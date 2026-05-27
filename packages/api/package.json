@@ -1,0 +1,11 @@
+{
+  "name": "@repo/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./processor/*": "./src/processor/*",
+    "./context/*": "./src/context/*",
+    "./services/*": "./src/services/*"
+  }
+}
