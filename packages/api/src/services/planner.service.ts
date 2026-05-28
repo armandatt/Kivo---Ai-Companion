@@ -1,4 +1,4 @@
-import { generateGeminiText } from "./gemini.service";
+import { generateOpenAIText } from "./openai.service";
 import { prisma } from "@repo/db/client";
 
 const planStore: Record<string, string> = {};
@@ -69,41 +69,57 @@ export async function generateAIPlan(input: {
   context: any;
 }) {
   const prompt = `
-	You are Kevo, an intelligent planning assistant.
+You are Kevo, building a realistic weekly execution plan.
 
-User info:
+User:
 - Name: ${input.context.user.name}
-- Goals: ${input.context.memory.longTerm.goals?.join(", ")}
+- Goals: ${input.context.memory.longTerm.goals?.join(", ") || "none"}
+- Deadlines: ${input.context.memory.longTerm.deadlines?.join(", ") || "none"}
+- Preferences: ${input.context.memory.longTerm.preferences?.join(", ") || "none"}
 
 User request:
 "${input.message}"
 
-Task:
-1. Extract activities
-2. Distribute them across a week
-3. Keep it realistic
-4. Keep it clean and structured
+Build the plan by:
+1. Extracting concrete activities from the request.
+2. Spreading work across the next 7 days.
+3. Keeping daily load realistic.
+4. Adding recovery or buffer time when the request involves gym, study, deadlines, or burnout.
+5. Using short action labels, not long explanations.
 
-Format STRICTLY like:
+Return only this format:
 
-📅 Your Week — Structured
+Your Week - Structured
 
 Mon:
-• Task
-• Task
+- Task
+- Task
 
 Tue:
-• Task
+- Task
 
-...
+Wed:
+- Task
 
-	Keep it concise.
-	`;
+Thu:
+- Task
+
+Fri:
+- Task
+
+Sat:
+- Task
+
+Sun:
+- Task
+
+Keep it concise. Do not add intro or outro text.
+`;
 
   try {
-    return await generateGeminiText({ prompt, maxOutputTokens: 900 });
+    return await generateOpenAIText({ prompt, maxOutputTokens: 900 });
   } catch (error) {
-    console.error("Gemini planner error:", error);
+    console.error("OpenAI planner error:", error);
     return "Couldn't generate plan right now. Try again in a bit.";
   }
 }

@@ -30,6 +30,12 @@ model User {
   sessions Session[]
 
   userProfile UserProfile?   // ✅ ADD THIS
+  workoutLogs    WorkoutLog[]
+  liftLogs       LiftLog[]
+  sorenessLogs   SorenessLog[]
+  bodyweightLogs BodyweightLog[]
+  energyLogs     EnergyLog[]
+  injuryFlags    InjuryFlag[]
 }
 
 //////////////////////////////////////////////////
@@ -205,6 +211,7 @@ model UserProfile {
   onboardingAnswers    Json?
 
   // 🔹 Gym (nullable)
+  gymMode            Boolean @default(false)
   gymExperience      String?
   gymDaysPerWeek     Int?
   gymPreferredTime   String?
@@ -214,6 +221,11 @@ model UserProfile {
   deadlift           Int?
 
   gymGoal            String?
+  dietType           String?
+  currentSplit       String?
+  sessionTime        String?
+  phaseWeek          Int     @default(1)
+  gymOnboardingComplete Boolean @default(false)
   gymStruggle        String?
   gymEnvironment     String?
 
@@ -221,6 +233,97 @@ model UserProfile {
   updatedAt          DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model WorkoutLog {
+  id              String   @id @default(cuid())
+  userId          String
+  date            DateTime
+  completed       Boolean
+  skipReason      String?
+  intensityScore  Int?
+  energyScore     Int?
+  musclesWorked   String[]
+  notes           String?
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  liftLogs LiftLog[]
+
+  @@index([userId, date])
+}
+
+model LiftLog {
+  id            String  @id @default(cuid())
+  userId        String
+  workoutLogId  String
+  exercise      String
+  weightKg      Float
+  reps          Int
+  sets          Int
+  isPR          Boolean @default(false)
+  prPrevious    Float?
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workoutLog WorkoutLog @relation(fields: [workoutLogId], references: [id], onDelete: Cascade)
+
+  @@index([userId, exercise])
+  @@index([workoutLogId])
+}
+
+model SorenessLog {
+  id          String   @id @default(cuid())
+  userId      String
+  date        DateTime
+  muscleGroup String
+  score       Int
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+  @@index([userId, muscleGroup])
+}
+
+model BodyweightLog {
+  id        String   @id @default(cuid())
+  userId    String
+  date      DateTime
+  weightKg  Float
+  trend     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+}
+
+model EnergyLog {
+  id              String   @id @default(cuid())
+  userId          String
+  date            DateTime
+  morningScore    Int?
+  preSessionScore Int?
+  postSessionScore Int?
+  sleepHours      Float?
+  moodTag         String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+}
+
+model InjuryFlag {
+  id            String   @id @default(cuid())
+  userId        String
+  bodyPart      String
+  exercise      String?
+  reportCount   Int      @default(0)
+  active        Boolean  @default(true)
+  firstReported DateTime
+  lastReported  DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, active])
+  @@index([userId, bodyPart])
 }
 
 model Account {

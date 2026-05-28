@@ -13,6 +13,15 @@ export type CompanionUser = {
   timezone?: string | null;
 };
 
+export type CompanionVisitKind =
+  | "morning"
+  | "basic_2h"
+  | "major_4h"
+  | "basic_6h"
+  | "major_8h"
+  | "basic_10h"
+  | "evening";
+
 export async function getUser(userId: string) {
   try {
     const user = await prisma.messengerUser.upsert({
@@ -81,10 +90,6 @@ export async function getUsersDueForCheckIn(currentTime: string) {
 
 export async function getUsersForCompanionVisit(currentTime: string) {
   try {
-    const visitKind = getVisitKind(currentTime);
-
-    if (!visitKind) return [];
-
     const users = await prisma.messengerUser.findMany({
       where: {
         platform: "telegram",
@@ -92,29 +97,98 @@ export async function getUsersForCompanionVisit(currentTime: string) {
       select: {
         platformChatId: true,
         preferredCheckInTime: true,
+        timezone: true,
       },
     });
 
     return users
-      .filter((user) => {
-        if (visitKind !== "morning") return true;
-        return (user.preferredCheckInTime || "08:00") === currentTime;
+      .map((user) => {
+        const visitKind = getVisitKind(currentTime, user.preferredCheckInTime || "08:00");
+
+        if (!visitKind) return null;
+
+        return {
+          platformChatId: user.platformChatId,
+          visitKind,
+        };
       })
-      .map((user) => ({
-        platformChatId: user.platformChatId,
-        visitKind,
-      }));
+      .filter((user): user is { platformChatId: string; visitKind: CompanionVisitKind } => Boolean(user));
   } catch (error) {
     console.error("Failed to load companion visit users:", error);
     return [];
   }
 }
 
-function getVisitKind(currentTime: string) {
-  if (currentTime === "08:00") return "morning";
-  if (currentTime === "14:00") return "plan_nudge";
-  if (currentTime === "20:00") return "evening";
+export async function getUsersForCompanionVisitAt(now: Date) {
+  try {
+    const users = await prisma.messengerUser.findMany({
+      where: {
+        platform: "telegram",
+      },
+      select: {
+        platformChatId: true,
+        preferredCheckInTime: true,
+        timezone: true,
+      },
+    });
+
+    return users
+      .map((user) => {
+        const localTime = getLocalTime(now, user.timezone || "Asia/Kolkata");
+        const visitKind = getVisitKind(localTime, user.preferredCheckInTime || "08:00");
+
+        if (!visitKind) return null;
+
+        return {
+          platformChatId: user.platformChatId,
+          visitKind,
+          localTime,
+        };
+      })
+      .filter(
+        (
+          user
+        ): user is {
+          platformChatId: string;
+          visitKind: CompanionVisitKind;
+          localTime: string;
+        } => Boolean(user)
+      );
+  } catch (error) {
+    console.error("Failed to load companion visit users:", error);
+    return [];
+  }
+}
+
+function getLocalTime(now: Date, timezone: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: timezone,
+  }).format(now);
+}
+
+function getVisitKind(currentTime: string, checkInTime: string) {
+  if (currentTime === checkInTime) return "morning";
+  if (currentTime === addMinutes(checkInTime, 2 * 60)) return "basic_2h";
+  if (currentTime === addMinutes(checkInTime, 4 * 60)) return "major_4h";
+  if (currentTime === addMinutes(checkInTime, 6 * 60)) return "basic_6h";
+  if (currentTime === addMinutes(checkInTime, 8 * 60)) return "major_8h";
+  if (currentTime === addMinutes(checkInTime, 10 * 60)) return "basic_10h";
+  if (currentTime === addMinutes(checkInTime, 12 * 60)) return "evening";
+
   return null;
+}
+
+function addMinutes(time: string, minutesToAdd: number) {
+  const [hours = "0", minutes = "0"] = time.split(":");
+  const total = (Number(hours) * 60 + Number(minutes) + minutesToAdd) % (24 * 60);
+  const normalized = total < 0 ? total + 24 * 60 : total;
+  const nextHours = Math.floor(normalized / 60);
+  const nextMinutes = normalized % 60;
+
+  return `${String(nextHours).padStart(2, "0")}:${String(nextMinutes).padStart(2, "0")}`;
 }
 
 export async function updateUserProfile(

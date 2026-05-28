@@ -19,6 +19,7 @@ export function processMessage(text: string) {
       planning: intent === "planning",
       saveDeadline: intent === "deadline_set",
       emotional: intent === "emotional_trigger",
+      gym: intent.startsWith("gym_") || intent.endsWith("_log") || intent === "missed_session" || intent === "weight_log" || intent === "energy_checkin" || intent === "recovery_query" || intent === "nutrition_query" || intent === "pain_report",
     },
   };
 }
