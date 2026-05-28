@@ -38,6 +38,42 @@ const nextConfig = {
         source: "/api/auth/google/callback",
         destination: `${apiUrl}/api/auth/google/callback`,
       },
+      {
+        source: "/api/dashboard",
+        destination: `${apiUrl}/api/dashboard`,
+      },
+      {
+        source: "/api/goals",
+        destination: `${apiUrl}/api/goals`,
+      },
+      {
+        source: "/api/planner",
+        destination: `${apiUrl}/api/planner`,
+      },
+      {
+        source: "/api/insights",
+        destination: `${apiUrl}/api/insights`,
+      },
+      {
+        source: "/api/creature",
+        destination: `${apiUrl}/api/creature`,
+      },
+      {
+        source: "/api/creature-rename",
+        destination: `${apiUrl}/api/creature-rename`,
+      },
+      {
+        source: "/api/settings",
+        destination: `${apiUrl}/api/settings`,
+      },
+      {
+        source: "/api/delete-account",
+        destination: `${apiUrl}/api/delete-account`,
+      },
+      {
+        source: "/api/nav",
+        destination: `${apiUrl}/api/nav`,
+      },
     ]
   },
 }
