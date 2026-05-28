@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
+<<<<<<< HEAD
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Lightning, SignOut } from "@phosphor-icons/react/dist/ssr"
@@ -12,6 +13,14 @@ export function Header() {
   const [scrolled, setScrolled] = useState(false)
   const [user, setUser] = useState<{ name?: string | null; email: string } | null>(null)
   const [loggingOut, setLoggingOut] = useState(false)
+=======
+import { Button } from "@/components/ui/button"
+import { Lightning } from "@phosphor-icons/react/dist/ssr"
+import { KivoLogo } from "@/components/KivoLogo"
+
+export function Header() {
+  const [scrolled, setScrolled] = useState(false)
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
 
   useEffect(() => {
     const handleScroll = () => {
@@ -21,6 +30,7 @@ export function Header() {
     return () => window.removeEventListener("scroll", handleScroll)
   }, [])
 
+<<<<<<< HEAD
   useEffect(() => {
     fetch("/api/me")
       .then((r) => (r.ok ? r.json() : null))
@@ -40,6 +50,8 @@ export function Header() {
     ? user.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
     : user?.email?.[0]?.toUpperCase() ?? "?"
 
+=======
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
   return (
     <>
       <header className="fixed top-0 left-0 right-0 z-50">
@@ -62,7 +74,11 @@ export function Header() {
           {/* Nav */}
           <nav
             className={`
+<<<<<<< HEAD
               hidden md:flex items-center gap-1 rounded-full border border-[var(--color-baltic-sea-800)]
+=======
+              hidden md:flex items-center gap-1 rounded-full border border-[var(--color-baltic-sea-800)] 
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
               bg-[var(--color-baltic-sea-900)]/80 backdrop-blur-md px-2 py-1.5
               transition-all duration-500 ease-out
               ${scrolled ? "opacity-0 pointer-events-none" : "opacity-100"}
@@ -84,6 +100,7 @@ export function Header() {
           </nav>
 
           {/* Actions */}
+<<<<<<< HEAD
           <div className="flex items-center gap-3">
             {user ? (
               <>
@@ -147,11 +164,41 @@ export function Header() {
                 </Button>
               </>
             )}
+=======
+          <div className="flex items-center gap-4">
+            <a
+              href="/signin"
+              className={`
+                hidden text-sm text-[var(--color-baltic-sea-400)] hover:text-[var(--color-baltic-sea-100)] transition-all duration-500 md:block
+                ${scrolled ? "opacity-0 pointer-events-none" : "opacity-100"}
+              `}
+            >
+              Sign in
+            </a>
+            <Button
+              asChild
+              className={`
+                hidden md:flex bg-[var(--color-keppel-400)] text-[var(--color-keppel-950)] hover:bg-[var(--color-keppel-300)] 
+                rounded-full px-5 py-2.5 h-auto text-sm
+                transition-all duration-500
+                ${scrolled ? "opacity-0 pointer-events-none" : "opacity-100"}
+              `}
+            >
+              <Link href="/signup">
+                <Lightning weight="fill" className="mr-1.5 h-4 w-4" />
+                Start free
+              </Link>
+            </Button>
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
           </div>
         </div>
       </header>
 
+<<<<<<< HEAD
       {/* Floating CTA / Sign-out on scroll */}
+=======
+      {/* Floating CTA on scroll */}
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
       <div
         className={`
           fixed z-50 bottom-6 right-6 lg:right-12
@@ -159,6 +206,7 @@ export function Header() {
           ${scrolled ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"}
         `}
       >
+<<<<<<< HEAD
         {user ? (
           <Button
             onClick={handleLogout}
@@ -182,6 +230,18 @@ export function Header() {
             </Link>
           </Button>
         )}
+=======
+        <Button
+          asChild
+          className="bg-[var(--color-keppel-400)] text-[var(--color-keppel-950)] hover:bg-[var(--color-keppel-300)] 
+            rounded-full px-6 py-3 h-auto text-sm shadow-lg shadow-[var(--color-keppel-400)]/20"
+        >
+          <Link href="/signup">
+            <Lightning weight="fill" className="mr-1.5 h-4 w-4" />
+            Start free
+          </Link>
+        </Button>
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
       </div>
     </>
   )
