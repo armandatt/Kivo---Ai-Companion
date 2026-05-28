@@ -38,6 +38,7 @@ const nextConfig = {
         source: "/api/auth/google/callback",
         destination: `${apiUrl}/api/auth/google/callback`,
       },
+<<<<<<< HEAD
       {
         source: "/api/dashboard",
         destination: `${apiUrl}/api/dashboard`,
@@ -74,6 +75,19 @@ const nextConfig = {
         source: "/api/nav",
         destination: `${apiUrl}/api/nav`,
       },
+=======
+<<<<<<< HEAD
+      {
+        source: "/api/forgot-password",
+        destination: `${apiUrl}/api/forgot-password`,
+      },
+      {
+        source: "/api/reset-password",
+        destination: `${apiUrl}/api/reset-password`,
+      },
+=======
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
+>>>>>>> a51671498b1a78c2f5881a550a4f39addaaf076e
     ]
   },
 }

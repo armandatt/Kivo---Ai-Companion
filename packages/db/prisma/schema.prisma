@@ -28,6 +28,10 @@ model User {
 
   accounts Account[]
   sessions Session[]
+<<<<<<< HEAD
+  passwordResetTokens PasswordResetToken[]
+=======
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
 
   userProfile UserProfile?   // ✅ ADD THIS
   workoutLogs    WorkoutLog[]
@@ -326,6 +330,23 @@ model InjuryFlag {
   @@index([userId, bodyPart])
 }
 
+<<<<<<< HEAD
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+}
+
+=======
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
 model Account {
   id                 String  @id @default(cuid())
   userId             String
