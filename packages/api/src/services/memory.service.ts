@@ -45,35 +45,35 @@ export async function getMemory(userId: string) {
     const gymMemory = await buildGymLongTermMemory(userId);
     const longTerm = {
       goals: [
-        ...user.goals.map((goal) => goal.title),
+        ...user.goals.map((goal: { title: any; }) => goal.title),
         ...user.memories
-          .filter((memory) => memory.type === "goal")
-          .map((memory) => memory.value),
+          .filter((memory: { type: string; }) => memory.type === "goal")
+          .map((memory: { value: any; }) => memory.value),
       ],
       struggles: user.memories
-        .filter((memory) => memory.type === "struggle")
-        .map((memory) => memory.value),
+        .filter((memory: { type: string; }) => memory.type === "struggle")
+        .map((memory: { value: any; }) => memory.value),
       deadlines: [
         ...user.deadlines.map(
-          (deadline) => `${deadline.title} due ${deadline.dueAt.toISOString()}`
+          (deadline: { title: any; dueAt: { toISOString: () => any; }; }) => `${deadline.title} due ${deadline.dueAt.toISOString()}`
         ),
         ...user.memories
-          .filter((memory) => memory.type === "deadline")
-          .map((memory) => memory.value),
+          .filter((memory: { type: string; }) => memory.type === "deadline")
+          .map((memory: { value: any; }) => memory.value),
       ],
       preferences: user.memories
-        .filter((memory) => memory.type === "preference")
-        .map((memory) => memory.value),
+        .filter((memory: { type: string; }) => memory.type === "preference")
+        .map((memory: { value: any; }) => memory.value),
       anchors: user.memories
-        .filter((memory) => memory.type === "anchor")
-        .map((memory) => memory.value),
+        .filter((memory: { type: string; }) => memory.type === "anchor")
+        .map((memory: { value: any; }) => memory.value),
       ...(gymMemory ? { gym: gymMemory } : {}),
     };
 
     return {
       shortTerm: user.messages
         .reverse()
-        .map((message) => `${message.role}: ${message.text}`),
+        .map((message: { role: any; text: any; }) => `${message.role}: ${message.text}`),
       longTerm,
     };
   } catch (error) {
@@ -184,8 +184,8 @@ async function buildGymLongTermMemory(userId: string) {
     phaseWeek: profile.phaseWeek,
     lifts: groupLastThreeLiftsByExercise(liftLogs),
     injuryFlags,
-    last7DaysEnergy: energyLogs.map((entry) => entry.morningScore),
-    last7DaysSleep: energyLogs.map((entry) => entry.sleepHours),
+    last7DaysEnergy: energyLogs.map((entry: { morningScore: any; }) => entry.morningScore),
+    last7DaysSleep: energyLogs.map((entry: { sleepHours: any; }) => entry.sleepHours),
     consistencyScore30d: total30d ? completed30d / total30d : 0,
     skipPattern: groupSkipsByDayOfWeek(skipped30d),
   };

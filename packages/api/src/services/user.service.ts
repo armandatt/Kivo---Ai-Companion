@@ -102,7 +102,7 @@ export async function getUsersForCompanionVisit(currentTime: string) {
     });
 
     return users
-      .map((user) => {
+      .map((user: { preferredCheckInTime: any; platformChatId: any; }) => {
         const visitKind = getVisitKind(currentTime, user.preferredCheckInTime || "08:00");
 
         if (!visitKind) return null;
@@ -112,7 +112,7 @@ export async function getUsersForCompanionVisit(currentTime: string) {
           visitKind,
         };
       })
-      .filter((user): user is { platformChatId: string; visitKind: CompanionVisitKind } => Boolean(user));
+      .filter((user: any): user is { platformChatId: string; visitKind: CompanionVisitKind } => Boolean(user));
   } catch (error) {
     console.error("Failed to load companion visit users:", error);
     return [];
@@ -133,7 +133,7 @@ export async function getUsersForCompanionVisitAt(now: Date) {
     });
 
     return users
-      .map((user) => {
+      .map((user: { timezone: any; preferredCheckInTime: any; platformChatId: any; }) => {
         const localTime = getLocalTime(now, user.timezone || "Asia/Kolkata");
         const visitKind = getVisitKind(localTime, user.preferredCheckInTime || "08:00");
 
@@ -147,7 +147,7 @@ export async function getUsersForCompanionVisitAt(now: Date) {
       })
       .filter(
         (
-          user
+          user: any
         ): user is {
           platformChatId: string;
           visitKind: CompanionVisitKind;
