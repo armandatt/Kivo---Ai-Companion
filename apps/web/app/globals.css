@@ -227,6 +227,17 @@
   animation: fade-in-up 0.4s ease-out forwards;
 }
 
+/* Dashboard shell responsive utilities */
+.kevo-mobile-only { display: none; }
+
+@media (max-width: 768px) {
+  .kevo-sidebar-wrapper { display: none !important; }
+  .kevo-bottom-nav { display: flex !important; }
+  .kevo-desktop-only { display: none !important; }
+  .kevo-mobile-only { display: flex !important; }
+  .kevo-main-content { padding: 16px 16px 80px !important; }
+}
+
 /* Message appear animation */
 @keyframes message-appear {
   0% {
