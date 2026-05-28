@@ -38,6 +38,7 @@ const nextConfig = {
         source: "/api/auth/google/callback",
         destination: `${apiUrl}/api/auth/google/callback`,
       },
+<<<<<<< HEAD
       {
         source: "/api/forgot-password",
         destination: `${apiUrl}/api/forgot-password`,
@@ -46,6 +47,8 @@ const nextConfig = {
         source: "/api/reset-password",
         destination: `${apiUrl}/api/reset-password`,
       },
+=======
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
     ]
   },
 }

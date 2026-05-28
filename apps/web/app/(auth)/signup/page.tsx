@@ -14,7 +14,10 @@ export default function SignupPage() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+<<<<<<< HEAD
   const [isRetrying, setIsRetrying] = useState(false)
+=======
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -26,14 +29,21 @@ export default function SignupPage() {
     }
 
     setIsLoading(true)
+<<<<<<< HEAD
     setIsRetrying(false)
 
     const attempt = () =>
       fetch('/api/signup', {
+=======
+
+    try {
+      const res = await fetch('/api/signup', {
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       })
+<<<<<<< HEAD
 
     try {
       let res = await attempt()
@@ -45,6 +55,8 @@ export default function SignupPage() {
         setIsRetrying(false)
       }
 
+=======
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
       const data = await res.json()
 
       if (!res.ok) {
@@ -58,7 +70,10 @@ export default function SignupPage() {
       setError('Something went wrong. Please try again.')
     } finally {
       setIsLoading(false)
+<<<<<<< HEAD
       setIsRetrying(false)
+=======
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
     }
   }
 
@@ -137,7 +152,11 @@ export default function SignupPage() {
               disabled={isLoading}
               className="w-full bg-[#00D9A3] text-black hover:bg-[#00c896] font-semibold py-2 rounded-full transition-all duration-200 mt-6"
             >
+<<<<<<< HEAD
               {isRetrying ? 'Connecting...' : isLoading ? 'Creating Account...' : 'Start free'}
+=======
+              {isLoading ? 'Creating Account...' : 'Start free'}
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
             </Button>
           </form>
 

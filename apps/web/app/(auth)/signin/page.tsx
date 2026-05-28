@@ -2,19 +2,27 @@
 
 import { Suspense, useState } from 'react'
 import Link from 'next/link'
+<<<<<<< HEAD
 import { useRouter, useSearchParams } from 'next/navigation'
+=======
+import { useRouter } from 'next/navigation'
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 
 function SigninForm() {
   const router = useRouter()
+<<<<<<< HEAD
   const searchParams = useSearchParams()
+=======
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+<<<<<<< HEAD
   const [isRetrying, setIsRetrying] = useState(false)
 
   const resetSuccess = searchParams.get('reset') === 'success'
@@ -43,6 +51,26 @@ function SigninForm() {
         res = await attempt()
         setIsRetrying(false)
       }
+=======
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    setError('')
+    setIsLoading(true)
+
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email,
+          password,
+        }),
+      })
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
 
       const data = await res.json()
 
@@ -51,6 +79,7 @@ function SigninForm() {
         return
       }
 
+<<<<<<< HEAD
       router.push('/quiz')
       router.refresh()
     } catch {
@@ -58,6 +87,16 @@ function SigninForm() {
     } finally {
       setIsLoading(false)
       setIsRetrying(false)
+=======
+      // Redirect to quiz page
+      router.push('/quiz')
+
+      router.refresh()
+    } catch (error) {
+      setError('Something went wrong. Please try again.')
+    } finally {
+      setIsLoading(false)
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
     }
   }
 
@@ -79,12 +118,15 @@ function SigninForm() {
             </p>
           </div>
 
+<<<<<<< HEAD
           {resetSuccess && (
             <p className="rounded-md border border-[#00D9A3]/30 bg-[#00D9A3]/10 px-3 py-2 text-sm text-[#00D9A3] mb-4">
               Password reset successfully. Sign in with your new password.
             </p>
           )}
 
+=======
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Email Input */}
@@ -142,7 +184,11 @@ function SigninForm() {
               disabled={isLoading}
               className="w-full bg-[#00D9A3] text-black hover:bg-[#00c896] font-semibold py-2 rounded-full transition-all duration-200 mt-6"
             >
+<<<<<<< HEAD
               {isRetrying ? 'Connecting...' : isLoading ? 'Signing in...' : 'Sign in'}
+=======
+              {isLoading ? 'Signing in...' : 'Sign in'}
+>>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
             </Button>
           </form>
 
