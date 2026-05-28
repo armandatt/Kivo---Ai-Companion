@@ -1,0 +1,423 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+datasource db {
+  provider = "postgresql"
+  // Removed URL as it is now configured in prisma.config.ts
+
+}
+
+
+//////////////////////////////////////////////////
+// NEXTAUTH TABLES
+//////////////////////////////////////////////////
+
+model User {
+  id            String   @id @default(cuid())
+  name          String?
+  email         String   @unique
+  password      String?
+  emailVerified DateTime?
+  image         String?
+
+  accounts Account[]
+  sessions Session[]
+  passwordResetTokens PasswordResetToken[]
+
+  userProfile UserProfile?   // ✅ ADD THIS
+  workoutLogs    WorkoutLog[]
+  liftLogs       LiftLog[]
+  sorenessLogs   SorenessLog[]
+  bodyweightLogs BodyweightLog[]
+  energyLogs     EnergyLog[]
+  injuryFlags    InjuryFlag[]
+}
+
+//////////////////////////////////////////////////
+// MESSENGER COMPANION STATE
+//////////////////////////////////////////////////
+
+model MessengerUser {
+  id                  String   @id @default(cuid())
+  platform            String
+  platformChatId      String
+  displayName         String?
+  username            String?
+  persona             String   @default("rex")
+  tonePreference      String   @default("hard")
+  tier                String   @default("free")
+  timezone            String?
+  preferredCheckInTime String?
+  onboardingComplete  Boolean  @default(false)
+  onboardingStep       String   @default("not_started")
+  onboardingAnswers    Json?
+  energyPattern        String?
+  corePain             String?  @db.Text
+  primaryGoal30d       String?  @db.Text
+  goalCategory         String?
+  accountabilityStyle  String?
+  aspirationWords      String[]
+  creatureType         String?
+  creatureColor        String?
+  creatureName         String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  messages CompanionMessage[]
+  memories MemoryFact[]
+  goals    Goal[]
+  plans    Plan[]
+  deadlines Deadline[]
+  focusSessions FocusSession[]
+
+  @@unique([platform, platformChatId])
+  @@index([platformChatId])
+}
+
+model CompanionMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  role      String
+  text      String   @db.Text
+  intent    String?
+  emotion   String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model MemoryFact {
+  id              String   @id @default(cuid())
+  userId          String
+  type            String
+  key             String
+  value           String   @db.Text
+  confidence      Float    @default(0.8)
+  sourceMessageId String?
+  archivedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([userId, key])
+}
+
+model Goal {
+  id              String   @id @default(cuid())
+  userId          String
+  title           String   @db.Text
+  status          String   @default("active")
+  sourceMessageId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
+
+model Plan {
+  id        String   @id @default(cuid())
+  userId    String
+  content   String   @db.Text
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
+
+model Deadline {
+  id              String   @id @default(cuid())
+  userId          String
+  title           String   @db.Text
+  dueAt           DateTime
+  status          String   @default("active")
+  sourceMessageId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([dueAt])
+}
+
+model FocusSession {
+  id          String   @id @default(cuid())
+  userId      String
+  durationMin Int
+  status      String   @default("active")
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+
+  user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
+
+//////////////////////////////////////////////////
+// ONBOARDING / AI PROFILE
+//////////////////////////////////////////////////
+
+model UserProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+
+  // 🔹 Core Identity
+  primaryDomain      String?
+  secondaryDomains   String[]   // Postgres supports arrays
+
+  seriousness        String?
+
+  // 🔹 Psychology
+  consistency        String?
+  motivationType     String?
+  failurePattern     String?
+  emotionalTrigger   String?
+  riskLevel          String?
+
+  // 🔹 Persona
+  primaryPersona     String?
+  tone               String?
+
+  // 🔹 Kevo web onboarding quiz
+  energyPattern        String?
+  corePain             String?  @db.Text
+  primaryGoal30d       String?  @db.Text
+  goalCategory         String?
+  accountabilityStyle  String?
+  aspirationWords      String[]
+  personaName          String?
+  personaDescription   String?
+  creatureType         String?
+  creatureColor        String?
+  creatureName         String?
+  preferredCheckInTime String?
+  timezone             String?
+  onboardingComplete   Boolean @default(false)
+  onboardingAnswers    Json?
+
+  // 🔹 Gym (nullable)
+  gymMode            Boolean @default(false)
+  gymExperience      String?
+  gymDaysPerWeek     Int?
+  gymPreferredTime   String?
+
+  bench              Int?
+  squat              Int?
+  deadlift           Int?
+
+  gymGoal            String?
+  dietType           String?
+  currentSplit       String?
+  sessionTime        String?
+  phaseWeek          Int     @default(1)
+  gymOnboardingComplete Boolean @default(false)
+  gymStruggle        String?
+  gymEnvironment     String?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model WorkoutLog {
+  id              String   @id @default(cuid())
+  userId          String
+  date            DateTime
+  completed       Boolean
+  skipReason      String?
+  intensityScore  Int?
+  energyScore     Int?
+  musclesWorked   String[]
+  notes           String?
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  liftLogs LiftLog[]
+
+  @@index([userId, date])
+}
+
+model LiftLog {
+  id            String  @id @default(cuid())
+  userId        String
+  workoutLogId  String
+  exercise      String
+  weightKg      Float
+  reps          Int
+  sets          Int
+  isPR          Boolean @default(false)
+  prPrevious    Float?
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workoutLog WorkoutLog @relation(fields: [workoutLogId], references: [id], onDelete: Cascade)
+
+  @@index([userId, exercise])
+  @@index([workoutLogId])
+}
+
+model SorenessLog {
+  id          String   @id @default(cuid())
+  userId      String
+  date        DateTime
+  muscleGroup String
+  score       Int
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+  @@index([userId, muscleGroup])
+}
+
+model BodyweightLog {
+  id        String   @id @default(cuid())
+  userId    String
+  date      DateTime
+  weightKg  Float
+  trend     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+}
+
+model EnergyLog {
+  id              String   @id @default(cuid())
+  userId          String
+  date            DateTime
+  morningScore    Int?
+  preSessionScore Int?
+  postSessionScore Int?
+  sleepHours      Float?
+  moodTag         String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+}
+
+model InjuryFlag {
+  id            String   @id @default(cuid())
+  userId        String
+  bodyPart      String
+  exercise      String?
+  reportCount   Int      @default(0)
+  active        Boolean  @default(true)
+  firstReported DateTime
+  lastReported  DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, active])
+  @@index([userId, bodyPart])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+}
+
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+
+  refresh_token      String? @db.Text
+  access_token       String? @db.Text
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String? @db.Text
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+//////////////////////////////////////////////////
+// CORE COMPLIANCE TABLES
+//////////////////////////////////////////////////
+
+model Product {
+  id          String   @id @default(cuid())
+
+  title       String
+  productUrl  String   @unique
+  platform    String
+
+  brand       String?
+  category    String?
+  seller      String?
+
+  imageUrl    String?
+
+  // OCR extracted fields
+  mrp                 Float?
+  netQuantity         String?
+  manufacturerName    String?
+  manufacturerAddress String?
+  countryOfOrigin     String?
+  manufactureDate     String?
+  consumerCare        String?
+
+  // OCR raw text
+  ocrText     String?  @db.Text
+
+  // Compliance results
+  complianceScore Int?
+  isCompliant     Boolean?
+
+  // store rule failures
+  violations Json?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ScanJob {
+  id        String   @id @default(cuid())
+
+  platform  String
+  status    String
+
+  totalProducts     Int  @default(0)
+  violationsFound   Int  @default(0)
+
+  startedAt DateTime @default(now())
+  finishedAt DateTime?
+}
