@@ -6,10 +6,11 @@
   "scripts": {
     "dev": "next dev --port 3001",
     "build": "next build",
-    "start": "next start --port 3001",
+    "start": "next start --port ${PORT:-3001}",
     "check-types": "next typegen && tsc --noEmit"
   },
   "dependencies": {
+    "@repo/api": "^1.0.0",
     "@repo/db": "^0.0.0",
     "bcrypt": "^6.0.0",
     "jose": "^6.2.2",

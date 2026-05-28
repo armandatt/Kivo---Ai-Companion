@@ -1,0 +1,323 @@
+//@ts-ignore
+import { processMessage } from "@repo/api/processor/messageProcessor";
+//@ts-ignore
+import { buildContext } from "@repo/api/context/contextBuilder";
+//@ts-ignore
+import { generateResponse } from "@repo/api/services/llm";
+//@ts-ignore
+import { buildSystemState } from "@repo/api/services/decision.service";
+//@ts-ignore
+import { addToShortTerm, addToLongTerm } from "@repo/api/services/memory.service";
+//@ts-ignore
+import { runDecisionEngine } from "@repo/api/services/decision.engine";
+//@ts-ignore
+import { startFocusSession } from "@repo/api/services/focus.service";
+//@ts-ignore
+import { generateAIPlan, savePlan } from "@repo/api/services/planner.service";
+//@ts-ignore
+import { updateUserProfile } from "@repo/api/services/user.service";
+//@ts-ignore
+import { checkRateLimit } from "@repo/api/services/rateLimit.service";
+//@ts-ignore
+import { pushNearestDeadline, saveDeadline } from "@repo/api/services/deadline.service";
+//@ts-ignore
+import { formatMessengerText } from "@repo/api/services/formatter.service";
+//@ts-ignore
+import { generateProgressSummary, generateWeeklyReview } from "@repo/api/services/review.service";
+//@ts-ignore
+import { handleGymMessage } from "@repo/api/services/gym.service";
+//@ts-ignore
+import { handlePostSessionDebriefResponse, resetReengagementFlag } from "@repo/api/services/gymCron.service";
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+
+    const text = body.message?.text || "";
+    const chatId = body.message?.chat?.id;
+    const from = body.message?.from;
+
+    if (!text || !chatId) {
+      return Response.json({ ok: true });
+    }
+
+    const stopTyping = startTelegramTyping(chatId);
+
+    try {
+    console.log("Incoming:", text);
+
+    await updateUserProfile(chatId.toString(), {
+      displayName: [from?.first_name, from?.last_name].filter(Boolean).join(" ") || undefined,
+      username: from?.username,
+    });
+
+    const rateLimit = await checkRateLimit(chatId.toString());
+    if (!rateLimit.allowed) {
+      await sendTelegramMessage(
+        chatId,
+        "You’ve been busy today. Give me a few minutes to catch up."
+      );
+      return Response.json({ ok: true });
+    }
+
+    // 🧠 STEP 1: PROCESS MESSAGE
+    const processed = processMessage(text);
+    console.log("Processed:", processed);
+
+    const gymUserId = body.userId || body.user?.id;
+    if (gymUserId) {
+      await resetReengagementFlag(gymUserId);
+
+      const debriefReply = await handlePostSessionDebriefResponse(gymUserId, processed.cleanedText);
+      if (debriefReply) {
+        await sendTelegramMessage(chatId, debriefReply);
+        await addToShortTerm(chatId.toString(), debriefReply, {
+          role: "assistant",
+          intent: "post_session_debrief",
+          emotion: processed.emotion,
+        });
+        return Response.json({ ok: true });
+      }
+
+      const gymResult = await handleGymMessage({
+        userId: gymUserId,
+        text: processed.cleanedText,
+        intent: processed.intent,
+      });
+
+      if (gymResult.handled && gymResult.reply) {
+        await sendTelegramMessage(chatId, gymResult.reply);
+        await addToShortTerm(chatId.toString(), gymResult.reply, {
+          role: "assistant",
+          intent: processed.intent,
+          emotion: processed.emotion,
+        });
+        return Response.json({ ok: true });
+      }
+    }
+
+    // 🧠 Save current message
+    await addToShortTerm(chatId.toString(), text, {
+      role: "user",
+      intent: processed.intent,
+      emotion: processed.emotion,
+    });
+
+    if (processed.entities?.goal) {
+      await addToLongTerm(chatId.toString(), "goals", processed.entities.goal);
+    }
+
+    if (processed.entities?.deadline) {
+      await saveDeadline({
+        platformChatId: chatId.toString(),
+        title: processed.entities.deadline.label,
+        dueAt: processed.entities.deadline.dueAt,
+      });
+    }
+
+    // 🧠 STEP 2: BUILD CONTEXT
+    const context = await buildContext(processed, chatId.toString());
+    console.log("Context:", context);
+
+    // 🧠 STEP 3: SYSTEM STATE (NO DUPLICATION)
+    const systemState = buildSystemState(processed, context);
+    console.log("System State:", systemState);
+
+    const decision = await runDecisionEngine({
+      message: text,
+      processed,
+      context,
+      system: systemState,
+    });
+
+    console.log("Decision:", decision);
+
+    if (decision.type === "focus_start") {
+      startFocusSession(chatId.toString(), (id: string, text: string) =>
+        sendTelegramMessage(id, text, "Markdown"),
+        processed.entities?.focusDurationMin || 25
+      );
+      return Response.json({ ok: true });
+    }
+
+    if (decision.type === "deadline") {
+      const deadline = processed.entities?.deadline;
+      const reply = deadline
+        ? `Got it. I’ll keep ${deadline.label} in view.`
+        : "I caught a deadline intent, but not the date. Send it like: assignment due Friday 6pm.";
+
+      await sendTelegramMessage(chatId, reply);
+      await addToShortTerm(chatId.toString(), reply, {
+        role: "assistant",
+        intent: processed.intent,
+        emotion: processed.emotion,
+      });
+      return Response.json({ ok: true });
+    }
+
+    if (decision.type === "schedule_adjust") {
+      const minutes = processed.entities?.timeShiftMin || 60;
+      const updatedDeadline = await pushNearestDeadline(chatId.toString(), minutes);
+      const reply = updatedDeadline
+        ? `Done. I pushed ${updatedDeadline.title} by ${minutes >= 60 ? `${minutes / 60} hour` : `${minutes} minutes`}.`
+        : "I can adjust that, but I do not see an active deadline yet. Send the deadline first.";
+
+      await sendTelegramMessage(chatId, reply);
+      await addToShortTerm(chatId.toString(), reply, {
+        role: "assistant",
+        intent: processed.intent,
+        emotion: processed.emotion,
+      });
+      return Response.json({ ok: true });
+    }
+
+    if (decision.type === "progress") {
+      const reply = await generateProgressSummary(chatId.toString());
+      await sendTelegramMessage(chatId, reply);
+      await addToShortTerm(chatId.toString(), reply, {
+        role: "assistant",
+        intent: processed.intent,
+        emotion: processed.emotion,
+      });
+      return Response.json({ ok: true });
+    }
+
+    if (decision.type === "weekly_review") {
+      const reply = await generateWeeklyReview(chatId.toString());
+      await sendTelegramMessage(chatId, reply);
+      await addToShortTerm(chatId.toString(), reply, {
+        role: "assistant",
+        intent: processed.intent,
+        emotion: processed.emotion,
+      });
+      return Response.json({ ok: true });
+    }
+
+    if (decision.type === "planner_ai") {
+      const plan = await generateAIPlan({
+        message: text,
+        context,
+      });
+
+      await savePlan(chatId.toString(), plan);
+
+      await sendTelegramMessage(chatId, plan);
+      await addToShortTerm(chatId.toString(), plan, {
+        role: "assistant",
+        intent: processed.intent,
+        emotion: processed.emotion,
+      });
+
+      await sendTelegramMessage(
+        chatId,
+        "I’ll keep this in mind for your week."
+      );
+
+      return Response.json({ ok: true });
+    }
+
+    // 🧠 STEP 4: LLM RESPONSE
+    let reply = "";
+
+    // 🎯 If system decides direct response
+    if (decision.type !== "llm" && decision.reply) {
+      reply = decision.reply;
+    } else {
+      // 🧠 Otherwise use LLM
+      reply = await generateResponse({
+        message: text,
+        context,
+        system: systemState,
+      });
+    }
+
+    console.log("Reply:", reply);
+
+    // 🔁 STEP 5: SEND BACK TO TELEGRAM
+    if (rateLimit.warning) {
+      reply = `${reply}\n\nYou’re close to today’s free message limit, so I may slow down soon.`;
+    }
+
+    await sendTelegramMessage(chatId, reply);
+    await addToShortTerm(chatId.toString(), reply, {
+      role: "assistant",
+      intent: processed.intent,
+      emotion: systemState.emotion,
+    });
+
+    return Response.json({ ok: true });
+    } finally {
+      stopTyping();
+    }
+
+  } catch (err) {
+    console.error("Error:", err);
+    return Response.json({ ok: false });
+  }
+}
+
+function startTelegramTyping(chatId: number | string) {
+  void sendTelegramChatAction(chatId, "typing");
+
+  const timer = setInterval(() => {
+    void sendTelegramChatAction(chatId, "typing");
+  }, 4000);
+
+  return () => clearInterval(timer);
+}
+
+async function sendTelegramChatAction(
+  chatId: number | string,
+  action: "typing"
+) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+
+  if (!token) {
+    return;
+  }
+
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendChatAction`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        chat_id: chatId,
+        action,
+      }),
+    });
+  } catch (error) {
+    console.error("Telegram typing action failed:", error);
+  }
+}
+
+// ✅ Telegram sender
+async function sendTelegramMessage(
+  chatId: number | string,
+  text: string,
+  parseMode?: "Markdown"
+) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+
+  if (!token) {
+    throw new Error("TELEGRAM_BOT_TOKEN not set");
+  }
+
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: formatMessengerText(text),
+      ...(parseMode ? { parse_mode: parseMode } : {}),
+    }),
+  });
+
+  if (!res.ok) {
+    const error = await res.text();
+    throw new Error(`Telegram send failed: ${error}`);
+  }
+}
