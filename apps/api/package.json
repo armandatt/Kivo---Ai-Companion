@@ -16,12 +16,7 @@
     "jose": "^6.2.2",
     "next": "16.1.5",
     "react": "^19.2.0",
-<<<<<<< HEAD
-    "react-dom": "^19.2.0",
-    "resend": "^6.12.4"
-=======
     "react-dom": "^19.2.0"
->>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
   },
   "devDependencies": {
     "@repo/typescript-config": "*",

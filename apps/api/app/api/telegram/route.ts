@@ -28,6 +28,9 @@ import { generateProgressSummary, generateWeeklyReview } from "@repo/api/service
 import { handleGymMessage } from "@repo/api/services/gym.service";
 //@ts-ignore
 import { handlePostSessionDebriefResponse, resetReengagementFlag } from "@repo/api/services/gymCron.service";
+//@ts-ignore
+import { needsIntake, getWebProfile, handleIntakeMessage } from "@repo/api/services/intake.service";
+import { prisma } from "@repo/db/client";
 
 export const runtime = "nodejs";
 
@@ -49,6 +52,25 @@ export async function POST(req: Request) {
         displayName: [from?.first_name, from?.last_name].filter(Boolean).join(" ") || undefined,
         username: from?.username,
       });
+
+      const handledTelegramConnect = await handleTelegramConnectStart(text, chatId);
+      if (handledTelegramConnect) {
+        return Response.json({ ok: true });
+      }
+
+      // Intake gate — runs until the domain-specific intake conversation is complete
+      if (await needsIntake(chatId.toString())) {
+        const webProfile = await getWebProfile(chatId.toString());
+        const intakeResult = await handleIntakeMessage({
+          platformChatId: chatId.toString(),
+          text,
+          webProfile,
+        });
+        if (intakeResult.handled) {
+          await sendTelegramMessage(chatId, intakeResult.reply);
+          return Response.json({ ok: true });
+        }
+      }
 
       const rateLimit = await checkRateLimit(chatId.toString());
       if (!rateLimit.allowed) {
@@ -191,6 +213,42 @@ export async function POST(req: Request) {
   }
 }
 
+async function handleTelegramConnectStart(text: string, chatId: number | string) {
+  const match = text.trim().match(/^\/start(?:@\w+)?(?:\s+(.+))?$/i);
+  const payload = match?.[1]?.trim();
+
+  if (!match || !payload) {
+    return false;
+  }
+
+  const profile = await prisma.userProfile.findUnique({
+    where: { telegramConnectToken: payload },
+    select: { id: true },
+  });
+
+  if (!profile) {
+    await sendTelegramMessage(
+      chatId,
+      "That link has expired. Go back to your dashboard and try again."
+    );
+    return true;
+  }
+
+  await prisma.userProfile.update({
+    where: { id: profile.id },
+    data: {
+      telegramChatId: String(chatId),
+      telegramConnected: true,
+      telegramConnectedAt: new Date(),
+      telegramConnectToken: null,
+      lastActivityAt: new Date(),
+    },
+  });
+
+  await sendTelegramMessage(chatId, "Connected. I'll be here every morning.");
+  return true;
+}
+
 async function sendAndRemember(
   chatId: number | string,
   text: string,
@@ -219,7 +277,7 @@ async function sendTelegramChatAction(
   chatId: number | string,
   action: "typing"
 ) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const token = process.env.TELEGRAM_BOT_TOKEN ?? process.env.BOT_TOKEN;
   if (!token) return;
 
   try {
@@ -243,10 +301,10 @@ async function sendTelegramMessage(
   text: string,
   parseMode?: "Markdown"
 ) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const token = process.env.TELEGRAM_BOT_TOKEN ?? process.env.BOT_TOKEN;
 
   if (!token) {
-    throw new Error("TELEGRAM_BOT_TOKEN not set");
+    throw new Error("TELEGRAM_BOT_TOKEN or BOT_TOKEN not set");
   }
 
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {

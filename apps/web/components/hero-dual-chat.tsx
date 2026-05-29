@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import Link from 'next/link'
 import { Button } from "@/components/ui/button"
+import { AuthAwareLink } from "@/components/auth-aware-link"
 
 interface Message {
   id: string
@@ -267,7 +267,7 @@ export function HeroDualChat() {
                   className="font-bold text-slate-950 hover:scale-[1.02] transition-transform"
                   style={{ background: '#00E5A0', boxShadow: '0 0 24px rgba(0,229,160,0.25)' }}
                 >
-                  <Link href="/signup">Start on Telegram →</Link>
+                  <AuthAwareLink>Start on Telegram →</AuthAwareLink>
                 </Button>
                 <Button
                   asChild
@@ -276,7 +276,7 @@ export function HeroDualChat() {
                   className="font-semibold"
                   style={{ borderColor: 'rgba(255,255,255,0.12)', color: '#e8eaf0', background: 'rgba(255,255,255,0.03)' }}
                 >
-                  <Link href="/signup">Start on WhatsApp</Link>
+                  <AuthAwareLink>Start on WhatsApp</AuthAwareLink>
                 </Button>
               </div>
 

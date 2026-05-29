@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation"
 import { cookies } from "next/headers"
-import { getSession } from "@/lib/auth/session"
 import Sidebar from "@/components/dashboard/sidebar"
 import TopBar from "@/components/dashboard/topbar"
 import BottomNav from "@/components/dashboard/bottom-nav"
@@ -36,24 +35,20 @@ async function fetchNavData(token: string): Promise<NavData | null> {
 }
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const session = await getSession()
-  if (!session) redirect("/signin")
-
   const cookieStore = await cookies()
   const token = cookieStore.get("kevo_session")?.value ?? ""
-  const navData = await fetchNavData(token)
+  if (!token) redirect("/signin")
 
-  if (navData && !navData.onboardingComplete) {
+  const navData = await fetchNavData(token)
+  if (!navData) redirect("/signin")
+
+  if (!navData.onboardingComplete) {
     redirect("/onboarding")
   }
 
-  const user = navData?.user ?? {
-    name: session.name ?? null,
-    email: session.email,
-    image: session.image ?? null,
-  }
+  const user = navData.user
 
-  const tier = navData?.tier ?? "free"
+  const tier = navData.tier
 
   return (
     <>
@@ -67,12 +62,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
       >
         <div className="kevo-sidebar-wrapper">
           <Sidebar
-            streakCount={navData?.streakCount ?? 0}
-            activeGoalCount={navData?.activeGoalCount ?? 0}
-            overdueCount={navData?.overdueCount ?? 0}
-            hasUnreadReviews={navData?.hasUnreadReviews ?? false}
-            evolutionAvailable={navData?.evolutionAvailable ?? false}
-            creatureStage={navData?.creatureStage ?? "egg"}
+            streakCount={navData.streakCount}
+            activeGoalCount={navData.activeGoalCount}
+            overdueCount={navData.overdueCount}
+            hasUnreadReviews={navData.hasUnreadReviews}
+            evolutionAvailable={navData.evolutionAvailable}
+            creatureStage={navData.creatureStage}
             user={user}
             tier={tier}
           />
@@ -90,10 +85,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <TopBar
             user={user}
             tier={tier}
-            hasUnread={navData?.hasUnreadReviews ?? false}
-            telegramConnected={navData?.platforms?.telegram?.connected ?? false}
-            telegramDeeplink={navData?.platforms?.telegram?.deeplink ?? null}
-            whatsappConnected={navData?.platforms?.whatsapp?.connected ?? false}
+            hasUnread={navData.hasUnreadReviews}
+            telegramConnected={navData.platforms.telegram.connected}
+            telegramDeeplink={navData.platforms.telegram.deeplink}
+            whatsappConnected={navData.platforms.whatsapp.connected}
           />
           <main
             className="kevo-main-content"
@@ -108,7 +103,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         </div>
       </div>
 
-      <BottomNav creatureStage={navData?.creatureStage ?? "egg"} />
+      <BottomNav creatureStage={navData.creatureStage} />
     </>
   )
 }

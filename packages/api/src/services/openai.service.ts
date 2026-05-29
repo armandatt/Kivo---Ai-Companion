@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 type OpenAIResponse = {
   output_text?: string;
   output?: Array<{
@@ -12,13 +16,47 @@ type OpenAIResponse = {
 };
 
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
+const __dirname = dirname(fileURLToPath(import.meta.url));
+let packageEnvLoaded = false;
+
+function loadPackageEnv() {
+  if (packageEnvLoaded) return;
+  packageEnvLoaded = true;
+
+  try {
+    const envPath = resolve(__dirname, "../../.env");
+    const env = readFileSync(envPath, "utf8");
+
+    for (const line of env.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+
+      const separator = trimmed.indexOf("=");
+      if (separator === -1) continue;
+
+      const key = trimmed.slice(0, separator).trim();
+      const rawValue = trimmed.slice(separator + 1).trim();
+
+      if (!key || process.env[key]) continue;
+
+      process.env[key] = rawValue.replace(/^["']|["']$/g, "");
+    }
+  } catch {
+    // The API app can also provide these env vars directly.
+  }
+}
+
+function getOpenAIKey() {
+  loadPackageEnv();
+  return process.env.OPENAI_API_KEY || process.env.OPEN_API_KEY;
+}
 
 export async function generateOpenAIText(input: {
   prompt: string;
   systemInstruction?: string;
   maxOutputTokens?: number;
 }) {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = getOpenAIKey();
 
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not set");

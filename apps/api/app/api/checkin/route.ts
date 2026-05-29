@@ -91,19 +91,18 @@ async function wasVisitSentToday(
 
 async function sendTelegramMessage(chatId: string, text: string) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-
   if (!token) {
-    throw new Error("TELEGRAM_BOT_TOKEN not set");
+    console.error("[CHECKIN] TELEGRAM_BOT_TOKEN not set — skipping send");
+    return;
   }
 
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text: formatMessengerText(text),
-    }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text: formatMessengerText(text) }),
   });
+
+  if (!res.ok) {
+    console.error(`[CHECKIN] Telegram send failed for ${chatId}: ${res.status}`);
+  }
 }

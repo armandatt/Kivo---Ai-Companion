@@ -1,5 +1,4 @@
-import PersonalityQuiz from '@/components/PersonalityQuiz';
-import { redirect } from 'next/navigation';
+import OnboardingFlow from '@/components/onboarding-flow';
 
 export const metadata = {
   title: 'Personality Quiz - Kivo',
@@ -7,5 +6,5 @@ export const metadata = {
 };
 
 export default function QuizPage() {
-  redirect('/onboarding');
+  return <OnboardingFlow />;
 }

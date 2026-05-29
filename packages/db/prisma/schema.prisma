@@ -28,10 +28,8 @@ model User {
 
   accounts Account[]
   sessions Session[]
-<<<<<<< HEAD
+
   passwordResetTokens PasswordResetToken[]
-=======
->>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
 
   userProfile UserProfile?   // ✅ ADD THIS
   workoutLogs    WorkoutLog[]
@@ -69,6 +67,11 @@ model MessengerUser {
   creatureType         String?
   creatureColor        String?
   creatureName         String?
+  intakeComplete      Boolean  @default(false)
+  intakeStep          String   @default("not_started")
+  intakeAnswers       Json?
+  activeModules       String[]
+
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -214,6 +217,16 @@ model UserProfile {
   onboardingComplete   Boolean @default(false)
   onboardingAnswers    Json?
 
+  // 🔹 Telegram connection
+  telegramConnectToken  String?   @unique
+  telegramChatId        String?
+  telegramConnected     Boolean   @default(false)
+  telegramConnectedAt   DateTime?
+  nextMessageTime       DateTime?
+  lastMessageSentAt     DateTime?
+  lastActivityAt        DateTime?
+  messageSchedule       Json?
+
   // 🔹 Gym (nullable)
   gymMode            Boolean @default(false)
   gymExperience      String?
@@ -330,7 +343,6 @@ model InjuryFlag {
   @@index([userId, bodyPart])
 }
 
-<<<<<<< HEAD
 model PasswordResetToken {
   id        String   @id @default(cuid())
   token     String   @unique
@@ -345,8 +357,6 @@ model PasswordResetToken {
   @@index([userId])
 }
 
-=======
->>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
 model Account {
   id                 String  @id @default(cuid())
   userId             String
