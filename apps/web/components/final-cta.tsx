@@ -1,8 +1,8 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import Link from "next/link"
 import { Button } from "@/components/ui/button"
+import { AuthAwareLink } from "@/components/auth-aware-link"
 import { ArrowRight, Egg } from "@phosphor-icons/react/dist/ssr"
 
 export function FinalCTA() {
@@ -113,10 +113,10 @@ export function FinalCTA() {
                 }`}
                 style={{ transitionDelay: "700ms" }}
               >
-                <Link href="/signup">
+                <AuthAwareLink>
                   Start on Telegram
                   <ArrowRight weight="bold" className="ml-2 h-4 w-4" />
-                </Link>
+                </AuthAwareLink>
               </Button>
               <Button
                 asChild
@@ -127,7 +127,7 @@ export function FinalCTA() {
                 }`}
                 style={{ transitionDelay: "700ms" }}
               >
-                <Link href="/signup">Start on WhatsApp</Link>
+                <AuthAwareLink>Start on WhatsApp</AuthAwareLink>
               </Button>
             </div>
 

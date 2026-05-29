@@ -161,12 +161,15 @@ export async function getUsersForCompanionVisitAt(now: Date) {
 }
 
 function getLocalTime(now: Date, timezone: string) {
+  // Floor to 5-minute boundary so a cron running at :01 or :04 still matches a :00 check-in time.
+  const floored = new Date(now)
+  floored.setMinutes(Math.floor(floored.getMinutes() / 5) * 5, 0, 0)
   return new Intl.DateTimeFormat("en-GB", {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
     timeZone: timezone,
-  }).format(now);
+  }).format(floored)
 }
 
 function getVisitKind(currentTime: string, checkInTime: string) {

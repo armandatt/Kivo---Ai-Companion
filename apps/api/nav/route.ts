@@ -3,7 +3,7 @@ import { prisma } from "@repo/db/client"
 import { getSession } from "../lib/auth/session"
 
 function toDateStr(d: Date): string {
-  return d.toISOString().split("T")[0]
+  return d.toISOString().slice(0, 10)
 }
 
 function computeStreak(logs: Array<{ date: Date; completed: boolean }>): number {
@@ -49,7 +49,12 @@ export async function GET() {
       }),
       prisma.userProfile.findUnique({
         where: { userId: session.userId },
-        select: { onboardingComplete: true, primaryGoal30d: true },
+        select: {
+          onboardingComplete: true,
+          primaryGoal30d: true,
+          telegramConnected: true,
+          telegramConnectToken: true,
+        },
       }),
       prisma.workoutLog.findMany({
         where: { userId: session.userId },
@@ -78,7 +83,12 @@ export async function GET() {
       creatureStage: stage,
       onboardingComplete: profile?.onboardingComplete ?? false,
       platforms: {
-        telegram: { connected: false, deeplink: null },
+        telegram: {
+          connected: profile?.telegramConnected ?? false,
+          deeplink: profile?.telegramConnectToken
+            ? `https://t.me/${(process.env.TELEGRAM_BOT_USERNAME ?? process.env.BOT_USERNAME ?? "YourBotName").replace(/^@/, "")}?start=${profile.telegramConnectToken}`
+            : null,
+        },
         whatsapp: { connected: false },
       },
     })

@@ -1,11 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { type FormEvent, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 
 export default function SignupPage() {
   const router = useRouter()
@@ -14,12 +14,9 @@ export default function SignupPage() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-<<<<<<< HEAD
   const [isRetrying, setIsRetrying] = useState(false)
-=======
->>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setError('')
 
@@ -29,34 +26,24 @@ export default function SignupPage() {
     }
 
     setIsLoading(true)
-<<<<<<< HEAD
     setIsRetrying(false)
 
     const attempt = () =>
       fetch('/api/signup', {
-=======
-
-    try {
-      const res = await fetch('/api/signup', {
->>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       })
-<<<<<<< HEAD
 
     try {
       let res = await attempt()
 
       if (res.status >= 500) {
         setIsRetrying(true)
-        await new Promise((r) => setTimeout(r, 2000))
+        await new Promise((resolve) => setTimeout(resolve, 2000))
         res = await attempt()
-        setIsRetrying(false)
       }
 
-=======
->>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
       const data = await res.json()
 
       if (!res.ok) {
@@ -70,22 +57,17 @@ export default function SignupPage() {
       setError('Something went wrong. Please try again.')
     } finally {
       setIsLoading(false)
-<<<<<<< HEAD
       setIsRetrying(false)
-=======
->>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
     }
   }
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Animated background orbs */}
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-[#00D9A3]/10 rounded-full blur-3xl animate-pulse" />
       <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-[#FF8C42]/10 rounded-full blur-3xl animate-pulse" />
 
       <Card className="w-full max-w-md relative z-10 bg-[#1a1a24] border-[#2a2a35] shadow-2xl">
         <div className="p-8">
-          {/* Header */}
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-white mb-2">
               Join <span className="text-[#00D9A3]">Kivo</span>
@@ -93,9 +75,7 @@ export default function SignupPage() {
             <p className="text-gray-400">Create your AI companion today</p>
           </div>
 
-          {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Email Input */}
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 Email
@@ -110,7 +90,6 @@ export default function SignupPage() {
               />
             </div>
 
-            {/* Password Input */}
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 Password
@@ -125,7 +104,6 @@ export default function SignupPage() {
               />
             </div>
 
-            {/* Confirm Password Input */}
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 Confirm Password
@@ -146,28 +124,25 @@ export default function SignupPage() {
               </p>
             )}
 
-            {/* Sign Up Button */}
             <Button
               type="submit"
               disabled={isLoading}
               className="w-full bg-[#00D9A3] text-black hover:bg-[#00c896] font-semibold py-2 rounded-full transition-all duration-200 mt-6"
             >
-<<<<<<< HEAD
-              {isRetrying ? 'Connecting...' : isLoading ? 'Creating Account...' : 'Start free'}
-=======
-              {isLoading ? 'Creating Account...' : 'Start free'}
->>>>>>> ccde3615727554342c1b928ce849dfc73a2c482b
+              {isRetrying
+                ? 'Connecting...'
+                : isLoading
+                  ? 'Creating Account...'
+                  : 'Start free'}
             </Button>
           </form>
 
-          {/* Divider */}
           <div className="flex items-center gap-4 my-6">
             <div className="flex-1 h-px bg-[#2a2a35]" />
             <span className="text-gray-500 text-sm">or</span>
             <div className="flex-1 h-px bg-[#2a2a35]" />
           </div>
 
-          {/* Google Sign Up */}
           <Button
             asChild
             variant="outline"
@@ -200,10 +175,12 @@ export default function SignupPage() {
             </a>
           </Button>
 
-          {/* Sign In Link */}
           <p className="text-center text-gray-400 mt-6">
             Already have an account?{' '}
-            <Link href="/signin" className="text-[#00D9A3] hover:text-[#00c896] font-semibold">
+            <Link
+              href="/signin"
+              className="text-[#00D9A3] hover:text-[#00c896] font-semibold"
+            >
               Sign in
             </Link>
           </p>

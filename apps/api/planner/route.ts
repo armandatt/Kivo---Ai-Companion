@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { getSession } from "../lib/auth/session"
 
 function toDateStr(d: Date): string {
-  return d.toISOString().split("T")[0]
+  return d.toISOString().slice(0, 10)
 }
 
 export async function GET() {

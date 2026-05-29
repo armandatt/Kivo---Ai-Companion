@@ -35,15 +35,41 @@ export default function TopBar({
 }: Props) {
   const pathname = usePathname()
   const [dropdownOpen, setDropdownOpen] = useState(false)
+  const [telegramUrl, setTelegramUrl] = useState(telegramDeeplink)
+  const [isGeneratingTelegramLink, setIsGeneratingTelegramLink] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   const pageTitle =
     PAGE_TITLES.find(([path, , exact]) => (exact ? pathname === path : pathname.startsWith(path)))?.[1] ??
     "Dashboard"
 
-  const telegramUrl = telegramDeeplink ?? "https://t.me/kivo_bot"
   const showBothButtons = telegramConnected && whatsappConnected
   const onlyWhatsapp = !telegramConnected && whatsappConnected
+
+  useEffect(() => {
+    setTelegramUrl(telegramDeeplink)
+  }, [telegramDeeplink])
+
+  const handleTelegramClick = async () => {
+    if (telegramConnected && telegramUrl) {
+      window.open(telegramUrl, "_blank", "noopener,noreferrer")
+      return
+    }
+
+    setIsGeneratingTelegramLink(true)
+    try {
+      const res = await fetch("/api/telegram/generate-token", { method: "POST" })
+      if (!res.ok) return
+
+      const data = (await res.json()) as { deeplink?: string }
+      if (data.deeplink) {
+        setTelegramUrl(data.deeplink)
+        window.open(data.deeplink, "_blank", "noopener,noreferrer")
+      }
+    } finally {
+      setIsGeneratingTelegramLink(false)
+    }
+  }
 
   useEffect(() => {
     if (!dropdownOpen) return
@@ -95,11 +121,25 @@ export default function TopBar({
             <PlatformButton href="https://wa.me/" label="Open WhatsApp" primary />
           ) : showBothButtons ? (
             <>
-              <PlatformButton href={telegramUrl} label="Telegram" primary />
+              <PlatformButton
+                label={isGeneratingTelegramLink ? "Preparing..." : "Telegram"}
+                onClick={handleTelegramClick}
+                primary
+              />
               <PlatformButton href="https://wa.me/" label="WhatsApp" />
             </>
           ) : (
-            <PlatformButton href={telegramUrl} label="Open Telegram →" primary />
+            <PlatformButton
+              label={
+                isGeneratingTelegramLink
+                  ? "Preparing..."
+                  : telegramConnected
+                    ? "Open Telegram →"
+                    : "Connect Telegram →"
+              }
+              onClick={handleTelegramClick}
+              primary
+            />
           )}
         </div>
 
@@ -219,25 +259,54 @@ export default function TopBar({
   )
 }
 
-function PlatformButton({ href, label, primary }: { href: string; label: string; primary?: boolean }) {
+function PlatformButton({
+  href,
+  label,
+  primary,
+  onClick,
+}: {
+  href?: string
+  label: string
+  primary?: boolean
+  onClick?: () => void
+}) {
+  const commonStyle = {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "7px 18px",
+    borderRadius: "20px",
+    fontSize: "13px",
+    fontWeight: 700,
+    textDecoration: "none",
+    backgroundColor: primary ? "#00F5A0" : "transparent",
+    color: primary ? "#0D0D0D" : "#888888",
+    border: primary ? "none" : "1px solid #333333",
+    whiteSpace: "nowrap",
+    transition: "opacity 0.15s",
+  } as const
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        style={{
+          ...commonStyle,
+          cursor: "pointer",
+        }}
+      >
+        {label}
+      </button>
+    )
+  }
+
   return (
     <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
       style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "7px 18px",
-        borderRadius: "20px",
-        fontSize: "13px",
-        fontWeight: 700,
-        textDecoration: "none",
-        backgroundColor: primary ? "#00F5A0" : "transparent",
-        color: primary ? "#0D0D0D" : "#888888",
-        border: primary ? "none" : "1px solid #333333",
-        whiteSpace: "nowrap",
-        transition: "opacity 0.15s",
+        ...commonStyle,
       }}
     >
       {label}
