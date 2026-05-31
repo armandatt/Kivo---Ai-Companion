@@ -36,6 +36,8 @@ export async function POST() {
     create: {
       userId: session.userId,
       telegramConnectToken: token,
+      secondaryDomains: [],
+      aspirationWords: [],
     },
   })
 
