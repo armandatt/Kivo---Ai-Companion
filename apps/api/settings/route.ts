@@ -71,7 +71,7 @@ export async function PATCH(req: NextRequest) {
       await prisma.userProfile.upsert({
         where: { userId: session.userId },
         update: profileUpdates,
-        create: { userId: session.userId, ...profileUpdates },
+        create: { userId: session.userId, secondaryDomains: [], aspirationWords: [], ...profileUpdates },
       })
     }
 

@@ -31,6 +31,7 @@ export async function POST(req: Request) {
       update: profileData,
       create: {
         userId: session.userId,
+        secondaryDomains: [],
         ...profileData,
       },
     })
