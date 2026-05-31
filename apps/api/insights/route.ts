@@ -51,7 +51,7 @@ export async function GET() {
     thirtyStart.setDate(now.getDate() - 29)
     thirtyStart.setHours(0, 0, 0, 0)
 
-    const [workoutLogs90, energyLogs90, energyLogs30, allCompleted] = await Promise.all([
+    const [workoutLogs90, energyLogs90, energyLogs30, allCompleted, profile] = await Promise.all([
       prisma.workoutLog.findMany({
         where: { userId: session.userId, date: { gte: ninetyStart } },
         select: { date: true, completed: true, intensityScore: true },
@@ -71,6 +71,10 @@ export async function GET() {
         where: { userId: session.userId, completed: true },
         select: { date: true },
         orderBy: { date: "asc" },
+      }),
+      prisma.userProfile.findUnique({
+        where: { userId: session.userId },
+        select: { telegramChatId: true },
       }),
     ])
 
@@ -138,10 +142,47 @@ export async function GET() {
       else moodInsight = "Energy is steady. Consistency over intensity."
     }
 
+    // Focus sessions from MessengerUser (Telegram)
+    let focusSessions: Array<{
+      id: string
+      durationMin: number
+      status: string
+      startedAt: string
+      completedAt: string | null
+    }> = []
+
+    if (profile?.telegramChatId) {
+      const messenger = await prisma.messengerUser.findUnique({
+        where: {
+          platform_platformChatId: {
+            platform: "telegram",
+            platformChatId: profile.telegramChatId,
+          },
+        },
+        select: {
+          focusSessions: {
+            where: { startedAt: { gte: thirtyStart } },
+            orderBy: { startedAt: "desc" },
+            select: { id: true, durationMin: true, status: true, startedAt: true, completedAt: true },
+          },
+        },
+      })
+
+      if (messenger) {
+        focusSessions = messenger.focusSessions.map((s) => ({
+          id: s.id,
+          durationMin: s.durationMin,
+          status: s.status,
+          startedAt: s.startedAt.toISOString(),
+          completedAt: s.completedAt?.toISOString() ?? null,
+        }))
+      }
+    }
+
     return NextResponse.json({
       heatmap: { days: heatmapDays, currentStreak, longestStreak, totalDays },
       moodTrend: { points: moodPoints, insight: moodInsight },
-      focusSessions: [],
+      focusSessions,
       weeklyReviews: [],
       tier: "free",
     })

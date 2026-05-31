@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@repo/db/client"
-import { getSession, clearSession } from "../lib/auth/session"
+import { getSession } from "../lib/auth/session"
 
 export async function DELETE() {
   const session = await getSession()
@@ -8,7 +8,6 @@ export async function DELETE() {
 
   try {
     await prisma.user.delete({ where: { id: session.userId } })
-    await clearSession()
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error("[DELETE ACCOUNT ERROR]", e)

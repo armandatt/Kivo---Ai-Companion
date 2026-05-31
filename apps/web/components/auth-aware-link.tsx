@@ -1,32 +1,29 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useState, type ComponentPropsWithoutRef } from "react"
 
-type AuthAwareLinkProps = {
-  children: ReactNode
-  className?: string
+type AuthAwareLinkProps = Omit<ComponentPropsWithoutRef<typeof Link>, "href"> & {
   loggedOutHref?: string
 }
 
 export function AuthAwareLink({
   children,
-  className,
   loggedOutHref = "/signup",
+  ...props
 }: AuthAwareLinkProps) {
-  const [href, setHref] = useState("/dashboard")
+  const [href, setHref] = useState(loggedOutHref)
 
   useEffect(() => {
     fetch("/api/me")
       .then((res) => {
-        if (res.ok) setHref("/dashboard")
-        else setHref(loggedOutHref)
+        setHref(res.ok ? "/dashboard" : loggedOutHref)
       })
-      .catch(() => {})
+      .catch(() => setHref(loggedOutHref))
   }, [loggedOutHref])
 
   return (
-    <Link href={href} className={className}>
+    <Link href={href} {...props}>
       {children}
     </Link>
   )

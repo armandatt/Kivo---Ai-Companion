@@ -1,7 +1,7 @@
 import { prisma } from "@repo/db/client"
 import bcrypt from "bcrypt"
 import { NextResponse } from "next/server"
-import { createSession } from "../lib/auth/session"
+import { createSession, SESSION_COOKIE_NAME, SESSION_COOKIE_OPTIONS } from "../lib/auth/session"
 
 export async function POST(req: Request) {
   try {
@@ -49,18 +49,19 @@ export async function POST(req: Request) {
       },
     })
 
-    // Create session cookie immediately after signup
-    await createSession({
+    const token = await createSession({
       userId: user.id,
       email: user.email,
       name: user.name,
       image: user.image,
     })
 
-    return NextResponse.json(
+    const response = NextResponse.json(
       { message: "Account created", user },
       { status: 201 }
     )
+    response.cookies.set(SESSION_COOKIE_NAME, token, SESSION_COOKIE_OPTIONS)
+    return response
   } catch (error) {
     console.error("[SIGNUP ERROR]", error)
     return NextResponse.json(

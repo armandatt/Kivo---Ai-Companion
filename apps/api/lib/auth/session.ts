@@ -13,32 +13,30 @@ export interface SessionPayload extends JWTPayload {
   image?: string | null
 }
 
-const COOKIE_NAME = "kevo_session"
+export const SESSION_COOKIE_NAME = "kevo_session"
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30
 
-export async function createSession(payload: SessionPayload) {
-  const token = await new SignJWT(payload)
+export const SESSION_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax" as const,
+  maxAge: COOKIE_MAX_AGE,
+  path: "/",
+}
+
+// Returns the signed JWT — callers set the cookie on the response directly
+export async function createSession(payload: SessionPayload): Promise<string> {
+  return new SignJWT(payload)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("30d")
     .sign(SECRET)
-
-  const cookieStore = await cookies()
-  cookieStore.set(COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge: COOKIE_MAX_AGE,
-    path: "/",
-  })
-
-  return token
 }
 
 export async function getSession(): Promise<SessionPayload | null> {
   try {
     const cookieStore = await cookies()
-    const token = cookieStore.get(COOKIE_NAME)?.value
+    const token = cookieStore.get(SESSION_COOKIE_NAME)?.value
     if (!token) return null
 
     const { payload } = await jwtVerify(token, SECRET)
@@ -46,9 +44,4 @@ export async function getSession(): Promise<SessionPayload | null> {
   } catch {
     return null
   }
-}
-
-export async function clearSession() {
-  const cookieStore = await cookies()
-  cookieStore.delete(COOKIE_NAME)
 }
