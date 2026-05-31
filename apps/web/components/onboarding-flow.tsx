@@ -10,6 +10,7 @@ type OnboardingStep = 'quiz' | 'post-quiz' | 'complete';
 interface QuizAnswers {
   energyPattern?: string;
   corePain?: string;
+  mentorDomain?: string | null;
   primaryGoal?: string;
   accountabilityStyle?: string | null;
   aspirationWords?: string[];
@@ -19,6 +20,7 @@ interface PostQuizData {
   quizAnswers: QuizAnswers;
   personaName: string;
   personaDescription: string;
+  toneModifier?: string;
   creatureType?: number;
   creatureColor?: string;
   creatureName?: string;

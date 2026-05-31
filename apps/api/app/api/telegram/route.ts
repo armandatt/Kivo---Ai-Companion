@@ -13,6 +13,8 @@ import { runDecisionEngine } from "@repo/api/services/decision.engine";
 //@ts-ignore
 import { startFocusSession } from "@repo/api/services/focus.service";
 //@ts-ignore
+import { fireMentorIntakeOpener } from "@repo/api/services/mentorIntake.service";
+//@ts-ignore
 import { generateAIPlan, savePlan } from "@repo/api/services/planner.service";
 //@ts-ignore
 import { updateUserProfile } from "@repo/api/services/user.service";
@@ -245,7 +247,11 @@ async function handleTelegramConnectStart(text: string, chatId: number | string)
     },
   });
 
-  await sendTelegramMessage(chatId, "Connected. I'll be here every morning.");
+  await fireMentorIntakeOpener(
+    profile.id,
+    String(chatId),
+    (id: string, msg: string) => sendTelegramMessage(id, msg),
+  );
   return true;
 }
 

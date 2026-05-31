@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@repo/db/client"
 import { getSession } from "../lib/auth/session"
+//@ts-ignore
+import { buildOnboardingSchedulePayload } from "@repo/api/services/mentorIntake.service"
 
 export async function POST(req: Request) {
   try {
@@ -50,6 +52,7 @@ export async function POST(req: Request) {
 type QuizAnswers = {
   energyPattern?: string
   corePain?: string
+  mentorDomain?: string | null
   primaryGoal?: string
   accountabilityStyle?: string | null
   aspirationWords?: string[]
@@ -59,6 +62,7 @@ type OnboardingPayload = {
   quizAnswers: QuizAnswers
   personaName?: string
   personaDescription?: string
+  toneModifier?: string
   creatureType?: string | number
   creatureColor?: string
   creatureName?: string
@@ -84,6 +88,7 @@ function normalizePayload(body: unknown): OnboardingPayload | null {
     quizAnswers,
     personaName: readString(data.personaName),
     personaDescription: readString(data.personaDescription),
+    toneModifier: readString(data.toneModifier),
     creatureType: readString(data.creatureType),
     creatureColor: readString(data.creatureColor),
     creatureName: readString(data.creatureName),
@@ -104,17 +109,35 @@ function normalizeAccountability(value?: string | null) {
   return value
 }
 
+function domainPersonaFallback(mentorDomain?: string | null): string {
+  if (mentorDomain === "gym") return "REX"
+  if (mentorDomain === "study") return "NOVA"
+  return "ZEN"
+}
+
+const PERSONA_DESCRIPTIONS: Record<string, string> = {
+  REX:  "No excuses. Just results.",
+  NOVA: "Steady. Structured. Always here.",
+  ZEN:  "Slow down. Go further.",
+}
+
 function mapToDB(payload: OnboardingPayload) {
   const words = Array.isArray(payload.quizAnswers.aspirationWords)
     ? payload.quizAnswers.aspirationWords.map((word) => word.trim()).filter(Boolean).slice(0, 3)
     : []
   const accountabilityStyle = normalizeAccountability(payload.quizAnswers.accountabilityStyle)
-  const personaName = payload.personaName ?? (accountabilityStyle === "soft" ? "NOVA" : "REX")
+  const personaName = payload.personaName ?? domainPersonaFallback(payload.quizAnswers.mentorDomain)
+  const toneModifier = payload.toneModifier ?? null
+  const energyPattern = readString(payload.quizAnswers.energyPattern) ?? null
+  const preferredCheckInTime = payload.checkInTime ?? null
+
+  const schedule = buildOnboardingSchedulePayload({ energyPattern, preferredCheckInTime })
 
   return {
     primaryPersona: personaName.toLowerCase(),
     tone: accountabilityStyle,
-    energyPattern: readString(payload.quizAnswers.energyPattern) ?? null,
+    toneModifier,
+    energyPattern,
     corePain: readString(payload.quizAnswers.corePain) ?? null,
     primaryGoal30d: readString(payload.quizAnswers.primaryGoal) ?? null,
     goalCategory: categorizeGoal(payload.quizAnswers.primaryGoal),
@@ -122,14 +145,16 @@ function mapToDB(payload: OnboardingPayload) {
     aspirationWords: words,
     personaName,
     personaDescription:
-      payload.personaDescription ?? (personaName === "NOVA" ? "Gentle progress. Real momentum." : "No excuses. Just results."),
+      payload.personaDescription ?? PERSONA_DESCRIPTIONS[personaName] ?? "No excuses. Just results.",
     creatureType: payload.creatureType ? String(payload.creatureType) : null,
     creatureColor: payload.creatureColor ?? null,
     creatureName: payload.creatureName ?? null,
-    preferredCheckInTime: payload.checkInTime ?? null,
+    preferredCheckInTime,
     timezone: payload.timezone ?? null,
+    mentorDomain: payload.quizAnswers.mentorDomain ?? null,
     onboardingComplete: true,
     onboardingAnswers: payload,
+    ...schedule,
   }
 }
 

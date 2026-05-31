@@ -24,6 +24,7 @@ type Step = 'persona' | 'creature-selection' | 'naming-confirm' | 'check-in' | '
 interface QuizAnswers {
   energyPattern?: string;
   corePain?: string;
+  mentorDomain?: string | null;
   primaryGoal?: string;
   accountabilityStyle?: string | null;
   aspirationWords?: string[];
@@ -33,6 +34,7 @@ interface PostQuizData {
   quizAnswers: QuizAnswers;
   personaName: string;
   personaDescription: string;
+  toneModifier?: string;
   creatureType?: number;
   creatureColor?: string;
   creatureName?: string;
@@ -45,18 +47,48 @@ interface PostQuizSequenceProps {
   onComplete: (data: PostQuizData) => void;
 }
 
+const PERSONA_CONTENT = {
+  rex:  { name: 'REX',  description: 'No excuses. Just results.' },
+  nova: { name: 'NOVA', description: 'Steady. Structured. Always here.' },
+  zen:  { name: 'ZEN',  description: 'Slow down. Go further.' },
+} as const;
+
+function assignPersona(
+  mentorDomain?: string | null,
+  accountabilityStyle?: string | null,
+): { personaName: string; personaDescription: string; toneModifier: string | undefined } {
+  // Primary: domain drives persona
+  let base: keyof typeof PERSONA_CONTENT;
+  if (mentorDomain === 'gym') base = 'rex';
+  else if (mentorDomain === 'study') base = 'nova';
+  else base = 'zen';
+
+  // Secondary: calibrate tone without switching persona
+  let toneModifier: string | undefined;
+  const isHard = accountabilityStyle === 'No mercy';
+  const isSoft = accountabilityStyle === 'Gentle nudges';
+  if (base === 'rex'  && isSoft) toneModifier = 'firm_not_brutal';
+  else if (base === 'nova' && isHard) toneModifier = 'structured_direct';
+  else if (base === 'zen'  && isHard) toneModifier = 'purposeful_direct';
+
+  return {
+    personaName: PERSONA_CONTENT[base].name,
+    personaDescription: PERSONA_CONTENT[base].description,
+    toneModifier,
+  };
+}
+
 export default function PostQuizSequence({ quizAnswers, onComplete }: PostQuizSequenceProps) {
-  const accountabilityStyle = quizAnswers.accountabilityStyle;
-  const personaName = accountabilityStyle === 'Gentle nudges' ? 'NOVA' : 'REX';
-  const personaDescription =
-    accountabilityStyle === 'Gentle nudges'
-      ? 'Gentle progress. Real momentum.'
-      : 'No excuses. Just results.';
+  const { personaName, personaDescription, toneModifier } = assignPersona(
+    quizAnswers.mentorDomain,
+    quizAnswers.accountabilityStyle,
+  );
   const [currentStep, setCurrentStep] = useState<Step>('persona');
   const [data, setData] = useState<PostQuizData>({
     quizAnswers,
     personaName,
     personaDescription,
+    toneModifier,
     creatureType: undefined,
     creatureColor: undefined,
     creatureName: undefined,

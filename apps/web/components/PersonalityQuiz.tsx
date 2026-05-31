@@ -6,6 +6,7 @@ import { ChevronLeft } from 'lucide-react';
 interface QuizAnswers {
   energyPattern: string;
   corePain: string;
+  mentorDomain: string | null;
   primaryGoal: string;
   accountabilityStyle: string | null;
   aspirationWords: [string, string, string] | ['', '', ''];
@@ -14,6 +15,12 @@ interface QuizAnswers {
 interface PersonalityQuizProps {
   onComplete: (answers: QuizAnswers) => void;
 }
+
+const domainOptions = [
+  { label: 'Gym & Fitness', subtitle: 'Training, nutrition, recovery, body goals', value: 'gym' },
+  { label: 'Study & Coding', subtitle: 'Exams, DSA, skills, learning, placement', value: 'study' },
+  { label: 'Life & Productivity', subtitle: 'Habits, focus, goals, getting things done', value: 'general' },
+];
 
 const questions = [
   {
@@ -32,20 +39,27 @@ const questions = [
   },
   {
     id: 3,
+    title: 'Mentor domain',
+    question: 'What do you need the most help with right now?',
+    type: 'cards-domain',
+    hint: '',
+  },
+  {
+    id: 4,
     title: '30-day goal',
     question: 'What does a win look like for you in 30 days?',
     type: 'text',
     hint: '',
   },
   {
-    id: 4,
+    id: 5,
     title: 'Accountability style',
     question: 'How do you want to be pushed?',
     type: 'cards',
     options: ['Gentle nudges', 'No mercy'],
   },
   {
-    id: 5,
+    id: 6,
     title: 'Aspiration anchor',
     question: 'Describe the ideal version of yourself in 3 words.',
     type: 'three-words',
@@ -58,6 +72,7 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
   const [answers, setAnswers] = useState<QuizAnswers>({
     energyPattern: '',
     corePain: '',
+    mentorDomain: null,
     primaryGoal: '',
     accountabilityStyle: null,
     aspirationWords: ['', '', ''],
@@ -86,9 +101,9 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
         return answers.energyPattern;
       case 1:
         return answers.corePain;
-      case 2:
+      case 3:
         return answers.primaryGoal;
-      case 4:
+      case 5:
         return answers.aspirationWords.join(' ');
       default:
         return '';
@@ -96,7 +111,9 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
   };
 
   const isAnswerFilled = (): boolean => {
-    if (question.type === 'cards') {
+    if (question.type === 'cards-domain') {
+      return answers.mentorDomain !== null;
+    } else if (question.type === 'cards') {
       return answers.accountabilityStyle !== null;
     } else if (question.type === 'three-words') {
       return (
@@ -112,8 +129,13 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
     const newAnswers = { ...answers };
     if (currentQuestion === 0) newAnswers.energyPattern = value;
     else if (currentQuestion === 1) newAnswers.corePain = value;
-    else if (currentQuestion === 2) newAnswers.primaryGoal = value;
+    else if (currentQuestion === 3) newAnswers.primaryGoal = value;
     setAnswers(newAnswers);
+  };
+
+  const handleDomainSelect = (value: string) => {
+    setAnswers({ ...answers, mentorDomain: value });
+    setTimeout(() => goToNextQuestion(), 300);
   };
 
   const handleCardSelect = (option: string) => {
@@ -185,7 +207,7 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
         {/* Progress Bar */}
         <div className="mb-8">
           <div className="flex gap-1 h-1 bg-[#1a1a24] rounded-full overflow-hidden">
-            {[...Array(5)].map((_, i) => (
+            {[...Array(6)].map((_, i) => (
               <div
                 key={i}
                 className="flex-1 bg-[#00D9A3] transition-all duration-500 rounded-full"
@@ -240,6 +262,25 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
                 {question.hint && (
                   <p className="text-xs text-gray-600 mt-2">{question.hint}</p>
                 )}
+              </div>
+            )}
+
+            {question.type === 'cards-domain' && (
+              <div className="flex flex-col gap-3">
+                {domainOptions.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => handleDomainSelect(opt.value)}
+                    className={`w-full p-5 rounded-xl border-2 text-left transition-all duration-200 cursor-pointer ${
+                      answers.mentorDomain === opt.value
+                        ? 'border-[#00D9A3] bg-[#00D9A3] bg-opacity-10'
+                        : 'border-[#1a1a24] bg-[#1a1a24] hover:border-[#00D9A3] hover:border-opacity-50'
+                    }`}
+                  >
+                    <p className="text-white font-semibold text-base">{opt.label}</p>
+                    <p className="text-gray-500 text-sm mt-1">{opt.subtitle}</p>
+                  </button>
+                ))}
               </div>
             )}
 
@@ -298,7 +339,7 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
           </div>
 
           {/* Skip Link */}
-          {question.type !== 'cards' && (
+          {question.type !== 'cards' && question.type !== 'cards-domain' && (
             <div className="mb-8">
               <button
                 onClick={handleSkip}

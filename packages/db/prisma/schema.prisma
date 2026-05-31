@@ -199,6 +199,7 @@ model UserProfile {
   // 🔹 Persona
   primaryPersona     String?
   tone               String?
+  toneModifier       String?
 
   // 🔹 Kevo web onboarding quiz
   energyPattern        String?
@@ -245,6 +246,12 @@ model UserProfile {
   gymOnboardingComplete Boolean @default(false)
   gymStruggle        String?
   gymEnvironment     String?
+
+  // Mentor intake
+  mentorDomain           String?
+  mentorIntakeStarted    Boolean  @default(false)
+  mentorIntakeComplete   Boolean  @default(false)
+  intakeState            Json?
 
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
