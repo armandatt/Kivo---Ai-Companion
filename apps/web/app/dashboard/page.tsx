@@ -6,6 +6,7 @@ import MoodRing from "@/components/dashboard/mood-ring"
 import TodayPlan from "@/components/dashboard/today-plan"
 import UpcomingDeadlines from "@/components/dashboard/upcoming-deadlines"
 import LastMessage from "@/components/dashboard/last-message"
+import TelegramConnectBanner from "@/components/dashboard/telegram-connect-banner"
 
 type MoodEntry = { date: string; mood: string }
 
@@ -28,6 +29,7 @@ type DashboardData = {
   plan: null
   deadlines: Array<{ id: string; title: string; dueAt: string }>
   lastMessage: { text: string; timestamp: string } | null
+  telegramConnected: boolean
 }
 
 async function fetchDashboard(): Promise<DashboardData | null> {
@@ -57,6 +59,7 @@ export default async function DashboardPage() {
   const mood = data?.mood ?? []
   const deadlines = data?.deadlines ?? []
   const lastMessage = data?.lastMessage ?? null
+  const telegramConnected = data?.telegramConnected ?? false
 
   return (
     <div style={{ maxWidth: "1100px" }}>
@@ -90,6 +93,7 @@ export default async function DashboardPage() {
 
       {/* Below the fold */}
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        {!telegramConnected && <TelegramConnectBanner />}
         <TodayPlan tasks={[]} />
         <UpcomingDeadlines deadlines={deadlines} />
         <LastMessage

@@ -43,6 +43,8 @@ export async function POST(req: Request) {
     const chatId = body.message?.chat?.id;
     const from = body.message?.from;
 
+    console.log("WEBHOOK HIT — incoming message:", text);
+
     if (!text || !chatId) {
       return Response.json({ ok: true });
     }

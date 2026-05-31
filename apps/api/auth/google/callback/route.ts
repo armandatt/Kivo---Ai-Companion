@@ -1,6 +1,6 @@
 import { prisma } from "@repo/db/client"
 import { NextResponse } from "next/server"
-import { createSession } from "../../../lib/auth/session"
+import { createSession, SESSION_COOKIE_NAME, SESSION_COOKIE_OPTIONS } from "../../../lib/auth/session"
 
 export async function GET(req: Request) {
   try {
@@ -106,18 +106,18 @@ export async function GET(req: Request) {
       },
     })
 
-    // ── Set session cookie ──
-    await createSession({
+    const token = await createSession({
       userId: user.id,
       email: user.email,
       name: user.name,
       image: user.image,
     })
 
-    // ── Redirect to dashboard ──
-    return NextResponse.redirect(
+    const redirectResponse = NextResponse.redirect(
       `${process.env.NEXT_PUBLIC_APP_URL}/onboarding`
     )
+    redirectResponse.cookies.set(SESSION_COOKIE_NAME, token, SESSION_COOKIE_OPTIONS)
+    return redirectResponse
   } catch (error) {
     console.error("[GOOGLE CALLBACK ERROR]", error)
     return NextResponse.redirect(

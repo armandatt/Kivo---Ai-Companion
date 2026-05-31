@@ -15,7 +15,18 @@ export async function GET() {
       return NextResponse.json({ goals: [], archive: [], aspirationWords: [], tier: "free" })
     }
 
-    const goals = []
+    const goals: Array<{
+      id: string
+      title: string
+      category: string | null
+      daysTotal: number | null
+      daysRemaining: number | null
+      status: string
+      createdAt: string
+      source: "web" | "telegram"
+    }> = []
+
+    // Web onboarding goal
     if (profile.primaryGoal30d) {
       const daysTotal = 30
       const daysElapsed = Math.floor((Date.now() - new Date(profile.createdAt).getTime()) / 86400000)
@@ -26,14 +37,59 @@ export async function GET() {
         category: profile.goalCategory,
         daysTotal,
         daysRemaining,
-        status: "active" as const,
+        status: "active",
         createdAt: profile.createdAt.toISOString(),
+        source: "web",
       })
+    }
+
+    // Telegram conversation goals
+    let archive: Array<{ id: string; title: string; status: string; createdAt: string }> = []
+
+    if (profile.telegramChatId) {
+      const messenger = await prisma.messengerUser.findUnique({
+        where: {
+          platform_platformChatId: {
+            platform: "telegram",
+            platformChatId: profile.telegramChatId,
+          },
+        },
+        select: {
+          goals: {
+            orderBy: { createdAt: "desc" },
+            select: { id: true, title: true, status: true, createdAt: true },
+          },
+        },
+      })
+
+      if (messenger) {
+        for (const g of messenger.goals) {
+          if (g.status === "active" || g.status === "paused") {
+            goals.push({
+              id: g.id,
+              title: g.title,
+              category: null,
+              daysTotal: null,
+              daysRemaining: null,
+              status: g.status,
+              createdAt: g.createdAt.toISOString(),
+              source: "telegram",
+            })
+          } else {
+            archive.push({
+              id: g.id,
+              title: g.title,
+              status: g.status,
+              createdAt: g.createdAt.toISOString(),
+            })
+          }
+        }
+      }
     }
 
     return NextResponse.json({
       goals,
-      archive: [],
+      archive,
       aspirationWords: profile.aspirationWords,
       tier: "free",
     })

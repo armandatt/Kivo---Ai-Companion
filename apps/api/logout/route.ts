@@ -1,15 +1,8 @@
 import { NextResponse } from "next/server"
-import { clearSession } from "../lib/auth/session"
+import { SESSION_COOKIE_NAME } from "../lib/auth/session"
 
 export async function POST() {
-  try {
-    await clearSession()
-    return NextResponse.json({ message: "Logged out" })
-  } catch (error) {
-    console.error("[LOGOUT ERROR]", error)
-    return NextResponse.json(
-      { error: "Something went wrong" },
-      { status: 500 }
-    )
-  }
+  const response = NextResponse.json({ message: "Logged out" })
+  response.cookies.delete(SESSION_COOKIE_NAME)
+  return response
 }

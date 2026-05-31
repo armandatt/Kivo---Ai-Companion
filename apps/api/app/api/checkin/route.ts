@@ -90,9 +90,9 @@ async function wasVisitSentToday(
 }
 
 async function sendTelegramMessage(chatId: string, text: string) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const token = process.env.TELEGRAM_BOT_TOKEN ?? process.env.BOT_TOKEN;
   if (!token) {
-    console.error("[CHECKIN] TELEGRAM_BOT_TOKEN not set — skipping send");
+    console.error("[CHECKIN] TELEGRAM_BOT_TOKEN or BOT_TOKEN not set — skipping send");
     return;
   }
 

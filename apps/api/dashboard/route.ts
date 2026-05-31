@@ -91,6 +91,49 @@ export async function GET() {
       return { date: dateStr, mood: moodMap.get(dateStr) ?? "no_data" }
     })
 
+    // Bridge to MessengerUser for Telegram-sourced data
+    let deadlines: Array<{ id: string; title: string; dueAt: string }> = []
+    let lastMessage: { text: string; timestamp: string } | null = null
+
+    if (profile?.telegramChatId) {
+      const messenger = await prisma.messengerUser.findUnique({
+        where: {
+          platform_platformChatId: {
+            platform: "telegram",
+            platformChatId: profile.telegramChatId,
+          },
+        },
+        select: {
+          deadlines: {
+            where: { status: "active", dueAt: { gte: new Date() } },
+            orderBy: { dueAt: "asc" },
+            take: 5,
+            select: { id: true, title: true, dueAt: true },
+          },
+          messages: {
+            where: { role: "assistant" },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: { text: true, createdAt: true },
+          },
+        },
+      })
+
+      if (messenger) {
+        deadlines = messenger.deadlines.map((d) => ({
+          id: d.id,
+          title: d.title,
+          dueAt: d.dueAt.toISOString(),
+        }))
+        if (messenger.messages[0]) {
+          lastMessage = {
+            text: messenger.messages[0].text,
+            timestamp: messenger.messages[0].createdAt.toISOString(),
+          }
+        }
+      }
+    }
+
     return NextResponse.json({
       user: { name: user.name, email: user.email, image: user.image },
       profile: profile
@@ -110,8 +153,9 @@ export async function GET() {
       streak,
       mood,
       plan: null,
-      deadlines: [],
-      lastMessage: null,
+      deadlines,
+      lastMessage,
+      telegramConnected: profile?.telegramConnected ?? false,
     })
   } catch (e) {
     console.error("[DASHBOARD ERROR]", e)
