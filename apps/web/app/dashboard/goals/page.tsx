@@ -7,19 +7,20 @@ type GoalItem = {
   id: string
   title: string
   category: string | null
-  daysTotal: number
-  daysRemaining: number
-  status: "active" | "completed" | "closed"
+  daysTotal: number | null
+  daysRemaining: number | null
+  status: "active" | "paused" | "completed" | "closed"
   createdAt: string
+  source?: "web" | "telegram"
 }
 
 type ArchiveItem = {
   id: string
   title: string
-  category: string | null
-  status: "completed" | "closed"
-  completedAt: string | null
-  daysTaken: number | null
+  category?: string | null
+  status: "completed" | "closed" | "abandoned"
+  completedAt?: string | null
+  daysTaken?: number | null
   createdAt: string
 }
 

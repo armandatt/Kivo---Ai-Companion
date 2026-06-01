@@ -5,10 +5,10 @@ import { useState } from "react"
 interface ArchiveItem {
   id: string
   title: string
-  category: string | null
-  status: "completed" | "closed"
-  completedAt: string | null
-  daysTaken: number | null
+  category?: string | null
+  status: string
+  completedAt?: string | null
+  daysTaken?: number | null
   createdAt: string
 }
 
@@ -133,9 +133,9 @@ export default function GoalArchive({ archive }: GoalArchiveProps) {
                       })}
                     </span>
                   )}
-                  {item.status === "completed" && item.daysTaken !== null ? (
+                  {item.status === "completed" && item.daysTaken != null ? (
                     <span style={{ fontSize: "12px", color: "#555555" }}>{item.daysTaken}d</span>
-                  ) : item.status === "closed" ? (
+                  ) : item.status === "closed" || item.status === "abandoned" ? (
                     <span
                       style={{
                         fontSize: "11px",

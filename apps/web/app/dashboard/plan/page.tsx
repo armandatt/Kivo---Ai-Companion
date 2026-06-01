@@ -55,9 +55,12 @@ export default async function PlanPage() {
         </p>
       </div>
 
-      <WeekView weekDays={weekDays} hasPlan={hasPlan} />
+      <div className="kevo-week-scroll">
+        <WeekView weekDays={weekDays} hasPlan={hasPlan} />
+      </div>
 
       <div
+        className="kevo-planner-grid"
         style={{
           display: "grid",
           gridTemplateColumns: "380px 1fr",

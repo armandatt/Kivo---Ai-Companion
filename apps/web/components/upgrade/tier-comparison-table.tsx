@@ -27,12 +27,14 @@ interface Props {
 
 export default function TierComparisonTable({ currentTier }: Props) {
   return (
+    <div className="kevo-tier-scroll" style={{ borderRadius: "12px" }}>
     <div
       style={{
         backgroundColor: "#1A1A1A",
         border: "1px solid #2A2A2A",
         borderRadius: "12px",
         overflow: "hidden",
+        minWidth: "600px",
       }}
     >
       {/* Header row */}
@@ -206,6 +208,7 @@ export default function TierComparisonTable({ currentTier }: Props) {
           )}
         </div>
       </div>
+    </div>
     </div>
   )
 }

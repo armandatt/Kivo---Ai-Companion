@@ -1,5 +1,7 @@
 "use client"
 
+import { useState } from "react"
+
 interface Platform {
   connected: boolean
   handle: string | null
@@ -14,6 +16,24 @@ interface Props {
 }
 
 export default function PlatformConnections({ platforms }: Props) {
+  const [telegramConnecting, setTelegramConnecting] = useState(false)
+  const [telegramConnected, setTelegramConnected] = useState(platforms.telegram.connected)
+
+  async function handleTelegramConnect() {
+    setTelegramConnecting(true)
+    try {
+      const res = await fetch("/api/telegram/generate-token", { method: "POST" })
+      if (!res.ok) return
+      const data = (await res.json()) as { deeplink?: string }
+      if (data.deeplink) {
+        window.open(data.deeplink, "_blank", "noopener,noreferrer")
+        setTelegramConnected(true)
+      }
+    } finally {
+      setTelegramConnecting(false)
+    }
+  }
+
   return (
     <div
       style={{
@@ -31,7 +51,9 @@ export default function PlatformConnections({ platforms }: Props) {
         <PlatformRow
           name="Telegram"
           icon={<TelegramIcon />}
-          platform={platforms.telegram}
+          platform={{ ...platforms.telegram, connected: telegramConnected }}
+          onConnect={handleTelegramConnect}
+          connecting={telegramConnecting}
         />
         <div style={{ height: "1px", backgroundColor: "#2A2A2A", margin: "0" }} />
         <PlatformRow
@@ -50,11 +72,15 @@ function PlatformRow({
   icon,
   platform,
   comingSoon,
+  onConnect,
+  connecting,
 }: {
   name: string
   icon: React.ReactNode
   platform: Platform
   comingSoon?: boolean
+  onConnect?: () => void
+  connecting?: boolean
 }) {
   const dotColor = platform.broken
     ? "#EF4444"
@@ -113,6 +139,8 @@ function PlatformRow({
               ? platform.handle
               : comingSoon
               ? "Coming soon"
+              : platform.connected
+              ? "Connected"
               : "Not connected"}
           </span>
           <span
@@ -130,12 +158,14 @@ function PlatformRow({
         {!comingSoon && (
           <div style={{ display: "flex", gap: "8px" }}>
             {platform.connected ? (
-              <>
-                <GhostButton label="Test connection" />
-                <GhostButton label="Disconnect" />
-              </>
+              <GhostButton label="Open chat" onClick={() => window.open("https://t.me", "_blank", "noopener,noreferrer")} />
             ) : (
-              <GhostButton label="Connect" accent />
+              <GhostButton
+                label={connecting ? "Opening…" : "Connect"}
+                accent
+                onClick={onConnect}
+                disabled={connecting}
+              />
             )}
           </div>
         )}
@@ -144,9 +174,21 @@ function PlatformRow({
   )
 }
 
-function GhostButton({ label, accent }: { label: string; accent?: boolean }) {
+function GhostButton({
+  label,
+  accent,
+  onClick,
+  disabled,
+}: {
+  label: string
+  accent?: boolean
+  onClick?: () => void
+  disabled?: boolean
+}) {
   return (
     <button
+      onClick={onClick}
+      disabled={disabled}
       style={{
         padding: "6px 14px",
         fontSize: "12px",
@@ -155,9 +197,10 @@ function GhostButton({ label, accent }: { label: string; accent?: boolean }) {
         backgroundColor: "transparent",
         border: `1px solid ${accent ? "rgba(0, 245, 160, 0.3)" : "#2A2A2A"}`,
         borderRadius: "6px",
-        cursor: "pointer",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.6 : 1,
         whiteSpace: "nowrap" as const,
-        transition: "color 0.12s, border-color 0.12s",
+        transition: "color 0.12s, border-color 0.12s, opacity 0.12s",
       }}
     >
       {label}
