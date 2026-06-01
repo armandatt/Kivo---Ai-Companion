@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Lightning, SignOut } from "@phosphor-icons/react/dist/ssr"
+import { Lightning, SignOut, SquaresFour } from "@phosphor-icons/react/dist/ssr"
 import { KivoLogo } from "@/components/KivoLogo"
 
 export function Header() {
@@ -62,7 +62,7 @@ export function Header() {
           {/* Nav */}
           <nav
             className={`
-              hidden md:flex items-center gap-1 rounded-full border border-[var(--color-baltic-sea-800)] 
+              hidden md:flex items-center gap-1 rounded-full border border-[var(--color-baltic-sea-800)]
               bg-[var(--color-baltic-sea-900)]/80 backdrop-blur-md px-2 py-1.5
               transition-all duration-500 ease-out
               ${scrolled ? "opacity-0 pointer-events-none" : "opacity-100"}
@@ -87,6 +87,27 @@ export function Header() {
           <div className="flex items-center gap-3">
             {user ? (
               <>
+                {/* Dashboard button */}
+                <Button
+                  asChild
+                  className={`
+                    hidden md:flex items-center gap-1.5 rounded-full
+                    px-4 py-2 h-auto text-sm font-semibold
+                    transition-all duration-500
+                    ${scrolled ? "opacity-0 pointer-events-none" : "opacity-100"}
+                  `}
+                  style={{
+                    background: "rgba(0,229,160,0.1)",
+                    border: "1px solid rgba(0,229,160,0.2)",
+                    color: "#00E5A0",
+                  }}
+                >
+                  <Link href="/dashboard">
+                    <SquaresFour weight="bold" className="h-4 w-4" />
+                    Dashboard
+                  </Link>
+                </Button>
+
                 {/* Avatar */}
                 <div
                   className={`
@@ -161,14 +182,18 @@ export function Header() {
       >
         {user ? (
           <Button
-            onClick={handleLogout}
-            disabled={loggingOut}
-            className="bg-[var(--color-baltic-sea-800)] border border-[var(--color-baltic-sea-700)] text-[var(--color-baltic-sea-200)]
-              hover:bg-[var(--color-baltic-sea-700)] hover:text-white
-              rounded-full px-6 py-3 h-auto text-sm shadow-lg"
+            asChild
+            className="rounded-full px-6 py-3 h-auto text-sm font-semibold shadow-lg"
+            style={{
+              background: "rgba(0,229,160,0.12)",
+              border: "1px solid rgba(0,229,160,0.25)",
+              color: "#00E5A0",
+            }}
           >
-            <SignOut weight="bold" className="mr-1.5 h-4 w-4" />
-            {loggingOut ? "Signing out…" : "Sign out"}
+            <Link href="/dashboard">
+              <SquaresFour weight="bold" className="mr-1.5 h-4 w-4" />
+              Dashboard
+            </Link>
           </Button>
         ) : (
           <Button
