@@ -2,20 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-type OpenAIResponse = {
-  output_text?: string;
-  output?: Array<{
-    content?: Array<{
-      text?: string;
-      type?: string;
-    }>;
-  }>;
-  error?: {
-    message?: string;
-  };
-};
-
-const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
+const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 let packageEnvLoaded = false;
 
@@ -63,7 +50,7 @@ export async function generateOpenAIText(input: {
   }
 
   const model = process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
-  const res = await fetch("https://api.openai.com/v1/responses", {
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -71,14 +58,21 @@ export async function generateOpenAIText(input: {
     },
     body: JSON.stringify({
       model,
-      instructions: input.systemInstruction,
-      input: input.prompt,
-      max_output_tokens: input.maxOutputTokens ?? 512,
+      messages: [
+        ...(input.systemInstruction
+          ? [{ role: "system", content: input.systemInstruction }]
+          : []),
+        { role: "user", content: input.prompt },
+      ],
+      max_tokens: input.maxOutputTokens ?? 512,
       temperature: 0.7,
     }),
   });
 
-  const data = (await res.json()) as OpenAIResponse;
+  const data = await res.json() as {
+    choices?: Array<{ message?: { content?: string } }>;
+    error?: { message?: string };
+  };
 
   if (!res.ok) {
     throw new Error(
@@ -86,13 +80,7 @@ export async function generateOpenAIText(input: {
     );
   }
 
-  const text =
-    data.output_text ||
-    data.output
-      ?.flatMap((item) => item.content || [])
-      .map((content) => content.text || "")
-      .join("")
-      .trim();
+  const text = data.choices?.[0]?.message?.content?.trim();
 
   if (!text) {
     throw new Error("OpenAI returned an empty response");
