@@ -2,9 +2,7 @@ import { cookies } from "next/headers"
 import WeekView from "@/components/planner/week-view"
 import DeadlineCalendar from "@/components/planner/deadline-calendar"
 import TaskList from "@/components/planner/task-list"
-
-type Task = { id: string; title: string; status: "pending" | "done" | "skipped" }
-type WeekDay = { date: string; tasks: Task[] }
+import { buildWeekDays } from "@/lib/plan-parser"
 
 type DeadlineItem = {
   id: string
@@ -14,9 +12,11 @@ type DeadlineItem = {
 }
 
 type PlannerData = {
-  weekDays: WeekDay[]
+  weekDays: Array<{ date: string; tasks: unknown[] }>
   deadlines: DeadlineItem[]
   hasPlan: boolean
+  planContent: string | null
+  planId: string | null
 }
 
 async function fetchPlanner(): Promise<PlannerData | null> {
@@ -38,11 +38,28 @@ async function fetchPlanner(): Promise<PlannerData | null> {
   }
 }
 
+function getWeekDates(): string[] {
+  const today = new Date()
+  const dayOfWeek = today.getDay() === 0 ? 6 : today.getDay() - 1
+  const monday = new Date(today)
+  monday.setDate(today.getDate() - dayOfWeek)
+  monday.setHours(0, 0, 0, 0)
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday)
+    d.setDate(monday.getDate() + i)
+    return d.toISOString().slice(0, 10)
+  })
+}
+
 export default async function PlanPage() {
   const data = await fetchPlanner()
-  const weekDays = data?.weekDays ?? []
   const deadlines = data?.deadlines ?? []
   const hasPlan = data?.hasPlan ?? false
+  const planContent = data?.planContent ?? null
+  const planId = data?.planId ?? null
+
+  const weekDates = getWeekDates()
+  const weekDays = buildWeekDays(planContent, planId, weekDates)
 
   return (
     <div style={{ maxWidth: "1100px" }}>
@@ -56,7 +73,7 @@ export default async function PlanPage() {
       </div>
 
       <div className="kevo-week-scroll">
-        <WeekView weekDays={weekDays} hasPlan={hasPlan} />
+        <WeekView weekDays={weekDays} hasPlan={hasPlan} planId={planId} />
       </div>
 
       <div

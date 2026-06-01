@@ -106,6 +106,8 @@ Required for `apps/api` (Railway) and `apps/web` (Vercel):
 | `JWT_SECRET` | both | Signing secret for session JWTs |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | api | Google OAuth credentials |
 | `NEXT_PUBLIC_APP_URL` | web | Public URL of the web app |
+| `NEXT_PUBLIC_BOT_USERNAME` | web | Telegram bot username (no @) — e.g. `kevo_companion_bot`. Matches `BOT_USERNAME` on Railway. Used for all "open chat" and "connect" links in the dashboard. |
+| `BOT_USERNAME` | api | Telegram bot username (no @). Used by `/api/telegram/generate-token` to build the `?start=TOKEN` deeplink. |
 
 ## Deployment
 

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { TELEGRAM_BOT_URL } from "@/lib/telegram"
 
 interface Platform {
   connected: boolean
@@ -158,7 +159,7 @@ function PlatformRow({
         {!comingSoon && (
           <div style={{ display: "flex", gap: "8px" }}>
             {platform.connected ? (
-              <GhostButton label="Open chat" onClick={() => window.open("https://t.me", "_blank", "noopener,noreferrer")} />
+              <GhostButton label="Open chat" onClick={() => window.open(TELEGRAM_BOT_URL, "_blank", "noopener,noreferrer")} />
             ) : (
               <GhostButton
                 label={connecting ? "Opening…" : "Connect"}

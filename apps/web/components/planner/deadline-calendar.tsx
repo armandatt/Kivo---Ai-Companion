@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { TELEGRAM_BOT_URL } from "@/lib/telegram"
 
 interface DeadlineItem {
   id: string
@@ -295,7 +296,7 @@ export default function DeadlineCalendar({ deadlines }: DeadlineCalendarProps) {
           <p style={{ fontSize: "12px", color: "#444444", margin: 0 }}>
             No deadlines yet.{" "}
             <a
-              href="https://t.me"
+              href={TELEGRAM_BOT_URL}
               target="_blank"
               rel="noreferrer"
               style={{ color: "#00F5A0", textDecoration: "none" }}

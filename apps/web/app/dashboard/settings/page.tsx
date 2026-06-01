@@ -15,6 +15,8 @@ type SettingsData = {
   accountabilityStyle: string | null
   timezone: string | null
   tier: string
+  browserNotifications: boolean
+  emailDigest: boolean
   platforms: { telegram: Platform; whatsapp: Platform }
 }
 
@@ -48,6 +50,8 @@ export default async function SettingsPage() {
     accountabilityStyle: null,
     timezone: null,
     tier: "free",
+    browserNotifications: true,
+    emailDigest: true,
     platforms: {
       telegram: { connected: false, handle: null, broken: false },
       whatsapp: { connected: false, handle: null, broken: false },
@@ -84,7 +88,10 @@ export default async function SettingsPage() {
           timezone={s.timezone}
         />
 
-        <NotificationSettings />
+        <NotificationSettings
+          browserNotifications={s.browserNotifications}
+          emailDigest={s.emailDigest}
+        />
       </div>
     </div>
   )

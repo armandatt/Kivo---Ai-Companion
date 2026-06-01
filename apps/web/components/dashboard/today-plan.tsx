@@ -1,26 +1,46 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { TELEGRAM_BOT_URL } from "@/lib/telegram"
 
 interface Task {
   id: string
   title: string
-  completed: boolean
 }
 
 interface TodayPlanProps {
   tasks: Task[]
+  planId: string | null
 }
 
-export default function TodayPlan({ tasks: initial }: TodayPlanProps) {
-  const [tasks, setTasks] = useState<Task[]>(initial)
+export default function TodayPlan({ tasks, planId }: TodayPlanProps) {
+  const [doneIds, setDoneIds] = useState<Set<string>>(new Set())
 
-  const toggle = (id: string) =>
-    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t)))
+  // Hydrate from localStorage after mount to avoid SSR mismatch
+  useEffect(() => {
+    if (!planId) return
+    try {
+      const raw = localStorage.getItem(`kevo_plan_done_${planId}`)
+      if (raw) setDoneIds(new Set(JSON.parse(raw) as string[]))
+    } catch {}
+  }, [planId])
 
-  const done = tasks.filter((t) => t.completed).length
+  function toggle(id: string) {
+    setDoneIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      if (planId) {
+        try {
+          localStorage.setItem(`kevo_plan_done_${planId}`, JSON.stringify([...next]))
+        } catch {}
+      }
+      return next
+    })
+  }
 
-  /* Empty state */
+  const done = tasks.filter((t) => doneIds.has(t.id)).length
+
   if (tasks.length === 0) {
     return (
       <div
@@ -32,7 +52,7 @@ export default function TodayPlan({ tasks: initial }: TodayPlanProps) {
         }}
       >
         <p style={{ fontSize: "14px", fontWeight: 700, color: "#FFFFFF", margin: "0 0 16px" }}>
-          Today's Plan
+          Today&apos;s Plan
         </p>
         <div
           style={{
@@ -47,10 +67,10 @@ export default function TodayPlan({ tasks: initial }: TodayPlanProps) {
           }}
         >
           <p style={{ fontSize: "14px", color: "#888888", margin: 0, lineHeight: 1.55 }}>
-            No plan yet — tell Kevo what's happening this week
+            No plan yet — tell Kevo what&apos;s happening this week
           </p>
           <a
-            href="https://t.me"
+            href={TELEGRAM_BOT_URL}
             target="_blank"
             rel="noreferrer"
             style={{
@@ -89,7 +109,7 @@ export default function TodayPlan({ tasks: initial }: TodayPlanProps) {
         }}
       >
         <p style={{ fontSize: "14px", fontWeight: 700, color: "#FFFFFF", margin: 0 }}>
-          Today's Plan
+          Today&apos;s Plan
         </p>
         <span style={{ fontSize: "12px", color: "#888888" }}>
           {done}/{tasks.length} done
@@ -97,62 +117,64 @@ export default function TodayPlan({ tasks: initial }: TodayPlanProps) {
       </div>
 
       <div style={{ display: "flex", flexDirection: "column" }}>
-        {tasks.map((task, i) => (
-          <button
-            key={task.id}
-            onClick={() => toggle(task.id)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "12px",
-              background: "none",
-              border: "none",
-              borderBottom: i < tasks.length - 1 ? "1px solid #2A2A2A" : "none",
-              cursor: "pointer",
-              padding: "11px 0",
-              textAlign: "left",
-            }}
-          >
-            {/* Custom checkbox */}
-            <div
+        {tasks.map((task, i) => {
+          const completed = doneIds.has(task.id)
+          return (
+            <button
+              key={task.id}
+              onClick={() => toggle(task.id)}
               style={{
-                width: "18px",
-                height: "18px",
-                borderRadius: "4px",
-                border: task.completed ? "none" : "1px solid #444444",
-                backgroundColor: task.completed ? "#00F5A0" : "transparent",
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "center",
-                flexShrink: 0,
-                transition: "background-color 0.15s ease",
+                gap: "12px",
+                background: "none",
+                border: "none",
+                borderBottom: i < tasks.length - 1 ? "1px solid #2A2A2A" : "none",
+                cursor: "pointer",
+                padding: "11px 0",
+                textAlign: "left",
               }}
             >
-              {task.completed && (
-                <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
-                  <path
-                    d="M1 4L3.5 6.5L9 1"
-                    stroke="#0D0D0D"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              )}
-            </div>
-            <span
-              style={{
-                fontSize: "14px",
-                color: task.completed ? "#555555" : "#FFFFFF",
-                textDecoration: task.completed ? "line-through" : "none",
-                transition: "color 0.15s ease",
-                lineHeight: 1.4,
-              }}
-            >
-              {task.title}
-            </span>
-          </button>
-        ))}
+              <div
+                style={{
+                  width: "18px",
+                  height: "18px",
+                  borderRadius: "4px",
+                  border: completed ? "none" : "1px solid #444444",
+                  backgroundColor: completed ? "#00F5A0" : "transparent",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                  transition: "background-color 0.15s ease",
+                }}
+              >
+                {completed && (
+                  <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
+                    <path
+                      d="M1 4L3.5 6.5L9 1"
+                      stroke="#0D0D0D"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                )}
+              </div>
+              <span
+                style={{
+                  fontSize: "14px",
+                  color: completed ? "#555555" : "#FFFFFF",
+                  textDecoration: completed ? "line-through" : "none",
+                  transition: "color 0.15s ease",
+                  lineHeight: 1.4,
+                }}
+              >
+                {task.title}
+              </span>
+            </button>
+          )
+        })}
       </div>
 
       <a
