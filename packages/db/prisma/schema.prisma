@@ -31,13 +31,15 @@ model User {
 
   passwordResetTokens PasswordResetToken[]
 
-  userProfile UserProfile?   // ✅ ADD THIS
-  workoutLogs    WorkoutLog[]
-  liftLogs       LiftLog[]
-  sorenessLogs   SorenessLog[]
-  bodyweightLogs BodyweightLog[]
-  energyLogs     EnergyLog[]
-  injuryFlags    InjuryFlag[]
+  userProfile UserProfile?
+  workoutLogs       WorkoutLog[]
+  liftLogs          LiftLog[]
+  sorenessLogs      SorenessLog[]
+  bodyweightLogs    BodyweightLog[]
+  energyLogs        EnergyLog[]
+  injuryFlags       InjuryFlag[]
+  weeklyReviews     WeeklyReview[]
+  creatureEvolutions CreatureEvolution[]
 }
 
 //////////////////////////////////////////////////
@@ -247,6 +249,10 @@ model UserProfile {
   gymStruggle        String?
   gymEnvironment     String?
 
+  // 🔹 Notification preferences
+  browserNotifications   Boolean  @default(true)
+  emailDigest            Boolean  @default(true)
+
   // Mentor intake
   mentorDomain           String?
   mentorIntakeStarted    Boolean  @default(false)
@@ -390,6 +396,37 @@ model Session {
   expires      DateTime
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model WeeklyReview {
+  id                String   @id @default(cuid())
+  userId            String
+  weekStartDate     DateTime
+  summaryText       String   @db.Text
+  sessionsCompleted Int?
+  sessionsPlanned   Int?
+  avgEnergyScore    Float?
+  avgSleepHours     Float?
+  goalPaceStatus    String?
+  topWins           String[]
+  focusForNextWeek  String?
+  createdAt         DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, weekStartDate])
+}
+
+model CreatureEvolution {
+  id               String   @id @default(cuid())
+  userId           String
+  stage            Int
+  evolvedAt        DateTime @default(now())
+  companionMessage String?  @db.Text
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, evolvedAt])
 }
 
 //////////////////////////////////////////////////

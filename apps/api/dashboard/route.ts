@@ -94,6 +94,7 @@ export async function GET() {
     // Bridge to MessengerUser for Telegram-sourced data
     let deadlines: Array<{ id: string; title: string; dueAt: string }> = []
     let lastMessage: { text: string; timestamp: string } | null = null
+    let activePlan: { id: string; content: string } | null = null
 
     if (profile?.telegramChatId) {
       const messenger = await prisma.messengerUser.findUnique({
@@ -116,6 +117,12 @@ export async function GET() {
             take: 1,
             select: { text: true, createdAt: true },
           },
+          plans: {
+            where: { status: "active" },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: { id: true, content: true },
+          },
         },
       })
 
@@ -131,6 +138,7 @@ export async function GET() {
             timestamp: messenger.messages[0].createdAt.toISOString(),
           }
         }
+        activePlan = messenger.plans[0] ?? null
       }
     }
 
@@ -152,7 +160,8 @@ export async function GET() {
         : null,
       streak,
       mood,
-      plan: null,
+      planContent: activePlan?.content ?? null,
+      planId: activePlan?.id ?? null,
       deadlines,
       lastMessage,
       telegramConnected: profile?.telegramConnected ?? false,

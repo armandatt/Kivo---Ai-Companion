@@ -23,6 +23,14 @@ type CreaturePageData = {
   creatureLogs: CreatureLog[]
 }
 
+type EvolutionRecord = {
+  id: string
+  stage: number
+  stageName: string
+  evolvedAt: string
+  companionMessage: string | null
+}
+
 async function fetchCreature(): Promise<CreaturePageData | null> {
   try {
     const cookieStore = await cookies()
@@ -30,13 +38,27 @@ async function fetchCreature(): Promise<CreaturePageData | null> {
     if (!token) return null
 
     const apiUrl = process.env.API_URL ?? "http://localhost:3001"
-    const res = await fetch(`${apiUrl}/api/creature`, {
-      headers: { Cookie: `kevo_session=${token}` },
-      cache: "no-store",
-    })
+    const headers = { Cookie: `kevo_session=${token}` }
 
-    if (!res.ok) return null
-    return res.json()
+    const [creatureRes, evolutionRes] = await Promise.all([
+      fetch(`${apiUrl}/api/creature`, { headers, cache: "no-store" }),
+      fetch(`${apiUrl}/api/creature/evolution`, { headers, cache: "no-store" }),
+    ])
+
+    if (!creatureRes.ok) return null
+    const creature = await creatureRes.json() as CreaturePageData
+
+    const evolutionData = evolutionRes.ok
+      ? (await evolutionRes.json() as { evolutions: EvolutionRecord[] })
+      : { evolutions: [] }
+
+    const evolutionHistory: EvolutionEvent[] = evolutionData.evolutions.map((e) => ({
+      stage: e.stageName,
+      reachedAt: e.evolvedAt,
+      message: e.companionMessage ?? undefined,
+    }))
+
+    return { ...creature, evolutionHistory }
   } catch {
     return null
   }

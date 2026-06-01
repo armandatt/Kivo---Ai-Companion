@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { TELEGRAM_BOT_URL } from "@/lib/telegram"
 
 interface StreakCounterProps {
   current: number
@@ -47,7 +48,7 @@ export default function StreakCounter({ current, best, broken, skipUsed }: Strea
           Complete your first workout to light the flame. Every legend starts at zero.
         </p>
         <a
-          href="https://t.me"
+          href={TELEGRAM_BOT_URL}
           target="_blank"
           rel="noreferrer"
           style={{

@@ -37,7 +37,7 @@ export default function WeeklyReviewArchive({ reviews, tier }: WeeklyReviewArchi
 
       {reviews.length === 0 ? (
         <p style={{ fontSize: "13px", color: "#444444", textAlign: "center", padding: "16px 0" }}>
-          Weekly reviews will appear here after your first full week with Kevo.
+          Your first weekly review will appear after your first Sunday with Kevo.
         </p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>

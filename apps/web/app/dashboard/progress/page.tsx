@@ -25,13 +25,20 @@ async function fetchInsights(): Promise<InsightsData | null> {
     if (!token) return null
 
     const apiUrl = process.env.API_URL ?? "http://localhost:3001"
-    const res = await fetch(`${apiUrl}/api/insights`, {
-      headers: { Cookie: `kevo_session=${token}` },
-      cache: "no-store",
-    })
+    const headers = { Cookie: `kevo_session=${token}` }
 
-    if (!res.ok) return null
-    return res.json()
+    const [insightsRes, reviewsRes] = await Promise.all([
+      fetch(`${apiUrl}/api/insights`, { headers, cache: "no-store" }),
+      fetch(`${apiUrl}/api/insights/weekly-reviews`, { headers, cache: "no-store" }),
+    ])
+
+    if (!insightsRes.ok) return null
+    const insights = await insightsRes.json() as InsightsData
+    const reviewsData = reviewsRes.ok
+      ? (await reviewsRes.json() as { reviews: WeeklyReview[] })
+      : { reviews: [] }
+
+    return { ...insights, weeklyReviews: reviewsData.reviews }
   } catch {
     return null
   }

@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { Pencil, Lock } from "lucide-react"
+import { TELEGRAM_BOT_URL } from "@/lib/telegram"
 
 const CATEGORY_LABELS: Record<string, string> = {
   fitness: "Fitness",
@@ -51,7 +52,7 @@ export default function GoalCard({
           Tell Kevo what you're working on this month and we'll track it together.
         </p>
         <a
-          href="https://t.me"
+          href={TELEGRAM_BOT_URL}
           target="_blank"
           rel="noreferrer"
           style={{ fontSize: "13px", fontWeight: 600, color: "#00F5A0", textDecoration: "none" }}

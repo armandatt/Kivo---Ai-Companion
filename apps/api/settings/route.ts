@@ -21,6 +21,8 @@ export async function GET() {
           timezone: true,
           telegramConnected: true,
           telegramChatId: true,
+          browserNotifications: true,
+          emailDigest: true,
         },
       }),
       prisma.account.findFirst({
@@ -38,6 +40,8 @@ export async function GET() {
       accountabilityStyle: profile?.accountabilityStyle ?? null,
       timezone: profile?.timezone ?? null,
       tier: "free",
+      browserNotifications: profile?.browserNotifications ?? true,
+      emailDigest: profile?.emailDigest ?? true,
       platforms: {
         telegram: {
           connected: profile?.telegramConnected ?? false,

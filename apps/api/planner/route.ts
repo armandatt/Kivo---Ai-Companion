@@ -70,6 +70,7 @@ export async function GET() {
       deadlines,
       hasPlan: !!activePlan,
       planContent: activePlan?.content ?? null,
+      planId: activePlan?.id ?? null,
     })
   } catch (e) {
     console.error("[PLANNER ERROR]", e)

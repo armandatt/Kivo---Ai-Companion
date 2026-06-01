@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { Pencil } from "lucide-react"
 import CompleteModal from "./complete-modal"
+import { TELEGRAM_BOT_URL } from "@/lib/telegram"
 
 const CATEGORY_LABELS: Record<string, string> = {
   fitness: "Fitness",
@@ -211,7 +212,7 @@ export default function GoalList({ goals, tier }: GoalListProps) {
             Tell Kevo what you&apos;re working on this month and we&apos;ll track it together.
           </p>
           <a
-            href="https://t.me"
+            href={TELEGRAM_BOT_URL}
             target="_blank"
             rel="noreferrer"
             style={{ fontSize: "13px", fontWeight: 600, color: "#00F5A0", textDecoration: "none" }}
@@ -241,7 +242,7 @@ export default function GoalList({ goals, tier }: GoalListProps) {
         <p style={{ fontSize: "13px", color: "#888888", margin: "4px 0 0" }}>
           Set new goals by{" "}
           <a
-            href="https://t.me"
+            href={TELEGRAM_BOT_URL}
             target="_blank"
             rel="noreferrer"
             style={{ color: "#00F5A0", textDecoration: "none", fontWeight: 600 }}

@@ -1,4 +1,5 @@
 import { cookies } from "next/headers"
+import { parseTodayTasks } from "@/lib/plan-parser"
 import StreakCounter from "@/components/dashboard/streak-counter"
 import CreatureThumbnail from "@/components/dashboard/creature-thumbnail"
 import GoalCard from "@/components/dashboard/goal-card"
@@ -26,7 +27,8 @@ type DashboardData = {
   } | null
   streak: { current: number; best: number; broken: boolean }
   mood: MoodEntry[]
-  plan: null
+  planContent: string | null
+  planId: string | null
   deadlines: Array<{ id: string; title: string; dueAt: string }>
   lastMessage: { text: string; timestamp: string } | null
   telegramConnected: boolean
@@ -60,6 +62,9 @@ export default async function DashboardPage() {
   const deadlines = data?.deadlines ?? []
   const lastMessage = data?.lastMessage ?? null
   const telegramConnected = data?.telegramConnected ?? false
+  const planContent = data?.planContent ?? null
+  const planId = data?.planId ?? null
+  const todayTasks = parseTodayTasks(planContent, planId)
 
   return (
     <div style={{ maxWidth: "1100px" }}>
@@ -94,7 +99,7 @@ export default async function DashboardPage() {
       {/* Below the fold */}
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
         {!telegramConnected && <TelegramConnectBanner />}
-        <TodayPlan tasks={[]} />
+        <TodayPlan tasks={todayTasks} planId={planId} />
         <UpcomingDeadlines deadlines={deadlines} />
         <LastMessage
           message={lastMessage}

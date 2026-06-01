@@ -1,3 +1,5 @@
+import { TELEGRAM_BOT_URL } from "@/lib/telegram"
+
 interface LastMessageProps {
   message: { text: string; timestamp: string } | null
   personaName: string | null
@@ -73,7 +75,7 @@ export default function LastMessage({ message, personaName }: LastMessageProps) 
             {truncate(message.text)}
           </p>
           <a
-            href="https://t.me"
+            href={TELEGRAM_BOT_URL}
             target="_blank"
             rel="noreferrer"
             style={{ fontSize: "13px", fontWeight: 600, color: "#00F5A0", textDecoration: "none" }}
@@ -94,7 +96,7 @@ export default function LastMessage({ message, personaName }: LastMessageProps) 
             No conversation yet. Open Telegram to start talking with your companion.
           </p>
           <a
-            href="https://t.me"
+            href={TELEGRAM_BOT_URL}
             target="_blank"
             rel="noreferrer"
             style={{ fontSize: "13px", fontWeight: 600, color: "#00F5A0", textDecoration: "none" }}

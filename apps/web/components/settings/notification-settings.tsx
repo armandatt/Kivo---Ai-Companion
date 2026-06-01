@@ -1,13 +1,11 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef } from "react"
 
-const TOGGLES = [
-  { key: "daily", label: "Daily check-in reminders", defaultOn: true },
-  { key: "weekly", label: "Weekly review notifications", defaultOn: true },
-  { key: "streak", label: "Streak milestone alerts", defaultOn: true },
-  { key: "deadlines", label: "Goal deadline alerts", defaultOn: true },
-]
+interface Props {
+  browserNotifications: boolean
+  emailDigest: boolean
+}
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void }) {
   return (
@@ -44,14 +42,43 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void 
   )
 }
 
-export default function NotificationSettings() {
-  const [states, setStates] = useState<Record<string, boolean>>(
-    Object.fromEntries(TOGGLES.map((t) => [t.key, t.defaultOn]))
-  )
+export default function NotificationSettings({ browserNotifications, emailDigest }: Props) {
+  const [browser, setBrowser] = useState(browserNotifications)
+  const [digest, setDigest] = useState(emailDigest)
+  const [saved, setSaved] = useState(false)
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  function toggle(key: string) {
-    setStates((prev) => ({ ...prev, [key]: !prev[key] }))
+  async function persist(updates: { browserNotifications?: boolean; emailDigest?: boolean }) {
+    try {
+      await fetch("/api/settings/notifications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      })
+      if (saveTimer.current) clearTimeout(saveTimer.current)
+      setSaved(true)
+      saveTimer.current = setTimeout(() => setSaved(false), 2000)
+    } catch {
+      // silent — non-critical
+    }
   }
+
+  function toggleBrowser() {
+    const next = !browser
+    setBrowser(next)
+    persist({ browserNotifications: next })
+  }
+
+  function toggleDigest() {
+    const next = !digest
+    setDigest(next)
+    persist({ emailDigest: next })
+  }
+
+  const rows = [
+    { label: "Browser notifications", checked: browser, onChange: toggleBrowser },
+    { label: "Email digest", checked: digest, onChange: toggleDigest },
+  ]
 
   return (
     <div
@@ -62,24 +89,29 @@ export default function NotificationSettings() {
         padding: "20px",
       }}
     >
-      <p style={{ fontSize: "13px", fontWeight: 600, color: "#FFFFFF", margin: "0 0 20px" }}>
-        Notifications
-      </p>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
+        <p style={{ fontSize: "13px", fontWeight: 600, color: "#FFFFFF", margin: 0 }}>
+          Notifications
+        </p>
+        {saved && (
+          <span style={{ fontSize: "11px", color: "#00F5A0", fontWeight: 500 }}>Saved</span>
+        )}
+      </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
-        {TOGGLES.map((t, i) => (
+        {rows.map((row, i) => (
           <div
-            key={t.key}
+            key={row.label}
             style={{
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
               padding: "13px 0",
-              borderBottom: i < TOGGLES.length - 1 ? "1px solid #222222" : "none",
+              borderBottom: i < rows.length - 1 ? "1px solid #222222" : "none",
             }}
           >
-            <span style={{ fontSize: "13px", color: "#CCCCCC" }}>{t.label}</span>
-            <Toggle checked={states[t.key]} onChange={() => toggle(t.key)} />
+            <span style={{ fontSize: "13px", color: "#CCCCCC" }}>{row.label}</span>
+            <Toggle checked={row.checked} onChange={row.onChange} />
           </div>
         ))}
       </div>
@@ -93,7 +125,7 @@ export default function NotificationSettings() {
           lineHeight: 1.55,
         }}
       >
-        Notification frequency is set by talking to your companion directly.
+        Check-in frequency is set by talking to your companion directly.
       </p>
     </div>
   )
