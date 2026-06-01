@@ -47,7 +47,7 @@ function SigninForm() {
         return
       }
 
-      router.push('/quiz')
+      router.push(data.user?.onboardingComplete ? '/dashboard' : '/onboarding')
       router.refresh()
     } catch {
       setError('Something went wrong. Please try again.')
