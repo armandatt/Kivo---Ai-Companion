@@ -6,19 +6,16 @@ function apiUrl(path: string) {
 }
 
 export async function POST() {
-  const upstream = await fetch(apiUrl("/api/logout"), {
-    method: "POST",
-    cache: "no-store",
-  })
+  try {
+    await fetch(apiUrl("/api/logout"), {
+      method: "POST",
+      cache: "no-store",
+    })
+  } catch {
+    // The browser session is local to the web app, so clear it even if the API is unavailable.
+  }
 
-  const body = await upstream.text()
-  const response = new NextResponse(body, {
-    status: upstream.status,
-    headers: {
-      "Content-Type": upstream.headers.get("content-type") ?? "application/json",
-    },
-  })
-
+  const response = NextResponse.json({ success: true })
   clearSessionCookie(response)
 
   return response

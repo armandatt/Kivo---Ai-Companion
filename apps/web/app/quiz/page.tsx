@@ -1,10 +1,5 @@
-import OnboardingFlow from '@/components/onboarding-flow';
-
-export const metadata = {
-  title: 'Personality Quiz - Kivo',
-  description: 'Discover your companion personality with Kivo',
-};
+import { redirect } from 'next/navigation';
 
 export default function QuizPage() {
-  return <OnboardingFlow />;
+  redirect('/onboarding');
 }

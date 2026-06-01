@@ -38,8 +38,8 @@ export default function SigninPage() {
         return
       }
 
-      // Redirect to quiz page
-      window.location.href = 'http://localhost:3000/quiz'
+      const nextPath = data.user?.onboardingComplete ? '/dashboard' : '/onboarding'
+      window.location.href = nextPath
     } catch (error) {
       console.error(error)
       setError('Something went wrong. Please try again.')

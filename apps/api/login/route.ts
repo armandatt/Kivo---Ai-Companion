@@ -24,6 +24,11 @@ export async function POST(req: Request) {
         name: true,
         image: true,
         password: true,
+        userProfile: {
+          select: {
+            onboardingComplete: true,
+          },
+        },
       },
     })
 
@@ -60,6 +65,7 @@ export async function POST(req: Request) {
         email: user.email,
         name: user.name,
         image: user.image,
+        onboardingComplete: user.userProfile?.onboardingComplete ?? false,
       },
     })
     response.cookies.set(SESSION_COOKIE_NAME, token, SESSION_COOKIE_OPTIONS)

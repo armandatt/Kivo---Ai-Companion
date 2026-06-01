@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { Bell } from "lucide-react"
 import { KivoLogoWithWordmark } from "@/components/KivoLogo"
 
@@ -34,9 +34,11 @@ export default function TopBar({
   whatsappConnected,
 }: Props) {
   const pathname = usePathname()
+  const router = useRouter()
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [telegramUrl, setTelegramUrl] = useState(telegramDeeplink)
   const [isGeneratingTelegramLink, setIsGeneratingTelegramLink] = useState(false)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   const pageTitle =
@@ -69,6 +71,14 @@ export default function TopBar({
     } finally {
       setIsGeneratingTelegramLink(false)
     }
+  }
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true)
+    await fetch("/api/logout", { method: "POST" })
+    setDropdownOpen(false)
+    router.push("/")
+    router.refresh()
   }
 
   useEffect(() => {
@@ -227,30 +237,31 @@ export default function TopBar({
                 Settings
               </DropdownLink>
               <div style={{ height: "1px", backgroundColor: "#2A2A2A" }} />
-              <form action="/api/logout" method="POST">
-                <button
-                  type="submit"
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    padding: "10px 16px",
-                    fontSize: "13px",
-                    color: "#888888",
-                    background: "none",
-                    border: "none",
-                    cursor: "pointer",
-                    textAlign: "left",
-                  }}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.04)")
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.backgroundColor = "transparent")
-                  }
-                >
-                  Sign out
-                </button>
-              </form>
+              <button
+                type="button"
+                disabled={isLoggingOut}
+                onClick={handleLogout}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "10px 16px",
+                  fontSize: "13px",
+                  color: "#888888",
+                  background: "none",
+                  border: "none",
+                  cursor: isLoggingOut ? "default" : "pointer",
+                  textAlign: "left",
+                  opacity: isLoggingOut ? 0.7 : 1,
+                }}
+                onMouseEnter={(e) =>
+                  (e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.04)")
+                }
+                onMouseLeave={(e) =>
+                  (e.currentTarget.style.backgroundColor = "transparent")
+                }
+              >
+                {isLoggingOut ? "Signing out..." : "Sign out"}
+              </button>
             </div>
           )}
         </div>

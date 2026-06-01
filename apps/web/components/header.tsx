@@ -32,7 +32,7 @@ export function Header() {
     setLoggingOut(true)
     await fetch("/api/logout", { method: "POST" })
     setUser(null)
-    router.push("/signin")
+    router.push("/")
     router.refresh()
   }
 
