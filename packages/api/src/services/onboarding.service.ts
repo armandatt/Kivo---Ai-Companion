@@ -66,6 +66,8 @@ export async function handleOnboardingMessage(input: {
       platformChatId: input.platformChatId,
       displayName: input.displayName,
       username: input.username,
+      aspirationWords: [],
+      activeModules: [],
     },
   });
 

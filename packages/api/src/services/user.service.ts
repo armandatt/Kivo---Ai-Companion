@@ -35,6 +35,8 @@ export async function getUser(userId: string) {
       create: {
         platform: "telegram",
         platformChatId: userId,
+        aspirationWords: [],
+        activeModules: [],
       },
     });
 
@@ -218,6 +220,8 @@ export async function updateUserProfile(
         platformChatId: userId,
         displayName: input.displayName,
         username: input.username,
+        aspirationWords: [],
+        activeModules: [],
       },
     });
   } catch (error) {
