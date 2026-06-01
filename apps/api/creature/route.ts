@@ -50,6 +50,38 @@ export async function GET() {
     const evolutionAvailable = [3, 7, 21, 50].includes(currentStreak)
     const state = currentStreak === 0 ? "resting" : currentStreak < 3 ? "quiet" : "active"
 
+    let creatureLogs: Array<{ id: string; text: string; createdAt: string }> = []
+
+    if (profile?.telegramChatId && profile.creatureName) {
+      const messenger = await prisma.messengerUser.findUnique({
+        where: {
+          platform_platformChatId: {
+            platform: "telegram",
+            platformChatId: profile.telegramChatId,
+          },
+        },
+        select: {
+          messages: {
+            where: {
+              role: "assistant",
+              text: { contains: profile.creatureName, mode: "insensitive" },
+            },
+            orderBy: { createdAt: "desc" },
+            take: 10,
+            select: { id: true, text: true, createdAt: true },
+          },
+        },
+      })
+
+      if (messenger) {
+        creatureLogs = messenger.messages.map((m) => ({
+          id: m.id,
+          text: m.text,
+          createdAt: m.createdAt.toISOString(),
+        }))
+      }
+    }
+
     return NextResponse.json({
       creature: {
         name: profile?.creatureName ?? "Your Creature",
@@ -61,7 +93,7 @@ export async function GET() {
         state,
       },
       evolutionHistory: [],
-      creatureLogs: [],
+      creatureLogs,
     })
   } catch (e) {
     console.error("[CREATURE ERROR]", e)

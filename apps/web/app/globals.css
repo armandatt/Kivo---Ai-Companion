@@ -238,6 +238,19 @@
   .kevo-main-content { padding: 16px 16px 80px !important; }
 }
 
+/* Responsive planner and upgrade layout overrides */
+@media (max-width: 768px) {
+  .kevo-planner-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .kevo-week-scroll {
+    overflow-x: auto;
+  }
+  .kevo-tier-scroll {
+    overflow-x: auto;
+  }
+}
+
 /* Message appear animation */
 @keyframes message-appear {
   0% {

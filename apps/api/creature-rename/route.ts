@@ -15,7 +15,7 @@ export async function PATCH(req: NextRequest) {
   await prisma.userProfile.upsert({
     where: { userId: session.userId },
     update: { creatureName: name },
-    create: { userId: session.userId, creatureName: name },
+    create: { userId: session.userId, creatureName: name, secondaryDomains: [], aspirationWords: [] },
   })
 
   return NextResponse.json({ ok: true })

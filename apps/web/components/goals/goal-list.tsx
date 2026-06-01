@@ -16,10 +16,11 @@ interface GoalItem {
   id: string
   title: string
   category: string | null
-  daysTotal: number
-  daysRemaining: number
-  status: "active" | "completed" | "closed"
+  daysTotal: number | null
+  daysRemaining: number | null
+  status: "active" | "paused" | "completed" | "closed"
   createdAt: string
+  source?: "web" | "telegram"
 }
 
 interface GoalListProps {
@@ -34,9 +35,10 @@ function GoalCardItem({
   goal: GoalItem
   onComplete: (id: string, title: string) => void
 }) {
-  const progress = Math.round(
-    Math.max(0, Math.min(1, (goal.daysTotal - goal.daysRemaining) / goal.daysTotal)) * 100
-  )
+  const progress =
+    goal.daysTotal && goal.daysRemaining != null
+      ? Math.round(Math.max(0, Math.min(1, (goal.daysTotal - goal.daysRemaining) / goal.daysTotal)) * 100)
+      : 0
   const categoryLabel = goal.category
     ? (CATEGORY_LABELS[goal.category] ?? goal.category)
     : "Goal"
@@ -98,9 +100,11 @@ function GoalCardItem({
         </button>
       </div>
 
-      <p style={{ fontSize: "13px", color: "#888888", margin: 0 }}>
-        {goal.daysRemaining} day{goal.daysRemaining !== 1 ? "s" : ""} remaining
-      </p>
+      {goal.daysRemaining != null && (
+        <p style={{ fontSize: "13px", color: "#888888", margin: 0 }}>
+          {goal.daysRemaining} day{goal.daysRemaining !== 1 ? "s" : ""} remaining
+        </p>
+      )}
 
       <div
         style={{
