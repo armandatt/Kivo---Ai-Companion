@@ -55,6 +55,10 @@ const nextConfig = {
         destination: `${apiUrl}/api/insights`,
       },
       {
+        source: "/api/insights/weekly-reviews",
+        destination: `${apiUrl}/api/insights/weekly-reviews`,
+      },
+      {
         source: "/api/creature",
         destination: `${apiUrl}/api/creature`,
       },
@@ -63,8 +67,20 @@ const nextConfig = {
         destination: `${apiUrl}/api/creature-rename`,
       },
       {
+        source: "/api/creature/evolution",
+        destination: `${apiUrl}/api/creature/evolution`,
+      },
+      {
         source: "/api/settings",
         destination: `${apiUrl}/api/settings`,
+      },
+      {
+        source: "/api/settings/notifications",
+        destination: `${apiUrl}/api/settings/notifications`,
+      },
+      {
+        source: "/api/usage",
+        destination: `${apiUrl}/api/usage`,
       },
       {
         source: "/api/delete-account",
