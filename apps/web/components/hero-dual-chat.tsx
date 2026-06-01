@@ -228,8 +228,8 @@ export function HeroDualChat() {
       `}</style>
 
       <section
-        className="relative px-4 py-16 md:py-24 overflow-hidden"
-        style={{ background: '#060810' }}
+        className="relative px-4 py-12 overflow-hidden flex items-center"
+        style={{ background: '#060810', minHeight: 'calc(100vh - 80px)' }}
       >
         {/* Sparkles background */}
         <SparklesCore
