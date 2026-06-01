@@ -58,6 +58,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <link rel="preconnect" href="https://prod.spline.design" />
+        <link rel="dns-prefetch" href="https://prod.spline.design" />
+      </head>
       <body className={`${geistSans.className} ${geistMono.variable} font-sans antialiased`}>
         {children}
         <Analytics />
