@@ -3,6 +3,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { Button } from "@/components/ui/button"
 import { AuthAwareLink } from "@/components/auth-aware-link"
+import { SparklesCore } from "@/components/ui/sparkles"
+import { SplineBot } from "@/components/spline-bot"
+import { getCurrentQuote, type Quote } from "@/lib/quotes"
 
 interface Message {
   id: string
@@ -197,51 +200,53 @@ function ChatPane({
 }
 
 export function HeroDualChat() {
-  const [rexActive, setRexActive] = useState(false)
-  const [dividerVisible, setDividerVisible] = useState(false)
-  const [novaActive, setNovaActive] = useState(false)
+  const [quote, setQuote] = useState<Quote>(() => getCurrentQuote())
+  const [quoteVisible, setQuoteVisible] = useState(true)
 
+  // Rotate quote every 8 seconds with a fade transition
   useEffect(() => {
-    // Rex starts immediately on mount
-    const t0 = setTimeout(() => setRexActive(true), 300)
-    // Divider line appears before Nova
-    const t1 = setTimeout(() => setDividerVisible(true), DIVIDER_APPEAR_DELAY)
-    // Nova activates
-    const t2 = setTimeout(() => setNovaActive(true), NOVA_START_DELAY)
-    return () => { clearTimeout(t0); clearTimeout(t1); clearTimeout(t2) }
+    const id = setInterval(() => {
+      setQuoteVisible(false)
+      setTimeout(() => {
+        setQuote(getCurrentQuote())
+        setQuoteVisible(true)
+      }, 500)
+    }, 8000)
+    return () => clearInterval(id)
   }, [])
 
   return (
     <>
       <style>{`
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(5px); }
-          to   { opacity: 1; transform: translateY(0); }
+        @keyframes botFloat {
+          0%, 100% { transform: translateY(0px); }
+          50%       { transform: translateY(-10px); }
         }
-        @keyframes dividerGrow {
-          from { opacity: 0; transform: scaleY(0); }
-          to   { opacity: 1; transform: scaleY(1); }
-        }
-        .divider-line {
-          transform-origin: top center;
-          animation: dividerGrow 0.5s cubic-bezier(0.22,1,0.36,1) forwards;
+        .quote-fade {
+          transition: opacity 0.5s ease;
         }
       `}</style>
 
       <section
-        className="relative overflow-hidden px-4 py-20 md:py-36"
+        className="relative px-4 py-16 md:py-24 overflow-hidden"
         style={{ background: '#060810' }}
       >
-        {/* NO decorative rects — removed entirely to fix the ghost boxes */}
-        <div
-          className="absolute top-1/3 left-1/4 w-72 h-72 rounded-full blur-3xl pointer-events-none"
-          style={{ background: 'radial-gradient(ellipse, rgba(255,107,53,0.04) 0%, transparent 70%)' }}
+        {/* Sparkles background */}
+        <SparklesCore
+          id="hero-sparkles"
+          background="transparent"
+          particleColor="#00E5A0"
+          particleDensity={30}
+          minSize={0.3}
+          maxSize={1.2}
+          speed={1}
+          className="absolute inset-0 w-full h-full pointer-events-none"
         />
 
         <div className="mx-auto max-w-7xl relative z-10">
           <div className="grid md:grid-cols-2 gap-12 lg:gap-16 items-center">
 
-            {/* LEFT */}
+            {/* LEFT: Heading + rotating quote + CTA */}
             <div className="space-y-7">
               <div
                 className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-semibold"
@@ -256,11 +261,30 @@ export function HeroDualChat() {
                 <span style={{ color: '#e8eaf0' }}>you quit</span>
               </h1>
 
-              <p className="text-lg text-slate-400 leading-relaxed max-w-md">
-                "Your AI companion that grows with you — complete with a living creature. All inside WhatsApp and Telegram."
-              </p>
+              {/* Rotating motivational quote */}
+              <div
+                className="quote-fade rounded-xl px-5 py-4"
+                style={{
+                  opacity: quoteVisible ? 1 : 0,
+                  background: 'rgba(0,229,160,0.04)',
+                  border: '1px solid rgba(0,229,160,0.12)',
+                }}
+              >
+                <p
+                  className="text-sm leading-relaxed"
+                  style={{ color: 'rgba(255,255,255,0.55)', fontStyle: 'italic' }}
+                >
+                  &ldquo;{quote.text}&rdquo;
+                </p>
+                <p
+                  className="mt-1.5 text-xs tracking-widest uppercase"
+                  style={{ color: 'rgba(0,229,160,0.45)' }}
+                >
+                  — {quote.author}
+                </p>
+              </div>
 
-              <div className="flex flex-col sm:flex-row gap-3 pt-2">
+              <div className="flex flex-col sm:flex-row gap-3 pt-1">
                 <Button
                   asChild
                   size="lg"
@@ -290,66 +314,20 @@ export function HeroDualChat() {
               </div>
             </div>
 
-            {/* RIGHT — single screen, two panes */}
-            <div className="flex items-center justify-center">
+            {/* RIGHT: Floating robot */}
+            <div
+              className="relative flex items-center justify-center"
+              style={{ minHeight: '520px' }}
+            >
               <div
-                className="w-full rounded-[20px] overflow-hidden"
                 style={{
-                  maxWidth: "580px",
-                  background: '#0d1117',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  boxShadow: '0 32px 64px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.04)',
+                  position: 'relative',
+                  width: '100%',
+                  height: '520px',
+                  animation: 'botFloat 7s ease-in-out infinite',
                 }}
               >
-                {/* Shared status bar */}
-                <div
-                  className="flex justify-between items-center px-5 py-2.5"
-                  style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
-                >
-                  <span className="text-[11px] font-semibold text-slate-300">9:41</span>
-                  <span className="text-[10px] text-slate-500 font-medium tracking-wide">2 conversations</span>
-                  <svg width="14" height="9" viewBox="0 0 14 9" fill="none">
-                    <rect x="0" y="3.5" width="2.2" height="5.5" rx="0.7" fill="rgba(255,255,255,0.35)" />
-                    <rect x="3.5" y="2" width="2.2" height="7" rx="0.7" fill="rgba(255,255,255,0.55)" />
-                    <rect x="7" y="0.5" width="2.2" height="8.5" rx="0.7" fill="rgba(255,255,255,0.8)" />
-                    <rect x="11" y="1" width="1.8" height="7" rx="0.4" fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth="0.7" />
-                    <rect x="11.4" y="2.8" width="0.9" height="3.4" rx="0.3" fill="rgba(255,255,255,0.35)" />
-                  </svg>
-                </div>
-
-                {/* Two panes */}
-                <div className="flex" style={{ minHeight: "560px" }}>
-                  {/* Rex pane */}
-                  <ChatPane
-                    companion={rexCompanion}
-                    active={rexActive}
-                    startOffset={0}
-                  />
-
-                  
-                  <div
-                    className="flex-shrink-0 self-stretch flex flex-col items-center"
-                    style={{ width: '20px', padding: '12px 0' }}
-                  >
-                    <div
-                      style={{
-                        width: '1px',
-                        flex: 1,
-                        background: dividerVisible
-                          ? 'linear-gradient(to bottom, transparent, rgba(0,229,160,0.5) 20%, rgba(0,229,160,0.5) 80%, transparent)'
-                          : 'transparent',
-                        transition: 'background 0.6s ease',
-                      }}
-                    />
-                  </div>
-
-                  {/* Nova pane — always in DOM but inactive until triggered */}
-                  <ChatPane
-                    companion={novaCompanion}
-                    active={novaActive}
-                    startOffset={0}
-                  />
-                </div>
+                <SplineBot className="w-full h-full" />
               </div>
             </div>
 
