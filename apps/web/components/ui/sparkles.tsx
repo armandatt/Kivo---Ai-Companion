@@ -1,99 +1,68 @@
 "use client";
-import React, { useCallback } from "react";
-import Particles, { ParticlesProvider } from "@tsparticles/react";
-import { loadSlim } from "@tsparticles/slim";
+import React, { useMemo } from "react";
 import { cn } from "@/lib/utils";
-import { motion } from "framer-motion";
 
 type SparklesProps = {
   id?: string;
   className?: string;
-  background?: string;
+  particleColor?: string;
+  particleDensity?: number;
   minSize?: number;
   maxSize?: number;
   speed?: number;
-  particleColor?: string;
-  particleDensity?: number;
+  background?: string;
 };
 
-function SparklesInner({
-  id,
+// Deterministic pseudo-random so SSR and client produce the same layout.
+function seededRandom(seed: number) {
+  const x = Math.sin(seed + 1) * 10000;
+  return x - Math.floor(x);
+}
+
+export function SparklesCore({
   className,
-  background,
-  minSize,
-  maxSize,
-  speed,
-  particleColor,
-  particleDensity,
+  particleColor = "#00E5A0",
+  particleDensity = 80,
+  minSize = 0.5,
+  maxSize = 2,
+  speed = 2,
 }: SparklesProps) {
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.15 }}
-      className={cn("h-full w-full", className)}
-    >
-      <Particles
-        id={id ?? "sparkles-core"}
-        className="h-full w-full"
-        options={{
-          background: { color: { value: background ?? "transparent" } },
-          fullScreen: { enable: false, zIndex: 0 },
-          fpsLimit: 120,
-          interactivity: {
-            events: {
-              onClick: { enable: false },
-              onHover: { enable: false },
-              resize: true as any,
-            },
-          },
-          particles: {
-            color: { value: particleColor ?? "#00E5A0" },
-            move: {
-              direction: "none",
-              enable: true,
-              outModes: { default: "out" },
-              random: false,
-              speed: { min: 0.1, max: 0.6 },
-              straight: false,
-            },
-            number: {
-              density: { enable: true, width: 400, height: 400 },
-              value: particleDensity ?? 80,
-            },
-            opacity: {
-              value: { min: 0.05, max: 0.6 },
-              animation: {
-                enable: true,
-                speed: speed ?? 2,
-                sync: false,
-              },
-            },
-            shape: { type: "circle" },
-            size: {
-              value: { min: minSize ?? 0.5, max: maxSize ?? 2 },
-            },
-          },
-          detectRetina: true,
-        }}
-      />
-    </motion.div>
-  );
-}
-
-// init must be stable (module-level) so ParticlesProvider doesn't throw
-async function initEngine(engine: any) {
-  await loadSlim(engine);
-}
-
-export function SparklesCore(props: SparklesProps) {
-  // useCallback with [] guarantees the same reference on every render
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const stableInit = useCallback(initEngine, []);
+  const dots = useMemo(() => {
+    return Array.from({ length: particleDensity }, (_, i) => ({
+      left: seededRandom(i * 3) * 100,
+      top: seededRandom(i * 3 + 1) * 100,
+      size: minSize + seededRandom(i * 3 + 2) * (maxSize - minSize),
+      duration: (2 + seededRandom(i * 7) * 3) / speed,
+      delay: seededRandom(i * 11) * 4,
+      opacity: 0.08 + seededRandom(i * 13) * 0.55,
+    }));
+  }, [particleDensity, minSize, maxSize, speed]);
 
   return (
-    <ParticlesProvider init={stableInit}>
-      <SparklesInner {...props} />
-    </ParticlesProvider>
+    <div className={cn("relative overflow-hidden", className)}>
+      <style>{`
+        @keyframes sparkle-twinkle {
+          0%, 100% { opacity: var(--spark-lo); transform: scale(1); }
+          50%       { opacity: var(--spark-hi); transform: scale(1.4); }
+        }
+      `}</style>
+      {dots.map((d, i) => (
+        <span
+          key={i}
+          style={{
+            position: "absolute",
+            left: `${d.left}%`,
+            top: `${d.top}%`,
+            width: `${d.size}px`,
+            height: `${d.size}px`,
+            borderRadius: "50%",
+            background: particleColor,
+            "--spark-lo": d.opacity * 0.15,
+            "--spark-hi": d.opacity,
+            animation: `sparkle-twinkle ${d.duration}s ease-in-out ${d.delay}s infinite`,
+          } as React.CSSProperties}
+        />
+      ))}
+    </div>
   );
 }
