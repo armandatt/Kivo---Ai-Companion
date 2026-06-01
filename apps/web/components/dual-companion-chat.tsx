@@ -16,7 +16,7 @@ interface Companion {
   messages: MessageItem[]
 }
 
-const TYPING_DURATION = 600
+const TYPING_DURATION = 900
 
 const companions: Record<string, Companion> = {
   rex: {
@@ -25,11 +25,11 @@ const companions: Record<string, Companion> = {
     color: '#f97316',
     messages: [
       { id: 'rex-1', text: "Yo. 6:47am. Leg day doesn't cancel itself 🔥", isUser: false, delayMs: 0 },
-      { id: 'rex-2', text: 'Last Tuesday 80kg squats. Today we go 82.5kg 💪', isUser: false, delayMs: 1200 },
-      { id: 'user-1', text: "I'm actually feeling it today", isUser: true, delayMs: 2400 },
-      { id: 'rex-3', text: "That's the CNS adapting. That feeling IS the progress.", isUser: false, delayMs: 3400 },
-      { id: 'user-2', text: 'Hit 82.5 for 3 sets 🔥', isUser: true, delayMs: 5000 },
-      { id: 'rex-4', text: 'LETSSS GO. Streak: 12 days 🐉', isUser: false, delayMs: 6200 },
+      { id: 'rex-2', text: 'Last Tuesday 80kg squats. Today we go 82.5kg 💪', isUser: false, delayMs: 2000 },
+      { id: 'user-1', text: "I'm actually feeling it today", isUser: true, delayMs: 3800 },
+      { id: 'rex-3', text: "That's the CNS adapting. That feeling IS the progress.", isUser: false, delayMs: 5400 },
+      { id: 'user-2', text: 'Hit 82.5 for 3 sets 🔥', isUser: true, delayMs: 7800 },
+      { id: 'rex-4', text: 'LETSSS GO. Streak: 12 days 🐉', isUser: false, delayMs: 9600 },
     ],
   },
   nova: {
@@ -38,17 +38,17 @@ const companions: Record<string, Companion> = {
     color: '#00E5A0',
     messages: [
       { id: 'nova-1', text: "Hey 🌿 You've got a 2pm deadline today.", isUser: false, delayMs: 0 },
-      { id: 'nova-2', text: 'Want to start a 25-min focus session? 🌱', isUser: false, delayMs: 1400 },
-      { id: 'user-3', text: 'Start focus', isUser: true, delayMs: 2600 },
-      { id: 'nova-3', text: 'Forest session started 🌲 Phone down, world out.', isUser: false, delayMs: 3500 },
-      { id: 'user-4', text: 'Done! That felt really good', isUser: true, delayMs: 5200 },
-      { id: 'nova-4', text: "Your pine grew 3cm ✨ 4 sessions today. Zone unlocked.", isUser: false, delayMs: 6400 },
+      { id: 'nova-2', text: 'Want to start a 25-min focus session? 🌱', isUser: false, delayMs: 2200 },
+      { id: 'user-3', text: 'Start focus', isUser: true, delayMs: 4000 },
+      { id: 'nova-3', text: 'Forest session started 🌲 Phone down, world out.', isUser: false, delayMs: 5600 },
+      { id: 'user-4', text: 'Done! That felt really good', isUser: true, delayMs: 8200 },
+      { id: 'nova-4', text: "Your pine grew 3cm ✨ 4 sessions today. Zone unlocked.", isUser: false, delayMs: 10000 },
     ],
   },
 }
 
-const PHONE_W = 252
-const PHONE_H = 500
+const PHONE_W = 268
+const PHONE_H = 530
 
 function ChatPhone({ companion, active }: { companion: Companion; active: boolean }) {
   const [visibleMessages, setVisibleMessages] = useState<Set<string>>(new Set())
@@ -305,7 +305,7 @@ export function DualCompanionChat() {
 
           {/* Phones */}
           <div style={{
-            display: 'flex', flexWrap: 'wrap', gap: '48px',
+            display: 'flex', flexWrap: 'wrap', gap: '88px',
             justifyContent: 'center', alignItems: 'center',
           }}>
             {/* Rex */}
