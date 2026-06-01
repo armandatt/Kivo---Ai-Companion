@@ -3,6 +3,7 @@ import { cookies } from "next/headers"
 import Sidebar from "@/components/dashboard/sidebar"
 import TopBar from "@/components/dashboard/topbar"
 import BottomNav from "@/components/dashboard/bottom-nav"
+import WelcomeSplash from "@/components/dashboard/welcome-splash"
 
 type NavData = {
   user: { name: string | null; email: string; image: string | null }
@@ -52,6 +53,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <>
+      <WelcomeSplash name={user.name ?? null} />
       <div
         style={{
           display: "flex",

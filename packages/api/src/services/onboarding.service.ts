@@ -120,7 +120,14 @@ export async function handleOnboardingMessage(input: {
       },
     });
 
-    const reply = `${acknowledgement}\n\nI’m ${personaLabel(persona)}. Not here to decorate your life. Here to notice what you keep avoiding.\n\n${QUESTIONS.creature_type}`;
+    const reply = `${acknowledgement}\n\nYour companion is ${personaLabel(persona)}. Not here to decorate your life — here to notice what you keep avoiding.\n\nNow, something stands beside you on this path. It evolves as you stay consistent.\n\n— Select your creature —\n\n${QUESTIONS.creature_type}`;
+    await saveAssistantOnboardingMessage(input.platformChatId, reply);
+    return { handled: true, reply };
+  }
+
+  // Enforce min 6-character creature name
+  if (step === "creature_name" && !isSkip(normalizedAnswer) && normalizedAnswer.length < 6) {
+    const reply = `That’s too short. Your creature deserves a real name — give it at least 6 characters.`;
     await saveAssistantOnboardingMessage(input.platformChatId, reply);
     return { handled: true, reply };
   }
@@ -203,9 +210,9 @@ async function completeOnboarding(
   ]);
 
   const reply = [
-    `${creatureName}. That’s what we’re building this around. I’ll remember that.`,
-    `I’ll show up tomorrow at ${preferredCheckInTime}.`,
-    `This is where ${creatureName} is right now. Come back tomorrow.`,
+    `${creatureName}.`,
+    `Remember that name. It’s not decoration — it’s a marker. Every time you follow through, ${creatureName} grows. Every time you don’t, it waits.`,
+    `I’ll be here tomorrow at ${preferredCheckInTime}. This is where ${creatureName} starts.`,
   ].join("\n\n");
 
   return { reply };
@@ -249,7 +256,7 @@ function buildAcknowledgement(step: OnboardingStep, answer: string) {
   }
 
   if (step === "creature_name") {
-    return `${shorten(answer)}. There it is.`;
+    return `${shorten(answer)}.\n\nHold that name. That's who you're building this for.`;
   }
 
   return "Got it.";
