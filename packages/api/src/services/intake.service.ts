@@ -155,47 +155,86 @@ async function routeStep(
 async function handleNotStarted(user: IntakeUser, profile: WebProfile, chatId: string): Promise<string> {
   await updateIntake(user.id, "path_select", {}, [])
 
-  const creature = profile.creatureName || user.creatureName || "your companion"
-  const goal = profile.primaryGoal30d || "something important"
-  const pain = profile.corePain || "the thing you keep not doing"
+  const persona  = profile.persona || user.persona || "nova"
+  const creature = profile.creatureName || user.creatureName || null
+  // Only use goal/pain if they are real values, not the generic fallbacks
+  const goal = (profile.primaryGoal30d && profile.primaryGoal30d !== "something important")
+    ? profile.primaryGoal30d : null
+  const pain = (profile.corePain && profile.corePain !== "the thing you keep not doing")
+    ? profile.corePain : null
 
-  return `${creature} brought me here.
+  const pathQ = "Gym and fitness, studying and work, or both? Pick one."
 
-I already know a bit about you — you want to ${goal}, and the thing you keep not doing is ${pain}.
+  if (persona === "rex" || persona === "spark") {
+    const creatureLine = creature ? `${creature} sent me.` : "I'm here."
+    const goalLine     = goal ? `You want ${goal}.` : "You have a goal. Let's make it concrete."
+    const painLine     = pain ? `And ${pain} keeps getting in the way.` : ""
+    return [creatureLine, goalLine, painLine, `\nNo warm-up. A few direct questions and we'll have something to work with.\n\n${pathQ}`]
+      .filter(Boolean).join(" ")
+  }
 
-Before I can actually help, I need to understand your situation properly. Going to ask you a few things. Answer honestly — the more real you are, the more useful I'll be.
+  if (persona === "zen") {
+    const creatureLine = creature ? `${creature} brought me here.` : "Something brought you here."
+    const goalLine     = goal ? `You're working toward ${goal}.` : "You have something you're working toward."
+    const painLine     = pain ? `And ${pain} keeps pulling you back.` : ""
+    return [creatureLine, goalLine, painLine, `\nBefore I can be useful, I need to understand where you actually are. A few questions — answer from what's real, not what sounds good.\n\n${pathQ}`]
+      .filter(Boolean).join(" ")
+  }
 
-First: what are we actually working on together — gym and fitness, studying and work, or both?`
+  // Nova / default
+  const creatureLine = creature ? `${creature} brought me here.` : "I'm here."
+  const goalLine     = goal ? `I already know you want ${goal}.` : "I'm here to help you build something real."
+  const painLine     = pain ? `And the thing that keeps getting in the way is ${pain}.` : ""
+  return [creatureLine, goalLine, painLine, `\nBefore I can actually help, I need to understand your situation. Going to ask you a few things. The more honest you are, the more useful I'll be.\n\n${pathQ}`]
+    .filter(Boolean).join("\n\n")
 }
 
 async function handlePathSelect(
   text: string, answers: IntakeAnswers, user: IntakeUser, profile: WebProfile, chatId: string
 ): Promise<string> {
   const t = text.toLowerCase()
-  const wantsGym = /\b(gym|fitness|training|workout|lift|body|muscle|weight|health|sport)\b/.test(t)
-  const wantsStudy = /\b(study|learn|exam|work|career|course|skills?|job|placement|coding|programming|degree|college|school)\b/.test(t)
+
+  // Broad gym signal — includes physique/body transformation language
+  const wantsGym = /\b(gym|fitness|training|workout|lift|lifting|body|muscle|weight|health|sport|physique|bulk|cut|lean|recomp|stronger|athletic|exercise|cardio|abs|gains|transform|best version|get fit|lose weight|gain|build muscle|fat loss|shred)\b/.test(t)
+
+  // Broad study/work signal
+  const wantsStudy = /\b(study|learn|exam|work|career|course|skill|job|placement|coding|programming|degree|college|school|prep|competitive|dsa|leetcode|interview|project|startup|business)\b/.test(t)
+
   const wantsBoth = wantsGym && wantsStudy
+
+  // If the message is off-topic (a question, a greeting, unclear) — re-ask.
+  // Never default to "general" just because keywords weren't found.
+  const looksOffTopic =
+    !wantsGym && !wantsStudy &&
+    (t.split(/\s+/).length <= 8 ||
+      /^(what|who|where|when|how|why|is|are|can|do|did|will|would|could|tell|hi|hey|hello|yo|ok|okay)\b/i.test(text.trim()))
+
+  if (looksOffTopic || (!wantsGym && !wantsStudy)) {
+    // Stay on path_select — don't advance the step
+    return `I need to know what we're working on first.\n\nGym and fitness, studying and work, or both? Pick one.`
+  }
 
   let modules: string[]
   let firstStep: IntakeStep
   let reply: string
 
+  const q = gymQ(user.persona)
+  const isRex = user.persona === "rex" || user.persona === "spark"
+
   if (wantsBoth) {
     modules = ["gym", "study"]
     firstStep = "ga1"
-    reply = `Both. Good — that means we're building the full picture.\n\nLet's start with gym since it's the most structured part.\n\n${GYM_Q.ga1}`
+    reply = isRex
+      ? `Both. Gym first — it's the most structured.\n\n${q.ga1}`
+      : `Both. Good — that means we're building the full picture.\n\nLet's start with gym since it's the most structured part.\n\n${q.ga1}`
   } else if (wantsGym) {
     modules = ["gym"]
     firstStep = "ga1"
-    reply = `Gym it is.\n\n${GYM_Q.ga1}`
-  } else if (wantsStudy) {
+    reply = isRex ? `Gym.\n\n${q.ga1}` : `Gym it is.\n\n${q.ga1}`
+  } else {
     modules = ["study"]
     firstStep = "sb1"
-    reply = `Study and work mode.\n\n${STUDY_Q.sb1}`
-  } else {
-    modules = ["general"]
-    firstStep = "gn1"
-    reply = `General. We'll figure out the shape of things.\n\n${GENERAL_Q.gn1}`
+    reply = isRex ? `Study and work.\n\n${STUDY_Q.sb1}` : `Study and work mode.\n\n${STUDY_Q.sb1}`
   }
 
   await updateIntake(user.id, firstStep, answers, modules)
@@ -209,26 +248,27 @@ async function handleGa1(text: string, answers: IntakeAnswers, user: IntakeUser,
   answers.gym_goal = goal
   const needsTarget = goal === "bulk" || goal === "cut" || goal === "recomp"
   const next: IntakeStep = needsTarget ? "ga1_target" : "ga2_weight"
+  const q = gymQ(user.persona)
   await updateIntake(user.id, next, answers)
 
   const ack = {
-    bulk: "Building. Got it.",
-    cut: "Cutting. Clear.",
-    strength: "Strength. That's a number-driven goal — I like it.",
-    habit: "Consistency first. That's actually the hardest one.",
-    recomp: "Recomp. Ambitious, but doable with the right structure.",
+    bulk:     "Building.",
+    cut:      "Cutting.",
+    strength: "Strength.",
+    habit:    "Consistency.",
+    recomp:   "Recomp.",
   }[goal] ?? "Got it."
 
   if (needsTarget) {
-    return `${ack}\n\nGive me a rough target — where do you want to be in 3 months? Weight, lift number, whatever feels right.`
+    return `${ack} Give me a target — where do you want to be in 3 months? Weight, lift number, whatever.`
   }
-  return `${ack}\n\n${GYM_Q.ga2_weight}`
+  return `${ack}\n\n${q.ga2_weight}`
 }
 
 async function handleGa1Target(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
   answers.gym_target_3m = text
   await updateIntake(user.id, "ga2_weight", answers)
-  return `${text}. I've got that locked.\n\n${GYM_Q.ga2_weight}`
+  return `Locked.\n\n${gymQ(user.persona).ga2_weight}`
 }
 
 async function handleGa2Weight(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
@@ -243,13 +283,13 @@ async function handleGa2Weight(text: string, answers: IntakeAnswers, user: Intak
     answers.protein_target_g = "160"
   }
   await updateIntake(user.id, "ga2_exp", answers)
-  return `Noted.\n\n${GYM_Q.ga2_exp}`
+  return `Noted.\n\n${gymQ(user.persona).ga2_exp}`
 }
 
 async function handleGa2Exp(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
   answers.training_experience = classifyTrainingExp(text)
   await updateIntake(user.id, "ga3", answers)
-  return `${ackExp(answers.training_experience)}\n\n${GYM_Q.ga3}`
+  return `${ackExp(answers.training_experience)}\n\n${gymQ(user.persona).ga3}`
 }
 
 async function handleGa3(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
@@ -257,43 +297,44 @@ async function handleGa3(text: string, answers: IntakeAnswers, user: IntakeUser,
   answers.current_split = split
   const needsDays = split === "unstructured" || split === "none"
   const next: IntakeStep = needsDays ? "ga3_days" : "ga4"
+  const q = gymQ(user.persona)
   await updateIntake(user.id, next, answers)
 
   const acks: Record<string, string> = {
-    PPL: "PPL. Solid structure.",
-    upper_lower: "Upper/lower. Good balance.",
-    bro_split: "Bro split. We can work with that.",
-    full_body: "Full body. Efficient.",
-    unstructured: "No fixed structure right now.",
-    none: "Starting from scratch.",
+    PPL:         "PPL.",
+    upper_lower: "Upper/lower.",
+    bro_split:   "Bro split.",
+    full_body:   "Full body.",
+    unstructured:"No structure yet.",
+    none:        "Starting fresh.",
   }
   const ack = acks[split] ?? "Got it."
 
   if (needsDays) {
-    return `${ack}\n\nHow many days a week can you actually train? Not the ideal number — the real number.`
+    return `${ack} How many days a week can you actually train? Real number.`
   }
-  return `${ack}\n\n${GYM_Q.ga4}`
+  return `${ack}\n\n${q.ga4}`
 }
 
 async function handleGa3Days(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
   const days = parseInt(text.match(/\d/)?.[0] || "3")
   answers.available_training_days = String(Math.min(Math.max(days, 1), 7))
   await updateIntake(user.id, "ga4", answers)
-  return `${answers.available_training_days} days. Real number. That's what we build around.\n\n${GYM_Q.ga4}`
+  return `${answers.available_training_days} days. That's what we build around.\n\n${gymQ(user.persona).ga4}`
 }
 
 async function handleGa4(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
   const time = parseTimeString(text) || text.trim()
   answers.gym_session_time = time
   await updateIntake(user.id, "ga5_diet", answers)
-  return `${time}. Pre-session cue and post-session check-in will run around that.\n\n${GYM_Q.ga5_diet}`
+  return `${time}. Pre-session cue and post-session check-in will run around that.\n\n${gymQ(user.persona).ga5_diet}`
 }
 
 async function handleGa5Diet(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
   const t = text.toLowerCase()
   answers.diet_type = /\bvegan\b/.test(t) ? "vegan" : /\bveg\b|vegetarian/.test(t) ? "veg" : "non_veg"
   await updateIntake(user.id, "ga5_track", answers)
-  return `Got it.\n\n${GYM_Q.ga5_track}`
+  return `Got it.\n\n${gymQ(user.persona).ga5_track}`
 }
 
 async function handleGa5Track(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
@@ -304,7 +345,7 @@ async function handleGa5Track(text: string, answers: IntakeAnswers, user: Intake
     ? "rough_awareness"
     : "not_tracking"
   await updateIntake(user.id, "ga6", answers)
-  return `Understood.\n\n${GYM_Q.ga6}`
+  return `Got it.\n\n${gymQ(user.persona).ga6}`
 }
 
 async function handleGa6(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
@@ -315,10 +356,8 @@ async function handleGa6(text: string, answers: IntakeAnswers, user: IntakeUser,
   }
   await updateIntake(user.id, "ga7", answers)
 
-  const ack = hasInjury
-    ? `Noted — keeping that out of any programming I give you.`
-    : `Clean. Good.`
-  return `${ack}\n\n${GYM_Q.ga7}`
+  const ack = hasInjury ? `Noted — working around that.` : `Clean.`
+  return `${ack}\n\n${gymQ(user.persona).ga7}`
 }
 
 async function handleGa7(
@@ -505,18 +544,45 @@ async function handleSb8(
 }
 
 // ─── General Path ─────────────────────────────────────────────────────────────
+// These handlers also rescue users who expressed gym/study intent but got here
+// because their path_select response was off-topic.
+
+const GYM_RESCUE_RE   = /\b(gym|fitness|training|workout|lift|body|muscle|weight|physique|bulk|cut|lean|recomp|stronger|athletic|exercise|cardio|gains|transform|best version|get fit|lose weight|gain muscle|build muscle|fat loss|shred)\b/i
+const STUDY_RESCUE_RE = /\b(study|learn|exam|work|career|course|skill|job|placement|coding|programming|degree|college|school|prep|competitive|dsa|leetcode|interview)\b/i
 
 async function handleGn1(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
+  // Rescue: if user is clearly talking about gym or study, switch paths now
+  if (GYM_RESCUE_RE.test(text)) {
+    await updateIntake(user.id, "ga1", answers, ["gym"])
+    return `Gym it is — switching to the right track.\n\n${GYM_Q.ga1}`
+  }
+  if (STUDY_RESCUE_RE.test(text)) {
+    await updateIntake(user.id, "sb1", answers, ["study"])
+    return `Study and work. Got it.\n\n${STUDY_Q.sb1}`
+  }
+
   answers.general_context = text
   await updateIntake(user.id, "gn2", answers)
   return `Got the picture.\n\n${GENERAL_Q.gn2}`
 }
 
 async function handleGn2(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  answers.general_focus_area = text
-  await addToLongTerm(chatId, "goals", text)
+  // Rescue: if they've now mentioned gym/study focus, switch paths
+  if (GYM_RESCUE_RE.test(text)) {
+    await updateIntake(user.id, "ga1", answers, ["gym"])
+    return `Gym. That's what we're building around.\n\n${GYM_Q.ga1}`
+  }
+  if (STUDY_RESCUE_RE.test(text)) {
+    await updateIntake(user.id, "sb1", answers, ["study"])
+    return `Study focus. Let's get into it.\n\n${STUDY_Q.sb1}`
+  }
+
+  // Normalize the text — don't echo the raw input literally
+  const normalizedFocus = text.length > 80 ? text.slice(0, 77).trim() + "..." : text.trim()
+  answers.general_focus_area = normalizedFocus
+  await addToLongTerm(chatId, "goals", normalizedFocus)
   await updateIntake(user.id, "gn3", answers)
-  return `${text}. That's the focus.\n\n${GENERAL_Q.gn3}`
+  return `Got it. That's the focus for the next 30 days.\n\n${GENERAL_Q.gn3}`
 }
 
 async function handleGn3(
@@ -676,6 +742,20 @@ function buildPersonaMessage(persona: string | null, lines: string[]): string {
 
 // ─── Question Templates ───────────────────────────────────────────────────────
 
+// Rex / Spark — short, direct, no hedging
+const REX_GYM_Q = {
+  ga1: "Goal — bulk, cut, strength, or just make it a consistent habit?",
+  ga2_weight: "Weight right now. Just the number.",
+  ga2_exp: "How long have you been training? Beginner, a few months, or been at it for a while?",
+  ga3: "Current split — PPL, upper/lower, bro split, full body, or no structure?",
+  ga4: "What time are you training?",
+  ga5_diet: "Veg or non-veg?",
+  ga5_track: "Tracking food or going by feel?",
+  ga6: "Injuries I need to work around?",
+  ga7: "Last one — why does this actually matter? Not the goal. The real reason underneath it.",
+}
+
+// Nova / Zen / others — full, contextual
 const GYM_Q = {
   ga1: "What's the actual goal right now — building muscle, losing weight, getting stronger, or just making gym a consistent thing?",
   ga2_weight: "What do you weigh right now? Rough number is fine.",
@@ -686,6 +766,12 @@ const GYM_Q = {
   ga5_track: "Are you tracking food at all, or is it more by feel?",
   ga6: "Any injuries or body parts giving you trouble I should know about before I start recommending things?",
   ga7: "Last gym question — why does this actually matter to you? Not the fitness goal. The thing underneath it.",
+}
+
+// Returns the right question set for the given persona
+function gymQ(persona: string | null | undefined): typeof GYM_Q {
+  const p = (persona ?? "nova").toLowerCase()
+  return (p === "rex" || p === "spark") ? REX_GYM_Q : GYM_Q
 }
 
 const STUDY_Q = {
