@@ -6,6 +6,8 @@
   "exports": {
     "./processor/*": "./src/processor/*",
     "./context/*": "./src/context/*",
-    "./services/*": "./src/services/*"
+    "./services/*": "./src/services/*",
+    "./engines/*": "./src/engines/*",
+    "./types/*": "./src/types/*"
   }
 }
