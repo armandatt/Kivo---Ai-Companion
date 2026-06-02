@@ -40,6 +40,19 @@ import { prisma } from "@repo/db/client";
 
 export const runtime = "nodejs";
 
+// ── Rate-limit warning dedup ──────────────────────────────────────────────────
+// Shows the warning at most once per day per user. Resets on process restart,
+// which is fine — Railway restarts are infrequent.
+const rateLimitWarnedToday = new Map<string, string>(); // chatId → "YYYY-MM-DD"
+
+function hasWarnedToday(chatId: string): boolean {
+  const today = new Date().toISOString().slice(0, 10);
+  return rateLimitWarnedToday.get(chatId) === today;
+}
+function markWarned(chatId: string): void {
+  rateLimitWarnedToday.set(chatId, new Date().toISOString().slice(0, 10));
+}
+
 export async function POST(req: Request) {
   try {
     const body   = await req.json();
@@ -134,10 +147,21 @@ export async function POST(req: Request) {
         }
       }
 
-      // ── Abuse/pushback detection — immediate template, no LLM cost ─────────
-      if (/\b(shut up|stfu|fuck (up|off)|bitch|leave me alone|stop (asking|pressing|pushing))\b/i.test(text)) {
-        const reply = "Heard. I'll give you space. Message me when you're ready to move.";
-        await addToShortTerm(chatId.toString(), text,  { role: "user",      intent: processed.intent, emotion: processed.emotion });
+      // ── Pushback / "leave me alone" detection ────────────────────────────────
+      // Catches: "shut the fuck up", "shut up", "stfu", "let me work",
+      //          "leave me alone", "stop asking", "bruv i said", "i said stop", etc.
+      const isPushback =
+        /\bshut\b.{0,15}\bup\b/i.test(text) ||             // "shut up", "shut the fuck up"
+        /\b(stfu|gtfo)\b/i.test(text) ||
+        /\blet me (work|focus|study|be|do my thing)\b/i.test(text) ||
+        /\bleave me (alone|be)\b/i.test(text) ||
+        /\b(stop (asking|pressing|pushing|bothering|messaging))\b/i.test(text) ||
+        /\bi (already |just )?said (shut|stop|leave|let me)\b/i.test(text) ||
+        /\bbruv i said\b/i.test(text);
+
+      if (isPushback) {
+        const reply = "Heard. I'll give you space.";
+        await addToShortTerm(chatId.toString(), text, { role: "user", intent: processed.intent, emotion: processed.emotion });
         await sendAndRemember(chatId, reply, "general_chat", "neutral");
         return Response.json({ ok: true });
       }
@@ -226,8 +250,9 @@ export async function POST(req: Request) {
 
       let reply = result.reply;
 
-      // Rate limit soft warning
-      if (rateLimit.warning) {
+      // Rate limit soft warning — shown at most once per day per user
+      if (rateLimit.warning && !hasWarnedToday(chatId.toString())) {
+        markWarned(chatId.toString());
         reply = `${reply}\n\nYou're close to today's free message limit, so I may slow down soon.`;
       }
 

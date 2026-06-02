@@ -452,7 +452,7 @@ function buildMinimalContext(state: MentorState): UserContext {
 // Strips banned phrases, enforces question budget.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function validateResponse(reply: string, memory: MemoryContext): string {
+function validateResponse(reply: string, memory: MemoryContext, userText: string): string {
   let out = reply;
 
   for (const phrase of BANNED_PHRASES) {
@@ -460,13 +460,18 @@ function validateResponse(reply: string, memory: MemoryContext): string {
     out = out.replace(new RegExp(escaped, "g"), "").trim();
   }
 
-  // Question budget: strip trailing question if last assistant reply also had one
-  if (memory.lastAssistantMessage?.includes("?") && out.includes("?")) {
+  const lastBotHadQuestion = memory.lastAssistantMessage?.includes("?") ?? false;
+  // Short user replies (≤ 3 words) answering a bot question mean: don't ask again.
+  // e.g. user says "dev" or "yeah" or "not yet" — they want direction, not interrogation.
+  const userRepliedShort = userText.trim().split(/\s+/).length <= 3;
+
+  if ((lastBotHadQuestion || userRepliedShort) && out.includes("?")) {
     const stripped = out.replace(/\s*[^.!?\n]*\?\s*$/, "").trim();
     if (stripped) out = stripped;
   }
 
-  return out.trim() || "Keep moving. What's the next thing on your list?";
+  // Never end with an empty fallback that contains a question (ironic after stripping)
+  return out.trim() || "Keep moving.";
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -725,7 +730,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   }
 
   // ── Stage 10: Validate response ──────────────────────────────────────────────
-  reply = validateResponse(reply, memory);
+  reply = validateResponse(reply, memory, input.text);
   diag.stagesRun.push("validate");
 
   // ── Stage 11: Persist turn (non-blocking) ────────────────────────────────────
