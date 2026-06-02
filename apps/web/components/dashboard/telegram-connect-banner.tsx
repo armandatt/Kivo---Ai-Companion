@@ -3,25 +3,31 @@
 import { useState } from "react"
 
 export default function TelegramConnectBanner() {
-  const [loading, setLoading] = useState(false)
-  const [connected, setConnected] = useState(false)
+  const [loading, setLoading]   = useState(false)
+  const [deeplink, setDeeplink] = useState<string | null>(null)
+  const [error, setError]       = useState<string | null>(null)
 
   const handleConnect = async () => {
     setLoading(true)
+    setError(null)
     try {
       const res = await fetch("/api/telegram/generate-token", { method: "POST" })
-      if (!res.ok) return
+      if (!res.ok) {
+        setError("Couldn't generate link. Try again.")
+        return
+      }
       const data = (await res.json()) as { deeplink?: string }
       if (data.deeplink) {
-        window.open(data.deeplink, "_blank", "noopener,noreferrer")
-        setConnected(true)
+        setDeeplink(data.deeplink)
+      } else {
+        setError("No link returned. Try again.")
       }
+    } catch {
+      setError("Something went wrong. Try again.")
     } finally {
       setLoading(false)
     }
   }
-
-  if (connected) return null
 
   return (
     <div
@@ -59,30 +65,54 @@ export default function TelegramConnectBanner() {
             Connect your Telegram companion
           </p>
           <p style={{ margin: "3px 0 0", fontSize: "12px", color: "#888888", lineHeight: 1.4 }}>
-            Get daily check-ins, track goals, and chat with your companion directly in Telegram.
+            {error
+              ? <span style={{ color: "#EF4444" }}>{error}</span>
+              : "Get daily check-ins, track goals, and chat with your companion directly in Telegram."}
           </p>
         </div>
       </div>
-      <button
-        onClick={handleConnect}
-        disabled={loading}
-        style={{
-          padding: "9px 20px",
-          borderRadius: "20px",
-          backgroundColor: "#00F5A0",
-          color: "#0D0D0D",
-          border: "none",
-          fontSize: "13px",
-          fontWeight: 700,
-          cursor: loading ? "not-allowed" : "pointer",
-          opacity: loading ? 0.7 : 1,
-          whiteSpace: "nowrap",
-          flexShrink: 0,
-          transition: "opacity 0.15s",
-        }}
-      >
-        {loading ? "Opening..." : "Connect Telegram →"}
-      </button>
+
+      {deeplink ? (
+        <a
+          href={deeplink}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            padding: "9px 20px",
+            borderRadius: "20px",
+            backgroundColor: "#00F5A0",
+            color: "#0D0D0D",
+            fontSize: "13px",
+            fontWeight: 700,
+            textDecoration: "none",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+          }}
+        >
+          Open Telegram →
+        </a>
+      ) : (
+        <button
+          onClick={handleConnect}
+          disabled={loading}
+          style={{
+            padding: "9px 20px",
+            borderRadius: "20px",
+            backgroundColor: "#00F5A0",
+            color: "#0D0D0D",
+            border: "none",
+            fontSize: "13px",
+            fontWeight: 700,
+            cursor: loading ? "not-allowed" : "pointer",
+            opacity: loading ? 0.7 : 1,
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+            transition: "opacity 0.15s",
+          }}
+        >
+          {loading ? "Getting link…" : "Connect Telegram →"}
+        </button>
+      )}
     </div>
   )
 }

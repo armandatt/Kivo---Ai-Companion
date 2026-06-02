@@ -127,26 +127,23 @@ export default function TopBar({
       <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
         {/* Messenger buttons — desktop only */}
         <div className="kevo-desktop-only" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-          {onlyWhatsapp ? (
+          {/* Only show platform buttons when already connected — connect CTA lives on the home banner */}
+          {onlyWhatsapp && (
             <PlatformButton href="https://wa.me/" label="Open WhatsApp" primary />
-          ) : showBothButtons ? (
+          )}
+          {showBothButtons && (
             <>
               <PlatformButton
-                label={isGeneratingTelegramLink ? "Preparing..." : "Telegram"}
+                label={isGeneratingTelegramLink ? "Preparing..." : "Open Telegram →"}
                 onClick={handleTelegramClick}
                 primary
               />
               <PlatformButton href="https://wa.me/" label="WhatsApp" />
             </>
-          ) : (
+          )}
+          {!onlyWhatsapp && !showBothButtons && telegramConnected && (
             <PlatformButton
-              label={
-                isGeneratingTelegramLink
-                  ? "Preparing..."
-                  : telegramConnected
-                    ? "Open Telegram →"
-                    : "Connect Telegram →"
-              }
+              label={isGeneratingTelegramLink ? "Preparing..." : "Open Telegram →"}
               onClick={handleTelegramClick}
               primary
             />
