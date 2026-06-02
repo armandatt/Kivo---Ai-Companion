@@ -3,6 +3,30 @@ import { getMemory } from "./memory.service";
 import { getUpcomingDeadlines } from "./deadline.service";
 import { getUser, type CompanionVisitKind } from "./user.service";
 
+export async function generateDynamicCheckIn(userId: string) {
+  const plan = await getPlan(userId);
+  const memory = await getMemory(userId);
+  const deadlines = await getUpcomingDeadlines(userId);
+  const user = await getUser(userId);
+
+  const name = user.name && user.name !== "there" ? user.name : null;
+  const activeGoal = memory.longTerm.goals?.[0];
+  const deadlineLine = deadlines[0] ? `Nearest: ${deadlines[0].title}.` : null;
+  const recentUserLine = getLastUserLine(memory.shortTerm || []);
+  const planLines = plan ? plan.split("\n").filter(Boolean).slice(0, 3) : [];
+
+  const lines = [
+    name ? `Check-in, ${name}.` : "Check-in.",
+    recentUserLine ? `Last I heard: "${recentUserLine}"` : null,
+    activeGoal ? `Still moving this: ${activeGoal}?` : "What's the current focus?",
+    planLines[0] ? `Next piece: ${planLines[0]}` : null,
+    deadlineLine,
+    "One honest line.",
+  ];
+
+  return lines.filter(Boolean).join("\n");
+}
+
 export async function generateCheckIn(userId: string) {
   const plan = await getPlan(userId);
   const memory = await getMemory(userId);

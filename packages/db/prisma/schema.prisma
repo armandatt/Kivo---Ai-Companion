@@ -74,6 +74,9 @@ model MessengerUser {
   intakeAnswers       Json?
   activeModules       String[]
 
+  nextCheckInAt       DateTime?
+  checkInIntervalMin  Int?
+
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 

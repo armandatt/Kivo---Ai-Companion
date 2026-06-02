@@ -37,6 +37,14 @@ export async function runDecisionEngine(input: {
     };
   }
 
+  if (intent === "checkin_schedule") {
+    return { type: "checkin_schedule", reply: null };
+  }
+
+  if (intent === "checkin_cancel") {
+    return { type: "checkin_cancel", reply: null };
+  }
+
   if (intent === "rest_day") {
     return {
       type: "direct",

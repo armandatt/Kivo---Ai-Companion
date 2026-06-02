@@ -196,6 +196,43 @@ function addMinutes(time: string, minutesToAdd: number) {
   return `${String(nextHours).padStart(2, "0")}:${String(nextMinutes).padStart(2, "0")}`;
 }
 
+export async function getUsersDueForDynamicCheckIn(now: Date) {
+  const windowStart = new Date(now.getTime() - 6 * 60 * 1000);
+  try {
+    return await prisma.messengerUser.findMany({
+      where: {
+        platform: "telegram",
+        nextCheckInAt: {
+          lte: now,
+          gte: windowStart,
+        },
+      },
+      select: {
+        platformChatId: true,
+        checkInIntervalMin: true,
+        nextCheckInAt: true,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to load dynamic check-in users:", error);
+    return [];
+  }
+}
+
+export async function advanceDynamicCheckIn(
+  platformChatId: string,
+  intervalMin: number | null,
+  now: Date
+) {
+  await prisma.messengerUser.updateMany({
+    where: { platform: "telegram", platformChatId },
+    data: {
+      nextCheckInAt: intervalMin ? new Date(now.getTime() + intervalMin * 60 * 1000) : null,
+      checkInIntervalMin: intervalMin ?? null,
+    },
+  });
+}
+
 export async function updateUserProfile(
   userId: string,
   input: {

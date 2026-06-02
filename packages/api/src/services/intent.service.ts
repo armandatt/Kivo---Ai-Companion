@@ -9,6 +9,23 @@ export function detectIntent(text: string): string {
   if (/\b(skipped today|didn'?t go|missed my workout|missed workout|skipped workout)\b/.test(text)) return "missed_session";
   if (/\b(i weigh|current weight|weighing)\b.*\d+|\b\d+(\.\d+)?\s*kg\b/.test(text)) return "weight_log";
   if (/\b(feeling flat|no energy|feeling great|low energy|tired today|energized)\b/.test(text)) return "energy_checkin";
+
+  // Cancel a scheduled check-in — must come before schedule patterns
+  if (
+    /\b(stop|cancel|disable|turn off)\b/.test(text) &&
+    /\b(check.?in|check me|reminders?|updates?|pings?|checking)\b/.test(text)
+  ) return "checkin_cancel";
+  if (/\b(no more (check.?ins?|reminders?|updates?|pings?))\b/.test(text)) return "checkin_cancel";
+
+  // Schedule a proactive check-in: "check every 1 hour", "remind me in 30 min", "update me every hour"
+  if (
+    /\b(check(?: in| on me| me)?|remind me|update me|ping me|keep checking)\b/.test(text) &&
+    /\b(every|in|each)\b/.test(text) &&
+    /\b(\d+\s*(min|mins?|minutes?|hour|hours?|hr|hrs?))\b/.test(text)
+  ) return "checkin_schedule";
+  // "check every hour" without a number
+  if (/\b(check(?: in| on me| me)?|remind me|update me|ping me|keep checking)\b.*\bevery\s+hour\b/.test(text)) return "checkin_schedule";
+
   if (
     (text.includes("push") || text.includes("extend") || text.includes("postpone") || text.includes("delay")) &&
     (text.includes("hour") || text.includes("hr") || text.includes("min") || text.includes("minute"))
