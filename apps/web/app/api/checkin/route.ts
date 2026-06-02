@@ -1,7 +1,7 @@
 //@ts-ignore
-import { generateCompanionVisit } from "@repo/api/services/checkin.service";
+import { generateCompanionVisit, generateDynamicCheckIn } from "@repo/api/services/checkin.service";
 //@ts-ignore
-import { getUsersForCompanionVisitAt } from "@repo/api/services/user.service";
+import { getUsersForCompanionVisitAt, getUsersDueForDynamicCheckIn, advanceDynamicCheckIn } from "@repo/api/services/user.service";
 //@ts-ignore
 import { addToShortTerm } from "@repo/api/services/memory.service";
 //@ts-ignore
@@ -41,6 +41,29 @@ export async function GET() {
         }
     }
 
+    // Dynamic user-requested check-ins (e.g. "check every hour", "remind me in 30 min")
+    const dynamicUsers = await getUsersDueForDynamicCheckIn(now);
+    let dynamicSent = 0;
+    for (const user of dynamicUsers) {
+        const userId = user.platformChatId;
+
+        // Advance (or clear) the schedule first to prevent double-fire
+        await advanceDynamicCheckIn(userId, user.checkInIntervalMin ?? null, now);
+
+        console.log(`[CHECKIN] Dynamic check-in firing for ${userId} (interval: ${user.checkInIntervalMin ?? "one-shot"})`);
+
+        const message = await generateDynamicCheckIn(userId);
+        await sendTelegramMessage(userId, message);
+        await addToShortTerm(userId, message, {
+            role: "assistant",
+            intent: "dynamic_checkin",
+            emotion: "neutral",
+        });
+
+        console.log(`[CHECKIN] Dynamic message sent to ${userId}`);
+        dynamicSent++;
+    }
+
     const gymMessages = await runGymCronJobs(now);
     for (const message of gymMessages) {
         await sendTelegramMessage(message.chatId, message.text);
@@ -51,7 +74,7 @@ export async function GET() {
         });
     }
 
-    return Response.json({ ok: true, sent: users.length + gymMessages.length });
+    return Response.json({ ok: true, sent: users.length + dynamicSent + gymMessages.length });
 }
 
 async function wasVisitSentToday(

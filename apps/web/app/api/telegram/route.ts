@@ -28,6 +28,8 @@ import { generateProgressSummary, generateWeeklyReview } from "@repo/api/service
 import { handleGymMessage } from "@repo/api/services/gym.service";
 //@ts-ignore
 import { handlePostSessionDebriefResponse, resetReengagementFlag } from "@repo/api/services/gymCron.service";
+//@ts-ignore
+import { scheduleCheckIn, cancelCheckIn } from "@repo/api/services/scheduleCheckin.service";
 
 export async function POST(req: Request) {
   try {
@@ -189,6 +191,28 @@ export async function POST(req: Request) {
         role: "assistant",
         intent: processed.intent,
         emotion: processed.emotion,
+      });
+      return Response.json({ ok: true });
+    }
+
+    if (decision.type === "checkin_schedule") {
+      const result = await scheduleCheckIn(chatId.toString(), text);
+      await sendTelegramMessage(chatId, result.reply);
+      await addToShortTerm(chatId.toString(), result.reply, {
+        role: "assistant",
+        intent: "checkin_schedule",
+        emotion: "neutral",
+      });
+      return Response.json({ ok: true });
+    }
+
+    if (decision.type === "checkin_cancel") {
+      const result = await cancelCheckIn(chatId.toString());
+      await sendTelegramMessage(chatId, result.reply);
+      await addToShortTerm(chatId.toString(), result.reply, {
+        role: "assistant",
+        intent: "checkin_cancel",
+        emotion: "neutral",
       });
       return Response.json({ ok: true });
     }
