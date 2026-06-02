@@ -23,22 +23,36 @@ type CompanionVisitKind =
 
 export async function GET() {
     const now = new Date();
+    console.log(`[CHECKIN] Cron fired at ${now.toISOString()}`);
+
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    if (!token) {
+        console.error("[CHECKIN] TELEGRAM_BOT_TOKEN is not set — cron will not send any messages");
+        return Response.json({ ok: false, error: "TELEGRAM_BOT_TOKEN missing" }, { status: 500 });
+    }
 
     const users = await getUsersForCompanionVisitAt(now);
+    console.log(`[CHECKIN] Fixed daily visits due: ${users.length}`);
 
     for (const user of users) {
         const userId = user.platformChatId;
+        const alreadySent = await wasVisitSentToday(userId, user.visitKind, now);
 
-        if (!(await wasVisitSentToday(userId, user.visitKind, now))) {
-            const message = await generateCompanionVisit(userId, user.visitKind);
-
-            await sendTelegramMessage(userId, message);
-            await addToShortTerm(userId, message, {
-                role: "assistant",
-                intent: user.visitKind,
-                emotion: "neutral",
-            });
+        if (alreadySent) {
+            console.log(`[CHECKIN] Skipping ${userId} (${user.visitKind}) — already sent today`);
+            continue;
         }
+
+        console.log(`[CHECKIN] Sending ${user.visitKind} to ${userId}`);
+        const message = await generateCompanionVisit(userId, user.visitKind);
+
+        await sendTelegramMessage(userId, message);
+        await addToShortTerm(userId, message, {
+            role: "assistant",
+            intent: user.visitKind,
+            emotion: "neutral",
+        });
+        console.log(`[CHECKIN] Sent ${user.visitKind} to ${userId}`);
     }
 
     // Dynamic user-requested check-ins (e.g. "check every hour", "remind me in 30 min")
