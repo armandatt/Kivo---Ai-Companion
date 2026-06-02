@@ -1,6 +1,9 @@
 import { prisma } from "@repo/db/client";
 
-const MIN_INTERVAL_MIN = 15;
+// Minimum interval enforced to prevent spam
+const MIN_INTERVAL_MIN = 10;
+// Maximum interval (24 hours — beyond that, use the companion visit schedule instead)
+const MAX_INTERVAL_MIN = 24 * 60;
 
 export async function scheduleCheckIn(platformChatId: string, text: string) {
   const parsed = parseCheckInRequest(text);
@@ -8,7 +11,7 @@ export async function scheduleCheckIn(platformChatId: string, text: string) {
   if (!parsed) {
     return {
       scheduled: false,
-      reply: "I can't schedule that — I didn't catch a time. Try: 'check me in 30 minutes' or 'check every hour'.",
+      reply: "I didn't catch a time. Try: 'check me in 30 minutes', 'text me after 1 hour', or 'remind me every 2 hours'.",
     };
   }
 
@@ -17,7 +20,14 @@ export async function scheduleCheckIn(platformChatId: string, text: string) {
   if (intervalMin < MIN_INTERVAL_MIN) {
     return {
       scheduled: false,
-      reply: `I won't check in more than once every ${MIN_INTERVAL_MIN} minutes. Set a longer interval.`,
+      reply: `Minimum interval is ${MIN_INTERVAL_MIN} minutes. Set a longer time.`,
+    };
+  }
+
+  if (intervalMin > MAX_INTERVAL_MIN) {
+    return {
+      scheduled: false,
+      reply: `That's over 24 hours. Use a check-in interval of up to 24 hours.`,
     };
   }
 
@@ -35,13 +45,13 @@ export async function scheduleCheckIn(platformChatId: string, text: string) {
   });
 
   const timeDesc = formatDuration(intervalMin);
-
   const reply = isRepeating
-    ? `Scheduled. I'll check in every ${timeDesc}. Say "stop checking in" to cancel.`
-    : `Got it. I'll check in ${timeDesc} from now.`;
+    ? `Scheduled. I'll check in every ${timeDesc}. Say "stop check-ins" to cancel.`
+    : `Got it. I'll follow up ${timeDesc} from now.`;
 
   console.log(
-    `[SCHEDULE] ${platformChatId}: nextCheckInAt=${nextCheckInAt.toISOString()}, interval=${isRepeating ? intervalMin + "min repeating" : "one-shot"}`
+    `[SCHEDULE] ${platformChatId}: nextCheckInAt=${nextCheckInAt.toISOString()}, ` +
+    `interval=${isRepeating ? `${intervalMin}min repeating` : "one-shot"}`
   );
 
   return { scheduled: true, reply };
@@ -49,43 +59,53 @@ export async function scheduleCheckIn(platformChatId: string, text: string) {
 
 export async function cancelCheckIn(platformChatId: string) {
   await prisma.messengerUser.updateMany({
-    where: {
-      platform: "telegram",
-      platformChatId,
-    },
-    data: {
-      nextCheckInAt: null,
-      checkInIntervalMin: null,
-    },
+    where: { platform: "telegram", platformChatId },
+    data: { nextCheckInAt: null, checkInIntervalMin: null },
   });
 
   console.log(`[SCHEDULE] ${platformChatId}: check-in schedule cleared`);
   return { reply: "Done. No more scheduled check-ins." };
 }
 
+// ── Parser ────────────────────────────────────────────────────────────────────
+// Handles: "in X min", "after X min", "every X min", "every hour",
+//          "in an hour", "half an hour", bare "30 min", etc.
+
 function parseCheckInRequest(text: string): { intervalMin: number; isRepeating: boolean } | null {
   const lower = text.toLowerCase();
 
   const isRepeating =
-    /\b(every|each|keep checking|repeatedly)\b/.test(lower) ||
-    /check(?: in| on me| me)?\s+every\b/.test(lower);
+    /\b(every|each|keep checking|repeatedly|keep reminding|always)\b/.test(lower) ||
+    /\b(check|remind|text|message|ping|update)\b.{0,20}\bevery\b/.test(lower);
 
-  const hourMatch = lower.match(/\b(\d{1,2})\s*(?:hour|hours?|hr|hrs?)\b/);
+  // Hours — e.g. "2 hours", "1 hr", "in 1 hour", "every 2h"
+  const hourMatch = lower.match(/\b(\d{1,2})\s*(?:hours?|hrs?|h)\b/);
   if (hourMatch) {
     return { intervalMin: Number(hourMatch[1]) * 60, isRepeating };
   }
 
-  const minuteMatch = lower.match(/\b(\d{1,3})\s*(?:min|mins?|minutes?)\b/);
+  // "every hour" / "in an hour" / "after an hour"
+  if (/\b(in|after|every)\s+an?\s+hour\b/.test(lower)) {
+    return { intervalMin: 60, isRepeating: /\bevery\b/.test(lower) };
+  }
+
+  // Half an hour
+  if (/\bhalf\s+an?\s+hour\b/.test(lower)) {
+    return { intervalMin: 30, isRepeating: false };
+  }
+
+  // Minutes — e.g. "30 min", "20 minutes", "after 15 mins"
+  const minuteMatch = lower.match(/\b(\d{1,3})\s*(?:mins?|minutes?|m)\b/);
   if (minuteMatch) {
     return { intervalMin: Number(minuteMatch[1]), isRepeating };
   }
 
-  if (/every\s+hour\b/.test(lower) || /\bin\s+an?\s+hour\b/.test(lower)) {
-    return { intervalMin: 60, isRepeating: /every/.test(lower) };
-  }
-
-  if (/half\s+an?\s+hour/.test(lower)) {
-    return { intervalMin: 30, isRepeating: false };
+  // Bare number with no unit at sentence boundary, e.g. "after 30"
+  const bareMatch = lower.match(/\b(?:in|after|every)\s+(\d{1,3})\b(?!\s*(?:hours?|hrs?|h|mins?|minutes?|m))/);
+  if (bareMatch) {
+    const n = Number(bareMatch[1]);
+    // Treat numbers ≤ 90 as minutes, larger as minutes too (ambiguous, but reasonable)
+    return { intervalMin: n, isRepeating };
   }
 
   return null;

@@ -1,6 +1,9 @@
 import { prisma } from "@repo/db/client";
 import { processMessage } from "../processor/messageProcessor";
 import { addToShortTerm } from "../services/memory.service";
+import { savePlan } from "../services/planner.service";
+import { generateEngineResponse } from "../services/llm";
+import type { EngineContext } from "../services/llm";
 import {
   getMentorState,
   updateMentorState,
@@ -20,8 +23,6 @@ import { generatePlan, summarizePlan } from "./planner-engine";
 import type { PlannerInput, PlannerResult } from "./planner-engine";
 import { resolveIntervention } from "./intervention-engine";
 import type { InterventionInput, InterventionResult } from "./intervention-engine";
-import { generateOpenAIText } from "../services/openai.service";
-import { getPersona } from "../services/personna.service";
 import type { PersonaType } from "../services/personna.service";
 import type {
   ConversationAnalysis,
@@ -63,6 +64,9 @@ export interface OrchestratorInput {
   text: string;
   platform: "telegram" | "whatsapp" | "web";
   timestamp?: Date;
+  /** "full" saves both user + assistant (standalone use).
+   *  "reply_only" skips user message save — use when the caller already saved it. */
+  persistMode?: "full" | "reply_only";
 }
 
 export interface ScheduledAction {
@@ -440,109 +444,8 @@ function buildMinimalContext(state: MentorState): UserContext {
   return { memory, state, persona: FALLBACK_PERSONA, isFirstSession: true, messageCountToday: 0, tonePreference: DEFAULT_TONE };
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// SYSTEM PROMPT BUILDER
-// Assembles a cost-efficient, context-rich system prompt from all engine outputs.
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function buildSystemPrompt(args: {
-  analysis:     ConversationAnalysis;
-  memory:       MemoryContext;
-  state:        MentorState;
-  personaType:  PersonaType;
-  decision:     MentorDecision;
-  patterns:     PatternAnalysis;
-  intervention: InterventionResult | null;
-  plan:         PlannerResult | null;
-  feasibility:  FeasibilityResult | null;
-}): string {
-  const { analysis, memory, state, personaType, decision, patterns, intervention, plan, feasibility } = args;
-  const persona = getPersona(personaType);
-  const lines: string[] = [];
-
-  // Persona
-  lines.push(`You are Kivo, an AI accountability companion. Stay in character at all times.\n`);
-  lines.push(`PERSONA — ${persona.name.toUpperCase()}`);
-  lines.push(persona.voice);
-
-  // Mentor decision directive
-  lines.push(`\nMENTOR DIRECTIVE`);
-  lines.push(`Action: ${decision.action}/${decision.subAction}`);
-  lines.push(`Tone: ${decision.tone} | Urgency: ${decision.urgency}`);
-  if (decision.contextHints.length > 0) {
-    lines.push(`Hints: ${decision.contextHints.join(" | ")}`);
-  }
-
-  // User state
-  lines.push(`\nUSER STATE (0-100)`);
-  lines.push(`capacity:${state.capacity} stress:${state.stress} burnout:${state.burnoutRisk} motivation:${state.motivation} consistency:${state.consistency}`);
-  if (state.streakDays > 0)        lines.push(`streak: ${state.streakDays} days`);
-  if (state.consecutiveMisses > 0) lines.push(`consecutive_misses: ${state.consecutiveMisses}`);
-  if (state.flags.length > 0)      lines.push(`flags: ${state.flags.join(", ")}`);
-
-  // Conversation context
-  lines.push(`\nCONVERSATION`);
-  lines.push(`emotion: ${analysis.emotion.primary} (${(analysis.emotion.intensity * 100).toFixed(0)}%) | intent: ${analysis.intent}`);
-  if (analysis.constraints.length > 0) {
-    lines.push(`constraints: ${analysis.constraints.map(c => `${c.type}(${c.severity})`).join(", ")}`);
-  }
-
-  // Memory
-  if (memory.longTerm.goals.length > 0) {
-    lines.push(`\nACTIVE GOALS`);
-    memory.longTerm.goals.slice(0, 3).forEach(g => lines.push(`• ${g}`));
-  }
-  if (memory.longTerm.creatureName) {
-    lines.push(`creature: ${memory.longTerm.creatureName}`);
-  }
-
-  // Recent messages (last 6 turns)
-  const recent = memory.shortTerm.slice(-6);
-  if (recent.length > 0) {
-    lines.push(`\nRECENT CONVERSATION`);
-    recent.forEach(m => lines.push(`${m.role === "user" ? "User" : "You"}: ${m.text}`));
-  }
-
-  // Pattern insights
-  if (patterns.patterns.length > 0) {
-    lines.push(`\nDETECTED PATTERNS`);
-    patterns.patterns.slice(0, 3).forEach(p =>
-      lines.push(`• ${p.type} [${p.severity}] ${(p.confidenceScore * 100).toFixed(0)}%: ${p.evidence[0] ?? ""}`)
-    );
-  }
-
-  // Intervention context
-  if (intervention?.needed && intervention.contextHints.length > 0) {
-    lines.push(`\nINTERVENTION`);
-    intervention.contextHints.forEach(h => lines.push(h));
-  }
-
-  // Plan summary (if generated)
-  if (plan && "canGenerate" in plan && plan.canGenerate) {
-    lines.push(`\nGENERATED PLAN`);
-    lines.push(summarizePlan(plan));
-  } else if (feasibility && decision.action === MentorAction.PLAN) {
-    lines.push(`\nFEASIBILITY: ${feasibility.scores.overall}/100 (${feasibility.status})`);
-    if (feasibility.blockers.length > 0) {
-      lines.push(`blockers: ${feasibility.blockers.map(b => b.type).join(", ")}`);
-    }
-  }
-
-  // Universal rules
-  lines.push(`\nRULES`);
-  lines.push(`• No bullet points in conversational replies`);
-  lines.push(`• Match length to input — short message = short reply`);
-  lines.push(`• Banned phrases: ${BANNED_PHRASES.slice(0, 5).join(", ")}`);
-  lines.push(`• No dramatic punctuation or excessive caps`);
-  lines.push(`• After completion: 1 sentence acknowledge, then next action`);
-  lines.push(`• Never apologise when user pushes back`);
-  lines.push(`• Default ending: direction or next action, not a question`);
-  lines.push(`• Max 1 question per reply — skip if last reply already asked one`);
-  lines.push(`• Have a point of view — call out bad decisions, then move`);
-  lines.push(`• Aim for ~${Math.ceil(decision.tokenBudget * 0.55)} words unless detail is required`);
-
-  return lines.join("\n");
-}
+// buildSystemPrompt removed — llm.ts generateEngineResponse builds the prompt
+// from the full EngineContext. See packages/api/src/services/llm.ts.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // RESPONSE VALIDATOR
@@ -559,7 +462,7 @@ function validateResponse(reply: string, memory: MemoryContext): string {
 
   // Question budget: strip trailing question if last assistant reply also had one
   if (memory.lastAssistantMessage?.includes("?") && out.includes("?")) {
-    const stripped = out.replace(/\s*[^.!?\n]*\?\s*$/s, "").trim();
+    const stripped = out.replace(/\s*[^.!?\n]*\?\s*$/, "").trim();
     if (stripped) out = stripped;
   }
 
@@ -575,16 +478,31 @@ function persistTurn(
   userText: string,
   assistantReply: string,
   analysis: ConversationAnalysis,
+  planResult: PlannerResult | null,
+  mode: "full" | "reply_only",
 ): void {
-  Promise.allSettled([
-    addToShortTerm(platformChatId, userText, {
-      role:    "user",
-      intent:  analysis.intent,
-      emotion: analysis.emotion.primary,
-    }),
+  const saves: Promise<unknown>[] = [
     addToShortTerm(platformChatId, assistantReply, { role: "assistant" }),
     updateMentorState(platformChatId, { analysis }),
-  ]).catch(err => console.error("[ORCHESTRATOR] persistTurn error:", err));
+  ];
+
+  if (mode === "full") {
+    saves.push(
+      addToShortTerm(platformChatId, userText, {
+        role:    "user",
+        intent:  analysis.intent,
+        emotion: analysis.emotion.primary,
+      }),
+    );
+  }
+
+  if (planResult && "canGenerate" in planResult && planResult.canGenerate) {
+    saves.push(savePlan(platformChatId, summarizePlan(planResult)));
+  }
+
+  Promise.allSettled(saves).catch(err =>
+    console.error("[ORCHESTRATOR] persistTurn error:", err),
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -784,28 +702,23 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     diag.templateUsed = true;
     skip("llm_call");
   } else {
-    const systemPrompt = buildSystemPrompt({
+    const engineCtx: EngineContext = {
+      message:      input.text,
+      personaType:  persona,
+      decision,
+      state,
       analysis,
       memory,
-      state,
-      personaType: persona,
-      decision,
       patterns,
       intervention: interventionResult,
-      plan: planResult,
-      feasibility,
-    });
+      plan:         planResult,
+    };
 
-    const tokenBudget = Math.max(decision.tokenBudget, 80);
-    diag.llmTokensRequested = tokenBudget;
+    diag.llmTokensRequested = Math.max(decision.tokenBudget, 80);
 
     reply = await run(
       "llm_call",
-      () => generateOpenAIText({
-        systemInstruction: systemPrompt,
-        prompt:            input.text,
-        maxOutputTokens:   tokenBudget,
-      }),
+      () => generateEngineResponse(engineCtx),
       "Something went off on my end. Try again.",
     );
     diag.llmCalled = true;
@@ -816,7 +729,14 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   diag.stagesRun.push("validate");
 
   // ── Stage 11: Persist turn (non-blocking) ────────────────────────────────────
-  persistTurn(input.platformChatId, input.text, reply, analysis);
+  persistTurn(
+    input.platformChatId,
+    input.text,
+    reply,
+    analysis,
+    planResult,
+    input.persistMode ?? "full",
+  );
   diag.stagesRun.push("persist");
 
   diag.totalMs = Date.now() - pipelineStart;

@@ -1,37 +1,384 @@
-import { getPersona, PersonaType } from "../services/personna.service";
+import { getPersona } from "../services/personna.service";
+import type { PersonaType } from "../services/personna.service";
 import { generateOpenAIText } from "./openai.service";
+import { summarizePlan } from "../engines/planner-engine";
+import {
+  MentorAction,
+  DecisionTone,
+} from "../engines/mentor-decision-engine";
+import type { MentorDecision } from "../engines/mentor-decision-engine";
+import type { MentorState } from "../engines/user-state-engine";
+import type { PatternAnalysis } from "../types/pattern.types";
+import type { InterventionResult } from "../engines/intervention-engine";
+import type { PlannerResult } from "../engines/planner-engine";
+import type { ConversationAnalysis } from "../types/mentor.types";
+import type { MemoryContext } from "../types/memory.types";
 
-function getToneModifierNote(personaName: string, tone: string): string {
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENGINE CONTEXT — full input for the engine-aware LLM call
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface EngineContext {
+  message:      string;
+  personaType:  PersonaType;
+  decision:     MentorDecision;
+  state:        MentorState;
+  analysis:     ConversationAnalysis;
+  memory:       MemoryContext;
+  patterns:     PatternAnalysis;
+  intervention: InterventionResult | null;
+  plan:         PlannerResult | null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TONE MODIFIER
+// Applies persona-specific tone overrides based on decision tone.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function getToneModifier(personaName: string, tone: DecisionTone): string {
   const name = personaName.toLowerCase();
-  if (name === "rex" && tone === "soft") {
-    return `TONE MODIFIER — firm_not_brutal\n${getPersona("rex").toneModifiers.firm_not_brutal}`;
+  const persona = getPersona(name as PersonaType);
+  if (!persona?.toneModifiers) return "";
+
+  // Rex needs softening when tone is gentle/supportive
+  if (name === "rex" && (tone === DecisionTone.GENTLE || tone === DecisionTone.SUPPORTIVE)) {
+    const key = "firm_not_brutal";
+    const val = persona.toneModifiers[key];
+    return val ? `TONE MODIFIER — ${key}\n${val}` : "";
   }
-  if (name === "nova" && tone === "hard") {
-    return `TONE MODIFIER — structured_direct\n${getPersona("nova").toneModifiers.structured_direct}`;
+  // Nova gets structured_direct when hard/firm
+  if (name === "nova" && (tone === DecisionTone.HARD || tone === DecisionTone.FIRM)) {
+    const key = "structured_direct";
+    const val = persona.toneModifiers[key];
+    return val ? `TONE MODIFIER — ${key}\n${val}` : "";
   }
-  if (name === "zen" && tone === "hard") {
-    return `TONE MODIFIER — purposeful_direct\n${getPersona("zen").toneModifiers.purposeful_direct}`;
+  // Zen gets purposeful_direct when hard/firm
+  if (name === "zen" && (tone === DecisionTone.HARD || tone === DecisionTone.FIRM)) {
+    const key = "purposeful_direct";
+    const val = persona.toneModifiers[key];
+    return val ? `TONE MODIFIER — ${key}\n${val}` : "";
   }
   return "";
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ACTION DIRECTIVE
+// Tells the LLM exactly what to DO — not just persona flavour.
+// One directive per action/subAction pair. This is the core behavioural layer.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function buildActionDirective(decision: MentorDecision): string {
+  const { action, subAction, tone, contextHints } = decision;
+
+  const directives: Partial<Record<string, string>> = {
+    // ── REDUCE_SCOPE ────────────────────────────────────────────────────────
+    [`${MentorAction.REDUCE_SCOPE}/burnout_critical`]:
+      "DIRECTIVE: Critical burnout. Say NOTHING about goals, plans, tasks, or progress. Acknowledge the exhaustion in one line. Offer permission to rest — not a plan. End with open space.",
+    [`${MentorAction.REDUCE_SCOPE}/stress_capacity_collapse`]:
+      "DIRECTIVE: User is at capacity. Ask only: what is the single thing that cannot wait this week? Drop everything else without discussion.",
+    [`${MentorAction.REDUCE_SCOPE}/burnout_pattern_confirmed`]:
+      "DIRECTIVE: Burnout pattern confirmed over time. Acknowledge it is not a motivation problem — it is a recovery need. Reduce scope to the absolute minimum. No new commitments.",
+
+    // ── ACCOUNTABILITY ───────────────────────────────────────────────────────
+    [`${MentorAction.ACCOUNTABILITY}/ghosting_response`]:
+      "DIRECTIVE: User went silent after active engagement. Do not mention how long they were gone. Do not shame. Ask one warm question about where they are right now.",
+    [`${MentorAction.ACCOUNTABILITY}/excuse_loop_confrontation`]:
+      "DIRECTIVE: Name the commit-miss-excuse cycle by count. Ask what is ACTUALLY blocking them — not the surface reason. Do not accept this excuse at face value.",
+    [`${MentorAction.ACCOUNTABILITY}/consecutive_miss_escalation`]:
+      "DIRECTIVE: Reference the number of consecutive misses directly. Ask the specific blocker — not a general question. Do not lecture.",
+    [`${MentorAction.ACCOUNTABILITY}/failure_with_excuse`]:
+      "DIRECTIVE: Acknowledge the failure in one clause. Hold the standard. Ask what will be different this time. Do not validate the excuse.",
+
+    // ── CHALLENGE ────────────────────────────────────────────────────────────
+    [`${MentorAction.CHALLENGE}/overplanning_intervention`]:
+      "DIRECTIVE: Refuse to build a new plan. Point to what already exists. Ask for one concrete action from the existing plan today — not a new strategy.",
+    [`${MentorAction.CHALLENGE}/tutorial_hell_intervention`]:
+      "DIRECTIVE: Name the loop — consuming content without producing anything. Block the next course question. Assign one specific output: build or solve something in the next 48 hours. Give the exact deliverable.",
+    [`${MentorAction.CHALLENGE}/all_or_nothing_reframe`]:
+      "DIRECTIVE: Reject the binary. They are treating a miss as total failure. Ask: what does 50% of this look like? Give one small next action — not a restart.",
+    [`${MentorAction.CHALLENGE}/perfectionism_start_now`]:
+      "DIRECTIVE: Reject the 'not ready' frame directly. Nothing will ever be ready enough. Assign a specific 30-minute imperfect attempt — right now. No planning before starting.",
+    [`${MentorAction.CHALLENGE}/restart_cycle_break`]:
+      "DIRECTIVE: Name how many times they have restarted on this goal. Refuse the fresh start. Ask: at what exact point did the last attempt break down?",
+    [`${MentorAction.CHALLENGE}/momentum_push`]:
+      "DIRECTIVE: They are in a strong streak. One sentence acknowledging progress. Raise the target. Push harder — they can handle it right now.",
+
+    // ── PLAN ─────────────────────────────────────────────────────────────────
+    [`${MentorAction.PLAN}/user_requested_plan`]:
+      "DIRECTIVE: Present the generated plan. Speak it like a person — not a formatted document. Introduce the logic briefly. Reference capacity and constraints.",
+    [`${MentorAction.PLAN}/new_goal_needs_structure`]:
+      "DIRECTIVE: Help structure the goal into a starting plan. Start with the first 3 days only. Make the first action so small it is impossible to refuse.",
+    [`${MentorAction.PLAN}/recovery_plan_after_accountability`]:
+      "DIRECTIVE: Build a recovery plan. Smaller scope than whatever failed before. One minimum viable action per day. One week maximum. No volume pledges.",
+
+    // ── TEACH ────────────────────────────────────────────────────────────────
+    [`${MentorAction.TEACH}/concept_explanation`]:
+      "DIRECTIVE: Explain the concept directly. Match their knowledge level. Use one concrete example. End with one application question.",
+    [`${MentorAction.TEACH}/stuck_on_approach`]:
+      "DIRECTIVE: Diagnose the confusion source first. Break the approach into steps. Confirm understanding before moving on.",
+    [`${MentorAction.TEACH}/domain_foundation`]:
+      "DIRECTIVE: Ask about their current knowledge level before teaching anything. Map to the domain framework. Do not overwhelm with scope.",
+
+    // ── REFLECT ──────────────────────────────────────────────────────────────
+    [`${MentorAction.REFLECT}/user_initiated_reflection`]:
+      "DIRECTIVE: Deepen the reflection — not wider. One honest question that they haven't already answered. Do not give solutions.",
+    [`${MentorAction.REFLECT}/comparison_trap_identity`]:
+      "DIRECTIVE: Reject the external comparison. Anchor them to their own trajectory. Ask: what does progress look like on your own terms — not theirs?",
+    [`${MentorAction.REFLECT}/pattern_awareness_after_misses`]:
+      "DIRECTIVE: Ask what is actually blocking them. Not the surface reason. The real thing underneath. Do not give another plan yet.",
+    [`${MentorAction.REFLECT}/post_failure_self_inquiry`]:
+      "DIRECTIVE: Acknowledge the failure in one sentence. Then one honest question only — not a fix, not a plan. Give the question space to land.",
+
+    // ── REVIEW ───────────────────────────────────────────────────────────────
+    [`${MentorAction.REVIEW}/weekly_review`]:
+      "DIRECTIVE: Review the week: one win, one gap, one pattern you noticed. Reference the consistency score. Identify one focus for next week.",
+    [`${MentorAction.REVIEW}/status_update_acknowledged`]:
+      "DIRECTIVE: Acknowledge in one sentence. Redirect immediately to the next action. No questions unless the next step is genuinely unknown.",
+    [`${MentorAction.REVIEW}/goal_completion_debrief`]:
+      "DIRECTIVE: Acknowledge completion in one sentence — make it feel earned, not effusive. Extract what worked. Set the next target.",
+
+    // ── ENCOURAGE ────────────────────────────────────────────────────────────
+    [`${MentorAction.ENCOURAGE}/streak_milestone`]:
+      "DIRECTIVE: Acknowledge the streak in one sentence. Reference the creature name if available. Keep it brief — let the number speak.",
+    [`${MentorAction.ENCOURAGE}/comeback_acknowledgment`]:
+      "DIRECTIVE: Acknowledge that they showed up. Do not reference how long they were gone. Start from today as if this is a clean slate.",
+    [`${MentorAction.ENCOURAGE}/confidence_rebuild`]:
+      "DIRECTIVE: Use evidence — not affirmation. Point to what they have actually done. One piece of real proof. Connect it to what they can do next.",
+    [`${MentorAction.ENCOURAGE}/emotional_support`]:
+      "DIRECTIVE: Hold space. One sentence acknowledging the feeling — not solving it. One grounding question at most. Do not immediately redirect to tasks.",
+
+    // ── ASK ──────────────────────────────────────────────────────────────────
+    [`${MentorAction.ASK}/first_session_capacity`]:
+      "DIRECTIVE: Ask about their actual week — not the ideal one. What does real available time look like? One clear question.",
+    [`${MentorAction.ASK}/vague_goal_clarification`]:
+      "DIRECTIVE: Ask for the most concrete version of what they want. Most specific possible formulation. One question only.",
+    [`${MentorAction.ASK}/unknown_domain_context`]:
+      "DIRECTIVE: One short question: what area of your life are we talking about here?",
+    [`${MentorAction.ASK}/general_checkin`]:
+      "DIRECTIVE: Reference their active goal if it exists. Ask one direct question about it. Avoid generic openers.",
+  };
+
+  const key = `${action}/${subAction}`;
+  const directive = directives[key]
+    ?? `DIRECTIVE: ${action.toLowerCase().replace("_", " ")} — ${subAction.replace(/_/g, " ")}.`;
+
+  const toneInstruction = {
+    [DecisionTone.HARD]:       "TONE: Unfiltered. Blunt. No hedging whatsoever.",
+    [DecisionTone.FIRM]:       "TONE: Direct and clear. No softening. No hedging.",
+    [DecisionTone.STANDARD]:   "TONE: Balanced. Neither warm nor harsh.",
+    [DecisionTone.SUPPORTIVE]: "TONE: Warm and real. Not cheerleading — actual support.",
+    [DecisionTone.GENTLE]:     "TONE: Soft. Careful. They are fragile right now. Zero pressure.",
+  }[tone] ?? "TONE: Balanced.";
+
+  const hintsLine = contextHints.length > 0
+    ? `\nCONTEXT HINTS (use these — don't repeat them verbatim): ${contextHints.slice(0, 6).join(" | ")}`
+    : "";
+
+  return `${directive}\n${toneInstruction}${hintsLine}`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EMOTION NOTE
+// Adds specific guidance when the detected emotion requires overriding the default
+// mentor approach (e.g., overwhelm overrides accountability, burnout blocks all push).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function buildEmotionNote(analysis: ConversationAnalysis, state: MentorState): string {
+  const { primary, intensity } = analysis.emotion;
+
+  if (state.burnoutRisk >= 70) {
+    return `\nEMOTION OVERRIDE: burnout_risk is ${state.burnoutRisk}/100. Zero pressure. Zero demands. Acknowledge only.`;
+  }
+  if (primary === "overwhelmed") {
+    return `\nEMOTION: overwhelmed (${(intensity * 100).toFixed(0)}%). Acknowledge before any direction. Do not add load.`;
+  }
+  if (primary === "stressed" && intensity >= 0.7) {
+    return `\nEMOTION: highly stressed. Reduce the ask — one thing maximum. Nothing escalating.`;
+  }
+  if (primary === "discouraged" && intensity >= 0.7) {
+    return `\nEMOTION: deeply discouraged. One acknowledgment sentence before any direction. Hold space.`;
+  }
+  if (primary === "defensive") {
+    return `\nEMOTION: defensive. Do not escalate. Acknowledge pushback in one clause — then space or one concrete instruction.`;
+  }
+  if (primary === "determined" || primary === "motivated") {
+    return `\nEMOTION: ${primary}. Match their energy with clear direction. Minimal validation — they want to go.`;
+  }
+  if (primary === "guilty") {
+    return `\nEMOTION: guilty. Acknowledge it briefly — don't dwell. Move to what comes next, not what went wrong.`;
+  }
+  return "";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INTERVENTION BLOCK
+// Injects intervention-specific instructions when a pattern intervention is active.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function buildInterventionBlock(intervention: InterventionResult | null): string {
+  if (!intervention?.needed || !intervention.playbook) return "";
+
+  const { playbook, contextHints, appliedAdaptations } = intervention;
+  const lines = [
+    `\nINTERVENTION ACTIVE — ${playbook.name.toUpperCase()}`,
+    `Pattern: ${playbook.class} | Type: ${playbook.interventionType}`,
+    `Opening move: ${playbook.responseStyle.openingMove}`,
+    ...playbook.mentorAction.frames.slice(0, 2).map(f => `Frame: ${f}`),
+    ...playbook.mentorAction.refuses.slice(0, 2).map(r => `REFUSE: ${r}`),
+    ...contextHints.slice(0, 4),
+    appliedAdaptations.length > 0 ? `Adaptations applied: ${appliedAdaptations.join(", ")}` : "",
+  ].filter(Boolean);
+
+  return lines.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PATTERN BLOCK
+// Injects active pattern context so the LLM can reference evidence naturally.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function buildPatternBlock(patterns: PatternAnalysis): string {
+  if (patterns.patterns.length === 0) return "";
+
+  const lines = ["\nDETECTED PATTERNS"];
+  patterns.patterns.slice(0, 3).forEach(p => {
+    lines.push(`• ${p.type} [${p.severity}] ${(p.confidenceScore * 100).toFixed(0)}%: ${p.evidence[0] ?? ""}`);
+  });
+  if (patterns.positivePatterns.length > 0) {
+    lines.push(`Positive: ${patterns.positivePatterns[0]}`);
+  }
+  return lines.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PLAN BLOCK
+// If a plan was generated, gives the LLM the plan content to present naturally.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function buildPlanBlock(plan: PlannerResult | null): string {
+  if (!plan || !("canGenerate" in plan) || !plan.canGenerate) return "";
+  return `\nGENERATED PLAN (present this in your reply — speak it as a person, not a document):\n${summarizePlan(plan)}`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STATE BLOCK
+// Compact state snapshot — used to calibrate empathy and challenge level.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function buildStateBlock(state: MentorState): string {
+  const lines = [
+    `capacity:${state.capacity} stress:${state.stress} burnout_risk:${state.burnoutRisk}`,
+    `motivation:${state.motivation} consistency:${state.consistency} momentum:${state.momentum}`,
+  ];
+  if (state.streakDays > 0)        lines.push(`streak: ${state.streakDays}d`);
+  if (state.consecutiveMisses > 0) lines.push(`consecutive_misses: ${state.consecutiveMisses}`);
+  if (state.flags.length > 0)      lines.push(`flags: ${state.flags.join(", ")}`);
+  return lines.join(" | ");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// QUESTION LOOP GUARD
+// Strips trailing question if the last assistant reply already had one.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function guardQuestionLoop(reply: string, lastAssistantMessage: string | null): string {
+  if (!lastAssistantMessage?.includes("?") || !reply.includes("?")) return reply;
+  const stripped = reply.replace(/\s*[^.!?\n]*\?\s*$/, "").trim();
+  return stripped || reply;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRIMARY EXPORT — engine-aware LLM call
+// Called by mentor-orchestrator for every main conversation turn.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function generateEngineResponse(ctx: EngineContext): Promise<string> {
+  const persona      = getPersona(ctx.personaType);
+  const toneModifier = getToneModifier(persona.name, ctx.decision.tone);
+  const actionDir    = buildActionDirective(ctx.decision);
+  const emotionNote  = buildEmotionNote(ctx.analysis, ctx.state);
+  const intervention = buildInterventionBlock(ctx.intervention);
+  const patterns     = buildPatternBlock(ctx.patterns);
+  const planBlock    = buildPlanBlock(ctx.plan);
+
+  // Recent conversation (last 6 turns, chronological)
+  const recentLines = ctx.memory.shortTerm.slice(-6).map(m =>
+    `${m.role === "user" ? "User" : "You"}: ${m.text}`
+  ).join("\n");
+
+  const systemInstruction = `You are Kivo, an AI accountability companion. Stay in character at all times.
+
+PERSONA — ${persona.name.toUpperCase()}
+${persona.voice}
+${toneModifier ? `\n${toneModifier}\n` : ""}
+${actionDir}
+${emotionNote}
+${intervention}
+${patterns}
+${planBlock}
+
+USER STATE (0–100)
+${buildStateBlock(ctx.state)}
+
+MEMORY
+Goals: ${ctx.memory.longTerm.goals.slice(0, 3).join(" | ") || "none"}
+${ctx.memory.longTerm.creatureName ? `Creature name: ${ctx.memory.longTerm.creatureName}` : ""}
+${ctx.memory.longTerm.anchors.length > 0 ? `Anchors: ${ctx.memory.longTerm.anchors.slice(0, 2).join(" | ")}` : ""}
+${ctx.memory.longTerm.struggles.length > 0 ? `Known struggles: ${ctx.memory.longTerm.struggles.slice(0, 2).join(" | ")}` : ""}
+
+RECENT CONVERSATION
+${recentLines || "none"}
+
+RULES
+• No bullet points in conversational replies — prose only
+• Match length to input: 1-sentence message → 1-3 sentences max
+• Banned phrases (never use): Great!, Awesome!, Absolutely!, Of course!, Certainly!, You've got this!, Let's go!, Clock's ticking, No excuses, As your mentor, Remember, Don't forget, I understand how you feel, That's a great question
+• No dramatic punctuation. No ALL-CAPS for emphasis.
+• After completion: 1-sentence acknowledgment → immediate next action
+• Never apologise when user pushes back. Acknowledge briefly, hold the position.
+• Default ending: direction or next action — not a question
+• Max 1 question per reply. If last reply asked a question — don't ask another.
+• Use memory naturally — never "Based on your goal of X, I recommend…"
+• Have a point of view. Call out bad decisions briefly, then move.
+• Never break character.
+• Aim for ~${Math.ceil(ctx.decision.tokenBudget * 0.55)} words.
+
+Do not end mid-word or mid-sentence.`.trim();
+
+  try {
+    const raw = await generateOpenAIText({
+      systemInstruction,
+      prompt:          ctx.message,
+      maxOutputTokens: Math.max(ctx.decision.tokenBudget, 80),
+    });
+    return guardQuestionLoop(raw, ctx.memory.lastAssistantMessage);
+  } catch (err) {
+    console.error("[LLM] generateEngineResponse failed:", err);
+    return "Something went off on my end. Try again in a moment.";
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LEGACY EXPORT — used by intake, check-in, and other services that don't have
+// full engine context. Kept for backward compatibility.
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export async function generateResponse(input: {
   message: string;
   context: any;
   system: any;
 }) {
-  const persona = getPersona(input.system.persona as PersonaType);
-  const toneModifierNote = getToneModifierNote(input.system.persona, input.system.tone);
-
-  const gymMemory = input.context.memory.longTerm.gym
+  const persona      = getPersona(input.system.persona as PersonaType);
+  const toneModifier = getToneModifier(persona.name, input.system.tone ?? DecisionTone.STANDARD);
+  const gymMemory    = input.context.memory.longTerm.gym
     ? JSON.stringify(input.context.memory.longTerm.gym)
     : "none";
 
-  const systemInstruction = `You are Kevo, an accountability companion. You have a fixed identity — stay in character at all times.
+  const systemInstruction = `You are Kivo, an accountability companion. Stay in character at all times.
 
 PERSONA — ${persona.name.toUpperCase()}
 ${persona.voice}
-${toneModifierNote ? `\n${toneModifierNote}\n` : ""}
+${toneModifier ? `\n${toneModifier}\n` : ""}
 CONTEXT
 User name: ${input.context.user.name}
 Conversation mode: ${input.system.mode}
@@ -41,69 +388,37 @@ Recent conversation:
 ${input.context.memory.shortTerm.join("\n") || "none"}
 
 Long-term context:
-- Goals: ${input.context.memory.longTerm.goals?.join("; ") || "none"}
-- Deadlines: ${input.context.memory.longTerm.deadlines?.join("; ") || "none"}
-- Preferences: ${input.context.memory.longTerm.preferences?.join("; ") || "none"}
-- Anchors: ${input.context.memory.longTerm.anchors?.join("; ") || "none"}
-- Gym context: ${gymMemory}
+Goals: ${input.context.memory.longTerm.goals?.join("; ") || "none"}
+Deadlines: ${input.context.memory.longTerm.deadlines?.join("; ") || "none"}
+Preferences: ${input.context.memory.longTerm.preferences?.join("; ") || "none"}
+Anchors: ${input.context.memory.longTerm.anchors?.join("; ") || "none"}
+Gym: ${gymMemory}
 
-UNIVERSAL RULES — apply to every single response:
+RULES
+• No bullet points in conversational replies
+• Match length to input
+• Banned phrases: Great!, Awesome!, Absolutely!, Of course!, You've got this!, Let's go!, Clock's ticking, No excuses, As your mentor, I understand how you feel, That's a great question
+• No dramatic punctuation
+• After completion: 1-sentence acknowledge → next action
+• Never apologise when pushed back
+• Default ending: direction or action, not a question
+• Max 1 question per reply
+• Have a point of view — call out bad decisions
+• Never break character
 
-1. NO BULLET POINTS in conversational responses. Only acceptable for actual workout plans, study schedules, or specific lists the user asked for. Even then — introduce it like a person, not a document.
-
-2. MATCH RESPONSE LENGTH TO INPUT. 1-sentence input → 1-3 sentences max. Paragraph input → can respond with a paragraph. Never pad.
-
-3. BANNED PHRASES — remove permanently: "Great!", "Awesome!", "Absolutely!", "Of course!", "Certainly!", "You've got this!", "Let's go!", "Clock's ticking", "No excuses", "As your mentor", "Remember", "Don't forget", "I understand how you feel", "That's a great question".
-
-4. NO DRAMATIC PUNCTUATION. No "Let's. Get. To. Work." No "THIS IS YOUR MOMENT." No excessive caps. No ellipses used for drama.
-
-5. WHEN THE USER COMPLETES SOMETHING: acknowledge in maximum 1 sentence, immediately pivot to a concrete next action. Do not ask what is next unless the task list is completely unknown. Rex: "Done. DSA next. 25 minutes." Nova: "Good. Next block: revise the hardest topic for 25 minutes." Zen: "Good. Let the win land, then return to the one thing still waiting."
-
-6. WHEN THE USER PUSHES BACK OR GETS ANGRY: do not apologise. Do not change tone. Do not get more aggressive. Do not ask another question. Acknowledge the pushback in one clause, give space or one concrete instruction. Rex example: "Fair. I’ll stop pressing. Assignment block now." Nova example: "Noted. I’ll give you room. Work the next 25 minutes."
-
-7. DEFAULT ENDING: do not end every response with a question. Most replies should end with a direction, decision, or next action. Ask one question maximum only when missing information blocks the next move. If the previous assistant message already asked a question and the user gives a short answer, do not ask another question — use the answer to direct them. If the user just gave a status update, acknowledge and direct without asking another question. Never ask a question you already know the answer to from context. But if they said they're stuck on their assignment, don't ask if they're stuck — tell them what to do next.
-
-8. QUESTION BUDGET: across a normal back-and-forth, do not ask questions in consecutive assistant replies unless the user explicitly asked for an interview/intake. A mentor should decide and guide, not interrogate.
-
-9. USE MEMORY NATURALLY — not formulaically. BAD: "Based on your goal of losing weight, I recommend..." GOOD: "You said you want to lean bulk. This doesn't match that. Adjust the next meal."
-
-10. HAVE A POINT OF VIEW. Notice patterns. Call things out. Push back on bad decisions. If the user is making an obvious mistake — say so, briefly, then move on.
-
-11. NEVER BREAK CHARACTER — not for compliments, not for abuse, not for existential questions. If asked "are you AI?": Rex: "Does it matter? Assignment's still due." Nova: "What matters is whether this is actually helping. Back to the task." Zen: "Labels matter less than whether this keeps you honest."
-
-Do not end mid-word or mid-sentence.`;
+Do not end mid-word or mid-sentence.`.trim();
 
   try {
-    const reply = await generateOpenAIText({
+    const shortTerm      = input.context.memory.shortTerm as string[] | undefined;
+    const lastAssistant  = [...(shortTerm ?? [])].reverse().find(l => l.startsWith("assistant: ")) ?? null;
+    const raw = await generateOpenAIText({
       systemInstruction,
-      prompt: input.message,
+      prompt:          input.message,
       maxOutputTokens: 512,
     });
-    return avoidQuestionLoop(reply, input);
-  } catch (error) {
-    console.error("OpenAI response error:", error);
-    return "Something went off with my AI brain. Try again in a bit.";
+    return guardQuestionLoop(raw, lastAssistant);
+  } catch (err) {
+    console.error("[LLM] generateResponse failed:", err);
+    return "Something went off. Try again in a bit.";
   }
-}
-
-function avoidQuestionLoop(reply: string, input: { message: string; context: any }) {
-  const shortTerm = input.context.memory.shortTerm as string[] | undefined;
-  const lastAssistant = [...(shortTerm || [])].reverse().find((line) => line.startsWith("assistant: "));
-
-  if (!lastAssistant?.includes("?") || !reply.includes("?")) return reply;
-
-  const withoutTrailingQuestion = reply
-    .replace(/\s*[^.!?\n]*\?\s*$/, "")
-    .trim();
-
-  if (withoutTrailingQuestion && withoutTrailingQuestion !== reply.trim()) {
-    return withoutTrailingQuestion;
-  }
-
-  const topic = input.message.trim();
-  if (topic.length > 0 && topic.length <= 40) {
-    return `Noted. Stay with ${topic} for 25 minutes. No switching tabs.`;
-  }
-
-  return "Noted. Keep the next block simple: 25 minutes on the task in front of you.";
 }

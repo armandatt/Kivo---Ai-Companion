@@ -1,7 +1,7 @@
 //@ts-ignore
 import { generateCompanionVisit, generateDynamicCheckIn } from "@repo/api/services/checkin.service";
 //@ts-ignore
-import { getUsersForCompanionVisitAt, getUsersDueForDynamicCheckIn, advanceDynamicCheckIn } from "@repo/api/services/user.service";
+import { getUsersForCompanionVisitAt, getUsersDueForDynamicCheckIn, advanceDynamicCheckIn, clearStaleCheckIns } from "@repo/api/services/user.service";
 //@ts-ignore
 import { addToShortTerm } from "@repo/api/services/memory.service";
 //@ts-ignore
@@ -54,6 +54,9 @@ export async function GET() {
         });
         console.log(`[CHECKIN] Sent ${user.visitKind} to ${userId}`);
     }
+
+    // Clear one-shot entries that missed their window before querying
+    await clearStaleCheckIns(now).catch(() => {});
 
     // Dynamic user-requested check-ins (e.g. "check every hour", "remind me in 30 min")
     const dynamicUsers = await getUsersDueForDynamicCheckIn(now);
