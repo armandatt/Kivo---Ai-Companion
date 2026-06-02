@@ -19,17 +19,27 @@ interface Props {
 export default function PlatformConnections({ platforms }: Props) {
   const [telegramConnecting, setTelegramConnecting] = useState(false)
   const [telegramConnected, setTelegramConnected] = useState(platforms.telegram.connected)
+  const [deeplink, setDeeplink] = useState<string | null>(null)
+  const [connectError, setConnectError] = useState<string | null>(null)
 
   async function handleTelegramConnect() {
     setTelegramConnecting(true)
+    setDeeplink(null)
+    setConnectError(null)
     try {
       const res = await fetch("/api/telegram/generate-token", { method: "POST" })
-      if (!res.ok) return
+      if (!res.ok) {
+        setConnectError("Couldn't generate link. Try again.")
+        return
+      }
       const data = (await res.json()) as { deeplink?: string }
       if (data.deeplink) {
-        window.open(data.deeplink, "_blank", "noopener,noreferrer")
-        setTelegramConnected(true)
+        setDeeplink(data.deeplink)
+      } else {
+        setConnectError("No link returned. Try again.")
       }
+    } catch {
+      setConnectError("Something went wrong. Try again.")
     } finally {
       setTelegramConnecting(false)
     }
@@ -47,6 +57,45 @@ export default function PlatformConnections({ platforms }: Props) {
       <p style={{ fontSize: "13px", fontWeight: 600, color: "#FFFFFF", margin: "0 0 20px" }}>
         Platform connections
       </p>
+
+      {connectError && (
+        <p style={{ fontSize: "12px", color: "#EF4444", marginBottom: "12px" }}>{connectError}</p>
+      )}
+
+      {deeplink && (
+        <div
+          style={{
+            backgroundColor: "rgba(0, 245, 160, 0.05)",
+            border: "1px solid rgba(0, 245, 160, 0.2)",
+            borderRadius: "8px",
+            padding: "12px 14px",
+            marginBottom: "12px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "12px",
+          }}
+        >
+          <span style={{ fontSize: "12px", color: "#888888" }}>
+            Click to open Telegram and connect
+          </span>
+          <a
+            href={deeplink}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setTelegramConnected(true)}
+            style={{
+              fontSize: "12px",
+              fontWeight: 600,
+              color: "#00F5A0",
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Open Telegram →
+          </a>
+        </div>
+      )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
         <PlatformRow
