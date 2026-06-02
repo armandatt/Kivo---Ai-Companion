@@ -11,7 +11,8 @@ export function startFocusSession(
   const sessionId = Date.now().toString();
   void saveFocusSession(chatId, sessionId, durationMin);
 
-  const FOCUS_URL = `http://localhost:3000/focus?sessionId=${sessionId}`;
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? "https://your-app.vercel.app";
+  const FOCUS_URL = `${baseUrl}/focus?sessionId=${sessionId}`;
 
   // 🔥 TELEGRAM MESSAGE (interactive)
   sendMessage(chatId, `
