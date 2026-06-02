@@ -1,7 +1,7 @@
 //@ts-ignore
 import { generateCompanionVisit, generateDynamicCheckIn } from "@repo/api/services/checkin.service";
 //@ts-ignore
-import { getUsersForCompanionVisitAt, getUsersDueForDynamicCheckIn, advanceDynamicCheckIn } from "@repo/api/services/user.service";
+import { getUsersForCompanionVisitAt, getUsersDueForDynamicCheckIn, advanceDynamicCheckIn, clearStaleCheckIns } from "@repo/api/services/user.service";
 //@ts-ignore
 import { addToShortTerm } from "@repo/api/services/memory.service";
 //@ts-ignore
@@ -57,6 +57,9 @@ export async function runCheckinCron(now = new Date()): Promise<CheckinCronResul
       console.log(`[CHECKIN] Skipping ${userId} (${user.visitKind}) - already sent today`);
     }
   }
+
+  // Clear one-shot entries that missed their window (prevents very-late fires after downtime)
+  await clearStaleCheckIns(now).catch(() => {});
 
   const dynamicUsers = await getUsersDueForDynamicCheckIn(now);
   console.log(`[CHECKIN] Dynamic users due: ${dynamicUsers.length}`);

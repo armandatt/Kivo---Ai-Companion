@@ -216,14 +216,17 @@ function addMinutes(time: string, minutesToAdd: number) {
 }
 
 export async function getUsersDueForDynamicCheckIn(now: Date) {
-  const windowStart = new Date(now.getTime() - 6 * 60 * 1000);
+  // Fire if due within the last 12 minutes (2.4× the 5-minute cron interval).
+  // This survives a single missed tick without spamming on server restarts.
+  // Entries older than 12 minutes are silently cleared by advanceDynamicCheckIn.
+  const staleThreshold = new Date(now.getTime() - 12 * 60 * 1000);
   try {
     return await prisma.messengerUser.findMany({
       where: {
         platform: "telegram",
         nextCheckInAt: {
           lte: now,
-          gte: windowStart,
+          gte: staleThreshold,
         },
       },
       select: {
@@ -235,6 +238,28 @@ export async function getUsersDueForDynamicCheckIn(now: Date) {
   } catch (error) {
     console.error("Failed to load dynamic check-in users:", error);
     return [];
+  }
+}
+
+// Clear check-in entries that are past the stale threshold without firing them.
+// Called on each cron tick to prevent very late messages after downtime.
+export async function clearStaleCheckIns(now: Date) {
+  const staleThreshold = new Date(now.getTime() - 12 * 60 * 1000);
+  try {
+    await prisma.messengerUser.updateMany({
+      where: {
+        platform: "telegram",
+        nextCheckInAt: {
+          lt: staleThreshold,
+        },
+        checkInIntervalMin: null, // one-shot only; repeating reschedules itself via advanceDynamicCheckIn
+      },
+      data: {
+        nextCheckInAt: null,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to clear stale check-ins:", error);
   }
 }
 
