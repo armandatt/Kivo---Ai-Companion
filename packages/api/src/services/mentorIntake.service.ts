@@ -111,6 +111,8 @@ export async function fireMentorIntakeOpener(
       primaryPersona: true,
       mentorDomain: true,
       toneModifier: true,
+      preferredCheckInTime: true,
+      timezone: true,
     },
   })
   if (!profile) return
@@ -151,6 +153,10 @@ export async function fireMentorIntakeOpener(
     where: {
       platform_platformChatId: { platform: "telegram", platformChatId: telegramChatId },
     },
-    data: { intakeStep: firstStep },
+    data: {
+      intakeStep: firstStep,
+      preferredCheckInTime: profile.preferredCheckInTime ?? "08:00",
+      timezone: profile.timezone ?? "Asia/Kolkata",
+    },
   })
 }

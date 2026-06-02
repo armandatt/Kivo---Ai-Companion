@@ -133,11 +133,30 @@ export async function getUsersForCompanionVisitAt(now: Date) {
         timezone: true,
       },
     });
+    const profileSchedules = await prisma.userProfile.findMany({
+      where: {
+        telegramConnected: true,
+        telegramChatId: { in: users.map((user) => user.platformChatId) },
+      },
+      select: {
+        telegramChatId: true,
+        preferredCheckInTime: true,
+        timezone: true,
+      },
+    });
+    const profileScheduleByChatId = new Map(
+      profileSchedules
+        .filter((profile) => profile.telegramChatId)
+        .map((profile) => [profile.telegramChatId as string, profile])
+    );
 
     return users
       .map((user: { timezone: any; preferredCheckInTime: any; platformChatId: any; }) => {
-        const localTime = getLocalTime(now, user.timezone || "Asia/Kolkata");
-        const visitKind = getVisitKind(localTime, user.preferredCheckInTime || "08:00");
+        const profileSchedule = profileScheduleByChatId.get(user.platformChatId);
+        const timezone = user.timezone || profileSchedule?.timezone || "Asia/Kolkata";
+        const checkInTime = user.preferredCheckInTime || profileSchedule?.preferredCheckInTime || "08:00";
+        const localTime = getLocalTime(now, timezone);
+        const visitKind = getVisitKind(localTime, checkInTime);
 
         if (!visitKind) return null;
 

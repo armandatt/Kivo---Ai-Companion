@@ -114,7 +114,7 @@ const DEFINITIONS: Record<PatternId, PatternDefinition> = {
       "User disappears after engagement. Stops responding to check-ins without warning. Often follows a period of high activity.",
     minConfidence: 0.50,
     baseSeverity: "confirmed",
-    recommendation: "gentle_re_engagement",
+    recommendation: "gentle_re_engagement" as PatternRecommendation,
     examples: [
       "Active daily for 5 days, then completely silent for 9 days",
       "Agreed to check in tomorrow — no message in 4 days",
@@ -130,7 +130,7 @@ const DEFINITIONS: Record<PatternId, PatternDefinition> = {
       "User starts strong with high energy then drops suddenly after first obstacle, missed milestone, or early setback.",
     minConfidence: 0.55,
     baseSeverity: "confirmed",
-    recommendation: "momentum_rebuild",
+    recommendation: "momentum_rebuild" as PatternRecommendation,
     examples: [
       "'I'm SO ready for this!' → silence for 8 days after first miss",
       "Week 1: 5 messages/day. Week 3: 0 messages",
@@ -146,7 +146,7 @@ const DEFINITIONS: Record<PatternId, PatternDefinition> = {
       "User produces rotating justifications that systematically prevent progress. Each miss has a different reason; the pattern always ends the same.",
     minConfidence: 0.60,
     baseSeverity: "confirmed",
-    recommendation: "call_out_directly",
+    recommendation: "call_out_directly" as PatternRecommendation,
     examples: [
       "Week 1: 'I was sick.' Week 2: 'Work exploded.' Week 3: 'Family issue.'",
       "4 consecutive misses, 4 different reasons for the same task",
@@ -162,7 +162,7 @@ const DEFINITIONS: Record<PatternId, PatternDefinition> = {
       "User over-invests in planning and scheduling but under-executes. Plans are detailed and frequent; completion reports are absent.",
     minConfidence: 0.55,
     baseSeverity: "confirmed",
-    recommendation: "reduce_commitment_scope",
+    recommendation: "reduce_commitment_scope" as PatternRecommendation,
     examples: [
       "3 detailed weekly plans created, 0 reported completions",
       "Asks for a new plan every Sunday before finishing the last one",
@@ -178,7 +178,7 @@ const DEFINITIONS: Record<PatternId, PatternDefinition> = {
       "User endlessly consumes learning content (courses, tutorials, books) without applying or building. Always one course away from starting.",
     minConfidence: 0.55,
     baseSeverity: "confirmed",
-    recommendation: "build_habit_anchor",
+    recommendation: "build_habit_anchor" as PatternRecommendation,
     examples: [
       "Finished 4 courses on DSA, hasn't solved a problem independently",
       "'After I finish this Udemy course I'll start LeetCode'",
@@ -194,7 +194,7 @@ const DEFINITIONS: Record<PatternId, PatternDefinition> = {
       "User delays action indefinitely waiting for ideal conditions, complete knowledge, or perfect motivation. Plans exist; execution is permanently deferred.",
     minConfidence: 0.55,
     baseSeverity: "confirmed",
-    recommendation: "build_habit_anchor",
+    recommendation: "build_habit_anchor" as PatternRecommendation,
     examples: [
       "'I'll start once I understand everything properly'",
       "'I want to set up my system correctly before I begin'",
@@ -210,7 +210,7 @@ const DEFINITIONS: Record<PatternId, PatternDefinition> = {
       "User abandons current effort and 'starts fresh' repeatedly. Treats reset as progress. Never reaches the phase where previous attempt failed.",
     minConfidence: 0.60,
     baseSeverity: "confirmed",
-    recommendation: "reset_goals",
+    recommendation: "reset_goals" as PatternRecommendation,
     examples: [
       "Third 'fresh start' on DSA this month",
       "Switches plan every 10 days before anything compounds",
@@ -226,7 +226,7 @@ const DEFINITIONS: Record<PatternId, PatternDefinition> = {
       "User shows clinical-level exhaustion preventing meaningful engagement. Not a motivation issue — a recovery need.",
     minConfidence: 0.60,
     baseSeverity: "critical",
-    recommendation: "reduce_load",
+    recommendation: "reduce_load" as PatternRecommendation,
     examples: [
       "burnoutRisk: 83, stress: 79, consecutiveMisses: 6",
       "'I can't even look at my notes, I'm so tired'",
@@ -242,7 +242,7 @@ const DEFINITIONS: Record<PatternId, PatternDefinition> = {
       "User treats any deviation as total failure. One missed session means the whole week is 'ruined'. Responds to imperfection with complete abandonment.",
     minConfidence: 0.55,
     baseSeverity: "confirmed",
-    recommendation: "call_out_directly",
+    recommendation: "call_out_directly" as PatternRecommendation,
     examples: [
       "'I missed Monday so the whole week is ruined anyway'",
       "Skipped gym once → 'I've completely given up on fitness'",
@@ -258,7 +258,7 @@ const DEFINITIONS: Record<PatternId, PatternDefinition> = {
       "User systematically avoids one specific goal or domain while engaging actively with everything else. The avoided topic is always conspicuously absent.",
     minConfidence: 0.55,
     baseSeverity: "confirmed",
-    recommendation: "schedule_reflection",
+    recommendation: "schedule_reflection" as PatternRecommendation,
     examples: [
       "Updates on gym/diet/sleep but never on the job search (goal set 3 weeks ago)",
       "Discusses life and habits freely, never mentions the DSA goal",
@@ -274,7 +274,7 @@ const DEFINITIONS: Record<PatternId, PatternDefinition> = {
       "User measures their progress against others, leading to artificial urgency, demotivation, and unrealistic timelines set to 'catch up'.",
     minConfidence: 0.55,
     baseSeverity: "confirmed",
-    recommendation: "schedule_reflection",
+    recommendation: "schedule_reflection" as PatternRecommendation,
     examples: [
       "'My batchmate already has 2 offers and I'm still on basics'",
       "'Everyone around me is so far ahead'",
@@ -785,7 +785,7 @@ function detectTutorialHell(input: DetectionInput): DetectionResult {
     daysSince(g.createdAt, input.now) >= 21
   );
 
-  const "afterIFinish" = messages30d.filter((m) =>
+  const afterIFinish = messages30d.filter((m) =>
     /\b(after (i finish|completing|this course|i'm done).{0,50}(i'?ll? (start|begin|practice|build|do)))\b/i.test(m.text)
   ).length;
 

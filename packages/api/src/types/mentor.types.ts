@@ -93,6 +93,7 @@ export interface EmotionResult {
 }
 
 export interface ConversationAnalysis {
+  entities: any;
   intent: MessageIntent;
   secondaryIntents: MessageIntent[];
   goal: DetectedGoal | null;
