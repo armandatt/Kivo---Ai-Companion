@@ -307,14 +307,27 @@ async function handleTelegramConnectStart(text: string, chatId: number | string)
   await prisma.userProfile.update({
     where: { id: profile.id },
     data:  {
-      telegramChatId:          String(chatId),
-      telegramConnected:       true,
-      telegramConnectedAt:     new Date(),
-      telegramConnectToken:    null,
-      lastActivityAt:          new Date(),
+      telegramChatId:       String(chatId),
+      telegramConnected:    true,
+      telegramConnectedAt:  new Date(),
+      telegramConnectToken: null,
+      lastActivityAt:       new Date(),
     },
   });
 
+  // Check if this user already completed intake.
+  // Reconnecting (e.g. after deleting chat history) should never restart the intake flow.
+  const existingUser = await prisma.messengerUser.findUnique({
+    where:  { platform_platformChatId: { platform: "telegram", platformChatId: String(chatId) } },
+    select: { intakeComplete: true },
+  });
+
+  if (existingUser?.intakeComplete) {
+    await sendTelegramMessage(chatId, "We're reconnected. Pick up where you left off.");
+    return true;
+  }
+
+  // First-time connect — run the full intake opener
   await fireMentorIntakeOpener(
     profile.id,
     String(chatId),
