@@ -48,6 +48,8 @@ export interface MentorScores {
 }
 
 export interface MentorState extends MentorScores {
+  completionRate30d: number;
+  completionRate7d: number;
   streakDays: number;
   longestStreak: number;
   consecutiveMisses: number;
@@ -528,7 +530,7 @@ function computeFlags(state: MentorState, previous: MentorState | null): StateFl
     flags.push("peak_performance");
   }
 
-  return flags;
+  return [...new Set(flags)];
 }
 
 // ── Pure: streak tracking ─────────────────────────────────────────────────────
@@ -698,6 +700,8 @@ function buildDefaultState(): MentorState {
     momentum:        BASELINE.momentum,
     burnoutRisk:     BASELINE.burnoutRisk,
     capacity:        75,
+    completionRate30d:    0.5,
+    completionRate7d:     0.5,
     streakDays:           0,
     longestStreak:        0,
     consecutiveMisses:    0,
@@ -714,6 +718,13 @@ function buildDefaultState(): MentorState {
 
 function parseState(raw: Record<string, unknown>): MentorState {
   const def = buildDefaultState();
+  const flags = Array.isArray(raw.flags)
+    ? (raw.flags as unknown[]).filter(isStateFlag)
+    : [];
+  const momentum7dTrend = Array.isArray(raw.momentum7dTrend)
+    ? (raw.momentum7dTrend as unknown[]).map((value) => toNum(value, NaN)).filter(Number.isFinite)
+    : [];
+
   return {
     motivation:      toNum(raw.motivation,      def.motivation),
     consistency:     toNum(raw.consistency,     def.consistency),
@@ -723,16 +734,18 @@ function parseState(raw: Record<string, unknown>): MentorState {
     momentum:        toNum(raw.momentum,        def.momentum),
     burnoutRisk:     toNum(raw.burnoutRisk,     def.burnoutRisk),
     capacity:        toNum(raw.capacity,        def.capacity),
+    completionRate30d:    clamp(toNum(raw.completionRate30d, def.completionRate30d), 0, 1),
+    completionRate7d:     clamp(toNum(raw.completionRate7d,  def.completionRate7d),  0, 1),
     streakDays:           toNum(raw.streakDays,           0),
     longestStreak:        toNum(raw.longestStreak,        0),
     consecutiveMisses:    toNum(raw.consecutiveMisses,    0),
     totalCommitmentsMade: toNum(raw.totalCommitmentsMade, 0),
     totalCommitmentsKept: toNum(raw.totalCommitmentsKept, 0),
-    lastUpdatedAt:  raw.lastUpdatedAt  ? new Date(raw.lastUpdatedAt  as string) : new Date(),
-    lastActivityAt: raw.lastActivityAt ? new Date(raw.lastActivityAt as string) : null,
+    lastUpdatedAt:  toDate(raw.lastUpdatedAt,  new Date()) as Date,
+    lastActivityAt: toDate(raw.lastActivityAt, null),
     daysSinceFirstSession: toNum(raw.daysSinceFirstSession, 0),
-    flags:           Array.isArray(raw.flags)            ? (raw.flags as StateFlag[])   : [],
-    momentum7dTrend: Array.isArray(raw.momentum7dTrend)  ? (raw.momentum7dTrend as number[]) : [],
+    flags,
+    momentum7dTrend,
     version:         toNum(raw.version, 0),
   };
 }
@@ -741,6 +754,40 @@ function toNum(value: unknown, fallback: number): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
 }
+
+function toDate(value: unknown, fallback: Date): Date;
+function toDate(value: unknown, fallback: null): Date | null;
+function toDate(value: unknown, fallback: Date | null): Date | null {
+  if (!value) return fallback;
+  const date = new Date(value as string);
+  return Number.isFinite(date.getTime()) ? date : fallback;
+}
+
+function isStateFlag(value: unknown): value is StateFlag {
+  return typeof value === "string" && STATE_FLAGS.has(value as StateFlag);
+}
+
+const STATE_FLAGS = new Set<StateFlag>([
+  "high_stress",
+  "burnout_risk_high",
+  "burnout_risk_critical",
+  "low_capacity",
+  "low_motivation",
+  "low_confidence",
+  "streak_at_risk",
+  "streak_broken",
+  "momentum_building",
+  "momentum_collapsed",
+  "consistency_strong",
+  "consistency_collapsed",
+  "overcommitted",
+  "comeback",
+  "peak_performance",
+  "first_week",
+  "returning_after_gap",
+  "avoidance_pattern_active",
+  "disengaged",
+]);
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -789,11 +836,8 @@ export async function updateMentorState(
   // 7. Derived capacity (always recomputed, never directly set)
   updated.capacity = recomputeCapacity(updated);
 
-  // 8. Days since first session
-  if (current.lastActivityAt) {
-    const gapDays = Math.floor((now.getTime() - current.lastActivityAt.getTime()) / 86_400_000);
-    updated.daysSinceFirstSession = current.daysSinceFirstSession + gapDays;
-  }
+  // 8. Days since first session: advance by elapsed days since the last state update.
+  updated.daysSinceFirstSession = current.daysSinceFirstSession + Math.floor(daysSinceUpdate);
 
   // 9. Flags (need previous for comeback / returning detection)
   updated.flags = computeFlags(updated, previous);

@@ -5,6 +5,14 @@ export async function runDecisionEngine(input: {
   system: any;
 }) {
   const { intent, triggers } = input.processed;
+  const text = input.message.toLowerCase();
+
+  if (/\b(shut up|stfu|fuck up|bitch|leave me|stop asking|stop pressing)\b/.test(text)) {
+    return {
+      type: "direct",
+      reply: "Heard. I’ll stop pressing. Work now; I’ll only interrupt when a real check-in is scheduled.",
+    };
+  }
 
   // 🎯 FOCUS MODE
   if (intent === "focus_start" || triggers?.startFocus) {
@@ -69,7 +77,7 @@ export async function runDecisionEngine(input: {
   if (intent === "completion") {
     return {
       type: "direct",
-      reply: "Good. Mark that as evidence, not luck. What is the next clean step?",
+      reply: "Good. Mark that as evidence, not luck. Keep the next block simple: 25 minutes on the highest-priority task.",
     };
   }
 

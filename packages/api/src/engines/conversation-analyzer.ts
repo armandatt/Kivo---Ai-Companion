@@ -61,6 +61,7 @@ export function analyzeConversation(
     confidence,
     rawText,
     normalizedText: normalized,
+    entities: undefined,
   };
 }
 

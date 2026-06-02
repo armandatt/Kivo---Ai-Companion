@@ -1,7 +1,7 @@
 //@ts-ignore
-import { generateCompanionVisit } from "@repo/api/services/checkin.service";
+import { generateCompanionVisit, generateDynamicCheckIn } from "@repo/api/services/checkin.service";
 //@ts-ignore
-import { getUsersForCompanionVisitAt } from "@repo/api/services/user.service";
+import { getUsersForCompanionVisitAt, getUsersDueForDynamicCheckIn, advanceDynamicCheckIn } from "@repo/api/services/user.service";
 //@ts-ignore
 import { addToShortTerm } from "@repo/api/services/memory.service";
 //@ts-ignore
@@ -23,13 +23,23 @@ type CompanionVisitKind =
 
 export async function GET() {
   const now = new Date();
+  console.log(`[CHECKIN] Cron fired at ${now.toISOString()}`);
+
+  const token = process.env.TELEGRAM_BOT_TOKEN ?? process.env.BOT_TOKEN;
+  if (!token) {
+    console.error("[CHECKIN] TELEGRAM_BOT_TOKEN or BOT_TOKEN not set — cron will not send messages");
+    return Response.json({ ok: false, error: "Telegram bot token missing" }, { status: 500 });
+  }
+
   const users = await getUsersForCompanionVisitAt(now);
+  console.log(`[CHECKIN] Fixed daily visits due: ${users.length}`);
   let sent = 0;
 
   for (const user of users) {
     const userId = user.platformChatId;
 
     if (!(await wasVisitSentToday(userId, user.visitKind, now))) {
+      console.log(`[CHECKIN] Sending ${user.visitKind} to ${userId}`);
       const message = await generateCompanionVisit(userId, user.visitKind);
 
       await sendTelegramMessage(userId, message);
@@ -39,7 +49,31 @@ export async function GET() {
         emotion: "neutral",
       });
       sent += 1;
+      console.log(`[CHECKIN] Sent ${user.visitKind} to ${userId}`);
+    } else {
+      console.log(`[CHECKIN] Skipping ${userId} (${user.visitKind}) — already sent today`);
     }
+  }
+
+  const dynamicUsers = await getUsersDueForDynamicCheckIn(now);
+  console.log(`[CHECKIN] Dynamic users due: ${dynamicUsers.length}`);
+
+  for (const user of dynamicUsers) {
+    const userId = user.platformChatId;
+
+    await advanceDynamicCheckIn(userId, user.checkInIntervalMin ?? null, now);
+    console.log(`[CHECKIN] Dynamic check-in firing for ${userId} (interval: ${user.checkInIntervalMin ?? "one-shot"})`);
+
+    const message = await generateDynamicCheckIn(userId);
+    await sendTelegramMessage(userId, message);
+    await addToShortTerm(userId, message, {
+      role: "assistant",
+      intent: "dynamic_checkin",
+      emotion: "neutral",
+    });
+
+    sent += 1;
+    console.log(`[CHECKIN] Dynamic message sent to ${userId}`);
   }
 
   const gymMessages = await runGymCronJobs(now);

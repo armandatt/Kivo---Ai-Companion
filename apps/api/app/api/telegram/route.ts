@@ -32,6 +32,8 @@ import { handleGymMessage } from "@repo/api/services/gym.service";
 import { handlePostSessionDebriefResponse, resetReengagementFlag } from "@repo/api/services/gymCron.service";
 //@ts-ignore
 import { needsIntake, getWebProfile, handleIntakeMessage } from "@repo/api/services/intake.service";
+//@ts-ignore
+import { scheduleCheckIn, cancelCheckIn } from "@repo/api/services/scheduleCheckin.service";
 import { prisma } from "@repo/db/client";
 
 export const runtime = "nodejs";
@@ -182,6 +184,18 @@ export async function POST(req: Request) {
       if (decision.type === "weekly_review") {
         const reply = await generateWeeklyReview(chatId.toString());
         await sendAndRemember(chatId, reply, processed.intent, processed.emotion);
+        return Response.json({ ok: true });
+      }
+
+      if (decision.type === "checkin_schedule") {
+        const result = await scheduleCheckIn(chatId.toString(), text);
+        await sendAndRemember(chatId, result.reply, "checkin_schedule", "neutral");
+        return Response.json({ ok: true });
+      }
+
+      if (decision.type === "checkin_cancel") {
+        const result = await cancelCheckIn(chatId.toString());
+        await sendAndRemember(chatId, result.reply, "checkin_cancel", "neutral");
         return Response.json({ ok: true });
       }
 
