@@ -303,18 +303,49 @@ async function handlePathSelect(
 // Triggered for Rex persona directly from not_started — skips path_select.
 
 async function handleGaName(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  const t = text.toLowerCase().trim()
-  // If the user asked a question instead of giving their name, answer & redirect
-  if (
-    /^(why|what|how|when|where|who|is|are|can|do|did|will|won'?t|don'?t|doesn'?t)\b/i.test(t) ||
-    t.endsWith("?") || t === "??" || t === "?"
-  ) {
+  const name = await llmExtractName(text)
+  if (!name) {
     return answerOffTopicAndRedirect(text, currentStepQuestion("ga_name", answers))
   }
-  const name = extractFirstName(text)
   answers.name = name
   await updateIntake(user.id, "ga_goal", answers)
   return `${name}. Alright. What are we actually here for — lose fat, build muscle, recomp (both at once), or are you one of those "just be healthy" people?`
+}
+
+async function llmExtractName(text: string): Promise<string | null> {
+  try {
+    const raw = await generateOpenAIText({
+      model: "gpt-4o-mini",
+      maxOutputTokens: 15,
+      systemInstruction: [
+        "Extract the user's name from their message. They were just asked 'What's your name?'",
+        "If they are providing a name or nickname (even unconventional: Bro, Dragon, etc.), reply with ONLY that name, capitalized.",
+        "If they are asking a question, insulting, off-topic, or clearly NOT providing a name, reply with exactly: off_topic",
+        "Examples:",
+        "  akshar → Akshar",
+        "  my name is mike → Mike",
+        "  call me bro → Bro",
+        "  why you want to know → off_topic",
+        "  gandu like you → off_topic",
+        "  jhatu like you → off_topic",
+        "  what is this → off_topic",
+        "  ?? → off_topic",
+        "  lol → off_topic",
+      ].join("\n"),
+      prompt: text,
+    })
+    const result = raw.trim()
+    if (/off_topic/i.test(result)) return null
+    const extracted = result.split(/\s+/)[0]?.replace(/[^\w]/g, "") ?? ""
+    if (extracted.length < 2) return null
+    return extracted.charAt(0).toUpperCase() + extracted.slice(1).toLowerCase()
+  } catch {
+    // LLM down — fall back to regex heuristic so intake doesn't hard-block
+    const t = text.toLowerCase().trim()
+    if (/^(why|what|how|when|where|who|is|are|can|do|did|will)\b/.test(t) || t.endsWith("?") || t.length < 2) return null
+    const word = text.trim().replace(/[^\w\s]/g, "").split(/\s+/)[0] ?? ""
+    return word.length >= 2 ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : null
+  }
 }
 
 async function handleGaGoal(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
@@ -562,10 +593,6 @@ function diagnoseWeakLink(a: IntakeAnswers): string {
 
 // ─── Rex Gym Path Helpers ─────────────────────────────────────────────────────
 
-function extractFirstName(text: string): string {
-  const word = text.trim().replace(/[^\w\s]/g, "").split(/\s+/)[0] ?? "hey"
-  return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
-}
 
 async function classifyRexGoal(text: string): Promise<string | null> {
   const VALID = new Set(["fat_loss", "muscle", "both", "performance"])
