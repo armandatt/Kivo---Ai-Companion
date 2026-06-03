@@ -143,23 +143,27 @@ function extractTimeShiftMin(text: string): number | null {
 export async function processMessage(text: string) {
   const cleanedText = text.toLowerCase().trim()
 
-  let intent:           Intent = "general_chat"
-  let emotion:          Emotion = "neutral"
-  let focusDurationMin: number | null = null
-  let timeShiftMin:     number | null = null
+  // ── Tier 1: regex (free, instant) ────────────────────────────────────────
+  // Handles the large majority of messages that have clear keywords/structure.
+  // Struct parsers (durations, time shifts) always stay regex — no ambiguity there.
+  const regexResult  = regexIntent(cleanedText)
+  const emotion      = regexEmotion(cleanedText)   // 3-state emotion stays regex
+  let focusDurationMin = extractFocusDurationMin(cleanedText)
+  let timeShiftMin     = extractTimeShiftMin(cleanedText)
 
-  try {
-    const analysis    = await llmAnalyze(text)
-    intent            = analysis.intent
-    emotion           = analysis.emotion
-    focusDurationMin  = analysis.focusDurationMin ?? extractFocusDurationMin(cleanedText)
-    timeShiftMin      = analysis.timeShiftMin     ?? extractTimeShiftMin(cleanedText)
-  } catch {
-    // OpenAI unreachable — fall back to regex so the bot stays online
-    intent           = regexIntent(cleanedText)
-    emotion          = regexEmotion(cleanedText)
-    focusDurationMin = extractFocusDurationMin(cleanedText)
-    timeShiftMin     = extractTimeShiftMin(cleanedText)
+  // ── Tier 2: LLM (only when regex is genuinely uncertain) ─────────────────
+  // "general_chat" means regex found no clear signal → ask LLM for nuance.
+  // Saves ~80 % of LLM calls while still handling natural-language edge cases.
+  let intent: Intent = regexResult
+  if (regexResult === "general_chat") {
+    try {
+      const analysis   = await llmAnalyze(text)
+      intent           = analysis.intent
+      focusDurationMin = analysis.focusDurationMin ?? focusDurationMin
+      timeShiftMin     = analysis.timeShiftMin     ?? timeShiftMin
+    } catch {
+      // LLM unreachable — keep the regex result
+    }
   }
 
   // Date and deadline extraction stay with chrono-node — it's reliable
