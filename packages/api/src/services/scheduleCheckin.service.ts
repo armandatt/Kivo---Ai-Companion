@@ -1,4 +1,5 @@
 import { prisma } from "@repo/db/client";
+import { generateOpenAIText } from "./openai.service";
 
 // Minimum interval enforced to prevent spam
 const MIN_INTERVAL_MIN = 10;
@@ -6,12 +7,22 @@ const MIN_INTERVAL_MIN = 10;
 const MAX_INTERVAL_MIN = 24 * 60;
 
 export async function scheduleCheckIn(platformChatId: string, text: string) {
-  const parsed = parseCheckInRequest(text);
+  // Tier 1: fast regex for simple relative times ("in 30 min", "every 1 hour")
+  let parsed = parseCheckInRequest(text);
+
+  // Tier 2: LLM for natural language — absolute times, ranges, named times
+  if (!parsed) {
+    const user = await prisma.messengerUser.findUnique({
+      where: { platform_platformChatId: { platform: "telegram", platformChatId } },
+      select: { timezone: true },
+    });
+    parsed = await llmParseScheduleTime(text, user?.timezone ?? "Asia/Kolkata");
+  }
 
   if (!parsed) {
     return {
       scheduled: false,
-      reply: "I didn't catch a time. Try: 'check me in 30 minutes', 'text me after 1 hour', or 'remind me every 2 hours'.",
+      reply: "I didn't catch a time. Try: 'check me in 30 minutes', 'ping me at 10am', or 'remind me every 2 hours'.",
     };
   }
 
@@ -116,4 +127,43 @@ function formatDuration(minutes: number): string {
   if (minutes === 60) return "1 hour";
   if (minutes % 60 === 0) return `${minutes / 60} hours`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}min`;
+}
+
+// ── LLM fallback parser ───────────────────────────────────────────────────────
+// Handles what regex can't: absolute times, time ranges, named times (breakfast,
+// lunch, evening), days of week, etc.
+
+async function llmParseScheduleTime(
+  text: string,
+  timezone: string,
+): Promise<{ intervalMin: number; isRepeating: boolean } | null> {
+  const localTime = new Date().toLocaleTimeString("en-US", {
+    hour: "2-digit", minute: "2-digit", hour12: true, timeZone: timezone,
+  });
+
+  try {
+    const raw = await generateOpenAIText({
+      model:           "gpt-4o-mini",
+      maxOutputTokens: 40,
+      systemInstruction: [
+        `You extract scheduling intent. Current local time: ${localTime} (${timezone}).`,
+        `Reply ONLY with JSON: {"minutesFromNow": <number>, "isRepeating": <bool>}`,
+        `Rules:`,
+        `- Time ranges → use the midpoint (10–11am → 10:30am)`,
+        `- Named times: breakfast=8am, lunch=1pm, evening=6pm, dinner=8pm, night=10pm`,
+        `- If the time already passed today, schedule for tomorrow`,
+        `- "every X" / "repeat" → isRepeating: true`,
+        `- If no clear time found → reply with null`,
+      ].join("\n"),
+      prompt: text,
+    });
+
+    if (raw.trim().toLowerCase() === "null") return null;
+    const obj = JSON.parse(raw.trim()) as { minutesFromNow?: unknown; isRepeating?: unknown };
+    const mins = Number(obj.minutesFromNow);
+    if (!Number.isFinite(mins) || mins <= 0) return null;
+    return { intervalMin: Math.round(mins), isRepeating: !!obj.isRepeating };
+  } catch {
+    return null;
+  }
 }
