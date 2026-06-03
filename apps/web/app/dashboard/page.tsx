@@ -1,5 +1,6 @@
 import { cookies } from "next/headers"
 import { parseTodayTasks } from "@/lib/plan-parser"
+import TelegramConnectBanner from "@/components/dashboard/telegram-connect-banner"
 import GymStatCards from "@/components/dashboard/gym-stat-cards"
 import WeekSplit from "@/components/dashboard/week-split"
 import NextSessionTargets from "@/components/dashboard/next-session-targets"
@@ -66,14 +67,57 @@ export default async function DashboardPage() {
   const todayTasks       = parseTodayTasks(planContent, planId)
   const gym              = data?.gymData ?? null
 
-  // ── Rex gym dashboard ────────────────────────────────────────────────────────
-  if (gym) {
+  const isRex = profile?.primaryPersona === "rex"
+
+  // ── Rex gym dashboard ─────────────────────────────────────────────────────
+  if (isRex) {
+    // Not yet connected to Telegram — can't load gym data
+    if (!telegramConnected || !gym) {
+      return (
+        <div style={{ maxWidth: "600px" }}>
+          <div style={{ marginBottom: "24px" }}>
+            <h1 style={{ fontSize: "24px", fontWeight: 700, color: "#FFFFFF", margin: "0 0 6px" }}>
+              Welcome, {data?.user?.name?.split(" ")[0] ?? "athlete"} 💪
+            </h1>
+            <p style={{ fontSize: "14px", color: "#888", margin: 0 }}>
+              Connect Telegram to start training with Rex and unlock your gym dashboard.
+            </p>
+          </div>
+          <div style={{
+            backgroundColor: "#111111",
+            border: "1px solid #2A2A2A",
+            borderRadius: "12px",
+            padding: "28px 24px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "16px",
+          }}>
+            <div style={{
+              width: "52px", height: "52px", borderRadius: "12px",
+              background: "linear-gradient(135deg, #00F5A0, #00C070)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: "22px", fontWeight: 700, color: "#0D0D0D",
+            }}>
+              R
+            </div>
+            <div>
+              <p style={{ fontSize: "16px", fontWeight: 700, color: "#FFFFFF", margin: "0 0 6px" }}>
+                Rex is waiting on Telegram
+              </p>
+              <p style={{ fontSize: "13px", color: "#888", margin: 0 }}>
+                Log your first session, set your schedule, and your full gym dashboard will appear here — live.
+              </p>
+            </div>
+            <TelegramConnectBanner />
+          </div>
+        </div>
+      )
+    }
+
     return (
       <div style={{ maxWidth: "1200px" }}>
-        {/* 4 top stat cards */}
         <GymStatCards gym={gym} />
 
-        {/* Main 2-col: 60 / 40 */}
         <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: "12px", marginBottom: "12px" }}>
           <WeekSplit gym={gym} />
           <NextSessionTargets gym={gym} />
@@ -84,16 +128,11 @@ export default async function DashboardPage() {
           <RexFlags gym={gym} />
         </div>
 
-        {/* Volume + heatmap (full width, 2-col internal) */}
         <div style={{ marginBottom: "12px" }}>
           <VolumeHeatmap gym={gym} />
         </div>
 
-        {/* Rex companion card */}
-        <RexCompanionCard
-          lastMessage={lastMessage}
-          telegramConnected={telegramConnected}
-        />
+        <RexCompanionCard lastMessage={lastMessage} telegramConnected={telegramConnected} />
       </div>
     )
   }
