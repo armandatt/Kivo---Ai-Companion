@@ -116,7 +116,24 @@ function currentStepQuestion(step: IntakeStep, answers: IntakeAnswers): string {
     case "ga_gym_time":  return `What time do you usually train? And what city are you in?`
     case "ga_nutrition": return `Roughly how much protein are you hitting daily?`
     case "ga_injuries":  return `Any injuries I need to know about?`
-    default:             return ""
+    // Study path
+    case "sb1":              return STUDY_Q.sb1
+    case "sb2":              return STUDY_Q.sb2
+    case "sb3":              return STUDY_Q.sb3
+    case "sb3b":             return `How behind are we talking — weeks or months?`
+    case "sb4":              return STUDY_Q.sb4
+    case "sb4b":             return `Which one is the biggest problem right now — the one you keep avoiding?`
+    case "sb5_style":        return STUDY_Q.sb5_style
+    case "sb5_killer":       return `What kills your focus most — phone, environment, other people, or your own head?`
+    case "sb6_hours":        return STUDY_Q.sb6_hours
+    case "sb6_consistency":  return `Is that consistent every day, or more variable — like lighter on weekdays, heavier on weekends?`
+    case "sb7":              return STUDY_Q.sb7
+    case "sb8":              return STUDY_Q.sb8
+    // General path
+    case "gn1": return GENERAL_Q.gn1
+    case "gn2": return GENERAL_Q.gn2
+    case "gn3": return GENERAL_Q.gn3
+    default:    return ""
   }
 }
 
