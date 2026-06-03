@@ -8,11 +8,17 @@ import { generateOpenAIText } from "./openai.service"
 
 type IntakeStep =
   | "not_started" | "path_select"
+  // Rex gym coaching path
+  | "ga_name" | "ga_goal" | "ga_drill" | "ga_lifts"
+  | "ga_schedule" | "ga_split" | "ga_gym_time" | "ga_nutrition" | "ga_injuries"
+  // Legacy gym path (backward compat for mid-flow users)
   | "ga1" | "ga1_target" | "ga2_weight" | "ga2_exp"
   | "ga3" | "ga3_days" | "ga4" | "ga5_diet" | "ga5_track" | "ga6" | "ga7"
+  // Study path
   | "sb1" | "sb2" | "sb3" | "sb3b" | "sb4" | "sb4b"
   | "sb5_style" | "sb5_killer" | "sb6_hours" | "sb6_consistency"
   | "sb7" | "sb8"
+  // General path
   | "gn1" | "gn2" | "gn3"
   | "complete"
 
@@ -118,9 +124,20 @@ async function routeStep(
   modules: string[], user: IntakeUser, profile: WebProfile, chatId: string
 ): Promise<string> {
   switch (step) {
-    case "not_started":    return handleNotStarted(user, profile, chatId)
-    case "path_select":    return handlePathSelect(text, answers, user, profile, chatId)
-    case "ga1":            return handleGa1(text, answers, user, chatId)
+    case "not_started":     return handleNotStarted(user, profile, chatId)
+    case "path_select":     return handlePathSelect(text, answers, user, profile, chatId)
+    // Rex gym coaching path
+    case "ga_name":         return handleGaName(text, answers, user, chatId)
+    case "ga_goal":         return handleGaGoal(text, answers, user, chatId)
+    case "ga_drill":        return handleGaDrill(text, answers, user, chatId)
+    case "ga_lifts":        return handleGaLifts(text, answers, user, chatId)
+    case "ga_schedule":     return handleGaSchedule(text, answers, user, chatId)
+    case "ga_split":        return handleGaSplit(text, answers, user, chatId)
+    case "ga_gym_time":     return handleGaGymTime(text, answers, user, chatId)
+    case "ga_nutrition":    return handleGaNutrition(text, answers, user, chatId)
+    case "ga_injuries":     return handleGaInjuries(text, answers, modules, user, profile, chatId)
+    // Legacy gym path
+    case "ga1":             return handleGa1(text, answers, user, chatId)
     case "ga1_target":     return handleGa1Target(text, answers, user, chatId)
     case "ga2_weight":     return handleGa2Weight(text, answers, user, chatId)
     case "ga2_exp":        return handleGa2Exp(text, answers, user, chatId)
@@ -153,11 +170,17 @@ async function routeStep(
 // ─── Opening & Path Select ────────────────────────────────────────────────────
 
 async function handleNotStarted(user: IntakeUser, profile: WebProfile, chatId: string): Promise<string> {
+  const persona = profile.persona || user.persona || "nova"
+
+  // Rex skips path_select and goes straight into gym coaching
+  if (persona === "rex") {
+    await updateIntake(user.id, "ga_name", {}, ["gym"])
+    return `Your last trainer probably told you what you wanted to hear.\nI won't. Name?`
+  }
+
   await updateIntake(user.id, "path_select", {}, [])
 
-  const persona  = profile.persona || user.persona || "nova"
   const creature = profile.creatureName || user.creatureName || null
-  // Only use goal/pain if they are real values, not the generic fallbacks
   const goal = (profile.primaryGoal30d && profile.primaryGoal30d !== "something important")
     ? profile.primaryGoal30d : null
   const pain = (profile.corePain && profile.corePain !== "the thing you keep not doing")
@@ -165,7 +188,7 @@ async function handleNotStarted(user: IntakeUser, profile: WebProfile, chatId: s
 
   const pathQ = "Gym and fitness, studying and work, or both? Pick one."
 
-  if (persona === "rex" || persona === "spark") {
+  if (persona === "spark") {
     const creatureLine = creature ? `${creature} sent me.` : "I'm here."
     const goalLine     = goal ? `You want ${goal}.` : "You have a goal. Let's make it concrete."
     const painLine     = pain ? `And ${pain} keeps getting in the way.` : ""
@@ -402,6 +425,377 @@ async function handleGa7(
 
   await updateIntake(user.id, "complete", answers, modules, { intakeComplete: true })
   return buildGymClosing(answers, profile, user)
+}
+
+// ─── Rex Gym Coaching Path ────────────────────────────────────────────────────
+// Triggered for Rex persona directly from not_started — skips path_select.
+
+async function handleGaName(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
+  const name = extractFirstName(text)
+  answers.name = name
+  await updateIntake(user.id, "ga_goal", answers)
+  return `${name}. Alright. What are we actually here for — lose fat, build muscle, or are you one of those "just be healthy" people?`
+}
+
+async function handleGaGoal(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
+  const goal = classifyRexGoal(text)
+  if (!goal) {
+    return `That's not an answer. Pick one: fat loss, muscle, or performance.`
+  }
+  answers.gym_goal     = goal
+  answers.gym_goal_raw = text
+  await updateIntake(user.id, "ga_drill", answers)
+  return buildRexGoalDrillQuestion(goal)
+}
+
+async function handleGaDrill(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
+  const level = classifyRexExperience(text)
+  answers.training_experience = level
+  answers.drill_raw           = text
+  await updateIntake(user.id, "ga_lifts", answers)
+  return buildRexLiftsQuestion(level)
+}
+
+async function handleGaLifts(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
+  answers.lifts_raw = text
+  const lifts = parseLiftsFromText(text)
+  if (lifts.squat)    answers.squat_kg    = String(lifts.squat)
+  if (lifts.bench)    answers.bench_kg    = String(lifts.bench)
+  if (lifts.deadlift) answers.deadlift_kg = String(lifts.deadlift)
+  await updateIntake(user.id, "ga_schedule", answers)
+
+  const calibration = isUnknownLiftsText(text)
+    ? `Then we're testing Week 1. That's fine.`
+    : buildLiftCalibration(lifts)
+
+  return `${calibration}\n\nHow many days a week are you actually going to show up? Not the plan — the real number.`
+}
+
+async function handleGaSchedule(text: string, answers: IntakeAnswers, user: IntakeUser, _chatId: string): Promise<string> {
+  const days    = extractDaysNumber(text)
+  const isRetry = answers.schedule_retry === "true"
+
+  if (!isRetry && days !== null && days < 3) {
+    answers.schedule_retry = "true"
+    await updateIntake(user.id, "ga_schedule", answers)
+    return `That's not enough. 3 minimum. Can you do 3?`
+  }
+
+  const finalDays = days ?? 3
+  answers.available_training_days = String(finalDays)
+  delete answers.schedule_retry
+  await updateIntake(user.id, "ga_split", answers)
+
+  if (finalDays >= 5) {
+    return `Ambitious. Do you have a split or are you winging it?`
+  }
+  return `Honest. ${finalDays} days is plenty if you don't waste them.\n\nWalk me through your split. What do you train each day?`
+}
+
+async function handleGaSplit(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
+  const splitType      = classifySplit(text)
+  answers.current_split = splitType
+  answers.split_raw    = text
+  await updateIntake(user.id, "ga_gym_time", answers)
+
+  const hasSplit = splitType !== "unstructured" && splitType !== "none"
+  return hasSplit
+    ? `Noted. What time do you usually train? And what city are you in so I know your timezone.`
+    : `I'll build one. What time do you train? And what city are you in so I know your timezone.`
+}
+
+async function handleGaGymTime(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
+  const sessionTime = parseTimeString(text)
+  const city        = extractCityFromText(text)
+  if (sessionTime) answers.gym_session_time = sessionTime
+  if (city)        answers.city             = city
+  await updateIntake(user.id, "ga_nutrition", answers)
+  return `Quick nutrition check. Roughly how much protein are you hitting daily? Be honest — I can tell when people are guessing.`
+}
+
+async function handleGaNutrition(text: string, answers: IntakeAnswers, user: IntakeUser, _chatId: string): Promise<string> {
+  answers.protein_raw = text
+  const status        = classifyProteinStatus(text)
+  answers.protein_status = status
+
+  const bw = parseBodyweightKg(text)
+  if (bw) {
+    answers.current_bodyweight_kg = String(bw)
+    const factor = answers.gym_goal === "cut" ? 2.2 : 1.8
+    answers.protein_target_g = String(Math.round(bw * factor))
+  }
+
+  await updateIntake(user.id, "ga_injuries", answers)
+  const name = answers.name ?? "you"
+
+  if (status === "adequate") {
+    return `Good. That's the one thing most people get wrong.\n\nAny injuries I need to know about, or are you working with a full deck?`
+  }
+  if (status === "low") {
+    return `That's why you're not recovering. ${name}, bodyweight in lbs × 0.8 = your minimum.\n\nAny injuries I need to know about?`
+  }
+  return `You're not tracking. Roughly — are you eating more than 100g protein a day?\n\nAny injuries I need to know about?`
+}
+
+async function handleGaInjuries(
+  text: string, answers: IntakeAnswers, modules: string[],
+  user: IntakeUser, profile: WebProfile, chatId: string
+): Promise<string> {
+  const hasInjury = !/\b(no|none|nothing|all good|fine|healthy|nope|full deck|clean|clear)\b/i.test(text)
+  answers.injury_notes = hasInjury ? text : "none"
+  if (hasInjury) await addToLongTerm(chatId, "preferences", `injury_flag: ${text}`)
+
+  await Promise.all([
+    addToLongTerm(chatId, "preferences", `gym_goal: ${answers.gym_goal}`),
+    addToLongTerm(chatId, "preferences", `training_experience: ${answers.training_experience}`),
+    addToLongTerm(chatId, "preferences", `training_days_per_week: ${answers.available_training_days}`),
+    addToLongTerm(chatId, "preferences", `current_split: ${answers.current_split}`),
+    answers.gym_session_time
+      ? addToLongTerm(chatId, "preferences", `gym_session_time: ${answers.gym_session_time}`)
+      : Promise.resolve(),
+    answers.protein_target_g
+      ? addToLongTerm(chatId, "preferences", `protein_target: ${answers.protein_target_g}g`)
+      : Promise.resolve(),
+    answers.squat_kg || answers.bench_kg || answers.deadlift_kg
+      ? addToLongTerm(chatId, "anchors", `lifts — squat: ${answers.squat_kg ?? "?"}, bench: ${answers.bench_kg ?? "?"}, deadlift: ${answers.deadlift_kg ?? "?"}`)
+      : Promise.resolve(),
+  ])
+
+  const timezone = answers.city ? cityToTimezone(answers.city) : "Asia/Kolkata"
+  await prisma.messengerUser.update({
+    where: { id: user.id },
+    data: {
+      ...(answers.gym_session_time ? { preferredCheckInTime: answers.gym_session_time } : {}),
+      timezone,
+      intakeAnswers: answers,
+    },
+  })
+
+  const gymPlan = await buildGymPlan(answers)
+  await savePlan(chatId, gymPlan)
+
+  if (modules.includes("study")) {
+    await updateIntake(user.id, "sb1", answers, modules)
+    return buildRexGymClosing(answers) + "\n\n---\n\nNow for study.\n\n" + STUDY_Q.sb1
+  }
+
+  await updateIntake(user.id, "complete", answers, modules, { intakeComplete: true })
+  return buildRexGymClosing(answers)
+}
+
+// ─── Rex Closing ──────────────────────────────────────────────────────────────
+
+function buildRexGymClosing(a: IntakeAnswers): string {
+  const goal     = rexGoalLabel(a.gym_goal ?? "fitness")
+  const days     = a.available_training_days ?? "3"
+  const time     = a.gym_session_time ?? "your usual time"
+  const split    = rexSplitLabel(a.current_split ?? "unstructured", parseInt(days))
+  const weakLink = diagnoseWeakLink(a)
+
+  return [
+    `Right. Here's where we are:`,
+    `Goal: ${goal}. Training: ${days}x/week, ${time}. Split: ${split}.`,
+    `Weakest link right now: ${weakLink}.`,
+    `First check-in is ${time} tomorrow. Don't ghost me.`,
+  ].join("\n")
+}
+
+function rexGoalLabel(goal: string): string {
+  const map: Record<string, string> = {
+    fat_loss: "Fat loss", muscle: "Build muscle", both: "Recomp",
+    performance: "Performance", bulk: "Build muscle", cut: "Fat loss",
+    strength: "Strength", habit: "Build the habit", recomp: "Recomp",
+  }
+  return map[goal] ?? goal
+}
+
+function rexSplitLabel(split: string, days: number): string {
+  const map: Record<string, string> = {
+    PPL: "PPL", upper_lower: "Upper/Lower", full_body: "Full Body", bro_split: "Body Part Split",
+    unstructured: days >= 4 ? "Upper/Lower (to be built)" : "Full Body (to be built)",
+    none:         days >= 4 ? "Upper/Lower (to be built)" : "Full Body (to be built)",
+  }
+  return map[split] ?? split
+}
+
+function diagnoseWeakLink(a: IntakeAnswers): string {
+  if (!a.lifts_raw || isUnknownLiftsText(a.lifts_raw)) return "no baseline — testing everything Week 1"
+  if (a.protein_status === "low")                        return "your protein intake — fix that before anything else"
+  if (a.injury_notes && a.injury_notes !== "none")       return `working around: ${a.injury_notes.slice(0, 50)}`
+
+  const days = parseInt(a.available_training_days ?? "3")
+  if (days < 3) return "frequency — making every session count"
+
+  const split = a.current_split
+  if (!split || split === "unstructured" || split === "none") return "your training structure — I'm building it"
+
+  const bench = parseInt(a.bench_kg ?? "0")
+  const squat = parseInt(a.squat_kg ?? "0")
+  const dl    = parseInt(a.deadlift_kg ?? "0")
+  if (squat > 0 && bench > 0 && bench / squat < 0.60) return "bench — it's lagging everything else"
+  if (squat > 0 && dl > 0 && dl < squat)              return "deadlift — shouldn't be under your squat"
+
+  return "consistency — the numbers are workable"
+}
+
+// ─── Rex Gym Path Helpers ─────────────────────────────────────────────────────
+
+function extractFirstName(text: string): string {
+  const word = text.trim().replace(/[^\w\s]/g, "").split(/\s+/)[0] ?? "hey"
+  return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+}
+
+function classifyRexGoal(text: string): string | null {
+  const t = text.toLowerCase()
+  const fat    = /\b(fat|cut|lean|lose|weight loss|slim|shred|drop|burning)\b/.test(t)
+  const muscle = /\b(muscle|bulk|build|gain|mass|strong|strength|size|bigger)\b/.test(t)
+  const perf   = /\b(performance|athletic|sport|run|endurance|healthy|health|habit|fitness|fit)\b/.test(t)
+  if (fat && muscle) return "both"
+  if (fat)           return "fat_loss"
+  if (muscle)        return "muscle"
+  if (perf)          return "performance"
+  return null
+}
+
+function buildRexGoalDrillQuestion(goal: string): string {
+  if (goal === "fat_loss")    return `Fat loss. Fine. How long have you been "trying" to lose fat?`
+  if (goal === "muscle")      return `Muscle. Good choice. How long have you been training?`
+  if (goal === "both")        return `Both at once. Bold. Intermediate or just started?`
+  if (goal === "performance") return `Performance. How long have you been training seriously?`
+  return `How long have you been at this?`
+}
+
+function classifyRexExperience(text: string): string {
+  const t = text.toLowerCase()
+  if (/\b(never|just start|brand new|zero|first time|no experience|newbie|beginner)\b/.test(t)) return "beginner"
+
+  const yr = t.match(/(\d+)\s*(?:year|yr)/)
+  if (yr) {
+    const y = parseInt(yr[1])
+    return y >= 5 ? "advanced" : y >= 2 ? "intermediate" : "beginner"
+  }
+  const mo = t.match(/(\d+)\s*month/)
+  if (mo) {
+    return parseInt(mo[1]) >= 24 ? "intermediate" : "beginner"
+  }
+
+  if (/\b(advanced|competitive|5\+)\b/.test(t))                            return "advanced"
+  if (/\b(intermediate|couple years?|few years?|some experience)\b/.test(t)) return "intermediate"
+  if (/\b(beginner|new to|started recently|few months?)\b/.test(t))         return "beginner"
+  return "intermediate"
+}
+
+function buildRexLiftsQuestion(level: string): string {
+  if (level === "beginner") {
+    return `Beginner. No ego then, good. We can work with that.\n\nGive me your working weights. Squat, bench, deadlift. If you don't know them, that's the first problem we're fixing.`
+  }
+  if (level === "intermediate") {
+    return `Intermediate means different things to different people. Give me squat, bench, and deadlift.`
+  }
+  if (level === "advanced") {
+    return `Advanced. We'll see. Give me squat, bench, and deadlift — working weights or 1RM.`
+  }
+  return `Give me your working weights. Squat, bench, deadlift. If you don't know them, that's the first problem we're fixing.`
+}
+
+function isUnknownLiftsText(text: string): boolean {
+  return /\b(don'?t know|not sure|no idea|haven'?t tested|never tested|idk|can'?t|none|n\/a|not tested|no numbers)\b/i.test(text)
+}
+
+type LiftNumbers = { squat?: number; bench?: number; deadlift?: number }
+
+function parseLiftsFromText(text: string): LiftNumbers {
+  const sqMatch = text.match(/(?:squat|sq)[^\d]*(\d+)/i)
+  const bpMatch = text.match(/(?:bench|bp|bench\s*press)[^\d]*(\d+)/i)
+  const dlMatch = text.match(/(?:deadlift|dl|dead)[^\d]*(\d+)/i)
+
+  if (sqMatch || bpMatch || dlMatch) {
+    return {
+      squat:    sqMatch ? parseInt(sqMatch[1]) : undefined,
+      bench:    bpMatch ? parseInt(bpMatch[1]) : undefined,
+      deadlift: dlMatch ? parseInt(dlMatch[1]) : undefined,
+    }
+  }
+  // Positional fallback: first three plausible numbers = squat, bench, deadlift
+  const nums = [...text.matchAll(/\d+/g)]
+    .map(m => parseInt(m[0]))
+    .filter(n => n > 10 && n < 1000)
+  return { squat: nums[0], bench: nums[1], deadlift: nums[2] }
+}
+
+function buildLiftCalibration(lifts: LiftNumbers): string {
+  const { squat, bench, deadlift } = lifts
+  if (squat && bench) {
+    if (bench / squat < 0.60) return `Bench is lagging your squat hard. We'll fix that.`
+    if (bench / squat > 0.95) return `Bench nearly matching your squat. Posterior chain probably needs work.`
+  }
+  if (squat && deadlift && deadlift < squat) {
+    return `Deadlift under your squat — that's unusual. We'll address it.`
+  }
+  return `Noted.`
+}
+
+function extractDaysNumber(text: string): number | null {
+  const wordMap: Record<string, number> = {
+    one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
+  }
+  const t = text.toLowerCase()
+  for (const [word, num] of Object.entries(wordMap)) {
+    if (t.includes(word)) return num
+  }
+  const m = t.match(/\b([1-7])\s*(?:days?|x|times?|\/week)?\b/)
+  return m ? parseInt(m[1]) : null
+}
+
+function extractCityFromText(text: string): string | null {
+  const skip = new Set(["am", "pm", "at", "in", "around", "usually", "morning", "evening", "afternoon", "night", "i", "my", "gym"])
+  for (const word of text.split(/[\s,]+/)) {
+    const clean = word.replace(/[^\w]/g, "")
+    if (clean.length > 2 && /^[A-Z]/.test(clean) && !skip.has(clean.toLowerCase()) && isNaN(Number(clean))) {
+      return clean
+    }
+  }
+  return null
+}
+
+function cityToTimezone(city: string): string {
+  const map: Record<string, string> = {
+    // India
+    Mumbai: "Asia/Kolkata", Delhi: "Asia/Kolkata", Bangalore: "Asia/Kolkata",
+    Bengaluru: "Asia/Kolkata", Chennai: "Asia/Kolkata", Hyderabad: "Asia/Kolkata",
+    Pune: "Asia/Kolkata", Kolkata: "Asia/Kolkata", Noida: "Asia/Kolkata",
+    Gurgaon: "Asia/Kolkata", Ahmedabad: "Asia/Kolkata", Jaipur: "Asia/Kolkata",
+    // USA
+    Chicago: "America/Chicago", Houston: "America/Chicago", Dallas: "America/Chicago",
+    Seattle: "America/Los_Angeles", Miami: "America/New_York", Boston: "America/New_York",
+    Atlanta: "America/New_York",
+    // UK / Europe
+    London: "Europe/London", Manchester: "Europe/London",
+    Berlin: "Europe/Berlin", Paris: "Europe/Paris", Amsterdam: "Europe/Amsterdam",
+    // Others
+    Dubai: "Asia/Dubai", Singapore: "Asia/Singapore", Tokyo: "Asia/Tokyo",
+    Sydney: "Australia/Sydney", Melbourne: "Australia/Melbourne",
+    Toronto: "America/Toronto", Vancouver: "America/Vancouver",
+  }
+  return map[city] ?? "Asia/Kolkata"
+}
+
+function classifyProteinStatus(text: string): "adequate" | "low" | "unknown" {
+  const t = text.toLowerCase()
+  if (/\b(don'?t know|not sure|no idea|not tracking|idk|unsure)\b/.test(t)) return "unknown"
+  const g = t.match(/(\d+)\s*g/)
+  if (g) return parseInt(g[1]) >= 120 ? "adequate" : "low"
+  if (/\b(enough|plenty|good|adequate|hitting|high)\b/.test(t)) return "adequate"
+  if (/\b(low|not enough|lacking|barely|hardly)\b/.test(t))     return "low"
+  return "unknown"
+}
+
+function parseBodyweightKg(text: string): number | null {
+  const lbsMatch = text.match(/(\d{2,3})\s*(?:lbs?|pounds?)/i)
+  if (lbsMatch) return Math.round(parseInt(lbsMatch[1]) * 0.453)
+  const kgMatch = text.match(/(\d{2,3})\s*(?:kg|kilos?)/i)
+  if (kgMatch) return parseInt(kgMatch[1])
+  return null
 }
 
 // ─── Study Path ───────────────────────────────────────────────────────────────

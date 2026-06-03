@@ -42,6 +42,7 @@ export async function generateOpenAIText(input: {
   prompt: string;
   systemInstruction?: string;
   maxOutputTokens?: number;
+  model?: string;             // per-call override; falls back to OPENAI_MODEL env → gpt-4o-mini
 }) {
   const apiKey = getOpenAIKey();
 
@@ -49,7 +50,7 @@ export async function generateOpenAIText(input: {
     throw new Error("OPENAI_API_KEY is not set");
   }
 
-  const model = process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+  const model = input.model ?? process.env.OPENAI_MODEL ?? DEFAULT_OPENAI_MODEL;
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {

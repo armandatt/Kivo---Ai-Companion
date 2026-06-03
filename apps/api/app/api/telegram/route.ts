@@ -25,6 +25,10 @@ import { handlePostSessionDebriefResponse, resetReengagementFlag } from "@repo/a
 //@ts-ignore
 import { needsIntake, getWebProfile, handleIntakeMessage } from "@repo/api/services/intake.service";
 //@ts-ignore
+import { handleWorkoutCommand, handleActiveLoggingMessage } from "@repo/api/services/workoutTracking.service";
+//@ts-ignore
+import { handleOffTopicMessage } from "@repo/api/services/offTopicClassifier.service";
+//@ts-ignore
 import { scheduleCheckIn, cancelCheckIn } from "@repo/api/services/scheduleCheckin.service";
 //@ts-ignore
 import { detectTimeMention } from "@repo/api/services/checkin-offer.service";
@@ -84,6 +88,20 @@ export async function POST(req: Request) {
           await sendTelegramMessage(chatId, intakeResult.reply);
           return Response.json({ ok: true });
         }
+      }
+
+      // ── Workout commands (/log /pr /progress /history /overload /streak /split)
+      const workoutCmd = await handleWorkoutCommand(chatId.toString(), text);
+      if (workoutCmd.handled) {
+        await sendAndRemember(chatId, workoutCmd.reply, workoutCmd.intent ?? "workout_cmd", "neutral");
+        return Response.json({ ok: true });
+      }
+
+      // ── Active workout logging (mid-session set entry) ────────────────────
+      const loggingResult = await handleActiveLoggingMessage(chatId.toString(), text);
+      if (loggingResult.handled) {
+        await sendAndRemember(chatId, loggingResult.reply, "workout_logging", "neutral");
+        return Response.json({ ok: true });
       }
 
       // ── Rate limit ────────────────────────────────────────────────────────
@@ -147,25 +165,6 @@ export async function POST(req: Request) {
         }
       }
 
-      // ── Pushback / "leave me alone" detection ────────────────────────────────
-      // Catches: "shut the fuck up", "shut up", "stfu", "let me work",
-      //          "leave me alone", "stop asking", "bruv i said", "i said stop", etc.
-      const isPushback =
-        /\bshut\b.{0,15}\bup\b/i.test(text) ||             // "shut up", "shut the fuck up"
-        /\b(stfu|gtfo)\b/i.test(text) ||
-        /\blet me (work|focus|study|be|do my thing)\b/i.test(text) ||
-        /\bleave me (alone|be)\b/i.test(text) ||
-        /\b(stop (asking|pressing|pushing|bothering|messaging))\b/i.test(text) ||
-        /\bi (already |just )?said (shut|stop|leave|let me)\b/i.test(text) ||
-        /\bbruv i said\b/i.test(text);
-
-      if (isPushback) {
-        const reply = "Heard. I'll give you space.";
-        await addToShortTerm(chatId.toString(), text, { role: "user", intent: processed.intent, emotion: processed.emotion });
-        await sendAndRemember(chatId, reply, "general_chat", "neutral");
-        return Response.json({ ok: true });
-      }
-
       // ── Focus session ─────────────────────────────────────────────────────
       // Side effect: starts an async timer loop — can't be handled inside orchestrator.
       if (processed.intent === "focus_start" || processed.triggers?.startFocus) {
@@ -227,6 +226,16 @@ export async function POST(req: Request) {
         const reply = await generateWeeklyReview(chatId.toString());
         await addToShortTerm(chatId.toString(), text, { role: "user", intent: processed.intent, emotion: processed.emotion });
         await sendAndRemember(chatId, reply, processed.intent, processed.emotion);
+        return Response.json({ ok: true });
+      }
+
+      // ── Off-topic classification (3-layer: regex → hardcoded → cheap LLM) ──
+      // Training-related messages pass through instantly (no cost).
+      // Everything else is handled here without touching the orchestrator.
+      const offTopicResult = await handleOffTopicMessage(chatId.toString(), text);
+      if (offTopicResult.handled) {
+        await addToShortTerm(chatId.toString(), text, { role: "user", intent: "off_topic", emotion: "neutral" });
+        await sendAndRemember(chatId, offTopicResult.reply, offTopicResult.intent, "neutral");
         return Response.json({ ok: true });
       }
 

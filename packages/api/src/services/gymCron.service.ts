@@ -4,6 +4,7 @@ import {
   runProgressiveOverloadCheck,
 } from "./gymDetections.service";
 import { generateWeeklyReview } from "./review.service";
+import { buildGymTimeContext } from "./gymTimeContext.service";
 
 export type GymCronMessage = {
   userId: string;
@@ -13,14 +14,276 @@ export type GymCronMessage = {
 };
 
 export async function runGymCronJobs(now = new Date()) {
-  const [preSession, postSession, reengagement, sundayReports] = await Promise.all([
+  const [preSession, postSession, reengagement, sundayReports,
+         rexPre, rexEvening, rexRestDay, rexSilence] = await Promise.all([
     runPreSessionFormCueCron(now),
     runPostSessionDebriefCron(now),
     runReengagementCron(now),
     runSundayPlateauAndDeloadCron(now),
+    runRexPreSessionCron(now),
+    runRexEveningAccountabilityCron(now),
+    runRexRestDayCron(now),
+    runRexSilenceCheckCron(now),
   ]);
 
-  return [...preSession, ...postSession, ...reengagement, ...sundayReports];
+  return [
+    ...preSession, ...postSession, ...reengagement, ...sundayReports,
+    ...rexPre, ...rexEvening, ...rexRestDay, ...rexSilence,
+  ];
+}
+
+// ─── Rex Telegram Cron Jobs ───────────────────────────────────────────────────
+// These operate on MessengerUser (Telegram-native Rex users).
+// chatId = platformChatId for all outbound messages.
+
+// JOB 1 — Pre-session fire-up (30 min before gym_time on training days)
+async function runRexPreSessionCron(now: Date): Promise<GymCronMessage[]> {
+  const users = await getRexUsersDueAtLocalTime(now, -30);
+  const messages: GymCronMessage[] = [];
+
+  for (const user of users) {
+    const ctx = await buildGymTimeContext(user.platformChatId, now);
+    if (!ctx?.isTrainingDay) continue;
+    if (await wasRexCronSentToday(user.platformChatId, "rex_pre_session", now)) continue;
+    if (await hadRexSessionToday(user.platformChatId, now)) continue;
+
+    const text = buildPreSessionMessage(ctx, user);
+    messages.push({ userId: user.platformChatId, chatId: user.platformChatId, text, intent: "rex_pre_session" });
+  }
+
+  return messages;
+}
+
+// JOB 2 — Evening accountability (9pm on training days if no log)
+async function runRexEveningAccountabilityCron(now: Date): Promise<GymCronMessage[]> {
+  const users = await getRexUsersAtLocalHour(now, 21);
+  const messages: GymCronMessage[] = [];
+
+  for (const user of users) {
+    const ctx = await buildGymTimeContext(user.platformChatId, now);
+    if (!ctx?.isTrainingDay) continue;
+    if (await wasRexCronSentToday(user.platformChatId, "rex_evening_check", now)) continue;
+    if (await hadRexSessionToday(user.platformChatId, now)) continue;
+
+    messages.push({
+      userId: user.platformChatId,
+      chatId: user.platformChatId,
+      text: "No log yet today. Did you train or did something come up?",
+      intent: "rex_evening_check",
+    });
+  }
+
+  return messages;
+}
+
+// JOB 3 — Rest day morning (10am on rest days)
+async function runRexRestDayCron(now: Date): Promise<GymCronMessage[]> {
+  const users = await getRexUsersAtLocalHour(now, 10);
+  const messages: GymCronMessage[] = [];
+
+  for (const user of users) {
+    const ctx = await buildGymTimeContext(user.platformChatId, now);
+    if (!ctx || ctx.isTrainingDay) continue;
+    if (await wasRexCronSentToday(user.platformChatId, "rex_rest_day", now)) continue;
+
+    const text = pickRestDayMessage(ctx);
+    messages.push({ userId: user.platformChatId, chatId: user.platformChatId, text, intent: "rex_rest_day" });
+  }
+
+  return messages;
+}
+
+// JOB 4 — 5-day silence check
+async function runRexSilenceCheckCron(now: Date): Promise<GymCronMessage[]> {
+  const users = await getRexUsersAtLocalHour(now, 10);
+  const messages: GymCronMessage[] = [];
+
+  for (const user of users) {
+    if (await wasRexCronSentToday(user.platformChatId, "rex_silence_check", now)) continue;
+    if (!(await hasBeenSilentForDays(user.platformChatId, now, 5))) continue;
+
+    const ctx = await buildGymTimeContext(user.platformChatId, now);
+    const muscles = ctx?.todayMuscles ?? "your next session";
+    const days = ctx?.lastSessionDaysAgo ?? 5;
+
+    messages.push({
+      userId: user.platformChatId,
+      chatId: user.platformChatId,
+      text: `Still alive? Your ${muscles} session is ${days} days overdue. What happened?`,
+      intent: "rex_silence_check",
+    });
+  }
+
+  return messages;
+}
+
+// ─── Rex Message Builders ─────────────────────────────────────────────────────
+
+function buildPreSessionMessage(
+  ctx: Awaited<ReturnType<typeof buildGymTimeContext>> & object,
+  user: { intakeAnswers: unknown }
+): string {
+  const intake = parseRexIntake(user.intakeAnswers);
+  const primaryLift = primaryLiftForMuscles(ctx.todayMuscles);
+  const baselineKg  = parseFloat(intake[`${primaryLift}_kg`] ?? "0") || 0;
+  const targetKg    = baselineKg > 0 ? baselineKg + 2.5 : null;
+  const time        = ctx.localTimeStr.split(",")[0] ?? ctx.gymTimeStr;
+
+  const liftLine = ctx.lastLiftSummary
+    ? `Last session: ${ctx.lastLiftSummary}.`
+    : baselineKg > 0
+      ? `Last logged ${primaryLift}: ${baselineKg}kg.`
+      : null;
+
+  const targetLine = targetKg ? `Today: ${targetKg}kg.` : null;
+  const mindset    = pickPreSessionMindset(ctx.todayMuscles);
+
+  return [
+    `Yo. ${time}. ${ctx.todayMuscles} day doesn't cancel itself.`,
+    liftLine,
+    targetLine,
+    `${mindset} 🔥`,
+  ].filter(Boolean).join(" ");
+}
+
+const REST_DAY_MESSAGES = [
+  (_muscles: string, _days: number) => `Rest day. Eat your protein. Don't skip it because you're not training.`,
+  (muscles: string, _days: number) => `Recovery day. ${muscles} tomorrow. Sleep 8hrs.`,
+  (muscles: string, days: number)  =>
+    days > 1
+      ? `You've trained ${days} days this week. Good. Rest today, ${muscles} next.`
+      : `Rest day. ${muscles} next session. Protein and sleep.`,
+];
+
+function pickRestDayMessage(ctx: NonNullable<Awaited<ReturnType<typeof buildGymTimeContext>>>): string {
+  const idx = Math.floor(Math.random() * REST_DAY_MESSAGES.length);
+  return REST_DAY_MESSAGES[idx]!(ctx.todayMuscles, ctx.daysPerWeek);
+}
+
+function primaryLiftForMuscles(muscles: string): string {
+  const m = muscles.toLowerCase();
+  if (m.includes("chest") || m.includes("push"))  return "bench";
+  if (m.includes("leg") || m.includes("lower"))   return "squat";
+  if (m.includes("back") || m.includes("pull"))   return "deadlift";
+  return "squat";
+}
+
+const PRE_SESSION_MINDSET: Record<string, string[]> = {
+  chest:    ["CNS is fresh. Use it.", "This is the session that separates weeks.", "No grinding through — attack it."],
+  legs:     ["Leg days build everything else. Don't cut depth.", "The people who skip leg day are easy to spot.", "Full range. No partials."],
+  back:     ["Pull heavy. Control the negative.", "Back work is the thing most people do wrong. You won't."],
+  default:  ["Show up and do the work.", "This one matters.", "No warm-up sets on effort."],
+};
+
+function pickPreSessionMindset(muscles: string): string {
+  const m = muscles.toLowerCase();
+  const key = m.includes("chest") || m.includes("push") ? "chest"
+    : m.includes("leg") || m.includes("lower") ? "legs"
+    : m.includes("back") || m.includes("pull") ? "back"
+    : "default";
+  const lines = PRE_SESSION_MINDSET[key] ?? PRE_SESSION_MINDSET.default!;
+  return lines[Math.floor(Math.random() * lines.length)]!;
+}
+
+// ─── Rex DB Helpers ───────────────────────────────────────────────────────────
+
+async function getRexUsersDueAtLocalTime(now: Date, gymOffsetMin: number) {
+  const users = await prisma.messengerUser.findMany({
+    where: {
+      persona:              "rex",
+      intakeComplete:       true,
+      preferredCheckInTime: { not: null },
+      timezone:             { not: null },
+    },
+    select: {
+      platformChatId:       true,
+      preferredCheckInTime: true,
+      timezone:             true,
+      intakeAnswers:        true,
+    },
+  });
+
+  return users.filter(u => {
+    const local = getLocalTime(now, u.timezone!);
+    const target = addMinutes(u.preferredCheckInTime!, gymOffsetMin);
+    return local === target;
+  });
+}
+
+async function getRexUsersAtLocalHour(now: Date, hour: number) {
+  const users = await prisma.messengerUser.findMany({
+    where: {
+      persona:        "rex",
+      intakeComplete: true,
+      timezone:       { not: null },
+    },
+    select: {
+      platformChatId:       true,
+      timezone:             true,
+      preferredCheckInTime: true,
+      intakeAnswers:        true,
+    },
+  });
+
+  const targetHHMM = `${String(hour).padStart(2, "0")}:00`;
+  return users.filter(u => getLocalTime(now, u.timezone!) === targetHHMM);
+}
+
+async function wasRexCronSentToday(platformChatId: string, intent: string, now: Date): Promise<boolean> {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+
+  const user = await prisma.messengerUser.findUnique({
+    where: { platform_platformChatId: { platform: "telegram", platformChatId } },
+    select: {
+      messages: {
+        where: { role: "assistant", intent, createdAt: { gte: start } },
+        select: { id: true },
+        take: 1,
+      },
+    },
+  });
+  return Boolean(user?.messages.length);
+}
+
+async function hadRexSessionToday(platformChatId: string, now: Date): Promise<boolean> {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+
+  const gymIntents = ["gym_checkin", "lift_log", "pr_log", "soreness_log", "missed_session"];
+  const user = await prisma.messengerUser.findUnique({
+    where: { platform_platformChatId: { platform: "telegram", platformChatId } },
+    select: {
+      messages: {
+        where: { role: "user", intent: { in: gymIntents }, createdAt: { gte: start } },
+        select: { id: true },
+        take: 1,
+      },
+    },
+  });
+  return Boolean(user?.messages.length);
+}
+
+async function hasBeenSilentForDays(platformChatId: string, now: Date, days: number): Promise<boolean> {
+  const since = new Date(now);
+  since.setDate(since.getDate() - days);
+
+  const user = await prisma.messengerUser.findUnique({
+    where: { platform_platformChatId: { platform: "telegram", platformChatId } },
+    select: {
+      messages: {
+        where: { role: "user", createdAt: { gte: since } },
+        select: { id: true },
+        take: 1,
+      },
+    },
+  });
+  return !user?.messages.length;
+}
+
+function parseRexIntake(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return raw as Record<string, string>;
 }
 
 export async function runPreSessionFormCueCron(now = new Date()): Promise<GymCronMessage[]> {
