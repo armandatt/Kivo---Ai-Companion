@@ -94,6 +94,7 @@ function isOffTopicDuringIntake(text: string): boolean {
 function currentStepQuestion(step: IntakeStep, answers: IntakeAnswers): string {
   const name = answers.name ?? "you"
   switch (step) {
+    case "ga_name":      return `Name — just your first name.`
     case "ga_goal":      return `${name}, what are we training for — fat loss, muscle, recomp, or performance?`
     case "ga_body":      return `What's your current weight and height? (e.g. 75kg, 5'10" or 80kg, 178cm)`
     case "ga_drill":     return buildRexGoalDrillQuestion(answers.gym_goal ?? "muscle")
@@ -302,6 +303,14 @@ async function handlePathSelect(
 // Triggered for Rex persona directly from not_started — skips path_select.
 
 async function handleGaName(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
+  const t = text.toLowerCase().trim()
+  // If the user asked a question instead of giving their name, answer & redirect
+  if (
+    /^(why|what|how|when|where|who|is|are|can|do|did|will|won'?t|don'?t|doesn'?t)\b/i.test(t) ||
+    t.endsWith("?") || t === "??" || t === "?"
+  ) {
+    return answerOffTopicAndRedirect(text, currentStepQuestion("ga_name", answers))
+  }
   const name = extractFirstName(text)
   answers.name = name
   await updateIntake(user.id, "ga_goal", answers)
