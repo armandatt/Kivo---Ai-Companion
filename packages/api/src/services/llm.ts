@@ -500,9 +500,9 @@ Do not end mid-word or mid-sentence.`.trim();
     const raw = await generateOpenAIText({
       systemInstruction,
       prompt: ctx.message,
-      // No maxOutputTokens — gpt-5 is a reasoning model that burns CoT tokens
-      // against the cap. Omitting it lets the model allocate freely between
-      // reasoning and output so we never get finish_reason:length empty responses.
+      // 1500 gives gpt-5 enough room for CoT reasoning + visible output.
+      // Uncapped produced 40s latency; the old floor of 80 caused empty responses.
+      maxOutputTokens: Math.max(ctx.decision.tokenBudget * 4, 1500),
     });
     return guardQuestionLoop(raw, ctx.memory.lastAssistantMessage);
   } catch (err) {
