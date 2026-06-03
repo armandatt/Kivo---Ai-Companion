@@ -343,6 +343,14 @@ async function handleGaBody(text: string, answers: IntakeAnswers, user: IntakeUs
   }
 
   delete answers.body_retry
+
+  // Persist to MemoryFact immediately so LLM can reference these stats in any future message
+  const memSaves: Promise<void>[] = []
+  if (bw) memSaves.push(addToLongTerm(chatId, "preferences", `bodyweight: ${bw}kg`))
+  if (ht) memSaves.push(addToLongTerm(chatId, "preferences", `height: ${ht}cm`))
+  if (bw && ht) memSaves.push(addToLongTerm(chatId, "preferences", `bmi: ${answers.bmi}`))
+  await Promise.all(memSaves)
+
   await updateIntake(user.id, "ga_drill", answers)
   return buildRexGoalDrillQuestion(answers.gym_goal ?? "muscle")
 }
@@ -457,6 +465,12 @@ async function handleGaInjuries(
       : Promise.resolve(),
     answers.squat_kg || answers.bench_kg || answers.deadlift_kg
       ? addToLongTerm(chatId, "anchors", `lifts — squat: ${answers.squat_kg ?? "?"}, bench: ${answers.bench_kg ?? "?"}, deadlift: ${answers.deadlift_kg ?? "?"}`)
+      : Promise.resolve(),
+    answers.current_bodyweight_kg
+      ? addToLongTerm(chatId, "preferences", `bodyweight: ${answers.current_bodyweight_kg}kg`)
+      : Promise.resolve(),
+    answers.height_cm
+      ? addToLongTerm(chatId, "preferences", `height: ${answers.height_cm}cm`)
       : Promise.resolve(),
   ])
 
