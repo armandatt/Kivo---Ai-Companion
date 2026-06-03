@@ -120,21 +120,36 @@ function currentStepQuestion(step: IntakeStep, answers: IntakeAnswers): string {
   }
 }
 
-async function answerOffTopicAndRedirect(question: string, currentQ: string): Promise<string> {
+async function answerOffTopicAndRedirect(question: string, currentQ: string, knownStats?: string): Promise<string> {
   try {
     return await generateOpenAIText({
       model:             "gpt-4o-mini",
       maxOutputTokens:   100,
-      systemInstruction:
-        `You are Rex, a direct no-nonsense gym coach doing an initial client intake.
-The client asked a question instead of answering yours. Answer it in 1-2 sentences (Rex voice: blunt, honest, no fluff).
-Then on a new line write exactly: "Now — " followed by the intake question they need to answer.
-Do not add anything else.`,
+      systemInstruction: [
+        `You are Rex, a direct no-nonsense gym coach doing an initial client intake.`,
+        `The client asked a question instead of answering yours. Answer it in 1-2 sentences (Rex voice: blunt, honest, no fluff).`,
+        knownStats ? `You have this information about the client already: ${knownStats}. Use it if it answers their question.` : "",
+        `Then on a new line write exactly: "Now — " followed by the intake question they need to answer.`,
+        `Do not add anything else.`,
+      ].filter(Boolean).join("\n"),
       prompt: `Client's question: "${question}"\nYour current intake question: "${currentQ}"`,
     })
   } catch {
     return `I don't have that yet — that's what intake is for.\n\nNow — ${currentQ}`
   }
+}
+
+function buildKnownStatsFromAnswers(answers: IntakeAnswers): string {
+  const parts: string[] = []
+  if (answers.name)                   parts.push(`name: ${answers.name}`)
+  if (answers.current_bodyweight_kg)  parts.push(`bodyweight: ${answers.current_bodyweight_kg}kg`)
+  if (answers.height_cm)              parts.push(`height: ${answers.height_cm}cm`)
+  if (answers.bmi)                    parts.push(`BMI: ${answers.bmi}`)
+  if (answers.gym_goal)               parts.push(`goal: ${answers.gym_goal}`)
+  if (answers.protein_target_g)       parts.push(`protein target: ${answers.protein_target_g}g/day`)
+  if (answers.training_experience)    parts.push(`experience: ${answers.training_experience}`)
+  if (answers.available_training_days) parts.push(`training days: ${answers.available_training_days}/week`)
+  return parts.join(", ")
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -182,7 +197,8 @@ export async function handleIntakeMessage(input: {
     if (!valid) {
       const currentQ = currentStepQuestion(effectiveStep, answers)
       if (currentQ) {
-        const reply = await answerOffTopicAndRedirect(text, currentQ)
+        const knownStats = buildKnownStatsFromAnswers(answers)
+        const reply = await answerOffTopicAndRedirect(text, currentQ, knownStats || undefined)
         await addToShortTerm(input.platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" })
         return { handled: true, reply }
       }
