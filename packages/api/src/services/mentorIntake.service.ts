@@ -3,13 +3,13 @@ import { prisma } from "@repo/db/client"
 type IntakePath = "gym" | "study" | "general"
 
 const DOMAIN_FIRST_STEP: Record<IntakePath, string> = {
-  gym: "ga1",
+  gym: "ga_name",
   study: "sb1",
   general: "gn1",
 }
 
 const DOMAIN_OPENER_QUESTION: Record<IntakePath, string> = {
-  gym: "What's the actual goal right now — building muscle, losing weight, getting stronger, or just making gym a consistent habit?",
+  gym: "Your last trainer probably told you what you wanted to hear.\nI won't. Name?",
   study: "What are you studying or preparing for right now? Give me the actual thing — exam, skill, degree, placement.",
   general: "What's actually going on in your life right now — what's taking up most of your headspace?",
 }
@@ -155,6 +155,7 @@ export async function fireMentorIntakeOpener(
     },
     data: {
       intakeStep: firstStep,
+      activeModules: domain === "gym" ? ["gym"] : domain === "study" ? ["study"] : [],
       preferredCheckInTime: profile.preferredCheckInTime ?? "08:00",
       timezone: profile.timezone ?? "Asia/Kolkata",
     },

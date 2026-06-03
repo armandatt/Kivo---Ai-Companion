@@ -11,9 +11,6 @@ type IntakeStep =
   // Rex gym coaching path
   | "ga_name" | "ga_goal" | "ga_drill" | "ga_lifts"
   | "ga_schedule" | "ga_split" | "ga_gym_time" | "ga_nutrition" | "ga_injuries"
-  // Legacy gym path (backward compat for mid-flow users)
-  | "ga1" | "ga1_target" | "ga2_weight" | "ga2_exp"
-  | "ga3" | "ga3_days" | "ga4" | "ga5_diet" | "ga5_track" | "ga6" | "ga7"
   // Study path
   | "sb1" | "sb2" | "sb3" | "sb3b" | "sb4" | "sb4b"
   | "sb5_style" | "sb5_killer" | "sb6_hours" | "sb6_consistency"
@@ -111,10 +108,25 @@ export async function handleIntakeMessage(input: {
     preferredCheckInTime: user.preferredCheckInTime,
   }
 
-  const reply = await routeStep(step, input.text.trim(), answers, modules, user, profile, input.platformChatId)
+  const effectiveStep = normalizeRexIntakeStep(step, user, answers)
+  const reply = await routeStep(effectiveStep, input.text.trim(), answers, modules, user, profile, input.platformChatId)
 
   await addToShortTerm(input.platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" })
   return { handled: true, reply }
+}
+
+function normalizeRexIntakeStep(step: IntakeStep, user: IntakeUser, answers: IntakeAnswers): IntakeStep {
+  const legacyGymSteps = [
+    "ga1", "ga1_target", "ga2_weight", "ga2_exp",
+    "ga3", "ga3_days", "ga4", "ga5_diet", "ga5_track", "ga6", "ga7",
+  ]
+
+  if (legacyGymSteps.includes(step)) {
+    for (const key of Object.keys(answers)) delete answers[key]
+    return "not_started"
+  }
+
+  return step
 }
 
 // ─── Step Router ──────────────────────────────────────────────────────────────
@@ -136,18 +148,6 @@ async function routeStep(
     case "ga_gym_time":     return handleGaGymTime(text, answers, user, chatId)
     case "ga_nutrition":    return handleGaNutrition(text, answers, user, chatId)
     case "ga_injuries":     return handleGaInjuries(text, answers, modules, user, profile, chatId)
-    // Legacy gym path
-    case "ga1":             return handleGa1(text, answers, user, chatId)
-    case "ga1_target":     return handleGa1Target(text, answers, user, chatId)
-    case "ga2_weight":     return handleGa2Weight(text, answers, user, chatId)
-    case "ga2_exp":        return handleGa2Exp(text, answers, user, chatId)
-    case "ga3":            return handleGa3(text, answers, user, chatId)
-    case "ga3_days":       return handleGa3Days(text, answers, user, chatId)
-    case "ga4":            return handleGa4(text, answers, user, chatId)
-    case "ga5_diet":       return handleGa5Diet(text, answers, user, chatId)
-    case "ga5_track":      return handleGa5Track(text, answers, user, chatId)
-    case "ga6":            return handleGa6(text, answers, user, chatId)
-    case "ga7":            return handleGa7(text, answers, modules, user, profile, chatId)
     case "sb1":            return handleSb1(text, answers, user, chatId)
     case "sb2":            return handleSb2(text, answers, user, chatId)
     case "sb3":            return handleSb3(text, answers, user, chatId)
@@ -241,19 +241,20 @@ async function handlePathSelect(
   let firstStep: IntakeStep
   let reply: string
 
-  const q = gymQ(user.persona)
   const isRex = user.persona === "rex" || user.persona === "spark"
 
   if (wantsBoth) {
     modules = ["gym", "study"]
-    firstStep = "ga1"
+    firstStep = "ga_name"
     reply = isRex
-      ? `Both. Gym first — it's the most structured.\n\n${q.ga1}`
-      : `Both. Good — that means we're building the full picture.\n\nLet's start with gym since it's the most structured part.\n\n${q.ga1}`
+      ? `Both. Gym first — it's the most structured.\n\nYour last trainer probably told you what you wanted to hear.\nI won't. Name?`
+      : `Both. Good — gym first since it's the most structured.\n\nName?`
   } else if (wantsGym) {
     modules = ["gym"]
-    firstStep = "ga1"
-    reply = isRex ? `Gym.\n\n${q.ga1}` : `Gym it is.\n\n${q.ga1}`
+    firstStep = "ga_name"
+    reply = isRex
+      ? `Gym.\n\nYour last trainer probably told you what you wanted to hear.\nI won't. Name?`
+      : `Gym it is.\n\nName?`
   } else {
     modules = ["study"]
     firstStep = "sb1"
@@ -262,169 +263,6 @@ async function handlePathSelect(
 
   await updateIntake(user.id, firstStep, answers, modules)
   return reply
-}
-
-// ─── Gym Path ─────────────────────────────────────────────────────────────────
-
-async function handleGa1(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  const goal = classifyGymGoal(text)
-  answers.gym_goal = goal
-  const needsTarget = goal === "bulk" || goal === "cut" || goal === "recomp"
-  const next: IntakeStep = needsTarget ? "ga1_target" : "ga2_weight"
-  const q = gymQ(user.persona)
-  await updateIntake(user.id, next, answers)
-
-  const ack = {
-    bulk:     "Building.",
-    cut:      "Cutting.",
-    strength: "Strength.",
-    habit:    "Consistency.",
-    recomp:   "Recomp.",
-  }[goal] ?? "Got it."
-
-  if (needsTarget) {
-    return `${ack} Give me a target — where do you want to be in 3 months? Weight, lift number, whatever.`
-  }
-  return `${ack}\n\n${q.ga2_weight}`
-}
-
-async function handleGa1Target(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  answers.gym_target_3m = text
-  await updateIntake(user.id, "ga2_weight", answers)
-  return `Locked.\n\n${gymQ(user.persona).ga2_weight}`
-}
-
-async function handleGa2Weight(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  const kg = parseWeight(text)
-  if (kg) {
-    answers.current_bodyweight_kg = String(kg)
-    const goal = answers.gym_goal || "bulk"
-    const protein = Math.round(kg * (goal === "cut" ? 2.2 : 1.8))
-    answers.protein_target_g = String(protein)
-  } else {
-    answers.current_bodyweight_kg = text
-    answers.protein_target_g = "160"
-  }
-  await updateIntake(user.id, "ga2_exp", answers)
-  return `Noted.\n\n${gymQ(user.persona).ga2_exp}`
-}
-
-async function handleGa2Exp(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  answers.training_experience = classifyTrainingExp(text)
-  await updateIntake(user.id, "ga3", answers)
-  return `${ackExp(answers.training_experience)}\n\n${gymQ(user.persona).ga3}`
-}
-
-async function handleGa3(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  const split = classifySplit(text)
-  answers.current_split = split
-  const needsDays = split === "unstructured" || split === "none"
-  const next: IntakeStep = needsDays ? "ga3_days" : "ga4"
-  const q = gymQ(user.persona)
-  await updateIntake(user.id, next, answers)
-
-  const acks: Record<string, string> = {
-    PPL:         "PPL.",
-    upper_lower: "Upper/lower.",
-    bro_split:   "Bro split.",
-    full_body:   "Full body.",
-    unstructured:"No structure yet.",
-    none:        "Starting fresh.",
-  }
-  const ack = acks[split] ?? "Got it."
-
-  if (needsDays) {
-    return `${ack} How many days a week can you actually train? Real number.`
-  }
-  return `${ack}\n\n${q.ga4}`
-}
-
-async function handleGa3Days(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  const days = parseInt(text.match(/\d/)?.[0] || "3")
-  answers.available_training_days = String(Math.min(Math.max(days, 1), 7))
-  await updateIntake(user.id, "ga4", answers)
-  return `${answers.available_training_days} days. That's what we build around.\n\n${gymQ(user.persona).ga4}`
-}
-
-async function handleGa4(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  const time = parseTimeString(text) || text.trim()
-  answers.gym_session_time = time
-  await updateIntake(user.id, "ga5_diet", answers)
-  return `${time}. Pre-session cue and post-session check-in will run around that.\n\n${gymQ(user.persona).ga5_diet}`
-}
-
-async function handleGa5Diet(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  const t = text.toLowerCase()
-  answers.diet_type = /\bvegan\b/.test(t) ? "vegan" : /\bveg\b|vegetarian/.test(t) ? "veg" : "non_veg"
-  await updateIntake(user.id, "ga5_track", answers)
-  return `Got it.\n\n${gymQ(user.persona).ga5_track}`
-}
-
-async function handleGa5Track(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  const t = text.toLowerCase()
-  answers.diet_tracking = /track|myfitnesspal|count|log/.test(t)
-    ? "tracking"
-    : /rough|sort of|kind of|aware/.test(t)
-    ? "rough_awareness"
-    : "not_tracking"
-  await updateIntake(user.id, "ga6", answers)
-  return `Got it.\n\n${gymQ(user.persona).ga6}`
-}
-
-async function handleGa6(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  const hasInjury = !/\b(no|none|nothing|all good|fine|healthy|nope)\b/i.test(text)
-  answers.injury_notes = hasInjury ? text : "none"
-  if (hasInjury) {
-    await addToLongTerm(chatId, "preferences", `injury_flag: ${text}`)
-  }
-  await updateIntake(user.id, "ga7", answers)
-
-  const ack = hasInjury ? `Noted — working around that.` : `Clean.`
-  return `${ack}\n\n${gymQ(user.persona).ga7}`
-}
-
-async function handleGa7(
-  text: string, answers: IntakeAnswers, modules: string[],
-  user: IntakeUser, profile: WebProfile, chatId: string
-): Promise<string> {
-  answers.gym_motivation_core = text
-
-  // Store all gym data to long-term memory
-  await Promise.all([
-    addToLongTerm(chatId, "preferences", `gym_goal: ${answers.gym_goal}`),
-    addToLongTerm(chatId, "preferences", `protein_target: ${answers.protein_target_g}g`),
-    addToLongTerm(chatId, "preferences", `gym_session_time: ${answers.gym_session_time}`),
-    addToLongTerm(chatId, "preferences", `training_experience: ${answers.training_experience}`),
-    addToLongTerm(chatId, "preferences", `current_split: ${answers.current_split}`),
-    addToLongTerm(chatId, "preferences", `diet_type: ${answers.diet_type}`),
-    answers.available_training_days
-      ? addToLongTerm(chatId, "preferences", `training_days_per_week: ${answers.available_training_days}`)
-      : Promise.resolve(),
-  ])
-
-  // Update MessengerUser with session time and gym mode
-  const sessionTime = parseTimeString(answers.gym_session_time)
-  await prisma.messengerUser.update({
-    where: { id: user.id },
-    data: {
-      ...(sessionTime ? { preferredCheckInTime: profile.preferredCheckInTime || "08:00" } : {}),
-      intakeAnswers: answers,
-    },
-  })
-
-  // Build and save weekly gym plan
-  const gymPlan = await buildGymPlan(answers)
-  await savePlan(chatId, gymPlan)
-
-  // Check if study path is also queued
-  const studyQueued = modules.includes("study")
-  if (studyQueued) {
-    await updateIntake(user.id, "sb1", answers, modules)
-    return buildGymClosing(answers, profile, user) + "\n\n---\n\nNow for study.\n\n" + STUDY_Q.sb1
-  }
-
-  await updateIntake(user.id, "complete", answers, modules, { intakeComplete: true })
-  return buildGymClosing(answers, profile, user)
 }
 
 // ─── Rex Gym Coaching Path ────────────────────────────────────────────────────
@@ -947,8 +785,8 @@ const STUDY_RESCUE_RE = /\b(study|learn|exam|work|career|course|skill|job|placem
 async function handleGn1(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
   // Rescue: if user is clearly talking about gym or study, switch paths now
   if (GYM_RESCUE_RE.test(text)) {
-    await updateIntake(user.id, "ga1", answers, ["gym"])
-    return `Gym it is — switching to the right track.\n\n${GYM_Q.ga1}`
+    await updateIntake(user.id, "ga_name", answers, ["gym"])
+    return `Gym it is — switching to the right track.\n\nName?`
   }
   if (STUDY_RESCUE_RE.test(text)) {
     await updateIntake(user.id, "sb1", answers, ["study"])
@@ -963,8 +801,8 @@ async function handleGn1(text: string, answers: IntakeAnswers, user: IntakeUser,
 async function handleGn2(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
   // Rescue: if they've now mentioned gym/study focus, switch paths
   if (GYM_RESCUE_RE.test(text)) {
-    await updateIntake(user.id, "ga1", answers, ["gym"])
-    return `Gym. That's what we're building around.\n\n${GYM_Q.ga1}`
+    await updateIntake(user.id, "ga_name", answers, ["gym"])
+    return `Gym. That's what we're building around.\n\nName?`
   }
   if (STUDY_RESCUE_RE.test(text)) {
     await updateIntake(user.id, "sb1", answers, ["study"])
@@ -1076,30 +914,6 @@ No intro or outro text.`
 
 // ─── Closing Messages ─────────────────────────────────────────────────────────
 
-function buildGymClosing(a: IntakeAnswers, profile: WebProfile, user: IntakeUser): string {
-  const creature = profile.creatureName || user.creatureName || "your companion"
-  const persona = profile.persona || user.persona
-  const checkin = profile.preferredCheckInTime || "08:00"
-  const sessionTime = a.gym_session_time || "your session time"
-  const preTime = shiftTime(parseTimeString(sessionTime) || "07:00", -30)
-
-  const lines = [
-    `Right. Here's where we are:`,
-    `Goal: ${a.gym_goal}${a.gym_target_3m ? ` — targeting ${a.gym_target_3m}` : ""}`,
-    `Protein: ${a.protein_target_g}g a day starting now`,
-    `Training: ${a.current_split}${a.available_training_days ? `, ${a.available_training_days} days a week` : ""} at ${sessionTime}`,
-    a.injury_notes && a.injury_notes !== "none" ? `Keeping ${a.injury_notes} out of the programme for now.` : null,
-    ``,
-    `Protein sources for ${a.diet_type === "veg" ? "you: eggs, paneer, soya chunks, curd, dal" : a.diet_type === "vegan" ? "you: tofu, soya chunks, lentils, chickpeas" : "you: chicken breast, eggs, fish, paneer"}.`,
-    ``,
-    `First session cue at ${preTime}. Morning check-in at ${checkin}.`,
-    a.gym_motivation_core ? `\nYou said this matters because: ${a.gym_motivation_core}.\nI won't forget that.` : null,
-    `\n${creature} grows when you show up.`,
-  ]
-
-  return buildPersonaMessage(persona, lines.filter(Boolean) as string[])
-}
-
 function buildStudyClosing(a: IntakeAnswers, profile: WebProfile, user: IntakeUser): string {
   const creature = profile.creatureName || user.creatureName || "your companion"
   const persona = profile.persona || user.persona
@@ -1136,38 +950,6 @@ function buildPersonaMessage(persona: string | null, lines: string[]): string {
 
 // ─── Question Templates ───────────────────────────────────────────────────────
 
-// Rex / Spark — short, direct, no hedging
-const REX_GYM_Q = {
-  ga1: "Goal — bulk, cut, strength, or just make it a consistent habit?",
-  ga2_weight: "Weight right now. Just the number.",
-  ga2_exp: "How long have you been training? Beginner, a few months, or been at it for a while?",
-  ga3: "Current split — PPL, upper/lower, bro split, full body, or no structure?",
-  ga4: "What time are you training?",
-  ga5_diet: "Veg or non-veg?",
-  ga5_track: "Tracking food or going by feel?",
-  ga6: "Injuries I need to work around?",
-  ga7: "Last one — why does this actually matter? Not the goal. The real reason underneath it.",
-}
-
-// Nova / Zen / others — full, contextual
-const GYM_Q = {
-  ga1: "What's the actual goal right now — building muscle, losing weight, getting stronger, or just making gym a consistent thing?",
-  ga2_weight: "What do you weigh right now? Rough number is fine.",
-  ga2_exp: "How long have you been training consistently — just starting out, been at it a while, or somewhere in between?",
-  ga3: "What does training look like right now — do you follow a split or is it more random?",
-  ga4: "What time do you usually train, or want to train?",
-  ga5_diet: "Veg or non-veg? Need this for diet advice.",
-  ga5_track: "Are you tracking food at all, or is it more by feel?",
-  ga6: "Any injuries or body parts giving you trouble I should know about before I start recommending things?",
-  ga7: "Last gym question — why does this actually matter to you? Not the fitness goal. The thing underneath it.",
-}
-
-// Returns the right question set for the given persona
-function gymQ(persona: string | null | undefined): typeof GYM_Q {
-  const p = (persona ?? "nova").toLowerCase()
-  return (p === "rex" || p === "spark") ? REX_GYM_Q : GYM_Q
-}
-
 const STUDY_Q = {
   sb1: "What are you studying or preparing for right now? Tell me the actual thing — exam, skill, degree, placement, whatever it is.",
   sb2: "When's the actual deadline — exam date, submission, interview, whatever the hard stop is?",
@@ -1186,23 +968,6 @@ const GENERAL_Q = {
 }
 
 // ─── Classifiers ─────────────────────────────────────────────────────────────
-
-function classifyGymGoal(text: string): string {
-  const t = text.toLowerCase()
-  if (/\b(bulk|muscle|mass|size|gain|build)\b/.test(t)) return "bulk"
-  if (/\b(cut|lose|fat|lean|slim|deficit|weight loss|shred)\b/.test(t)) return "cut"
-  if (/\b(strength|strong|power|lift|deadlift|squat|bench press)\b/.test(t)) return "strength"
-  if (/\b(recomp|both|fat loss.*muscle|muscle.*fat loss)\b/.test(t)) return "recomp"
-  return "habit"
-}
-
-function classifyTrainingExp(text: string): string {
-  const t = text.toLowerCase()
-  if (/\b(beginner|new|just start|never|first time|no experience)\b/.test(t)) return "beginner"
-  if (/\b(few months?|6 months?|less than a year|started recently)\b/.test(t)) return "early"
-  if (/\b(2\+? years?|advanced|serious|competitive)\b/.test(t)) return "advanced"
-  return "intermediate"
-}
 
 function classifySplit(text: string): string {
   const t = text.toLowerCase()
@@ -1233,16 +998,6 @@ function classifyStudyStatus(text: string): string {
   return "on_track"
 }
 
-function ackExp(exp: string): string {
-  const map: Record<string, string> = {
-    beginner: "Starting from scratch.",
-    early: "A few months in.",
-    intermediate: "Some solid time in.",
-    advanced: "You've been at this.",
-  }
-  return map[exp] ?? "Got it."
-}
-
 function ackFocusKiller(killer: string): string {
   const map: Record<string, string> = {
     phone: "Phone. The most common and most fixable one.",
@@ -1255,14 +1010,6 @@ function ackFocusKiller(killer: string): string {
 }
 
 // ─── Parsers ─────────────────────────────────────────────────────────────────
-
-function parseWeight(text: string): number | null {
-  const match = text.match(/(\d+(\.\d+)?)\s*(kg|kgs|kilos?)?/i)
-  if (!match) return null
-  const val = parseFloat(match[1])
-  const isLbs = /\blb|pound/.test(text.toLowerCase())
-  return isLbs ? Math.round(val * 0.453) : val
-}
 
 function parseTimeString(text: string): string | null {
   const match = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i)
