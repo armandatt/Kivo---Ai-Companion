@@ -66,7 +66,6 @@ export async function generateOpenAIText(input: {
         { role: "user", content: input.prompt },
       ],
       max_completion_tokens: input.maxOutputTokens ?? 512,
-      temperature: 0.7,
     }),
   });
 
