@@ -77,17 +77,29 @@ export async function getWebProfile(telegramChatId: string): Promise<WebProfile 
   }
 }
 
-// ─── Off-topic detection during intake ───────────────────────────────────────
+// ─── Intake answer validation ─────────────────────────────────────────────────
+// LLM decides whether the user's reply is a genuine attempt to answer the
+// current step question. Replaces the old regex-only isOffTopicDuringIntake.
 
-function isOffTopicDuringIntake(text: string): boolean {
-  const t = text.toLowerCase().trim()
-  // Questions directed at the bot about its own knowledge/memory
-  if (/\b(do you (know|have|remember|store|track|see)|can you (tell me|see|check|access|find)|you have (my|the)|don.?t you (know|have)|have you (got|stored|saved))\b/.test(t)) return true
-  // Asking about their own data
-  if (/\b(do you know my|you know my|what (do|did) you know|my (weight|height|bmi|age|stats?|data|info|profile))\??/.test(t)) return true
-  // Ends with ? and is clearly a question about the bot/process, not an intake answer
-  if (t.endsWith("?") && /^(what (is|are|does|do)|why (do|are|is)|how (do|does|can|will)|when (do|will|did)|who (are|is)|is (this|it|that)|are (you|we|these)|will (you|this)|does (this|it))/.test(t)) return true
-  return false
+async function isValidIntakeAnswer(text: string, step: IntakeStep, answers: IntakeAnswers): Promise<boolean> {
+  const stepQ = currentStepQuestion(step, answers)
+  if (!stepQ) return true // step has no expected answer (complete, etc.) — don't block
+
+  try {
+    const raw = await generateOpenAIText({
+      model: "gpt-4o-mini",
+      maxOutputTokens: 3,
+      systemInstruction:
+        "Decide if a user's reply is a genuine attempt to answer a chatbot intake question. " +
+        "Reply ONLY 'yes' or 'no'. " +
+        "Be lenient — slang, short answers, typos, unusual phrasing all count as yes. " +
+        "Say no only for: off-topic questions directed at the bot, insults, pure gibberish with no relation to the question.",
+      prompt: `Question: "${stepQ}"\nUser replied: "${text}"`,
+    })
+    return /^yes/i.test(raw.trim())
+  } catch {
+    return true // LLM unreachable — let it through so intake never hard-blocks
+  }
 }
 
 // Maps the current step back to the question Rex asked for it, so we can re-ask after an off-topic answer
@@ -160,13 +172,14 @@ export async function handleIntakeMessage(input: {
 
   const effectiveStep = normalizeRexIntakeStep(step, user, answers)
 
-  // ── Off-topic detection ───────────────────────────────────────────────────
-  // If the user asked a question instead of answering the current intake step,
-  // answer it briefly in Rex's voice then redirect back to the open question.
-  // Skip this for the very first message (not_started) — it's fine to start with a question.
+  // ── Intake answer validation ─────────────────────────────────────────────
+  // LLM checks if the reply is a genuine attempt to answer the current step.
+  // If not, Rex answers the off-topic message briefly then redirects.
+  // Skip for not_started — the first message triggers the flow, no question was asked yet.
   if (effectiveStep !== "not_started" && effectiveStep !== "path_select" && effectiveStep !== "complete") {
     const text = input.text.trim()
-    if (isOffTopicDuringIntake(text)) {
+    const valid = await isValidIntakeAnswer(text, effectiveStep, answers)
+    if (!valid) {
       const currentQ = currentStepQuestion(effectiveStep, answers)
       if (currentQ) {
         const reply = await answerOffTopicAndRedirect(text, currentQ)
