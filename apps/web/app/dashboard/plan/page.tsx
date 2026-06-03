@@ -62,7 +62,7 @@ export default async function PlanPage() {
   const weekDays = buildWeekDays(planContent, planId, weekDates)
 
   return (
-    <div style={{ maxWidth: "1100px" }}>
+    <div style={{ width: "100%" }}>
       <div style={{ marginBottom: "24px" }}>
         <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#FFFFFF", margin: "0 0 4px" }}>
           Planner

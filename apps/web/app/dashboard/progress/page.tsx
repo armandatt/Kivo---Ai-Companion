@@ -54,7 +54,7 @@ export default async function ProgressPage() {
   const tier = data?.tier ?? "free"
 
   return (
-    <div style={{ maxWidth: "1000px" }}>
+    <div style={{ width: "100%" }}>
       <div style={{ marginBottom: "24px" }}>
         <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#FFFFFF", margin: "0 0 4px" }}>
           Insights
@@ -71,20 +71,19 @@ export default async function ProgressPage() {
         totalDays={heatmap.totalDays}
       />
 
-      <div style={{ height: "20px" }} />
+      <div style={{ height: "16px" }} />
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
         <FocusSessionLog sessions={focusSessions} tier={tier} />
         <MoodTrendChart points={moodTrend.points} insight={moodTrend.insight} />
       </div>
 
-      <div style={{ height: "20px" }} />
+      <div style={{ height: "16px" }} />
 
-      <WeeklyReviewArchive reviews={weeklyReviews} tier={tier} />
-
-      <div style={{ height: "20px" }} />
-
-      <BehaviouralPatternCards tier={tier} />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+        <WeeklyReviewArchive reviews={weeklyReviews} tier={tier} />
+        <BehaviouralPatternCards tier={tier} />
+      </div>
     </div>
   )
 }
