@@ -1,19 +1,12 @@
 import { cookies } from "next/headers"
 import { parseTodayTasks } from "@/lib/plan-parser"
-import StreakCounter from "@/components/dashboard/streak-counter"
-import CreatureThumbnail from "@/components/dashboard/creature-thumbnail"
-import GoalCard from "@/components/dashboard/goal-card"
-import MoodRing from "@/components/dashboard/mood-ring"
-import TodayPlan from "@/components/dashboard/today-plan"
-import UpcomingDeadlines from "@/components/dashboard/upcoming-deadlines"
-import LastMessage from "@/components/dashboard/last-message"
-import TelegramConnectBanner from "@/components/dashboard/telegram-connect-banner"
 import GymStatCards from "@/components/dashboard/gym-stat-cards"
 import WeekSplit from "@/components/dashboard/week-split"
 import NextSessionTargets from "@/components/dashboard/next-session-targets"
 import LiftProgress from "@/components/dashboard/lift-progress"
 import RexFlags from "@/components/dashboard/rex-flags"
 import VolumeHeatmap from "@/components/dashboard/volume-heatmap"
+import NovaDashboard from "@/components/dashboard/nova-dashboard"
 import type { GymData } from "@/types/gym"
 
 type MoodEntry = { date: string; mood: string }
@@ -96,9 +89,8 @@ export default async function DashboardPage() {
           <VolumeHeatmap gym={gym} />
         </div>
 
-        {/* Nova companion card */}
-        <NovaCompanionCard
-          personaName={profile?.personaName ?? null}
+        {/* Rex companion card */}
+        <RexCompanionCard
           lastMessage={lastMessage}
           telegramConnected={telegramConnected}
         />
@@ -106,59 +98,31 @@ export default async function DashboardPage() {
     )
   }
 
-  // ── Default dashboard (non-Rex / no gym data) ─────────────────────────────
+  // ── Nova dashboard ────────────────────────────────────────────────────────
   return (
-    <div style={{ maxWidth: "1100px" }}>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: "16px",
-          marginBottom: "16px",
-        }}
-      >
-        <StreakCounter
-          current={streak.current}
-          best={streak.best}
-          broken={streak.broken}
-          skipUsed={false}
-        />
-        <CreatureThumbnail
-          creatureType={profile?.creatureType ?? null}
-          creatureColor={profile?.creatureColor ?? null}
-          creatureName={profile?.creatureName ?? null}
-          streak={streak.current}
-        />
-        <GoalCard
-          goal={profile?.primaryGoal30d ?? null}
-          category={profile?.goalCategory ?? null}
-        />
-        <MoodRing entries={mood} />
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        {!telegramConnected && <TelegramConnectBanner />}
-        <TodayPlan tasks={todayTasks} planId={planId} />
-        <UpcomingDeadlines deadlines={deadlines} />
-        <LastMessage message={lastMessage} personaName={profile?.personaName ?? null} />
-      </div>
-    </div>
+    <NovaDashboard
+      userName={data?.user?.name ?? null}
+      streak={streak}
+      mood={mood}
+      todayTasks={todayTasks}
+      deadlines={deadlines}
+      lastMessage={lastMessage}
+      primaryGoal={profile?.primaryGoal30d ?? null}
+      telegramConnected={telegramConnected}
+      personaName={profile?.personaName ?? "Nova"}
+    />
   )
 }
 
-// ── Nova companion card ───────────────────────────────────────────────────────
-
-function NovaCompanionCard({
-  personaName,
+// ── Rex companion card ────────────────────────────────────────────────────────
+function RexCompanionCard({
   lastMessage,
   telegramConnected,
 }: {
-  personaName:        string | null
-  lastMessage:        { text: string; timestamp: string } | null
-  telegramConnected:  boolean
+  lastMessage:       { text: string; timestamp: string } | null
+  telegramConnected: boolean
 }) {
-  const name    = personaName ?? "Nova"
-  const preview = lastMessage?.text?.slice(0, 120) ?? "No conversation yet. Open Telegram to start talking with Nova."
+  const preview     = lastMessage?.text?.slice(0, 120) ?? "No conversation yet. Open Telegram to start training with Rex."
   const botUsername = process.env.NEXT_PUBLIC_BOT_USERNAME ?? ""
   const deeplink    = botUsername ? `https://t.me/${botUsername}` : null
 
@@ -174,29 +138,26 @@ function NovaCompanionCard({
         gap:             "14px",
       }}
     >
-      {/* Avatar */}
       <div
         style={{
           width:           "40px",
           height:          "40px",
           borderRadius:    "50%",
-          background:      "linear-gradient(135deg, #6366F1, #8B5CF6)",
+          background:      "linear-gradient(135deg, #00F5A0, #00C070)",
           display:         "flex",
           alignItems:      "center",
           justifyContent:  "center",
           fontSize:        "16px",
           fontWeight:      700,
-          color:           "#FFFFFF",
+          color:           "#0D0D0D",
           flexShrink:      0,
         }}
       >
-        N
+        R
       </div>
-
-      {/* Text */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <p style={{ fontSize: "13px", fontWeight: 600, color: "#FFFFFF", margin: "0 0 3px" }}>
-          {name} — your study companion
+          Rex — your gym coach
         </p>
         <p
           style={{
@@ -211,9 +172,7 @@ function NovaCompanionCard({
           {preview}
         </p>
       </div>
-
-      {/* CTA */}
-      {deeplink && (
+      {telegramConnected && deeplink && (
         <a
           href={deeplink}
           target="_blank"
@@ -221,13 +180,13 @@ function NovaCompanionCard({
           style={{
             fontSize:       "12px",
             fontWeight:     600,
-            color:          "#888",
+            color:          "#00F5A0",
             textDecoration: "none",
             whiteSpace:     "nowrap",
             flexShrink:     0,
           }}
         >
-          Open Telegram ↗
+          Open Rex ↗
         </a>
       )}
     </div>

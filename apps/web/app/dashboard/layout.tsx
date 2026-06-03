@@ -15,6 +15,7 @@ type NavData = {
   evolutionAvailable: boolean
   creatureStage: string
   onboardingComplete: boolean
+  persona: string
   platforms: {
     telegram: { connected: boolean; deeplink: string | null }
     whatsapp: { connected: boolean }
@@ -72,6 +73,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             creatureStage={navData.creatureStage}
             user={user}
             tier={tier}
+            persona={navData.persona}
           />
         </div>
 
