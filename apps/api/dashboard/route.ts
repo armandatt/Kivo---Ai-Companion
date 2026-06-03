@@ -547,8 +547,8 @@ export async function GET() {
         activePlan = messenger.plans[0] ?? null
 
         // Gym data — only for Rex users who completed intake
-        if (messenger.persona === "rex" && messenger.intakeAnswers) {
-          const intake = (messenger.intakeAnswers as Record<string, string>)
+        if (messenger.persona === "rex") {
+          const intake = ((messenger.intakeAnswers ?? {}) as Record<string, string>)
           gymData = await computeGymData(
             messenger.id,
             intake,

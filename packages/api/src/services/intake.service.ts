@@ -116,12 +116,15 @@ export async function handleIntakeMessage(input: {
 }
 
 function normalizeRexIntakeStep(step: IntakeStep, user: IntakeUser, answers: IntakeAnswers): IntakeStep {
-  const legacyGymSteps = [
+  // Reset any legacy or path_select step back to not_started so all users
+  // hit the new Rex flow cleanly.
+  const resetSteps = [
+    "path_select",
     "ga1", "ga1_target", "ga2_weight", "ga2_exp",
     "ga3", "ga3_days", "ga4", "ga5_diet", "ga5_track", "ga6", "ga7",
   ]
 
-  if (legacyGymSteps.includes(step)) {
+  if (resetSteps.includes(step)) {
     for (const key of Object.keys(answers)) delete answers[key]
     return "not_started"
   }
@@ -169,47 +172,10 @@ async function routeStep(
 
 // ─── Opening & Path Select ────────────────────────────────────────────────────
 
-async function handleNotStarted(user: IntakeUser, profile: WebProfile, chatId: string): Promise<string> {
-  const persona = profile.persona || user.persona || "nova"
-
-  // Rex skips path_select and goes straight into gym coaching
-  if (persona === "rex") {
-    await updateIntake(user.id, "ga_name", {}, ["gym"])
-    return `Your last trainer probably told you what you wanted to hear.\nI won't. Name?`
-  }
-
-  await updateIntake(user.id, "path_select", {}, [])
-
-  const creature = profile.creatureName || user.creatureName || null
-  const goal = (profile.primaryGoal30d && profile.primaryGoal30d !== "something important")
-    ? profile.primaryGoal30d : null
-  const pain = (profile.corePain && profile.corePain !== "the thing you keep not doing")
-    ? profile.corePain : null
-
-  const pathQ = "Gym and fitness, studying and work, or both? Pick one."
-
-  if (persona === "spark") {
-    const creatureLine = creature ? `${creature} sent me.` : "I'm here."
-    const goalLine     = goal ? `You want ${goal}.` : "You have a goal. Let's make it concrete."
-    const painLine     = pain ? `And ${pain} keeps getting in the way.` : ""
-    return [creatureLine, goalLine, painLine, `\nNo warm-up. A few direct questions and we'll have something to work with.\n\n${pathQ}`]
-      .filter(Boolean).join(" ")
-  }
-
-  if (persona === "zen") {
-    const creatureLine = creature ? `${creature} brought me here.` : "Something brought you here."
-    const goalLine     = goal ? `You're working toward ${goal}.` : "You have something you're working toward."
-    const painLine     = pain ? `And ${pain} keeps pulling you back.` : ""
-    return [creatureLine, goalLine, painLine, `\nBefore I can be useful, I need to understand where you actually are. A few questions — answer from what's real, not what sounds good.\n\n${pathQ}`]
-      .filter(Boolean).join(" ")
-  }
-
-  // Nova / default
-  const creatureLine = creature ? `${creature} brought me here.` : "I'm here."
-  const goalLine     = goal ? `I already know you want ${goal}.` : "I'm here to help you build something real."
-  const painLine     = pain ? `And the thing that keeps getting in the way is ${pain}.` : ""
-  return [creatureLine, goalLine, painLine, `\nBefore I can actually help, I need to understand your situation. Going to ask you a few things. The more honest you are, the more useful I'll be.\n\n${pathQ}`]
-    .filter(Boolean).join("\n\n")
+async function handleNotStarted(user: IntakeUser, _profile: WebProfile, _chatId: string): Promise<string> {
+  // All users go straight into the Rex gym coaching flow. No path_select.
+  await updateIntake(user.id, "ga_name", {}, ["gym"])
+  return `Your last trainer probably told you what you wanted to hear.\nI won't.\n\nName?`
 }
 
 async function handlePathSelect(
