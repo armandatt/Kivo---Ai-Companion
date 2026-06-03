@@ -70,7 +70,7 @@ export async function generateOpenAIText(input: {
   });
 
   const data = await res.json() as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{ message?: { content?: string | null; refusal?: string | null }; finish_reason?: string }>;
     error?: { message?: string };
   };
 
@@ -80,10 +80,19 @@ export async function generateOpenAIText(input: {
     );
   }
 
-  const text = data.choices?.[0]?.message?.content?.trim();
+  const choice  = data.choices?.[0];
+  const text    = choice?.message?.content?.trim();
+  const refusal = choice?.message?.refusal;
+
+  if (refusal) {
+    throw new Error(`OpenAI refused the request: ${refusal}`);
+  }
 
   if (!text) {
-    throw new Error("OpenAI returned an empty response");
+    // Reasoning models (gpt-5, o-series) can exhaust max_completion_tokens on CoT
+    // and return empty content. Log for visibility, throw so callers use their fallback.
+    console.error("[OpenAI] empty response — finish_reason:", choice?.finish_reason, "| model:", model);
+    throw new Error(`OpenAI returned empty content (finish_reason: ${choice?.finish_reason ?? "unknown"})`);
   }
 
   return text;
