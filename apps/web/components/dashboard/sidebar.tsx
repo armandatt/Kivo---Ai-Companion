@@ -12,6 +12,7 @@ import {
   Dumbbell,
   Brain,
   Timer,
+  BookOpen,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { KivoLogoWithWordmark } from "@/components/KivoLogo"
@@ -42,6 +43,7 @@ const NOVA_TOP_NAV: NavItemDef[] = [
   { href: "/dashboard/progress", label: "Insights",                   Icon: BarChart2,badgeType: "insights-dot" },
   { href: "/dashboard/memory",   label: "Memory",                     Icon: Brain,    badgeType: null },
   { href: "/dashboard/focus",    label: "Focus tracker",              Icon: Timer,    badgeType: null },
+  { href: "/dashboard/guide",    label: "Guide",                      Icon: BookOpen, badgeType: null },
 ]
 
 const NOVA_PERSONA_NAV: NavItemDef[] = [
@@ -52,6 +54,7 @@ const REX_TOP_NAV: NavItemDef[] = [
   { href: "/dashboard",          label: "Home",     exact: true, Icon: Home,      badgeType: "streak" },
   { href: "/dashboard/goals",    label: "Goals",                 Icon: Target,    badgeType: "goals" },
   { href: "/dashboard/progress", label: "Training",              Icon: Dumbbell,  badgeType: null },
+  { href: "/dashboard/guide",    label: "Guide",                 Icon: BookOpen,  badgeType: null },
 ]
 
 const REX_PERSONA_NAV: NavItemDef[] = []
