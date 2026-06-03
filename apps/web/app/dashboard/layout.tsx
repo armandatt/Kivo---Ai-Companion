@@ -49,8 +49,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
 
   const user = navData.user
-
   const tier = navData.tier
+  const isRex = navData.persona === "rex"
+  const accentVars = {
+    "--kv-accent":      isRex ? "#00F5A0" : "#7C3AED",
+    "--kv-accent2":     isRex ? "#00C070" : "#6366F1",
+    "--kv-accent-bg":   isRex ? "rgba(0,245,160,0.08)" : "rgba(124,58,237,0.10)",
+    "--kv-card-bg":     isRex ? "#111111" : "#0F0F1C",
+    "--kv-card-border": isRex ? "#2A2A2A" : "#1E1E3A",
+  } as React.CSSProperties
 
   return (
     <>
@@ -100,6 +107,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
               flex: 1,
               overflowY: "auto",
               padding: "28px 32px",
+              ...accentVars,
             }}
           >
             {children}

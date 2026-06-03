@@ -51,31 +51,64 @@ async function fetchGoals(): Promise<GoalsData | null> {
 }
 
 export default async function GoalsPage() {
-  const data = await fetchGoals()
-  const goals = data?.goals ?? []
-  const archive = data?.archive ?? []
+  const data            = await fetchGoals()
+  const goals           = data?.goals ?? []
+  const archive         = data?.archive ?? []
   const aspirationWords = data?.aspirationWords ?? []
-  const tier = data?.tier ?? "free"
+  const tier            = data?.tier ?? "free"
+
+  const activeGoals    = goals.filter((g) => g.status === "active")
+  const pausedGoals    = goals.filter((g) => g.status === "paused")
+  const completedGoals = archive.filter((a) => a.status === "completed")
 
   return (
-    <div style={{ maxWidth: "760px", position: "relative" }}>
+    <div style={{ width: "100%", position: "relative" }}>
       <AspirationAnchor words={aspirationWords} />
 
       <div style={{ position: "relative", zIndex: 1 }}>
-        <div style={{ marginBottom: "28px" }}>
-          <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#FFFFFF", margin: "0 0 4px" }}>
-            Goals
-          </h1>
-          <p style={{ fontSize: "13px", color: "#888888", margin: 0 }}>
-            Your active commitments. Set new ones by messaging Kevo.
-          </p>
+        {/* Header */}
+        <div style={{ marginBottom: "24px", display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: "12px" }}>
+          <div>
+            <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#FFFFFF", margin: "0 0 4px" }}>
+              Goals
+            </h1>
+            <p style={{ fontSize: "13px", color: "#888888", margin: 0 }}>
+              Your active commitments. Set new ones by messaging your companion.
+            </p>
+          </div>
+          {/* Quick stats */}
+          <div style={{ display: "flex", gap: "8px" }}>
+            {[
+              { label: "Active",    value: activeGoals.length,    color: "var(--kv-accent)" },
+              { label: "Paused",    value: pausedGoals.length,    color: "#F59E0B" },
+              { label: "Completed", value: completedGoals.length, color: "#22C55E" },
+            ].map((s) => (
+              <div key={s.label} style={{
+                backgroundColor: "#111111",
+                border:          "1px solid #2A2A2A",
+                borderRadius:    "8px",
+                padding:         "8px 14px",
+                textAlign:       "center",
+              }}>
+                <p style={{ fontSize: "18px", fontWeight: 700, color: s.color, margin: 0 }}>{s.value}</p>
+                <p style={{ fontSize: "10px", color: "#666", margin: 0, textTransform: "uppercase", letterSpacing: "0.06em" }}>{s.label}</p>
+              </div>
+            ))}
+          </div>
         </div>
 
-        <GoalList goals={goals} tier={tier} />
+        {/* 2-column layout */}
+        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: "20px", alignItems: "start" }}>
+          {/* Left: active + paused goals */}
+          <div>
+            <GoalList goals={goals} tier={tier} />
+          </div>
 
-        <div style={{ height: "20px" }} />
-
-        <GoalArchive archive={archive} />
+          {/* Right: archive */}
+          <div>
+            <GoalArchive archive={archive} />
+          </div>
+        </div>
       </div>
     </div>
   )

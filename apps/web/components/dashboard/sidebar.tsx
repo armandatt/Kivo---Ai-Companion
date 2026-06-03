@@ -10,6 +10,8 @@ import {
   BarChart2,
   Settings,
   Dumbbell,
+  Brain,
+  Timer,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { KivoLogoWithWordmark } from "@/components/KivoLogo"
@@ -34,10 +36,12 @@ type NavItemDef = {
 }
 
 const NOVA_TOP_NAV: NavItemDef[] = [
-  { href: "/dashboard",          label: "Home",     exact: true, Icon: Home,     badgeType: "streak" },
-  { href: "/dashboard/goals",    label: "Goals",                 Icon: Target,   badgeType: "goals" },
-  { href: "/dashboard/plan",     label: "Planner",               Icon: Calendar, badgeType: "planner" },
-  { href: "/dashboard/progress", label: "Insights",              Icon: BarChart2,badgeType: "insights-dot" },
+  { href: "/dashboard",          label: "Home",          exact: true, Icon: Home,     badgeType: "streak" },
+  { href: "/dashboard/goals",    label: "Goals",                      Icon: Target,   badgeType: "goals" },
+  { href: "/dashboard/plan",     label: "Planner",                    Icon: Calendar, badgeType: "planner" },
+  { href: "/dashboard/progress", label: "Insights",                   Icon: BarChart2,badgeType: "insights-dot" },
+  { href: "/dashboard/memory",   label: "Memory",                     Icon: Brain,    badgeType: null },
+  { href: "/dashboard/focus",    label: "Focus tracker",              Icon: Timer,    badgeType: null },
 ]
 
 const NOVA_PERSONA_NAV: NavItemDef[] = [
