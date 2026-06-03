@@ -265,7 +265,7 @@ function detectRequestedOutcome(intent: MessageIntent, text: string): RequestedO
 
 function buildConversationAnalysis(
   rawText: string,
-  legacy: ReturnType<typeof processMessage>,
+  legacy: Awaited<ReturnType<typeof processMessage>>,
 ): ConversationAnalysis {
   const intent          = mapIntent(legacy.intent);
   const domain          = detectDomain(rawText);
@@ -650,7 +650,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   }
 
   // ── Stage 1: Conversation analysis ──────────────────────────────────────────
-  const legacy   = processMessage(input.text);
+  const legacy   = await processMessage(input.text);
   const analysis = buildConversationAnalysis(input.text, legacy);
   diag.stagesRun.push("analyze");
 

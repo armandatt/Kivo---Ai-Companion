@@ -112,7 +112,7 @@ export async function POST(req: Request) {
       }
 
       // ── Gym short-circuit (runs before general processing) ────────────────
-      const processed = processMessage(text);
+      const processed = await processMessage(text);
       const gymUserId = body.userId || body.user?.id;
 
       if (gymUserId) {
