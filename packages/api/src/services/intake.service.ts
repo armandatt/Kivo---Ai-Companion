@@ -238,13 +238,13 @@ async function handleGaName(text: string, answers: IntakeAnswers, user: IntakeUs
   const name = extractFirstName(text)
   answers.name = name
   await updateIntake(user.id, "ga_goal", answers)
-  return `${name}. Alright. What are we actually here for — lose fat, build muscle, or are you one of those "just be healthy" people?`
+  return `${name}. Alright. What are we actually here for — lose fat, build muscle, recomp (both at once), or are you one of those "just be healthy" people?`
 }
 
 async function handleGaGoal(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
   const goal = classifyRexGoal(text)
   if (!goal) {
-    return `That's not an answer. Pick one: fat loss, muscle, or performance.`
+    return `I need a direction. Pick one: fat loss, muscle, recomp (both at once), or performance.`
   }
   answers.gym_goal     = goal
   answers.gym_goal_raw = text
@@ -451,13 +451,26 @@ function extractFirstName(text: string): string {
 
 function classifyRexGoal(text: string): string | null {
   const t = text.toLowerCase()
-  const fat    = /\b(fat|cut|lean|lose|weight loss|slim|shred|drop|burning)\b/.test(t)
-  const muscle = /\b(muscle|bulk|build|gain|mass|strong|strength|size|bigger)\b/.test(t)
+  // Recomp / body recomposition — must check before fat/muscle so it doesn't get
+  // split into two separate signals and misclassified.
+  const recomp = /\b(recomp|recompo|recomposition|body recomp|both|lose fat.*build|build.*lose fat|fat.*muscle|muscle.*fat|cut.*bulk|bulk.*cut|both at once|simultaneously|at the same time)\b/.test(t)
+  if (recomp) return "both"
+
+  const fat    = /\b(fat|cut|lean|lose|weight loss|slim|shred|drop|burning|calorie deficit)\b/.test(t)
+  const muscle = /\b(muscle|bulk|build|gain|mass|strong|strength|size|bigger|hypertrophy)\b/.test(t)
   const perf   = /\b(performance|athletic|sport|run|endurance|healthy|health|habit|fitness|fit)\b/.test(t)
   if (fat && muscle) return "both"
   if (fat)           return "fat_loss"
   if (muscle)        return "muscle"
   if (perf)          return "performance"
+
+  // Week/timeline hints — "8 weeks" alone isn't a goal, keep asking
+  // but don't loop forever: if the message is very short and doesn't match anything,
+  // return null so Rex can re-prompt once, but if it contains a timeline phrase
+  // alongside a transformation word, treat it as recomp intent.
+  const transformHint = /\b(transform|change|better|improve|body|physique|shape|tone|toned|definition|shredded|jacked|aesthetic)\b/.test(t)
+  if (transformHint) return "both"
+
   return null
 }
 
