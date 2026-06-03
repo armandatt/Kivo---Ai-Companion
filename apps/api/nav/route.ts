@@ -54,6 +54,7 @@ export async function GET() {
           primaryGoal30d: true,
           telegramConnected: true,
           telegramConnectToken: true,
+          telegramChatId: true,
         },
       }),
       prisma.workoutLog.findMany({
@@ -63,6 +64,15 @@ export async function GET() {
         take: 60,
       }),
     ])
+
+    let persona = "nova"
+    if (profile?.telegramChatId) {
+      const messenger = await prisma.messengerUser.findFirst({
+        where: { platform: "telegram", platformChatId: profile.telegramChatId },
+        select: { persona: true },
+      })
+      persona = messenger?.persona ?? "nova"
+    }
 
     const streak = computeStreak(workoutLogs)
     const stage = getStage(streak)
@@ -82,6 +92,7 @@ export async function GET() {
       evolutionAvailable,
       creatureStage: stage,
       onboardingComplete: profile?.onboardingComplete ?? false,
+      persona,
       platforms: {
         telegram: {
           connected: profile?.telegramConnected ?? false,
