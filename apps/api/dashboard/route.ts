@@ -85,6 +85,25 @@ function computeStreak(logs: Array<{ date: Date; completed: boolean }>) {
   return { current, best: Math.max(current, completedDates.length), broken: false }
 }
 
+function computeStreakFromDates(sortedDesc: string[]): { current: number; best: number; broken: boolean } {
+  if (!sortedDesc.length) return { current: 0, best: 0, broken: false }
+  const today     = toDateStr(new Date())
+  const yesterday = toDateStr(new Date(Date.now() - 86400000))
+  const mostRecent = sortedDesc[0]!
+  if (mostRecent !== today && mostRecent !== yesterday) {
+    return { current: 0, best: sortedDesc.length, broken: true }
+  }
+  let current = 0
+  const base = new Date(mostRecent + "T00:00:00Z")
+  for (let i = 0; i < sortedDesc.length; i++) {
+    const expected = new Date(base)
+    expected.setUTCDate(expected.getUTCDate() - i)
+    if (sortedDesc[i] === toDateStr(expected)) current++
+    else break
+  }
+  return { current, best: Math.max(current, sortedDesc.length), broken: false }
+}
+
 function moodFromLog(entry: { moodTag: string | null; morningScore: number | null }): string {
   if (entry.moodTag) return entry.moodTag
   const s = entry.morningScore
@@ -492,7 +511,8 @@ export async function GET() {
 
     if (!user) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
-    const streak = computeStreak(workoutLogs)
+    // streak is overridden below based on persona
+    let streak = computeStreak(workoutLogs)
     const moodMap = new Map(energyLogs.map((l) => [toDateStr(l.date), moodFromLog(l)]))
     const mood = Array.from({ length: 7 }, (_, i) => {
       const d = new Date()
@@ -546,8 +566,25 @@ export async function GET() {
         }
         activePlan = messenger.plans[0] ?? null
 
-        // Gym data — only for Rex users who completed intake
-        if (messenger.persona === "rex") {
+        // Streak: Rex = gym session streak, Nova = consecutive chat days
+        const isRex = profile?.primaryPersona === "rex"
+        if (isRex) {
+          const gs = messenger.gymStreak ?? 0
+          streak = { current: gs, best: gs, broken: false }
+        } else {
+          const chatDates = await prisma.companionMessage.findMany({
+            where:   { userId: messenger.id },
+            select:  { createdAt: true },
+            orderBy: { createdAt: "desc" },
+            take:    120,
+          })
+          const uniqueDates = [...new Set(chatDates.map((m) => toDateStr(m.createdAt)))]
+            .sort((a, b) => b.localeCompare(a))
+          streak = computeStreakFromDates(uniqueDates)
+        }
+
+        // Gym data — only for Rex users (based on web onboarding persona selection)
+        if (isRex) {
           const intake = ((messenger.intakeAnswers ?? {}) as Record<string, string>)
           gymData = await computeGymData(
             messenger.id,
