@@ -55,6 +55,7 @@ export async function GET() {
           telegramConnected: true,
           telegramConnectToken: true,
           telegramChatId: true,
+          primaryPersona: true,
         },
       }),
       prisma.workoutLog.findMany({
@@ -65,10 +66,12 @@ export async function GET() {
       }),
     ])
 
-    let persona = "nova"
-    if (profile?.telegramChatId) {
+    // primaryPersona is the source of truth — set during web onboarding quiz.
+    // Fall back to messenger.persona only if primaryPersona is missing.
+    let persona = profile?.primaryPersona ?? "nova"
+    if (!profile?.primaryPersona && profile?.telegramChatId) {
       const messenger = await prisma.messengerUser.findFirst({
-        where: { platform: "telegram", platformChatId: profile.telegramChatId },
+        where:  { platform: "telegram", platformChatId: profile.telegramChatId },
         select: { persona: true },
       })
       persona = messenger?.persona ?? "nova"
