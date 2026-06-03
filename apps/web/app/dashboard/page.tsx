@@ -1,6 +1,5 @@
 import { cookies } from "next/headers"
 import { parseTodayTasks } from "@/lib/plan-parser"
-import TelegramConnectBanner from "@/components/dashboard/telegram-connect-banner"
 import GymStatCards from "@/components/dashboard/gym-stat-cards"
 import WeekSplit from "@/components/dashboard/week-split"
 import NextSessionTargets from "@/components/dashboard/next-session-targets"
@@ -8,6 +7,8 @@ import LiftProgress from "@/components/dashboard/lift-progress"
 import RexFlags from "@/components/dashboard/rex-flags"
 import VolumeHeatmap from "@/components/dashboard/volume-heatmap"
 import NovaDashboard from "@/components/dashboard/nova-dashboard"
+import NovaIntro from "@/components/dashboard/nova-intro"
+import RexIntro from "@/components/dashboard/rex-intro"
 import type { GymData } from "@/types/gym"
 
 type MoodEntry = { date: string; mood: string }
@@ -71,47 +72,9 @@ export default async function DashboardPage() {
 
   // ── Rex gym dashboard ─────────────────────────────────────────────────────
   if (isRex) {
-    // Not yet connected to Telegram — can't load gym data
+    // Not yet connected to Telegram — show rich Rex intro
     if (!telegramConnected || !gym) {
-      return (
-        <div style={{ maxWidth: "600px" }}>
-          <div style={{ marginBottom: "24px" }}>
-            <h1 style={{ fontSize: "24px", fontWeight: 700, color: "#FFFFFF", margin: "0 0 6px" }}>
-              Welcome, {data?.user?.name?.split(" ")[0] ?? "athlete"} 💪
-            </h1>
-            <p style={{ fontSize: "14px", color: "#888", margin: 0 }}>
-              Connect Telegram to start training with Rex and unlock your gym dashboard.
-            </p>
-          </div>
-          <div style={{
-            backgroundColor: "#111111",
-            border: "1px solid #2A2A2A",
-            borderRadius: "12px",
-            padding: "28px 24px",
-            display: "flex",
-            flexDirection: "column",
-            gap: "16px",
-          }}>
-            <div style={{
-              width: "52px", height: "52px", borderRadius: "12px",
-              background: "linear-gradient(135deg, #00F5A0, #00C070)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: "22px", fontWeight: 700, color: "#0D0D0D",
-            }}>
-              R
-            </div>
-            <div>
-              <p style={{ fontSize: "16px", fontWeight: 700, color: "#FFFFFF", margin: "0 0 6px" }}>
-                Rex is waiting on Telegram
-              </p>
-              <p style={{ fontSize: "13px", color: "#888", margin: 0 }}>
-                Log your first session, set your schedule, and your full gym dashboard will appear here — live.
-              </p>
-            </div>
-            <TelegramConnectBanner />
-          </div>
-        </div>
-      )
+      return <RexIntro userName={data?.user?.name ?? null} />
     }
 
     return (
@@ -138,6 +101,10 @@ export default async function DashboardPage() {
   }
 
   // ── Nova dashboard ────────────────────────────────────────────────────────
+  if (!telegramConnected) {
+    return <NovaIntro userName={data?.user?.name ?? null} />
+  }
+
   return (
     <NovaDashboard
       userName={data?.user?.name ?? null}

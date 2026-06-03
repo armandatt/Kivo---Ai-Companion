@@ -228,12 +228,16 @@ export default function CompanionGuide({
   persona,
   onEnter,
   fullscreen = true,
+  showHero = true,
+  ctaLabel,
 }: {
   persona: string
   onEnter?: () => void
   fullscreen?: boolean
+  showHero?: boolean
+  ctaLabel?: string
 }) {
-  const [phase, setPhase] = useState<'name' | 'features'>(() => fullscreen ? 'name' : 'features')
+  const [phase, setPhase] = useState<'name' | 'features'>(() => (fullscreen && showHero) ? 'name' : 'features')
   const lp      = persona.toLowerCase()
   const accent  = ACCENT[lp] ?? '#7C3AED'
   const tagline = TAGLINES[lp] ?? 'Your companion is ready.'
@@ -241,10 +245,10 @@ export default function CompanionGuide({
   const features = isRexPersona(persona) ? REX_FEATURES : NOVA_FEATURES
 
   useEffect(() => {
-    if (!fullscreen) return
+    if (!fullscreen || !showHero) return
     const t = setTimeout(() => setPhase('features'), 1600)
     return () => clearTimeout(t)
-  }, [fullscreen])
+  }, [fullscreen, showHero])
 
   const content = (
     <div style={{
@@ -255,7 +259,7 @@ export default function CompanionGuide({
       padding:        fullscreen ? '0 20px 60px' : '0',
     }}>
       {/* ── Phase 1: Name ─────────────────────────────────────────────── */}
-      <div style={{
+      {showHero && <div style={{
         display:        'flex',
         flexDirection:  'column',
         alignItems:     'center',
@@ -369,7 +373,7 @@ export default function CompanionGuide({
             </motion.p>
           )}
         </AnimatePresence>
-      </div>
+      </div>}
 
       {/* ── Phase 2: Features ─────────────────────────────────────────── */}
       <AnimatePresence>
@@ -447,7 +451,7 @@ export default function CompanionGuide({
                     ;(e.currentTarget as HTMLButtonElement).style.boxShadow = `0 0 32px ${accent}50`
                   }}
                 >
-                  Enter Dashboard →
+                  {ctaLabel ?? 'Enter Dashboard →'}
                 </button>
               ) : (
                 <a
@@ -464,19 +468,18 @@ export default function CompanionGuide({
                     boxShadow:       `0 0 32px ${accent}50`,
                   }}
                 >
-                  Back to Dashboard →
+                  {ctaLabel ?? 'Back to Dashboard →'}
                 </a>
               )}
-              <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', marginTop: '14px' }}>
-                This guide lives at{' '}
-                <a
-                  href="/dashboard/guide"
-                  style={{ color: accent, textDecoration: 'none', opacity: 0.8 }}
-                >
-                  /dashboard/guide
-                </a>
-                {' '}— come back any time.
-              </p>
+              {!ctaLabel && (
+                <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', marginTop: '14px' }}>
+                  This guide lives at{' '}
+                  <a href="/dashboard/guide" style={{ color: accent, textDecoration: 'none', opacity: 0.8 }}>
+                    /dashboard/guide
+                  </a>
+                  {' '}— come back any time.
+                </p>
+              )}
             </motion.div>
           </motion.div>
         )}
