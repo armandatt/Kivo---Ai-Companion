@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { ChevronRight, Clock, MapPin } from 'lucide-react';
+import CompanionGuide from '@/components/companion-guide';
 
 // Sample creature data - will be replaced with backend data
 const CREATURES = [
@@ -19,7 +20,7 @@ const COLORS = [
   { id: 6, name: 'Azure', hex: '#0EA5E9', bg: 'bg-sky-400' },
 ];
 
-type Step = 'persona' | 'creature-selection' | 'naming-confirm' | 'check-in' | 'egg-delivery' | 'complete';
+type Step = 'persona' | 'guide' | 'creature-selection' | 'naming-confirm' | 'check-in' | 'egg-delivery' | 'complete';
 
 interface QuizAnswers {
   energyPattern?: string;
@@ -179,17 +180,30 @@ export default function PostQuizSequence({ quizAnswers, onComplete }: PostQuizSe
 
           {showButton && (
             <button
-              onClick={() => setCurrentStep('creature-selection')}
+              onClick={() => setCurrentStep('guide')}
               className="persona-button group flex items-center gap-2 px-8 py-3 bg-cyan-400 text-black font-semibold rounded-full hover:bg-cyan-300 transition-all duration-300 transform hover:scale-105"
             >
-              Meet your companion
+              See what I can do
               <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
             </button>
           )}
         </div>
       )}
 
-      {/* Step 2: Creature Selection */}
+      {/* Step 2: Companion Guide */}
+      {currentStep === 'guide' && (
+        <div className="w-full h-full overflow-y-auto" style={{ background: '#060810' }}>
+          <CompanionGuide
+            persona={data.personaName}
+            fullscreen={false}
+            showHero={false}
+            ctaLabel="Meet your companion →"
+            onEnter={() => setCurrentStep('creature-selection')}
+          />
+        </div>
+      )}
+
+      {/* Step 3: Creature Selection */}
       {currentStep === 'creature-selection' && (
         <div className="w-full h-full flex flex-col items-center justify-center px-6 py-12 overflow-y-auto animate-fade-in">
           <div className="max-w-3xl w-full">

@@ -4,9 +4,8 @@ import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import PersonalityQuiz from '@/components/PersonalityQuiz';
 import PostQuizSequence from '@/components/PostQuizSequence';
-import CompanionGuide from '@/components/companion-guide';
 
-type OnboardingStep = 'quiz' | 'post-quiz' | 'guide' | 'complete';
+type OnboardingStep = 'quiz' | 'post-quiz' | 'complete';
 
 interface QuizAnswers {
   energyPattern?: string;
@@ -34,7 +33,6 @@ function OnboardingFlowContent() {
   const searchParams = useSearchParams();
   const [step, setStep] = useState<OnboardingStep>('quiz');
   const [quizAnswers, setQuizAnswers] = useState<QuizAnswers>({});
-  const [guidePersona, setGuidePersona] = useState('NOVA');
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -76,9 +74,8 @@ function OnboardingFlowContent() {
         return;
       }
 
-      // Show the companion guide before redirecting to the dashboard
-      setGuidePersona(data.personaName ?? 'NOVA');
-      setStep('guide');
+      setStep('complete');
+      setTimeout(() => router.push('/dashboard'), 800);
     } catch {
       setError('Something went wrong while saving onboarding.');
     } finally {
@@ -91,13 +88,6 @@ function OnboardingFlowContent() {
       {step === 'quiz' && <PersonalityQuiz onComplete={handleQuizComplete} />}
       {step === 'post-quiz' && (
         <PostQuizSequence quizAnswers={quizAnswers} onComplete={handlePostQuizComplete} />
-      )}
-      {step === 'guide' && (
-        <CompanionGuide
-          persona={guidePersona}
-          onEnter={() => router.push('/dashboard')}
-          fullscreen
-        />
       )}
       {step === 'complete' && (
         <div className="w-full h-screen flex items-center justify-center bg-black text-white text-center">
