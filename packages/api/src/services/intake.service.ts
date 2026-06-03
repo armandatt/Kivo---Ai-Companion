@@ -253,7 +253,7 @@ async function handleGaGoal(text: string, answers: IntakeAnswers, user: IntakeUs
 }
 
 async function handleGaDrill(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  const level = classifyRexExperience(text)
+  const level = await classifyRexExperience(text)
   answers.training_experience = level
   answers.drill_raw           = text
   await updateIntake(user.id, "ga_lifts", answers)
@@ -297,7 +297,7 @@ async function handleGaSchedule(text: string, answers: IntakeAnswers, user: Inta
 }
 
 async function handleGaSplit(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  const splitType      = classifySplit(text)
+  const splitType      = await classifySplit(text)
   answers.current_split = splitType
   answers.split_raw    = text
   await updateIntake(user.id, "ga_gym_time", answers)
@@ -480,6 +480,31 @@ async function classifyRexGoal(text: string): Promise<string | null> {
   }
 }
 
+// ─── Shared LLM classifier helper ────────────────────────────────────────────
+// Makes a cheap gpt-4o-mini call and maps the response to one of the provided
+// valid labels. Falls back to `defaultLabel` if the call fails or returns
+// something unexpected.
+
+async function llmClassify(
+  text: string,
+  systemInstruction: string,
+  validLabels: string[],
+  defaultLabel: string,
+): Promise<string> {
+  try {
+    const raw = await generateOpenAIText({
+      model:             "gpt-4o-mini",
+      maxOutputTokens:   12,
+      systemInstruction,
+      prompt:            text,
+    })
+    const label = raw.trim().toLowerCase().replace(/[^a-z_]/g, "")
+    return validLabels.includes(label) ? label : defaultLabel
+  } catch {
+    return defaultLabel
+  }
+}
+
 function buildRexGoalDrillQuestion(goal: string): string {
   if (goal === "fat_loss")    return `Fat loss. Fine. How long have you been "trying" to lose fat?`
   if (goal === "muscle")      return `Muscle. Good choice. How long have you been training?`
@@ -488,24 +513,19 @@ function buildRexGoalDrillQuestion(goal: string): string {
   return `How long have you been at this?`
 }
 
-function classifyRexExperience(text: string): string {
-  const t = text.toLowerCase()
-  if (/\b(never|just start|brand new|zero|first time|no experience|newbie|beginner)\b/.test(t)) return "beginner"
-
-  const yr = t.match(/(\d+)\s*(?:year|yr)/)
-  if (yr) {
-    const y = parseInt(yr[1])
-    return y >= 5 ? "advanced" : y >= 2 ? "intermediate" : "beginner"
-  }
-  const mo = t.match(/(\d+)\s*month/)
-  if (mo) {
-    return parseInt(mo[1]) >= 24 ? "intermediate" : "beginner"
-  }
-
-  if (/\b(advanced|competitive|5\+)\b/.test(t))                            return "advanced"
-  if (/\b(intermediate|couple years?|few years?|some experience)\b/.test(t)) return "intermediate"
-  if (/\b(beginner|new to|started recently|few months?)\b/.test(t))         return "beginner"
-  return "intermediate"
+async function classifyRexExperience(text: string): Promise<string> {
+  return llmClassify(
+    text,
+    [
+      "Classify the user's gym/lifting experience level. Reply with ONLY one word:",
+      "  beginner     — never trained, just started, a few months, under 1 year",
+      "  intermediate — 1-4 years of consistent training",
+      "  advanced     — 5+ years, competitive, very experienced",
+      "When in doubt, default to: intermediate",
+    ].join("\n"),
+    ["beginner", "intermediate", "advanced"],
+    "intermediate",
+  )
 }
 
 function buildRexLiftsQuestion(level: string): string {
@@ -625,7 +645,7 @@ function parseBodyweightKg(text: string): number | null {
 
 async function handleSb1(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
   answers.study_goal_description = text
-  answers.study_category = classifyStudyCategory(text)
+  answers.study_category = await classifyStudyCategory(text)
   await updateIntake(user.id, "sb2", answers)
   return `${text.length > 60 ? text.slice(0, 57) + "..." : text}. Clear.\n\n${STUDY_Q.sb2}`
 }
@@ -644,7 +664,7 @@ async function handleSb2(text: string, answers: IntakeAnswers, user: IntakeUser,
 }
 
 async function handleSb3(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  const status = classifyStudyStatus(text)
+  const status = await classifyStudyStatus(text)
   answers.study_current_status = status
   const needsGap = status === "behind" || status === "significantly_behind"
   await updateIntake(user.id, needsGap ? "sb3b" : "sb4", answers)
@@ -954,33 +974,56 @@ const GENERAL_Q = {
 
 // ─── Classifiers ─────────────────────────────────────────────────────────────
 
-function classifySplit(text: string): string {
-  const t = text.toLowerCase()
-  if (/\bppl\b|push.?pull.?leg/.test(t)) return "PPL"
-  if (/upper.?lower/.test(t)) return "upper_lower"
-  if (/full.?body/.test(t)) return "full_body"
-  if (/bro|chest day|arm day|body part/.test(t)) return "bro_split"
-  if (/nothing|haven.?t started|not going|no gym yet/.test(t)) return "none"
-  return "unstructured"
+async function classifySplit(text: string): Promise<string> {
+  return llmClassify(
+    text,
+    [
+      "Classify the gym training split described by the user. Reply with ONLY one word:",
+      "  PPL          — push/pull/legs split",
+      "  upper_lower  — upper body / lower body alternating",
+      "  full_body     — full body sessions each time",
+      "  bro_split    — body-part split (chest day, back day, arm day, etc.)",
+      "  none         — hasn't started, no split yet, not currently going to gym",
+      "  unstructured — goes to gym but no defined split / random / mixed",
+      "When in doubt, default to: unstructured",
+    ].join("\n"),
+    ["PPL", "upper_lower", "full_body", "bro_split", "none", "unstructured"],
+    "unstructured",
+  )
 }
 
-function classifyStudyCategory(text: string): string {
-  const t = text.toLowerCase()
-  if (/\b(jee|neet|upsc|ias|board|competitive|cat|gre|gmat)\b/.test(t)) return "competitive_exam"
-  if (/\b(degree|semester|college|uni|btech|mtech|bsc)\b/.test(t)) return "academic"
-  if (/\b(coding|dsa|programming|dev|software|cs|leet)\b/.test(t)) return "technical_skill"
-  if (/\b(placement|interview|job|internship|campus)\b/.test(t)) return "placement_prep"
-  return "skill_building"
+async function classifyStudyCategory(text: string): Promise<string> {
+  return llmClassify(
+    text,
+    [
+      "Classify what the user is studying or preparing for. Reply with ONLY one word:",
+      "  competitive_exam — entrance exam (JEE, NEET, UPSC, CAT, GRE, GMAT, boards, etc.)",
+      "  academic         — university/college coursework, semester, degree",
+      "  technical_skill  — coding, DSA, software development, CS fundamentals",
+      "  placement_prep   — job placement, campus interviews, internship prep",
+      "  skill_building   — learning a skill, certification, language, creative, or anything else",
+      "When in doubt, default to: skill_building",
+    ].join("\n"),
+    ["competitive_exam", "academic", "technical_skill", "placement_prep", "skill_building"],
+    "skill_building",
+  )
 }
 
-function classifyStudyStatus(text: string): string {
-  const t = text.toLowerCase()
-  if (/\b(haven.?t|not started|zero|beginning|just start)\b/.test(t)) return "not_started"
-  if (/\b(early|just begun|starting out|beginning)\b/.test(t)) return "early"
-  if (/\b(on track|going okay|good|fine|scheduled)\b/.test(t)) return "on_track"
-  if (/\b(very behind|a lot|significantly|way behind|months behind)\b/.test(t)) return "significantly_behind"
-  if (/\b(behind|late|falling|behind schedule)\b/.test(t)) return "behind"
-  return "on_track"
+async function classifyStudyStatus(text: string): Promise<string> {
+  return llmClassify(
+    text,
+    [
+      "Classify the user's current study/preparation progress. Reply with ONLY one word:",
+      "  not_started          — hasn't begun at all",
+      "  early                — just started, very early stages",
+      "  on_track             — progressing as expected, keeping up",
+      "  behind               — somewhat behind schedule",
+      "  significantly_behind — very behind, months of backlog, serious gap",
+      "When in doubt, default to: on_track",
+    ].join("\n"),
+    ["not_started", "early", "on_track", "behind", "significantly_behind"],
+    "on_track",
+  )
 }
 
 function ackFocusKiller(killer: string): string {
