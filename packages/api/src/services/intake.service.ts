@@ -9,7 +9,7 @@ import { generateOpenAIText } from "./openai.service"
 type IntakeStep =
   | "not_started" | "path_select"
   // Rex gym coaching path
-  | "ga_name" | "ga_goal" | "ga_drill" | "ga_lifts"
+  | "ga_name" | "ga_goal" | "ga_body" | "ga_drill" | "ga_lifts"
   | "ga_schedule" | "ga_split" | "ga_gym_time" | "ga_nutrition" | "ga_injuries"
   // Study path
   | "sb1" | "sb2" | "sb3" | "sb3b" | "sb4" | "sb4b"
@@ -77,6 +77,55 @@ export async function getWebProfile(telegramChatId: string): Promise<WebProfile 
   }
 }
 
+// ─── Off-topic detection during intake ───────────────────────────────────────
+
+function isOffTopicDuringIntake(text: string): boolean {
+  const t = text.toLowerCase().trim()
+  // Questions directed at the bot about its own knowledge/memory
+  if (/\b(do you (know|have|remember|store|track|see)|can you (tell me|see|check|access|find)|you have (my|the)|don.?t you (know|have)|have you (got|stored|saved))\b/.test(t)) return true
+  // Asking about their own data
+  if (/\b(do you know my|you know my|what (do|did) you know|my (weight|height|bmi|age|stats?|data|info|profile))\??/.test(t)) return true
+  // Ends with ? and is clearly a question about the bot/process, not an intake answer
+  if (t.endsWith("?") && /^(what (is|are|does|do)|why (do|are|is)|how (do|does|can|will)|when (do|will|did)|who (are|is)|is (this|it|that)|are (you|we|these)|will (you|this)|does (this|it))/.test(t)) return true
+  return false
+}
+
+// Maps the current step back to the question Rex asked for it, so we can re-ask after an off-topic answer
+function currentStepQuestion(step: IntakeStep, answers: IntakeAnswers): string {
+  const name = answers.name ?? "you"
+  switch (step) {
+    case "ga_goal":      return `${name}, what are we training for — fat loss, muscle, recomp, or performance?`
+    case "ga_body":      return `What's your current weight and height? (e.g. 75kg, 5'10" or 80kg, 178cm)`
+    case "ga_drill":     return buildRexGoalDrillQuestion(answers.gym_goal ?? "muscle")
+    case "ga_lifts":     return buildRexLiftsQuestion(answers.training_experience ?? "intermediate")
+    case "ga_schedule":  return `How many days a week are you actually going to show up?`
+    case "ga_split":     return `Walk me through your split. What do you train each day?`
+    case "ga_gym_time":  return `What time do you usually train? And what city are you in?`
+    case "ga_nutrition": return `Roughly how much protein are you hitting daily?`
+    case "ga_injuries":  return `Any injuries I need to know about?`
+    default:             return ""
+  }
+}
+
+async function answerOffTopicAndRedirect(question: string, currentQ: string): Promise<string> {
+  try {
+    return await generateOpenAIText({
+      model:             "gpt-4o-mini",
+      maxOutputTokens:   100,
+      systemInstruction:
+        `You are Rex, a direct no-nonsense gym coach doing an initial client intake.
+The client asked a question instead of answering yours. Answer it in 1-2 sentences (Rex voice: blunt, honest, no fluff).
+Then on a new line write exactly: "Now — " followed by the intake question they need to answer.
+Do not add anything else.`,
+      prompt: `Client's question: "${question}"\nYour current intake question: "${currentQ}"`,
+    })
+  } catch {
+    return `I don't have that yet — that's what intake is for.\n\nNow — ${currentQ}`
+  }
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 export async function handleIntakeMessage(input: {
   platformChatId: string
   text: string
@@ -95,20 +144,37 @@ export async function handleIntakeMessage(input: {
 
   await addToShortTerm(input.platformChatId, input.text, { role: "user", intent: "intake", emotion: "neutral" })
 
-  const step = (user.intakeStep || "not_started") as IntakeStep
+  const step    = (user.intakeStep || "not_started") as IntakeStep
   const answers = parseAnswers(user.intakeAnswers)
   const modules = user.activeModules || []
 
   const profile: WebProfile = input.webProfile ?? {
-    creatureName: user.creatureName,
-    primaryGoal30d: user.primaryGoal30d,
-    corePain: user.corePain,
-    persona: user.persona,
+    creatureName:        user.creatureName,
+    primaryGoal30d:      user.primaryGoal30d,
+    corePain:            user.corePain,
+    persona:             user.persona,
     accountabilityStyle: user.tonePreference,
     preferredCheckInTime: user.preferredCheckInTime,
   }
 
   const effectiveStep = normalizeRexIntakeStep(step, user, answers)
+
+  // ── Off-topic detection ───────────────────────────────────────────────────
+  // If the user asked a question instead of answering the current intake step,
+  // answer it briefly in Rex's voice then redirect back to the open question.
+  // Skip this for the very first message (not_started) — it's fine to start with a question.
+  if (effectiveStep !== "not_started" && effectiveStep !== "path_select" && effectiveStep !== "complete") {
+    const text = input.text.trim()
+    if (isOffTopicDuringIntake(text)) {
+      const currentQ = currentStepQuestion(effectiveStep, answers)
+      if (currentQ) {
+        const reply = await answerOffTopicAndRedirect(text, currentQ)
+        await addToShortTerm(input.platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" })
+        return { handled: true, reply }
+      }
+    }
+  }
+
   const reply = await routeStep(effectiveStep, input.text.trim(), answers, modules, user, profile, input.platformChatId)
 
   await addToShortTerm(input.platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" })
@@ -144,6 +210,7 @@ async function routeStep(
     // Rex gym coaching path
     case "ga_name":         return handleGaName(text, answers, user, chatId)
     case "ga_goal":         return handleGaGoal(text, answers, user, chatId)
+    case "ga_body":         return handleGaBody(text, answers, user, chatId)
     case "ga_drill":        return handleGaDrill(text, answers, user, chatId)
     case "ga_lifts":        return handleGaLifts(text, answers, user, chatId)
     case "ga_schedule":     return handleGaSchedule(text, answers, user, chatId)
@@ -248,8 +315,36 @@ async function handleGaGoal(text: string, answers: IntakeAnswers, user: IntakeUs
   }
   answers.gym_goal     = goal
   answers.gym_goal_raw = text
+  await updateIntake(user.id, "ga_body", answers)
+  const ack = { fat_loss: "Fat loss.", muscle: "Building muscle.", both: "Recomp. Both at once.", performance: "Performance." }[goal] ?? "Got it."
+  return `${ack}\n\nBefore we go further — what's your current weight and height? (e.g. 75kg, 5'10" or 80kg, 178cm)`
+}
+
+async function handleGaBody(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
+  const bw      = parseBodyweightKg(text)
+  const ht      = parseHeightCm(text)
+  const isRetry = answers.body_retry === "true"
+
+  if (!bw && !ht && !isRetry) {
+    answers.body_retry = "true"
+    await updateIntake(user.id, "ga_body", answers)
+    return `Need the numbers. Format: "75kg, 5'10" or "80kg, 178cm". Weight and height.`
+  }
+
+  if (bw) {
+    answers.current_bodyweight_kg = String(bw)
+    const factor                  = answers.gym_goal === "fat_loss" ? 2.2 : 1.8
+    answers.protein_target_g      = String(Math.round(bw * factor))
+  }
+  if (ht) answers.height_cm = String(ht)
+  if (bw && ht) {
+    const bmi  = bw / Math.pow(ht / 100, 2)
+    answers.bmi = bmi.toFixed(1)
+  }
+
+  delete answers.body_retry
   await updateIntake(user.id, "ga_drill", answers)
-  return buildRexGoalDrillQuestion(goal)
+  return buildRexGoalDrillQuestion(answers.gym_goal ?? "muscle")
 }
 
 async function handleGaDrill(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
@@ -638,6 +733,23 @@ function parseBodyweightKg(text: string): number | null {
   if (lbsMatch) return Math.round(parseInt(lbsMatch[1]) * 0.453)
   const kgMatch = text.match(/(\d{2,3})\s*(?:kg|kilos?)/i)
   if (kgMatch) return parseInt(kgMatch[1])
+  return null
+}
+
+function parseHeightCm(text: string): number | null {
+  // feet + inches: 5'10, 5'10", 5 ft 10, 5 feet 10 inches
+  const ftIn = text.match(/(\d)\s*['′`]\s*(\d{1,2})|(\d)\s*(?:ft|feet|foot)\s*(\d{1,2})?/i)
+  if (ftIn) {
+    const feet   = parseInt(ftIn[1] ?? ftIn[3] ?? "0")
+    const inches = parseInt(ftIn[2] ?? ftIn[4] ?? "0")
+    return Math.round(feet * 30.48 + inches * 2.54)
+  }
+  // centimetres: 178cm, 178 cm
+  const cm = text.match(/(\d{2,3})\s*cm/i)
+  if (cm) return parseInt(cm[1])
+  // bare number between 140–220 → assume cm
+  const bare = text.match(/\b(1[4-9]\d|2[0-2]\d)\b/)
+  if (bare && !parseBodyweightKg(text)) return parseInt(bare[0])
   return null
 }
 
