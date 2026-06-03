@@ -499,10 +499,10 @@ Do not end mid-word or mid-sentence.`.trim();
   try {
     const raw = await generateOpenAIText({
       systemInstruction,
-      prompt:          ctx.message,
-      // gpt-5 and reasoning models burn CoT tokens against max_completion_tokens —
-      // minimum 400 so there's always room for visible output after internal reasoning.
-      maxOutputTokens: Math.max(ctx.decision.tokenBudget, 400),
+      prompt: ctx.message,
+      // No maxOutputTokens — gpt-5 is a reasoning model that burns CoT tokens
+      // against the cap. Omitting it lets the model allocate freely between
+      // reasoning and output so we never get finish_reason:length empty responses.
     });
     return guardQuestionLoop(raw, ctx.memory.lastAssistantMessage);
   } catch (err) {

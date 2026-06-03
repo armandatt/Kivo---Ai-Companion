@@ -65,7 +65,12 @@ export async function generateOpenAIText(input: {
           : []),
         { role: "user", content: input.prompt },
       ],
-      max_completion_tokens: input.maxOutputTokens ?? 512,
+      // Only send max_completion_tokens when the caller explicitly requests a cap.
+      // Omitting it for main LLM calls lets gpt-5 (reasoning model) allocate tokens
+      // freely between CoT and output — prevents finish_reason:length empty responses.
+      ...(input.maxOutputTokens !== undefined
+        ? { max_completion_tokens: input.maxOutputTokens }
+        : {}),
     }),
   });
 
