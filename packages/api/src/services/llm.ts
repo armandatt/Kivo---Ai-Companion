@@ -466,6 +466,7 @@ ${buildStateBlock(ctx.state)}
 MEMORY
 Goals: ${ctx.memory.longTerm.goals.slice(0, 3).join(" | ") || "none"}
 ${ctx.memory.longTerm.creatureName ? `Creature name: ${ctx.memory.longTerm.creatureName}` : ""}
+${ctx.memory.longTerm.preferences.length > 0 ? `Preferences: ${ctx.memory.longTerm.preferences.slice(0, 10).join(" | ")}` : ""}
 ${ctx.memory.longTerm.anchors.length > 0 ? `Anchors: ${ctx.memory.longTerm.anchors.slice(0, 2).join(" | ")}` : ""}
 ${ctx.memory.longTerm.struggles.length > 0 ? `Known struggles: ${ctx.memory.longTerm.struggles.slice(0, 2).join(" | ")}` : ""}
 ${timeBlock}
