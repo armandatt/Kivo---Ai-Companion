@@ -242,9 +242,9 @@ async function handleGaName(text: string, answers: IntakeAnswers, user: IntakeUs
 }
 
 async function handleGaGoal(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  const goal = classifyRexGoal(text)
+  const goal = await classifyRexGoal(text)
   if (!goal) {
-    return `I need a direction. Pick one: fat loss, muscle, recomp (both at once), or performance.`
+    return `I need a direction. Fat loss, muscle, recomp (both at once), or performance — what are we actually training for?`
   }
   answers.gym_goal     = goal
   answers.gym_goal_raw = text
@@ -449,29 +449,35 @@ function extractFirstName(text: string): string {
   return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
 }
 
-function classifyRexGoal(text: string): string | null {
-  const t = text.toLowerCase()
-  // Recomp / body recomposition — must check before fat/muscle so it doesn't get
-  // split into two separate signals and misclassified.
-  const recomp = /\b(recomp|recompo|recomposition|body recomp|both|lose fat.*build|build.*lose fat|fat.*muscle|muscle.*fat|cut.*bulk|bulk.*cut|both at once|simultaneously|at the same time)\b/.test(t)
-  if (recomp) return "both"
+async function classifyRexGoal(text: string): Promise<string | null> {
+  const VALID = new Set(["fat_loss", "muscle", "both", "performance"])
 
-  const fat    = /\b(fat|cut|lean|lose|weight loss|slim|shred|drop|burning|calorie deficit)\b/.test(t)
-  const muscle = /\b(muscle|bulk|build|gain|mass|strong|strength|size|bigger|hypertrophy)\b/.test(t)
-  const perf   = /\b(performance|athletic|sport|run|endurance|healthy|health|habit|fitness|fit)\b/.test(t)
-  if (fat && muscle) return "both"
-  if (fat)           return "fat_loss"
-  if (muscle)        return "muscle"
-  if (perf)          return "performance"
-
-  // Week/timeline hints — "8 weeks" alone isn't a goal, keep asking
-  // but don't loop forever: if the message is very short and doesn't match anything,
-  // return null so Rex can re-prompt once, but if it contains a timeline phrase
-  // alongside a transformation word, treat it as recomp intent.
-  const transformHint = /\b(transform|change|better|improve|body|physique|shape|tone|toned|definition|shredded|jacked|aesthetic)\b/.test(t)
-  if (transformHint) return "both"
-
-  return null
+  try {
+    const raw = await generateOpenAIText({
+      model: "gpt-4o-mini",
+      maxOutputTokens: 10,
+      systemInstruction: [
+        "You classify a gym user's fitness goal into exactly one label.",
+        "Reply with ONLY one of these four words — nothing else:",
+        "  fat_loss  — losing fat, cutting, shredding, calorie deficit, slim down",
+        "  muscle    — building muscle, bulking, gaining mass, strength, hypertrophy",
+        "  both      — recomp, body recomposition, lose fat AND build muscle simultaneously",
+        "  performance — athletic performance, endurance, sport, general health/fitness habit",
+        "If the message contains a timeline or vague intent (e.g. '8 weeks', 'get better') but no clear goal, reply: null",
+      ].join("\n"),
+      prompt: text,
+    })
+    const label = raw.trim().toLowerCase().replace(/[^a-z_]/g, "")
+    return VALID.has(label) ? label : null
+  } catch {
+    // Hard fallback — never leave the user stuck if OpenAI is down
+    const t = text.toLowerCase()
+    if (/recomp|both|simultaneously/.test(t))              return "both"
+    if (/fat|cut|lean|lose|shred|slim/.test(t))            return "fat_loss"
+    if (/muscle|bulk|build|gain|mass|strength/.test(t))    return "muscle"
+    if (/perform|athletic|sport|endur|health|fit/.test(t)) return "performance"
+    return null
+  }
 }
 
 function buildRexGoalDrillQuestion(goal: string): string {
