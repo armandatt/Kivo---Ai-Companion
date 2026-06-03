@@ -4,6 +4,12 @@ import { addToShortTerm } from "../services/memory.service";
 import { savePlan } from "../services/planner.service";
 import { generateEngineResponse } from "../services/llm";
 import type { EngineContext } from "../services/llm";
+import { computeGymTimeContextFromData } from "../services/gymTimeContext.service";
+import type { GymTimeContext } from "../services/gymTimeContext.service";
+import { computePatternReport } from "../services/gymPatternDetector.service";
+import type { PatternReport } from "../services/gymPatternDetector.service";
+import { buildEngagementContext } from "../services/engagement.service";
+import type { EngagementContext } from "../services/engagement.service";
 import {
   getMentorState,
   updateMentorState,
@@ -315,12 +321,15 @@ function buildConversationAnalysis(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 interface UserContext {
-  memory:           MemoryContext;
-  state:            MentorState;
-  persona:          PersonaType;
-  isFirstSession:   boolean;
+  memory:            MemoryContext;
+  state:             MentorState;
+  persona:           PersonaType;
+  isFirstSession:    boolean;
   messageCountToday: number;
-  tonePreference:   "hard" | "soft" | "dynamic";
+  tonePreference:    "hard" | "soft" | "dynamic";
+  gymContext:        GymTimeContext | null;
+  gymPatternReport:  PatternReport | null;
+  engagementContext: EngagementContext | null;
 }
 
 async function loadUserContext(platformChatId: string, now: Date): Promise<UserContext> {
@@ -329,9 +338,12 @@ async function loadUserContext(platformChatId: string, now: Date): Promise<UserC
     prisma.messengerUser.findUnique({
       where: { platform_platformChatId: { platform: "telegram", platformChatId } },
       select: {
-        id:        true,
-        createdAt: true,
-        persona:   true,
+        id:                   true,
+        createdAt:            true,
+        persona:              true,
+        timezone:             true,
+        preferredCheckInTime: true,
+        intakeAnswers:        true,
         messages: {
           orderBy: { createdAt: "desc" },
           take: 25,
@@ -427,7 +439,30 @@ async function loadUserContext(platformChatId: string, now: Date): Promise<UserC
     longTerm.preferences.includes("soft_tone") ? "soft" :
     DEFAULT_TONE;
 
-  return { memory, state, persona, isFirstSession, messageCountToday, tonePreference };
+  const gymContext = computeGymTimeContextFromData(
+    {
+      persona:              userRow.persona,
+      timezone:             userRow.timezone,
+      preferredCheckInTime: userRow.preferredCheckInTime,
+      intakeAnswers:        userRow.intakeAnswers,
+      memories:             memories.filter(m => m.type === "anchor"),
+      messages:             userRow.messages,
+    },
+    now,
+  );
+
+  let gymPatternReport:  PatternReport  | null = null;
+  let engagementContext: EngagementContext | null = null;
+  if (persona === "rex") {
+    [gymPatternReport, engagementContext] = await Promise.all([
+      userRow.intakeAnswers
+        ? computePatternReport(userRow.id, now).catch((err) => { console.error("[ORCHESTRATOR] gymPatternReport:", err); return null; })
+        : Promise.resolve(null),
+      buildEngagementContext(userRow.id, now).catch((err) => { console.error("[ORCHESTRATOR] engagementContext:", err); return null; }),
+    ]);
+  }
+
+  return { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext };
 }
 
 function buildMinimalContext(state: MentorState): UserContext {
@@ -441,7 +476,7 @@ function buildMinimalContext(state: MentorState): UserContext {
     sessionCount: 0, daysSinceFirstMessage: 0,
     lastUserMessage: null, lastTopicDiscussed: null, lastAssistantMessage: null,
   };
-  return { memory, state, persona: FALLBACK_PERSONA, isFirstSession: true, messageCountToday: 0, tonePreference: DEFAULT_TONE };
+  return { memory, state, persona: FALLBACK_PERSONA, isFirstSession: true, messageCountToday: 0, tonePreference: DEFAULT_TONE, gymContext: null, gymPatternReport: null, engagementContext: null };
 }
 
 // buildSystemPrompt removed — llm.ts generateEngineResponse builds the prompt
@@ -625,7 +660,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     () => loadUserContext(input.platformChatId, timestamp),
     await getMentorState(input.platformChatId).then(state => buildMinimalContext(state)),
   );
-  const { memory, state, persona, isFirstSession, messageCountToday, tonePreference } = userCtx;
+  const { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext } = userCtx;
 
   // ── Stage 3: Pattern detection (skip for brand-new users) ──────────────────
   const runPatterns =
@@ -716,7 +751,10 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
       memory,
       patterns,
       intervention: interventionResult,
-      plan:         planResult,
+      plan:             planResult,
+      gymContext:        gymContext ?? null,
+      gymPatternReport:  gymPatternReport ?? null,
+      engagementContext: engagementContext ?? null,
     };
 
     diag.llmTokensRequested = Math.max(decision.tokenBudget, 80);

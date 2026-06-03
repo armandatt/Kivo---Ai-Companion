@@ -13,6 +13,9 @@ import type { InterventionResult } from "../engines/intervention-engine";
 import type { PlannerResult } from "../engines/planner-engine";
 import type { ConversationAnalysis } from "../types/mentor.types";
 import type { MemoryContext } from "../types/memory.types";
+import type { GymTimeContext } from "./gymTimeContext.service";
+import type { PatternReport } from "./gymPatternDetector.service";
+import type { EngagementContext } from "./engagement.service";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ENGINE CONTEXT — full input for the engine-aware LLM call
@@ -28,6 +31,9 @@ export interface EngineContext {
   patterns:     PatternAnalysis;
   intervention: InterventionResult | null;
   plan:         PlannerResult | null;
+  gymContext:        GymTimeContext | null;
+  gymPatternReport:  PatternReport | null;
+  engagementContext: EngagementContext | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -277,6 +283,138 @@ function buildStateBlock(state: MentorState): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// TIME BLOCK
+// Injects Rex's time/schedule context into the system prompt.
+// Only active for Rex persona — returns empty string for all others.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function buildTimeBlock(gymCtx: GymTimeContext | null, personaType: PersonaType): string {
+  if (!gymCtx || personaType !== "rex") return "";
+
+  const gymRelative = gymCtx.minutesUntilGym > 0
+    ? `${gymCtx.minutesUntilGym} min away`
+    : gymCtx.minutesUntilGym === 0
+      ? "now"
+      : `${Math.abs(gymCtx.minutesUntilGym)} min ago`;
+
+  const sessionLine = gymCtx.lastSessionDaysAgo < 999
+    ? gymCtx.lastSessionDaysAgo === 0
+      ? "last session: today"
+      : gymCtx.lastSessionDaysAgo === 1
+        ? "last session: yesterday"
+        : `last session: ${gymCtx.lastSessionDaysAgo} days ago`
+    : null;
+
+  const lines = [
+    `GYM TIME CONTEXT`,
+    `User's current time: ${gymCtx.localTimeStr}`,
+    `Gym time: ${gymCtx.gymTimeStr} (${gymRelative})`,
+    gymCtx.isTrainingDay
+      ? `Today: Training day — ${gymCtx.todayMuscles}`
+      : `Today: Rest day`,
+    sessionLine,
+    gymCtx.lastLiftSummary ? `Last logged lifts: ${gymCtx.lastLiftSummary}` : null,
+  ].filter(Boolean).join("\n");
+
+  return `\n${lines}`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MODE GUIDANCE
+// Tells Rex how to behave based on where the user is in their training day.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function buildModeGuidance(gymCtx: GymTimeContext | null, personaType: PersonaType): string {
+  if (!gymCtx || personaType !== "rex") return "";
+
+  switch (gymCtx.mode) {
+    case "pre_workout":
+      return `\nREX MODE — PRE-WORKOUT (${gymCtx.minutesUntilGym} min to gym)
+Be sharp and session-focused. Reference today's muscle group (${gymCtx.todayMuscles}) and, if you have lift data, the weight they need to beat. No small talk.`;
+
+    case "session":
+      return `\nREX MODE — SESSION WINDOW
+Gym time is now or just passed. Short responses. If they haven't logged anything, ask about the session directly.`;
+
+    case "recovery":
+      return `\nREX MODE — RECOVERY
+Training day, session window has passed. Acknowledge if session is done. Can discuss nutrition, sleep, tomorrow's plan.`;
+
+    case "rest_day":
+      return `\nREX MODE — REST DAY
+Don't push training today. Protein target, sleep, next session prep. That's it.`;
+
+    default:
+      return "";
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENGAGEMENT BLOCK
+// Surfaces streak, monthly volume, PR trajectory, and stated obstacle so Rex
+// can reference them naturally — not on every message, but when they land.
+// Only active for Rex persona.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function buildEngagementBlock(ctx: EngagementContext | null, personaType: PersonaType): string {
+  if (!ctx || personaType !== "rex") return "";
+
+  const streakLine = ctx.streak > 0
+    ? `Streak: ${ctx.streak} days 🔥`
+    : "Streak: 0 (broken)";
+
+  const benchLine = ctx.firstBenchWeight && ctx.currentBenchWeight && ctx.currentBenchWeight > ctx.firstBenchWeight
+    ? `First bench logged: ${ctx.firstBenchWeight}kg → now ${ctx.currentBenchWeight}kg`
+    : null;
+
+  const lines: (string | null)[] = [
+    "\nENGAGEMENT CONTEXT",
+    streakLine,
+    `Sessions this month: ${ctx.sessionsThisMonth}`,
+    `Biggest PR: ${ctx.biggestPR}`,
+    ctx.onboardingObstacle ? `User's stated obstacle: "${ctx.onboardingObstacle}"` : null,
+    benchLine,
+    ctx.firstLogDate ? `First session: ${ctx.firstLogDate}` : null,
+    "",
+    "Surface these moments naturally — not every message. One well-timed reference builds more trust than 10 generic check-ins.",
+  ];
+
+  return lines.filter(Boolean).join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GYM PATTERN BLOCK
+// Injects PatternReport so Rex proactively addresses the top flag.
+// Only active for Rex persona — returns empty string for all others.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function buildGymPatternBlock(report: PatternReport | null, personaType: PersonaType): string {
+  if (!report || personaType !== "rex") return "";
+
+  const lines: string[] = [
+    "\nPATTERN REPORT",
+    `Consistency: ${report.consistencyScore}% (last 4 weeks)`,
+    `Active flags: ${report.flags.slice(0, 6).join(", ") || "none"}`,
+    report.stalledLifts.length
+      ? `Stalled: ${report.stalledLifts.map(s => s.exercise).join(", ")}`
+      : null,
+    `RPE trend: ${report.rpe_trend} | Methodology: ${report.inferredMethodology}`,
+    `Deload due: ${report.deloadDue}`,
+  ].filter(Boolean) as string[];
+
+  if (report.interventionMessage) {
+    lines.push(
+      `\nTOP INTERVENTION — lead with this (weave in naturally, don't quote verbatim):\n${report.interventionMessage}`,
+      "Address this one flag only. Do not stack multiple interventions.",
+    );
+  } else {
+    lines.push("No active interventions — respond to the message as normal.");
+  }
+
+  return lines.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // QUESTION LOOP GUARD
 // Strips trailing question if the last assistant reply already had one.
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -300,6 +438,10 @@ export async function generateEngineResponse(ctx: EngineContext): Promise<string
   const intervention = buildInterventionBlock(ctx.intervention);
   const patterns     = buildPatternBlock(ctx.patterns);
   const planBlock    = buildPlanBlock(ctx.plan);
+  const timeBlock        = buildTimeBlock(ctx.gymContext, ctx.personaType);
+  const modeGuidance     = buildModeGuidance(ctx.gymContext, ctx.personaType);
+  const patternBlock     = buildGymPatternBlock(ctx.gymPatternReport, ctx.personaType);
+  const engagementBlock  = buildEngagementBlock(ctx.engagementContext, ctx.personaType);
 
   // Recent conversation (last 6 turns, chronological)
   const recentLines = ctx.memory.shortTerm.slice(-6).map(m =>
@@ -312,6 +454,7 @@ PERSONA — ${persona.name.toUpperCase()}
 ${persona.voice}
 ${toneModifier ? `\n${toneModifier}\n` : ""}
 ${actionDir}
+${modeGuidance}
 ${emotionNote}
 ${intervention}
 ${patterns}
@@ -325,6 +468,9 @@ Goals: ${ctx.memory.longTerm.goals.slice(0, 3).join(" | ") || "none"}
 ${ctx.memory.longTerm.creatureName ? `Creature name: ${ctx.memory.longTerm.creatureName}` : ""}
 ${ctx.memory.longTerm.anchors.length > 0 ? `Anchors: ${ctx.memory.longTerm.anchors.slice(0, 2).join(" | ")}` : ""}
 ${ctx.memory.longTerm.struggles.length > 0 ? `Known struggles: ${ctx.memory.longTerm.struggles.slice(0, 2).join(" | ")}` : ""}
+${timeBlock}
+${patternBlock}
+${engagementBlock}
 
 RECENT CONVERSATION
 ${recentLines || "none"}
@@ -341,6 +487,7 @@ RULES
 • SHORT REPLY RULE: If the user's message is 1-3 words, they are answering your last question. Do not ask another. Tell them what to do next.
 • NO PREACHING: Never lecture, moralize, or explain why they should do something. They know. Just tell them what to do.
 • NO MOTIVATIONAL POSTERS: Never say things like "you have the time, you just need to use it wisely", "this is your moment", "you've got what it takes". These are generic and hollow.
+• TIME RULE: Use time context naturally — never say "according to your schedule" or "your gym time is approaching". Speak like a coach who knows their day.
 • Use memory naturally — never "Based on your goal of X, I recommend…"
 • Have a point of view. Call out bad decisions briefly, then move.
 • Never break character.

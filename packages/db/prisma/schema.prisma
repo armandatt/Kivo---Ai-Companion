@@ -77,15 +77,21 @@ model MessengerUser {
   nextCheckInAt       DateTime?
   checkInIntervalMin  Int?
 
+  // Workout tracking (Rex gym users)
+  splitState       Json?
+  personalRecords  Json?
+  gymStreak        Int      @default(0)
+
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
-  messages CompanionMessage[]
-  memories MemoryFact[]
-  goals    Goal[]
-  plans    Plan[]
-  deadlines Deadline[]
-  focusSessions FocusSession[]
+  messages         CompanionMessage[]
+  memories         MemoryFact[]
+  goals            Goal[]
+  plans            Plan[]
+  deadlines        Deadline[]
+  focusSessions    FocusSession[]
+  workoutSessions  TelegramWorkoutSession[]
 
   @@unique([platform, platformChatId])
   @@index([platformChatId])
@@ -483,4 +489,39 @@ model ScanJob {
 
   startedAt DateTime @default(now())
   finishedAt DateTime?
+}
+
+//////////////////////////////////////////////////
+// TELEGRAM WORKOUT TRACKING (Rex gym users)
+//////////////////////////////////////////////////
+
+model TelegramWorkoutSession {
+  id              String   @id @default(cuid())
+  messengerUserId String
+  date            DateTime @default(now())
+  splitDayIndex   Int
+  musclesTrained  String[]
+  durationMinutes Int?
+  completed       Boolean  @default(false)
+
+  user MessengerUser    @relation(fields: [messengerUserId], references: [id], onDelete: Cascade)
+  sets TelegramSetLog[]
+
+  @@index([messengerUserId, date])
+}
+
+model TelegramSetLog {
+  id           String  @id @default(cuid())
+  sessionId    String
+  exerciseName String
+  setNumber    Int
+  reps         Int
+  weightKg     Float
+  rpe          Int?
+  completed    Boolean @default(true)
+
+  session TelegramWorkoutSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([sessionId, exerciseName])
 }
