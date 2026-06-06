@@ -10,10 +10,11 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface QuickLogEntry {
-  exercise: string
-  sets:     number
-  reps:     number
-  weightKg: number | null
+  exercise:         string
+  sets:             number
+  reps:             number
+  weightKg:         number | null
+  setsRepsProvided?: boolean  // true = user explicitly gave sets/reps; false/undefined = defaulted
 }
 
 export interface PendingLog {
@@ -29,7 +30,7 @@ interface ActiveLogging {
   muscles:                 string
   startedAt:               string
   logMode:                 "quick" | "set_by_set"
-  logState:                "awaiting_exercises" | "awaiting_weights" | "confirming" | "mid_exercise" | "weight_review" | "muscle_conflict"
+  logState:                "awaiting_exercises" | "awaiting_weights" | "awaiting_sets_reps" | "confirming" | "mid_exercise" | "weight_review" | "muscle_conflict"
   parsedEntries:           QuickLogEntry[]
   pendingWeightFor:        string[]
   lastActivityAt:          string
@@ -286,14 +287,14 @@ function extractWeight(text: string): number | null {
   return candidates.length === 1 ? candidates[0]! : null
 }
 
-function extractSetsRepsWeight(text: string): { sets: number; reps: number; weightKg: number | null } {
+function extractSetsRepsWeight(text: string): { sets: number; reps: number; weightKg: number | null; setsRepsProvided: boolean } {
   // sets×reps×weight like "3×5×80"
   const triple = text.match(/\b(\d+(?:\.\d+)?)\s*[×xX*]\s*(\d+(?:\.\d+)?)\s*[×xX*]\s*(\d+(?:\.\d+)?)\b/)
   if (triple) {
     const [a, b, c] = [+triple[1]!, +triple[2]!, +triple[3]!]
-    if (a <= 8 && b <= 20 && c >= 10) return { sets: a, reps: b, weightKg: c }
-    if (c <= 8 && b <= 20 && a >= 10) return { sets: c, reps: b, weightKg: a }
-    return { sets: Math.round(a), reps: Math.round(b), weightKg: c }
+    if (a <= 8 && b <= 20 && c >= 10) return { sets: a, reps: b, weightKg: c, setsRepsProvided: true }
+    if (c <= 8 && b <= 20 && a >= 10) return { sets: c, reps: b, weightKg: a, setsRepsProvided: true }
+    return { sets: Math.round(a), reps: Math.round(b), weightKg: c, setsRepsProvided: true }
   }
 
   const weightKg = extractWeight(text)
@@ -303,20 +304,21 @@ function extractSetsRepsWeight(text: string): { sets: number; reps: number; weig
   if (double) {
     const [n1, n2] = [+double[1]!, +double[2]!]
     if (weightKg !== null) {
-      if (n1 <= 8 && n2 <= 20) return { sets: n1, reps: n2, weightKg }
-      return { sets: 1, reps: n2, weightKg }
+      if (n1 <= 8 && n2 <= 20) return { sets: n1, reps: n2, weightKg, setsRepsProvided: true }
+      return { sets: 1, reps: n2, weightKg, setsRepsProvided: true }
     }
-    if (n1 >= 20) return { sets: 1, reps: n2, weightKg: n1 }
-    if (n2 >= 20) return { sets: 1, reps: n1, weightKg: n2 }
-    return { sets: n1, reps: n2, weightKg: null }
+    if (n1 >= 20) return { sets: 1, reps: n2, weightKg: n1, setsRepsProvided: true }
+    if (n2 >= 20) return { sets: 1, reps: n1, weightKg: n2, setsRepsProvided: true }
+    return { sets: n1, reps: n2, weightKg: null, setsRepsProvided: true }
   }
 
   const setsM = text.match(/(\d+)\s*sets?/i)
   const repsM = text.match(/(\d+)\s*reps?/i) ?? text.match(/for\s+(\d+)/i)
   return {
-    sets:    setsM ? +setsM[1]! : 1,
-    reps:    repsM ? +repsM[1]! : 5,
+    sets:             setsM ? +setsM[1]! : 1,
+    reps:             repsM ? +repsM[1]! : 5,
     weightKg,
+    setsRepsProvided: setsM !== null || repsM !== null,
   }
 }
 
@@ -334,9 +336,63 @@ export function parseMultiExercise(text: string): QuickLogEntry[] {
   for (const chunk of chunks) {
     const match = matchExerciseName(chunk)
     if (!match) continue
-    const { sets, reps, weightKg } = extractSetsRepsWeight(chunk)
-    entries.push({ exercise: match.canonical, sets, reps, weightKg })
+    const { sets, reps, weightKg, setsRepsProvided } = extractSetsRepsWeight(chunk)
+    entries.push({ exercise: match.canonical, sets, reps, weightKg, setsRepsProvided })
   }
+  return entries
+}
+
+// Parses "3×5", "3x5", "3 sets 5 reps", "3 5" → { sets, reps } | null
+function parseSetsReps(text: string): { sets: number; reps: number } | null {
+  const t = text.trim()
+  const crossM = t.match(/^(\d+)\s*[×xX]\s*(\d+)$/)
+  if (crossM) return { sets: +crossM[1]!, reps: +crossM[2]! }
+
+  const setsM = t.match(/(\d+)\s*sets?/i)
+  const repsM = t.match(/(\d+)\s*reps?/i)
+  if (setsM && repsM) return { sets: +setsM[1]!, reps: +repsM[1]! }
+
+  const twoM = t.match(/^(\d+)\s+(\d+)$/)
+  if (twoM) {
+    const [a, b] = [+twoM[1]!, +twoM[2]!]
+    if (a <= 6 && b <= 20) return { sets: a, reps: b }
+  }
+  return null
+}
+
+// Fills in sets/reps for entries where setsRepsProvided is false.
+// setsRepsText can be:
+//   single pair  "3×5"          → applied to ALL needing fill
+//   comma list   "3×5, 3×8, 3×12" → mapped in order to exercises needing fill
+function fillMissingSetsReps(entries: QuickLogEntry[], setsRepsText: string): QuickLogEntry[] {
+  const needFilling = entries.filter(e => !e.setsRepsProvided)
+  if (!needFilling.length) return entries
+
+  const chunks = setsRepsText.split(/,\s*/).map(s => s.trim()).filter(Boolean)
+  const pairs  = chunks.map(c => parseSetsReps(c)).filter((p): p is { sets: number; reps: number } => p !== null)
+
+  if (pairs.length === 1) {
+    const { sets, reps } = pairs[0]!
+    return entries.map(e => (!e.setsRepsProvided ? { ...e, sets, reps, setsRepsProvided: true } : e))
+  }
+
+  if (pairs.length >= needFilling.length) {
+    let i = 0
+    return entries.map(e => {
+      if (!e.setsRepsProvided && i < pairs.length) {
+        const { sets, reps } = pairs[i++]!
+        return { ...e, sets, reps, setsRepsProvided: true }
+      }
+      return e
+    })
+  }
+
+  // Single-number fallback — try the whole string as one pair
+  const single = parseSetsReps(setsRepsText)
+  if (single) {
+    return entries.map(e => (!e.setsRepsProvided ? { ...e, sets: single.sets, reps: single.reps, setsRepsProvided: true } : e))
+  }
+
   return entries
 }
 
@@ -728,13 +784,24 @@ async function handlePendingLogMessage(
   }
 
   // User sent exercise data directly
-  const entries  = parseMultiExercise(text)
-  const missing  = entries.filter(e => e.weightKg === null).map(e => e.exercise)
-  const withData = { ...newAl, parsedEntries: entries }
+  const entries      = parseMultiExercise(text)
+  const missing      = entries.filter(e => e.weightKg === null).map(e => e.exercise)
+  const needSetsReps = entries.filter(e => e.weightKg !== null && !e.setsRepsProvided)
+  const withData     = { ...newAl, parsedEntries: entries }
 
   if (missing.length) {
     await writeSplitState(user.id, { ...newState, activeLogging: { ...withData, logState: "awaiting_weights", pendingWeightFor: missing } })
     return { handled: true, reply: `Got it. Weight for ${missing.join(" and ")}?` }
+  }
+
+  if (needSetsReps.length > 0) {
+    const lines  = entries.map(e => `${e.exercise} — ${e.weightKg}kg`)
+    const target = needSetsReps.length === 1 ? needSetsReps[0]!.exercise : "each"
+    await writeSplitState(user.id, { ...newState, activeLogging: { ...withData, logState: "awaiting_sets_reps" } })
+    return {
+      handled: true,
+      reply:   `Got it.\n${lines.join("\n")}\n\nSets × reps for ${target}? (e.g. 3×5, 3×8, 3×12)`,
+    }
   }
 
   await writeSplitState(user.id, { ...newState, activeLogging: { ...withData, logState: "confirming" } })
@@ -818,12 +885,24 @@ async function handleQuickLogMessage(
         }
       }
 
-      const missing = entries.filter(e => e.weightKg === null).map(e => e.exercise)
-      const updated = { ...al, parsedEntries: entries, lastActivityAt: now.toISOString() }
+      const missing      = entries.filter(e => e.weightKg === null).map(e => e.exercise)
+      const needSetsReps = entries.filter(e => !e.setsRepsProvided)
+      const updated      = { ...al, parsedEntries: entries, lastActivityAt: now.toISOString() }
 
       if (missing.length) {
         await writeSplitState(user.id, { ...state, activeLogging: { ...updated, logState: "awaiting_weights", pendingWeightFor: missing } })
         return { handled: true, reply: `Got the exercises. Weight for ${missing.join(" and ")}?` }
+      }
+
+      // Weights present but sets/reps not given — confirm what was parsed, ask once for reps
+      if (needSetsReps.length > 0) {
+        const lines  = entries.map(e => `${e.exercise} — ${e.weightKg}kg`)
+        const target = needSetsReps.length === 1 ? needSetsReps[0]!.exercise : "each"
+        await writeSplitState(user.id, { ...state, activeLogging: { ...updated, logState: "awaiting_sets_reps" } })
+        return {
+          handled: true,
+          reply:   `Got it.\n${lines.join("\n")}\n\nSets × reps for ${target}? (e.g. 3×5, 3×8, 3×12)`,
+        }
       }
 
       await writeSplitState(user.id, { ...state, activeLogging: { ...updated, logState: "confirming" } })
@@ -834,19 +913,49 @@ async function handleQuickLogMessage(
     }
 
     case "awaiting_weights": {
-      const updated = fillMissingWeights(al.parsedEntries, al.pendingWeightFor, text)
+      const updated      = fillMissingWeights(al.parsedEntries, al.pendingWeightFor, text)
       const stillMissing = updated.filter(e => e.weightKg === null).map(e => e.exercise)
-      const newAl = { ...al, parsedEntries: updated, lastActivityAt: now.toISOString() }
+      const newAl        = { ...al, parsedEntries: updated, lastActivityAt: now.toISOString() }
 
       if (stillMissing.length) {
         await writeSplitState(user.id, { ...state, activeLogging: { ...newAl, pendingWeightFor: stillMissing } })
         return { handled: true, reply: `Got it. Weight for ${stillMissing.join(" and ")}?` }
       }
 
+      // All weights filled — check if sets/reps still needed
+      const needSetsReps = updated.filter(e => !e.setsRepsProvided)
+      if (needSetsReps.length > 0) {
+        const lines  = updated.map(e => `${e.exercise} — ${e.weightKg}kg`)
+        const target = needSetsReps.length === 1 ? needSetsReps[0]!.exercise : "each"
+        await writeSplitState(user.id, { ...state, activeLogging: { ...newAl, logState: "awaiting_sets_reps", pendingWeightFor: [] } })
+        return {
+          handled: true,
+          reply:   `Got:\n${lines.join("\n")}\n\nSets × reps for ${target}? (e.g. 3×5, 3×8, 3×12)`,
+        }
+      }
+
       await writeSplitState(user.id, { ...state, activeLogging: { ...newAl, logState: "confirming", pendingWeightFor: [] } })
       return {
         handled: true,
         reply:   buildQuickLogConfirmation(updated) + "\n\nAnything else or \"done\"?",
+      }
+    }
+
+    case "awaiting_sets_reps": {
+      const filled    = fillMissingSetsReps(al.parsedEntries, text)
+      const stillNeed = filled.filter(e => !e.setsRepsProvided)
+      const newAl     = { ...al, parsedEntries: filled, lastActivityAt: now.toISOString() }
+
+      if (stillNeed.length) {
+        await writeSplitState(user.id, { ...state, activeLogging: newAl })
+        const names = stillNeed.map(e => e.exercise).join(", ")
+        return { handled: true, reply: `Sets × reps for ${names}?` }
+      }
+
+      await writeSplitState(user.id, { ...state, activeLogging: { ...newAl, logState: "confirming" } })
+      return {
+        handled: true,
+        reply:   buildQuickLogConfirmation(filled) + "\n\nAnything else or \"done\"?",
       }
     }
 
@@ -857,15 +966,26 @@ async function handleQuickLogMessage(
       }
 
       // More exercises added
-      const newEntries = parseMultiExercise(text)
+      const newEntries   = parseMultiExercise(text)
       if (newEntries.length) {
-        const combined = [...al.parsedEntries, ...newEntries]
-        const missing  = newEntries.filter(e => e.weightKg === null).map(e => e.exercise)
-        const newAl    = { ...al, parsedEntries: combined, lastActivityAt: now.toISOString() }
+        const combined     = [...al.parsedEntries, ...newEntries]
+        const missing      = newEntries.filter(e => e.weightKg === null).map(e => e.exercise)
+        const needSetsReps = newEntries.filter(e => e.weightKg !== null && !e.setsRepsProvided)
+        const newAl        = { ...al, parsedEntries: combined, lastActivityAt: now.toISOString() }
 
         if (missing.length) {
           await writeSplitState(user.id, { ...state, activeLogging: { ...newAl, logState: "awaiting_weights", pendingWeightFor: missing } })
           return { handled: true, reply: `Added. Weight for ${missing.join(" and ")}?` }
+        }
+
+        if (needSetsReps.length > 0) {
+          const target = needSetsReps.length === 1 ? needSetsReps[0]!.exercise : "each"
+          await writeSplitState(user.id, { ...state, activeLogging: { ...newAl, logState: "awaiting_sets_reps" } })
+          const lines = combined.map(e => `${e.exercise} — ${e.weightKg}kg`)
+          return {
+            handled: true,
+            reply:   `Got:\n${lines.join("\n")}\n\nSets × reps for ${target}? (e.g. 3×5, 3×8, 3×12)`,
+          }
         }
 
         await writeSplitState(user.id, { ...state, activeLogging: newAl })
@@ -1002,10 +1122,51 @@ async function selectExercise(
 ): Promise<{ handled: boolean; reply: string }> {
   const defaults = MUSCLE_EXERCISES[al.muscles] ?? []
   const idx      = parseInt(text.trim()) - 1
-  const exercise = (idx >= 0 && idx < defaults.length)
-    ? defaults[idx]!
-    : capitalize(text.trim())
 
+  // Numbered list selection (user picks from the exercise list)
+  if (!isNaN(idx) && idx >= 0 && idx < defaults.length) {
+    return startSingleExercise(user, state, al, defaults[idx]!)
+  }
+
+  // Multi-exercise natural language dump — the primary post-session use case.
+  // User sends the whole session in one message: "bench 70, incline 25, cable fly 15"
+  // Never echo the message; parse what's there and ask only for what's missing.
+  const multiEntries = parseMultiExercise(text)
+  if (multiEntries.length > 1) {
+    return handleMultiExerciseDump(user, state, al, multiEntries, new Date())
+  }
+
+  // Single exercise with complete set data inline: "bench 3×5×70"
+  if (multiEntries.length === 1 && multiEntries[0]!.weightKg !== null && multiEntries[0]!.setsRepsProvided) {
+    const entry     = multiEntries[0]!
+    const remaining = al.exercisesRemaining.filter(e => e.toLowerCase() !== entry.exercise.toLowerCase())
+    const updatedAl = { ...al, currentExercise: entry.exercise, exercisesRemaining: remaining, currentSetNumber: 0 }
+    return logSets(user, state, updatedAl, { sets: entry.sets, reps: entry.reps, weightKg: entry.weightKg! })
+  }
+
+  // Single exercise name or alias — select it and prompt for sets
+  const matched  = matchExerciseName(text.trim())
+  // Only treat as a raw exercise name if the text is short enough to plausibly BE a name.
+  // Long messages that hit here failed all parsers — ask for clarification instead of echoing.
+  const exercise = matched
+    ? matched.canonical
+    : text.trim().length <= 40
+      ? capitalize(text.trim())
+      : null
+
+  if (!exercise) {
+    return {
+      handled: true,
+      reply:   `What exercise did you do? (e.g. "bench press", "squat", or pick a number from the list)`,
+    }
+  }
+
+  return startSingleExercise(user, state, al, exercise)
+}
+
+async function startSingleExercise(
+  user: UserRow, state: SplitState, al: ActiveLogging, exercise: string
+): Promise<{ handled: boolean; reply: string }> {
   const remaining = al.exercisesRemaining.filter(e => e.toLowerCase() !== exercise.toLowerCase())
 
   await writeSplitState(user.id, {
@@ -1021,11 +1182,47 @@ async function selectExercise(
   })
 
   const overload = await getOverloadSuggestion(user.id, exercise)
-  const hint = overload ? `\nLast time: ${overload.lastNote} → target ${overload.nextKg}kg.` : ""
+  const hint     = overload ? `\nLast time: ${overload.lastNote} → target ${overload.nextKg}kg.` : ""
 
   return {
     handled: true,
     reply:   `${exercise}.${hint}\n\nSets × reps × weight. Go:\nFormat: 3×5×80 or just "80kg × 5"`,
+  }
+}
+
+// Handles a message that contains multiple exercises (post-session batch entry).
+// Routes to appropriate logState based on what data is already in the message.
+async function handleMultiExerciseDump(
+  user: UserRow, state: SplitState, al: ActiveLogging, entries: QuickLogEntry[], now: Date
+): Promise<{ handled: boolean; reply: string }> {
+  const missingWeight = entries.filter(e => e.weightKg === null).map(e => e.exercise)
+  const missingReps   = entries.filter(e => e.weightKg !== null && !e.setsRepsProvided)
+  const updatedAl     = { ...al, logMode: "quick" as const, parsedEntries: entries, lastActivityAt: now.toISOString() }
+
+  // Weights missing — ask for those first
+  if (missingWeight.length) {
+    const gotLines = entries.filter(e => e.weightKg !== null).map(e => `${e.exercise} — ${e.weightKg}kg`)
+    await writeSplitState(user.id, { ...state, activeLogging: { ...updatedAl, logState: "awaiting_weights", pendingWeightFor: missingWeight } })
+    const header = gotLines.length ? `Got:\n${gotLines.join("\n")}\n\n` : ""
+    return { handled: true, reply: `${header}Weight for ${missingWeight.join(" and ")}?` }
+  }
+
+  // Weights present but sets/reps not provided — confirm weights, ask for sets×reps
+  if (missingReps.length > 0) {
+    const lines  = entries.map(e => `${e.exercise} — ${e.weightKg}kg`)
+    const target = missingReps.length === 1 ? missingReps[0]!.exercise : "each"
+    await writeSplitState(user.id, { ...state, activeLogging: { ...updatedAl, logState: "awaiting_sets_reps" } })
+    return {
+      handled: true,
+      reply:   `Got it.\n${lines.join("\n")}\n\nSets × reps for ${target}? (e.g. 3×5, 3×8, 3×12)`,
+    }
+  }
+
+  // Complete — straight to confirmation
+  await writeSplitState(user.id, { ...state, activeLogging: { ...updatedAl, logState: "confirming" } })
+  return {
+    handled: true,
+    reply:   buildQuickLogConfirmation(entries) + "\n\nAnything else or \"done\"?",
   }
 }
 
