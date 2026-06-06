@@ -1,5 +1,6 @@
 import { prisma } from "@repo/db/client"
 import { generateOpenAIText } from "./openai.service"
+import { computeGymTimeContextFromData } from "./gymTimeContext.service"
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -17,6 +18,11 @@ interface OffTopicContext {
   userName:     string | null
   stalledLift:  { exercise: string; weight: number } | null
   userId:       string | null
+  // training context — drives confirmed_evasion counter
+  isTrainingDay:      boolean
+  gymTimePassed:      boolean  // gym_time has passed today (minutesUntilGym <= 0)
+  sessionLoggedToday: boolean  // user completed a session today
+  accountAgeDays:     number   // days since messengerUser.createdAt
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -44,6 +50,9 @@ const HARDCODED_TRIGGERS: Record<string, RegExp> = {
   testing:     /(be (nice|mean|rude|friendly)|pretend (to be|you'?re)|act like (you'?re|a different)|you'?re (fired|replaced|useless now|being deleted))/i,
   space:       /\blet me (work|focus|study|be|do my thing|think)\b/i,
 }
+
+// Categories treated as hard disrespect (tracked separately from evasion)
+const DISRESPECT_CATEGORIES = new Set(["disrespect", "deflection"])
 
 export function classifyMessage(text: string): MessageClassification {
   const t = text.trim()
@@ -113,10 +122,10 @@ function buildHardcodedResponse(category: string, ctx: OffTopicContext): string 
 }
 
 const GIBBERISH_RESPONSES: Array<(muscles: string) => string> = [
-  (m) => `That's not a log. What are we doing?`,
-  (m) => `I don't speak that. Reps and weight — that's the language here.`,
-  (m) => `${m} day. Less typing, more lifting.`,
-  (m) => `Try again with actual words. Or just go train.`,
+  (_m) => `That's not a log. What are we doing?`,
+  (_m) => `I don't speak that. Reps and weight — that's the language here.`,
+  (m)  => `${m} day. Less typing, more lifting.`,
+  (_m) => `Try again with actual words. Or just go train.`,
 ]
 
 function pickGibberishResponse(ctx: OffTopicContext): string {
@@ -125,34 +134,74 @@ function pickGibberishResponse(ctx: OffTopicContext): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// REPEAT OFFENDER — only counts confirmed hard evasion (disrespect/deflection),
-// never LLM-classified messages (those are ambiguous, not confirmed evasion).
-// Only appends a note; never replaces the response.
+// EVASION CONTEXT — gate for confirmed_evasion counter
+// Only fires when: training day + training window passed + no session today +
+// account age >= 7 days. Outside this context, no counter tracking.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function getHardEvasionCountToday(userId: string, now: Date): Promise<number> {
+function isEvasionContext(ctx: OffTopicContext): boolean {
+  return (
+    ctx.isTrainingDay &&
+    ctx.gymTimePassed &&
+    !ctx.sessionLoggedToday &&
+    ctx.accountAgeDays >= 7 &&
+    ctx.userId !== null
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TWO SEPARATE COUNTERS
+//
+// confirmed_evasions — off-topic messages when training was due today.
+//   Threshold: 3. Fires note exactly once (when prevCount === 2).
+//
+// hard_disrespect — explicit disrespect/deflection patterns.
+//   Threshold: 3. Fires note exactly once (when prevCount === 2).
+//   Tracked separately — asking "who are you" is not disrespect.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function getConfirmedEvasionsToday(userId: string, now: Date): Promise<number> {
   const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   return prisma.companionMessage.count({
     where: {
       userId,
       role:      "assistant",
-      // Only disrespect/deflection hardcoded hits count — LLM fallbacks do not
-      intent:    "off_topic_hardcoded",
+      intent:    "off_topic_confirmed_evasion",
       createdAt: { gte: dayStart },
     },
   })
 }
 
-function withRepeatOffenderNote(reply: string, prevHardCount: number, nextMuscles: string): string {
-  // Only append a note after 2+ confirmed hard-evasion hits today (disrespect/deflection)
-  if (prevHardCount >= 2) {
-    return `${reply}\n\nYou've been avoiding this a while. ${nextMuscles} — whenever you're ready.`
+async function getHardDisrespectToday(userId: string, now: Date): Promise<number> {
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  return prisma.companionMessage.count({
+    where: {
+      userId,
+      role:      "assistant",
+      intent:    "off_topic_disrespect",
+      createdAt: { gte: dayStart },
+    },
+  })
+}
+
+// Fires exactly once — on the 3rd confirmed evasion (prevCount === 2 means 2 prior)
+function withEvasionNote(reply: string, prevCount: number, nextMuscles: string): string {
+  if (prevCount === 2) {
+    return `${reply}\n\nThird message today with no training log.\nDid you train or not?`
+  }
+  return reply
+}
+
+// Fires exactly once — on the 3rd hard disrespect (prevCount === 2)
+function withDisrespectNote(reply: string, prevCount: number): string {
+  if (prevCount === 2) {
+    return `${reply}\n\nYou've said that 3 times today.\nTrain or don't. But I'm not going anywhere.`
   }
   return reply
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// CONTEXT LOADER (minimal — fast single query, no gym pipeline)
+// CONTEXT LOADER (single query, includes training context)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function getNextMusclesFromState(
@@ -183,32 +232,76 @@ function getNextMusclesFromState(
   return dayList[nextIdx] ?? "Full Body"
 }
 
-async function loadOffTopicContext(platformChatId: string): Promise<OffTopicContext> {
+async function loadOffTopicContext(platformChatId: string, now: Date): Promise<OffTopicContext> {
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
   const user = await prisma.messengerUser.findUnique({
     where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
     select: {
-      id:              true,
-      displayName:     true,
-      gymStreak:       true,
-      intakeAnswers:   true,
-      splitState:      true,
-      personalRecords: true,
+      id:                   true,
+      displayName:          true,
+      gymStreak:            true,
+      intakeAnswers:        true,
+      splitState:           true,
+      personalRecords:      true,
+      createdAt:            true,
+      timezone:             true,
+      preferredCheckInTime: true,
+      persona:              true,
+      workoutSessions: {
+        where:  { completed: true, date: { gte: dayStart } },
+        select: { id: true },
+        take:   1,
+      },
     },
   })
 
   if (!user) {
-    return { nextMuscles: "your next session", streak: 0, userName: null, stalledLift: null, userId: null }
+    return {
+      nextMuscles: "your next session", streak: 0, userName: null, stalledLift: null, userId: null,
+      isTrainingDay: false, gymTimePassed: false, sessionLoggedToday: false, accountAgeDays: 0,
+    }
   }
 
-  const nextMuscles = getNextMusclesFromState(user.intakeAnswers, user.splitState)
-  const streak      = user.gymStreak ?? 0
-  const userName    = user.displayName ?? null
+  const nextMuscles      = getNextMusclesFromState(user.intakeAnswers, user.splitState)
+  const streak           = user.gymStreak ?? 0
+  const userName         = user.displayName ?? null
+  const accountAgeDays   = Math.floor((now.getTime() - user.createdAt.getTime()) / 86_400_000)
+  const sessionLoggedToday = user.workoutSessions.length > 0
 
-  // Stalled lift: cheaply inferred from personalRecords entry age isn't available here,
-  // so we skip the extra query and leave it null — hardcoded responses degrade gracefully.
-  const stalledLift = null
+  // Compute training day + time-window from gymTimeContext
+  let isTrainingDay = false
+  let gymTimePassed = false
 
-  return { nextMuscles, streak, userName, stalledLift, userId: user.id }
+  if (user.persona === "rex" && user.preferredCheckInTime) {
+    const gymCtx = computeGymTimeContextFromData(
+      {
+        persona:              user.persona,
+        timezone:             user.timezone,
+        preferredCheckInTime: user.preferredCheckInTime,
+        intakeAnswers:        user.intakeAnswers,
+        memories:             [],
+        messages:             [],
+      },
+      now,
+    )
+    if (gymCtx) {
+      isTrainingDay = gymCtx.isTrainingDay
+      gymTimePassed = gymCtx.minutesUntilGym <= 0  // negative = gym time already passed
+    }
+  }
+
+  return {
+    nextMuscles,
+    streak,
+    userName,
+    stalledLift: null,
+    userId: user.id,
+    isTrainingDay,
+    gymTimePassed,
+    sessionLoggedToday,
+    accountAgeDays,
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -220,8 +313,10 @@ async function loadOffTopicContext(platformChatId: string): Promise<OffTopicCont
 async function callLLMFallback(text: string, ctx: OffTopicContext): Promise<string> {
   const quickCtx = [
     `Next session: ${ctx.nextMuscles}.`,
-    ctx.streak > 0   ? `Streak: ${ctx.streak} days.`         : "",
-    ctx.stalledLift  ? `Stalled: ${ctx.stalledLift.exercise} ${ctx.stalledLift.weight}kg.` : "",
+    ctx.streak > 0         ? `Streak: ${ctx.streak} days.`         : "",
+    ctx.isTrainingDay && ctx.gymTimePassed && !ctx.sessionLoggedToday
+                           ? `Training was due today — not logged.` : "",
+    ctx.stalledLift        ? `Stalled: ${ctx.stalledLift.exercise} ${ctx.stalledLift.weight}kg.` : "",
   ].filter(Boolean).join(" ")
 
   return generateOpenAIText({
@@ -256,46 +351,72 @@ export async function handleOffTopicMessage(
   // Training-related → pass to orchestrator, zero cost
   if (cls.type === "training_related") return { handled: false }
 
-  const ctx = await loadOffTopicContext(platformChatId)
+  const ctx = await loadOffTopicContext(platformChatId, now)
+  const evasionCtx = isEvasionContext(ctx)
 
   let reply: string
   let intent: string
 
   switch (cls.type) {
-    case "hardcoded":
-      reply  = buildHardcodedResponse(cls.category!, ctx)
-      intent = "off_topic_hardcoded"
+    case "hardcoded": {
+      reply = buildHardcodedResponse(cls.category!, ctx)
 
-      // Space requests ("let me focus") are not repeat-offender-tracked
+      // Space requests — never tracked, immediate return
       if (cls.category === "space") {
-        return { handled: true, reply, intent }
+        return { handled: true, reply, intent: "off_topic_hardcoded" }
+      }
+
+      if (DISRESPECT_CATEGORIES.has(cls.category!)) {
+        // Hard disrespect tracker — independent of training context
+        intent = "off_topic_disrespect"
+        if (ctx.userId) {
+          const prevCount = await getHardDisrespectToday(ctx.userId, now)
+          reply = withDisrespectNote(reply, prevCount)
+        }
+      } else {
+        // identity, offtopic, existential, testing
+        // Counts as evasion only if training was due today and not logged
+        if (evasionCtx) {
+          intent = "off_topic_confirmed_evasion"
+          const prevCount = await getConfirmedEvasionsToday(ctx.userId!, now)
+          reply = withEvasionNote(reply, prevCount, ctx.nextMuscles)
+        } else {
+          intent = "off_topic_hardcoded"
+        }
       }
       break
+    }
 
-    case "gibberish":
-      reply  = pickGibberishResponse(ctx)
-      intent = "off_topic_gibberish"
+    case "gibberish": {
+      reply = pickGibberishResponse(ctx)
+      if (evasionCtx) {
+        intent = "off_topic_confirmed_evasion"
+        const prevCount = await getConfirmedEvasionsToday(ctx.userId!, now)
+        reply = withEvasionNote(reply, prevCount, ctx.nextMuscles)
+      } else {
+        intent = "off_topic_gibberish"
+      }
       break
+    }
 
     case "needs_llm": {
       try {
         reply = await callLLMFallback(text, ctx)
       } catch {
-        // If LLM call fails, degrade gracefully to hardcoded offtopic response
         reply = buildHardcodedResponse("offtopic", ctx)
       }
-      intent = "off_topic_llm"
+      if (evasionCtx) {
+        intent = "off_topic_confirmed_evasion"
+        const prevCount = await getConfirmedEvasionsToday(ctx.userId!, now)
+        reply = withEvasionNote(reply, prevCount, ctx.nextMuscles)
+      } else {
+        intent = "off_topic_llm"
+      }
       break
     }
 
     default:
       return { handled: false }
-  }
-
-  // Repeat offender note — only for confirmed hard evasion, never LLM-classified
-  if (ctx.userId && intent === "off_topic_hardcoded") {
-    const prevHardCount = await getHardEvasionCountToday(ctx.userId, now)
-    reply = withRepeatOffenderNote(reply, prevHardCount, ctx.nextMuscles)
   }
 
   return { handled: true, reply, intent }
