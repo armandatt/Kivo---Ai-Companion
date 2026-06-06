@@ -107,12 +107,12 @@ function currentStepQuestion(step: IntakeStep, answers: IntakeAnswers): string {
   const name = answers.name ?? "you"
   switch (step) {
     case "ga_name":      return `Name — just your first name.`
-    case "ga_goal":      return `${name}, what are we training for — fat loss, muscle, recomp, or performance?`
-    case "ga_body":      return `What's your current weight and height? (e.g. 75kg, 5'10" or 80kg, 178cm)`
+    case "ga_goal":      return `${name}, what are we training for — fat loss, muscle, strength, recomp, or consistency?`
     case "ga_drill":     return buildRexGoalDrillQuestion(answers.gym_goal ?? "muscle")
+    case "ga_body":      return `What's your current weight and height? (e.g. 75kg, 5'10" or 80kg, 178cm)`
     case "ga_lifts":     return buildRexLiftsQuestion(answers.training_experience ?? "intermediate")
     case "ga_schedule":  return `How many days a week are you actually going to show up?`
-    case "ga_split":     return `Walk me through your split. What do you train each day?`
+    case "ga_split":     return `Walk me through your split — or should I build one for you?`
     case "ga_gym_time":  return `What time do you usually train? And what city are you in?`
     case "ga_nutrition": return `Roughly how much protein are you hitting daily?`
     case "ga_injuries":  return `Any injuries I need to know about?`
@@ -286,10 +286,48 @@ async function routeStep(
 
 // ─── Opening & Path Select ────────────────────────────────────────────────────
 
+// ─── Rex Gym Path: LLM transition helper ─────────────────────────────────────
+// Generates BOTH the reaction to the user's answer AND the next question in one
+// LLM call. The `systemInstruction` describes the context + what to generate.
+// Always falls back to a template string on LLM failure.
+
+async function generateRexTransition(
+  systemInstruction: string,
+  contextPrompt: string,
+  fallback: string,
+  maxOutputTokens = 120,
+): Promise<string> {
+  try {
+    return await generateOpenAIText({
+      model:             "gpt-4o-mini",
+      maxOutputTokens,
+      systemInstruction: [
+        "You are Rex, a blunt no-nonsense gym mentor conducting initial intake.",
+        "Rules: direct, concise, no fluff, no emojis, no clichés.",
+        "Never say: Great, Awesome, Perfect, Let's go, Let's crush it, Nice, Absolutely, Of course.",
+        "Max 4 lines total. React naturally to the user's answer, then ask the next question.",
+        systemInstruction,
+      ].join("\n"),
+      prompt: contextPrompt,
+    })
+  } catch {
+    return fallback
+  }
+}
+
+// ─── Opening ──────────────────────────────────────────────────────────────────
+
 async function handleNotStarted(user: IntakeUser, _profile: WebProfile, _chatId: string): Promise<string> {
-  // All users go straight into the Rex gym coaching flow. No path_select.
   await updateIntake(user.id, "ga_name", {}, ["gym"])
-  return `Your last trainer probably told you what you wanted to hear.\nI won't.\n\nName?`
+  return generateRexTransition(
+    "Generate Rex's opening message to a brand new user. " +
+    "Structure: one line defining what Rex does (not 'I'm your AI coach'). " +
+    "One challenging line that sizes them up. " +
+    "Then ask their name. Max 3 lines total. No greeting words. No emojis.",
+    "new user started",
+    `Your last trainer told you what you wanted to hear.\nI won't.\n\nName?`,
+    80,
+  )
 }
 
 async function handlePathSelect(
@@ -346,7 +384,6 @@ async function handlePathSelect(
 }
 
 // ─── Rex Gym Coaching Path ────────────────────────────────────────────────────
-// Triggered for Rex persona directly from not_started — skips path_select.
 
 async function handleGaName(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
   const name = await llmExtractName(text)
@@ -355,7 +392,15 @@ async function handleGaName(text: string, answers: IntakeAnswers, user: IntakeUs
   }
   answers.name = name
   await updateIntake(user.id, "ga_goal", answers)
-  return `${name}. Alright. What are we actually here for — lose fat, build muscle, recomp (both at once), or are you one of those "just be healthy" people?`
+  return generateRexTransition(
+    `User's name is ${name}. ` +
+    `React in ONE word or very short phrase to their name (not 'great' or 'nice' or 'perfect'). ` +
+    `Then ask what they're training for. Options: lose fat, build muscle, get stronger, recomp (both), or just be consistent. ` +
+    `Merge reaction + question into 2 lines max. Direct. No emojis.`,
+    name,
+    `${name}. What are we here for — lose fat, build muscle, get stronger, recomp, or "just stay consistent"?`,
+    100,
+  )
 }
 
 async function llmExtractName(text: string): Promise<string | null> {
@@ -397,13 +442,70 @@ async function llmExtractName(text: string): Promise<string | null> {
 async function handleGaGoal(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
   const goal = await classifyRexGoal(text)
   if (!goal) {
-    return `I need a direction. Fat loss, muscle, recomp (both at once), or performance — what are we actually training for?`
+    return `I need a direction. Fat loss, muscle, strength, recomp — which one?`
   }
+
+  // "habit" / consistency is too vague — push for specific goal
+  if (goal === "habit") {
+    return generateRexTransition(
+      `User said their goal is consistency or general fitness — too vague for a program. ` +
+      `Call it out briefly. Push them to pick one: fat loss, muscle, or strength. Max 2 lines.`,
+      text,
+      `Consistency toward what? Pick one: fat loss, muscle, or strength.`,
+      80,
+    )
+  }
+
   answers.gym_goal     = goal
   answers.gym_goal_raw = text
+  // Experience comes BEFORE body stats — better to understand their level before asking numbers
+  await updateIntake(user.id, "ga_drill", answers)
+
+  return generateRexTransition(
+    buildGoalReactionPrompt(goal),
+    text,
+    buildRexGoalDrillQuestion(goal),
+    120,
+  )
+}
+
+function buildGoalReactionPrompt(goal: string): string {
+  const ctx: Record<string, string> = {
+    fat_loss: "User wants fat loss. React briefly — slightly skeptical if they've been spinning wheels. " +
+              "Ask how long they've been training consistently (signals history of trying). Be direct.",
+    muscle:   "User wants to build muscle. Short acknowledgment. Ask how long they've been training seriously.",
+    strength: "User wants strength. Acknowledge it's a solid goal. Ask how long they've been training with any real structure.",
+    both:     "User wants recomp — both at once. Brief reality check: it's slow but doable for beginners. " +
+              "Don't discourage. Ask their experience level.",
+    performance: "User wants general performance or fitness. Ask how long they've been training seriously.",
+  }
+  return (ctx[goal] ?? "React to their goal briefly. Ask how long they've been training.") + " Max 3 lines. No emojis."
+}
+
+async function handleGaDrill(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
+  const level = await classifyRexExperience(text)
+  answers.training_experience = level
+  answers.drill_raw           = text
+  // Experience collected → now ask for body stats
   await updateIntake(user.id, "ga_body", answers)
-  const ack = { fat_loss: "Fat loss.", muscle: "Building muscle.", both: "Recomp. Both at once.", performance: "Performance." }[goal] ?? "Got it."
-  return `${ack}\n\nBefore we go further — what's your current weight and height? (e.g. 75kg, 5'10" or 80kg, 178cm)`
+
+  return generateRexTransition(
+    buildExperienceReactionPrompt(level),
+    text,
+    `Current weight and height? (e.g. 75kg, 5'10" or 80kg, 178cm)`,
+    120,
+  )
+}
+
+function buildExperienceReactionPrompt(level: string): string {
+  const ctx: Record<string, string> = {
+    beginner:     "User is a beginner. One line that removes the ego pressure — being a beginner is actually the best position to be in. " +
+                  "Then ask for current weight and height. Mention the format.",
+    intermediate: "User says intermediate. One line of brief skepticism — intermediate means very different things. " +
+                  "Ask for weight and height anyway.",
+    advanced:     "User is advanced. Brief acknowledgment. Ask weight and height — you'll verify with their lift numbers.",
+  }
+  return (ctx[level] ?? "React to their experience level. Ask for current weight and height.") + " Max 3 lines. No emojis."
 }
 
 async function handleGaBody(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
@@ -414,64 +516,115 @@ async function handleGaBody(text: string, answers: IntakeAnswers, user: IntakeUs
   if (!bw && !ht && !isRetry) {
     answers.body_retry = "true"
     await updateIntake(user.id, "ga_body", answers)
-    return `Need the numbers. Format: "75kg, 5'10" or "80kg, 178cm". Weight and height.`
+    return `Numbers. Format: "75kg, 5'10" or "80kg, 178cm". Weight and height.`
   }
 
   if (bw) {
     answers.current_bodyweight_kg = String(bw)
-    const factor                  = answers.gym_goal === "fat_loss" ? 2.2 : 1.8
-    answers.protein_target_g      = String(Math.round(bw * factor))
+    // protein target = bodyweight_kg × 2.2 × 0.8 (conservative minimum)
+    answers.protein_target_g = String(Math.round(bw * 2.2 * 0.8))
   }
   if (ht) answers.height_cm = String(ht)
   if (bw && ht) {
-    const bmi  = bw / Math.pow(ht / 100, 2)
-    answers.bmi = bmi.toFixed(1)
+    answers.bmi = (bw / Math.pow(ht / 100, 2)).toFixed(1)
   }
-
   delete answers.body_retry
 
-  // Persist to MemoryFact immediately so LLM can reference these stats in any future message
-  const memSaves: Promise<void>[] = []
-  if (bw) memSaves.push(addToLongTerm(chatId, "preferences", `bodyweight: ${bw}kg`))
-  if (ht) memSaves.push(addToLongTerm(chatId, "preferences", `height: ${ht}cm`))
-  if (bw && ht) memSaves.push(addToLongTerm(chatId, "preferences", `bmi: ${answers.bmi}`))
-  await Promise.all(memSaves)
+  const saves: Promise<void>[] = []
+  if (bw) saves.push(addToLongTerm(chatId, "preferences", `bodyweight: ${bw}kg`))
+  if (ht) saves.push(addToLongTerm(chatId, "preferences", `height: ${ht}cm`))
+  await Promise.all(saves)
 
-  await updateIntake(user.id, "ga_drill", answers)
-  return buildRexGoalDrillQuestion(answers.gym_goal ?? "muscle")
+  await updateIntake(user.id, "ga_lifts", answers)
+
+  const bmi   = answers.bmi ? parseFloat(answers.bmi) : null
+  const goal  = answers.gym_goal ?? "muscle"
+  const level = answers.training_experience ?? "intermediate"
+
+  return generateRexTransition(
+    buildBodyReactionContext(bmi, goal),
+    `${bw ?? "?"}kg, ${ht ?? "?"}cm`,
+    buildRexLiftsQuestion(level),
+    130,
+  )
 }
 
-async function handleGaDrill(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  const level = await classifyRexExperience(text)
-  answers.training_experience = level
-  answers.drill_raw           = text
-  await updateIntake(user.id, "ga_lifts", answers)
-  return buildRexLiftsQuestion(level)
+function buildBodyReactionContext(bmi: number | null, goal: string): string {
+  let bodyNote = ""
+  if (bmi !== null && bmi < 18.5 && goal === "muscle") {
+    bodyNote = "User is underweight for muscle building. Briefly note eating matters as much as training. "
+  } else if (bmi !== null && bmi > 28 && goal === "fat_loss") {
+    bodyNote = "Brief acknowledgment of context — no comment on weight directly. "
+  } else {
+    bodyNote = "Minimal reaction to the stats. "
+  }
+  return (
+    bodyNote +
+    `Ask for working weights: squat, bench, deadlift. ` +
+    `Tell them it's fine if they don't know — first session will be baseline testing. ` +
+    `Max 3 lines. No emojis.`
+  )
 }
 
 async function handleGaLifts(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
   answers.lifts_raw = text
-  const lifts = parseLiftsFromText(text)
+  const lifts   = parseLiftsFromText(text)
+  const unknown = isUnknownLiftsText(text)
   if (lifts.squat)    answers.squat_kg    = String(lifts.squat)
   if (lifts.bench)    answers.bench_kg    = String(lifts.bench)
   if (lifts.deadlift) answers.deadlift_kg = String(lifts.deadlift)
   await updateIntake(user.id, "ga_schedule", answers)
 
-  const calibration = isUnknownLiftsText(text)
-    ? `Then we're testing Week 1. That's fine.`
-    : buildLiftCalibration(lifts)
+  const imbalance = detectLiftImbalance(lifts)
 
-  return `${calibration}\n\nHow many days a week are you actually going to show up? Not the plan — the real number.`
+  const liftCtx = unknown
+    ? "User doesn't know their working weights. Acknowledge briefly — first session is baseline testing. " +
+      "Then ask how many days per week they will ACTUALLY show up. Not the plan — the real number. Max 3 lines. No emojis."
+    : `User's lifts: squat ${lifts.squat ?? "?"}kg, bench ${lifts.bench ?? "?"}kg, deadlift ${lifts.deadlift ?? "?"}kg. ` +
+      (imbalance ? `Notable imbalance: ${imbalance}. Call it out in ONE line. ` : "No notable imbalance. ") +
+      "Then ask: how many days per week they're ACTUALLY going to show up. Not the plan — the real number. Max 3 lines. No emojis."
+
+  return generateRexTransition(
+    liftCtx,
+    text,
+    `${unknown ? "First session is baseline testing." : buildLiftCalibration(lifts)}\n\nHow many days a week are you actually going to show up? Not the plan — the real number.`,
+    120,
+  )
+}
+
+function detectLiftImbalance(lifts: LiftNumbers): string | null {
+  const { squat, bench, deadlift } = lifts
+  if (squat && bench) {
+    if (bench >= squat * 0.95) return "bench nearly matching squat — posterior chain needs work"
+    if (bench > squat)         return "bench higher than squat — legs are behind"
+    if (bench < squat * 0.55)  return "bench lagging far behind squat"
+  }
+  if (squat && deadlift && deadlift < squat) {
+    return "deadlift below squat — unusual, hinge pattern needs work"
+  }
+  return null
 }
 
 async function handleGaSchedule(text: string, answers: IntakeAnswers, user: IntakeUser, _chatId: string): Promise<string> {
   const days    = extractDaysNumber(text)
   const isRetry = answers.schedule_retry === "true"
 
-  if (!isRetry && days !== null && days < 3) {
+  if (!isRetry && days === 1) {
     answers.schedule_retry = "true"
     await updateIntake(user.id, "ga_schedule", answers)
-    return `That's not enough. 3 minimum. Can you do 3?`
+    return `1 day doesn't cut it. 3 minimum. Can you do 3?`
+  }
+
+  if (!isRetry && days === 2) {
+    answers.schedule_retry = "true"
+    await updateIntake(user.id, "ga_schedule", answers)
+    return `Bare minimum. 3 is better — can you add one?`
+  }
+
+  if (!isRetry && days === 7) {
+    answers.schedule_retry = "true"
+    await updateIntake(user.id, "ga_schedule", answers)
+    return `You need rest days. 6 max. Which day are you dropping?`
   }
 
   const finalDays = days ?? 3
@@ -479,62 +632,223 @@ async function handleGaSchedule(text: string, answers: IntakeAnswers, user: Inta
   delete answers.schedule_retry
   await updateIntake(user.id, "ga_split", answers)
 
-  if (finalDays >= 5) {
-    return `Ambitious. Do you have a split or are you winging it?`
-  }
-  return `Honest. ${finalDays} days is plenty if you don't waste them.\n\nWalk me through your split. What do you train each day?`
+  return generateRexTransition(
+    `User is training ${finalDays} days/week. ` +
+    (finalDays <= 3 ? "React briefly — 3 done right beats 5 done half-assed. " : "") +
+    (finalDays >= 5 ? "React briefly — ambitious, achievable. " : "") +
+    (finalDays === 4 ? "React briefly — good frequency. " : "") +
+    `Then ask casually if they have a split or want Rex to build one. Max 2 lines. No emojis.`,
+    text,
+    finalDays >= 5
+      ? `Ambitious. Do you have a split or should I build one?`
+      : `Honest. ${finalDays} days is enough.\n\nWalk me through your split — or should I build one for you?`,
+    100,
+  )
 }
 
 async function handleGaSplit(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
-  const splitType      = await classifySplit(text)
+  const lower = text.toLowerCase().trim()
+
+  // ── Review loop: user reacting to Rex's proposed split ───────────────────
+  if (answers.split_review_pending === "true") {
+    const confirmed   = /\b(yes|yeah|yep|good|fine|looks? good|confirmed?|ok|sure|that.?s? (good|fine|it)|works?)\b/i.test(lower)
+    const wantsChange = /\b(swap|change|move|replace|add|remove|instead|different|modify)\b/i.test(lower)
+
+    if (confirmed) {
+      delete answers.split_review_pending
+      await updateIntake(user.id, "ga_gym_time", answers)
+      return generateRexTransition(
+        "User confirmed their split. Move straight to asking what time they train and what city they're in. One line, casual. No emojis.",
+        "confirmed",
+        `Good. What time do you usually train, and what city are you in?`,
+        80,
+      )
+    }
+
+    if (wantsChange) {
+      answers.split_raw = `${answers.split_raw ?? ""} (updated: ${text})`
+      return generateRexTransition(
+        `User wants to adjust the proposed split. Their request: "${text}". ` +
+        `Acknowledge the change briefly. Re-present the full split in Day 1 / Day 2 / ... format with the adjustment applied. ` +
+        `Ask "Good with this?" Max 5 lines. No emojis.`,
+        text,
+        `Adjusted. Here's the updated split:\n${answers.split_proposed ?? "Day 1: Upper\nDay 2: Lower\nDay 3: Full Body"}\n\nGood with this?`,
+        160,
+      )
+    }
+
+    return `Is the split above good, or do you want to swap anything?`
+  }
+
+  // ── User wants Rex to build ───────────────────────────────────────────────
+  const wantsRexToBuild = /\b(you (decide|build|pick|choose)|build me|don.?t (have|know)|wing(ing)?|winging it|no idea|random|whatever|your (pick|choice)|no (split|plan)|not sure|can you)\b/i.test(lower)
+
+  if (wantsRexToBuild) {
+    const days     = parseInt(answers.available_training_days ?? "3")
+    const goal     = answers.gym_goal ?? "muscle"
+    const proposed = buildProposedSplit(days, goal)
+    answers.current_split        = classifySplitFromDaysAndGoal(days, goal)
+    answers.split_raw            = "rex_built"
+    answers.split_proposed       = proposed
+    answers.split_review_pending = "true"
+    await updateIntake(user.id, "ga_split", answers)
+    return `Here's your split:\n${proposed}\n\nGood with this or want changes?`
+  }
+
+  // ── User provided their own split ─────────────────────────────────────────
+  const splitType       = await classifySplit(text)
   answers.current_split = splitType
-  answers.split_raw    = text
+  answers.split_raw     = text
   await updateIntake(user.id, "ga_gym_time", answers)
 
-  const hasSplit = splitType !== "unstructured" && splitType !== "none"
-  return hasSplit
-    ? `Noted. What time do you usually train? And what city are you in so I know your timezone.`
-    : `I'll build one. What time do you train? And what city are you in so I know your timezone.`
+  return generateRexTransition(
+    `User's split: ${text}. Type: ${splitType}. Goal: ${answers.gym_goal ?? "muscle"}. ` +
+    `Note ONE obvious issue with this split vs their goal if there is one ` +
+    `(e.g. only 1 leg day for strength, no direct shoulders, etc.) — skip if it's fine. ` +
+    `Then ask what time they usually train and what city they're in. Max 3 lines. No emojis.`,
+    text,
+    `Noted. What time do you usually train, and what city are you in?`,
+    120,
+  )
+}
+
+function buildProposedSplit(days: number, goal: string): string {
+  if (days <= 3) {
+    if (goal === "strength") {
+      return "Day 1: Squat focus (Legs / Back)\nDay 2: Press focus (Chest / Shoulders / Triceps)\nDay 3: Pull focus (Back / Biceps) + Deadlift"
+    }
+    return "Day 1: Full Body\nDay 2: Full Body\nDay 3: Full Body"
+  }
+  if (days === 4) {
+    if (goal === "strength") {
+      return "Day 1: Squat + Back\nDay 2: Bench + Shoulders\nDay 3: Deadlift + Accessories\nDay 4: Upper Volume"
+    }
+    return "Day 1: Back + Biceps\nDay 2: Chest + Triceps\nDay 3: Legs\nDay 4: Shoulders + Core"
+  }
+  // 5–6 days → PPL
+  const ppl = "Day 1: Push (Chest / Shoulders / Triceps)\nDay 2: Pull (Back / Biceps)\nDay 3: Legs\nDay 4: Push\nDay 5: Pull"
+  return days >= 6 ? ppl + "\nDay 6: Legs" : ppl
+}
+
+function classifySplitFromDaysAndGoal(days: number, _goal: string): string {
+  if (days <= 3) return "full_body"
+  if (days === 4) return "upper_lower"
+  return "PPL"
 }
 
 async function handleGaGymTime(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
   const sessionTime = parseTimeString(text)
   const city        = extractCityFromText(text)
+
+  if (!sessionTime && !answers.time_retry) {
+    answers.time_retry = "true"
+    await updateIntake(user.id, "ga_gym_time", answers)
+    return `What time exactly? "Morning" doesn't help. Give me a number — "6:30am", "7pm".`
+  }
+
   if (sessionTime) answers.gym_session_time = sessionTime
   if (city)        answers.city             = city
+  delete answers.time_retry
   await updateIntake(user.id, "ga_nutrition", answers)
-  return `Quick nutrition check. Roughly how much protein are you hitting daily? Be honest — I can tell when people are guessing.`
+
+  const hour     = sessionTime ? parseInt(sessionTime.split(":")[0] ?? "9") : -1
+  const timeNote = hour < 7 ? "early morning" : hour >= 20 ? "late night" : ""
+
+  return generateRexTransition(
+    `User trains at ${sessionTime ?? "unknown time"} in ${city ?? "unknown city"}. ` +
+    (timeNote === "early morning" ? "Note: very early morning session. One wry line about it — discipline or insomnia. " : "") +
+    (timeNote === "late night"    ? "Note: late night training. Brief acknowledgment, no judgment. " : "") +
+    `Ask: roughly how much protein are they hitting daily. Tell them to be honest. Max 3 lines. No emojis.`,
+    text,
+    `Got it. Roughly how much protein are you hitting daily? Be honest.`,
+    100,
+  )
 }
 
 async function handleGaNutrition(text: string, answers: IntakeAnswers, user: IntakeUser, _chatId: string): Promise<string> {
-  answers.protein_raw = text
-  const status        = classifyProteinStatus(text)
-  answers.protein_status = status
+  answers.protein_raw     = text
+  const gramsReported     = parseProteinGrams(text)
+  const target            = parseInt(answers.protein_target_g ?? "0") || 0
+  const name              = answers.name ?? "you"
 
-  const bw = parseBodyweightKg(text)
-  if (bw) {
-    answers.current_bodyweight_kg = String(bw)
-    const factor = answers.gym_goal === "cut" ? 2.2 : 1.8
-    answers.protein_target_g = String(Math.round(bw * factor))
-  }
+  answers.protein_status  = gramsReported === null
+    ? "unknown"
+    : gramsReported >= target * 0.8 ? "adequate" : "low"
+  if (gramsReported !== null) answers.daily_protein_g = String(gramsReported)
 
   await updateIntake(user.id, "ga_injuries", answers)
-  const name = answers.name ?? "you"
 
-  if (status === "adequate") {
-    return `Good. That's the one thing most people get wrong.\n\nAny injuries I need to know about, or are you working with a full deck?`
+  // Not tracking at all
+  if (gramsReported === null || target === 0) {
+    return generateRexTransition(
+      `User isn't tracking protein or gave a vague answer. Don't lecture. ` +
+      `Ask "more or less than 100g a day?" to calibrate. ` +
+      `Then immediately ask about injuries on a new line. Max 2 lines. No emojis.`,
+      text,
+      `Not tracking — more or less than 100g daily?\n\nAny injuries I need to know about?`,
+      100,
+    )
   }
-  if (status === "low") {
-    return `That's why you're not recovering. ${name}, bodyweight in lbs × 0.8 = your minimum.\n\nAny injuries I need to know about?`
+
+  const gapPct = Math.round((gramsReported / target) * 100)
+
+  if (gapPct < 30) {
+    return generateRexTransition(
+      `User hitting ${gramsReported}g protein daily. Minimum target is ${target}g — they're at ${gapPct}% of it. ` +
+      `This is critical for recovery. React: concrete gap, no lecture. ` +
+      `Give 3 specific food sources with gram counts (eggs, chicken, whey etc) that close the gap. ` +
+      `Then ask about injuries. Keep total under 4 lines. No emojis.`,
+      text,
+      `${name}, that's not enough. Minimum is ${target}g daily.\n3 eggs=18g. 150g chicken=45g. Whey scoop=25g. Stack those every day.\nAny injuries I need to know about?`,
+      150,
+    )
   }
-  return `You're not tracking. Roughly — are you eating more than 100g protein a day?\n\nAny injuries I need to know about?`
+
+  if (gapPct < 70) {
+    return generateRexTransition(
+      `User hitting ${gramsReported}g protein, target ${target}g — low but workable (${gapPct}%). ` +
+      `Give them the exact target number. Ask about injuries. 2 lines max. No emojis.`,
+      text,
+      `Low but fixable. Get to ${target}g minimum daily.\nAny injuries I need to know about?`,
+      100,
+    )
+  }
+
+  return generateRexTransition(
+    `User hitting ${gramsReported}g protein, target ${target}g — solid (${gapPct}%). ` +
+    `Brief positive acknowledgment. Ask about injuries. 2 lines max. No emojis.`,
+    text,
+    `Solid. That's one less variable to fix.\nAny injuries I need to know about?`,
+    80,
+  )
+}
+
+function parseProteinGrams(text: string): number | null {
+  const t = text.toLowerCase()
+  if (/\b(don'?t know|not (sure|tracking)|no idea|idk|nothing|don'?t track)\b/.test(t)) return null
+
+  // Range: "80-100g", "20-30 grams"
+  const range = t.match(/(\d+)\s*[-–]\s*(\d+)\s*(?:g|gm|grams?)?/)
+  if (range) return Math.round((parseInt(range[1]) + parseInt(range[2])) / 2)
+
+  // Direct: "100g", "100 grams", "around 100g"
+  const direct = t.match(/(\d+)\s*(?:g|gm|grams?)/i)
+  if (direct) return parseInt(direct[1])
+
+  // Bare number in plausible protein range
+  const bare = t.match(/(?:around|about|roughly|~)?\s*(\d{2,3})\b/)
+  if (bare) {
+    const n = parseInt(bare[1])
+    if (n >= 30 && n <= 400) return n
+  }
+  return null
 }
 
 async function handleGaInjuries(
   text: string, answers: IntakeAnswers, modules: string[],
   user: IntakeUser, profile: WebProfile, chatId: string
 ): Promise<string> {
-  const hasInjury = !/\b(no|none|nothing|all good|fine|healthy|nope|full deck|clean|clear)\b/i.test(text)
+  const hasInjury = !/\b(no|none|nothing|all good|fine|healthy|nope|full deck|clean|clear|n\/a)\b/i.test(text)
   answers.injury_notes = hasInjury ? text : "none"
   if (hasInjury) await addToLongTerm(chatId, "preferences", `injury_flag: ${text}`)
 
@@ -543,21 +857,13 @@ async function handleGaInjuries(
     addToLongTerm(chatId, "preferences", `training_experience: ${answers.training_experience}`),
     addToLongTerm(chatId, "preferences", `training_days_per_week: ${answers.available_training_days}`),
     addToLongTerm(chatId, "preferences", `current_split: ${answers.current_split}`),
-    answers.gym_session_time
-      ? addToLongTerm(chatId, "preferences", `gym_session_time: ${answers.gym_session_time}`)
-      : Promise.resolve(),
-    answers.protein_target_g
-      ? addToLongTerm(chatId, "preferences", `protein_target: ${answers.protein_target_g}g`)
-      : Promise.resolve(),
+    answers.gym_session_time ? addToLongTerm(chatId, "preferences", `gym_session_time: ${answers.gym_session_time}`) : Promise.resolve(),
+    answers.protein_target_g ? addToLongTerm(chatId, "preferences", `protein_target: ${answers.protein_target_g}g`) : Promise.resolve(),
     answers.squat_kg || answers.bench_kg || answers.deadlift_kg
       ? addToLongTerm(chatId, "anchors", `lifts — squat: ${answers.squat_kg ?? "?"}, bench: ${answers.bench_kg ?? "?"}, deadlift: ${answers.deadlift_kg ?? "?"}`)
       : Promise.resolve(),
-    answers.current_bodyweight_kg
-      ? addToLongTerm(chatId, "preferences", `bodyweight: ${answers.current_bodyweight_kg}kg`)
-      : Promise.resolve(),
-    answers.height_cm
-      ? addToLongTerm(chatId, "preferences", `height: ${answers.height_cm}cm`)
-      : Promise.resolve(),
+    answers.current_bodyweight_kg ? addToLongTerm(chatId, "preferences", `bodyweight: ${answers.current_bodyweight_kg}kg`) : Promise.resolve(),
+    answers.height_cm ? addToLongTerm(chatId, "preferences", `height: ${answers.height_cm}cm`) : Promise.resolve(),
   ])
 
   const timezone = answers.city ? cityToTimezone(answers.city) : "Asia/Kolkata"
@@ -575,7 +881,7 @@ async function handleGaInjuries(
 
   if (modules.includes("study")) {
     await updateIntake(user.id, "sb1", answers, modules)
-    return buildRexGymClosing(answers) + "\n\n---\n\nNow for study.\n\n" + STUDY_Q.sb1
+    return (await buildRexGymClosing(answers)) + "\n\n---\n\nNow for study.\n\n" + STUDY_Q.sb1
   }
 
   await updateIntake(user.id, "complete", answers, modules, { intakeComplete: true })
@@ -584,20 +890,57 @@ async function handleGaInjuries(
 
 // ─── Rex Closing ──────────────────────────────────────────────────────────────
 
-function buildRexGymClosing(a: IntakeAnswers): string {
-  const goal     = rexGoalLabel(a.gym_goal ?? "fitness")
-  const days     = a.available_training_days ?? "3"
-  const time     = a.gym_session_time ?? "your usual time"
-  const split    = rexSplitLabel(a.current_split ?? "unstructured", parseInt(days))
-  const weakLink = diagnoseWeakLink(a)
+async function buildRexGymClosing(a: IntakeAnswers): Promise<string> {
+  const goal        = rexGoalLabel(a.gym_goal ?? "fitness")
+  const days        = a.available_training_days ?? "3"
+  const time        = a.gym_session_time ?? "your usual time"
+  const split       = rexSplitLabel(a.current_split ?? "unstructured", parseInt(days))
+  const weakLink    = diagnoseWeakLink(a)
   const nextSession = nextTrainingDayLabel(a.current_split ?? "unstructured", parseInt(days))
+  const liftLine    = (a.squat_kg || a.bench_kg || a.deadlift_kg)
+    ? `Lifts: squat ${a.squat_kg ?? "?"}kg, bench ${a.bench_kg ?? "?"}kg, deadlift ${a.deadlift_kg ?? "?"}kg.`
+    : "Lifts: baseline testing Week 1."
 
-  return [
+  const fallback = [
     `Right. Here's where we are:`,
     `Goal: ${goal}. Training: ${days}x/week, ${time}. Split: ${split}.`,
     `Weakest link right now: ${weakLink}.`,
-    `${nextSession} at ${time}. Don't ghost me.`,
+    `${nextSession}. ${time}. Don't ghost me.`,
   ].join("\n")
+
+  try {
+    return await generateOpenAIText({
+      model:             "gpt-4o-mini",
+      maxOutputTokens:   180,
+      systemInstruction:
+        "You are Rex, a direct gym mentor. Generate a closing onboarding summary.\n" +
+        "Format exactly like this (no deviations):\n" +
+        "'Right. Here's where we are:\n" +
+        "Goal: [goal]. Training: [days]x/week, [time]. Split: [split].\n" +
+        "Weakest link right now: [weakest link specific to this user].\n" +
+        "[next session label] — [muscles for that day].\n" +
+        "[gym_time]. Don't ghost me.'\n\n" +
+        "Rules:\n" +
+        "- Use the ACTUAL next training day provided — never say 'tomorrow' if tomorrow is a rest day\n" +
+        "- Weakest link must be specific to this person's data, not generic\n" +
+        "- Last line is always gym_time + 'Don't ghost me'\n" +
+        "- Max 6 lines total. No emojis.",
+      prompt: [
+        `Name: ${a.name ?? "unknown"}`,
+        `Goal: ${goal}`,
+        `Level: ${a.training_experience ?? "unknown"}`,
+        `Training: ${days}x/week at ${time}`,
+        `Split: ${split}`,
+        liftLine,
+        `Protein target: ${a.protein_target_g ?? "?"}g/day (currently hitting: ${a.daily_protein_g ?? "unknown"})`,
+        `Injuries: ${a.injury_notes ?? "none"}`,
+        `Weakest link: ${weakLink}`,
+        `Next session: ${nextSession}`,
+      ].join("\n"),
+    })
+  } catch {
+    return fallback
+  }
 }
 
 function nextTrainingDayLabel(split: string, daysPerWeek: number): string {
@@ -676,7 +1019,7 @@ function diagnoseWeakLink(a: IntakeAnswers): string {
 
 
 async function classifyRexGoal(text: string): Promise<string | null> {
-  const VALID = new Set(["fat_loss", "muscle", "both", "performance"])
+  const VALID = new Set(["fat_loss", "muscle", "strength", "both", "performance", "habit"])
 
   try {
     const raw = await generateOpenAIText({
@@ -684,24 +1027,25 @@ async function classifyRexGoal(text: string): Promise<string | null> {
       maxOutputTokens: 10,
       systemInstruction: [
         "You classify a gym user's fitness goal into exactly one label.",
-        "Reply with ONLY one of these four words — nothing else:",
-        "  fat_loss  — losing fat, cutting, shredding, calorie deficit, slim down",
-        "  muscle    — building muscle, bulking, gaining mass, strength, hypertrophy",
-        "  both      — recomp, body recomposition, lose fat AND build muscle simultaneously",
-        "  performance — athletic performance, endurance, sport, general health/fitness habit",
-        "If the message contains a timeline or vague intent (e.g. '8 weeks', 'get better') but no clear goal, reply: null",
+        "Reply with ONLY one of these words — nothing else:",
+        "  fat_loss   — losing fat, cutting, shredding, calorie deficit, slim down, lose weight",
+        "  muscle     — building muscle, bulking, gaining mass, size, hypertrophy",
+        "  strength   — getting stronger, lifting more, powerlifting, performance, athletic",
+        "  both       — recomp, lose fat AND build muscle simultaneously",
+        "  habit      — just be consistent, healthy, general fitness, 'just be fit', vague/no specific goal",
+        "If the message contains only a timeline with no clear goal, reply: null",
       ].join("\n"),
       prompt: text,
     })
     const label = raw.trim().toLowerCase().replace(/[^a-z_]/g, "")
     return VALID.has(label) ? label : null
   } catch {
-    // Hard fallback — never leave the user stuck if OpenAI is down
     const t = text.toLowerCase()
-    if (/recomp|both|simultaneously/.test(t))              return "both"
-    if (/fat|cut|lean|lose|shred|slim/.test(t))            return "fat_loss"
-    if (/muscle|bulk|build|gain|mass|strength/.test(t))    return "muscle"
-    if (/perform|athletic|sport|endur|health|fit/.test(t)) return "performance"
+    if (/recomp|both|simultaneously/.test(t))                     return "both"
+    if (/fat|cut|lean|lose|shred|slim/.test(t))                   return "fat_loss"
+    if (/stronger|strength|power|lift|perform|athletic/.test(t))  return "strength"
+    if (/muscle|bulk|build|gain|mass/.test(t))                    return "muscle"
+    if (/consist|habit|health|fit|active/.test(t))                return "habit"
     return null
   }
 }
@@ -732,11 +1076,12 @@ async function llmClassify(
 }
 
 function buildRexGoalDrillQuestion(goal: string): string {
-  if (goal === "fat_loss")    return `Fat loss. Fine. How long have you been "trying" to lose fat?`
-  if (goal === "muscle")      return `Muscle. Good choice. How long have you been training?`
-  if (goal === "both")        return `Both at once. Bold. Intermediate or just started?`
-  if (goal === "performance") return `Performance. How long have you been training seriously?`
-  return `How long have you been at this?`
+  if (goal === "fat_loss")    return `How long have you been "trying" to lose fat?`
+  if (goal === "muscle")      return `How long have you been training seriously?`
+  if (goal === "strength")    return `How long have you been training with any real structure?`
+  if (goal === "both")        return `Recomp is slow. How long have you been training?`
+  if (goal === "performance") return `How long have you been training seriously?`
+  return `How long have you been training?`
 }
 
 async function classifyRexExperience(text: string): Promise<string> {
@@ -849,15 +1194,6 @@ function cityToTimezone(city: string): string {
   return map[city] ?? "Asia/Kolkata"
 }
 
-function classifyProteinStatus(text: string): "adequate" | "low" | "unknown" {
-  const t = text.toLowerCase()
-  if (/\b(don'?t know|not sure|no idea|not tracking|idk|unsure)\b/.test(t)) return "unknown"
-  const g = t.match(/(\d+)\s*g/)
-  if (g) return parseInt(g[1]) >= 120 ? "adequate" : "low"
-  if (/\b(enough|plenty|good|adequate|hitting|high)\b/.test(t)) return "adequate"
-  if (/\b(low|not enough|lacking|barely|hardly)\b/.test(t))     return "low"
-  return "unknown"
-}
 
 function parseBodyweightKg(text: string): number | null {
   const lbsMatch = text.match(/(\d{2,3})\s*(?:lbs?|pounds?)/i)
