@@ -86,7 +86,7 @@ function buildHardcodedResponse(category: string, ctx: OffTopicContext): string 
         : `I do one thing. ${nextMuscles} day. Log it.`
 
     case "disrespect":
-      return `Bold from someone who hasn't logged ${nextMuscles} yet.\nTrain first. Talk after. 💪`
+      return `Bold from someone who hasn't logged ${nextMuscles} yet.\nTrain first. Talk after.`
 
     case "deflection":
       return streak > 0
