@@ -10,6 +10,7 @@ import { computePatternReport } from "../services/gymPatternDetector.service";
 import type { PatternReport } from "../services/gymPatternDetector.service";
 import { buildEngagementContext } from "../services/engagement.service";
 import type { EngagementContext } from "../services/engagement.service";
+import { buildRexSessionContextBlock, buildExperienceLevelBlock } from "../services/rexSessionContext.service";
 import {
   getMentorState,
   updateMentorState,
@@ -321,15 +322,17 @@ function buildConversationAnalysis(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 interface UserContext {
-  memory:            MemoryContext;
-  state:             MentorState;
-  persona:           PersonaType;
-  isFirstSession:    boolean;
-  messageCountToday: number;
-  tonePreference:    "hard" | "soft" | "dynamic";
-  gymContext:        GymTimeContext | null;
-  gymPatternReport:  PatternReport | null;
-  engagementContext: EngagementContext | null;
+  memory:              MemoryContext;
+  state:               MentorState;
+  persona:             PersonaType;
+  isFirstSession:      boolean;
+  messageCountToday:   number;
+  tonePreference:      "hard" | "soft" | "dynamic";
+  gymContext:          GymTimeContext | null;
+  gymPatternReport:    PatternReport | null;
+  engagementContext:   EngagementContext | null;
+  rexSessionContext:   string | null;
+  rexExperienceLevel:  string | null;
 }
 
 async function loadUserContext(platformChatId: string, now: Date): Promise<UserContext> {
@@ -453,16 +456,21 @@ async function loadUserContext(platformChatId: string, now: Date): Promise<UserC
 
   let gymPatternReport:  PatternReport  | null = null;
   let engagementContext: EngagementContext | null = null;
+  let rexSessionContext: string | null = null;
+  let rexExperienceLevel: string | null = null;
+
   if (persona === "rex") {
-    [gymPatternReport, engagementContext] = await Promise.all([
+    [gymPatternReport, engagementContext, rexSessionContext] = await Promise.all([
       userRow.intakeAnswers
         ? computePatternReport(userRow.id, now).catch((err) => { console.error("[ORCHESTRATOR] gymPatternReport:", err); return null; })
         : Promise.resolve(null),
       buildEngagementContext(userRow.id, now).catch((err) => { console.error("[ORCHESTRATOR] engagementContext:", err); return null; }),
+      buildRexSessionContextBlock(platformChatId, now).catch((err) => { console.error("[ORCHESTRATOR] rexSessionContext:", err); return null; }),
     ]);
+    rexExperienceLevel = buildExperienceLevelBlock(userRow.intakeAnswers);
   }
 
-  return { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext };
+  return { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel };
 }
 
 function buildMinimalContext(state: MentorState): UserContext {
@@ -476,7 +484,7 @@ function buildMinimalContext(state: MentorState): UserContext {
     sessionCount: 0, daysSinceFirstMessage: 0,
     lastUserMessage: null, lastTopicDiscussed: null, lastAssistantMessage: null,
   };
-  return { memory, state, persona: FALLBACK_PERSONA, isFirstSession: true, messageCountToday: 0, tonePreference: DEFAULT_TONE, gymContext: null, gymPatternReport: null, engagementContext: null };
+  return { memory, state, persona: FALLBACK_PERSONA, isFirstSession: true, messageCountToday: 0, tonePreference: DEFAULT_TONE, gymContext: null, gymPatternReport: null, engagementContext: null, rexSessionContext: null, rexExperienceLevel: null };
 }
 
 // buildSystemPrompt removed — llm.ts generateEngineResponse builds the prompt
@@ -660,7 +668,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     () => loadUserContext(input.platformChatId, timestamp),
     await getMentorState(input.platformChatId).then(state => buildMinimalContext(state)),
   );
-  const { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext } = userCtx;
+  const { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel } = userCtx;
 
   // ── Stage 3: Pattern detection (skip for brand-new users) ──────────────────
   const runPatterns =
@@ -752,9 +760,11 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
       patterns,
       intervention: interventionResult,
       plan:             planResult,
-      gymContext:        gymContext ?? null,
-      gymPatternReport:  gymPatternReport ?? null,
-      engagementContext: engagementContext ?? null,
+      gymContext:          gymContext          ?? null,
+      gymPatternReport:    gymPatternReport    ?? null,
+      engagementContext:   engagementContext   ?? null,
+      rexSessionContext:   rexSessionContext   ?? null,
+      rexExperienceLevel:  rexExperienceLevel  ?? null,
     };
 
     diag.llmTokensRequested = Math.max(decision.tokenBudget, 80);
