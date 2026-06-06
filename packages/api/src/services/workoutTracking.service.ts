@@ -29,18 +29,11 @@ interface ActiveLogging {
   splitDayIndex:           number
   muscles:                 string
   startedAt:               string
-  logMode:                 "quick" | "set_by_set"
-  logState:                "awaiting_exercises" | "awaiting_weights" | "awaiting_sets_reps" | "confirming" | "mid_exercise" | "weight_review" | "muscle_conflict"
+  logMode:                 "quick"
+  logState:                "awaiting_exercises" | "awaiting_weights" | "awaiting_sets_reps" | "confirming" | "weight_review" | "muscle_conflict"
   parsedEntries:           QuickLogEntry[]
   pendingWeightFor:        string[]
   lastActivityAt:          string
-  currentExercise:         string | null
-  exercisesDone:           string[]
-  exercisesRemaining:      string[]
-  pendingRpe:              boolean
-  lastSetId:               string | null
-  currentSetNumber:        number
-  setsTargetThisExercise:  number
   pendingSuspectExercise:  string | null
   conflictEntries:         QuickLogEntry[]
   conflictDetectedMuscles: string
@@ -73,11 +66,6 @@ interface PersonalRecords {
   }
 }
 
-interface SetEntry {
-  sets:     number
-  reps:     number
-  weightKg: number
-}
 
 type UserRow = {
   id:                   string
@@ -110,19 +98,6 @@ const NOT_HANDLED = { handled: false as const, reply: "" }
 // EXERCISE LIBRARY
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Split-day composite keys (for set-by-set display + existing split logic)
-const MUSCLE_EXERCISES: Record<string, string[]> = {
-  "Chest + Triceps + Shoulders":                  ["Bench Press",  "Overhead Press",    "Incline DB Press",  "Tricep Dips"],
-  "Back + Biceps":                                ["Barbell Row",  "Pull-up",           "Lat Pulldown",      "Barbell Curl"],
-  "Legs":                                         ["Squat",        "Romanian Deadlift", "Leg Press",         "Hip Thrust"],
-  "Upper Body (Chest / Back / Shoulders / Arms)": ["Bench Press",  "Barbell Row",       "Overhead Press",    "Pull-up"],
-  "Lower Body (Quads / Hamstrings / Glutes)":     ["Squat",        "Romanian Deadlift", "Leg Press",         "Lunges"],
-  "Full Body":                                    ["Squat",        "Bench Press",       "Barbell Row",       "Romanian Deadlift"],
-  "Chest":                                        ["Bench Press",  "Incline DB Press",  "Cable Flyes",       "Dips"],
-  "Back":                                         ["Barbell Row",  "Pull-up",           "Lat Pulldown",      "Seated Cable Row"],
-  "Shoulders":                                    ["Overhead Press","Lateral Raises",   "Face Pulls",        "Arnold Press"],
-  "Arms":                                         ["Barbell Curl", "Tricep Pushdown",   "Hammer Curl",       "Close-Grip Bench"],
-}
 
 // Per-muscle keys (for getExercisesForToday)
 const MUSCLE_DEFAULTS: Record<string, string[]> = {
@@ -495,16 +470,10 @@ export async function handleLogCommand(
   // Already logging — resume
   if (state.activeLogging) {
     const al = state.activeLogging
-    if (al.logMode === "set_by_set" && al.currentExercise) {
-      return `Already logging — ${al.muscles}, set ${al.currentSetNumber} of ${al.currentExercise}.\nContinue or type "done" to finish.`
+    if (al.parsedEntries.length) {
+      return buildQuickLogConfirmation(al.parsedEntries) + "\n\nAnything else or \"done\"?"
     }
-    if (al.logMode === "quick") {
-      if (al.parsedEntries.length) {
-        return buildQuickLogConfirmation(al.parsedEntries) + "\n\nAnything else or \"done\"?"
-      }
-      return `${al.muscles} — what did you hit?`
-    }
-    return `${al.muscles} — what did you do first?\n${formatExerciseList(al.muscles)}`
+    return `${al.muscles} — what did you hit?`
   }
 
   const intake   = parseIntake(user.intakeAnswers)
@@ -525,10 +494,6 @@ export async function handleLogCommand(
     return `You already logged ${muscles} today at ${time}.\nAdding more sets or did you mean a different session?`
   }
 
-  // Determine mode: within 2hrs after gym_time = set_by_set; otherwise = quick
-  const gymTime = intake.preferred_gym_time ?? intake.gym_session_time ?? user.preferredCheckInTime
-  const logMode = isWithinGymWindow(gymTime, now) ? "set_by_set" : "quick"
-
   const session = await prisma.telegramWorkoutSession.create({
     data: {
       messengerUserId: user.id,
@@ -539,25 +504,16 @@ export async function handleLogCommand(
     },
   })
 
-  const defaultExercises = (MUSCLE_EXERCISES[muscles] ?? []).slice()
-
   const newAl: ActiveLogging = {
     sessionId:               session.id,
     splitDayIndex:           nextIdx,
     muscles,
     startedAt:               now.toISOString(),
-    logMode,
-    logState:                logMode === "quick" ? "awaiting_exercises" : "mid_exercise",
+    logMode:                 "quick",
+    logState:                "awaiting_exercises",
     parsedEntries:           [],
     pendingWeightFor:        [],
     lastActivityAt:          now.toISOString(),
-    currentExercise:         null,
-    exercisesDone:           [],
-    exercisesRemaining:      defaultExercises,
-    pendingRpe:              false,
-    lastSetId:               null,
-    currentSetNumber:        0,
-    setsTargetThisExercise:  3,
     pendingSuspectExercise:  null,
     conflictEntries:         [],
     conflictDetectedMuscles: "",
@@ -566,31 +522,17 @@ export async function handleLogCommand(
 
   await writeSplitState(user.id, {
     ...state,
-    pendingLog:   null,
-    firstLogDate: state.firstLogDate ?? now.toISOString().slice(0, 10),
+    pendingLog:    null,
+    firstLogDate:  state.firstLogDate ?? now.toISOString().slice(0, 10),
     activeLogging: newAl,
   })
 
-  if (logMode === "quick") {
-    const exData = await getExercisesForToday(user.id, muscles)
-    return [
-      `Day ${nextIdx + 1} — ${muscles}.`,
-      "",
-      formatQuickLogOpening(muscles, exData),
-    ].join("\n")
-  }
-
-  // Set-by-set mode (live during gym)
-  return `Day ${nextIdx + 1} — ${muscles}.\n\nWhat did you hit first?\n${formatExerciseList(muscles)}`
-}
-
-function isWithinGymWindow(gymTime: string | null | undefined, now: Date): boolean {
-  if (!gymTime) return false
-  const [h = 0, m = 0] = gymTime.split(":").map(Number)
-  const gymMinutes = h * 60 + m
-  const nowMinutes = now.getHours() * 60 + now.getMinutes()
-  const diff = nowMinutes - gymMinutes // positive = after gym time
-  return diff >= 0 && diff <= 120
+  const exData = await getExercisesForToday(user.id, muscles)
+  return [
+    `Day ${nextIdx + 1} — ${muscles}.`,
+    "",
+    formatQuickLogOpening(muscles, exData),
+  ].join("\n")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -624,91 +566,23 @@ export async function handleActiveLoggingMessage(
 
   if (!state.activeLogging) return NOT_HANDLED
 
-  const al    = state.activeLogging
-  const lower = text.trim().toLowerCase()
+  const al = state.activeLogging
 
   // Session timeout (3 hrs) — auto-save whatever is logged
   const ageMs = now.getTime() - new Date(al.lastActivityAt || al.startedAt).getTime()
   if (ageMs > 3 * 3_600_000) {
-    const setCount = await prisma.telegramSetLog.count({ where: { sessionId: al.sessionId } })
-    const qCount   = al.logMode === "quick" ? al.parsedEntries.length : 0
-    if (setCount === 0 && qCount === 0) {
+    if (!al.parsedEntries.length) {
       await prisma.telegramWorkoutSession.delete({ where: { id: al.sessionId } }).catch(() => {})
       await writeSplitState(user.id, { ...state, activeLogging: null })
       return NOT_HANDLED
     }
-    if (al.logMode === "quick" && al.parsedEntries.length) {
-      await saveQuickEntriesToDb(al.sessionId, al.parsedEntries)
-    }
+    await saveQuickEntriesToDb(al.sessionId, al.parsedEntries)
     const result = await finishSession(user, state, al, now)
     return { ...result, reply: `Session timed out — auto-saved.\n\n${result.reply}` }
   }
 
-  // Update activity timestamp
   const updatedAl = { ...al, lastActivityAt: now.toISOString() }
-
-  // Route by mode
-  if (al.logMode === "quick") {
-    return handleQuickLogMessage(user, { ...state, activeLogging: updatedAl }, updatedAl, text, now)
-  }
-
-  // ── Set-by-set mode ──────────────────────────────────────────────────────
-  await writeSplitState(user.id, { ...state, activeLogging: updatedAl })
-
-  // done / finish → complete session
-  if (/^(done|finish|finished|end|stop|complete)$/i.test(lower)) {
-    return finishSession(user, state, updatedAl, now)
-  }
-
-  // RPE response pending
-  if (updatedAl.pendingRpe) {
-    const rpe  = parseRpe(text)
-    const skip = /^(skip|no|s|-|pass|\.|\/)$/i.test(lower)
-    if (rpe !== null || skip) {
-      if (updatedAl.lastSetId && rpe !== null) {
-        await prisma.telegramSetLog.update({ where: { id: updatedAl.lastSetId }, data: { rpe } })
-      }
-      await writeSplitState(user.id, { ...state, activeLogging: { ...updatedAl, pendingRpe: false } })
-      return { handled: true, reply: `Logged. Next set, "next" for next exercise, or "done".` }
-    }
-  }
-
-  // "how many sets left?"
-  if (/\b(how many|sets? left|sets? remaining|left to do|how much left)\b/i.test(lower)) {
-    if (updatedAl.currentExercise) {
-      const done      = updatedAl.currentSetNumber
-      const target    = updatedAl.setsTargetThisExercise
-      const left      = Math.max(0, target - done)
-      const remaining = updatedAl.exercisesRemaining.filter(e => e !== updatedAl.currentExercise)
-      const nextUp    = remaining[0] ?? null
-      const reply     = left > 0
-        ? `${done} done, ${left} more to go for ${updatedAl.currentExercise}.${nextUp ? ` Then ${nextUp} and you're done.` : " Then you're done."}`
-        : `${updatedAl.currentExercise} sets complete. ${nextUp ? `${nextUp} next.` : 'Ready to finish — type "done".'}`
-      return { handled: true, reply }
-    }
-    return { handled: true, reply: `No exercise selected yet. Pick one first.` }
-  }
-
-  // No exercise selected yet
-  if (!updatedAl.currentExercise) {
-    return selectExercise(user, state, updatedAl, text)
-  }
-
-  // next / switch
-  if (/^(next|next exercise|change|switch|new exercise)$/i.test(lower)) {
-    return moveToNextExercise(user, state, updatedAl)
-  }
-
-  // parse set data
-  const setEntry = parseSet(text)
-  if (setEntry) {
-    return logSets(user, state, updatedAl, setEntry)
-  }
-
-  return {
-    handled: true,
-    reply:   `Format: 3×5×80 (sets×reps×kg) or "80kg × 5".\n"next" for next exercise. "done" to finish.`,
-  }
+  return handleQuickLogMessage(user, { ...state, activeLogging: updatedAl }, updatedAl, text, now)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -759,13 +633,6 @@ async function handlePendingLogMessage(
     parsedEntries:           [],
     pendingWeightFor:        [],
     lastActivityAt:          now.toISOString(),
-    currentExercise:         null,
-    exercisesDone:           [],
-    exercisesRemaining:      (MUSCLE_EXERCISES[pendingLog.muscles] ?? []).slice(),
-    pendingRpe:              false,
-    lastSetId:               null,
-    currentSetNumber:        0,
-    setsTargetThisExercise:  3,
     pendingSuspectExercise:  null,
     conflictEntries:         [],
     conflictDetectedMuscles: "",
@@ -1117,212 +984,10 @@ async function saveQuickEntriesToDb(sessionId: string, entries: QuickLogEntry[])
 // SESSION STEPS (set-by-set mode)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function selectExercise(
-  user: UserRow, state: SplitState, al: ActiveLogging, text: string
-): Promise<{ handled: boolean; reply: string }> {
-  const defaults = MUSCLE_EXERCISES[al.muscles] ?? []
-  const idx      = parseInt(text.trim()) - 1
-
-  // Numbered list selection (user picks from the exercise list)
-  if (!isNaN(idx) && idx >= 0 && idx < defaults.length) {
-    return startSingleExercise(user, state, al, defaults[idx]!)
-  }
-
-  // Multi-exercise natural language dump — the primary post-session use case.
-  // User sends the whole session in one message: "bench 70, incline 25, cable fly 15"
-  // Never echo the message; parse what's there and ask only for what's missing.
-  const multiEntries = parseMultiExercise(text)
-  if (multiEntries.length > 1) {
-    return handleMultiExerciseDump(user, state, al, multiEntries, new Date())
-  }
-
-  // Single exercise with complete set data inline: "bench 3×5×70"
-  if (multiEntries.length === 1 && multiEntries[0]!.weightKg !== null && multiEntries[0]!.setsRepsProvided) {
-    const entry     = multiEntries[0]!
-    const remaining = al.exercisesRemaining.filter(e => e.toLowerCase() !== entry.exercise.toLowerCase())
-    const updatedAl = { ...al, currentExercise: entry.exercise, exercisesRemaining: remaining, currentSetNumber: 0 }
-    return logSets(user, state, updatedAl, { sets: entry.sets, reps: entry.reps, weightKg: entry.weightKg! })
-  }
-
-  // Single exercise name or alias — select it and prompt for sets
-  const matched  = matchExerciseName(text.trim())
-  // Only treat as a raw exercise name if the text is short enough to plausibly BE a name.
-  // Long messages that hit here failed all parsers — ask for clarification instead of echoing.
-  const exercise = matched
-    ? matched.canonical
-    : text.trim().length <= 40
-      ? capitalize(text.trim())
-      : null
-
-  if (!exercise) {
-    return {
-      handled: true,
-      reply:   `What exercise did you do? (e.g. "bench press", "squat", or pick a number from the list)`,
-    }
-  }
-
-  return startSingleExercise(user, state, al, exercise)
-}
-
-async function startSingleExercise(
-  user: UserRow, state: SplitState, al: ActiveLogging, exercise: string
-): Promise<{ handled: boolean; reply: string }> {
-  const remaining = al.exercisesRemaining.filter(e => e.toLowerCase() !== exercise.toLowerCase())
-
-  await writeSplitState(user.id, {
-    ...state,
-    activeLogging: {
-      ...al,
-      currentExercise:        exercise,
-      exercisesRemaining:     remaining,
-      currentSetNumber:       0,
-      setsTargetThisExercise: 3,
-      pendingRpe:             false,
-    },
-  })
-
-  const overload = await getOverloadSuggestion(user.id, exercise)
-  const hint     = overload ? `\nLast time: ${overload.lastNote} → target ${overload.nextKg}kg.` : ""
-
-  return {
-    handled: true,
-    reply:   `${exercise}.${hint}\n\nSets × reps × weight. Go:\nFormat: 3×5×80 or just "80kg × 5"`,
-  }
-}
-
-// Handles a message that contains multiple exercises (post-session batch entry).
-// Routes to appropriate logState based on what data is already in the message.
-async function handleMultiExerciseDump(
-  user: UserRow, state: SplitState, al: ActiveLogging, entries: QuickLogEntry[], now: Date
-): Promise<{ handled: boolean; reply: string }> {
-  const missingWeight = entries.filter(e => e.weightKg === null).map(e => e.exercise)
-  const missingReps   = entries.filter(e => e.weightKg !== null && !e.setsRepsProvided)
-  const updatedAl     = { ...al, logMode: "quick" as const, parsedEntries: entries, lastActivityAt: now.toISOString() }
-
-  // Weights missing — ask for those first
-  if (missingWeight.length) {
-    const gotLines = entries.filter(e => e.weightKg !== null).map(e => `${e.exercise} — ${e.weightKg}kg`)
-    await writeSplitState(user.id, { ...state, activeLogging: { ...updatedAl, logState: "awaiting_weights", pendingWeightFor: missingWeight } })
-    const header = gotLines.length ? `Got:\n${gotLines.join("\n")}\n\n` : ""
-    return { handled: true, reply: `${header}Weight for ${missingWeight.join(" and ")}?` }
-  }
-
-  // Weights present but sets/reps not provided — confirm weights, ask for sets×reps
-  if (missingReps.length > 0) {
-    const lines  = entries.map(e => `${e.exercise} — ${e.weightKg}kg`)
-    const target = missingReps.length === 1 ? missingReps[0]!.exercise : "each"
-    await writeSplitState(user.id, { ...state, activeLogging: { ...updatedAl, logState: "awaiting_sets_reps" } })
-    return {
-      handled: true,
-      reply:   `Got it.\n${lines.join("\n")}\n\nSets × reps for ${target}? (e.g. 3×5, 3×8, 3×12)`,
-    }
-  }
-
-  // Complete — straight to confirmation
-  await writeSplitState(user.id, { ...state, activeLogging: { ...updatedAl, logState: "confirming" } })
-  return {
-    handled: true,
-    reply:   buildQuickLogConfirmation(entries) + "\n\nAnything else or \"done\"?",
-  }
-}
-
-async function logSets(
-  user: UserRow, state: SplitState, al: ActiveLogging, entry: SetEntry
-): Promise<{ handled: boolean; reply: string }> {
-  let lastSetId: string | null = null
-
-  for (let i = 0; i < entry.sets; i++) {
-    const setNumber = al.currentSetNumber + i + 1
-    const set = await prisma.telegramSetLog.create({
-      data: {
-        sessionId:    al.sessionId,
-        exerciseName: al.currentExercise!,
-        setNumber,
-        reps:         entry.reps,
-        weightKg:     entry.weightKg,
-        completed:    true,
-      },
-    })
-    if (i === entry.sets - 1) lastSetId = set.id
-  }
-
-  const newSetNum = al.currentSetNumber + entry.sets
-  const askRpe   = entry.sets === 1
-
-  const firstWeights  = state.firstExerciseWeights
-  const isNew         = al.currentExercise! && !(al.currentExercise! in firstWeights)
-  const updatedFirst  = isNew ? { ...firstWeights, [al.currentExercise!]: entry.weightKg } : firstWeights
-
-  await writeSplitState(user.id, {
-    ...state,
-    firstExerciseWeights: updatedFirst,
-    activeLogging: {
-      ...al,
-      currentSetNumber: newSetNum,
-      pendingRpe:       askRpe,
-      lastSetId:        askRpe ? lastSetId : al.lastSetId,
-      lastActivityAt:   new Date().toISOString(),
-    },
-  })
-
-  const summary = entry.sets > 1
-    ? `${entry.sets} sets: ${entry.weightKg}kg × ${entry.reps}.`
-    : `Set ${newSetNum}: ${entry.weightKg}kg × ${entry.reps}.`
-
-  const rpeLine = askRpe ? ` RPE? (or skip)` : ``
-  return {
-    handled: true,
-    reply:   `${summary}${rpeLine}\n\nNext set, "next" for new exercise, or "done".`,
-  }
-}
-
-async function moveToNextExercise(
-  user: UserRow, state: SplitState, al: ActiveLogging
-): Promise<{ handled: boolean; reply: string }> {
-  const done = al.currentExercise ? [...al.exercisesDone, al.currentExercise] : al.exercisesDone
-  const nextExercise = al.exercisesRemaining[0] ?? null
-
-  await writeSplitState(user.id, {
-    ...state,
-    activeLogging: {
-      ...al,
-      currentExercise:        null,
-      exercisesDone:          done,
-      currentSetNumber:       0,
-      setsTargetThisExercise: 3,
-      pendingRpe:             false,
-      lastSetId:              null,
-    },
-  })
-
-  const total = await prisma.telegramSetLog.count({ where: { sessionId: al.sessionId } })
-
-  const completedLine = al.currentExercise && al.currentSetNumber > 0
-    ? `${al.currentExercise} done. ${al.currentSetNumber} sets. ${total} total this session.`
-    : `${total} sets total this session.`
-
-  const overload  = nextExercise ? await getOverloadSuggestion(user.id, nextExercise) : null
-  const nextHint  = nextExercise
-    ? overload
-      ? `${nextExercise} next — last time ${overload.lastNote} → target ${overload.nextKg}kg.`
-      : `${nextExercise} next.`
-    : null
-
-  return {
-    handled: true,
-    reply: [
-      completedLine,
-      nextHint ?? `Next exercise? (or "done")\n${formatExerciseList(al.muscles)}`,
-    ].filter(Boolean).join("\n"),
-  }
-}
-
 async function finishSession(
   user: UserRow, state: SplitState, al: ActiveLogging, now: Date
 ): Promise<{ handled: boolean; reply: string }> {
-  const allExercises = al.currentExercise
-    ? [...al.exercisesDone, al.currentExercise]
-    : al.exercisesDone
+  const allExercises = al.parsedEntries.map(e => e.exercise)
 
   const totalSets = await prisma.telegramSetLog.count({
     where: { sessionId: al.sessionId, completed: true },
@@ -1494,33 +1159,6 @@ async function checkPRsForSession(user: UserRow, sessionId: string): Promise<str
 // PROGRESSIVE OVERLOAD
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function getOverloadSuggestion(
-  userId: string,
-  exercise: string
-): Promise<{ lastNote: string; nextKg: number } | null> {
-  const sets = await prisma.telegramSetLog.findMany({
-    where:   { exerciseName: exercise, session: { messengerUserId: userId }, completed: true },
-    orderBy: [{ sessionId: "desc" }, { setNumber: "asc" }],
-    take:    30,
-    select:  { weightKg: true, reps: true, rpe: true, sessionId: true },
-  })
-  if (!sets.length) return null
-
-  const sessions = groupBySession(sets)
-  const last     = sessions[0]
-  if (!last?.length) return null
-
-  const maxW    = Math.max(...last.map((s: any) => s.weightKg))
-  const rpeVals = last.filter((s: any) => s.rpe != null).map((s: any) => s.rpe as number)
-  const avgRpe  = rpeVals.length ? rpeVals.reduce((a, b) => a + b, 0) / rpeVals.length : 7
-
-  const stalled = sessions.length >= 3 &&
-    sessions.slice(0, 3).every((sess: any[]) => Math.max(...sess.map((s: any) => s.weightKg)) === maxW)
-
-  if (stalled)     return { lastNote: `${maxW}kg (stalled 3 sessions)`,      nextKg: maxW }
-  if (avgRpe <= 8) return { lastNote: `${maxW}kg @ RPE ${avgRpe.toFixed(0)}`, nextKg: maxW + 2.5 }
-  return             { lastNote: `${maxW}kg @ RPE ${avgRpe.toFixed(0)}`, nextKg: maxW }
-}
 
 export async function computeProgressiveOverloadForSession(
   userId:    string,
@@ -1847,13 +1485,6 @@ async function handleSetupPendingMessage(
         parsedEntries:           [],
         pendingWeightFor:        [],
         lastActivityAt:          new Date().toISOString(),
-        currentExercise:         null,
-        exercisesDone:           [],
-        exercisesRemaining:      (MUSCLE_EXERCISES[muscles] ?? []).slice(),
-        pendingRpe:              false,
-        lastSetId:               null,
-        currentSetNumber:        0,
-        setsTargetThisExercise:  3,
         pendingSuspectExercise:  null,
         conflictEntries:         [],
         conflictDetectedMuscles: "",
@@ -1937,9 +1568,6 @@ async function handleLogCommandForce(user: UserRow, state: SplitState, now: Date
   const dayList   = getTrainingDays(split, days)
   const nextIdx   = state.pendingLog?.splitDayIndex ?? getNextDayIndex(state, dayList.length)
   const muscles   = state.pendingLog?.muscles ?? (dayList[nextIdx] ?? "Full Body")
-  const gymTime   = intake.preferred_gym_time ?? intake.gym_session_time ?? user.preferredCheckInTime
-  const logMode   = isWithinGymWindow(gymTime, now) ? "set_by_set" : "quick"
-
   const session = await prisma.telegramWorkoutSession.create({
     data: { messengerUserId: user.id, date: now, splitDayIndex: nextIdx, musclesTrained: [muscles], completed: false },
   })
@@ -1949,18 +1577,11 @@ async function handleLogCommandForce(user: UserRow, state: SplitState, now: Date
     splitDayIndex:           nextIdx,
     muscles,
     startedAt:               now.toISOString(),
-    logMode,
-    logState:                logMode === "quick" ? "awaiting_exercises" : "mid_exercise",
+    logMode:                 "quick",
+    logState:                "awaiting_exercises",
     parsedEntries:           [],
     pendingWeightFor:        [],
     lastActivityAt:          now.toISOString(),
-    currentExercise:         null,
-    exercisesDone:           [],
-    exercisesRemaining:      (MUSCLE_EXERCISES[muscles] ?? []).slice(),
-    pendingRpe:              false,
-    lastSetId:               null,
-    currentSetNumber:        0,
-    setsTargetThisExercise:  3,
     pendingSuspectExercise:  null,
     conflictEntries:         [],
     conflictDetectedMuscles: "",
@@ -1969,11 +1590,8 @@ async function handleLogCommandForce(user: UserRow, state: SplitState, now: Date
 
   await writeSplitState(user.id, { ...state, pendingLog: null, setupPending: null, activeLogging: newAl })
 
-  if (logMode === "quick") {
-    const exData = await getExercisesForToday(user.id, muscles)
-    return [`Logging Day ${nextIdx + 1} — ${muscles}.`, "", formatQuickLogOpening(muscles, exData)].join("\n")
-  }
-  return `Logging Day ${nextIdx + 1} — ${muscles}.\n\nFirst exercise? (or type your own):\n${formatExerciseList(muscles)}`
+  const exData = await getExercisesForToday(user.id, muscles)
+  return [`Logging Day ${nextIdx + 1} — ${muscles}.`, "", formatQuickLogOpening(muscles, exData)].join("\n")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2188,55 +1806,30 @@ async function splitCommand(platformChatId: string): Promise<string> {
 // PARSERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function parseSet(text: string): SetEntry | null {
-  const t = text.trim()
-
-  const a = t.match(/^(\d+)\s*[×xX*]\s*(\d+)\s*[×xX*]\s*(\d+(?:\.\d+)?)(?:\s*kg)?$/i)
-  if (a) return { sets: +a[1]!, reps: +a[2]!, weightKg: +a[3]! }
-
-  const b = t.match(/^(\d+(?:\.\d+)?)\s*(?:kg)?\s*[×xX*]\s*(\d+)(?:\s*reps?)?$/i)
-  if (b) {
-    const n1 = +b[1]!, n2 = +b[2]!
-    return n1 >= 20
-      ? { sets: 1, reps: n2, weightKg: n1 }
-      : { sets: 1, reps: n1, weightKg: n2 }
-  }
-
-  const weight = t.match(/(\d+(?:\.\d+)?)\s*kg/i)?.[1]
-  const reps   = t.match(/(\d+)\s*rep/i)?.[1] ?? t.match(/(\d+)\s*times?/i)?.[1]
-  const sets   = t.match(/(\d+)\s*sets?/i)?.[1]
-  if (weight && reps) return { sets: sets ? +sets : 1, reps: +reps, weightKg: +weight }
-
-  return null
-}
-
-function parseRpe(text: string): number | null {
-  const n = parseFloat(text.trim().replace(/^rpe\s*/i, ""))
-  return !isNaN(n) && n >= 1 && n <= 10 ? Math.round(n) : null
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // UTILITIES + DB HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function migrateActiveLogging(raw: Partial<ActiveLogging>): ActiveLogging {
+function migrateActiveLogging(raw: Partial<ActiveLogging> & Record<string, unknown>): ActiveLogging {
+  const knownStates: ActiveLogging["logState"][] = [
+    "awaiting_exercises", "awaiting_weights", "awaiting_sets_reps", "confirming", "weight_review", "muscle_conflict",
+  ]
+  const rawState = raw.logState as string | undefined
+  const logState: ActiveLogging["logState"] = knownStates.includes(rawState as ActiveLogging["logState"])
+    ? (rawState as ActiveLogging["logState"])
+    : "awaiting_exercises"
+
   return {
     sessionId:              raw.sessionId              ?? "",
     splitDayIndex:          raw.splitDayIndex          ?? 0,
     muscles:                raw.muscles                ?? "Full Body",
     startedAt:              raw.startedAt              ?? new Date().toISOString(),
-    logMode:                raw.logMode                ?? "set_by_set",
-    logState:               raw.logState               ?? "mid_exercise",
+    logMode:                "quick",
+    logState,
     parsedEntries:          Array.isArray(raw.parsedEntries) ? raw.parsedEntries : [],
     pendingWeightFor:       Array.isArray(raw.pendingWeightFor) ? raw.pendingWeightFor : [],
     lastActivityAt:         raw.lastActivityAt         ?? raw.startedAt ?? new Date().toISOString(),
-    currentExercise:        raw.currentExercise        ?? null,
-    exercisesDone:          raw.exercisesDone          ?? [],
-    exercisesRemaining:     raw.exercisesRemaining     ?? [],
-    pendingRpe:             raw.pendingRpe             ?? false,
-    lastSetId:              raw.lastSetId              ?? null,
-    currentSetNumber:       raw.currentSetNumber       ?? 0,
-    setsTargetThisExercise: raw.setsTargetThisExercise ?? 3,
     pendingSuspectExercise: raw.pendingSuspectExercise  ?? null,
     conflictEntries:        Array.isArray(raw.conflictEntries) ? raw.conflictEntries : [],
     conflictDetectedMuscles: raw.conflictDetectedMuscles ?? "",
@@ -2260,14 +1853,6 @@ function buildSessionSummary(sets: Array<{ exerciseName: string; reps: number; w
     .join(", ")
 }
 
-function formatExerciseList(muscles: string): string {
-  const ex = MUSCLE_EXERCISES[muscles] ?? ["Bench Press", "Squat", "Barbell Row", "Deadlift"]
-  return ex.slice(0, 4).map((e, i) => `${i + 1}. ${e}`).join("\n")
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1)
-}
 
 function isConsecutiveDay(last: string | null, today: string): boolean {
   if (!last) return false
