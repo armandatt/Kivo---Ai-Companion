@@ -31,6 +31,10 @@ import { handleOffTopicMessage } from "@repo/api/services/offTopicClassifier.ser
 //@ts-ignore
 import { scheduleCheckIn, cancelCheckIn } from "@repo/api/services/scheduleCheckin.service";
 //@ts-ignore
+import { listReminders, cancelReminderByIndex, parseAndCreateReminder } from "@repo/api/services/customReminder.service";
+//@ts-ignore
+import { parseAndSaveNutrition } from "@repo/api/services/rexSessionContext.service";
+//@ts-ignore
 import { detectTimeMention } from "@repo/api/services/checkin-offer.service";
 //@ts-ignore
 import { shouldOfferCheckIn } from "@repo/api/services/checkin-offer.service";
@@ -93,13 +97,45 @@ export async function POST(req: Request) {
       // ── Workout commands (/log /pr /progress /history /overload /streak /split)
       const workoutCmd = await handleWorkoutCommand(chatId.toString(), text);
       if (workoutCmd.handled) {
+        await addToShortTerm(chatId.toString(), text, { role: "user", intent: workoutCmd.intent ?? "workout_cmd", emotion: "neutral" });
         await sendAndRemember(chatId, workoutCmd.reply, workoutCmd.intent ?? "workout_cmd", "neutral");
         return Response.json({ ok: true });
+      }
+
+      // ── /reminders — list active custom reminders ─────────────────────────
+      if (/^\/reminders\b/i.test(text.trim())) {
+        await addToShortTerm(chatId.toString(), text, { role: "user", intent: "reminders_list", emotion: "neutral" });
+        const reply = await listReminders(chatId.toString());
+        await sendAndRemember(chatId, reply, "reminders_list", "neutral");
+        return Response.json({ ok: true });
+      }
+
+      // ── /cancel N — remove a custom reminder by index ─────────────────────
+      const cancelMatch = text.trim().match(/^\/cancel\s+(\d+)$/i);
+      if (cancelMatch) {
+        const index = parseInt(cancelMatch[1]!, 10);
+        await addToShortTerm(chatId.toString(), text, { role: "user", intent: "reminder_cancel", emotion: "neutral" });
+        const reply = await cancelReminderByIndex(chatId.toString(), index);
+        await sendAndRemember(chatId, reply, "reminder_cancel", "neutral");
+        return Response.json({ ok: true });
+      }
+
+      // ── Natural-language reminder creation ────────────────────────────────
+      // "remind me at 8am to...", "update me at breakfast with...", "check in with me at 10pm..."
+      if (/\b(remind|reminder|update me at|check in with me at|ping me at)\b/i.test(text)) {
+        const result = await parseAndCreateReminder(chatId.toString(), text);
+        if (result?.created) {
+          await addToShortTerm(chatId.toString(), text, { role: "user", intent: "reminder_create", emotion: "neutral" });
+          await sendAndRemember(chatId, result.reply, "reminder_create", "neutral");
+          return Response.json({ ok: true });
+        }
+        // If parsing failed, fall through to normal processing
       }
 
       // ── Active workout logging (mid-session set entry) ────────────────────
       const loggingResult = await handleActiveLoggingMessage(chatId.toString(), text);
       if (loggingResult.handled) {
+        await addToShortTerm(chatId.toString(), text, { role: "user", intent: "workout_logging", emotion: "neutral" });
         await sendAndRemember(chatId, loggingResult.reply, "workout_logging", "neutral");
         return Response.json({ ok: true });
       }
@@ -237,6 +273,11 @@ export async function POST(req: Request) {
         await addToShortTerm(chatId.toString(), text, { role: "user", intent: "off_topic", emotion: "neutral" });
         await sendAndRemember(chatId, offTopicResult.reply, offTopicResult.intent, "neutral");
         return Response.json({ ok: true });
+      }
+
+      // ── Nutrition logging (fire-and-forget) ───────────────────────────────
+      if (/\b(ate|eating|had|protein|calories|meal|breakfast|lunch|dinner|snack|macros|pre.?workout|post.?workout|grams? of|chicken|rice|oats)\b/i.test(text)) {
+        parseAndSaveNutrition(chatId.toString(), text).catch(() => {});
       }
 
       // ══════════════════════════════════════════════════════════════════════

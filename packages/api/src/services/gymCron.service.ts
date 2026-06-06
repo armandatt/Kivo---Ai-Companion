@@ -5,286 +5,380 @@ import {
 } from "./gymDetections.service";
 import { generateWeeklyReview } from "./review.service";
 import { buildGymTimeContext } from "./gymTimeContext.service";
+import { getSplitDayInfo } from "./gymTimeContext.service";
+import { setPendingLog, getNextSplitDayInfo, incrementReactivationCount } from "./workoutTracking.service";
+import {
+  checkGlobalFireRules,
+  mergeSchedulerMessages,
+  type GlobalFireRulesInput,
+  type SchedulerJobContext,
+  type WeeklySummaryStats,
+} from "./schedulerEngine.service";
+import { rexMessageProvider } from "./rexSchedulerMessages.service";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export type GymCronMessage = {
   userId: string;
   chatId: string;
-  text: string;
+  text:   string;
   intent: string;
 };
 
+// Centralised select — every Rex cron job uses this so global fire rules always
+// have the data they need without extra queries.
+const REX_SELECT = {
+  id:                   true,
+  platformChatId:       true,
+  preferredCheckInTime: true,
+  timezone:             true,
+  intakeAnswers:        true,
+  intakeComplete:       true,
+  splitState:           true,
+  gymStreak:            true,
+  displayName:          true,
+} as const;
+
+type RexUserRow = {
+  id:                   string;
+  platformChatId:       string;
+  preferredCheckInTime: string | null;
+  timezone:             string | null;
+  intakeAnswers:        unknown;
+  intakeComplete:       boolean;
+  splitState:           unknown;
+  gymStreak:            number;
+  displayName:          string | null;
+};
+
+// ─── Main entry ───────────────────────────────────────────────────────────────
+
 export async function runGymCronJobs(now = new Date()) {
-  const [preSession, postSession, reengagement, sundayReports,
-         rexPre, rexEvening, rexRestDay, rexSilence] = await Promise.all([
+  const [
+    preSessionForm, postSessionDebrief, reengagement, sundayReports,
+    rexDailyCheckIn,
+    rexPre, rexAutoPrompt, rexChase1, rexChase2,
+    rexRestDay, rexBackdate,
+    rexSilence, rexWeeklySummary, rexCommitments,
+  ] = await Promise.all([
     runPreSessionFormCueCron(now),
     runPostSessionDebriefCron(now),
     runReengagementCron(now),
     runSundayPlateauAndDeloadCron(now),
+    runRexDailyCheckInCron(now),
     runRexPreSessionCron(now),
-    runRexEveningAccountabilityCron(now),
+    runRexAutoPromptCron(now),
+    runRexMissedSessionChase1Cron(now),
+    runRexMissedSessionChase2Cron(now),
     runRexRestDayCron(now),
+    runRexBackdatePromptCron(now),
     runRexSilenceCheckCron(now),
+    runRexWeeklySummaryCron(now),
+    runRexCommitmentFollowUpCron(now),
   ]);
 
-  return [
-    ...preSession, ...postSession, ...reengagement, ...sundayReports,
-    ...rexPre, ...rexEvening, ...rexRestDay, ...rexSilence,
+  const all = [
+    ...preSessionForm, ...postSessionDebrief, ...reengagement, ...sundayReports,
+    ...rexDailyCheckIn,
+    ...rexPre, ...rexAutoPrompt, ...rexChase1, ...rexChase2,
+    ...rexRestDay, ...rexBackdate,
+    ...rexSilence, ...rexWeeklySummary, ...rexCommitments,
   ];
+
+  // Merge engine: multiple messages to the same user in this cron tick become one
+  return mergeSchedulerMessages(all);
 }
 
-// ─── Rex Telegram Cron Jobs ───────────────────────────────────────────────────
-// These operate on MessengerUser (Telegram-native Rex users).
-// chatId = platformChatId for all outbound messages.
+// ═══════════════════════════════════════════════════════════════════════════════
+// CATEGORY 1 — CHECK-IN SCHEDULERS
+// ═══════════════════════════════════════════════════════════════════════════════
 
-// JOB 1 — Pre-session fire-up (30 min before gym_time on training days)
-async function runRexPreSessionCron(now: Date): Promise<GymCronMessage[]> {
-  const users = await getRexUsersDueAtLocalTime(now, -30);
+// 1.0 — Daily Check-In (LLM-generated, 9am local, every day)
+async function runRexDailyCheckInCron(now: Date): Promise<GymCronMessage[]> {
+  const users    = await getRexUsersAtLocalHour(now, 9);
   const messages: GymCronMessage[] = [];
 
   for (const user of users) {
+    if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
+    if (await wasRexCronSentToday(user.platformChatId, "rex_daily_checkin", now)) continue;
+    // On training days the pre-session fires 30min before gym — skip daily check-in
+    // to avoid two near-simultaneous messages (they'll merge if gym_time ≈ 09:30).
+    const ctx = await buildGymTimeContext(user.platformChatId, now);
+    if (!ctx) continue;
+
+    const jCtx = buildJobContext(user, ctx);
+    const text  = await rexMessageProvider.dailyCheckIn(jCtx, now);
+    messages.push(msg(user, text, "rex_daily_checkin"));
+  }
+
+  return messages;
+}
+
+// 1.1 — Pre-Session Fire-Up (30 min before gym_time on training days)
+async function runRexPreSessionCron(now: Date): Promise<GymCronMessage[]> {
+  const users    = await getRexUsersDueAtLocalTime(now, -30);
+  const messages: GymCronMessage[] = [];
+
+  for (const user of users) {
+    if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
     const ctx = await buildGymTimeContext(user.platformChatId, now);
     if (!ctx?.isTrainingDay) continue;
     if (await wasRexCronSentToday(user.platformChatId, "rex_pre_session", now)) continue;
-    if (await hadRexSessionToday(user.platformChatId, now)) continue;
+    if (await hadRexCompletedSessionToday(user.platformChatId, now)) continue;
 
-    const text = buildPreSessionMessage(ctx, user);
-    messages.push({ userId: user.platformChatId, chatId: user.platformChatId, text, intent: "rex_pre_session" });
+    // Detect stall and deload so the message provider can inject them
+    const stallInfo    = await detectRexStalledLift(user.id, ctx.todayMuscles);
+    const isDeloadWeek = isDeloadCycle(user.splitState);
+
+    const jCtx = buildJobContext(user, ctx, { stallInfo, isDeloadWeek });
+    const text  = rexMessageProvider.preSessionFireUp(jCtx);
+    messages.push(msg(user, text, "rex_pre_session"));
   }
 
   return messages;
 }
 
-// JOB 2 — Evening accountability (9pm on training days if no log)
-async function runRexEveningAccountabilityCron(now: Date): Promise<GymCronMessage[]> {
-  const users = await getRexUsersAtLocalHour(now, 21);
+// 1.2 — Post Session Log Prompt (gym_time + avg session duration)
+async function runRexAutoPromptCron(now: Date): Promise<GymCronMessage[]> {
+  const users = await prisma.messengerUser.findMany({
+    where:  { persona: "rex", intakeComplete: true, preferredCheckInTime: { not: null }, timezone: { not: null } },
+    select: REX_SELECT,
+  });
   const messages: GymCronMessage[] = [];
 
   for (const user of users) {
+    if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
+
+    const avgMin = getAvgDurationFromState(user.splitState) ?? 60;
+    const local  = getLocalTime(now, user.timezone!);
+    const target = addMinutes(user.preferredCheckInTime!, avgMin);
+    if (local !== target) continue;
+
     const ctx = await buildGymTimeContext(user.platformChatId, now);
     if (!ctx?.isTrainingDay) continue;
-    if (await wasRexCronSentToday(user.platformChatId, "rex_evening_check", now)) continue;
-    if (await hadRexSessionToday(user.platformChatId, now)) continue;
+    if (await wasRexCronSentToday(user.platformChatId, "rex_auto_prompt", now)) continue;
+    if (await hadRexCompletedSessionToday(user.platformChatId, now)) continue;
 
-    messages.push({
-      userId: user.platformChatId,
-      chatId: user.platformChatId,
-      text: "No log yet today. Did you train or did something come up?",
-      intent: "rex_evening_check",
+    const dayInfo = await getNextSplitDayInfo(user.platformChatId);
+    if (!dayInfo) continue;
+
+    await setPendingLog(user.platformChatId, {
+      muscles:       dayInfo.muscles,
+      splitDayIndex: dayInfo.splitDayIndex,
+      promptedAt:    now.toISOString(),
+      chaseCount:    0,
     });
+
+    messages.push(msg(user, rexMessageProvider.postSessionLogPrompt(dayInfo.muscles), "rex_auto_prompt"));
   }
 
   return messages;
 }
 
-// JOB 3 — Rest day morning (10am on rest days)
-async function runRexRestDayCron(now: Date): Promise<GymCronMessage[]> {
-  const users = await getRexUsersAtLocalHour(now, 10);
+// 1.3 — Missed Session Chase 1 (gym_time + 3 hrs)
+async function runRexMissedSessionChase1Cron(now: Date): Promise<GymCronMessage[]> {
+  const users    = await getRexUsersDueAtLocalTime(now, 180);
   const messages: GymCronMessage[] = [];
 
   for (const user of users) {
+    if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
+    const ctx = await buildGymTimeContext(user.platformChatId, now);
+    if (!ctx?.isTrainingDay) continue;
+    if (await wasRexCronSentToday(user.platformChatId, "rex_chase_1", now)) continue;
+    if (await hadRexCompletedSessionToday(user.platformChatId, now)) continue;
+
+    messages.push(msg(user, rexMessageProvider.missedSessionChase(1), "rex_chase_1"));
+  }
+
+  return messages;
+}
+
+// 1.3 — Missed Session Chase 2 (gym_time + 5 hrs)
+async function runRexMissedSessionChase2Cron(now: Date): Promise<GymCronMessage[]> {
+  const users    = await getRexUsersDueAtLocalTime(now, 300);
+  const messages: GymCronMessage[] = [];
+
+  for (const user of users) {
+    if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
+    const ctx = await buildGymTimeContext(user.platformChatId, now);
+    if (!ctx?.isTrainingDay) continue;
+    if (await wasRexCronSentToday(user.platformChatId, "rex_chase_2", now)) continue;
+    if (await hadRexCompletedSessionToday(user.platformChatId, now)) continue;
+
+    messages.push(msg(user, rexMessageProvider.missedSessionChase(2), "rex_chase_2"));
+  }
+
+  return messages;
+}
+
+// 1.4 — Rest Day Morning (9am on rest days)
+async function runRexRestDayCron(now: Date): Promise<GymCronMessage[]> {
+  const users    = await getRexUsersAtLocalHour(now, 9);
+  const messages: GymCronMessage[] = [];
+
+  for (const user of users) {
+    if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
     const ctx = await buildGymTimeContext(user.platformChatId, now);
     if (!ctx || ctx.isTrainingDay) continue;
     if (await wasRexCronSentToday(user.platformChatId, "rex_rest_day", now)) continue;
 
-    const text = pickRestDayMessage(ctx);
-    messages.push({ userId: user.platformChatId, chatId: user.platformChatId, text, intent: "rex_rest_day" });
+    const jCtx = buildJobContext(user, ctx);
+    messages.push(msg(user, rexMessageProvider.restDayMorning(jCtx), "rex_rest_day"));
   }
 
   return messages;
 }
 
-// JOB 4 — 5-day silence check
+// 1.5 — Backdate Prompt (9am, if yesterday was a training day but nothing was logged)
+async function runRexBackdatePromptCron(now: Date): Promise<GymCronMessage[]> {
+  const users    = await getRexUsersAtLocalHour(now, 9);
+  const messages: GymCronMessage[] = [];
+
+  for (const user of users) {
+    if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
+    if (await wasRexCronSentToday(user.platformChatId, "rex_backdate", now)) continue;
+
+    // Was yesterday a training day (in user's timezone)?
+    const tz             = user.timezone ?? "Asia/Kolkata";
+    const yesterdayWkDay = getLocalWeekdayNum(new Date(now.getTime() - 86_400_000), tz);
+    const intake         = parseAnswers(user.intakeAnswers);
+    const split          = intake.current_split ?? "unstructured";
+    const daysPerWeek    = parseInt(intake.available_training_days ?? "3") || 3;
+    const { isTrainingDay } = getSplitDayInfo(split, daysPerWeek, yesterdayWkDay);
+    if (!isTrainingDay) continue;
+
+    // Did they log a session yesterday?
+    const yesterdayStart = new Date(now);
+    yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+    yesterdayStart.setHours(0, 0, 0, 0);
+    const yesterdayEnd = new Date(yesterdayStart);
+    yesterdayEnd.setDate(yesterdayEnd.getDate() + 1);
+
+    const logged = await hadRexSessionOnDateRange(user.id, yesterdayStart, yesterdayEnd);
+    if (logged) continue;
+
+    messages.push(msg(user, rexMessageProvider.backdatePrompt(), "rex_backdate"));
+  }
+
+  return messages;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CATEGORY 3 — PRESET / EVENT SCHEDULERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// 3.4 — Silence Reactivation (5-day silence, max 2 total messages per inactivity period)
 async function runRexSilenceCheckCron(now: Date): Promise<GymCronMessage[]> {
-  const users = await getRexUsersAtLocalHour(now, 10);
+  const users    = await getRexUsersAtLocalHour(now, 10);
   const messages: GymCronMessage[] = [];
 
   for (const user of users) {
     if (await wasRexCronSentToday(user.platformChatId, "rex_silence_check", now)) continue;
     if (!(await hasBeenSilentForDays(user.platformChatId, now, 5))) continue;
 
-    const ctx = await buildGymTimeContext(user.platformChatId, now);
-    const muscles = ctx?.todayMuscles ?? "your next session";
-    const days = ctx?.lastSessionDaysAgo ?? 5;
+    const reactivationCount = getReactivationCountFromState(user.splitState);
+    if (reactivationCount >= 2) continue;
 
-    messages.push({
-      userId: user.platformChatId,
-      chatId: user.platformChatId,
-      text: `Still alive? Your ${muscles} session is ${days} days overdue. What happened?`,
-      intent: "rex_silence_check",
-    });
+    if (!await checkGlobalFireRules({ ...fireRulesInput(user, now), intakeComplete: true })) continue;
+
+    const hasSessions = await hasAnyCompletedSession(user.platformChatId);
+    const ctx         = await buildGymTimeContext(user.platformChatId, now);
+    const jCtx        = buildJobContext(user, ctx ?? null);
+
+    messages.push(msg(user, rexMessageProvider.silenceReactivation(hasSessions, jCtx), "rex_silence_check"));
+    await incrementReactivationCount(user.platformChatId);
   }
 
   return messages;
 }
 
-// ─── Rex Message Builders ─────────────────────────────────────────────────────
+// 3.6 — Weekly Summary (Sunday 8pm local, Rex users)
+async function runRexWeeklySummaryCron(now: Date): Promise<GymCronMessage[]> {
+  const users    = await getRexUsersAtLocalHour(now, 20);
+  const messages: GymCronMessage[] = [];
 
-function buildPreSessionMessage(
-  ctx: Awaited<ReturnType<typeof buildGymTimeContext>> & object,
-  user: { intakeAnswers: unknown }
-): string {
-  const intake = parseRexIntake(user.intakeAnswers);
-  const primaryLift = primaryLiftForMuscles(ctx.todayMuscles);
-  const baselineKg  = parseFloat(intake[`${primaryLift}_kg`] ?? "0") || 0;
-  const targetKg    = baselineKg > 0 ? baselineKg + 2.5 : null;
-  const time        = ctx.localTimeStr.split(",")[0] ?? ctx.gymTimeStr;
+  for (const user of users) {
+    if (!isLocalSunday(now, user.timezone ?? "Asia/Kolkata")) continue;
+    if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
+    if (await wasRexCronSentToday(user.platformChatId, "rex_weekly_summary", now)) continue;
 
-  const liftLine = ctx.lastLiftSummary
-    ? `Last session: ${ctx.lastLiftSummary}.`
-    : baselineKg > 0
-      ? `Last logged ${primaryLift}: ${baselineKg}kg.`
-      : null;
+    const stats = await getRexWeeklyStats(user.id, now);
+    if (!stats) continue;
 
-  const targetLine = targetKg ? `Today: ${targetKg}kg.` : null;
-  const mindset    = pickPreSessionMindset(ctx.todayMuscles);
+    const ctx  = await buildGymTimeContext(user.platformChatId, now);
+    const jCtx = buildJobContext(user, ctx ?? null);
+    const text = await rexMessageProvider.weeklySummary(stats, jCtx);
+    messages.push(msg(user, text, "rex_weekly_summary"));
+  }
 
-  return [
-    `Yo. ${time}. ${ctx.todayMuscles} day doesn't cancel itself.`,
-    liftLine,
-    targetLine,
-    `${mindset} 🔥`,
-  ].filter(Boolean).join(" ");
+  return messages;
 }
 
-const REST_DAY_MESSAGES = [
-  (_muscles: string, _days: number) => `Rest day. Eat your protein. Don't skip it because you're not training.`,
-  (muscles: string, _days: number) => `Recovery day. ${muscles} tomorrow. Sleep 8hrs.`,
-  (muscles: string, days: number)  =>
-    days > 1
-      ? `You've trained ${days} days this week. Good. Rest today, ${muscles} next.`
-      : `Rest day. ${muscles} next session. Protein and sleep.`,
-];
+// 3.7 — Commitment Follow-Ups (10am, 3 days before deadline / day-of expiry)
+async function runRexCommitmentFollowUpCron(now: Date): Promise<GymCronMessage[]> {
+  const users    = await getRexUsersAtLocalHour(now, 10);
+  const messages: GymCronMessage[] = [];
+  if (!users.length) return messages;
 
-function pickRestDayMessage(ctx: NonNullable<Awaited<ReturnType<typeof buildGymTimeContext>>>): string {
-  const idx = Math.floor(Math.random() * REST_DAY_MESSAGES.length);
-  return REST_DAY_MESSAGES[idx]!(ctx.todayMuscles, ctx.daysPerWeek);
-}
+  const userIds     = users.map(u => u.id);
+  const threeDaysOut = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+  const oneDayAgo   = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-function primaryLiftForMuscles(muscles: string): string {
-  const m = muscles.toLowerCase();
-  if (m.includes("chest") || m.includes("push"))  return "bench";
-  if (m.includes("leg") || m.includes("lower"))   return "squat";
-  if (m.includes("back") || m.includes("pull"))   return "deadlift";
-  return "squat";
-}
-
-const PRE_SESSION_MINDSET: Record<string, string[]> = {
-  chest:    ["CNS is fresh. Use it.", "This is the session that separates weeks.", "No grinding through — attack it."],
-  legs:     ["Leg days build everything else. Don't cut depth.", "The people who skip leg day are easy to spot.", "Full range. No partials."],
-  back:     ["Pull heavy. Control the negative.", "Back work is the thing most people do wrong. You won't."],
-  default:  ["Show up and do the work.", "This one matters.", "No warm-up sets on effort."],
-};
-
-function pickPreSessionMindset(muscles: string): string {
-  const m = muscles.toLowerCase();
-  const key = m.includes("chest") || m.includes("push") ? "chest"
-    : m.includes("leg") || m.includes("lower") ? "legs"
-    : m.includes("back") || m.includes("pull") ? "back"
-    : "default";
-  const lines = PRE_SESSION_MINDSET[key] ?? PRE_SESSION_MINDSET.default!;
-  return lines[Math.floor(Math.random() * lines.length)]!;
-}
-
-// ─── Rex DB Helpers ───────────────────────────────────────────────────────────
-
-async function getRexUsersDueAtLocalTime(now: Date, gymOffsetMin: number) {
-  const users = await prisma.messengerUser.findMany({
-    where: {
-      persona:              "rex",
-      intakeComplete:       true,
-      preferredCheckInTime: { not: null },
-      timezone:             { not: null },
-    },
-    select: {
-      platformChatId:       true,
-      preferredCheckInTime: true,
-      timezone:             true,
-      intakeAnswers:        true,
-    },
+  // Deadlines due in the next 3 days (upcoming)
+  const upcoming = await prisma.deadline.findMany({
+    where: { userId: { in: userIds }, status: "active", dueAt: { gte: now, lte: threeDaysOut } },
+    select: { id: true, userId: true, title: true, dueAt: true },
   });
 
-  return users.filter(u => {
-    const local = getLocalTime(now, u.timezone!);
-    const target = addMinutes(u.preferredCheckInTime!, gymOffsetMin);
-    return local === target;
-  });
-}
-
-async function getRexUsersAtLocalHour(now: Date, hour: number) {
-  const users = await prisma.messengerUser.findMany({
-    where: {
-      persona:        "rex",
-      intakeComplete: true,
-      timezone:       { not: null },
-    },
-    select: {
-      platformChatId:       true,
-      timezone:             true,
-      preferredCheckInTime: true,
-      intakeAnswers:        true,
-    },
+  // Deadlines that just expired (active, dueAt in last 24 hrs)
+  const expired = await prisma.deadline.findMany({
+    where: { userId: { in: userIds }, status: "active", dueAt: { lt: now, gte: oneDayAgo } },
+    select: { id: true, userId: true, title: true },
   });
 
-  const targetHHMM = `${String(hour).padStart(2, "0")}:00`;
-  return users.filter(u => getLocalTime(now, u.timezone!) === targetHHMM);
+  const userById = new Map(users.map(u => [u.id, u]));
+
+  for (const dl of upcoming) {
+    const user = userById.get(dl.userId);
+    if (!user) continue;
+    if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
+    if (await wasRexCronSentToday(user.platformChatId, "rex_commitment_followup", now)) continue;
+
+    const daysLeft = Math.ceil((dl.dueAt.getTime() - now.getTime()) / 86_400_000);
+    messages.push(msg(user, rexMessageProvider.commitmentFollowUp(dl.title, daysLeft), "rex_commitment_followup"));
+  }
+
+  for (const dl of expired) {
+    const user = userById.get(dl.userId);
+    if (!user) continue;
+    await prisma.deadline.update({ where: { id: dl.id }, data: { status: "missed" } });
+    messages.push(msg(user, rexMessageProvider.commitmentMissed(dl.title), "rex_commitment_missed"));
+  }
+
+  return messages;
 }
 
-async function wasRexCronSentToday(platformChatId: string, intent: string, now: Date): Promise<boolean> {
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXPORTED — event-driven helpers called from other services
+// ═══════════════════════════════════════════════════════════════════════════════
 
+function getReactivationCountFromState(splitState: unknown): number {
+  if (!splitState || typeof splitState !== "object" || Array.isArray(splitState)) return 0;
+  const s = splitState as Record<string, unknown>;
+  return typeof s.reactivationCount === "number" ? s.reactivationCount : 0;
+}
+
+async function hasAnyCompletedSession(platformChatId: string): Promise<boolean> {
   const user = await prisma.messengerUser.findUnique({
-    where: { platform_platformChatId: { platform: "telegram", platformChatId } },
-    select: {
-      messages: {
-        where: { role: "assistant", intent, createdAt: { gte: start } },
-        select: { id: true },
-        take: 1,
-      },
-    },
+    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    select: { workoutSessions: { where: { completed: true }, select: { id: true }, take: 1 } },
   });
-  return Boolean(user?.messages.length);
+  return Boolean(user?.workoutSessions.length);
 }
 
-async function hadRexSessionToday(platformChatId: string, now: Date): Promise<boolean> {
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-
-  const gymIntents = ["gym_checkin", "lift_log", "pr_log", "soreness_log", "missed_session"];
-  const user = await prisma.messengerUser.findUnique({
-    where: { platform_platformChatId: { platform: "telegram", platformChatId } },
-    select: {
-      messages: {
-        where: { role: "user", intent: { in: gymIntents }, createdAt: { gte: start } },
-        select: { id: true },
-        take: 1,
-      },
-    },
-  });
-  return Boolean(user?.messages.length);
-}
-
-async function hasBeenSilentForDays(platformChatId: string, now: Date, days: number): Promise<boolean> {
-  const since = new Date(now);
-  since.setDate(since.getDate() - days);
-
-  const user = await prisma.messengerUser.findUnique({
-    where: { platform_platformChatId: { platform: "telegram", platformChatId } },
-    select: {
-      messages: {
-        where: { role: "user", createdAt: { gte: since } },
-        select: { id: true },
-        take: 1,
-      },
-    },
-  });
-  return !user?.messages.length;
-}
-
-function parseRexIntake(raw: unknown): Record<string, string> {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  return raw as Record<string, string>;
-}
+// ═══════════════════════════════════════════════════════════════════════════════
+// OLD UserProfile-based CRON JOBS (web users — kept for backward compatibility)
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export async function runPreSessionFormCueCron(now = new Date()): Promise<GymCronMessage[]> {
   const users = await getGymUsersDueAt(now, -30);
@@ -335,7 +429,7 @@ export async function handlePostSessionDebriefResponse(userId: string, text: str
   if (!workout) return null;
 
   const intensityScore = extractIntensityScore(text);
-  const lifts = extractLiftEntries(text);
+  const lifts          = extractLiftEntries(text);
 
   await (prisma as any).workoutLog.update({
     where: { id: workout.id },
@@ -350,13 +444,12 @@ export async function handlePostSessionDebriefResponse(userId: string, text: str
       data: {
         userId,
         workoutLogId: workout.id,
-        exercise: lift.exercise,
-        weightKg: lift.weightKg,
-        reps: lift.reps,
-        sets: lift.sets,
+        exercise:     lift.exercise,
+        weightKg:     lift.weightKg,
+        reps:         lift.reps,
+        sets:         lift.sets,
       },
     });
-
     await runProgressiveOverloadCheck(userId, createdLift);
   }
 
@@ -364,39 +457,25 @@ export async function handlePostSessionDebriefResponse(userId: string, text: str
 
   return [
     intensityScore ? `Intensity logged: ${intensityScore}/5.` : null,
-    lifts.length ? `Logged ${lifts.length} lift${lifts.length === 1 ? "" : "s"}.` : null,
+    lifts.length   ? `Logged ${lifts.length} lift${lifts.length === 1 ? "" : "s"}.` : null,
   ].filter(Boolean).join(" ");
 }
 
 export async function runReengagementCron(now = new Date()): Promise<GymCronMessage[]> {
   const profiles = await (prisma as any).userProfile.findMany({
-    where: { gymMode: true },
-    select: {
-      userId: true,
-      primaryPersona: true,
-      onboardingAnswers: true,
-    },
+    where:  { gymMode: true },
+    select: { userId: true, primaryPersona: true, onboardingAnswers: true },
   });
   const messages: GymCronMessage[] = [];
 
   for (const profile of profiles) {
     const memory = getGymCronMemory(profile.onboardingAnswers);
-    if (memory.reengagementSent) continue;
+    if (memory.reengagementSent)                               continue;
     if (!(await wasStreakPreviouslyActive(profile.userId, now))) continue;
-    if (!(await hasBeenQuietFor72Hours(profile.userId, now))) continue;
+    if (!(await hasBeenQuietFor72Hours(profile.userId, now)))   continue;
 
-    await updateGymCronMemory(profile.userId, {
-      ...memory,
-      reengagementSent: true,
-    });
-
-    messages.push(
-      toCronMessage(
-        profile.userId,
-        reengagementMessage(profile.primaryPersona),
-        "gym_reengagement"
-      )
-    );
+    await updateGymCronMemory(profile.userId, { ...memory, reengagementSent: true });
+    messages.push(toCronMessage(profile.userId, reengagementMessage(profile.primaryPersona), "gym_reengagement"));
   }
 
   return messages;
@@ -404,27 +483,19 @@ export async function runReengagementCron(now = new Date()): Promise<GymCronMess
 
 export async function resetReengagementFlag(userId: string) {
   const profile = await (prisma as any).userProfile.findUnique({
-    where: { userId },
+    where:  { userId },
     select: { onboardingAnswers: true },
   });
-
   if (!profile) return;
   const memory = getGymCronMemory(profile.onboardingAnswers);
   if (!memory.reengagementSent) return;
-
-  await updateGymCronMemory(userId, {
-    ...memory,
-    reengagementSent: false,
-  });
+  await updateGymCronMemory(userId, { ...memory, reengagementSent: false });
 }
 
 export async function runSundayPlateauAndDeloadCron(now = new Date()): Promise<GymCronMessage[]> {
   const profiles = await (prisma as any).userProfile.findMany({
-    where: { gymMode: true },
-    select: {
-      userId: true,
-      timezone: true,
-    },
+    where:  { gymMode: true },
+    select: { userId: true, timezone: true },
   });
   const messages: GymCronMessage[] = [];
 
@@ -443,122 +514,361 @@ export async function runSundayPlateauAndDeloadCron(now = new Date()): Promise<G
   return messages;
 }
 
-async function getGymUsersDueAt(now: Date, offsetMinutes: number) {
-  const profiles = await (prisma as any).userProfile.findMany({
-    where: {
-      gymMode: true,
-      sessionTime: { not: null },
-    },
+// ═══════════════════════════════════════════════════════════════════════════════
+// REX DB HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function getRexUsersDueAtLocalTime(now: Date, gymOffsetMin: number): Promise<RexUserRow[]> {
+  const users = await prisma.messengerUser.findMany({
+    where:  { persona: "rex", intakeComplete: true, preferredCheckInTime: { not: null }, timezone: { not: null } },
+    select: REX_SELECT,
+  });
+  return users.filter(u => {
+    const local  = getLocalTime(now, u.timezone!);
+    const target = addMinutes(u.preferredCheckInTime!, gymOffsetMin);
+    return local === target;
+  });
+}
+
+async function getRexUsersAtLocalHour(now: Date, hour: number): Promise<RexUserRow[]> {
+  const users = await prisma.messengerUser.findMany({
+    where:  { persona: "rex", intakeComplete: true, timezone: { not: null } },
+    select: REX_SELECT,
+  });
+  const target = `${String(hour).padStart(2, "0")}:00`;
+  return users.filter(u => getLocalTime(now, u.timezone!) === target);
+}
+
+async function wasRexCronSentToday(platformChatId: string, intent: string, now: Date): Promise<boolean> {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+
+  const user = await prisma.messengerUser.findUnique({
+    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
     select: {
-      userId: true,
-      currentSplit: true,
-      sessionTime: true,
-      timezone: true,
+      messages: {
+        where:  { role: "assistant", intent, createdAt: { gte: start } },
+        select: { id: true },
+        take:   1,
+      },
+    },
+  });
+  return Boolean(user?.messages.length);
+}
+
+// Checks TelegramWorkoutSession (not messages) — fixes the bug where the old
+// intent-based check missed sessions logged via the new quick-log flow.
+async function hadRexCompletedSessionToday(platformChatId: string, now: Date): Promise<boolean> {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+
+  const user = await prisma.messengerUser.findUnique({
+    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    select: {
+      workoutSessions: {
+        where:  { completed: true, date: { gte: start } },
+        select: { id: true },
+        take:   1,
+      },
+    },
+  });
+  return Boolean(user?.workoutSessions.length);
+}
+
+async function hadRexSessionOnDateRange(messengerUserId: string, start: Date, end: Date): Promise<boolean> {
+  const count = await prisma.telegramWorkoutSession.count({
+    where: { messengerUserId, completed: true, date: { gte: start, lt: end } },
+  });
+  return count > 0;
+}
+
+async function hasBeenSilentForDays(platformChatId: string, now: Date, days: number): Promise<boolean> {
+  const since = new Date(now);
+  since.setDate(since.getDate() - days);
+
+  const user = await prisma.messengerUser.findUnique({
+    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    select: {
+      messages: {
+        where:  { role: "user", createdAt: { gte: since } },
+        select: { id: true },
+        take:   1,
+      },
+    },
+  });
+  return !user?.messages.length;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCHEDULER CONTEXT BUILDERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function fireRulesInput(user: RexUserRow, now: Date): GlobalFireRulesInput {
+  return {
+    platformChatId: user.platformChatId,
+    timezone:       user.timezone ?? "Asia/Kolkata",
+    now,
+    intakeAnswers:  user.intakeAnswers,
+    intakeComplete: user.intakeComplete,
+    splitState:     user.splitState,
+  };
+}
+
+function buildJobContext(
+  user: RexUserRow,
+  gymCtx: Awaited<ReturnType<typeof buildGymTimeContext>>,
+  preSessionExtras?: SchedulerJobContext["preSessionExtras"],
+): SchedulerJobContext {
+  return {
+    platformChatId:  user.platformChatId,
+    gymCtx:          gymCtx ?? null,
+    user: {
+      displayName:   user.displayName,
+      gymStreak:     user.gymStreak,
+      intakeAnswers: user.intakeAnswers,
+      splitState:    user.splitState,
+    },
+    preSessionExtras,
+  };
+}
+
+function msg(user: RexUserRow, text: string, intent: string): GymCronMessage {
+  return { userId: user.platformChatId, chatId: user.platformChatId, text, intent };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STALL / DELOAD DETECTION (injected into pre-session by the message provider)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function detectRexStalledLift(
+  messengerUserId: string,
+  muscles:         string,
+): Promise<{ exercise: string; weightKg: number; sessions: number } | null> {
+  // Only look at sessions that trained today's muscle group
+  const muscleFilter = muscles.toLowerCase().split(/[\s/+,]+/).filter(Boolean);
+
+  const sessions = await prisma.telegramWorkoutSession.findMany({
+    where: {
+      messengerUserId,
+      completed: true,
+      musclesTrained: { hasSome: muscleFilter },
+    },
+    orderBy: { date: "desc" },
+    take:    3,
+    select:  {
+      id:   true,
+      sets: { where: { completed: true }, select: { exerciseName: true, weightKg: true } },
     },
   });
 
-  return profiles.filter((profile: any) => {
-    const localTime = getLocalTime(now, profile.timezone || "Asia/Kolkata");
-    return localTime === addMinutes(profile.sessionTime, offsetMinutes);
+  if (sessions.length < 3) return null;
+
+  // Build: exercise → [maxWeight per session]
+  const maxByEx: Record<string, number[]> = {};
+  for (const session of sessions) {
+    const sessionMax: Record<string, number> = {};
+    for (const s of session.sets) {
+      sessionMax[s.exerciseName] = Math.max(sessionMax[s.exerciseName] ?? 0, s.weightKg);
+    }
+    for (const [ex, w] of Object.entries(sessionMax)) {
+      maxByEx[ex] ??= [];
+      maxByEx[ex]!.push(w);
+    }
+  }
+
+  for (const [exercise, weights] of Object.entries(maxByEx)) {
+    if (weights.length >= 3 && weights.every(w => w === weights[0])) {
+      return { exercise, weightKg: weights[0]!, sessions: weights.length };
+    }
+  }
+
+  return null;
+}
+
+function isDeloadCycle(splitState: unknown): boolean {
+  if (!splitState || typeof splitState !== "object" || Array.isArray(splitState)) return false;
+  const s     = splitState as Record<string, unknown>;
+  const cycle = typeof s.cycleNumber === "number" ? s.cycleNumber : 0;
+  return cycle > 0 && cycle % 4 === 0;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WEEKLY STATS FOR REX WEEKLY SUMMARY
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function getRexWeeklyStats(messengerUserId: string, now: Date): Promise<WeeklySummaryStats | null> {
+  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  const sessions = await prisma.telegramWorkoutSession.findMany({
+    where:   { messengerUserId, completed: true, date: { gte: weekAgo } },
+    orderBy: { date: "desc" },
+    select:  { id: true, musclesTrained: true },
+  });
+
+  if (!sessions.length) return null;
+
+  const sessionIds = sessions.map(s => s.id);
+
+  const allSets = await prisma.telegramSetLog.findMany({
+    where:   { sessionId: { in: sessionIds }, completed: true },
+    select:  { exerciseName: true, weightKg: true, reps: true, sessionId: true },
+  });
+
+  // Best lift: heaviest set with reps ≥ 3
+  const goodSets = allSets.filter(s => s.reps >= 3).sort((a, b) => b.weightKg - a.weightKg);
+  const bestSet  = goodSets[0] ?? null;
+  const bestLift = bestSet
+    ? { exercise: bestSet.exerciseName, weightKg: bestSet.weightKg, reps: bestSet.reps }
+    : null;
+
+  // Detect gap area: muscle group with no sessions this week
+  const musclesCovered = new Set(sessions.flatMap(s => s.musclesTrained));
+  const commonGroups   = ["chest", "back", "legs", "shoulders"];
+  const gapArea        = commonGroups.find(g =>
+    ![...musclesCovered].some(m => m.toLowerCase().includes(g))
+  ) ?? null;
+
+  // Cycle number from splitState
+  const user = await prisma.messengerUser.findUnique({
+    where:  { id: messengerUserId },
+    select: { splitState: true },
+  });
+  const splitState  = user?.splitState as Record<string, unknown> | null;
+  const cycleNumber = typeof splitState?.cycleNumber === "number" ? splitState.cycleNumber : 0;
+
+  return {
+    sessionsCompleted: sessions.length,
+    sessionsPlanned:   4,   // reasonable default without knowing the user's split length
+    bestLift,
+    gapArea,
+    cycleNumber,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TIME / GENERAL UTILITIES (private)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function getLocalTime(now: Date, timezone: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit", minute: "2-digit", hour12: false, timeZone: timezone,
+  }).format(now);
+}
+
+function getLocalWeekdayNum(date: Date, timezone: string): number {
+  const day = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: timezone })
+    .format(date)
+    .toLowerCase();
+  const map: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+  return map[day] ?? 1;
+}
+
+function addMinutes(time: string, minutesToAdd: number): string {
+  const [hours = "0", minutes = "0"] = time.split(":");
+  const total      = (Number(hours) * 60 + Number(minutes) + minutesToAdd) % (24 * 60);
+  const normalized = total < 0 ? total + 24 * 60 : total;
+  return `${String(Math.floor(normalized / 60)).padStart(2, "0")}:${String(normalized % 60).padStart(2, "0")}`;
+}
+
+function isLocalSunday(now: Date, timezone: string): boolean {
+  return getLocalWeekdayNum(now, timezone) === 0;
+}
+
+function isSundayEightPm(now: Date, timezone = "Asia/Kolkata"): boolean {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    weekday: "long", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: timezone,
+  }).formatToParts(now);
+  const weekday = parts.find(p => p.type === "weekday")?.value.toLowerCase();
+  const hour    = parts.find(p => p.type === "hour")?.value;
+  const minute  = parts.find(p => p.type === "minute")?.value;
+  return weekday === "sunday" && hour === "20" && minute === "00";
+}
+
+function getAvgDurationFromState(splitState: unknown): number {
+  if (!splitState || typeof splitState !== "object" || Array.isArray(splitState)) return 60;
+  const s = splitState as Record<string, unknown>;
+  return typeof s.avgSessionDurationMin === "number" ? s.avgSessionDurationMin : 60;
+}
+
+function parseAnswers(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return raw as Record<string, string>;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OLD UserProfile HELPERS (unchanged)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function getGymUsersDueAt(now: Date, offsetMinutes: number) {
+  const profiles = await (prisma as any).userProfile.findMany({
+    where:  { gymMode: true, sessionTime: { not: null } },
+    select: { userId: true, currentSplit: true, sessionTime: true, timezone: true },
+  });
+  return profiles.filter((p: any) => {
+    const localTime = getLocalTime(now, p.timezone || "Asia/Kolkata");
+    return localTime === addMinutes(p.sessionTime, offsetMinutes);
   });
 }
 
 async function hasWorkoutToday(userId: string, now: Date) {
   const { start, end } = dayBounds(now);
   const workout = await (prisma as any).workoutLog.findFirst({
-    where: {
-      userId,
-      date: { gte: start, lt: end },
-    },
+    where:  { userId, date: { gte: start, lt: end } },
     select: { id: true },
   });
-
   return Boolean(workout);
 }
 
 async function getTodayWorkoutNeedingDebrief(userId: string, now: Date) {
   const { start, end } = dayBounds(now);
   return (prisma as any).workoutLog.findFirst({
-    where: {
-      userId,
-      completed: true,
-      intensityScore: null,
-      date: { gte: start, lt: end },
-    },
+    where:   { userId, completed: true, intensityScore: null, date: { gte: start, lt: end } },
     orderBy: { date: "desc" },
-    select: {
-      id: true,
-      musclesWorked: true,
-    },
+    select:  { id: true, musclesWorked: true },
   });
 }
 
 async function wasStreakPreviouslyActive(userId: string, now: Date) {
   const workouts = await (prisma as any).workoutLog.count({
-    where: {
-      userId,
-      completed: true,
-      date: { gte: daysAgoFrom(now, 14) },
-    },
+    where: { userId, completed: true, date: { gte: daysAgoFrom(now, 14) } },
   });
-
   return workouts >= 2;
 }
 
 async function hasBeenQuietFor72Hours(userId: string, now: Date) {
   const since = daysAgoFrom(now, 3);
   const [workout, message] = await Promise.all([
-    (prisma as any).workoutLog.findFirst({
-      where: {
-        userId,
-        date: { gte: since },
-      },
-      select: { id: true },
-    }),
+    (prisma as any).workoutLog.findFirst({ where: { userId, date: { gte: since } }, select: { id: true } }),
     (prisma as any).companionMessage.findFirst({
       where: {
-        user: {
-          platform: "telegram",
-          platformChatId: userId,
-        },
+        user: { platform: "telegram", platformChatId: userId },
         createdAt: { gte: since },
         OR: [
           { intent: { startsWith: "gym" } },
-          { intent: { in: ["lift_log", "pr_log", "soreness_log", "missed_session", "weight_log", "energy_checkin", "nutrition_query", "pain_report"] } },
+          { intent: { in: ["lift_log", "pr_log", "soreness_log", "missed_session", "weight_log", "energy_checkin"] } },
         ],
       },
       select: { id: true },
     }),
   ]);
-
   return !workout && !message;
 }
 
 async function flagPlateausForWeeklyReport(userId: string) {
   const lifts = await (prisma as any).liftLog.findMany({
-    where: { userId },
+    where:   { userId },
     orderBy: { id: "desc" },
-    select: {
-      exercise: true,
-      weightKg: true,
-      reps: true,
-    },
+    select:  { exercise: true, weightKg: true, reps: true },
   });
-
   const grouped = groupByExercise(lifts);
-
   for (const [exercise, entries] of Object.entries(grouped)) {
-    const lastThree = entries.slice(0, 3);
+    const last = (entries as any[]).slice(0, 3);
     if (
-      lastThree.length === 3 &&
-      lastThree.every((entry: any) => entry.weightKg === lastThree[0].weightKg && entry.reps === lastThree[0].reps)
+      last.length === 3 &&
+      last.every((e: any) => e.weightKg === last[0].weightKg && e.reps === last[0].reps)
     ) {
-      await writeMemoryFact(
-        userId,
-        "gym_signal",
-        "plateau_flag",
-        `${formatExercise(exercise)} has stayed at ${lastThree[0].weightKg}kg x ${lastThree[0].reps} for 3 consecutive sessions.`
-      );
+      await writeMemoryFact(userId, "gym_signal", "plateau_flag",
+        `${formatExercise(exercise)} has stayed at ${last[0].weightKg}kg × ${last[0].reps} for 3 consecutive sessions.`);
     }
   }
 }
@@ -566,70 +876,44 @@ async function flagPlateausForWeeklyReport(userId: string) {
 async function wasCronSentToday(userId: string, key: string, now: Date) {
   const { start, end } = dayBounds(now);
   const fact = await (prisma as any).memoryFact.findFirst({
-    where: {
-      key,
-      value: userId,
-      createdAt: { gte: start, lt: end },
-    },
+    where:  { key, value: userId, createdAt: { gte: start, lt: end } },
     select: { id: true },
   });
-
   return Boolean(fact);
 }
 
-async function markCronSent(userId: string, key: string, now: Date) {
+async function markCronSent(userId: string, key: string, _now: Date) {
   await writeMemoryFact(userId, "gym_cron", key, userId);
 }
 
 async function writeMemoryFact(userId: string, type: string, key: string, value: string) {
   const user = await (prisma as any).messengerUser.upsert({
-    where: {
-      platform_platformChatId: {
-        platform: "telegram",
-        platformChatId: userId,
-      },
-    },
+    where:  { platform_platformChatId: { platform: "telegram", platformChatId: userId } },
     update: {},
-    create: {
-      platform: "telegram",
-      platformChatId: userId,
-    },
+    create: { platform: "telegram", platformChatId: userId },
   });
-
-  await (prisma as any).memoryFact.create({
-    data: {
-      userId: user.id,
-      type,
-      key,
-      value,
-    },
-  });
+  await (prisma as any).memoryFact.create({ data: { userId: user.id, type, key, value } });
 }
 
 function toCronMessage(userId: string, text: string, intent: string): GymCronMessage {
-  return {
-    userId,
-    chatId: userId,
-    text,
-    intent,
-  };
+  return { userId, chatId: userId, text, intent };
 }
 
 function getPrimaryCompoundLift(currentSplit: string | null, now: Date) {
   const day = now.getDay();
   if (currentSplit === "upper-lower") return day % 2 === 0 ? "squat" : "bench";
-  if (currentSplit === "full-body") return ["squat", "bench", "deadlift"][day % 3];
-  if (currentSplit === "bro-split") return ["bench", "row", "squat", "press", "curl", "deadlift", "bench"][day];
+  if (currentSplit === "full-body")   return ["squat", "bench", "deadlift"][day % 3];
+  if (currentSplit === "bro-split")   return ["bench", "row", "squat", "press", "curl", "deadlift", "bench"][day];
   return ["bench", "squat", "row", "press", "deadlift", "bench", "squat"][day];
 }
 
 function getFormCue(lift: string) {
-  if (lift === "bench") return "Bench cue: shoulder blades back, feet planted, controlled touch, no ego bounce.";
-  if (lift === "squat") return "Squat cue: brace before descent, knees track toes, depth you can own.";
-  if (lift === "deadlift") return "Deadlift cue: wedge in, lats tight, push the floor away.";
-  if (lift === "press") return "Press cue: ribs down, glutes tight, bar path close.";
-  if (lift === "row") return "Row cue: chest fixed, pull elbows back, no swinging.";
-  return "Compound cue: warm up slowly, keep reps clean, stop before form breaks.";
+  if (lift === "bench")    return "Bench: shoulder blades back, feet planted, controlled touch.";
+  if (lift === "squat")    return "Squat: brace before descent, knees track toes, depth you can own.";
+  if (lift === "deadlift") return "Deadlift: wedge in, lats tight, push the floor away.";
+  if (lift === "press")    return "Press: ribs down, glutes tight, bar path close.";
+  if (lift === "row")      return "Row: chest fixed, pull elbows back, no swinging.";
+  return "Compound: warm up slowly, keep reps clean, stop before form breaks.";
 }
 
 function extractIntensityScore(text: string) {
@@ -645,39 +929,37 @@ function extractLiftEntries(text: string) {
 }
 
 function extractLift(text: string) {
-  const exercise = extractExercise(text);
-  if (!exercise) return null;
-
+  const exercise    = extractExercise(text);
+  if (!exercise)    return null;
   const weightMatch = text.match(/\b(\d{1,3}(?:\.\d+)?)\s*kg\b/);
-  const compact = text.match(/\b(\d{1,2})\s*x\s*(\d{1,2})\b/);
-  const setsReps = text.match(/\b(\d{1,2})\s*sets?\s*(of)?\s*(\d{1,2})\b/);
+  const compact     = text.match(/\b(\d{1,2})\s*x\s*(\d{1,2})\b/);
+  const setsReps    = text.match(/\b(\d{1,2})\s*sets?\s*(of)?\s*(\d{1,2})\b/);
   if (!weightMatch) return null;
-
   return {
     exercise,
     weightKg: Number(weightMatch[1]),
-    sets: compact ? Number(compact[1]) : setsReps ? Number(setsReps[1]) : 1,
-    reps: compact ? Number(compact[2]) : setsReps ? Number(setsReps[3]) : 1,
+    sets:     compact ? Number(compact[1]) : setsReps ? Number(setsReps[1]) : 1,
+    reps:     compact ? Number(compact[2]) : setsReps ? Number(setsReps[3]) : 1,
   };
 }
 
 function extractExercise(text: string) {
-  if (/\bbench\b/.test(text)) return "bench";
-  if (/\bsquats?\b/.test(text)) return "squat";
+  if (/\bbench\b/.test(text))     return "bench";
+  if (/\bsquats?\b/.test(text))   return "squat";
   if (/\bdeadlifts?\b/.test(text)) return "deadlift";
   if (/\bpress(ing)?\b/.test(text)) return "press";
-  if (/\brows?\b/.test(text)) return "row";
-  if (/\bcurls?\b/.test(text)) return "curl";
+  if (/\brows?\b/.test(text))     return "row";
+  if (/\bcurls?\b/.test(text))    return "curl";
   return null;
 }
 
 function musclesForExercise(exercise: string) {
-  if (exercise === "bench") return ["chest"];
-  if (exercise === "squat") return ["legs"];
+  if (exercise === "bench")    return ["chest"];
+  if (exercise === "squat")    return ["legs"];
   if (exercise === "deadlift") return ["back", "legs"];
-  if (exercise === "press") return ["shoulders"];
-  if (exercise === "row") return ["back"];
-  if (exercise === "curl") return ["arms"];
+  if (exercise === "press")    return ["shoulders"];
+  if (exercise === "row")      return ["back"];
+  if (exercise === "curl")     return ["arms"];
   return [];
 }
 
@@ -686,39 +968,27 @@ function mergeUnique(a: string[], b: string[]) {
 }
 
 function groupByExercise(lifts: any[]) {
-  return lifts.reduce<Record<string, any[]>>((groups, lift) => {
-    groups[lift.exercise] ||= [];
-    groups[lift.exercise].push(lift);
-    return groups;
+  return lifts.reduce<Record<string, any[]>>((g, l) => {
+    g[l.exercise] ||= [];
+    g[l.exercise].push(l);
+    return g;
   }, {});
 }
 
 function getGymCronMemory(onboardingAnswers: unknown) {
-  if (!onboardingAnswers || typeof onboardingAnswers !== "object" || Array.isArray(onboardingAnswers)) {
-    return {};
-  }
-
+  if (!onboardingAnswers || typeof onboardingAnswers !== "object" || Array.isArray(onboardingAnswers)) return {};
   return onboardingAnswers as { reengagementSent?: boolean };
 }
 
 async function updateGymCronMemory(userId: string, memory: { reengagementSent?: boolean }) {
   const profile = await (prisma as any).userProfile.findUnique({
-    where: { userId },
-    select: { onboardingAnswers: true },
+    where: { userId }, select: { onboardingAnswers: true },
   });
-  const current =
-    profile?.onboardingAnswers && typeof profile.onboardingAnswers === "object" && !Array.isArray(profile.onboardingAnswers)
-      ? profile.onboardingAnswers
-      : {};
-
+  const current = (profile?.onboardingAnswers && typeof profile.onboardingAnswers === "object" && !Array.isArray(profile.onboardingAnswers))
+    ? profile.onboardingAnswers : {};
   await (prisma as any).userProfile.update({
     where: { userId },
-    data: {
-      onboardingAnswers: {
-        ...current,
-        ...memory,
-      },
-    },
+    data:  { onboardingAnswers: { ...current, ...memory } },
   });
 }
 
@@ -726,42 +996,7 @@ function reengagementMessage(persona?: string | null) {
   if (persona === "nova") {
     return "Your streak was starting to take shape. Come back gently today: even a small session counts.";
   }
-
   return "Your streak was alive. Do not let 72 hours become a new identity. Show me one set today.";
-}
-
-function getLocalTime(now: Date, timezone: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: timezone,
-  }).format(now);
-}
-
-function addMinutes(time: string, minutesToAdd: number) {
-  const [hours = "0", minutes = "0"] = time.split(":");
-  const total = (Number(hours) * 60 + Number(minutes) + minutesToAdd) % (24 * 60);
-  const normalized = total < 0 ? total + 24 * 60 : total;
-  const nextHours = Math.floor(normalized / 60);
-  const nextMinutes = normalized % 60;
-
-  return `${String(nextHours).padStart(2, "0")}:${String(nextMinutes).padStart(2, "0")}`;
-}
-
-function isSundayEightPm(now: Date, timezone = "Asia/Kolkata") {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    weekday: "long",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: timezone,
-  }).formatToParts(now);
-  const weekday = parts.find((part) => part.type === "weekday")?.value.toLowerCase();
-  const hour = parts.find((part) => part.type === "hour")?.value;
-  const minute = parts.find((part) => part.type === "minute")?.value;
-
-  return weekday === "sunday" && hour === "20" && minute === "00";
 }
 
 function dayBounds(now: Date) {
@@ -769,7 +1004,6 @@ function dayBounds(now: Date) {
   start.setHours(0, 0, 0, 0);
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
-
   return { start, end };
 }
 
@@ -780,6 +1014,5 @@ function daysAgoFrom(now: Date, days: number) {
 }
 
 function formatExercise(exercise: string) {
-  if (exercise === "bench") return "Bench";
-  return exercise.charAt(0).toUpperCase() + exercise.slice(1);
+  return exercise.charAt(0).toUpperCase() + exercise.slice(1).replace(/_/g, " ");
 }

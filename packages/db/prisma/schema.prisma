@@ -92,6 +92,8 @@ model MessengerUser {
   deadlines        Deadline[]
   focusSessions    FocusSession[]
   workoutSessions  TelegramWorkoutSession[]
+  customReminders  CustomReminder[]
+  nutritionLogs    NutritionLog[]
 
   @@unique([platform, platformChatId])
   @@index([platformChatId])
@@ -495,6 +497,22 @@ model ScanJob {
 // TELEGRAM WORKOUT TRACKING (Rex gym users)
 //////////////////////////////////////////////////
 
+model CustomReminder {
+  id             String   @id @default(cuid())
+  userId         String
+  messageContext String   @db.Text
+  triggerTime    DateTime
+  repeat         Boolean  @default(false)
+  repeatTime     String?
+  fired          Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([triggerTime, fired])
+}
+
 model TelegramWorkoutSession {
   id              String   @id @default(cuid())
   messengerUserId String
@@ -502,12 +520,29 @@ model TelegramWorkoutSession {
   splitDayIndex   Int
   musclesTrained  String[]
   durationMinutes Int?
+  totalSets       Int?
+  sessionSummary  String?  @db.Text
   completed       Boolean  @default(false)
 
   user MessengerUser    @relation(fields: [messengerUserId], references: [id], onDelete: Cascade)
   sets TelegramSetLog[]
 
   @@index([messengerUserId, date])
+}
+
+model NutritionLog {
+  id              String   @id @default(cuid())
+  userId          String
+  date            DateTime @default(now())
+  mealType        String?
+  description     String   @db.Text
+  proteinEstimate Int?
+  notedBy         String   @default("user")
+  createdAt       DateTime @default(now())
+
+  user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
 }
 
 model TelegramSetLog {

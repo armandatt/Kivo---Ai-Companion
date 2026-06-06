@@ -38,11 +38,11 @@ const REX_FEATURES = [
     subtitle: 'Rex checks in on your terms',
     wide: true,
     items: [
-      { cmd: '"ping me at 6am"',                    desc: 'One-time check-in' },
-      { cmd: '"remind me every day at 9"',           desc: 'Daily repeating' },
-      { cmd: '"check me in 30 minutes"',             desc: 'Quick follow-up' },
-      { cmd: '"ping me at breakfast"',               desc: 'Named time — Rex figures it out' },
-      { cmd: '"stop check-ins"',                     desc: 'Cancel all scheduled pings' },
+      { cmd: '"remind me at 6am to eat protein before gym"', desc: 'Context-aware daily reminder' },
+      { cmd: '"update me at breakfast with today\'s plan"',  desc: 'Named time — Rex figures it out' },
+      { cmd: '"check me in 30 minutes"',                     desc: 'Quick follow-up' },
+      { cmd: '/reminders',                                   desc: 'List all active reminders' },
+      { cmd: '/cancel [number]',                             desc: 'Remove a reminder by its number' },
     ],
   },
   {
@@ -91,11 +91,11 @@ const NOVA_FEATURES = [
     subtitle: 'Nova checks in on your terms',
     wide: true,
     items: [
-      { cmd: '"check in at breakfast time"',        desc: 'Named time — Nova figures it out' },
-      { cmd: '"ping me every 2 hours"',             desc: 'Repeating accountability' },
-      { cmd: '"remind me at 9pm to review"',        desc: 'One-time evening check-in' },
-      { cmd: '"check me in 30 minutes"',            desc: 'Quick follow-up' },
-      { cmd: '"stop check-ins"',                    desc: 'Cancel all scheduled pings' },
+      { cmd: '"remind me at 9pm to review my notes"',        desc: 'Context-aware evening reminder' },
+      { cmd: '"update me at breakfast with today\'s plan"',  desc: 'Named time — Nova figures it out' },
+      { cmd: '"check me in 30 minutes"',                     desc: 'Quick follow-up' },
+      { cmd: '/reminders',                                   desc: 'List all active reminders' },
+      { cmd: '/cancel [number]',                             desc: 'Remove a reminder by its number' },
     ],
   },
   {

@@ -18,6 +18,46 @@ import type { PatternReport } from "./gymPatternDetector.service";
 import type { EngagementContext } from "./engagement.service";
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// REX VOICE RULES — injected per-message for Rex persona only
+// These are enforced on top of the base RULES section.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const REX_VOICE_RULES = `
+VOICE RULES (Rex — enforced on every single message):
+
+1. Max 2 lines unless user explicitly asked for detail, or this is a workout plan/logging confirmation.
+
+2. BANNED PHRASES — never use:
+   "Let's focus on crushing" / "Let's get after it" / "Great job" / "Good job"
+   "Keep it up" / "Keep going" (only OK on streak milestone messages)
+   "You've got this" / "Stay strong" / "Full body training waits for no one"
+   "Check-in," at message start / "I remember where you left" / "Last I heard"
+   "One honest line" / "What is the next honest action"
+   Any phrase ending with the user's name or username with symbols (e.g. "AK$HAR")
+
+3. Reference exact numbers always:
+   RIGHT: "Last time 80kg × 5"
+   WRONG: "your previous session" or "last time you trained"
+
+4. Never quote the user's message back at them verbatim.
+
+5. Never use the user's name more than once in a conversation thread — zero is better.
+
+6. One clear action per message. Never list multiple options unless the user asked "what should I do".
+
+7. Corrections: ONE line acknowledgment then move on. Never explain what Rex assumed before.
+   Example: User: "I only train once a day" → Rex: "One session at 7:30pm. That's what we work with."
+
+8. Never expose scheduler labels or internal states:
+   WRONG: "Six-hour pulse. Still here." / "Second deep checkpoint."
+   WRONG: "Check-in, [name]. Last I heard..."
+   RIGHT: Just the actual message content.
+
+9. Internal metadata NEVER appears in output:
+   WRONG: "weekly | domain:fitness | days:7 | feasibility:100"
+   Rex acts on this silently — never shows it.`.trim();
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // ENGINE CONTEXT — full input for the engine-aware LLM call
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -31,9 +71,11 @@ export interface EngineContext {
   patterns:     PatternAnalysis;
   intervention: InterventionResult | null;
   plan:         PlannerResult | null;
-  gymContext:        GymTimeContext | null;
-  gymPatternReport:  PatternReport | null;
-  engagementContext: EngagementContext | null;
+  gymContext:           GymTimeContext | null;
+  gymPatternReport:     PatternReport | null;
+  engagementContext:    EngagementContext | null;
+  rexSessionContext:    string | null;
+  rexExperienceLevel:  string | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -442,6 +484,9 @@ export async function generateEngineResponse(ctx: EngineContext): Promise<string
   const modeGuidance     = buildModeGuidance(ctx.gymContext, ctx.personaType);
   const patternBlock     = buildGymPatternBlock(ctx.gymPatternReport, ctx.personaType);
   const engagementBlock  = buildEngagementBlock(ctx.engagementContext, ctx.personaType);
+  const sessionBlock     = ctx.rexSessionContext    ? `\n${ctx.rexSessionContext}` : "";
+  const levelBlock       = ctx.rexExperienceLevel   ? `\n${ctx.rexExperienceLevel}` : "";
+  const voiceRulesBlock  = ctx.personaType === "rex" ? `\n${REX_VOICE_RULES}` : "";
 
   // Recent conversation (last 6 turns, chronological)
   const recentLines = ctx.memory.shortTerm.slice(-6).map(m =>
@@ -472,6 +517,9 @@ ${ctx.memory.longTerm.struggles.length > 0 ? `Known struggles: ${ctx.memory.long
 ${timeBlock}
 ${patternBlock}
 ${engagementBlock}
+${sessionBlock}
+${levelBlock}
+${voiceRulesBlock}
 
 RECENT CONVERSATION
 ${recentLines || "none"}
