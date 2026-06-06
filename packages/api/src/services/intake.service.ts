@@ -590,14 +590,49 @@ function buildRexGymClosing(a: IntakeAnswers): string {
   const time     = a.gym_session_time ?? "your usual time"
   const split    = rexSplitLabel(a.current_split ?? "unstructured", parseInt(days))
   const weakLink = diagnoseWeakLink(a)
+  const nextSession = nextTrainingDayLabel(a.current_split ?? "unstructured", parseInt(days))
 
   return [
     `Right. Here's where we are:`,
     `Goal: ${goal}. Training: ${days}x/week, ${time}. Split: ${split}.`,
     `Weakest link right now: ${weakLink}.`,
-    `First check-in is ${time} tomorrow. Don't ghost me.`,
+    `${nextSession} at ${time}. Don't ghost me.`,
   ].join("\n")
 }
+
+function nextTrainingDayLabel(split: string, daysPerWeek: number): string {
+  const todayNum = new Date().getDay() // 0=Sun…6=Sat
+  // Walk forward up to 7 days to find the next training day
+  for (let offset = 1; offset <= 7; offset++) {
+    const dayNum = (todayNum + offset) % 7
+    const { isTrainingDay } = getSplitDayInfoLocal(split, daysPerWeek, dayNum)
+    if (isTrainingDay) {
+      return offset === 1 ? "First session tomorrow" : `First session is ${WEEKDAY_NAMES[dayNum]}`
+    }
+  }
+  return "First session coming up"
+}
+
+function getSplitDayInfoLocal(split: string, daysPerWeek: number, weekdayNum: number): { isTrainingDay: boolean } {
+  if (split === "PPL") {
+    const map: Record<number, boolean> = { 0: false, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true }
+    return { isTrainingDay: map[weekdayNum] ?? false }
+  }
+  if (split === "upper_lower") {
+    return { isTrainingDay: [1, 2, 4, 5].includes(weekdayNum) }
+  }
+  if (split === "full_body") {
+    return { isTrainingDay: [1, 3, 5].includes(weekdayNum) }
+  }
+  if (split === "bro_split") {
+    return { isTrainingDay: [1, 2, 3, 4, 5].includes(weekdayNum) }
+  }
+  // unstructured — estimate from daysPerWeek
+  const trainingDays = daysPerWeek >= 5 ? [1,2,3,4,5] : daysPerWeek >= 4 ? [1,2,4,5] : [1,3,5]
+  return { isTrainingDay: trainingDays.includes(weekdayNum) }
+}
+
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
 function rexGoalLabel(goal: string): string {
   const map: Record<string, string> = {

@@ -1679,9 +1679,8 @@ async function handleSetupPendingMessage(
 async function handleSkipReason(
   user: UserRow, state: SplitState, text: string, now: Date
 ): Promise<{ handled: boolean; reply: string }> {
-  const lower   = text.trim().toLowerCase()
-  const muscles = state.skipState?.muscles ?? "next session"
-  const today   = now.toISOString().slice(0, 10)
+  const lower = text.trim().toLowerCase()
+  const today = now.toISOString().slice(0, 10)
 
   // Calculate next training day label
   const intake  = parseIntake(user.intakeAnswers)
@@ -1864,7 +1863,7 @@ async function prCommand(platformChatId: string): Promise<string> {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([ex, r]) => `${ex}: ${r.weightKg}kg × ${r.reps} (${r.date})`)
 
-  return `Your records:\n${lines.join("\n")} 💪`
+  return `Your records:\n${lines.join("\n")}`
 }
 
 async function progressCommand(platformChatId: string, exercise: string | null): Promise<string> {
