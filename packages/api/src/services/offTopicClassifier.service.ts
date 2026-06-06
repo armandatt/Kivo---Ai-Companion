@@ -25,7 +25,7 @@ interface OffTopicContext {
 
 // Any match here → immediate pass-through to normal mentor flow
 const TRAINING_KEYWORDS =
-  /\b(gym|train|workout|lift|squat|bench|deadlift|press|pull|push|protein|calories|macro|bulk|cut|sleep|recover|log|sets|reps|weight|kg|lbs|progress|pr|streak|split|session|exercise|muscle|cardio|run|diet|eat|food|form|technique|volume|frequency|overload|deload|hypertrophy|strength|cut|bulk|lean|tone)\b/i
+  /\b(gym|train|training|workout|lift|lifting|squat|bench|deadlift|press|pull|push|protein|calories|calorie|macro|macros|bulk|cut|cutting|sleep|recover|recovery|log|sets|reps|weight|kg|lbs|progress|pr|streak|split|session|exercise|muscle|cardio|run|running|diet|eat|eating|food|form|technique|volume|frequency|overload|deload|hypertrophy|strength|lean|tone|toning|rest|rest\s+day|back|chest|legs|arms|shoulders|bicep|biceps|tricep|triceps|glutes|quads|hamstrings|calves|core|abs|push\s+day|pull\s+day|leg\s+day|upper|lower|full\s+body|monday|tuesday|wednesday|thursday|friday|saturday|sunday|creatine|supplement|soreness|sore|injury|injure|pain|schedule|plan|program|phase|cycle|week|today|tomorrow|next)\b/i
 
 const GIBBERISH_PATTERNS = [
   /^[^a-z0-9\s]{3,}$/i,          // only symbols: @#$%
@@ -125,29 +125,28 @@ function pickGibberishResponse(ctx: OffTopicContext): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// REPEAT OFFENDER (tracked via CompanionMessage.intent — zero schema changes)
+// REPEAT OFFENDER — only counts confirmed hard evasion (disrespect/deflection),
+// never LLM-classified messages (those are ambiguous, not confirmed evasion).
+// Only appends a note; never replaces the response.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function getPreviousOffTopicCountToday(userId: string, now: Date): Promise<number> {
+async function getHardEvasionCountToday(userId: string, now: Date): Promise<number> {
   const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   return prisma.companionMessage.count({
     where: {
       userId,
       role:      "assistant",
-      intent:    { startsWith: "off_topic_" },
+      // Only disrespect/deflection hardcoded hits count — LLM fallbacks do not
+      intent:    "off_topic_hardcoded",
       createdAt: { gte: dayStart },
     },
   })
 }
 
-function withRepeatOffenderNote(reply: string, prevCount: number, nextMuscles: string): string {
-  if (prevCount === 1) {
-    // This is the 2nd off-topic response today
-    return `${reply}\n\nYou've dodged training twice today. Everything actually okay?`
-  }
-  if (prevCount >= 2) {
-    // 3rd+ — replace the whole thing
-    return `Third time avoiding ${nextMuscles} today.\nThat's not boredom. What's going on?`
+function withRepeatOffenderNote(reply: string, prevHardCount: number, nextMuscles: string): string {
+  // Only append a note after 2+ confirmed hard-evasion hits today (disrespect/deflection)
+  if (prevHardCount >= 2) {
+    return `${reply}\n\nYou've been avoiding this a while. ${nextMuscles} — whenever you're ready.`
   }
   return reply
 }
@@ -227,12 +226,11 @@ async function callLLMFallback(text: string, ctx: OffTopicContext): Promise<stri
 
   return generateOpenAIText({
     systemInstruction:
-      `You are Rex, a no-nonsense gym mentor. ` +
-      `User is going off-topic. Reply in MAX 2 lines. ` +
+      `You are Rex, a blunt gym coach. ` +
+      `User sent a message that's off-topic or ambiguous. Reply in MAX 2 lines. ` +
       `User data: ${quickCtx} ` +
       `Rules: don't answer the off-topic question. Stay in character. ` +
-      `Redirect to training. Be sarcastic if warranted. ` +
-      `Allowed emojis: 🔥 💪 🐉 only. No others.`,
+      `Redirect to training with a dry, direct line. No emoji. No sarcasm unless they're clearly messing around.`,
     prompt:          text,
     maxOutputTokens: 80,
     model:           "gpt-4o-mini",
@@ -294,10 +292,10 @@ export async function handleOffTopicMessage(
       return { handled: false }
   }
 
-  // Repeat offender logic — append note or replace reply
-  if (ctx.userId) {
-    const prevCount = await getPreviousOffTopicCountToday(ctx.userId, now)
-    reply = withRepeatOffenderNote(reply, prevCount, ctx.nextMuscles)
+  // Repeat offender note — only for confirmed hard evasion, never LLM-classified
+  if (ctx.userId && intent === "off_topic_hardcoded") {
+    const prevHardCount = await getHardEvasionCountToday(ctx.userId, now)
+    reply = withRepeatOffenderNote(reply, prevHardCount, ctx.nextMuscles)
   }
 
   return { handled: true, reply, intent }
