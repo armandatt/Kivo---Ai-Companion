@@ -3,6 +3,7 @@ import { addToLongTerm, addToShortTerm } from "./memory.service"
 import { savePlan } from "./planner.service"
 import { saveDeadline } from "./deadline.service"
 import { generateOpenAIText } from "./openai.service"
+import { getSplitDayInfo } from "./gymTimeContext.service"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,7 +43,60 @@ type IntakeUser = {
   preferredCheckInTime: string | null
 }
 
-type IntakeAnswers = Record<string, string>
+// Typed intake answers — all fields are optional since they accumulate over the flow.
+// Using an interface (not Record<string,string>) gives compile-time safety on key names.
+interface IntakeAnswers {
+  // Rex gym path
+  name?: string
+  gym_goal?: string
+  gym_goal_raw?: string
+  training_experience?: string
+  drill_raw?: string
+  current_bodyweight_kg?: string
+  height_cm?: string
+  bmi?: string
+  protein_target_g?: string
+  body_retry?: string
+  lifts_raw?: string
+  squat_kg?: string
+  bench_kg?: string
+  deadlift_kg?: string
+  available_training_days?: string
+  schedule_retry?: string
+  current_split?: string
+  split_raw?: string
+  split_proposed?: string
+  split_review_pending?: string
+  gym_session_time?: string
+  city?: string
+  time_retry?: string
+  protein_raw?: string
+  daily_protein_g?: string
+  protein_status?: string
+  injury_notes?: string
+  // Study path
+  study_goal_description?: string
+  study_category?: string
+  study_deadline_raw?: string
+  study_deadline_iso?: string
+  days_until_deadline?: string
+  soft_deadline?: string
+  study_current_status?: string
+  study_gap_estimate?: string
+  study_subjects?: string
+  study_weak_subject?: string
+  study_style?: string
+  default_focus_duration?: string
+  focus_killer?: string
+  study_hours_available?: string
+  study_consistency_type?: string
+  study_past_failure?: string
+  study_stakes?: string
+  // General path
+  general_context?: string
+  general_focus_area?: string
+  general_block?: string
+}
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -222,6 +276,15 @@ export async function handleIntakeMessage(input: {
     }
   }
 
+  // Passively extract split / gym-time from every valid rex-gym-path answer,
+  // even if the current question is about something else entirely.
+  const rexGymPathStates: IntakeStep[] = [
+    "ga_goal", "ga_drill", "ga_body", "ga_lifts", "ga_schedule", "ga_split", "ga_gym_time", "ga_nutrition", "ga_injuries",
+  ]
+  if (rexGymPathStates.includes(effectiveStep)) {
+    await applyPassiveIntakeData(user.id, answers, input.text.trim())
+  }
+
   const reply = await routeStep(effectiveStep, input.text.trim(), answers, modules, user, profile, input.platformChatId)
 
   await addToShortTerm(input.platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" })
@@ -238,7 +301,8 @@ function normalizeRexIntakeStep(step: IntakeStep, user: IntakeUser, answers: Int
   ]
 
   if (resetSteps.includes(step)) {
-    for (const key of Object.keys(answers)) delete answers[key]
+    const mutable = answers as Record<string, unknown>
+    for (const key of Object.keys(mutable)) delete mutable[key]
     return "not_started"
   }
 
@@ -570,17 +634,24 @@ async function handleGaLifts(text: string, answers: IntakeAnswers, user: IntakeU
   answers.lifts_raw = text
   const lifts   = parseLiftsFromText(text)
   const unknown = isUnknownLiftsText(text)
-  if (lifts.squat)    answers.squat_kg    = String(lifts.squat)
-  if (lifts.bench)    answers.bench_kg    = String(lifts.bench)
-  if (lifts.deadlift) answers.deadlift_kg = String(lifts.deadlift)
+  // null = explicitly skipped (don't store); undefined = not mentioned; number = we have it
+  if (lifts.squat    != null) answers.squat_kg    = String(lifts.squat)
+  if (lifts.bench    != null) answers.bench_kg    = String(lifts.bench)
+  if (lifts.deadlift != null) answers.deadlift_kg = String(lifts.deadlift)
   await updateIntake(user.id, "ga_schedule", answers)
 
   const imbalance = detectLiftImbalance(lifts)
 
+  const liftStr = (v: number | null | undefined) =>
+    v === null ? "N/A (skipped)" : v !== undefined ? `${v}kg` : "?"
+  const skippedLifts = (["squat", "bench", "deadlift"] as const)
+    .filter(k => lifts[k] === null).join(" and ")
+
   const liftCtx = unknown
     ? "User doesn't know their working weights. Acknowledge briefly — first session is baseline testing. " +
       "Then ask how many days per week they will ACTUALLY show up. Not the plan — the real number. Max 3 lines. No emojis."
-    : `User's lifts: squat ${lifts.squat ?? "?"}kg, bench ${lifts.bench ?? "?"}kg, deadlift ${lifts.deadlift ?? "?"}kg. ` +
+    : `User's lifts: squat ${liftStr(lifts.squat)}, bench ${liftStr(lifts.bench)}, deadlift ${liftStr(lifts.deadlift)}. ` +
+      (skippedLifts ? `Note: user explicitly doesn't do ${skippedLifts} — do NOT mention imbalance for skipped lifts. ` : "") +
       (imbalance ? `Notable imbalance: ${imbalance}. Call it out in ONE line. ` : "No notable imbalance. ") +
       "Then ask: how many days per week they're ACTUALLY going to show up. Not the plan — the real number. Max 3 lines. No emojis."
 
@@ -594,13 +665,21 @@ async function handleGaLifts(text: string, answers: IntakeAnswers, user: IntakeU
 
 function detectLiftImbalance(lifts: LiftNumbers): string | null {
   const { squat, bench, deadlift } = lifts
-  if (squat && bench) {
-    if (bench >= squat * 0.95) return "bench nearly matching squat — posterior chain needs work"
-    if (bench > squat)         return "bench higher than squat — legs are behind"
-    if (bench < squat * 0.55)  return "bench lagging far behind squat"
+  // Require both to be actual positive numbers — null (skipped) or undefined (unknown) = no comparison
+  const hasSquat    = typeof squat    === "number" && squat    > 0
+  const hasBench    = typeof bench    === "number" && bench    > 0
+  const hasDeadlift = typeof deadlift === "number" && deadlift > 0
+
+  if (hasBench && hasSquat) {
+    if (bench! >= squat! * 0.95) return "bench nearly matching squat — posterior chain needs work"
+    if (bench! > squat!)         return "bench higher than squat — legs are behind"
+    if (bench! < squat! * 0.55)  return "bench lagging far behind squat"
   }
-  if (squat && deadlift && deadlift < squat) {
+  if (hasSquat && hasDeadlift && deadlift! < squat!) {
     return "deadlift below squat — unusual, hinge pattern needs work"
+  }
+  if (hasBench && hasDeadlift && !hasSquat && bench! > deadlift!) {
+    return "bench exceeding deadlift — posterior chain is weak"
   }
   return null
 }
@@ -630,6 +709,23 @@ async function handleGaSchedule(text: string, answers: IntakeAnswers, user: Inta
   const finalDays = days ?? 3
   answers.available_training_days = String(finalDays)
   delete answers.schedule_retry
+
+  // If split was already captured passively earlier, skip the split question entirely
+  if (answers.current_split && answers.split_raw && answers.split_raw !== "rex_built" && !answers.split_review_pending) {
+    await updateIntake(user.id, "ga_gym_time", answers)
+    return generateRexTransition(
+      `User is training ${finalDays} days/week. ` +
+      (finalDays <= 3 ? "React briefly — 3 done right beats 5 done half-assed. " : "") +
+      (finalDays >= 5 ? "React briefly — ambitious, achievable. " : "") +
+      (finalDays === 4 ? "React briefly — good frequency. " : "") +
+      `You already have their split from earlier in the conversation — acknowledge it in one line (name what it is). ` +
+      `Then ask what time they train and what city they're in. Max 3 lines. No emojis.`,
+      text,
+      `${finalDays} days. Got your split already.\nWhat time do you usually train, and what city are you in?`,
+      120,
+    )
+  }
+
   await updateIntake(user.id, "ga_split", answers)
 
   return generateRexTransition(
@@ -850,42 +946,23 @@ async function handleGaInjuries(
 ): Promise<string> {
   const hasInjury = !/\b(no|none|nothing|all good|fine|healthy|nope|full deck|clean|clear|n\/a)\b/i.test(text)
   answers.injury_notes = hasInjury ? text : "none"
-  if (hasInjury) await addToLongTerm(chatId, "preferences", `injury_flag: ${text}`)
-
-  await Promise.all([
-    addToLongTerm(chatId, "preferences", `gym_goal: ${answers.gym_goal}`),
-    addToLongTerm(chatId, "preferences", `training_experience: ${answers.training_experience}`),
-    addToLongTerm(chatId, "preferences", `training_days_per_week: ${answers.available_training_days}`),
-    addToLongTerm(chatId, "preferences", `current_split: ${answers.current_split}`),
-    answers.gym_session_time ? addToLongTerm(chatId, "preferences", `gym_session_time: ${answers.gym_session_time}`) : Promise.resolve(),
-    answers.protein_target_g ? addToLongTerm(chatId, "preferences", `protein_target: ${answers.protein_target_g}g`) : Promise.resolve(),
-    answers.squat_kg || answers.bench_kg || answers.deadlift_kg
-      ? addToLongTerm(chatId, "anchors", `lifts — squat: ${answers.squat_kg ?? "?"}, bench: ${answers.bench_kg ?? "?"}, deadlift: ${answers.deadlift_kg ?? "?"}`)
-      : Promise.resolve(),
-    answers.current_bodyweight_kg ? addToLongTerm(chatId, "preferences", `bodyweight: ${answers.current_bodyweight_kg}kg`) : Promise.resolve(),
-    answers.height_cm ? addToLongTerm(chatId, "preferences", `height: ${answers.height_cm}cm`) : Promise.resolve(),
-  ])
-
-  const timezone = answers.city ? cityToTimezone(answers.city) : "Asia/Kolkata"
-  await prisma.messengerUser.update({
-    where: { id: user.id },
-    data: {
-      ...(answers.gym_session_time ? { preferredCheckInTime: answers.gym_session_time } : {}),
-      timezone,
-      intakeAnswers: answers,
-    },
-  })
-
-  const gymPlan = await buildGymPlan(answers)
-  await savePlan(chatId, gymPlan)
-
-  if (modules.includes("study")) {
-    await updateIntake(user.id, "sb1", answers, modules)
-    return (await buildRexGymClosing(answers)) + "\n\n---\n\nNow for study.\n\n" + STUDY_Q.sb1
+  // Injury flag is a standalone write — failure here doesn't block finalization
+  if (hasInjury) {
+    await addToLongTerm(chatId, "preferences", `injury_flag: ${text}`)
+      .catch(e => console.error("[INTAKE] injury_flag write failed:", e))
   }
 
-  await updateIntake(user.id, "complete", answers, modules, { intakeComplete: true })
-  return buildRexGymClosing(answers)
+  if (modules.includes("study")) {
+    // Rex gym portion done — write profile but don't mark intakeComplete yet;
+    // study intake continues and will call its own completion.
+    const safeAnswers = await writeRexProfileToDb(user.id, chatId, answers)
+    await updateIntake(user.id, "sb1", safeAnswers, modules)
+    return (await buildRexGymClosing(safeAnswers)) + "\n\n---\n\nNow for study.\n\n" + STUDY_Q.sb1
+  }
+
+  // Gym-only path: write profile, mark complete, return closing message.
+  const safeAnswers = await finalizeRexProfile(user.id, chatId, answers, modules)
+  return buildRexGymClosing(safeAnswers)
 }
 
 // ─── Rex Closing ──────────────────────────────────────────────────────────────
@@ -948,7 +1025,7 @@ function nextTrainingDayLabel(split: string, daysPerWeek: number): string {
   // Walk forward up to 7 days to find the next training day
   for (let offset = 1; offset <= 7; offset++) {
     const dayNum = (todayNum + offset) % 7
-    const { isTrainingDay } = getSplitDayInfoLocal(split, daysPerWeek, dayNum)
+    const { isTrainingDay } = getSplitDayInfo(split, daysPerWeek, dayNum)
     if (isTrainingDay) {
       return offset === 1 ? "First session tomorrow" : `First session is ${WEEKDAY_NAMES[dayNum]}`
     }
@@ -956,24 +1033,6 @@ function nextTrainingDayLabel(split: string, daysPerWeek: number): string {
   return "First session coming up"
 }
 
-function getSplitDayInfoLocal(split: string, daysPerWeek: number, weekdayNum: number): { isTrainingDay: boolean } {
-  if (split === "PPL") {
-    const map: Record<number, boolean> = { 0: false, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true }
-    return { isTrainingDay: map[weekdayNum] ?? false }
-  }
-  if (split === "upper_lower") {
-    return { isTrainingDay: [1, 2, 4, 5].includes(weekdayNum) }
-  }
-  if (split === "full_body") {
-    return { isTrainingDay: [1, 3, 5].includes(weekdayNum) }
-  }
-  if (split === "bro_split") {
-    return { isTrainingDay: [1, 2, 3, 4, 5].includes(weekdayNum) }
-  }
-  // unstructured — estimate from daysPerWeek
-  const trainingDays = daysPerWeek >= 5 ? [1,2,3,4,5] : daysPerWeek >= 4 ? [1,2,4,5] : [1,3,5]
-  return { isTrainingDay: trainingDays.includes(weekdayNum) }
-}
 
 const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
@@ -1116,25 +1175,41 @@ function isUnknownLiftsText(text: string): boolean {
   return /\b(don'?t know|not sure|no idea|haven'?t tested|never tested|idk|can'?t|none|n\/a|not tested|no numbers)\b/i.test(text)
 }
 
-type LiftNumbers = { squat?: number; bench?: number; deadlift?: number }
+// null = user explicitly doesn't do this lift; undefined = not mentioned
+type LiftNumbers = { squat?: number | null; bench?: number | null; deadlift?: number | null }
 
 function parseLiftsFromText(text: string): LiftNumbers {
-  const sqMatch = text.match(/(?:squat|sq)[^\d]*(\d+)/i)
-  const bpMatch = text.match(/(?:bench|bp|bench\s*press)[^\d]*(\d+)/i)
-  const dlMatch = text.match(/(?:deadlift|dl|dead)[^\d]*(\d+)/i)
-
-  if (sqMatch || bpMatch || dlMatch) {
-    return {
-      squat:    sqMatch ? parseInt(sqMatch[1]) : undefined,
-      bench:    bpMatch ? parseInt(bpMatch[1]) : undefined,
-      deadlift: dlMatch ? parseInt(dlMatch[1]) : undefined,
-    }
+  // Detect explicitly skipped lifts first
+  const dontDo = new Set<string>()
+  const skipPat = /(?:don'?t|not|never|skip(?:ping)?|no)\s+(?:do|doing|perform|use|train)?\s*(\bsquats?|\bdeadlifts?|\bbench(?:\s*press)?|\bohp\b|\boverhead\b)/gi
+  for (const m of text.matchAll(skipPat)) {
+    const w = (m[1] ?? "").toLowerCase()
+    if (w.includes("squat"))    dontDo.add("squat")
+    if (w.includes("deadlift")) dontDo.add("deadlift")
+    if (w.includes("bench"))    dontDo.add("bench")
+    if (w.includes("ohp") || w.includes("overhead")) dontDo.add("ohp")
   }
-  // Positional fallback: first three plausible numbers = squat, bench, deadlift
-  const nums = [...text.matchAll(/\d+/g)]
-    .map(m => parseInt(m[0]))
-    .filter(n => n > 10 && n < 1000)
-  return { squat: nums[0], bench: nums[1], deadlift: nums[2] }
+
+  // Limited non-alpha gap prevents matching across exercise name boundaries
+  const sqMatch = !dontDo.has("squat")    ? text.match(/\b(?:squat|sq)\b[^a-zA-Z]{0,30}?(\d+)/i)       : null
+  const bpMatch = !dontDo.has("bench")    ? text.match(/\b(?:bench|bp|bench\s*press)\b[^a-zA-Z]{0,30}?(\d+)/i) : null
+  const dlMatch = !dontDo.has("deadlift") ? text.match(/\b(?:deadlift|dl|dead)\b[^a-zA-Z]{0,30}?(\d+)/i) : null
+
+  const result: LiftNumbers = {
+    squat:    dontDo.has("squat")    ? null : sqMatch ? parseInt(sqMatch[1]!) : undefined,
+    bench:    dontDo.has("bench")    ? null : bpMatch ? parseInt(bpMatch[1]!) : undefined,
+    deadlift: dontDo.has("deadlift") ? null : dlMatch ? parseInt(dlMatch[1]!) : undefined,
+  }
+
+  // Positional fallback only if NO named matches AND NO explicit skips
+  if (Object.values(result).every(v => v === undefined) && dontDo.size === 0) {
+    const nums = [...text.matchAll(/\d+/g)]
+      .map(m => parseInt(m[0]!))
+      .filter(n => n > 10 && n < 1000)
+    return { squat: nums[0], bench: nums[1], deadlift: nums[2] }
+  }
+
+  return result
 }
 
 function buildLiftCalibration(lifts: LiftNumbers): string {
@@ -1333,7 +1408,8 @@ async function handleSb8(
 ): Promise<string> {
   answers.study_stakes = text
 
-  await Promise.all([
+  // Task 3 — Memory write failures never block completion
+  const memResults = await Promise.allSettled([
     addToLongTerm(chatId, "preferences", `study_goal: ${answers.study_goal_description}`),
     addToLongTerm(chatId, "preferences", `study_category: ${answers.study_category}`),
     addToLongTerm(chatId, "preferences", `study_style: ${answers.study_style}`),
@@ -1341,19 +1417,26 @@ async function handleSb8(
     addToLongTerm(chatId, "preferences", `study_hours_daily: ${answers.study_hours_available}`),
     addToLongTerm(chatId, "struggles", `study_past_failure: ${answers.study_past_failure}`),
   ])
+  const memFailed = memResults.filter(r => r.status === "rejected")
+  if (memFailed.length) {
+    console.error(`[INTAKE] ${memFailed.length}/6 study memory write(s) failed for ${chatId}`)
+  }
 
-  // Save deadline if we have one
+  // Task 4 — Deadline + plan are optional; never block completion
   if (answers.study_deadline_iso) {
     await saveDeadline({
       platformChatId: chatId,
       title: answers.study_goal_description || "Study deadline",
       dueAt: new Date(answers.study_deadline_iso),
-    })
+    }).catch(e => console.error("[INTAKE] Study deadline save failed:", e))
   }
 
-  // Build and save study plan
-  const studyPlan = await buildStudyPlan(answers)
-  await savePlan(chatId, studyPlan)
+  try {
+    const studyPlan = await buildStudyPlan(answers)
+    await savePlan(chatId, studyPlan)
+  } catch (err) {
+    console.error(`[INTAKE] Study plan generation failed for ${chatId} — continuing:`, err)
+  }
 
   await updateIntake(user.id, "complete", answers, modules, { intakeComplete: true })
   return buildStudyClosing(answers, profile, user)
@@ -1700,6 +1783,155 @@ function buildFallbackStudyPlan(subjects: string, weak: string, hours: number): 
   return lines.join("\n")
 }
 
+// ─── Passive Data Extraction ──────────────────────────────────────────────────
+// Runs on EVERY onboarding message to capture data volunteered ahead of schedule.
+// Saves immediately so handlers that come later don't need to re-ask.
+
+function extractPassiveSplitType(text: string): string | null {
+  if (/\b(push.{0,20}pull.{0,20}leg|ppl)\b/i.test(text)) return "PPL"
+  if (/upper.{0,10}lower|lower.{0,10}upper/i.test(text)) return "upper_lower"
+  if (/\bfull.?body\b/i.test(text)) return "full_body"
+  // Day-of-week pattern paired with muscle group names → structured split
+  if (
+    /\b(mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b.{0,30}[-:–]/i.test(text) &&
+    /\b(chest|back|legs?|shoulders?|arms?|bicep|tricep|push|pull)\b/i.test(text)
+  ) return "bro_split"
+  return null
+}
+
+async function applyPassiveIntakeData(userId: string, answers: IntakeAnswers, text: string): Promise<void> {
+  let changed = false
+
+  // Split — only capture if not yet set and not mid-review-loop
+  if (!answers.current_split && !answers.split_review_pending) {
+    const splitType = extractPassiveSplitType(text)
+    if (splitType) {
+      answers.current_split = splitType
+      answers.split_raw     = text
+      changed = true
+    }
+  }
+
+  // Gym time — only capture if not yet set
+  if (!answers.gym_session_time) {
+    const timeMatch = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
+    if (timeMatch) {
+      const parsed = parseTimeString(timeMatch[0])
+      if (parsed) {
+        answers.gym_session_time = parsed
+        changed = true
+      }
+    }
+  }
+
+  if (changed) {
+    await prisma.messengerUser.update({ where: { id: userId }, data: { intakeAnswers: answers as any } })
+  }
+}
+
+// ─── Onboarding Finalization ──────────────────────────────────────────────────
+// Single source of truth for completing Rex gym onboarding.
+// All Tasks 1-4, 7-8 are enforced here.
+
+// Task 1 + Task 7 — Apply safe defaults to all required scheduler/coach fields.
+// A user that reaches this function will ALWAYS have a valid preferredCheckInTime.
+function applyProfileDefaults(answers: IntakeAnswers): IntakeAnswers {
+  const fixed: IntakeAnswers = { ...answers }
+  // preferredCheckInTime is the single most critical field — if missing the user
+  // is invisible to every cron query. Default to 07:00 so at least schedulers run.
+  if (!fixed.gym_session_time)           fixed.gym_session_time        = "07:00"
+  if (!fixed.available_training_days)    fixed.available_training_days = "3"
+  if (!fixed.current_split)             fixed.current_split            = "unstructured"
+  if (!fixed.gym_goal)                  fixed.gym_goal                 = "muscle"
+  if (!fixed.training_experience)       fixed.training_experience      = "intermediate"
+  if (!fixed.injury_notes)              fixed.injury_notes             = "none"
+  return fixed
+}
+
+// Task 2 + Task 3 + Task 4 + Task 8 — Idempotent profile write.
+// Writes memory, updates the profile DB row, and attempts plan generation.
+// Memory write failures are logged but never block completion.
+// Plan generation failures are caught and logged — user can re-generate later.
+// Running this function twice produces the same end state (idempotent).
+async function writeRexProfileToDb(
+  userId:  string,
+  chatId:  string,
+  answers: IntakeAnswers,
+): Promise<IntakeAnswers> {
+  const safe     = applyProfileDefaults(answers)
+  const timezone = safe.city ? cityToTimezone(safe.city) : "Asia/Kolkata"
+
+  // Task 8 — Idempotency: skip memory writes if already marked as finalized
+  const alreadyFinalized = await prisma.memoryFact.count({
+    where: { userId, type: "intake_finalized" },
+  }).then(n => n > 0).catch(() => false)
+
+  if (!alreadyFinalized) {
+    // Task 3 — Promise.allSettled: one failure never blocks the rest
+    const writes: Promise<void>[] = [
+      addToLongTerm(chatId, "preferences", `gym_goal: ${safe.gym_goal}`),
+      addToLongTerm(chatId, "preferences", `training_experience: ${safe.training_experience}`),
+      addToLongTerm(chatId, "preferences", `training_days_per_week: ${safe.available_training_days}`),
+      addToLongTerm(chatId, "preferences", `current_split: ${safe.current_split}`),
+      addToLongTerm(chatId, "preferences", `gym_session_time: ${safe.gym_session_time}`),
+      ...(safe.protein_target_g
+        ? [addToLongTerm(chatId, "preferences", `protein_target: ${safe.protein_target_g}g`)]
+        : []),
+      ...(safe.squat_kg || safe.bench_kg || safe.deadlift_kg
+        ? [addToLongTerm(chatId, "anchors", `lifts — squat: ${safe.squat_kg ?? "?"}, bench: ${safe.bench_kg ?? "?"}, deadlift: ${safe.deadlift_kg ?? "?"}`)]
+        : []),
+      ...(safe.current_bodyweight_kg
+        ? [addToLongTerm(chatId, "preferences", `bodyweight: ${safe.current_bodyweight_kg}kg`)]
+        : []),
+      ...(safe.height_cm
+        ? [addToLongTerm(chatId, "preferences", `height: ${safe.height_cm}cm`)]
+        : []),
+    ]
+    const results = await Promise.allSettled(writes)
+    const failed  = results.filter(r => r.status === "rejected")
+    if (failed.length) {
+      console.error(`[INTAKE] ${failed.length}/${writes.length} memory write(s) failed for ${chatId}`)
+    }
+
+    // Idempotency marker — written once so a retry skips the above block
+    await prisma.memoryFact.create({
+      data: { userId, type: "intake_finalized", key: "gym", value: new Date().toISOString(), confidence: 1.0 },
+    }).catch(e => console.error("[INTAKE] finalization marker write failed:", e))
+  }
+
+  // Task 1 — preferredCheckInTime is ALWAYS set (never conditional after applyProfileDefaults)
+  await prisma.messengerUser.update({
+    where: { id: userId },
+    data: {
+      preferredCheckInTime: safe.gym_session_time,
+      timezone,
+      intakeAnswers: safe as any,
+    },
+  })
+
+  // Task 4 — Plan generation is optional. Never blocks profile write or completion.
+  try {
+    const gymPlan = await buildGymPlan(safe)
+    await savePlan(chatId, gymPlan)
+  } catch (err) {
+    console.error(`[INTAKE] Plan generation failed for ${chatId} — continuing:`, err)
+  }
+
+  return safe
+}
+
+// Thin wrapper: profile write + mark intakeComplete = true (gym-only path).
+async function finalizeRexProfile(
+  userId:  string,
+  chatId:  string,
+  answers: IntakeAnswers,
+  modules: string[],
+): Promise<IntakeAnswers> {
+  const safe = await writeRexProfileToDb(userId, chatId, answers)
+  await updateIntake(userId, "complete", safe, modules, { intakeComplete: true })
+  return safe
+}
+
 // ─── DB Helpers ───────────────────────────────────────────────────────────────
 
 async function updateIntake(
@@ -1713,7 +1945,7 @@ async function updateIntake(
     where: { id: userId },
     data: {
       intakeStep: step,
-      ...(answers ? { intakeAnswers: answers } : {}),
+      ...(answers ? { intakeAnswers: answers as any } : {}),
       ...(modules ? { activeModules: modules } : {}),
       ...extras,
     },

@@ -4,6 +4,15 @@ import {
   getStreakBrokenMessage,
   generateWeeklyReview,
 } from "./engagement.service"
+import {
+  writeMomentPR,
+  writeMomentBreakthrough,
+  writeMomentStreakMilestone,
+  writeMomentComeback,
+  retrieveRelevantMoments,
+  getConsecutiveSessionsAtWeight,
+  generateLLMMilestoneMessage,
+} from "./momentMemory.service"
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -40,6 +49,8 @@ interface ActiveLogging {
   noSplitAdvance:          boolean
 }
 
+export type FeelRating = "easy" | "moderate" | "hard" | "failed"
+
 export interface SplitState {
   lastCompletedDayIndex: number | null
   lastSessionDate:       string | null
@@ -55,6 +66,8 @@ export interface SplitState {
   skipState:             SkipState | null
   lastSkipDate:          string | null
   reactivationCount:     number
+  lastFeelRating:        FeelRating | null
+  feelPending:           { sessionId: string; muscles: string } | null
 }
 
 interface PersonalRecords {
@@ -564,6 +577,11 @@ export async function handleActiveLoggingMessage(
     return handlePendingLogMessage(user, state, state.pendingLog, text, now)
   }
 
+  // Intercept feel-rating response after a completed session
+  if (state.feelPending && !state.activeLogging) {
+    return handleFeelResponse(user, state, state.feelPending, text)
+  }
+
   if (!state.activeLogging) return NOT_HANDLED
 
   const al = state.activeLogging
@@ -981,6 +999,39 @@ async function saveQuickEntriesToDb(sessionId: string, entries: QuickLogEntry[])
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// FEEL RESPONSE (post-session)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function classifyFeelResponse(text: string): FeelRating | null {
+  const lower = text.toLowerCase()
+  if (/\b(failed|couldn'?t|missed reps?|dropped|couldn'?t (finish|complete)|didn'?t finish)\b/.test(lower)) return "failed"
+  if (/\b(easy|too easy|way more|barely felt|breeze|flew through|could (do|have done) more|more (reps?|in the tank|left))\b/.test(lower)) return "easy"
+  if (/\b(had more|more in (the )?tank|wasn'?t hard|felt light|nothing)\b/.test(lower)) return "easy"
+  if (/\b(hard but (finished|done|completed|got it)|tough but (made|got)|barely (made|finished)|grinded)\b/.test(lower)) return "hard"
+  if (/\b(very hard|really hard|struggled|nearly failed|barely)\b/.test(lower)) return "hard"
+  if (/\b(hard|tough|difficult)\b/.test(lower)) return "hard"
+  if (/\b(moderate|medium|ok(ay)?|alright|decent|fine|solid|normal|usual|average|manageable)\b/.test(lower)) return "moderate"
+  return null
+}
+
+async function handleFeelResponse(
+  user: UserRow, state: SplitState, feelPending: { sessionId: string; muscles: string }, text: string,
+): Promise<{ handled: boolean; reply: string }> {
+  const rating = classifyFeelResponse(text)
+  await writeSplitState(user.id, { ...state, feelPending: null, lastFeelRating: rating })
+
+  if (!rating) return { handled: true, reply: "Noted." }
+
+  const ack: Record<FeelRating, string> = {
+    easy:     "Good — weight's moving well. We'll look at pushing next session.",
+    moderate: "Solid. That's exactly where you want to be.",
+    hard:     "Grinded through it. Keep the same weight next session — hit it cleaner before adding more.",
+    failed:   "Missed reps. Same weight next time, dial in the form before adding load.",
+  }
+  return { handled: true, reply: ack[rating] }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SESSION STEPS (set-by-set mode)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1045,6 +1096,8 @@ async function finishSession(
   const milestone        = getStreakMilestoneMessage(newStreak, state.milestonesFired)
   const updatedMilestones = milestone ? [...state.milestonesFired, milestone.threshold] : state.milestonesFired
 
+  const level = intake.training_experience ?? "intermediate"
+
   const newState: SplitState = {
     lastCompletedDayIndex: al.noSplitAdvance ? state.lastCompletedDayIndex : al.splitDayIndex,
     lastSessionDate:       todayISO,
@@ -1060,6 +1113,8 @@ async function finishSession(
     skipState:             null,
     lastSkipDate:          al.noSplitAdvance ? (now.toISOString().slice(0, 10)) : state.lastSkipDate,
     reactivationCount:     state.reactivationCount,
+    lastFeelRating:        state.lastFeelRating ?? null,
+    feelPending:           { sessionId: al.sessionId, muscles: al.muscles },
   }
   await writeSplitState(user.id, newState)
 
@@ -1071,16 +1126,45 @@ async function finishSession(
   const hadPRsBefore = Object.keys(parsePersonalRecords(user.personalRecords)).length > 0
   const prMessages   = await checkPRsForSession(user, al.sessionId)
 
+  // Write streak milestone and comeback moments (fire-and-forget — never blocks reply)
+  if (milestone) {
+    writeMomentStreakMilestone(user.id, milestone.threshold, newStreak).catch(() => {})
+  }
+  const daysSinceLastSession = state.lastSessionDate
+    ? Math.floor((now.getTime() - new Date(state.lastSessionDate).getTime()) / 86_400_000)
+    : 999
+  if (daysSinceLastSession >= 5) {
+    writeMomentComeback(user.id, daysSinceLastSession, prevStreak, al.muscles).catch(() => {})
+  }
+
   const nextIdx     = (al.splitDayIndex + 1) % dayList.length
   const nextMuscles = dayList[nextIdx] ?? "Full Body"
 
+  // Retrieve one historical moment to surface when a PR was hit
+  const primaryLift = primaryLiftFromMuscles(al.muscles)
+  const sessionMoments = prMessages.length > 0
+    ? await retrieveRelevantMoments(user.id, { surface: "session_completion", exercise: primaryLift })
+    : []
+
+  // For milestones >= 30 days, generate a personalised message from actual history
+  let milestoneMessage = milestone?.message ?? null
+  if (milestone && milestone.threshold >= 30) {
+    const llmMsg = await generateLLMMilestoneMessage(user.id, milestone.threshold, newStreak)
+    if (llmMsg) milestoneMessage = llmMsg
+  }
+
   const streakBlock = streakBroken
     ? `\n\n${getStreakBrokenMessage(prevStreak)}`
-    : milestone ? `\n\n${milestone.message}` : ""
+    : milestoneMessage ? `\n\n${milestoneMessage}` : ""
 
   const identityBlock = (!hadPRsBefore && prMessages.length > 0)
     ? "\n\nThat weight didn't move before. Now it does.\nThat's the whole point of this. 🔥"
     : prMessages.length ? "\n\n" + prMessages.join("\n") : ""
+
+  // Journey context — one line showing arc when a PR was hit and history exists
+  const momentBlock = sessionMoments.length
+    ? `\n\n${sessionMoments[0]}`
+    : ""
 
   const deloadMsg = cycleDone && newState.cycleNumber > 0 && newState.cycleNumber % 4 === 0
     ? "\n\n4 weeks straight. Next cycle: 60% weights, 2 sets max. Non-negotiable — your CNS needs it."
@@ -1100,6 +1184,9 @@ async function finishSession(
   }
 
   const exercisesLogged = allExercises.length || al.parsedEntries.length
+  const feelQ = level === "beginner"
+    ? `\n\nHow did that feel — could you have done more reps, or was it genuinely hard by the last set?`
+    : `\n\nHow did that feel? Easy, hard, or somewhere in between?`
 
   return {
     handled: true,
@@ -1107,10 +1194,12 @@ async function finishSession(
       `Done. ${al.muscles} logged. ${totalSets} sets. ${durationMin} min.`,
       exercisesLogged ? `Next session: Day ${nextIdx + 1} — ${nextMuscles}.` : `Next: Day ${nextIdx + 1} — ${nextMuscles}.`,
       identityBlock,
+      momentBlock,
       deloadMsg,
       firstDeloadNote,
       streakBlock,
       weeklyReviewBlock,
+      feelQ,
     ].join(""),
   }
 }
@@ -1152,6 +1241,31 @@ async function checkPRsForSession(user: UserRow, sessionId: string): Promise<str
   if (Object.keys(updates).length) {
     await writePersonalRecords(user.id, { ...records, ...updates })
   }
+
+  // Write moment facts for PRs and breakthroughs (fire-and-forget)
+  const totalSessions = await prisma.telegramWorkoutSession.count({
+    where: { messengerUserId: user.id, completed: true },
+  })
+  for (const [exercise, update] of Object.entries(updates)) {
+    const prev = records[exercise]
+    if (!prev || update.weightKg <= prev.weightKg) continue
+
+    const firstWeight = (parseSplitState(user.splitState).firstExerciseWeights ?? {})[exercise] ?? null
+
+    writeMomentPR(user.id, exercise, update.weightKg, prev.weightKg, firstWeight, totalSessions)
+      .catch(() => {})
+
+    // Breakthrough = PR after being stuck at prev.weightKg for 3+ sessions
+    getConsecutiveSessionsAtWeight(user.id, exercise, prev.weightKg)
+      .then(stallCount => {
+        if (stallCount >= 3) {
+          writeMomentBreakthrough(user.id, exercise, prev.weightKg, update.weightKg, stallCount)
+            .catch(() => {})
+        }
+      })
+      .catch(() => {})
+  }
+
   return messages
 }
 
@@ -1161,9 +1275,29 @@ async function checkPRsForSession(user: UserRow, sessionId: string): Promise<str
 
 
 export async function computeProgressiveOverloadForSession(
-  userId:    string,
-  sessionId: string
+  userId:     string,
+  sessionId:  string,
+  feelRating?: FeelRating | null,
 ): Promise<Array<{ exercise: string; nextWeightKg: number; note: string; flag: string | null }>> {
+  // Phase 1: no overload suggestions for the first 3 sessions
+  const totalSessions = await prisma.telegramWorkoutSession.count({
+    where: { messengerUserId: userId, completed: true },
+  })
+  if (totalSessions < 4) {
+    const phaseNote: Record<number, string> = {
+      1: "First session logged. I'll watch how your weights move over the next 2 sessions before suggesting changes.",
+      2: "Two sessions in. Keep the same weights — let your body adapt before we push.",
+      3: "3 sessions done. One more before I start giving overload targets.",
+    }
+    return [{ exercise: "all", nextWeightKg: 0, note: phaseNote[totalSessions] ?? "Building baseline.", flag: "phase1" }]
+  }
+
+  // Sessions-needed threshold by experience level
+  const userRow = await prisma.messengerUser.findUnique({ where: { id: userId }, select: { intakeAnswers: true } })
+  const intake  = (userRow?.intakeAnswers as Record<string, string>) ?? {}
+  const level   = intake.training_experience ?? "intermediate"
+  const sessionsNeeded = level === "beginner" ? 2 : level === "advanced" ? 4 : 3
+
   const exercises = await prisma.telegramSetLog.groupBy({
     by:    ["exerciseName"],
     where: { sessionId, completed: true },
@@ -1175,7 +1309,7 @@ export async function computeProgressiveOverloadForSession(
     const allSets = await prisma.telegramSetLog.findMany({
       where:   { exerciseName, session: { messengerUserId: userId }, completed: true },
       orderBy: [{ sessionId: "desc" }, { setNumber: "asc" }],
-      take:    30,
+      take:    40,
       select:  { weightKg: true, reps: true, rpe: true, sessionId: true },
     })
 
@@ -1188,25 +1322,46 @@ export async function computeProgressiveOverloadForSession(
     const avgRpe    = rpeVals.length ? rpeVals.reduce((a, b) => a + b, 0) / rpeVals.length : 7
     const failedAny = current.some((s: any) => s.reps < 1)
 
-    const stalled = sessions.length >= 3 &&
-      sessions.slice(0, 3).every((sess: any[]) => Math.max(...sess.map((s: any) => s.weightKg)) === maxW)
+    // Map feel rating to effective RPE — overrides logged RPE when available
+    const effectiveRpe = feelRating === "failed" ? 10
+      : feelRating === "hard"     ? 9
+      : feelRating === "moderate" ? 7.5
+      : feelRating === "easy"     ? 6
+      : avgRpe
 
-    if (stalled) {
-      results.push({ exercise: exerciseName, nextWeightKg: maxW, flag: "rep_increase",
-        note: `${exerciseName} stalled at ${maxW}kg for 3 sessions. Same weight, add a rep.` })
-    } else if (failedAny || avgRpe >= 10) {
-      results.push({ exercise: exerciseName, nextWeightKg: maxW, flag: "technique_check",
-        note: `Grinded that. Keep ${maxW}kg. Focus on bar path, not adding weight.` })
-    } else if (avgRpe >= 9) {
+    // Sessions at current weight
+    const sessionsAtWeight = sessions.filter(
+      (sess: any[]) => Math.max(...sess.map((s: any) => s.weightKg)) === maxW
+    ).length
+
+    if (feelRating === "failed" || failedAny) {
+      results.push({ exercise: exerciseName, nextWeightKg: maxW, flag: "maintain",
+        note: `Missed reps at ${maxW}kg. Keep it — complete the reps first.` })
+    } else if (effectiveRpe >= 9) {
       results.push({ exercise: exerciseName, nextWeightKg: maxW, flag: "maintain",
         note: `Keep ${maxW}kg. Hit the reps cleaner first.` })
+    } else if (sessionsAtWeight >= sessionsNeeded && effectiveRpe < 9) {
+      const newWeight = maxW + 2.5
+      results.push({ exercise: exerciseName, nextWeightKg: newWeight, flag: "increase",
+        note: buildOverloadNote(level, exerciseName, maxW, newWeight, sessionsAtWeight) })
     } else {
-      results.push({ exercise: exerciseName, nextWeightKg: maxW + 2.5, flag: "increase",
-        note: `Last time ${maxW}kg felt manageable. Today: ${maxW + 2.5}kg.` })
+      const remaining = sessionsNeeded - sessionsAtWeight
+      results.push({ exercise: exerciseName, nextWeightKg: maxW, flag: "maintain",
+        note: `${maxW}kg — ${remaining} more session${remaining > 1 ? "s" : ""} at this weight before we move up.` })
     }
   }
 
   return results
+}
+
+function buildOverloadNote(level: string, exercise: string, oldWeight: number, newWeight: number, sessions: number): string {
+  if (level === "beginner") {
+    return `${exercise} has been ${oldWeight}kg for ${sessions} sessions and you're handling it. Try ${newWeight}kg — if the last set gets hard, that's fine. Come back to ${oldWeight}kg if you can't complete the reps.`
+  }
+  if (level === "advanced") {
+    return `${newWeight}kg next. ${sessions} sessions at ${oldWeight}kg — earned.`
+  }
+  return `${oldWeight}kg for ${sessions} sessions. Time to test ${newWeight}kg. If it moves clean for all sets, it's your new working weight.`
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1759,15 +1914,19 @@ async function overloadCommand(platformChatId: string): Promise<string> {
   })
   if (!last) return "No sessions logged yet.\nUse /log to start."
 
-  const overloads = await computeProgressiveOverloadForSession(user.id, last.id)
+  const state    = parseSplitState(user.splitState)
+  const overloads = await computeProgressiveOverloadForSession(user.id, last.id, state.lastFeelRating)
   if (!overloads.length) return "Not enough data to compute targets yet."
+
+  // Phase 1: just return the note directly
+  if (overloads[0]?.flag === "phase1") return overloads[0].note
 
   const lines = overloads.map(o => {
     const arrow = o.flag === "increase" ? `↑ ${o.nextWeightKg}kg` : `→ ${o.nextWeightKg}kg`
     return `${o.exercise}: ${arrow} — ${o.note}`
   })
 
-  return `Tomorrow's targets (${last.musclesTrained[0] ?? "session"}):\n${lines.join("\n")}`
+  return `Next session targets (${last.musclesTrained[0] ?? "session"}):\n${lines.join("\n")}`
 }
 
 async function streakCommand(platformChatId: string): Promise<string> {
@@ -1837,6 +1996,14 @@ function migrateActiveLogging(raw: Partial<ActiveLogging> & Record<string, unkno
   }
 }
 
+function primaryLiftFromMuscles(muscles: string): string {
+  const m = muscles.toLowerCase()
+  if (m.includes("chest") || m.includes("push"))  return "bench"
+  if (m.includes("leg")   || m.includes("lower")) return "squat"
+  if (m.includes("back")  || m.includes("pull"))  return "deadlift"
+  return "squat"
+}
+
 function buildSessionSummary(sets: Array<{ exerciseName: string; reps: number; weightKg: number }>): string {
   if (!sets.length) return ""
   const grouped: Record<string, Array<{ reps: number; weightKg: number }>> = {}
@@ -1890,12 +2057,15 @@ async function writePersonalRecords(userId: string, records: PersonalRecords): P
 }
 
 function parseSplitState(raw: unknown): SplitState {
+  const FEEL_RATINGS = new Set(["easy", "moderate", "hard", "failed"])
+
   const def: SplitState = {
     lastCompletedDayIndex: null, lastSessionDate: null, cycleNumber: 0,
     daysTrained: [], activeLogging: null, pendingLog: null,
     avgSessionDurationMin: 60,
     milestonesFired: [], firstExerciseWeights: {}, firstLogDate: null,
     setupPending: null, skipState: null, lastSkipDate: null, reactivationCount: 0,
+    lastFeelRating: null, feelPending: null,
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return def
   const s = raw as Record<string, unknown>
@@ -1915,6 +2085,8 @@ function parseSplitState(raw: unknown): SplitState {
     skipState:             (s.skipState && typeof s.skipState === "object") ? (s.skipState as SkipState) : null,
     lastSkipDate:          typeof s.lastSkipDate === "string" ? s.lastSkipDate : null,
     reactivationCount:     typeof s.reactivationCount === "number" ? s.reactivationCount : 0,
+    lastFeelRating:        FEEL_RATINGS.has(s.lastFeelRating as string) ? (s.lastFeelRating as FeelRating) : null,
+    feelPending:           (s.feelPending && typeof s.feelPending === "object") ? (s.feelPending as { sessionId: string; muscles: string }) : null,
   }
 }
 

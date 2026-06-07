@@ -1,11 +1,44 @@
 import { prisma } from "@repo/db/client"
 import type { GymTimeContext } from "./gymTimeContext.service"
+import type { FeelRating } from "./workoutTracking.service"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface PreSessionExtras {
-  stallInfo:    { exercise: string; weightKg: number; sessions: number } | null
-  isDeloadWeek: boolean
+  stallInfo:         { exercise: string; weightKg: number; sessions: number } | null
+  isDeloadWeek:      boolean
+  lastFeelRating:    FeelRating | null
+  sessionsAtWeight:  { exercise: string; weightKg: number; count: number } | null
+}
+
+export interface ChaseExtras {
+  todayMuscles:       string
+  consecutiveMisses:  number
+  lastSessionMuscles: string | null
+  lastSessionDaysAgo: number | null
+}
+
+export interface RestDayExtras {
+  lastFeelRating:       FeelRating | null
+  nextSessionMuscles:   string
+  daysUntilNextSession: number
+  stallInfo:            { exercise: string; weightKg: number; sessions: number } | null
+}
+
+export interface DailyCheckInExtras {
+  patternFlags:        string[]
+  interventionMessage: string | null
+  activeCommitments:   Array<{ title: string; daysLeft: number }>
+}
+
+export interface ReactivationExtras {
+  lastUserMessages:   string[]
+  lastWorkoutMuscles: string | null
+  lastWorkoutDaysAgo: number
+}
+
+export interface CommitmentExtras {
+  progressSummary: string | null
 }
 
 export interface SchedulerJobContext {
@@ -17,64 +50,66 @@ export interface SchedulerJobContext {
     intakeAnswers: unknown
     splitState:    unknown
   }
-  preSessionExtras?: PreSessionExtras
+  preSessionExtras?:   PreSessionExtras
+  chaseExtras?:        ChaseExtras
+  restDayExtras?:      RestDayExtras
+  dailyCheckInExtras?: DailyCheckInExtras
+  reactivationExtras?: ReactivationExtras
+  commitmentExtras?:   CommitmentExtras
 }
 
 export interface WeeklySummaryStats {
-  sessionsCompleted: number
-  sessionsPlanned:   number
-  bestLift:          { exercise: string; weightKg: number; reps: number } | null
-  gapArea:           string | null
-  cycleNumber:       number
+  sessionsCompleted:   number
+  sessionsPlanned:     number
+  bestLift:            { exercise: string; weightKg: number; reps: number } | null
+  gapArea:             string | null
+  cycleNumber:         number
+  feelRatingTrend?:    string[]
+  commitmentProgress?: string | null
+  momentContext?:      string[]
 }
 
 // ─── Message Provider Interface ───────────────────────────────────────────────
-// Implement this interface per companion persona (Rex = gym mentor, Nova = study
-// mentor, etc.). The scheduler engine calls these methods without knowing which
-// persona is active — only the provider changes.
 
 export interface SchedulerMessageProvider {
   readonly persona: string
 
   // Category 1 — Check-In Schedulers
   dailyCheckIn(ctx: SchedulerJobContext, now: Date):                              Promise<string>
-  preSessionFireUp(ctx: SchedulerJobContext):                                     string
+  preSessionFireUp(ctx: SchedulerJobContext):                                     Promise<string>
   postSessionLogPrompt(muscles: string):                                          string
-  missedSessionChase(attempt: 1 | 2):                                            string
-  restDayMorning(ctx: SchedulerJobContext):                                       string
+  missedSessionChase(attempt: 1 | 2, ctx: SchedulerJobContext):                  Promise<string>
+  restDayMorning(ctx: SchedulerJobContext):                                       Promise<string | null>
   backdatePrompt():                                                               string
 
   // Category 3 — Preset / Event Schedulers
-  silenceReactivation(hasSessions: boolean, ctx: SchedulerJobContext):            string
-  streakMilestone(streak: number):                                                string
-  prAlert(exercise: string, weightKg: number, reps: number):                     string
-  weeklySummary(stats: WeeklySummaryStats, ctx: SchedulerJobContext):            Promise<string>
-  commitmentFollowUp(title: string, daysLeft: number):                           string
+  silenceReactivation(hasSessions: boolean, ctx: SchedulerJobContext):           Promise<string>
+  streakMilestone(streak: number):                                               string
+  prAlert(exercise: string, weightKg: number, reps: number):                    string
+  weeklySummary(stats: WeeklySummaryStats, ctx: SchedulerJobContext):           Promise<string>
+  commitmentFollowUp(title: string, daysLeft: number, ctx: SchedulerJobContext): Promise<string>
   commitmentMissed(title: string):                                               string
 }
 
 // ─── Quiet Hours ──────────────────────────────────────────────────────────────
 
-const DEFAULT_QUIET_START = 23  // 11 pm
-const DEFAULT_QUIET_END   = 7   // 7 am
+const DEFAULT_QUIET_START = 23
+const DEFAULT_QUIET_END   = 7
 
 export function isInQuietHours(intakeAnswers: unknown, localHHMM: string): boolean {
   const answers   = parseAnswers(intakeAnswers)
   const sleepStr  = answers.sleep_time  ?? answers.quiet_start ?? `${DEFAULT_QUIET_START}:00`
   const wakeStr   = answers.wake_time   ?? answers.quiet_end   ?? `${DEFAULT_QUIET_END}:00`
 
-  const current   = hhmmToMinutes(localHHMM)
-  const sleepMin  = hhmmToMinutes(sleepStr)
-  const wakeMin   = hhmmToMinutes(wakeStr)
+  const current  = hhmmToMinutes(localHHMM)
+  const sleepMin = hhmmToMinutes(sleepStr)
+  const wakeMin  = hhmmToMinutes(wakeStr)
 
-  // Window wraps midnight
   if (sleepMin > wakeMin) return current >= sleepMin || current < wakeMin
   return current >= sleepMin && current < wakeMin
 }
 
 // ─── Global Fire Rules ────────────────────────────────────────────────────────
-// Call this before every scheduled message. Returns false if the job should not
-// fire right now for this user.
 
 export interface GlobalFireRulesInput {
   platformChatId: string
@@ -88,17 +123,12 @@ export interface GlobalFireRulesInput {
 export async function checkGlobalFireRules(input: GlobalFireRulesInput): Promise<boolean> {
   const { platformChatId, timezone, now, intakeAnswers, intakeComplete, splitState } = input
 
-  // 1. Onboarding not complete
   if (!intakeComplete) return false
-
-  // 2. User currently in active logging flow
   if (isInActiveLogging(splitState)) return false
 
-  // 3. Quiet hours
   const localHHMM = getLocalHHMM(now, timezone)
   if (isInQuietHours(intakeAnswers, localHHMM)) return false
 
-  // 4. User sent a message in the last 10 minutes (active conversation)
   if (await messagedRecently(platformChatId, now, 10)) return false
 
   return true
@@ -126,9 +156,6 @@ function isInActiveLogging(splitState: unknown): boolean {
 }
 
 // ─── Merge Engine ─────────────────────────────────────────────────────────────
-// Within a single cron tick, if multiple messages are queued for the same user
-// they are merged into one delivery. Higher-priority intent wins as the intent
-// label; texts are concatenated with a blank line separator.
 
 export function mergeSchedulerMessages<
   T extends { chatId: string; text: string; intent: string }
@@ -156,15 +183,15 @@ export function mergeSchedulerMessages<
 }
 
 const INTENT_PRIORITY: Record<string, number> = {
-  commitment_followup:   1,
-  rex_pre_session:       2,
-  rex_daily_checkin:     2,
-  rex_auto_prompt:       3,
-  rex_post_session:      3,
-  custom_reminder:       4,
-  rex_weekly_summary:    5,
-  rex_rest_day:          5,
-  rex_silence_check:     6,
+  commitment_followup: 1,
+  rex_pre_session:     2,
+  rex_daily_checkin:   2,
+  rex_auto_prompt:     3,
+  rex_post_session:    3,
+  custom_reminder:     4,
+  rex_weekly_summary:  5,
+  rex_rest_day:        5,
+  rex_silence_check:   6,
 }
 
 function intentPriority(intent: string): number {
