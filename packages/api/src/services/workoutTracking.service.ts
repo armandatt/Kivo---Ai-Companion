@@ -157,7 +157,14 @@ const EXERCISE_ALIASES: Array<{ canonical: string; pattern: RegExp }> = [
 // SPLIT CYCLE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function getTrainingDays(split: string, daysPerWeek: number): string[] {
+function getTrainingDays(split: string, daysPerWeek: number, splitDaysJson?: string): string[] {
+  // Bug 3: use the user's actual custom day sequence when stored during onboarding
+  if (splitDaysJson) {
+    try {
+      const days = JSON.parse(splitDaysJson) as string[]
+      if (Array.isArray(days) && days.length >= 2) return days
+    } catch { /* fall through to canonical split */ }
+  }
   if (split === "PPL") {
     const base = ["Chest + Triceps + Shoulders", "Back + Biceps", "Legs"]
     return daysPerWeek >= 6 ? [...base, ...base] : base
@@ -270,6 +277,9 @@ function matchExerciseName(text: string): { canonical: string; pattern: RegExp }
 function extractWeight(text: string): number | null {
   const kgMatch = text.match(/(\d+(?:\.\d+)?)\s*kg\b/i)
   if (kgMatch) return +kgMatch[1]!
+  // Bug 2: accept lbs and convert
+  const lbsMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:lbs?|pounds?)\b/i)
+  if (lbsMatch) return Math.round(+lbsMatch[1]! * 0.4536)
   const nums = [...text.matchAll(/\b(\d+(?:\.\d+)?)\b/g)].map(m => +m[1]!)
   const candidates = nums.filter(n => n >= 20)
   return candidates.length === 1 ? candidates[0]! : null
@@ -454,7 +464,7 @@ export async function getNextSplitDayInfo(
   const intake   = parseIntake(user.intakeAnswers)
   const split    = intake.current_split ?? "unstructured"
   const days     = parseInt(intake.available_training_days ?? "3") || 3
-  const dayList  = getTrainingDays(split, days)
+  const dayList  = getTrainingDays(split, days, intake.split_days_json)
   const state    = parseSplitState(user.splitState)
   const nextIdx  = getNextDayIndex(state, dayList.length)
   return { muscles: dayList[nextIdx] ?? "Full Body", splitDayIndex: nextIdx }
@@ -492,12 +502,27 @@ export async function handleLogCommand(
   const intake   = parseIntake(user.intakeAnswers)
   const split    = intake.current_split ?? "unstructured"
   const days     = parseInt(intake.available_training_days ?? "3") || 3
-  const dayList  = getTrainingDays(split, days)
+  const dayList  = getTrainingDays(split, days, intake.split_days_json)
 
   // Use pending log info if present (cron already set the muscles/dayIndex)
   const pendingMuscles = state.pendingLog?.muscles
   const nextIdx = state.pendingLog?.splitDayIndex ?? getNextDayIndex(state, dayList.length)
   const muscles = pendingMuscles ?? (dayList[nextIdx] ?? "Full Body")
+
+  // Bug 5: Ask for confirmation before assuming muscles, except when cron already set them.
+  // If user came from a cron auto-prompt (pendingLog set), skip the confirmation question.
+  if (!state.pendingLog) {
+    const isStructured = split !== "unstructured" && split !== "none"
+    const confirmMsg = isStructured
+      ? `Today's scheduled: ${muscles}.\nDid you train that, or something different?`
+      : `What muscles did you train today?`
+    await writeSplitState(user.id, {
+      ...state,
+      pendingLog: { muscles, splitDayIndex: nextIdx, promptedAt: now.toISOString(), chaseCount: 0 },
+      firstLogDate: state.firstLogDate ?? now.toISOString().slice(0, 10),
+    })
+    return confirmMsg
+  }
 
   // Edge Case 3: duplicate session today for the same muscle group
   const duplicate = await checkTodaySession(user.id, muscles, now)
@@ -542,7 +567,7 @@ export async function handleLogCommand(
 
   const exData = await getExercisesForToday(user.id, muscles)
   return [
-    `Day ${nextIdx + 1} — ${muscles}.`,
+    `${muscles} — what did you hit?`,
     "",
     formatQuickLogOpening(muscles, exData),
   ].join("\n")
@@ -607,6 +632,36 @@ export async function handleActiveLoggingMessage(
 // PENDING LOG — handle response to auto-prompt
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Bug 7: extract named muscle group from free text (for user correction handling)
+function extractMentionedMuscles(text: string): string | null {
+  const t = text.toLowerCase()
+  const hasBack     = /\b(back|lats?|row|pull|deadlift)\b/.test(t)
+  const hasChest    = /\b(chest|bench|pec|push|incline)\b/.test(t)
+  const hasLegs     = /\b(legs?|quad|squat|hamstring|glute|hinge|rdl)\b/.test(t)
+  const hasShoulder = /\b(shoulder|delt|ohp|overhead|press)\b/.test(t)
+  const hasTri      = /\b(tri|tricep)\b/.test(t)
+  const hasBi       = /\b(bi|bicep|curl)\b/.test(t)
+  const hasArms     = hasBi && hasTri
+
+  if (hasBack && hasTri)       return "Back + Triceps"
+  if (hasBack && hasBi)        return "Back + Biceps"
+  if (hasChest && hasTri)      return "Chest + Triceps"
+  if (hasChest && hasBi)       return "Chest + Biceps"
+  if (hasChest && hasShoulder) return "Chest + Shoulders"
+  if (hasLegs && hasShoulder)  return "Legs + Shoulders"
+  if (hasArms)                 return "Arms (Biceps + Triceps)"
+  if (/\b(full.?body|everything|total)\b/.test(t)) return "Full Body"
+  if (/\bpush\b/.test(t))      return "Push (Chest/Shoulders/Triceps)"
+  if (/\bpull\b/.test(t))      return "Pull (Back/Biceps)"
+  if (hasBack)                 return "Back"
+  if (hasChest)                return "Chest"
+  if (hasLegs)                 return "Legs"
+  if (hasShoulder)             return "Shoulders"
+  if (hasTri)                  return "Triceps"
+  if (hasBi)                   return "Biceps"
+  return null
+}
+
 async function handlePendingLogMessage(
   user: UserRow, state: SplitState, pendingLog: PendingLog, text: string, now: Date
 ): Promise<{ handled: boolean; reply: string }> {
@@ -621,8 +676,49 @@ async function handlePendingLogMessage(
     }
   }
 
-  const isYes       = /^(yes|yeah|yep|yup|did it|trained|went|done|finished|yep done)$/i.test(lower)
+  const isYes        = /^(yes|yeah|yep|yup|did it|trained|went|done|finished|yep done)$/i.test(lower)
   const hasExercises = parseMultiExercise(text).length > 0
+
+  // Bug 7: detect if user is naming a different muscle group than scheduled
+  const mentionedMuscles = !isYes ? extractMentionedMuscles(lower) : null
+  const isCorrecting     = mentionedMuscles !== null &&
+    mentionedMuscles.toLowerCase() !== pendingLog.muscles.toLowerCase()
+
+  if (isCorrecting) {
+    // User corrected the session — acknowledge, update muscles, start logging
+    const correctedLog = { ...pendingLog, muscles: mentionedMuscles! }
+    await writeSplitState(user.id, { ...state, pendingLog: correctedLog })
+    const exData = await getExercisesForToday(user.id, mentionedMuscles!)
+    const session = await prisma.telegramWorkoutSession.create({
+      data: {
+        messengerUserId: user.id,
+        date:            now,
+        splitDayIndex:   correctedLog.splitDayIndex,
+        musclesTrained:  [mentionedMuscles!],
+        completed:       false,
+      },
+    })
+    const newAl: ActiveLogging = {
+      sessionId:               session.id,
+      splitDayIndex:           correctedLog.splitDayIndex,
+      muscles:                 mentionedMuscles!,
+      startedAt:               now.toISOString(),
+      logMode:                 "quick",
+      logState:                "awaiting_exercises",
+      parsedEntries:           [],
+      pendingWeightFor:        [],
+      lastActivityAt:          now.toISOString(),
+      pendingSuspectExercise:  null,
+      conflictEntries:         [],
+      conflictDetectedMuscles: "",
+      noSplitAdvance:          true,
+    }
+    await writeSplitState(user.id, { ...state, pendingLog: null, activeLogging: newAl })
+    return {
+      handled: true,
+      reply: `You're right. Using ${mentionedMuscles} instead of ${pendingLog.muscles}.\n\n${formatQuickLogOpening(mentionedMuscles!, exData)}`,
+    }
+  }
 
   // Message doesn't look relevant — clear pending and pass through
   if (!isYes && !hasExercises) {
@@ -1084,7 +1180,7 @@ async function finishSession(
   const intake    = parseIntake(user.intakeAnswers)
   const split     = intake.current_split ?? "unstructured"
   const days      = parseInt(intake.available_training_days ?? "3") || 3
-  const dayList   = getTrainingDays(split, days)
+  const dayList   = getTrainingDays(split, days, intake.split_days_json)
   const todayISO  = now.toISOString().slice(0, 10)
   const trained   = [...state.daysTrained, al.splitDayIndex]
   const cycleDone = trained.length >= dayList.length
@@ -1667,7 +1763,7 @@ async function handleSkipReason(
 
   // Calculate next training day label
   const intake  = parseIntake(user.intakeAnswers)
-  const dayList = getTrainingDays(intake.current_split ?? "unstructured", parseInt(intake.available_training_days ?? "3") || 3)
+  const dayList = getTrainingDays(intake.current_split ?? "unstructured", parseInt(intake.available_training_days ?? "3") || 3, intake.split_days_json)
   const nextIdx = getNextDayIndex(state, dayList.length)
   const nextMus = dayList[nextIdx] ?? "Full Body"
 
@@ -1720,7 +1816,7 @@ async function handleLogCommandForce(user: UserRow, state: SplitState, now: Date
   const intake    = parseIntake(user.intakeAnswers)
   const split     = intake.current_split ?? "unstructured"
   const days      = parseInt(intake.available_training_days ?? "3") || 3
-  const dayList   = getTrainingDays(split, days)
+  const dayList   = getTrainingDays(split, days, intake.split_days_json)
   const nextIdx   = state.pendingLog?.splitDayIndex ?? getNextDayIndex(state, dayList.length)
   const muscles   = state.pendingLog?.muscles ?? (dayList[nextIdx] ?? "Full Body")
   const session = await prisma.telegramWorkoutSession.create({
@@ -1793,7 +1889,7 @@ export async function handleWorkoutCommand(
     if (user) {
       const state  = parseSplitState(user.splitState)
       const intake = parseIntake(user.intakeAnswers)
-      const dl     = getTrainingDays(intake.current_split ?? "unstructured", parseInt(intake.available_training_days ?? "3") || 3)
+      const dl     = getTrainingDays(intake.current_split ?? "unstructured", parseInt(intake.available_training_days ?? "3") || 3, intake.split_days_json)
       const nxt    = getNextDayIndex(state, dl.length)
       await writeSplitState(user.id, { ...state, skipState: { pendingReason: true, muscles: dl[nxt] ?? "Full Body" } })
       return { handled: true, reply: "Noted. Reason?\nskip / injury / sick / life", intent: "skip_day" }
@@ -1945,7 +2041,7 @@ async function splitCommand(platformChatId: string): Promise<string> {
   const intake   = parseIntake(user.intakeAnswers)
   const split    = intake.current_split ?? "unstructured"
   const days     = parseInt(intake.available_training_days ?? "3") || 3
-  const dayList  = getTrainingDays(split, days)
+  const dayList  = getTrainingDays(split, days, intake.split_days_json)
   const state    = parseSplitState(user.splitState)
   const nextIdx  = getNextDayIndex(state, dayList.length)
 
