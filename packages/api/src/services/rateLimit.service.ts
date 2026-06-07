@@ -1,9 +1,11 @@
 import { prisma } from "@repo/db/client";
 
 const limitsByTier = {
-  free: { hourly: 20, daily: 50 },
-  pro: { hourly: 60, daily: 300 },
-  elite: { hourly: 200, daily: 1000 },
+  // Free tier was 20/hr — too low for active onboarding sessions.
+  // Raised to 60/hr so a normal gym coaching session never hits the limit.
+  free:  { hourly: 60,  daily: 200  },
+  pro:   { hourly: 120, daily: 600  },
+  elite: { hourly: 400, daily: 2000 },
 };
 
 export async function checkRateLimit(platformChatId: string) {
@@ -28,19 +30,19 @@ export async function checkRateLimit(platformChatId: string) {
     const hourAgo = new Date(now - 60 * 60 * 1000);
     const dayAgo = new Date(now - 24 * 60 * 60 * 1000);
 
+    // Exclude intake messages — they're mandatory (onboarding can't be skipped)
+    // and should not deplete the conversational quota.
     const [hourlyCount, dailyCount] = await Promise.all([
       prisma.companionMessage.count({
         where: {
-          userId: user.id,
-          role: "user",
-          createdAt: { gte: hourAgo },
+          userId: user.id, role: "user", createdAt: { gte: hourAgo },
+          OR: [{ intent: null }, { intent: { not: "intake" } }],
         },
       }),
       prisma.companionMessage.count({
         where: {
-          userId: user.id,
-          role: "user",
-          createdAt: { gte: dayAgo },
+          userId: user.id, role: "user", createdAt: { gte: dayAgo },
+          OR: [{ intent: null }, { intent: { not: "intake" } }],
         },
       }),
     ]);
