@@ -12,6 +12,7 @@ type IntakeStep =
   // Rex gym coaching path
   | "ga_name" | "ga_goal" | "ga_body" | "ga_drill" | "ga_lifts"
   | "ga_schedule" | "ga_split" | "ga_gym_time" | "ga_nutrition" | "ga_injuries"
+  | "ga_review"   // final profile confirmation before intakeComplete = true
   // Study path
   | "sb1" | "sb2" | "sb3" | "sb3b" | "sb4" | "sb4b"
   | "sb5_style" | "sb5_killer" | "sb6_hours" | "sb6_consistency"
@@ -76,6 +77,8 @@ interface IntakeAnswers {
   protein_status?: string
   injury_notes?: string
   validation_attempts?: string    // Bug 9: retry count for gibberish escalation
+  review_edit_mode?: string       // "true" when returning from ga_review to edit one field
+  review_other_pending?: string   // "true" while awaiting free-text correction from "Edit Other"
   // Study path
   study_goal_description?: string
   study_category?: string
@@ -165,6 +168,7 @@ async function isValidIntakeAnswer(text: string, step: IntakeStep, answers: Inta
 function currentStepQuestion(step: IntakeStep, answers: IntakeAnswers): string {
   const name = answers.name ?? "you"
   switch (step) {
+    case "ga_review":    return ``   // confirmation step — validator always passes
     case "ga_name":      return `Name — just your first name.`
     case "ga_goal":      return `${name}, what are we training for — fat loss, muscle, strength, recomp, or consistency?`
     case "ga_drill":     return buildRexGoalDrillQuestion(answers.gym_goal ?? "muscle")
@@ -374,6 +378,7 @@ async function routeStep(
     case "ga_gym_time":     return handleGaGymTime(text, answers, user, chatId)
     case "ga_nutrition":    return handleGaNutrition(text, answers, user, chatId)
     case "ga_injuries":     return handleGaInjuries(text, answers, modules, user, profile, chatId)
+    case "ga_review":      return handleGaReview(text, answers, modules, user, chatId)
     case "sb1":            return handleSb1(text, answers, user, chatId)
     case "sb2":            return handleSb2(text, answers, user, chatId)
     case "sb3":            return handleSb3(text, answers, user, chatId)
@@ -567,6 +572,13 @@ async function handleGaGoal(text: string, answers: IntakeAnswers, user: IntakeUs
 
   answers.gym_goal     = goal
   answers.gym_goal_raw = text
+  // Review edit mode: go back to review after updating goal
+  if (answers.review_edit_mode) {
+    const mutable = answers as Record<string, unknown>
+    delete mutable.review_edit_mode
+    await updateIntake(user.id, "ga_review", answers)
+    return `${buildReviewCard(answers)}\n\n${REX_REVIEW_PROMPT}`
+  }
   // Experience comes BEFORE body stats — better to understand their level before asking numbers
   await updateIntake(user.id, "ga_drill", answers)
 
@@ -595,6 +607,12 @@ async function handleGaDrill(text: string, answers: IntakeAnswers, user: IntakeU
   const level = await classifyRexExperience(text)
   answers.training_experience = level
   answers.drill_raw           = text
+  if (answers.review_edit_mode) {
+    const mutable = answers as Record<string, unknown>
+    delete mutable.review_edit_mode
+    await updateIntake(user.id, "ga_review", answers)
+    return `${buildReviewCard(answers)}\n\n${REX_REVIEW_PROMPT}`
+  }
   // Experience collected → now ask for body stats
   await updateIntake(user.id, "ga_body", answers)
 
@@ -643,6 +661,13 @@ async function handleGaBody(text: string, answers: IntakeAnswers, user: IntakeUs
   if (bw) saves.push(addToLongTerm(chatId, "preferences", `bodyweight: ${bw}kg`))
   if (ht) saves.push(addToLongTerm(chatId, "preferences", `height: ${ht}cm`))
   await Promise.all(saves)
+
+  if (answers.review_edit_mode) {
+    const mutable = answers as Record<string, unknown>
+    delete mutable.review_edit_mode
+    await updateIntake(user.id, "ga_review", answers)
+    return `${buildReviewCard(answers)}\n\n${REX_REVIEW_PROMPT}`
+  }
 
   await updateIntake(user.id, "ga_lifts", answers)
 
@@ -758,6 +783,13 @@ async function handleGaSchedule(text: string, answers: IntakeAnswers, user: Inta
   answers.available_training_days = String(finalDays)
   delete answers.schedule_retry
 
+  if (answers.review_edit_mode) {
+    const mutable = answers as Record<string, unknown>
+    delete mutable.review_edit_mode
+    await updateIntake(user.id, "ga_review", answers)
+    return `${buildReviewCard(answers)}\n\n${REX_REVIEW_PROMPT}`
+  }
+
   // If split was already captured passively earlier, skip the split question entirely
   if (answers.current_split && answers.split_raw && answers.split_raw !== "rex_built" && !answers.split_review_pending) {
     await updateIntake(user.id, "ga_gym_time", answers)
@@ -800,6 +832,12 @@ async function handleGaSplit(text: string, answers: IntakeAnswers, user: IntakeU
 
     if (confirmed) {
       delete answers.split_review_pending
+      if (answers.review_edit_mode) {
+        const mutable = answers as Record<string, unknown>
+        delete mutable.review_edit_mode
+        await updateIntake(user.id, "ga_review", answers)
+        return `${buildReviewCard(answers)}\n\n${REX_REVIEW_PROMPT}`
+      }
       await updateIntake(user.id, "ga_gym_time", answers)
       return generateRexTransition(
         "User confirmed their split. Move straight to asking what time they train and what city they're in. One line, casual. No emojis.",
@@ -846,6 +884,13 @@ async function handleGaSplit(text: string, answers: IntakeAnswers, user: IntakeU
   // Bug 3: parse and store the user's actual day sequence so scheduling uses it
   const daySeq = parseSplitDaySequence(text)
   if (daySeq) answers.split_days_json = JSON.stringify(daySeq)
+
+  if (answers.review_edit_mode) {
+    const mutable = answers as Record<string, unknown>
+    delete mutable.review_edit_mode
+    await updateIntake(user.id, "ga_review", answers)
+    return `${buildReviewCard(answers)}\n\n${REX_REVIEW_PROMPT}`
+  }
   await updateIntake(user.id, "ga_gym_time", answers)
 
   // Bug 8: profile summary after split is confirmed (user now has goal + experience + body + lifts + days + split)
@@ -899,6 +944,13 @@ async function handleGaGymTime(text: string, answers: IntakeAnswers, user: Intak
   if (sessionTime) answers.gym_session_time = sessionTime
   if (city)        answers.city             = city
   delete answers.time_retry
+
+  if (answers.review_edit_mode) {
+    const mutable = answers as Record<string, unknown>
+    delete mutable.review_edit_mode
+    await updateIntake(user.id, "ga_review", answers)
+    return `${buildReviewCard(answers)}\n\n${REX_REVIEW_PROMPT}`
+  }
   await updateIntake(user.id, "ga_nutrition", answers)
 
   const hour     = sessionTime ? parseInt(sessionTime.split(":")[0] ?? "9") : -1
@@ -996,27 +1048,34 @@ function parseProteinGrams(text: string): number | null {
 
 async function handleGaInjuries(
   text: string, answers: IntakeAnswers, modules: string[],
-  user: IntakeUser, profile: WebProfile, chatId: string
+  user: IntakeUser, _profile: WebProfile, chatId: string
 ): Promise<string> {
   const hasInjury = !/\b(no|none|nothing|all good|fine|healthy|nope|full deck|clean|clear|n\/a)\b/i.test(text)
   answers.injury_notes = hasInjury ? text : "none"
-  // Injury flag is a standalone write — failure here doesn't block finalization
   if (hasInjury) {
     await addToLongTerm(chatId, "preferences", `injury_flag: ${text}`)
       .catch(e => console.error("[INTAKE] injury_flag write failed:", e))
   }
 
-  if (modules.includes("study")) {
-    // Rex gym portion done — write profile but don't mark intakeComplete yet;
-    // study intake continues and will call its own completion.
-    const safeAnswers = await writeRexProfileToDb(user.id, chatId, answers)
-    await updateIntake(user.id, "sb1", safeAnswers, modules)
-    return (await buildRexGymClosing(safeAnswers)) + "\n\n---\n\nNow for study.\n\n" + STUDY_Q.sb1
+  // If returning from ga_review edit mode, go back to review after updating injury notes
+  if (answers.review_edit_mode) {
+    const mutable = answers as Record<string, unknown>
+    delete mutable.review_edit_mode
+    await updateIntake(user.id, "ga_review", answers)
+    return `${buildReviewCard(answers)}\n\n${REX_REVIEW_PROMPT}`
   }
 
-  // Gym-only path: write profile, mark complete, return closing message.
-  const safeAnswers = await finalizeRexProfile(user.id, chatId, answers, modules)
-  return buildRexGymClosing(safeAnswers)
+  // All onboarding questions answered — show profile review BEFORE finalizing
+  await updateIntake(user.id, "ga_review", answers, modules)
+  return generateRexTransition(
+    "All onboarding data is collected. Your job is to transition cleanly to the final profile review. " +
+    "One line: something direct like 'This is who I'm building your plan around.' or " +
+    "'Before I start holding you accountable, make sure I got this right.' " +
+    "Then the profile card follows. No emojis. No sycophancy.",
+    "profile review intro",
+    "This is who I'm building the plan around. Make sure I got it right.",
+    60,
+  ).then(intro => `${intro}\n\n${buildReviewCard(answers)}\n\n${REX_REVIEW_PROMPT}`)
 }
 
 // ─── Rex Closing ──────────────────────────────────────────────────────────────
@@ -1102,6 +1161,181 @@ function buildIntermediaryProfile(a: IntakeAnswers): string {
   if (a.available_training_days)  lines.push(`Frequency: ${a.available_training_days}x/week`)
   if (a.current_split)            lines.push(`Split: ${rexSplitLabel(a.current_split, parseInt(a.available_training_days ?? "3"))}`)
   return lines.join("\n")
+}
+
+// ─── Profile Review Step (ga_review) ─────────────────────────────────────────
+// Shown after all onboarding questions are answered, before intakeComplete = true.
+// Lets the user catch errors and approve the profile explicitly.
+
+const REX_REVIEW_PROMPT =
+  `Anything wrong before I lock this in?\n\n` +
+  `1. Looks good\n` +
+  `2. Edit goal\n` +
+  `3. Edit schedule\n` +
+  `4. Edit split\n` +
+  `5. Edit training time\n` +
+  `6. Edit body metrics\n` +
+  `7. Edit other`
+
+function buildReviewCard(a: IntakeAnswers): string {
+  const EXP_MAP: Record<string, string> = {
+    beginner: "< 1 year", intermediate: "1–4 years", advanced: "5+ years",
+  }
+  const lines: string[] = ["Here's what I've got:"]
+  if (a.gym_goal)               lines.push(`Goal: ${rexGoalLabel(a.gym_goal)}`)
+  if (a.training_experience)    lines.push(`Experience: ${EXP_MAP[a.training_experience] ?? a.training_experience}`)
+  if (a.current_bodyweight_kg)  lines.push(`Weight: ${a.current_bodyweight_kg}kg`)
+  if (a.height_cm)              lines.push(`Height: ${a.height_cm}cm`)
+  if (a.available_training_days) lines.push(`Training: ${a.available_training_days}x/week`)
+
+  // Split — show custom day sequence if stored, else canonical label
+  if (a.split_days_json) {
+    try {
+      const days = JSON.parse(a.split_days_json) as string[]
+      const DAYNAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+      const splitLines = days.map((d, i) => `  ${DAYNAMES[i] ?? `Day ${i + 1}`} → ${d}`).join("\n")
+      lines.push(`Split:\n${splitLines}`)
+    } catch {
+      if (a.current_split) lines.push(`Split: ${rexSplitLabel(a.current_split, parseInt(a.available_training_days ?? "3"))}`)
+    }
+  } else if (a.current_split && a.split_raw && a.split_raw !== "rex_built") {
+    lines.push(`Split: ${a.split_raw}`)
+  } else if (a.current_split) {
+    lines.push(`Split: ${rexSplitLabel(a.current_split, parseInt(a.available_training_days ?? "3"))}`)
+  }
+
+  // Training time in 12-hour format
+  if (a.gym_session_time) {
+    const [hStr, mStr] = a.gym_session_time.split(":")
+    const h = parseInt(hStr ?? "0"), m = parseInt(mStr ?? "0")
+    const period = h >= 12 ? "PM" : "AM"
+    const dh = h === 0 ? 12 : h > 12 ? h - 12 : h
+    const dm = m === 0 ? "" : `:${String(m).padStart(2, "0")}`
+    lines.push(`Training Time: ${dh}${dm} ${period}`)
+  }
+  if (a.city) lines.push(`Location: ${a.city}`)
+
+  // Protein
+  if (a.daily_protein_g) {
+    lines.push(`Protein: ~${a.daily_protein_g}g/day`)
+  } else if (a.protein_status === "unknown") {
+    lines.push(`Protein: Not tracked`)
+  }
+
+  if (a.injury_notes) lines.push(`Injuries: ${a.injury_notes === "none" ? "None" : a.injury_notes}`)
+
+  return lines.join("\n")
+}
+
+function parseReviewEditChoice(lower: string): "goal" | "schedule" | "split" | "gym_time" | "body" | "other" | null {
+  if (/^2$|\bedit goal\b|\bgoal\b/.test(lower)) return "goal"
+  if (/^3$|\bedit schedule\b|\bschedule\b|\bdays\b|\bfrequency\b/.test(lower)) return "schedule"
+  if (/^4$|\bedit split\b|\bsplit\b/.test(lower)) return "split"
+  if (/^5$|\btraining time\b|\bgym time\b|\btime\b/.test(lower)) return "gym_time"
+  if (/^6$|\bbody\b|\bweight\b|\bheight\b|\bmetrics\b/.test(lower)) return "body"
+  if (/^7$|\bother\b|\bprotein\b|\binjur\b|\bcity\b|\blocation\b|\bexperience\b/.test(lower)) return "other"
+  return null
+}
+
+function applyTextCorrection(text: string, answers: IntakeAnswers): boolean {
+  const t = text.toLowerCase()
+  let changed = false
+
+  const proteinM = text.match(/(?:protein|hitting|eating|it.?s)\s+(?:is\s+|actually\s+)?~?(\d+)\s*g/i)
+  if (proteinM) { answers.daily_protein_g = proteinM[1]; changed = true }
+
+  const cityM = text.match(/(?:i.?m in|city is|location is|based in|live in|from)\s+([A-Z][a-z]+)/i)
+  if (cityM) { answers.city = cityM[1]; changed = true }
+
+  if (/\b(no injury|no injuries|not injured|all good|healthy|no pain)\b/.test(t)) {
+    answers.injury_notes = "none"; changed = true
+  } else if (/\binjur\b|\bhurt\b|\bpain\b|\btorn\b|\bstrain\b/.test(t)) {
+    answers.injury_notes = text; changed = true
+  }
+
+  const expM = /\b(beginner|intermediate|advanced)\b/i.exec(text)
+  if (expM) { answers.training_experience = expM[1]!.toLowerCase(); changed = true }
+
+  const bw = parseBodyweightKg(text)
+  if (bw) { answers.current_bodyweight_kg = String(bw); changed = true }
+  const ht = parseHeightCm(text)
+  if (ht && ht !== bw) { answers.height_cm = String(ht); changed = true }
+
+  return changed
+}
+
+async function handleGaReview(
+  text: string, answers: IntakeAnswers, modules: string[], user: IntakeUser, chatId: string
+): Promise<string> {
+  const lower = text.trim().toLowerCase()
+
+  // ── Free-text correction mode (after "Edit Other") ───────────────────────
+  if (answers.review_other_pending === "true") {
+    const mutable = answers as Record<string, unknown>
+    delete mutable.review_other_pending
+    const changed = applyTextCorrection(text, answers)
+    await prisma.messengerUser.update({ where: { id: user.id }, data: { intakeAnswers: answers as any } })
+    if (changed) {
+      return `${buildReviewCard(answers)}\n\n${REX_REVIEW_PROMPT}`
+    }
+    return `Couldn't parse that — pick one of the numbered options.\n\n${buildReviewCard(answers)}\n\n${REX_REVIEW_PROMPT}`
+  }
+
+  // ── Confirmed ─────────────────────────────────────────────────────────────
+  const isConfirmed = /^(1|yes|yeah|yep|yup|looks? good|looks? right|all good|correct|fine|lock it in|good|done|ok|okay|right|perfect|that.?s right|confirmed?)$/i.test(lower)
+
+  if (isConfirmed) {
+    if (modules.includes("study")) {
+      const safeAnswers = await writeRexProfileToDb(user.id, chatId, answers)
+      await updateIntake(user.id, "sb1", safeAnswers, modules)
+      return (await buildRexGymClosing(safeAnswers)) + "\n\n---\n\nNow for study.\n\n" + STUDY_Q.sb1
+    }
+    const safeAnswers = await finalizeRexProfile(user.id, chatId, answers, modules)
+    return buildRexGymClosing(safeAnswers)
+  }
+
+  // ── Numbered edit choice ──────────────────────────────────────────────────
+  const editTarget = parseReviewEditChoice(lower)
+
+  if (editTarget === "goal") {
+    const mutable = answers as Record<string, unknown>
+    mutable.review_edit_mode = "true"
+    await updateIntake(user.id, "ga_goal", answers)
+    return `What are we actually training for — fat loss, muscle, strength, or recomp?`
+  }
+  if (editTarget === "schedule") {
+    const mutable = answers as Record<string, unknown>
+    mutable.review_edit_mode = "true"
+    await updateIntake(user.id, "ga_schedule", answers)
+    return `How many days a week are you actually showing up?`
+  }
+  if (editTarget === "split") {
+    const mutable = answers as Record<string, unknown>
+    mutable.review_edit_mode = "true"
+    await updateIntake(user.id, "ga_split", answers)
+    return `Walk me through your actual split — or say "build me one".`
+  }
+  if (editTarget === "gym_time") {
+    const mutable = answers as Record<string, unknown>
+    mutable.review_edit_mode = "true"
+    await updateIntake(user.id, "ga_gym_time", answers)
+    return `What time do you train, and what city?`
+  }
+  if (editTarget === "body") {
+    const mutable = answers as Record<string, unknown>
+    mutable.review_edit_mode = "true"
+    await updateIntake(user.id, "ga_body", answers)
+    return `Current weight and height? (e.g. 82kg, 5'11 or 80kg, 180cm)`
+  }
+  if (editTarget === "other") {
+    const mutable = answers as Record<string, unknown>
+    mutable.review_other_pending = "true"
+    await prisma.messengerUser.update({ where: { id: user.id }, data: { intakeAnswers: answers as any } })
+    return `What needs fixing? Tell me directly — protein target, injury notes, city, or experience level.`
+  }
+
+  // ── Unrecognised — re-show the card ──────────────────────────────────────
+  return `${buildReviewCard(answers)}\n\n${REX_REVIEW_PROMPT}`
 }
 
 function rexGoalLabel(goal: string): string {
