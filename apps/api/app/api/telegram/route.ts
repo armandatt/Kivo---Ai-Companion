@@ -50,9 +50,40 @@ import { prisma } from "@repo/db/client";
 
 export const runtime = "nodejs";
 
+// ── Processing lock (per-chat, in-memory, 45 s TTL) ──────────────────────────
+// Prevents concurrent LLM/orchestrator calls for the same chat.
+// Railway is single-instance + persistent — process-level Maps survive requests.
+// 45 s TTL auto-clears stale locks so a crash never permanently blocks a user.
+const inFlightChats = new Map<string, number>(); // chatId → acquired timestamp (ms)
+const LOCK_TTL_MS   = 45_000;
+
+function tryAcquireLock(chatId: string): boolean {
+  const since = inFlightChats.get(chatId);
+  if (since !== undefined && Date.now() - since < LOCK_TTL_MS) return false;
+  inFlightChats.set(chatId, Date.now());
+  return true;
+}
+function releaseLock(chatId: string): void {
+  inFlightChats.delete(chatId);
+}
+
+// ── Rate-limit busy-message dedup ─────────────────────────────────────────────
+// Show "you've hit the limit" at most once per 5 minutes — not on every message.
+// Without this, rapid retries spam the user with identical responses.
+const rateLimitBusySentAt  = new Map<string, number>(); // chatId → last sent (ms)
+const BUSY_MSG_COOLDOWN_MS = 5 * 60 * 1000;
+
+function shouldSendBusyMessage(chatId: string): boolean {
+  const last = rateLimitBusySentAt.get(chatId);
+  if (last === undefined || Date.now() - last > BUSY_MSG_COOLDOWN_MS) {
+    rateLimitBusySentAt.set(chatId, Date.now());
+    return true;
+  }
+  return false;
+}
+
 // ── Rate-limit warning dedup ──────────────────────────────────────────────────
-// Shows the warning at most once per day per user. Resets on process restart,
-// which is fine — Railway restarts are infrequent.
+// Shows the "approaching limit" warning at most once per day per user.
 const rateLimitWarnedToday = new Map<string, string>(); // chatId → "YYYY-MM-DD"
 
 function hasWarnedToday(chatId: string): boolean {
@@ -73,6 +104,7 @@ export async function POST(req: Request) {
     if (!text || !chatId) return Response.json({ ok: true });
 
     const stopTyping = startTelegramTyping(chatId);
+    let lockAcquired = false;
 
     try {
       // ── Profile update (display name, username) ───────────────────────────
@@ -146,7 +178,24 @@ export async function POST(req: Request) {
       // ── Rate limit ────────────────────────────────────────────────────────
       const rateLimit = await checkRateLimit(chatId.toString());
       if (!rateLimit.allowed) {
-        await sendTelegramMessage(chatId, "You've been busy today. Give me a few minutes to catch up.");
+        // Dedup: show this message at most once per 5 minutes so rapid retries
+        // don't create a spam loop of identical blocked responses.
+        if (shouldSendBusyMessage(chatId.toString())) {
+          await sendTelegramMessage(
+            chatId,
+            "You've hit the hourly message limit. It resets as time passes — try again in a few minutes.",
+          );
+        }
+        return Response.json({ ok: true });
+      }
+
+      // ── Processing lock ───────────────────────────────────────────────────
+      // Prevents concurrent LLM calls for the same chat arriving milliseconds
+      // apart. If a prior request is in-flight, acknowledge and drop this one.
+      // The lock is released in the finally block below — guaranteed even on error.
+      lockAcquired = tryAcquireLock(chatId.toString());
+      if (!lockAcquired) {
+        await sendTelegramMessage(chatId, "I'm still processing your last message. Give me a moment.");
         return Response.json({ ok: true });
       }
 
@@ -339,6 +388,10 @@ export async function POST(req: Request) {
       return Response.json({ ok: true });
 
     } finally {
+      // Guaranteed unlock — runs even if an exception escapes the try block.
+      // Without this, a thrown error would leave the chat permanently locked
+      // until the 45 s TTL expires.
+      if (lockAcquired) releaseLock(chatId.toString());
       stopTyping();
     }
   } catch (error) {
