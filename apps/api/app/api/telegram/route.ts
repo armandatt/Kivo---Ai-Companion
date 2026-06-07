@@ -5,6 +5,8 @@ import { runOrchestrator } from "@repo/api/engines/mentor-orchestrator";
 //@ts-ignore
 import { addToShortTerm, addToLongTerm } from "@repo/api/services/memory.service";
 //@ts-ignore
+import { writeMomentPromiseFromChat, writeMomentIdentityShiftFromChat, detectIdentityShift } from "@repo/api/services/momentMemory.service";
+//@ts-ignore
 import { startFocusSession } from "@repo/api/services/focus.service";
 //@ts-ignore
 import { fireMentorIntakeOpener } from "@repo/api/services/mentorIntake.service";
@@ -297,6 +299,15 @@ export async function POST(req: Request) {
         timestamp:   new Date(),
         persistMode: "full",
       });
+
+      // Write moment memories (fire-and-forget — never blocks the reply)
+      if (result.analysis.hasCommitment || result.analysis.intent === "commitment_made") {
+        writeMomentPromiseFromChat(chatId.toString(), text).catch(() => {})
+      }
+      const identitySignal = detectIdentityShift(text)
+      if (identitySignal) {
+        writeMomentIdentityShiftFromChat(chatId.toString(), text, identitySignal).catch(() => {})
+      }
 
       let reply = result.reply;
 
