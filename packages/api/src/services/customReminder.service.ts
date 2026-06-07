@@ -45,6 +45,33 @@ export async function createCustomReminder(
   };
 }
 
+// Bug 6: detect contradictory time signals in a reminder request.
+// Returns a clarification message string, or null if no conflict.
+function detectTimeConflict(text: string, parsed: Date): string | null {
+  const hour  = parsed.getHours()
+  const lower = text.toLowerCase()
+
+  const saysMorning   = /\bmorning\b/.test(lower)
+  const saysAfternoon = /\bafternoon\b/.test(lower)
+  const saysEvening   = /\bevening\b/.test(lower)
+  const saysNight     = /\bnight\b/.test(lower)
+  const saysAM        = /\bam\b/.test(lower)
+  const saysPM        = /\bpm\b/.test(lower)
+
+  if (saysMorning && hour >= 12)
+    return `"Morning" and ${hour}:${String(parsed.getMinutes()).padStart(2, "0")} don't match. Did you mean AM or PM?`
+  if (saysAfternoon && hour < 12)
+    return `"Afternoon" and ${hour}:${String(parsed.getMinutes()).padStart(2, "0")} don't match. Which time should I use?`
+  if (saysEvening && hour < 17)
+    return `"Evening" and ${hour}:${String(parsed.getMinutes()).padStart(2, "0")} don't match. Did you mean PM?`
+  if (saysNight && (hour >= 6 && hour < 18))
+    return `"Night" and ${hour}:${String(parsed.getMinutes()).padStart(2, "0")} don't match. Which one is right?`
+  if (saysAM && saysPM)
+    return `Both AM and PM in the same message — which one do you mean?`
+
+  return null
+}
+
 // ─── Parse and create from natural language ───────────────────────────────────
 
 export async function parseAndCreateReminder(
@@ -89,6 +116,10 @@ export async function parseAndCreateReminder(
 
     const triggerTime = new Date(obj.triggerISO);
     if (isNaN(triggerTime.getTime())) return null;
+
+    // Bug 6: detect contradictory time clues before saving
+    const conflict = detectTimeConflict(text, triggerTime);
+    if (conflict) return { created: false, reply: conflict };
 
     return createCustomReminder(
       platformChatId,

@@ -65,6 +65,7 @@ interface IntakeAnswers {
   schedule_retry?: string
   current_split?: string
   split_raw?: string
+  split_days_json?: string        // Bug 3: parsed day sequence from user's custom split
   split_proposed?: string
   split_review_pending?: string
   gym_session_time?: string
@@ -74,6 +75,7 @@ interface IntakeAnswers {
   daily_protein_g?: string
   protein_status?: string
   injury_notes?: string
+  validation_attempts?: string    // Bug 9: retry count for gibberish escalation
   // Study path
   study_goal_description?: string
   study_category?: string
@@ -144,10 +146,13 @@ async function isValidIntakeAnswer(text: string, step: IntakeStep, answers: Inta
       model: "gpt-4o-mini",
       maxOutputTokens: 3,
       systemInstruction:
-        "Decide if a user's reply is a genuine attempt to answer a chatbot intake question. " +
+        "Decide if a user's reply is a genuine attempt to answer a fitness chatbot intake question. " +
         "Reply ONLY 'yes' or 'no'. " +
-        "Be lenient — slang, short answers, typos, unusual phrasing all count as yes. " +
-        "Say no only for: off-topic questions directed at the bot, insults, pure gibberish with no relation to the question.",
+        "Be lenient — slang, short answers, typos, and unusual phrasing all count as yes. " +
+        "Fitness/gym slang ALWAYS counts as yes: lean bulk, natty, PPL, bro split, recomp, cut, bulk, HIIT, " +
+        "macros, DL, OHP, push pull legs, upper lower, 75kg, 5'11, etc. " +
+        "Say no ONLY for: completely unrelated topics (weather, politics, sports scores), insults, or " +
+        "pure random characters with zero relation to health/fitness (e.g. kiyugkuyhv, asdfgh).",
       prompt: `Question: "${stepQ}"\nUser replied: "${text}"`,
     })
     return /^yes/i.test(raw.trim())
@@ -210,6 +215,23 @@ async function answerOffTopicAndRedirect(question: string, currentQ: string, kno
   }
 }
 
+// Bug 9: After 3 failed validation attempts, show selectable options for the current step.
+function buildGibberishEscalation(step: IntakeStep, _answers: IntakeAnswers, currentQ: string): Promise<string> {
+  const options: Record<string, string> = {
+    ga_goal:     `${currentQ}\n\nPick one:\n1. Fat loss\n2. Build muscle\n3. Get stronger\n4. Recomp (both)`,
+    ga_drill:    `${currentQ}\n\nPick one:\n1. Beginner (< 1 year)\n2. Intermediate (1-4 years)\n3. Advanced (5+ years)`,
+    ga_body:     `Send it like: 75kg, 5'10 — or just the weight if you don't know your height.`,
+    ga_lifts:    `Send your working weights like: squat 60, bench 50, deadlift 80 — or say "I don't know".`,
+    ga_schedule: `How many days? Just type: 3, 4, 5, or 6`,
+    ga_split:    `Do you have a split or should I build one?\n\n1. PPL (Push/Pull/Legs)\n2. Upper/Lower\n3. Full Body\n4. Build one for me`,
+    ga_gym_time: `What time do you train? Example: 7am, 18:30, 6pm`,
+    ga_nutrition:`Rough protein daily? Just a number in grams — or say "not tracking"`,
+    ga_injuries: `Any injuries? Type "none" if you're all good.`,
+  }
+  const fallback = `${currentQ}`
+  return Promise.resolve(options[step] ?? fallback)
+}
+
 function buildKnownStatsFromAnswers(answers: IntakeAnswers): string {
   const parts: string[] = []
   if (answers.name)                   parts.push(`name: ${answers.name}`)
@@ -268,10 +290,33 @@ export async function handleIntakeMessage(input: {
     if (!valid) {
       const currentQ = currentStepQuestion(effectiveStep, answers)
       if (currentQ) {
-        const knownStats = buildKnownStatsFromAnswers(answers)
-        const reply = await answerOffTopicAndRedirect(text, currentQ, knownStats || undefined)
+        // Bug 9: track retry count to escalate the redirect message
+        const attempt = parseInt(answers.validation_attempts ?? "0") + 1
+        const mutable = answers as Record<string, unknown>
+        mutable.validation_attempts = String(attempt)
+        await prisma.messengerUser.update({ where: { id: user.id }, data: { intakeAnswers: answers as any } })
+
+        let reply: string
+        if (attempt >= 3) {
+          // 3rd+ bad answer: give explicit selectable options for the current step
+          reply = await buildGibberishEscalation(effectiveStep, answers, currentQ)
+        } else if (attempt === 2) {
+          // 2nd bad answer: brief example-driven redirect
+          const knownStats = buildKnownStatsFromAnswers(answers)
+          reply = await answerOffTopicAndRedirect(text, currentQ, knownStats || undefined)
+          reply = reply + "\n\n(Not sure what to say? Just type a number or keyword.)"
+        } else {
+          const knownStats = buildKnownStatsFromAnswers(answers)
+          reply = await answerOffTopicAndRedirect(text, currentQ, knownStats || undefined)
+        }
         await addToShortTerm(input.platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" })
         return { handled: true, reply }
+      }
+    } else {
+      // Valid answer — reset retry counter
+      if (answers.validation_attempts) {
+        const mutable = answers as Record<string, unknown>
+        delete mutable.validation_attempts
       }
     }
   }
@@ -655,12 +700,15 @@ async function handleGaLifts(text: string, answers: IntakeAnswers, user: IntakeU
       (imbalance ? `Notable imbalance: ${imbalance}. Call it out in ONE line. ` : "No notable imbalance. ") +
       "Then ask: how many days per week they're ACTUALLY going to show up. Not the plan — the real number. Max 3 lines. No emojis."
 
-  return generateRexTransition(
+  // Bug 8: intermediate profile summary after lifts are collected
+  const profileSnap = buildIntermediaryProfile(answers)
+  const transition  = await generateRexTransition(
     liftCtx,
     text,
     `${unknown ? "First session is baseline testing." : buildLiftCalibration(lifts)}\n\nHow many days a week are you actually going to show up? Not the plan — the real number.`,
     120,
   )
+  return `${profileSnap}\n\n---\n\n${transition}`
 }
 
 function detectLiftImbalance(lifts: LiftNumbers): string | null {
@@ -795,9 +843,14 @@ async function handleGaSplit(text: string, answers: IntakeAnswers, user: IntakeU
   const splitType       = await classifySplit(text)
   answers.current_split = splitType
   answers.split_raw     = text
+  // Bug 3: parse and store the user's actual day sequence so scheduling uses it
+  const daySeq = parseSplitDaySequence(text)
+  if (daySeq) answers.split_days_json = JSON.stringify(daySeq)
   await updateIntake(user.id, "ga_gym_time", answers)
 
-  return generateRexTransition(
+  // Bug 8: profile summary after split is confirmed (user now has goal + experience + body + lifts + days + split)
+  const profileSnap = buildIntermediaryProfile(answers)
+  const splitTransition = await generateRexTransition(
     `User's split: ${text}. Type: ${splitType}. Goal: ${answers.gym_goal ?? "muscle"}. ` +
     `Note ONE obvious issue with this split vs their goal if there is one ` +
     `(e.g. only 1 leg day for strength, no direct shoulders, etc.) — skip if it's fine. ` +
@@ -806,6 +859,7 @@ async function handleGaSplit(text: string, answers: IntakeAnswers, user: IntakeU
     `Noted. What time do you usually train, and what city are you in?`,
     120,
   )
+  return `${profileSnap}\n\n---\n\n${splitTransition}`
 }
 
 function buildProposedSplit(days: number, goal: string): string {
@@ -1035,6 +1089,20 @@ function nextTrainingDayLabel(split: string, daysPerWeek: number): string {
 
 
 const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+// Bug 8: compact profile card shown mid-onboarding so users can catch errors early.
+function buildIntermediaryProfile(a: IntakeAnswers): string {
+  const lines: string[] = ["Profile so far:"]
+  if (a.gym_goal)                 lines.push(`Goal: ${rexGoalLabel(a.gym_goal)}`)
+  if (a.training_experience)      lines.push(`Experience: ${a.training_experience}`)
+  if (a.current_bodyweight_kg)    lines.push(`Weight: ${a.current_bodyweight_kg}kg${a.height_cm ? ` / Height: ${a.height_cm}cm` : ""}`)
+  if (a.squat_kg || a.bench_kg || a.deadlift_kg) {
+    lines.push(`Lifts: squat ${a.squat_kg ?? "?"}kg / bench ${a.bench_kg ?? "?"}kg / deadlift ${a.deadlift_kg ?? "?"}kg`)
+  }
+  if (a.available_training_days)  lines.push(`Frequency: ${a.available_training_days}x/week`)
+  if (a.current_split)            lines.push(`Split: ${rexSplitLabel(a.current_split, parseInt(a.available_training_days ?? "3"))}`)
+  return lines.join("\n")
+}
 
 function rexGoalLabel(goal: string): string {
   const map: Record<string, string> = {
@@ -1279,18 +1347,20 @@ function parseBodyweightKg(text: string): number | null {
 }
 
 function parseHeightCm(text: string): number | null {
+  // Normalize Unicode apostrophes from phone autocorrect (U+2018, U+2019, U+02BC)
+  const t = text.replace(/[‘’ʼ]/g, "'")
   // feet + inches: 5'10, 5'10", 5 ft 10, 5 feet 10 inches
-  const ftIn = text.match(/(\d)\s*['′`]\s*(\d{1,2})|(\d)\s*(?:ft|feet|foot)\s*(\d{1,2})?/i)
+  const ftIn = t.match(/(\d)\s*['′`]\s*(\d{1,2})|(\d)\s*(?:ft|feet|foot)\s*(\d{1,2})?/i)
   if (ftIn) {
     const feet   = parseInt(ftIn[1] ?? ftIn[3] ?? "0")
     const inches = parseInt(ftIn[2] ?? ftIn[4] ?? "0")
     return Math.round(feet * 30.48 + inches * 2.54)
   }
   // centimetres: 178cm, 178 cm
-  const cm = text.match(/(\d{2,3})\s*cm/i)
+  const cm = t.match(/(\d{2,3})\s*cm/i)
   if (cm) return parseInt(cm[1])
   // bare number between 140–220 → assume cm
-  const bare = text.match(/\b(1[4-9]\d|2[0-2]\d)\b/)
+  const bare = t.match(/\b(1[4-9]\d|2[0-2]\d)\b/)
   if (bare && !parseBodyweightKg(text)) return parseInt(bare[0])
   return null
 }
@@ -1799,6 +1869,40 @@ function extractPassiveSplitType(text: string): string | null {
   return null
 }
 
+// Bug 3: parse a user's described split into an ordered day sequence.
+// "Back/Tri, Chest/Bi, Legs" → ["Back + Triceps", "Chest + Biceps", "Legs"]
+function parseSplitDaySequence(raw: string): string[] | null {
+  const MUSCLE_ABBREVS: Record<string, string> = {
+    tri: "Triceps", tris: "Triceps", tricep: "Triceps", triceps: "Triceps",
+    bi: "Biceps", bis: "Biceps", bicep: "Biceps", biceps: "Biceps",
+    legs: "Legs", leg: "Legs",
+    back: "Back", chest: "Chest", shoulders: "Shoulders", shoulder: "Shoulders",
+    delt: "Shoulders", delts: "Shoulders",
+    arms: "Arms", arm: "Arms", abs: "Core", core: "Core",
+    push: "Push", pull: "Pull",
+    fullbody: "Full Body", "full body": "Full Body",
+  }
+  const formatPart = (p: string): string => {
+    const key = p.trim().toLowerCase()
+    return MUSCLE_ABBREVS[key] ?? (p.trim().charAt(0).toUpperCase() + p.trim().slice(1).toLowerCase())
+  }
+
+  // Split on commas, arrows, newlines, or semicolons to get day chunks
+  const chunks = raw.split(/,\s*|→|->|\n|;\s*|\|/).map(c => c.trim()).filter(c => c.length > 1)
+  if (chunks.length < 2) return null
+
+  const days: string[] = []
+  for (const chunk of chunks) {
+    // Remove "Day 1:", "D1:", etc. prefixes
+    const clean = chunk.replace(/^(?:day\s*\d+|d\d+)\s*[:.-]?\s*/i, "").trim()
+    if (!clean || /^rest$/i.test(clean)) continue
+    // Split within a day by "/" or "+"
+    const parts = clean.split(/\s*[\/+&]\s*/).map(formatPart)
+    days.push(parts.join(" + "))
+  }
+  return days.length >= 2 ? days : null
+}
+
 async function applyPassiveIntakeData(userId: string, answers: IntakeAnswers, text: string): Promise<void> {
   let changed = false
 
@@ -1808,6 +1912,9 @@ async function applyPassiveIntakeData(userId: string, answers: IntakeAnswers, te
     if (splitType) {
       answers.current_split = splitType
       answers.split_raw     = text
+      // Bug 3: also try to extract custom day sequence
+      const seq = parseSplitDaySequence(text)
+      if (seq) answers.split_days_json = JSON.stringify(seq)
       changed = true
     }
   }
@@ -1822,6 +1929,20 @@ async function applyPassiveIntakeData(userId: string, answers: IntakeAnswers, te
         changed = true
       }
     }
+  }
+
+  // Bug 10: also passively capture bodyweight, height, and training days
+  if (!answers.current_bodyweight_kg) {
+    const bw = parseBodyweightKg(text)
+    if (bw) { answers.current_bodyweight_kg = String(bw); changed = true }
+  }
+  if (!answers.height_cm) {
+    const ht = parseHeightCm(text)
+    if (ht) { answers.height_cm = String(ht); changed = true }
+  }
+  if (!answers.available_training_days) {
+    const daysM = text.match(/\b([3-6])\s*(?:days?|x|times?|\/week)\b/i)
+    if (daysM) { answers.available_training_days = daysM[1]; changed = true }
   }
 
   if (changed) {

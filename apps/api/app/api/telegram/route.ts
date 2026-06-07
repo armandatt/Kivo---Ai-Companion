@@ -126,12 +126,13 @@ export async function POST(req: Request) {
       // "remind me at 8am to...", "update me at breakfast with...", "check in with me at 10pm..."
       if (/\b(remind|reminder|update me at|check in with me at|ping me at)\b/i.test(text)) {
         const result = await parseAndCreateReminder(chatId.toString(), text);
-        if (result?.created) {
+        if (result) {
+          // Bug 6: result is non-null for both created=true (saved) and created=false (conflict detected)
           await addToShortTerm(chatId.toString(), text, { role: "user", intent: "reminder_create", emotion: "neutral" });
           await sendAndRemember(chatId, result.reply, "reminder_create", "neutral");
           return Response.json({ ok: true });
         }
-        // If parsing failed, fall through to normal processing
+        // null = LLM couldn't parse — fall through to normal processing
       }
 
       // ── Active workout logging (mid-session set entry) ────────────────────
