@@ -183,7 +183,7 @@ export async function POST(req: Request) {
         if (shouldSendBusyMessage(chatId.toString())) {
           await sendTelegramMessage(
             chatId,
-            "You've hit the hourly message limit. It resets as time passes — try again in a few minutes.",
+            "You've hit the free conversation limit for now.\n\nI'll be back shortly.\n\nYour training data and progress are safe.",
           );
         }
         return Response.json({ ok: true });
