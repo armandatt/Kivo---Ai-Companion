@@ -498,14 +498,15 @@ model ScanJob {
 //////////////////////////////////////////////////
 
 model CustomReminder {
-  id             String   @id @default(cuid())
-  userId         String
-  messageContext String   @db.Text
-  triggerTime    DateTime
-  repeat         Boolean  @default(false)
-  repeatTime     String?
-  fired          Boolean  @default(false)
-  createdAt      DateTime @default(now())
+  id                String   @id @default(cuid())
+  userId            String
+  messageContext    String   @db.Text
+  triggerTime       DateTime
+  repeat            Boolean  @default(false)
+  repeatTime        String?           // HH:MM for daily-at-time reminders
+  repeatIntervalMin Int?              // minutes between fires for interval reminders (every 1h, every 30min, etc.)
+  fired             Boolean  @default(false)
+  createdAt         DateTime @default(now())
 
   user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 

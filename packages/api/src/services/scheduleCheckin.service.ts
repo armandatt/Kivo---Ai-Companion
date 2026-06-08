@@ -95,6 +95,11 @@ function parseCheckInRequest(text: string): { intervalMin: number; isRepeating: 
     return { intervalMin: Number(hourMatch[1]) * 60, isRepeating };
   }
 
+  // "hourly" / "every hour" / "each hour" / "once an hour" / "once every hour" (Bug 11)
+  if (/\b(hourly|every\s+hour|each\s+hour|once\s+(an?|per|every)\s+hour|per\s+hour)\b/.test(lower)) {
+    return { intervalMin: 60, isRepeating: true };
+  }
+
   // "every hour" / "in an hour" / "after an hour"
   if (/\b(in|after|every)\s+an?\s+hour\b/.test(lower)) {
     return { intervalMin: 60, isRepeating: /\bevery\b/.test(lower) };

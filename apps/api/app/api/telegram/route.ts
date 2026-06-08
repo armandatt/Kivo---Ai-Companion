@@ -33,7 +33,7 @@ import { handleOffTopicMessage } from "@repo/api/services/offTopicClassifier.ser
 //@ts-ignore
 import { scheduleCheckIn, cancelCheckIn } from "@repo/api/services/scheduleCheckin.service";
 //@ts-ignore
-import { listReminders, cancelReminderByIndex, parseAndCreateReminder } from "@repo/api/services/customReminder.service";
+import { listReminders, cancelReminderByIndex, parseAndCreateReminder, cancelReminderByKeyword, updateReminderByKeyword } from "@repo/api/services/customReminder.service";
 //@ts-ignore
 import { parseAndSaveNutrition } from "@repo/api/services/rexSessionContext.service";
 //@ts-ignore
@@ -154,12 +154,35 @@ export async function POST(req: Request) {
         return Response.json({ ok: true });
       }
 
+      // ── Natural-language reminder cancel ──────────────────────────────────
+      // "stop reminding me to drink water", "cancel my protein reminder", etc.
+      const nlCancelMatch = text.match(
+        /\b(?:stop|cancel|remove|delete|turn off|disable)\b.{0,30}\b(?:remind(?:er|ing me)?|notification)\b.{0,40}(?:for|about|to|of)?\s+(.+)/i
+      );
+      if (nlCancelMatch?.[1]) {
+        await addToShortTerm(chatId.toString(), text, { role: "user", intent: "reminder_cancel", emotion: "neutral" });
+        const reply = await cancelReminderByKeyword(chatId.toString(), nlCancelMatch[1].trim());
+        await sendAndRemember(chatId, reply, "reminder_cancel", "neutral");
+        return Response.json({ ok: true });
+      }
+
+      // ── Natural-language reminder edit ────────────────────────────────────
+      // "change my water reminder to every 2 hours", "update gym reminder to 7am"
+      const nlEditMatch = text.match(
+        /\b(?:change|update|edit|switch|modify)\b.{0,20}?\b(.+?)\b\s*reminder\b.{0,10}to\b\s+(.+)/i
+      );
+      if (nlEditMatch?.[1] && nlEditMatch?.[2]) {
+        await addToShortTerm(chatId.toString(), text, { role: "user", intent: "reminder_edit", emotion: "neutral" });
+        const reply = await updateReminderByKeyword(chatId.toString(), nlEditMatch[1].trim(), nlEditMatch[2].trim());
+        await sendAndRemember(chatId, reply, "reminder_edit", "neutral");
+        return Response.json({ ok: true });
+      }
+
       // ── Natural-language reminder creation ────────────────────────────────
       // "remind me at 8am to...", "update me at breakfast with...", "check in with me at 10pm..."
       if (/\b(remind|reminder|update me at|check in with me at|ping me at)\b/i.test(text)) {
         const result = await parseAndCreateReminder(chatId.toString(), text);
         if (result) {
-          // Bug 6: result is non-null for both created=true (saved) and created=false (conflict detected)
           await addToShortTerm(chatId.toString(), text, { role: "user", intent: "reminder_create", emotion: "neutral" });
           await sendAndRemember(chatId, result.reply, "reminder_create", "neutral");
           return Response.json({ ok: true });
