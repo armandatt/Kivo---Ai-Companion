@@ -75,7 +75,7 @@ function OnboardingFlowContent() {
       }
 
       setStep('complete');
-      setTimeout(() => router.push('/dashboard'), 800);
+      setTimeout(() => router.push('/home'), 800);
     } catch {
       setError('Something went wrong while saving onboarding.');
     } finally {
