@@ -21,78 +21,62 @@ export function BabylonTilemap({
   playerY,
   currentTime,
 }: BabylonTilemapProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const engineRef = useRef<BabylonVoxelEngine | null>(null)
+  const canvasRef  = useRef<HTMLCanvasElement>(null)
+  const engineRef  = useRef<BabylonVoxelEngine | null>(null)
 
-  // Initialize Babylon.js engine
+  // Init engine — wait one rAF so the canvas has real CSS dimensions
   useEffect(() => {
-    if (!canvasRef.current) return
+    const canvas = canvasRef.current
+    if (!canvas) return
 
-    try {
-      // Ensure canvas has proper dimensions
-      const parent = canvasRef.current.parentElement
-      if (parent) {
-        canvasRef.current.width = parent.clientWidth
-        canvasRef.current.height = parent.clientHeight
+    let cancelled = false
+    let raf: number
+
+    const init = () => {
+      if (cancelled) return
+      const rect = canvas.getBoundingClientRect()
+      if (!rect.width || !rect.height) {
+        // Layout not ready yet — retry next frame
+        raf = requestAnimationFrame(init)
+        return
       }
-
-      const engine = new BabylonVoxelEngine(
-        canvasRef.current,
-        userSeed,
-        unlockedBiomes,
-        worldHealth,
-      )
-      engineRef.current = engine
-
-      // Handle window resize
-      const handleResize = () => {
-        if (parent && canvasRef.current) {
-          canvasRef.current.width = parent.clientWidth
-          canvasRef.current.height = parent.clientHeight
-        }
+      try {
+        const engine = new BabylonVoxelEngine(canvas, userSeed, unlockedBiomes, worldHealth)
+        engineRef.current = engine
+      } catch (err) {
+        console.error('[creature] engine init failed:', err)
       }
-      window.addEventListener('resize', handleResize)
+    }
 
-      return () => {
-        window.removeEventListener('resize', handleResize)
-        engine.dispose()
-      }
-    } catch (error) {
-      console.error('[v0] Failed to initialize Babylon engine:', error)
+    raf = requestAnimationFrame(init)
+
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf)
+      engineRef.current?.dispose()
+      engineRef.current = null
     }
   }, [userSeed, unlockedBiomes, worldHealth])
 
-  // Update player position and chunk loading
+  // Player position
   useEffect(() => {
-    if (engineRef.current) {
-      const worldX = playerX * 2
-      const worldZ = playerY * 2
-      engineRef.current.updatePlayerPosition(worldX, worldZ)
-    }
+    engineRef.current?.updatePlayerPosition(playerX * 2, playerY * 2)
   }, [playerX, playerY])
 
-  // Update time and lighting
+  // Time
   useEffect(() => {
-    if (engineRef.current) {
-      engineRef.current.updateTime(currentTime)
-    }
+    engineRef.current?.updateTime(currentTime)
   }, [currentTime])
 
-  // Update world health
+  // World health
   useEffect(() => {
-    if (engineRef.current) {
-      engineRef.current.updateWorldHealth(worldHealth)
-    }
+    engineRef.current?.updateWorldHealth(worldHealth)
   }, [worldHealth])
 
   return (
     <canvas
       ref={canvasRef}
-      style={{
-        width: '100%',
-        height: '100%',
-        display: 'block',
-      }}
+      style={{ width: '100%', height: '100%', display: 'block' }}
     />
   )
 }

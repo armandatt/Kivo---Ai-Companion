@@ -110,7 +110,7 @@ export class BabylonVoxelEngine {
   private tNoise:    (x: number, y: number) => number
   private playerX   = 0
   private playerZ   = 0
-  private cameraYaw = Math.PI  // start looking south
+  private cameraYaw = 0  // start looking north (away from spawn hill)
   private currentTime: number
   private frame:     number | null = null
   private lastCX    = Infinity
@@ -129,10 +129,15 @@ export class BabylonVoxelEngine {
     this.hNoise = createNoise2D(mulberry32(seed))
     this.tNoise = createNoise2D(mulberry32(seed ^ 0xdeadbeef))
 
-    // Renderer
+    // Renderer — use getBoundingClientRect so we get real CSS dimensions
+    // even when canvas.clientWidth is 0 before first paint
+    const rect = canvas.getBoundingClientRect()
+    const initW = rect.width  || canvas.clientWidth  || 800
+    const initH = rect.height || canvas.clientHeight || 600
+
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    this.renderer.setSize(canvas.clientWidth || canvas.width, canvas.clientHeight || canvas.height, false)
+    this.renderer.setSize(initW, initH, false)
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -145,8 +150,8 @@ export class BabylonVoxelEngine {
     // Camera — 65° FOV, close near plane for immersive feel
     this.camera = new THREE.PerspectiveCamera(65, (canvas.clientWidth || canvas.width) / (canvas.clientHeight || canvas.height), 0.1, 150)
 
-    // Lighting — bright directional like Minecraft daytime
-    this.scene.add(new THREE.AmbientLight(0x8aafc8, 0.9))
+    // Lighting — bright ambient keeps world visible at all times (moonlight floor)
+    this.scene.add(new THREE.AmbientLight(0x8aafc8, 1.1))
     this.sun = new THREE.DirectionalLight(0xfff5e0, 1.5)
     this.sun.castShadow = true
     this.sun.shadow.mapSize.set(1024, 1024)
@@ -325,7 +330,8 @@ export class BabylonVoxelEngine {
 
     const angle    = ((t - 6) / 12) * Math.PI
     const isDay    = t >= 6 && t < 20
-    this.sun.intensity = isDay ? Math.max(0.2, Math.sin(angle) * 1.6) : 0.05
+    // Minimum 0.3 at night so world is never pitch black (moonlight)
+    this.sun.intensity = isDay ? Math.max(0.4, Math.sin(angle) * 1.6) : 0.3
     this.sun.position.set(Math.cos(angle) * 80, Math.abs(Math.sin(angle)) * 80, 30)
   }
 

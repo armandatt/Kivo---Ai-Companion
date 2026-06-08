@@ -27,11 +27,14 @@ export default function CreaturePage() {
   const [playerY, setPlayerY] = useState(0)
   const [currentTime, setCurrentTime] = useState(14) // Start at 2 PM
 
-  // Simulate day/night cycle
+  // Real local time — updates every minute so the world matches the user's timezone
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime((prev) => (prev + 0.05) % 24)
-    }, 100)
+    const tick = () => {
+      const now = new Date()
+      setCurrentTime(now.getHours() + now.getMinutes() / 60)
+    }
+    tick()
+    const timer = setInterval(tick, 60_000)
     return () => clearInterval(timer)
   }, [])
 
