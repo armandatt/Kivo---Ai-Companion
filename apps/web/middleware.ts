@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 
-const PROTECTED_ROUTES = ["/dashboard", "/onboarding", "/settings"]
+const PROTECTED_ROUTES = [
+  "/home", "/coach", "/journey", "/progress", "/goals", "/creature", "/settings",
+  "/onboarding",
+]
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -21,8 +24,13 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/dashboard/:path*",
-    "/onboarding/:path*",
+    "/home/:path*",
+    "/coach/:path*",
+    "/journey/:path*",
+    "/progress/:path*",
+    "/goals/:path*",
+    "/creature/:path*",
     "/settings/:path*",
+    "/onboarding/:path*",
   ],
 }
