@@ -1,3 +1,10 @@
+/**
+ * Kivo World Engine — smooth stylized RPG world, no voxel blocks.
+ * Architecture: single large terrain mesh (vertex-displaced PlaneGeometry),
+ * instanced trees, instanced grass billboards, animated creature character,
+ * smooth lerp camera, sky dome shader, day/night lighting.
+ */
+
 import * as THREE from 'three'
 import { createNoise2D } from 'simplex-noise'
 import type { BiomeType } from './game-state'
@@ -5,88 +12,13 @@ import type { BiomeType } from './game-state'
 export type { BiomeType }
 export interface VoxelBlock { position: THREE.Vector3; blockType: string; biome: BiomeType }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-const CHUNK   = 16
-const VIEW    = 3
-const WATER   = 2
-const CLIFF_D = 10
+// ─── World constants ──────────────────────────────────────────────────────────
+const WORLD    = 320   // terrain spans -160 to +160 world units
+const SEGS     = 160   // mesh subdivisions per axis (160×160 = smooth hills)
+const WATER_Y  = 0.4   // water surface height
+const SPAWN_R  = 28    // radius of flat spawn area near (0,0)
 
-// ─── Block palette ────────────────────────────────────────────────────────────
-type M = 'grass'|'dirt'|'stone'|'water'|'sand'|'log'|'leaf1'|'leaf2'|'leaf3'|'lava'
-
-function makeMats(): Record<M, THREE.MeshLambertMaterial> {
-  const l = (c: number, o: Partial<THREE.MeshLambertMaterialParameters> = {}) =>
-    new THREE.MeshLambertMaterial({ color: c, ...o })
-  return {
-    grass : l(0x5a9c2e, { vertexColors: true }),
-    dirt  : l(0x7a5c3a),
-    stone : l(0x828282),
-    water : l(0x3d7fb5, { transparent: true, opacity: 0.75 }),
-    sand  : l(0xd9c47a),
-    log   : l(0x675030),
-    leaf1 : l(0x3a7d21),
-    leaf2 : l(0x4c9a2a),
-    leaf3 : l(0x2d5e18),
-    lava  : new THREE.MeshLambertMaterial({ color: 0xff6d00, emissive: new THREE.Color(0xff3300), emissiveIntensity: 0.5 }),
-  }
-}
-
-// Grass block: green top face, dirt-brown sides (vertex colours)
-function makeGrassGeo(): THREE.BufferGeometry {
-  const geo  = new THREE.BoxGeometry(1, 1, 1)
-  const pos  = geo.attributes.position as THREE.BufferAttribute
-  const cols = new Float32Array(pos.count * 3)
-  for (let i = 0; i < pos.count; i++) {
-    if (pos.getY(i) > 0.4) {
-      cols[i*3]=0.353; cols[i*3+1]=0.612; cols[i*3+2]=0.180  // grass green
-    } else {
-      cols[i*3]=0.478; cols[i*3+1]=0.361; cols[i*3+2]=0.227  // dirt brown
-    }
-  }
-  geo.setAttribute('color', new THREE.BufferAttribute(cols, 3))
-  return geo
-}
-
-// ─── Creature character (Minecraft-style biped) ───────────────────────────────
-function buildCreature(): THREE.Group {
-  const g       = new THREE.Group()
-  const teal    = new THREE.MeshLambertMaterial({ color: 0x1e8c72 })
-  const darkTeal= new THREE.MeshLambertMaterial({ color: 0x145c4e })
-  const legMat  = new THREE.MeshLambertMaterial({ color: 0x0f4238 })
-  const eyeMat  = new THREE.MeshBasicMaterial({ color: 0xf5e642 })   // glowing yellow
-  const pupilMat= new THREE.MeshBasicMaterial({ color: 0x111111 })
-
-  const add = (mat: THREE.Material|THREE.Material[], w: number, h: number, d: number, x: number, y: number, z: number) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat)
-    mesh.position.set(x, y, z)
-    mesh.castShadow = true
-    g.add(mesh)
-  }
-
-  // Head (slightly oversized for character)
-  add(teal, 0.62, 0.62, 0.62,  0, 1.72, 0)
-  // Eyes
-  add(eyeMat,  0.14, 0.10, 0.04,  -0.16, 1.76, 0.30)
-  add(eyeMat,  0.14, 0.10, 0.04,   0.16, 1.76, 0.30)
-  add(pupilMat,0.07, 0.07, 0.05,  -0.16, 1.74, 0.31)
-  add(pupilMat,0.07, 0.07, 0.05,   0.16, 1.74, 0.31)
-  // Neck stub
-  add(darkTeal, 0.22, 0.12, 0.22, 0, 1.38, 0)
-  // Body
-  add(darkTeal, 0.56, 0.70, 0.32, 0, 0.96, 0)
-  // Left arm
-  add(teal, 0.22, 0.65, 0.22, -0.39, 0.96, 0)
-  // Right arm
-  add(teal, 0.22, 0.65, 0.22,  0.39, 0.96, 0)
-  // Left leg
-  add(legMat, 0.24, 0.62, 0.24, -0.15, 0.31, 0)
-  // Right leg
-  add(legMat, 0.24, 0.62, 0.24,  0.15, 0.31, 0)
-
-  return g
-}
-
-// ─── PRNG / noise ─────────────────────────────────────────────────────────────
+// ─── Noise helpers ────────────────────────────────────────────────────────────
 function strSeed(s: string): number {
   let h = 0x811c9dc5
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) }
@@ -101,62 +33,345 @@ function mulberry32(seed: number) {
   }
 }
 
-// ─── Sky colour stops ─────────────────────────────────────────────────────────
-// Night is dark-blue (not black) so terrain stays visible
-const SKY: Array<[number, THREE.Color]> = [
-  [0,  new THREE.Color(0x0e2244)],  // midnight  — dark navy
-  [4,  new THREE.Color(0x1a1650)],  // pre-dawn  — deep blue
-  [6,  new THREE.Color(0xf08040)],  // sunrise   — orange
-  [8,  new THREE.Color(0x5bb8f5)],  // morning   — bright blue
-  [14, new THREE.Color(0x3ea8f0)],  // afternoon — vivid blue
-  [18, new THREE.Color(0xf07030)],  // sunset    — orange
-  [20, new THREE.Color(0x1a1255)],  // dusk      — indigo
-  [24, new THREE.Color(0x0e2244)],
-]
-function skyAt(t: number): THREE.Color {
-  for (let i = 0; i < SKY.length - 1; i++) {
-    const [t0,c0]=SKY[i], [t1,c1]=SKY[i+1]
-    if (t >= t0 && t < t1) return c0.clone().lerp(c1, (t-t0)/(t1-t0))
+// ─── Terrain height function ──────────────────────────────────────────────────
+function makeHeightFn(hN: (x:number,y:number)=>number) {
+  return (wx: number, wz: number): number => {
+    const dist  = Math.sqrt(wx*wx + wz*wz)
+    // Flat spawn area fades into rolling hills then ocean at edge
+    const spawn = Math.exp(-Math.pow(dist / SPAWN_R, 2)) * 2.5     // gentle central plateau
+    const isle  = Math.max(0, 1 - Math.pow(dist / 130, 2.5)) * 8  // island falloff
+    const n1    = hN(wx / 80, wz / 80) * 6    // large hills
+    const n2    = hN(wx / 28, wz / 28) * 2.5  // medium bumps
+    const n3    = hN(wx / 10, wz / 10) * 0.9  // surface detail
+    return Math.max(-2, spawn + isle + (n1 + n2 + n3))
   }
-  return SKY[0][1].clone()
 }
 
-// ─── Engine ───────────────────────────────────────────────────────────────────
+// ─── Height → terrain colour ──────────────────────────────────────────────────
+function lerp3(c: THREE.Color, a: number, b: number, t: number) {
+  c.setHex(a).lerp(new THREE.Color(b), Math.max(0, Math.min(1, t)))
+}
+function heightColor(h: number): THREE.Color {
+  const c = new THREE.Color()
+  if      (h < -0.2) { lerp3(c, 0x1a5580, 0x2a80b5, (h+2)/1.8); }
+  else if (h < 0.5)  { lerp3(c, 0xcfba82, 0xd9cb90, (h+0.2)/0.7); }
+  else if (h < 3.0)  { lerp3(c, 0x5ab840, 0x4aa835, (h-0.5)/2.5); }
+  else if (h < 6.5)  { lerp3(c, 0x4a9830, 0x3a8025, (h-3.0)/3.5); }
+  else if (h < 9.5)  { lerp3(c, 0x7a7260, 0x8a8270, (h-6.5)/3.0); }
+  else               { c.setHex(0xe8eaf6) }
+  return c
+}
+
+// ─── Terrain mesh ─────────────────────────────────────────────────────────────
+function buildTerrain(hFn: (x:number,z:number)=>number): THREE.Mesh {
+  const geo  = new THREE.PlaneGeometry(WORLD, WORLD, SEGS, SEGS)
+  geo.rotateX(-Math.PI / 2)
+  const pos  = geo.attributes.position as THREE.BufferAttribute
+  const cols = new Float32Array(pos.count * 3)
+  for (let i = 0; i < pos.count; i++) {
+    const h = hFn(pos.getX(i), pos.getZ(i))
+    pos.setY(i, h)
+    const c = heightColor(h)
+    cols[i*3]=c.r; cols[i*3+1]=c.g; cols[i*3+2]=c.b
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(cols, 3))
+  geo.computeVertexNormals()
+  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }))
+  mesh.receiveShadow = true
+  return mesh
+}
+
+// ─── Water plane ──────────────────────────────────────────────────────────────
+function buildWater(): THREE.Mesh {
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(WORLD, WORLD).rotateX(-Math.PI / 2) as THREE.BufferGeometry,
+    new THREE.MeshLambertMaterial({ color: 0x2a90d0, transparent: true, opacity: 0.78 })
+  )
+  mesh.position.y = WATER_Y
+  return mesh
+}
+
+// ─── Sky dome (gradient shader) ───────────────────────────────────────────────
+function buildSkyDome(): THREE.Mesh {
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      top:    { value: new THREE.Color(0x1565c0) },
+      bottom: { value: new THREE.Color(0x90caf9) },
+    },
+    vertexShader: `
+      varying vec3 vPos;
+      void main() { vPos = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }
+    `,
+    fragmentShader: `
+      uniform vec3 top;
+      uniform vec3 bottom;
+      varying vec3 vPos;
+      void main() {
+        float h = clamp(vPos.y / 148.0, 0.0, 1.0);
+        gl_FragColor = vec4(mix(bottom, top, pow(h, 0.6)), 1.0);
+      }
+    `,
+    side: THREE.BackSide,
+  })
+  return new THREE.Mesh(new THREE.SphereGeometry(148, 32, 16), mat)
+}
+
+// ─── Instanced trees ──────────────────────────────────────────────────────────
+function scatterTrees(hFn:(x:number,z:number)=>number, tN:(x:number,y:number)=>number, scene: THREE.Scene) {
+  const spots: Array<[number,number,number,number]> = []  // wx,wz,h,scale
+  const halfW = WORLD/2 - 12, step = 14
+  const dummy = new THREE.Object3D()
+
+  for (let wx = -halfW; wx < halfW; wx += step) {
+    for (let wz = -halfW; wz < halfW; wz += step) {
+      const jx = wx + tN(wx*.09, wz*.09+50) * step * .85
+      const jz = wz + tN(wx*.09+80, wz*.09) * step * .85
+      const h  = hFn(jx, jz)
+      if (h < 2.8 || h > 8.5) continue
+      if (tN(jx/16, jz/16) < 0.1) continue
+      const scale = 0.85 + Math.abs(tN(jx*.4, jz*.4+300)) * 0.55
+      spots.push([jx, jz, h, scale])
+    }
+  }
+
+  const N = spots.length
+  const mat4 = new THREE.Matrix4()
+
+  // Trunks
+  const trunkM = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.13, 0.20, 2.0, 7),
+    new THREE.MeshLambertMaterial({ color: 0x6b4226 }), N
+  )
+  trunkM.castShadow = true
+
+  // Three canopy cone layers
+  const coneRadii  = [1.7, 1.35, 1.0]
+  const coneColors = [0x2d6b22, 0x3d7c2a, 0x4e8c38]
+  const coneY      = [1.9, 2.9, 3.8]
+  const coneMeshes = coneRadii.map((r, i) => {
+    const m = new THREE.InstancedMesh(
+      new THREE.ConeGeometry(r, 1.8, 8),
+      new THREE.MeshLambertMaterial({ color: coneColors[i] }), N
+    )
+    m.castShadow = true
+    return m
+  })
+
+  spots.forEach(([wx, wz, h, sc], i) => {
+    dummy.position.set(wx, h + sc * 1.0, wz); dummy.scale.setScalar(sc); dummy.rotation.set(0,0,0)
+    dummy.updateMatrix(); trunkM.setMatrixAt(i, dummy.matrix)
+    coneY.forEach((yOff, li) => {
+      dummy.position.set(wx, h + sc * yOff, wz)
+      dummy.rotation.y = i * 0.7
+      dummy.updateMatrix(); coneMeshes[li].setMatrixAt(i, dummy.matrix)
+    })
+  })
+
+  trunkM.instanceMatrix.needsUpdate = true
+  coneMeshes.forEach(m => { m.instanceMatrix.needsUpdate = true; scene.add(m) })
+  scene.add(trunkM)
+}
+
+// ─── Instanced grass billboards ───────────────────────────────────────────────
+function scatterGrass(hFn:(x:number,z:number)=>number, tN:(x:number,y:number)=>number): THREE.InstancedMesh {
+  const mat = new THREE.MeshLambertMaterial({ color: 0x5aaa40, side: THREE.DoubleSide, transparent: true, alphaTest: 0.1 })
+  const geo  = new THREE.PlaneGeometry(0.55, 0.75)
+  const COUNT = 5000
+  const mesh  = new THREE.InstancedMesh(geo, mat, COUNT * 2)
+  const dummy = new THREE.Object3D()
+  let idx = 0
+  while (idx < COUNT) {
+    const wx = (Math.random() - 0.5) * (WORLD - 24)
+    const wz = (Math.random() - 0.5) * (WORLD - 24)
+    const h  = hFn(wx, wz)
+    if (h < 0.6 || h > 7.5) continue
+    if (tN(wx/7, wz/7) < -0.35) continue
+    const sc = 0.55 + Math.random() * 0.9
+    // Plane 1
+    dummy.position.set(wx, h + 0.37 * sc, wz); dummy.scale.setScalar(sc)
+    dummy.rotation.set(0, Math.random() * Math.PI, 0); dummy.updateMatrix()
+    mesh.setMatrixAt(idx * 2, dummy.matrix)
+    // Cross plane
+    dummy.rotation.y += Math.PI / 2; dummy.updateMatrix()
+    mesh.setMatrixAt(idx * 2 + 1, dummy.matrix)
+    idx++
+  }
+  mesh.count = COUNT * 2; mesh.instanceMatrix.needsUpdate = true
+  return mesh
+}
+
+// ─── Kivo — animated companion creature ───────────────────────────────────────
+interface Kivo {
+  group: THREE.Group
+  body:  THREE.Mesh
+  head:  THREE.Group      // whole head group rotates for look-around
+  eyeL:  THREE.Mesh       // white ball — scaled for blink
+  eyeR:  THREE.Mesh
+  earL:  THREE.Mesh
+  earR:  THREE.Mesh
+  tail:  THREE.Mesh
+  wL:    THREE.Mesh       // wing left
+  wR:    THREE.Mesh       // wing right
+}
+
+function buildKivo(): Kivo {
+  const group = new THREE.Group()
+  const teal  = new THREE.MeshLambertMaterial({ color: 0x1a9e8c })
+  const pale  = new THREE.MeshLambertMaterial({ color: 0x8adfd5 })
+  const dark  = new THREE.MeshLambertMaterial({ color: 0x0d7060 })
+  const eW    = new THREE.MeshLambertMaterial({ color: 0xfafafa })
+  const eB    = new THREE.MeshBasicMaterial   ({ color: 0x00d4ff })  // glowing iris
+  const eP    = new THREE.MeshBasicMaterial   ({ color: 0x050a14 })
+  const wMat  = new THREE.MeshLambertMaterial ({ color: 0x0e8a7a, transparent: true, opacity: 0.82 })
+
+  // Body
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.48, 16, 12), teal)
+  body.scale.set(1, 0.88, 1); body.position.y = 0.52; body.castShadow = true
+  group.add(body)
+  // Belly highlight
+  const belly = new THREE.Mesh(new THREE.SphereGeometry(0.33, 12, 10), pale)
+  belly.scale.set(0.88, 0.72, 0.5); belly.position.set(0, 0.48, 0.2)
+  group.add(belly)
+
+  // Head group (rotates for look-around animation)
+  const headGroup = new THREE.Group()
+  headGroup.position.set(0, 1.05, 0.14)
+  group.add(headGroup)
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 12), teal)
+  head.castShadow = true
+  headGroup.add(head)
+  // Snout
+  const snout = new THREE.Mesh(new THREE.SphereGeometry(0.19, 10, 8), pale)
+  snout.scale.set(0.9, 0.6, 0.75); snout.position.set(0, -0.08, 0.38)
+  headGroup.add(snout)
+  // Nostrils
+  ;[-0.07, 0.07].forEach(xOff => {
+    const nostril = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 6), dark)
+    nostril.position.set(xOff, -0.12, 0.52)
+    headGroup.add(nostril)
+  })
+
+  // Eyes
+  const mkEye = (xOff: number): THREE.Mesh => {
+    const eg = new THREE.Group()
+    const white = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 10), eW)
+    const iris  = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 10), eB)
+    iris.position.z = 0.05
+    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.058, 8, 8), eP)
+    pupil.position.z = 0.085
+    // Catchlight
+    const shine = new THREE.Mesh(new THREE.SphereGeometry(0.03, 6, 6), new THREE.MeshBasicMaterial({ color: 0xffffff }))
+    shine.position.set(0.04, 0.04, 0.11)
+    eg.add(white, iris, pupil, shine)
+    eg.position.set(xOff, 0.08, 0.38)
+    headGroup.add(eg)
+    return white  // return white for blink scale
+  }
+  const eyeL = mkEye(-0.17)
+  const eyeR = mkEye( 0.17)
+
+  // Ears (fin-shaped cones)
+  const mkEar = (xOff: number, zRot: number): THREE.Mesh => {
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.3, 5), dark)
+    ear.position.set(xOff, 0.36, -0.06); ear.rotation.z = zRot
+    headGroup.add(ear)
+    return ear
+  }
+  const earL = mkEar(-0.22, -0.35)
+  const earR = mkEar( 0.22,  0.35)
+
+  // Tail
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.72, 8), teal)
+  tail.position.set(0, 0.4, -0.5); tail.rotation.x = -0.75; tail.castShadow = true
+  group.add(tail)
+  // Tail tip
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8), pale)
+  tip.position.set(0, -0.38, 0)
+  tail.add(tip)
+
+  // Wings
+  const wGeo = new THREE.BufferGeometry()
+  const wV = new Float32Array([0,0,0, 0.72,0.28,-0.05, 0.42,0.62,0.08])
+  wGeo.setAttribute('position', new THREE.BufferAttribute(wV, 3))
+  wGeo.computeVertexNormals()
+  const wL = new THREE.Mesh(wGeo, wMat)
+  wL.position.set(-0.45, 0.72, -0.1); group.add(wL)
+  const wGeo2 = wGeo.clone()
+  const wV2 = new Float32Array([0,0,0, -0.72,0.28,-0.05, -0.42,0.62,0.08])
+  wGeo2.setAttribute('position', new THREE.BufferAttribute(wV2, 3))
+  wGeo2.computeVertexNormals()
+  const wR = new THREE.Mesh(wGeo2, wMat)
+  wR.position.set(0.45, 0.72, -0.1); group.add(wR)
+
+  // Legs
+  const legM = new THREE.MeshLambertMaterial({ color: 0x0d6e5f })
+  ;[-0.22, 0.22].forEach((xOff, i) => {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.055, 0.32, 6), legM)
+    leg.position.set(xOff, 0.14, 0.12); leg.rotation.z = xOff > 0 ? 0.18 : -0.18
+    group.add(leg)
+    const foot = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8), legM)
+    foot.position.set(xOff > 0 ? 0.04 : -0.04, 0, 0.05); foot.scale.set(1.2,0.55,1.3)
+    leg.add(foot)
+  })
+
+  return { group, body, head: headGroup, eyeL, eyeR, earL, earR, tail, wL, wR }
+}
+
+// ─── Day/night sky colours ────────────────────────────────────────────────────
+type SkyStop = { t: number; top: number; bot: number; sun: number; amb: number }
+const SKY_STOPS: SkyStop[] = [
+  { t:  0, top: 0x030820, bot: 0x0a1830, sun: 0.10, amb: 0.35 },
+  { t:  5, top: 0x0a1040, bot: 0x1a1555, sun: 0.12, amb: 0.38 },
+  { t:  6, top: 0x7a2010, bot: 0xf09060, sun: 0.70, amb: 0.60 },
+  { t:  8, top: 0x1455c0, bot: 0x82caf8, sun: 1.90, amb: 0.85 },
+  { t: 14, top: 0x0e45b0, bot: 0x72baf4, sun: 2.10, amb: 0.90 },
+  { t: 17, top: 0x1a3080, bot: 0xf09060, sun: 1.50, amb: 0.75 },
+  { t: 19, top: 0x060820, bot: 0x2a1540, sun: 0.30, amb: 0.42 },
+  { t: 24, top: 0x030820, bot: 0x0a1830, sun: 0.10, amb: 0.35 },
+]
+function lerpSky(t: number): SkyStop {
+  for (let i = 0; i < SKY_STOPS.length - 1; i++) {
+    const a = SKY_STOPS[i], b = SKY_STOPS[i+1]
+    if (t >= a.t && t < b.t) {
+      const p = (t - a.t) / (b.t - a.t)
+      return {
+        t,
+        top: new THREE.Color(a.top).lerp(new THREE.Color(b.top), p).getHex(),
+        bot: new THREE.Color(a.bot).lerp(new THREE.Color(b.bot), p).getHex(),
+        sun: a.sun + (b.sun - a.sun) * p,
+        amb: a.amb + (b.amb - a.amb) * p,
+      }
+    }
+  }
+  return SKY_STOPS[0]
+}
+
+// ─── Engine class ─────────────────────────────────────────────────────────────
 export class BabylonVoxelEngine {
-  private renderer:  THREE.WebGLRenderer
-  private scene:     THREE.Scene
-  private camera:    THREE.PerspectiveCamera
-  private sun:       THREE.DirectionalLight
-  private ambient:   THREE.AmbientLight
-  private mats:      Record<M, THREE.MeshLambertMaterial>
-  private grassGeo:  THREE.BufferGeometry
-  private box:       THREE.BoxGeometry
-  private chunks   = new Map<string, THREE.Group>()
-  private creature:  THREE.Group
-  private hNoise:    (x: number, y: number) => number
-  private tNoise:    (x: number, y: number) => number
-  private playerX  = 0
-  private playerZ  = 0
-  private cameraYaw= 0.5   // nice diagonal start view
-  private time     = 14
-  private frame:   number | null = null
-  private lastCX   = Infinity
-  private lastCZ   = Infinity
-  private ro:      ResizeObserver
+  private renderer: THREE.WebGLRenderer
+  private scene:    THREE.Scene
+  private camera:   THREE.PerspectiveCamera
+  private sun:      THREE.DirectionalLight
+  private hemi:     THREE.HemisphereLight
+  private ambient:  THREE.AmbientLight
+  private skyDome:  THREE.Mesh
+  private water:    THREE.Mesh
+  private kivo:     Kivo
+  private heightFn: (wx:number,wz:number)=>number
+  private playerX   = 0
+  private playerZ   = 0
+  private cameraYaw = 0.6
+  private camPos    = new THREE.Vector3()
+  private camLook   = new THREE.Vector3()
+  private clock     = new THREE.Clock()
+  private realTime  = 14
+  private frame:    number | null = null
+  private ro:       ResizeObserver
 
-  constructor(
-    canvas: HTMLCanvasElement,
-    userSeed: string,
-    _unlockedBiomes: BiomeType[],
-    _worldHealth: number,
-  ) {
-    const seed = strSeed(userSeed)
-    this.hNoise = createNoise2D(mulberry32(seed))
-    this.tNoise = createNoise2D(mulberry32(seed ^ 0xdeadbeef))
-
+  constructor(canvas: HTMLCanvasElement, userSeed: string, _unlockedBiomes: BiomeType[], _worldHealth: number) {
     const rect = canvas.getBoundingClientRect()
-    const W = rect.width  || canvas.clientWidth  || 800
-    const H = rect.height || canvas.clientHeight || 600
+    const W    = rect.width  || canvas.clientWidth  || 800
+    const H    = rect.height || canvas.clientHeight || 600
 
     // Renderer
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
@@ -165,192 +380,152 @@ export class BabylonVoxelEngine {
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.15
+    this.renderer.toneMappingExposure = 1.18
 
     // Scene
     this.scene = new THREE.Scene()
-    this.scene.fog = new THREE.Fog(0x5bb8f5, 40, 110)
+    this.scene.fog = new THREE.Fog(0x82caf8, 65, 148)
 
-    // Camera — wider FOV feels more immersive
-    this.camera = new THREE.PerspectiveCamera(70, W / H, 0.1, 160)
+    // Camera
+    this.camera = new THREE.PerspectiveCamera(65, W / H, 0.1, 165)
+    this.camPos.set(0, 8, 10); this.camLook.set(0, 1.5, 0)
+    this.camera.position.copy(this.camPos)
 
-    // Lighting — always bright enough to see (Minecraft feel)
-    this.ambient = new THREE.AmbientLight(0xffffff, 1.4)
-    this.scene.add(this.ambient)
+    // Noise
+    const seed = strSeed(userSeed)
+    const hNoise = createNoise2D(mulberry32(seed))
+    const tNoise = createNoise2D(mulberry32(seed ^ 0xdeadbeef))
+    this.heightFn = makeHeightFn(hNoise)
 
-    this.sun = new THREE.DirectionalLight(0xfff8e7, 2.2)
+    // World geometry
+    this.skyDome = buildSkyDome(); this.scene.add(this.skyDome)
+    this.scene.add(buildTerrain(this.heightFn))
+    this.water = buildWater(); this.scene.add(this.water)
+    scatterTrees(this.heightFn, tNoise, this.scene)
+    this.scene.add(scatterGrass(this.heightFn, tNoise))
+
+    // Creature
+    this.kivo = buildKivo(); this.scene.add(this.kivo.group)
+
+    // Lighting
+    this.hemi   = new THREE.HemisphereLight(0x87ceeb, 0x4a6e2a, 0.85); this.scene.add(this.hemi)
+    this.ambient= new THREE.AmbientLight(0xfff5e0, 0.8); this.scene.add(this.ambient)
+    this.sun    = new THREE.DirectionalLight(0xfff8e7, 2.1)
     this.sun.castShadow = true
-    this.sun.shadow.mapSize.set(1024, 1024)
-    this.sun.shadow.camera.near = 0.5
-    this.sun.shadow.camera.far  = 150
+    this.sun.shadow.mapSize.set(2048, 2048)
     const sh = this.sun.shadow.camera as THREE.OrthographicCamera
-    sh.left = sh.bottom = -70; sh.right = sh.top = 70
+    sh.left=sh.bottom=-90; sh.right=sh.top=90
+    this.sun.shadow.camera.near=0.5; this.sun.shadow.camera.far=200
     this.scene.add(this.sun)
-
-    // Shared geometry
-    this.grassGeo = makeGrassGeo()
-    this.box      = new THREE.BoxGeometry(1, 1, 1)
-    this.mats     = makeMats()
-
-    // Creature character
-    this.creature = buildCreature()
-    this.scene.add(this.creature)
 
     // Resize
     this.ro = new ResizeObserver(() => {
       const w = canvas.clientWidth, h = canvas.clientHeight
       if (!w || !h) return
       this.renderer.setSize(w, h, false)
-      this.camera.aspect = w / h
-      this.camera.updateProjectionMatrix()
+      this.camera.aspect = w / h; this.camera.updateProjectionMatrix()
     })
     this.ro.observe(canvas)
 
-    this.loadInitialChunks()
     this.loop()
   }
 
-  // ── Terrain ──────────────────────────────────────────────────────────────────
-  private terrainH(wx: number, wz: number): number {
-    const n1 = this.hNoise(wx / 55, wz / 55) * 6
-    const n2 = this.hNoise(wx / 20, wz / 20) * 3
-    const n3 = this.hNoise(wx / 7,  wz / 7)  * 1.2
-    return Math.max(1, Math.round(5 + n1 + n2 + n3))
+  private getTerrainY(wx: number, wz: number) { return this.heightFn(wx, wz) }
+
+  // ── Creature animation ────────────────────────────────────────────────────────
+  private animateKivo(t: number) {
+    const { group, body, head, eyeL, eyeR, earL, earR, tail, wL, wR } = this.kivo
+    const gy = this.getTerrainY(this.playerX, this.playerZ)
+
+    // Gentle hover
+    group.position.set(this.playerX, gy + 0.55 + Math.sin(t * 0.85) * 0.13, this.playerZ)
+    group.rotation.y = this.cameraYaw + Math.PI  // always face camera
+
+    // Breathing
+    body.scale.setScalar(1 + Math.sin(t * 1.3) * 0.032)
+
+    // Head look-around (slow, organic)
+    head.rotation.y = Math.sin(t * 0.28) * 0.55
+    head.rotation.x = Math.sin(t * 0.42) * 0.09
+
+    // Blink every ~3.5s
+    const bc = t % 3.8
+    const bScale = bc > 3.65 ? Math.max(0.05, 1 - (bc - 3.65) * 65) : 1
+    eyeL.scale.y = eyeR.scale.y = bScale
+
+    // Ear flutter
+    earL.rotation.z = -0.35 + Math.sin(t * 2.6 + 0.3) * 0.18
+    earR.rotation.z =  0.35 - Math.sin(t * 2.6) * 0.18
+
+    // Tail wag
+    tail.rotation.x = -0.75 + Math.sin(t * 2.1) * 0.38
+
+    // Wing flutter
+    wL.rotation.x = Math.sin(t * 3.2) * 0.28
+    wR.rotation.x = -Math.sin(t * 3.2 + 0.5) * 0.28
   }
 
-  // ── Trees ─────────────────────────────────────────────────────────────────────
-  private addTree(out: Map<M,[number,number,number][]>, wx: number, wz: number, groundY: number) {
-    const nv = Math.abs(this.tNoise(wx * 0.31 + 71, wz * 0.31 + 71))
-    const topY = groundY + 4 + Math.round(nv * 3)
-    const push = (m: M, x: number, y: number, z: number) => {
-      let a = out.get(m); if (!a) { a=[]; out.set(m,a) }; a.push([x,y,z])
-    }
-    for (let y = groundY+1; y <= topY; y++) push('log', wx, y, wz)
-    const LM: M[] = ['leaf1','leaf2','leaf3']
-    for (let lx=-2;lx<=2;lx++) for (let lz=-2;lz<=2;lz++) for (let ly=-1;ly<=2;ly++) {
-      const corner = Math.abs(lx)===2 && Math.abs(lz)===2
-      if (corner && ly<=0) continue
-      if (corner && this.tNoise(wx+lx*0.7, wz+lz*0.7+200)>0.25) continue
-      push(LM[Math.abs(lx+lz+ly+9)%3], wx+lx, topY+ly, wz+lz)
-    }
-  }
+  // ── Smooth camera (lerp follow) ───────────────────────────────────────────────
+  private updateCamera() {
+    const gy  = this.getTerrainY(this.playerX, this.playerZ)
+    const cy  = gy + 1.1
+    const yaw = this.cameraYaw
+    const DIST= 9.5, UP = 5.8
 
-  // ── Chunk building ───────────────────────────────────────────────────────────
-  private buildChunk(cx: number, cz: number): THREE.Group {
-    const group = new THREE.Group()
-    const out   = new Map<M,[number,number,number][]>()
-    const push  = (m: M, x: number, y: number, z: number) => {
-      let a=out.get(m); if (!a){a=[];out.set(m,a)}; a.push([x,y,z])
-    }
-    for (let tx=0;tx<CHUNK;tx++) for (let tz=0;tz<CHUNK;tz++) {
-      const wx=cx*CHUNK+tx, wz=cz*CHUNK+tz
-      const h=this.terrainH(wx,wz)
-      if (h<=WATER) {
-        push('water',wx,WATER,wz); push('sand',wx,h,wz)
-        if (h>1) push('sand',wx,h-1,wz)
-      } else {
-        push('grass',wx,h,wz)
-        for (let dy=1;dy<=CLIFF_D;dy++) {
-          const y=h-dy; if (y<1) break
-          push(dy<=3?'dirt':'stone',wx,y,wz)
-        }
-        if (this.tNoise(wx/7,wz/7)>0.5 && h>WATER+1) this.addTree(out,wx,wz,h)
-      }
-    }
-    const mat4=new THREE.Matrix4()
-    out.forEach((positions,key) => {
-      if (!positions.length) return
-      const mesh=new THREE.InstancedMesh(key==='grass'?this.grassGeo:this.box, this.mats[key], positions.length)
-      mesh.castShadow=key!=='water'; mesh.receiveShadow=true
-      positions.forEach(([x,y,z],i) => { mat4.setPosition(x,y,z); mesh.setMatrixAt(i,mat4) })
-      mesh.instanceMatrix.needsUpdate=true; group.add(mesh)
-    })
-    return group
-  }
-
-  // ── Chunk management ─────────────────────────────────────────────────────────
-  private loadInitialChunks() {
-    this.lastCX=Math.floor(this.playerX/CHUNK)
-    this.lastCZ=Math.floor(this.playerZ/CHUNK)
-    this.refreshChunks(this.lastCX,this.lastCZ)
-  }
-  private refreshChunks(px: number, pz: number) {
-    for (let dx=-VIEW;dx<=VIEW;dx++) for (let dz=-VIEW;dz<=VIEW;dz++) {
-      const key=`${px+dx},${pz+dz}`
-      if (!this.chunks.has(key)) {
-        const g=this.buildChunk(px+dx,pz+dz); this.scene.add(g); this.chunks.set(key,g)
-      }
-    }
-    this.chunks.forEach((group,key) => {
-      const [cx,cz]=key.split(',').map(Number)
-      if (Math.abs(cx-px)>VIEW+1||Math.abs(cz-pz)>VIEW+1) {
-        this.scene.remove(group)
-        group.traverse(o=>{if((o as THREE.InstancedMesh).isInstancedMesh)(o as THREE.InstancedMesh).dispose()})
-        this.chunks.delete(key)
-      }
-    })
-  }
-
-  // ── Camera (third-person, character centred, sky visible) ─────────────────────
-  private positionCamera() {
-    const px=this.playerX, pz=this.playerZ
-    const groundY=this.terrainH(Math.round(px),Math.round(pz))
-    const charY=groundY+1.0   // creature centre
-
-    const yaw=this.cameraYaw
-    const DIST=9, UP=5.5      // further back + higher = more sky visible
-
-    this.camera.position.set(
-      px - Math.sin(yaw)*DIST,
-      charY + UP,
-      pz - Math.cos(yaw)*DIST,
+    const tp = new THREE.Vector3(
+      this.playerX - Math.sin(yaw) * DIST,
+      cy + UP,
+      this.playerZ - Math.cos(yaw) * DIST,
     )
-    // Look AT the creature — keeps it at screen centre
-    this.camera.lookAt(px, charY + 0.5, pz)
+    const tl = new THREE.Vector3(this.playerX, cy + 0.4, this.playerZ)
 
-    // Place creature on terrain surface, facing camera
-    this.creature.position.set(px, groundY, pz)
-    this.creature.rotation.y = yaw + Math.PI  // face toward camera
+    this.camPos.lerp(tp, 0.055)
+    this.camLook.lerp(tl, 0.055)
+    this.camera.position.copy(this.camPos)
+    this.camera.lookAt(this.camLook)
+
+    this.skyDome.position.copy(this.camera.position)
   }
 
-  // ── Day / night ──────────────────────────────────────────────────────────────
+  // ── Day / night ───────────────────────────────────────────────────────────────
   private updateDayNight() {
-    const t   = this.time
-    const sky = skyAt(t)
-    this.scene.background = sky
-    ;(this.scene.fog as THREE.Fog).color.copy(sky)
+    const s   = lerpSky(this.realTime)
+    const isD = this.realTime >= 6 && this.realTime < 20
+    const ang = ((this.realTime - 6) / 12) * Math.PI
 
-    const angle = ((t-6)/12)*Math.PI
-    const isDay = t>=6 && t<20
+    const skyMat = this.skyDome.material as THREE.ShaderMaterial
+    skyMat.uniforms.top.value.setHex(s.top)
+    skyMat.uniforms.bottom.value.setHex(s.bot)
 
-    // Minimum 0.6 at night — world is ALWAYS visible (moonlight)
-    this.ambient.intensity = isDay ? 1.4 : 0.9
-    this.sun.intensity     = isDay ? Math.max(0.6, Math.sin(angle)*2.2) : 0.4
-    this.sun.position.set(Math.cos(angle)*100, Math.abs(Math.sin(angle))*100, 40)
+    const fogC = new THREE.Color(s.bot)
+    ;(this.scene.fog as THREE.Fog).color.copy(fogC)
+
+    this.sun.intensity    = s.sun
+    this.ambient.intensity= s.amb
+    this.hemi.intensity   = isD ? 0.85 : 0.28
+    this.sun.position.set(Math.cos(ang) * 110, Math.abs(Math.sin(ang)) * 110, 45)
+
+    this.water.position.y = WATER_Y + Math.sin(this.clock.getElapsedTime() * 0.5) * 0.025
   }
 
-  // ── Render loop ──────────────────────────────────────────────────────────────
   private loop = () => {
+    const t = this.clock.getElapsedTime()
     this.updateDayNight()
-    this.positionCamera()
+    this.animateKivo(t)
+    this.updateCamera()
     this.renderer.render(this.scene, this.camera)
     this.frame = requestAnimationFrame(this.loop)
   }
 
-  // ── Public API ───────────────────────────────────────────────────────────────
-  public updatePlayerPosition(playerX: number, playerZ: number) {
-    const dx=playerX-this.playerX, dz=playerZ-this.playerZ
-    if (dx!==0||dz!==0) this.cameraYaw=Math.atan2(dx,dz)
-    this.playerX=playerX; this.playerZ=playerZ
-    const cx=Math.floor(playerX/CHUNK), cz=Math.floor(playerZ/CHUNK)
-    if (cx!==this.lastCX||cz!==this.lastCZ) { this.lastCX=cx; this.lastCZ=cz; this.refreshChunks(cx,cz) }
+  public updatePlayerPosition(px: number, pz: number) {
+    const dx = px - this.playerX, dz = pz - this.playerZ
+    if (dx !== 0 || dz !== 0) this.cameraYaw = Math.atan2(dx, dz)
+    this.playerX = px; this.playerZ = pz
   }
-  public updateTime(t: number) { this.time=t }
+  public updateTime(t: number) { this.realTime = t }
   public updateWorldHealth(_h: number) {}
   public dispose() {
-    if (this.frame!==null) cancelAnimationFrame(this.frame)
+    if (this.frame !== null) cancelAnimationFrame(this.frame)
     this.ro.disconnect(); this.renderer.dispose()
-    this.grassGeo.dispose(); this.box.dispose()
-    Object.values(this.mats).forEach(m=>m.dispose())
   }
 }

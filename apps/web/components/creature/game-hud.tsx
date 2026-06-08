@@ -1,6 +1,5 @@
 'use client'
 
-import React from 'react'
 import { motion } from 'framer-motion'
 
 interface GameHUDProps {
@@ -12,113 +11,92 @@ interface GameHUDProps {
   playerY: number
 }
 
-export function GameHUD({
-  playerLevel,
-  currentStreak,
-  worldHealth,
-  currentTime,
-  playerX,
-  playerY,
-}: GameHUDProps) {
-  // Format time as HH:MM
-  const hours = Math.floor(currentTime)
-  const minutes = Math.round((currentTime - hours) * 60)
-  const timeString = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`
+function StreakFlame({ streak }: { streak: number }) {
+  const tier = streak >= 100 ? 'legendary' : streak >= 30 ? 'epic' : streak >= 7 ? 'rare' : 'common'
+  const colors = {
+    common   : 'from-orange-400 to-yellow-300',
+    rare     : 'from-blue-400 to-cyan-300',
+    epic     : 'from-purple-400 to-pink-300',
+    legendary: 'from-yellow-300 to-orange-200',
+  }
+  return (
+    <div className={`text-5xl font-black bg-linear-to-b ${colors[tier]} bg-clip-text text-transparent leading-none`}>
+      {streak}
+    </div>
+  )
+}
 
-  // Calculate health and hunger bars
-  const healthPercent = Math.max(0, Math.min(100, (currentStreak / 60) * 100))
-  const hungerPercent = worldHealth
+export function GameHUD({ playerLevel, currentStreak, worldHealth, currentTime }: GameHUDProps) {
+  const worldTier  = playerLevel >= 20 ? 'Ancient' : playerLevel >= 10 ? 'Elder' : playerLevel >= 5 ? 'Growing' : 'Newborn'
+  const worldColor = playerLevel >= 20 ? 'text-yellow-300' : playerLevel >= 10 ? 'text-purple-300' : playerLevel >= 5 ? 'text-cyan-300' : 'text-green-300'
+  const isDay      = currentTime >= 6 && currentTime < 20
 
   return (
     <>
-      {/* Bottom-left HUD */}
+      {/* ── Top-left: Kivo identity card ─────────────────────────────────────── */}
       <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="fixed bottom-6 left-6 z-20 space-y-4"
+        initial={{ opacity: 0, x: -20 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ delay: 0.3 }}
+        className="fixed top-5 left-5 z-20"
       >
-        {/* Health Bar */}
-        <div>
-          <p className="text-xs text-foreground/60 mb-1">STREAK</p>
-          <div className="w-40 h-5 bg-slate-900/60 border border-slate-700 rounded px-1 flex items-center gap-0.5">
+        <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-2xl px-4 py-3 space-y-1 shadow-xl">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399] animate-pulse" />
+            <span className="text-white/90 text-sm font-semibold tracking-wide">Kivo</span>
+          </div>
+          <div className={`text-xs font-medium ${worldColor}`}>{worldTier} World · Lv {playerLevel}</div>
+          <div className="w-28 h-1 rounded-full bg-white/10 mt-1">
             <div
-              className="h-full bg-red-500 transition-all duration-300"
-              style={{ width: `${healthPercent}%` }}
+              className="h-full rounded-full bg-linear-to-r from-emerald-400 to-cyan-400 transition-all duration-700"
+              style={{ width: `${Math.min(100, (playerLevel % 10) * 10 || 100)}%` }}
             />
           </div>
-          <p className="text-xs text-foreground/50 mt-1">{currentStreak} days</p>
-        </div>
-
-        {/* Hunger Bar */}
-        <div>
-          <p className="text-xs text-foreground/60 mb-1">WORLD HEALTH</p>
-          <div className="w-40 h-5 bg-slate-900/60 border border-slate-700 rounded px-1 flex items-center gap-0.5">
-            <div
-              className="h-full bg-orange-500 transition-all duration-300"
-              style={{ width: `${hungerPercent}%` }}
-            />
-          </div>
-          <p className="text-xs text-foreground/50 mt-1">{Math.round(hungerPercent)}%</p>
-        </div>
-
-        {/* Level */}
-        <div className="pt-2 border-t border-slate-700">
-          <p className="text-xs text-foreground/60">LEVEL</p>
-          <p className="text-2xl font-bold text-lime-400">{playerLevel}</p>
         </div>
       </motion.div>
 
-      {/* Top-right HUD */}
+      {/* ── Top-right: Streak ─────────────────────────────────────────────────── */}
       <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="fixed top-6 right-6 z-20 text-right space-y-3"
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ delay: 0.3 }}
+        className="fixed top-5 right-5 z-20 text-right"
       >
-        {/* Time */}
-        <div>
-          <p className="text-xs text-foreground/60 mb-1">TIME</p>
-          <p className="text-2xl font-mono font-bold text-cyan-400">{timeString}</p>
-        </div>
-
-        {/* Coordinates */}
-        <div className="pt-2 border-t border-slate-700">
-          <p className="text-xs text-foreground/60 mb-1">POSITION</p>
-          <p className="text-sm font-mono text-lime-400">
-            X: {Math.round(playerX)} Y: {Math.round(playerY)}
-          </p>
+        <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-2xl px-5 py-3 shadow-xl">
+          <div className="text-[10px] text-white/50 uppercase tracking-widest mb-1">Current Streak</div>
+          <StreakFlame streak={currentStreak} />
+          <div className="text-white/50 text-xs mt-1">
+            {currentStreak === 1 ? 'day' : 'days'} &nbsp;·&nbsp; {isDay ? '☀️' : '🌙'}
+          </div>
         </div>
       </motion.div>
 
-      {/* Center bottom - Hotbar */}
+      {/* ── Bottom-left: World vitality ───────────────────────────────────────── */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="fixed bottom-6 left-1/2 -translate-x-1/2 z-20"
+        transition={{ delay: 0.5 }}
+        className="fixed bottom-5 left-5 z-20"
       >
-        <div className="flex gap-1 bg-slate-900/80 border border-slate-700 p-2 rounded">
-          {[...Array(9)].map((_, i) => (
-            <div
-              key={i}
-              className={`w-8 h-8 border-2 rounded ${
-                i === 0
-                  ? 'bg-lime-500/20 border-lime-400'
-                  : 'bg-slate-700 border-slate-600'
-              }`}
-            />
-          ))}
-        </div>
-      </motion.div>
-
-      {/* Compass/Biome indicator top-left */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="fixed top-6 left-6 z-20"
-      >
-        <div className="bg-slate-900/60 border border-slate-700 rounded p-3 backdrop-blur-sm">
-          <p className="text-xs text-foreground/60 mb-2">BIOME</p>
-          <p className="text-sm font-semibold text-cyan-400">Forest</p>
-          <p className="text-xs text-foreground/50 mt-1">↑ North</p>
+        <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-2xl px-4 py-3 space-y-2 shadow-xl">
+          <div className="text-[10px] text-white/50 uppercase tracking-widest">World Vitality</div>
+          <div className="flex items-center gap-2">
+            <div className="w-24 h-1.5 rounded-full bg-white/10">
+              <div
+                className="h-full rounded-full transition-all duration-700"
+                style={{
+                  width: `${worldHealth}%`,
+                  background: worldHealth > 60
+                    ? 'linear-gradient(to right, #34d399, #6ee7b7)'
+                    : worldHealth > 30
+                    ? 'linear-gradient(to right, #fbbf24, #f59e0b)'
+                    : 'linear-gradient(to right, #f87171, #ef4444)',
+                }}
+              />
+            </div>
+            <span className="text-white/70 text-xs">{worldHealth}%</span>
+          </div>
+          <div className="text-[10px] text-white/40">Keep your streak to keep the world alive</div>
         </div>
       </motion.div>
     </>
