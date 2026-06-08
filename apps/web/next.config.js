@@ -6,18 +6,14 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // three and simplex-noise are ESM-only; transpile them for SSR compatibility
+  transpilePackages: ["three", "simplex-noise"],
   async rewrites() {
     const apiUrl = process.env.API_URL ?? "http://localhost:3001"
 
     return [
-      {
-        source: "/api/signup",
-        destination: `${apiUrl}/api/signup`,
-      },
-      {
-        source: "/api/login",
-        destination: `${apiUrl}/api/login`,
-      },
+      // NOTE: /api/login and /api/signup are handled by local route handlers —
+      // no rewrites needed for those paths.
       {
         source: "/api/logout",
         destination: `${apiUrl}/api/logout`,
