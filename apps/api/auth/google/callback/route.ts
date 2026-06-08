@@ -106,11 +106,6 @@ export async function GET(req: Request) {
       },
     })
 
-    const profile = await prisma.userProfile.findUnique({
-      where: { userId: user.id },
-      select: { onboardingComplete: true },
-    })
-
     const token = await createSession({
       userId: user.id,
       email: user.email,
@@ -118,7 +113,7 @@ export async function GET(req: Request) {
       image: user.image,
     })
 
-    const nextPath = profile?.onboardingComplete ? "/dashboard" : "/onboarding"
+    const nextPath = "/home"
     const redirectResponse = NextResponse.redirect(
       `${process.env.NEXT_PUBLIC_APP_URL}${nextPath}`
     )
