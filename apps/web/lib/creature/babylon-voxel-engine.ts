@@ -40,6 +40,35 @@ const WAYPOINTS = [
   { ...V.tower,    label: 'watch'   },
 ]
 
+// Dwell time at each waypoint (seconds): min, max
+const DWELL: Record<string, [number, number]> = {
+  sleep  : [360, 600],  // 6–10 min
+  sit    : [240, 480],  // 4–8 min
+  train  : [240, 480],  // 4–8 min
+  wander : [180, 360],  // 3–6 min
+  inspect: [180, 360],  // 3–6 min
+  rest   : [180, 360],  // 3–6 min
+  reflect: [180, 360],  // 3–6 min
+  watch  : [240, 420],  // 4–7 min
+}
+
+const ACTIVITY_TEXT: Record<string, string[]> = {
+  sleep  : ['Kivo is asleep.', 'Kivo rests peacefully inside.'],
+  sit    : ['Kivo sits by the campfire.', 'Kivo stares into the flames quietly.'],
+  train  : ['Kivo is training.', 'Kivo pushes through the reps.', 'Kivo practices alone.'],
+  wander : ['Kivo walks through the Memory Grove.', 'Kivo studies the monuments.'],
+  inspect: ['Kivo looks around the Achievement Plaza.', 'Kivo observes the plaza.'],
+  rest   : ['Kivo stands before the Rex Sanctuary.', 'Kivo kneels near the sanctuary.'],
+  reflect: ['Kivo reflects at the Commitment Shrine.', 'Kivo stands quietly at the shrine.'],
+  watch  : ['Kivo gazes from the Journey Tower.', 'Kivo watches the horizon.'],
+  walking: ['Kivo walks with purpose.', 'Kivo heads somewhere.'],
+}
+
+function pickActivity(label: string): string {
+  const msgs = ACTIVITY_TEXT[label] ?? ['Kivo is resting.']
+  return msgs[Math.floor(Math.random() * msgs.length)]
+}
+
 // ─── Noise / PRNG helpers ──────────────────────────────────────────────────────
 function strSeed(s: string): number {
   let h = 0x811c9dc5
@@ -653,16 +682,24 @@ export class BabylonVoxelEngine {
   private camPos     = new THREE.Vector3(0, 9, 14)
   private camLook    = new THREE.Vector3(0, 2, 0)
   private cameraYaw  = 0                       // controlled externally
-  private kivoX      = V.home.x               // creature autonomous position
-  private kivoZ      = V.home.z
-  private targetX    = V.center.x
-  private targetZ    = V.center.z
+  private kivoX      = 0
+  private kivoZ      = 0
+  private targetX    = 0
+  private targetZ    = 0
   private wpIndex    = 0
   private wpTimer    = 0
+  private wpDwellSec = 0       // how long to stay at current waypoint (seconds)
+  private kivoActivity = 'Kivo is resting.'
+  public  onActivityChange: ((text: string) => void) | null = null
   private realTime   = 14
   private clock      = new THREE.Clock()
   private frame:     number | null = null
   private ro:        ResizeObserver
+
+  // Intro camera reveal
+  private introRevealActive   = false
+  private introRevealTimer    = 0
+  private readonly introRevealDuration = 5.5  // seconds
 
   constructor(canvas: HTMLCanvasElement, userSeed: string, _u: BiomeType[], _w: number) {
     const rect = canvas.getBoundingClientRect()
@@ -709,7 +746,18 @@ export class BabylonVoxelEngine {
     scatterBackgroundTrees(this.scene, this.heightFn, tNoise)
     this.scene.add(scatterGrass(this.heightFn, tNoise))
 
-    // Kivo
+    // Kivo — spawn at a random landmark each load
+    this.wpIndex = Math.floor(Math.random() * WAYPOINTS.length)
+    const spawnWP = WAYPOINTS[this.wpIndex]
+    this.kivoX   = spawnWP.x + (Math.random() - 0.5) * 1.5
+    this.kivoZ   = spawnWP.z + (Math.random() - 0.5) * 1.5
+    this.targetX = this.kivoX
+    this.targetZ = this.kivoZ
+    // Stay at spawn for 4-8 minutes before first move
+    this.wpDwellSec = 240 + Math.random() * 240
+    this.wpTimer    = 0
+    this.kivoActivity = ACTIVITY_TEXT[spawnWP.label]?.[0] ?? 'Kivo is resting.'
+
     this.kivo = buildKivo()
     this.kivo.group.position.set(this.kivoX, this.heightFn(this.kivoX, this.kivoZ), this.kivoZ)
     this.scene.add(this.kivo.group)
@@ -734,25 +782,48 @@ export class BabylonVoxelEngine {
   }
 
   // ── Kivo autonomous routine ───────────────────────────────────────────────────
-  private updateKivoRoutine(dt: number) {
-    this.wpTimer += dt
+  private isWalkingToWaypoint = false
 
-    // Walk toward target
+  private updateKivoRoutine(dt: number) {
     const dx = this.targetX - this.kivoX
     const dz = this.targetZ - this.kivoZ
     const dist = Math.sqrt(dx*dx + dz*dz)
-    const speed = 2.2
-    if (dist > 0.3) {
+
+    if (dist > 0.5) {
+      // Currently walking — move toward target
+      this.isWalkingToWaypoint = true
+      const speed = 2.2
       this.kivoX += (dx/dist) * speed * dt
       this.kivoZ += (dz/dist) * speed * dt
-    }
+    } else {
+      // Arrived (or at spawn) — count dwell time
+      if (this.isWalkingToWaypoint) {
+        // Just arrived — set dwell time and update activity
+        this.isWalkingToWaypoint = false
+        const wp = WAYPOINTS[this.wpIndex]
+        const [min, max] = DWELL[wp.label] ?? [240, 360]
+        this.wpDwellSec = min + Math.random() * (max - min)
+        this.wpTimer    = 0
+        const text = pickActivity(wp.label)
+        this.kivoActivity = text
+        this.onActivityChange?.(text)
+      }
 
-    // Arrived — wait then pick next waypoint
-    if (dist < 0.8 && this.wpTimer > 6) {
-      this.wpTimer = 0
-      this.wpIndex = (this.wpIndex + 1) % WAYPOINTS.length
-      this.targetX = WAYPOINTS[this.wpIndex].x + (Math.random()-0.5)*1.5
-      this.targetZ = WAYPOINTS[this.wpIndex].z + (Math.random()-0.5)*1.5
+      this.wpTimer += dt
+
+      if (this.wpTimer >= this.wpDwellSec) {
+        // Dwell done — pick a random different waypoint
+        let nextIdx: number
+        do { nextIdx = Math.floor(Math.random() * WAYPOINTS.length) }
+        while (nextIdx === this.wpIndex && WAYPOINTS.length > 1)
+        this.wpIndex = nextIdx
+        this.targetX = WAYPOINTS[nextIdx].x + (Math.random()-0.5)*1.5
+        this.targetZ = WAYPOINTS[nextIdx].z + (Math.random()-0.5)*1.5
+        this.wpTimer = 0
+        const walkText = pickActivity('walking')
+        this.kivoActivity = walkText
+        this.onActivityChange?.(walkText)
+      }
     }
   }
 
@@ -776,18 +847,44 @@ export class BabylonVoxelEngine {
   }
 
   // ── Camera: always looks at Kivo ──────────────────────────────────────────────
-  private updateCamera() {
+  private updateCamera(dt: number) {
     const kgy = this.heightFn(this.kivoX, this.kivoZ)
     const cy  = kgy + 1.1
-    const yaw = this.cameraYaw
-    const target = new THREE.Vector3(
-      this.kivoX - Math.sin(yaw) * 9.5,
-      cy + 5.5,
-      this.kivoZ - Math.cos(yaw) * 9.5,
-    )
-    const look = new THREE.Vector3(this.kivoX, cy + 0.4, this.kivoZ)
-    this.camPos.lerp(target, 0.06)
-    this.camLook.lerp(look, 0.06)
+
+    if (this.introRevealActive) {
+      this.introRevealTimer += dt
+      const t = Math.min(1, this.introRevealTimer / this.introRevealDuration)
+      const e = 1 - Math.pow(1 - t, 3)  // cubic ease-out
+
+      // Descend from high aerial view to normal follow position
+      const yaw = this.cameraYaw
+      const normalTarget = new THREE.Vector3(
+        this.kivoX - Math.sin(yaw) * 9.5,
+        cy + 5.5,
+        this.kivoZ - Math.cos(yaw) * 9.5,
+      )
+      const aerialTarget = new THREE.Vector3(this.kivoX - 5, kgy + 55, this.kivoZ - 5)
+      const pos = aerialTarget.clone().lerp(normalTarget, e)
+      this.camPos.lerp(pos, 0.04)
+
+      const normalLook = new THREE.Vector3(this.kivoX, cy + 0.4, this.kivoZ)
+      const aerialLook = new THREE.Vector3(this.kivoX, kgy, this.kivoZ)
+      const look = aerialLook.clone().lerp(normalLook, e)
+      this.camLook.lerp(look, 0.04)
+
+      if (t >= 1) this.introRevealActive = false
+    } else {
+      const yaw = this.cameraYaw
+      const target = new THREE.Vector3(
+        this.kivoX - Math.sin(yaw) * 9.5,
+        cy + 5.5,
+        this.kivoZ - Math.cos(yaw) * 9.5,
+      )
+      const look = new THREE.Vector3(this.kivoX, cy + 0.4, this.kivoZ)
+      this.camPos.lerp(target, 0.06)
+      this.camLook.lerp(look, 0.06)
+    }
+
     this.camera.position.copy(this.camPos)
     this.camera.lookAt(this.camLook)
     this.skyDome.position.copy(this.camera.position)
@@ -821,7 +918,7 @@ export class BabylonVoxelEngine {
     this.updateDayNight(t)
     this.updateKivoRoutine(dt)
     this.animateKivo(t, isWalking)
-    this.updateCamera()
+    this.updateCamera(dt)
     this.renderer.render(this.scene, this.camera)
     this.frame = requestAnimationFrame(this.loop)
   }
@@ -831,6 +928,16 @@ export class BabylonVoxelEngine {
   public updatePlayerPosition(_x: number, _z: number) { /* camera only — Kivo is autonomous */ }
   public updateTime(t: number) { this.realTime = t }
   public updateWorldHealth(_h: number) {}
+  public getActivity(): string { return this.kivoActivity }
+
+  public startIntroReveal() {
+    // Place camera high above Kivo, then let updateCamera() descend it
+    const kgy = this.heightFn(this.kivoX, this.kivoZ)
+    this.camPos.set(this.kivoX - 5, kgy + 55, this.kivoZ - 5)
+    this.camLook.set(this.kivoX, kgy, this.kivoZ)
+    this.introRevealActive = true
+    this.introRevealTimer  = 0
+  }
   public dispose() {
     if (this.frame!==null) cancelAnimationFrame(this.frame)
     this.ro.disconnect(); this.renderer.dispose()
