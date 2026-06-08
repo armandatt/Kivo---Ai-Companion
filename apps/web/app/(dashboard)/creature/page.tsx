@@ -12,7 +12,6 @@ const MOCK_STREAK       = 47
 const MOCK_TOTAL_DAYS   = 180
 const MOCK_LEVEL        = 12
 const MOCK_WORLD_HEALTH = 85
-const MOCK_NAME         = 'Kivo'
 const INTRO_KEY         = 'kivo_intro_v3'
 
 function hasSeenIntro() {
@@ -29,14 +28,26 @@ export default function CreaturePage() {
   const unlockedStructures = Object.entries(STRUCTURE_UNLOCKS)
     .filter(([, days]) => MOCK_STREAK >= days).map(([s]) => s)
 
-  const [cameraYaw, setCameraYaw]   = useState(0)
+  const [cameraYaw, setCameraYaw]     = useState(0)
   const [currentTime, setCurrentTime] = useState(14)
-  const [showIntro, setShowIntro]   = useState(false)
-  const [introReady, setIntroReady] = useState(false)
-  const [hudVisible, setHudVisible] = useState(false)
-  const [activity, setActivity]     = useState('Kivo is resting.')
+  const [showIntro, setShowIntro]     = useState(false)
+  const [introReady, setIntroReady]   = useState(false)
+  const [hudVisible, setHudVisible]   = useState(false)
+  const [activity, setActivity]       = useState('...')
+  const [creatureName, setCreatureName] = useState('Kivo') // fallback until fetched
 
   const engineApiRef = useRef<EngineApi | null>(null)
+
+  // Fetch creature name from the user's profile
+  useEffect(() => {
+    fetch('/api/me')
+      .then(r => r.json())
+      .then(d => { if (d.creatureName) setCreatureName(d.creatureName) })
+      .catch(() => {})
+  }, [])
+
+  // Replace hardcoded "Kivo" in activity text with the user's chosen name
+  const displayActivity = activity.replace(/\bKivo\b/g, creatureName)
 
   // Real clock for time
   useEffect(() => {
@@ -118,7 +129,7 @@ export default function CreaturePage() {
       {hudVisible && (
         <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-20">
           <div className="bg-black/45 backdrop-blur-md border border-white/10 rounded-2xl px-5 py-2.5 shadow-xl">
-            <p className="text-xs text-white/65 tracking-wide font-light text-center">{activity}</p>
+            <p className="text-xs text-white/65 tracking-wide font-light text-center">{displayActivity}</p>
           </div>
         </div>
       )}
@@ -133,7 +144,7 @@ export default function CreaturePage() {
       {/* Cinematic intro */}
       {showIntro && introReady && (
         <CreatureIntro
-          creatureName={MOCK_NAME}
+          creatureName={creatureName}
           level={MOCK_LEVEL}
           streak={MOCK_STREAK}
           onReveal={handleReveal}
@@ -149,7 +160,7 @@ export default function CreaturePage() {
             color: '#bfff00', opacity: 0.3, letterSpacing: '0.35em',
             fontFamily: 'system-ui, sans-serif',
           }}>
-            {MOCK_NAME.toUpperCase()}
+            {creatureName.toUpperCase()}
           </p>
         </div>
       )}

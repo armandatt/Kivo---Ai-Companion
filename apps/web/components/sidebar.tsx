@@ -21,6 +21,8 @@ import { useState } from 'react'
 interface SidebarProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** When true, sidebar always floats as an overlay (never inline-pushes content) */
+  overlay?: boolean
 }
 
 const navItems = [
@@ -32,7 +34,7 @@ const navItems = [
   { href: '/creature', label: 'Creature', icon: Map },
 ]
 
-export function Sidebar({ open, onOpenChange }: SidebarProps) {
+export function Sidebar({ open, onOpenChange, overlay = false }: SidebarProps) {
   const pathname = usePathname()
   const [isMobileOpen, setIsMobileOpen] = useState(false)
   const [isLargeScreen, setIsLargeScreen] = useState(false)
@@ -66,9 +68,9 @@ export function Sidebar({ open, onOpenChange }: SidebarProps) {
       {/* Sidebar */}
       <motion.aside
         initial={{ x: -280 }}
-        animate={{ x: isMobileOpen || isLargeScreen ? 0 : -280 }}
+        animate={{ x: (isMobileOpen || isLargeScreen) && open ? 0 : -280 }}
         transition={{ duration: 0.3, ease: 'easeInOut' }}
-        className="fixed lg:relative w-[280px] h-screen bg-sidebar border-r border-sidebar-border flex flex-col z-40"
+        className={`w-70 h-screen bg-sidebar border-r border-sidebar-border flex flex-col z-40 ${overlay ? 'fixed' : 'fixed lg:relative'}`}
       >
         {/* Logo Area */}
         <div className="p-6 border-b border-sidebar-border">
@@ -100,7 +102,7 @@ export function Sidebar({ open, onOpenChange }: SidebarProps) {
               >
                 <Link
                   href={item.href}
-                  onClick={() => setIsMobileOpen(false)}
+                  onClick={() => { setIsMobileOpen(false); onOpenChange(false) }}
                   className={cn(
                     'flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200',
                     active
@@ -128,7 +130,7 @@ export function Sidebar({ open, onOpenChange }: SidebarProps) {
           <motion.div whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }}>
             <Link
               href="/settings"
-              onClick={() => setIsMobileOpen(false)}
+              onClick={() => { setIsMobileOpen(false); onOpenChange(false) }}
               className="flex items-center gap-3 px-4 py-3 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition-all duration-200"
             >
               <Settings className="w-5 h-5 flex-shrink-0" />
@@ -138,14 +140,14 @@ export function Sidebar({ open, onOpenChange }: SidebarProps) {
         </div>
       </motion.aside>
 
-      {/* Mobile Overlay */}
-      {isMobileOpen && (
+      {/* Backdrop — mobile drawer, or desktop overlay mode (creature page) */}
+      {(isMobileOpen || (overlay && open)) && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          onClick={() => setIsMobileOpen(false)}
-          className="fixed inset-0 bg-black/50 z-30 lg:hidden"
+          onClick={() => { setIsMobileOpen(false); onOpenChange(false) }}
+          className="fixed inset-0 bg-black/50 z-30"
         />
       )}
     </>
