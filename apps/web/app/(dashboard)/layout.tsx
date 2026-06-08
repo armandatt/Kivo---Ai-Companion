@@ -1,24 +1,22 @@
 import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
+import { jwtVerify } from "jose"
+import { prisma } from "@repo/db/client"
 import { DashboardShell } from "@/components/dashboard-shell"
 
-async function getSession(): Promise<string | null> {
-  const store = await cookies()
-  return store.get("kevo_session")?.value ?? null
-}
+const SECRET = new TextEncoder().encode(
+  process.env.JWT_SECRET ?? "fallback-dev-secret-change-in-production"
+)
 
-async function fetchOnboardingStatus(token: string): Promise<boolean> {
+async function getUserId(): Promise<string | null> {
   try {
-    const apiUrl = process.env.API_URL ?? "http://localhost:3001"
-    const res = await fetch(`${apiUrl}/api/nav`, {
-      headers: { Cookie: `kevo_session=${token}` },
-      cache:   "no-store",
-    })
-    if (!res.ok) return false
-    const data = await res.json()
-    return data?.onboardingComplete ?? false
+    const store = await cookies()
+    const token = store.get("kevo_session")?.value
+    if (!token) return null
+    const { payload } = await jwtVerify(token, SECRET)
+    return (payload as { userId?: string }).userId ?? null
   } catch {
-    return false
+    return null
   }
 }
 
@@ -27,11 +25,15 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
-  const token = await getSession()
-  if (!token) redirect("/signin")
+  const userId = await getUserId()
+  if (!userId) redirect("/signin")
 
-  const onboardingComplete = await fetchOnboardingStatus(token)
-  if (!onboardingComplete) redirect("/onboarding")
+  const profile = await prisma.userProfile.findUnique({
+    where: { userId },
+    select: { onboardingComplete: true },
+  })
+
+  if (!profile?.onboardingComplete) redirect("/onboarding")
 
   return <DashboardShell>{children}</DashboardShell>
 }
