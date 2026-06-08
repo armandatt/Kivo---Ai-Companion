@@ -1,8 +1,9 @@
 import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 import { jwtVerify } from "jose"
-import { prisma } from "@repo/db/client"
 import { DashboardShell } from "@/components/dashboard-shell"
+
+export const dynamic = "force-dynamic"
 
 const SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET ?? "fallback-dev-secret-change-in-production"
@@ -28,6 +29,8 @@ export default async function DashboardLayout({
   const userId = await getUserId()
   if (!userId) redirect("/signin")
 
+  // Dynamic import: Prisma must not be loaded at build time (no DATABASE_URL in Vercel build env)
+  const { prisma } = await import("@repo/db/client")
   const profile = await prisma.userProfile.findUnique({
     where: { userId },
     select: { onboardingComplete: true },
