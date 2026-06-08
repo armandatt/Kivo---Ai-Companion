@@ -22,10 +22,10 @@ export default function CreaturePage() {
     .filter(([_, days]) => mockStreak >= days)
     .map(([structure]) => structure)
 
-  // Game state
-  const [playerX, setPlayerX] = useState(0)
-  const [playerY, setPlayerY] = useState(0)
-  const [currentTime, setCurrentTime] = useState(14) // Start at 2 PM
+  // Creature spawns at a random home location each page load
+  const [playerX, setPlayerX] = useState(() => Math.floor((Math.random() - 0.5) * 80))
+  const [playerY, setPlayerY] = useState(() => Math.floor((Math.random() - 0.5) * 80))
+  const [currentTime, setCurrentTime] = useState(14)
 
   // Real local time — updates every minute so the world matches the user's timezone
   useEffect(() => {
