@@ -7,100 +7,66 @@ import { GameOverlay } from '@/components/creature/game-overlay'
 import { BIOME_UNLOCKS, STRUCTURE_UNLOCKS, type BiomeType } from '@/lib/creature/game-state'
 
 export default function CreaturePage() {
-  // Mock data - in production, fetch from database
-  const mockStreak = 47
-  const mockTotalDays = 180
+  const mockStreak      = 47
+  const mockTotalDays   = 180
   const mockPlayerLevel = 12
   const mockWorldHealth = 85
 
-  // Calculate unlocked biomes and structures
   const unlockedBiomes = (Object.entries(BIOME_UNLOCKS) as Array<[BiomeType, number]>)
-    .filter(([_, days]) => mockStreak >= days)
-    .map(([biome]) => biome)
-
+    .filter(([_, days]) => mockStreak >= days).map(([b]) => b)
   const unlockedStructures = Object.entries(STRUCTURE_UNLOCKS)
-    .filter(([_, days]) => mockStreak >= days)
-    .map(([structure]) => structure)
+    .filter(([_, days]) => mockStreak >= days).map(([s]) => s)
 
-  // Creature spawns at a random home location each page load
-  const [playerX, setPlayerX] = useState(() => Math.floor((Math.random() - 0.5) * 80))
-  const [playerY, setPlayerY] = useState(() => Math.floor((Math.random() - 0.5) * 80))
+  // Camera yaw — arrow keys rotate around Kivo
+  const [cameraYaw, setCameraYaw] = useState(0)
   const [currentTime, setCurrentTime] = useState(14)
 
-  // Real local time — updates every minute so the world matches the user's timezone
   useEffect(() => {
     const tick = () => {
-      const now = new Date()
-      setCurrentTime(now.getHours() + now.getMinutes() / 60)
+      const n = new Date(); setCurrentTime(n.getHours() + n.getMinutes() / 60)
     }
-    tick()
-    const timer = setInterval(tick, 60_000)
-    return () => clearInterval(timer)
+    tick(); const t = setInterval(tick, 60_000); return () => clearInterval(t)
   }, [])
 
-  // Handle arrow key movement
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const moveDistance = 1
-      switch (e.key) {
-        case 'ArrowUp':
-          setPlayerY((prev) => prev - moveDistance)
-          e.preventDefault()
-          break
-        case 'ArrowDown':
-          setPlayerY((prev) => prev + moveDistance)
-          e.preventDefault()
-          break
-        case 'ArrowLeft':
-          setPlayerX((prev) => prev - moveDistance)
-          e.preventDefault()
-          break
-        case 'ArrowRight':
-          setPlayerX((prev) => prev + moveDistance)
-          e.preventDefault()
-          break
-        default:
-          break
-      }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft')  { setCameraYaw(y => y - 0.18); e.preventDefault() }
+      if (e.key === 'ArrowRight') { setCameraYaw(y => y + 0.18); e.preventDefault() }
     }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
 
   return (
     <div className="relative w-full h-screen overflow-hidden bg-black">
-      {/* Game Canvas - 3D Babylon.js */}
       <BabylonTilemap
-        userSeed={`user-${mockTotalDays}`}
+        userSeed={`kivo-${mockTotalDays}`}
         unlockedBiomes={unlockedBiomes}
         worldHealth={mockWorldHealth}
-        playerX={playerX}
-        playerY={playerY}
+        playerX={0}
+        playerY={0}
         currentTime={currentTime}
+        cameraYaw={cameraYaw}
       />
 
-      {/* Game HUD */}
       <GameHUD
         playerLevel={mockPlayerLevel}
         currentStreak={mockStreak}
         worldHealth={mockWorldHealth}
         currentTime={currentTime}
-        playerX={playerX}
-        playerY={playerY}
+        playerX={0}
+        playerY={0}
       />
 
-      {/* Game Overlay (Quotes & Notifications) */}
       <GameOverlay
         currentStreak={mockStreak}
         totalDays={mockTotalDays}
         unlockedStructures={unlockedStructures}
       />
 
-      {/* Instructions overlay (mobile/first-time) */}
-      <div className="fixed bottom-6 right-6 z-20 bg-slate-900/80 border border-slate-700 rounded p-4 max-w-xs text-xs text-foreground/70 backdrop-blur-sm">
-        <p className="font-semibold text-foreground mb-2">Use arrow keys to explore</p>
-        <p>Your streak keeps the world alive. Every day, the biome grows richer.</p>
+      {/* Hint */}
+      <div className="fixed bottom-5 right-5 z-20 bg-black/50 backdrop-blur-md border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white/60">
+        <span className="text-white/80 font-medium">← →</span> rotate camera &nbsp;·&nbsp; Kivo roams the village
       </div>
     </div>
   )
