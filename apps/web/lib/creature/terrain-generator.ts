@@ -42,6 +42,11 @@ export class TerrainGenerator {
     return tiles
   }
 
+  /** Public accessor for single tile at world coordinates */
+  getTile(x: number, y: number): Tile {
+    return this.generateTile(x, y)
+  }
+
   /**
    * Generate a single tile at world coordinates
    */
