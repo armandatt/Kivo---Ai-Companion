@@ -102,7 +102,7 @@ export function Sidebar({ open, onOpenChange, overlay = false }: SidebarProps) {
               >
                 <Link
                   href={item.href}
-                  onClick={() => { setIsMobileOpen(false); onOpenChange(false) }}
+                  onClick={() => { setIsMobileOpen(false); if (overlay) onOpenChange(false) }}
                   className={cn(
                     'flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200',
                     active
@@ -130,7 +130,7 @@ export function Sidebar({ open, onOpenChange, overlay = false }: SidebarProps) {
           <motion.div whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }}>
             <Link
               href="/settings"
-              onClick={() => { setIsMobileOpen(false); onOpenChange(false) }}
+              onClick={() => { setIsMobileOpen(false); if (overlay) onOpenChange(false) }}
               className="flex items-center gap-3 px-4 py-3 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition-all duration-200"
             >
               <Settings className="w-5 h-5 flex-shrink-0" />
@@ -146,7 +146,7 @@ export function Sidebar({ open, onOpenChange, overlay = false }: SidebarProps) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          onClick={() => { setIsMobileOpen(false); onOpenChange(false) }}
+          onClick={() => { setIsMobileOpen(false); if (overlay) onOpenChange(false) }}
           className="fixed inset-0 bg-black/50 z-30"
         />
       )}
