@@ -6,6 +6,7 @@ import { TodaysFocus } from '@/components/home/todays-focus'
 import { ActiveCommitment } from '@/components/home/active-commitment'
 import { PatternDetector } from '@/components/home/pattern-detector'
 import { RexQuote } from '@/components/home/rex-quote'
+import { TelegramConnect } from '@/components/home/telegram-connect'
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -51,6 +52,11 @@ export default function HomePage() {
 
       {/* Main Content */}
       <div className="px-6 pb-12 space-y-6">
+        {/* Telegram connect — always visible, collapses when connected */}
+        <motion.div variants={itemVariants}>
+          <TelegramConnect />
+        </motion.div>
+
         {/* Rex Assessment - Hero Card */}
         <motion.div variants={itemVariants}>
           <RexAssessment />

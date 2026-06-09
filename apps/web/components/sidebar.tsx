@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   BarChart3,
+  BookOpen,
   Compass,
   Home,
   Map,
@@ -26,12 +27,13 @@ interface SidebarProps {
 }
 
 const navItems = [
-  { href: '/home', label: 'Home', icon: Home },
-  { href: '/coach', label: 'Coach', icon: Zap },
-  { href: '/journey', label: 'Journey', icon: Compass },
+  { href: '/home',     label: 'Home',     icon: Home },
+  { href: '/coach',    label: 'Coach',    icon: Zap },
+  { href: '/journey',  label: 'Journey',  icon: Compass },
   { href: '/progress', label: 'Progress', icon: BarChart3 },
-  { href: '/goals', label: 'Goals', icon: Target },
+  { href: '/goals',    label: 'Goals',    icon: Target },
   { href: '/creature', label: 'Creature', icon: Map },
+  { href: '/guide',    label: 'Guide',    icon: BookOpen },
 ]
 
 export function Sidebar({ open, onOpenChange, overlay = false }: SidebarProps) {
@@ -76,7 +78,7 @@ export function Sidebar({ open, onOpenChange, overlay = false }: SidebarProps) {
         <div className="p-6 border-b border-sidebar-border">
           <Link href="/home" className="flex items-center gap-3 group">
             <div className="relative">
-              <div className="w-10 h-10 bg-gradient-to-br from-green-400 to-green-600 rounded-lg flex items-center justify-center font-bold text-black text-lg">
+              <div className="w-10 h-10 bg-linear-to-br from-green-400 to-green-600 rounded-lg flex items-center justify-center font-bold text-black text-lg">
                 R
               </div>
               <div className="absolute inset-0 bg-green-400 rounded-lg blur opacity-50 group-hover:opacity-75 transition-opacity -z-10" />
@@ -117,7 +119,7 @@ export function Sidebar({ open, onOpenChange, overlay = false }: SidebarProps) {
                       transition={{ type: 'spring', stiffness: 380, damping: 40 }}
                     />
                   )}
-                  <Icon className="w-5 h-5 flex-shrink-0" />
+                  <Icon className="w-5 h-5 shrink-0" />
                   <span className="font-medium text-sm">{item.label}</span>
                 </Link>
               </motion.div>
@@ -133,7 +135,7 @@ export function Sidebar({ open, onOpenChange, overlay = false }: SidebarProps) {
               onClick={() => { setIsMobileOpen(false); if (overlay) onOpenChange(false) }}
               className="flex items-center gap-3 px-4 py-3 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition-all duration-200"
             >
-              <Settings className="w-5 h-5 flex-shrink-0" />
+              <Settings className="w-5 h-5 shrink-0" />
               <span className="font-medium text-sm">Settings</span>
             </Link>
           </motion.div>
