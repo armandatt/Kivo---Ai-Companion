@@ -8,6 +8,7 @@ import { GameOverlay } from '@/components/creature/game-overlay'
 import { CreatureIntro } from '@/components/creature/creature-intro'
 import { AmbientOverlay } from '@/components/creature/ambient-overlay'
 import { BIOME_UNLOCKS, STRUCTURE_UNLOCKS, type BiomeType } from '@/lib/creature/game-state'
+import { Sun, Moon } from 'lucide-react'
 
 const MOCK_STREAK       = 47
 const MOCK_TOTAL_DAYS   = 180
@@ -36,8 +37,19 @@ export default function CreaturePage() {
   const [hudVisible, setHudVisible]   = useState(false)
   const [activity, setActivity]       = useState('...')
   const [creatureName, setCreatureName] = useState<string>('')
+  const [timeOverride, setTimeOverride] = useState<number | null>(null)
 
   const engineApiRef = useRef<EngineApi | null>(null)
+
+  // Effective time: user override takes priority over real clock
+  const displayTime = timeOverride ?? currentTime
+  const isNight     = displayTime > 20 || displayTime < 6
+
+  const toggleDayNight = useCallback(() => {
+    const next = isNight ? 14 : 22
+    setTimeOverride(next)
+    engineApiRef.current?.setTime(next)
+  }, [isNight])
 
   // Fetch creature name — don't show intro until this resolves
   useEffect(() => {
@@ -99,14 +111,14 @@ export default function CreaturePage() {
         worldHealth={MOCK_WORLD_HEALTH}
         playerX={0}
         playerY={0}
-        currentTime={currentTime}
+        currentTime={displayTime}
         cameraYaw={cameraYaw}
         onEngineReady={handleEngineReady}
         onActivityChange={setActivity}
       />
 
       {/* Ambient life — birds, butterflies, fireflies, leaves */}
-      <AmbientOverlay currentTime={currentTime} worldHealth={MOCK_WORLD_HEALTH} />
+      <AmbientOverlay currentTime={displayTime} worldHealth={MOCK_WORLD_HEALTH} />
 
       {/* HUD */}
       {hudVisible && (
@@ -138,10 +150,24 @@ export default function CreaturePage() {
         </div>
       )}
 
-      {/* Camera hint */}
+      {/* Bottom-right controls */}
       {hudVisible && (
-        <div className="fixed bottom-5 right-5 z-20 bg-black/40 backdrop-blur-md border border-white/10 rounded-xl px-4 py-2 text-xs text-white/50">
-          <span className="text-white/70 font-medium">← →</span> rotate
+        <div className="fixed bottom-5 right-5 z-20 flex flex-col items-end gap-2">
+          {/* Day / Night toggle */}
+          <button
+            onClick={toggleDayNight}
+            className="flex items-center gap-2 bg-black/45 backdrop-blur-md border border-white/10 rounded-xl px-4 py-2 text-xs text-white/60 hover:text-white/90 hover:border-white/20 transition-all"
+            title={isNight ? 'Switch to day' : 'Switch to night'}
+          >
+            {isNight
+              ? <><Sun  className="w-3.5 h-3.5 text-amber-300" /><span>Day</span></>
+              : <><Moon className="w-3.5 h-3.5 text-indigo-300" /><span>Night</span></>
+            }
+          </button>
+          {/* Camera hint */}
+          <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-xl px-4 py-2 text-xs text-white/50">
+            <span className="text-white/70 font-medium">← →</span> rotate
+          </div>
         </div>
       )}
 

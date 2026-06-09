@@ -6,6 +6,7 @@ import { BiomeType } from '@/lib/creature/game-state'
 
 export interface EngineApi {
   startIntroReveal: () => void
+  setTime: (hour: number) => void
 }
 
 interface Props {
@@ -45,7 +46,10 @@ export function BabylonTilemap({
           onActivityChange(engine.getActivity())
         }
         if (onEngineReady) {
-          onEngineReady({ startIntroReveal: () => engine.startIntroReveal() })
+          onEngineReady({
+            startIntroReveal: () => engine.startIntroReveal(),
+            setTime: (h: number) => engine.setTime(h),
+          })
         }
       } catch (e) { console.error('[creature]', e) }
     }

@@ -40,16 +40,16 @@ const WAYPOINTS = [
   { ...V.tower,    label: 'watch'   },
 ]
 
-// Dwell time at each waypoint (seconds): min, max
+// Dwell time at each waypoint (seconds): min, max  (~2 min per stop)
 const DWELL: Record<string, [number, number]> = {
-  sleep  : [360, 600],  // 6–10 min
-  sit    : [240, 480],  // 4–8 min
-  train  : [240, 480],  // 4–8 min
-  wander : [180, 360],  // 3–6 min
-  inspect: [180, 360],  // 3–6 min
-  rest   : [180, 360],  // 3–6 min
-  reflect: [180, 360],  // 3–6 min
-  watch  : [240, 420],  // 4–7 min
+  sleep  : [100, 140],  // ~2 min
+  sit    : [90,  120],  // ~1.75 min
+  train  : [90,  120],  // ~1.75 min
+  wander : [75,  105],  // ~1.5 min
+  inspect: [75,  105],
+  rest   : [75,  105],
+  reflect: [75,  105],
+  watch  : [90,  120],
 }
 
 const ACTIVITY_TEXT: Record<string, string[]> = {
@@ -936,8 +936,8 @@ export class BabylonVoxelEngine {
     this.kivoZ   = spawnWP.z + (Math.random() - 0.5) * 1.5
     this.targetX = this.kivoX
     this.targetZ = this.kivoZ
-    // Stay at spawn for 4-8 minutes before first move
-    this.wpDwellSec = 240 + Math.random() * 240
+    // Stay at spawn for ~2 min before first move
+    this.wpDwellSec = 90 + Math.random() * 60
     this.wpTimer    = 0
     this.kivoActivity = ACTIVITY_TEXT[spawnWP.label]?.[0] ?? 'Kivo is resting.'
 
@@ -1307,6 +1307,7 @@ export class BabylonVoxelEngine {
   public updateCameraYaw(yaw: number) { this.cameraYaw = yaw }
   public updatePlayerPosition(_x: number, _z: number) { /* camera only — Kivo is autonomous */ }
   public updateTime(t: number) { this.realTime = t }
+  public setTime(t: number) { this.realTime = t }
   public updateWorldHealth(h: number) { this.worldHealth = h }
   public getActivity(): string { return this.kivoActivity }
 
