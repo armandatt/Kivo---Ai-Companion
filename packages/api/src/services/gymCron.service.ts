@@ -71,7 +71,7 @@ export async function runGymCronJobs(now = new Date()) {
   const [
     preSessionForm, postSessionDebrief, reengagement, sundayReports,
     rexDailyCheckIn,
-    rexPre, rexAutoPrompt, rexChase1, rexChase2,
+    rexPre, rexAutoPrompt, rexAutoPromptChase, rexChase1, rexChase2,
     rexRestDay, rexBackdate,
     rexSilence, rexWeeklySummary, rexCommitments,
   ] = await Promise.all([
@@ -82,6 +82,7 @@ export async function runGymCronJobs(now = new Date()) {
     runRexDailyCheckInCron(now),
     runRexPreSessionCron(now),
     runRexAutoPromptCron(now),
+    runRexAutoPromptChase1Cron(now),
     runRexMissedSessionChase1Cron(now),
     runRexMissedSessionChase2Cron(now),
     runRexRestDayCron(now),
@@ -94,7 +95,7 @@ export async function runGymCronJobs(now = new Date()) {
   const all = [
     ...preSessionForm, ...postSessionDebrief, ...reengagement, ...sundayReports,
     ...rexDailyCheckIn,
-    ...rexPre, ...rexAutoPrompt, ...rexChase1, ...rexChase2,
+    ...rexPre, ...rexAutoPrompt, ...rexAutoPromptChase, ...rexChase1, ...rexChase2,
     ...rexRestDay, ...rexBackdate,
     ...rexSilence, ...rexWeeklySummary, ...rexCommitments,
   ];
@@ -191,7 +192,7 @@ async function runRexAutoPromptCron(now: Date): Promise<GymCronMessage[]> {
     const avgMin = getAvgDurationFromState(user.splitState) ?? 60;
     const local  = getLocalTime(now, user.timezone!);
     const target = addMinutes(user.preferredCheckInTime!, avgMin);
-    if (local !== target) continue;
+    if (!withinTolerance(local, target)) continue;
 
     const ctx = await buildGymTimeContext(user.platformChatId, now);
     if (!ctx?.isTrainingDay) continue;
@@ -209,6 +210,39 @@ async function runRexAutoPromptCron(now: Date): Promise<GymCronMessage[]> {
     });
 
     messages.push(msg(user, rexMessageProvider.postSessionLogPrompt(dayInfo.muscles), "rex_auto_prompt"));
+  }
+
+  return messages;
+}
+
+// 1.2b — Log Prompt Chase (gym_time + avgDuration + 90 min, if original prompt was sent but no log)
+async function runRexAutoPromptChase1Cron(now: Date): Promise<GymCronMessage[]> {
+  const users = await prisma.messengerUser.findMany({
+    where:  { persona: "rex", intakeComplete: true, preferredCheckInTime: { not: null }, timezone: { not: null } },
+    select: REX_SELECT,
+  });
+  const messages: GymCronMessage[] = [];
+
+  for (const user of users) {
+    if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
+
+    const avgMin = getAvgDurationFromState(user.splitState) ?? 60;
+    const local  = getLocalTime(now, user.timezone!);
+    const target = addMinutes(user.preferredCheckInTime!, avgMin + 90);
+    if (!withinTolerance(local, target)) continue;
+
+    const ctx = await buildGymTimeContext(user.platformChatId, now);
+    if (!ctx?.isTrainingDay) continue;
+
+    // Only chase if original prompt was already sent today
+    if (!(await wasRexCronSentToday(user.platformChatId, "rex_auto_prompt", now))) continue;
+    if (await wasRexCronSentToday(user.platformChatId, "rex_auto_prompt_chase", now)) continue;
+    if (await hadRexCompletedSessionToday(user.platformChatId, now)) continue;
+
+    const dayInfo = await getNextSplitDayInfo(user.platformChatId);
+    const muscles = dayInfo?.muscles ?? ctx.todayMuscles ?? "today's session";
+    const text    = `${muscles} was scheduled.\n\nDid today's session happen?`;
+    messages.push(msg(user, text, "rex_auto_prompt_chase"));
   }
 
   return messages;
@@ -448,17 +482,21 @@ async function runRexWeeklySummaryCron(now: Date): Promise<GymCronMessage[]> {
 }
 
 // 3.7 — Commitment Follow-Ups: inject progress for known exercise/consistency goals
+// Milestone days at which Rex proactively checks in on a commitment.
+const COMMITMENT_MILESTONES = [30, 14, 7, 3, 2, 1];
+
 async function runRexCommitmentFollowUpCron(now: Date): Promise<GymCronMessage[]> {
   const users    = await getRexUsersAtLocalHour(now, 10);
   const messages: GymCronMessage[] = [];
   if (!users.length) return messages;
 
   const userIds      = users.map(u => u.id);
-  const threeDaysOut = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
-  const oneDayAgo    = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  // Look 30 days ahead to catch all milestones
+  const thirtyDaysOut = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const oneDayAgo     = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
   const upcoming = await prisma.deadline.findMany({
-    where:  { userId: { in: userIds }, status: "active", dueAt: { gte: now, lte: threeDaysOut } },
+    where:  { userId: { in: userIds }, status: "active", dueAt: { gte: now, lte: thirtyDaysOut } },
     select: { id: true, userId: true, title: true, dueAt: true },
   });
 
@@ -472,23 +510,30 @@ async function runRexCommitmentFollowUpCron(now: Date): Promise<GymCronMessage[]
   for (const dl of upcoming) {
     const user = userById.get(dl.userId);
     if (!user) continue;
-    if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
-    if (await wasRexCronSentToday(user.platformChatId, "rex_commitment_followup", now)) continue;
 
-    const daysLeft        = Math.ceil((dl.dueAt.getTime() - now.getTime()) / 86_400_000);
+    const daysLeft = Math.ceil((dl.dueAt.getTime() - now.getTime()) / 86_400_000);
+
+    // Only fire at defined milestone days — skip everything else
+    if (!COMMITMENT_MILESTONES.includes(daysLeft)) continue;
+
+    if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
+
+    // Each milestone has its own dedup key so 30d and 7d can both fire
+    const intent = `rex_commitment_followup_${daysLeft}d`;
+    if (await wasRexCronSentToday(user.platformChatId, intent, now)) continue;
+
     const [progressSummary, momentHistory] = await Promise.all([
       getCommitmentProgressSummary(user.id, dl.title),
       retrieveRelevantMoments(user.id, { surface: "commitment", commitmentTitle: dl.title }).catch(() => [] as string[]),
     ]);
 
-    // Merge training progress with historical promise context
     const fullProgress = [progressSummary, ...momentHistory].filter(Boolean).join(" | ") || null;
     const commitmentExtras: CommitmentExtras = { progressSummary: fullProgress };
 
     const ctx  = await buildGymTimeContext(user.platformChatId, now).catch(() => null);
     const jCtx = buildJobContext(user, ctx ?? null, { commitmentExtras });
     const text = await rexMessageProvider.commitmentFollowUp(dl.title, daysLeft, jCtx);
-    messages.push(msg(user, text, "rex_commitment_followup"));
+    messages.push(msg(user, text, intent));
   }
 
   for (const dl of expired) {
@@ -669,7 +714,7 @@ async function getRexUsersDueAtLocalTime(now: Date, gymOffsetMin: number): Promi
   return users.filter(u => {
     const local  = getLocalTime(now, u.timezone!);
     const target = addMinutes(u.preferredCheckInTime!, gymOffsetMin);
-    return local === target;
+    return withinTolerance(local, target);
   });
 }
 
@@ -1099,6 +1144,18 @@ function addMinutes(time: string, minutesToAdd: number): string {
   const total      = (Number(hours) * 60 + Number(minutes) + minutesToAdd) % (24 * 60);
   const normalized = total < 0 ? total + 24 * 60 : total;
   return `${String(Math.floor(normalized / 60)).padStart(2, "0")}:${String(normalized % 60).padStart(2, "0")}`;
+}
+
+function timeToMinutes(hhmm: string): number {
+  const [h = "0", m = "0"] = hhmm.split(":");
+  return Number(h) * 60 + Number(m);
+}
+
+// Returns true if local time is within ±toleranceMin of target.
+// Handles midnight wrap (e.g. 23:58 vs 00:01).
+function withinTolerance(local: string, target: string, toleranceMin = 4): boolean {
+  const diff = Math.abs(timeToMinutes(local) - timeToMinutes(target));
+  return diff <= toleranceMin || diff >= (24 * 60 - toleranceMin);
 }
 
 function isLocalSunday(now: Date, timezone: string): boolean {

@@ -1811,6 +1811,14 @@ export async function incrementReactivationCount(platformChatId: string): Promis
   await writeSplitState(user.id, { ...state, reactivationCount: (state.reactivationCount ?? 0) + 1 })
 }
 
+export async function resetReactivationCount(platformChatId: string): Promise<void> {
+  const user = await getUser(platformChatId)
+  if (!user) return
+  const state = parseSplitState(user.splitState)
+  if ((state.reactivationCount ?? 0) === 0) return  // already zero, skip write
+  await writeSplitState(user.id, { ...state, reactivationCount: 0 })
+}
+
 // ─── Force create session (bypassing duplicate check) ─────────────────────────
 async function handleLogCommandForce(user: UserRow, state: SplitState, now: Date): Promise<string> {
   const intake    = parseIntake(user.intakeAnswers)
