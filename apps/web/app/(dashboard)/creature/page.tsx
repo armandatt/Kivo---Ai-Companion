@@ -6,6 +6,7 @@ import type { EngineApi } from '@/components/creature/babylon-tilemap'
 import { GameHUD } from '@/components/creature/game-hud'
 import { GameOverlay } from '@/components/creature/game-overlay'
 import { CreatureIntro } from '@/components/creature/creature-intro'
+import { AmbientOverlay } from '@/components/creature/ambient-overlay'
 import { BIOME_UNLOCKS, STRUCTURE_UNLOCKS, type BiomeType } from '@/lib/creature/game-state'
 
 const MOCK_STREAK       = 47
@@ -103,6 +104,9 @@ export default function CreaturePage() {
         onEngineReady={handleEngineReady}
         onActivityChange={setActivity}
       />
+
+      {/* Ambient life — birds, butterflies, fireflies, leaves */}
+      <AmbientOverlay currentTime={currentTime} worldHealth={MOCK_WORLD_HEALTH} />
 
       {/* HUD */}
       {hudVisible && (

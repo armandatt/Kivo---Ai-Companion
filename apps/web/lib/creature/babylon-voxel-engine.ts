@@ -157,7 +157,7 @@ function place(parent: THREE.Object3D | THREE.Scene, mesh: Obj3D, x: number, y: 
 }
 
 // ─── Landmark: Creature Home ──────────────────────────────────────────────────
-function buildHome(scene: THREE.Scene, hFn: (x:number,z:number)=>number) {
+function buildHome(scene: THREE.Scene, hFn: (x:number,z:number)=>number): THREE.PointLight {
   const bx = V.home.x, bz = V.home.z, by = hFn(bx, bz)
   const g  = new THREE.Group(); g.position.set(bx, by, bz); scene.add(g)
 
@@ -179,7 +179,8 @@ function buildHome(scene: THREE.Scene, hFn: (x:number,z:number)=>number) {
     place(g, box(0.95, 0.8, 0.1, M(0x5c3317)), xo, 1.6, 2.14)
   })
   // Interior warm light
-  const fl = new THREE.PointLight(0xff9955, 0.9, 9); fl.position.set(bx, by + 1.5, bz); scene.add(fl)
+  // Interior warm light — starts off, turned on at night by engine
+  const fl = new THREE.PointLight(0xff9955, 0, 10); fl.position.set(bx, by + 1.5, bz); scene.add(fl)
   // Sign above door
   place(g, box(1.4, 0.4, 0.12, M(0x7a5c3a)), 0, 2.4, 2.17)
   // Path stones to door
@@ -191,6 +192,7 @@ function buildHome(scene: THREE.Scene, hFn: (x:number,z:number)=>number) {
     place(g, cyl(0.18, 0.22, 0.35, 6, M(0x9e5030)), xo, 0.18, 2.5)
     place(g, sphere(0.2, 8, M(0xe84040)), xo, 0.55, 2.5)
   })
+  return fl
 }
 
 // ─── Landmark: Training Hall ──────────────────────────────────────────────────
@@ -310,8 +312,10 @@ function buildAchievementPlaza(scene: THREE.Scene, hFn: (x:number,z:number)=>num
   })
 }
 
+interface RexRefs { glowLights: THREE.PointLight[]; worldPos: THREE.Vector3 }
+
 // ─── Landmark: Rex Sanctuary ──────────────────────────────────────────────────
-function buildRexSanctuary(scene: THREE.Scene, hFn: (x:number,z:number)=>number) {
+function buildRexSanctuary(scene: THREE.Scene, hFn: (x:number,z:number)=>number): RexRefs {
   const bx = V.rex.x, bz = V.rex.z, by = hFn(bx, bz)
   const g  = new THREE.Group(); g.position.set(bx, by, bz); scene.add(g)
 
@@ -333,12 +337,16 @@ function buildRexSanctuary(scene: THREE.Scene, hFn: (x:number,z:number)=>number)
   // Large banner with Rex identity
   place(g, cyl(0.08, 0.08, 6.0, 6, M(0x5a3818)), 0, 3.45, -4.6)
   place(g, box(3.5, 4.0, 0.1, M(0x8b1a1a)), 1.75, 6.0, -4.6)
-  // Wisdom stones
+  // Wisdom stones — green glow, pulsed by engine
+  const glowLights: THREE.PointLight[] = []
   ;[-3.5, 3.5].forEach(xo => {
-    place(g, box(0.6, 1.2, 0.45, M(0xb0a890)), xo, 1.05, 2.5)
-    const glow = new THREE.PointLight(0xffaa44, 0.5, 4)
-    glow.position.set(bx + xo, by + 1.8, bz + 2.5); scene.add(glow)
+    place(g, box(0.6, 1.2, 0.45, M(0x1a2a1a)), xo, 1.05, 2.5)
+    const glow = new THREE.PointLight(0x44ff88, 1.0, 8)
+    glow.position.set(bx + xo, by + 2.2, bz + 2.5)
+    scene.add(glow)
+    glowLights.push(glow)
   })
+  return { glowLights, worldPos: new THREE.Vector3(bx, by + 2.5, bz) }
 }
 
 // ─── Landmark: Commitment Shrine ─────────────────────────────────────────────
@@ -701,6 +709,29 @@ export class BabylonVoxelEngine {
   private introRevealTimer    = 0
   private readonly introRevealDuration = 5.5  // seconds
 
+  // Ambient / environment
+  private houseLampLight: THREE.PointLight | null = null
+  private rexGlowLights:  THREE.PointLight[]     = []
+  private rexWorldPos:    THREE.Vector3           = new THREE.Vector3()
+  private fireflyPoints:  THREE.Points  | null    = null
+  private fireflyVels:    Float32Array  | null    = null
+  private worldHealth = 85
+
+  // Kivo state & aura
+  private currentBehavior = 'sit'
+  private kivoAura: THREE.Mesh | null = null
+
+  // Cinematic camera
+  private cinemaMode: 'following' | 'panning' | 'holding' | 'returning' = 'following'
+  private cinemaTimer   = 0          // ms in current mode
+  private cinemaInterval = 45_000 + Math.random() * 30_000  // ms between cinematics
+  private cinemaPanPos  = new THREE.Vector3()
+  private cinemaPanLook = new THREE.Vector3()
+
+  // Rex sanctuary click
+  public  onRexSanctuaryClick: (() => void) | null = null
+  private raycaster = new THREE.Raycaster()
+
   constructor(canvas: HTMLCanvasElement, userSeed: string, _u: BiomeType[], _w: number) {
     const rect = canvas.getBoundingClientRect()
     const W = rect.width || canvas.clientWidth || 800
@@ -730,12 +761,14 @@ export class BabylonVoxelEngine {
     this.scene.add(buildTerrain(this.heightFn))
     this.water = buildWater(); this.scene.add(this.water)
 
-    // Village landmarks
-    buildHome(this.scene, this.heightFn)
+    // Village landmarks — capture refs for dynamic effects
+    this.houseLampLight = buildHome(this.scene, this.heightFn)
     buildTrainingHall(this.scene, this.heightFn)
     buildMemoryGrove(this.scene, this.heightFn)
     buildAchievementPlaza(this.scene, this.heightFn)
-    buildRexSanctuary(this.scene, this.heightFn)
+    const rexRefs = buildRexSanctuary(this.scene, this.heightFn)
+    this.rexGlowLights = rexRefs.glowLights
+    this.rexWorldPos   = rexRefs.worldPos
     buildCommitmentShrine(this.scene, this.heightFn)
     buildJourneyTower(this.scene, this.heightFn)
     this.campfire = buildCampfire(this.scene, this.heightFn)
@@ -761,6 +794,18 @@ export class BabylonVoxelEngine {
     this.kivo = buildKivo()
     this.kivo.group.position.set(this.kivoX, this.heightFn(this.kivoX, this.kivoZ), this.kivoZ)
     this.scene.add(this.kivo.group)
+
+    // Kivo aura glow sphere
+    const auraMat = new THREE.MeshBasicMaterial({ color: 0x88ffaa, transparent: true, opacity: 0.06, side: THREE.FrontSide })
+    this.kivoAura = new THREE.Mesh(new THREE.SphereGeometry(0.75, 10, 8), auraMat)
+    this.kivoAura.position.y = 0.65
+    this.kivo.group.add(this.kivoAura)
+
+    // Fireflies
+    this.buildFireflies()
+
+    // Rex Sanctuary click detection
+    this.setupClickDetection(canvas)
 
     // Lighting
     this.hemi   = new THREE.HemisphereLight(0x87ceeb, 0x4a6e2a, 0.85); this.scene.add(this.hemi)
@@ -804,6 +849,7 @@ export class BabylonVoxelEngine {
         const [min, max] = DWELL[wp.label] ?? [240, 360]
         this.wpDwellSec = min + Math.random() * (max - min)
         this.wpTimer    = 0
+        this.currentBehavior = wp.label
         const text = pickActivity(wp.label)
         this.kivoActivity = text
         this.onActivityChange?.(text)
@@ -827,23 +873,136 @@ export class BabylonVoxelEngine {
     }
   }
 
+  // ── Firefly particle system ────────────────────────────────────────────────────
+  private buildFireflies() {
+    const count = 60
+    const pos = new Float32Array(count * 3)
+    const vel = new Float32Array(count * 3)
+    for (let i = 0; i < count; i++) {
+      pos[i*3+0] = (Math.random() - 0.5) * 70
+      pos[i*3+1] = 1.2 + Math.random() * 4
+      pos[i*3+2] = (Math.random() - 0.5) * 70
+      vel[i*3+0] = (Math.random() - 0.5) * 0.008
+      vel[i*3+1] = (Math.random() - 0.5) * 0.004
+      vel[i*3+2] = (Math.random() - 0.5) * 0.008
+    }
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+    const mat = new THREE.PointsMaterial({ color: 0xaaff55, size: 0.18, transparent: true, opacity: 0, sizeAttenuation: true })
+    this.fireflyPoints = new THREE.Points(geo, mat)
+    this.fireflyVels   = vel
+    this.scene.add(this.fireflyPoints)
+  }
+
+  private updateFireflies(t: number) {
+    if (!this.fireflyPoints || !this.fireflyVels) return
+    const isNight = this.realTime > 20 || this.realTime < 6
+    const mat = this.fireflyPoints.material as THREE.PointsMaterial
+    const targetOpacity = isNight ? 0.75 : 0
+    mat.opacity += (targetOpacity - mat.opacity) * 0.02
+    if (mat.opacity < 0.01 && !isNight) return  // skip position update when invisible
+
+    const attr = this.fireflyPoints.geometry.attributes.position as THREE.BufferAttribute
+    const arr  = attr.array as Float32Array
+    for (let i = 0; i < arr.length / 3; i++) {
+      arr[i*3+0] += this.fireflyVels![i*3+0] + Math.sin(t * 0.7 + i) * 0.003
+      arr[i*3+1] += Math.sin(t * 0.9 + i * 0.5) * 0.004
+      arr[i*3+2] += this.fireflyVels![i*3+2] + Math.cos(t * 0.6 + i) * 0.003
+      // Soft boundary wrap
+      if (arr[i*3+0] >  38) arr[i*3+0] = -38
+      if (arr[i*3+0] < -38) arr[i*3+0] =  38
+      if (arr[i*3+2] >  38) arr[i*3+2] = -38
+      if (arr[i*3+2] < -38) arr[i*3+2] =  38
+    }
+    attr.needsUpdate = true
+  }
+
+  // ── Rex Sanctuary click ────────────────────────────────────────────────────────
+  private setupClickDetection(canvas: HTMLCanvasElement) {
+    canvas.addEventListener('click', (e) => {
+      if (!this.onRexSanctuaryClick) return
+      const rect = canvas.getBoundingClientRect()
+      const mouse = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width)  *  2 - 1,
+        ((e.clientY - rect.top)  / rect.height) * -2 + 1,
+      )
+      this.raycaster.setFromCamera(mouse, this.camera)
+      // Distance-based test: did the ray pass near Rex Sanctuary?
+      const closest = new THREE.Vector3()
+      this.raycaster.ray.closestPointToPoint(this.rexWorldPos, closest)
+      if (closest.distanceTo(this.rexWorldPos) < 5) this.onRexSanctuaryClick()
+    })
+  }
+
   // ── Kivo animation ────────────────────────────────────────────────────────────
   private animateKivo(t: number, isWalking: boolean) {
     const { group, body, head, eyeL, eyeR, earL, earR, tail, wL, wR } = this.kivo
-    const gy = this.heightFn(this.kivoX, this.kivoZ)
-    const dx = this.targetX - this.kivoX, dz = this.targetZ - this.kivoZ
+    const gy  = this.heightFn(this.kivoX, this.kivoZ)
+    const dx  = this.targetX - this.kivoX, dz = this.targetZ - this.kivoZ
+    const beh = isWalking ? 'walking' : this.currentBehavior
+
+    const isSleeping = beh === 'sleep'
+    const isTraining = beh === 'train'
+    const isSitting  = beh === 'sit' || beh === 'reflect'
+
+    // Base Y position — sleeping crouches down
+    const baseY  = isSleeping ? gy + 0.18 : gy + 0.55
+    const bobAmp = isSleeping ? 0.02 : isTraining ? 0.08 : 0.12
+    const bobSpd = isTraining ? 3.5 : isWalking ? 2.8 : 0.9
+    group.position.set(this.kivoX, baseY + Math.sin(t * bobSpd) * bobAmp, this.kivoZ)
+
+    // Face direction
     const faceYaw = Math.abs(dx)+Math.abs(dz) > 0.4 ? Math.atan2(dx, dz) : this.cameraYaw + Math.PI
-    group.position.set(this.kivoX, gy + 0.55 + Math.sin(t * 0.9) * 0.12, this.kivoZ)
     group.rotation.y += (faceYaw - group.rotation.y) * 0.08
-    body.scale.setScalar(1 + Math.sin(t * (isWalking ? 3.5 : 1.3)) * (isWalking ? 0.025 : 0.03))
-    head.rotation.y = Math.sin(t * 0.28) * 0.55
-    head.rotation.x = Math.sin(t * 0.42) * 0.09
-    const bc = t % 3.8; eyeL.scale.y = eyeR.scale.y = bc>3.65 ? Math.max(0.05, 1-(bc-3.65)*65) : 1
+
+    // Body scale — training pulses, sleeping is flat
+    const bodyTarget = isSleeping
+      ? new THREE.Vector3(1.15, 0.5, 1.15)
+      : new THREE.Vector3(
+          1 + Math.sin(t * (isTraining ? 4 : 1.3)) * (isTraining ? 0.055 : 0.03),
+          1,
+          1 + Math.sin(t * (isTraining ? 4 : 1.3)) * (isTraining ? 0.055 : 0.03),
+        )
+    body.scale.lerp(bodyTarget, 0.08)
+
+    // Head
+    head.rotation.y = isSleeping ? 0 : Math.sin(t * 0.28) * 0.55
+    head.rotation.x = isSleeping ? 0.7 : isSitting ? 0.15 : Math.sin(t * 0.42) * 0.09
+    head.rotation.z = isSleeping ? -0.4 : 0
+
+    // Blink (suppressed when sleeping)
+    if (!isSleeping) {
+      const bc = t % 3.8; eyeL.scale.y = eyeR.scale.y = bc>3.65 ? Math.max(0.05, 1-(bc-3.65)*65) : 1
+    } else {
+      eyeL.scale.y = eyeR.scale.y = 0.05  // closed
+    }
+
+    // Ears
     earL.rotation.z = -0.35 + Math.sin(t*2.6+0.3)*0.18
     earR.rotation.z =  0.35 - Math.sin(t*2.6)*0.18
-    tail.rotation.x = -0.75 + Math.sin(t * (isWalking ? 3.5 : 2.1)) * 0.38
-    wL.rotation.x = Math.sin(t * (isWalking ? 5 : 3.2)) * (isWalking ? 0.4 : 0.28)
-    wR.rotation.x = -Math.sin(t * (isWalking ? 5 : 3.2)+0.5) * (isWalking ? 0.4 : 0.28)
+
+    // Tail
+    tail.rotation.x = -0.75 + Math.sin(t * (isWalking ? 3.5 : isSleeping ? 0.4 : 2.1)) * (isSleeping ? 0.1 : 0.38)
+
+    // Wings
+    const wingSpd = isTraining ? 6 : isWalking ? 5 : 3.2
+    const wingAmp = isTraining ? 0.55 : isWalking ? 0.4 : 0.28
+    wL.rotation.x =  Math.sin(t * wingSpd)       * wingAmp
+    wR.rotation.x = -Math.sin(t * wingSpd + 0.5) * wingAmp
+
+    // Aura glow — bright when training, faint when sleeping, subtle otherwise
+    if (this.kivoAura) {
+      const auraMat = this.kivoAura.material as THREE.MeshBasicMaterial
+      const targetOp = isTraining ? 0.22 + Math.sin(t * 5) * 0.08
+                     : isSleeping ? 0.03
+                     : 0.06
+      auraMat.opacity += (targetOp - auraMat.opacity) * 0.05
+      if (isTraining) {
+        auraMat.color.setHex(0xbfff00)
+      } else {
+        auraMat.color.lerp(new THREE.Color(0x88ffaa), 0.03)
+      }
+    }
   }
 
   // ── Camera: always looks at Kivo ──────────────────────────────────────────────
@@ -873,7 +1032,39 @@ export class BabylonVoxelEngine {
       this.camLook.lerp(look, 0.04)
 
       if (t >= 1) this.introRevealActive = false
+    } else if (this.cinemaMode !== 'following') {
+      // Cinematic pan in progress
+      this.cinemaTimer += dt * 1000
+
+      if (this.cinemaMode === 'panning') {
+        this.camPos.lerp(this.cinemaPanPos, 0.016)
+        this.camLook.lerp(this.cinemaPanLook, 0.016)
+        if (this.camPos.distanceTo(this.cinemaPanPos) < 1.5) {
+          this.cinemaMode  = 'holding'
+          this.cinemaTimer = 0
+        }
+      } else if (this.cinemaMode === 'holding') {
+        if (this.cinemaTimer >= 5_000) {
+          this.cinemaMode  = 'returning'
+          this.cinemaTimer = 0
+        }
+      } else if (this.cinemaMode === 'returning') {
+        const yaw = this.cameraYaw
+        const followPos  = new THREE.Vector3(this.kivoX - Math.sin(yaw)*9.5, cy+5.5, this.kivoZ - Math.cos(yaw)*9.5)
+        const followLook = new THREE.Vector3(this.kivoX, cy+0.4, this.kivoZ)
+        this.camPos.lerp(followPos, 0.022)
+        this.camLook.lerp(followLook, 0.022)
+        if (this.camPos.distanceTo(followPos) < 2) {
+          this.cinemaMode    = 'following'
+          this.cinemaTimer   = 0
+          this.cinemaInterval = 40_000 + Math.random() * 30_000
+        }
+      }
     } else {
+      // Normal follow — also accumulate cinema timer
+      this.cinemaTimer += dt * 1000
+      if (this.cinemaTimer >= this.cinemaInterval) this.startCinematic()
+
       const yaw = this.cameraYaw
       const target = new THREE.Vector3(
         this.kivoX - Math.sin(yaw) * 9.5,
@@ -890,21 +1081,59 @@ export class BabylonVoxelEngine {
     this.skyDome.position.copy(this.camera.position)
   }
 
+  private startCinematic() {
+    const targets = [
+      { pos: V.center,   label: 'campfire'   },
+      { pos: V.home,     label: 'home'       },
+      { pos: V.training, label: 'training'   },
+      { pos: V.rex,      label: 'sanctuary'  },
+      { pos: V.grove,    label: 'grove'      },
+      { pos: V.tower,    label: 'tower'      },
+    ]
+    const t    = targets[Math.floor(Math.random() * targets.length)]
+    const hFn  = this.heightFn
+    const by   = hFn(t.pos.x, t.pos.z)
+    this.cinemaPanLook.set(t.pos.x, by + 2.5, t.pos.z)
+    this.cinemaPanPos.set(t.pos.x - 10, by + 12, t.pos.z - 10)
+    this.cinemaMode  = 'panning'
+    this.cinemaTimer = 0
+  }
+
   // ── Day/night ─────────────────────────────────────────────────────────────────
   private updateDayNight(t: number) {
-    const s    = lerpSky(this.realTime)
-    const isD  = this.realTime >= 6 && this.realTime < 20
-    const ang  = ((this.realTime - 6) / 12) * Math.PI
-    const sky  = this.skyDome.material as THREE.ShaderMaterial
+    const s       = lerpSky(this.realTime)
+    const isDay   = this.realTime >= 6 && this.realTime < 20
+    const isNight = this.realTime > 20 || this.realTime < 6
+    const ang     = ((this.realTime - 6) / 12) * Math.PI
+    const sky     = this.skyDome.material as THREE.ShaderMaterial
     sky.uniforms.top.value.setHex(s.top)
     sky.uniforms.bottom.value.setHex(s.bot)
-    ;(this.scene.fog as THREE.Fog).color.setHex(s.bot)
+
+    // Fog: sky colour base + denser at low world health
+    const fog = this.scene.fog as THREE.Fog
+    fog.color.setHex(s.bot)
+    const healthFogFar = 80 + (this.worldHealth / 100) * 60  // 80–140
+    fog.far += (healthFogFar - fog.far) * 0.01
+
     this.sun.intensity    = s.sun
     this.ambient.intensity= s.amb
-    this.hemi.intensity   = isD ? 0.85 : 0.3
+    this.hemi.intensity   = isDay ? 0.85 : 0.3
     this.sun.position.set(Math.cos(ang)*110, Math.abs(Math.sin(ang))*110, 45)
+
     // Campfire flicker
     this.campfire.intensity = 1.5 + Math.sin(t * 7.3) * 0.4 + Math.sin(t * 13.7) * 0.25
+
+    // House lamp — warm glow at night only
+    if (this.houseLampLight) {
+      const targetIntensity = isNight ? 1.2 + Math.sin(t * 0.4) * 0.1 : 0
+      this.houseLampLight.intensity += (targetIntensity - this.houseLampLight.intensity) * 0.03
+    }
+
+    // Rex Sanctuary green glow pulse
+    this.rexGlowLights.forEach(gl => {
+      gl.intensity = 0.8 + Math.sin(t * 1.8) * 0.4 + Math.sin(t * 2.9) * 0.2
+    })
+
     this.water.position.y = 0.4 + Math.sin(t * 0.5) * 0.025
   }
 
@@ -918,6 +1147,7 @@ export class BabylonVoxelEngine {
     this.updateDayNight(t)
     this.updateKivoRoutine(dt)
     this.animateKivo(t, isWalking)
+    this.updateFireflies(t)
     this.updateCamera(dt)
     this.renderer.render(this.scene, this.camera)
     this.frame = requestAnimationFrame(this.loop)
@@ -927,7 +1157,7 @@ export class BabylonVoxelEngine {
   public updateCameraYaw(yaw: number) { this.cameraYaw = yaw }
   public updatePlayerPosition(_x: number, _z: number) { /* camera only — Kivo is autonomous */ }
   public updateTime(t: number) { this.realTime = t }
-  public updateWorldHealth(_h: number) {}
+  public updateWorldHealth(h: number) { this.worldHealth = h }
   public getActivity(): string { return this.kivoActivity }
 
   public startIntroReveal() {
