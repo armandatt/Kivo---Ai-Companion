@@ -35,16 +35,16 @@ export default function CreaturePage() {
   const [introReady, setIntroReady]   = useState(false)
   const [hudVisible, setHudVisible]   = useState(false)
   const [activity, setActivity]       = useState('...')
-  const [creatureName, setCreatureName] = useState('Kivo') // fallback until fetched
+  const [creatureName, setCreatureName] = useState<string>('')
 
   const engineApiRef = useRef<EngineApi | null>(null)
 
-  // Fetch creature name from the user's profile
+  // Fetch creature name — don't show intro until this resolves
   useEffect(() => {
     fetch('/api/me')
       .then(r => r.json())
-      .then(d => { if (d.creatureName) setCreatureName(d.creatureName) })
-      .catch(() => {})
+      .then(d => setCreatureName(d.creatureName || 'Kivo'))
+      .catch(() => setCreatureName('Kivo'))
   }, [])
 
   // Replace hardcoded "Kivo" in activity text with the user's chosen name
@@ -146,7 +146,7 @@ export default function CreaturePage() {
       )}
 
       {/* Cinematic intro */}
-      {showIntro && introReady && (
+      {showIntro && introReady && !!creatureName && (
         <CreatureIntro
           creatureName={creatureName}
           level={MOCK_LEVEL}
@@ -156,16 +156,18 @@ export default function CreaturePage() {
         />
       )}
 
-      {/* Loading state while babylon initialises before intro starts */}
-      {showIntro && !introReady && (
+      {/* Loading state while babylon initialises / name fetches before intro starts */}
+      {showIntro && (!introReady || !creatureName) && (
         <div className="fixed inset-0 z-99 bg-black flex items-center justify-center">
-          <p style={{
-            fontSize: 'clamp(4rem,13vw,10rem)', fontWeight: 900,
-            color: '#bfff00', opacity: 0.3, letterSpacing: '0.35em',
-            fontFamily: 'system-ui, sans-serif',
-          }}>
-            {creatureName.toUpperCase()}
-          </p>
+          {creatureName && (
+            <p style={{
+              fontSize: 'clamp(2rem,5vw,4.5rem)', fontWeight: 900,
+              color: '#bfff00', opacity: 0.25, letterSpacing: '0.06em',
+              fontFamily: 'system-ui, sans-serif', maxWidth: '90vw', overflow: 'hidden',
+            }}>
+              {creatureName.toUpperCase()}
+            </p>
+          )}
         </div>
       )}
     </div>
