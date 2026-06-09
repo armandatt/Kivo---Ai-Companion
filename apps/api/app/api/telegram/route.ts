@@ -27,7 +27,7 @@ import { handlePostSessionDebriefResponse, resetReengagementFlag } from "@repo/a
 //@ts-ignore
 import { needsIntake, getWebProfile, handleIntakeMessage } from "@repo/api/services/intake.service";
 //@ts-ignore
-import { handleWorkoutCommand, handleActiveLoggingMessage } from "@repo/api/services/workoutTracking.service";
+import { handleWorkoutCommand, handleActiveLoggingMessage, resetReactivationCount } from "@repo/api/services/workoutTracking.service";
 //@ts-ignore
 import { handleOffTopicMessage } from "@repo/api/services/offTopicClassifier.service";
 //@ts-ignore
@@ -221,6 +221,10 @@ export async function POST(req: Request) {
         await sendTelegramMessage(chatId, "I'm still processing your last message. Give me a moment.");
         return Response.json({ ok: true });
       }
+
+      // ── Any real user message resets the reactivation counter ────────────
+      // Fire-and-forget — do not let a DB hiccup block the response.
+      resetReactivationCount(chatId.toString()).catch(() => {});
 
       // ── Gym short-circuit (runs before general processing) ────────────────
       const processed = await processMessage(text);
