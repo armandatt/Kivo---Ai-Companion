@@ -170,14 +170,15 @@ export function CreatureIntro({ creatureName, level, streak, onReveal, onComplet
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 1.2, ease: 'easeOut' }}
                 style={{
-                  fontSize: 'clamp(4rem, 13vw, 10rem)',
+                  fontSize: `clamp(2rem, ${Math.min(10, Math.floor(55 / Math.max(creatureName.length, 4)))}vw, 5.5rem)`,
                   fontWeight: 900,
-                  letterSpacing: phase === 'awakening' ? '0.2em' : '0.35em',
+                  letterSpacing: phase === 'awakening' ? '0.05em' : '0.08em',
                   color: phase === 'awakening' ? '#bfff00' : '#fff',
                   textShadow: phase === 'awakening'
                     ? '0 0 60px rgba(191,255,0,0.55), 0 0 120px rgba(163,230,53,0.28)'
                     : '0 0 30px rgba(255,255,255,0.12)',
                   lineHeight: 1, fontFamily: 'system-ui, sans-serif',
+                  maxWidth: '90vw', overflow: 'hidden',
                   transition: 'color 1.1s ease, text-shadow 1.1s ease, letter-spacing 1.1s ease',
                 }}
               >
@@ -250,7 +251,7 @@ export function CreatureIntro({ creatureName, level, streak, onReveal, onComplet
                 initial={{ opacity: 1 }} animate={{ opacity: 0 }} transition={{ duration: 0.45 }}
                 className="absolute inset-0 flex items-center justify-center"
               >
-                <h1 style={{ fontSize: 'clamp(4rem,13vw,10rem)', fontWeight:900, color:'#bfff00', opacity:0.25, letterSpacing:'0.2em' }}>
+                <h1 style={{ fontSize: `clamp(2rem,${Math.min(10,Math.floor(55/Math.max(creatureName.length,4)))}vw,5.5rem)`, fontWeight:900, color:'#bfff00', opacity:0.25, letterSpacing:'0.05em', maxWidth:'90vw', overflow:'hidden' }}>
                   {creatureName.toUpperCase()}
                 </h1>
               </motion.div>
@@ -383,11 +384,12 @@ export function CreatureIntro({ creatureName, level, streak, onReveal, onComplet
                     Your Companion
                   </motion.p>
                   <motion.h2
-                    initial={{ opacity:0, letterSpacing:'0.55em' }}
-                    animate={{ opacity:1, letterSpacing:'0.18em' }}
+                    initial={{ opacity:0, letterSpacing:'0.15em' }}
+                    animate={{ opacity:1, letterSpacing:'0.05em' }}
                     transition={{ delay:0.35, duration:0.85 }}
                     style={{
-                      fontSize:'clamp(2.5rem,7vw,5.5rem)', fontWeight:900,
+                      fontSize:`clamp(2rem, ${Math.min(8, Math.floor(50 / Math.max(creatureName.length, 4)))}vw, 4.5rem)`,
+                      fontWeight:900, maxWidth:'90vw', overflow:'hidden',
                       color:'#bfff00', textShadow:'0 0 45px rgba(191,255,0,0.5)',
                       fontFamily:'system-ui, sans-serif',
                     }}
