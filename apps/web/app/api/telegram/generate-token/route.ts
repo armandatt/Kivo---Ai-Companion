@@ -1,4 +1,3 @@
-import crypto from "node:crypto"
 import { cookies } from "next/headers"
 import { NextResponse } from "next/server"
 import { jwtVerify } from "jose"
@@ -6,6 +5,13 @@ import { jwtVerify } from "jose"
 const SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET ?? "fallback-dev-secret-change-in-production"
 )
+
+function randomHex(bytes = 16): string {
+  // Web Crypto API — available in all Next.js environments (Edge + Node)
+  const arr = new Uint8Array(bytes)
+  globalThis.crypto.getRandomValues(arr)
+  return Array.from(arr, b => b.toString(16).padStart(2, "0")).join("")
+}
 
 async function getBotName(): Promise<string> {
   const configured = process.env.NEXT_PUBLIC_BOT_USERNAME ?? process.env.BOT_USERNAME
@@ -24,40 +30,59 @@ async function getBotName(): Promise<string> {
 }
 
 export async function POST() {
+  // ── 1. Verify session ─────────────────────────────────────────────────────
+  let userId: string
   try {
     const store = await cookies()
     const sessionToken = store.get("kevo_session")?.value
     if (!sessionToken) {
       return NextResponse.json({ error: "Not signed in" }, { status: 401 })
     }
-
     const { payload } = await jwtVerify(sessionToken, SECRET)
-    const userId = (payload as { userId?: string }).userId
-    if (!userId) {
-      return NextResponse.json({ error: "Invalid session" }, { status: 401 })
-    }
+    const uid = (payload as { userId?: string }).userId
+    if (!uid) return NextResponse.json({ error: "Invalid session" }, { status: 401 })
+    userId = uid
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error("[generate-token] auth:", msg)
+    return NextResponse.json({ error: `Auth error: ${msg}` }, { status: 401 })
+  }
 
+  // ── 2. Generate token + upsert ────────────────────────────────────────────
+  try {
     const { prisma } = await import("@repo/db/client")
-    const connectToken = crypto.randomBytes(16).toString("hex")
+    const connectToken = randomHex(16)
 
-    await prisma.userProfile.upsert({
+    // Update existing profile if present, otherwise create a minimal one
+    const existing = await prisma.userProfile.findUnique({
       where:  { userId },
-      update: { telegramConnectToken: connectToken },
-      create: {
-        userId,
-        telegramConnectToken: connectToken,
-        secondaryDomains: [],
-        aspirationWords:  [],
-      },
+      select: { id: true },
     })
+
+    if (existing) {
+      await prisma.userProfile.update({
+        where: { userId },
+        data:  { telegramConnectToken: connectToken },
+      })
+    } else {
+      await prisma.userProfile.create({
+        data: {
+          userId,
+          telegramConnectToken: connectToken,
+          secondaryDomains: [],
+          aspirationWords:  [],
+        },
+      })
+    }
 
     const botName = await getBotName()
     return NextResponse.json({
       token:    connectToken,
       deeplink: `https://t.me/${botName}?start=${connectToken}`,
     })
-  } catch (err) {
-    console.error("[generate-token]", err)
-    return NextResponse.json({ error: "Failed to generate link" }, { status: 500 })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error("[generate-token] db:", msg)
+    return NextResponse.json({ error: `Could not save token: ${msg.slice(0, 120)}` }, { status: 500 })
   }
 }
