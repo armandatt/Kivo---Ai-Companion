@@ -1,21 +1,63 @@
-import { NextResponse } from "next/server"
+import crypto from "node:crypto"
 import { cookies } from "next/headers"
+import { NextResponse } from "next/server"
+import { jwtVerify } from "jose"
+
+const SECRET = new TextEncoder().encode(
+  process.env.JWT_SECRET ?? "fallback-dev-secret-change-in-production"
+)
+
+async function getBotName(): Promise<string> {
+  const configured = process.env.NEXT_PUBLIC_BOT_USERNAME ?? process.env.BOT_USERNAME
+  if (configured) return configured.replace(/^@/, "")
+
+  const botToken = process.env.TELEGRAM_BOT_TOKEN ?? process.env.BOT_TOKEN
+  if (!botToken) return "kevo_companion_bot"
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${botToken}/getMe`, { cache: "no-store" })
+    const data = (await res.json()) as { ok?: boolean; result?: { username?: string } }
+    return data.result?.username ?? "kevo_companion_bot"
+  } catch {
+    return "kevo_companion_bot"
+  }
+}
 
 export async function POST() {
-  const cookieStore = await cookies()
-  const token = cookieStore.get("kevo_session")?.value
-  if (!token) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 })
+  try {
+    const store = await cookies()
+    const sessionToken = store.get("kevo_session")?.value
+    if (!sessionToken) {
+      return NextResponse.json({ error: "Not signed in" }, { status: 401 })
+    }
 
-  const apiUrl = process.env.API_URL ?? "http://localhost:3001"
-  const upstream = await fetch(`${apiUrl}/api/telegram/generate-token`, {
-    method:  "POST",
-    headers: { Cookie: `kevo_session=${token}` },
-    cache:   "no-store",
-  })
+    const { payload } = await jwtVerify(sessionToken, SECRET)
+    const userId = (payload as { userId?: string }).userId
+    if (!userId) {
+      return NextResponse.json({ error: "Invalid session" }, { status: 401 })
+    }
 
-  const body = await upstream.text()
-  return new NextResponse(body, {
-    status: upstream.status,
-    headers: { "Content-Type": upstream.headers.get("content-type") ?? "application/json" },
-  })
+    const { prisma } = await import("@repo/db/client")
+    const connectToken = crypto.randomBytes(16).toString("hex")
+
+    await prisma.userProfile.upsert({
+      where:  { userId },
+      update: { telegramConnectToken: connectToken },
+      create: {
+        userId,
+        telegramConnectToken: connectToken,
+        secondaryDomains: [],
+        aspirationWords:  [],
+      },
+    })
+
+    const botName = await getBotName()
+    return NextResponse.json({
+      token:    connectToken,
+      deeplink: `https://t.me/${botName}?start=${connectToken}`,
+    })
+  } catch (err) {
+    console.error("[generate-token]", err)
+    return NextResponse.json({ error: "Failed to generate link" }, { status: 500 })
+  }
 }

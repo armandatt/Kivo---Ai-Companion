@@ -26,10 +26,11 @@ export function TelegramConnect() {
       if (data.deeplink) {
         setDeeplink(data.deeplink)
       } else {
-        setError('Could not generate link. Try again.')
+        const msg = data.error ?? 'Could not generate link'
+        setError(`${msg}. Try again or refresh the page.`)
       }
     } catch {
-      setError('Something went wrong. Try again.')
+      setError('Network error. Check your connection and try again.')
     } finally {
       setConnecting(false)
     }
@@ -58,9 +59,9 @@ export function TelegramConnect() {
   // Not connected — prominent card
   if (status === 'disconnected') {
     return (
-      <div className="rounded-2xl border border-white/8 bg-gradient-to-br from-slate-900 to-slate-950 overflow-hidden">
+      <div className="rounded-2xl border border-white/8 bg-linear-to-br from-slate-900 to-slate-950 overflow-hidden">
         {/* Top accent bar */}
-        <div className="h-0.5 bg-gradient-to-r from-transparent via-emerald-500/60 to-transparent" />
+        <div className="h-0.5 bg-linear-to-r from-transparent via-emerald-500/60 to-transparent" />
 
         <div className="px-6 py-5">
           <div className="flex items-start justify-between gap-4">
@@ -78,7 +79,7 @@ export function TelegramConnect() {
             </div>
 
             {/* Right side action */}
-            <div className="flex-shrink-0 pt-1">
+            <div className="shrink-0 pt-1">
               {!deeplink ? (
                 <button
                   onClick={connect}
