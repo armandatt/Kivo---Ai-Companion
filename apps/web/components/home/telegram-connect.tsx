@@ -26,8 +26,8 @@ export function TelegramConnect() {
       if (data.deeplink) {
         setDeeplink(data.deeplink)
       } else {
-        const msg = data.error ?? 'Could not generate link'
-        setError(`${msg}. Try again or refresh the page.`)
+        // Show the exact error from the server so it's diagnosable
+        setError(data.error ?? 'Could not generate link — try again.')
       }
     } catch {
       setError('Network error. Check your connection and try again.')
