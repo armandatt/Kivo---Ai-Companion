@@ -590,63 +590,213 @@ interface Kivo {
   body:  THREE.Mesh
   head:  THREE.Group
   eyeL:  THREE.Mesh; eyeR: THREE.Mesh
-  earL:  THREE.Mesh; earR: THREE.Mesh
-  tail:  THREE.Mesh
-  wL:    THREE.Mesh; wR: THREE.Mesh
+  earL:  THREE.Object3D; earR: THREE.Object3D
+  tail:  THREE.Object3D
+  wL:    THREE.Object3D; wR: THREE.Object3D
+}
+
+// Wing membrane: fan of 4 triangles from root to 5 tip points
+function buildWingMembrane(side: number, mat: THREE.Material): THREE.Mesh {
+  const s = side
+  // Root + 5 tip points arranged as a sweeping wing
+  const v = new Float32Array([
+    0,    0,     0,       // 0 root
+    s*0.5, 0.72, -0.18,  // 1 upper tip
+    s*1.3, 0.42, -0.05,  // 2 mid-upper tip
+    s*1.65,0.0,   0.12,  // 3 widest tip
+    s*1.35,-0.45, 0.22,  // 4 lower tip
+    s*0.55,-0.7,  0.18,  // 5 inner lower
+  ])
+  const idx = new Uint16Array([0,1,2, 0,2,3, 0,3,4, 0,4,5])
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(v, 3))
+  geo.setIndex(new THREE.BufferAttribute(idx, 1))
+  geo.computeVertexNormals()
+  return new THREE.Mesh(geo, mat)
 }
 
 function buildKivo(): Kivo {
-  const g    = new THREE.Group()
-  const teal = M(0x1a9e8c); const pale = M(0x8adfd5)
-  const dark = M(0x0d7060); const eW   = M(0xfafafa)
-  const eB   = new THREE.MeshBasicMaterial({ color: 0x00d4ff })
-  const eP   = new THREE.MeshBasicMaterial({ color: 0x050a14 })
-  const wMat = M(0x0e8a7a, { transparent: true, opacity: 0.82 })
+  const g = new THREE.Group()
 
-  const body = sh(new THREE.Mesh(new THREE.SphereGeometry(0.48, 16, 12), teal))
-  body.scale.set(1, 0.88, 1); body.position.y = 0.52; g.add(body)
-  const belly = sh(new THREE.Mesh(new THREE.SphereGeometry(0.33, 12, 10), pale))
-  belly.scale.set(0.88, 0.72, 0.5); belly.position.set(0, 0.48, 0.2); g.add(belly)
+  // ── Materials ──────────────────────────────────────────────────────────────
+  const bodyDeep  = M(0x0c4a3c)                                     // deep teal body
+  const bodyMid   = M(0x196653)                                     // slightly lighter teal
+  const bellyPale = M(0x72dfc8)                                     // pale aqua belly
+  const darkAccent= M(0x061410)                                     // near-black for detail
+  const glowLime  = EM(0x88ff40, 1.0)                              // brand lime glow
+  const glowCyan  = EM(0x00e8ff, 1.1)                              // eye iris glow
+  const glowSoft  = EM(0x40ffd0, 0.55)                             // soft teal glow (spine)
+  const scleraMat = new THREE.MeshLambertMaterial({ color: 0xf0fffe })
+  const pupilMat  = new THREE.MeshBasicMaterial({ color: 0x050814 })
+  const highlightMat = new THREE.MeshBasicMaterial({ color: 0xffffff })
+  const wingMembMat  = M(0x134f40, { transparent: true, opacity: 0.62, side: THREE.DoubleSide })
+  const wingRibMat   = EM(0x44ff90, 0.45)
+  const hornMat      = M(0x082018)
+  const hornTipMat   = EM(0x88ff40, 0.9)
 
-  const headGroup = new THREE.Group(); headGroup.position.set(0, 1.05, 0.14); g.add(headGroup)
-  const hd = sh(new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 12), teal)); headGroup.add(hd)
-  const snout = new THREE.Mesh(new THREE.SphereGeometry(0.19, 10, 8), pale)
-  snout.scale.set(0.9, 0.6, 0.75); snout.position.set(0, -0.08, 0.38); headGroup.add(snout)
+  // ── Body ───────────────────────────────────────────────────────────────────
+  const body = sh(new THREE.Mesh(new THREE.SphereGeometry(0.68, 22, 16), bodyDeep))
+  body.scale.set(1, 0.86, 1.08); body.position.y = 0.78; g.add(body)
 
-  const mkEye = (xo: number): THREE.Mesh => {
-    const eg = new THREE.Group()
-    const w = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 10), eW)
-    const ir= new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 10), eB); ir.position.z = 0.05
-    const pu= new THREE.Mesh(new THREE.SphereGeometry(0.058, 8, 8), eP); pu.position.z = 0.085
-    eg.add(w, ir, pu); eg.position.set(xo, 0.08, 0.38); headGroup.add(eg); return w
-  }
-  const eyeL = mkEye(-0.17), eyeR = mkEye(0.17)
+  // Belly plate
+  const belly = new THREE.Mesh(new THREE.SphereGeometry(0.52, 16, 12), bellyPale)
+  belly.scale.set(0.8, 0.58, 0.42); belly.position.set(0, 0.72, 0.38); g.add(belly)
 
-  const earL = sh(new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.3, 5), dark))
-  earL.position.set(-0.22, 0.36, -0.06); earL.rotation.z = -0.35; headGroup.add(earL)
-  const earR = sh(new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.3, 5), dark))
-  earR.position.set( 0.22, 0.36, -0.06); earR.rotation.z =  0.35; headGroup.add(earR)
-
-  const tail = sh(new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.72, 8), teal))
-  tail.position.set(0, 0.4, -0.5); tail.rotation.x = -0.75; g.add(tail)
-
-  const mkWing = (xo: number, flip: boolean) => {
-    const geo = new THREE.BufferGeometry()
-    const v = flip
-      ? new Float32Array([0,0,0, -0.72,0.28,-0.05, -0.42,0.62,0.08])
-      : new Float32Array([0,0,0,  0.72,0.28,-0.05,  0.42,0.62,0.08])
-    geo.setAttribute('position', new THREE.BufferAttribute(v, 3)); geo.computeVertexNormals()
-    const w = new THREE.Mesh(geo, wMat); w.position.set(xo, 0.72, -0.1); g.add(w); return w
-  }
-  const wL = mkWing(-0.45, true), wR = mkWing(0.45, false)
-
-  const legM = M(0x0d6e5f)
-  ;[-0.22, 0.22].forEach(xo => {
-    const leg = sh(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.055, 0.32, 6), legM))
-    leg.position.set(xo, 0.14, 0.12); leg.rotation.z = xo > 0 ? 0.18 : -0.18; g.add(leg)
+  // Shoulder muscle humps
+  ;[[-0.42, 1.05, -0.15], [0.42, 1.05, -0.15]].forEach(([x, y, z]) => {
+    const hump = sh(new THREE.Mesh(new THREE.SphereGeometry(0.25, 10, 8), bodyMid))
+    hump.scale.set(0.9, 0.7, 0.8); hump.position.set(x, y, z); g.add(hump)
   })
 
-  return { group: g, body, head: headGroup, eyeL, eyeR, earL, earR, tail, wL, wR }
+  // Dorsal spine gems along the ridge
+  for (let i = 0; i < 6; i++) {
+    const t = i / 5
+    const spine = sh(new THREE.Mesh(new THREE.OctahedronGeometry(0.055 - t * 0.018, 0), i < 3 ? glowLime : glowSoft))
+    spine.position.set(0, 1.38 - t * 0.45, -0.15 - t * 0.18)
+    spine.rotation.x = 0.35 + t * 0.1
+    g.add(spine)
+  }
+
+  // ── Legs (4) ───────────────────────────────────────────────────────────────
+  const legPositions: [number, number, number, number][] = [
+    [-0.32, 0.45, 0.3, -0.2], [0.32, 0.45, 0.3, 0.2],
+    [-0.28, 0.45, -0.28, -0.15], [0.28, 0.45, -0.28, 0.15],
+  ]
+  legPositions.forEach(([x, y, z, rz]) => {
+    const upper = sh(new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.075, 0.38, 7), bodyDeep))
+    upper.position.set(x, y, z); upper.rotation.z = rz; g.add(upper)
+    const lower = sh(new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.045, 0.32, 6), bodyMid))
+    lower.position.set(x + rz * 0.1, y - 0.32, z); lower.rotation.z = rz * 0.4; g.add(lower)
+    // 3 tiny toes
+    ;[-0.06, 0, 0.06].forEach(toe => {
+      const t = new THREE.Mesh(new THREE.SphereGeometry(0.038, 6, 6), darkAccent)
+      t.position.set(x + rz * 0.12 + toe, y - 0.52, z + 0.1); g.add(t)
+    })
+  })
+
+  // ── Tail ───────────────────────────────────────────────────────────────────
+  const tailGroup = new THREE.Group(); g.add(tailGroup)
+  const tailBase = sh(new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.09, 0.58, 9), bodyDeep))
+  tailBase.position.set(0, 0.62, -0.72); tailBase.rotation.x = -0.82; tailGroup.add(tailBase)
+  const tailMid = sh(new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.06, 0.52, 8), bodyMid))
+  tailMid.position.set(0, 0.25, -1.18); tailMid.rotation.x = -0.52; tailGroup.add(tailMid)
+  // Side fins on tail
+  ;[-1, 1].forEach(s => {
+    const fin = sh(new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.28, 4), glowSoft))
+    fin.position.set(s * 0.14, 0.2, -1.12); fin.rotation.z = s * -0.55; fin.rotation.x = 0.3; tailGroup.add(fin)
+  })
+  // Glowing diamond tip
+  const tailTip = sh(new THREE.Mesh(new THREE.OctahedronGeometry(0.14, 0), glowLime))
+  tailTip.position.set(0, -0.05, -1.62); tailGroup.add(tailTip)
+
+  // ── Head ───────────────────────────────────────────────────────────────────
+  const headGroup = new THREE.Group(); headGroup.position.set(0, 1.52, 0.22); g.add(headGroup)
+  const skull = sh(new THREE.Mesh(new THREE.SphereGeometry(0.54, 20, 15), bodyDeep))
+  skull.scale.set(1.05, 0.97, 1.0); headGroup.add(skull)
+
+  // Brow ridges — give personality
+  ;[-0.22, 0.22].forEach((xo, i) => {
+    const brow = sh(new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.07, 0.16), bodyMid))
+    brow.position.set(xo, 0.22, 0.42); brow.rotation.z = i === 0 ? 0.28 : -0.28; headGroup.add(brow)
+  })
+
+  // Muzzle — wider, more defined
+  const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.26, 14, 10), bellyPale)
+  muzzle.scale.set(0.92, 0.62, 0.78); muzzle.position.set(0, -0.09, 0.5); headGroup.add(muzzle)
+  // Nostrils
+  ;[-0.09, 0.09].forEach(xo => {
+    const n = new THREE.Mesh(new THREE.SphereGeometry(0.038, 6, 6), darkAccent)
+    n.position.set(xo, -0.12, 0.67); headGroup.add(n)
+  })
+
+  // ── Eyes — the WOW moment ────────────────────────────────────────────────
+  const mkEye = (xo: number): THREE.Mesh => {
+    const eg = new THREE.Group()
+    // Large white sclera
+    const sclera = new THREE.Mesh(new THREE.SphereGeometry(0.205, 14, 14), scleraMat)
+    // Glowing cyan iris
+    const iris = new THREE.Mesh(new THREE.SphereGeometry(0.148, 14, 14), glowCyan)
+    iris.position.z = 0.072
+    // Pupil
+    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 10), pupilMat)
+    pupil.position.z = 0.115
+    // Catchlight sparkle
+    const spark = new THREE.Mesh(new THREE.SphereGeometry(0.032, 6, 6), highlightMat)
+    spark.position.set(0.06, 0.07, 0.185)
+    eg.add(sclera, iris, pupil, spark)
+    eg.position.set(xo, 0.1, 0.46)
+    headGroup.add(eg)
+    return sclera
+  }
+  const eyeL = mkEye(-0.2), eyeR = mkEye(0.2)
+
+  // ── Horns — swept back, glowing tips ────────────────────────────────────
+  const mkHorn = (xo: number): THREE.Object3D => {
+    const hg = new THREE.Group()
+    const shaft = sh(new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.06, 0.58, 7), hornMat))
+    shaft.position.set(0, 0.26, 0); shaft.rotation.z = xo > 0 ? -0.32 : 0.32; shaft.rotation.x = -0.18
+    const tip = sh(new THREE.Mesh(new THREE.SphereGeometry(0.048, 8, 8), hornTipMat))
+    tip.position.set(xo > 0 ? 0.2 : -0.2, 0.5, -0.1)
+    hg.add(shaft, tip); hg.position.set(xo, 0.28, -0.18); headGroup.add(hg)
+    return hg
+  }
+  const earL = mkHorn(-0.28), earR = mkHorn(0.28)
+
+  // ── Wings — multi-panel dragon wings ─────────────────────────────────────
+  const mkWing = (side: number): THREE.Object3D => {
+    const wg = new THREE.Group()
+
+    // Main membrane (4-triangle fan)
+    const memb = buildWingMembrane(side, wingMembMat)
+    wg.add(memb)
+
+    // Upper secondary membrane (smaller, above)
+    const upMat = M(0x1a6a52, { transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+    const upGeo = new THREE.BufferGeometry()
+    const s = side
+    const uv = new Float32Array([
+      0, 0, 0,
+      s*0.45, 0.82, -0.22,
+      s*1.0,  0.55, -0.08,
+      s*1.35, 0.12, 0.05,
+    ])
+    const ui = new Uint16Array([0,1,2, 0,2,3])
+    upGeo.setAttribute('position', new THREE.BufferAttribute(uv, 3))
+    upGeo.setIndex(new THREE.BufferAttribute(ui, 1))
+    upGeo.computeVertexNormals()
+    wg.add(new THREE.Mesh(upGeo, upMat))
+
+    // 4 wing ribs (glowing, create the "bone" look)
+    const ribEndPoints: [number, number, number][] = [
+      [s*0.5, 0.72, -0.18],
+      [s*1.3, 0.42, -0.05],
+      [s*1.65, 0.0, 0.12],
+      [s*1.35, -0.45, 0.22],
+    ]
+    ribEndPoints.forEach(([tx, ty, tz]) => {
+      const dir = new THREE.Vector3(tx, ty, tz)
+      const len = dir.length()
+      const mid = dir.clone().multiplyScalar(0.5)
+      const rib = sh(new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.016, len, 4), wingRibMat))
+      rib.position.copy(mid)
+      rib.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize())
+      wg.add(rib)
+    })
+
+    wg.position.set(side * 0.55, 1.08, -0.12)
+    g.add(wg)
+    return wg
+  }
+  const wL = mkWing(-1), wR = mkWing(1)
+
+  // ── Ambient glow lights (children of group — move with Kivo) ─────────────
+  const eyeGlowLight = new THREE.PointLight(0x00e5ff, 0.55, 2.8)
+  eyeGlowLight.position.set(0, 1.58, 0.55); g.add(eyeGlowLight)
+
+  const bodyGlowLight = new THREE.PointLight(0x44ff90, 0.3, 3.5)
+  bodyGlowLight.position.set(0, 1.1, 0); g.add(bodyGlowLight)
+
+  return { group: g, body, head: headGroup, eyeL, eyeR, earL, earR, tail: tailGroup, wL, wR }
 }
 
 // ─── Day/night palette ────────────────────────────────────────────────────────
@@ -795,10 +945,10 @@ export class BabylonVoxelEngine {
     this.kivo.group.position.set(this.kivoX, this.heightFn(this.kivoX, this.kivoZ), this.kivoZ)
     this.scene.add(this.kivo.group)
 
-    // Kivo aura glow sphere
+    // Kivo aura glow sphere — sized to encompass full creature
     const auraMat = new THREE.MeshBasicMaterial({ color: 0x88ffaa, transparent: true, opacity: 0.06, side: THREE.FrontSide })
-    this.kivoAura = new THREE.Mesh(new THREE.SphereGeometry(0.75, 10, 8), auraMat)
-    this.kivoAura.position.y = 0.65
+    this.kivoAura = new THREE.Mesh(new THREE.SphereGeometry(1.2, 12, 10), auraMat)
+    this.kivoAura.position.y = 1.05
     this.kivo.group.add(this.kivoAura)
 
     // Fireflies
@@ -945,8 +1095,8 @@ export class BabylonVoxelEngine {
     const isTraining = beh === 'train'
     const isSitting  = beh === 'sit' || beh === 'reflect'
 
-    // Base Y position — sleeping crouches down
-    const baseY  = isSleeping ? gy + 0.18 : gy + 0.55
+    // Base Y position — sleeping crouches down (new creature is larger)
+    const baseY  = isSleeping ? gy + 0.22 : gy + 0.62
     const bobAmp = isSleeping ? 0.02 : isTraining ? 0.08 : 0.12
     const bobSpd = isTraining ? 3.5 : isWalking ? 2.8 : 0.9
     group.position.set(this.kivoX, baseY + Math.sin(t * bobSpd) * bobAmp, this.kivoZ)
