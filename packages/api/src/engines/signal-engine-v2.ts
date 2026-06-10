@@ -119,6 +119,7 @@ const SIGNAL_SPECS: SignalSpec[] = [
       { re: /\b(running on empty|mentally exhausted|totally drained|done with (it|everything|this))\b/, tier: "strong" },
       { re: /\b(drained|no energy left|exhausted by (this|it|everything)|hitting a wall)\b/,           tier: "medium" },
       { re: /\b(worn out|feeling drained|low on energy)\b/,                                            tier: "weak"   },
+      { re: /\b(feel(ing)? exhausted|really tired|dead.?tired|wiped.?out|totally wiped|running low|mentally drained)\b/, tier: "weak" },
     ],
     stateDeltas: { stress: 18, burnoutRisk: 25, motivation: -10 },
     memoryWrite: {
@@ -191,6 +192,7 @@ const SIGNAL_SPECS: SignalSpec[] = [
       { re: /\b(doubt(ing)? myself|not sure i can|don.?t think i can|what if i fail)\b/,              tier: "medium" },
       { re: /\b(not sure i.?m (good enough|ready|capable)|questioning (myself|whether))\b/,          tier: "medium" },
       { re: /\b(maybe i.?m not|might not be able to|not confident (about|in))\b/,                    tier: "weak"   },
+      { re: /\b(?:want\s+to|thinking\s+(?:of|about)|might\s+(?:just\s+)?|considering\s+|don.?t\s+think\s+i\s+can\s+do\s+this)\s*(?:quit(?:ting)?|giv(?:e|ing)\s+up|stop(?:ping)?|walk(?:ing)?\s+away)|i\s+(?:want|wanna)\s+to\s+quit\b/, tier: "weak" },
     ],
     stateDeltas: { confidence: -14, motivation: -7 },
   },
@@ -262,6 +264,7 @@ const SIGNAL_SPECS: SignalSpec[] = [
     patterns: [
       { re: /\b(new (pr|pb|personal (record|best))|broke (my|a|the) (pr|pb|record|limit))\b/,    tier: "strong" },
       { re: /\b(finally (did it|made it|got (there|it)|finished)|crushed (it|my (goal|workout)))\b/, tier: "strong" },
+      { re: /\b(hit\s+(?:a\s+)?(?:new\s+)?(?:pr|pb|personal\s+(?:record|best))|(?:bench|squat|deadlift)\s+(?:pr|pb))\b/, tier: "medium" },
       { re: /\b(hit (\d+[\s.]?kg|a (new|my)|my (target|goal))|completed (the|my|a))\b/,          tier: "medium" },
       { re: /\b(i (did|finished|accomplished|achieved|nailed|aced) (it|the|my|this))\b/,          tier: "medium" },
       { re: /\b(managed to (do|finish|complete|hit)|got (it done|through|there))\b/,             tier: "weak"   },

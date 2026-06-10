@@ -148,7 +148,7 @@ const TRAVEL_RE = /\b(?:travel(?:l?ing|l?ed)?|going\s+(?:away|out\s+of\s+town)|o
 const BUSY_RE   = /\b(?:busy|no\s+time|too\s+much\s+(?:on|going\s+on)|schedule\s+(?:is\s+)?(?:packed|full|crazy)|work(?:ing)?\s+(?:a\s+lot|overtime|long\s+hours)|no\s+free\s+time)\b/i
 
 // ─── Short reply classification ───────────────────────────────────────────────
-const AFFIRM_RE = /^(?:yeah|yes|yep|yup|ya|sure|okay|ok|fine|alright|absolutely|definitely|of\s+course|correct|right|exactly|confirmed?|done|for\s+sure|totally|yep\s+done|did\s+it|yess+|perfect|great|awesome|nice|love\s+it|all\s+good|good(?:\s+(?:with\s+(?:this|that|it)|to\s+go|enough))?|looks?\s+good(?:\s+to\s+me)?|works?(?:\s+for\s+me)?|sounds?\s+good(?:\s+to\s+me)?|let'?s\s+(?:do\s+it|go)|i'?m\s+good|im\s+good)\.?!?$/i
+const AFFIRM_RE = /^(?:yeah|yes|yep|yup|ya|sure|okay|ok|fine|alright|absolutely|definitely|of\s+course|correct|right|exactly|confirmed?|done|for\s+sure|totally|yep\s+done|did\s+it|yess+|perfect|great|awesome|nice|love\s+it|all\s+good|aight|ight|aiight|good(?:\s+(?:with\s+(?:this|that|it)|to\s+go|enough))?|looks?\s+good(?:\s+to\s+me)?|works?(?:\s+for\s+me)?|sounds?\s+good(?:\s+to\s+me)?|let'?s\s+(?:do\s+it|go)|i'?m\s+good|im\s+good)\.?!?$/i
 const DENY_RE   = /^(?:no|nope|nah|na|not\s+really|not\s+yet|not\s+today|haven'?t|didn'?t|nahh|incorrect|wrong|negative|not\s+(?:good|right|correct)|that'?s\s+(?:not\s+right|wrong)|thats\s+(?:not\s+right|wrong)|change\s+it|don'?t\s+like\s+it|dont\s+like\s+it)\.?!?$/i
 const ACK_RE    = /^(?:k|kay|kk|ok|okay|thanks?|cool|got\s+it|noted|understood|roger|makes?\s+sense)\.?!?$/i
 
@@ -395,6 +395,11 @@ function detectReminderDelete(text: string): IntentResult | null {
 }
 
 function detectLogSkip(text: string): IntentResult | null {
+  // Natural-language skip: "can't train today", "won't make it", "not going today", etc.
+  const hasNaturalSkip = /\b(?:can.?t|cannot|won.?t|will\s+not)\s+(?:train(?:ing)?|make\s+it|get\s+to\s+(?:the\s+)?gym|go(?:\s+to\s+(?:the\s+)?gym)?)|not\s+(?:going\s+(?:today|to\s+(?:the\s+)?gym)?|making\s+it\s+today|able\s+to\s+(?:train|workout|go)|training\s+today)|missing\s+today.?s\s+(?:workout|session|gym)\b/i.test(text)
+  if (hasNaturalSkip) {
+    return makeIntent(IntentType.LOG_SKIP, 0.88, [text.slice(0, 60)], true, { action: "log_skip" })
+  }
   if (!FAILURE_RE.test(text)) return null
   const isExplicitLog  = /\b(?:log|record|mark|note|save)\b/i.test(text)
   // "Skipped push today", "missed chest day" — gym-context skips are inherently log requests

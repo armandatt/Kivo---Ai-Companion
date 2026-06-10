@@ -229,6 +229,20 @@ export async function POST(req: Request) {
       const v2ParseCtx = await buildParseContext(chatId.toString());
       const v2Parse    = parseMessage(text, v2ParseCtx);
 
+      // ── Structured production log (observability) ─────────────────────────
+      // One line per user message. Used for debugging intent classification,
+      // routing decisions, and signal coverage in production.
+      console.log(JSON.stringify({
+        ts:         new Date().toISOString(),
+        chatId:     String(chatId),
+        message:    text.slice(0, 120),
+        intent:     v2Parse.actionableIntent?.type ?? "none",
+        confidence: v2Parse.confidence,
+        signals:    v2Parse.signals,
+        intents:    v2Parse.intents.map((i: any) => `${i.type}(${i.confidence.toFixed(2)})`),
+        reasoning:  v2Parse.reasoning,
+      }));
+
       // ── Natural-language reminder creation (V2-controlled routing) ────────
       // Replaces the legacy /\b(remind|..)\b/ regex. Uses Parsing Engine V2
       // actionableIntent so multi-intent messages (reminder + pain context,
@@ -238,6 +252,18 @@ export async function POST(req: Request) {
         if (result) {
           await addToShortTerm(chatId.toString(), text, { role: "user", intent: "reminder_create", emotion: "neutral" });
           await sendAndRemember(chatId, result.reply, "reminder_create", "neutral");
+          // Multi-intent: check for a secondary gym-relevant intent in the same message
+          // (e.g. "remind me every hour and chest is sore" — soreness must also be logged)
+          const GYM_SECONDARY_TYPES = new Set(["log_soreness", "log_pain", "log_skip", "log_weight", "log_workout"]);
+          const secondary = v2Parse.intents.find(
+            (i: any) => i.type !== "reminder_create" && GYM_SECONDARY_TYPES.has(i.type)
+          );
+          if (secondary && body.userId) {
+            const secIntent = mapV2ToGymIntent(secondary.type, text);
+            if (secIntent) {
+              await handleGymMessage({ userId: body.userId, text, intent: secIntent }).catch(() => {});
+            }
+          }
           return Response.json({ ok: true });
         }
         // parseAndCreateReminder returned null — fall through to orchestrator
@@ -448,6 +474,24 @@ export async function POST(req: Request) {
         parseAndSaveNutrition(chatId.toString(), text).catch(() => {});
       }
 
+      // ── Safety gate: low-confidence recommendation block (Part 5) ──────────
+      // When the parser isn't sure what the user wants, asking beats guessing.
+      // Prevents hallucinated exercise plans, nutrition changes, or schedule
+      // rewrites being sent when the intent is ambiguous.
+      const RECOMMENDATION_INTENT_TYPES = new Set([
+        "recommendation_request", "advice_request", "nutrition_query",
+        "plan_request", "goal_set", "schedule_update",
+      ]);
+      if (
+        RECOMMENDATION_INTENT_TYPES.has(v2Parse.actionableIntent?.type ?? "") &&
+        v2Parse.confidence < 0.55
+      ) {
+        const clarifyReply = "Before I give you anything specific — what are you trying to do? Looking for a training adjustment, a nutrition tweak, or something else?";
+        await addToShortTerm(chatId.toString(), text, { role: "user", intent: v2Parse.actionableIntent?.type ?? "general", emotion: "neutral" });
+        await sendAndRemember(chatId, clarifyReply, "clarification_request", "neutral");
+        return Response.json({ ok: true });
+      }
+
       // ══════════════════════════════════════════════════════════════════════
       // DEFAULT PATH — full mentor engine pipeline
       //
@@ -466,6 +510,17 @@ export async function POST(req: Request) {
         persistMode: "full",
         parseResult: v2Parse,
       });
+
+      // ── Post-pipeline log: full trace including decision and route ─────────
+      console.log(JSON.stringify({
+        ts:       new Date().toISOString(),
+        chatId:   String(chatId),
+        message:  text.slice(0, 120),
+        intent:   v2Parse.actionableIntent?.type ?? "none",
+        decision: `${result.decision.action}/${result.decision.subAction ?? ""}`,
+        rule:     result.decision.ruleId,
+        route:    v2Parse.actionableIntent?.type ? mapV2ToGymIntent(v2Parse.actionableIntent.type, text) ?? "orchestrator" : "orchestrator",
+      }));
 
       // Write moment memories (fire-and-forget — never blocks the reply)
       if (result.analysis.hasCommitment || result.analysis.intent === "commitment_made") {
