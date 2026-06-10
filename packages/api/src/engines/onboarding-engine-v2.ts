@@ -831,7 +831,7 @@ async function saveState(userId: string, state: OnboardingState): Promise<void> 
   state.lastActivityAt = Date.now();
   const serialized = JSON.stringify(state);
   await prisma.memoryFact.upsert({
-    where: { userId_type_key: { userId, type: FACT_TYPE, key: FACT_KEY } } as any,
+    where: { userId_type_key: { userId, type: FACT_TYPE, key: FACT_KEY } },
     update: { value: serialized, archivedAt: null },
     create: { userId, type: FACT_TYPE, key: FACT_KEY, value: serialized, confidence: 1.0 },
   });
