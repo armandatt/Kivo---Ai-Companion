@@ -1,6 +1,6 @@
 import { prisma } from "@repo/db/client";
 import { processMessage } from "../processor/messageProcessor";
-import { addToShortTerm } from "../services/memory.service";
+import { addToShortTerm, addToLongTerm } from "../services/memory.service";
 import { savePlan } from "../services/planner.service";
 import { generateEngineResponse } from "../services/llm";
 import type { EngineContext } from "../services/llm";
@@ -18,12 +18,13 @@ import {
 import type { MentorState } from "./user-state-engine";
 import { detectPatterns } from "./pattern-detector";
 import {
-  makeMentorDecision,
   MentorAction,
   DecisionUrgency,
   DecisionTone,
 } from "./mentor-decision-engine";
-import type { DecisionInput, MentorDecision } from "./mentor-decision-engine";
+import type { MentorDecision } from "./mentor-decision-engine";
+import { runDecisionV2, decisionV2ToMentorDecision } from "./decision-engine-v2";
+import type { DecisionV2Input } from "./decision-engine-v2";
 import { evaluateFeasibility } from "./feasibility-engine";
 import type { FeasibilityResult } from "./feasibility-engine";
 import { generatePlan, summarizePlan } from "./planner-engine";
@@ -49,6 +50,11 @@ import type {
   MemoryFact,
 } from "../types/memory.types";
 import type { PatternAnalysis } from "../types/pattern.types";
+import { scoreAndRankFacts } from "./memory-retrieval-v2";
+import { extractSignals as extractSignalsV2 } from "./signal-engine-v2";
+import { buildSchedulerContextV2, TrainingState } from "./scheduler-intelligence-v2";
+import type { SchedulerContextV2 } from "./scheduler-intelligence-v2";
+import type { ParseResult as V2ParseResult } from "./parsing-engine-v2";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -74,6 +80,9 @@ export interface OrchestratorInput {
   /** "full" saves both user + assistant (standalone use).
    *  "reply_only" skips user message save — use when the caller already saved it. */
   persistMode?: "full" | "reply_only";
+  /** Output of Parsing Engine V2 — injected by the webhook when available.
+   *  Provides multi-intent detection, pain signals, and RECOMMENDATION_BLOCKED. */
+  parseResult?: V2ParseResult;
 }
 
 export interface ScheduledAction {
@@ -333,9 +342,16 @@ interface UserContext {
   engagementContext:   EngagementContext | null;
   rexSessionContext:   string | null;
   rexExperienceLevel:  string | null;
+  schedulerContextV2:  SchedulerContextV2 | null;
 }
 
-async function loadUserContext(platformChatId: string, now: Date): Promise<UserContext> {
+async function loadUserContext(
+  platformChatId: string,
+  now:            Date,
+  message:        string,
+  intent:         string,
+  emotion:        string,
+): Promise<UserContext> {
   const [state, userRow] = await Promise.all([
     getMentorState(platformChatId),
     prisma.messengerUser.findUnique({
@@ -408,20 +424,37 @@ async function loadUserContext(platformChatId: string, now: Date): Promise<UserC
     accountabilityStyle: accountStyleFact?.value ?? null,
   };
 
-  const relevantFacts: MemoryFact[] = memories
-    .filter(m => !["goal", "detected_pattern"].includes(m.type))
-    .slice(0, 10)
-    .map(m => ({
-      id:              m.id,
-      type:            m.type,
-      key:             m.key,
-      value:           m.value,
-      confidence:      m.confidence,
-      ageHours:        Math.floor((now.getTime() - new Date(m.createdAt).getTime()) / 3_600_000),
-      sourceMessageId: null,
-      createdAt:       new Date(m.createdAt),
-      updatedAt:       new Date(m.updatedAt),
-    }));
+  // V2: score every loaded fact by semantic relevance (intent + emotion + message
+  // overlap + goal relevance) rather than taking the 10 most-recently-updated.
+  const relevantFacts: MemoryFact[] = scoreAndRankFacts(
+    memories.map(m => ({
+      id:         m.id,
+      type:       m.type,
+      key:        m.key,
+      value:      m.value,
+      confidence: m.confidence,
+      createdAt:  new Date(m.createdAt),
+      updatedAt:  new Date(m.updatedAt),
+    })),
+    {
+      message,
+      intent,
+      emotion,
+      activeGoals: longTerm.goals,
+      topK:        10,
+    },
+    now,
+  ).map(m => ({
+    id:              m.id,
+    type:            m.type,
+    key:             m.key,
+    value:           m.value,
+    confidence:      m.confidence,
+    ageHours:        m.ageHours,
+    sourceMessageId: null,
+    createdAt:       m.createdAt,
+    updatedAt:       m.updatedAt,
+  }));
 
   const lastUserMsg      = shortTerm.filter(m => m.role === "user").at(-1)?.text ?? null;
   const lastAssistantMsg = shortTerm.filter(m => m.role === "assistant").at(-1)?.text ?? null;
@@ -442,7 +475,8 @@ async function loadUserContext(platformChatId: string, now: Date): Promise<UserC
     longTerm.preferences.includes("soft_tone") ? "soft" :
     DEFAULT_TONE;
 
-  const gymContext = computeGymTimeContextFromData(
+  // V2: use let so we can enrich it with cycle-accurate Scheduler V2 data below
+  let gymContext = computeGymTimeContextFromData(
     {
       persona:              userRow.persona,
       timezone:             userRow.timezone,
@@ -458,19 +492,37 @@ async function loadUserContext(platformChatId: string, now: Date): Promise<UserC
   let engagementContext: EngagementContext | null = null;
   let rexSessionContext: string | null = null;
   let rexExperienceLevel: string | null = null;
+  let schedulerCtxV2: SchedulerContextV2 | null = null;
 
   if (persona === "rex") {
-    [gymPatternReport, engagementContext, rexSessionContext] = await Promise.all([
+    [gymPatternReport, engagementContext, rexSessionContext, schedulerCtxV2] = await Promise.all([
       userRow.intakeAnswers
         ? computePatternReport(userRow.id, now).catch((err) => { console.error("[ORCHESTRATOR] gymPatternReport:", err); return null; })
         : Promise.resolve(null),
       buildEngagementContext(userRow.id, now).catch((err) => { console.error("[ORCHESTRATOR] engagementContext:", err); return null; }),
       buildRexSessionContextBlock(platformChatId, now).catch((err) => { console.error("[ORCHESTRATOR] rexSessionContext:", err); return null; }),
+      buildSchedulerContextV2(platformChatId, now).catch((err) => { console.error("[ORCHESTRATOR] schedulerCtxV2:", err); return null; }),
     ]);
     rexExperienceLevel = buildExperienceLevelBlock(userRow.intakeAnswers);
+
+    // V2: Override calendar-based gymContext fields with cycle-accurate data.
+    // pendingMuscles = next session in split cycle (never weekday-derived).
+    // isTrainingDay  = DUE (user is in their window) or PENDING_CONFIRMATION
+    //                  (window passed, no session logged yet).
+    if (schedulerCtxV2 && gymContext) {
+      gymContext = {
+        ...gymContext,
+        todayMuscles:      schedulerCtxV2.pendingMuscles ?? gymContext.todayMuscles,
+        isTrainingDay:     schedulerCtxV2.trainingState === TrainingState.DUE
+                        || schedulerCtxV2.trainingState === TrainingState.PENDING_CONFIRMATION,
+        lastSessionDaysAgo: schedulerCtxV2.daysSinceLastSession < 999
+          ? schedulerCtxV2.daysSinceLastSession
+          : gymContext.lastSessionDaysAgo,
+      };
+    }
   }
 
-  return { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel };
+  return { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel, schedulerContextV2: schedulerCtxV2 };
 }
 
 function buildMinimalContext(state: MentorState): UserContext {
@@ -484,7 +536,7 @@ function buildMinimalContext(state: MentorState): UserContext {
     sessionCount: 0, daysSinceFirstMessage: 0,
     lastUserMessage: null, lastTopicDiscussed: null, lastAssistantMessage: null,
   };
-  return { memory, state, persona: FALLBACK_PERSONA, isFirstSession: true, messageCountToday: 0, tonePreference: DEFAULT_TONE, gymContext: null, gymPatternReport: null, engagementContext: null, rexSessionContext: null, rexExperienceLevel: null };
+  return { memory, state, persona: FALLBACK_PERSONA, isFirstSession: true, messageCountToday: 0, tonePreference: DEFAULT_TONE, gymContext: null, gymPatternReport: null, engagementContext: null, rexSessionContext: null, rexExperienceLevel: null, schedulerContextV2: null };
 }
 
 // buildSystemPrompt removed — llm.ts generateEngineResponse builds the prompt
@@ -658,17 +710,61 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   }
 
   // ── Stage 1: Conversation analysis ──────────────────────────────────────────
-  const legacy   = await processMessage(input.text);
-  const analysis = buildConversationAnalysis(input.text, legacy);
+  const legacy = await processMessage(input.text);
+  let analysis = buildConversationAnalysis(input.text, legacy);
   diag.stagesRun.push("analyze");
+
+  // V2: Enrich analysis with Parsing Engine V2 signals (injected from route.ts).
+  // Pain context → add injury constraint so Decision Engine scores burnout/empathy correctly.
+  // Failure signal → ensure hasFailureReport even when legacy intent map misses it.
+  if (input.parseResult) {
+    const pr = input.parseResult;
+    const hasPain = pr.signals.includes("PAIN_MENTIONED");
+    const hasFailV2 = pr.intents.some((i: any) => i.type === "failure_signal" || i.type === "pain_context" || i.type === "injury_context");
+    const extraConstraints: typeof analysis.constraints = hasPain &&
+      !analysis.constraints.some(c => c.type === "injury")
+      ? [{ type: "injury" as any, raw: input.text, severity: "moderate" as any, isTemporary: true }]
+      : [];
+    if (extraConstraints.length > 0 || (hasFailV2 && !analysis.hasFailureReport)) {
+      analysis = {
+        ...analysis,
+        constraints:     [...analysis.constraints, ...extraConstraints],
+        hasFailureReport: analysis.hasFailureReport || hasFailV2,
+      };
+    }
+  }
 
   // ── Stage 2: Load context (memory + state in parallel) ──────────────────────
   const userCtx = await run(
     "load_context",
-    () => loadUserContext(input.platformChatId, timestamp),
+    () => loadUserContext(
+      input.platformChatId,
+      timestamp,
+      input.text,
+      analysis.intent,
+      analysis.emotion.primary,
+    ),
     await getMentorState(input.platformChatId).then(state => buildMinimalContext(state)),
   );
-  const { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel } = userCtx;
+  const { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel, schedulerContextV2 } = userCtx;
+
+  // ── Stage 2.5: Signal Engine V2 ─────────────────────────────────────────────
+  // Detect emotional / behavioral signals from raw text, apply state deltas
+  // (motivation, consistency, burnoutRisk, etc.) to the in-memory MentorState,
+  // and queue memory writes for high-confidence signals (achievements, burnout,
+  // commitments, identity shifts).  All writes are fire-and-forget so they never
+  // block the reply path.
+  const sigV2 = extractSignalsV2({ text: input.text, now: timestamp });
+  for (const upd of sigV2.stateUpdates) {
+    const stateMap = state as unknown as Record<string, number>;
+    const cur = stateMap[upd.field];
+    if (typeof cur === "number") {
+      stateMap[upd.field] = Math.max(0, Math.min(100, cur + upd.delta));
+    }
+  }
+  for (const mw of sigV2.memoryWrites) {
+    addToLongTerm(input.platformChatId, mw.type, mw.value).catch(() => {});
+  }
 
   // ── Stage 3: Pattern detection (skip for brand-new users) ──────────────────
   const runPatterns =
@@ -685,19 +781,25 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     patterns = emptyPatterns();
   }
 
-  // ── Stage 4: Mentor decision ─────────────────────────────────────────────────
-  const decisionInput: DecisionInput = {
+  // ── Stage 4: Decision Engine V2 ─────────────────────────────────────────────
+  const decisionV2Input: DecisionV2Input = {
+    message:          input.text,
     analysis,
     state,
-    patterns,
-    memory,
-    persona,
-    tonePreference,
+    relevantMemories: memory.relevantFacts,
+    goals:            memory.longTerm.goals,
+    gymContext:       gymContext ?? null,
+    patternReport:    gymPatternReport ?? null,
+    behaviorPatterns: patterns,
     isFirstSession,
-    messageCountToday,
+    personaType:      persona,
   };
 
-  const decision = await run("decision", async () => makeMentorDecision(decisionInput), fallbackDecision());
+  const decision = await run(
+    "decision",
+    async () => decisionV2ToMentorDecision(runDecisionV2(decisionV2Input, tonePreference)),
+    fallbackDecision(),
+  );
   diag.decisionPath = decision.decisionPath;
 
   // ── Stage 5: Feasibility (only for PLAN action) ──────────────────────────────
@@ -765,6 +867,9 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
       engagementContext:   engagementContext   ?? null,
       rexSessionContext:   rexSessionContext   ?? null,
       rexExperienceLevel:  rexExperienceLevel  ?? null,
+      signalEngineV2:     sigV2.detectedSignals,
+      schedulerContextV2: schedulerContextV2 ?? null,
+      parseSignals:       input.parseResult?.signals ?? [],
     };
 
     diag.llmTokensRequested = Math.max(decision.tokenBudget, 80);

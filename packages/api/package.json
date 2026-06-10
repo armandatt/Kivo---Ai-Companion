@@ -3,11 +3,19 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "jest --config jest.config.ts"
+  },
   "exports": {
     "./processor/*": "./src/processor/*",
     "./context/*": "./src/context/*",
     "./services/*": "./src/services/*",
     "./engines/*": "./src/engines/*",
     "./types/*": "./src/types/*"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.11"
   }
 }

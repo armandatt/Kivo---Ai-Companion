@@ -5,8 +5,20 @@ import {
 } from "./gymDetections.service";
 import { generateWeeklyReview } from "./review.service";
 import { buildGymTimeContext } from "./gymTimeContext.service";
-import { getSplitDayInfo } from "./gymTimeContext.service";
 import { setPendingLog, getNextSplitDayInfo, incrementReactivationCount } from "./workoutTracking.service";
+import {
+  resolveNextCycleDay,
+  deriveTrainingWindow,
+  deriveVirtualGymTime,
+  isTrainingDayByFrequency,
+  computeConsecutiveMissesV2,
+  getEffectiveChaseTime,
+  parseSplitStateMinimal,
+  getLocalDateISO,
+  daysBetween,
+  TrainingWindow,
+  type SchedulerContextV2,
+} from "../engines/scheduler-intelligence-v2";
 import {
   checkGlobalFireRules,
   mergeSchedulerMessages,
@@ -119,6 +131,12 @@ async function runRexDailyCheckInCron(now: Date): Promise<GymCronMessage[]> {
     const ctx = await buildGymTimeContext(user.platformChatId, now);
     if (!ctx) continue;
 
+    // V2: patch ctx with cycle-based muscles and correct training-day flag
+    const checkIn        = resolveTrainingObligationToday(user, now);
+    const patchedCheckInCtx = checkIn.nextDay
+      ? { ...ctx, todayMuscles: checkIn.nextDay.muscles, isTrainingDay: checkIn.isTrainingDay }
+      : ctx;
+
     // Pattern report — don't let a failure block the check-in
     const patternReport = await computePatternReport(user.id, now).catch(() => null);
 
@@ -138,7 +156,7 @@ async function runRexDailyCheckInCron(now: Date): Promise<GymCronMessage[]> {
       })),
     };
 
-    const jCtx = buildJobContext(user, ctx, { dailyCheckInExtras });
+    const jCtx = buildJobContext(user, patchedCheckInCtx, { dailyCheckInExtras });
     const text  = await rexMessageProvider.dailyCheckIn(jCtx, now);
     messages.push(msg(user, text, "rex_daily_checkin"));
   }
@@ -148,20 +166,25 @@ async function runRexDailyCheckInCron(now: Date): Promise<GymCronMessage[]> {
 
 // 1.1 — Pre-Session Fire-Up: inject feel rating + sessions-at-weight
 async function runRexPreSessionCron(now: Date): Promise<GymCronMessage[]> {
-  const users    = await getRexUsersDueAtLocalTime(now, -30);
+  const fixedUsers = await getRexUsersDueAtLocalTime(now, -30);
+  const flexUsers  = await getRexFlexibleUsersDueWithOffset(now, -30);
   const messages: GymCronMessage[] = [];
 
-  for (const user of users) {
+  for (const user of mergeUserLists(fixedUsers, flexUsers)) {
     if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
-    const ctx = await buildGymTimeContext(user.platformChatId, now);
-    if (!ctx?.isTrainingDay) continue;
+
+    // V2: cycle-based training day check — never uses weekday
+    const trainingCheck = resolveTrainingObligationToday(user, now);
+    if (!trainingCheck.isTrainingDay || !trainingCheck.nextDay) continue;
+
     if (await wasRexCronSentToday(user.platformChatId, "rex_pre_session", now)) continue;
     if (await hadRexCompletedSessionToday(user.platformChatId, now)) continue;
 
-    const stallInfo    = await detectRexStalledLift(user.id, ctx.todayMuscles);
-    const isDeloadWeek = isDeloadCycle(user.splitState);
-    const lastFeelRating = getFeelRatingFromState(user.splitState);
-    const sessionsAtWeight = await getSessionsAtCurrentWeight(user.id, ctx.todayMuscles);
+    const { nextDay } = trainingCheck;
+    const stallInfo        = await detectRexStalledLift(user.id, nextDay.muscles);
+    const isDeloadWeek     = isDeloadCycle(user.splitState);
+    const lastFeelRating   = getFeelRatingFromState(user.splitState);
+    const sessionsAtWeight = await getSessionsAtCurrentWeight(user.id, nextDay.muscles);
 
     const preSessionExtras: PreSessionExtras = {
       stallInfo,
@@ -170,7 +193,13 @@ async function runRexPreSessionCron(now: Date): Promise<GymCronMessage[]> {
       sessionsAtWeight,
     };
 
-    const jCtx = buildJobContext(user, ctx, { preSessionExtras });
+    // Patch gymCtx: override calendar muscles with cycle muscles for message generator
+    const ctx        = await buildGymTimeContext(user.platformChatId, now);
+    const patchedCtx = ctx
+      ? { ...ctx, todayMuscles: nextDay.muscles, isTrainingDay: true }
+      : null;
+
+    const jCtx = buildJobContext(user, patchedCtx, { preSessionExtras });
     const text  = await rexMessageProvider.preSessionFireUp(jCtx);
     messages.push(msg(user, text, "rex_pre_session"));
   }
@@ -180,22 +209,28 @@ async function runRexPreSessionCron(now: Date): Promise<GymCronMessage[]> {
 
 // 1.2 — Post Session Log Prompt (gym_time + avg session duration)
 async function runRexAutoPromptCron(now: Date): Promise<GymCronMessage[]> {
-  const users = await prisma.messengerUser.findMany({
+  const fixedUsers = await prisma.messengerUser.findMany({
     where:  { persona: "rex", intakeComplete: true, preferredCheckInTime: { not: null }, timezone: { not: null } },
     select: REX_SELECT,
   });
+  const flexUsers  = await getRexFlexibleUsersDueWithOffset(now, 60);
   const messages: GymCronMessage[] = [];
 
-  for (const user of users) {
+  for (const user of mergeUserLists(fixedUsers, flexUsers)) {
     if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
 
-    const avgMin = getAvgDurationFromState(user.splitState) ?? 60;
-    const local  = getLocalTime(now, user.timezone!);
-    const target = addMinutes(user.preferredCheckInTime!, avgMin);
-    if (!withinTolerance(local, target)) continue;
+    // Timing check: fixed users use preferredCheckInTime; flexible use virtual gym time
+    if (user.preferredCheckInTime) {
+      const avgMin = getAvgDurationFromState(user.splitState) ?? 60;
+      const local  = getLocalTime(now, user.timezone!);
+      const target = addMinutes(user.preferredCheckInTime, avgMin);
+      if (!withinTolerance(local, target)) continue;
+    }
 
-    const ctx = await buildGymTimeContext(user.platformChatId, now);
-    if (!ctx?.isTrainingDay) continue;
+    // V2: cycle-based training day check
+    const trainingCheck = resolveTrainingObligationToday(user, now);
+    if (!trainingCheck.isTrainingDay) continue;
+
     if (await wasRexCronSentToday(user.platformChatId, "rex_auto_prompt", now)) continue;
     if (await hadRexCompletedSessionToday(user.platformChatId, now)) continue;
 
@@ -217,22 +252,26 @@ async function runRexAutoPromptCron(now: Date): Promise<GymCronMessage[]> {
 
 // 1.2b — Log Prompt Chase (gym_time + avgDuration + 90 min, if original prompt was sent but no log)
 async function runRexAutoPromptChase1Cron(now: Date): Promise<GymCronMessage[]> {
-  const users = await prisma.messengerUser.findMany({
+  const fixedUsers = await prisma.messengerUser.findMany({
     where:  { persona: "rex", intakeComplete: true, preferredCheckInTime: { not: null }, timezone: { not: null } },
     select: REX_SELECT,
   });
+  const flexUsers  = await getRexFlexibleUsersDueWithOffset(now, 150);
   const messages: GymCronMessage[] = [];
 
-  for (const user of users) {
+  for (const user of mergeUserLists(fixedUsers, flexUsers)) {
     if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
 
-    const avgMin = getAvgDurationFromState(user.splitState) ?? 60;
-    const local  = getLocalTime(now, user.timezone!);
-    const target = addMinutes(user.preferredCheckInTime!, avgMin + 90);
-    if (!withinTolerance(local, target)) continue;
+    if (user.preferredCheckInTime) {
+      const avgMin = getAvgDurationFromState(user.splitState) ?? 60;
+      const local  = getLocalTime(now, user.timezone!);
+      const target = addMinutes(user.preferredCheckInTime, avgMin + 90);
+      if (!withinTolerance(local, target)) continue;
+    }
 
-    const ctx = await buildGymTimeContext(user.platformChatId, now);
-    if (!ctx?.isTrainingDay) continue;
+    // V2: cycle-based training day check
+    const trainingCheck = resolveTrainingObligationToday(user, now);
+    if (!trainingCheck.isTrainingDay) continue;
 
     // Only chase if original prompt was already sent today
     if (!(await wasRexCronSentToday(user.platformChatId, "rex_auto_prompt", now))) continue;
@@ -240,7 +279,8 @@ async function runRexAutoPromptChase1Cron(now: Date): Promise<GymCronMessage[]> 
     if (await hadRexCompletedSessionToday(user.platformChatId, now)) continue;
 
     const dayInfo = await getNextSplitDayInfo(user.platformChatId);
-    const muscles = dayInfo?.muscles ?? ctx.todayMuscles ?? "today's session";
+    // V2: muscles from cycle next day, not calendar
+    const muscles = dayInfo?.muscles ?? trainingCheck.nextDay?.muscles ?? "today's session";
     const text    = `${muscles} was scheduled.\n\nDid today's session happen?`;
     messages.push(msg(user, text, "rex_auto_prompt_chase"));
   }
@@ -250,18 +290,27 @@ async function runRexAutoPromptChase1Cron(now: Date): Promise<GymCronMessage[]> 
 
 // 1.3 — Missed Session Chase 1 (gym_time + 3 hrs)
 async function runRexMissedSessionChase1Cron(now: Date): Promise<GymCronMessage[]> {
-  const users    = await getRexUsersDueAtLocalTime(now, 180);
+  const fixedUsers = await getRexUsersDueAtLocalTime(now, 180);
+  const flexUsers  = await getRexFlexibleUsersDueWithOffset(now, 180);
   const messages: GymCronMessage[] = [];
 
-  for (const user of users) {
+  for (const user of mergeUserLists(fixedUsers, flexUsers)) {
     if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
-    const ctx = await buildGymTimeContext(user.platformChatId, now);
-    if (!ctx?.isTrainingDay) continue;
+
+    // V2: cycle-based training day check
+    const trainingCheck = resolveTrainingObligationToday(user, now);
+    if (!trainingCheck.isTrainingDay) continue;
+
     if (await wasRexCronSentToday(user.platformChatId, "rex_chase_1", now)) continue;
     if (await hadRexCompletedSessionToday(user.platformChatId, now)) continue;
 
     const chaseExtras = await buildChaseExtras(user, now);
-    const jCtx = buildJobContext(user, ctx, { chaseExtras });
+    // Patch gymCtx with cycle muscles
+    const ctx        = await buildGymTimeContext(user.platformChatId, now);
+    const patchedCtx = ctx && trainingCheck.nextDay
+      ? { ...ctx, todayMuscles: trainingCheck.nextDay.muscles, isTrainingDay: true }
+      : ctx;
+    const jCtx = buildJobContext(user, patchedCtx ?? null, { chaseExtras });
     const text = await rexMessageProvider.missedSessionChase(1, jCtx);
     messages.push(msg(user, text, "rex_chase_1"));
   }
@@ -270,14 +319,24 @@ async function runRexMissedSessionChase1Cron(now: Date): Promise<GymCronMessage[
 }
 
 // 1.3 — Missed Session Chase 2 (gym_time + 5 hrs)
+// V2 fix: evening users whose chase fires in quiet hours are served at their wake time instead
+// of being silently dropped.
 async function runRexMissedSessionChase2Cron(now: Date): Promise<GymCronMessage[]> {
-  const users    = await getRexUsersDueAtLocalTime(now, 300);
+  // Standard users: gym_time + 5h
+  const standardUsers  = await getRexUsersDueAtLocalTime(now, 300);
+  // Quiet-hour-adjusted: users whose gym_time + 5h fell in quiet hours → deliver at wake time
+  const adjustedUsers  = await getRexUsersAtAdjustedChaseTime(now, 300);
+  // Flexible users: virtual gym time + 5h
+  const flexUsers      = await getRexFlexibleUsersDueWithOffset(now, 300);
   const messages: GymCronMessage[] = [];
 
-  for (const user of users) {
+  for (const user of mergeUserLists(mergeUserLists(standardUsers, adjustedUsers), flexUsers)) {
     if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
-    const ctx = await buildGymTimeContext(user.platformChatId, now);
-    if (!ctx?.isTrainingDay) continue;
+
+    // V2: cycle-based training day check
+    const trainingCheck = resolveTrainingObligationToday(user, now);
+    if (!trainingCheck.isTrainingDay) continue;
+
     if (await wasRexCronSentToday(user.platformChatId, "rex_chase_2", now)) continue;
     if (await hadRexCompletedSessionToday(user.platformChatId, now)) continue;
 
@@ -289,7 +348,11 @@ async function runRexMissedSessionChase2Cron(now: Date): Promise<GymCronMessage[
       writeMomentStruggle(user.id, "consecutive_miss_pattern", detail).catch(() => {})
     }
 
-    const jCtx = buildJobContext(user, ctx, { chaseExtras });
+    const ctx        = await buildGymTimeContext(user.platformChatId, now);
+    const patchedCtx = ctx && trainingCheck.nextDay
+      ? { ...ctx, todayMuscles: trainingCheck.nextDay.muscles, isTrainingDay: true }
+      : ctx;
+    const jCtx = buildJobContext(user, patchedCtx ?? null, { chaseExtras });
     const text = await rexMessageProvider.missedSessionChase(2, jCtx);
     messages.push(msg(user, text, "rex_chase_2"));
   }
@@ -304,19 +367,25 @@ async function runRexRestDayCron(now: Date): Promise<GymCronMessage[]> {
 
   for (const user of users) {
     if (!await checkGlobalFireRules(fireRulesInput(user, now))) continue;
-    const ctx = await buildGymTimeContext(user.platformChatId, now);
-    if (!ctx || ctx.isTrainingDay) continue;
+
+    // V2: rest day = user is NOT due for training today (still inside rest window)
+    const intake      = parseAnswers(user.intakeAnswers);
+    const daysPerWeek = parseInt(intake.available_training_days ?? "3") || 3;
+    const tz          = user.timezone ?? "Asia/Kolkata";
+    const stateMin    = parseSplitStateMinimal(user.splitState);
+    const todayISO    = getLocalDateISO(now, tz);
+    const daysSinceLast = stateMin.lastSessionDate
+      ? daysBetween(stateMin.lastSessionDate, todayISO)
+      : 999;
+    // If user is due for training → this is not a rest day
+    if (isTrainingDayByFrequency(daysPerWeek, daysSinceLast)) continue;
+
     if (await wasRexCronSentToday(user.platformChatId, "rex_rest_day", now)) continue;
     // Suppress daily check-in on rest days — rest day message covers it
     if (await wasRexCronSentToday(user.platformChatId, "rex_daily_checkin", now)) continue;
 
-    const intake       = parseAnswers(user.intakeAnswers);
-    const split        = intake.current_split ?? "unstructured";
-    const daysPerWeek  = parseInt(intake.available_training_days ?? "3") || 3;
-    const tz           = user.timezone ?? "Asia/Kolkata";
-    const weekday      = getLocalWeekdayNum(now, tz);
-
-    const { nextMuscles, daysUntil } = getNextSessionInfo(split, daysPerWeek, weekday);
+    // V2: next session muscles from cycle index, not weekday calendar
+    const { nextMuscles, daysUntil } = getNextSessionInfoV2(user.splitState, user.intakeAnswers, daysPerWeek);
 
     const lastFeelRating = getFeelRatingFromState(user.splitState);
     const lastSession    = await getLastCompletedSessionInfo(user.id);
@@ -331,7 +400,8 @@ async function runRexRestDayCron(now: Date): Promise<GymCronMessage[]> {
       stallInfo,
     };
 
-    const jCtx = buildJobContext(user, ctx, { restDayExtras });
+    // Pass null for gymCtx — restDayMorning message uses restDayExtras, not gymCtx
+    const jCtx = buildJobContext(user, null, { restDayExtras });
     const text = await rexMessageProvider.restDayMorning(jCtx);
     if (!text) continue;  // silence is valid
     messages.push(msg(user, text, "rex_rest_day"));
@@ -352,13 +422,19 @@ async function runRexBackdatePromptCron(now: Date): Promise<GymCronMessage[]> {
     // includes the unlogged-yesterday signal when relevant)
     if (await wasRexCronSentToday(user.platformChatId, "rex_daily_checkin", now)) continue;
 
-    const tz             = user.timezone ?? "Asia/Kolkata";
-    const yesterdayWkDay = getLocalWeekdayNum(new Date(now.getTime() - 86_400_000), tz);
-    const intake         = parseAnswers(user.intakeAnswers);
-    const split          = intake.current_split ?? "unstructured";
-    const daysPerWeek    = parseInt(intake.available_training_days ?? "3") || 3;
-    const { isTrainingDay } = getSplitDayInfo(split, daysPerWeek, yesterdayWkDay);
-    if (!isTrainingDay) continue;
+    const tz          = user.timezone ?? "Asia/Kolkata";
+    const intake      = parseAnswers(user.intakeAnswers);
+    const daysPerWeek = parseInt(intake.available_training_days ?? "3") || 3;
+
+    // V2: backdate fires when user has a pending cycle day AND yesterday was an
+    // expected training day based on frequency (not weekday calendar).
+    const nextDay = resolveNextCycleDay(user.splitState, user.intakeAnswers);
+    if (!nextDay) continue;
+    const stateMin      = parseSplitStateMinimal(user.splitState);
+    if (!stateMin.lastSessionDate) continue;  // no history → backdate doesn't apply
+    const yesterdayISO  = getLocalDateISO(new Date(now.getTime() - 86_400_000), tz);
+    const daysSinceForYesterday = daysBetween(stateMin.lastSessionDate, yesterdayISO);
+    if (!isTrainingDayByFrequency(daysPerWeek, daysSinceForYesterday)) continue;
 
     const yesterdayStart = new Date(now);
     yesterdayStart.setDate(yesterdayStart.getDate() - 1);
@@ -544,6 +620,99 @@ async function runRexCommitmentFollowUpCron(now: Date): Promise<GymCronMessage[]
   }
 
   return messages;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// V2 SCHEDULER HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Determines whether today is a training day using cycle state + frequency.
+ * Never uses weekday calendar. Replaces all ctx.isTrainingDay checks in crons.
+ */
+function resolveTrainingObligationToday(
+  user: RexUserRow,
+  now:  Date,
+): { isTrainingDay: boolean; nextDay: { muscles: string; splitDayIndex: number } | null } {
+  const nextDay     = resolveNextCycleDay(user.splitState, user.intakeAnswers);
+  if (!nextDay) return { isTrainingDay: false, nextDay: null };
+
+  const intake      = parseAnswers(user.intakeAnswers);
+  const daysPerWeek = parseInt(intake.available_training_days ?? "3") || 3;
+  const tz          = user.timezone ?? "Asia/Kolkata";
+  const todayISO    = getLocalDateISO(now, tz);
+  const stateMin    = parseSplitStateMinimal(user.splitState);
+  const daysSinceLast = stateMin.lastSessionDate
+    ? daysBetween(stateMin.lastSessionDate, todayISO)
+    : 999;
+
+  return {
+    isTrainingDay: isTrainingDayByFrequency(daysPerWeek, daysSinceLast),
+    nextDay,
+  };
+}
+
+/**
+ * Returns flexible users (no preferredCheckInTime) due for a prompt at the
+ * given gym-time offset, based on their observed training window.
+ */
+async function getRexFlexibleUsersDueWithOffset(
+  now:       Date,
+  offsetMin: number,
+): Promise<RexUserRow[]> {
+  const candidates = await prisma.messengerUser.findMany({
+    where:  { persona: "rex", intakeComplete: true, preferredCheckInTime: null, timezone: { not: null } },
+    select: REX_SELECT,
+  });
+  if (!candidates.length) return [];
+
+  const results: RexUserRow[] = [];
+  for (const user of candidates) {
+    const recentSessions = await prisma.telegramWorkoutSession.findMany({
+      where:   { messengerUserId: user.id, completed: true },
+      orderBy: { date: "desc" },
+      take:    10,
+      select:  { date: true },
+    });
+    const { window } = deriveTrainingWindow(
+      recentSessions.map(s => ({ date: new Date(s.date) })),
+      user.timezone!,
+    );
+    const virtualTime = deriveVirtualGymTime(window);
+    const target      = addMinutes(virtualTime, offsetMin);
+    const local       = getLocalTime(now, user.timezone!);
+    if (withinTolerance(local, target)) results.push(user);
+  }
+  return results;
+}
+
+/**
+ * Returns users whose gym_time + offsetMin falls inside quiet hours and whose
+ * adjusted delivery time (wake_time) matches now.
+ * Fixes: evening-user chase prompts that were silently dropped.
+ */
+async function getRexUsersAtAdjustedChaseTime(
+  now:       Date,
+  offsetMin: number,
+): Promise<RexUserRow[]> {
+  const allUsers = await prisma.messengerUser.findMany({
+    where:  { persona: "rex", intakeComplete: true, preferredCheckInTime: { not: null }, timezone: { not: null } },
+    select: REX_SELECT,
+  });
+  return allUsers.filter(u => {
+    const rawTarget      = addMinutes(u.preferredCheckInTime!, offsetMin);
+    const effectiveTarget = getEffectiveChaseTime(u.preferredCheckInTime!, offsetMin, u.intakeAnswers);
+    if (rawTarget === effectiveTarget) return false;  // no quiet-hour adjustment
+    return withinTolerance(getLocalTime(now, u.timezone!), effectiveTarget);
+  });
+}
+
+/**
+ * Merges two RexUserRow arrays, deduplicating by platformChatId.
+ */
+function mergeUserLists(primary: RexUserRow[], additional: RexUserRow[]): RexUserRow[] {
+  const seen = new Set(primary.map(u => u.platformChatId));
+  return [...primary, ...additional.filter(u => !seen.has(u.platformChatId))];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -939,14 +1108,11 @@ function getFeelRatingFromState(splitState: unknown): import("./workoutTracking.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function buildChaseExtras(user: RexUserRow, now: Date): Promise<ChaseExtras> {
-  const intake      = parseAnswers(user.intakeAnswers);
-  const split       = intake.current_split ?? "unstructured";
-  const daysPerWeek = parseInt(intake.available_training_days ?? "3") || 3;
-  const tz          = user.timezone ?? "Asia/Kolkata";
-  const weekday     = getLocalWeekdayNum(now, tz);
-  const { todayMuscles } = getSplitDayInfo(split, daysPerWeek, weekday);
+  // V2: cycle-based pending muscles — not weekday calendar
+  const nextDay      = resolveNextCycleDay(user.splitState, user.intakeAnswers);
+  const todayMuscles = nextDay?.muscles ?? "Full Body";
 
-  const consecutiveMisses = await getConsecutiveMissedDays(user.id, user.intakeAnswers, user.timezone, now);
+  const consecutiveMisses = await getConsecutiveMissedDaysV2(user.id, user.intakeAnswers, user.timezone, now);
   const lastSession       = await getLastCompletedSessionInfo(user.id);
 
   return {
@@ -957,37 +1123,27 @@ async function buildChaseExtras(user: RexUserRow, now: Date): Promise<ChaseExtra
   };
 }
 
-async function getConsecutiveMissedDays(
+// V2: frequency-based miss counter — no weekday calendar
+async function getConsecutiveMissedDaysV2(
   messengerUserId: string,
   intakeAnswers:   unknown,
   timezone:        string | null,
   now:             Date,
 ): Promise<number> {
-  const intake      = parseAnswers(intakeAnswers);
-  const split       = intake.current_split ?? "unstructured";
-  const daysPerWeek = parseInt(intake.available_training_days ?? "3") || 3;
-  const tz          = timezone ?? "Asia/Kolkata";
+  const intake       = parseAnswers(intakeAnswers);
+  const daysPerWeek  = parseInt(intake.available_training_days ?? "3") || 3;
+  const tz           = timezone ?? "Asia/Kolkata";
   const eightDaysAgo = new Date(now.getTime() - 8 * 86_400_000);
 
   const sessions = await prisma.telegramWorkoutSession.findMany({
     where:  { messengerUserId, completed: true, date: { gte: eightDaysAgo } },
     select: { date: true },
   });
-  const sessionDates = new Set(
-    sessions.map(s => new Date(s.date).toLocaleDateString("en-CA", { timeZone: tz }))
-  );
 
-  let misses = 0;
-  for (let daysBack = 0; daysBack <= 7; daysBack++) {
-    const dayDate  = new Date(now.getTime() - daysBack * 86_400_000);
-    const weekday  = getLocalWeekdayNum(dayDate, tz);
-    const { isTrainingDay } = getSplitDayInfo(split, daysPerWeek, weekday);
-    if (!isTrainingDay) continue;
-    const dateKey = dayDate.toLocaleDateString("en-CA", { timeZone: tz });
-    if (sessionDates.has(dateKey)) break;
-    misses++;
-  }
-  return misses;
+  const todayISO         = getLocalDateISO(now, tz);
+  const completedDateISOs = sessions.map(s => getLocalDateISO(new Date(s.date), tz));
+
+  return computeConsecutiveMissesV2(completedDateISOs, daysPerWeek, todayISO);
 }
 
 async function getLastCompletedSessionInfo(
@@ -1003,18 +1159,16 @@ async function getLastCompletedSessionInfo(
   return { muscles: session.musclesTrained.join(", "), daysAgo };
 }
 
-// Returns the next training day's muscles and how many days away it is
-function getNextSessionInfo(
-  split:       string,
-  daysPerWeek: number,
-  currentWeekday: number,
+// V2: cycle-based next session info — no weekday calendar
+function getNextSessionInfoV2(
+  splitStateRaw: unknown,
+  intakeAnswers: unknown,
+  daysPerWeek:   number,
 ): { nextMuscles: string; daysUntil: number } {
-  for (let d = 1; d <= 7; d++) {
-    const nextDay = (currentWeekday + d) % 7;
-    const { isTrainingDay, todayMuscles } = getSplitDayInfo(split, daysPerWeek, nextDay);
-    if (isTrainingDay) return { nextMuscles: todayMuscles, daysUntil: d };
-  }
-  return { nextMuscles: "Full Body", daysUntil: 1 };
+  const nextDay = resolveNextCycleDay(splitStateRaw, intakeAnswers);
+  // daysUntil is an estimate from frequency; exact date is unknowable without a calendar anchor
+  const daysUntil = daysPerWeek >= 5 ? 1 : daysPerWeek >= 4 ? 1 : 2;
+  return { nextMuscles: nextDay?.muscles ?? "Full Body", daysUntil };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

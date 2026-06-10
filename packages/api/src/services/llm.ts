@@ -16,6 +16,8 @@ import type { MemoryContext } from "../types/memory.types";
 import type { GymTimeContext } from "./gymTimeContext.service";
 import type { PatternReport } from "./gymPatternDetector.service";
 import type { EngagementContext } from "./engagement.service";
+import type { DetectedSignal } from "../engines/signal-engine-v2";
+import type { SchedulerContextV2 } from "../engines/scheduler-intelligence-v2";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // REX VOICE RULES — injected per-message for Rex persona only
@@ -82,6 +84,9 @@ export interface EngineContext {
   engagementContext:    EngagementContext | null;
   rexSessionContext:    string | null;
   rexExperienceLevel:  string | null;
+  signalEngineV2:     DetectedSignal[];
+  schedulerContextV2: SchedulerContextV2 | null;
+  parseSignals:       string[];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -123,6 +128,9 @@ function getToneModifier(personaName: string, tone: DecisionTone): string {
 
 function buildActionDirective(decision: MentorDecision): string {
   const { action, subAction, tone, contextHints } = decision;
+
+  // V2 intervention override — takes precedence over action/subAction lookup
+  const v2Override = buildV2DirectiveOverride(decision);
 
   const directives: Partial<Record<string, string>> = {
     // ── REDUCE_SCOPE ────────────────────────────────────────────────────────
@@ -213,7 +221,7 @@ function buildActionDirective(decision: MentorDecision): string {
   };
 
   const key = `${action}/${subAction}`;
-  const directive = directives[key]
+  const directive = v2Override ?? directives[key]
     ?? `DIRECTIVE: ${action.toLowerCase().replace("_", " ")} — ${subAction.replace(/_/g, " ")}.`;
 
   const toneInstruction = {
@@ -463,6 +471,53 @@ function buildGymPatternBlock(report: PatternReport | null, personaType: Persona
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// MEMORY BLOCK — V2
+// Reads ctx.memory.relevantFacts (already scored and ranked by Memory Retrieval V2
+// in the orchestrator) and groups them into labelled blocks.
+// Goals come from longTerm because they are structural identity data, not recall.
+// Everything else — struggles, achievements, commitments, breakthroughs, and any
+// other fact — surfaces only when V2 ranked it as relevant to this message.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function buildMemoryBlock(memory: MemoryContext): string {
+  const lines: string[] = [];
+
+  const goals = memory.longTerm.goals.slice(0, 3);
+  if (goals.length > 0) lines.push(`Goals: ${goals.join(" | ")}`);
+  if (memory.longTerm.creatureName) lines.push(`Creature name: ${memory.longTerm.creatureName}`);
+
+  const facts = memory.relevantFacts;
+
+  const struggles = facts.filter(f => f.type === "struggle").slice(0, 3);
+  if (struggles.length > 0)
+    lines.push(`Relevant Struggles: ${struggles.map(f => f.value).join(" | ")}`);
+
+  const achievements = facts.filter(f => f.type === "achievement").slice(0, 3);
+  if (achievements.length > 0)
+    lines.push(`Relevant Achievements: ${achievements.map(f => f.value).join(" | ")}`);
+
+  const commitments = facts
+    .filter(f => f.type === "commitment" || f.type === "promise")
+    .slice(0, 3);
+  if (commitments.length > 0)
+    lines.push(`Relevant Commitments: ${commitments.map(f => f.value).join(" | ")}`);
+
+  const breakthroughs = facts.filter(f => f.type === "breakthrough").slice(0, 2);
+  if (breakthroughs.length > 0)
+    lines.push(`Relevant Breakthroughs: ${breakthroughs.map(f => f.value).join(" | ")}`);
+
+  const other = facts
+    .filter(f =>
+      !["struggle","achievement","commitment","promise","breakthrough","goal"].includes(f.type)
+    )
+    .slice(0, 3);
+  if (other.length > 0)
+    lines.push(`Relevant Memories: ${other.map(f => f.value).join(" | ")}`);
+
+  return lines.join("\n") || "none";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // QUESTION LOOP GUARD
 // Strips trailing question if the last assistant reply already had one.
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -471,6 +526,102 @@ function guardQuestionLoop(reply: string, lastAssistantMessage: string | null): 
   if (!lastAssistantMessage?.includes("?") || !reply.includes("?")) return reply;
   const stripped = reply.replace(/\s*[^.!?\n]*\?\s*$/, "").trim();
   return stripped || reply;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SIGNAL ENGINE V2 BLOCK
+// Surfaces active signals (intensity ≥ 0.35) for the LLM to reason about.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export function buildActiveSignalsBlock(signals: DetectedSignal[]): string {
+  const visible = signals.filter(s => s.intensity >= 0.35).slice(0, 5);
+  if (visible.length === 0) return "";
+  return `\nACTIVE SIGNALS\n${visible.map(s => `• ${s.type} (${s.intensity.toFixed(2)})`).join("\n")}`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCHEDULER CONTEXT V2 BLOCK
+// Injects cycle-accurate training state with guidance for each state variant.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export function buildTrainingStateBlock(ctx: SchedulerContextV2 | null): string {
+  if (!ctx) return "";
+  const stateGuide: Record<string, string> = {
+    completed:            "COMPLETED — Session already done today. Do NOT encourage training again. Acknowledge if relevant. Focus on recovery, nutrition, or next session prep.",
+    due:                  "DUE — User is inside their training window. Session not yet logged. Be session-focused.",
+    pending_confirmation: "PENDING_CONFIRMATION — Training window has passed. Session status unconfirmed. Verify whether they trained before assuming.",
+    upcoming:             "UPCOMING — Training window not yet reached. Too early to prompt training. Focus on preparation.",
+    skipped:              "SKIPPED — User explicitly skipped today. Acknowledge the skip without shame.",
+    unknown:              "UNKNOWN — Insufficient history to determine state. Do not infer.",
+  };
+  const lines = [
+    "\nTRAINING STATE",
+    stateGuide[ctx.trainingState] ?? `State: ${ctx.trainingState}`,
+    ctx.pendingMuscles        ? `Pending muscle group: ${ctx.pendingMuscles}` : null,
+    ctx.completedTodayMuscles ? `Completed today: ${ctx.completedTodayMuscles}` : null,
+    `Consecutive misses: ${ctx.consecutiveMisses}`,
+    `7-day completion rate: ${(ctx.completionRate7d * 100).toFixed(0)}%`,
+    `Observed training window: ${ctx.observedWindow} (confidence: ${ctx.windowConfidence})`,
+  ].filter(Boolean) as string[];
+  return lines.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PARSER SAFETY BLOCK
+// Surfaces pain, injury, and recommendation-blocked signals explicitly.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export function buildParserSafetyBlock(parseSignals: string[]): string {
+  const hasPain     = parseSignals.includes("PAIN_MENTIONED");
+  const hasBlocked  = parseSignals.includes("RECOMMENDATION_BLOCKED");
+  const hasInjury   = parseSignals.includes("INJURY_CONTEXT");
+  if (!hasPain && !hasBlocked && !hasInjury) return "";
+  const lines = ["\nSAFETY FLAGS"];
+  if (hasPain)    lines.push("Pain mentioned.");
+  if (hasInjury)  lines.push("Injury context detected.");
+  if (hasBlocked) lines.push("No explicit recommendation requested.");
+  if (hasBlocked) lines.push("RECOMMENDATION_BLOCKED = TRUE");
+  return lines.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// V2 DIRECTIVE OVERRIDE
+// Returns a specific directive for V2 interventions, bypassing the generic
+// action/subAction lookup. Returns null for non-V2 decisions.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export function buildV2DirectiveOverride(decision: MentorDecision): string | null {
+  if (!decision.ruleId.startsWith("V2:")) return null;
+  const intervention = decision.ruleId.slice(3);
+
+  const v2Directives: Record<string, string> = {
+    SURFACE_PROMISE:
+      "DIRECTIVE: The user made a specific promise that is now being tested. Surface it from memory — word-for-word if possible. Ask one direct question: what happened to that commitment? Do not lecture. Let the promise do the work.",
+    SURFACE_BREAKTHROUGH:
+      "DIRECTIVE: The user has had a past breakthrough or achievement that directly contradicts their current self-doubt. Pull it from memory. Name it specifically — exact numbers, exact date if known. Do not be generic. End with: what made that possible?",
+    SURFACE_COMMITMENT:
+      "DIRECTIVE: The user previously made a commitment that is now relevant. Surface it from memory — the exact language if available. Then ask: is that still true? One question only. Do not pile on.",
+    REDUCE_FRICTION:
+      "DIRECTIVE: The user is overloaded or capacity-collapsed. Do not add more. Ask: what is the single smallest action they can take in the next 24 hours? Nothing else. Strip back completely.",
+    PRIORITY_RESET:
+      "DIRECTIVE: The user is juggling too much and needs to pick one thing. Do not offer a new plan. Ask: if only ONE commitment survives this week, what is it? Everything else waits. Help them name it.",
+    PREVENT_SPIRAL:
+      "DIRECTIVE: Spiral risk detected — quit language, momentum collapse, or heavy discouragement. Do NOT problem-solve yet. One sentence acknowledging how heavy this feels. Then one question anchoring them to evidence: name one thing that actually worked before.",
+    PREVENT_BURNOUT:
+      "DIRECTIVE: Burnout risk is critical. Zero pressure. Zero demands. Say nothing about goals, plans, or tasks. Acknowledge the exhaustion in one line. Give permission to rest — not a strategy.",
+    CELEBRATE_WIN:
+      "DIRECTIVE: Acknowledge the win in one specific sentence — name what they did, not just that they did something. Let it land. Then move: what does the next step look like from here?",
+    REFRAME_FAILURE:
+      "DIRECTIVE: One sentence acknowledging the failure without dwelling. Reframe immediately: what does this tell us about what needs to change? One clear question forward — not backward.",
+    CONSISTENCY_CHECK:
+      "DIRECTIVE: Reference their actual consistency data — streak, completion rate, or consecutive misses. Ask one direct question about the pattern. Do not shame. Do not overpraise. Be factual.",
+    MOMENTUM_PUSH:
+      "DIRECTIVE: They are in strong momentum. Match their energy. Raise the target. One sentence acknowledging the streak — then push harder. They can handle it.",
+    GOAL_ALIGNMENT:
+      "DIRECTIVE: The current request may be drifting from their stated goal. Surface the goal from memory. Ask: does this still serve what you said you were building toward?",
+  };
+
+  return v2Directives[intervention] ?? null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -490,9 +641,12 @@ export async function generateEngineResponse(ctx: EngineContext): Promise<string
   const modeGuidance     = buildModeGuidance(ctx.gymContext, ctx.personaType);
   const patternBlock     = buildGymPatternBlock(ctx.gymPatternReport, ctx.personaType);
   const engagementBlock  = buildEngagementBlock(ctx.engagementContext, ctx.personaType);
-  const sessionBlock     = ctx.rexSessionContext    ? `\n${ctx.rexSessionContext}` : "";
-  const levelBlock       = ctx.rexExperienceLevel   ? `\n${ctx.rexExperienceLevel}` : "";
-  const voiceRulesBlock  = ctx.personaType === "rex" ? `\n${REX_VOICE_RULES}` : "";
+  const sessionBlock        = ctx.rexSessionContext    ? `\n${ctx.rexSessionContext}` : "";
+  const levelBlock          = ctx.rexExperienceLevel   ? `\n${ctx.rexExperienceLevel}` : "";
+  const voiceRulesBlock     = ctx.personaType === "rex" ? `\n${REX_VOICE_RULES}` : "";
+  const signalsBlock        = buildActiveSignalsBlock(ctx.signalEngineV2 ?? []);
+  const trainingStateBlock  = buildTrainingStateBlock(ctx.schedulerContextV2 ?? null);
+  const parserSafetyBlock   = buildParserSafetyBlock(ctx.parseSignals ?? []);
 
   // Recent conversation (last 6 turns, chronological)
   const recentLines = ctx.memory.shortTerm.slice(-6).map(m =>
@@ -513,13 +667,12 @@ ${planBlock}
 
 USER STATE (0–100)
 ${buildStateBlock(ctx.state)}
+${signalsBlock}
+${trainingStateBlock}
+${parserSafetyBlock}
 
 MEMORY
-Goals: ${ctx.memory.longTerm.goals.slice(0, 3).join(" | ") || "none"}
-${ctx.memory.longTerm.creatureName ? `Creature name: ${ctx.memory.longTerm.creatureName}` : ""}
-${ctx.memory.longTerm.preferences.length > 0 ? `Preferences: ${ctx.memory.longTerm.preferences.slice(0, 10).join(" | ")}` : ""}
-${ctx.memory.longTerm.anchors.length > 0 ? `Anchors: ${ctx.memory.longTerm.anchors.slice(0, 2).join(" | ")}` : ""}
-${ctx.memory.longTerm.struggles.length > 0 ? `Known struggles: ${ctx.memory.longTerm.struggles.slice(0, 2).join(" | ")}` : ""}
+${buildMemoryBlock(ctx.memory)}
 ${timeBlock}
 ${patternBlock}
 ${engagementBlock}
@@ -548,6 +701,24 @@ RULES
 • Have a point of view. Call out bad decisions briefly, then move.
 • Never break character.
 • Aim for ~${Math.ceil(ctx.decision.tokenBudget * 0.55)} words.
+
+CONFIDENCE FRAMEWORK — applies to ALL recommendation paths (workout, split, nutrition, recovery, scheduling, plans):
+• HIGH confidence (have: muscle group, experience level, current state, active goal) → recommend.
+• MEDIUM confidence (missing 1 key piece) → ask exactly ONE clarifying question. No recommendation yet.
+• LOW confidence (missing 2+ key pieces, or pain/injury context) → do not recommend, do not infer. Ask for missing context.
+"I don't know enough yet" is always preferred over a confident wrong answer.
+
+PAIN / INJURY HARD RULES:
+• If PAIN_MENTIONED = TRUE and RECOMMENDATION_BLOCKED = TRUE → NO exercise recommendations. NO replacement exercises. NO workout modifications. NO recovery protocols. Only: clarify, acknowledge, gather context (location, severity, duration).
+• If PAIN_MENTIONED = TRUE and user explicitly asked for recommendations → still require location + severity + duration before recommending anything.
+• Pain ≠ soreness. When uncertain → default to clarification.
+
+SCHEDULER STATE BEHAVIOR:
+• COMPLETED → never encourage training. Session is done. Acknowledge only if they bring it up.
+• PENDING_CONFIRMATION → do not assume they trained. Verify status before responding as if complete.
+• SKIPPED → acknowledge the skip. No shame. One question about what happened.
+• DUE → be session-focused. Name the muscle group if known.
+• UPCOMING → preparation only. No session push.
 
 Do not end mid-word or mid-sentence.`.trim();
 

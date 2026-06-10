@@ -1,5 +1,29 @@
 import type { Domain } from './mentor.types';
 
+// ─── Memory Retrieval V2 ──────────────────────────────────────────────────────
+
+export type RetrievalReason =
+  | "similar_struggle"
+  | "similar_achievement"
+  | "related_commitment"
+  | "related_promise"
+  | "related_breakthrough"
+  | "goal_match"
+  | "pattern_match";
+
+export interface RankedMemoryV2 {
+  id:         string;
+  type:       string;
+  key:        string;
+  value:      string;
+  score:      number;
+  reason:     RetrievalReason;
+  confidence: number;
+  ageHours:   number;
+  createdAt:  Date;
+  updatedAt:  Date;
+}
+
 export interface ShortTermMessage {
   role: 'user' | 'assistant';
   text: string;
