@@ -128,6 +128,7 @@ model MemoryFact {
 
   user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, type, key])
   @@index([userId, type])
   @@index([userId, key])
 }
