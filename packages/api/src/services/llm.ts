@@ -87,6 +87,8 @@ export interface EngineContext {
   signalEngineV2:     DetectedSignal[];
   schedulerContextV2: SchedulerContextV2 | null;
   parseSignals:       string[];
+  parseIntent?:       string;
+  parseConfidence?:   number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -571,16 +573,34 @@ export function buildTrainingStateBlock(ctx: SchedulerContextV2 | null): string 
 // Surfaces pain, injury, and recommendation-blocked signals explicitly.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export function buildParserSafetyBlock(parseSignals: string[]): string {
-  const hasPain     = parseSignals.includes("PAIN_MENTIONED");
-  const hasBlocked  = parseSignals.includes("RECOMMENDATION_BLOCKED");
-  const hasInjury   = parseSignals.includes("INJURY_CONTEXT");
-  if (!hasPain && !hasBlocked && !hasInjury) return "";
-  const lines = ["\nSAFETY FLAGS"];
-  if (hasPain)    lines.push("Pain mentioned.");
-  if (hasInjury)  lines.push("Injury context detected.");
-  if (hasBlocked) lines.push("No explicit recommendation requested.");
-  if (hasBlocked) lines.push("RECOMMENDATION_BLOCKED = TRUE");
+export function buildParserSafetyBlock(
+  parseSignals:    string[],
+  parseIntent?:    string,
+  parseConfidence?: number,
+): string {
+  const hasPain    = parseSignals.includes("PAIN_MENTIONED");
+  const hasBlocked = parseSignals.includes("RECOMMENDATION_BLOCKED");
+  const hasInjury  = parseSignals.includes("INJURY_CONTEXT");
+  const lines: string[] = [];
+
+  // Always inject parser classification so LLM knows what V2 decided
+  if (parseIntent !== undefined || parseConfidence !== undefined) {
+    lines.push("\nPARSER CLASSIFICATION");
+    if (parseIntent)    lines.push(`intent: ${parseIntent}`);
+    if (parseConfidence !== undefined) lines.push(`confidence: ${parseConfidence.toFixed(2)}`);
+    if (parseConfidence !== undefined && parseConfidence < 0.6) {
+      lines.push("IMPORTANT: confidence is LOW — ask clarifying questions, do not make recommendations.");
+    }
+  }
+
+  if (hasPain || hasBlocked || hasInjury) {
+    lines.push("\nSAFETY FLAGS");
+    if (hasPain)    lines.push("Pain mentioned.");
+    if (hasInjury)  lines.push("Injury context detected.");
+    if (hasBlocked) lines.push("No explicit recommendation requested.");
+    if (hasBlocked) lines.push("RECOMMENDATION_BLOCKED = TRUE");
+  }
+
   return lines.join("\n");
 }
 
@@ -646,7 +666,7 @@ export async function generateEngineResponse(ctx: EngineContext): Promise<string
   const voiceRulesBlock     = ctx.personaType === "rex" ? `\n${REX_VOICE_RULES}` : "";
   const signalsBlock        = buildActiveSignalsBlock(ctx.signalEngineV2 ?? []);
   const trainingStateBlock  = buildTrainingStateBlock(ctx.schedulerContextV2 ?? null);
-  const parserSafetyBlock   = buildParserSafetyBlock(ctx.parseSignals ?? []);
+  const parserSafetyBlock   = buildParserSafetyBlock(ctx.parseSignals ?? [], ctx.parseIntent, ctx.parseConfidence);
 
   // Recent conversation (last 6 turns, chronological)
   const recentLines = ctx.memory.shortTerm.slice(-6).map(m =>

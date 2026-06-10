@@ -67,7 +67,7 @@ import { needsIntake, getWebProfile, handleIntakeMessage } from "@repo/api/servi
 //@ts-ignore
 import { handleOnboardingV2, isV2Active } from "@repo/api/engines/onboarding-engine-v2";
 //@ts-ignore
-import { handleWorkoutCommand, handleActiveLoggingMessage, resetReactivationCount } from "@repo/api/services/workoutTracking.service";
+import { handleWorkoutCommand, handleActiveLoggingMessage, resetReactivationCount, commitNLWorkoutSession, commitNLSkip, updatePRFromNL } from "@repo/api/services/workoutTracking.service";
 //@ts-ignore
 import { handleOffTopicMessage } from "@repo/api/services/offTopicClassifier.service";
 //@ts-ignore
@@ -200,6 +200,7 @@ export async function POST(req: Request) {
       // ── Workout commands (/log /pr /progress /history /overload /streak /split)
       const workoutCmd = await handleWorkoutCommand(chatId.toString(), text);
       if (workoutCmd.handled) {
+        console.log(JSON.stringify({ ts: new Date().toISOString(), chatId: String(chatId), message: text.slice(0, 80), route: "command", intent: workoutCmd.intent ?? "workout_cmd", service: "workoutTracking" }));
         await addToShortTerm(chatId.toString(), text, { role: "user", intent: workoutCmd.intent ?? "workout_cmd", emotion: "neutral" });
         await sendAndRemember(chatId, workoutCmd.reply, workoutCmd.intent ?? "workout_cmd", "neutral");
         return Response.json({ ok: true });
@@ -354,8 +355,26 @@ export async function POST(req: Request) {
           intent: v2GymIntent,
         });
         if (gymResult.handled && gymResult.reply) {
+          console.log(JSON.stringify({ ts: new Date().toISOString(), chatId: String(chatId), message: text.slice(0, 80), route: "gym_shortcircuit", intent: v2GymIntent, service: "gym.service" }));
           await sendAndRemember(chatId, gymResult.reply, v2GymIntent, processed.emotion);
           return Response.json({ ok: true });
+        }
+      }
+
+      // ── NL parity writes (Telegram-only users, no gymUserId) ─────────────
+      // Keeps /history, /streak, /pr, /split consistent for users who describe
+      // workouts or skips in natural language instead of using /log commands.
+      if (!gymUserId) {
+        const nlIntent = v2Parse.actionableIntent?.type
+        if (nlIntent === "log_workout") {
+          commitNLWorkoutSession(chatId.toString(), text).catch(() => {})
+        }
+        if (nlIntent === "log_skip") {
+          commitNLSkip(chatId.toString()).catch(() => {})
+        }
+        // PR parity: update personalRecords from NL so /pr sees the new record
+        if (/\b(?:hit\s+(?:a\s+)?(?:new\s+)?(?:pr|pb)|new\s+(?:pr|pb)|personal\s+(?:record|best))\b/i.test(text)) {
+          updatePRFromNL(chatId.toString(), text).catch(() => {})
         }
       }
 
@@ -474,10 +493,20 @@ export async function POST(req: Request) {
         parseAndSaveNutrition(chatId.toString(), text).catch(() => {});
       }
 
-      // ── Safety gate: low-confidence recommendation block (Part 5) ──────────
+      // ── P0 Fix 2: Split-change redirect ───────────────────────────────────
+      // Natural language split change requests ("change my split", "switch to PPL")
+      // are intercepted here and redirected to /setup split.  The LLM cannot
+      // persist split state, so discussing it without executing is misleading.
+      // Advice/plan requests ("what split should I use?") pass through normally.
+      const SPLIT_CHANGE_RE = /\b(?:change|switch|modify|redo|update)\b.{0,25}\b(?:split|program|routine)\b|\b(?:make\s+it|go\s+(?:with|to)|switch\s+to|try)\s+(?:ppl|upper.?lower|full.?body|bro.?split)\b|\b(?:new|different)\s+split\b/i;
+      if (SPLIT_CHANGE_RE.test(text) && !text.startsWith("/")) {
+        await addToShortTerm(chatId.toString(), text, { role: "user", intent: "schedule_update", emotion: "neutral" });
+        await sendAndRemember(chatId, "To apply a split change, use /setup split — I'll walk you through it.", "setup_redirect", "neutral");
+        return Response.json({ ok: true });
+      }
+
+      // ── Safety gate: low-confidence recommendation block ──────────────────
       // When the parser isn't sure what the user wants, asking beats guessing.
-      // Prevents hallucinated exercise plans, nutrition changes, or schedule
-      // rewrites being sent when the intent is ambiguous.
       const RECOMMENDATION_INTENT_TYPES = new Set([
         "recommendation_request", "advice_request", "nutrition_query",
         "plan_request", "goal_set", "schedule_update",
@@ -486,10 +515,16 @@ export async function POST(req: Request) {
         RECOMMENDATION_INTENT_TYPES.has(v2Parse.actionableIntent?.type ?? "") &&
         v2Parse.confidence < 0.55
       ) {
+        logBetaFailure(chatId, text, v2Parse.actionableIntent?.type ?? "unknown", v2Parse.confidence, "low_confidence_recommendation_blocked");
         const clarifyReply = "Before I give you anything specific — what are you trying to do? Looking for a training adjustment, a nutrition tweak, or something else?";
         await addToShortTerm(chatId.toString(), text, { role: "user", intent: v2Parse.actionableIntent?.type ?? "general", emotion: "neutral" });
         await sendAndRemember(chatId, clarifyReply, "clarification_request", "neutral");
         return Response.json({ ok: true });
+      }
+
+      // Beta failure: parser flagged clarification needed even at normal confidence
+      if (v2Parse.requiresClarification) {
+        logBetaFailure(chatId, text, v2Parse.actionableIntent?.type ?? "none", v2Parse.confidence, "requires_clarification");
       }
 
       // ══════════════════════════════════════════════════════════════════════
@@ -653,6 +688,27 @@ async function sendTelegramChatAction(chatId: number | string, action: "typing")
       body:    JSON.stringify({ chat_id: chatId, action }),
     });
   } catch { /* typing indicator failure is non-fatal */ }
+}
+
+// ── Beta failure logger ───────────────────────────────────────────────────────
+// Writes one structured line per incident. Collected during beta to identify
+// the most common parser failures and routing gaps in production.
+function logBetaFailure(
+  chatId:     number | string,
+  message:    string,
+  intent:     string,
+  confidence: number,
+  reason:     string,
+): void {
+  console.log(JSON.stringify({
+    ts:           new Date().toISOString(),
+    beta_failure: true,
+    chatId:       String(chatId),
+    message:      message.slice(0, 120),
+    intent,
+    confidence,
+    reason,
+  }));
 }
 
 // ── V2 intent → gym.service intent mapping ────────────────────────────────────
