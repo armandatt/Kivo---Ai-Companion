@@ -870,6 +870,10 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
       signalEngineV2:     sigV2.detectedSignals,
       schedulerContextV2: schedulerContextV2 ?? null,
       parseSignals:       input.parseResult?.signals ?? [],
+      parseIntent:        input.parseResult?.actionableIntent?.type
+                            ?? input.parseResult?.intents[0]?.type
+                            ?? "general_chat",
+      parseConfidence:    input.parseResult?.confidence ?? 1.0,
     };
 
     diag.llmTokensRequested = Math.max(decision.tokenBudget, 80);

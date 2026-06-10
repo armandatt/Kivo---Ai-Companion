@@ -1,4 +1,5 @@
 import { prisma } from "@repo/db/client"
+import { buildSchedulerContextV2, TrainingState } from "../engines/scheduler-intelligence-v2"
 import {
   getStreakMilestoneMessage,
   getStreakBrokenMessage,
@@ -2046,23 +2047,50 @@ async function splitCommand(platformChatId: string): Promise<string> {
   const user = await getUser(platformChatId)
   if (!user) return "No profile found."
 
-  const intake   = parseIntake(user.intakeAnswers)
-  const split    = intake.current_split ?? "unstructured"
-  const days     = parseInt(intake.available_training_days ?? "3") || 3
-  const dayList  = getTrainingDays(split, days, intake.split_days_json)
-  const state    = parseSplitState(user.splitState)
-  const nextIdx  = getNextDayIndex(state, dayList.length)
+  const intake  = parseIntake(user.intakeAnswers)
+  const split   = intake.current_split ?? "unstructured"
+  const days    = parseInt(intake.available_training_days ?? "3") || 3
+  const dayList = getTrainingDays(split, days, intake.split_days_json)
+  const state   = parseSplitState(user.splitState)
+  const nextIdx = getNextDayIndex(state, dayList.length)
+
+  // Fetch Scheduler V2 training state — non-fatal if unavailable
+  let schedLabel  = ""
+  let missLabel   = ""
+  let windowLabel = ""
+  try {
+    const sched = await buildSchedulerContextV2(platformChatId, new Date())
+    if (sched) {
+      const STATE_LABELS: Partial<Record<TrainingState, string>> = {
+        [TrainingState.DUE]:                  "DUE",
+        [TrainingState.UPCOMING]:             "Upcoming",
+        [TrainingState.PENDING_CONFIRMATION]: "Check in",
+        [TrainingState.COMPLETED]:            "Done today",
+        [TrainingState.SKIPPED]:              "Skipped",
+      }
+      const label = STATE_LABELS[sched.trainingState]
+      schedLabel  = label ? `  [${label}]` : ""
+      missLabel   = sched.consecutiveMisses > 0 ? `  Missed: ${sched.consecutiveMisses}` : ""
+      const WIN_LABELS: Partial<Record<string, string>> = {
+        MORNING: "Morning", AFTERNOON: "Afternoon", EVENING: "Evening",
+      }
+      const win = WIN_LABELS[sched.observedWindow]
+      windowLabel = win ? `Window: ${win}` : ""
+    }
+  } catch { /* scheduler errors are non-fatal */ }
 
   const lines = dayList.map((muscles, i) => {
-    const marker = i === nextIdx ? "→" : " "
-    return `${marker} Day ${i + 1}: ${muscles}`.trim()
+    const marker  = i === nextIdx ? "→" : " "
+    const suffix  = i === nextIdx ? `${schedLabel}${missLabel}` : ""
+    return `${marker} Day ${i + 1}: ${muscles}${suffix}`.trim()
   })
 
   return [
     `${split.toUpperCase()} (${days} days) — Cycle ${state.cycleNumber + 1}`,
     lines.join("\n"),
+    windowLabel,
     `\n${state.daysTrained.length}/${dayList.length} days trained this cycle`,
-  ].join("\n")
+  ].filter(Boolean).join("\n")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2202,4 +2230,155 @@ function parsePersonalRecords(raw: unknown): PersonalRecords {
 function parseIntake(raw: unknown): Record<string, string> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
   return raw as Record<string, string>
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NL PARITY WRITES
+// Called from the Telegram webhook when V2 classifies a natural language message
+// as a workout completion or skip.  Keeps /history, /streak, /pr, /split
+// consistent for users who never touch slash commands.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Muscle group extraction from free text — used when no /log session is running
+function extractNLMuscles(text: string): string[] {
+  const t = text.toLowerCase()
+  const groups: string[] = []
+  if (/\b(?:chest|pec|bench)\b/.test(t))                        groups.push("Chest")
+  if (/\b(?:back|lat|row|deadlift|pull)\b/.test(t))             groups.push("Back")
+  if (/\b(?:leg|squat|quad|hamstring|glute|lunge|calf)\b/.test(t)) groups.push("Legs")
+  if (/\b(?:shoulder|delt|ohp|overhead)\b/.test(t))             groups.push("Shoulders")
+  if (/\b(?:arm|bicep|tricep|curl)\b/.test(t))                  groups.push("Arms")
+  if (!groups.length && /\bpush\b/.test(t))  groups.push("Chest", "Shoulders", "Triceps")
+  if (!groups.length && /\bpull\b/.test(t))  groups.push("Back", "Biceps")
+  return groups.length ? groups : ["Full Body"]
+}
+
+/**
+ * commitNLWorkoutSession
+ * Creates a completed TelegramWorkoutSession record and updates gymStreak +
+ * splitState when the user describes a finished workout in natural language
+ * ("just finished chest day", "did push today") without using /log.
+ * No-ops if a completed session was already logged today.
+ */
+export async function commitNLWorkoutSession(
+  platformChatId: string,
+  text:           string,
+  now             = new Date(),
+): Promise<void> {
+  const user = await getUser(platformChatId)
+  if (!user) return
+
+  const todayISO = now.toISOString().slice(0, 10)
+
+  // Idempotency: don't double-create if user already logged via /log today
+  const alreadyLogged = await prisma.telegramWorkoutSession.findFirst({
+    where: {
+      messengerUserId: user.id,
+      completed:       true,
+      date:            { gte: new Date(todayISO) },
+    },
+    select: { id: true },
+  })
+  if (alreadyLogged) return
+
+  const muscles  = extractNLMuscles(text)
+  const state    = parseSplitState(user.splitState)
+  const intake   = parseIntake(user.intakeAnswers)
+  const split    = intake.current_split ?? "unstructured"
+  const days     = parseInt(intake.available_training_days ?? "3") || 3
+  const dayList  = getTrainingDays(split, days, intake.split_days_json)
+  const nextIdx  = getNextDayIndex(state, dayList.length)
+
+  await prisma.telegramWorkoutSession.create({
+    data: {
+      messengerUserId: user.id,
+      date:            now,
+      splitDayIndex:   nextIdx,
+      musclesTrained:  muscles,
+      completed:       true,
+    },
+  })
+
+  // Streak update
+  const prevStreak = user.gymStreak ?? 0
+  const newStreak  = isConsecutiveDay(state.lastSessionDate, todayISO) ? prevStreak + 1 : 1
+  await prisma.messengerUser.update({
+    where: { id: user.id },
+    data:  { gymStreak: newStreak },
+  })
+
+  // splitState advance
+  const trained   = [...state.daysTrained, nextIdx]
+  const cycleDone = trained.length >= dayList.length
+  await writeSplitState(user.id, {
+    ...state,
+    lastCompletedDayIndex: nextIdx,
+    lastSessionDate:       todayISO,
+    cycleNumber:           cycleDone ? state.cycleNumber + 1 : state.cycleNumber,
+    daysTrained:           cycleDone ? [] : trained,
+    activeLogging:         null,
+    pendingLog:            null,
+  })
+}
+
+/**
+ * commitNLSkip
+ * Records today as a skip in splitState so Scheduler V2's consecutive-miss
+ * counter stays accurate when the user says "can't train today" via NL.
+ */
+export async function commitNLSkip(
+  platformChatId: string,
+  now             = new Date(),
+): Promise<void> {
+  const user = await getUser(platformChatId)
+  if (!user) return
+  const state    = parseSplitState(user.splitState)
+  const todayISO = now.toISOString().slice(0, 10)
+  if (state.lastSkipDate === todayISO) return  // already recorded
+  await writeSplitState(user.id, { ...state, lastSkipDate: todayISO })
+}
+
+/**
+ * updatePRFromNL
+ * Updates MessengerUser.personalRecords when the user mentions a PR in natural
+ * language ("hit a 100kg squat PR").  Uses the same JSON field that /pr reads,
+ * so both sources converge on a single store.
+ * Returns true if a new record was written.
+ */
+export async function updatePRFromNL(
+  platformChatId: string,
+  text:           string,
+): Promise<boolean> {
+  const prSignal = /\b(?:hit\s+(?:a\s+)?(?:new\s+)?(?:pr|pb)|new\s+(?:pr|pb|record|personal\s+(?:record|best))|personal\s+(?:record|best))\b/i.test(text)
+  if (!prSignal) return false
+
+  const exerciseRe = /\b(bench(?:\s+press)?|squat|deadlift|overhead\s+press|ohp|barbell\s+row|pull.?up|curl)\b/i
+  const exerciseMatch = exerciseRe.exec(text)
+  if (!exerciseMatch) return false
+  const exercise = exerciseMatch[1]!.toLowerCase().replace(/\s+/g, "_")
+
+  const weightMatch = /(\d+(?:\.\d+)?)\s*kg/i.exec(text)
+  if (!weightMatch) return false
+  const weightKg = parseFloat(weightMatch[1]!)
+
+  const repsMatch = /(\d+)\s*(?:reps?|x\s*\d|×\s*\d)/i.exec(text)
+  const reps      = repsMatch ? parseInt(repsMatch[1]!) : 1
+
+  const user = await getUser(platformChatId)
+  if (!user) return false
+
+  const records = parsePersonalRecords(user.personalRecords)
+  const prev    = records[exercise]
+  if (prev && weightKg <= prev.weightKg && reps <= prev.reps) return false
+
+  await writePersonalRecords(user.id, {
+    ...records,
+    [exercise]: {
+      weightKg,
+      reps,
+      date:      new Date().toISOString().slice(0, 10),
+      sessionId: "nl",
+    },
+  })
+  return true
 }
