@@ -640,7 +640,7 @@ interface StepDef {
   // What to do when user says skip/idk
   skipBehavior: "advance_with_null" | "advance_with_default" | "advance_unknown";
   skipDefault?: string;
-  // How many times to show this question before force-advancing
+  // How many times to re-ask before showing structured choices
   repeatLimit: number;
   // nextStep: always static (no dynamic routing through LLM)
   nextStep: StepId;
@@ -648,6 +648,10 @@ interface StepDef {
   verifyMessage: (proposed: string) => string;
   // Which IntakeAnswers keys to write on store
   storageKeys: (value: string) => Record<string, string>;
+  // Shown after repeatLimit invalid answers — structured choices, never advances automatically
+  guidedRecovery: (answers: Record<string, string>) => string;
+  // One-line answer to "why do you want to know?" — shown when user asks about the step
+  contextExplanation: string;
 }
 
 const STEPS: Record<StepId, StepDef> = {
@@ -662,6 +666,8 @@ const STEPS: Record<StepId, StepDef> = {
     nextStep: "goal",
     verifyMessage: v => `Just to confirm — your name is ${v}?`,
     storageKeys: v => ({ name: v }),
+    guidedRecovery: () => `I still need something to call you.\n\nJust type your first name — even a nickname works.`,
+    contextExplanation: "I use your name to personalize this — nothing else.",
   },
 
   goal: {
@@ -675,6 +681,8 @@ const STEPS: Record<StepId, StepDef> = {
     nextStep: "body_stats",
     verifyMessage: v => `Your goal is ${v} — right?`,
     storageKeys: v => ({ gym_goal: v, gym_goal_raw: v }),
+    guidedRecovery: () => `What's your main training goal? Pick one:\n\n• Muscle — build size\n• Strength — move more weight\n• Fat Loss — cut down\n• General Fitness — stay active\n• Performance — sport or endurance\n\nOr describe it in your own words.`,
+    contextExplanation: "Your goal drives rep ranges, volume, and how I program recovery — it changes the whole plan.",
   },
 
   body_stats: {
@@ -693,6 +701,8 @@ const STEPS: Record<StepId, StepDef> = {
       }));
       return parts;
     },
+    guidedRecovery: () => `I need your bodyweight and height.\n\nExamples:\n• 75kg 180cm\n• 165lbs 5'10\n• 80 182\n\nOr type "skip" if you'd rather leave this blank.`,
+    contextExplanation: "Weight helps me calibrate load recommendations. Height helps estimate proportions.",
   },
 
   experience: {
@@ -706,6 +716,8 @@ const STEPS: Record<StepId, StepDef> = {
     nextStep: "lifts",
     verifyMessage: v => `Classifying you as ${v} — correct?`,
     storageKeys: v => ({ training_experience: v }),
+    guidedRecovery: () => `How long have you been training consistently?\n\n• Beginner — under 1 year\n• Intermediate — 1 to 3 years\n• Advanced — 3+ years\n\nPick one.`,
+    contextExplanation: "Experience level changes how I program progressive overload — beginners and advanced lifters need very different approaches.",
   },
 
   lifts: {
@@ -727,6 +739,8 @@ const STEPS: Record<StepId, StepDef> = {
       }
       return r;
     },
+    guidedRecovery: () => `I need your squat, bench, and deadlift numbers — or skip.\n\nFormat: squat 100 bench 80 deadlift 120\n\nOr just type "skip" if you don't have numbers yet.`,
+    contextExplanation: "Your lifts tell me where to anchor the program so I'm not programming weights you can't hit.",
   },
 
   days: {
@@ -740,6 +754,8 @@ const STEPS: Record<StepId, StepDef> = {
     nextStep: "split",
     verifyMessage: v => `${v} days per week — correct?`,
     storageKeys: v => ({ available_training_days: v }),
+    guidedRecovery: () => `How many days per week can you realistically train?\n\n• 3 days\n• 4 days\n• 5 days\n• 6 days\n\nType any number from 1 to 7.`,
+    contextExplanation: "Training days determine what split is even possible — 3 days and 6 days need completely different programs.",
   },
 
   split: {
@@ -760,6 +776,11 @@ const STEPS: Record<StepId, StepDef> = {
       if (v === "BUILD") throw new Error("[onboarding] BUILD sentinel must never be written to DB");
       return { current_split: v };
     },
+    guidedRecovery: a => {
+      const d = a.available_training_days ?? "4";
+      return `What's your training split?\n\n• PPL — Push / Pull / Legs\n• Upper / Lower\n• Full Body\n• Bro Split\n• Build one for me — I'll generate a ${d}-day plan\n\nOr describe yours.`;
+    },
+    contextExplanation: "The split is the structure I build your whole program around.",
   },
 
   confirm_split: {
@@ -776,6 +797,8 @@ const STEPS: Record<StepId, StepDef> = {
     nextStep: "gym_time",
     verifyMessage: () => `Is the split above good to go?`,
     storageKeys: () => ({}),
+    guidedRecovery: a => `${a._pending_split_display ?? "Generated split"}\n\nSay yes to keep it, or no to go back and change it.`,
+    contextExplanation: "Just confirming the split before we move on.",
   },
 
   gym_time: {
@@ -789,6 +812,8 @@ const STEPS: Record<StepId, StepDef> = {
     nextStep: "protein",
     verifyMessage: v => `You train around ${v} — right?`,
     storageKeys: v => ({ gym_session_time: v }),
+    guidedRecovery: () => `When do you usually train?\n\n• Morning — before noon\n• Afternoon — noon to 6pm\n• Evening — 6pm onwards\n\nOr type a specific time like 7pm or 18:30.`,
+    contextExplanation: "I time check-ins around your training window so you're not getting messages at 6am when you train at night.",
   },
 
   protein: {
@@ -804,6 +829,8 @@ const STEPS: Record<StepId, StepDef> = {
     storageKeys: v => v === "not_tracking"
       ? { protein_raw: "not_tracking", protein_status: "not_tracking" }
       : { protein_raw: v, daily_protein_g: v, protein_status: "reported" },
+    guidedRecovery: () => `How much protein are you getting daily?\n\nType a number in grams — like 150 — or say "not tracking" and I'll set a target for you.`,
+    contextExplanation: "Protein intake tells me whether to add nutrition coaching or leave that alone.",
   },
 
   injury: {
@@ -817,6 +844,8 @@ const STEPS: Record<StepId, StepDef> = {
     nextStep: "review",
     verifyMessage: v => v === "none" ? `No injuries to flag — correct?` : `Noting: "${v}" — right?`,
     storageKeys: v => ({ injury_notes: v }),
+    guidedRecovery: () => `Any injuries or areas I need to work around?\n\nDescribe them — or just say "none" if everything is fine.`,
+    contextExplanation: "Injuries change which exercises are safe to include — I won't program around something I don't know about.",
   },
 
   review: {
@@ -833,6 +862,8 @@ const STEPS: Record<StepId, StepDef> = {
     nextStep: "review",
     verifyMessage: () => `Just confirm with "yes" to finish, or "no" to restart.`,
     storageKeys: () => ({}),
+    guidedRecovery: (a) => `${buildReviewCard(a)}\n\nType yes to confirm, or no to start over.`,
+    contextExplanation: "Just confirming everything before we finish.",
   },
 };
 
@@ -1153,37 +1184,13 @@ export async function handleOnboardingV2(input: {
     return { handled: true, reply };
   }
 
-  // ── Loop prevention ───────────────────────────────────────────────────────────
+  // ── Parse first — skip signals always bypass the repeat counter ──────────────
+  // Intentional skips (idk, skip, not sure, whatever) are honoured immediately,
+  // regardless of how many bad answers the user gave before this message.
   const repeatKey = state.currentStep;
-  state.repeatCounts[repeatKey] = (state.repeatCounts[repeatKey] ?? 0) + 1;
+  const parsed    = stepDef.parser(text);
 
-  if (state.repeatCounts[repeatKey]! > stepDef.repeatLimit) {
-    // Bug 3: split loop prevention routes to generator, never stores BUILD
-    if (state.currentStep === "split") {
-      logEntry(state, { step: "split", rawAnswer: text, normalizedAnswer: null, confidence: 0, storedValue: null, nextStep: "confirm_split", action: "split_generated", ts: Date.now() });
-      state.repeatCounts[repeatKey] = 0;
-      return await handleSplitGenerate(platformChatId, state, userId, resumePrefix);
-    }
-    const defaultVal = stepDef.skipDefault ?? null;
-    if (defaultVal) {
-      const keys = stepDef.storageKeys(defaultVal);
-      Object.assign(state.answers, keys);
-    }
-    logEntry(state, { step: state.currentStep, rawAnswer: text, normalizedAnswer: null, confidence: 0, storedValue: defaultVal, nextStep: stepDef.nextStep, action: "loop_prevented", ts: Date.now() });
-    state.currentStep = stepDef.nextStep;
-    state.repeatCounts[repeatKey] = 0;
-    const reply = resumePrefix + STEPS[stepDef.nextStep].question(state.answers);
-    await saveState(userId, state);
-    await addToShortTerm(platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" });
-    return { handled: true, reply };
-  }
-
-  // ── Parse the answer ──────────────────────────────────────────────────────────
-  const parsed = stepDef.parser(text);
-
-  // ── Skip: user deliberately chose to skip or said idk ────────────────────────
-  // isSkip = true means the text matched a known skip signal (idk, skip, whatever…).
-  // Advance with the step's default value — this is intentional user input.
+  // ── Intentional skip — advance with default, reset counter ───────────────────
   if (parsed.isSkip) {
     let stored: string | null = null;
 
@@ -1198,7 +1205,7 @@ export async function handleOnboardingV2(input: {
 
     logEntry(state, { step: state.currentStep, rawAnswer: text, normalizedAnswer: stored, confidence: parsed.confidence, storedValue: stored, nextStep: stepDef.nextStep, action: stored === null ? "skipped" : "unknown_stored", ts: Date.now() });
 
-    // Split skip → generator; never stores BUILD (Bug 3)
+    // Split skip → generator; never stores BUILD
     if (state.currentStep === "split") {
       return await handleSplitGenerate(platformChatId, state, userId, resumePrefix);
     }
@@ -1216,17 +1223,41 @@ export async function handleOnboardingV2(input: {
     return { handled: true, reply: skipReply };
   }
 
-  // ── Unknown: parser couldn't extract a valid answer — re-ask, do NOT advance ─
-  // isUnknown = true when the text did not match any known pattern for this step.
-  // This covers off-topic input, questions, insults, and gibberish.
-  // The repeatCount was already incremented above; after repeatLimit attempts the
-  // loop-prevention block above will force-advance with the default.
+  // ── Increment counter — only for non-skip, non-valid answers ─────────────────
+  state.repeatCounts[repeatKey] = (state.repeatCounts[repeatKey] ?? 0) + 1;
+
+  // ── Guided recovery — shown after repeatLimit invalid answers, never advances ─
+  // Replaces the old force-advance-with-default. The user sees structured choices
+  // and must provide a valid answer before state can mutate.
+  if (state.repeatCounts[repeatKey]! > stepDef.repeatLimit) {
+    // Split gets auto-generation as guided recovery (the most useful outcome)
+    if (state.currentStep === "split") {
+      logEntry(state, { step: "split", rawAnswer: text, normalizedAnswer: null, confidence: 0, storedValue: null, nextStep: "confirm_split", action: "split_generated", ts: Date.now() });
+      state.repeatCounts[repeatKey] = 0;
+      return await handleSplitGenerate(platformChatId, state, userId, resumePrefix);
+    }
+    logEntry(state, { step: state.currentStep, rawAnswer: text, normalizedAnswer: null, confidence: 0, storedValue: null, nextStep: null, action: "loop_prevented", ts: Date.now() });
+    state.repeatCounts[repeatKey] = 0; // reset so user gets fresh attempts after seeing choices
+    const recoveryReply = resumePrefix + stepDef.guidedRecovery(state.answers);
+    await saveState(userId, state);
+    await addToShortTerm(platformChatId, recoveryReply, { role: "assistant", intent: "intake", emotion: "neutral" });
+    return { handled: true, reply: recoveryReply };
+  }
+
+  // ── Unknown: parser couldn't extract a valid answer — classify and re-ask ─────
+  // isUnknown = true when the text matched no known pattern for this step.
+  // Covers off-topic input, questions, insults, and gibberish.
+  // Counter stays incremented — after repeatLimit unknowns, guided recovery fires.
   if (parsed.isUnknown) {
     const isGibberish = detectGibberish(text);
     const cls: InvalidAnswerClass = isGibberish
       ? "gibberish"
       : await classifyInvalidAnswer(text, stepDef.question(state.answers));
-    const invalidReply = resumePrefix + buildInvalidAnswerReply(cls, stepDef.question(state.answers));
+    const invalidReply = resumePrefix + buildInvalidAnswerReply(
+      cls,
+      stepDef.question(state.answers),
+      stepDef.contextExplanation,
+    );
     logEntry(state, { step: state.currentStep, rawAnswer: text, normalizedAnswer: null, confidence: parsed.confidence, storedValue: null, nextStep: null, action: "skipped", ts: Date.now() });
     await saveState(userId, state);
     await addToShortTerm(platformChatId, invalidReply, { role: "assistant", intent: "intake", emotion: "neutral" });
@@ -1271,13 +1302,12 @@ export async function handleOnboardingV2(input: {
       await addToShortTerm(platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" });
       return { handled: true, reply };
     }
-    logEntry(state, { step: state.currentStep, rawAnswer: text, normalizedAnswer: null, confidence: parsed.confidence, storedValue: null, nextStep: stepDef.nextStep, action: "skipped", ts: Date.now() });
-    state.currentStep = stepDef.nextStep;
-    state.repeatCounts[repeatKey] = 0;
-    const reply = resumePrefix + STEPS[state.currentStep].question(state.answers);
+    // No extractedValue — re-ask rather than advance with nothing
+    logEntry(state, { step: state.currentStep, rawAnswer: text, normalizedAnswer: null, confidence: parsed.confidence, storedValue: null, nextStep: null, action: "skipped", ts: Date.now() });
+    const lowConfReply = resumePrefix + stepDef.question(state.answers);
     await saveState(userId, state);
-    await addToShortTerm(platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" });
-    return { handled: true, reply };
+    await addToShortTerm(platformChatId, lowConfReply, { role: "assistant", intent: "intake", emotion: "neutral" });
+    return { handled: true, reply: lowConfReply };
   }
 
   // ── High confidence: store and advance ────────────────────────────────────────

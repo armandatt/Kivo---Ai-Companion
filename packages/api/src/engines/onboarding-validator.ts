@@ -68,15 +68,20 @@ export async function classifyInvalidAnswer(
 
 // ── Re-ask message builder ────────────────────────────────────────────────────
 // Inside onboarding: no roasting, no sarcasm. One firm sentence + repeat the question.
+// Pass contextExplanation to give a real answer when the user asks "why?".
 
 export function buildInvalidAnswerReply(
   cls: InvalidAnswerClass,
   stepQuestion: string,
+  contextExplanation?: string,
 ): string {
+  if (cls === "question" && contextExplanation) {
+    return `${contextExplanation}\n\nNow: ${stepQuestion}`;
+  }
   const prefixes: Record<InvalidAnswerClass, string> = {
-    question:  "I'll cover that after setup. Right now I need this answer:",
+    question:  "I'll explain more after setup.",
     off_topic: "Let's stay on track.",
-    insult:    "I need a real answer for this one.",
+    insult:    "You can roast me after setup. Right now I need an actual answer.",
     gibberish: "I need a real answer for this one.",
     uncertain: "Not sure what you mean — try being more specific.",
   };
