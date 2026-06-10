@@ -223,30 +223,6 @@ export async function POST(req: Request) {
         return Response.json({ ok: true });
       }
 
-      // ── Natural-language reminder cancel ──────────────────────────────────
-      // "stop reminding me to drink water", "cancel my protein reminder", etc.
-      const nlCancelMatch = text.match(
-        /\b(?:stop|cancel|remove|delete|turn off|disable)\b.{0,30}\b(?:remind(?:er|ing me)?|notification)\b.{0,40}(?:for|about|to|of)?\s+(.+)/i
-      );
-      if (nlCancelMatch?.[1]) {
-        await addToShortTerm(chatId.toString(), text, { role: "user", intent: "reminder_cancel", emotion: "neutral" });
-        const reply = await cancelReminderByKeyword(chatId.toString(), nlCancelMatch[1].trim());
-        await sendAndRemember(chatId, reply, "reminder_cancel", "neutral");
-        return Response.json({ ok: true });
-      }
-
-      // ── Natural-language reminder edit ────────────────────────────────────
-      // "change my water reminder to every 2 hours", "update gym reminder to 7am"
-      const nlEditMatch = text.match(
-        /\b(?:change|update|edit|switch|modify)\b.{0,20}?\b(.+?)\b\s*reminder\b.{0,10}to\b\s+(.+)/i
-      );
-      if (nlEditMatch?.[1] && nlEditMatch?.[2]) {
-        await addToShortTerm(chatId.toString(), text, { role: "user", intent: "reminder_edit", emotion: "neutral" });
-        const reply = await updateReminderByKeyword(chatId.toString(), nlEditMatch[1].trim(), nlEditMatch[2].trim());
-        await sendAndRemember(chatId, reply, "reminder_edit", "neutral");
-        return Response.json({ ok: true });
-      }
-
       // ── Parsing Engine V2 ─────────────────────────────────────────────────
       // Must run before reminder routing so multi-intent messages survive
       // (e.g. "remind me to drink water and chest is sore" → both intents extracted).
@@ -264,8 +240,32 @@ export async function POST(req: Request) {
           await sendAndRemember(chatId, result.reply, "reminder_create", "neutral");
           return Response.json({ ok: true });
         }
-        // parseAndCreateReminder returned null (LLM couldn't extract time/target)
-        // — fall through to orchestrator so the message is not silently dropped
+        // parseAndCreateReminder returned null — fall through to orchestrator
+      }
+
+      // ── Reminder: delete (V2-gated) ───────────────────────────────────────
+      if (v2Parse.actionableIntent?.type === "reminder_delete") {
+        const keyword = v2Parse.entities.find((e: any) => e.type === "reminder_target")?.value;
+        if (keyword) {
+          await addToShortTerm(chatId.toString(), text, { role: "user", intent: "reminder_cancel", emotion: "neutral" });
+          const reply = await cancelReminderByKeyword(chatId.toString(), keyword);
+          await sendAndRemember(chatId, reply, "reminder_cancel", "neutral");
+          return Response.json({ ok: true });
+        }
+        // no keyword extracted — fall through to orchestrator
+      }
+
+      // ── Reminder: edit (V2-gated) ─────────────────────────────────────────
+      if (v2Parse.actionableIntent?.type === "reminder_edit") {
+        const keyword         = v2Parse.entities.find((e: any) => e.type === "reminder_target")?.value;
+        const newScheduleText = text.match(/\bto\s+(.+)$/i)?.[1]?.trim();
+        if (keyword && newScheduleText) {
+          await addToShortTerm(chatId.toString(), text, { role: "user", intent: "reminder_edit", emotion: "neutral" });
+          const reply = await updateReminderByKeyword(chatId.toString(), keyword, newScheduleText);
+          await sendAndRemember(chatId, reply, "reminder_edit", "neutral");
+          return Response.json({ ok: true });
+        }
+        // insufficient info — fall through to orchestrator
       }
 
       // ── Active workout logging (mid-session set entry) ────────────────────
@@ -317,13 +317,18 @@ export async function POST(req: Request) {
           return Response.json({ ok: true });
         }
 
+        // Parser V2 decides intent; fall back to messageProcessor for intents
+        // V2 doesn't cover (energy_checkin, pr_log, gym_checkin via processed).
+        const v2GymIntent = mapV2ToGymIntent(v2Parse.actionableIntent?.type ?? "", text)
+          ?? processed.intent;
+
         const gymResult = await handleGymMessage({
           userId: gymUserId,
           text:   processed.cleanedText,
-          intent: processed.intent,
+          intent: v2GymIntent,
         });
         if (gymResult.handled && gymResult.reply) {
-          await sendAndRemember(chatId, gymResult.reply, processed.intent, processed.emotion);
+          await sendAndRemember(chatId, gymResult.reply, v2GymIntent, processed.emotion);
           return Response.json({ ok: true });
         }
       }
@@ -432,8 +437,14 @@ export async function POST(req: Request) {
         return Response.json({ ok: true });
       }
 
-      // ── Nutrition logging (fire-and-forget) ───────────────────────────────
-      if (/\b(ate|eating|had|protein|calories|meal|breakfast|lunch|dinner|snack|macros|pre.?workout|post.?workout|grams? of|chicken|rice|oats)\b/i.test(text)) {
+      // ── Nutrition logging (V2-gated) ──────────────────────────────────────
+      // Parser V2 gates all nutrition writes. Raw regex removed — "ASK > GUESS".
+      // >= 0.55: log (covers "I ate chicken" at 0.82, food mentions at 0.72)
+      // < 0.55: skip — no silent writes on vague/ambiguous messages
+      const nutIntent = v2Parse.intents.find(
+        (i: any) => i.type === "nutrition_context" || i.type === "nutrition_query"
+      );
+      if (nutIntent && nutIntent.confidence >= 0.55) {
         parseAndSaveNutrition(chatId.toString(), text).catch(() => {});
       }
 
@@ -587,6 +598,29 @@ async function sendTelegramChatAction(chatId: number | string, action: "typing")
       body:    JSON.stringify({ chat_id: chatId, action }),
     });
   } catch { /* typing indicator failure is non-fatal */ }
+}
+
+// ── V2 intent → gym.service intent mapping ────────────────────────────────────
+// Parser V2 decides intent; gym.service executes the action.
+// Deterministic extraction (weights, reps, exercise names) stays inside gym.service.
+function mapV2ToGymIntent(v2Type: string, text: string): string | null {
+  switch (v2Type) {
+    case "log_workout": {
+      // Distinguish explicit lift log from general checkin
+      const hasExercise = /\b(?:bench|squat|deadlift|press(?:ing)?|rows?|curls?)\b/i.test(text);
+      const hasNumber   = /\b\d+\s*(?:kg|x)\b/i.test(text);
+      return (hasExercise && hasNumber) ? "lift_log" : "gym_checkin";
+    }
+    case "log_weight":       return "weight_log";
+    case "log_soreness":     return "soreness_log";
+    case "log_skip":         return "missed_session";
+    case "log_pain":         return "pain_report";
+    case "progress_query":   return "recovery_query";
+    case "recovery_context": return "recovery_query";
+    case "nutrition_context": return "nutrition_query";
+    case "nutrition_query":  return "nutrition_query";
+    default:                 return null;
+  }
 }
 
 // ── Parsing Engine V2 context builder ────────────────────────────────────────
