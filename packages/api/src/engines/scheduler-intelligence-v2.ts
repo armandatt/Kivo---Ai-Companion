@@ -383,6 +383,14 @@ export async function buildSchedulerContextV2(
     timezone,
   )
 
+  // F7: when the observed window is unreliable (< 3 sessions) and the user has
+  // no stored preferredCheckInTime, use the onboarding gym_session_time as a
+  // temporary scheduler anchor so the training state isn't perpetually UNKNOWN.
+  const effectiveCheckInTime =
+    windowConfidence !== "high" && !user.preferredCheckInTime && intake.gym_session_time
+      ? (intake.gym_session_time as string)
+      : user.preferredCheckInTime
+
   const todayISO = getLocalDateISO(now, timezone)
 
   // Completed today
@@ -429,7 +437,7 @@ export async function buildSchedulerContextV2(
     now,
     timezone,
     observedWindow,
-    preferredCheckInTime:  user.preferredCheckInTime,
+    preferredCheckInTime:  effectiveCheckInTime,
     lastSkipDateISO:       state.lastSkipDate,
     completedTodayMuscles,
     daysSinceLastSession,
