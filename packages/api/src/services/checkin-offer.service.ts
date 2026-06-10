@@ -1,3 +1,5 @@
+import { isAffirmative, isNegative } from "../engines/parsing-engine-v2";
+
 // ── Pending check-in offer store ─────────────────────────────────────────────
 // In-memory map: chatId → { minutes, offeredAt }
 // Persists within the Railway process lifetime. Loss on restart is fine —
@@ -89,15 +91,15 @@ export function shouldOfferCheckIn(text: string, intent: string): boolean {
 }
 
 // ── Confirmation / rejection ──────────────────────────────────────────────────
+// Delegates to parsing-engine-v2 so all confirmation language is handled
+// by a single source of truth across onboarding, check-ins, and future flows.
 
 export function isConfirmation(text: string): boolean {
-  const t = text.toLowerCase().trim();
-  return /^(yes|yeah|yep|yup|sure|ok|okay|ok sure|yes please|do it|go for it|sounds good|perfect|please|schedule it|set it|definitely|absolutely)\b/.test(t);
+  return isAffirmative(text);
 }
 
 export function isRejection(text: string): boolean {
-  const t = text.toLowerCase().trim();
-  return /^(no|nah|nope|not now|skip|skip it|don'?t|cancel|forget it|never mind|no thanks|its ok|it'?s ok|i'?ll come back|no need)\b/.test(t);
+  return isNegative(text);
 }
 
 // ── Offer message ─────────────────────────────────────────────────────────────

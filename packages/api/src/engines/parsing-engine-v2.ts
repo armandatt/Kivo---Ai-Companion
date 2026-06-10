@@ -121,6 +121,7 @@ const REMINDER_VERB_RE    = /\b(?:remind(?:ers?)?(?:\s+me)?|ping(?:\s+me)?|alert
 // Implicit reminder: "[thing] every [frequency]" (no verb, inferred)
 const IMPLICIT_REMINDER_RE = /\b\w[\w\s]{0,20}\s+every\s+(?:\d+\s*(?:hours?|hr|mins?|minutes?|days?)|hour|day|morning|evening)\b/i
 const REMINDER_DELETE_RE  = /\b(?:stop|cancel|remove|delete|disable|turn\s+off)\b.{0,25}\b(?:reminders?|ping|alert)\b/i
+const REMINDER_EDIT_RE    = /\b(?:change|update|edit|switch|modify|move|reschedule)\b.{0,30}\b(?:reminders?|ping|alert)\b/i
 const FREQUENCY_NUM_RE    = /\bevery\s+(\d+)\s*(hours?|hr|mins?|minutes?|days?)\b/i
 const EVERY_HOUR_RE       = /\bevery\s+hour\b|\bhourly\b/i
 const EVERY_30MIN_RE      = /\bevery\s+(?:30\s*(?:min|minute)|half\s*hour)\b/i
@@ -395,14 +396,12 @@ function detectReminderDelete(text: string): IntentResult | null {
 
 function detectLogSkip(text: string): IntentResult | null {
   if (!FAILURE_RE.test(text)) return null
-  // Distinguish context (just mentioning) from log request
-  // "I skipped" → failure signal (context)
-  // "skipped today, log it" → log_skip (actionable)
-  const isExplicitLog = /\b(?:log|record|mark|note|save)\b/i.test(text)
-  if (isExplicitLog) {
+  const isExplicitLog  = /\b(?:log|record|mark|note|save)\b/i.test(text)
+  // "Skipped push today", "missed chest day" — gym-context skips are inherently log requests
+  const hasSessionSkip = /\b(?:skipped?|missed)\s+(?:gym|workout|training|session|push|pull|legs?|chest|back|shoulders?|arms?|today)\b/i.test(text)
+  if (isExplicitLog || hasSessionSkip) {
     return makeIntent(IntentType.LOG_SKIP, 0.88, [text.slice(0, 60)], true, { action: "log_skip" })
   }
-  // Return as FAILURE_SIGNAL (contextual) instead
   return null
 }
 
@@ -453,10 +452,13 @@ function detectNutritionQuery(text: string): IntentResult | null {
 }
 
 function detectNutritionContext(text: string): IntentResult | null {
-  if (!/\b(?:eating|food|meal|diet|protein|calories?|macros?|nutrition)\b/i.test(text)) return null
-  // Only return as context if it's not a query
+  if (!/\b(?:eating|food|meal|diet|protein|calories?|macros?|nutrition|ate|had|eaten|having)\b/i.test(text)) return null
   if (detectNutritionQuery(text)) return null
-  return makeIntent(IntentType.NUTRITION_CONTEXT, 0.72, [text.slice(0, 40)], false)
+  // Explicit food consumption verb + specific food → higher confidence
+  const hasConsumptionVerb = /\b(?:ate|had|eaten|eating|having)\b/i.test(text)
+  const hasSpecificFood    = /\b(?:chicken|eggs?|rice|oats?|fish|meat|dal|paneer|salad|bread|pasta|fruit|milk|curd|yogurt|nuts?|veggies?|vegetables?|sandwich|smoothie|shake|whey|supplement)\b/i.test(text)
+  const conf = (hasConsumptionVerb && hasSpecificFood) ? 0.82 : 0.72
+  return makeIntent(IntentType.NUTRITION_CONTEXT, conf, [text.slice(0, 40)], false)
 }
 
 function detectMoodContext(text: string): IntentResult | null {
@@ -471,7 +473,9 @@ function detectTravelContext(text: string): IntentResult | null {
 
 function detectLogWorkout(text: string): IntentResult | null {
   const done = /\b(?:just\s+(?:finished|done|wrapped\s+up|completed|got\s+back\s+from)|done\s+with\s+(?:my|the|a)?\s*(?:workout|training|session|gym|lift)|workout\s+(?:done|complete|finished|over|crushed)|crushed\s+(?:it|today|the\s+workout|my\s+session)|back\s+from\s+(?:the\s+)?gym|session\s+(?:done|complete)|hit\s+the\s+gym|hit\s+(?:legs?|chest|back|shoulders?|arms?|quads?|hamstrings?|glutes?|pull|push)\s+today)\b/i.test(text)
-  if (!done) return null
+  // Explicit lift log: "bench 75 x 8", "squat 100kg 3x5", "deadlift 3 sets"
+  const explicitLift = /\b(?:bench|squat|deadlift|press(?:ing)?|rows?|curls?|pull.?ups?|dips?)\b.{0,30}\b\d+\b/i.test(text)
+  if (!done && !explicitLift) return null
   return makeIntent(IntentType.LOG_WORKOUT, 0.88, [text.slice(0, 60)], true, { action: "log_session" })
 }
 
@@ -500,6 +504,32 @@ function detectCheckinSchedule(text: string): IntentResult | null {
     })
   }
   return null
+}
+
+function detectReminderEdit(text: string): IntentResult | null {
+  if (!REMINDER_EDIT_RE.test(text)) return null
+  return makeIntent(IntentType.REMINDER_EDIT, 0.88, [text.slice(0, 60)], true, { action: "edit_reminder" })
+}
+
+function detectLogWeight(text: string): IntentResult | null {
+  const hasWeightVerb = /\b(?:i\s+(?:weigh|am\s+\d|weight)|(?:my\s+)?(?:bodyweight|body\s+weight|current\s+weight)\s+(?:is|was|:|=)|weighed?\s+in\s+at)\b/i.test(text)
+  if (!hasWeightVerb) return null
+  if (!extractWeightKg(text)) return null
+  return makeIntent(IntentType.LOG_WEIGHT, 0.88, [text.slice(0, 60)], true, { action: "log_weight" })
+}
+
+const LOG_SORENESS_RE = /\b(?:(?:chest|legs?|back|shoulders?|arms?|biceps?|triceps?|lats?|quads?|hamstrings?|glutes?|calves?|traps?)\s+(?:is|are|feels?|feeling)?\s*(?:sore|tender|tight|stiff|aching|achy|fatigued)|(?:soreness|DOMS)\s+(?:in\s+)?(?:my\s+)?(?:chest|legs?|back|shoulders?|arms?|quads?|hamstrings?|glutes?|calves?))\b/i
+
+function detectLogSoreness(text: string): IntentResult | null {
+  if (!LOG_SORENESS_RE.test(text)) return null
+  return makeIntent(IntentType.LOG_SORENESS, 0.85, [text.slice(0, 60)], true, { action: "log_soreness" })
+}
+
+const LOG_PAIN_RE = /\b(?:(?:knee|shoulder|wrist|elbow|hip|ankle|neck|lower\s+back|upper\s+back)\s+(?:is\s+)?(?:pain(?:ful)?|hurt(?:ing|s)?|aching|achy)|(?:pain|hurt(?:ing|s)?)\s+(?:in\s+(?:my\s+)?)?(?:knee|shoulder|wrist|elbow|hip|ankle|neck|back))\b/i
+
+function detectLogPain(text: string): IntentResult | null {
+  if (!LOG_PAIN_RE.test(text)) return null
+  return makeIntent(IntentType.LOG_PAIN, 0.86, [text.slice(0, 60)], true, { action: "log_pain" })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -636,6 +666,7 @@ const ACTIONABLE_TYPES = new Set<IntentType>([
   IntentType.LOG_SKIP,
   IntentType.LOG_WEIGHT,
   IntentType.LOG_SORENESS,
+  IntentType.LOG_PAIN,
   IntentType.RECOMMENDATION_REQUEST,
   IntentType.ADVICE_REQUEST,
   IntentType.NUTRITION_QUERY,
@@ -707,8 +738,12 @@ export function parseMessage(
   // Actionable detectors
   const rem = detectReminderCreate(trimmed);       if (rem)  rawIntents.push(rem)
   const del = detectReminderDelete(trimmed);       if (del)  rawIntents.push(del)
+  const edt = detectReminderEdit(trimmed);         if (edt)  rawIntents.push(edt)
   const log = detectLogWorkout(trimmed);           if (log)  rawIntents.push(log)
   const skp = detectLogSkip(trimmed);              if (skp)  rawIntents.push(skp)
+  const wgt = detectLogWeight(trimmed);            if (wgt)  rawIntents.push(wgt)
+  const sor = detectLogSoreness(trimmed);          if (sor)  rawIntents.push(sor)
+  const lp  = detectLogPain(trimmed);              if (lp)   rawIntents.push(lp)
   const rec = detectRecommendationRequest(trimmed);if (rec)  rawIntents.push(rec)
   const adv = detectAdviceRequest(trimmed);        if (adv)  rawIntents.push(adv)
   const nuq = detectNutritionQuery(trimmed);       if (nuq)  rawIntents.push(nuq)
