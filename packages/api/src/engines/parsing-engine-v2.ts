@@ -147,9 +147,27 @@ const TRAVEL_RE = /\b(?:travel(?:l?ing|l?ed)?|going\s+(?:away|out\s+of\s+town)|o
 const BUSY_RE   = /\b(?:busy|no\s+time|too\s+much\s+(?:on|going\s+on)|schedule\s+(?:is\s+)?(?:packed|full|crazy)|work(?:ing)?\s+(?:a\s+lot|overtime|long\s+hours)|no\s+free\s+time)\b/i
 
 // ─── Short reply classification ───────────────────────────────────────────────
-const AFFIRM_RE = /^(?:yeah|yes|yep|yup|sure|okay|ok|fine|alright|absolutely|definitely|of\s+course|correct|right|exactly|confirmed?|done|for\s+sure|totally|yep\s+done|did\s+it|yess+)\.?!?$/i
-const DENY_RE   = /^(?:no|nope|nah|not\s+really|not\s+yet|not\s+today|haven'?t|didn'?t|nahh|na|nah)\.?!?$/i
-const ACK_RE    = /^(?:k|kay|kk|ok|okay|thanks?|cool|got\s+it|noted|understood|roger|sounds?\s+good|makes?\s+sense|sure)\.?!?$/i
+const AFFIRM_RE = /^(?:yeah|yes|yep|yup|ya|sure|okay|ok|fine|alright|absolutely|definitely|of\s+course|correct|right|exactly|confirmed?|done|for\s+sure|totally|yep\s+done|did\s+it|yess+|perfect|great|awesome|nice|love\s+it|all\s+good|good(?:\s+(?:with\s+(?:this|that|it)|to\s+go|enough))?|looks?\s+good(?:\s+to\s+me)?|works?(?:\s+for\s+me)?|sounds?\s+good(?:\s+to\s+me)?|let'?s\s+(?:do\s+it|go)|i'?m\s+good|im\s+good)\.?!?$/i
+const DENY_RE   = /^(?:no|nope|nah|na|not\s+really|not\s+yet|not\s+today|haven'?t|didn'?t|nahh|incorrect|wrong|negative|not\s+(?:good|right|correct)|that'?s\s+(?:not\s+right|wrong)|thats\s+(?:not\s+right|wrong)|change\s+it|don'?t\s+like\s+it|dont\s+like\s+it)\.?!?$/i
+const ACK_RE    = /^(?:k|kay|kk|ok|okay|thanks?|cool|got\s+it|noted|understood|roger|makes?\s+sense)\.?!?$/i
+
+// Non-anchored — matches a modification request anywhere in the text
+// (e.g. "swap chest and back day", "can you change the split").
+const MODIFICATION_RE = /\b(?:swap|change|modify|replace|add|remove|different|adjust|redo|switch|move)\b/i
+
+// ─── Confirmation / rejection — exported for reuse outside this engine ─────────
+// These are the SOURCE OF TRUTH for "is this an affirmation / rejection /
+// modification request" across the codebase. Other engines (e.g. onboarding)
+// should consume these instead of maintaining their own exact-match Sets.
+export function isAffirmative(text: string): boolean {
+  return AFFIRM_RE.test(text.trim())
+}
+export function isNegative(text: string): boolean {
+  return DENY_RE.test(text.trim())
+}
+export function isModificationRequest(text: string): boolean {
+  return MODIFICATION_RE.test(text)
+}
 
 // ─── Onboarding step → expected answer type ───────────────────────────────────
 const ONBOARDING_STEP_MAP: Record<string, IntentType> = {
