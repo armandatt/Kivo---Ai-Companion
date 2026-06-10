@@ -8,6 +8,12 @@ import {
   isModificationRequest,
   type ParseContext,
 } from "./parsing-engine-v2";
+import {
+  detectGibberish,
+  classifyInvalidAnswer,
+  buildInvalidAnswerReply,
+  type InvalidAnswerClass,
+} from "./onboarding-validator";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -214,6 +220,8 @@ function hit(value: string, norm: string, reason: string, conf: number, verify =
 export function parseName(text: string): ParseResult {
   const n = normalize(text);
   if (n.isSkip) return skip();
+  // A question mark at the end means this is a question, not a name
+  if (text.trim().endsWith("?")) return unknown("question_detected");
   const t = text.trim();
   if (/^[A-Za-z][a-zA-Z'\-\s]{1,28}$/.test(t)) {
     const cap = t.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
@@ -1173,8 +1181,10 @@ export async function handleOnboardingV2(input: {
   // ── Parse the answer ──────────────────────────────────────────────────────────
   const parsed = stepDef.parser(text);
 
-  // ── Skip / unknown handling ───────────────────────────────────────────────────
-  if (parsed.isSkip || parsed.isUnknown) {
+  // ── Skip: user deliberately chose to skip or said idk ────────────────────────
+  // isSkip = true means the text matched a known skip signal (idk, skip, whatever…).
+  // Advance with the step's default value — this is intentional user input.
+  if (parsed.isSkip) {
     let stored: string | null = null;
 
     if (stepDef.skipBehavior === "advance_with_default" && stepDef.skipDefault) {
@@ -1200,10 +1210,27 @@ export async function handleOnboardingV2(input: {
       return await handleReview(platformChatId, state, userId, resumePrefix);
     }
 
-    const reply = resumePrefix + STEPS[state.currentStep].question(state.answers);
+    const skipReply = resumePrefix + STEPS[state.currentStep].question(state.answers);
     await saveState(userId, state);
-    await addToShortTerm(platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" });
-    return { handled: true, reply };
+    await addToShortTerm(platformChatId, skipReply, { role: "assistant", intent: "intake", emotion: "neutral" });
+    return { handled: true, reply: skipReply };
+  }
+
+  // ── Unknown: parser couldn't extract a valid answer — re-ask, do NOT advance ─
+  // isUnknown = true when the text did not match any known pattern for this step.
+  // This covers off-topic input, questions, insults, and gibberish.
+  // The repeatCount was already incremented above; after repeatLimit attempts the
+  // loop-prevention block above will force-advance with the default.
+  if (parsed.isUnknown) {
+    const isGibberish = detectGibberish(text);
+    const cls: InvalidAnswerClass = isGibberish
+      ? "gibberish"
+      : await classifyInvalidAnswer(text, stepDef.question(state.answers));
+    const invalidReply = resumePrefix + buildInvalidAnswerReply(cls, stepDef.question(state.answers));
+    logEntry(state, { step: state.currentStep, rawAnswer: text, normalizedAnswer: null, confidence: parsed.confidence, storedValue: null, nextStep: null, action: "skipped", ts: Date.now() });
+    await saveState(userId, state);
+    await addToShortTerm(platformChatId, invalidReply, { role: "assistant", intent: "intake", emotion: "neutral" });
+    return { handled: true, reply: invalidReply };
   }
 
   // ── Build split signal ────────────────────────────────────────────────────────
