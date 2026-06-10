@@ -1,3 +1,41 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// ONBOARDING ARCHITECTURE — SINGLE SOURCE OF TRUTH
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//  Telegram webhook
+//    └─ updateUserProfile (upsert — ensures messengerUser row exists)
+//    └─ needsIntake() ─────────────── intakeComplete = false?
+//         ├─ isV2Active() = true ──── handleOnboardingV2()   ← ONE gym brain
+//         │    ├─ state machine drives every step transition
+//         │    ├─ no LLM decides nextStep
+//         │    └─ finalizeIntake() on review confirm → intakeComplete = true
+//         │
+//         └─ isV2Active() = false ─── handleIntakeMessage()  ← V1 fallback only
+//              ├─ KEEP: study path  (sb1 … sb8)
+//              ├─ KEEP: general path (gn1 … gn3)
+//              ├─ MIGRATE: legacy gym mid-flow (ga_name … ga_review)
+//              │    kept only for users who started before V2 shipped
+//              │    removal pending telemetry showing zero active V1 gym sessions
+//              └─ not_started → initOnboardingV2() migrates to V2
+//
+//  isV2Active() = true when:
+//    • intakeStep is null / "not_started"   (any new user)
+//    • intakeStep is any value AND a V2 MemoryFact (type=onboarding_v2) exists
+//
+//  isV2Active() = false when:
+//    • intakeStep is a V1 step name (ga_name, sb1, etc.) AND no V2 MemoryFact
+//
+//  V1 entry point (fireMentorIntakeOpener — called on /start web-connect):
+//    • gym domain  → initOnboardingV2()  (does NOT write intakeStep)
+//    • study/general → writes intakeStep = sb1/gn1 directly (V1 path)
+//
+//  Dead code (never reached from this file):
+//    • onboarding.service.ts: handleOnboardingMessage, needsOnboarding
+//      (use onboardingComplete/onboardingStep — separate web-quiz fields)
+//    • onboarding-engine-v2.ts: confirmAndFinalizeOnboarding
+//      (superseded by the W6 review block inside handleOnboardingV2)
+//
+// ═══════════════════════════════════════════════════════════════════════════════
 //@ts-ignore
 import { processMessage } from "@repo/api/processor/messageProcessor";
 //@ts-ignore
@@ -27,6 +65,8 @@ import { handlePostSessionDebriefResponse, resetReengagementFlag } from "@repo/a
 //@ts-ignore
 import { needsIntake, getWebProfile, handleIntakeMessage } from "@repo/api/services/intake.service";
 //@ts-ignore
+import { handleOnboardingV2, isV2Active } from "@repo/api/engines/onboarding-engine-v2";
+//@ts-ignore
 import { handleWorkoutCommand, handleActiveLoggingMessage, resetReactivationCount } from "@repo/api/services/workoutTracking.service";
 //@ts-ignore
 import { handleOffTopicMessage } from "@repo/api/services/offTopicClassifier.service";
@@ -36,6 +76,8 @@ import { scheduleCheckIn, cancelCheckIn } from "@repo/api/services/scheduleCheck
 import { listReminders, cancelReminderByIndex, parseAndCreateReminder, cancelReminderByKeyword, updateReminderByKeyword } from "@repo/api/services/customReminder.service";
 //@ts-ignore
 import { parseAndSaveNutrition } from "@repo/api/services/rexSessionContext.service";
+//@ts-ignore
+import { parseMessage } from "@repo/api/engines/parsing-engine-v2";
 //@ts-ignore
 import { detectTimeMention } from "@repo/api/services/checkin-offer.service";
 //@ts-ignore
@@ -119,12 +161,39 @@ export async function POST(req: Request) {
       }
 
       // ── Intake gate ───────────────────────────────────────────────────────
+      // Routing decision tree (single source of truth):
+      //
+      //   Telegram message
+      //     └─ needsIntake() = true
+      //          ├─ isV2Active() = true  → handleOnboardingV2()   [gym, all new users]
+      //          │    └─ handled=false   → WARN + fall-through (should not happen)
+      //          └─ isV2Active() = false → handleIntakeMessage()  [study / general / legacy gym mid-V1]
+      //
+      // isV2Active() = true when:
+      //   • intakeStep is null / "not_started"  (new user, no prior step written)
+      //   • intakeStep is anything AND a V2 MemoryFact state record exists
+      //
+      // isV2Active() = false when:
+      //   • intakeStep is a V1 step name (ga_name, ga_goal, sb1, gn1, …) AND no V2 state
+      //   → those users continue on V1 until they complete naturally
       if (await needsIntake(chatId.toString())) {
-        const webProfile    = await getWebProfile(chatId.toString());
-        const intakeResult  = await handleIntakeMessage({ platformChatId: chatId.toString(), text, webProfile });
-        if (intakeResult.handled) {
-          await sendTelegramMessage(chatId, intakeResult.reply);
-          return Response.json({ ok: true });
+        if (await isV2Active(chatId.toString())) {
+          const v2Result = await handleOnboardingV2({ platformChatId: chatId.toString(), text });
+          if (v2Result.handled) {
+            await sendTelegramMessage(chatId, v2Result.reply);
+            return Response.json({ ok: true });
+          }
+          // V2 returned handled=false — should never happen for an active V2 session.
+          // Log and fall through so the user is not silently dropped.
+          console.warn(`[intake] V2 returned handled=false for chatId=${chatId} — falling through`);
+        } else {
+          // V1 fallback: study / general paths, and legacy gym users mid-V1
+          const webProfile   = await getWebProfile(chatId.toString());
+          const intakeResult = await handleIntakeMessage({ platformChatId: chatId.toString(), text, webProfile });
+          if (intakeResult.handled) {
+            await sendTelegramMessage(chatId, intakeResult.reply);
+            return Response.json({ ok: true });
+          }
         }
       }
 
@@ -178,16 +247,25 @@ export async function POST(req: Request) {
         return Response.json({ ok: true });
       }
 
-      // ── Natural-language reminder creation ────────────────────────────────
-      // "remind me at 8am to...", "update me at breakfast with...", "check in with me at 10pm..."
-      if (/\b(remind|reminder|update me at|check in with me at|ping me at)\b/i.test(text)) {
+      // ── Parsing Engine V2 ─────────────────────────────────────────────────
+      // Must run before reminder routing so multi-intent messages survive
+      // (e.g. "remind me to drink water and chest is sore" → both intents extracted).
+      const v2ParseCtx = await buildParseContext(chatId.toString());
+      const v2Parse    = parseMessage(text, v2ParseCtx);
+
+      // ── Natural-language reminder creation (V2-controlled routing) ────────
+      // Replaces the legacy /\b(remind|..)\b/ regex. Uses Parsing Engine V2
+      // actionableIntent so multi-intent messages (reminder + pain context,
+      // reminder + skip, etc.) route correctly and secondary intents survive.
+      if (v2Parse.actionableIntent?.type === "reminder_create") {
         const result = await parseAndCreateReminder(chatId.toString(), text);
         if (result) {
           await addToShortTerm(chatId.toString(), text, { role: "user", intent: "reminder_create", emotion: "neutral" });
           await sendAndRemember(chatId, result.reply, "reminder_create", "neutral");
           return Response.json({ ok: true });
         }
-        // null = LLM couldn't parse — fall through to normal processing
+        // parseAndCreateReminder returned null (LLM couldn't extract time/target)
+        // — fall through to orchestrator so the message is not silently dropped
       }
 
       // ── Active workout logging (mid-session set entry) ────────────────────
@@ -375,6 +453,7 @@ export async function POST(req: Request) {
         platform:    "telegram",
         timestamp:   new Date(),
         persistMode: "full",
+        parseResult: v2Parse,
       });
 
       // Write moment memories (fire-and-forget — never blocks the reply)
@@ -508,6 +587,37 @@ async function sendTelegramChatAction(chatId: number | string, action: "typing")
       body:    JSON.stringify({ chat_id: chatId, action }),
     });
   } catch { /* typing indicator failure is non-fatal */ }
+}
+
+// ── Parsing Engine V2 context builder ────────────────────────────────────────
+// Loads the last 5 messages for short-reply disambiguation and the current
+// intake step for stateful onboarding answers.  Intentionally cheap and
+// fault-tolerant — a DB error here must never block the message pipeline.
+async function buildParseContext(platformChatId: string) {
+  try {
+    const user = await prisma.messengerUser.findUnique({
+      where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+      select: {
+        intakeStep: true,
+        messages: {
+          orderBy: { createdAt: "desc" },
+          take:    5,
+          select:  { role: true, text: true, intent: true },
+        },
+      },
+    });
+    if (!user) return { recentMessages: [] };
+    return {
+      recentMessages:        [...user.messages].reverse().map(m => ({
+        role:   m.role as "user" | "assistant",
+        text:   m.text,
+        intent: m.intent ?? undefined,
+      })),
+      currentOnboardingStep: (user as any).intakeStep ?? undefined,
+    };
+  } catch {
+    return { recentMessages: [] };
+  }
 }
 
 async function sendTelegramMessage(chatId: number | string, text: string, parseMode?: "Markdown") {

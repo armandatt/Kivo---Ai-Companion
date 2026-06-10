@@ -1,3 +1,16 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// @deprecated — REMOVE: This entire file is legacy persona/creature onboarding
+// that predates Onboarding Engine V2.
+//
+// handleOnboardingMessage  — DEAD: not called from the Telegram webhook.
+//                             The webhook uses handleOnboardingV2 (gym) and
+//                             handleIntakeMessage (study/general).
+// needsOnboarding          — DEAD: the webhook uses needsIntake() only.
+//
+// These use the onboardingComplete / onboardingStep fields (MessengerUser) which
+// are separate from intakeComplete / intakeStep used by V2 and V1 intake paths.
+// Safe to delete once confirmed no callers exist outside this file.
+// ═══════════════════════════════════════════════════════════════════════════
 import { prisma } from "@repo/db/client";
 import { addToLongTerm, addToShortTerm } from "./memory.service";
 import { generateOpenAIText } from "./openai.service";

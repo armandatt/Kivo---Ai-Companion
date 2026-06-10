@@ -1,4 +1,6 @@
 import { prisma } from "@repo/db/client"
+// @ts-ignore — monorepo path alias
+import { initOnboardingV2 } from "@repo/api/engines/onboarding-engine-v2"
 
 type IntakePath = "gym" | "study" | "general"
 
@@ -132,9 +134,35 @@ export async function fireMentorIntakeOpener(
     toneModifier: profile.toneModifier ?? null,
   })
 
+  // ── Gym domain → Onboarding Engine V2 ───────────────────────────────────────
+  // V2 owns all gym onboarding. We initialise V2 state here so that the next
+  // user message routes to V2 instead of legacy intake.service.ts handlers.
+  // We do NOT write intakeStep = "ga_name"; V2 tracks state via MemoryFact.
+  if (domain === "gym") {
+    const welcome = await initOnboardingV2(telegramChatId)
+    await sendFn(telegramChatId, welcome)
+
+    await prisma.userProfile.update({
+      where: { id: profileId },
+      data: { mentorIntakeStarted: true, intakeState: { path: "gym", v2: true, complete: false } },
+    })
+
+    await prisma.messengerUser.update({
+      where: { platform_platformChatId: { platform: "telegram", platformChatId: telegramChatId } },
+      data: {
+        // intakeStep intentionally NOT set — leave as null/"not_started" so isV2Active returns true
+        activeModules: ["gym"],
+        preferredCheckInTime: profile.preferredCheckInTime ?? "08:00",
+        timezone: profile.timezone ?? "Asia/Kolkata",
+      },
+    })
+    return
+  }
+
+  // ── Study / General domain → legacy V1 ───────────────────────────────────────
+  // V2 does not handle study or general paths yet. V1 intake.service.ts handles them.
   await sendFn(telegramChatId, message)
 
-  // Mark intake started and write initial state to UserProfile (web-side tracking)
   const intakeState = {
     path: domain,
     currentQuestion: firstStep.toUpperCase(),
@@ -146,16 +174,11 @@ export async function fireMentorIntakeOpener(
     data: { mentorIntakeStarted: true, intakeState },
   })
 
-  // Advance MessengerUser intakeStep past not_started/path_select to the first domain question.
-  // The existing intake handler (intake.service.ts) will pick up from this step on the
-  // next user message, skipping the generic opener it would otherwise send.
   await prisma.messengerUser.update({
-    where: {
-      platform_platformChatId: { platform: "telegram", platformChatId: telegramChatId },
-    },
+    where: { platform_platformChatId: { platform: "telegram", platformChatId: telegramChatId } },
     data: {
       intakeStep: firstStep,
-      activeModules: domain === "gym" ? ["gym"] : domain === "study" ? ["study"] : [],
+      activeModules: domain === "study" ? ["study"] : [],
       preferredCheckInTime: profile.preferredCheckInTime ?? "08:00",
       timezone: profile.timezone ?? "Asia/Kolkata",
     },

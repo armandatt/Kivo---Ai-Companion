@@ -4,6 +4,8 @@ import { savePlan } from "./planner.service"
 import { saveDeadline } from "./deadline.service"
 import { generateOpenAIText } from "./openai.service"
 import { getSplitDayInfo } from "./gymTimeContext.service"
+// @ts-ignore — monorepo path alias
+import { initOnboardingV2 } from "@repo/api/engines/onboarding-engine-v2"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -431,17 +433,12 @@ async function generateRexTransition(
 
 // ─── Opening ──────────────────────────────────────────────────────────────────
 
-async function handleNotStarted(user: IntakeUser, _profile: WebProfile, _chatId: string): Promise<string> {
-  await updateIntake(user.id, "ga_name", {}, ["gym"])
-  return generateRexTransition(
-    "Generate Rex's opening message to a brand new user. " +
-    "Structure: one line defining what Rex does (not 'I'm your AI coach'). " +
-    "One challenging line that sizes them up. " +
-    "Then ask their name. Max 3 lines total. No greeting words. No emojis.",
-    "new user started",
-    `Your last trainer told you what you wanted to hear.\nI won't.\n\nName?`,
-    80,
-  )
+async function handleNotStarted(_user: IntakeUser, _profile: WebProfile, chatId: string): Promise<string> {
+  // Migration path: any user reaching "not_started" through V1 (legacy step reset
+  // or first message without a web connect) is migrated to Onboarding Engine V2.
+  // V2 initialises its MemoryFact state here so the NEXT message routes via
+  // isV2Active() = true → handleOnboardingV2, not back into this V1 handler.
+  return initOnboardingV2(chatId)
 }
 
 async function handlePathSelect(
@@ -497,7 +494,17 @@ async function handlePathSelect(
   return reply
 }
 
-// ─── Rex Gym Coaching Path ────────────────────────────────────────────────────
+// ─── Rex Gym Coaching Path ───────────────────────────────────────────────────
+// @deprecated MIGRATE — These handlers (handleGaName … handleGaReview) are the
+// V1 LLM-driven gym onboarding path. Kept ONLY for users who started onboarding
+// before Onboarding Engine V2 shipped and are still mid-flow
+// (intakeStep = ga_name / ga_goal / … AND no V2 MemoryFact state).
+//
+// Removal plan: once production telemetry shows zero active V1 gym sessions,
+// delete handleGaName through handleGaReview plus all V1 gym-path helpers
+// (generateRexTransition, classifyRexGoal, buildProposedSplit, etc.)
+// and remove the ga_* cases from routeStep.
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function handleGaName(text: string, answers: IntakeAnswers, user: IntakeUser, chatId: string): Promise<string> {
   const name = await llmExtractName(text)
