@@ -1,5 +1,13 @@
 import { prisma } from "@repo/db/client";
 import { addToShortTerm } from "../services/memory.service";
+import {
+  parseMessage,
+  IntentType,
+  isAffirmative,
+  isNegative,
+  isModificationRequest,
+  type ParseContext,
+} from "./parsing-engine-v2";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -132,11 +140,57 @@ export function normalize(text: string): {
     isBuildSplit:  BUILD_SPLIT_SIGNALS.has(lower) || BUILD_SPLIT_SIGNALS.has(stripped)
                    || /\b(build|generate|create|make)\s+(one|it|me one|a split|my split)\b/.test(lower)
                    || /\b(you\s+(pick|choose|decide|build))\b/.test(lower),
+    // NOTE: isYes/isNo are kept ONLY as a fallback safety layer for
+    // classifyConfirmation() below. Do not use these directly for
+    // confirmation/rejection decisions — they require an exact string match
+    // and miss natural phrasing like "good with this" or "looks good".
     isYes:         YES_SIGNALS.has(lower) || YES_SIGNALS.has(stripped),
     isNo:          NO_SIGNALS.has(lower) || NO_SIGNALS.has(stripped),
     isNoneInjury:  NONE_INJURY_SIGNALS.has(lower) || NONE_INJURY_SIGNALS.has(stripped),
     cleaned:       lower,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONFIRMATION CLASSIFIER — backed by Parsing Engine V2
+//
+// Single source of truth for "is this reply a confirmation, a rejection, or a
+// modification request?" used by confirm_split, pendingVerification, and the
+// review step. Parsing Engine V2's CONFIRMATION / SESSION_CONFIRMATION /
+// REJECTION intents (and its isAffirmative/isNegative regexes) are checked
+// first; the legacy YES_SIGNALS/NO_SIGNALS exact-match sets are only a final
+// fallback safety net.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type ConfirmationClass = "yes" | "no" | "modify" | "unclear";
+
+export function classifyConfirmation(text: string, lastQuestion: string): ConfirmationClass {
+  // Modification requests ("swap chest and back", "change it") take priority
+  // — these are actionable regardless of how V2 classifies the rest of the text.
+  if (isModificationRequest(text)) return "modify";
+
+  // Parsing Engine V2 — primary classifier. The last assistant message is
+  // passed so Q_GENERAL_YES_NO_RE-style disambiguation kicks in (onboarding
+  // questions all end in "?").
+  const ctx: ParseContext = { recentMessages: [{ role: "assistant", text: lastQuestion }] };
+  const v2 = parseMessage(text, ctx);
+  const top = v2.intents[0];
+  if (top && !top.requiresClarification && top.confidence >= 0.60) {
+    if (top.type === IntentType.CONFIRMATION || top.type === IntentType.SESSION_CONFIRMATION) return "yes";
+    if (top.type === IntentType.REJECTION) return "no";
+  }
+
+  // Direct affirmative/negative regexes — covers phrasing parseMessage's
+  // conversation-state disambiguation doesn't reach.
+  if (isAffirmative(text)) return "yes";
+  if (isNegative(text)) return "no";
+
+  // Legacy exact-match sets — fallback safety layer only.
+  const n = normalize(text);
+  if (n.isYes) return "yes";
+  if (n.isNo) return "no";
+
+  return "unclear";
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -703,15 +757,10 @@ const STEPS: Record<StepId, StepDef> = {
   confirm_split: {
     id: "confirm_split",
     question: a => `${a._pending_split_display ?? "Generated split"}\n\nGood with this, or want changes?`,
-    parser: text => {
-      const n = normalize(text);
-      if (n.isYes)  return hit("yes", "yes", "confirmation", 0.97);
-      if (n.isNo)   return hit("no",  "no",  "rejection",    0.97);
-      // Partial change requests
-      if (/\b(swap|change|move|replace|add|remove|different)\b/i.test(text))
-        return hit("modify", "modify", "change_request", 0.90);
-      return unknown("unclear_confirmation");
-    },
+    // @dead-code: confirm_split is handled entirely by the dedicated block in
+    // handleOnboardingV2 (which calls classifyConfirmation()) before this
+    // generic parser path is ever reached. Kept only to satisfy StepDef.
+    parser: () => unknown("dead_code_unused_parser"),
     confidenceThreshold: 0.80,
     skipBehavior: "advance_with_default",
     skipDefault: "yes",
@@ -765,12 +814,10 @@ const STEPS: Record<StepId, StepDef> = {
   review: {
     id: "review",
     question: (a) => buildReviewCard(a),
-    parser: text => {
-      const n = normalize(text);
-      if (n.isYes) return hit("confirmed", "confirmed", "review_confirmed", 0.97);
-      if (n.isNo)  return hit("restart",   "restart",   "review_restart",   0.90);
-      return unknown("review_unclear");
-    },
+    // @dead-code: review is handled entirely by the dedicated W6 block in
+    // handleOnboardingV2 (which calls classifyConfirmation()) before this
+    // generic parser path is ever reached. Kept only to satisfy StepDef.
+    parser: () => unknown("dead_code_unused_parser"),
     confidenceThreshold: 0.75,
     skipBehavior: "advance_with_default",
     skipDefault: "confirmed",
@@ -932,8 +979,9 @@ export async function handleOnboardingV2(input: {
   // ── Verification pending ──────────────────────────────────────────────────────
   if (state.pendingVerification) {
     const pv = state.pendingVerification;
+    const verificationCls = classifyConfirmation(text, pv.confirmQuestion);
 
-    if (normalized.isYes) {
+    if (verificationCls === "yes") {
       // Bug 4: use canonicalValue for storage; add split_raw from originalInput
       const keys = STEPS[pv.step].storageKeys(pv.canonicalValue);
       if (pv.step === "split") keys.split_raw = pv.originalInput;
@@ -950,7 +998,7 @@ export async function handleOnboardingV2(input: {
       return { handled: true, reply };
     }
 
-    if (normalized.isNo) {
+    if (verificationCls === "no" || verificationCls === "modify") {
       state.pendingVerification = null;
       const reaskReply = resumePrefix + `No problem. ${STEPS[pv.step].question(state.answers)}`;
       await saveState(userId, state);
@@ -1005,7 +1053,9 @@ export async function handleOnboardingV2(input: {
 
   // ── Split confirmation sub-flow ───────────────────────────────────────────────
   if (state.currentStep === "confirm_split") {
-    if (normalized.isYes) {
+    const splitCls = classifyConfirmation(text, STEPS["confirm_split"].question(state.answers));
+
+    if (splitCls === "yes") {
       // Bug 7: guard — split data must exist before advancing
       if (!state.pendingGeneratedSplit) {
         const reask = resumePrefix + STEPS["confirm_split"].question(state.answers);
@@ -1029,12 +1079,8 @@ export async function handleOnboardingV2(input: {
       return { handled: true, reply };
     }
 
-    // Bug 8: any modification request → back to split step, clear generated split
-    const isModify = normalized.isNo
-      || text.toLowerCase().includes("change")
-      || /\b(swap|replace|add|remove|different|adjust|modify|redo|switch)\b/i.test(text);
-
-    if (isModify) {
+    // Bug 8: any modification/rejection request → back to split step, clear generated split
+    if (splitCls === "modify" || splitCls === "no") {
       state.currentStep = "split";
       state.pendingGeneratedSplit = null;
       state.pendingPartialSplit   = null;
@@ -1056,11 +1102,11 @@ export async function handleOnboardingV2(input: {
   // Dedicated block prevents review parser output from cycling back through
   // the generic high-confidence path which self-loops (nextStep = "review").
   if (state.currentStep === "review") {
-    const reviewed = STEPS["review"].parser(text);
+    const reviewCls = classifyConfirmation(text, buildReviewCard(state.answers));
 
-    if (reviewed.extractedValue === "confirmed") {
+    if (reviewCls === "yes") {
       state.completedAt = Date.now();
-      logEntry(state, { step: "review", rawAnswer: text, normalizedAnswer: "confirmed", confidence: reviewed.confidence, storedValue: "completed", nextStep: null, action: "stored", ts: Date.now() });
+      logEntry(state, { step: "review", rawAnswer: text, normalizedAnswer: "confirmed", confidence: 0.97, storedValue: "completed", nextStep: null, action: "stored", ts: Date.now() });
       await saveState(userId, state);  // W6: persist completedAt + final audit entry before archive
       await finalizeIntake(userId, platformChatId, state);
       const msg = resumePrefix + `You're all set${state.answers.name ? `, ${state.answers.name}` : ""}. Let's build something.`;
@@ -1068,7 +1114,7 @@ export async function handleOnboardingV2(input: {
       return { handled: true, reply: msg };
     }
 
-    if (reviewed.extractedValue === "restart") {
+    if (reviewCls === "no" || reviewCls === "modify") {
       // W6: clear answers but keep name so user doesn't re-type it
       const keptName = state.answers.name;
       state.answers = keptName ? { name: keptName } : {};
@@ -1077,7 +1123,7 @@ export async function handleOnboardingV2(input: {
       state.pendingGeneratedSplit = null;
       state.pendingPartialSplit   = null;
       state.repeatCounts          = {};
-      logEntry(state, { step: "review", rawAnswer: text, normalizedAnswer: "restart", confidence: reviewed.confidence, storedValue: null, nextStep: state.currentStep, action: "stored", ts: Date.now() });
+      logEntry(state, { step: "review", rawAnswer: text, normalizedAnswer: "restart", confidence: 0.90, storedValue: null, nextStep: state.currentStep, action: "stored", ts: Date.now() });
       const reply = resumePrefix + `Starting over.\n\n${STEPS[state.currentStep].question(state.answers)}`;
       await saveState(userId, state);
       await addToShortTerm(platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" });
