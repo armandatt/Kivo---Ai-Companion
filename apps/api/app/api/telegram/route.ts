@@ -79,6 +79,8 @@ import { parseAndSaveNutrition } from "@repo/api/services/rexSessionContext.serv
 //@ts-ignore
 import { parseMessage } from "@repo/api/engines/parsing-engine-v2";
 //@ts-ignore
+import { runUnderstandingLayer, buildProfileSummary } from "@repo/api/engines/understanding-layer";
+//@ts-ignore
 import { detectTimeMention } from "@repo/api/services/checkin-offer.service";
 //@ts-ignore
 import { shouldOfferCheckIn } from "@repo/api/services/checkin-offer.service";
@@ -243,6 +245,38 @@ export async function POST(req: Request) {
         intents:    v2Parse.intents.map((i: any) => `${i.type}(${i.confidence.toFixed(2)})`),
         reasoning:  v2Parse.reasoning,
       }));
+
+      // ── Understanding Layer V1 — parallel, fire-and-forget ─────────────────
+      // Runs alongside Parser V2. No await — never blocks the pipeline.
+      // Logs both outputs for divergence analysis and migration planning.
+      runUnderstandingLayer({
+        message:        text,
+        recentMessages: v2ParseCtx.recentMessages ?? [],
+      }).then((ul: any) => {
+        console.log(JSON.stringify({
+          ts:         new Date().toISOString(),
+          chatId:     String(chatId),
+          layer:      "ul_v1",
+          message:    text.slice(0, 80),
+          // Understanding Layer output
+          ul_intent:  ul.intent,
+          ul_emotion: ul.emotion,
+          ul_topic:   ul.topic,
+          ul_conf:    ul.confidence,
+          ul_advice:  ul.needsAdvice,
+          ul_action:  ul.needsAction,
+          ul_ms:      ul.durationMs,
+          ul_facts:   Object.keys(ul.extractedFacts).length > 0 ? ul.extractedFacts : undefined,
+          ul_reason:  ul.reasoning,
+          // Parser V2 for direct comparison
+          v2_intent:  v2Parse.actionableIntent?.type ?? "none",
+          v2_conf:    v2Parse.confidence,
+          // Divergence flag: intents differ between the two systems
+          diverged:   ul.intent !== mapULToV2Intent(v2Parse.actionableIntent?.type ?? ""),
+        }));
+      }).catch((e: Error) => {
+        console.warn("[ul_v1] error:", e.message);
+      });
 
       // ── Natural-language reminder creation (V2-controlled routing) ────────
       // Replaces the legacy /\b(remind|..)\b/ regex. Uses Parsing Engine V2
@@ -738,6 +772,39 @@ function mapV2ToGymIntent(v2Type: string, text: string): string | null {
 // Loads the last 5 messages for short-reply disambiguation and the current
 // intake step for stateful onboarding answers.  Intentionally cheap and
 // fault-tolerant — a DB error here must never block the message pipeline.
+// ── Understanding Layer V1 helpers ───────────────────────────────────────────
+
+// Maps a Parser V2 intent type to the closest Understanding Layer intent.
+// Used only for the divergence flag in the comparison log.
+function mapULToV2Intent(v2Intent: string): string {
+  const map: Record<string, string> = {
+    gym_checkin:       "log_activity",
+    pr_log:            "log_activity",
+    lift_log:          "log_activity",
+    completion:        "log_activity",
+    missed_session:    "log_missed",
+    weight_log:        "log_data",
+    soreness_log:      "log_data",
+    energy_checkin:    "log_data",
+    recovery_query:    "seeking_guidance",
+    nutrition_query:   "seeking_guidance",
+    planning:          "seeking_guidance",
+    streak_check:      "asking_question",
+    progress_check:    "asking_question",
+    emotional_trigger: "emotional_expression",
+    goal_set:          "making_commitment",
+    checkin_schedule:  "requesting_check_in",
+    checkin_cancel:    "requesting_help",
+    schedule_adjust:   "requesting_help",
+    rest_day:          "log_activity",
+    pain_report:       "requesting_help",
+    deadline_set:      "making_commitment",
+    weekly_review:     "asking_question",
+    general_chat:      "general_chat",
+  };
+  return map[v2Intent] ?? "general_chat";
+}
+
 async function buildParseContext(platformChatId: string) {
   try {
     const user = await prisma.messengerUser.findUnique({
