@@ -10,9 +10,12 @@ import {
 } from "./parsing-engine-v2";
 import {
   detectGibberish,
-  classifyInvalidAnswer,
+  classifyAnswer,
+  validateName,
+  validateInjuryText,
   buildInvalidAnswerReply,
-  type InvalidAnswerClass,
+  type AnswerType,
+  type AnswerClassification,
 } from "./onboarding-validator";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -225,9 +228,11 @@ export function parseName(text: string): ParseResult {
   const t = text.trim();
   if (/^[A-Za-z][a-zA-Z'\-\s]{1,28}$/.test(t)) {
     const cap = t.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+    if (!validateName(cap).valid) return unknown("invalid_name");
     return hit(cap, cap, "name_format", 0.92);
   }
   if (t.length >= 2 && t.length <= 30 && !/[\d@/]/.test(t)) {
+    if (!validateName(t).valid) return unknown("invalid_name");
     return hit(t, t, "possible_name", 0.65, true);
   }
   return unknown("not_name_like");
@@ -454,8 +459,10 @@ export function parseInjury(text: string): ParseResult {
     return hit("none", "none", "no_injury", 0.97);
 
   const t = text.trim();
-  if (t.length >= 3 && t.length <= 300)
+  if (t.length >= 3 && t.length <= 300) {
+    if (!validateInjuryText(t)) return unknown("invalid_injury_text");
     return hit(t, t, "injury_text", 0.90);
+  }
 
   return hit("none", "none", "empty_injury_treated_as_none", 0.80);
 }
@@ -888,6 +895,50 @@ function buildReviewCard(a: Record<string, string>): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// LAYER 3 — STEP VALIDATION TABLES
+// Separate from StepDef so STEPS definitions stay unchanged.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Required steps cannot advance via skip/idk — user must provide a real answer.
+const STEP_REQUIRED: Record<StepId, boolean> = {
+  name:          false,   // skips to "Athlete"
+  goal:          true,
+  body_stats:    true,
+  experience:    true,
+  lifts:         false,   // optional — no lift numbers is fine
+  days:          true,
+  split:         false,   // skip → auto-generate
+  confirm_split: false,
+  gym_time:      false,   // skips to 18:00 default
+  protein:       false,   // skips to not_tracking
+  injury:        false,   // skips to none
+  review:        false,
+};
+
+// Which AnswerType values are valid for each step.
+// Used for cross-step detection: "I understood what you said, but it's for a different step."
+const STEP_ALLOWED_TYPES: Record<StepId, AnswerType[]> = {
+  name:          ["NAME"],
+  goal:          ["GOAL_ANSWER"],
+  body_stats:    ["BODY_STATS"],
+  experience:    ["EXPERIENCE_LEVEL"],
+  lifts:         ["LIFTS"],
+  days:          ["TRAINING_FREQUENCY"],
+  split:         ["TRAINING_FREQUENCY"],
+  confirm_split: [],
+  gym_time:      ["TRAINING_TIME"],
+  protein:       ["PROTEIN"],
+  injury:        ["INJURY"],
+  review:        [],
+};
+
+// Data types (valid for SOME step) — used to detect cross-step answers vs behavioral failures.
+const DATA_ANSWER_TYPES = new Set<AnswerType>([
+  "GOAL_ANSWER", "BODY_STATS", "TRAINING_TIME", "TRAINING_FREQUENCY",
+  "EXPERIENCE_LEVEL", "LIFTS", "PROTEIN", "INJURY", "NAME",
+]);
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // AUDIT LOGGER
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1190,6 +1241,22 @@ export async function handleOnboardingV2(input: {
   const repeatKey = state.currentStep;
   const parsed    = stepDef.parser(text);
 
+  // ── Layer 3: required-step skip guard ────────────────────────────────────────
+  // Required steps cannot advance via skip — user must provide a real answer.
+  // contextExplanation tells them WHY this step can't be skipped.
+  if (parsed.isSkip && STEP_REQUIRED[state.currentStep]) {
+    state.repeatCounts[repeatKey] = (state.repeatCounts[repeatKey] ?? 0) + 1;
+    logEntry(state, { step: state.currentStep, rawAnswer: text, normalizedAnswer: null, confidence: parsed.confidence, storedValue: null, nextStep: null, action: "skipped", ts: Date.now() });
+    const noSkipReply = resumePrefix + buildInvalidAnswerReply(
+      "SKIP_REQUEST",
+      stepDef.question(state.answers),
+      stepDef.contextExplanation,
+    );
+    await saveState(userId, state);
+    await addToShortTerm(platformChatId, noSkipReply, { role: "assistant", intent: "intake", emotion: "neutral" });
+    return { handled: true, reply: noSkipReply };
+  }
+
   // ── Intentional skip — advance with default, reset counter ───────────────────
   if (parsed.isSkip) {
     let stored: string | null = null;
@@ -1244,21 +1311,34 @@ export async function handleOnboardingV2(input: {
     return { handled: true, reply: recoveryReply };
   }
 
-  // ── Unknown: parser couldn't extract a valid answer — classify and re-ask ─────
-  // isUnknown = true when the text matched no known pattern for this step.
-  // Covers off-topic input, questions, insults, and gibberish.
+  // ── Layer 2.5 + Layer 3: classify unknown answers and detect cross-step inputs ─
+  // isUnknown = true when the parser found no valid answer for this step.
+  // This includes: insults, questions, gibberish, off-topic, and wrong-step answers.
   // Counter stays incremented — after repeatLimit unknowns, guided recovery fires.
   if (parsed.isUnknown) {
-    const isGibberish = detectGibberish(text);
-    const cls: InvalidAnswerClass = isGibberish
-      ? "gibberish"
-      : await classifyInvalidAnswer(text, stepDef.question(state.answers));
+    // Gibberish: skip the LLM call — regex is fast and decisive
+    let cls: AnswerClassification;
+    if (detectGibberish(text)) {
+      cls = { answerType: "GIBBERISH", confidence: 0.99, extractedValue: null, validForCurrentStep: false };
+    } else {
+      cls = await classifyAnswer(text, state.currentStep, stepDef.question(state.answers));
+    }
+
+    // Cross-step detection: user gave a real data answer but for a different step.
+    // Example: goal step + user says "72kg 180cm" → BODY_STATS → "I'll ask about that in a moment."
+    const wrongStepType: AnswerType | undefined = (
+      !cls.validForCurrentStep &&
+      DATA_ANSWER_TYPES.has(cls.answerType) &&
+      !STEP_ALLOWED_TYPES[state.currentStep].includes(cls.answerType)
+    ) ? cls.answerType : undefined;
+
     const invalidReply = resumePrefix + buildInvalidAnswerReply(
-      cls,
+      cls.answerType,
       stepDef.question(state.answers),
       stepDef.contextExplanation,
+      wrongStepType,
     );
-    logEntry(state, { step: state.currentStep, rawAnswer: text, normalizedAnswer: null, confidence: parsed.confidence, storedValue: null, nextStep: null, action: "skipped", ts: Date.now() });
+    logEntry(state, { step: state.currentStep, rawAnswer: text, normalizedAnswer: null, confidence: cls.confidence, storedValue: null, nextStep: null, action: "skipped", ts: Date.now() });
     await saveState(userId, state);
     await addToShortTerm(platformChatId, invalidReply, { role: "assistant", intent: "intake", emotion: "neutral" });
     return { handled: true, reply: invalidReply };
