@@ -11,6 +11,7 @@
     "./context/*": "./src/context/*",
     "./services/*": "./src/services/*",
     "./engines/*": "./src/engines/*",
+    "./engines/understanding-layer": "./src/engines/understanding-layer.ts",
     "./types/*": "./src/types/*"
   },
   "devDependencies": {
