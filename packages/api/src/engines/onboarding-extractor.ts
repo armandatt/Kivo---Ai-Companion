@@ -25,6 +25,7 @@ export interface OnboardingExtraction {
   reply:                    string;
   nextField:                string | null;
   splitGenerationRequested: boolean;
+  splitPreference:          string | null;   // structural preference when splitGenerationRequested=true
   communicationStyle:       "fast" | "conversational" | "resistant";
   emotionalTone:            "neutral" | "frustrated" | "engaged";
   done:                     boolean;
@@ -41,6 +42,7 @@ const FALLBACK: OnboardingExtraction = {
   reply:                    "What's your primary training goal?",
   nextField:                "gym_goal",
   splitGenerationRequested: false,
+  splitPreference:          null,
   communicationStyle:       "conversational",
   emotionalTone:            "neutral",
   done:                     false,
@@ -93,6 +95,7 @@ ${stallLines ? `STALL COUNTS (times asked for field without answer):\n${stallLin
   "reply": "<Rex reply — 1-3 sentences>",
   "nextField": "<single most important still-missing required field, or null>",
   "splitGenerationRequested": false,
+  "splitPreference": null,
   "communicationStyle": "fast" | "conversational" | "resistant",
   "emotionalTone": "neutral" | "frustrated" | "engaged",
   "done": false
@@ -149,9 +152,19 @@ Set splitGenerationRequested=true (do NOT set current_split) for:
   "train two body parts per day" ← preference + generation request
   "more chest", "less legs", "more upper body" ← preference → generation
   "6 day split", "5 day split" ← also extract available_training_days
+  "change it", "different one", "something else" after a split was shown ← re-generation
 
 Do NOT set splitGenerationRequested for named splits the user already knows:
   "PPL", "upper lower", "full body", "bro split" → extract current_split instead
+
+When splitGenerationRequested=true, also set splitPreference to the user's structural preference:
+  "train two body parts per day" → "two muscle groups per session"
+  "more chest focus" → "more chest and upper body work"
+  "less leg days" → "minimal leg volume"
+  "chest and back together", "pushing and pulling same day" → "push-pull pairing per session"
+  "no back-to-back heavy days" → "alternating intensity"
+  "something different", "change it" with no specific structure → null (orchestrator rotates template)
+  Generic request ("build me a split", "you pick") with no preference → null
 
 ─── CONFLICT DETECTION ──────────────────────────────────────────────────────
 Only flag conflict for: gym_goal, training_experience, available_training_days, current_split
@@ -193,8 +206,8 @@ conversational: normal sentences, engaged
 - NEVER: expose field names ("I need your training_experience")
 - NEVER: ask about already-captured fields
 
-REQUIRED FIELDS: name, gym_goal, training_experience, available_training_days, current_split, gym_session_time
-OPTIONAL FIELDS: current_bodyweight_kg, height_cm, squat_kg, bench_kg, deadlift_kg, daily_protein_g, injury_notes
+REQUIRED FIELDS: name, gym_goal, current_bodyweight_kg, height_cm, training_experience, available_training_days, current_split, gym_session_time
+OPTIONAL FIELDS: squat_kg, bench_kg, deadlift_kg, daily_protein_g, injury_notes
 
 When ALL required fields are captured: set done=true. The handler will show the review card.`.trim();
 }
@@ -251,6 +264,7 @@ export async function extractOnboardingFacts(input: {
       reply:                    typeof p.reply === "string" && p.reply.length > 0 ? p.reply : FALLBACK.reply,
       nextField:                typeof p.nextField === "string" ? p.nextField : null,
       splitGenerationRequested: p.splitGenerationRequested === true,
+      splitPreference:          (p.splitGenerationRequested === true && typeof p.splitPreference === "string" && p.splitPreference.length > 0) ? p.splitPreference : null,
       communicationStyle:       (["fast","conversational","resistant"] as const).includes(p.communicationStyle as never) ? p.communicationStyle! : "conversational",
       emotionalTone:            (["neutral","frustrated","engaged"] as const).includes(p.emotionalTone as never) ? p.emotionalTone! : "neutral",
       done:                     p.done === true,
