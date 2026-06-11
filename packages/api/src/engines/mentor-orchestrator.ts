@@ -1,4 +1,5 @@
 import { prisma } from "@repo/db/client";
+import { generateOpenAIText } from "../services/openai.service";
 import { processMessage } from "../processor/messageProcessor";
 import { addToShortTerm, addToLongTerm } from "../services/memory.service";
 import { savePlan } from "../services/planner.service";
@@ -23,7 +24,7 @@ import {
   DecisionTone,
 } from "./mentor-decision-engine";
 import type { MentorDecision } from "./mentor-decision-engine";
-import { runDecisionV2, decisionV2ToMentorDecision } from "./decision-engine-v2";
+import { runDecisionV2, decisionV2ToMentorDecision, CoachIntervention } from "./decision-engine-v2";
 import type { DecisionV2Input } from "./decision-engine-v2";
 import { evaluateFeasibility } from "./feasibility-engine";
 import type { FeasibilityResult } from "./feasibility-engine";
@@ -347,6 +348,7 @@ interface UserContext {
   rexSessionContext:   string | null;
   rexExperienceLevel:  string | null;
   schedulerContextV2:  SchedulerContextV2 | null;
+  intakeAnswers:       unknown;
 }
 
 async function loadUserContext(
@@ -526,7 +528,7 @@ async function loadUserContext(
     }
   }
 
-  return { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel, schedulerContextV2: schedulerCtxV2 };
+  return { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel, schedulerContextV2: schedulerCtxV2, intakeAnswers: userRow.intakeAnswers };
 }
 
 function buildMinimalContext(state: MentorState): UserContext {
@@ -540,7 +542,7 @@ function buildMinimalContext(state: MentorState): UserContext {
     sessionCount: 0, daysSinceFirstMessage: 0,
     lastUserMessage: null, lastTopicDiscussed: null, lastAssistantMessage: null,
   };
-  return { memory, state, persona: FALLBACK_PERSONA, isFirstSession: true, messageCountToday: 0, tonePreference: DEFAULT_TONE, gymContext: null, gymPatternReport: null, engagementContext: null, rexSessionContext: null, rexExperienceLevel: null, schedulerContextV2: null };
+  return { memory, state, persona: FALLBACK_PERSONA, isFirstSession: true, messageCountToday: 0, tonePreference: DEFAULT_TONE, gymContext: null, gymPatternReport: null, engagementContext: null, rexSessionContext: null, rexExperienceLevel: null, schedulerContextV2: null, intakeAnswers: null };
 }
 
 // buildSystemPrompt removed — llm.ts generateEngineResponse builds the prompt
@@ -668,10 +670,746 @@ function buildScheduledActions(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// MENTOR ORCHESTRATOR V3
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Architecture shift: OpenAI decides coaching approach. Code verifies and persists.
+//
+// V1: User → UL → Decision Engine → Intervention Engine → OpenAI(writes)
+// V3: User → UL → Context Assembly → OpenAI(decides+writes) → Verify → Persist
+//
+// Deterministic systems unchanged: extraction, verification, scheduler, logging,
+// reminders, persistence. OpenAI becomes: coach, mentor, intervention selector.
+//
+// Rollback: MENTOR_V3_ENABLED=false → instant fallback to V1 pipeline.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── V3 Types ──────────────────────────────────────────────────────────────────
+
+interface RexContext {
+  userProfile:             Record<string, string>;
+  ulIntent:                string | null;
+  ulEmotion:               string | null;
+  ulTopic:                 string | null;
+  ulSuggestedIntervention: string | null;
+  schedulerState:          SchedulerContextV2 | null;
+  schedulerNarrative:      string;
+  todaySessionStatus:      string;
+  activeCommitments:       string[];
+  topRelevantMemories:     MemoryFact[];
+  conversationHistory:     Array<{ role: "user" | "assistant"; text: string }>;
+  currentMessage:          string;
+  daysSinceJoined:         number;
+  signalEngineOutput:      ReturnType<typeof extractSignalsV2>["detectedSignals"];
+}
+
+interface V3StateUpdates {
+  sessionLogged:       boolean;
+  missedSessionLogged: boolean;
+  commitmentMade:      string | null;
+  goalUpdated:         string | null;
+}
+
+interface RexOpenAIResponse {
+  reply:             string;
+  intervention_used: string;
+  mood_detected:     string;
+  state_updates:     V3StateUpdates;
+  parseError:        boolean;
+  rawOutput?:        string;
+}
+
+interface StateConflict {
+  field:           string;
+  currentValue:    string;
+  proposedValue:   string;
+  confirmQuestion: string;
+}
+
+// All 19 valid intervention names (lowercase of CoachIntervention enum values)
+const VALID_V3_INTERVENTIONS = new Set(
+  Object.values(CoachIntervention).map(v => v.toLowerCase()),
+);
+
+// ── Step 2: Scheduler narrative ───────────────────────────────────────────────
+
+function buildSchedulerNarrative(
+  ctx:          SchedulerContextV2 | null,
+  daySinceJoin: number,
+): string {
+  if (!ctx || !ctx.hasAnyHistory) {
+    return daySinceJoin > 0
+      ? `Day ${daySinceJoin}. No training history recorded yet.`
+      : "New user — no training history recorded yet.";
+  }
+
+  const day     = `Day ${daySinceJoin}.`;
+  const muscles = ctx.pendingMuscles ?? "Rest day";
+
+  const stateLine = (() => {
+    switch (ctx.trainingState) {
+      case "completed":            return `${muscles} session already done today.`;
+      case "due":                  return `${muscles} session due — not yet logged.`;
+      case "pending_confirmation": return `${muscles} window passed — session unconfirmed.`;
+      case "upcoming":             return `${muscles} session coming up later today.`;
+      case "skipped":              return `${muscles} — skipped today.`;
+      default:                     return `${muscles}.`;
+    }
+  })();
+
+  const contextLine = (() => {
+    if (ctx.consecutiveMisses >= 3)
+      return `Missed the last ${ctx.consecutiveMisses} sessions — longest miss streak since joining.`;
+    if (ctx.consecutiveMisses > 0)
+      return `Missed the last ${ctx.consecutiveMisses} session${ctx.consecutiveMisses > 1 ? "s" : ""}.`;
+    const rate = Math.round(ctx.completionRate7d * 100);
+    if (rate >= 80) return `${rate}% completion rate this week — strong run.`;
+    if (ctx.daysSinceLastSession > 7) return `${ctx.daysSinceLastSession} days since last session.`;
+    return `Completion rate last 7 days: ${rate}%.`;
+  })();
+
+  return `${day} ${stateLine} ${contextLine}`.trim();
+}
+
+// ── Step 1: Build Rex context ─────────────────────────────────────────────────
+
+function buildRexContext(
+  input:   OrchestratorInput,
+  userCtx: UserContext,
+  sigV2:   ReturnType<typeof extractSignalsV2>,
+): RexContext {
+  const { memory, schedulerContextV2 } = userCtx;
+  const daysSinceJoined = memory.daysSinceFirstMessage;
+
+  const ulResult    = input.routerDecision?.source === "ul" ? input.routerDecision.ulResult : null;
+  const ulAny       = ulResult as Record<string, unknown> | null;
+  const ulIntent    = typeof ulAny?.intent    === "string" ? ulAny.intent    : null;
+  const ulEmotion   = typeof ulAny?.emotion   === "string" ? ulAny.emotion   : null;
+  const ulTopic     = typeof ulAny?.topic     === "string" ? ulAny.topic     : null;
+  const ulSuggested = input.routerDecision?.source === "ul"
+    ? (input.routerDecision.suggestedIntervention ?? null)
+    : null;
+
+  const userProfile = userCtx.intakeAnswers != null &&
+    typeof userCtx.intakeAnswers === "object" &&
+    !Array.isArray(userCtx.intakeAnswers)
+    ? userCtx.intakeAnswers as Record<string, string>
+    : {};
+
+  const activeCommitments = memory.relevantFacts
+    .filter(f => f.type === "promise" || f.type === "commitment")
+    .slice(0, 5)
+    .map(f => f.value);
+
+  const topRelevantMemories = memory.relevantFacts.slice(0, 7);
+
+  const conversationHistory = memory.shortTerm
+    .slice(-10)
+    .map(m => ({ role: m.role as "user" | "assistant", text: m.text }));
+
+  const schedulerNarrative  = buildSchedulerNarrative(schedulerContextV2, daysSinceJoined);
+  const todaySessionStatus  = schedulerContextV2?.trainingState.toUpperCase() ?? "UNKNOWN";
+
+  return {
+    userProfile,
+    ulIntent,
+    ulEmotion,
+    ulTopic,
+    ulSuggestedIntervention: ulSuggested,
+    schedulerState:     schedulerContextV2,
+    schedulerNarrative,
+    todaySessionStatus,
+    activeCommitments,
+    topRelevantMemories,
+    conversationHistory,
+    currentMessage:     input.text,
+    daysSinceJoined,
+    signalEngineOutput: sigV2.detectedSignals,
+  };
+}
+
+// ── Step 3: Build Rex system prompt ───────────────────────────────────────────
+
+const INTERVENTION_LIBRARY = `INTERVENTION LIBRARY
+Choose exactly one. Set it as "intervention_used" in your JSON.
+
+empathize — Use when: user expresses emotion, discouragement, or needs to feel heard before coaching.
+How it feels: supported, understood, not immediately pushed.
+Example trigger: "I'm so tired of this."
+
+challenge — Use when: user is complacent, not pushing, or the gap between goal and behaviour is clear.
+How it feels: called out fairly — not shamed.
+Example trigger: "I've been training but just going through the motions."
+
+accountability — Use when: user missed a commitment, is making excuses, or returned after ghosting.
+How it feels: held to their word, not judged.
+Example trigger: "Missed again yesterday." (after a specific promise)
+
+refocus — Use when: user is scattered across too many goals or has drifted from their primary objective.
+How it feels: simplified, pulled back to what matters.
+Example trigger: "Should I try PPL? Or a cut? Or add cardio first?"
+
+clarify — Use when: message is vague and you can't give useful coaching without more context.
+How it feels: asked a good question, not interrogated.
+Example trigger: "What should I do?"
+
+problem_solve — Use when: user is stuck on a specific practical obstacle with a concrete solution path.
+How it feels: helped through a real problem, not left with a platitude.
+Example trigger: "I don't know how to fit training around night shifts."
+
+reduce_friction — Use when: user is overloaded, capacity-collapsed, or needs the smallest possible next action.
+How it feels: pressure lifted — one thing only, nothing else.
+Example trigger: "I have zero time or energy this week."
+
+reinforce_identity — Use when: user made a genuine identity shift or meaningful mindset statement.
+How it feels: their new self reflected back specifically and clearly.
+Example trigger: "I'm starting to actually feel like an athlete."
+
+surface_breakthrough — Use when: user doubts themselves but memory has a relevant past win.
+How it feels: reminded of what they've actually done — evidenced, not motivated.
+Example trigger: "I don't think I can get stronger." [memory shows: "benched 100kg for first time 6 weeks ago"]
+
+surface_commitment — Use when: user made a commitment that's now under pressure from their current message.
+How it feels: their own words brought back fairly — not a gotcha.
+Example trigger: "Maybe I'll skip today." [they committed to 4 sessions this week]
+
+surface_promise — Use when: user made an explicit promise that's being tested by their current behaviour.
+How it feels: their promise taken seriously — they feel accountable to themselves.
+Example trigger: "I said I'd be consistent no matter what." [then asks for another break]
+
+celebrate_win — Use when: user hit a PR, completed a milestone, or achieved something genuinely worth acknowledging.
+How it feels: their specific accomplishment named exactly — not generic praise.
+Example trigger: "Hit 120kg on deadlift today."
+
+reframe_failure — Use when: user treats a miss or setback as total failure or uses all-or-nothing thinking.
+How it feels: setback acknowledged but not final — one forward question follows.
+Example trigger: "Missed 3 days, the whole week is ruined."
+
+prevent_spiral — Use when: quit language, nihilism, "what's the point", or momentum collapse detected.
+How it feels: seen and anchored to evidence — not pushed further.
+Example trigger: "I don't even know why I bother anymore."
+
+prevent_burnout — Use when: burnout signals are at critical level — exhausted, nothing left, running on empty.
+How it feels: all pressure removed, permission to rest — not a strategy.
+Example trigger: "I'm completely burned out. Can't do anything."
+
+momentum_push — Use when: user is in strong momentum, on a streak, or in a high-energy window.
+How it feels: energy matched and bar raised — earned, not empty praise.
+Example trigger: "Just had the best training week of my life."
+
+consistency_check — Use when: the user's actual consistency data is the most relevant context to their message.
+How it feels: real data reflected back — factual, not judgmental.
+Example trigger: "Think I've been pretty good lately?" [60% completion rate last 7 days]
+
+goal_alignment — Use when: current request may be drifting from the stated primary goal.
+How it feels: reminded of what they said they were building toward.
+Example trigger: "Should I add more cardio?" [goal is muscle gain]
+
+priority_reset — Use when: user has too many active commitments and is spreading dangerously thin.
+How it feels: simplified — one thing survives, everything else explicitly waits.
+Example trigger: "I'm trying to gym, study, cut, sleep better, and fix my diet all at once."`;
+
+function buildRexSystemPrompt(ctx: RexContext): string {
+  // Section B — user profile
+  const p = ctx.userProfile;
+  const profileLines: string[] = [];
+  if (p.name)                    profileLines.push(`Name: ${p.name}`);
+  if (p.gym_goal)                profileLines.push(`Goal: ${p.gym_goal}`);
+  if (p.training_experience)     profileLines.push(`Experience: ${p.training_experience}`);
+  if (p.current_split)           profileLines.push(`Split: ${p.current_split}`);
+  if (p.available_training_days) profileLines.push(`Training days/week: ${p.available_training_days}`);
+  if (p.gym_session_time)        profileLines.push(`Gym time: ${p.gym_session_time}`);
+  if (p.current_bodyweight_kg)   profileLines.push(`Bodyweight: ${p.current_bodyweight_kg}kg`);
+  if (p.height_cm)               profileLines.push(`Height: ${p.height_cm}cm`);
+  if (p.injury_notes && p.injury_notes !== "none")
+    profileLines.push(`Injuries: ${p.injury_notes}`);
+  const profileSection = profileLines.length > 0
+    ? profileLines.join("\n")
+    : "(Profile not yet complete)";
+
+  // Section C — memories
+  const memSection = ctx.topRelevantMemories.length > 0
+    ? ctx.topRelevantMemories
+        .map(f => `• [${f.type.replace(/_/g, " ")}] ${f.value}`)
+        .join("\n")
+    : "none";
+
+  // Section D — commitments
+  const commSection = ctx.activeCommitments.length > 0
+    ? ctx.activeCommitments.map(c => `• "${c}"`).join("\n")
+    : "none";
+
+  // Section E — UL output
+  const ulLines: string[] = [];
+  if (ctx.ulIntent)                ulLines.push(`intent: ${ctx.ulIntent}`);
+  if (ctx.ulEmotion)               ulLines.push(`emotion: ${ctx.ulEmotion}`);
+  if (ctx.ulTopic)                 ulLines.push(`topic: ${ctx.ulTopic}`);
+  if (ctx.ulSuggestedIntervention) ulLines.push(`suggested_intervention: ${ctx.ulSuggestedIntervention}`);
+  const ulSection = ulLines.length > 0
+    ? ulLines.join("\n") +
+      "\n\nIMPORTANT: UL output is context, not authority. You may disagree. If you do — your judgment wins."
+    : "not available";
+
+  // Section G — tone evolution
+  const toneGuide = ctx.daysSinceJoined <= 7
+    ? "Days 1–7: Build trust. Explain your reasoning. Don't assume familiarity. Warm but direct."
+    : ctx.daysSinceJoined <= 30
+    ? "Days 8–30: More familiar. More direct. Can reference past conversations naturally. Less explaining."
+    : "Day 30+: High expectations. Deep personal references. Less explanation. More challenge. You know this person.";
+
+  // Conversation history
+  const historyBlock = ctx.conversationHistory
+    .map(m => `${m.role === "user" ? "User" : "Rex"}: ${m.text.slice(0, 200)}`)
+    .join("\n") || "none — first message";
+
+  return `You are Rex — a direct Telegram gym coach who knows this user personally.
+
+Not a fitness app. Not a therapist. Not a motivational quote generator.
+You talk like someone who genuinely knows the user. Never corporate. Never robotic.
+
+─── SECTION A — IDENTITY ─────────────────────────────────────────────────────
+
+Rex is the only character. Stay in it completely.
+
+Never say: "Great job!" / "Awesome work!" / "Keep it up!" / "Certainly!" / "Of course!"
+Never use bullet points in conversational replies.
+Never sound like a productivity app or a fitness chatbot.
+Short responses unless explaining something technical or presenting a full plan.
+Use specifics always. RIGHT: "Last time 80kg × 5. Add 2.5kg today." WRONG: "last time you trained."
+One response = one focus. Never stack multiple coaching points in one reply.
+Every response must feel personal to this specific user — not generic fitness advice.
+Zero emoji in conversational replies. Exception only for a confirmed PR just logged.
+
+─── SECTION B — USER CONTEXT ────────────────────────────────────────────────
+
+${profileSection}
+
+Training state: ${ctx.schedulerNarrative}
+Today: ${ctx.todaySessionStatus}
+
+─── SECTION C — MEMORIES ────────────────────────────────────────────────────
+
+${memSection}
+
+Only use memories relevant to the current message.
+Reference them as a coach who knows the person — naturally, not explicitly.
+If nothing is relevant — don't force it.
+
+─── SECTION D — ACTIVE COMMITMENTS ─────────────────────────────────────────
+
+${commSection}
+
+If the user contradicts an active commitment — surface it naturally in your response.
+
+─── SECTION E — UNDERSTANDING LAYER ─────────────────────────────────────────
+
+${ulSection}
+
+─── SECTION F — INTERVENTION LIBRARY ────────────────────────────────────────
+
+${INTERVENTION_LIBRARY}
+
+─── SECTION G — TONE EVOLUTION ──────────────────────────────────────────────
+
+${toneGuide}
+Current day since joining: ${ctx.daysSinceJoined}
+
+─── SECTION H — SIGNAL DETECTION ────────────────────────────────────────────
+
+Detect these patterns yourself from the message. Do not rely on pre-tagged labels.
+
+burnout: tired, what's the point, skipping, demotivated, nothing left, running empty
+→ Acknowledge first. Reduce all pressure immediately. Never push training.
+
+achievement: PR, completed a week, hit goal, feeling strong, personal best
+→ Celebrate the specific achievement by name. Build momentum. One forward push.
+
+self_doubt: can't do this, not seeing results, thinking of quitting, what if I fail
+→ Firm but caring. Reference specific progress from memory. No motivational quotes.
+
+overwhelm: too much, don't know where to start, confused, juggling everything
+→ Simplify completely. Give ONE next action only. Nothing else.
+
+excuse: I'll start Monday, been busy, maybe tomorrow, things came up, work got crazy
+→ Acknowledge briefly. Do not accept. Redirect with one specific action today.
+
+─── SECTION I — HARD RULES ──────────────────────────────────────────────────
+
+• One response = one focus. Never stack coaching points.
+• Never ask for information already in the user profile.
+• Never contradict training state (do NOT tell user to train if state is COMPLETED).
+• If frustrated: shorter, more direct.
+• If overwhelmed: ONE action only.
+• If burnout: reduce pressure immediately — zero demands.
+• If achievement: celebrate the specific thing by name — not "great work".
+• Never use generic motivational quotes or slogans.
+• No ALL CAPS for emphasis. No dramatic punctuation.
+• Default ending: direction or next action — not a question.
+• If the previous reply had a question — do NOT ask another question.
+
+─── RESPONSE FORMAT (STRICT) ────────────────────────────────────────────────
+
+Return ONLY valid compact JSON. No markdown fences. No explanation outside the JSON.
+
+{
+  "reply": "<your response — 1-3 sentences unless presenting a plan or explanation>",
+  "intervention_used": "<one of the 19 names from Section F, lowercase with underscores>",
+  "mood_detected": "<one word: frustrated | discouraged | motivated | overwhelmed | burnout | self_doubt | excuse | achievement | neutral>",
+  "state_updates": {
+    "sessionLogged": <true if user just confirmed completing a session, else false>,
+    "missedSessionLogged": <true if user just confirmed missing a session, else false>,
+    "commitmentMade": <"exact text of commitment" or null>,
+    "goalUpdated": <"new goal value" or null — only set if user explicitly changed their goal>
+  }
+}
+
+─── RECENT CONVERSATION ─────────────────────────────────────────────────────
+
+${historyBlock}`.trim();
+}
+
+// ── Step 4: OpenAI call + JSON failure handler ────────────────────────────────
+
+const V3_FALLBACK_REPLY = "Something went wrong on my end. Give me a second and try again.";
+
+function parseRexOpenAIResponse(raw: string): RexOpenAIResponse {
+  // Strip markdown code fences that OpenAI sometimes wraps around JSON
+  const cleaned = raw
+    .replace(/^```(?:json)?\s*/im, "")
+    .replace(/```\s*$/im, "")
+    .trim();
+
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (!match) {
+    console.error("[MENTOR_V3] parse_failed:no_json_object raw:", raw.slice(0, 300));
+    return {
+      reply:             V3_FALLBACK_REPLY,
+      intervention_used: "unknown",
+      mood_detected:     "unknown",
+      state_updates:     { sessionLogged: false, missedSessionLogged: false, commitmentMade: null, goalUpdated: null },
+      parseError:        true,
+      rawOutput:         raw,
+    };
+  }
+
+  try {
+    const p = JSON.parse(match[0]) as Partial<{
+      reply:             unknown;
+      intervention_used: unknown;
+      mood_detected:     unknown;
+      state_updates:     Partial<V3StateUpdates>;
+    }>;
+
+    if (typeof p.reply !== "string" || p.reply.trim() === "") {
+      console.error("[MENTOR_V3] parse_ok:reply_missing raw:", raw.slice(0, 300));
+      return {
+        reply:             V3_FALLBACK_REPLY,
+        intervention_used: typeof p.intervention_used === "string" ? p.intervention_used : "unknown",
+        mood_detected:     typeof p.mood_detected     === "string" ? p.mood_detected     : "unknown",
+        state_updates:     { sessionLogged: false, missedSessionLogged: false, commitmentMade: null, goalUpdated: null },
+        parseError:        true,
+        rawOutput:         raw,
+      };
+    }
+
+    const su = p.state_updates ?? {};
+    return {
+      reply:             p.reply.trim(),
+      intervention_used: typeof p.intervention_used === "string" ? p.intervention_used : "unknown",
+      mood_detected:     typeof p.mood_detected     === "string" ? p.mood_detected     : "unknown",
+      state_updates: {
+        sessionLogged:       su.sessionLogged       === true,
+        missedSessionLogged: su.missedSessionLogged === true,
+        commitmentMade:      typeof su.commitmentMade === "string" ? su.commitmentMade : null,
+        goalUpdated:         typeof su.goalUpdated    === "string" ? su.goalUpdated    : null,
+      },
+      parseError: false,
+    };
+  } catch (err) {
+    console.error("[MENTOR_V3] parse_threw:", err, "raw:", raw.slice(0, 300));
+    return {
+      reply:             V3_FALLBACK_REPLY,
+      intervention_used: "unknown",
+      mood_detected:     "unknown",
+      state_updates:     { sessionLogged: false, missedSessionLogged: false, commitmentMade: null, goalUpdated: null },
+      parseError:        true,
+      rawOutput:         raw,
+    };
+  }
+}
+
+// ── Step 5: State conflict detector ──────────────────────────────────────────
+
+function detectStateConflicts(
+  stateUpdates: V3StateUpdates,
+  userProfile:  Record<string, string>,
+): StateConflict[] {
+  const conflicts: StateConflict[] = [];
+
+  if (
+    stateUpdates.goalUpdated &&
+    userProfile.gym_goal &&
+    stateUpdates.goalUpdated.toLowerCase() !== userProfile.gym_goal.toLowerCase()
+  ) {
+    conflicts.push({
+      field:           "gym_goal",
+      currentValue:    userProfile.gym_goal,
+      proposedValue:   stateUpdates.goalUpdated,
+      confirmQuestion: `Last time you said ${userProfile.gym_goal} was the goal. Has that changed?`,
+    });
+  }
+
+  return conflicts;
+}
+
+// ── V3 → MentorDecision bridge ────────────────────────────────────────────────
+// Builds a synthetic MentorDecision so OrchestratorResult stays V1-compatible.
+
+function v3InterventionToDecision(
+  interventionUsed: string,
+  confidence:       number,
+): MentorDecision {
+  const actionMap: Record<string, string> = {
+    empathize:            MentorAction.ENCOURAGE,
+    challenge:            MentorAction.CHALLENGE,
+    accountability:       MentorAction.ACCOUNTABILITY,
+    refocus:              MentorAction.REFLECT,
+    clarify:              MentorAction.ASK,
+    problem_solve:        MentorAction.PLAN,
+    reduce_friction:      MentorAction.REDUCE_SCOPE,
+    reinforce_identity:   MentorAction.ENCOURAGE,
+    surface_breakthrough: MentorAction.ENCOURAGE,
+    surface_commitment:   MentorAction.ACCOUNTABILITY,
+    surface_promise:      MentorAction.ACCOUNTABILITY,
+    celebrate_win:        MentorAction.ENCOURAGE,
+    reframe_failure:      MentorAction.REFLECT,
+    prevent_spiral:       MentorAction.REDUCE_SCOPE,
+    prevent_burnout:      MentorAction.REDUCE_SCOPE,
+    momentum_push:        MentorAction.CHALLENGE,
+    consistency_check:    MentorAction.REVIEW,
+    goal_alignment:       MentorAction.REFLECT,
+    priority_reset:       MentorAction.REDUCE_SCOPE,
+  };
+
+  const action = (actionMap[interventionUsed] ?? MentorAction.ASK) as typeof MentorAction[keyof typeof MentorAction];
+
+  return {
+    action,
+    subAction:        interventionUsed,
+    urgency:          DecisionUrgency.LOW,
+    tone:             DecisionTone.STANDARD,
+    requiresLLM:      true,
+    tokenBudget:      150,
+    template:         null,
+    ruleId:           `V3:${interventionUsed.toUpperCase()}`,
+    reason:           `V3 — OpenAI selected intervention: ${interventionUsed}`,
+    confidence,
+    contextHints:     [],
+    decisionPath:     ["v3_openai_decides"],
+    blockedActions:   [],
+    suppressFollowUp: false,
+  };
+}
+
+// ── Step 9: Monitoring log ────────────────────────────────────────────────────
+
+function logMentorV3(data: {
+  userId:                  string;
+  ulIntent:                string | null;
+  ulEmotion:               string | null;
+  ulSuggestedIntervention: string | null;
+  interventionUsed:        string;
+  moodDetected:            string;
+  schedulerState:          string;
+  conflictDetected:        boolean;
+  jsonParseFailed:         boolean;
+  responseLength:          number;
+  durationMs:              number;
+}): void {
+  console.log("[MENTOR_V3]", JSON.stringify(data));
+}
+
+// ── V3 pipeline ───────────────────────────────────────────────────────────────
+
+async function runOrchestratorV3(input: OrchestratorInput): Promise<OrchestratorResult> {
+  const v3Start   = Date.now();
+  const timestamp = input.timestamp ?? new Date();
+
+  const diag: OrchestratorDiagnostics = {
+    totalMs:               0,
+    stageTimings:          {},
+    stagesRun:             [],
+    stagesSkipped:         ["pattern_detection", "decision", "feasibility", "planner", "intervention"],
+    llmCalled:             false,
+    llmTokensRequested:    0,
+    templateUsed:          false,
+    patternCount:          0,
+    riskScore:             0,
+    decisionPath:          ["v3_openai_decides"],
+    interventionTriggered: false,
+    planGenerated:         false,
+    feasibilityScore:      null,
+    engineErrors:          [],
+  };
+
+  // ── Analysis ─────────────────────────────────────────────────────────────────
+  const legacy   = await processMessage(input.text);
+  const analysis = buildConversationAnalysis(input.text, legacy);
+  diag.stagesRun.push("analyze");
+
+  // ── Load context ──────────────────────────────────────────────────────────────
+  let userCtx: UserContext;
+  try {
+    userCtx = await loadUserContext(
+      input.platformChatId, timestamp, input.text,
+      analysis.intent, analysis.emotion.primary,
+    );
+  } catch (err) {
+    console.error("[MENTOR_V3] loadUserContext failed:", err);
+    userCtx = buildMinimalContext(await getMentorState(input.platformChatId));
+  }
+  const { memory, state } = userCtx;
+  diag.stagesRun.push("load_context");
+
+  // ── Signal Engine V2 — state mutations (same as V1) ──────────────────────────
+  const sigV2 = extractSignalsV2({ text: input.text, now: timestamp });
+  for (const upd of sigV2.stateUpdates) {
+    const sm = state as unknown as Record<string, number>;
+    if (typeof sm[upd.field] === "number") {
+      sm[upd.field] = Math.max(0, Math.min(100, sm[upd.field]! + upd.delta));
+    }
+  }
+  for (const mw of sigV2.memoryWrites) {
+    addToLongTerm(input.platformChatId, mw.type, mw.value).catch(() => {});
+  }
+
+  // ── Build Rex context ─────────────────────────────────────────────────────────
+  const rexCtx = buildRexContext(input, userCtx, sigV2);
+
+  // ── Build system prompt ───────────────────────────────────────────────────────
+  const systemPrompt = buildRexSystemPrompt(rexCtx);
+
+  // ── OpenAI call ───────────────────────────────────────────────────────────────
+  diag.llmCalled          = true;
+  diag.llmTokensRequested = 400;
+  let rawLLMOutput = "";
+  try {
+    rawLLMOutput = await generateOpenAIText({
+      model:             "gpt-4o",
+      maxOutputTokens:   400,
+      systemInstruction: systemPrompt,
+      prompt:            input.text,
+    });
+  } catch (err) {
+    console.error("[MENTOR_V3] OpenAI call failed:", err);
+    diag.engineErrors.push({ stage: "llm_call", error: err instanceof Error ? err.message : String(err) });
+  }
+  diag.stagesRun.push("llm_call");
+
+  // ── Parse response + failure handling ────────────────────────────────────────
+  const parsed = rawLLMOutput
+    ? parseRexOpenAIResponse(rawLLMOutput)
+    : {
+        reply:             V3_FALLBACK_REPLY,
+        intervention_used: "unknown",
+        mood_detected:     "unknown",
+        state_updates:     { sessionLogged: false, missedSessionLogged: false, commitmentMade: null, goalUpdated: null },
+        parseError:        true,
+        rawOutput:         "",
+      } satisfies RexOpenAIResponse;
+
+  // ── Step 5: Conflict detection — before any writes ────────────────────────────
+  const conflicts       = detectStateConflicts(parsed.state_updates, rexCtx.userProfile);
+  const conflictDetected = conflicts.length > 0;
+
+  // Conflict: ask user to confirm instead of sending coaching reply
+  let finalReply = parsed.reply;
+  if (conflictDetected && !parsed.parseError) {
+    finalReply = conflicts[0]!.confirmQuestion;
+  }
+
+  // ── Step 6: Verification layer — holds writes on conflict ─────────────────────
+  // Deterministic: OpenAI proposes. Code approves. DB writes only after verification.
+  if (!conflictDetected && !parsed.parseError) {
+    if (parsed.state_updates.commitmentMade) {
+      addToLongTerm(input.platformChatId, "promise", parsed.state_updates.commitmentMade).catch(() => {});
+    }
+  }
+
+  // ── Step 7: Signal Engine — observation only (V3 role) ────────────────────────
+  // Compare Signal Engine output vs OpenAI mood_detected. Log divergence. No blocking.
+  const topSignal      = sigV2.detectedSignals[0];
+  const moodNorm       = parsed.mood_detected.toLowerCase();
+  const signalMismatch = topSignal &&
+    !moodNorm.includes(topSignal.type) &&
+    !topSignal.type.includes(moodNorm);
+  if (signalMismatch) {
+    console.log("[MENTOR_V3_DIVERGENCE]", JSON.stringify({
+      signalEngine:  topSignal.type,
+      signalValence: topSignal.valence,
+      openaiMood:    moodNorm,
+      note:          "OpenAI mood wins — signal engine divergence logged for analysis",
+    }));
+  }
+
+  // ── Step 8: Decision Engine — validation only (V3 role) ───────────────────────
+  // Verify intervention_used is one of the 19 valid names. Log. No downstream effect.
+  const interventionNorm = parsed.intervention_used.toLowerCase().replace(/[-\s]/g, "_");
+  const isValidIntervention = VALID_V3_INTERVENTIONS.has(interventionNorm);
+  if (!isValidIntervention && parsed.intervention_used !== "unknown") {
+    console.log("[MENTOR_V3_INVALID_INTERVENTION]", JSON.stringify({
+      received:   parsed.intervention_used,
+      normalized: interventionNorm,
+      note:       "Not one of the 19 valid CoachIntervention names — analytics only",
+    }));
+  }
+
+  // ── Build synthetic MentorDecision for OrchestratorResult compat ─────────────
+  const decision = v3InterventionToDecision(
+    isValidIntervention ? interventionNorm : "empathize",
+    isValidIntervention ? 0.90 : 0.50,
+  );
+  diag.stagesRun.push("decision");
+
+  // ── Validate response (V1-compatible banned phrase check) ─────────────────────
+  finalReply = validateResponse(finalReply, memory, input.text);
+  diag.stagesRun.push("validate");
+
+  // ── Persist turn (non-blocking, same as V1) ───────────────────────────────────
+  persistTurn(input.platformChatId, input.text, finalReply, analysis, null, input.persistMode ?? "full");
+  diag.stagesRun.push("persist");
+
+  // ── Monitoring log ────────────────────────────────────────────────────────────
+  const durationMs = Date.now() - v3Start;
+  diag.totalMs = durationMs;
+
+  logMentorV3({
+    userId:                  input.platformChatId,
+    ulIntent:                rexCtx.ulIntent,
+    ulEmotion:               rexCtx.ulEmotion,
+    ulSuggestedIntervention: rexCtx.ulSuggestedIntervention,
+    interventionUsed:        parsed.intervention_used,
+    moodDetected:            parsed.mood_detected,
+    schedulerState:          rexCtx.schedulerState?.trainingState ?? "unknown",
+    conflictDetected,
+    jsonParseFailed:         parsed.parseError,
+    responseLength:          finalReply.length,
+    durationMs,
+  });
+
+  return { reply: finalReply, decision, state, analysis, diagnostics: diag, scheduledActions: [] };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN PIPELINE
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export async function runOrchestrator(input: OrchestratorInput): Promise<OrchestratorResult> {
+  // ── Rollback flag: MENTOR_V3_ENABLED=false → instant fallback to V1 pipeline ──
+  if (process.env.MENTOR_V3_ENABLED === "true") {
+    return runOrchestratorV3(input);
+  }
+
   const pipelineStart = Date.now();
   const timestamp     = input.timestamp ?? new Date();
 
