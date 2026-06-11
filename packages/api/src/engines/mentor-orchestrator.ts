@@ -349,6 +349,8 @@ interface UserContext {
   rexExperienceLevel:  string | null;
   schedulerContextV2:  SchedulerContextV2 | null;
   intakeAnswers:       unknown;
+  rawMemories:         Array<{ id: string; type: string; key: string; value: string; confidence: number; createdAt: Date; updatedAt: Date }>;
+  interventionHistory: Array<{ intervention: string; createdAt: Date }>;
 }
 
 async function loadUserContext(
@@ -430,10 +432,22 @@ async function loadUserContext(
     accountabilityStyle: accountStyleFact?.value ?? null,
   };
 
+  // Separate intervention logs before relevance scoring so they don't pollute rankings
+  const interventionLogs = memories.filter(m => m.type === "intervention_log");
+  const scorableMemories = memories.filter(m => m.type !== "intervention_log");
+  const interventionHistory = [...interventionLogs]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 10)
+    .map(m => ({ intervention: m.value, createdAt: new Date(m.createdAt) }));
+  const rawMemories = scorableMemories.map(m => ({
+    id: m.id, type: m.type, key: m.key, value: m.value,
+    confidence: m.confidence, createdAt: new Date(m.createdAt), updatedAt: new Date(m.updatedAt),
+  }));
+
   // V2: score every loaded fact by semantic relevance (intent + emotion + message
   // overlap + goal relevance) rather than taking the 10 most-recently-updated.
   const relevantFacts: MemoryFact[] = scoreAndRankFacts(
-    memories.map(m => ({
+    scorableMemories.map(m => ({
       id:         m.id,
       type:       m.type,
       key:        m.key,
@@ -528,7 +542,7 @@ async function loadUserContext(
     }
   }
 
-  return { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel, schedulerContextV2: schedulerCtxV2, intakeAnswers: userRow.intakeAnswers };
+  return { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel, schedulerContextV2: schedulerCtxV2, intakeAnswers: userRow.intakeAnswers, rawMemories, interventionHistory };
 }
 
 function buildMinimalContext(state: MentorState): UserContext {
@@ -542,7 +556,7 @@ function buildMinimalContext(state: MentorState): UserContext {
     sessionCount: 0, daysSinceFirstMessage: 0,
     lastUserMessage: null, lastTopicDiscussed: null, lastAssistantMessage: null,
   };
-  return { memory, state, persona: FALLBACK_PERSONA, isFirstSession: true, messageCountToday: 0, tonePreference: DEFAULT_TONE, gymContext: null, gymPatternReport: null, engagementContext: null, rexSessionContext: null, rexExperienceLevel: null, schedulerContextV2: null, intakeAnswers: null };
+  return { memory, state, persona: FALLBACK_PERSONA, isFirstSession: true, messageCountToday: 0, tonePreference: DEFAULT_TONE, gymContext: null, gymPatternReport: null, engagementContext: null, rexSessionContext: null, rexExperienceLevel: null, schedulerContextV2: null, intakeAnswers: null, rawMemories: [], interventionHistory: [] };
 }
 
 // buildSystemPrompt removed — llm.ts generateEngineResponse builds the prompt
@@ -701,6 +715,17 @@ interface RexContext {
   currentMessage:          string;
   daysSinceJoined:         number;
   signalEngineOutput:      ReturnType<typeof extractSignalsV2>["detectedSignals"];
+  // Phase 3 context extensions
+  mentorStateCtx:     { burnoutRisk: number; motivation: number; capacity: number; streakDays: number; consecutiveMisses: number } | null;
+  topSignalCtx:       { signals: string[]; topSignal: string; intensity: number } | null;
+  gymPatternCtx:      { stalledLifts: string[]; deloadDue: boolean; plateauDetected: boolean; consistencyScore: number; interventionMessage: string | null } | null;
+  engagementCtx:      { sessionsThisMonth: number; streak: number; biggestPR: string; completionRate7d: number } | null;
+  sessionCtx:         { daysSinceLastSession: number; pendingMuscles: string | null } | null;
+  behavioralPatterns: { skippedMuscles: string[]; rpeTrend: string } | null;
+  interventionHistory: Array<{ intervention: string; createdAt: Date }>;
+  contrastiveMemories: MemoryFact[];
+  empathizeLoop:       boolean;
+  lastIntervention:    string | null;
 }
 
 interface V3StateUpdates {
@@ -726,10 +751,46 @@ interface StateConflict {
   confirmQuestion: string;
 }
 
-// All 19 valid intervention names (lowercase of CoachIntervention enum values)
-const VALID_V3_INTERVENTIONS = new Set(
-  Object.values(CoachIntervention).map(v => v.toLowerCase()),
-);
+// All 21 valid intervention names (19 from CoachIntervention enum + 2 Phase 3 additions)
+const VALID_V3_INTERVENTIONS = new Set([
+  ...Object.values(CoachIntervention).map(v => v.toLowerCase()),
+  "anchor_commitment",
+  "re_engagement",
+]);
+
+// ── Phase 3: Contrastive memory retrieval ────────────────────────────────────
+// Maps current mood/signal to memory types that reframe vs. reinforce it.
+// Standard retrieval finds similar context; contrastive finds counterevidence.
+
+const CONTRASTIVE_SIGNAL_MAP: Record<string, string[]> = {
+  self_doubt:     ["achievement", "milestone", "pr"],
+  excuse:         ["promise", "commitment", "goal"],
+  burnout:        ["anchor", "preference"],
+  missed_workout: ["achievement", "goal"],
+  overwhelm:      ["anchor", "preference"],
+  quitting:       ["achievement", "milestone", "goal"],
+};
+
+function buildContrastiveMemories(
+  rawMemories: UserContext["rawMemories"],
+  mood: string | null,
+  topSignal: string | null,
+): MemoryFact[] {
+  const key = (mood ?? topSignal ?? "").toLowerCase().replace(/[\s-]/g, "_");
+  const targetTypes = CONTRASTIVE_SIGNAL_MAP[key] ?? [];
+  if (targetTypes.length === 0) return [];
+  return rawMemories
+    .filter(m => targetTypes.some(t => m.type.includes(t)))
+    .slice(0, 5)
+    .map(m => ({
+      id: m.id, type: m.type, key: m.key, value: m.value,
+      confidence: m.confidence,
+      ageHours: Math.floor((Date.now() - m.createdAt.getTime()) / 3_600_000),
+      sourceMessageId: null,
+      createdAt: m.createdAt,
+      updatedAt: m.updatedAt,
+    }));
+}
 
 // ── Step 2: Scheduler narrative ───────────────────────────────────────────────
 
@@ -778,7 +839,7 @@ function buildRexContext(
   userCtx: UserContext,
   sigV2:   ReturnType<typeof extractSignalsV2>,
 ): RexContext {
-  const { memory, schedulerContextV2 } = userCtx;
+  const { memory, schedulerContextV2, state, gymPatternReport, engagementContext, rawMemories, interventionHistory } = userCtx;
   const daysSinceJoined = memory.daysSinceFirstMessage;
 
   const ulResult    = input.routerDecision?.source === "ul" ? input.routerDecision.ulResult : null;
@@ -810,6 +871,73 @@ function buildRexContext(
   const schedulerNarrative  = buildSchedulerNarrative(schedulerContextV2, daysSinceJoined);
   const todaySessionStatus  = schedulerContextV2?.trainingState.toUpperCase() ?? "UNKNOWN";
 
+  // Phase 3 extended context (gated by PHASE3_CONTEXT_ENABLED)
+  const phase3Enabled = process.env.PHASE3_CONTEXT_ENABLED === "true";
+
+  let mentorStateCtx: RexContext["mentorStateCtx"]     = null;
+  let topSignalCtx: RexContext["topSignalCtx"]         = null;
+  let gymPatternCtx: RexContext["gymPatternCtx"]       = null;
+  let engagementCtx: RexContext["engagementCtx"]       = null;
+  let sessionCtx: RexContext["sessionCtx"]             = null;
+  let behavioralPatterns: RexContext["behavioralPatterns"] = null;
+  let contrastiveMemories: MemoryFact[]                = [];
+
+  if (phase3Enabled) {
+    mentorStateCtx = {
+      burnoutRisk:       state.burnoutRisk,
+      motivation:        state.motivation,
+      capacity:          state.capacity,
+      streakDays:        state.streakDays,
+      consecutiveMisses: state.consecutiveMisses,
+    };
+
+    const topSig = sigV2.detectedSignals[0];
+    topSignalCtx = topSig ? {
+      signals:   sigV2.detectedSignals.slice(0, 5).map(s => s.type),
+      topSignal: topSig.type,
+      intensity: topSig.intensity,
+    } : null;
+
+    if (gymPatternReport) {
+      gymPatternCtx = {
+        stalledLifts:     gymPatternReport.stalledLifts.map(s => `${s.exercise} (${s.sessionsStuck} sessions stuck)`),
+        deloadDue:        gymPatternReport.deloadDue,
+        plateauDetected:  gymPatternReport.stalledLifts.length > 0,
+        consistencyScore: gymPatternReport.consistencyScore,
+        interventionMessage: gymPatternReport.interventionMessage,
+      };
+      behavioralPatterns = {
+        skippedMuscles: gymPatternReport.skippedMuscles,
+        rpeTrend:       gymPatternReport.rpe_trend,
+      };
+    }
+
+    if (engagementContext) {
+      engagementCtx = {
+        sessionsThisMonth: engagementContext.sessionsThisMonth,
+        streak:            engagementContext.streak,
+        biggestPR:         engagementContext.biggestPR,
+        completionRate7d:  Math.round(state.completionRate7d * 100),
+      };
+    }
+
+    if (schedulerContextV2) {
+      sessionCtx = {
+        daysSinceLastSession: schedulerContextV2.daysSinceLastSession,
+        pendingMuscles:       schedulerContextV2.pendingMuscles ?? null,
+      };
+    }
+
+    contrastiveMemories = buildContrastiveMemories(rawMemories, ulEmotion, sigV2.detectedSignals[0]?.type ?? null);
+  }
+
+  const sortedHistory = [...interventionHistory].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  const empathizeLoop = sortedHistory.length >= 3 &&
+    sortedHistory.slice(-3).every(h => h.intervention === "empathize");
+  const lastIntervention = sortedHistory.length > 0
+    ? sortedHistory[sortedHistory.length - 1]!.intervention
+    : null;
+
   return {
     userProfile,
     ulIntent,
@@ -825,6 +953,16 @@ function buildRexContext(
     currentMessage:     input.text,
     daysSinceJoined,
     signalEngineOutput: sigV2.detectedSignals,
+    mentorStateCtx,
+    topSignalCtx,
+    gymPatternCtx,
+    engagementCtx,
+    sessionCtx,
+    behavioralPatterns,
+    interventionHistory: sortedHistory,
+    contrastiveMemories,
+    empathizeLoop,
+    lastIntervention,
   };
 }
 
@@ -907,7 +1045,17 @@ Example trigger: "Should I add more cardio?" [goal is muscle gain]
 
 priority_reset — Use when: user has too many active commitments and is spreading dangerously thin.
 How it feels: simplified — one thing survives, everything else explicitly waits.
-Example trigger: "I'm trying to gym, study, cut, sleep better, and fix my diet all at once."`;
+Example trigger: "I'm trying to gym, study, cut, sleep better, and fix my diet all at once."
+
+anchor_commitment — Use when: user makes a strong positive commitment.
+How it feels: their word taken seriously — the commitment becomes concrete, confirmed, and locked in.
+Example trigger: "I'm training 4x this week." / "90 day bulk starts now."
+Behavior: make it specific, confirm the details, store via state_updates.commitmentMade. Do not just celebrate — lock it in with a concrete plan element.
+
+re_engagement — Use when: user has been absent 7+ days and is returning.
+How it feels: welcomed back without judgment — no shame, no lecture, no accountability, no celebration.
+Example trigger: "Haven't trained in 10 days." / "Been gone 3 weeks."
+Behavior: reconnect naturally with one easy next step only. Do not reference the absence as a failure.`;
 
 function buildRexSystemPrompt(ctx: RexContext): string {
   // Section B — user profile
@@ -927,12 +1075,58 @@ function buildRexSystemPrompt(ctx: RexContext): string {
     ? profileLines.join("\n")
     : "(Profile not yet complete)";
 
-  // Section C — memories
+  // Section B2 — behavioral state (Phase 3)
+  const mentorStateSection = ctx.mentorStateCtx
+    ? `Burnout risk: ${ctx.mentorStateCtx.burnoutRisk}/100 | Motivation: ${ctx.mentorStateCtx.motivation}/100 | Capacity: ${ctx.mentorStateCtx.capacity}/100\nStreak: ${ctx.mentorStateCtx.streakDays} days | Consecutive misses: ${ctx.mentorStateCtx.consecutiveMisses}`
+    : null;
+
+  // Section B3 — detected signals (Phase 3)
+  const signalSection = ctx.topSignalCtx
+    ? `Top signal: ${ctx.topSignalCtx.topSignal} (intensity: ${Math.round(ctx.topSignalCtx.intensity * 100)}%)\nAll detected: ${ctx.topSignalCtx.signals.join(", ")}`
+    : null;
+
+  // Section B4 — gym pattern (Phase 3)
+  const gymPatternLines: string[] = [];
+  if (ctx.gymPatternCtx) {
+    if (ctx.gymPatternCtx.stalledLifts.length > 0)
+      gymPatternLines.push(`Stalled lifts: ${ctx.gymPatternCtx.stalledLifts.join("; ")}`);
+    if (ctx.gymPatternCtx.deloadDue)
+      gymPatternLines.push("Deload due.");
+    gymPatternLines.push(`Consistency: ${Math.round(ctx.gymPatternCtx.consistencyScore * 100)}%`);
+    if (ctx.gymPatternCtx.interventionMessage)
+      gymPatternLines.push(`Pattern note: ${ctx.gymPatternCtx.interventionMessage}`);
+  }
+  const gymPatternSection = gymPatternLines.length > 0 ? gymPatternLines.join("\n") : null;
+
+  // Section B5 — engagement (Phase 3)
+  const engagementSection = ctx.engagementCtx
+    ? `Sessions this month: ${ctx.engagementCtx.sessionsThisMonth} | Streak: ${ctx.engagementCtx.streak} | 7-day completion: ${ctx.engagementCtx.completionRate7d}%\nBiggest PR: ${ctx.engagementCtx.biggestPR}`
+    : null;
+
+  // Section B6 — intervention history + loop prevention (Phase 3)
+  let interventionHistoryLine = "";
+  let loopWarning = "";
+  if (ctx.interventionHistory.length > 0) {
+    interventionHistoryLine = `Last interventions: ${ctx.interventionHistory.slice(-5).map(h => h.intervention).join(" → ")}`;
+    if (ctx.empathizeLoop) {
+      loopWarning = "\nCRITICAL: User has received empathy 3 times in a row. Do NOT use empathize again. User needs forward momentum now, not more validation.";
+    } else if (ctx.lastIntervention) {
+      loopWarning = `\nNote: Last intervention was "${ctx.lastIntervention}". Choose a different one this turn unless it is genuinely the best fit.`;
+    }
+  }
+
+  // Section C — memories (standard + contrastive)
   const memSection = ctx.topRelevantMemories.length > 0
     ? ctx.topRelevantMemories
         .map(f => `• [${f.type.replace(/_/g, " ")}] ${f.value}`)
         .join("\n")
     : "none";
+
+  const contrastiveSection = ctx.contrastiveMemories.length > 0
+    ? ctx.contrastiveMemories
+        .map(f => `• [${f.type.replace(/_/g, " ")}] ${f.value}`)
+        .join("\n")
+    : null;
 
   // Section D — commitments
   const commSection = ctx.activeCommitments.length > 0
@@ -956,6 +1150,11 @@ function buildRexSystemPrompt(ctx: RexContext): string {
     : ctx.daysSinceJoined <= 30
     ? "Days 8–30: More familiar. More direct. Can reference past conversations naturally. Less explaining."
     : "Day 30+: High expectations. Deep personal references. Less explanation. More challenge. You know this person.";
+
+  // Burnout context (Phase 3)
+  const burnoutContext = ctx.mentorStateCtx
+    ? `Burnout risk score: ${ctx.mentorStateCtx.burnoutRisk}/100\nSemantic burnout signals (act on these even without explicit keywords): "I dread training", "feels like punishment", "nothing left", "going through the motions", "can't remember why I started"\nIf ANY burnout signal is present regardless of intensity — prioritize prevent_burnout over every other intervention.`
+    : "Detect burnout signals yourself: tired, what's the point, dread training, nothing left, running on empty.";
 
   // Conversation history
   const historyBlock = ctx.conversationHistory
@@ -986,14 +1185,19 @@ ${profileSection}
 
 Training state: ${ctx.schedulerNarrative}
 Today: ${ctx.todaySessionStatus}
+${mentorStateSection ? `\n─── BEHAVIORAL STATE ─────────────────────────────────────────────────────────\n${mentorStateSection}` : ""}${signalSection ? `\n\n─── DETECTED SIGNALS ─────────────────────────────────────────────────────────\n${signalSection}` : ""}${gymPatternSection ? `\n\n─── GYM PATTERNS ─────────────────────────────────────────────────────────────\n${gymPatternSection}` : ""}${engagementSection ? `\n\n─── ENGAGEMENT ───────────────────────────────────────────────────────────────\n${engagementSection}` : ""}${interventionHistoryLine ? `\n\n─── INTERVENTION HISTORY ─────────────────────────────────────────────────────\n${interventionHistoryLine}${loopWarning}` : ""}
 
 ─── SECTION C — MEMORIES ────────────────────────────────────────────────────
 
+RELEVANT MEMORIES (similar context):
 ${memSection}
+${contrastiveSection ? `\nCONTRASTIVE MEMORIES (use to reframe when appropriate):
+${contrastiveSection}
 
+When user expresses self_doubt, excuse, burnout, overwhelm, or quitting — use contrastive memories to anchor the response in evidence.
+Never force them. Only reference if genuinely relevant.` : ""}
 Only use memories relevant to the current message.
 Reference them as a coach who knows the person — naturally, not explicitly.
-If nothing is relevant — don't force it.
 
 ─── SECTION D — ACTIVE COMMITMENTS ─────────────────────────────────────────
 
@@ -1014,7 +1218,7 @@ ${INTERVENTION_LIBRARY}
 ${toneGuide}
 Current day since joining: ${ctx.daysSinceJoined}
 
-─── SECTION H — SIGNAL DETECTION ────────────────────────────────────────────
+─── SECTION H — SIGNAL DETECTION + BURNOUT ──────────────────────────────────
 
 Detect these patterns yourself from the message. Do not rely on pre-tagged labels.
 
@@ -1033,6 +1237,8 @@ overwhelm: too much, don't know where to start, confused, juggling everything
 excuse: I'll start Monday, been busy, maybe tomorrow, things came up, work got crazy
 → Acknowledge briefly. Do not accept. Redirect with one specific action today.
 
+${burnoutContext}
+
 ─── SECTION I — HARD RULES ──────────────────────────────────────────────────
 
 • One response = one focus. Never stack coaching points.
@@ -1046,6 +1252,7 @@ excuse: I'll start Monday, been busy, maybe tomorrow, things came up, work got c
 • No ALL CAPS for emphasis. No dramatic punctuation.
 • Default ending: direction or next action — not a question.
 • If the previous reply had a question — do NOT ask another question.
+• Every response must contain at least one specific reference to this user's history, progress, or commitments. A response with zero specific references is a failure. Generic coaching responses are not acceptable.
 
 ─── RESPONSE FORMAT (STRICT) ────────────────────────────────────────────────
 
@@ -1053,7 +1260,7 @@ Return ONLY valid compact JSON. No markdown fences. No explanation outside the J
 
 {
   "reply": "<your response — 1-3 sentences unless presenting a plan or explanation>",
-  "intervention_used": "<one of the 19 names from Section F, lowercase with underscores>",
+  "intervention_used": "<one of the 21 names from Section F, lowercase with underscores>",
   "mood_detected": "<one word: frustrated | discouraged | motivated | overwhelmed | burnout | self_doubt | excuse | achievement | neutral>",
   "state_updates": {
     "sessionLogged": <true if user just confirmed completing a session, else false>,
@@ -1189,6 +1396,8 @@ function v3InterventionToDecision(
     consistency_check:    MentorAction.REVIEW,
     goal_alignment:       MentorAction.REFLECT,
     priority_reset:       MentorAction.REDUCE_SCOPE,
+    anchor_commitment:    MentorAction.ACCOUNTABILITY,
+    re_engagement:        MentorAction.ENCOURAGE,
   };
 
   const action = (actionMap[interventionUsed] ?? MentorAction.ASK) as typeof MentorAction[keyof typeof MentorAction];
@@ -1225,6 +1434,16 @@ function logMentorV3(data: {
   jsonParseFailed:         boolean;
   responseLength:          number;
   durationMs:              number;
+  empathizeLoopPrevented:  boolean;
+  contextSourcesUsed: {
+    profileUsed:              boolean;
+    memoryUsed:               boolean;
+    contrastiveMemoryUsed:    boolean;
+    commitmentUsed:           boolean;
+    schedulerUsed:            boolean;
+    patternUsed:              boolean;
+    interventionHistoryUsed:  boolean;
+  };
 }): void {
   console.log("[MENTOR_V3]", JSON.stringify(data));
 }
@@ -1353,15 +1572,19 @@ async function runOrchestratorV3(input: OrchestratorInput): Promise<Orchestrator
   }
 
   // ── Step 8: Decision Engine — validation only (V3 role) ───────────────────────
-  // Verify intervention_used is one of the 19 valid names. Log. No downstream effect.
+  // Verify intervention_used is one of the 21 valid names. Log. No downstream effect.
   const interventionNorm = parsed.intervention_used.toLowerCase().replace(/[-\s]/g, "_");
   const isValidIntervention = VALID_V3_INTERVENTIONS.has(interventionNorm);
   if (!isValidIntervention && parsed.intervention_used !== "unknown") {
     console.log("[MENTOR_V3_INVALID_INTERVENTION]", JSON.stringify({
       received:   parsed.intervention_used,
       normalized: interventionNorm,
-      note:       "Not one of the 19 valid CoachIntervention names — analytics only",
+      note:       "Not one of the 21 valid intervention names — analytics only",
     }));
+  }
+  // Write intervention to history (loop prevention requires it in next turn)
+  if (!conflictDetected && !parsed.parseError && isValidIntervention) {
+    addToLongTerm(input.platformChatId, "intervention_log", interventionNorm).catch(() => {});
   }
 
   // ── Build synthetic MentorDecision for OrchestratorResult compat ─────────────
@@ -1395,6 +1618,16 @@ async function runOrchestratorV3(input: OrchestratorInput): Promise<Orchestrator
     jsonParseFailed:         parsed.parseError,
     responseLength:          finalReply.length,
     durationMs,
+    empathizeLoopPrevented:  rexCtx.empathizeLoop,
+    contextSourcesUsed: {
+      profileUsed:             Object.keys(rexCtx.userProfile).length > 0,
+      memoryUsed:              rexCtx.topRelevantMemories.length > 0,
+      contrastiveMemoryUsed:   rexCtx.contrastiveMemories.length > 0,
+      commitmentUsed:          rexCtx.activeCommitments.length > 0,
+      schedulerUsed:           rexCtx.schedulerState !== null,
+      patternUsed:             rexCtx.gymPatternCtx !== null,
+      interventionHistoryUsed: rexCtx.interventionHistory.length > 0,
+    },
   });
 
   return { reply: finalReply, decision, state, analysis, diagnostics: diag, scheduledActions: [] };
