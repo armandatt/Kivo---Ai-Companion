@@ -81,6 +81,8 @@ import { parseMessage } from "@repo/api/engines/parsing-engine-v2";
 //@ts-ignore
 import { runUnderstandingLayer, buildProfileSummary } from "@repo/api/engines/understanding-layer";
 //@ts-ignore
+import { routeMessage } from "@repo/api/engines/semantic-router";
+//@ts-ignore
 import { detectTimeMention } from "@repo/api/services/checkin-offer.service";
 //@ts-ignore
 import { shouldOfferCheckIn } from "@repo/api/services/checkin-offer.service";
@@ -246,36 +248,12 @@ export async function POST(req: Request) {
         reasoning:  v2Parse.reasoning,
       }));
 
-      // ── Understanding Layer V1 — parallel, fire-and-forget ─────────────────
-      // Runs alongside Parser V2. No await — never blocks the pipeline.
-      // Logs both outputs for divergence analysis and migration planning.
-      runUnderstandingLayer({
+      // ── Understanding Layer — primary semantic router (runs concurrently) ────
+      // Started here so UL runs in parallel with all sync/fast operations below.
+      // Awaited before the safety gate / orchestrator — only blocks the semantic path.
+      const ulPromise = runUnderstandingLayer({
         message:        text,
         recentMessages: v2ParseCtx.recentMessages ?? [],
-      }).then((ul: any) => {
-        console.log(JSON.stringify({
-          ts:         new Date().toISOString(),
-          chatId:     String(chatId),
-          layer:      "ul_v1",
-          message:    text.slice(0, 80),
-          // Understanding Layer output
-          ul_intent:  ul.intent,
-          ul_emotion: ul.emotion,
-          ul_topic:   ul.topic,
-          ul_conf:    ul.confidence,
-          ul_advice:  ul.needsAdvice,
-          ul_action:  ul.needsAction,
-          ul_ms:      ul.durationMs,
-          ul_facts:   Object.keys(ul.extractedFacts).length > 0 ? ul.extractedFacts : undefined,
-          ul_reason:  ul.reasoning,
-          // Parser V2 for direct comparison
-          v2_intent:  v2Parse.actionableIntent?.type ?? "none",
-          v2_conf:    v2Parse.confidence,
-          // Divergence flag: intents differ between the two systems
-          diverged:   ul.intent !== mapULToV2Intent(v2Parse.actionableIntent?.type ?? ""),
-        }));
-      }).catch((e: Error) => {
-        console.warn("[ul_v1] error:", e.message);
       });
 
       // ── Natural-language reminder creation (V2-controlled routing) ────────
@@ -539,15 +517,55 @@ export async function POST(req: Request) {
         return Response.json({ ok: true });
       }
 
+      // ── Semantic Router — resolve UL and build routing decision ──────────────
+      // UL has been running concurrently since before the structured routes above.
+      // Awaiting here: the structured routes (reminder/log/gym) already returned,
+      // so this await only affects messages reaching the semantic / orchestrator path.
+      const ulResult      = await (ulPromise as Promise<any>).catch(() => ({
+        intent: "general_chat", emotion: "neutral", topic: "other",
+        confidence: 0, extractedFacts: {}, needsAdvice: false, needsAction: false,
+        reasoning: "ul error", durationMs: 0,
+      }));
+      const routerDecision = routeMessage(v2Parse, ulResult);
+
+      console.log(JSON.stringify({
+        ts:               new Date().toISOString(),
+        chatId:           String(chatId),
+        layer:            "semantic_router",
+        message:          text.slice(0, 80),
+        router_source:    routerDecision.source,
+        router_intent:    routerDecision.intent,
+        router_conf:      routerDecision.confidence,
+        ul_intent:        ulResult.intent,
+        ul_emotion:       ulResult.emotion,
+        ul_conf:          ulResult.confidence,
+        ul_intervention:  ulResult.suggestedIntervention,
+        ul_ms:            ulResult.durationMs,
+        v2_intent:        v2Parse.actionableIntent?.type ?? "none",
+        v2_conf:          v2Parse.confidence,
+        requires_clarify: routerDecision.requiresClarification,
+      }));
+
+      // ── Clarification gate (semantic conflict) ────────────────────────────────
+      // Fires when UL is confident this isn't an action message but V2 disagrees
+      // on a state-changing intent. Ask before writing anything.
+      if (routerDecision.requiresClarification) {
+        await addToShortTerm(chatId.toString(), text, { role: "user", intent: "clarification_needed", emotion: ulResult.emotion });
+        await sendAndRemember(chatId, routerDecision.clarificationPrompt ?? "Just to make sure — did you want me to make a change, or are you just sharing?", "clarification_request", ulResult.emotion);
+        return Response.json({ ok: true });
+      }
+
       // ── Safety gate: low-confidence recommendation block ──────────────────
-      // When the parser isn't sure what the user wants, asking beats guessing.
+      // UL override: if the semantic router already assigned this to UL with high
+      // confidence, skip the V2 low-confidence block — UL has better signal here.
       const RECOMMENDATION_INTENT_TYPES = new Set([
         "recommendation_request", "advice_request", "nutrition_query",
         "plan_request", "goal_set", "schedule_update",
       ]);
       if (
         RECOMMENDATION_INTENT_TYPES.has(v2Parse.actionableIntent?.type ?? "") &&
-        v2Parse.confidence < 0.55
+        v2Parse.confidence < 0.55 &&
+        routerDecision.source !== "ul"
       ) {
         logBetaFailure(chatId, text, v2Parse.actionableIntent?.type ?? "unknown", v2Parse.confidence, "low_confidence_recommendation_blocked");
         const clarifyReply = "Before I give you anything specific — what are you trying to do? Looking for a training adjustment, a nutrition tweak, or something else?";
@@ -574,10 +592,11 @@ export async function POST(req: Request) {
       const result = await runOrchestrator({
         platformChatId: chatId.toString(),
         text,
-        platform:    "telegram",
-        timestamp:   new Date(),
-        persistMode: "full",
-        parseResult: v2Parse,
+        platform:       "telegram",
+        timestamp:      new Date(),
+        persistMode:    "full",
+        parseResult:    v2Parse,
+        routerDecision,
       });
 
       // ── Post-pipeline log: full trace including decision and route ─────────
@@ -609,6 +628,21 @@ export async function POST(req: Request) {
       }
 
       await sendTelegramMessage(chatId, reply);
+
+      // ── Intervention quality log (Section 6 of router-audit) ─────────────────
+      // Records whether the UL semantic directive was present in the LLM output.
+      // Analyzed offline: railway logs | grep response_quality | npx tsx router-audit.ts --from-logs
+      if ((routerDecision as any)?.source === "ul" && (routerDecision as any)?.ulResult?.suggestedIntervention) {
+        console.log(JSON.stringify({
+          ts:              new Date().toISOString(),
+          chatId:          String(chatId),
+          layer:           "response_quality",
+          router_source:   (routerDecision as any).source,
+          ul_intervention: (routerDecision as any).ulResult.suggestedIntervention,
+          ul_intent:       (routerDecision as any).ulResult.intent,
+          response_slice:  reply.slice(0, 200),
+        }));
+      }
 
       // ── Check-in offer — detect time mention and ask if user wants a follow-up
       // Only fires if: no pending offer already, time found, message looks like a commitment.

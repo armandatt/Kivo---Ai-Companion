@@ -109,7 +109,7 @@ describe("buildTrainingStateBlock", () => {
     });
     const block = buildTrainingStateBlock(ctx);
     expect(block).toContain("TRAINING STATE");
-    expect(block).toContain("COMPLETED");
+    expect(block).toContain("Current state: COMPLETED");
     expect(block).toContain("Do NOT encourage training again");
     expect(block).toContain("Completed today: chest, triceps");
     expect(block).toContain("85%");
@@ -117,19 +117,35 @@ describe("buildTrainingStateBlock", () => {
 
   it("DUE state includes session-focused guidance", () => {
     const ctx = makeSchedulerCtx({
-      trainingState:    TrainingState.DUE,
-      pendingMuscles:   "back, biceps",
-      completionRate7d: 0.60,
-      consecutiveMisses: 1,
-      observedWindow:   TrainingWindow.MORNING,
-      windowConfidence: "medium",
+      trainingState:       TrainingState.DUE,
+      pendingMuscles:      "back, biceps",
+      pendingSplitDayIndex: 1,
+      completionRate7d:    0.60,
+      consecutiveMisses:   1,
+      observedWindow:      TrainingWindow.MORNING,
+      windowConfidence:    "medium",
     });
     const block = buildTrainingStateBlock(ctx);
-    expect(block).toContain("DUE");
+    expect(block).toContain("Current state: DUE");
     expect(block).toContain("session-focused");
-    expect(block).toContain("Pending muscle group: back, biceps");
+    expect(block).toContain("Current muscle group: back, biceps");
+    expect(block).toContain("Cycle day: 2");
     expect(block).toContain("Consecutive misses: 1");
     expect(block).toContain("60%");
+  });
+
+  it("includes cycle day when pendingSplitDayIndex is 0 (first day)", () => {
+    const ctx = makeSchedulerCtx({
+      trainingState:       TrainingState.DUE,
+      pendingMuscles:      "chest, triceps",
+      pendingSplitDayIndex: 0,
+      completionRate7d:    0.80,
+      observedWindow:      TrainingWindow.EVENING,
+      windowConfidence:    "high",
+    });
+    const block = buildTrainingStateBlock(ctx);
+    expect(block).toContain("Cycle day: 1");
+    expect(block).toContain("Current muscle group: chest, triceps");
   });
 
   it("PENDING_CONFIRMATION state asks to verify before assuming", () => {
@@ -172,7 +188,7 @@ describe("buildTrainingStateBlock", () => {
     expect(block).toContain("preparation");
   });
 
-  it("omits pendingMuscles line when null", () => {
+  it("omits muscle group line when null", () => {
     const ctx = makeSchedulerCtx({
       trainingState:  TrainingState.DUE,
       pendingMuscles: null,
@@ -181,7 +197,20 @@ describe("buildTrainingStateBlock", () => {
       windowConfidence: "low",
     });
     const block = buildTrainingStateBlock(ctx);
+    expect(block).not.toContain("Current muscle group");
     expect(block).not.toContain("Pending muscle group");
+  });
+
+  it("omits cycle day when pendingSplitDayIndex is null", () => {
+    const ctx = makeSchedulerCtx({
+      trainingState:       TrainingState.DUE,
+      pendingSplitDayIndex: null,
+      completionRate7d:    0.5,
+      observedWindow:      TrainingWindow.FLEXIBLE,
+      windowConfidence:    "low",
+    });
+    const block = buildTrainingStateBlock(ctx);
+    expect(block).not.toContain("Cycle day");
   });
 
   it("includes completedTodayMuscles when set", () => {
@@ -290,6 +319,45 @@ describe("buildActiveSignalsBlock", () => {
     const block = buildActiveSignalsBlock(signals);
     expect(block).toContain("0.90");
   });
+
+  it("shows consistency_negative when valence is negative", () => {
+    const signal: DetectedSignal = {
+      type:       "consistency",
+      intensity:  0.73,
+      valence:    "negative",
+      confidence: 0.85,
+      evidence:   ["keep missing sessions"],
+    };
+    const block = buildActiveSignalsBlock([signal]);
+    expect(block).toContain("consistency_negative");
+    expect(block).not.toContain("• consistency (");
+  });
+
+  it("shows plain consistency when valence is positive", () => {
+    const signal: DetectedSignal = {
+      type:       "consistency",
+      intensity:  0.80,
+      valence:    "positive",
+      confidence: 0.85,
+      evidence:   ["been consistent"],
+    };
+    const block = buildActiveSignalsBlock([signal]);
+    expect(block).toContain("• consistency (0.80)");
+    expect(block).not.toContain("consistency_negative");
+  });
+
+  it("shows non-bipolar signals without valence suffix regardless of valence field", () => {
+    const signal: DetectedSignal = {
+      type:       "burnout",
+      intensity:  0.85,
+      valence:    "negative",
+      confidence: 0.90,
+      evidence:   [],
+    };
+    const block = buildActiveSignalsBlock([signal]);
+    expect(block).toContain("• burnout (0.85)");
+    expect(block).not.toContain("burnout_negative");
+  });
 });
 
 // ─── buildV2DirectiveOverride ─────────────────────────────────────────────────
@@ -366,5 +434,222 @@ describe("buildV2DirectiveOverride", () => {
   it("unknown V2 intervention returns null gracefully", () => {
     const decision = makeDecision({ ruleId: "V2:NONEXISTENT_INTERVENTION" });
     expect(buildV2DirectiveOverride(decision)).toBeNull();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PART 7 — VALIDATION AUDIT
+// Special-focus scenarios that must produce the correct safety/state blocks.
+// Each scenario is named after the real failure mode it prevents.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface AuditScore {
+  scenario:  string;
+  safety:    boolean;
+  scheduler: boolean;
+  signals:   boolean;
+}
+
+describe("Part 7 — Special Scenario Integration Audit", () => {
+  const SCORES: AuditScore[] = [];
+
+  afterAll(() => {
+    const total   = SCORES.length;
+    const passed  = (key: keyof Omit<AuditScore, "scenario">) =>
+      SCORES.filter(s => s[key]).length;
+
+    console.log("\n════════════════════════════════════════════════════");
+    console.log("PART 7 — INTEGRATION AUDIT SCORES");
+    console.log("════════════════════════════════════════════════════");
+    console.log(`Safety block accuracy  : ${passed("safety")}/${total}`);
+    console.log(`Scheduler awareness    : ${passed("scheduler")}/${total}`);
+    console.log(`Signal accuracy        : ${passed("signals")}/${total}`);
+    const overallPct = Math.round(
+      (passed("safety") + passed("scheduler") + passed("signals")) / (total * 3) * 100,
+    );
+    console.log(`Overall score          : ${overallPct}%`);
+    console.log("════════════════════════════════════════════════════\n");
+    for (const s of SCORES) {
+      const marks = [
+        s.safety    ? "✓ safety" : "✗ safety",
+        s.scheduler ? "✓ scheduler" : "✗ scheduler",
+        s.signals   ? "✓ signals" : "✗ signals",
+      ].join("  ");
+      console.log(`  ${s.scenario.padEnd(45)} ${marks}`);
+    }
+    console.log("");
+  });
+
+  // ── "sore chest" — RECOMMENDATION must be blocked ────────────────────────
+
+  it("sore chest → RECOMMENDATION_BLOCKED + no training push", () => {
+    const safetyBlock = buildParserSafetyBlock(["PAIN_MENTIONED", "RECOMMENDATION_BLOCKED"]);
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState:    TrainingState.DUE,
+      pendingMuscles:   "chest, triceps",
+      completionRate7d: 0.60,
+      observedWindow:   TrainingWindow.EVENING,
+      windowConfidence: "medium",
+    }));
+    const safety    = safetyBlock.includes("RECOMMENDATION_BLOCKED = TRUE") && safetyBlock.includes("Pain mentioned.");
+    const scheduler = schedulerBlock.includes("DUE") && schedulerBlock.includes("session-focused");
+    const signals   = true; // no active signals in this scenario
+
+    SCORES.push({ scenario: "sore chest (pain context, no request)", safety, scheduler, signals });
+    expect(safety).toBe(true);
+  });
+
+  // ── "knee pain" — INJURY_CONTEXT must be emitted and surfaced ────────────
+
+  it("knee pain → INJURY_CONTEXT signal in safety block", () => {
+    const safetyBlock = buildParserSafetyBlock(["PAIN_MENTIONED", "INJURY_CONTEXT", "RECOMMENDATION_BLOCKED"]);
+    const safety    = safetyBlock.includes("Injury context detected.") && safetyBlock.includes("RECOMMENDATION_BLOCKED = TRUE");
+    const scheduler = true; // not scheduler-dependent
+    const signals   = true;
+
+    SCORES.push({ scenario: "knee pain (injury context)", safety, scheduler, signals });
+    expect(safety).toBe(true);
+  });
+
+  // ── "completed workout today" — must NOT push training ────────────────────
+
+  it("completed workout → Do NOT encourage training again", () => {
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState:         TrainingState.COMPLETED,
+      completedTodayMuscles: "back, biceps",
+      completionRate7d:      0.80,
+      observedWindow:        TrainingWindow.EVENING,
+      windowConfidence:      "high",
+    }));
+    const safetyBlock = buildParserSafetyBlock([]);
+    const safety    = !safetyBlock.includes("SAFETY FLAGS");
+    const scheduler = schedulerBlock.includes("Do NOT encourage training again") &&
+                      schedulerBlock.includes("Current state: COMPLETED") &&
+                      schedulerBlock.includes("Completed today: back, biceps");
+    const signals   = true;
+
+    SCORES.push({ scenario: "completed workout (COMPLETED state)", safety, scheduler, signals });
+    expect(scheduler).toBe(true);
+  });
+
+  // ── "skipped workout today" — must acknowledge without shame ─────────────
+
+  it("skipped workout → acknowledge without shame + SKIPPED state", () => {
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState:    TrainingState.SKIPPED,
+      consecutiveMisses: 1,
+      completionRate7d: 0.50,
+      observedWindow:   TrainingWindow.MORNING,
+      windowConfidence: "medium",
+    }));
+    const safety    = true;
+    const scheduler = schedulerBlock.includes("Current state: SKIPPED") &&
+                      schedulerBlock.includes("without shame");
+    const signals   = true;
+
+    SCORES.push({ scenario: "skipped workout (SKIPPED state)", safety, scheduler, signals });
+    expect(scheduler).toBe(true);
+  });
+
+  // ── "burnout + overwhelm" — active signals must both surface ─────────────
+
+  it("burnout + overwhelm → both signals visible above threshold", () => {
+    const burnoutSig: DetectedSignal = { type: "burnout",   intensity: 0.81, valence: "negative", confidence: 0.90, evidence: [] };
+    const overwhelmSig: DetectedSignal = { type: "overwhelm", intensity: 0.73, valence: "negative", confidence: 0.85, evidence: [] };
+    const block = buildActiveSignalsBlock([burnoutSig, overwhelmSig]);
+
+    const safety    = true;
+    const scheduler = true;
+    const signals   = block.includes("burnout (0.81)") && block.includes("overwhelm (0.73)");
+
+    SCORES.push({ scenario: "burnout + overwhelm (active signals)", safety, scheduler, signals });
+    expect(signals).toBe(true);
+  });
+
+  // ── "I want to quit" — self_doubt signal must surface ────────────────────
+
+  it("quit message → self_doubt signal above threshold", () => {
+    const quitSig: DetectedSignal = { type: "self_doubt", intensity: 0.62, valence: "negative", confidence: 0.80, evidence: ["want to quit"] };
+    const block = buildActiveSignalsBlock([quitSig]);
+
+    const safety    = true;
+    const scheduler = true;
+    const signals   = block.includes("self_doubt (0.62)");
+
+    SCORES.push({ scenario: "quit message (self_doubt signal)", safety, scheduler, signals });
+    expect(signals).toBe(true);
+  });
+
+  // ── "coming back after gap" — PENDING_CONFIRMATION must verify ────────────
+
+  it("comeback after gap → PENDING_CONFIRMATION verifies before assuming", () => {
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState:    TrainingState.PENDING_CONFIRMATION,
+      consecutiveMisses: 3,
+      completionRate7d: 0.30,
+      observedWindow:   TrainingWindow.MORNING,
+      windowConfidence: "low",
+    }));
+    const safety    = true;
+    const scheduler = schedulerBlock.includes("Current state: PENDING_CONFIRMATION") &&
+                      schedulerBlock.includes("Verify whether they trained");
+    const signals   = true;
+
+    SCORES.push({ scenario: "comeback after gap (PENDING_CONFIRMATION)", safety, scheduler, signals });
+    expect(scheduler).toBe(true);
+  });
+
+  // ── "consistent streak" — positive consistency signal correct ────────────
+
+  it("consistent streak → plain 'consistency' signal (not _negative)", () => {
+    const posSig: DetectedSignal = { type: "consistency", intensity: 0.72, valence: "positive", confidence: 0.85, evidence: ["been consistent"] };
+    const block = buildActiveSignalsBlock([posSig]);
+
+    const safety    = true;
+    const scheduler = true;
+    const signals   = block.includes("• consistency (0.72)") && !block.includes("consistency_negative");
+
+    SCORES.push({ scenario: "consistent streak (positive consistency)", safety, scheduler, signals });
+    expect(signals).toBe(true);
+  });
+
+  // ── "inconsistent pattern" — negative consistency labelled correctly ──────
+
+  it("inconsistent pattern → consistency_negative signal shown", () => {
+    const negSig: DetectedSignal = { type: "consistency", intensity: 0.68, valence: "negative", confidence: 0.82, evidence: ["keep skipping"] };
+    const block = buildActiveSignalsBlock([negSig]);
+
+    const safety    = true;
+    const scheduler = true;
+    const signals   = block.includes("consistency_negative (0.68)");
+
+    SCORES.push({ scenario: "inconsistent pattern (consistency_negative)", safety, scheduler, signals });
+    expect(signals).toBe(true);
+  });
+
+  // ── "DUE + cycle day visible" — LLM sees which day of split is pending ───
+
+  it("DUE state shows cycle day in prompt block", () => {
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState:       TrainingState.DUE,
+      pendingMuscles:      "legs",
+      pendingSplitDayIndex: 2,
+      completionRate7d:    0.70,
+      observedWindow:      TrainingWindow.AFTERNOON,
+      windowConfidence:    "high",
+    }));
+    const safety    = true;
+    const scheduler = schedulerBlock.includes("Cycle day: 3") &&
+                      schedulerBlock.includes("Current muscle group: legs");
+    const signals   = true;
+
+    SCORES.push({ scenario: "DUE state with cycle day", safety, scheduler, signals });
+    expect(scheduler).toBe(true);
+  });
+
+  // ── Ensure all 10 scenarios ran ───────────────────────────────────────────
+
+  it("AUDIT COMPLETE — all 10 special scenarios captured", () => {
+    expect(SCORES).toHaveLength(10);
   });
 });

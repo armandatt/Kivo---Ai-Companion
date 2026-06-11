@@ -302,6 +302,48 @@ describe("C — Pain context, no auto-recommendation", () => {
     expect(recIntent).toBeDefined()
     expect(recIntent?.confidence).toBeGreaterThan(0.5)
   })
+
+  // ── INJURY_CONTEXT signal emission (Gap fix) ─────────────────────────────────
+
+  it("SC40b — 'I think I tore my shoulder' → INJURY_CONTEXT intent AND signal", () => {
+    const r = parseMessage("I think I tore my shoulder", noCtx())
+    expect(hasIntent(r, IntentType.INJURY_CONTEXT)).toBe(true)
+    expect(r.signals).toContain("PAIN_MENTIONED")
+    expect(r.signals).toContain("INJURY_CONTEXT")
+    expect(r.signals).toContain("RECOMMENDATION_BLOCKED")
+  })
+
+  it("SC40c — 'possible knee fracture' → INJURY_CONTEXT signal emitted", () => {
+    const r = parseMessage("I may have a knee fracture, it snapped during squats", noCtx())
+    expect(hasIntent(r, IntentType.INJURY_CONTEXT)).toBe(true)
+    expect(r.signals).toContain("INJURY_CONTEXT")
+    expect(r.signals).toContain("PAIN_MENTIONED")
+  })
+
+  it("SC40d — 'dislocated shoulder' → INJURY_CONTEXT signal but NOT plain pain signal conflict", () => {
+    const r = parseMessage("dislocated my shoulder yesterday", noCtx())
+    expect(hasIntent(r, IntentType.INJURY_CONTEXT)).toBe(true)
+    expect(r.signals).toContain("INJURY_CONTEXT")
+    expect(r.signals).toContain("PAIN_MENTIONED")
+    expect(r.signals).toContain("RECOMMENDATION_BLOCKED")
+  })
+
+  it("SC40e — plain soreness (no severe word) does NOT emit INJURY_CONTEXT signal", () => {
+    const r = parseMessage("my chest is sore today", noCtx())
+    expect(hasIntent(r, IntentType.PAIN_CONTEXT)).toBe(true)
+    expect(r.signals).toContain("PAIN_MENTIONED")
+    expect(r.signals).not.toContain("INJURY_CONTEXT")
+  })
+
+  it("SC40f — injury + explicit recommendation request → INJURY_CONTEXT signal set, recommendation NOT blocked", () => {
+    const r = parseMessage("I have a torn shoulder, what exercises can I still do?", noCtx())
+    expect(hasIntent(r, IntentType.INJURY_CONTEXT)).toBe(true)
+    expect(hasIntent(r, IntentType.RECOMMENDATION_REQUEST)).toBe(true)
+    expect(r.signals).toContain("PAIN_MENTIONED")
+    expect(r.signals).toContain("INJURY_CONTEXT")
+    // Explicit request → not blocked, but LLM will still require location/severity/duration
+    expect(r.signals).not.toContain("RECOMMENDATION_BLOCKED")
+  })
 })
 
 // ═══════════════════════════════════════════════════════════════════════════════
