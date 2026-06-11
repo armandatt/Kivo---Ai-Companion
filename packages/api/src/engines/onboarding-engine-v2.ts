@@ -46,7 +46,7 @@ interface PendingVerification {
   confirmQuestion: string;
 }
 
-interface GeneratedSplit {
+export interface GeneratedSplit {
   splitType: string;
   displayText: string;
   splitDaysJson: string;
@@ -63,7 +63,7 @@ interface AuditEntry {
   ts: number;
 }
 
-interface OnboardingState {
+export interface OnboardingState {
   userId: string;
   currentStep: StepId;
   answers: Record<string, string>;
@@ -572,7 +572,7 @@ interface GeneratedSplitOutput {
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-function generateSplit(days: number, goal: string): GeneratedSplitOutput {
+export function generateSplit(days: number, goal: string): GeneratedSplitOutput {
   const isStrength = goal === "strength";
   const isFat      = goal === "fat_loss";
 
@@ -874,7 +874,7 @@ const STEPS: Record<StepId, StepDef> = {
   },
 };
 
-function buildReviewCard(a: Record<string, string>): string {
+export function buildReviewCard(a: Record<string, string>): string {
   const lines: string[] = [
     `Here's your profile — confirm to finish:`,
     ``,
@@ -954,7 +954,7 @@ function logEntry(state: OnboardingState, entry: AuditEntry): void {
 const FACT_TYPE = "onboarding_v2";
 const FACT_KEY  = "active";
 
-async function loadState(userId: string): Promise<OnboardingState | null> {
+export async function loadState(userId: string): Promise<OnboardingState | null> {
   const fact = await prisma.memoryFact.findFirst({
     where: { userId, type: FACT_TYPE, key: FACT_KEY, archivedAt: null },
     orderBy: { createdAt: "desc" },
@@ -964,7 +964,7 @@ async function loadState(userId: string): Promise<OnboardingState | null> {
   catch { return null; }
 }
 
-async function saveState(userId: string, state: OnboardingState): Promise<void> {
+export async function saveState(userId: string, state: OnboardingState): Promise<void> {
   state.lastActivityAt = Date.now();
   const serialized = JSON.stringify(state);
   await prisma.memoryFact.upsert({
@@ -974,7 +974,7 @@ async function saveState(userId: string, state: OnboardingState): Promise<void> 
   });
 }
 
-function initState(userId: string): OnboardingState {
+export function initState(userId: string): OnboardingState {
   return {
     userId,
     currentStep: "name",
@@ -991,7 +991,7 @@ function initState(userId: string): OnboardingState {
   };
 }
 
-async function finalizeIntake(userId: string, platformChatId: string, state: OnboardingState): Promise<void> {
+export async function finalizeIntake(userId: string, platformChatId: string, state: OnboardingState): Promise<void> {
   const a = state.answers;
   await prisma.messengerUser.update({
     where: { id: userId },
@@ -1525,7 +1525,7 @@ export async function confirmAndFinalizeOnboarding(
 
 // ─── Welcome ──────────────────────────────────────────────────────────────────
 
-function buildWelcomeMessage(): string {
+export function buildWelcomeMessage(): string {
   return [
     `I'm Rex.`,
     ``,
