@@ -25,15 +25,16 @@ export interface UnderstandingInput {
 }
 
 export interface UnderstandingResult {
-  intent:         string;
-  emotion:        string;
-  topic:          string;
-  confidence:     number;
-  extractedFacts: Record<string, unknown>;
-  needsAdvice:    boolean;
-  needsAction:    boolean;
-  reasoning:      string;
-  durationMs:     number;  // wall-clock time for the LLM call
+  intent:                 string;
+  emotion:                string;
+  topic:                  string;
+  confidence:             number;
+  extractedFacts:         Record<string, unknown>;
+  needsAdvice:            boolean;
+  needsAction:            boolean;
+  reasoning:              string;
+  suggestedIntervention?: string;  // coaching intervention type for the semantic router
+  durationMs:             number;  // wall-clock time for the LLM call
 }
 
 // ── Intent / emotion / topic vocabularies ────────────────────────────────────
@@ -63,9 +64,21 @@ export const UL_TOPICS = [
   "injury", "motivation", "schedule", "goals", "other",
 ] as const;
 
-export type ULIntent  = (typeof UL_INTENTS)[number];
-export type ULEmotion = (typeof UL_EMOTIONS)[number];
-export type ULTopic   = (typeof UL_TOPICS)[number];
+export const INTERVENTION_TYPES = [
+  "address_excuse",      // challenge a rationalized miss
+  "validate_effort",     // affirm effort and redirect forward
+  "anchor_commitment",   // make a declared intention concrete
+  "emotional_support",   // acknowledge difficult emotions first
+  "burnout_support",     // zero pressure, give permission to rest
+  "self_doubt_reframe",  // surface a specific past win as counter-evidence
+  "challenge_avoidance", // surface the avoidance pattern, ask the real obstacle
+  "coach_engagement",    // standard coaching response
+] as const;
+
+export type ULIntent       = (typeof UL_INTENTS)[number];
+export type ULEmotion      = (typeof UL_EMOTIONS)[number];
+export type ULTopic        = (typeof UL_TOPICS)[number];
+export type ULIntervention = (typeof INTERVENTION_TYPES)[number];
 
 // ── LLM prompt ────────────────────────────────────────────────────────────────
 
@@ -84,7 +97,8 @@ Schema:
   "extractedFacts": {},
   "needsAdvice": boolean,
   "needsAction": boolean,
-  "reasoning": string
+  "reasoning": string,
+  "suggestedIntervention": string | null
 }
 
 INTENT — pick exactly one:
@@ -125,13 +139,25 @@ extractedFacts: only include keys with actual evidence in the message.
 needsAdvice: true when the user is asking for guidance or recommendations.
 needsAction: true when the message should trigger a system action (log data, schedule something).
 
-reasoning: one brief sentence explaining your classification.`;
+reasoning: one brief sentence explaining your classification.
+
+suggestedIntervention: pick the most relevant coaching response type, or null if none applies.
+  address_excuse      — user is rationalizing a miss; the excuse needs to be challenged
+  validate_effort     — user wants approval; affirm briefly then redirect to action
+  anchor_commitment   — user declared intent; make it concrete with a specific question
+  emotional_support   — user is sharing difficult emotions; acknowledge before anything else
+  burnout_support     — fatigue or burnout signals; zero pressure, give permission to rest
+  self_doubt_reframe  — user doubts their ability; surface one specific past win
+  challenge_avoidance — user is softening around a hard thing; name the pattern
+  coach_engagement    — standard coaching conversation; none of the above apply
+  null                — no coaching intervention needed (data log, question, etc.)`;
 
 // ── Main function ─────────────────────────────────────────────────────────────
 
-const VALID_INTENTS  = new Set<string>(UL_INTENTS);
-const VALID_EMOTIONS = new Set<string>(UL_EMOTIONS);
-const VALID_TOPICS   = new Set<string>(UL_TOPICS);
+const VALID_INTENTS        = new Set<string>(UL_INTENTS);
+const VALID_EMOTIONS       = new Set<string>(UL_EMOTIONS);
+const VALID_TOPICS         = new Set<string>(UL_TOPICS);
+const VALID_INTERVENTIONS  = new Set<string>(INTERVENTION_TYPES);
 
 export async function runUnderstandingLayer(
   input: UnderstandingInput,
@@ -167,9 +193,10 @@ export async function runUnderstandingLayer(
     if (!jsonMatch) return fallback(input.message, Date.now() - start);
 
     const p = JSON.parse(jsonMatch[0]) as Partial<UnderstandingResult & {
-      intent:  string;
-      emotion: string;
-      topic:   string;
+      intent:                 string;
+      emotion:                string;
+      topic:                  string;
+      suggestedIntervention:  string | null;
     }>;
 
     return {
@@ -185,6 +212,9 @@ export async function runUnderstandingLayer(
       needsAdvice:    Boolean(p.needsAdvice),
       needsAction:    Boolean(p.needsAction),
       reasoning:      typeof p.reasoning === "string" ? p.reasoning.slice(0, 200) : "",
+      suggestedIntervention: VALID_INTERVENTIONS.has(p.suggestedIntervention ?? "")
+                        ? (p.suggestedIntervention as string)
+                        : undefined,
       durationMs:     Date.now() - start,
     };
   } catch {
@@ -202,6 +232,7 @@ function fallback(message: string, durationMs: number): UnderstandingResult {
     needsAdvice:    false,
     needsAction:    false,
     reasoning:      "classifier error — fallback",
+    suggestedIntervention: undefined,
     durationMs,
   };
 }

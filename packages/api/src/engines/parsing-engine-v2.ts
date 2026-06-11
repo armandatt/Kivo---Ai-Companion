@@ -133,7 +133,7 @@ const RECOMMEND_REQUEST_RE = /\b(?:what\s+should\s+(?:i|I)|(?:can\s+you\s+)?(?:s
 
 // ─── Pain / injury ────────────────────────────────────────────────────────────
 const PAIN_WORDS_RE  = /\b(?:pain|hurt(?:ing|s)?|sore|ache|achy|tight|strain(?:ed)?|tweak(?:ed)?|injur(?:y|ed|ies)|sprain(?:ed)?|pulled?|popped?|snapped?|clicking|burning|pinching|tender)\b/i
-const INJURY_SEVERE_RE = /\b(?:torn|tear|fracture|break|broken|dislocated|ruptured)\b/i
+const INJURY_SEVERE_RE = /\b(?:torn|tore|tear|fracture|break|broken|dislocated|ruptured)\b/i
 const BODY_PART_RE  = /\b(?:knee|shoulder|back|wrist|elbow|hip|ankle|neck|chest|quad|hamstring|glute|lat|trap|calf|calves|arm|leg|lower\s+back|upper\s+back|rotator\s+cuff|bicep|tricep)\b/i
 
 // ─── Failure / skip ───────────────────────────────────────────────────────────
@@ -405,7 +405,9 @@ function detectLogSkip(text: string): IntentResult | null {
   // "Skipped push today", "missed chest day" — gym-context skips are inherently log requests
   const hasSessionSkip = /\b(?:skipped?|missed)\s+(?:gym|workout|training|session|push|pull|legs?|chest|back|shoulders?|arms?|today)\b/i.test(text)
   if (isExplicitLog || hasSessionSkip) {
-    return makeIntent(IntentType.LOG_SKIP, 0.88, [text.slice(0, 60)], true, { action: "log_skip" })
+    // Retrospective skip report ("skipped legs today") — below REMINDER_CREATE minimum (0.82)
+    // so any explicit user directive wins when both coexist.
+    return makeIntent(IntentType.LOG_SKIP, 0.80, [text.slice(0, 60)], true, { action: "log_skip" })
   }
   return null
 }
@@ -626,12 +628,17 @@ function applyRecommendationGate(
   signals: string[],
 ): { intents: IntentResult[]; signals: string[] } {
   const hasPain          = intents.some(i => i.type === IntentType.PAIN_CONTEXT || i.type === IntentType.INJURY_CONTEXT)
+  const hasInjury        = intents.some(i => i.type === IntentType.INJURY_CONTEXT)
   const hasExplicitReq   = intents.some(i => i.type === IntentType.RECOMMENDATION_REQUEST || i.type === IntentType.ADVICE_REQUEST)
-  // Other actionable intents that are not recommendation-type (reminders, logs, etc.)
+  // Other actionable intents that are not recommendation-type and not pain-logging
+  // (LOG_PAIN/LOG_SORENESS are the same pain mention, not a separate directive —
+  // they should not suppress RECOMMENDATION_BLOCKED)
   const hasOtherActionable = intents.some(i =>
     i.isActionable &&
     i.type !== IntentType.RECOMMENDATION_REQUEST &&
-    i.type !== IntentType.ADVICE_REQUEST
+    i.type !== IntentType.ADVICE_REQUEST &&
+    i.type !== IntentType.LOG_PAIN &&
+    i.type !== IntentType.LOG_SORENESS
   )
 
   const outSignals = [...signals]
@@ -639,6 +646,9 @@ function applyRecommendationGate(
 
   if (hasPain) {
     outSignals.push("PAIN_MENTIONED")
+    // Emit INJURY_CONTEXT as a distinct signal when severity warrants it —
+    // the LLM uses this to apply stricter safety rules (require location/severity/duration).
+    if (hasInjury) outSignals.push("INJURY_CONTEXT")
 
     if (!hasExplicitReq) {
       // Only add RECOMMENDATION_BLOCKED when it's a pure context mention with no other actionable
@@ -663,6 +673,9 @@ function applyRecommendationGate(
 // MAIN ENTRY POINT
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// LOG_PAIN and LOG_SORENESS are excluded — they are passive auto-logging signals,
+// not user directives. Including them would suppress RECOMMENDATION_BLOCKED for
+// pure pain mentions like "my back hurts".
 const ACTIONABLE_TYPES = new Set<IntentType>([
   IntentType.REMINDER_CREATE,
   IntentType.REMINDER_EDIT,
@@ -670,8 +683,6 @@ const ACTIONABLE_TYPES = new Set<IntentType>([
   IntentType.LOG_WORKOUT,
   IntentType.LOG_SKIP,
   IntentType.LOG_WEIGHT,
-  IntentType.LOG_SORENESS,
-  IntentType.LOG_PAIN,
   IntentType.RECOMMENDATION_REQUEST,
   IntentType.ADVICE_REQUEST,
   IntentType.NUTRITION_QUERY,

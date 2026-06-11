@@ -55,6 +55,7 @@ import { extractSignals as extractSignalsV2 } from "./signal-engine-v2";
 import { buildSchedulerContextV2, TrainingState } from "./scheduler-intelligence-v2";
 import type { SchedulerContextV2 } from "./scheduler-intelligence-v2";
 import type { ParseResult as V2ParseResult } from "./parsing-engine-v2";
+import type { RouterDecision } from "./semantic-router";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -83,6 +84,9 @@ export interface OrchestratorInput {
   /** Output of Parsing Engine V2 — injected by the webhook when available.
    *  Provides multi-intent detection, pain signals, and RECOMMENDATION_BLOCKED. */
   parseResult?: V2ParseResult;
+  /** Semantic router decision — injected when UL is primary router.
+   *  Carries UL intent, suggested intervention, and routing source. */
+  routerDecision?: RouterDecision;
 }
 
 export interface ScheduledAction {
@@ -869,11 +873,17 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
       rexExperienceLevel:  rexExperienceLevel  ?? null,
       signalEngineV2:     sigV2.detectedSignals,
       schedulerContextV2: schedulerContextV2 ?? null,
-      parseSignals:       input.parseResult?.signals ?? [],
-      parseIntent:        input.parseResult?.actionableIntent?.type
-                            ?? input.parseResult?.intents[0]?.type
-                            ?? "general_chat",
-      parseConfidence:    input.parseResult?.confidence ?? 1.0,
+      parseSignals:           input.parseResult?.signals ?? [],
+      parseIntent:            input.parseResult?.actionableIntent?.type
+                                ?? input.parseResult?.intents[0]?.type
+                                ?? "general_chat",
+      parseConfidence:        input.parseResult?.confidence ?? 1.0,
+      ulIntent:               input.routerDecision?.source === "ul"
+                                ? input.routerDecision.ulResult.intent
+                                : undefined,
+      suggestedIntervention:  input.routerDecision?.source === "ul"
+                                ? input.routerDecision.suggestedIntervention
+                                : undefined,
     };
 
     diag.llmTokensRequested = Math.max(decision.tokenBudget, 80);

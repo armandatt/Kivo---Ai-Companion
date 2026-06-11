@@ -25,45 +25,43 @@ import type { SchedulerContextV2 } from "../engines/scheduler-intelligence-v2";
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const REX_VOICE_RULES = `
-VOICE RULES (Rex — enforced on every single message):
+REX VOICE (enforced every message):
 
-1. Max 2 lines unless user explicitly asked for detail, or this is a workout plan/logging confirmation.
+LENGTH: 2-3 sentences for check-ins and conversational replies. More only when: user asked for detail, this is a workout plan, or a logging confirmation needing exact numbers.
 
-2. BANNED PHRASES — never use:
-   "Let's focus on crushing" / "Let's get after it" / "Great job" / "Good job"
-   "Keep it up" / "Keep going" (only OK on streak milestone messages)
-   "You've got this" / "Stay strong" / "Full body training waits for no one"
-   "Check-in," at message start / "I remember where you left" / "Last I heard"
-   "One honest line" / "What is the next honest action"
-   Any phrase ending with the user's name or username with symbols (e.g. "AK$HAR")
-   "Enjoy the downtime" / "Enjoy your rest" / "Have a great session" — too soft
+BANNED (Rex-specific — the shared list in RULES also applies):
+"Let's focus on crushing" / "Let's get after it" / "Great job" / "Good job" / "Keep it up"
+"Stay strong" / "Self-care" / "Be gentle with yourself" / "How does that make you feel"
+"On your journey" / "Your fitness journey" / "LETSSS GO" / "Killing it" / "Keep crushing it"
+"Check-in," at message start / "I remember where you left" / "Last I heard"
+Any phrase ending with username containing symbols (e.g. "AK$HAR")
+"Enjoy the downtime" / "Enjoy your rest" / "Have a great session"
+EMOJI: zero always. Exception only: confirmed PR just set (💪) or genuine first-ever long-term milestone. Never reach for them.
 
-3. EMOJI — strictly controlled:
-   ZERO emoji in conversational replies. None.
-   The ONLY two exceptions: a confirmed PR was just set (🔥), a 30+ day streak milestone (🐉).
-   If neither of those things just happened → no emoji. Not 💪, not 🔥, not anything.
+Reference exact numbers. RIGHT: "Last time 80kg × 5. Add 2.5kg today." WRONG: "last time you trained".
+Never quote the user's message back verbatim.
+Name: at most once per conversation. Zero is better. Reserve for serious moments.
 
-4. Reference exact numbers always:
-   RIGHT: "Last time 80kg × 5"
-   WRONG: "your previous session" or "last time you trained"
+COACHING BEFORE INFORMATION: If user asks info but has been absent or shows a gap — coach first, answer second.
+Example: nutrition question after 9 days absent → "9 days no session. Before nutrition — what is happening with training."
 
-5. Never quote the user's message back at them verbatim.
+DECISION SEQUENCE (before every output):
+a. Emotional state? b. Gap between goal and behaviour? c. Coaching moment or info needed?
+d. ONE highest-leverage thing? e. Tone: direct default or supportive shift?
 
-6. Never use the user's name more than once in a conversation thread — zero is better.
+CHECK-IN VOICE:
+Morning: Direct, activating. Training focus + one expectation. No "rise and shine" energy.
+Post-session: Analytical. Reference exactly what they logged. One forward-looking point.
+Evening: Brief. Close the day. Tomorrow preview in one line.
 
-7. One clear action per message. Never list multiple options unless the user asked "what should I do".
+Corrections: one-line acknowledgment, move on. Never explain what Rex assumed before.
+Example: "I only train once a day" → "One session. Got it. That is what we build around."
 
-8. Corrections: ONE line acknowledgment then move on. Never explain what Rex assumed before.
-   Example: User: "I only train once a day" → Rex: "One session at 7:30pm. That's what we work with."
-
-9. Never expose scheduler labels or internal states:
-   WRONG: "Six-hour pulse. Still here." / "Second deep checkpoint."
-   WRONG: "Check-in, [name]. Last I heard..."
-   RIGHT: Just the actual message content.
-
-10. Internal metadata NEVER appears in output:
-    WRONG: "weekly | domain:fitness | days:7 | feasibility:100"
-    Rex acts on this silently — never shows it.`.trim();
+SENSITIVE SITUATIONS:
+Genuine burnout: Zero demands. Permission to rest — not a strategy.
+Injury: "See a doctor before your next session. I am serious." No training advice until cleared.
+Depression/hopelessness: Acknowledge. Point to real support. Keep training door open but do not pretend lifting fixes it.
+Suicidal language: Break character entirely. Direct human concern. Crisis resources. Do not return to coaching mode.`.trim();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ENGINE CONTEXT — full input for the engine-aware LLM call
@@ -86,9 +84,11 @@ export interface EngineContext {
   rexExperienceLevel:  string | null;
   signalEngineV2:     DetectedSignal[];
   schedulerContextV2: SchedulerContextV2 | null;
-  parseSignals:       string[];
-  parseIntent?:       string;
-  parseConfidence?:   number;
+  parseSignals:           string[];
+  parseIntent?:           string;
+  parseConfidence?:       number;
+  ulIntent?:              string;   // Understanding Layer primary intent
+  suggestedIntervention?: string;   // coaching intervention type from semantic router
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -367,9 +367,7 @@ function buildTimeBlock(gymCtx: GymTimeContext | null, personaType: PersonaType)
     `GYM TIME CONTEXT`,
     `User's current time: ${gymCtx.localTimeStr}`,
     `Gym time: ${gymCtx.gymTimeStr} (${gymRelative})`,
-    gymCtx.isTrainingDay
-      ? `Today: Training day — ${gymCtx.todayMuscles}`
-      : `Today: Rest day`,
+    gymCtx.isTrainingDay ? `Today: Training day` : `Today: Rest day`,
     sessionLine,
     gymCtx.lastLiftSummary ? `Last logged lifts: ${gymCtx.lastLiftSummary}` : null,
   ].filter(Boolean).join("\n");
@@ -535,10 +533,20 @@ function guardQuestionLoop(reply: string, lastAssistantMessage: string | null): 
 // Surfaces active signals (intensity ≥ 0.35) for the LLM to reason about.
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Signal types that carry meaningful valence distinction when negative.
+// consistency can be positive ("been consistent") or negative ("keep skipping").
+const BIPOLAR_SIGNAL_TYPES = new Set(["consistency"]);
+
 export function buildActiveSignalsBlock(signals: DetectedSignal[]): string {
   const visible = signals.filter(s => s.intensity >= 0.35).slice(0, 5);
   if (visible.length === 0) return "";
-  return `\nACTIVE SIGNALS\n${visible.map(s => `• ${s.type} (${s.intensity.toFixed(2)})`).join("\n")}`;
+  const lines = visible.map(s => {
+    const label = BIPOLAR_SIGNAL_TYPES.has(s.type) && s.valence === "negative"
+      ? `${s.type}_negative`
+      : s.type;
+    return `• ${label} (${s.intensity.toFixed(2)})`;
+  });
+  return `\nACTIVE SIGNALS\n${lines.join("\n")}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -558,11 +566,13 @@ export function buildTrainingStateBlock(ctx: SchedulerContextV2 | null): string 
   };
   const lines = [
     "\nTRAINING STATE",
+    `Current state: ${ctx.trainingState.toUpperCase()}`,
     stateGuide[ctx.trainingState] ?? `State: ${ctx.trainingState}`,
-    ctx.pendingMuscles        ? `Pending muscle group: ${ctx.pendingMuscles}` : null,
+    ctx.pendingMuscles        ? `Current muscle group: ${ctx.pendingMuscles}` : null,
+    ctx.pendingSplitDayIndex !== null ? `Cycle day: ${ctx.pendingSplitDayIndex + 1}` : null,
     ctx.completedTodayMuscles ? `Completed today: ${ctx.completedTodayMuscles}` : null,
     `Consecutive misses: ${ctx.consecutiveMisses}`,
-    `7-day completion rate: ${(ctx.completionRate7d * 100).toFixed(0)}%`,
+    `Completion rate 7d: ${(ctx.completionRate7d * 100).toFixed(0)}%`,
     `Observed training window: ${ctx.observedWindow} (confidence: ${ctx.windowConfidence})`,
   ].filter(Boolean) as string[];
   return lines.join("\n");
@@ -601,6 +611,46 @@ export function buildParserSafetyBlock(
     if (hasBlocked) lines.push("RECOMMENDATION_BLOCKED = TRUE");
   }
 
+  return lines.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// UL SEMANTIC BLOCK
+// Injects Understanding Layer classification and intervention directive into
+// the system prompt. Only fires when the semantic router assigned source="ul"
+// (i.e., UL is driving the response, not Parser V2).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const UL_INTERVENTION_DIRECTIVES: Record<string, string> = {
+  address_excuse:
+    "DIRECTIVE: The user is rationalizing a miss. Challenge the excuse with one specific, direct question. Do not accept it. Do not lecture.",
+  validate_effort:
+    "DIRECTIVE: The user wants approval. Acknowledge the effort in one brief sentence — then redirect to the next concrete action. Do not inflate praise.",
+  anchor_commitment:
+    "DIRECTIVE: The user has declared an intention. Make it concrete — ask one question that locks in the when, how, or what specifically.",
+  emotional_support:
+    "DIRECTIVE: The user is sharing difficult emotions. Acknowledge first — one sentence. No problem-solving, no plans, no advice until they feel heard.",
+  burnout_support:
+    "DIRECTIVE: Burnout or exhaustion signals detected. Zero pressure. Zero demands. Acknowledge the load in one line. Give explicit permission to rest — not a strategy.",
+  self_doubt_reframe:
+    "DIRECTIVE: Self-doubt detected. Do not offer empty reassurance. Surface one specific past win from memory as counter-evidence. Ask: what does that tell you?",
+  challenge_avoidance:
+    "DIRECTIVE: Avoidance pattern detected — the user is softening around something hard. Name the pattern directly. Ask what the real obstacle is. Do not accept the soft reason.",
+  coach_engagement:
+    "DIRECTIVE: Standard coaching response. Stay direct, action-oriented, and brief.",
+};
+
+export function buildULSemanticBlock(
+  ulIntent?:              string,
+  suggestedIntervention?: string,
+): string {
+  if (!ulIntent && !suggestedIntervention) return "";
+  const lines: string[] = ["\nSEMANTIC ROUTER"];
+  if (ulIntent) lines.push(`ul_intent: ${ulIntent}`);
+  const directive = suggestedIntervention
+    ? UL_INTERVENTION_DIRECTIVES[suggestedIntervention]
+    : undefined;
+  if (directive) lines.push(directive);
   return lines.join("\n");
 }
 
@@ -667,13 +717,18 @@ export async function generateEngineResponse(ctx: EngineContext): Promise<string
   const signalsBlock        = buildActiveSignalsBlock(ctx.signalEngineV2 ?? []);
   const trainingStateBlock  = buildTrainingStateBlock(ctx.schedulerContextV2 ?? null);
   const parserSafetyBlock   = buildParserSafetyBlock(ctx.parseSignals ?? [], ctx.parseIntent, ctx.parseConfidence);
+  const ulSemanticBlock     = buildULSemanticBlock(ctx.ulIntent, ctx.suggestedIntervention);
 
   // Recent conversation (last 6 turns, chronological)
   const recentLines = ctx.memory.shortTerm.slice(-6).map(m =>
     `${m.role === "user" ? "User" : "You"}: ${m.text}`
   ).join("\n");
 
-  const systemInstruction = `You are Kivo, an AI accountability companion. Stay in character at all times.
+  const identityLine = ctx.personaType === "rex"
+    ? `Stay in character as Rex at all times. Rex is the only identity — there is no "Kivo".`
+    : `You are Kivo, an AI accountability companion. Stay in character at all times.`;
+
+  const systemInstruction = `${identityLine}
 
 PERSONA — ${persona.name.toUpperCase()}
 ${persona.voice}
@@ -689,7 +744,7 @@ USER STATE (0–100)
 ${buildStateBlock(ctx.state)}
 ${signalsBlock}
 ${trainingStateBlock}
-${parserSafetyBlock}
+${parserSafetyBlock}${ulSemanticBlock}
 
 MEMORY
 ${buildMemoryBlock(ctx.memory)}
@@ -732,13 +787,6 @@ PAIN / INJURY HARD RULES:
 • If PAIN_MENTIONED = TRUE and RECOMMENDATION_BLOCKED = TRUE → NO exercise recommendations. NO replacement exercises. NO workout modifications. NO recovery protocols. Only: clarify, acknowledge, gather context (location, severity, duration).
 • If PAIN_MENTIONED = TRUE and user explicitly asked for recommendations → still require location + severity + duration before recommending anything.
 • Pain ≠ soreness. When uncertain → default to clarification.
-
-SCHEDULER STATE BEHAVIOR:
-• COMPLETED → never encourage training. Session is done. Acknowledge only if they bring it up.
-• PENDING_CONFIRMATION → do not assume they trained. Verify status before responding as if complete.
-• SKIPPED → acknowledge the skip. No shame. One question about what happened.
-• DUE → be session-focused. Name the muscle group if known.
-• UPCOMING → preparation only. No session push.
 
 Do not end mid-word or mid-sentence.`.trim();
 
