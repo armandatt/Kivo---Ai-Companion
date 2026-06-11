@@ -67,6 +67,8 @@ import { needsIntake, getWebProfile, handleIntakeMessage } from "@repo/api/servi
 //@ts-ignore
 import { handleOnboardingV2, isV2Active } from "@repo/api/engines/onboarding-engine-v2";
 //@ts-ignore
+import { handleOnboardingV3 } from "@repo/api/engines/onboarding-engine-v3";
+//@ts-ignore
 import { handleWorkoutCommand, handleActiveLoggingMessage, resetReactivationCount, commitNLWorkoutSession, commitNLSkip, updatePRFromNL } from "@repo/api/services/workoutTracking.service";
 //@ts-ignore
 import { handleOffTopicMessage } from "@repo/api/services/offTopicClassifier.service";
@@ -181,6 +183,17 @@ export async function POST(req: Request) {
       //   • intakeStep is a V1 step name (ga_name, ga_goal, sb1, gn1, …) AND no V2 state
       //   → those users continue on V1 until they complete naturally
       if (await needsIntake(chatId.toString())) {
+        // V3: conversation-first onboarding. Enabled via ONBOARDING_V3_ENABLED=true.
+        // Instant rollback: set ONBOARDING_V3_ENABLED=false — no deploy required.
+        if (process.env.ONBOARDING_V3_ENABLED === "true" && await isV2Active(chatId.toString())) {
+          const v3Result = await handleOnboardingV3({ platformChatId: chatId.toString(), text });
+          if (v3Result.handled) {
+            await sendTelegramMessage(chatId, v3Result.reply);
+            return Response.json({ ok: true });
+          }
+          // V3 returned handled=false (user already complete or not found) — fall through to V2
+        }
+
         if (await isV2Active(chatId.toString())) {
           const v2Result = await handleOnboardingV2({ platformChatId: chatId.toString(), text });
           if (v2Result.handled) {
