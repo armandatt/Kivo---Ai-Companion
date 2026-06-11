@@ -762,13 +762,21 @@ const VALID_V3_INTERVENTIONS = new Set([
 // Maps current mood/signal to memory types that reframe vs. reinforce it.
 // Standard retrieval finds similar context; contrastive finds counterevidence.
 
+// Keys must be valid SignalType values or UL emotion values — no invented keys.
+// Values must be memory types actually written to the DB.
+// Dead keys removed: missed_workout (not a SignalType), quitting (not a SignalType)
+// Dead value types removed: milestone (never stored), pr (stored as "achievement")
 const CONTRASTIVE_SIGNAL_MAP: Record<string, string[]> = {
-  self_doubt:     ["achievement", "milestone", "pr"],
-  excuse:         ["promise", "commitment", "goal"],
-  burnout:        ["anchor", "preference"],
-  missed_workout: ["achievement", "goal"],
-  overwhelm:      ["anchor", "preference"],
-  quitting:       ["achievement", "milestone", "goal"],
+  // Signal Engine types
+  self_doubt:        ["achievement", "goal"],
+  excuse:            ["promise", "commitment", "goal"],
+  burnout:           ["anchor", "preference"],
+  overwhelm:         ["anchor", "preference"],
+  fear:              ["achievement", "goal"],
+  // UL emotion types
+  defeated:          ["achievement", "goal"],
+  frustrated:        ["achievement", "goal"],
+  tired:             ["anchor", "preference"],
 };
 
 function buildContrastiveMemories(
@@ -1057,6 +1065,44 @@ How it feels: welcomed back without judgment — no shame, no lecture, no accoun
 Example trigger: "Haven't trained in 10 days." / "Been gone 3 weeks."
 Behavior: reconnect naturally with one easy next step only. Do not reference the absence as a failure.`;
 
+// Converts MentorState numbers into actionable coaching directives.
+// Raw numbers (75/100) are uninterpretable by OpenAI without thresholds.
+// Directives ("BURNOUT: HIGH — reduce pressure") are immediately actionable.
+function buildMentorDirectives(m: RexContext["mentorStateCtx"]): string | null {
+  if (!m) return null;
+  const lines: string[] = [];
+
+  if (m.burnoutRisk > 75) {
+    lines.push("BURNOUT STATUS: HIGH\nReduce all pressure. Do not challenge. Do not prescribe harder training. Do not increase volume. Acknowledge first, then one small optional action.");
+  } else if (m.burnoutRisk > 50) {
+    lines.push("BURNOUT STATUS: ELEVATED\nAvoid aggressive accountability, challenge, or momentum_push interventions.");
+  }
+
+  if (m.consecutiveMisses >= 4) {
+    lines.push(`MISS STREAK: ${m.consecutiveMisses} consecutive sessions missed\nUse re_engagement. Do not use accountability or guilt. No lecture.`);
+  } else if (m.consecutiveMisses >= 2) {
+    lines.push(`RECENT MISSES: ${m.consecutiveMisses} sessions\nAddress gently. Acknowledge without applying pressure.`);
+  }
+
+  if (m.streakDays >= 14) {
+    lines.push(`MOMENTUM WINDOW: ${m.streakDays}-day streak active\nUser is highly consistent. Challenge is appropriate. Raise the bar.`);
+  } else if (m.streakDays >= 7) {
+    lines.push(`BUILDING STREAK: ${m.streakDays} days\nReinforce the pattern. Reward the consistency.`);
+  }
+
+  if (m.motivation < 25) {
+    lines.push("MOTIVATION: CRITICAL\nDo not use challenge. Use momentum_push or reduce_friction only.");
+  } else if (m.motivation < 40) {
+    lines.push("MOTIVATION: LOW\nAvoid high-pressure interventions this turn.");
+  }
+
+  if (m.capacity < 25) {
+    lines.push("CAPACITY: LOW\nUser is overloaded. One action only. Reduce scope immediately.");
+  }
+
+  return lines.length > 0 ? lines.join("\n\n") : null;
+}
+
 function buildRexSystemPrompt(ctx: RexContext): string {
   // Section B — user profile
   const p = ctx.userProfile;
@@ -1075,17 +1121,18 @@ function buildRexSystemPrompt(ctx: RexContext): string {
     ? profileLines.join("\n")
     : "(Profile not yet complete)";
 
-  // Section B2 — behavioral state (Phase 3)
-  const mentorStateSection = ctx.mentorStateCtx
-    ? `Burnout risk: ${ctx.mentorStateCtx.burnoutRisk}/100 | Motivation: ${ctx.mentorStateCtx.motivation}/100 | Capacity: ${ctx.mentorStateCtx.capacity}/100\nStreak: ${ctx.mentorStateCtx.streakDays} days | Consecutive misses: ${ctx.mentorStateCtx.consecutiveMisses}`
+  // Phase 4: MentorState → threshold-based coaching directives (not raw numbers)
+  const directivesBlock = buildMentorDirectives(ctx.mentorStateCtx);
+
+  // Phase 4: Session context injected (was ghost in Phase 3)
+  const sessionCtxSection = ctx.sessionCtx
+    ? [
+        `Last session: ${ctx.sessionCtx.daysSinceLastSession === 0 ? "today" : ctx.sessionCtx.daysSinceLastSession === 1 ? "yesterday" : `${ctx.sessionCtx.daysSinceLastSession} days ago`}`,
+        ctx.sessionCtx.pendingMuscles ? `Pending muscles: ${ctx.sessionCtx.pendingMuscles}` : null,
+      ].filter(Boolean).join("\n")
     : null;
 
-  // Section B3 — detected signals (Phase 3)
-  const signalSection = ctx.topSignalCtx
-    ? `Top signal: ${ctx.topSignalCtx.topSignal} (intensity: ${Math.round(ctx.topSignalCtx.intensity * 100)}%)\nAll detected: ${ctx.topSignalCtx.signals.join(", ")}`
-    : null;
-
-  // Section B4 — gym pattern (Phase 3)
+  // Gym pattern (unchanged from Phase 3)
   const gymPatternLines: string[] = [];
   if (ctx.gymPatternCtx) {
     if (ctx.gymPatternCtx.stalledLifts.length > 0)
@@ -1098,12 +1145,24 @@ function buildRexSystemPrompt(ctx: RexContext): string {
   }
   const gymPatternSection = gymPatternLines.length > 0 ? gymPatternLines.join("\n") : null;
 
-  // Section B5 — engagement (Phase 3)
+  // Phase 4: Behavioral patterns injected (was ghost in Phase 3)
+  const behavioralPatternsLines: string[] = [];
+  if (ctx.behavioralPatterns) {
+    if (ctx.behavioralPatterns.skippedMuscles.length > 0)
+      behavioralPatternsLines.push(`Frequently skipped: ${ctx.behavioralPatterns.skippedMuscles.join(", ")}`);
+    if (ctx.behavioralPatterns.rpeTrend !== "unknown")
+      behavioralPatternsLines.push(`RPE trend: ${ctx.behavioralPatterns.rpeTrend}`);
+  }
+  const behavioralPatternsSection = behavioralPatternsLines.length > 0
+    ? behavioralPatternsLines.join("\n")
+    : null;
+
+  // Engagement context (unchanged from Phase 3)
   const engagementSection = ctx.engagementCtx
     ? `Sessions this month: ${ctx.engagementCtx.sessionsThisMonth} | Streak: ${ctx.engagementCtx.streak} | 7-day completion: ${ctx.engagementCtx.completionRate7d}%\nBiggest PR: ${ctx.engagementCtx.biggestPR}`
     : null;
 
-  // Section B6 — intervention history + loop prevention (Phase 3)
+  // Phase 4: Strengthened intervention history — explicit repeat conditions, not escape clause
   let interventionHistoryLine = "";
   let loopWarning = "";
   if (ctx.interventionHistory.length > 0) {
@@ -1111,7 +1170,7 @@ function buildRexSystemPrompt(ctx: RexContext): string {
     if (ctx.empathizeLoop) {
       loopWarning = "\nCRITICAL: User has received empathy 3 times in a row. Do NOT use empathize again. User needs forward momentum now, not more validation.";
     } else if (ctx.lastIntervention) {
-      loopWarning = `\nNote: Last intervention was "${ctx.lastIntervention}". Choose a different one this turn unless it is genuinely the best fit.`;
+      loopWarning = `\nDo not use ${ctx.lastIntervention} again this turn. Repeat only if: (1) user topic is identical and unchanged, (2) a different intervention would clearly be worse. In all other cases — choose a different intervention.`;
     }
   }
 
@@ -1122,6 +1181,7 @@ function buildRexSystemPrompt(ctx: RexContext): string {
         .join("\n")
     : "none";
 
+  // Phase 4: Strengthened contrastive instruction — prefer evidence over generic coaching
   const contrastiveSection = ctx.contrastiveMemories.length > 0
     ? ctx.contrastiveMemories
         .map(f => `• [${f.type.replace(/_/g, " ")}] ${f.value}`)
@@ -1151,10 +1211,10 @@ function buildRexSystemPrompt(ctx: RexContext): string {
     ? "Days 8–30: More familiar. More direct. Can reference past conversations naturally. Less explaining."
     : "Day 30+: High expectations. Deep personal references. Less explanation. More challenge. You know this person.";
 
-  // Burnout context (Phase 3)
-  const burnoutContext = ctx.mentorStateCtx
-    ? `Burnout risk score: ${ctx.mentorStateCtx.burnoutRisk}/100\nSemantic burnout signals (act on these even without explicit keywords): "I dread training", "feels like punishment", "nothing left", "going through the motions", "can't remember why I started"\nIf ANY burnout signal is present regardless of intensity — prioritize prevent_burnout over every other intervention.`
-    : "Detect burnout signals yourself: tired, what's the point, dread training, nothing left, running on empty.";
+  // Section H — burnout (Phase 4: removed raw score, directives handle thresholds)
+  const burnoutSignals = `Semantic burnout signals (no explicit keywords needed):
+"I dread training", "feels like punishment", "nothing left", "going through the motions", "can't remember why I started"
+Any of these → prioritize prevent_burnout. Coaching directives above set the burnout status threshold.`;
 
   // Conversation history
   const historyBlock = ctx.conversationHistory
@@ -1185,19 +1245,20 @@ ${profileSection}
 
 Training state: ${ctx.schedulerNarrative}
 Today: ${ctx.todaySessionStatus}
-${mentorStateSection ? `\n─── BEHAVIORAL STATE ─────────────────────────────────────────────────────────\n${mentorStateSection}` : ""}${signalSection ? `\n\n─── DETECTED SIGNALS ─────────────────────────────────────────────────────────\n${signalSection}` : ""}${gymPatternSection ? `\n\n─── GYM PATTERNS ─────────────────────────────────────────────────────────────\n${gymPatternSection}` : ""}${engagementSection ? `\n\n─── ENGAGEMENT ───────────────────────────────────────────────────────────────\n${engagementSection}` : ""}${interventionHistoryLine ? `\n\n─── INTERVENTION HISTORY ─────────────────────────────────────────────────────\n${interventionHistoryLine}${loopWarning}` : ""}
+${directivesBlock ? `\n─── COACHING DIRECTIVES ──────────────────────────────────────────────────────\n${directivesBlock}\n\nThese are active constraints for this turn. Follow them.` : ""}${sessionCtxSection ? `\n\n─── SESSION CONTEXT ──────────────────────────────────────────────────────────\n${sessionCtxSection}` : ""}${gymPatternSection ? `\n\n─── GYM PATTERNS ─────────────────────────────────────────────────────────────\n${gymPatternSection}` : ""}${behavioralPatternsSection ? `\n\n─── BEHAVIORAL PATTERNS ──────────────────────────────────────────────────────\n${behavioralPatternsSection}` : ""}${engagementSection ? `\n\n─── ENGAGEMENT ───────────────────────────────────────────────────────────────\n${engagementSection}` : ""}${interventionHistoryLine ? `\n\n─── INTERVENTION HISTORY ─────────────────────────────────────────────────────\n${interventionHistoryLine}${loopWarning}` : ""}
 
 ─── SECTION C — MEMORIES ────────────────────────────────────────────────────
 
 RELEVANT MEMORIES (similar context):
 ${memSection}
-${contrastiveSection ? `\nCONTRASTIVE MEMORIES (use to reframe when appropriate):
+${contrastiveSection ? `\nCONTRASTIVE MEMORIES (reframing evidence):
 ${contrastiveSection}
 
-When user expresses self_doubt, excuse, burnout, overwhelm, or quitting — use contrastive memories to anchor the response in evidence.
-Never force them. Only reference if genuinely relevant.` : ""}
-Only use memories relevant to the current message.
-Reference them as a coach who knows the person — naturally, not explicitly.
+When self_doubt, excuse, burnout, overwhelm, fear, or defeat signals are present:
+Reference contrastive memories before generic coaching.
+Prefer specific past evidence over general encouragement.
+Do not reference them if not relevant.` : ""}
+Reference memories as a coach who knows the person — naturally, not by quoting them directly.
 
 ─── SECTION D — ACTIVE COMMITMENTS ─────────────────────────────────────────
 
@@ -1218,26 +1279,26 @@ ${INTERVENTION_LIBRARY}
 ${toneGuide}
 Current day since joining: ${ctx.daysSinceJoined}
 
-─── SECTION H — SIGNAL DETECTION + BURNOUT ──────────────────────────────────
+─── SECTION H — SIGNAL DETECTION ────────────────────────────────────────────
 
-Detect these patterns yourself from the message. Do not rely on pre-tagged labels.
+Detect these patterns yourself from the message.
 
 burnout: tired, what's the point, skipping, demotivated, nothing left, running empty
-→ Acknowledge first. Reduce all pressure immediately. Never push training.
+→ Acknowledge first. Reduce all pressure. Never push training.
 
 achievement: PR, completed a week, hit goal, feeling strong, personal best
-→ Celebrate the specific achievement by name. Build momentum. One forward push.
+→ Celebrate the specific achievement by name. One forward push.
 
 self_doubt: can't do this, not seeing results, thinking of quitting, what if I fail
 → Firm but caring. Reference specific progress from memory. No motivational quotes.
 
 overwhelm: too much, don't know where to start, confused, juggling everything
-→ Simplify completely. Give ONE next action only. Nothing else.
+→ Simplify completely. ONE next action only.
 
-excuse: I'll start Monday, been busy, maybe tomorrow, things came up, work got crazy
-→ Acknowledge briefly. Do not accept. Redirect with one specific action today.
+excuse: I'll start Monday, been busy, maybe tomorrow, things came up
+→ Acknowledge briefly. Do not accept. One specific action today.
 
-${burnoutContext}
+${burnoutSignals}
 
 ─── SECTION I — HARD RULES ──────────────────────────────────────────────────
 
@@ -1435,6 +1496,7 @@ function logMentorV3(data: {
   responseLength:          number;
   durationMs:              number;
   empathizeLoopPrevented:  boolean;
+  interventionRepeatPrevented: boolean;
   contextSourcesUsed: {
     profileUsed:              boolean;
     memoryUsed:               boolean;
@@ -1443,6 +1505,13 @@ function logMentorV3(data: {
     schedulerUsed:            boolean;
     patternUsed:              boolean;
     interventionHistoryUsed:  boolean;
+  };
+  directiveBlocksUsed: {
+    burnoutDirective:  boolean;
+    streakDirective:   boolean;
+    missDirective:     boolean;
+    patternDirective:  boolean;
+    sessionDirective:  boolean;
   };
 }): void {
   console.log("[MENTOR_V3]", JSON.stringify(data));
@@ -1606,6 +1675,11 @@ async function runOrchestratorV3(input: OrchestratorInput): Promise<Orchestrator
   const durationMs = Date.now() - v3Start;
   diag.totalMs = durationMs;
 
+  const interventionRepeatPrevented =
+    rexCtx.lastIntervention !== null &&
+    isValidIntervention &&
+    interventionNorm !== rexCtx.lastIntervention;
+
   logMentorV3({
     userId:                  input.platformChatId,
     ulIntent:                rexCtx.ulIntent,
@@ -1619,6 +1693,7 @@ async function runOrchestratorV3(input: OrchestratorInput): Promise<Orchestrator
     responseLength:          finalReply.length,
     durationMs,
     empathizeLoopPrevented:  rexCtx.empathizeLoop,
+    interventionRepeatPrevented,
     contextSourcesUsed: {
       profileUsed:             Object.keys(rexCtx.userProfile).length > 0,
       memoryUsed:              rexCtx.topRelevantMemories.length > 0,
@@ -1627,6 +1702,13 @@ async function runOrchestratorV3(input: OrchestratorInput): Promise<Orchestrator
       schedulerUsed:           rexCtx.schedulerState !== null,
       patternUsed:             rexCtx.gymPatternCtx !== null,
       interventionHistoryUsed: rexCtx.interventionHistory.length > 0,
+    },
+    directiveBlocksUsed: {
+      burnoutDirective:  (rexCtx.mentorStateCtx?.burnoutRisk  ?? 0) > 50,
+      streakDirective:   (rexCtx.mentorStateCtx?.streakDays   ?? 0) >= 14,
+      missDirective:     (rexCtx.mentorStateCtx?.consecutiveMisses ?? 0) >= 4,
+      patternDirective:  rexCtx.behavioralPatterns !== null,
+      sessionDirective:  rexCtx.sessionCtx !== null,
     },
   });
 
