@@ -59,10 +59,11 @@ function writeCache(userId: string, bundle: FitnessSnapshotBundle, now: Date): v
   snapshotCache.set(userId, { bundle, expiresAt: now.getTime() + CACHE_TTL_MS });
 }
 
-// Called by workoutTracking.finishSession to force re-computation after a
-// session completes (streak, totalSessions, lastWorkoutDate all change).
-export function invalidateFitnessSnapshot(userId: string): void {
+// Called by any mutation that changes fields surfaced in FitnessSnapshot.
+// reason: one of finish_session | skip_reason | nl_workout_commit | pr_update | intake_update
+export function invalidateFitnessSnapshot(userId: string, reason: string): void {
   snapshotCache.delete(userId);
+  console.log("[FITNESS_SNAPSHOT_INVALIDATED]", { userId, reason });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

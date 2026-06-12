@@ -1,4 +1,5 @@
 import { prisma } from "@repo/db/client"
+import { invalidateFitnessSnapshot } from "./fitnessSnapshot.service"
 import { addToLongTerm, addToShortTerm } from "./memory.service"
 import { savePlan } from "./planner.service"
 import { saveDeadline } from "./deadline.service"
@@ -301,6 +302,7 @@ export async function handleIntakeMessage(input: {
         const mutable = answers as Record<string, unknown>
         mutable.validation_attempts = String(attempt)
         await prisma.messengerUser.update({ where: { id: user.id }, data: { intakeAnswers: answers as any } })
+        invalidateFitnessSnapshot(user.id, "intake_update")
 
         let reply: string
         if (attempt >= 3) {
@@ -1282,6 +1284,7 @@ async function handleGaReview(
     delete mutable.review_other_pending
     const changed = applyTextCorrection(text, answers)
     await prisma.messengerUser.update({ where: { id: user.id }, data: { intakeAnswers: answers as any } })
+    invalidateFitnessSnapshot(user.id, "intake_update")
     if (changed) {
       return `${buildReviewCard(answers)}\n\n${REX_REVIEW_PROMPT}`
     }
@@ -1338,6 +1341,7 @@ async function handleGaReview(
     const mutable = answers as Record<string, unknown>
     mutable.review_other_pending = "true"
     await prisma.messengerUser.update({ where: { id: user.id }, data: { intakeAnswers: answers as any } })
+    invalidateFitnessSnapshot(user.id, "intake_update")
     return `What needs fixing? Tell me directly — protein target, injury notes, city, or experience level.`
   }
 
@@ -2188,6 +2192,7 @@ async function applyPassiveIntakeData(userId: string, answers: IntakeAnswers, te
 
   if (changed) {
     await prisma.messengerUser.update({ where: { id: userId }, data: { intakeAnswers: answers as any } })
+    invalidateFitnessSnapshot(userId, "intake_update")
   }
 }
 
@@ -2312,6 +2317,7 @@ async function updateIntake(
       ...extras,
     },
   })
+  if (answers) invalidateFitnessSnapshot(userId, "intake_update")
 }
 
 function parseAnswers(value: unknown): IntakeAnswers {
