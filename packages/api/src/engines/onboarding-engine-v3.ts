@@ -312,6 +312,41 @@ function buildReviewCardRex(a: Record<string, string>): string {
   return lines.join("\n");
 }
 
+// ── Field change acknowledgment ───────────────────────────────────────────────
+
+const FIELD_DISPLAY: Record<string, string> = {
+  name:                    "Name",
+  gym_goal:                "Goal",
+  current_bodyweight_kg:   "Weight",
+  height_cm:               "Height",
+  training_experience:     "Experience",
+  available_training_days: "Training days",
+  current_split:           "Split",
+  gym_session_time:        "Gym time",
+  daily_protein_g:         "Protein",
+  injury_notes:            "Injuries",
+};
+
+function formatFieldValue(field: string, val: string): string {
+  if (field === "current_bodyweight_kg") return `${val}kg`;
+  if (field === "height_cm")             return `${val}cm`;
+  if (field === "daily_protein_g")       return `${val}g/day`;
+  return val;
+}
+
+function buildFieldAck(before: Record<string, string>, after: Record<string, string>): string {
+  const changed = Object.keys(FIELD_DISPLAY).filter(
+    f => after[f] && after[f] !== before[f]
+  );
+  if (changed.length === 0) return "";
+  if (changed.length === 1) {
+    const f = changed[0]!;
+    return `Got it — updated your ${FIELD_DISPLAY[f]!.toLowerCase()} to ${formatFieldValue(f, after[f]!)}.`;
+  }
+  const lines = changed.map(f => `• ${FIELD_DISPLAY[f]} → ${formatFieldValue(f, after[f]!)}`);
+  return `Updated:\n${lines.join("\n")}`;
+}
+
 // ── Audit logging ────────────────────────────────────────────────────────────
 
 function v3log(tag: string, data: Record<string, unknown>): void {
@@ -408,8 +443,8 @@ export async function handleOnboardingV3(input: {
   const profileBefore = { ...a };
 
   for (const [field, { value, confidence }] of Object.entries(extraction.extracted)) {
-    if (field === "current_split" && extraction.splitGenerationRequested) {
-      v3log("FIELD_SKIP", { field, value, reason: "splitGenerationRequested=true — split set by generation path" });
+    if (field === "current_split" && (extraction.splitGenerationRequested || a._v3_waiting_split_feedback === "true")) {
+      v3log("FIELD_SKIP", { field, value, reason: extraction.splitGenerationRequested ? "splitGenerationRequested=true — split set by generation path" : "waiting_split_feedback — value captured as preference" });
       continue;
     }
     if (confidence < 0.60) {
@@ -440,6 +475,39 @@ export async function handleOnboardingV3(input: {
   a._v3_communication_style = extraction.communicationStyle;
   a._v3_emotional_tone      = extraction.emotionalTone;
 
+  // ── Awaiting split feedback — consume response and regenerate ────────────────
+  //
+  // Set when the user rejected a split with no preference embedded. The next
+  // non-question message is treated as split feedback regardless of intent.
+
+  if (a._v3_waiting_split_feedback === "true") {
+    if (
+      extraction.intent === "question_about_profile" ||
+      extraction.intent === "question_about_onboarding"
+    ) {
+      // Answer the question, keep waiting
+      const reply = `${extraction.reply}\n\nWhat would you like changed in the split?`;
+      await persist(reply);
+      return { handled: true, reply };
+    }
+
+    delete a._v3_waiting_split_feedback;
+
+    // Capture preference: extractor splitPreference field → extracted split value → raw text fallback
+    const splitFeedback =
+      extraction.splitPreference ??
+      extraction.extracted.current_split?.value ??
+      text.slice(0, 200);
+    a._split_preference    = splitFeedback;
+    a._split_attempt_count = String((parseInt(a._split_attempt_count ?? "0")) + 1);
+
+    v3log("SPLIT_FEEDBACK_CONSUMED", { splitFeedback, attempt: a._split_attempt_count });
+
+    const splitDisplay = await triggerSplitGeneration(state);
+    await persist(splitDisplay);
+    return { handled: true, reply: splitDisplay };
+  }
+
   // ── Gate 1: Pending split confirmation — intent-dispatched ──────────────────
 
   if (state.pendingGeneratedSplit) {
@@ -462,7 +530,8 @@ export async function handleOnboardingV3(input: {
       delete a._pending_split_display;
       v3log("SPLIT_CONFIRMED", { storedAs: a.current_split });
       // Fall through to check if all required fields now collected
-    } else if (isReject || isModify) {
+    } else if (isModify) {
+      // correction_with_data + splitGenerationRequested — preference embedded in message
       a._last_split_type = state.pendingGeneratedSplit.splitType;
       if (extraction.splitPreference) a._split_preference = extraction.splitPreference;
       state.pendingGeneratedSplit = null;
@@ -471,12 +540,47 @@ export async function handleOnboardingV3(input: {
       const splitDisplay = await triggerSplitGeneration(state);
       await persist(splitDisplay);
       return { handled: true, reply: splitDisplay };
+    } else if (isReject) {
+      a._last_split_type = state.pendingGeneratedSplit.splitType;
+      state.pendingGeneratedSplit = null;
+      delete a._pending_split_display;
+      if (extraction.splitPreference) {
+        // Preference already provided — regenerate immediately
+        a._split_preference    = extraction.splitPreference;
+        a._split_attempt_count = String((parseInt(a._split_attempt_count ?? "0")) + 1);
+        const splitDisplay = await triggerSplitGeneration(state);
+        await persist(splitDisplay);
+        return { handled: true, reply: splitDisplay };
+      }
+      // No preference — ask what they want before regenerating
+      a._v3_waiting_split_feedback = "true";
+      const reply = `Got it. What would you like changed?\n\nMore volume?\nDifferent structure?\nDifferent muscle grouping?\nSomething else?`;
+      await persist(reply);
+      return { handled: true, reply };
     } else if (extraction.intent === "correction_with_data") {
       // Named split already applied above — clear pending and fall through
       state.pendingGeneratedSplit = null;
       delete a._pending_split_display;
+    } else if (
+      extraction.intent === "question_about_profile" ||
+      extraction.intent === "question_about_onboarding" ||
+      extraction.intent === "frustration"
+    ) {
+      // Answer / acknowledge, then re-show the split so they can still decide
+      const reply = `${extraction.reply}\n\n${state.pendingGeneratedSplit.displayText}`;
+      await persist(reply);
+      return { handled: true, reply };
+    } else if (extraction.intent === "answer") {
+      // Field data already applied above — acknowledge and re-show split
+      const splitPart = state.pendingGeneratedSplit.displayText;
+      const reply = extraction.reply
+        ? `${extraction.reply}\n\n${splitPart}`
+        : `${splitPart}\n\nGood with this, or want changes?`;
+      await persist(reply);
+      return { handled: true, reply };
     } else {
-      const reply = `${state.pendingGeneratedSplit.displayText}\n\nSay yes to keep it, or no to change.`;
+      // offtopic or unclassified — re-show split
+      const reply = `${state.pendingGeneratedSplit.displayText}\n\nGood with this, or want changes?`;
       await persist(reply);
       return { handled: true, reply };
     }
@@ -528,11 +632,12 @@ export async function handleOnboardingV3(input: {
     }
 
     if (extraction.intent === "correction_with_data" || extraction.intent === "answer") {
-      // Fields already applied — rebuild card with updated values
+      const ack         = buildFieldAck(profileBefore, a);
       const updatedCard = buildReviewCardRex(a);
       a._v3_review_shown = "true";
-      await persist(updatedCard);
-      return { handled: true, reply: updatedCard };
+      const reply = ack ? `${ack}\n\n${updatedCard}` : updatedCard;
+      await persist(reply);
+      return { handled: true, reply };
     }
 
     // question_about_profile, question_about_onboarding, frustration, or default:
