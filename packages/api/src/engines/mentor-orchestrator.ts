@@ -54,6 +54,8 @@ import { extractSignals as extractSignalsV2 } from "./signal-engine-v2";
 import { TrainingState } from "./scheduler-intelligence-v2";
 import type { SchedulerContextV2 } from "./scheduler-intelligence-v2";
 import { buildFitnessSnapshot, type FitnessSnapshot } from "../services/fitnessSnapshot.service";
+import type { GoalProgress } from "../services/goalProgress.service";
+import { GOAL_TYPE_LABEL, EXERCISE_LABEL } from "../services/goalProgress.service";
 import type { ParseResult as V2ParseResult } from "./parsing-engine-v2";
 import type { RouterDecision } from "./semantic-router";
 
@@ -737,6 +739,7 @@ interface RexContext {
   contrastiveMemories: MemoryFact[];
   empathizeLoop:       boolean;
   lastIntervention:    string | null;
+  goalProgress:        GoalProgress | null;
 }
 
 interface V3StateUpdates {
@@ -858,7 +861,8 @@ function buildRexContext(
   userCtx: UserContext,
   sigV2:   ReturnType<typeof extractSignalsV2>,
 ): RexContext {
-  const { memory, schedulerContextV2, state, gymPatternReport, engagementContext, rawMemories, interventionHistory } = userCtx;
+  const { memory, schedulerContextV2, state, gymPatternReport, engagementContext, rawMemories, interventionHistory, fitnessSnapshot } = userCtx;
+  const goalProgress = fitnessSnapshot?.goalProgress ?? null;
   const daysSinceJoined = memory.daysSinceFirstMessage;
 
   const ulResult    = input.routerDecision?.source === "ul" ? input.routerDecision.ulResult : null;
@@ -982,6 +986,7 @@ function buildRexContext(
     contrastiveMemories,
     empathizeLoop,
     lastIntervention,
+    goalProgress,
   };
 }
 
@@ -1173,6 +1178,33 @@ function buildRexSystemPrompt(ctx: RexContext): string {
     ? `Sessions this month: ${ctx.engagementCtx.sessionsThisMonth} | Streak: ${ctx.engagementCtx.streak} | 7-day completion: ${ctx.engagementCtx.completionRate7d}%\nBiggest PR: ${ctx.engagementCtx.biggestPR}`
     : null;
 
+  // Goal progress section
+  let goalProgressSection: string | null = null;
+  if (ctx.goalProgress) {
+    const gp         = ctx.goalProgress;
+    const goalLabel  = GOAL_TYPE_LABEL[gp.goalType];
+    const exLabel    = gp.exercise ? (EXERCISE_LABEL[gp.exercise] ?? gp.exercise) : null;
+    const heading    = exLabel ? `${goalLabel} — ${exLabel}` : goalLabel;
+    const targetLine = gp.targetValue !== null
+      ? `${gp.targetValue}${gp.unit}`
+      : "not set";
+    const statusLine = gp.status === "unknown"
+      ? "Unknown (set a target to enable tracking)"
+      : `${gp.status.charAt(0).toUpperCase() + gp.status.slice(1).replace("_", " ")}`;
+    const lines = [
+      `Goal: ${heading}`,
+      `Started: ${gp.baselineValue}${gp.unit} (${gp.startDate})`,
+      `Current: ${gp.currentValue !== null ? `${gp.currentValue}${gp.unit}` : "no data"}`,
+      `Target: ${targetLine}`,
+    ];
+    if (gp.targetValue !== null) {
+      lines.push(`Progress: ${gp.progressPercent}%`);
+    }
+    lines.push(`Status: ${statusLine}`);
+    if (gp.targetDate) lines.push(`Target date: ${gp.targetDate}`);
+    goalProgressSection = lines.join("\n");
+  }
+
   // Phase 4: Strengthened intervention history — explicit repeat conditions, not escape clause
   let interventionHistoryLine = "";
   let loopWarning = "";
@@ -1297,7 +1329,7 @@ ${profileSection}
 
 Training state: ${ctx.schedulerNarrative}
 Today: ${ctx.todaySessionStatus}
-${directivesBlock ? `\n─── COACHING DIRECTIVES ──────────────────────────────────────────────────────\n${directivesBlock}\n\nThese are active constraints for this turn. Follow them.` : ""}${sessionCtxSection ? `\n\n─── SESSION CONTEXT ──────────────────────────────────────────────────────────\n${sessionCtxSection}` : ""}${gymPatternSection ? `\n\n─── GYM PATTERNS ─────────────────────────────────────────────────────────────\n${gymPatternSection}` : ""}${behavioralPatternsSection ? `\n\n─── BEHAVIORAL PATTERNS ──────────────────────────────────────────────────────\n${behavioralPatternsSection}` : ""}${engagementSection ? `\n\n─── ENGAGEMENT ───────────────────────────────────────────────────────────────\n${engagementSection}` : ""}${interventionHistoryLine ? `\n\n─── INTERVENTION HISTORY ─────────────────────────────────────────────────────\n${interventionHistoryLine}${loopWarning}` : ""}
+${directivesBlock ? `\n─── COACHING DIRECTIVES ──────────────────────────────────────────────────────\n${directivesBlock}\n\nThese are active constraints for this turn. Follow them.` : ""}${sessionCtxSection ? `\n\n─── SESSION CONTEXT ──────────────────────────────────────────────────────────\n${sessionCtxSection}` : ""}${gymPatternSection ? `\n\n─── GYM PATTERNS ─────────────────────────────────────────────────────────────\n${gymPatternSection}` : ""}${behavioralPatternsSection ? `\n\n─── BEHAVIORAL PATTERNS ──────────────────────────────────────────────────────\n${behavioralPatternsSection}` : ""}${engagementSection ? `\n\n─── ENGAGEMENT ───────────────────────────────────────────────────────────────\n${engagementSection}` : ""}${goalProgressSection ? `\n\n─── GOAL PROGRESS ────────────────────────────────────────────────────────────\n${goalProgressSection}` : ""}${interventionHistoryLine ? `\n\n─── INTERVENTION HISTORY ─────────────────────────────────────────────────────\n${interventionHistoryLine}${loopWarning}` : ""}
 
 ─── SECTION C — MEMORIES ────────────────────────────────────────────────────
 
