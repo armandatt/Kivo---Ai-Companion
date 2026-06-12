@@ -23,7 +23,6 @@ import {
   finalizeIntake,
   generateSplit,
   buildWelcomeMessage,
-  classifyConfirmation,
   parseName,
   parseGoal,
   parseExperience,
@@ -167,9 +166,6 @@ function storageKeysFor(field: string, canonical: string): Record<string, string
     default:                        return { [field]: canonical };
   }
 }
-
-// Conflict fields: warn before overwriting these
-const CONFLICT_FIELDS = new Set(["gym_goal", "training_experience", "available_training_days", "current_split"]);
 
 // ── Conversation history helpers ──────────────────────────────────────────────
 
@@ -316,21 +312,6 @@ function buildReviewCardRex(a: Record<string, string>): string {
   return lines.join("\n");
 }
 
-// ── Review response classifier ────────────────────────────────────────────────
-//
-// Wraps classifyConfirmation with Rex-specific affirmation phrases. AFFIRM_RE in
-// the parsing engine doesn't include coaching idioms ("solid", "lock it in", etc.)
-// because those are Rex-specific. Handling them here keeps the parser general.
-
-const REX_REVIEW_AFFIRM_RE = /^(?:solid|save\s+it|lock(?:\s+it)?(?:\s+in)?|ship\s+it|we(?:'re)?\s+good|that'?s\s+(?:fine|good|right|it)|done\s+deal|all\s+(?:good|solid|set)|good\s+to\s+go|let'?s\s+(?:lock|go|do\s+it))\.?!?$/i;
-
-function classifyReviewResponse(text: string, card: string): "yes" | "no" | "modify" | "unclear" {
-  const base = classifyConfirmation(text, card);
-  if (base !== "unclear") return base;
-  if (REX_REVIEW_AFFIRM_RE.test(text.trim())) return "yes";
-  return "unclear";
-}
-
 // ── Audit logging ────────────────────────────────────────────────────────────
 
 function v3log(tag: string, data: Record<string, unknown>): void {
@@ -354,7 +335,6 @@ export async function handleOnboardingV3(input: {
 
   const userId = user.id;
 
-  // Track user message in short-term memory
   await addToShortTerm(platformChatId, text, { role: "user", intent: "intake", emotion: "neutral" });
 
   let state = await loadState(userId);
@@ -372,120 +352,17 @@ export async function handleOnboardingV3(input: {
 
   v3log("TURN_START", { userId, msg: text.slice(0, 120), currentStep: state.currentStep });
 
-  // ── Gate 1: Pending split confirmation ──────────────────────────────────────
-  if (state.pendingGeneratedSplit) {
-    // classifyConfirmation handles natural phrasing ("looks good", "perfect"),
-    // modification keywords (swap/change/adjust), and bare rejections.
-    // DENY_RE is anchored so it misses "no I want two body parts per day" —
-    // add a leading-"no" check to catch rejection-with-embedded-preference.
-    const splitConfirmCls = classifyConfirmation(text, state.pendingGeneratedSplit.displayText);
-    const leadingNo = /^no[,\s!.]/i.test(text.trim());
-    const effectiveCls = (splitConfirmCls === "unclear" && leadingNo) ? "no" : splitConfirmCls;
+  // ── persist helper ────────────────────────────────────────────────────────────
+  const persist = async (reply: string) => {
+    state!.currentStep = computeCurrentStep(a);
+    appendHistory(a, text, reply);
+    await saveState(userId, state!);
+    await addToShortTerm(platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" });
+  };
 
-    v3log("GATE_SPLIT_CONFIRM", {
-      decision:       effectiveCls,
-      classifyResult: splitConfirmCls,
-      leadingNo,
-      normalizedMsg:  text.toLowerCase().trim().slice(0, 80),
-    });
+  // ── OpenAI extraction — runs first, always ───────────────────────────────────
 
-    if (effectiveCls === "yes") {
-      const g = state.pendingGeneratedSplit;
-      a.current_split   = g.splitType;
-      a.split_raw       = "rex_built";
-      a.split_days_json = g.splitDaysJson;
-      state.pendingGeneratedSplit = null;
-      delete a._pending_split_display;
-      v3log("SPLIT_CONFIRMED", { storedAs: a.current_split });
-      // Fall through to check if all required fields now collected
-    } else if (effectiveCls === "no" || effectiveCls === "modify") {
-      // Save what was shown so triggerSplitGeneration can avoid repeating it
-      a._last_split_type = state.pendingGeneratedSplit.splitType;
-      state.pendingGeneratedSplit = null;
-      delete a._pending_split_display;
-      // Do NOT return — fall through so the extractor processes any preference
-      // embedded in the message (e.g. "no I want two body parts per day")
-    } else {
-      // Genuinely unclear (short/ambiguous message) — re-show split
-      const reply = `${state.pendingGeneratedSplit.displayText}\n\nSay yes to keep it, or no to change.`;
-      await saveState(userId, state);
-      await addToShortTerm(platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" });
-      return { handled: true, reply };
-    }
-  }
-
-  // ── Gate 2: Review confirmation ──────────────────────────────────────────────
-  if (a._v3_review_shown === "true") {
-    const reviewCard = buildReviewCardRex(a);
-    const reviewCls  = classifyReviewResponse(text, reviewCard);
-
-    if (reviewCls === "yes") {
-      state.completedAt = Date.now();
-      state.currentStep = "review";
-      await saveState(userId, state);
-      await finalizeIntake(userId, platformChatId, state);
-      const done = `You're all set, ${a.name ?? "Athlete"}.\n\nI've got everything I need. Let's build something.`;
-      await addToShortTerm(platformChatId, done, { role: "assistant", intent: "intake", emotion: "neutral" });
-      return { handled: true, reply: done };
-    }
-    if (reviewCls === "no" || reviewCls === "modify") {
-      delete a._v3_review_shown;
-      // Gate 3 (pre-extraction) checks allRequiredCollected and fires if true.
-      // After a review rejection all required fields ARE set, so without this
-      // flag the very next user message would hit Gate 3 and re-show the review
-      // card before the extractor ever sees it. _v3_awaiting_correction bypasses
-      // Gate 3 for the correction turn and is cleared once extraction runs.
-      a._v3_awaiting_correction = "true";
-      const reply = "What would you like to change?";
-      await saveState(userId, state);
-      await addToShortTerm(platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" });
-      appendHistory(a, text, reply);
-      return { handled: true, reply };
-    }
-    // Unclear — re-show review card
-    await addToShortTerm(platformChatId, reviewCard, { role: "assistant", intent: "intake", emotion: "neutral" });
-    return { handled: true, reply: reviewCard };
-  }
-
-  // ── Gate 3: All required fields already collected → show review ──────────────
-  // _v3_awaiting_correction bypasses this gate: user just said "no" on the review
-  // and the next message is their correction request — it must reach the extractor,
-  // not hit Gate 3 and re-show the review card before anything is processed.
-  const missingForReview = REQUIRED_FIELDS.filter(f => !a[f]?.trim());
-  const reviewAllowed    = missingForReview.length === 0 && !a._v3_awaiting_correction;
-
-  console.log("[REVIEW_AUDIT] PRE_REVIEW_GATE", JSON.stringify({
-    missingFields:       missingForReview,
-    awaitingCorrection:  a._v3_awaiting_correction === "true",
-    reviewShown:         a._v3_review_shown === "true",
-    reviewAllowed,
-  }));
-
-  if (reviewAllowed && !a._v3_review_shown) {
-    const card = buildReviewCardRex(a);
-    a._v3_review_shown = "true";
-    state.currentStep  = "review";
-    await saveState(userId, state);
-    await addToShortTerm(platformChatId, card, { role: "assistant", intent: "intake", emotion: "neutral" });
-    appendHistory(a, text, card);
-    return { handled: true, reply: card };
-  }
-
-  // ── OpenAI extraction ────────────────────────────────────────────────────────
-
-  // Clear the correction flag now that this turn will be processed by the extractor.
-  // The flag only needs to survive a single turn (the one immediately after review
-  // rejection). Clearing here ensures Gate 3 works normally on subsequent turns.
-  if (a._v3_awaiting_correction) {
-    delete a._v3_awaiting_correction;
-    console.log("[REVIEW_AUDIT] CHANGE_REQUEST", JSON.stringify({
-      requestedChange:    text.slice(0, 120),
-      awaitingCorrection: true,
-      note:               "Correction turn — Gate 3 was bypassed, extraction running",
-    }));
-  }
-
-  const history   = loadHistory(a);
+  const history       = loadHistory(a);
   const missingFields = REQUIRED_FIELDS.filter(f => !a[f]?.trim());
   const stallCounts   = Object.fromEntries(
     missingFields.map(f => [f, state.repeatCounts[f] ?? 0])
@@ -495,12 +372,11 @@ export async function handleOnboardingV3(input: {
     missingFields,
     stallCounts,
     profileKeys: Object.keys(a).filter(k => !k.startsWith("_")),
-    note: "missingFields snapshot is pre-extraction — extractor reply may re-ask a field captured this same turn",
   });
 
   const extraction = await extractOnboardingFacts({
-    message:           text,
-    profile:           Object.fromEntries(Object.entries(a).filter(([k]) => !k.startsWith("_"))),
+    message:            text,
+    profile:            Object.fromEntries(Object.entries(a).filter(([k]) => !k.startsWith("_"))),
     missingFields,
     stallCounts,
     history,
@@ -511,6 +387,8 @@ export async function handleOnboardingV3(input: {
   v3log("EXTRACTION_RESULT", {
     extracted:                extraction.extracted,
     intent:                   extraction.intent,
+    targetField:              extraction.targetField,
+    confirmationConfidence:   extraction.confirmationConfidence,
     conflictDetected:         extraction.conflictDetected,
     conflictField:            extraction.conflictField,
     previousValue:            extraction.previousValue,
@@ -525,83 +403,155 @@ export async function handleOnboardingV3(input: {
     reply:                    extraction.reply.slice(0, 120),
   });
 
-  // ── Process extracted fields ─────────────────────────────────────────────────
+  // ── Apply extracted fields — no conflict guard ───────────────────────────────
 
-  // Hardcoded conflict strings were removed. The extractor's conflict detection
-  // generates a coaching-style reply. The handler still enforces "don't overwrite"
-  // for high-stakes fields as a safety check. If the extractor missed a conflict,
-  // extraction.reply still contextually fits (it'll ask for the next missing field,
-  // and the unchanged value will show on the review card for correction).
-  let handlerSkippedConflict = false;
   const profileBefore = { ...a };
 
   for (const [field, { value, confidence }] of Object.entries(extraction.extracted)) {
-    // If the extractor is requesting split generation it must NOT also store a
-    // current_split value from extraction — that would set a.current_split and
-    // cause the generation guard (!a.current_split) to fail silently, leaving
-    // the user with whatever name the extractor guessed (e.g. "Bro Split")
-    // instead of an actually generated split.
     if (field === "current_split" && extraction.splitGenerationRequested) {
-      v3log("FIELD_SKIP", { field, value, reason: "splitGenerationRequested=true — split will be set by generation path, not from extractor label" });
+      v3log("FIELD_SKIP", { field, value, reason: "splitGenerationRequested=true — split set by generation path" });
       continue;
     }
-
     if (confidence < 0.60) {
       v3log("FIELD_SKIP", { field, value, confidence, reason: "low_confidence (<0.60)" });
       continue;
     }
-
     const canonical = normalizeWithParser(field, value);
     if (!canonical) {
-      v3log("FIELD_SKIP", { field, rawValue: value, confidence, reason: "normalizeWithParser returned null — V2 parser rejected value" });
+      v3log("FIELD_SKIP", { field, rawValue: value, confidence, reason: "normalizeWithParser returned null" });
       continue;
     }
-
-    if (CONFLICT_FIELDS.has(field) && a[field] && a[field] !== canonical) {
-      handlerSkippedConflict = true;
-      v3log("FIELD_CONFLICT", { field, existing: a[field], proposed: canonical, extractorDetected: extraction.conflictDetected, action: "skipped — extractor reply handles it" });
-      continue;
-    }
-
     const keys = storageKeysFor(field, canonical);
     Object.assign(a, keys);
     v3log("FIELD_STORED", { field, rawValue: value, canonical, confidence, storedKeys: Object.keys(keys) });
   }
 
-  // Profile diff
   const added:   string[] = [];
   const updated: string[] = [];
   for (const [k, v] of Object.entries(a)) {
     if (k.startsWith("_")) continue;
-    if (!(k in profileBefore))            added.push(k);
-    else if (profileBefore[k] !== v)      updated.push(k);
+    if (!(k in profileBefore))        added.push(k);
+    else if (profileBefore[k] !== v)  updated.push(k);
   }
-  v3log("PROFILE_DIFF", {
-    added,
-    updated,
-    missingAfter: REQUIRED_FIELDS.filter(f => !a[f]?.trim()),
-  });
+  v3log("PROFILE_DIFF", { added, updated, missingAfter: REQUIRED_FIELDS.filter(f => !a[f]?.trim()) });
 
   // ── Update style / tone metadata ─────────────────────────────────────────────
 
   a._v3_communication_style = extraction.communicationStyle;
   a._v3_emotional_tone      = extraction.emotionalTone;
 
+  // ── Gate 1: Pending split confirmation — intent-dispatched ──────────────────
+
+  if (state.pendingGeneratedSplit) {
+    const isConfirm = extraction.intent === "confirm_profile" && extraction.confirmationConfidence >= 0.75;
+    const isReject  = extraction.intent === "reject_profile";
+    const isModify  = extraction.intent === "correction_with_data" && extraction.splitGenerationRequested;
+
+    v3log("GATE_SPLIT_CONFIRM", {
+      intent:                 extraction.intent,
+      confirmationConfidence: extraction.confirmationConfidence,
+      isConfirm, isReject, isModify,
+    });
+
+    if (isConfirm) {
+      const g = state.pendingGeneratedSplit;
+      a.current_split   = g.splitType;
+      a.split_raw       = "rex_built";
+      a.split_days_json = g.splitDaysJson;
+      state.pendingGeneratedSplit = null;
+      delete a._pending_split_display;
+      v3log("SPLIT_CONFIRMED", { storedAs: a.current_split });
+      // Fall through to check if all required fields now collected
+    } else if (isReject || isModify) {
+      a._last_split_type = state.pendingGeneratedSplit.splitType;
+      if (extraction.splitPreference) a._split_preference = extraction.splitPreference;
+      state.pendingGeneratedSplit = null;
+      delete a._pending_split_display;
+      a._split_attempt_count = String((parseInt(a._split_attempt_count ?? "0")) + 1);
+      const splitDisplay = await triggerSplitGeneration(state);
+      await persist(splitDisplay);
+      return { handled: true, reply: splitDisplay };
+    } else if (extraction.intent === "correction_with_data") {
+      // Named split already applied above — clear pending and fall through
+      state.pendingGeneratedSplit = null;
+      delete a._pending_split_display;
+    } else {
+      const reply = `${state.pendingGeneratedSplit.displayText}\n\nSay yes to keep it, or no to change.`;
+      await persist(reply);
+      return { handled: true, reply };
+    }
+  }
+
+  // ── Gate 2: Review state — intent-dispatched ─────────────────────────────────
+
+  if (a._v3_review_shown === "true") {
+    const reviewCard = buildReviewCardRex(a);
+    const isConfirm  = extraction.intent === "confirm_profile" && extraction.confirmationConfidence >= 0.75;
+
+    v3log("GATE_REVIEW", {
+      intent:                 extraction.intent,
+      confirmationConfidence: extraction.confirmationConfidence,
+      targetField:            extraction.targetField,
+      isConfirm,
+    });
+
+    if (isConfirm) {
+      state.completedAt = Date.now();
+      state.currentStep = "review";
+      await saveState(userId, state);
+      await finalizeIntake(userId, platformChatId, state);
+      const done = `You're all set, ${a.name ?? "Athlete"}.\n\nI've got everything I need. Let's build something.`;
+      await addToShortTerm(platformChatId, done, { role: "assistant", intent: "intake", emotion: "neutral" });
+      return { handled: true, reply: done };
+    }
+
+    if (extraction.intent === "reject_profile") {
+      delete a._v3_review_shown;
+      const reply = extraction.reply;
+      await persist(reply);
+      return { handled: true, reply };
+    }
+
+    if (
+      (extraction.intent === "correction_with_data" || extraction.intent === "answer") &&
+      extraction.splitGenerationRequested
+    ) {
+      delete a.current_split;
+      delete a.split_raw;
+      delete a.split_days_json;
+      delete a._v3_review_shown;
+      if (extraction.splitPreference) a._split_preference = extraction.splitPreference;
+      a._split_attempt_count = String((parseInt(a._split_attempt_count ?? "0")) + 1);
+      const splitDisplay = await triggerSplitGeneration(state);
+      await persist(splitDisplay);
+      return { handled: true, reply: splitDisplay };
+    }
+
+    if (extraction.intent === "correction_with_data" || extraction.intent === "answer") {
+      // Fields already applied — rebuild card with updated values
+      const updatedCard = buildReviewCardRex(a);
+      a._v3_review_shown = "true";
+      await persist(updatedCard);
+      return { handled: true, reply: updatedCard };
+    }
+
+    // question_about_profile, question_about_onboarding, frustration, or default:
+    // Answer the question then re-show the card
+    const reply = `${extraction.reply}\n\n${reviewCard}`;
+    await persist(reply);
+    return { handled: true, reply };
+  }
+
   // ── Handle split generation request ─────────────────────────────────────────
 
   if (extraction.splitGenerationRequested && !a.current_split) {
-    // Store structural preference if extractor provided one (e.g. "two muscle groups per session")
-    if (extraction.splitPreference) {
-      a._split_preference = extraction.splitPreference;
-    }
-    // Track how many times generation has been attempted so triggerSplitGeneration
-    // can rotate away from the previous template on re-generations.
+    if (extraction.splitPreference) a._split_preference = extraction.splitPreference;
     a._split_attempt_count = String((parseInt(a._split_attempt_count ?? "0")) + 1);
 
     console.log("[SPLIT_AUDIT] HANDLER_TRIGGER", JSON.stringify({
       extractedPreference:      extraction.splitPreference,
       storedPreference:         a._split_preference ?? null,
-      currentSplitBeforeGen:    a.current_split ?? null,   // must be null; if set, generation guard would fail
+      currentSplitBeforeGen:    a.current_split ?? null,
       splitGenerationRequested: extraction.splitGenerationRequested,
       attempt:                  a._split_attempt_count,
       available_training_days:  a.available_training_days ?? "NOT_SET — defaulting to 4",
@@ -609,18 +559,14 @@ export async function handleOnboardingV3(input: {
     }));
 
     const splitDisplay = await triggerSplitGeneration(state);
-    state.currentStep  = computeCurrentStep(a);
-    await saveState(userId, state);
-    await addToShortTerm(platformChatId, splitDisplay, { role: "assistant", intent: "intake", emotion: "neutral" });
-    appendHistory(a, text, splitDisplay);
+    await persist(splitDisplay);
     return { handled: true, reply: splitDisplay };
   }
 
-  // ── Check if all required fields collected after this extraction ─────────────
+  // ── Check if all required fields collected → show review card ────────────────
 
   if (allRequiredCollected(a) && !a._v3_review_shown) {
     v3log("REVIEW_CARD", { reason: "all required fields collected after extraction", fields: Object.fromEntries(REQUIRED_FIELDS.map(f => [f, a[f]])) });
-    delete a._v3_awaiting_correction; // already cleared above, but belt-and-suspenders
     const card = buildReviewCardRex(a);
     a._v3_review_shown = "true";
     state.currentStep  = "review";
@@ -632,8 +578,6 @@ export async function handleOnboardingV3(input: {
 
   // ── Logical inconsistency — show once ────────────────────────────────────────
 
-  // extraction.reply is always used — the extractor handles conflict replies
-  // in coaching voice. The handler only enforces storage safety (skip field).
   let reply = extraction.reply;
 
   if (extraction.logicalInconsistency && !a._v3_inconsistency_shown) {
@@ -651,30 +595,20 @@ export async function handleOnboardingV3(input: {
       field: extraction.nextField,
       count: newCount,
       why: "extractor said this is nextField and it is still missing in profile",
-      note: newCount === 1 ? "first increment happens on first ask — stall-2 behavior triggers on SECOND ask, not third" : undefined,
+      note: newCount === 1 ? "first increment on first ask — stall-2 triggers on SECOND ask, not third" : undefined,
     });
   }
 
-  // ── Update V2-compatible currentStep for rollback ────────────────────────────
-
-  state.currentStep = computeCurrentStep(a);
-
-  v3log("TURN_END", {
-    reply:               reply.slice(0, 120),
-    nextField:           extraction.nextField,
-    nextFieldWhy:        extraction.nextField
-      ? (a[extraction.nextField] ? "ALREADY_COLLECTED — extractor used pre-extraction snapshot" : "still missing")
-      : "extractor returned null",
-    currentStep:         state.currentStep,
-    missingFields:       REQUIRED_FIELDS.filter(f => !a[f]?.trim()),
-    handlerSkippedConflict,
-    replySource:         "extractor_reply",
-  });
-
   // ── Persist and return ───────────────────────────────────────────────────────
 
-  appendHistory(a, text, reply);
-  await saveState(userId, state);
-  await addToShortTerm(platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" });
+  v3log("TURN_END", {
+    reply:         reply.slice(0, 120),
+    nextField:     extraction.nextField,
+    currentStep:   computeCurrentStep(a),
+    missingFields: REQUIRED_FIELDS.filter(f => !a[f]?.trim()),
+    replySource:   "extractor_reply",
+  });
+
+  await persist(reply);
   return { handled: true, reply };
 }

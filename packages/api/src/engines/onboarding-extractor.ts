@@ -16,8 +16,19 @@ export interface ExtractionField {
 
 export interface OnboardingExtraction {
   extracted:                Record<string, ExtractionField>;
-  intent:                   "answer" | "question" | "request" | "frustration" | "offtopic";
-  conflictDetected:         boolean;
+  intent:
+    | "answer"
+    | "request"
+    | "confirm_profile"
+    | "reject_profile"
+    | "correction_with_data"
+    | "question_about_profile"
+    | "question_about_onboarding"
+    | "frustration"
+    | "offtopic";
+  targetField:              string | null;   // field being corrected or asked about
+  confirmationConfidence:   number;          // 0.0–1.0 — confidence for confirm_profile only
+  conflictDetected:         boolean;         // kept for audit logging
   conflictField:            string | null;
   previousValue:            string | null;
   newValue:                 string | null;
@@ -34,6 +45,8 @@ export interface OnboardingExtraction {
 const FALLBACK: OnboardingExtraction = {
   extracted:                {},
   intent:                   "answer",
+  targetField:              null,
+  confirmationConfidence:   0,
   conflictDetected:         false,
   conflictField:            null,
   previousValue:            null,
@@ -86,7 +99,9 @@ ${stallLines ? `STALL COUNTS (times asked for field without answer):\n${stallLin
   "extracted": {
     "<fieldName>": { "value": "<normalized value>", "confidence": 0.0-1.0 }
   },
-  "intent": "answer" | "question" | "request" | "frustration" | "offtopic",
+  "intent": "answer" | "request" | "confirm_profile" | "reject_profile" | "correction_with_data" | "question_about_profile" | "question_about_onboarding" | "frustration" | "offtopic",
+  "targetField": null,
+  "confirmationConfidence": 0.0,
   "conflictDetected": false,
   "conflictField": null,
   "previousValue": null,
@@ -184,11 +199,58 @@ stall 3: lock in a smart default and move on ("Defaulting to 18:00. Change it la
 stall 4+: NEVER re-ask. Accept "not_tracking" / "none" / the last stated value as the answer. Advance immediately.
 
 ─── INTENT TYPES ────────────────────────────────────────────────────────────
-answer: providing information, including approximate or hedged answers
-question: asking something ("why do you need my weight?")
-request: asking for something to be done ("build me a split")
-frustration: "what?", "i already said", profanity + frustration, "this again?"
-offtopic: unrelated to onboarding
+answer: providing data during active collection ("I'm 75kg", "4 days a week", "beginner")
+
+request: asking Rex to do something ("build me a split", "generate a plan")
+
+confirm_profile: user is satisfied with the review card and wants to finalize
+  Examples: "yes", "lock it in", "looks good", "perfect", "that's right", "ship it", "done", "correct"
+  → set confirmationConfidence 0.75–1.0 only for clear, unqualified affirmations
+  → "yes but..." → NOT confirm_profile — "but" signals a problem → use question_about_profile
+  → NEVER set confirmationConfidence ≥ 0.75 if message contains "but", "except", "however", "actually", "wait", "you forgot", "you never asked", or any embedded correction
+
+reject_profile: user is unhappy but has NOT provided the corrected value
+  Examples: "that's wrong", "no", "something's off", "not right", "nah", "change it", "that's not me"
+  → extracted{} is empty — no corrected data provided
+
+correction_with_data: user is correcting a specific field AND the new value IS embedded in the message
+  Examples:
+    "my split is not PPL, it's Upper Lower" → targetField=current_split, extracted.current_split="Upper Lower"
+    "back/tri, shoulders/legs, chest/bi" → targetField=current_split, extract the described split
+    "actually I'm 80kg not 75" → targetField=current_bodyweight_kg, extracted.current_bodyweight_kg="80"
+    "you had my goal wrong, it's fat loss" → targetField=gym_goal, extracted.gym_goal="fat_loss"
+    "my split is not PPL" with no new value given → this is reject_profile, not correction_with_data
+  → always set targetField, always populate extracted{} with the corrected value
+
+question_about_profile: user asking about a specific field shown in the review card
+  Examples: "you forgot protein", "you never asked my weight", "what did I say for split", "height is missing"
+  → set targetField to the field being asked about
+  → CRITICAL: "yes but you never asked my weight" → question_about_profile (the "yes" is irrelevant — "but you never asked" overrides)
+
+question_about_onboarding: user asking about the process itself
+  Examples: "why do you need my height", "what's this for", "why these questions", "how does this work"
+
+frustration: expressing frustration without actionable correction or question
+  Examples: "ugh", "this again", "are you dumb", profanity without embedded data, repeated dismissals
+
+offtopic: completely unrelated to onboarding or fitness
+
+─── REVIEW STATE ────────────────────────────────────────────────────────────
+When MISSING REQUIRED FIELDS is empty, all data is collected and the user is reviewing.
+In review state, classify intent precisely — finalization is irreversible.
+
+confirm_profile: "yes", "lock it in", "looks good", "perfect", "ship it", "done", "correct" (unqualified)
+  → confirmationConfidence 0.85–1.0 for single-word affirmations
+  → confirmationConfidence 0.75–0.85 for short affirmative phrases
+  → confirmationConfidence 0.0 for ANYTHING with a qualifier or correction attached
+
+reject_profile: "that's wrong", "no", "nah", "something's off" (no corrected value)
+
+correction_with_data: correction with the new value embedded in the message
+  → always set extracted{} with the corrected field value
+
+question_about_profile: ANY message where user flags a missing or wrong field WITHOUT fully fixing it
+  → "yes but you never asked X" = question_about_profile — NEVER confirm_profile
 
 ─── COMMUNICATION STYLE ─────────────────────────────────────────────────────
 fast: one-word answers, impatient phrasing, "k", "sure", "next"
@@ -261,9 +323,17 @@ export async function extractOnboardingFacts(input: {
 
     const p = JSON.parse(jsonMatch[0]) as Partial<OnboardingExtraction>;
 
+    const VALID_INTENTS = [
+      "answer","request",
+      "confirm_profile","reject_profile","correction_with_data",
+      "question_about_profile","question_about_onboarding",
+      "frustration","offtopic",
+    ] as const;
     return {
       extracted:                typeof p.extracted === "object" && p.extracted !== null ? p.extracted as Record<string, ExtractionField> : {},
-      intent:                   (["answer","question","request","frustration","offtopic"] as const).includes(p.intent as never) ? p.intent! : "answer",
+      intent:                   VALID_INTENTS.includes(p.intent as never) ? p.intent! : "answer",
+      targetField:              typeof p.targetField === "string" && p.targetField.length > 0 ? p.targetField : null,
+      confirmationConfidence:   typeof p.confirmationConfidence === "number" ? Math.max(0, Math.min(1, p.confirmationConfidence)) : 0,
       conflictDetected:         p.conflictDetected     === true,
       conflictField:            typeof p.conflictField  === "string" ? p.conflictField : null,
       previousValue:            typeof p.previousValue  === "string" ? p.previousValue : null,
