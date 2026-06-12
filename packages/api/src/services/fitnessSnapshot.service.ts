@@ -1,0 +1,135 @@
+import { prisma }                                              from "@repo/db/client";
+import { computePatternReport }                               from "./gymPatternDetector.service";
+import type { PatternReport }                                  from "./gymPatternDetector.service";
+import { buildEngagementContext }                             from "./engagement.service";
+import type { EngagementContext }                              from "./engagement.service";
+import { buildSchedulerContextV2 }                           from "../engines/scheduler-intelligence-v2";
+import type { SchedulerContextV2 }                            from "../engines/scheduler-intelligence-v2";
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface FitnessSnapshot {
+  consistencyScore:    number;        // 0–100 from PatternReport (28-day window)
+  streakDays:          number;        // consecutive training days from gymStreak
+  plateauDetected:     boolean;       // true when any lifts have ≥3 sessions at same weight
+  stalledLifts:        string[];      // exercise names with no weight progression
+  biggestPR:           string;        // "Deadlift 120kg" or "none yet"
+  weeklyCompletionRate: number;       // 0.0–1.0 from SchedulerContextV2
+  totalSessions:       number;        // all-time completed session count
+  lastWorkoutDate:     string | null; // "YYYY-MM-DD" or null
+  goalCategory:        string | null; // raw gym_goal from intakeAnswers
+}
+
+// Raw sub-results returned alongside the snapshot so the orchestrator can
+// populate its existing PatternReport / EngagementContext / SchedulerContextV2
+// fields without re-fetching.
+export interface FitnessSnapshotBundle {
+  snapshot:      FitnessSnapshot;
+  patternReport: PatternReport | null;
+  engagementCtx: EngagementContext | null;
+  schedulerCtx:  SchedulerContextV2 | null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CACHE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+interface CacheEntry {
+  bundle:    FitnessSnapshotBundle;
+  expiresAt: number;
+}
+
+const snapshotCache = new Map<string, CacheEntry>();
+
+function readCache(userId: string, now: Date): FitnessSnapshotBundle | null {
+  const entry = snapshotCache.get(userId);
+  if (!entry) return null;
+  if (now.getTime() >= entry.expiresAt) {
+    snapshotCache.delete(userId);
+    return null;
+  }
+  return entry.bundle;
+}
+
+function writeCache(userId: string, bundle: FitnessSnapshotBundle, now: Date): void {
+  snapshotCache.set(userId, { bundle, expiresAt: now.getTime() + CACHE_TTL_MS });
+}
+
+// Called by workoutTracking.finishSession to force re-computation after a
+// session completes (streak, totalSessions, lastWorkoutDate all change).
+export function invalidateFitnessSnapshot(userId: string): void {
+  snapshotCache.delete(userId);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BUILDER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function buildFitnessSnapshot(
+  messengerUserId: string,
+  platformChatId:  string,
+  now = new Date(),
+): Promise<FitnessSnapshotBundle | null> {
+  const cached = readCache(messengerUserId, now);
+  if (cached) return cached;
+
+  const [patternReport, engagementCtx, schedulerCtx, totalSessions, goalRow] =
+    await Promise.all([
+      computePatternReport(messengerUserId, now).catch(err => {
+        console.error("[FITNESS_SNAPSHOT] patternReport:", err);
+        return null as PatternReport | null;
+      }),
+      buildEngagementContext(messengerUserId, now).catch(err => {
+        console.error("[FITNESS_SNAPSHOT] engagementCtx:", err);
+        return null as EngagementContext | null;
+      }),
+      buildSchedulerContextV2(platformChatId, now).catch(err => {
+        console.error("[FITNESS_SNAPSHOT] schedulerCtx:", err);
+        return null as SchedulerContextV2 | null;
+      }),
+      prisma.telegramWorkoutSession
+        .count({ where: { messengerUserId, completed: true } })
+        .catch(err => {
+          console.error("[FITNESS_SNAPSHOT] totalSessions:", err);
+          return 0;
+        }),
+      prisma.messengerUser
+        .findUnique({
+          where:  { id: messengerUserId },
+          select: { intakeAnswers: true },
+        })
+        .catch(() => null),
+    ]);
+
+  // User has no training history yet — no snapshot to build
+  if (!engagementCtx && !schedulerCtx?.hasAnyHistory) return null;
+
+  const ia          = goalRow?.intakeAnswers as Record<string, string> | null | undefined;
+  const goalCategory = typeof ia?.gym_goal === "string" ? ia.gym_goal : null;
+
+  const snapshot: FitnessSnapshot = {
+    consistencyScore:    patternReport?.consistencyScore ?? 0,
+    streakDays:          engagementCtx?.streak ?? 0,
+    plateauDetected:     (patternReport?.stalledLifts.length ?? 0) > 0,
+    stalledLifts:        patternReport?.stalledLifts.map(s => s.exercise) ?? [],
+    biggestPR:           engagementCtx?.biggestPR ?? "none yet",
+    weeklyCompletionRate: schedulerCtx?.completionRate7d ?? 0,
+    totalSessions,
+    lastWorkoutDate:     schedulerCtx?.lastSessionDate ?? null,
+    goalCategory,
+  };
+
+  const bundle: FitnessSnapshotBundle = {
+    snapshot,
+    patternReport,
+    engagementCtx,
+    schedulerCtx,
+  };
+
+  writeCache(messengerUserId, bundle, now);
+  return bundle;
+}

@@ -7,9 +7,7 @@ import { generateEngineResponse } from "../services/llm";
 import type { EngineContext } from "../services/llm";
 import { computeGymTimeContextFromData } from "../services/gymTimeContext.service";
 import type { GymTimeContext } from "../services/gymTimeContext.service";
-import { computePatternReport } from "../services/gymPatternDetector.service";
 import type { PatternReport } from "../services/gymPatternDetector.service";
-import { buildEngagementContext } from "../services/engagement.service";
 import type { EngagementContext } from "../services/engagement.service";
 import { buildRexSessionContextBlock, buildExperienceLevelBlock } from "../services/rexSessionContext.service";
 import {
@@ -53,8 +51,9 @@ import type {
 import type { PatternAnalysis } from "../types/pattern.types";
 import { scoreAndRankFacts } from "./memory-retrieval-v2";
 import { extractSignals as extractSignalsV2 } from "./signal-engine-v2";
-import { buildSchedulerContextV2, TrainingState } from "./scheduler-intelligence-v2";
+import { TrainingState } from "./scheduler-intelligence-v2";
 import type { SchedulerContextV2 } from "./scheduler-intelligence-v2";
+import { buildFitnessSnapshot, type FitnessSnapshot } from "../services/fitnessSnapshot.service";
 import type { ParseResult as V2ParseResult } from "./parsing-engine-v2";
 import type { RouterDecision } from "./semantic-router";
 
@@ -348,6 +347,7 @@ interface UserContext {
   rexSessionContext:   string | null;
   rexExperienceLevel:  string | null;
   schedulerContextV2:  SchedulerContextV2 | null;
+  fitnessSnapshot:     FitnessSnapshot | null;
   intakeAnswers:       unknown;
   rawMemories:         Array<{ id: string; type: string; key: string; value: string; confidence: number; createdAt: Date; updatedAt: Date }>;
   interventionHistory: Array<{ intervention: string; createdAt: Date }>;
@@ -513,16 +513,27 @@ async function loadUserContext(
   let rexSessionContext: string | null = null;
   let rexExperienceLevel: string | null = null;
   let schedulerCtxV2: SchedulerContextV2 | null = null;
+  let fitnessSnapshot: FitnessSnapshot | null = null;
 
   if (persona === "rex") {
-    [gymPatternReport, engagementContext, rexSessionContext, schedulerCtxV2] = await Promise.all([
-      userRow.intakeAnswers
-        ? computePatternReport(userRow.id, now).catch((err) => { console.error("[ORCHESTRATOR] gymPatternReport:", err); return null; })
-        : Promise.resolve(null),
-      buildEngagementContext(userRow.id, now).catch((err) => { console.error("[ORCHESTRATOR] engagementContext:", err); return null; }),
-      buildRexSessionContextBlock(platformChatId, now).catch((err) => { console.error("[ORCHESTRATOR] rexSessionContext:", err); return null; }),
-      buildSchedulerContextV2(platformChatId, now).catch((err) => { console.error("[ORCHESTRATOR] schedulerCtxV2:", err); return null; }),
+    const [snapshotBundle, sessionCtxBlock] = await Promise.all([
+      buildFitnessSnapshot(userRow.id, platformChatId, now).catch((err) => {
+        console.error("[ORCHESTRATOR] fitnessSnapshot:", err);
+        return null;
+      }),
+      buildRexSessionContextBlock(platformChatId, now).catch((err) => {
+        console.error("[ORCHESTRATOR] rexSessionContext:", err);
+        return null;
+      }),
     ]);
+
+    if (snapshotBundle) {
+      fitnessSnapshot  = snapshotBundle.snapshot;
+      gymPatternReport = snapshotBundle.patternReport;
+      engagementContext = snapshotBundle.engagementCtx;
+      schedulerCtxV2   = snapshotBundle.schedulerCtx;
+    }
+    rexSessionContext  = sessionCtxBlock;
     rexExperienceLevel = buildExperienceLevelBlock(userRow.intakeAnswers);
 
     // V2: Override calendar-based gymContext fields with cycle-accurate data.
@@ -542,7 +553,7 @@ async function loadUserContext(
     }
   }
 
-  return { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel, schedulerContextV2: schedulerCtxV2, intakeAnswers: userRow.intakeAnswers, rawMemories, interventionHistory };
+  return { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel, schedulerContextV2: schedulerCtxV2, fitnessSnapshot, intakeAnswers: userRow.intakeAnswers, rawMemories, interventionHistory };
 }
 
 function buildMinimalContext(state: MentorState): UserContext {
@@ -556,7 +567,7 @@ function buildMinimalContext(state: MentorState): UserContext {
     sessionCount: 0, daysSinceFirstMessage: 0,
     lastUserMessage: null, lastTopicDiscussed: null, lastAssistantMessage: null,
   };
-  return { memory, state, persona: FALLBACK_PERSONA, isFirstSession: true, messageCountToday: 0, tonePreference: DEFAULT_TONE, gymContext: null, gymPatternReport: null, engagementContext: null, rexSessionContext: null, rexExperienceLevel: null, schedulerContextV2: null, intakeAnswers: null, rawMemories: [], interventionHistory: [] };
+  return { memory, state, persona: FALLBACK_PERSONA, isFirstSession: true, messageCountToday: 0, tonePreference: DEFAULT_TONE, gymContext: null, gymPatternReport: null, engagementContext: null, rexSessionContext: null, rexExperienceLevel: null, schedulerContextV2: null, fitnessSnapshot: null, intakeAnswers: null, rawMemories: [], interventionHistory: [] };
 }
 
 // buildSystemPrompt removed — llm.ts generateEngineResponse builds the prompt

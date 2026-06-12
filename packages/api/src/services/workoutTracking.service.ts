@@ -1,5 +1,6 @@
 import { prisma } from "@repo/db/client"
 import { buildSchedulerContextV2, TrainingState } from "../engines/scheduler-intelligence-v2"
+import { invalidateFitnessSnapshot } from "./fitnessSnapshot.service"
 import {
   getStreakMilestoneMessage,
   getStreakBrokenMessage,
@@ -1219,6 +1220,7 @@ async function finishSession(
     where: { id: user.id },
     data:  { gymStreak: newStreak },
   })
+  invalidateFitnessSnapshot(user.id)
 
   const hadPRsBefore = Object.keys(parsePersonalRecords(user.personalRecords)).length > 0
   const prMessages   = await checkPRsForSession(user, al.sessionId)
