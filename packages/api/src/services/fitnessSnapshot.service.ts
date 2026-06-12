@@ -5,6 +5,8 @@ import { buildEngagementContext }                             from "./engagement
 import type { EngagementContext }                              from "./engagement.service";
 import { buildSchedulerContextV2 }                           from "../engines/scheduler-intelligence-v2";
 import type { SchedulerContextV2 }                            from "../engines/scheduler-intelligence-v2";
+import { getGoalSummary }                                    from "./goalProgress.service";
+import type { GoalProgress }                                   from "./goalProgress.service";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -20,6 +22,7 @@ export interface FitnessSnapshot {
   totalSessions:       number;        // all-time completed session count
   lastWorkoutDate:     string | null; // "YYYY-MM-DD" or null
   goalCategory:        string | null; // raw gym_goal from intakeAnswers
+  goalProgress:        GoalProgress | null;
 }
 
 // Raw sub-results returned alongside the snapshot so the orchestrator can
@@ -78,7 +81,7 @@ export async function buildFitnessSnapshot(
   const cached = readCache(messengerUserId, now);
   if (cached) return cached;
 
-  const [patternReport, engagementCtx, schedulerCtx, totalSessions, goalRow] =
+  const [patternReport, engagementCtx, schedulerCtx, totalSessions, goalRow, goalProgress] =
     await Promise.all([
       computePatternReport(messengerUserId, now).catch(err => {
         console.error("[FITNESS_SNAPSHOT] patternReport:", err);
@@ -104,6 +107,10 @@ export async function buildFitnessSnapshot(
           select: { intakeAnswers: true },
         })
         .catch(() => null),
+      getGoalSummary(messengerUserId, now).catch(err => {
+        console.error("[FITNESS_SNAPSHOT] goalProgress:", err);
+        return null as GoalProgress | null;
+      }),
     ]);
 
   // User has no training history yet — no snapshot to build
@@ -122,6 +129,7 @@ export async function buildFitnessSnapshot(
     totalSessions,
     lastWorkoutDate:     schedulerCtx?.lastSessionDate ?? null,
     goalCategory,
+    goalProgress:        goalProgress ?? null,
   };
 
   const bundle: FitnessSnapshotBundle = {

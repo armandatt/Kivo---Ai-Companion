@@ -91,9 +91,10 @@ model MessengerUser {
   plans            Plan[]
   deadlines        Deadline[]
   focusSessions    FocusSession[]
-  workoutSessions  TelegramWorkoutSession[]
-  customReminders  CustomReminder[]
-  nutritionLogs    NutritionLog[]
+  workoutSessions      TelegramWorkoutSession[]
+  customReminders      CustomReminder[]
+  nutritionLogs        NutritionLog[]
+  goalProgressRecords  GoalProgress[]
 
   @@unique([platform, platformChatId])
   @@index([platformChatId])
@@ -545,6 +546,28 @@ model NutritionLog {
   user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, date])
+}
+
+model GoalProgress {
+  id            String    @id @default(cuid())
+  userId        String
+  goalType      String    // muscle | fat_loss | strength
+  exercise      String    @default("") // "" for bodyweight goals; exercise name for strength
+
+  baselineValue Float
+  targetValue   Float?
+  unit          String    @default("kg")
+
+  startDate     DateTime  @default(now())
+  targetDate    DateTime?
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, goalType, exercise])
+  @@index([userId])
 }
 
 model TelegramSetLog {
