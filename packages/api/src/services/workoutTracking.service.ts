@@ -1220,7 +1220,7 @@ async function finishSession(
     where: { id: user.id },
     data:  { gymStreak: newStreak },
   })
-  invalidateFitnessSnapshot(user.id)
+  invalidateFitnessSnapshot(user.id, "finish_session")
 
   const hadPRsBefore = Object.keys(parsePersonalRecords(user.personalRecords)).length > 0
   const prMessages   = await checkPRsForSession(user, al.sessionId)
@@ -1794,6 +1794,7 @@ async function handleSkipReason(
       const streak = user.gymStreak ?? 0
       if (streak > 0) {
         await prisma.messengerUser.update({ where: { id: user.id }, data: { gymStreak: 0 } })
+        invalidateFitnessSnapshot(user.id, "skip_reason")
       }
       return {
         handled: true,
@@ -2321,6 +2322,7 @@ export async function commitNLWorkoutSession(
     activeLogging:         null,
     pendingLog:            null,
   })
+  invalidateFitnessSnapshot(user.id, "nl_workout_commit")
 }
 
 /**
@@ -2382,5 +2384,6 @@ export async function updatePRFromNL(
       sessionId: "nl",
     },
   })
+  invalidateFitnessSnapshot(user.id, "pr_update")
   return true
 }
