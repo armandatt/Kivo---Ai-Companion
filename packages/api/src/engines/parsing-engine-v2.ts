@@ -154,7 +154,7 @@ const ACK_RE    = /^(?:k|kay|kk|ok|okay|thanks?|cool|got\s+it|noted|understood|r
 
 // Non-anchored — matches a modification request anywhere in the text
 // (e.g. "swap chest and back day", "can you change the split").
-const MODIFICATION_RE = /\b(?:swap|change|modify|replace|add|remove|different|adjust|redo|switch|move)\b/i
+const MODIFICATION_RE = /\b(?:swap|change|modify|replace|add|remove|different|adjust|redo|switch|move|fix|wrong|incorrect|not\s+right|not\s+correct)\b/i
 
 // ─── Confirmation / rejection — exported for reuse outside this engine ─────────
 // These are the SOURCE OF TRUTH for "is this an affirmation / rejection /

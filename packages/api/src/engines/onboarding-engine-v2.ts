@@ -1230,7 +1230,39 @@ export async function handleOnboardingV2(input: {
       return { handled: true, reply };
     }
 
-    // Unknown input at review — re-show card with explicit cue
+    // W6 contradiction: "my split is not PPL", "wrong weight", "that's incorrect"
+    // Detect which field is being corrected and jump directly to that step.
+    const REVIEW_CONTRADICTION_RE = /\b(?:not|wrong|incorrect|isn'?t|wasn'?t|no\s+it'?s?|that'?s?\s+(?:not|wrong)|fix|mistaken)\b/i;
+    if (REVIEW_CONTRADICTION_RE.test(text)) {
+      const FIELD_HINTS: Array<[RegExp, StepId]> = [
+        [/\b(?:split|ppl|upper.?lower|push.?pull|full.?body|bro.?split)\b/i,     "split"],
+        [/\b(?:goal|muscle|fat|weight\s*loss|cut|bulk|strength|recomp)\b/i,       "goal"],
+        [/\b(?:\d+\s*days?|training\s*days?|workout\s*days?|days?\s*a\s*week)\b/i,"days"],
+        [/\b(?:protein|calorie|diet)\b/i,                                          "protein"],
+        [/\b(?:bodyweight|body\s*weight|weigh(?:t|ing)?|my\s*weight)\b/i,         "body_stats"],
+        [/\b(?:gym\s*time|train(?:ing)?\s*(?:at|around)|workout\s*time)\b/i,      "gym_time"],
+        [/\b(?:injur|hurt|pain|recover)\b/i,                                       "injury"],
+        [/\b(?:experience|level|beginner|intermediate|advanced)\b/i,               "experience"],
+      ];
+      let targetStep: StepId = "goal";
+      for (const [re, step] of FIELD_HINTS) {
+        if (re.test(text)) { targetStep = step; break; }
+      }
+      const keptName = state.answers.name;
+      state.answers = keptName ? { name: keptName } : {};
+      state.currentStep = targetStep;
+      state.pendingVerification   = null;
+      state.pendingGeneratedSplit = null;
+      state.pendingPartialSplit   = null;
+      state.repeatCounts          = {};
+      logEntry(state, { step: "review", rawAnswer: text, normalizedAnswer: "contradiction_detected", confidence: 0.82, storedValue: null, nextStep: targetStep, action: "stored", ts: Date.now() });
+      const fixReply = resumePrefix + `Got it — let me ask again.\n\n${STEPS[targetStep].question(state.answers)}`;
+      await saveState(userId, state);
+      await addToShortTerm(platformChatId, fixReply, { role: "assistant", intent: "intake", emotion: "neutral" });
+      return { handled: true, reply: fixReply };
+    }
+
+    // Truly unclear — re-show card with explicit cue (last resort)
     const reask = resumePrefix + buildReviewCard(state.answers) + "\n\nType yes to confirm, or no to start over.";
     await saveState(userId, state);
     await addToShortTerm(platformChatId, reask, { role: "assistant", intent: "intake", emotion: "neutral" });
