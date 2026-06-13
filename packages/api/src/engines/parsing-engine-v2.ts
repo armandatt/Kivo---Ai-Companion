@@ -317,9 +317,14 @@ function extractMuscleGroups(text: string): ExtractedEntity[] {
 }
 
 function extractWeightKg(text: string): ExtractedEntity | null {
-  const match = text.match(/\b(\d{2,3}(?:\.\d)?)\s*kg\b/i)
-  if (match) {
-    return { type: EntityType.WEIGHT_KG, value: match[0], raw: match[0], normalized: match[1] + "kg" }
+  const kgMatch = text.match(/\b(\d{2,3}(?:\.\d)?)\s*(?:kg|kilos?)\b/i)
+  if (kgMatch) {
+    return { type: EntityType.WEIGHT_KG, value: kgMatch[0], raw: kgMatch[0], normalized: kgMatch[1] + "kg" }
+  }
+  const lbsMatch = text.match(/\b(\d{2,3}(?:\.\d)?)\s*(?:lbs?|pounds?)\b/i)
+  if (lbsMatch) {
+    const kg = Math.round(parseFloat(lbsMatch[1]!) * 0.453592 * 10) / 10
+    return { type: EntityType.WEIGHT_KG, value: lbsMatch[0], raw: lbsMatch[0], normalized: `${kg}kg` }
   }
   return null
 }

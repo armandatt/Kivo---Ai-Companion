@@ -3,8 +3,9 @@ import { generateOpenAIText } from "../services/openai.service";
 import { processMessage } from "../processor/messageProcessor";
 import { addToShortTerm, addToLongTerm } from "../services/memory.service";
 import { savePlan } from "../services/planner.service";
-import { generateEngineResponse } from "../services/llm";
-import type { EngineContext } from "../services/llm";
+import { generateEngineResponse, buildHardConstraintsBlock } from "../services/llm";
+import type { EngineContext, HardConstraints } from "../services/llm";
+import type { RecoveryStatus, RecoveryConstraintLevel } from "./recovery-engine";
 import { computeGymTimeContextFromData } from "../services/gymTimeContext.service";
 import type { GymTimeContext } from "../services/gymTimeContext.service";
 import type { PatternReport } from "../services/gymPatternDetector.service";
@@ -56,8 +57,11 @@ import type { SchedulerContextV2 } from "./scheduler-intelligence-v2";
 import { buildFitnessSnapshot, type FitnessSnapshot } from "../services/fitnessSnapshot.service";
 import type { GoalProgress } from "../services/goalProgress.service";
 import { GOAL_TYPE_LABEL, EXERCISE_LABEL } from "../services/goalProgress.service";
+import type { WeightTrend } from "../services/bodyweight.service";
 import type { ParseResult as V2ParseResult } from "./parsing-engine-v2";
 import type { RouterDecision } from "./semantic-router";
+import { getNutritionContext } from "../services/nutrition.service";
+import type { NutritionContext } from "../services/nutrition.service";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -353,6 +357,9 @@ interface UserContext {
   intakeAnswers:       unknown;
   rawMemories:         Array<{ id: string; type: string; key: string; value: string; confidence: number; createdAt: Date; updatedAt: Date }>;
   interventionHistory: Array<{ intervention: string; createdAt: Date }>;
+  activeInvestigation: ActiveInvestigation | null;    // V5
+  followUpCheck:       FollowUpCheck | null;           // V5
+  mentorStateHistory:  MentorStateSnapshot[];          // V5 Step 12
 }
 
 async function loadUserContext(
@@ -434,9 +441,22 @@ async function loadUserContext(
     accountabilityStyle: accountStyleFact?.value ?? null,
   };
 
-  // Separate intervention logs before relevance scoring so they don't pollute rankings
-  const interventionLogs = memories.filter(m => m.type === "intervention_log");
-  const scorableMemories = memories.filter(m => m.type !== "intervention_log");
+  // Separate intervention logs + V5 cognitive state before relevance scoring
+  const interventionLogs   = memories.filter(m => m.type === "intervention_log");
+  const investigationFact  = memories.find(m => m.type === "active_investigation"  && m.key === "current");
+  const followUpFact       = memories.find(m => m.type === "follow_up_check"       && m.key === "current");
+  const stateHistoryFact   = memories.find(m => m.type === "mentor_state_history"  && m.key === "snapshots");
+  const activeInvestigation: ActiveInvestigation | null = investigationFact
+    ? tryParseV5JSON<ActiveInvestigation>(investigationFact.value)
+    : null;
+  const followUpCheck: FollowUpCheck | null = followUpFact
+    ? tryParseV5JSON<FollowUpCheck>(followUpFact.value)
+    : null;
+  const mentorStateHistory: MentorStateSnapshot[] = stateHistoryFact
+    ? (tryParseV5JSON<MentorStateSnapshot[]>(stateHistoryFact.value) ?? [])
+    : [];
+  const V5_SYSTEM_TYPES = new Set(["intervention_log", "active_investigation", "follow_up_check", "mentor_state_history"]);
+  const scorableMemories = memories.filter(m => !V5_SYSTEM_TYPES.has(m.type));
   const interventionHistory = [...interventionLogs]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 10)
@@ -555,7 +575,7 @@ async function loadUserContext(
     }
   }
 
-  return { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel, schedulerContextV2: schedulerCtxV2, fitnessSnapshot, intakeAnswers: userRow.intakeAnswers, rawMemories, interventionHistory };
+  return { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel, schedulerContextV2: schedulerCtxV2, fitnessSnapshot, intakeAnswers: userRow.intakeAnswers, rawMemories, interventionHistory, activeInvestigation, followUpCheck, mentorStateHistory };
 }
 
 function buildMinimalContext(state: MentorState): UserContext {
@@ -569,7 +589,7 @@ function buildMinimalContext(state: MentorState): UserContext {
     sessionCount: 0, daysSinceFirstMessage: 0,
     lastUserMessage: null, lastTopicDiscussed: null, lastAssistantMessage: null,
   };
-  return { memory, state, persona: FALLBACK_PERSONA, isFirstSession: true, messageCountToday: 0, tonePreference: DEFAULT_TONE, gymContext: null, gymPatternReport: null, engagementContext: null, rexSessionContext: null, rexExperienceLevel: null, schedulerContextV2: null, fitnessSnapshot: null, intakeAnswers: null, rawMemories: [], interventionHistory: [] };
+  return { memory, state, persona: FALLBACK_PERSONA, isFirstSession: true, messageCountToday: 0, tonePreference: DEFAULT_TONE, gymContext: null, gymPatternReport: null, engagementContext: null, rexSessionContext: null, rexExperienceLevel: null, schedulerContextV2: null, fitnessSnapshot: null, intakeAnswers: null, rawMemories: [], interventionHistory: [], activeInvestigation: null, followUpCheck: null, mentorStateHistory: [] };
 }
 
 // buildSystemPrompt removed — llm.ts generateEngineResponse builds the prompt
@@ -718,7 +738,6 @@ interface RexContext {
   ulIntent:                string | null;
   ulEmotion:               string | null;
   ulTopic:                 string | null;
-  ulSuggestedIntervention: string | null;
   schedulerState:          SchedulerContextV2 | null;
   schedulerNarrative:      string;
   todaySessionStatus:      string;
@@ -731,7 +750,7 @@ interface RexContext {
   // Phase 3 context extensions
   mentorStateCtx:     { burnoutRisk: number; motivation: number; capacity: number; streakDays: number; consecutiveMisses: number } | null;
   topSignalCtx:       { signals: string[]; topSignal: string; intensity: number } | null;
-  gymPatternCtx:      { stalledLifts: string[]; deloadDue: boolean; plateauDetected: boolean; consistencyScore: number; interventionMessage: string | null } | null;
+  gymPatternCtx:      { stalledLifts: string[]; deloadDue: boolean; plateauDetected: boolean; consistencyScore: number } | null;
   engagementCtx:      { sessionsThisMonth: number; streak: number; biggestPR: string; completionRate7d: number } | null;
   sessionCtx:         { daysSinceLastSession: number; pendingMuscles: string | null } | null;
   behavioralPatterns: { skippedMuscles: string[]; rpeTrend: string } | null;
@@ -740,6 +759,20 @@ interface RexContext {
   empathizeLoop:       boolean;
   lastIntervention:    string | null;
   goalProgress:        GoalProgress | null;
+  weightTrend:         WeightTrend | null;
+  hardConstraints:       HardConstraints;
+  recoveryStatus:        RecoveryStatus | null;
+  rexSessionContext:     string | null;       // Phase 4A: specific lift weights, overload targets, PRs, nutrition
+  activeInvestigation:   ActiveInvestigation | null;  // V5: open diagnostic conversation
+  followUpCheck:         FollowUpCheck | null;        // V5: pending follow-up to surface
+  mentorStateTrend:      string | null;               // V5: "motivation: 75→45 (declining)"
+  mentorStateHistory:    MentorStateSnapshot[];       // V5 Step 12: last 12 snapshots for longitudinal reasoning
+  nutritionCtx:          NutritionContext | null;     // Phase 6: protein, calorie balance, growth assessment
+  coachState:            CoachState | null;            // Phase 7: multi-state user detection
+  multiQuestionCtx:      MultiQuestionContext | null;  // Phase 7: multi-question message handling
+  hasPainContext:        boolean;                      // parser: pain/soreness mentioned
+  hasInjuryContext:      boolean;                      // parser: severe injury (torn/fracture)
+  recommendationBlocked: boolean;                      // parser: RECOMMENDATION_BLOCKED signal
 }
 
 interface V3StateUpdates {
@@ -756,6 +789,12 @@ interface RexOpenAIResponse {
   state_updates:     V3StateUpdates;
   parseError:        boolean;
   rawOutput?:        string;
+  // V5 cognitive layer (null when COGNITIVE_LAYER_V5_ENABLED=false or field absent)
+  reasoningMode:       string | null;
+  confidence:          number | null;
+  missingData:         string[] | null;
+  activeInvestigation: ActiveInvestigation | null;
+  followUpCheck:       FollowUpCheck | null;
 }
 
 interface StateConflict {
@@ -763,6 +802,27 @@ interface StateConflict {
   currentValue:    string;
   proposedValue:   string;
   confirmQuestion: string;
+}
+
+// ── V5: Cognitive state types ─────────────────────────────────────────────────
+
+interface ActiveInvestigation {
+  topic:             string;
+  hypotheses:        string[];
+  missingData:       string[];
+  evidenceCollected: Record<string, string>;
+  attemptCount:      number;  // source of truth for stall detection (Step 5)
+  status:            "open" | "resolved" | "abandoned";
+  startedAt:         string;  // ISO timestamp
+  lastUpdatedAt:     string;  // ISO timestamp
+}
+
+interface FollowUpCheck {
+  topic:          string;
+  checkAfterDays: number;
+  context:        string;   // what was diagnosed and what was recommended
+  diagnosedAt:    string;   // ISO timestamp
+  surfaced:       boolean;  // true once Rex explicitly surfaces it — cleared on true, not on time gate
 }
 
 // All 21 valid intervention names (19 from CoachIntervention enum + 2 Phase 3 additions)
@@ -856,13 +916,324 @@ function buildSchedulerNarrative(
 
 // ── Step 1: Build Rex context ─────────────────────────────────────────────────
 
+// ── V5: Investigation + follow-up persistence ─────────────────────────────────
+// Both use MemoryFact (type+key unique) — one record per user per type.
+
+function tryParseV5JSON<T>(raw: string): T | null {
+  try { return JSON.parse(raw) as T; } catch { return null; }
+}
+
+async function saveActiveInvestigation(
+  platformChatId: string,
+  investigation:  ActiveInvestigation,
+): Promise<void> {
+  const user = await prisma.messengerUser.findFirst({
+    where: { platformChatId },
+    select: { id: true },
+  });
+  if (!user) return;
+  await prisma.memoryFact.upsert({
+    where:  { userId_type_key: { userId: user.id, type: "active_investigation", key: "current" } },
+    update: { value: JSON.stringify(investigation), updatedAt: new Date() },
+    create: { userId: user.id, type: "active_investigation", key: "current", value: JSON.stringify(investigation) },
+  });
+}
+
+async function clearActiveInvestigation(platformChatId: string): Promise<void> {
+  const user = await prisma.messengerUser.findFirst({
+    where: { platformChatId },
+    select: { id: true },
+  });
+  if (!user) return;
+  await prisma.memoryFact.deleteMany({
+    where: { userId: user.id, type: "active_investigation", key: "current" },
+  });
+}
+
+async function saveFollowUpCheck(
+  platformChatId: string,
+  followUp:       FollowUpCheck,
+): Promise<void> {
+  const user = await prisma.messengerUser.findFirst({
+    where: { platformChatId },
+    select: { id: true },
+  });
+  if (!user) return;
+  await prisma.memoryFact.upsert({
+    where:  { userId_type_key: { userId: user.id, type: "follow_up_check", key: "current" } },
+    update: { value: JSON.stringify(followUp), updatedAt: new Date() },
+    create: { userId: user.id, type: "follow_up_check", key: "current", value: JSON.stringify(followUp) },
+  });
+}
+
+async function clearFollowUpCheck(platformChatId: string): Promise<void> {
+  const user = await prisma.messengerUser.findFirst({
+    where: { platformChatId },
+    select: { id: true },
+  });
+  if (!user) return;
+  await prisma.memoryFact.deleteMany({
+    where: { userId: user.id, type: "follow_up_check", key: "current" },
+  });
+}
+
+// V5 Step 12: Mentor state history — append-only snapshots (last 12) stored as
+// a single MemoryFact JSON array. Enables "3 weeks ago motivation was 75" statements
+// grounded in real data. Never fabricate longitudinal narrative without this data.
+interface MentorStateSnapshot {
+  timestamp:   string;  // ISO
+  burnoutRisk: number;
+  motivation:  number;
+  capacity:    number;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 7: COACH STATE DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type CoachStateType =
+  | "BEGINNER"
+  | "INTERMEDIATE"
+  | "ADVANCED"
+  | "BURNED_OUT"
+  | "OVERTHINKING"
+  | "OVERTRAINING"
+  | "EXCUSE_LOOP"
+  | "INACTIVE"
+  | "DISENGAGED"
+  | "EMOTIONAL_SUPPORT"
+  | "MOMENTUM"
+  | "RETURNING_USER";
+
+export interface CoachState {
+  states:             CoachStateType[];
+  confidence:         number;
+  inactivityDays:     number;
+  excusePatternCount: number;
+  excuseSnippets:     string[];
+  journeySummary:     string | null;
+}
+
+interface MultiQuestionContext {
+  questionCount:      number;
+  primaryQuestion:    string | null;
+  secondaryQuestions: string[];
+}
+
+const OVERTRAINING_RE = /\b(twice\s+a\s+day|2[x×]\s*(?:per\s+)?day|training\s+every\s+day|every\s+single\s+day|never\s+(?:take\s+a\s+)?rest(?:\s+day)?|always\s+(?:tired|exhausted)|pushing\s+through\s+(?:fatigue|exhaustion|the\s+pain)|(\d{1,2}|eighteen|fifteen|twelve|ten)\s+days?\s+(?:straight|in\s+a\s+row))\b/i;
+
+const BURNOUT_STATE_RE = /\b(hate\s+(?:training|the\s+gym|working\s+out|lifting)|dread\s+(?:the\s+gym|training|going\s+to\s+(?:the\s+)?gym)|feels?\s+like\s+punishment|nothing\s+left\s+in\s+(?:me|the\s+tank)|going\s+through\s+the\s+motions|can'?t\s+remember\s+why\s+i\s+started|what'?s\s+the\s+point\s+(?:anymore|of\s+this)|sick\s+of\s+(?:this|training|the\s+gym)|tired\s+of\s+trying|don'?t\s+even\s+care\s+anymore)\b/i;
+
+const EMOTIONAL_FRAGILITY_RE = /\b(broke?\s+up|breakup|breakups|divorce|divorcing|grief|grieving|lost\s+(?:someone|my\s+\w+\s+(?:ago|recently|this\s+(?:week|month)))|anxiety\s+attack|panic\s+attack|having\s+a\s+breakdown|hopeless|depression|depressed|can'?t\s+cope|falling\s+apart|overwhelmed\s+by\s+(?:everything|life)|suicidal|self[- ]harm)\b/i;
+
+function detectCoachState(
+  text:        string,
+  userCtx:     UserContext,
+  rawMemories: UserContext["rawMemories"],
+  now:         Date,
+): CoachState {
+  const states: CoachStateType[] = [];
+
+  const intakeMap: Record<string, string> = (
+    userCtx.intakeAnswers != null &&
+    typeof userCtx.intakeAnswers === "object" &&
+    !Array.isArray(userCtx.intakeAnswers)
+  ) ? (userCtx.intakeAnswers as Record<string, string>) : {};
+
+  const experience = intakeMap.training_experience ?? "";
+  const shortTerm  = userCtx.memory.shortTerm;
+
+  // Inactivity: find last user message timestamp
+  const lastUserMsg = [...shortTerm].reverse().find(m => m.role === "user");
+  const lastUserTs  = lastUserMsg?.timestamp ?? null;
+  const inactivityDays = lastUserTs
+    ? Math.max(0, Math.floor((now.getTime() - lastUserTs.getTime()) / 86_400_000) - 1)
+    : 0;
+
+  // Experience level
+  const expLow =
+    userCtx.memory.daysSinceFirstMessage < 30 ||
+    /\b(beginner|newbie|new\s+to\s+(?:the\s+)?gym|just\s+started|starting\s+out|first\s+(?:time|month)|less\s+than\s+(?:6\s+months|a\s+year))\b/i.test(experience);
+  const expAdvanced =
+    /\b(4\+?\s*year|5\+?\s*year|6\+?\s*year|7\+?\s*year|advanced|veteran|competitive)\b/i.test(experience) ||
+    /\b(periodization|mesocycle|MEV|MAV|MRV|RIR\b|deload\s+week|hypertrophy\s+block|strength\s+block|progressive\s+overload\s+model)\b/i.test(text);
+
+  if (expLow)           states.push("BEGINNER");
+  else if (expAdvanced) states.push("ADVANCED");
+  else                  states.push("INTERMEDIATE");
+
+  // Burnout
+  if (BURNOUT_STATE_RE.test(text) || (userCtx.state.burnoutRisk ?? 0) >= 65) {
+    states.push("BURNED_OUT");
+  }
+
+  // Overtraining
+  if (OVERTRAINING_RE.test(text)) states.push("OVERTRAINING");
+
+  // Excuse loop: 3+ excuse_pattern MemoryFacts in last 30 days
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 86_400_000);
+  const recentExcuses = rawMemories.filter(
+    m => m.type === "excuse_pattern" && m.createdAt >= thirtyDaysAgo,
+  );
+  const excusePatternCount = recentExcuses.length;
+  const excuseSnippets = recentExcuses
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .slice(0, 3)
+    .map(m => m.value.slice(0, 80));
+  if (excusePatternCount >= 3) states.push("EXCUSE_LOOP");
+
+  // Inactivity / disengaged
+  if (inactivityDays >= 14)     states.push("DISENGAGED");
+  else if (inactivityDays >= 7) states.push("INACTIVE");
+
+  // Returning user (comes back after 7+ day gap)
+  if (inactivityDays >= 7) states.push("RETURNING_USER");
+
+  // Emotional fragility
+  if (EMOTIONAL_FRAGILITY_RE.test(text)) states.push("EMOTIONAL_SUPPORT");
+
+  // Overthinking: 3+ question marks in one message
+  if ((text.match(/\?/g) ?? []).length >= 3) states.push("OVERTHINKING");
+
+  // Momentum: good streak + high motivation
+  if ((userCtx.state.streakDays ?? 0) >= 7 && (userCtx.state.motivation ?? 50) >= 70) {
+    states.push("MOMENTUM");
+  }
+
+  // Journey summary for returning/disengaged users
+  let journeySummary: string | null = null;
+  if (inactivityDays >= 7) {
+    const parts: string[] = [];
+    if (inactivityDays > 0)      parts.push(`Away ${inactivityDays} days.`);
+    if (intakeMap.gym_goal)      parts.push(`Goal: ${intakeMap.gym_goal}.`);
+    const lastWeight =
+      userCtx.fitnessSnapshot?.weightTrend?.currentWeight ??
+      (parseFloat(intakeMap.current_bodyweight_kg ?? "") || null);
+    if (lastWeight)              parts.push(`Last weight: ${lastWeight}kg.`);
+    const lastAch = rawMemories.find(m => m.type === "achievement");
+    if (lastAch)                 parts.push(`Last win: ${lastAch.value}.`);
+    const lastCommit = rawMemories
+      .filter(m => m.type === "promise" || m.type === "commitment")
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+    if (lastCommit)              parts.push(`Last commitment: "${lastCommit.value}".`);
+    journeySummary = parts.join(" ") || null;
+  }
+
+  return { states, confidence: 0.80, inactivityDays, excusePatternCount, excuseSnippets, journeySummary };
+}
+
+function detectMultipleQuestions(text: string): MultiQuestionContext {
+  const matches = text.match(/[^.!?]*\?/g) ?? [];
+  const cleaned = matches.map(s => s.trim()).filter(s => s.length > 3);
+  return {
+    questionCount:      cleaned.length,
+    primaryQuestion:    cleaned[0] ?? null,
+    secondaryQuestions: cleaned.slice(1),
+  };
+}
+
+async function appendMentorStateSnapshot(
+  platformChatId: string,
+  state: MentorState,
+): Promise<void> {
+  const user = await prisma.messengerUser.findFirst({
+    where: { platformChatId },
+    select: { id: true },
+  });
+  if (!user) return;
+
+  const snapshot: MentorStateSnapshot = {
+    timestamp:   new Date().toISOString(),
+    burnoutRisk: Math.round(state.burnoutRisk),
+    motivation:  Math.round(state.motivation),
+    capacity:    Math.round(state.capacity),
+  };
+
+  const existing = await prisma.memoryFact.findFirst({
+    where: { userId: user.id, type: "mentor_state_history", key: "snapshots" },
+  });
+
+  const prev: MentorStateSnapshot[] = existing
+    ? (tryParseV5JSON<MentorStateSnapshot[]>(existing.value) ?? [])
+    : [];
+
+  // Keep last 12 snapshots
+  const updated = [...prev, snapshot].slice(-12);
+
+  await prisma.memoryFact.upsert({
+    where:  { userId_type_key: { userId: user.id, type: "mentor_state_history", key: "snapshots" } },
+    update: { value: JSON.stringify(updated), updatedAt: new Date() },
+    create: { userId: user.id, type: "mentor_state_history", key: "snapshots", value: JSON.stringify(updated) },
+  });
+}
+
+// Load state history for injection into context
+async function loadMentorStateHistory(platformChatId: string): Promise<MentorStateSnapshot[]> {
+  const user = await prisma.messengerUser.findFirst({
+    where: { platformChatId },
+    select: { id: true },
+  });
+  if (!user) return [];
+  const fact = await prisma.memoryFact.findFirst({
+    where: { userId: user.id, type: "mentor_state_history", key: "snapshots" },
+  });
+  if (!fact) return [];
+  return tryParseV5JSON<MentorStateSnapshot[]>(fact.value) ?? [];
+}
+
+// V5: Compute longitudinal trend direction from momentum7dTrend + state values.
+// Pairs momentum direction with planned-vs-unplanned miss context to prevent
+// false "declining" signals during intentional rest days.
+function buildMentorStateTrend(
+  state: MentorState,
+  consecutiveMisses?: number,
+  schedulerCtx?: SchedulerContextV2 | null,
+): string | null {
+  const trend = state.momentum7dTrend;
+  if (!trend || trend.length < 2) return null;
+
+  const last  = trend[trend.length - 1]!;
+  const prev  = trend[trend.length - 2]!;
+  const diff  = last - prev;
+
+  const direction = diff > 5 ? "improving" : diff < -5 ? "declining" : "stable";
+
+  // Classify whether declining momentum is from planned rest or unplanned misses.
+  // Planned rest: trainingState is not SKIPPED/PENDING_CONFIRMATION, or consecutiveMisses = 0.
+  let missContext = "";
+  if (direction === "declining" && consecutiveMisses !== undefined) {
+    const missCount = consecutiveMisses;
+    if (missCount === 0 && schedulerCtx?.trainingState !== TrainingState.SKIPPED) {
+      missContext = " (planned rest — no alarm)";
+    } else if (missCount > 0) {
+      missContext = ` (${missCount} unplanned miss${missCount > 1 ? "es" : ""})`;
+    }
+  }
+
+  const lines: string[] = [
+    `Momentum trend: ${direction}${missContext} (${trend.slice(-3).map(v => Math.round(v)).join(" → ")})`,
+  ];
+
+  if (state.burnoutRisk > 55) {
+    const severity = state.burnoutRisk >= 70 ? "HIGH" : "ELEVATED";
+    lines.push(`burnout_risk: ${state.burnoutRisk} — ${severity}`);
+  }
+  if (state.motivation < 35) {
+    lines.push(`motivation: ${state.motivation} — LOW`);
+  }
+
+  return lines.join("\n");
+}
+
 function buildRexContext(
-  input:   OrchestratorInput,
-  userCtx: UserContext,
-  sigV2:   ReturnType<typeof extractSignalsV2>,
+  input:        OrchestratorInput,
+  userCtx:      UserContext,
+  sigV2:        ReturnType<typeof extractSignalsV2>,
+  nutritionCtx: NutritionContext | null = null,
 ): RexContext {
   const { memory, schedulerContextV2, state, gymPatternReport, engagementContext, rawMemories, interventionHistory, fitnessSnapshot } = userCtx;
   const goalProgress = fitnessSnapshot?.goalProgress ?? null;
+  const weightTrend  = fitnessSnapshot?.weightTrend  ?? null;
   const daysSinceJoined = memory.daysSinceFirstMessage;
 
   const ulResult    = input.routerDecision?.source === "ul" ? input.routerDecision.ulResult : null;
@@ -870,9 +1241,6 @@ function buildRexContext(
   const ulIntent    = typeof ulAny?.intent    === "string" ? ulAny.intent    : null;
   const ulEmotion   = typeof ulAny?.emotion   === "string" ? ulAny.emotion   : null;
   const ulTopic     = typeof ulAny?.topic     === "string" ? ulAny.topic     : null;
-  const ulSuggested = input.routerDecision?.source === "ul"
-    ? (input.routerDecision.suggestedIntervention ?? null)
-    : null;
 
   const userProfile = userCtx.intakeAnswers != null &&
     typeof userCtx.intakeAnswers === "object" &&
@@ -895,7 +1263,7 @@ function buildRexContext(
   const todaySessionStatus  = schedulerContextV2?.trainingState.toUpperCase() ?? "UNKNOWN";
 
   // Phase 3 extended context (gated by PHASE3_CONTEXT_ENABLED)
-  const phase3Enabled = process.env.PHASE3_CONTEXT_ENABLED === "true";
+  const phase3Enabled = process.env.PHASE3_CONTEXT_ENABLED !== "false";
 
   let mentorStateCtx: RexContext["mentorStateCtx"]     = null;
   let topSignalCtx: RexContext["topSignalCtx"]         = null;
@@ -927,7 +1295,6 @@ function buildRexContext(
         deloadDue:        gymPatternReport.deloadDue,
         plateauDetected:  gymPatternReport.stalledLifts.length > 0,
         consistencyScore: gymPatternReport.consistencyScore,
-        interventionMessage: gymPatternReport.interventionMessage,
       };
       behavioralPatterns = {
         skippedMuscles: gymPatternReport.skippedMuscles,
@@ -961,12 +1328,18 @@ function buildRexContext(
     ? sortedHistory[sortedHistory.length - 1]!.intervention
     : null;
 
+  const recoveryStatus = fitnessSnapshot?.recoveryStatus ?? null;
+  const hardConstraints = buildHardConstraints(mentorStateCtx, recoveryStatus?.constraintLevel ?? null);
+
+  // Phase 7: coach state + multi-question detection
+  const coachState      = detectCoachState(input.text, userCtx, rawMemories, input.timestamp ?? new Date());
+  const multiQuestionCtx = detectMultipleQuestions(input.text);
+
   return {
     userProfile,
     ulIntent,
     ulEmotion,
     ulTopic,
-    ulSuggestedIntervention: ulSuggested,
     schedulerState:     schedulerContextV2,
     schedulerNarrative,
     todaySessionStatus,
@@ -987,6 +1360,20 @@ function buildRexContext(
     empathizeLoop,
     lastIntervention,
     goalProgress,
+    weightTrend,
+    hardConstraints,
+    recoveryStatus,
+    rexSessionContext:   userCtx.rexSessionContext ?? null,
+    activeInvestigation: userCtx.activeInvestigation ?? null,
+    followUpCheck:       userCtx.followUpCheck ?? null,
+    mentorStateTrend:    buildMentorStateTrend(state, state.consecutiveMisses, schedulerContextV2),
+    mentorStateHistory:  userCtx.mentorStateHistory ?? [],
+    nutritionCtx,
+    coachState,
+    multiQuestionCtx,
+    hasPainContext:        input.parseResult?.signals?.includes("PAIN_MENTIONED") ?? false,
+    hasInjuryContext:      input.parseResult?.signals?.includes("INJURY_CONTEXT") ?? false,
+    recommendationBlocked: input.parseResult?.signals?.includes("RECOMMENDATION_BLOCKED") ?? false,
   };
 }
 
@@ -1084,39 +1471,43 @@ Behavior: reconnect naturally with one easy next step only. Do not reference the
 // Converts MentorState numbers into actionable coaching directives.
 // Raw numbers (75/100) are uninterpretable by OpenAI without thresholds.
 // Directives ("BURNOUT: HIGH — reduce pressure") are immediately actionable.
-function buildMentorDirectives(m: RexContext["mentorStateCtx"]): string | null {
-  if (!m) return null;
-  const lines: string[] = [];
+function buildHardConstraints(
+  m: { burnoutRisk: number; motivation: number; capacity: number; consecutiveMisses: number } | null,
+  recoveryConstraintLevel: RecoveryConstraintLevel | null,
+): HardConstraints {
+  const burnoutRisk        = m?.burnoutRisk        ?? 0;
+  const burnoutFull        = burnoutRisk >= 70;
+  const burnoutPartial     = burnoutRisk >= 55 && burnoutRisk < 70;
+  const motivationCritical = (m?.motivation         ?? 100) < 25;
+  const capacityLow        = (m?.capacity           ?? 100) < 25;
+  const missStreakHigh     = (m?.consecutiveMisses  ?? 0)   >= 4;
 
-  if (m.burnoutRisk > 75) {
-    lines.push("BURNOUT STATUS: HIGH\nReduce all pressure. Do not challenge. Do not prescribe harder training. Do not increase volume. Acknowledge first, then one small optional action.");
-  } else if (m.burnoutRisk > 50) {
-    lines.push("BURNOUT STATUS: ELEVATED\nAvoid aggressive accountability, challenge, or momentum_push interventions.");
-  }
+  const toneFloor: HardConstraints["toneFloor"] =
+    (burnoutFull || capacityLow) ? "gentle" :
+    burnoutPartial               ? "supportive" :
+    null;
 
-  if (m.consecutiveMisses >= 4) {
-    lines.push(`MISS STREAK: ${m.consecutiveMisses} consecutive sessions missed\nUse re_engagement. Do not use accountability or guilt. No lecture.`);
-  } else if (m.consecutiveMisses >= 2) {
-    lines.push(`RECENT MISSES: ${m.consecutiveMisses} sessions\nAddress gently. Acknowledge without applying pressure.`);
-  }
+  return {
+    noChallenge:      burnoutFull || motivationCritical || burnoutPartial,
+    noAccountability: burnoutFull || missStreakHigh,
+    noPlan:           capacityLow,
+    trainingBlocked:  recoveryConstraintLevel === "training_blocked",
+    intensityReduced: recoveryConstraintLevel === "intensity_reduced",
+    toneFloor,
+  };
+}
 
-  if (m.streakDays >= 14) {
-    lines.push(`MOMENTUM WINDOW: ${m.streakDays}-day streak active\nUser is highly consistent. Challenge is appropriate. Raise the bar.`);
-  } else if (m.streakDays >= 7) {
-    lines.push(`BUILDING STREAK: ${m.streakDays} days\nReinforce the pattern. Reward the consistency.`);
-  }
-
-  if (m.motivation < 25) {
-    lines.push("MOTIVATION: CRITICAL\nDo not use challenge. Use momentum_push or reduce_friction only.");
-  } else if (m.motivation < 40) {
-    lines.push("MOTIVATION: LOW\nAvoid high-pressure interventions this turn.");
-  }
-
-  if (m.capacity < 25) {
-    lines.push("CAPACITY: LOW\nUser is overloaded. One action only. Reduce scope immediately.");
-  }
-
-  return lines.length > 0 ? lines.join("\n\n") : null;
+// FIX 4: Standalone weight trend renderer — independent of GoalProgress.
+// Visible for all user types: strength goals, bodyweight goals, no-goal users.
+function buildWeightTrendBlock(wt: WeightTrend | null): string | null {
+  if (!wt) return null;
+  const rateStr = wt.weeklyRate === 0 ? "±0" : (wt.weeklyRate > 0 ? `+${wt.weeklyRate}` : `${wt.weeklyRate}`);
+  const lines = [
+    `Current weight: ${wt.currentWeight}kg`,
+    `Weekly rate: ${rateStr} kg/week`,
+    `Trend: ${wt.trend}${wt.stalled ? " — STALLED (no meaningful change in 14+ days)" : ""}`,
+  ];
+  return lines.join("\n");
 }
 
 function buildRexSystemPrompt(ctx: RexContext): string {
@@ -1137,8 +1528,81 @@ function buildRexSystemPrompt(ctx: RexContext): string {
     ? profileLines.join("\n")
     : "(Profile not yet complete)";
 
-  // Phase 4: MentorState → threshold-based coaching directives (not raw numbers)
-  const directivesBlock = buildMentorDirectives(ctx.mentorStateCtx);
+  // V5 Step 12: Build mentor state history narrative for longitudinal reasoning
+  // Declared before mentorStateFacts so it can be embedded inline.
+  const stateHistoryBlock = (() => {
+    const history = ctx.mentorStateHistory;
+    if (!history || history.length < 3) return null;
+    const oldest = history[0]!;
+    const latest = history[history.length - 1]!;
+    const oldestDate = new Date(oldest.timestamp);
+    const daysAgo = Math.round((Date.now() - oldestDate.getTime()) / 86_400_000);
+    if (daysAgo < 7) return null;
+    const motivationDir = latest.motivation > oldest.motivation + 10 ? "rising"
+      : latest.motivation < oldest.motivation - 10 ? "declining"
+      : "stable";
+    const burnoutDir = latest.burnoutRisk > oldest.burnoutRisk + 10 ? "rising"
+      : latest.burnoutRisk < oldest.burnoutRisk - 10 ? "declining"
+      : "stable";
+    const lines: string[] = [
+      `State history (last ${history.length} snapshots over ${daysAgo} days):`,
+      `Motivation: ${oldest.motivation} → ${latest.motivation} (${motivationDir})`,
+      `Burnout risk: ${oldest.burnoutRisk} → ${latest.burnoutRisk} (${burnoutDir})`,
+      `Capacity: ${oldest.capacity} → ${latest.capacity}`,
+    ];
+    if (history.length >= 5) {
+      const mid = history[Math.floor(history.length / 2)]!;
+      const midDate = new Date(mid.timestamp);
+      const midDaysAgo = Math.round((Date.now() - midDate.getTime()) / 86_400_000);
+      lines.push(`Mid-point (~${midDaysAgo} days ago): motivation ${mid.motivation}, burnout ${mid.burnoutRisk}`);
+    }
+    lines.push("RULE: Only cite historical data from this block when making 'X weeks ago' claims. Never fabricate longitudinal narrative.");
+    return lines.join("\n");
+  })();
+
+  // Mentor state facts (raw numbers — OpenAI decides what they mean)
+  const mentorStateFacts = ctx.mentorStateCtx
+    ? [
+        `burnout_risk: ${ctx.mentorStateCtx.burnoutRisk}`,
+        `motivation: ${ctx.mentorStateCtx.motivation}`,
+        `capacity: ${ctx.mentorStateCtx.capacity}`,
+        `streak_days: ${ctx.mentorStateCtx.streakDays}`,
+        `consecutive_misses: ${ctx.mentorStateCtx.consecutiveMisses}`,
+        ctx.mentorStateTrend ? `\n${ctx.mentorStateTrend}` : null,
+        stateHistoryBlock ? `\n${stateHistoryBlock}` : null,
+      ].filter(Boolean).join("\n")
+    : null;
+
+  const hardConstraintsBlock = buildHardConstraintsBlock(ctx.hardConstraints);
+
+  // Pain / injury signal block (from parser)
+  const painInjuryBlock = (() => {
+    if (!ctx.hasPainContext) return null;
+    const lines: string[] = [];
+    if (ctx.hasInjuryContext) {
+      lines.push("INJURY_CONTEXT: ACTIVE (severe — torn/fracture/rupture language detected)");
+      lines.push("→ Do NOT suggest any exercises or training modifications. Recommend professional medical evaluation.");
+    } else {
+      lines.push("PAIN_MENTIONED: ACTIVE (pain/soreness/ache detected)");
+    }
+    if (ctx.recommendationBlocked) {
+      lines.push("RECOMMENDATION_BLOCKED: User mentioned pain without explicitly requesting advice.");
+      lines.push("→ Acknowledge the pain. Do NOT suggest exercises unless user explicitly asks what they can do.");
+    }
+    return lines.join("\n");
+  })();
+
+  // Recovery facts
+  const recoveryFacts = ctx.recoveryStatus
+    ? [
+        `Recovery score: ${ctx.recoveryStatus.score}`,
+        `Status: ${ctx.recoveryStatus.status}`,
+        `Constraint level: ${ctx.recoveryStatus.constraintLevel}`,
+        ctx.recoveryStatus.factors.length > 0
+          ? `Factors: ${ctx.recoveryStatus.factors.join(", ")}`
+          : null,
+      ].filter(Boolean).join("\n")
+    : null;
 
   // Phase 4: Session context injected (was ghost in Phase 3)
   const sessionCtxSection = ctx.sessionCtx
@@ -1148,6 +1612,9 @@ function buildRexSystemPrompt(ctx: RexContext): string {
       ].filter(Boolean).join("\n")
     : null;
 
+  // Phase 4A: Full session detail — specific lifts, weights, progressive overload targets, PRs, nutrition
+  const rexSessionSection = ctx.rexSessionContext ?? null;
+
   // Gym pattern (unchanged from Phase 3)
   const gymPatternLines: string[] = [];
   if (ctx.gymPatternCtx) {
@@ -1156,8 +1623,6 @@ function buildRexSystemPrompt(ctx: RexContext): string {
     if (ctx.gymPatternCtx.deloadDue)
       gymPatternLines.push("Deload due.");
     gymPatternLines.push(`Consistency: ${Math.round(ctx.gymPatternCtx.consistencyScore * 100)}%`);
-    if (ctx.gymPatternCtx.interventionMessage)
-      gymPatternLines.push(`Pattern note: ${ctx.gymPatternCtx.interventionMessage}`);
   }
   const gymPatternSection = gymPatternLines.length > 0 ? gymPatternLines.join("\n") : null;
 
@@ -1203,6 +1668,53 @@ function buildRexSystemPrompt(ctx: RexContext): string {
     lines.push(`Status: ${statusLine}`);
     if (gp.targetDate) lines.push(`Target date: ${gp.targetDate}`);
     goalProgressSection = lines.join("\n");
+  } else if (ctx.userProfile.gym_goal) {
+    goalProgressSection = `Goal type: ${ctx.userProfile.gym_goal}\nProgress tracking: Not available for this goal type — coach on behavior (consistency, adherence) rather than numeric targets.`;
+  }
+
+  // FIX 4: Weight trend rendered independently so strength-goal users and
+  // weight-only users both receive it regardless of GoalProgress state.
+  const weightTrendSection = buildWeightTrendBlock(ctx.weightTrend);
+
+  // Phase 6: Nutrition status section
+  let nutritionSection: string | null = null;
+  if (ctx.nutritionCtx) {
+    const nc   = ctx.nutritionCtx;
+    const lines: string[] = [];
+
+    if (nc.calorieBalance) {
+      const aligned = nc.calorieBalance.alignedWithGoal === true  ? "Yes"
+                    : nc.calorieBalance.alignedWithGoal === false ? "No — misaligned"
+                    : "N/A";
+      lines.push(`Calorie balance: ${nc.calorieBalance.narrative} (${nc.calorieBalance.confidence} confidence)`);
+      lines.push(`Aligned with goal: ${aligned}`);
+    }
+
+    if (nc.proteinSummary) {
+      const adequate = nc.proteinSummary.avgDailyG >= nc.proteinTargetG ? "adequate" : "below target";
+      lines.push(`Protein (last 7d, ${nc.proteinSummary.daysLogged} days logged): avg ${nc.proteinSummary.avgDailyG}g/day — ${adequate} (target: ${nc.proteinTargetG}g), trend: ${nc.proteinSummary.trend}`);
+    } else {
+      lines.push(`Protein logs: none in last 7 days (target: ${nc.proteinTargetG}g/day)`);
+    }
+
+    if (nc.adherenceSelfReport) {
+      lines.push(`Adherence self-report: ${nc.adherenceSelfReport === "positive" ? "eating clean / on point (user stated)" : "diet off / struggling (user stated)"}`);
+    }
+
+    if (nc.mealMemory && nc.mealMemory.topFoods.length > 0) {
+      lines.push(`Common meals: ${nc.mealMemory.topFoods.join(", ")} (last 14 days)`);
+      lines.push(`→ When coaching nutrition gaps, reference these specific foods. Do NOT give generic advice. Example: "Add Greek yogurt or eggs to your existing meals" not "eat more protein".`);
+    }
+
+    if (nc.growthAssessment) {
+      const ga = nc.growthAssessment;
+      lines.push(`Growth assessment: ${ga.overallStatus.replace("_", " ")} — ${ga.narrative}`);
+      if (ga.primaryLimiter !== "unknown" && ga.overallStatus !== "on_track") {
+        lines.push(`Primary limiter: ${ga.primaryLimiter}`);
+      }
+    }
+
+    nutritionSection = lines.length > 0 ? lines.join("\n") : null;
   }
 
   // Phase 4: Strengthened intervention history — explicit repeat conditions, not escape clause
@@ -1218,9 +1730,23 @@ function buildRexSystemPrompt(ctx: RexContext): string {
   }
 
   // Section C — memories (standard + contrastive)
+  // Include age so OpenAI can apply the staleness rule:
+  // promises/commitments > 2 weeks old = historical context, not current commitment.
   const memSection = ctx.topRelevantMemories.length > 0
     ? ctx.topRelevantMemories
-        .map(f => `• [${f.type.replace(/_/g, " ")}] ${f.value}`)
+        .map(f => {
+          const ageHours = f.ageHours ?? 0;
+          const ageLabel = ageHours < 24
+            ? "today"
+            : ageHours < 48
+            ? "yesterday"
+            : ageHours < 168
+            ? `${Math.floor(ageHours / 24)} days ago`
+            : ageHours < 720
+            ? `${Math.floor(ageHours / 168)} week${Math.floor(ageHours / 168) > 1 ? "s" : ""} ago`
+            : `${Math.floor(ageHours / 720)} month${Math.floor(ageHours / 720) > 1 ? "s" : ""} ago`;
+          return `• [${f.type.replace(/_/g, " ")}, ${ageLabel}] ${f.value}`;
+        })
         .join("\n")
     : "none";
 
@@ -1238,10 +1764,9 @@ function buildRexSystemPrompt(ctx: RexContext): string {
 
   // Section E — UL output
   const ulLines: string[] = [];
-  if (ctx.ulIntent)                ulLines.push(`intent: ${ctx.ulIntent}`);
-  if (ctx.ulEmotion)               ulLines.push(`emotion: ${ctx.ulEmotion}`);
-  if (ctx.ulTopic)                 ulLines.push(`topic: ${ctx.ulTopic}`);
-  if (ctx.ulSuggestedIntervention) ulLines.push(`suggested_intervention: ${ctx.ulSuggestedIntervention}`);
+  if (ctx.ulIntent)  ulLines.push(`intent: ${ctx.ulIntent}`);
+  if (ctx.ulEmotion) ulLines.push(`emotion: ${ctx.ulEmotion}`);
+  if (ctx.ulTopic)   ulLines.push(`topic: ${ctx.ulTopic}`);
   const ulSection = ulLines.length > 0
     ? ulLines.join("\n") +
       "\n\nIMPORTANT: UL output is context, not authority. You may disagree. If you do — your judgment wins."
@@ -1254,10 +1779,114 @@ function buildRexSystemPrompt(ctx: RexContext): string {
     ? "Days 8–30: More familiar. More direct. Can reference past conversations naturally. Less explaining."
     : "Day 30+: High expectations. Deep personal references. Less explanation. More challenge. You know this person.";
 
-  // Section H — burnout (Phase 4: removed raw score, directives handle thresholds)
+  // Section H — burnout
   const burnoutSignals = `Semantic burnout signals (no explicit keywords needed):
-"I dread training", "feels like punishment", "nothing left", "going through the motions", "can't remember why I started"
+"I hate training", "I dread training", "feels like punishment", "nothing left", "going through the motions",
+"can't remember why I started", "what's the point", "sick of this", "tired of trying", "don't even care anymore"
 Any of these → prioritize prevent_burnout. Coaching directives above set the burnout status threshold.`;
+
+  // Phase 7: Coach state block — injected into Section K
+  const coachStateBlock = (() => {
+    const cs = ctx.coachState;
+    if (!cs || cs.states.length === 0) return null;
+    const lines: string[] = [`Detected: ${cs.states.join(", ")}`];
+    if (cs.inactivityDays >= 7) lines.push(`Inactivity: ${cs.inactivityDays} days`);
+    if (cs.excusePatternCount > 0) {
+      lines.push(`Excuse patterns (last 30d): ${cs.excusePatternCount}`);
+      if (cs.excuseSnippets.length > 0) {
+        lines.push(`Recent excuses: ${cs.excuseSnippets.map(s => `"${s}"`).join(" | ")}`);
+      }
+    }
+    if (cs.journeySummary)      lines.push(`Journey: ${cs.journeySummary}`);
+    return lines.join("\n");
+  })();
+
+  // Phase 7: Multi-question block — injected into Section L
+  const multiQBlock = (() => {
+    const mq = ctx.multiQuestionCtx;
+    if (!mq || mq.questionCount < 2) return null;
+    const lines = [
+      `MULTI-QUESTION MESSAGE (${mq.questionCount} questions detected):`,
+      `Primary: "${mq.primaryQuestion}"`,
+    ];
+    if (mq.secondaryQuestions.length > 0) {
+      lines.push(`Secondary: ${mq.secondaryQuestions.map(q => `"${q}"`).join(" | ")}`);
+    }
+    lines.push("→ Answer ALL questions. Primary first. Never silently ignore a direct question.");
+    lines.push("→ If topics span urgency levels, name the order: \"Bench stall first — then split question.\"");
+    return lines.join("\n");
+  })();
+
+  // V5: Cognitive layer — active investigation block (if one is open)
+  const v5Enabled = process.env.COGNITIVE_LAYER_V5_ENABLED !== "false";
+  const openInvestigation = ctx.activeInvestigation && ctx.activeInvestigation.status === "open"
+    ? ctx.activeInvestigation
+    : null;
+
+  // Fix 6: Deterministic canonical evidence merge.
+  // Nutrition data known at context-build time is merged into evidenceCollected so OpenAI
+  // never asks for data we already have. Only fills missing keys — never overwrites user answers.
+  const mergedInvestigation = (() => {
+    if (!openInvestigation || !ctx.nutritionCtx) return openInvestigation;
+    const merged = { ...openInvestigation.evidenceCollected };
+    for (const [k, v] of Object.entries(ctx.nutritionCtx.canonicalEvidence)) {
+      if (!(k in merged)) merged[k] = v;
+    }
+    // Remove any key from missingData that now exists in evidenceCollected.
+    // Prevents "Evidence: X / Missing: X" contradiction in the prompt.
+    const resolvedMissing = openInvestigation.missingData.filter(k => !(k in merged));
+    return { ...openInvestigation, evidenceCollected: merged, missingData: resolvedMissing };
+  })();
+
+  const activeInvestigationBlock = v5Enabled && mergedInvestigation
+    ? `─── ACTIVE INVESTIGATION ─────────────────────────────────────────────────────
+
+An investigation is currently open. Continue it.
+
+Topic: ${mergedInvestigation.topic}
+Hypotheses so far: ${mergedInvestigation.hypotheses.join(", ")}
+Still missing: ${mergedInvestigation.missingData.join(", ")}
+Evidence collected: ${Object.entries(mergedInvestigation.evidenceCollected).map(([k, v]) => `${k}: ${v}`).join(", ") || "none yet"}
+Attempt count: ${mergedInvestigation.attemptCount} (max 2 — if user has stalled twice, diagnose with what you have)
+Started: ${mergedInvestigation.startedAt}
+
+If this turn's message provides missing evidence → update evidenceCollected, increment attemptCount.
+If evidence is now sufficient → deliver diagnosis, set status: "resolved".
+If attemptCount >= 2 and user still hasn't given useful info → diagnose with caveat, set status: "resolved".
+If user changed topic → acknowledge, set status: "abandoned", ask if they want to return to it later.
+QUESTION-SUPPRESSION EXEMPTION: while this investigation is open, you MAY ask follow-up questions
+  even if the previous reply was also a question. Investigation overrides the one-question rule.`
+    : null;
+
+  // V5: Follow-up check block — SURFACE-THEN-CLEAR (not time-gate-then-clear)
+  // followUpNow = eligible to surface (enough days elapsed, not already surfaced)
+  const followUpNow = v5Enabled && ctx.followUpCheck && !ctx.followUpCheck.surfaced
+    ? (() => {
+        const diagnosed = new Date(ctx.followUpCheck.diagnosedAt);
+        const daysElapsed = (Date.now() - diagnosed.getTime()) / 86_400_000;
+        return daysElapsed >= ctx.followUpCheck.checkAfterDays;
+      })()
+    : false;
+  // HARD SUPPRESSION: do not surface follow-up during achievement turns, burnout, or emotional support
+  const hasAchievementSignal = ctx.signalEngineOutput.some(s => s.type === "achievement");
+  const hasBurnoutOrEmotional = ctx.coachState?.states.some(
+    s => s === "BURNED_OUT" || s === "EMOTIONAL_SUPPORT",
+  ) ?? false;
+  const followUpSuppressed = hasAchievementSignal || hasBurnoutOrEmotional;
+  const followUpBlock = followUpNow && !followUpSuppressed && ctx.followUpCheck
+    ? `─── PENDING FOLLOW-UP ────────────────────────────────────────────────────────
+
+A previous diagnosis has a follow-up due. Surface it naturally — as something you remember, not a reminder.
+
+Topic: ${ctx.followUpCheck.topic}
+What was found: ${ctx.followUpCheck.context}
+Example natural surfacing: "Last time we figured out [topic] was the gap — has that shifted?"
+
+Only surface if it connects naturally to the current message. If the user is celebrating a PR or this
+is a simple check-in with no emotional weight — DO NOT surface it, return followUpCheck.surfaced: false.
+When you DO surface it — return followUpCheck.surfaced: true in your JSON response.
+The follow-up is only cleared when surfaced: true — not on this eligibility alone.`
+    : null;
 
   // Conversation history
   const historyBlock = ctx.conversationHistory
@@ -1328,8 +1957,8 @@ Zero emoji in conversational replies. Exception only for a confirmed PR just log
 ${profileSection}
 
 Training state: ${ctx.schedulerNarrative}
-Today: ${ctx.todaySessionStatus}
-${directivesBlock ? `\n─── COACHING DIRECTIVES ──────────────────────────────────────────────────────\n${directivesBlock}\n\nThese are active constraints for this turn. Follow them.` : ""}${sessionCtxSection ? `\n\n─── SESSION CONTEXT ──────────────────────────────────────────────────────────\n${sessionCtxSection}` : ""}${gymPatternSection ? `\n\n─── GYM PATTERNS ─────────────────────────────────────────────────────────────\n${gymPatternSection}` : ""}${behavioralPatternsSection ? `\n\n─── BEHAVIORAL PATTERNS ──────────────────────────────────────────────────────\n${behavioralPatternsSection}` : ""}${engagementSection ? `\n\n─── ENGAGEMENT ───────────────────────────────────────────────────────────────\n${engagementSection}` : ""}${goalProgressSection ? `\n\n─── GOAL PROGRESS ────────────────────────────────────────────────────────────\n${goalProgressSection}` : ""}${interventionHistoryLine ? `\n\n─── INTERVENTION HISTORY ─────────────────────────────────────────────────────\n${interventionHistoryLine}${loopWarning}` : ""}
+Today: ${ctx.todaySessionStatus}${ctx.coachState && ctx.coachState.states.length > 0 ? `\nCoach state: ${ctx.coachState.states.join(", ")}${ctx.coachState.inactivityDays >= 7 ? ` (${ctx.coachState.inactivityDays}d inactive)` : ""}` : ""}
+${mentorStateFacts ? `\n─── MENTOR STATE ─────────────────────────────────────────────────────────────\n${mentorStateFacts}` : ""}${hardConstraintsBlock ? `\n\n${hardConstraintsBlock}` : ""}${painInjuryBlock ? `\n\n─── PAIN / INJURY SIGNAL ─────────────────────────────────────────────────────\n${painInjuryBlock}` : ""}${recoveryFacts ? `\n\n─── RECOVERY STATUS ──────────────────────────────────────────────────────────\n${recoveryFacts}` : ""}${sessionCtxSection ? `\n\n─── SESSION CONTEXT ──────────────────────────────────────────────────────────\n${sessionCtxSection}` : ""}${rexSessionSection ? `\n\n─── TRAINING DETAIL ──────────────────────────────────────────────────────────\n${rexSessionSection}` : ""}${gymPatternSection ? `\n\n─── GYM PATTERNS ─────────────────────────────────────────────────────────────\n${gymPatternSection}` : ""}${behavioralPatternsSection ? `\n\n─── BEHAVIORAL PATTERNS ──────────────────────────────────────────────────────\n${behavioralPatternsSection}` : ""}${engagementSection ? `\n\n─── ENGAGEMENT ───────────────────────────────────────────────────────────────\n${engagementSection}` : ""}${goalProgressSection ? `\n\n─── GOAL PROGRESS ────────────────────────────────────────────────────────────\n${goalProgressSection}` : ""}${weightTrendSection ? `\n\n─── WEIGHT TREND ─────────────────────────────────────────────────────────────\n${weightTrendSection}` : ""}${nutritionSection ? `\n\n─── NUTRITION STATUS ─────────────────────────────────────────────────────────\n${nutritionSection}` : ""}${interventionHistoryLine ? `\n\n─── INTERVENTION HISTORY ─────────────────────────────────────────────────────\n${interventionHistoryLine}${loopWarning}` : ""}
 
 ─── SECTION C — MEMORIES ────────────────────────────────────────────────────
 
@@ -1367,8 +1996,39 @@ Current day since joining: ${ctx.daysSinceJoined}
 
 Detect these patterns yourself from the message.
 
-burnout: tired, what's the point, skipping, demotivated, nothing left, running empty
+burnout: "I hate training", tired, what's the point, skipping, demotivated, nothing left,
+         going through the motions, can't remember why I started, sick of this, dread the gym
 → GRILL: NO. Full stop. Acknowledge first. Reduce all pressure. Zero demands. No next action pushed.
+→ BURNOUT COACHING RULE: Never say "remember your why", "push through", "you've got this".
+   Instead: one sentence of permission. "Take the rest. Come back when you want to — not when you feel you should."
+   If BURNED_OUT is in coach state: all training pressure is suspended. No grilling. No commitments.
+
+burnout re-entry (was BURNED_OUT; user now engaging again after a rest period):
+→ Do NOT reload pressure immediately. One small step only.
+→ Reference what was suspended: "We backed off [training goal] while you recovered."
+→ Ask about readiness — do not assume it. "What's your energy actually like right now?"
+→ Re-entry is fragile. One bad reintroduction causes longer dropout than the burnout itself.
+→ Never say "good, you're back, now let's get to work." Match their pace.
+
+overtraining: training every day, twice a day, 10+ days straight, never rest, always tired/exhausted
+→ GRILL: NO. Warn. Name the pattern specifically.
+   "Training every day with no rest is a deficit, not discipline. Your body is not adapting — it is surviving."
+   Follow with ONE specific rest/deload action. Never celebrate the volume.
+
+pain / injury (PAIN_MENTIONED or INJURY_CONTEXT in PAIN/INJURY SIGNAL block):
+→ RECOMMENDATION_BLOCKED if flagged: Do NOT suggest exercises, movements, or training alternatives.
+   Acknowledge the pain first. One sentence. Nothing more until they ask.
+→ If user explicitly asks what they CAN do → answer with safe alternatives only (e.g., upper body if knee).
+   Never say "train around it" unless they ask. Never minimise reported pain.
+→ INJURY_CONTEXT (torn/fracture/rupture): do NOT give any training suggestions. One sentence only:
+   acknowledge it, recommend they get it checked professionally.
+→ If RECOMMENDATION_BLOCKED is NOT set (they asked alongside mentioning pain) → answer normally,
+   but flag the pain: "With the knee — keep it unloaded today. For the rest..."
+
+emotional fragility: breakup, grief, loss, panic attack, hopeless, depression, can't cope
+→ COACHING SUSPENDED. One human sentence only. Acknowledge what they said.
+   Do NOT pivot to fitness. Do NOT say "once you feel better, let's get back on track."
+   Do NOT set a commitment. Just be present.
 
 achievement: PR, completed a week, hit goal, feeling strong, personal best
 → GRILL: NO. Acknowledge the specific win by name. One forward push. Nothing more.
@@ -1381,18 +2041,82 @@ overwhelm: too much, don't know where to start, confused, juggling everything
 → GRILL: NO. Simplify completely. ONE next action only. No pressure.
 
 excuse: I'll start Monday, been busy, maybe tomorrow, things came up, it's fine right
-→ GRILL: YES. One sharp line. Name it. Do not accept it. End with one specific action.
+→ GRILL: YES (unless BURNED_OUT, self_doubt, or SYSTEMIC STRESS present).
+→ DISTINCTION — excuse vs. systemic stress:
+   Excuse: vague, repeated, pattern of life-as-constant-obstacle, seeking validation ("it's fine right?")
+   Systemic stress: specific ongoing situation (new job/role, family crisis, medical, bereavement) — mentioned for context, not deflection
+   → Systemic stress: do NOT grill. Acknowledge it briefly, reduce expectations, one small step only.
+   → Excuse (especially repeated): grill. One sharp line. Name it. End with one action.
    Example: "That is your excuse? Come on. One session tonight. What time are you free."
    Example: "I will start Monday again. You know how many Mondays you have already skipped."
    Example: "Busy is everyone. You said 4 sessions. You are at 1. What is actually going on."
 
-excuse cycle (same excuse appearing 2+ times this week):
-→ GRILL: YES, harder. Surface the pattern. Name that it has become a habit.
-   Example: "Again? Seriously? This is the second time this week. This is becoming a pattern."
+excuse cycle (EXCUSE_LOOP in coach state OR same excuse 2+ times this week):
+→ GRILL: YES, harder. Stop validating. Name the pattern without shame.
+   "This is the third time in a month. The pattern is the problem — not the week."
+   Ask one question about what is actually in the way: not what they plan to do, but what is stopping them.
+   Example: "What is actually in the way? Not the excuse — the real thing."
+
+inactive / returning (INACTIVE or RETURNING_USER in coach state):
+→ NEVER: "How's training going?" → it sounds hollow when they've been gone.
+→ Reference memory. Reference goal. Reference the gap. Sound like someone who noticed.
+   "Eight days. Last thing you said was [X]. Where are you at?"
+   ONE specific reference to what they left behind. Then one low-friction next step.
+   Do NOT lecture about the absence. Do NOT demand an explanation.
+
+disengaged (DISENGAGED — 14+ days):
+→ Re-engage with what they are building toward, not where they are now.
+   "You were [X weeks from goal] when you went quiet. That is still there."
+   One sentence. One question. Nothing else.
+
+advanced user (ADVANCED in coach state):
+→ Skip basic explanations. Skip motivational language. Skip "eat more protein" advice.
+→ Use periodization language. Volume landmarks. Mesocycle structure. Deload timing.
+→ Ask about specific training variables — not general habits.
+→ They know what to do. Tell them what to change, not why the basics matter.
+→ Reference actual numbers from their history. "You ran 4x10 at 85% last block — time to reassess."
+
+momentum (MOMENTUM in coach state — 7+ day streak, motivation ≥ 70):
+→ Match the energy. Don't dilute it with basic coaching.
+→ Raise the bar. This is the time to push for PRs, commitment upgrades, or goal acceleration.
+→ "You've had 7 days straight — let's use it. What's the number you've been avoiding?"
+→ Do NOT soft-pedal. They are ready for more. Give it to them.
+→ One specific challenge. Not encouragement. Not praise. A target.
+
+beginner (BEGINNER in coach state — first 30 days or self-reported new to gym):
+→ GRILL: NEVER. They are building the habit. Pressure before habit = dropout.
+→ Explain why before what. One reason. One action. No lists.
+→ Default to the smallest possible next step. "Show up. That is it."
+→ Celebrate showing up — not performance. "You came. That is the rep."
+→ Never say "you should be doing X by now" or compare to any standard.
+→ Build confidence first. Technique, volume, and intensity follow naturally.
+
+communication register — mirror the user's style:
+→ Formal, long message? → Match it. Complete sentences. Considered response.
+→ Casual / slang? → Shorter, lighter. "solid. do it."
+→ One-word check-in ("done", "skipped", "failed")? → 1–2 sentences back. No lecture.
+→ Long emotional message? → Acknowledge the length. Never reply with a wall of text back.
+→ Register is evidence of state. One word is not laziness — it is where they are.
+   Meet them there.
+
+PRIORITY RULE — when self_doubt AND excuse signals are BOTH present:
+self_doubt ALWAYS takes priority. Never grill.
 
 ${burnoutSignals}
 
 ─── SECTION I — HARD RULES ──────────────────────────────────────────────────
+
+COACHING HIERARCHY — higher tiers ALWAYS override lower tiers:
+Tier 1 SAFETY:       EMOTIONAL_SUPPORT detected (grief, panic, hopelessness) → suspend all coaching. One human sentence only.
+Tier 2 BURNOUT:      BURNED_OUT detected → zero pressure, zero demands, zero grilling. Permission to rest.
+Tier 3 RECOVERY:     recoveryStatus = training_blocked → no training push. Recovery first.
+Tier 4 OVERTRAINING: OVERTRAINING detected → warn and recommend rest. No volume encouragement.
+Tier 5 NUTRITION:    calorie misaligned → address food before changing training.
+Tier 6 TRAINING:     normal coaching flow.
+Tier 7 OPTIMIZATION: ADVANCED only — periodization, volume, specificity.
+Tier 8 MOTIVATION:   Only when all tiers 1–7 are clear.
+
+Never apply Tier 6/7/8 behavior when a higher tier is active.
 
 • One response = one focus. Never stack coaching points.
 • Never ask for information already in the user profile.
@@ -1405,22 +2129,246 @@ ${burnoutSignals}
 • No ALL CAPS for emphasis. No dramatic punctuation.
 • Default ending: direction or next action — not a question.
 • If the previous reply had a question — do NOT ask another question.
+  EXCEPTION: during an active investigation (activeInvestigation.status == "open"), follow-up
+  questions ARE allowed even if the previous reply had a question. Investigation overrides this rule.
 • Every response must contain at least one specific reference to this user's history, progress, or commitments. A response with zero specific references is a failure. Generic coaching responses are not acceptable.
+• CHECKIN with specific session data: ALWAYS reference the exact exercise/weight just logged AND give the next-session target. "Done. Pull day tomorrow." with zero specifics is a FAILURE state.
+• MEMORY STALENESS: a promise/commitment memory older than 2 weeks is historical context, not a current commitment. Do NOT say "you promised X this week" if the promise memory says "3 weeks ago". Instead: "a while back you said X — how's that tracking?"
+
+SINGLE BOTTLENECK RULE — before responding, pick one:
+1. Which coaching hierarchy tier (Section I above) is active?
+2. Within that tier, what is the single most important thing for THIS user TODAY?
+3. Say only that. The second-most important thing waits for the next message.
+If you find yourself writing "and also" or "additionally" — cut the second half. Always one.
+
+EVIDENCE CITATION RULE — when making a recommendation, name what led to it:
+RIGHT: "Your protein is averaging 85g — that's why you're stalling. Fix that first."
+RIGHT: "Eight missed sessions this month. The commitment isn't matching the goal."
+WRONG: "Based on your situation, I think you should focus on nutrition."
+One evidence source minimum. Two maximum. Never cite more than needed.
+
+DATA GAP HONESTY RULE — when you lack data that would normally inform your response, say so:
+RIGHT: "I don't have your recovery data (requires gym app tracking), so I'm going off what you've told me."
+RIGHT: "Weight trend isn't available yet — log your weight a few times and I can see the direction."
+WRONG: Coaching as if you have the data. Silent assumptions.
+State the gap once. Then coach with what you have. Never ask for data you cannot receive.
+
+QUESTION INTELLIGENCE:
+• If confidence > 0.85 on a DIAGNOSTIC_PROBLEM → do NOT investigate. Diagnose directly.
+• If the answer is already in NUTRITION STATUS, WEIGHT TREND, or GOAL PROGRESS → do NOT ask for it.
+• If the user asks a direct question → answer it first. Then investigate only if something critical is still unknown.
+• If the previous turn was already a question → do NOT ask another (except active investigation exemption).
+• QUESTION_NONE: CHECKIN, ACCOUNTABILITY, INFORMATION_REQUEST with complete profile data.
+• QUESTION_ONE: Most conversational turns where one clarifier genuinely improves the response.
+• QUESTION_FEW: Open DIAGNOSTIC_PROBLEM with multiple unknowns (max 3 questions, grouped).
+• QUESTION_DEEP: Active investigation continuation only.
 
 GRILLING HARD RULES:
 • Maximum ONE grilling line per response. The rest is coaching.
 • Never grill someone showing genuine distress, burnout, self_doubt, or emotional pain.
-• Never grill a beginner in their first 30 days — build the foundation, not the pressure.
+• Never grill someone with EMOTIONAL_SUPPORT, BURNED_OUT, or DISENGAGED coach state.
+• Never grill a BEGINNER in their first 30 days — build the foundation, not the pressure.
 • Every grilling line must be followed by one clear action. Insult without redirect is just cruelty.
 • If the user responds badly to a grilling turn — drop it. Switch to direct but supportive. Do not repeat.
 • Grilling is the hook. Coaching is the substance. Never let it become the whole message.
+
+─── SECTION J — COGNITIVE LAYER ─────────────────────────────────────────────
+
+${v5Enabled ? `STEP 1: REASONING MODE
+Before responding, classify this message into exactly one mode:
+INFORMATION_REQUEST — "What muscle is next?" / "What split am I on?" / "What should I do today?"
+DIAGNOSTIC_PROBLEM — "Why am I not growing?" / "Why is my bench stalled?"
+DECISION_REQUEST — "Should I bulk or cut?" / "Should I switch programs?"
+EMOTIONAL_SUPPORT — "I don't care anymore" / "I'm exhausted" / "Thinking of quitting" / "I hate training"
+PLAN_GENERATION — "Build me a plan" / "Fix my split" / "My split sucks"
+ACCOUNTABILITY — "I skipped again" / "I'll start Monday"
+CHECKIN — "Finished push day" / "Hit a PR" / "Done"
+
+INFORMATION_REQUEST HARD GUARD:
+If the message is a direct factual question about this user's own setup ("what's my split",
+"what muscle today", "what weight should I lift today") → ALWAYS answer directly from profile +
+scheduler + rexSessionContext. NEVER classify as DIAGNOSTIC_PROBLEM. NEVER open an investigation.
+If genuinely ambiguous — default to INFORMATION_REQUEST. Only escalate to DIAGNOSTIC_PROBLEM if
+the user's NEXT message clarifies they want analysis, not facts.
+
+STEP 2: CONFIDENCE ESTIMATION + FORCED BYPASS
+For DIAGNOSTIC_PROBLEM and DECISION_REQUEST only.
+
+FORCED HIGH CONFIDENCE — check rexSessionContext and PatternReport BEFORE estimating:
+• If the message names a specific lift AND rexSessionContext/gymPatterns shows that exact lift in
+  stalledLifts → confidence = 0.95. Diagnosis: deload. Do not investigate.
+• If the message asks about weight progress AND WeightTrend has >= 2 clear data points →
+  confidence = 0.90. Do not investigate.
+• If NUTRITION STATUS shows "Aligned with goal: No — misaligned" AND the message is about progress,
+  growth, gaining, weight stall, or fat loss → confidence = 0.90. The calorie picture is confirmed.
+  Diagnose immediately — the answer is in the data. Do not open an investigation for data you have.
+• If the message asks about a split/program AND behavioralPatterns shows the relevant muscle
+  group in skippedMuscles → confidence = 0.85. Diagnose the visible pattern directly.
+• For PLAN_GENERATION: if behavioralPatterns/PatternReport already shows the relevant issue
+  (e.g. skippedMuscles for "my split sucks") → confidence = 0.85. Diagnose directly, do not ask
+  "what specifically isn't working?" when you can already see what isn't working.
+
+If forced bypass applies → skip to hypothesis/diagnosis (Step 4). Do not investigate.
+
+General confidence estimation (when forced bypass does NOT apply):
+Estimate 0–1 based on available vs. missing data.
+Example: "Why am I not growing?" + you have training adherence and weight trend but not protein
+→ confidence: 0.42
+
+STEP 2.5: RECOMMENDATION GATE (applies to ALL modes — runs before any concrete suggestion)
+
+Classify every recommendation you are about to make before writing it.
+
+RECOMMENDATION TIERS:
+TIER 1 — LOW RISK — allowed with any evidence level:
+  Protein reminders, hydration, sleep, recovery reminders, habit suggestions, technique
+  refinements, weigh-in frequency, mindset reframes, scheduling tweaks.
+  → Make it. No gate required.
+
+TIER 2 — MEDIUM RISK — require MODERATE or STRONG evidence:
+  Volume changes, training frequency changes, exercise swaps, split modifications,
+  calorie adjustments (any direction), deload timing, rep range changes, adding/removing days.
+  → If evidence is only WEAK (single message, vague claim, one-off complaint): investigate first.
+  → If evidence is MODERATE or STRONG: make the recommendation.
+
+TIER 3 — HIGH RISK — require STRONG evidence across 2+ independent data sources:
+  Bulk → cut, cut → bulk, full program replacement, aggressive surplus (>300kcal above TDEE),
+  aggressive deficit (>500kcal), stopping a lift entirely, major training overhaul.
+  → If evidence is WEAK or MODERATE: DO NOT recommend. Investigate or observe.
+  → If evidence is STRONG (tracked trend, not self-report alone): make the recommendation.
+  → When blocked: name what's missing. "I'd want a few more weeks of weight data before
+     recommending a cut — one bad week isn't enough to pivot."
+
+EVIDENCE STRENGTH:
+STRONG — tracked data: weight trend (4+ logged points), recovery history (logged sessions),
+         session progression over 3+ weeks, nutrition logs with patterns, goal progress data,
+         behavioral patterns confirmed across multiple weeks in BEHAVIORAL PATTERNS / GYM PATTERNS.
+MODERATE — recent user statements this week, 2-3 self-reported data points in a row,
+            consistent pattern across 2 messages.
+WEAK — single message, one-off complaint ("had a terrible workout today"), vague claim
+       with no supporting data from WEIGHT TREND / RECOVERY STATUS / GYM PATTERNS / NUTRITION STATUS.
+
+PRE-RECOMMENDATION INTERNAL CHECK — run this before writing every concrete suggestion:
+  1. What tier is this recommendation?
+  2. What specific evidence supports it? (name the blocks: WEIGHT TREND, RECOVERY STATUS, etc.)
+  3. What data is missing that could change this recommendation?
+  4. Is the missing data critical to this tier's gate? If yes → downgrade to investigation.
+
+Do NOT expose this checklist in your reply. The reasoning is internal.
+The output is: recommend with confidence, investigate, or observe and wait.
+
+TIER GATE EXAMPLES:
+User: "My bench stalled." — no session history, no weight trend data.
+→ Deload recommendation is Tier 2. Evidence: WEAK. → Investigate first.
+
+User: "Bench stalled 6 weeks, recovery good, weight stable, protein hitting target."
+→ Deload recommendation is Tier 2. Evidence: STRONG (user-provided, consistent, multi-factor). → Recommend.
+
+User: "Bulking, but weight has dropped 4 weeks in a row."
+→ Increase calories is Tier 2. Evidence: STRONG (4-week weight trend). → Recommend with confidence.
+
+User: "Had a rough session today, thinking of switching programs."
+→ Program replacement is Tier 3. Evidence: WEAK (one session). → DO NOT recommend.
+   Observe: "One rough session isn't a program problem. What specifically felt off?"
+
+STEP 3: INVESTIGATION THRESHOLDS
+DIAGNOSTIC_PROBLEM → investigate if confidence < 0.8 (after forced bypass check)
+DECISION_REQUEST   → investigate if confidence < 0.7
+PLAN_GENERATION    → investigate if confidence < 0.75
+EMOTIONAL_SUPPORT  → NO investigation gate. Presence first.
+ACCOUNTABILITY / CHECKIN / INFORMATION_REQUEST → answer directly. No investigation.
+
+WHEN INVESTIGATING — ask 2–5 questions, grouped conversationally. NEVER use numbered lists:
+RIGHT: "Couple things I need — how has your weight moved the last few weeks, and what does eating look like day to day? Protein specifically."
+WRONG: "1. What is your weight? 2. What is your protein intake?" (numbered list — banned)
+Frame it as figuring it out together. QUESTION-SUPPRESSION EXEMPTION applies (see Section I).
+
+CANONICAL EVIDENCE KEYS — when recording evidenceCollected, ONLY use these keys:
+protein_intake | calorie_surplus_or_deficit | sleep_hours | training_frequency |
+training_intensity_rpe | weight_trend | recovery_status | consistency_score | lift_progression
+Map all user answers to the nearest canonical key. Never invent new key names.
+
+NUTRITION DATA PRE-FILL — check NUTRITION STATUS block before asking nutrition questions:
+If NUTRITION STATUS shows protein_intake data → do NOT ask "what's your protein?" You already have it.
+If NUTRITION STATUS shows calorie balance data → do NOT ask about calorie surplus/deficit. Already known.
+Pre-fill evidenceCollected with available nutrition data. Only ask for data that is genuinely missing.
+NEVER ask the user to log meals or track nutrition explicitly — capture passively from conversation only.
+
+INVESTIGATION STALL — use attemptCount (from ACTIVE INVESTIGATION block above, if open):
+attemptCount 1: ask again, rephrased, fewer questions
+attemptCount 2: STOP. Diagnose with available data, state the gap explicitly:
+  "Can't be 100% without knowing your protein, but based on what I can see — [diagnosis]. Worth
+  tracking [missing data] this week so we can confirm."
+Never loop beyond 2 attempts. Coach with what you have.
+
+SINGLE INVESTIGATION ENFORCEMENT:
+If an investigation is already open (see ACTIVE INVESTIGATION block) and you want to open a NEW one:
+• Same topic → continue the existing one, merge new evidence
+• Different topic → do NOT silently overwrite. Acknowledge: "We were working through [old topic] —
+  want to come back to that, or focus on this instead?" Let user choose.
+
+STEP 4: HYPOTHESIS RANKING (after sufficient evidence)
+For DIAGNOSTIC_PROBLEM: internally rank possible causes by evidence strength.
+Lead the diagnosis with the highest-confidence, evidence-backed cause.
+MULTI-SIGNAL SYNTHESIS: when protein drops AND performance drops AND weight stalls in the same
+window — connect them explicitly: "Protein's down, lifts have stalled, and weight hasn't moved —
+that's one problem wearing three faces. Fix the food, the rest follows."
+Do not explain your ranking process to the user. Just lead with the conclusion.
+
+RECOVERY vs NUTRITION ORDERING:
+When both recovery and nutrition could explain a problem (e.g. "why am I not growing?"):
+1. Check RECOVERY STATUS first. If constraintLevel is "training_blocked" or "intensity_reduced" —
+   recovery is the bottleneck. Do not pivot to nutrition as the primary cause.
+2. Only move to nutrition as primary hypothesis when recovery is clear (constraintLevel: "unrestricted").
+3. When both are implicated — name both, but lead with whichever has stronger evidence:
+   "Recovery's clearly off — sleep and soreness tell the story. Nutrition is secondary until that's fixed."
+
+STEP 5: LONGITUDINAL REASONING
+Before responding: what changed? what is trending? what repeated?
+Use: memories (with their age labels), weight trend, engagement, mentor state trend, STATE HISTORY block.
+Name shifts explicitly — but ONLY when backed by actual data from the STATE HISTORY block above.
+RULE: Never fabricate "three weeks ago you were locked in" unless the state history data confirms it.
+If STATE HISTORY has < 3 snapshots or < 7 days of data — do NOT make longitudinal claims.
+Fall back to current-state reasoning only.
+
+STEP 6: MEMORY REASONING (with staleness)
+Connect memories to now — do not cite them. Age labels are shown in the MEMORIES section.
+RIGHT: "You set 100kg bench as the target six weeks ago. Eight missed sessions since makes that math harder."
+WRONG: "[goal: bench 100kg]" / "You mentioned 100kg before."
+STALENESS: memories with "3 weeks ago", "1 month ago" etc. are historical — treat promises/goals
+as background context, not current commitments the user is accountable to this week.
+
+STEP 7: GOAL STATUS RESOLUTION
+If GOAL PROGRESS shows status: "Unknown (set a target to enable tracking)" AND daysSinceJoined >= 14
+AND reasoningMode is CHECKIN or INFORMATION_REQUEST:
+Weave a target request naturally into your response (once only — not as a bolt-on question):
+"You've been at this two weeks — what's the actual target? Give me a number so I can track progress."
+Do this ONCE. If a goalTargetRequested memory exists — do not ask again.
+
+NUTRITION FOLLOW-UPS:
+When diagnosing a nutrition problem (low protein, misaligned calories, poor adherence):
+Set followUpCheck to check back in 7 days for protein issues, 14 days for calorie/weight issues.
+Topic slugs: nutrition_protein | nutrition_calories | nutrition_adherence
+Example: { "topic": "nutrition_protein", "checkAfterDays": 7, "context": "avg protein was 95g/day — below 140g target for muscle goal. Recommended 150g+/day.", "surfaced": false }
+Do NOT set nutrition follow-ups when the user explicitly dismisses nutrition as irrelevant.
+
+${activeInvestigationBlock ?? ""}
+${followUpBlock ?? ""}` : "Cognitive layer disabled (COGNITIVE_LAYER_V5_ENABLED=false). Respond directly."}
+
+${coachStateBlock ? `─── SECTION K — COACH STATE ─────────────────────────────────────────────────
+
+${coachStateBlock}
+
+Apply the coaching hierarchy from Section I. The detected state(s) determine which tier is active.
+Higher-tier states BLOCK lower-tier behavior — check before deciding intervention.` : ""}
+${multiQBlock ? `\n─── SECTION L — MULTI-QUESTION HANDLER ──────────────────────────────────────\n\n${multiQBlock}` : ""}
 
 ─── RESPONSE FORMAT (STRICT) ────────────────────────────────────────────────
 
 Return ONLY valid compact JSON. No markdown fences. No explanation outside the JSON.
 
 {
-  "reply": "<your response — 1-3 sentences unless presenting a plan or explanation>",
+  "reply": "<your response — 1-3 sentences unless investigating, presenting a plan, or explaining>",
   "intervention_used": "<one of the 21 names from Section F, lowercase with underscores>",
   "mood_detected": "<one word: frustrated | discouraged | motivated | overwhelmed | burnout | self_doubt | excuse | achievement | neutral>",
   "state_updates": {
@@ -1428,8 +2376,34 @@ Return ONLY valid compact JSON. No markdown fences. No explanation outside the J
     "missedSessionLogged": <true if user just confirmed missing a session, else false>,
     "commitmentMade": <"exact text of commitment" or null>,
     "goalUpdated": <"new goal value" or null — only set if user explicitly changed their goal>
-  }
+  },
+  "reasoningMode": "<one of the 7 modes from Section J, or null if V5 disabled>",
+  "confidence": <0–1 number if DIAGNOSTIC_PROBLEM or DECISION_REQUEST, else null>,
+  "missingData": ["<what data would improve diagnosis>"] or null,
+  "activeInvestigation": {
+    "topic": "<short slug, e.g. why_not_growing>",
+    "hypotheses": ["<cause1>", "<cause2>"],
+    "missingData": ["<what is still needed>"],
+    "evidenceCollected": {"<canonical_key>": "<value from user this turn>"},
+    "attemptCount": <number — increment each time you asked a question in this investigation>,
+    "status": "<open|resolved|abandoned>"
+  } or null,
+  "followUpCheck": {
+    "topic": "<short slug>",
+    "checkAfterDays": <number — 7 for protein, 14 for weight stall, 3 for burnout>,
+    "context": "<what was diagnosed and what was recommended — 1 sentence>",
+    "surfaced": <true if you explicitly surface the follow-up in this reply, false if suppressed>
+  } or null
 }
+
+Notes:
+- activeInvestigation: set when opening or continuing an investigation. null when not applicable.
+  attemptCount must be included and incremented when you ask a question in the investigation.
+- followUpCheck: set when resolving a DIAGNOSTIC_PROBLEM. surfaced: false initially; true only when
+  you explicitly surface the follow-up in your reply. If reasoningMode is CHECKIN or achievement
+  signal is present — set surfaced: false and do not surface it this turn.
+- reasoningMode, confidence, missingData: always set when V5 is enabled. null only when V5 is disabled.
+- If V5 is disabled: all new fields can be null.
 
 ─── RECENT CONVERSATION ─────────────────────────────────────────────────────
 
@@ -1438,72 +2412,208 @@ ${historyBlock}`.trim();
 
 // ── Step 4: OpenAI call + JSON failure handler ────────────────────────────────
 
-const V3_FALLBACK_REPLY = "Something went wrong on my end. Give me a second and try again.";
+// Step 14: Graceful fallback — never show error language to users.
+// Partial extraction: regex-extract "reply" from malformed/truncated JSON.
+function extractReplyFallback(raw: string): string | null {
+  const m = raw.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (!m?.[1]) return null;
+  try {
+    return JSON.parse(`"${m[1]}"`) as string;
+  } catch {
+    return m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+  }
+}
 
-function parseRexOpenAIResponse(raw: string): RexOpenAIResponse {
-  // Strip markdown code fences that OpenAI sometimes wraps around JSON
-  const cleaned = raw
+// Build context-aware fallback based on scheduler state — never error-flavored.
+function buildContextFallback(schedulerNarrative: string): string {
+  const lower = schedulerNarrative.toLowerCase();
+  if (lower.includes("due") || lower.includes("pending confirmation")) {
+    const muscleMatch = schedulerNarrative.match(/^Day \d+\. (.+?) session/);
+    const muscle = muscleMatch?.[1] ?? "your session";
+    return `Quick hiccup on my end — but you know the plan: ${muscle} today. Go do that, we'll talk after.`;
+  }
+  return "One sec, lost my train of thought — what were you saying?";
+}
+
+function parseRexOpenAIResponse(
+  raw: string,
+  schedulerNarrative?: string,
+  previousInvestigation?: ActiveInvestigation | null,
+  previousFollowUp?: FollowUpCheck | null,
+): RexOpenAIResponse {
+  const nullV5: Pick<RexOpenAIResponse, "reasoningMode" | "confidence" | "missingData" | "activeInvestigation" | "followUpCheck"> = {
+    reasoningMode:       null,
+    confidence:          null,
+    missingData:         null,
+    activeInvestigation: null,
+    followUpCheck:       null,
+  };
+  const nullStateUpdates: V3StateUpdates = { sessionLogged: false, missedSessionLogged: false, commitmentMade: null, goalUpdated: null };
+
+  // Step 14-1: Strip markdown code fences
+  const stripped = raw
     .replace(/^```(?:json)?\s*/im, "")
     .replace(/```\s*$/im, "")
     .trim();
 
-  const match = cleaned.match(/\{[\s\S]*\}/);
-  if (!match) {
-    console.error("[MENTOR_V3] parse_failed:no_json_object raw:", raw.slice(0, 300));
-    return {
-      reply:             V3_FALLBACK_REPLY,
-      intervention_used: "unknown",
-      mood_detected:     "unknown",
-      state_updates:     { sessionLogged: false, missedSessionLogged: false, commitmentMade: null, goalUpdated: null },
-      parseError:        true,
-      rawOutput:         raw,
-    };
+  // Step 14-2: Try full JSON.parse on outermost {}
+  const outerMatch = stripped.match(/\{[\s\S]*\}/);
+  let parsed: ReturnType<typeof attemptParse> | null = null;
+  if (outerMatch) {
+    parsed = attemptParse(outerMatch[0]);
   }
 
-  try {
-    const p = JSON.parse(match[0]) as Partial<{
-      reply:             unknown;
-      intervention_used: unknown;
-      mood_detected:     unknown;
-      state_updates:     Partial<V3StateUpdates>;
-    }>;
-
-    if (typeof p.reply !== "string" || p.reply.trim() === "") {
-      console.error("[MENTOR_V3] parse_ok:reply_missing raw:", raw.slice(0, 300));
+  if (!parsed) {
+    // Step 14-4: Partial extraction — regex-extract reply field
+    const extractedReply = extractReplyFallback(raw);
+    if (extractedReply && extractedReply.trim()) {
+      console.warn("[MENTOR_V3] parse_failed:partial_extraction used raw:", raw.slice(0, 300));
       return {
-        reply:             V3_FALLBACK_REPLY,
-        intervention_used: typeof p.intervention_used === "string" ? p.intervention_used : "unknown",
-        mood_detected:     typeof p.mood_detected     === "string" ? p.mood_detected     : "unknown",
-        state_updates:     { sessionLogged: false, missedSessionLogged: false, commitmentMade: null, goalUpdated: null },
+        reply:             extractedReply.trim(),
+        intervention_used: "unknown",
+        mood_detected:     "unknown",
+        state_updates:     nullStateUpdates,
         parseError:        true,
         rawOutput:         raw,
+        // Preserve previous cognitive state on parse failure — don't corrupt it
+        ...nullV5,
+        activeInvestigation: previousInvestigation ?? null,
+        followUpCheck:       previousFollowUp ?? null,
       };
     }
 
-    const su = p.state_updates ?? {};
+    // Step 14-5: Context-aware templated fallback — never error language
+    console.error("[MENTOR_V3] parse_failed:full_fallback raw:", raw.slice(0, 300));
     return {
-      reply:             p.reply.trim(),
-      intervention_used: typeof p.intervention_used === "string" ? p.intervention_used : "unknown",
-      mood_detected:     typeof p.mood_detected     === "string" ? p.mood_detected     : "unknown",
-      state_updates: {
-        sessionLogged:       su.sessionLogged       === true,
-        missedSessionLogged: su.missedSessionLogged === true,
-        commitmentMade:      typeof su.commitmentMade === "string" ? su.commitmentMade : null,
-        goalUpdated:         typeof su.goalUpdated    === "string" ? su.goalUpdated    : null,
-      },
-      parseError: false,
-    };
-  } catch (err) {
-    console.error("[MENTOR_V3] parse_threw:", err, "raw:", raw.slice(0, 300));
-    return {
-      reply:             V3_FALLBACK_REPLY,
+      reply:             buildContextFallback(schedulerNarrative ?? ""),
       intervention_used: "unknown",
       mood_detected:     "unknown",
-      state_updates:     { sessionLogged: false, missedSessionLogged: false, commitmentMade: null, goalUpdated: null },
+      state_updates:     nullStateUpdates,
       parseError:        true,
       rawOutput:         raw,
+      ...nullV5,
+      activeInvestigation: previousInvestigation ?? null,
+      followUpCheck:       previousFollowUp ?? null,
     };
   }
+
+  if (!parsed.reply) {
+    const extractedReply = extractReplyFallback(raw);
+    const fallbackReply = extractedReply?.trim() || buildContextFallback(schedulerNarrative ?? "");
+    console.error("[MENTOR_V3] parse_ok:reply_missing raw:", raw.slice(0, 300));
+    return {
+      reply:             fallbackReply,
+      intervention_used: parsed.intervention_used ?? "unknown",
+      mood_detected:     parsed.mood_detected ?? "unknown",
+      state_updates:     nullStateUpdates,
+      parseError:        true,
+      rawOutput:         raw,
+      ...nullV5,
+      activeInvestigation: previousInvestigation ?? null,
+      followUpCheck:       previousFollowUp ?? null,
+    };
+  }
+
+  return {
+    reply:             parsed.reply,
+    intervention_used: parsed.intervention_used ?? "unknown",
+    mood_detected:     parsed.mood_detected ?? "unknown",
+    state_updates:     parsed.state_updates,
+    parseError:        false,
+    reasoningMode:     parsed.reasoningMode,
+    confidence:        parsed.confidence,
+    missingData:       parsed.missingData,
+    activeInvestigation: parsed.activeInvestigation,
+    followUpCheck:     parsed.followUpCheck,
+  };
+}
+
+// Inner parse attempt — returns null on JSON.parse failure
+function attemptParse(jsonStr: string): {
+  reply:               string | null;
+  intervention_used:   string | null;
+  mood_detected:       string | null;
+  state_updates:       V3StateUpdates;
+  reasoningMode:       string | null;
+  confidence:          number | null;
+  missingData:         string[] | null;
+  activeInvestigation: ActiveInvestigation | null;
+  followUpCheck:       FollowUpCheck | null;
+} | null {
+  let p: Partial<{
+    reply:               unknown;
+    intervention_used:   unknown;
+    mood_detected:       unknown;
+    state_updates:       Partial<V3StateUpdates>;
+    reasoningMode:       unknown;
+    confidence:          unknown;
+    missingData:         unknown;
+    activeInvestigation: unknown;
+    followUpCheck:       unknown;
+  }>;
+
+  try {
+    p = JSON.parse(jsonStr);
+  } catch {
+    return null;
+  }
+
+  const su = p.state_updates ?? {};
+  const reasoningMode = typeof p.reasoningMode === "string" ? p.reasoningMode : null;
+  const confidence    = typeof p.confidence === "number" && p.confidence >= 0 && p.confidence <= 1
+    ? p.confidence : null;
+  const missingData   = Array.isArray(p.missingData) && p.missingData.every(x => typeof x === "string")
+    ? (p.missingData as string[]) : null;
+
+  const activeInvestigation = (() => {
+    if (!p.activeInvestigation || typeof p.activeInvestigation !== "object") return null;
+    const ai = p.activeInvestigation as Record<string, unknown>;
+    if (typeof ai.topic !== "string") return null;
+    if (!["open", "resolved", "abandoned"].includes(ai.status as string)) return null;
+    return {
+      topic:             ai.topic as string,
+      hypotheses:        Array.isArray(ai.hypotheses) ? (ai.hypotheses as string[]).filter(x => typeof x === "string") : [],
+      missingData:       Array.isArray(ai.missingData) ? (ai.missingData as string[]).filter(x => typeof x === "string") : [],
+      evidenceCollected: (ai.evidenceCollected && typeof ai.evidenceCollected === "object" && !Array.isArray(ai.evidenceCollected))
+        ? (ai.evidenceCollected as Record<string, string>) : {},
+      attemptCount:      typeof ai.attemptCount === "number" ? Math.max(0, Math.floor(ai.attemptCount)) : 0,
+      status:            ai.status as "open" | "resolved" | "abandoned",
+      startedAt:         typeof ai.startedAt === "string" ? ai.startedAt : new Date().toISOString(),
+      lastUpdatedAt:     new Date().toISOString(),
+    } satisfies ActiveInvestigation;
+  })();
+
+  const followUpCheck = (() => {
+    if (!p.followUpCheck || typeof p.followUpCheck !== "object") return null;
+    const fc = p.followUpCheck as Record<string, unknown>;
+    if (typeof fc.topic !== "string") return null;
+    if (typeof fc.checkAfterDays !== "number") return null;
+    if (typeof fc.context !== "string") return null;
+    return {
+      topic:          fc.topic as string,
+      checkAfterDays: fc.checkAfterDays as number,
+      context:        fc.context as string,
+      diagnosedAt:    typeof fc.diagnosedAt === "string" ? fc.diagnosedAt : new Date().toISOString(),
+      surfaced:       fc.surfaced === true,
+    } satisfies FollowUpCheck;
+  })();
+
+  return {
+    reply:             typeof p.reply === "string" && p.reply.trim() !== "" ? p.reply.trim() : null,
+    intervention_used: typeof p.intervention_used === "string" ? p.intervention_used : null,
+    mood_detected:     typeof p.mood_detected     === "string" ? p.mood_detected     : null,
+    state_updates: {
+      sessionLogged:       su.sessionLogged       === true,
+      missedSessionLogged: su.missedSessionLogged === true,
+      commitmentMade:      typeof su.commitmentMade === "string" ? su.commitmentMade : null,
+      goalUpdated:         typeof su.goalUpdated    === "string" ? su.goalUpdated    : null,
+    },
+    reasoningMode,
+    confidence,
+    missingData,
+    activeInvestigation,
+    followUpCheck,
+  };
 }
 
 // ── Step 5: State conflict detector ──────────────────────────────────────────
@@ -1584,11 +2694,10 @@ function v3InterventionToDecision(
 // ── Step 9: Monitoring log ────────────────────────────────────────────────────
 
 function logMentorV3(data: {
-  userId:                  string;
-  ulIntent:                string | null;
-  ulEmotion:               string | null;
-  ulSuggestedIntervention: string | null;
-  interventionUsed:        string;
+  userId:           string;
+  ulIntent:         string | null;
+  ulEmotion:        string | null;
+  interventionUsed: string;
   moodDetected:            string;
   schedulerState:          string;
   conflictDetected:        boolean;
@@ -1671,20 +2780,93 @@ async function runOrchestratorV3(input: OrchestratorInput): Promise<Orchestrator
     addToLongTerm(input.platformChatId, mw.type, mw.value).catch(() => {});
   }
 
+  // ── Part 0A: Qualitative adherence self-report capture ────────────────────────
+  // Detects nutritional adherence phrases and writes to MemoryFact.
+  // Kept inline (not in signal-engine-v2) because it is nutrition-domain-specific.
+  const ADHERENCE_GOOD_RE = /\b(been\s+eating\s+(?:clean|well|great|on\s+point|properly)|hitting\s+my\s+protein|on\s+point\s+with\s+(?:nutrition|food|diet)|diet(?:'s|\s+is|\s+has\s+been)\s+(?:good|great|clean|solid|on\s+track))\b/i;
+  const ADHERENCE_POOR_RE = /\b(diet(?:'s|\s+is|\s+has\s+been)\s+(?:off|bad|terrible|trash|awful|horrible|a\s+mess)|been\s+eating\s+(?:like\s+shit|terribly|badly|off|awful|garbage)|struggling\s+with\s+(?:food|eating|nutrition)|food(?:'s|\s+has\s+been|\s+is)\s+(?:off|bad|terrible))\b/i;
+  if (ADHERENCE_GOOD_RE.test(input.text)) {
+    addToLongTerm(input.platformChatId, "adherence_self_report", "positive").catch(() => {});
+  } else if (ADHERENCE_POOR_RE.test(input.text)) {
+    addToLongTerm(input.platformChatId, "adherence_self_report", "negative").catch(() => {});
+  }
+
+  // ── Part 0B: Excuse pattern detection (Phase 7) ────────────────────────────
+  // Writes excuse_pattern MemoryFact for each detected excuse phrase.
+  // Count of these facts in last 30 days drives EXCUSE_LOOP coach state.
+  const EXCUSE_PATTERN_RE = /\b(next\s+week|start\s+(?:fresh\s+)?(?:on\s+)?monday|been\s+(?:so\s+)?busy|work\s+(?:was|has\s+been)\s+(?:crazy|hectic|insane|overwhelming)|travel(?:ling|ing)?|after\s+(?:exams?|the\s+project|this\s+week)|not\s+enough\s+time|it'?s?\s+fine(?:\s+right)?|things?\s+came\s+up|couldn'?t\s+make\s+it|will\s+start\s+(?:again\s+)?(?:next|this)\s+(?:week|month)|just\s+haven'?t\s+had\s+time)\b/i;
+  if (EXCUSE_PATTERN_RE.test(input.text)) {
+    const snippet = input.text.slice(0, 120).replace(/\n/g, " ");
+    addToLongTerm(input.platformChatId, "excuse_pattern", snippet).catch(() => {});
+  }
+
+  // ── Part 0C: PR / achievement memory — structured capture ────────────────────
+  // Writes a structured "PR — lift: Xkg PR" achievement memory when a PR is mentioned.
+  // Separate from signal-engine-v2 achievement detection which captures freeform sentences.
+  // This ensures PRs are queryable by lift + weight for longitudinal tracking.
+  const PR_RE = /\b(?:(?:new|got\s+a?|hit\s+a?|just\s+got\s+a?)\s+)?(?:pr|personal\s+(?:record|best)|pb)\b/i;
+  const LIFT_CAPTURE_RE = /\b(squat|bench(?:\s+press)?|deadlift|ohp|overhead\s+press|shoulder\s+press|pull[- ]?up|chin[- ]?up|barbell\s+row|bent[- ]?over\s+row|rdl|romanian\s+deadlift|hip\s+thrust|incline\s+(?:bench|press)|dumbbell\s+(?:bench|press))\b/i;
+  const WEIGHT_CAPTURE_RE = /\b(\d{2,3}(?:\.\d)?)\s*(kg|kilos?|lbs?|pounds?)\b/i;
+  if (PR_RE.test(input.text)) {
+    const liftMatch = input.text.match(LIFT_CAPTURE_RE);
+    const weightMatch = input.text.match(WEIGHT_CAPTURE_RE);
+    if (liftMatch || weightMatch) {
+      const lift = liftMatch ? liftMatch[1]!.toLowerCase().replace(/\s+/g, "_") : "lift";
+      let weightKg: number | null = null;
+      if (weightMatch) {
+        const raw = parseFloat(weightMatch[1]!);
+        const isLbs = /lbs?|pounds?/i.test(weightMatch[2]!);
+        weightKg = isLbs ? Math.round(raw * 0.453592 * 10) / 10 : raw;
+      }
+      const prValue = weightKg !== null ? `PR — ${lift}: ${weightKg}kg` : `PR — ${lift}`;
+      addToLongTerm(input.platformChatId, "achievement", prValue).catch(() => {});
+    }
+  }
+
+  // ── Phase 6: Load nutrition context ──────────────────────────────────────────
+  const { fitnessSnapshot } = userCtx;
+  const adherenceFacts = userCtx.rawMemories
+    .filter(m => m.type === "adherence_self_report")
+    .map(m => ({ value: m.value, updatedAt: m.updatedAt }));
+
+  // Fix 1: resolve bodyweight for personalized protein target.
+  // Prefer WeightTrend.currentWeight (most recent logged entry); fall back to onboarding answer.
+  const intakeAnswersMap = userCtx.intakeAnswers != null &&
+    typeof userCtx.intakeAnswers === "object" && !Array.isArray(userCtx.intakeAnswers)
+    ? userCtx.intakeAnswers as Record<string, string>
+    : {};
+  const bodyweightKg: number | null =
+    fitnessSnapshot?.weightTrend?.currentWeight ??
+    (parseFloat(intakeAnswersMap.current_bodyweight_kg ?? "") || null);
+
+  const nutritionCtx = await getNutritionContext(
+    input.platformChatId,
+    fitnessSnapshot?.weightTrend ?? null,
+    fitnessSnapshot?.goalCategory ?? null,
+    fitnessSnapshot?.goalProgress ?? null,
+    fitnessSnapshot?.consistencyScore ?? 0,
+    adherenceFacts,
+    fitnessSnapshot?.recoveryStatus ?? null,   // Fix 3
+    bodyweightKg,                               // Fix 1
+    timestamp,
+  ).catch(() => null);
+
   // ── Build Rex context ─────────────────────────────────────────────────────────
-  const rexCtx = buildRexContext(input, userCtx, sigV2);
+  const rexCtx = buildRexContext(input, userCtx, sigV2, nutritionCtx);
 
   // ── Build system prompt ───────────────────────────────────────────────────────
   const systemPrompt = buildRexSystemPrompt(rexCtx);
 
   // ── OpenAI call ───────────────────────────────────────────────────────────────
+  // V5: 800 tokens for investigation/diagnostic responses; V4 was 400.
+  const v5TokenBudget = process.env.COGNITIVE_LAYER_V5_ENABLED !== "false" ? 800 : 400;
   diag.llmCalled          = true;
-  diag.llmTokensRequested = 400;
+  diag.llmTokensRequested = v5TokenBudget;
   let rawLLMOutput = "";
   try {
     rawLLMOutput = await generateOpenAIText({
       model:             "gpt-4o",
-      maxOutputTokens:   400,
+      maxOutputTokens:   v5TokenBudget,
       systemInstruction: systemPrompt,
       prompt:            input.text,
     });
@@ -1694,16 +2876,26 @@ async function runOrchestratorV3(input: OrchestratorInput): Promise<Orchestrator
   }
   diag.stagesRun.push("llm_call");
 
-  // ── Parse response + failure handling ────────────────────────────────────────
+  // ── Parse response + failure handling (Step 14: graceful fallback chain) ─────
   const parsed = rawLLMOutput
-    ? parseRexOpenAIResponse(rawLLMOutput)
+    ? parseRexOpenAIResponse(
+        rawLLMOutput,
+        rexCtx.schedulerNarrative,
+        rexCtx.activeInvestigation,
+        rexCtx.followUpCheck,
+      )
     : {
-        reply:             V3_FALLBACK_REPLY,
-        intervention_used: "unknown",
-        mood_detected:     "unknown",
-        state_updates:     { sessionLogged: false, missedSessionLogged: false, commitmentMade: null, goalUpdated: null },
-        parseError:        true,
-        rawOutput:         "",
+        reply:               buildContextFallback(rexCtx.schedulerNarrative),
+        intervention_used:   "unknown",
+        mood_detected:       "unknown",
+        state_updates:       { sessionLogged: false, missedSessionLogged: false, commitmentMade: null, goalUpdated: null },
+        parseError:          true,
+        rawOutput:           "",
+        reasoningMode:       null,
+        confidence:          null,
+        missingData:         null,
+        activeInvestigation: rexCtx.activeInvestigation,
+        followUpCheck:       rexCtx.followUpCheck,
       } satisfies RexOpenAIResponse;
 
   // ── Step 5: Conflict detection — before any writes ────────────────────────────
@@ -1722,6 +2914,45 @@ async function runOrchestratorV3(input: OrchestratorInput): Promise<Orchestrator
     if (parsed.state_updates.commitmentMade) {
       addToLongTerm(input.platformChatId, "promise", parsed.state_updates.commitmentMade).catch(() => {});
     }
+  }
+
+  // ── V5: Persist cognitive state (investigation + follow-up) ──────────────────
+  if (!parsed.parseError) {
+    const ai = parsed.activeInvestigation;
+    if (ai) {
+      if (ai.status === "open") {
+        // Single-investigation enforcement: if topic changed, the abandoned flag should
+        // already be set by OpenAI (it was instructed to acknowledge the switch). Save
+        // whatever OpenAI returned — if it opened a new topic while an old one was
+        // open and didn't flag it, the old is silently replaced (accepted behavior for
+        // the case where the user explicitly moved on without Rex catching it).
+        saveActiveInvestigation(input.platformChatId, ai).catch(() => {});
+      } else if (ai.status === "resolved") {
+        // Save the resolved investigation, then clear it (one turn to surface the diagnosis)
+        saveActiveInvestigation(input.platformChatId, ai).catch(() => {});
+        clearActiveInvestigation(input.platformChatId).catch(() => {});
+      } else if (ai.status === "abandoned") {
+        clearActiveInvestigation(input.platformChatId).catch(() => {});
+      }
+    }
+
+    // V5 Step 10: SURFACE-THEN-CLEAR — follow-up only cleared when OpenAI surfaced it
+    if (parsed.followUpCheck) {
+      if (parsed.followUpCheck.surfaced) {
+        // OpenAI explicitly surfaced the follow-up → clear it
+        clearFollowUpCheck(input.platformChatId).catch(() => {});
+      } else {
+        // OpenAI returned it but did not surface it (suppressed) → keep it alive
+        saveFollowUpCheck(input.platformChatId, parsed.followUpCheck).catch(() => {});
+      }
+    } else if (parsed.followUpCheck === null && rexCtx.followUpCheck !== null) {
+      // OpenAI returned null for followUpCheck but one exists — preserve it (don't clear
+      // unless surfaced: true was explicitly set)
+      // Nothing to do — existing DB record stays intact
+    }
+
+    // V5 Step 12: Append mentor state snapshot for longitudinal reasoning
+    appendMentorStateSnapshot(input.platformChatId, state).catch(() => {});
   }
 
   // ── Step 7: Signal Engine — observation only (V3 role) ────────────────────────
@@ -1767,6 +2998,9 @@ async function runOrchestratorV3(input: OrchestratorInput): Promise<Orchestrator
   finalReply = validateResponse(finalReply, memory, input.text);
   diag.stagesRun.push("validate");
 
+  // ── Phase 4A: Persist mentor state from V3 (was missing — fixed) ─────────────
+  updateMentorState(input.platformChatId, { analysis }).catch(() => {});
+
   // ── Persist turn (non-blocking, same as V1) ───────────────────────────────────
   persistTurn(input.platformChatId, input.text, finalReply, analysis, null, input.persistMode ?? "full");
   diag.stagesRun.push("persist");
@@ -1781,11 +3015,10 @@ async function runOrchestratorV3(input: OrchestratorInput): Promise<Orchestrator
     interventionNorm !== rexCtx.lastIntervention;
 
   logMentorV3({
-    userId:                  input.platformChatId,
-    ulIntent:                rexCtx.ulIntent,
-    ulEmotion:               rexCtx.ulEmotion,
-    ulSuggestedIntervention: rexCtx.ulSuggestedIntervention,
-    interventionUsed:        parsed.intervention_used,
+    userId:           input.platformChatId,
+    ulIntent:         rexCtx.ulIntent,
+    ulEmotion:        rexCtx.ulEmotion,
+    interventionUsed: parsed.intervention_used,
     moodDetected:            parsed.mood_detected,
     schedulerState:          rexCtx.schedulerState?.trainingState ?? "unknown",
     conflictDetected,
@@ -2017,26 +3250,26 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
       analysis,
       memory,
       patterns,
-      intervention: interventionResult,
-      plan:             planResult,
+      plan:               planResult,
       gymContext:          gymContext          ?? null,
       gymPatternReport:    gymPatternReport    ?? null,
       engagementContext:   engagementContext   ?? null,
       rexSessionContext:   rexSessionContext   ?? null,
       rexExperienceLevel:  rexExperienceLevel  ?? null,
-      signalEngineV2:     sigV2.detectedSignals,
-      schedulerContextV2: schedulerContextV2 ?? null,
-      parseSignals:           input.parseResult?.signals ?? [],
-      parseIntent:            input.parseResult?.actionableIntent?.type
-                                ?? input.parseResult?.intents[0]?.type
-                                ?? "general_chat",
-      parseConfidence:        input.parseResult?.confidence ?? 1.0,
-      ulIntent:               input.routerDecision?.source === "ul"
-                                ? input.routerDecision.ulResult.intent
-                                : undefined,
-      suggestedIntervention:  input.routerDecision?.source === "ul"
-                                ? input.routerDecision.suggestedIntervention
-                                : undefined,
+      signalEngineV2:      sigV2.detectedSignals,
+      schedulerContextV2:  schedulerContextV2 ?? null,
+      parseSignals:        input.parseResult?.signals ?? [],
+      parseIntent:         input.parseResult?.actionableIntent?.type
+                             ?? input.parseResult?.intents[0]?.type,
+      parseConfidence:     input.parseResult?.confidence,
+      ulIntent:            input.routerDecision?.source === "ul"
+                             ? input.routerDecision.ulResult.intent
+                             : undefined,
+      recoveryStatus:      userCtx.fitnessSnapshot?.recoveryStatus ?? null,
+      hardConstraints:     buildHardConstraints(
+                             state,
+                             userCtx.fitnessSnapshot?.recoveryStatus?.constraintLevel ?? null,
+                           ),
     };
 
     diag.llmTokensRequested = Math.max(decision.tokenBudget, 80);

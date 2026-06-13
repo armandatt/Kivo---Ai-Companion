@@ -7,6 +7,10 @@ import { buildSchedulerContextV2 }                           from "../engines/sc
 import type { SchedulerContextV2 }                            from "../engines/scheduler-intelligence-v2";
 import { getGoalSummary }                                    from "./goalProgress.service";
 import type { GoalProgress }                                   from "./goalProgress.service";
+import { getRecoverySummary }                                from "../engines/recovery-engine";
+import type { RecoveryStatus }                                from "../engines/recovery-engine";
+import { getWeightTrend }                                    from "./bodyweight.service";
+import type { WeightTrend }                                   from "./bodyweight.service";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -23,16 +27,20 @@ export interface FitnessSnapshot {
   lastWorkoutDate:     string | null; // "YYYY-MM-DD" or null
   goalCategory:        string | null; // raw gym_goal from intakeAnswers
   goalProgress:        GoalProgress | null;
+  recoveryStatus:      RecoveryStatus | null; // null when flag disabled or no history
+  weightTrend:         WeightTrend | null;    // null when flag disabled or no history
 }
 
 // Raw sub-results returned alongside the snapshot so the orchestrator can
 // populate its existing PatternReport / EngagementContext / SchedulerContextV2
 // fields without re-fetching.
 export interface FitnessSnapshotBundle {
-  snapshot:      FitnessSnapshot;
-  patternReport: PatternReport | null;
-  engagementCtx: EngagementContext | null;
-  schedulerCtx:  SchedulerContextV2 | null;
+  snapshot:       FitnessSnapshot;
+  patternReport:  PatternReport | null;
+  engagementCtx:  EngagementContext | null;
+  schedulerCtx:   SchedulerContextV2 | null;
+  recoveryStatus: RecoveryStatus | null;
+  weightTrend:    WeightTrend | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -81,7 +89,9 @@ export async function buildFitnessSnapshot(
   const cached = readCache(messengerUserId, now);
   if (cached) return cached;
 
-  const [patternReport, engagementCtx, schedulerCtx, totalSessions, goalRow, goalProgress] =
+  // FIX 3: getWeightTrend runs in the first batch — independent of workout history.
+  // Weight tracking must function for users who have bodyweight entries but no sessions.
+  const [patternReport, engagementCtx, schedulerCtx, totalSessions, goalRow, goalProgress, weightTrend] =
     await Promise.all([
       computePatternReport(messengerUserId, now).catch(err => {
         console.error("[FITNESS_SNAPSHOT] patternReport:", err);
@@ -111,13 +121,30 @@ export async function buildFitnessSnapshot(
         console.error("[FITNESS_SNAPSHOT] goalProgress:", err);
         return null as GoalProgress | null;
       }),
+      getWeightTrend(messengerUserId, now).catch(err => {
+        console.error("[FITNESS_SNAPSHOT] weightTrend:", err);
+        return null as WeightTrend | null;
+      }),
     ]);
 
-  // User has no training history yet — no snapshot to build
-  if (!engagementCtx && !schedulerCtx?.hasAnyHistory) return null;
+  // Bail only when there is no training history AND no bodyweight data.
+  // A weight-only user must still receive a snapshot so their trend is visible.
+  if (!engagementCtx && !schedulerCtx?.hasAnyHistory && !weightTrend) return null;
 
   const ia          = goalRow?.intakeAnswers as Record<string, string> | null | undefined;
   const goalCategory = typeof ia?.gym_goal === "string" ? ia.gym_goal : null;
+
+  // Recovery assessment runs after scheduler context resolves so it can
+  // use daysSinceLastSession and completionRate7d without an extra query.
+  const recoveryStatus = await getRecoverySummary(
+    messengerUserId,
+    platformChatId,
+    schedulerCtx,
+    now,
+  ).catch(err => {
+    console.error("[FITNESS_SNAPSHOT] recoveryStatus:", err);
+    return null as RecoveryStatus | null;
+  });
 
   const snapshot: FitnessSnapshot = {
     consistencyScore:    patternReport?.consistencyScore ?? 0,
@@ -130,6 +157,8 @@ export async function buildFitnessSnapshot(
     lastWorkoutDate:     schedulerCtx?.lastSessionDate ?? null,
     goalCategory,
     goalProgress:        goalProgress ?? null,
+    recoveryStatus,
+    weightTrend,
   };
 
   const bundle: FitnessSnapshotBundle = {
@@ -137,6 +166,8 @@ export async function buildFitnessSnapshot(
     patternReport,
     engagementCtx,
     schedulerCtx,
+    recoveryStatus,
+    weightTrend,
   };
 
   writeCache(messengerUserId, bundle, now);

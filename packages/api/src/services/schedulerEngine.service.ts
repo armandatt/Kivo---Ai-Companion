@@ -26,9 +26,8 @@ export interface RestDayExtras {
 }
 
 export interface DailyCheckInExtras {
-  patternFlags:        string[]
-  interventionMessage: string | null
-  activeCommitments:   Array<{ title: string; daysLeft: number }>
+  patternFlags:      string[]
+  activeCommitments: Array<{ title: string; daysLeft: number }>
 }
 
 export interface ReactivationExtras {

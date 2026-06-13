@@ -117,6 +117,9 @@ const SIGNAL_SPECS: SignalSpec[] = [
     patterns: [
       { re: /\b(burned? out|burnt? out|complete(ly)? exhausted|can.?t function|nothing left in me)\b/, tier: "strong" },
       { re: /\b(running on empty|mentally exhausted|totally drained|done with (it|everything|this))\b/, tier: "strong" },
+      { re: /\b(hate (training|the gym|working out|going)|what.?s the point|sick of (this|trying)|tired of (this|trying))\b/, tier: "medium" },
+      { re: /\b(going through the motions|can.?t remember why i started|dread (training|the gym|going))\b/, tier: "medium" },
+      { re: /\b(don.?t (even )?care anymore|feel like giving up on (this|training|the gym))\b/,       tier: "medium" },
       { re: /\b(drained|no energy left|exhausted by (this|it|everything)|hitting a wall)\b/,           tier: "medium" },
       { re: /\b(worn out|feeling drained|low on energy)\b/,                                            tier: "weak"   },
       { re: /\b(feel(ing)? exhausted|really tired|dead.?tired|wiped.?out|totally wiped|running low|mentally drained)\b/, tier: "weak" },
@@ -236,6 +239,12 @@ const SIGNAL_SPECS: SignalSpec[] = [
       { re: /\b(couldn.?t (really )?find (the )?time|been (too busy|too tired) (to|for))\b/,        tier: "weak"   },
     ],
     stateDeltas: { consistency: -5, discipline: -7 },
+    memoryWrite: {
+      memType:      "excuse_pattern",
+      keyPrefix:    "excuse",
+      minIntensity: 0.52,
+      shouldUpsert: false,
+    },
   },
 
   // ── commitment ───────────────────────────────────────────────────────────────

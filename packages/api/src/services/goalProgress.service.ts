@@ -1,5 +1,6 @@
 import { prisma }                    from "@repo/db/client";
 import { invalidateFitnessSnapshot } from "./fitnessSnapshot.service";
+import { getLatestWeight }           from "./bodyweight.service";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // FEATURE FLAG
@@ -174,8 +175,13 @@ export async function getGoalSummary(
   // ── Current value from live sources ───────────────────────────────────────
   let currentValue: number | null = null;
   if (!exercise) {
-    const bw = parseFloat(ia?.current_bodyweight_kg ?? "");
-    currentValue = Number.isFinite(bw) ? bw : null;
+    // Prefer BodyweightHistory (append-only time series). Fall back to intakeAnswers
+    // for users who have not yet logged a bodyweight entry.
+    currentValue = await getLatestWeight(messengerUserId);
+    if (currentValue === null) {
+      const bw = parseFloat(ia?.current_bodyweight_kg ?? "");
+      currentValue = Number.isFinite(bw) ? bw : null;
+    }
   } else {
     const records = (user.personalRecords ?? {}) as Record<string, { weightKg: number }>;
     currentValue = records[exercise]?.weightKg ?? null;

@@ -95,6 +95,7 @@ model MessengerUser {
   customReminders      CustomReminder[]
   nutritionLogs        NutritionLog[]
   goalProgressRecords  GoalProgress[]
+  bodyweightHistory    BodyweightHistory[]
 
   @@unique([platform, platformChatId])
   @@index([platformChatId])
@@ -584,4 +585,16 @@ model TelegramSetLog {
 
   @@index([sessionId])
   @@index([sessionId, exerciseName])
+}
+
+model BodyweightHistory {
+  id         String   @id @default(cuid())
+  userId     String
+  weightKg   Float
+  recordedAt DateTime @default(now())
+  source     String   // "onboarding" | "manual_update" | "passive_capture"
+
+  user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, recordedAt(sort: Desc)])
 }

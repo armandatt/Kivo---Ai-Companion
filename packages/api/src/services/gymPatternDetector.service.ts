@@ -25,7 +25,6 @@ export interface PatternReport {
   weeklyVolume:        WeeklyVolumeEntry[]
   deloadDue:           boolean
   flags:               string[]
-  interventionMessage: string | null
 }
 
 interface RawSession {
@@ -81,10 +80,6 @@ function shortMuscle(muscle: string): string {
   return muscle.toLowerCase()
 }
 
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1)
-}
-
 // Groups sets by exercise → sessions in chronological order
 function groupByExerciseAndSession(
   sets:         RawSet[],
@@ -103,76 +98,6 @@ function groupByExerciseAndSession(
       .map(id => sessionMap[id]!)
   }
   return result
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// FLAG → INTERVENTION MESSAGE
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function buildInterventionMessage(
-  flags:               string[],
-  stalledLifts:        StalledLift[],
-  consistencyScore:    number,
-  inferredMethodology: "strength" | "hypertrophy" | "mixed",
-): string | null {
-  // Priority: OVERREACHING > REGRESSION > STALL > LOW_CONSISTENCY >
-  //           MUSCLE_AVOIDANCE > UNDERTRAINING > LOW_VOLUME > SCHEDULE_SLIP > DELOAD_DUE
-
-  if (flags.includes("OVERREACHING")) {
-    return "Your RPE has been 9-10 every session this week. That's not intensity, that's your CNS screaming. Cut weights 15% today. Not optional."
-  }
-
-  const regression = flags.find(f => f.startsWith("REGRESSION:"))
-  if (regression) {
-    const ex = capitalize(regression.replace("REGRESSION: ", ""))
-    return `${ex} dropped twice in a row. Not a technique issue — answer me this: sleep and food this week, 1-10?`
-  }
-
-  const stall = flags.find(f => f.startsWith("STALL:"))
-  if (stall) {
-    const ex = capitalize(stall.replace("STALL: ", ""))
-    const lift = stalledLifts.find(s => s.exercise.toLowerCase() === ex.toLowerCase())
-    const weightMatch = lift?.suggestedFix.match(/(\d+(?:\.\d+)?)kg/)
-    const weight = weightMatch ? `${weightMatch[1]}kg` : "the same weight"
-    return `${ex} has been ${weight} for 3 sessions. We're not adding weight — we're adding a rep. Same weight, hit one more rep. Reset the pattern.`
-  }
-
-  if (flags.includes("LOW_CONSISTENCY")) {
-    return `Real talk — you've completed ${consistencyScore}% of planned sessions in the last 4 weeks. That's not a schedule problem. What's actually going on?`
-  }
-
-  const avoidance = flags.find(f => f.startsWith("MUSCLE_AVOIDANCE:"))
-  if (avoidance) {
-    const muscle = avoidance.replace("MUSCLE_AVOIDANCE: ", "")
-    return `You haven't trained ${muscle} in over 10 days. I'm not asking if you want to. It's on the plan. When this week?`
-  }
-
-  if (flags.includes("UNDERTRAINING")) {
-    return "You've been coasting. RPE 5-6 isn't training, it's showing up. Add 5kg across the board this session."
-  }
-
-  const lowVol = flags.find(f => f.startsWith("LOW_VOLUME:"))
-  if (lowVol) {
-    const muscle = lowVol.replace("LOW_VOLUME: ", "")
-    return `Your ${muscle} is getting under 10 sets this week. Minimum for growth is 12-16. Add one more set to your next session.`
-  }
-
-  if (flags.includes("SCHEDULE_SLIP")) {
-    return "Your session gaps are stretching past what the plan allows. Give me a specific day you're training this week."
-  }
-
-  if (flags.includes("HIGH_VOLUME")) {
-    const hv = flags.find(f => f.startsWith("HIGH_VOLUME:"))!
-    const muscle = hv.replace("HIGH_VOLUME: ", "")
-    return `Over 22 sets for ${muscle} this week. More volume isn't better — it's just more. Drop 2 sets and add sleep instead.`
-  }
-
-  if (flags.includes("DELOAD_DUE")) {
-    const label = inferredMethodology === "strength" ? "4 cycles of real training" : "4 weeks straight"
-    return `${label}. Next cycle is a deload — 60% weights, 2 sets per exercise. I know you hate it. Do it anyway.`
-  }
-
-  return null
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -331,10 +256,6 @@ export async function computePatternReport(
   }
   if (deloadDue) flags.push("DELOAD_DUE")
 
-  const interventionMessage = buildInterventionMessage(
-    flags, stalledLifts, consistencyScore, inferredMethodology,
-  )
-
   return {
     consistencyScore,
     skippedMuscles,
@@ -344,6 +265,5 @@ export async function computePatternReport(
     weeklyVolume,
     deloadDue,
     flags,
-    interventionMessage,
   }
 }
