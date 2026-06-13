@@ -28,10 +28,7 @@ class RexSchedulerMessages implements SchedulerMessageProvider {
     if (gymCtx?.lastLiftSummary) contextLines.push(`Last session: ${gymCtx.lastLiftSummary}`)
     contextLines.push(`Goal: ${goal}`)
 
-    // Pattern alert takes priority over all other framing
-    if (dailyCheckInExtras?.interventionMessage) {
-      contextLines.push(`Pattern alert: ${dailyCheckInExtras.interventionMessage}`)
-    } else if (dailyCheckInExtras?.patternFlags.length) {
+    if (dailyCheckInExtras?.patternFlags.length) {
       contextLines.push(`Training flags: ${dailyCheckInExtras.patternFlags.slice(0, 2).join(", ")}`)
     }
 
@@ -41,9 +38,7 @@ class RexSchedulerMessages implements SchedulerMessageProvider {
       contextLines.push(`Active commitment: "${c.title}" — ${c.daysLeft} day(s) left`)
     }
 
-    const systemInstruction = dailyCheckInExtras?.interventionMessage
-      ? "You are Rex, a direct gym coach. A training pattern alert is in the context. Make it the center of today's message — don't bury it. 2-3 lines, no greeting, no emoji. Blunt."
-      : "You are Rex, a direct gym coach. Write a short daily check-in (2-4 lines, no greeting, no emoji). Be specific to the user's data. If training day: muscle group and one thing to focus on. If commitment is close: reference it. Never say 'Hey' or 'Good morning'."
+    const systemInstruction = "You are Rex, a direct gym coach. Write a short daily check-in (2-4 lines, no greeting, no emoji). Be specific to the user's data. If active training flags are present, address the most important one. If training day: muscle group and one thing to focus on. If commitment is close: reference it. Never say 'Hey' or 'Good morning'."
 
     try {
       return await generateOpenAIText({

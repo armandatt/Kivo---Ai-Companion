@@ -1,5 +1,6 @@
 import { prisma } from "@repo/db/client"
 import { invalidateFitnessSnapshot } from "./fitnessSnapshot.service"
+import { recordBodyweight } from "./bodyweight.service"
 import { addToLongTerm, addToShortTerm } from "./memory.service"
 import { savePlan } from "./planner.service"
 import { saveDeadline } from "./deadline.service"
@@ -659,6 +660,7 @@ async function handleGaBody(text: string, answers: IntakeAnswers, user: IntakeUs
     answers.current_bodyweight_kg = String(bw)
     // protein target = bodyweight_kg × 2.2 × 0.8 (conservative minimum)
     answers.protein_target_g = String(Math.round(bw * 2.2 * 0.8))
+    void recordBodyweight(user.id, bw, "onboarding")
   }
   if (ht) answers.height_cm = String(ht)
   if (bw && ht) {
@@ -1283,6 +1285,8 @@ async function handleGaReview(
     const mutable = answers as Record<string, unknown>
     delete mutable.review_other_pending
     const changed = applyTextCorrection(text, answers)
+    const bwCorrected = parseBodyweightKg(text)
+    if (bwCorrected) void recordBodyweight(user.id, bwCorrected, "manual_update")
     await prisma.messengerUser.update({ where: { id: user.id }, data: { intakeAnswers: answers as any } })
     invalidateFitnessSnapshot(user.id, "intake_update")
     if (changed) {
@@ -2179,7 +2183,11 @@ async function applyPassiveIntakeData(userId: string, answers: IntakeAnswers, te
   // Bug 10: also passively capture bodyweight, height, and training days
   if (!answers.current_bodyweight_kg) {
     const bw = parseBodyweightKg(text)
-    if (bw) { answers.current_bodyweight_kg = String(bw); changed = true }
+    if (bw) {
+      answers.current_bodyweight_kg = String(bw)
+      void recordBodyweight(userId, bw, "passive_capture")
+      changed = true
+    }
   }
   if (!answers.height_cm) {
     const ht = parseHeightCm(text)

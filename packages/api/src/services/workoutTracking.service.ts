@@ -1,6 +1,7 @@
 import { prisma } from "@repo/db/client"
 import { buildSchedulerContextV2, TrainingState } from "../engines/scheduler-intelligence-v2"
 import { invalidateFitnessSnapshot } from "./fitnessSnapshot.service"
+import { recordBodyweight } from "./bodyweight.service"
 import {
   getStreakMilestoneMessage,
   getStreakBrokenMessage,
@@ -1623,6 +1624,8 @@ export async function handleSetupCommand(
       }
     }
     await writeIntakeAnswers(user.id, { ...intake, current_bodyweight_kg: kg.toString() })
+    void recordBodyweight(user.id, kg, "manual_update")
+    invalidateFitnessSnapshot(user.id, "weight_update")
     return { handled: true, reply: `Updated. Bodyweight now ${kg}kg.` }
   }
 
@@ -1701,12 +1704,16 @@ async function handleSetupPendingMessage(
     const kg = parseFloat(pending.value ?? "0")
     if (/^(yes|yep|yeah|correct|right|that.?s right|confirmed?)$/i.test(lower)) {
       await writeIntakeAnswers(user.id, { ...intake, current_bodyweight_kg: kg.toString() })
+      void recordBodyweight(user.id, kg, "manual_update")
+      invalidateFitnessSnapshot(user.id, "weight_update")
       await writeSplitState(user.id, { ...state, setupPending: null })
       return { handled: true, reply: `Got it. Bodyweight updated to ${kg}kg.` }
     }
     const corrected = parseFloat(text.trim())
     if (!isNaN(corrected) && corrected > 20 && corrected < 300) {
       await writeIntakeAnswers(user.id, { ...intake, current_bodyweight_kg: corrected.toString() })
+      void recordBodyweight(user.id, corrected, "manual_update")
+      invalidateFitnessSnapshot(user.id, "weight_update")
       await writeSplitState(user.id, { ...state, setupPending: null })
       return { handled: true, reply: `Updated to ${corrected}kg.` }
     }

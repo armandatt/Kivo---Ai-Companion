@@ -148,9 +148,8 @@ async function runRexDailyCheckInCron(now: Date): Promise<GymCronMessage[]> {
     }).catch(() => []);
 
     const dailyCheckInExtras: DailyCheckInExtras = {
-      patternFlags:        patternReport?.flags ?? [],
-      interventionMessage: patternReport?.interventionMessage ?? null,
-      activeCommitments:   deadlines.map(d => ({
+      patternFlags:      patternReport?.flags ?? [],
+      activeCommitments: deadlines.map(d => ({
         title:    d.title,
         daysLeft: Math.ceil((d.dueAt.getTime() - now.getTime()) / 86_400_000),
       })),

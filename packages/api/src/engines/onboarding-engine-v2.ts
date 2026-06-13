@@ -1,5 +1,6 @@
 import { prisma } from "@repo/db/client";
 import { addToShortTerm } from "../services/memory.service";
+import { recordBodyweight } from "../services/bodyweight.service";
 import {
   parseMessage,
   IntentType,
@@ -1014,6 +1015,15 @@ export async function finalizeIntake(userId: string, platformChatId: string, sta
                      await prisma.memoryFact.create({ data: { userId, type: "preference", key: "injury_notes",         value: a.injury_notes, confidence: 0.90 } });
   if (a.training_experience)
                      await prisma.memoryFact.create({ data: { userId, type: "preference", key: "training_experience",  value: a.training_experience, confidence: 0.90 } });
+
+  // Seed BodyweightHistory from onboarding answer so weight trend starts from Day 0.
+  // The AI extractor already converts lbs → kg during onboarding, so the value is always in kg.
+  if (a.current_bodyweight_kg) {
+    const bwKg = parseFloat(a.current_bodyweight_kg);
+    if (!isNaN(bwKg) && bwKg > 20 && bwKg < 400) {
+      recordBodyweight(userId, bwKg, "onboarding").catch(() => {});
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

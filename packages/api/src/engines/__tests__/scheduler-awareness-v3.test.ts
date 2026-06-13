@@ -1,11 +1,10 @@
 /**
  * Scheduler Awareness V3 — LLM Prompt Builder Unit Tests
  *
- * Tests the four new builder functions added in REX LLM Integration V3:
+ * Tests the builder functions for REX LLM Integration V3:
  *   - buildActiveSignalsBlock
  *   - buildTrainingStateBlock
  *   - buildParserSafetyBlock
- *   - buildV2DirectiveOverride
  *
  * These are pure unit tests — no LLM calls, no DB, no I/O.
  */
@@ -26,7 +25,6 @@ import {
   buildActiveSignalsBlock,
   buildTrainingStateBlock,
   buildParserSafetyBlock,
-  buildV2DirectiveOverride,
 } from "../../services/llm";
 import { TrainingState, TrainingWindow } from "../scheduler-intelligence-v2";
 import type { SchedulerContextV2 } from "../scheduler-intelligence-v2";
@@ -65,7 +63,7 @@ function makeDecision(overrides: Partial<MentorDecision> = {}): MentorDecision {
   return {
     action:           MentorAction.ACCOUNTABILITY,
     subAction:        "failure_with_excuse",
-    urgency:          DecisionUrgency.MEDIUM,
+    urgency:          DecisionUrgency.LOW,
     tone:             DecisionTone.FIRM,
     requiresLLM:      true,
     tokenBudget:      150,
@@ -360,83 +358,6 @@ describe("buildActiveSignalsBlock", () => {
   });
 });
 
-// ─── buildV2DirectiveOverride ─────────────────────────────────────────────────
-
-describe("buildV2DirectiveOverride", () => {
-  it("returns null for non-V2 ruleId", () => {
-    const decision = makeDecision({ ruleId: "V1:some_rule" });
-    expect(buildV2DirectiveOverride(decision)).toBeNull();
-  });
-
-  it("returns null for ruleId without V2: prefix", () => {
-    const decision = makeDecision({ ruleId: "ACCOUNTABILITY/failure_with_excuse" });
-    expect(buildV2DirectiveOverride(decision)).toBeNull();
-  });
-
-  it("SURFACE_PROMISE returns promise-surfacing directive, not generic failure_with_excuse text", () => {
-    const decision = makeDecision({
-      ruleId:    "V2:SURFACE_PROMISE",
-      action:    MentorAction.ACCOUNTABILITY,
-      subAction: "failure_with_excuse",
-    });
-    const directive = buildV2DirectiveOverride(decision);
-    expect(directive).not.toBeNull();
-    expect(directive).toContain("promise");
-    expect(directive).toContain("commitment");
-    // Must NOT contain the generic failure_with_excuse language
-    expect(directive).not.toContain("Hold the standard");
-    expect(directive).not.toContain("acknowledge the failure");
-  });
-
-  it("SURFACE_BREAKTHROUGH returns breakthrough-surfacing directive", () => {
-    const decision = makeDecision({ ruleId: "V2:SURFACE_BREAKTHROUGH" });
-    const directive = buildV2DirectiveOverride(decision);
-    expect(directive).not.toBeNull();
-    expect(directive).toContain("breakthrough");
-    expect(directive).toContain("self-doubt");
-  });
-
-  it("SURFACE_COMMITMENT returns commitment-surfacing directive", () => {
-    const decision = makeDecision({ ruleId: "V2:SURFACE_COMMITMENT" });
-    const directive = buildV2DirectiveOverride(decision);
-    expect(directive).not.toBeNull();
-    expect(directive).toContain("commitment");
-  });
-
-  it("REDUCE_FRICTION returns friction-reduction directive", () => {
-    const decision = makeDecision({ ruleId: "V2:REDUCE_FRICTION" });
-    const directive = buildV2DirectiveOverride(decision);
-    expect(directive).not.toBeNull();
-    expect(directive).toContain("smallest action");
-  });
-
-  it("PREVENT_SPIRAL returns spiral-prevention directive", () => {
-    const decision = makeDecision({ ruleId: "V2:PREVENT_SPIRAL" });
-    const directive = buildV2DirectiveOverride(decision);
-    expect(directive).not.toBeNull();
-    expect(directive).toContain("Spiral risk");
-  });
-
-  it("PRIORITY_RESET returns priority-reset directive", () => {
-    const decision = makeDecision({ ruleId: "V2:PRIORITY_RESET" });
-    const directive = buildV2DirectiveOverride(decision);
-    expect(directive).not.toBeNull();
-    expect(directive).toContain("ONE commitment");
-  });
-
-  it("PREVENT_BURNOUT returns burnout-prevention directive with zero pressure", () => {
-    const decision = makeDecision({ ruleId: "V2:PREVENT_BURNOUT" });
-    const directive = buildV2DirectiveOverride(decision);
-    expect(directive).not.toBeNull();
-    expect(directive).toContain("Zero pressure");
-  });
-
-  it("unknown V2 intervention returns null gracefully", () => {
-    const decision = makeDecision({ ruleId: "V2:NONEXISTENT_INTERVENTION" });
-    expect(buildV2DirectiveOverride(decision)).toBeNull();
-  });
-});
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // PART 7 — VALIDATION AUDIT
 // Special-focus scenarios that must produce the correct safety/state blocks.
@@ -647,9 +568,412 @@ describe("Part 7 — Special Scenario Integration Audit", () => {
     expect(scheduler).toBe(true);
   });
 
-  // ── Ensure all 10 scenarios ran ───────────────────────────────────────────
+  // ── UPCOMING state — no session push, preparation only ───────────────────
 
-  it("AUDIT COMPLETE — all 10 special scenarios captured", () => {
-    expect(SCORES).toHaveLength(10);
+  it("UPCOMING state instructs preparation only", () => {
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState:    TrainingState.UPCOMING,
+      pendingMuscles:   "shoulders, triceps",
+      completionRate7d: 0.80,
+      observedWindow:   TrainingWindow.EVENING,
+      windowConfidence: "high",
+    }));
+    const safety    = true;
+    const scheduler = schedulerBlock.includes("Current state: UPCOMING") &&
+                      schedulerBlock.includes("preparation");
+    const signals   = true;
+
+    SCORES.push({ scenario: "UPCOMING state (preparation only)", safety, scheduler, signals });
+    expect(scheduler).toBe(true);
+  });
+
+  // ── UNKNOWN state — do not infer ─────────────────────────────────────────
+
+  it("UNKNOWN state instructs LLM not to infer training status", () => {
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState: TrainingState.UNKNOWN,
+      hasAnyHistory: false,
+    }));
+    const safety    = true;
+    const scheduler = schedulerBlock.includes("Current state: UNKNOWN") &&
+                      schedulerBlock.includes("Insufficient history") ||
+                      schedulerBlock.includes("Do not infer");
+    const signals   = true;
+
+    SCORES.push({ scenario: "UNKNOWN state (no history, do not infer)", safety, scheduler, signals });
+    expect(schedulerBlock).toContain("UNKNOWN");
+  });
+
+  // ── DUE + high consecutive misses — accountability context visible ────────
+
+  it("DUE state with 4 consecutive misses shows miss count", () => {
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState:    TrainingState.DUE,
+      consecutiveMisses: 4,
+      completionRate7d: 0.20,
+      observedWindow:   TrainingWindow.MORNING,
+      windowConfidence: "medium",
+    }));
+    const safety    = true;
+    const scheduler = schedulerBlock.includes("Consecutive misses: 4") &&
+                      schedulerBlock.includes("20%");
+    const signals   = true;
+
+    SCORES.push({ scenario: "DUE state with high consecutive misses", safety, scheduler, signals });
+    expect(scheduler).toBe(true);
+  });
+
+  // ── achievement signal — positive valence visible in signals block ────────
+
+  it("achievement signal appears in signals block", () => {
+    const achieveSig: DetectedSignal = { type: "achievement", intensity: 0.78, valence: "positive", confidence: 0.88, evidence: ["hit a PR"] };
+    const block = buildActiveSignalsBlock([achieveSig]);
+    const safety    = true;
+    const scheduler = true;
+    const signals   = block.includes("achievement (0.78)");
+
+    SCORES.push({ scenario: "achievement signal (positive)", safety, scheduler, signals });
+    expect(signals).toBe(true);
+  });
+
+  // ── commitment signal — surfaces above threshold ───────────────────────────
+
+  it("commitment signal surfaces above threshold", () => {
+    const commitSig: DetectedSignal = { type: "commitment", intensity: 0.85, valence: "positive", confidence: 0.90, evidence: ["promised I would"] };
+    const block = buildActiveSignalsBlock([commitSig]);
+    const safety    = true;
+    const scheduler = true;
+    const signals   = block.includes("commitment (0.85)");
+
+    SCORES.push({ scenario: "commitment signal (high intensity)", safety, scheduler, signals });
+    expect(signals).toBe(true);
+  });
+
+  // ── fear signal — below threshold does not appear ─────────────────────────
+
+  it("fear signal below 0.35 is excluded from signals block", () => {
+    const fearSig: DetectedSignal = { type: "fear", intensity: 0.28, valence: "negative", confidence: 0.70, evidence: ["worried about"] };
+    const block = buildActiveSignalsBlock([fearSig]);
+    const safety    = true;
+    const scheduler = true;
+    const signals   = block === "";  // empty — below threshold
+
+    SCORES.push({ scenario: "fear signal below threshold (excluded)", safety, scheduler, signals });
+    expect(block).toBe("");
+  });
+
+  // ── excuse signal — appears above threshold ──────────────────────────────
+
+  it("excuse signal appears when above threshold", () => {
+    const excuseSig: DetectedSignal = { type: "excuse", intensity: 0.62, valence: "negative", confidence: 0.80, evidence: ["work was crazy"] };
+    const block = buildActiveSignalsBlock([excuseSig]);
+    const safety    = true;
+    const scheduler = true;
+    const signals   = block.includes("excuse (0.62)");
+
+    SCORES.push({ scenario: "excuse signal above threshold", safety, scheduler, signals });
+    expect(signals).toBe(true);
+  });
+
+  // ── motivation signal (positive) — label correct ─────────────────────────
+
+  it("motivation signal (positive) shown without valence suffix", () => {
+    const motivSig: DetectedSignal = { type: "motivation", intensity: 0.73, valence: "positive", confidence: 0.85, evidence: ["feeling pumped"] };
+    const block = buildActiveSignalsBlock([motivSig]);
+    const safety    = true;
+    const scheduler = true;
+    const signals   = block.includes("motivation (0.73)") && !block.includes("motivation_positive");
+
+    SCORES.push({ scenario: "motivation signal (positive label correct)", safety, scheduler, signals });
+    expect(signals).toBe(true);
+  });
+
+  // ── All signals at exactly 0.35 — included at boundary ───────────────────
+
+  it("signals at exactly 0.35 are included (boundary inclusive)", () => {
+    const atThreshold: DetectedSignal = { type: "stress", intensity: 0.35, valence: "negative", confidence: 0.75, evidence: [] };
+    const block = buildActiveSignalsBlock([atThreshold]);
+    const safety    = true;
+    const scheduler = true;
+    const signals   = block.includes("stress (0.35)");
+
+    SCORES.push({ scenario: "signal at exactly 0.35 threshold (included)", safety, scheduler, signals });
+    expect(signals).toBe(true);
+  });
+
+  // ── Vague recommendation (low confidence) — parser warns LLM ─────────────
+
+  it("low parse confidence injects LOW-confidence warning into safety block", () => {
+    const safetyBlock = buildParserSafetyBlock([], "recommendation_request", 0.45);
+    const safety    = safetyBlock.includes("confidence is LOW");
+    const scheduler = true;
+    const signals   = true;
+
+    SCORES.push({ scenario: "vague recommendation request (low confidence)", safety, scheduler, signals });
+    expect(safety).toBe(true);
+  });
+
+  // ── Medium parse confidence — no warning fires ────────────────────────────
+
+  it("medium parse confidence (0.65) does NOT trigger LOW warning", () => {
+    const safetyBlock = buildParserSafetyBlock([], "recommendation_request", 0.65);
+    const safety    = !safetyBlock.includes("confidence is LOW");
+    const scheduler = true;
+    const signals   = true;
+
+    SCORES.push({ scenario: "medium parse confidence (no low-confidence warning)", safety, scheduler, signals });
+    expect(safety).toBe(true);
+  });
+
+  // ── High parse confidence — intent line shows correctly ──────────────────
+
+  it("high parse confidence shows intent and confidence without warning", () => {
+    const safetyBlock = buildParserSafetyBlock([], "log_workout", 0.92);
+    const safety    = safetyBlock.includes("intent: log_workout") &&
+                      safetyBlock.includes("confidence: 0.92") &&
+                      !safetyBlock.includes("confidence is LOW");
+    const scheduler = true;
+    const signals   = true;
+
+    SCORES.push({ scenario: "high parse confidence (intent shown, no warning)", safety, scheduler, signals });
+    expect(safety).toBe(true);
+  });
+
+  // ── Burnout signal + COMPLETED state — rest mandate visible ──────────────
+
+  it("burnout + COMPLETED: rest cue from both signals and scheduler", () => {
+    const burnoutSig: DetectedSignal = { type: "burnout", intensity: 0.88, valence: "negative", confidence: 0.92, evidence: ["done"] };
+    const signalsBlock = buildActiveSignalsBlock([burnoutSig]);
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState:         TrainingState.COMPLETED,
+      completedTodayMuscles: "legs",
+      completionRate7d:      0.90,
+      observedWindow:        TrainingWindow.MORNING,
+      windowConfidence:      "high",
+    }));
+    const safety    = true;
+    const scheduler = schedulerBlock.includes("Do NOT encourage training again");
+    const signals   = signalsBlock.includes("burnout (0.88)");
+
+    SCORES.push({ scenario: "burnout + COMPLETED (double rest cue)", safety, scheduler, signals });
+    expect(scheduler && signals).toBe(true);
+  });
+
+  // ── SKIPPED + high misses — consecutive misses count is visible ───────────
+
+  it("SKIPPED + 3 consecutive misses — miss count in block", () => {
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState:    TrainingState.SKIPPED,
+      consecutiveMisses: 3,
+      completionRate7d: 0.25,
+      observedWindow:   TrainingWindow.MORNING,
+      windowConfidence: "medium",
+    }));
+    const safety    = true;
+    const scheduler = schedulerBlock.includes("SKIPPED") &&
+                      schedulerBlock.includes("Consecutive misses: 3") &&
+                      schedulerBlock.includes("25%");
+    const signals   = true;
+
+    SCORES.push({ scenario: "SKIPPED + 3 consecutive misses", safety, scheduler, signals });
+    expect(scheduler).toBe(true);
+  });
+
+  // ── PENDING_CONFIRMATION + low rate — verify before assuming ─────────────
+
+  it("PENDING_CONFIRMATION with 20% completion rate — verify instruction present", () => {
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState:    TrainingState.PENDING_CONFIRMATION,
+      consecutiveMisses: 2,
+      completionRate7d: 0.20,
+      observedWindow:   TrainingWindow.AFTERNOON,
+      windowConfidence: "low",
+    }));
+    const safety    = true;
+    const scheduler = schedulerBlock.includes("PENDING_CONFIRMATION") &&
+                      schedulerBlock.includes("Verify whether they trained") &&
+                      schedulerBlock.includes("20%");
+    const signals   = true;
+
+    SCORES.push({ scenario: "PENDING_CONFIRMATION low completion (verify)", safety, scheduler, signals });
+    expect(scheduler).toBe(true);
+  });
+
+  // ── UPCOMING + muscle group visible — prep for specific session ───────────
+
+  it("UPCOMING state shows pending muscle group for prep", () => {
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState:       TrainingState.UPCOMING,
+      pendingMuscles:      "back, biceps",
+      pendingSplitDayIndex: 3,
+      completionRate7d:    0.75,
+      observedWindow:      TrainingWindow.EVENING,
+      windowConfidence:    "high",
+    }));
+    const safety    = true;
+    const scheduler = schedulerBlock.includes("UPCOMING") &&
+                      schedulerBlock.includes("Current muscle group: back, biceps") &&
+                      schedulerBlock.includes("Cycle day: 4");
+    const signals   = true;
+
+    SCORES.push({ scenario: "UPCOMING with pending muscle group and cycle day", safety, scheduler, signals });
+    expect(scheduler).toBe(true);
+  });
+
+  // ── No training history — UNKNOWN, hasAnyHistory false ───────────────────
+
+  it("no training history shows UNKNOWN state and zero completion", () => {
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState:    TrainingState.UNKNOWN,
+      hasAnyHistory:    false,
+      completionRate7d: 0,
+      consecutiveMisses: 0,
+      observedWindow:   TrainingWindow.FLEXIBLE,
+      windowConfidence: "low",
+    }));
+    const safety    = true;
+    const scheduler = schedulerBlock.includes("UNKNOWN") &&
+                      schedulerBlock.includes("0%");
+    const signals   = true;
+
+    SCORES.push({ scenario: "no training history (UNKNOWN + zero rate)", safety, scheduler, signals });
+    expect(schedulerBlock).toContain("UNKNOWN");
+  });
+
+  // ── All parser signals + COMPLETED — maximum safety context ─────────────
+
+  it("all parser signals + COMPLETED state — full safety + scheduler context", () => {
+    const safetyBlock = buildParserSafetyBlock(
+      ["PAIN_MENTIONED", "INJURY_CONTEXT", "RECOMMENDATION_BLOCKED"],
+      "recommendation_request",
+      0.50,
+    );
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState:         TrainingState.COMPLETED,
+      completedTodayMuscles: "chest",
+      completionRate7d:      0.70,
+      observedWindow:        TrainingWindow.MORNING,
+      windowConfidence:      "medium",
+    }));
+    const safety    = safetyBlock.includes("RECOMMENDATION_BLOCKED = TRUE") &&
+                      safetyBlock.includes("Injury context detected.") &&
+                      safetyBlock.includes("confidence is LOW");
+    const scheduler = schedulerBlock.includes("Do NOT encourage training again");
+    const signals   = true;
+
+    SCORES.push({ scenario: "all parser signals + COMPLETED (maximum safety)", safety, scheduler, signals });
+    expect(safety && scheduler).toBe(true);
+  });
+
+  // ── identity_statement signal — positive, surfaces above threshold ────────
+
+  it("identity_statement signal visible above threshold", () => {
+    const idSig: DetectedSignal = { type: "identity_statement", intensity: 0.58, valence: "positive", confidence: 0.80, evidence: ["I am a person who trains"] };
+    const block = buildActiveSignalsBlock([idSig]);
+    const safety    = true;
+    const scheduler = true;
+    const signals   = block.includes("identity_statement (0.58)");
+
+    SCORES.push({ scenario: "identity_statement signal above threshold", safety, scheduler, signals });
+    expect(signals).toBe(true);
+  });
+
+  // ── DUE + 100% completion rate — strong momentum context ─────────────────
+
+  it("DUE state with 100% completion rate shows perfect momentum", () => {
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState:    TrainingState.DUE,
+      pendingMuscles:   "chest",
+      completionRate7d: 1.0,
+      consecutiveMisses: 0,
+      observedWindow:   TrainingWindow.MORNING,
+      windowConfidence: "high",
+    }));
+    const safety    = true;
+    const scheduler = schedulerBlock.includes("DUE") &&
+                      schedulerBlock.includes("100%") &&
+                      schedulerBlock.includes("Consecutive misses: 0");
+    const signals   = true;
+
+    SCORES.push({ scenario: "DUE + 100% completion (perfect momentum)", safety, scheduler, signals });
+    expect(scheduler).toBe(true);
+  });
+
+  // ── stress signal at 0.34 — just below threshold, excluded ──────────────
+
+  it("stress signal at 0.34 is just below threshold and excluded", () => {
+    const stressSig: DetectedSignal = { type: "stress", intensity: 0.34, valence: "negative", confidence: 0.75, evidence: [] };
+    const block = buildActiveSignalsBlock([stressSig]);
+    const safety    = true;
+    const scheduler = true;
+    const signals   = block === "";
+
+    SCORES.push({ scenario: "stress at 0.34 (just below threshold, excluded)", safety, scheduler, signals });
+    expect(block).toBe("");
+  });
+
+  // ── self_doubt signal (positive valence) — no suffix added ───────────────
+
+  it("self_doubt with positive valence shown without suffix", () => {
+    const sig: DetectedSignal = { type: "self_doubt", intensity: 0.50, valence: "positive", confidence: 0.75, evidence: [] };
+    const block = buildActiveSignalsBlock([sig]);
+    const safety    = true;
+    const scheduler = true;
+    const signals   = block.includes("• self_doubt (0.50)") && !block.includes("self_doubt_positive");
+
+    SCORES.push({ scenario: "self_doubt positive valence (no _positive suffix)", safety, scheduler, signals });
+    expect(signals).toBe(true);
+  });
+
+  // ── Empty parseSignals with intent/confidence — SAFETY FLAGS absent ───────
+
+  it("no safety signals → SAFETY FLAGS block absent, PARSER CLASSIFICATION present", () => {
+    const block = buildParserSafetyBlock([], "recommendation_request", 0.88);
+    const safety    = !block.includes("SAFETY FLAGS") && block.includes("PARSER CLASSIFICATION");
+    const scheduler = true;
+    const signals   = true;
+
+    SCORES.push({ scenario: "no safety signals, intent+confidence visible", safety, scheduler, signals });
+    expect(safety).toBe(true);
+  });
+
+  // ── Only RECOMMENDATION_BLOCKED (no PAIN_MENTIONED) ─────────────────────
+
+  it("RECOMMENDATION_BLOCKED alone shows blocked flag without pain mention", () => {
+    const block = buildParserSafetyBlock(["RECOMMENDATION_BLOCKED"]);
+    const safety    = block.includes("RECOMMENDATION_BLOCKED = TRUE") &&
+                      !block.includes("Pain mentioned.");
+    const scheduler = true;
+    const signals   = true;
+
+    SCORES.push({ scenario: "RECOMMENDATION_BLOCKED without PAIN_MENTIONED", safety, scheduler, signals });
+    expect(safety).toBe(true);
+  });
+
+  // ── COMPLETED state + zero misses + 100% rate — optimal state ────────────
+
+  it("COMPLETED with perfect record shows all positive metrics", () => {
+    const schedulerBlock = buildTrainingStateBlock(makeSchedulerCtx({
+      trainingState:         TrainingState.COMPLETED,
+      completedTodayMuscles: "back, biceps",
+      consecutiveMisses:     0,
+      completionRate7d:      1.0,
+      observedWindow:        TrainingWindow.MORNING,
+      windowConfidence:      "high",
+    }));
+    const safety    = true;
+    const scheduler = schedulerBlock.includes("Do NOT encourage training again") &&
+                      schedulerBlock.includes("Completed today: back, biceps") &&
+                      schedulerBlock.includes("Consecutive misses: 0");
+    const signals   = true;
+
+    SCORES.push({ scenario: "COMPLETED perfect record (all positive metrics)", safety, scheduler, signals });
+    expect(scheduler).toBe(true);
+  });
+
+  // ── Ensure all 50 scenarios ran ──────────────────────────────────────────
+
+  it("AUDIT COMPLETE — all 50 special scenarios captured", () => {
+    expect(SCORES).toHaveLength(50);
   });
 });

@@ -456,7 +456,6 @@ describe("Decision Engine V2 — scenario audit", () => {
         weeklyVolume:     [],
         deloadDue:        false,
         flags:            ["bench_stalled"],
-        interventionMessage: "Bench has not progressed in 6 sessions — consider resetting",
       },
     });
     expect(result.primaryIntervention).toBe(CoachIntervention.PROBLEM_SOLVE);
@@ -914,7 +913,6 @@ describe("Recommendation gate", () => {
         weeklyVolume:     [],
         deloadDue:        false,
         flags:            ["bench_stalled"],
-        interventionMessage: null,
       },
     });
     expect(result.recommendationGate?.level).toBe("HIGH");
