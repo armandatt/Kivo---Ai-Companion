@@ -1,6 +1,7 @@
 import { prisma } from "@repo/db/client";
 import { addToShortTerm } from "../services/memory.service";
 import { recordBodyweight } from "../services/bodyweight.service";
+import { generateOpenAIText } from "../services/openai.service";
 import {
   parseMessage,
   IntentType,
@@ -895,6 +896,64 @@ export function buildReviewCard(a: Record<string, string>): string {
   return lines.join("\n");
 }
 
+// ── LLM review-reply classifier ───────────────────────────────────────────────
+// Called only when classifyConfirmation returns "unclear" — i.e. the user's
+// message isn't an obvious yes/no/swap. OpenAI classifies the intent and, for
+// corrections, identifies which profile field needs to be re-asked.
+type ReviewIntent =
+  | { intent: "confirm" }
+  | { intent: "restart" }
+  | { intent: "correction"; field: StepId }
+  | { intent: "unclear" };
+
+const REVIEW_FIELD_STEPS = new Set<StepId>([
+  "goal", "body_stats", "experience", "lifts", "days",
+  "split", "gym_time", "protein", "injury",
+]);
+
+async function classifyReviewReplyWithLLM(
+  text: string,
+  reviewCard: string,
+): Promise<ReviewIntent> {
+  try {
+    const raw = await generateOpenAIText({
+      model: "gpt-4o-mini",
+      maxOutputTokens: 40,
+      systemInstruction: `You classify a user reply during onboarding profile review.
+
+Profile shown to user:
+${reviewCard}
+
+Classify as exactly one of:
+- confirm    → user is happy with the profile (yes, looks good, correct, all good, sure, etc.)
+- correction → user says a specific field is wrong or needs changing (also output which field)
+- restart    → user wants to redo everything from scratch (no, start over, wrong everything, etc.)
+- unclear    → genuinely cannot determine intent
+
+Valid fields for correction: goal | body_stats | experience | lifts | days | split | gym_time | protein | injury
+
+Output ONLY raw JSON — no markdown, no explanation:
+{"intent":"confirm"} or {"intent":"correction","field":"split"} or {"intent":"restart"} or {"intent":"unclear"}`,
+      prompt: text,
+    });
+
+    const parsed = JSON.parse(raw.trim().replace(/^```json\n?|```$/g, "")) as {
+      intent?: string;
+      field?: string;
+    };
+
+    if (parsed.intent === "confirm") return { intent: "confirm" };
+    if (parsed.intent === "restart") return { intent: "restart" };
+    if (parsed.intent === "correction") {
+      const field = parsed.field as StepId | undefined;
+      return { intent: "correction", field: (field && REVIEW_FIELD_STEPS.has(field)) ? field : "goal" };
+    }
+    return { intent: "unclear" };
+  } catch {
+    return { intent: "unclear" };
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // LAYER 3 — STEP VALIDATION TABLES
 // Separate from StepDef so STEPS definitions stay unchanged.
@@ -1230,24 +1289,38 @@ export async function handleOnboardingV2(input: {
       return { handled: true, reply };
     }
 
-    // W6 contradiction: "my split is not PPL", "wrong weight", "that's incorrect"
-    // Detect which field is being corrected and jump directly to that step.
-    const REVIEW_CONTRADICTION_RE = /\b(?:not|wrong|incorrect|isn'?t|wasn'?t|no\s+it'?s?|that'?s?\s+(?:not|wrong)|fix|mistaken)\b/i;
-    if (REVIEW_CONTRADICTION_RE.test(text)) {
-      const FIELD_HINTS: Array<[RegExp, StepId]> = [
-        [/\b(?:split|ppl|upper.?lower|push.?pull|full.?body|bro.?split)\b/i,     "split"],
-        [/\b(?:goal|muscle|fat|weight\s*loss|cut|bulk|strength|recomp)\b/i,       "goal"],
-        [/\b(?:\d+\s*days?|training\s*days?|workout\s*days?|days?\s*a\s*week)\b/i,"days"],
-        [/\b(?:protein|calorie|diet)\b/i,                                          "protein"],
-        [/\b(?:bodyweight|body\s*weight|weigh(?:t|ing)?|my\s*weight)\b/i,         "body_stats"],
-        [/\b(?:gym\s*time|train(?:ing)?\s*(?:at|around)|workout\s*time)\b/i,      "gym_time"],
-        [/\b(?:injur|hurt|pain|recover)\b/i,                                       "injury"],
-        [/\b(?:experience|level|beginner|intermediate|advanced)\b/i,               "experience"],
-      ];
-      let targetStep: StepId = "goal";
-      for (const [re, step] of FIELD_HINTS) {
-        if (re.test(text)) { targetStep = step; break; }
-      }
+    // "unclear" from deterministic classifiers — let OpenAI read the actual intent.
+    // Handles any phrasing: "dude my split is not PPL", "bro the weight thing is off",
+    // "i dont do ppl", "change the split part", etc.
+    const llmCls = await classifyReviewReplyWithLLM(text, buildReviewCard(state.answers));
+
+    if (llmCls.intent === "confirm") {
+      state.completedAt = Date.now();
+      logEntry(state, { step: "review", rawAnswer: text, normalizedAnswer: "confirmed_via_llm", confidence: 0.88, storedValue: "completed", nextStep: null, action: "stored", ts: Date.now() });
+      await saveState(userId, state);
+      await finalizeIntake(userId, platformChatId, state);
+      const msg = resumePrefix + `You're all set${state.answers.name ? `, ${state.answers.name}` : ""}. Let's build something.`;
+      await addToShortTerm(platformChatId, msg, { role: "assistant", intent: "intake", emotion: "neutral" });
+      return { handled: true, reply: msg };
+    }
+
+    if (llmCls.intent === "restart") {
+      const keptName = state.answers.name;
+      state.answers = keptName ? { name: keptName } : {};
+      state.currentStep = keptName ? "goal" : "name";
+      state.pendingVerification   = null;
+      state.pendingGeneratedSplit = null;
+      state.pendingPartialSplit   = null;
+      state.repeatCounts          = {};
+      logEntry(state, { step: "review", rawAnswer: text, normalizedAnswer: "restart_via_llm", confidence: 0.88, storedValue: null, nextStep: state.currentStep, action: "stored", ts: Date.now() });
+      const reply = resumePrefix + `Starting over.\n\n${STEPS[state.currentStep].question(state.answers)}`;
+      await saveState(userId, state);
+      await addToShortTerm(platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" });
+      return { handled: true, reply };
+    }
+
+    if (llmCls.intent === "correction") {
+      const targetStep = llmCls.field;
       const keptName = state.answers.name;
       state.answers = keptName ? { name: keptName } : {};
       state.currentStep = targetStep;
@@ -1255,14 +1328,14 @@ export async function handleOnboardingV2(input: {
       state.pendingGeneratedSplit = null;
       state.pendingPartialSplit   = null;
       state.repeatCounts          = {};
-      logEntry(state, { step: "review", rawAnswer: text, normalizedAnswer: "contradiction_detected", confidence: 0.82, storedValue: null, nextStep: targetStep, action: "stored", ts: Date.now() });
-      const fixReply = resumePrefix + `Got it — let me ask again.\n\n${STEPS[targetStep].question(state.answers)}`;
+      logEntry(state, { step: "review", rawAnswer: text, normalizedAnswer: `correction:${targetStep}`, confidence: 0.88, storedValue: null, nextStep: targetStep, action: "stored", ts: Date.now() });
+      const fixReply = resumePrefix + `Got it — let me ask you again.\n\n${STEPS[targetStep].question(state.answers)}`;
       await saveState(userId, state);
       await addToShortTerm(platformChatId, fixReply, { role: "assistant", intent: "intake", emotion: "neutral" });
       return { handled: true, reply: fixReply };
     }
 
-    // Truly unclear — re-show card with explicit cue (last resort)
+    // Truly unclear even with LLM — re-show card
     const reask = resumePrefix + buildReviewCard(state.answers) + "\n\nType yes to confirm, or no to start over.";
     await saveState(userId, state);
     await addToShortTerm(platformChatId, reask, { role: "assistant", intent: "intake", emotion: "neutral" });
