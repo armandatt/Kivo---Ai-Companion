@@ -53,6 +53,8 @@ const REQUIRED_FIELDS: string[] = [
   "available_training_days",
   "current_split",
   "gym_session_time",
+  "daily_protein_g",         // protein — check protein_status too (not_tracking case stores no grams)
+  "injury_notes",            // injury — "none" is a valid answer
 ];
 
 // Maps required field names to the equivalent V2 step for rollback compatibility.
@@ -66,17 +68,28 @@ const REQUIRED_FIELD_TO_STEP: Array<{ field: string; step: StepId }> = [
   { field: "available_training_days", step: "days"       },
   { field: "current_split",           step: "split"      },
   { field: "gym_session_time",        step: "gym_time"   },
+  { field: "daily_protein_g",         step: "protein"    },
+  { field: "injury_notes",            step: "injury"     },
 ];
+
+// Protein is answered as "not_tracking" — storageKeysFor sets protein_status but NOT daily_protein_g.
+// Check protein_status as fallback so "not tracking" doesn't count as missing.
+function isFieldCollected(field: string, answers: Record<string, string>): boolean {
+  if (field === "daily_protein_g") {
+    return !!(answers["daily_protein_g"]?.trim() || answers["protein_status"]?.trim());
+  }
+  return !!answers[field]?.trim();
+}
 
 function computeCurrentStep(answers: Record<string, string>): StepId {
   for (const { field, step } of REQUIRED_FIELD_TO_STEP) {
-    if (!answers[field]) return step;
+    if (!isFieldCollected(field, answers)) return step;
   }
   return "review";
 }
 
 function allRequiredCollected(answers: Record<string, string>): boolean {
-  return REQUIRED_FIELDS.every(f => answers[f]?.trim());
+  return REQUIRED_FIELDS.every(f => isFieldCollected(f, answers));
 }
 
 // ── V2 parser normalizers — validate + canonicalize extractor output ──────────
@@ -398,7 +411,7 @@ export async function handleOnboardingV3(input: {
   // ── OpenAI extraction — runs first, always ───────────────────────────────────
 
   const history       = loadHistory(a);
-  const missingFields = REQUIRED_FIELDS.filter(f => !a[f]?.trim());
+  const missingFields = REQUIRED_FIELDS.filter(f => !isFieldCollected(f, a));
   const stallCounts   = Object.fromEntries(
     missingFields.map(f => [f, state.repeatCounts[f] ?? 0])
   );
@@ -710,7 +723,7 @@ export async function handleOnboardingV3(input: {
     reply:         reply.slice(0, 120),
     nextField:     extraction.nextField,
     currentStep:   computeCurrentStep(a),
-    missingFields: REQUIRED_FIELDS.filter(f => !a[f]?.trim()),
+    missingFields: REQUIRED_FIELDS.filter(f => !isFieldCollected(f, a)),
     replySource:   "extractor_reply",
   });
 
