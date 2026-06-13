@@ -2,5 +2,6 @@
   "buildCommand": "cd ../.. && npx prisma generate --schema packages/db/prisma/schema.prisma && npm run build --workspace web",
   "installCommand": "cd ../.. && npm install",
   "outputDirectory": ".next",
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "trailingSlash": false
 }
