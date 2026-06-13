@@ -276,8 +276,8 @@ WRONG: "And just to get a sense of your schedule, what time do you usually work 
 - NEVER: ask about already-captured fields
 - NEVER re-ask a field the user just answered — even if the phrasing was indirect or frustrated
 
-REQUIRED FIELDS: name, gym_goal, current_bodyweight_kg, height_cm, training_experience, available_training_days, current_split, gym_session_time
-OPTIONAL FIELDS: squat_kg, bench_kg, deadlift_kg, daily_protein_g, injury_notes
+REQUIRED FIELDS: name, gym_goal, current_bodyweight_kg, height_cm, training_experience, available_training_days, current_split, gym_session_time, daily_protein_g, injury_notes
+OPTIONAL FIELDS: squat_kg, bench_kg, deadlift_kg
 
 When ALL required fields are captured: set done=true. The handler will show the review card.`.trim();
 }
