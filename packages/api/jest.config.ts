@@ -7,6 +7,7 @@ const config: Config = {
   moduleNameMapper: {
     "^@repo/db/client$": "<rootDir>/__mocks__/db.ts",
     "^../services/memory.service$": "<rootDir>/__mocks__/memory.service.ts",
+    "^../services/openai.service$": "<rootDir>/__mocks__/openai.service.ts",
   },
   transform: {
     "^.+\\.tsx?$": [

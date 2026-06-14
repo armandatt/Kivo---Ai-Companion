@@ -82,7 +82,7 @@ function isFieldCollected(field: string, answers: Record<string, string>): boole
   return !!answers[field]?.trim();
 }
 
-function computeCurrentStep(answers: Record<string, string>): StepId {
+export function computeCurrentStep(answers: Record<string, string>): StepId {
   for (const { field, step } of REQUIRED_FIELD_TO_STEP) {
     if (!isFieldCollected(field, answers)) return step;
   }
@@ -367,6 +367,42 @@ function v3log(tag: string, data: Record<string, unknown>): void {
   console.log(`[V3-AUDIT] ${tag}`, JSON.stringify(data));
 }
 
+// ── V2→V3 migration guard (exported for testing) ─────────────────────────────
+//
+// Called at the top of every V3 turn. Cleans up V2 artifacts and takes
+// authoritative ownership of currentStep and repeatCounts.
+export function applyV3StateMigration(state: OnboardingState): void {
+  const a = state.answers;
+
+  // Fix 1: pendingVerification — V3 never uses it; clear to prevent V2 re-verification.
+  if (state.pendingVerification) {
+    state.pendingVerification = null;
+  }
+
+  // Fix 2: pendingPartialSplit — V3 extracts the full split in one shot; clear the accumulator.
+  if (state.pendingPartialSplit) {
+    state.pendingPartialSplit = null;
+  }
+
+  // Fix 3: V2 sets currentStep="review" when done; V3 uses _v3_review_shown. Bridge them.
+  if (state.currentStep === "review" && a._v3_review_shown !== "true") {
+    a._v3_review_shown = "true";
+  }
+
+  // Fix 4: repeatCounts keys. V2 uses StepIds ("split", "goal", "gym_time", …).
+  //        V3 uses field names ("current_split", "gym_goal", "gym_session_time", …).
+  //        Strip non-REQUIRED_FIELDS keys so the extractor never sees phantom stall counts.
+  const validRepeatKeys = new Set(REQUIRED_FIELDS);
+  for (const key of Object.keys(state.repeatCounts)) {
+    if (!validRepeatKeys.has(key)) {
+      delete state.repeatCounts[key];
+    }
+  }
+
+  // Fix 5: V3 is sole owner of currentStep. Recompute from answers before any gate.
+  state.currentStep = computeCurrentStep(a);
+}
+
 // ── Main V3 handler ───────────────────────────────────────────────────────────
 
 export async function handleOnboardingV3(input: {
@@ -397,28 +433,9 @@ export async function handleOnboardingV3(input: {
     return { handled: true, reply: welcome };
   }
 
+  applyV3StateMigration(state);
+
   const a = state.answers;
-
-  // ── V2→V3 state migration guard ──────────────────────────────────────────────
-  // If V2 left stale artifacts that V3 doesn't understand, clear them on load.
-
-  // Fix 1: V2 may have set pendingVerification (low-confidence answer awaiting confirm).
-  //        V3 never uses this — clear it to prevent V2 re-verification on engine switch.
-  if (state.pendingVerification) {
-    state.pendingVerification = null;
-  }
-
-  // Fix 2: V2 partial-split accumulation. V3 treats split as a single extraction,
-  //        not a multi-turn accumulation. Clear the V2 accumulator.
-  if (state.pendingPartialSplit) {
-    state.pendingPartialSplit = null;
-  }
-
-  // Fix 3: V2 sets currentStep="review" when all fields done. V3 tracks this via
-  //        _v3_review_shown flag. Bridge them so V3 doesn't skip into field extraction.
-  if (state.currentStep === "review" && a._v3_review_shown !== "true") {
-    a._v3_review_shown = "true";
-  }
 
   v3log("TURN_START", { userId, msg: text.slice(0, 120), currentStep: state.currentStep });
 
