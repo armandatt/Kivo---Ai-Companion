@@ -646,6 +646,15 @@ export async function handleOnboardingV3(input: {
 
     if (extraction.intent === "reject_profile") {
       delete a._v3_review_shown;
+      // Clear the specific rejected field so V3 re-asks it rather than treating old value as valid
+      if (extraction.targetField && extraction.targetField in a) {
+        delete (a as Record<string, string>)[extraction.targetField];
+        // If split is rejected, also clear derived split fields
+        if (extraction.targetField === "current_split") {
+          delete a.split_raw;
+          delete a.split_days_json;
+        }
+      }
       const reply = extraction.reply;
       await persist(reply);
       return { handled: true, reply };

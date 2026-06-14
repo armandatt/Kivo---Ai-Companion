@@ -230,8 +230,11 @@ question_about_profile: user asking about a specific field shown in the review c
 question_about_onboarding: user asking about the process itself
   Examples: "why do you need my height", "what's this for", "why these questions", "how does this work"
 
-frustration: expressing frustration without actionable correction or question
-  Examples: "ugh", "this again", "are you dumb", profanity without embedded data, repeated dismissals
+frustration: expressing frustration WITHOUT any field rejection or correction embedded
+  Examples: "ugh", "this again", "are you dumb", "wtf", "wtff", repeated dismissals with NO field context
+  → CRITICAL: if user says "dude my split is not PPL" or any variant that rejects a specific field, that is
+    reject_profile (or correction_with_data if they give the new value) — NOT frustration, even if phrased rudely
+  → frustration is ONLY when the message contains zero onboarding field content
 
 offtopic: completely unrelated to onboarding or fitness
 
@@ -244,7 +247,12 @@ confirm_profile: "yes", "lock it in", "looks good", "perfect", "ship it", "done"
   → confirmationConfidence 0.75–0.85 for short affirmative phrases
   → confirmationConfidence 0.0 for ANYTHING with a qualifier or correction attached
 
-reject_profile: "that's wrong", "no", "nah", "something's off" (no corrected value)
+reject_profile: user rejects a field or the whole profile without providing the replacement value
+  Examples: "that's wrong", "no", "nah", "something's off", "my split is not PPL", "dude my split is not PPL",
+    "that's not my goal", "wrong weight", "nah that split's wrong" — even if phrased rudely or with profanity
+  → set targetField to the rejected field when it's clear which field they mean
+  → extracted{} is empty — no corrected data provided
+  → NEVER classify as frustration when a specific field is being rejected
 
 correction_with_data: correction with the new value embedded in the message
   → always set extracted{} with the corrected field value
