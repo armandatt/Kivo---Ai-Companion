@@ -44,10 +44,11 @@ export interface SchedulerJobContext {
   platformChatId: string
   gymCtx:         GymTimeContext | null
   user: {
-    displayName:   string | null
-    gymStreak:     number
-    intakeAnswers: unknown
-    splitState:    unknown
+    displayName:          string | null
+    gymStreak:            number
+    intakeAnswers:        unknown
+    splitState:           unknown
+    workoutLogPreference: string | null
   }
   preSessionExtras?:   PreSessionExtras
   chaseExtras?:        ChaseExtras
@@ -76,7 +77,7 @@ export interface SchedulerMessageProvider {
   // Category 1 — Check-In Schedulers
   dailyCheckIn(ctx: SchedulerJobContext, now: Date):                              Promise<string>
   preSessionFireUp(ctx: SchedulerJobContext):                                     Promise<string>
-  postSessionLogPrompt(muscles: string):                                          string
+  postSessionLogPrompt(muscles: string, pref?: string | null):                   string
   missedSessionChase(attempt: 1 | 2, ctx: SchedulerJobContext):                  Promise<string>
   restDayMorning(ctx: SchedulerJobContext):                                       Promise<string | null>
   backdatePrompt():                                                               string

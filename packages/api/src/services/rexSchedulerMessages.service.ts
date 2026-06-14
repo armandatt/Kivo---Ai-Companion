@@ -101,13 +101,23 @@ class RexSchedulerMessages implements SchedulerMessageProvider {
       "Be specific. Name the weight. Do not use motivational phrases or generic encouragement.",
     ].join("\n")
 
+    const pref = ctx.user.workoutLogPreference
+    const logCue = pref === "live"
+      ? "Send /log when you get there."
+      : pref === "after"
+      ? "Tell me what you did when you finish."
+      : null
+
+    const appendCue = (base: string) => logCue ? `${base}\n${logCue}` : base
+
     try {
-      return await generateOpenAIText({
+      const llmText = await generateOpenAIText({
         model:             "gpt-4o-mini",
         maxOutputTokens:   80,
         systemInstruction: systemPrompt,
         prompt:            contextLines.join("\n"),
       })
+      return appendCue(llmText)
     } catch {
       // Fallback: derive advice without LLM
       const primaryLift = primaryLiftForMuscles(gymCtx.todayMuscles)
@@ -115,27 +125,29 @@ class RexSchedulerMessages implements SchedulerMessageProvider {
 
       if (feel === "failed") {
         const backoff = lastKg ? Math.round(lastKg * 0.95 / 2.5) * 2.5 : null
-        return [
+        return appendCue([
           `${gymCtx.todayMuscles} day.`,
           backoff
             ? `Missed reps last session. ${primaryLift}: ${backoff}kg today — clean sets before adding weight.`
             : "Missed reps last session. Drop the weight and nail the form first.",
-        ].join("\n")
+        ].join("\n"))
       }
       if (feel === "hard") {
-        return [`${gymCtx.todayMuscles} day.`, `Last session was hard. Same weights.`].join("\n")
+        return appendCue([`${gymCtx.todayMuscles} day.`, `Last session was hard. Same weights.`].join("\n"))
       }
       const targetKg = lastKg ? lastKg + 2.5 : null
-      return [
+      return appendCue([
         `${gymCtx.todayMuscles} day.`,
         gymCtx.lastLiftSummary ? `Last: ${gymCtx.lastLiftSummary}.` : null,
         targetKg ? `Today: ${primaryLift} ${targetKg}kg.` : null,
-      ].filter(Boolean).join("\n")
+      ].filter(Boolean).join("\n"))
     }
   }
 
   // ── 1.2 Post Session Log Prompt ───────────────────────────────────────────────
-  postSessionLogPrompt(muscles: string): string {
+  postSessionLogPrompt(muscles: string, pref: string | null = null): string {
+    if (pref === "live") return `${muscles} — still going or done?`
+    if (pref === "after") return `${muscles} — what did you hit?`
     return `${muscles} — what did you hit today?`
   }
 

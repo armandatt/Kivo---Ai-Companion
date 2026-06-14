@@ -1051,13 +1051,40 @@ export function initState(userId: string): OnboardingState {
   };
 }
 
+export function buildOnboardingCompleteMessage(answers: Record<string, string>): string {
+  const name = answers.name;
+  const greeting = name ? `You're all set, ${name}.` : "You're all set.";
+
+  const lines: string[] = [greeting, ""];
+
+  if (answers.current_split) {
+    lines.push(`Split: ${answers.current_split}. Start with session 1 when you're ready.`);
+  }
+
+  lines.push(`After each session, just tell me what you did — "done push", "hit legs", "skipped" is enough.`);
+
+  if (answers.gym_session_time) {
+    lines.push(`I'll reach out around ${answers.gym_session_time}.`);
+  }
+
+  if (answers.daily_protein_g) {
+    lines.push(`Protein target: ${answers.daily_protein_g}g/day.`);
+  } else if (answers.protein_status === "not_tracking") {
+    const bw = parseFloat(answers.current_bodyweight_kg ?? "70");
+    const mult = (answers.gym_goal === "muscle" || answers.gym_goal === "strength") ? 2.0 : 1.8;
+    lines.push(`You're not tracking protein — rough target: ~${Math.round(bw * mult)}g/day.`);
+  }
+
+  return lines.join("\n");
+}
+
 export async function finalizeIntake(userId: string, platformChatId: string, state: OnboardingState): Promise<void> {
   const a = state.answers;
   await prisma.messengerUser.update({
     where: { id: userId },
     data: {
       intakeComplete: true,
-      intakeStep:     "complete",
+      intakeStep:     "activation_pending",
       intakeAnswers:  a as any,
       ...(a.gym_session_time ? { preferredCheckInTime: a.gym_session_time } : {}),
       ...(a.name ? { displayName: a.name } : {}),
@@ -1268,7 +1295,7 @@ export async function handleOnboardingV2(input: {
       logEntry(state, { step: "review", rawAnswer: text, normalizedAnswer: "confirmed", confidence: 0.97, storedValue: "completed", nextStep: null, action: "stored", ts: Date.now() });
       await saveState(userId, state);  // W6: persist completedAt + final audit entry before archive
       await finalizeIntake(userId, platformChatId, state);
-      const msg = resumePrefix + `You're all set${state.answers.name ? `, ${state.answers.name}` : ""}. Let's build something.`;
+      const msg = resumePrefix + buildOnboardingCompleteMessage(state.answers);
       await addToShortTerm(platformChatId, msg, { role: "assistant", intent: "intake", emotion: "neutral" });
       return { handled: true, reply: msg };
     }
@@ -1299,7 +1326,7 @@ export async function handleOnboardingV2(input: {
       logEntry(state, { step: "review", rawAnswer: text, normalizedAnswer: "confirmed_via_llm", confidence: 0.88, storedValue: "completed", nextStep: null, action: "stored", ts: Date.now() });
       await saveState(userId, state);
       await finalizeIntake(userId, platformChatId, state);
-      const msg = resumePrefix + `You're all set${state.answers.name ? `, ${state.answers.name}` : ""}. Let's build something.`;
+      const msg = resumePrefix + buildOnboardingCompleteMessage(state.answers);
       await addToShortTerm(platformChatId, msg, { role: "assistant", intent: "intake", emotion: "neutral" });
       return { handled: true, reply: msg };
     }
@@ -1633,9 +1660,88 @@ export async function confirmAndFinalizeOnboarding(
   state.completedAt = Date.now();
   await finalizeIntake(user.id, platformChatId, state);
 
-  const completionMsg = `You're all set, ${state.answers.name ?? "Athlete"}. I've got everything I need.\n\nLet's build something.`;
+  const completionMsg = buildOnboardingCompleteMessage(state.answers);
   await addToShortTerm(platformChatId, completionMsg, { role: "assistant", intent: "intake", emotion: "neutral" });
   return { handled: true, reply: completionMsg };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// POST-ONBOARDING ACTIVATION FLOW
+// Runs AFTER intakeComplete=true. Asks logging preference (live / after),
+// persists it to workoutLogPreference, then marks intakeStep="complete".
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function needsActivation(platformChatId: string): Promise<boolean> {
+  const user = await prisma.messengerUser.findUnique({
+    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    select: { intakeComplete: true, intakeStep: true },
+  });
+  return !!(user?.intakeComplete &&
+    (user.intakeStep === "activation_pending" || user.intakeStep === "activation_awaiting_pref"));
+}
+
+export async function handleActivationFlow(input: {
+  platformChatId: string;
+  text:           string;
+}): Promise<{ handled: boolean; reply: string }> {
+  const { platformChatId, text } = input;
+
+  const user = await prisma.messengerUser.findUnique({
+    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    select: { id: true, intakeComplete: true, intakeStep: true, intakeAnswers: true },
+  });
+
+  if (!user?.intakeComplete) return { handled: false, reply: "" };
+  if (user.intakeStep !== "activation_pending" && user.intakeStep !== "activation_awaiting_pref") {
+    return { handled: false, reply: "" };
+  }
+
+  // Step 1: intake just completed — user's first post-onboarding message arrives.
+  // Ignore whatever they said; ask the logging preference first.
+  if (user.intakeStep === "activation_pending") {
+    await prisma.messengerUser.update({
+      where: { id: user.id },
+      data:  { intakeStep: "activation_awaiting_pref" },
+    });
+    const reply = `One thing before we start — when do you prefer to log sessions?\n\nReply 'live' (while training) or 'after' (when you finish).`;
+    await addToShortTerm(platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" });
+    return { handled: true, reply };
+  }
+
+  // Step 2: parse preference
+  const t       = text.trim().toLowerCase();
+  const isLive  = /\blive\b/.test(t);
+  const isAfter = /\bafter\b|\bdone\b|\bfinish\b|\bpost\b/.test(t);
+
+  if (!isLive && !isAfter) {
+    const reply = `Just 'live' (log while you train) or 'after' (log when you're done). Which?`;
+    await addToShortTerm(platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" });
+    return { handled: true, reply };
+  }
+
+  const pref: "live" | "after" = isLive ? "live" : "after";
+
+  // Merge preference into intakeAnswers so Rex sees it in userProfile
+  const existing = (typeof user.intakeAnswers === "object" && user.intakeAnswers !== null && !Array.isArray(user.intakeAnswers))
+    ? (user.intakeAnswers as Record<string, string>)
+    : {};
+  const updatedAnswers = { ...existing, workout_log_preference: pref };
+
+  await prisma.messengerUser.update({
+    where: { id: user.id },
+    data: {
+      workoutLogPreference: pref,
+      intakeStep:           "complete",
+      intakeAnswers:        updatedAnswers as any,
+    },
+  });
+
+  const reply = pref === "live"
+    ? `Got it. Send /log when you're in the gym — I'll track in real time.\n\nFirst session when you're ready.`
+    : `Got it. Tell me what you did when you finish — "done back/tri", "hit chest", anything works.\n\nFirst session when you're ready.`;
+
+  await addToShortTerm(platformChatId, reply, { role: "assistant", intent: "intake", emotion: "neutral" });
+  return { handled: true, reply };
 }
 
 // ─── Welcome ──────────────────────────────────────────────────────────────────

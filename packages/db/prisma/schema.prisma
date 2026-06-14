@@ -69,10 +69,11 @@ model MessengerUser {
   creatureType         String?
   creatureColor        String?
   creatureName         String?
-  intakeComplete      Boolean  @default(false)
-  intakeStep          String   @default("not_started")
-  intakeAnswers       Json?
-  activeModules       String[]
+  intakeComplete         Boolean  @default(false)
+  intakeStep             String   @default("not_started")
+  intakeAnswers          Json?
+  workoutLogPreference   String?  // "live" | "after" — set during post-onboarding activation
+  activeModules          String[]
 
   nextCheckInAt       DateTime?
   checkInIntervalMin  Int?
