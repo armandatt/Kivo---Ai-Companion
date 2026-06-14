@@ -1053,26 +1053,26 @@ export function initState(userId: string): OnboardingState {
 
 export function buildOnboardingCompleteMessage(answers: Record<string, string>): string {
   const name = answers.name;
-  const greeting = name ? `You're all set, ${name}.` : "You're all set.";
+  const greeting = name ? `${name}. Done.` : "Done.";
 
   const lines: string[] = [greeting, ""];
 
   if (answers.current_split) {
-    lines.push(`Split: ${answers.current_split}. Start with session 1 when you're ready.`);
+    lines.push(`${answers.current_split}. That is what we are working with.`);
   }
 
-  lines.push(`After each session, just tell me what you did — "done push", "hit legs", "skipped" is enough.`);
+  lines.push(`After each session: "done push", "hit legs", "skipped". That is it. Don't overthink it.`);
 
   if (answers.gym_session_time) {
-    lines.push(`I'll reach out around ${answers.gym_session_time}.`);
+    lines.push(`I will check in around ${answers.gym_session_time}.`);
   }
 
   if (answers.daily_protein_g) {
-    lines.push(`Protein target: ${answers.daily_protein_g}g/day.`);
+    lines.push(`Protein: ${answers.daily_protein_g}g/day. Hit it.`);
   } else if (answers.protein_status === "not_tracking") {
     const bw = parseFloat(answers.current_bodyweight_kg ?? "70");
     const mult = (answers.gym_goal === "muscle" || answers.gym_goal === "strength") ? 2.0 : 1.8;
-    lines.push(`You're not tracking protein — rough target: ~${Math.round(bw * mult)}g/day.`);
+    lines.push(`Not tracking protein. Rough target: ~${Math.round(bw * mult)}g/day. Worth knowing.`);
   }
 
   return lines.join("\n");
@@ -1748,13 +1748,11 @@ export async function handleActivationFlow(input: {
 
 export function buildWelcomeMessage(): string {
   return [
-    `I'm Rex.`,
+    `Rex.`,
     ``,
-    `You don't need motivation. You need a plan that doesn't break when life does.`,
+    `Ten questions. Short answers. The faster you go, the faster this is over.`,
     ``,
-    `I'm going to ask you 10 questions. Short answers are fine.`,
-    ``,
-    `First — what's your name?`,
+    `Name first.`,
   ].join("\n");
 }
 
