@@ -65,7 +65,7 @@ import { handlePostSessionDebriefResponse, resetReengagementFlag } from "@repo/a
 //@ts-ignore
 import { needsIntake, getWebProfile, handleIntakeMessage } from "@repo/api/services/intake.service";
 //@ts-ignore
-import { handleOnboardingV2, isV2Active } from "@repo/api/engines/onboarding-engine-v2";
+import { handleOnboardingV2, isV2Active, needsActivation, handleActivationFlow } from "@repo/api/engines/onboarding-engine-v2";
 //@ts-ignore
 import { handleOnboardingV3 } from "@repo/api/engines/onboarding-engine-v3";
 //@ts-ignore
@@ -211,6 +211,15 @@ export async function POST(req: Request) {
             await sendTelegramMessage(chatId, intakeResult.reply);
             return Response.json({ ok: true });
           }
+        }
+      }
+
+      // ── Post-onboarding activation (logging preference capture)
+      if (await needsActivation(chatId.toString())) {
+        const activationResult = await handleActivationFlow({ platformChatId: chatId.toString(), text });
+        if (activationResult.handled) {
+          await sendTelegramMessage(chatId, activationResult.reply);
+          return Response.json({ ok: true });
         }
       }
 

@@ -23,6 +23,7 @@ import {
   finalizeIntake,
   generateSplit,
   buildWelcomeMessage,
+  buildOnboardingCompleteMessage,
   parseName,
   parseGoal,
   parseExperience,
@@ -398,6 +399,27 @@ export async function handleOnboardingV3(input: {
 
   const a = state.answers;
 
+  // ── V2→V3 state migration guard ──────────────────────────────────────────────
+  // If V2 left stale artifacts that V3 doesn't understand, clear them on load.
+
+  // Fix 1: V2 may have set pendingVerification (low-confidence answer awaiting confirm).
+  //        V3 never uses this — clear it to prevent V2 re-verification on engine switch.
+  if (state.pendingVerification) {
+    state.pendingVerification = null;
+  }
+
+  // Fix 2: V2 partial-split accumulation. V3 treats split as a single extraction,
+  //        not a multi-turn accumulation. Clear the V2 accumulator.
+  if (state.pendingPartialSplit) {
+    state.pendingPartialSplit = null;
+  }
+
+  // Fix 3: V2 sets currentStep="review" when all fields done. V3 tracks this via
+  //        _v3_review_shown flag. Bridge them so V3 doesn't skip into field extraction.
+  if (state.currentStep === "review" && a._v3_review_shown !== "true") {
+    a._v3_review_shown = "true";
+  }
+
   v3log("TURN_START", { userId, msg: text.slice(0, 120), currentStep: state.currentStep });
 
   // ── persist helper ────────────────────────────────────────────────────────────
@@ -617,7 +639,7 @@ export async function handleOnboardingV3(input: {
       state.currentStep = "review";
       await saveState(userId, state);
       await finalizeIntake(userId, platformChatId, state);
-      const done = `You're all set, ${a.name ?? "Athlete"}.\n\nI've got everything I need. Let's build something.`;
+      const done = buildOnboardingCompleteMessage(a);
       await addToShortTerm(platformChatId, done, { role: "assistant", intent: "intake", emotion: "neutral" });
       return { handled: true, reply: done };
     }

@@ -58,6 +58,7 @@ const REX_SELECT = {
   splitState:           true,
   gymStreak:            true,
   displayName:          true,
+  workoutLogPreference: true,
 } as const;
 
 type RexUserRow = {
@@ -70,6 +71,7 @@ type RexUserRow = {
   splitState:           unknown;
   gymStreak:            number;
   displayName:          string | null;
+  workoutLogPreference: string | null;
 };
 
 type JobExtras = Partial<Pick<SchedulerJobContext,
@@ -243,7 +245,7 @@ async function runRexAutoPromptCron(now: Date): Promise<GymCronMessage[]> {
       chaseCount:    0,
     });
 
-    messages.push(msg(user, rexMessageProvider.postSessionLogPrompt(dayInfo.muscles), "rex_auto_prompt"));
+    messages.push(msg(user, rexMessageProvider.postSessionLogPrompt(dayInfo.muscles, user.workoutLogPreference), "rex_auto_prompt"));
   }
 
   return messages;
@@ -977,10 +979,11 @@ function buildJobContext(
     platformChatId: user.platformChatId,
     gymCtx:         gymCtx ?? null,
     user: {
-      displayName:   user.displayName,
-      gymStreak:     user.gymStreak,
-      intakeAnswers: user.intakeAnswers,
-      splitState:    user.splitState,
+      displayName:          user.displayName,
+      gymStreak:            user.gymStreak,
+      intakeAnswers:        user.intakeAnswers,
+      splitState:           user.splitState,
+      workoutLogPreference: user.workoutLogPreference,
     },
     ...extras,
   };

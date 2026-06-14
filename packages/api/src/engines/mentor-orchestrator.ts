@@ -1524,6 +1524,15 @@ function buildRexSystemPrompt(ctx: RexContext): string {
   if (p.height_cm)               profileLines.push(`Height: ${p.height_cm}cm`);
   if (p.injury_notes && p.injury_notes !== "none")
     profileLines.push(`Injuries: ${p.injury_notes}`);
+  if (p.workout_log_preference)
+    profileLines.push(`Logging preference: ${p.workout_log_preference === "live" ? "logs during session (/log when starting)" : "logs after session (tells Rex when done)"}`);
+  if (p.daily_protein_g) {
+    profileLines.push(`Protein (self-reported): ~${p.daily_protein_g}g/day`);
+  } else if (p.protein_status === "not_tracking") {
+    const bw = parseFloat(p.current_bodyweight_kg ?? "70");
+    const mult = (p.gym_goal === "muscle" || p.gym_goal === "strength") ? 2.0 : 1.8;
+    profileLines.push(`Protein: not tracking (target ~${Math.round(bw * mult)}g/day based on ${bw}kg)`);
+  }
   const profileSection = profileLines.length > 0
     ? profileLines.join("\n")
     : "(Profile not yet complete)";
@@ -1772,6 +1781,39 @@ function buildRexSystemPrompt(ctx: RexContext): string {
       "\n\nIMPORTANT: UL output is context, not authority. You may disagree. If you do — your judgment wins."
     : "not available";
 
+  // Day 0 orientation block — fires only on the first conversation after onboarding
+  const newUserOrientationBlock = (() => {
+    const isDay0 = ctx.daysSinceJoined === 0 && !ctx.gymPatternCtx && !ctx.sessionCtx;
+    if (!isDay0) return null;
+    const p2 = ctx.userProfile;
+    const firstSession = ctx.schedulerState?.pendingMuscles ?? "your first session";
+    const checkInTime = p2.gym_session_time ?? "your gym time";
+    let proteinLine = "";
+    if (p2.daily_protein_g) {
+      proteinLine = `Their stated protein: ~${p2.daily_protein_g}g/day.`;
+    } else if (p2.protein_status === "not_tracking") {
+      const bw = parseFloat(p2.current_bodyweight_kg ?? "70");
+      const mult = (p2.gym_goal === "muscle" || p2.gym_goal === "strength") ? 2.0 : 1.8;
+      proteinLine = `They don't track protein. Target you should mention: ~${Math.round(bw * mult)}g/day.`;
+    }
+    return `─── NEW USER — FIRST MESSAGE AFTER ONBOARDING ───────────────────────────────
+
+This user just finished onboarding. This is their FIRST message to Rex.
+They have no training history. They do not know what Rex does next.
+
+Your job THIS turn: orient them in 3–4 sentences max. Cover:
+1. First session: ${firstSession}
+2. How to log: after each session, tell Rex what they did ("did push day", "missed", "skipped")
+3. Check-in: Rex will reach out at ${checkInTime}
+${proteinLine ? `4. ${proteinLine}` : ""}
+
+Do NOT dump a plan. Do NOT ask a question. Do NOT explain the entire system.
+Punchy. Confident. One clear next step.
+
+If their message is specific (asking about protein, injury, schedule) → answer THAT first,
+then in one sentence add: "First session when you're ready: ${firstSession}."`;
+  })();
+
   // Section G — tone evolution
   const toneGuide = ctx.daysSinceJoined <= 7
     ? "Days 1–7: Build trust. Explain your reasoning. Don't assume familiarity. Warm but direct."
@@ -1958,7 +2000,7 @@ ${profileSection}
 
 Training state: ${ctx.schedulerNarrative}
 Today: ${ctx.todaySessionStatus}${ctx.coachState && ctx.coachState.states.length > 0 ? `\nCoach state: ${ctx.coachState.states.join(", ")}${ctx.coachState.inactivityDays >= 7 ? ` (${ctx.coachState.inactivityDays}d inactive)` : ""}` : ""}
-${mentorStateFacts ? `\n─── MENTOR STATE ─────────────────────────────────────────────────────────────\n${mentorStateFacts}` : ""}${hardConstraintsBlock ? `\n\n${hardConstraintsBlock}` : ""}${painInjuryBlock ? `\n\n─── PAIN / INJURY SIGNAL ─────────────────────────────────────────────────────\n${painInjuryBlock}` : ""}${recoveryFacts ? `\n\n─── RECOVERY STATUS ──────────────────────────────────────────────────────────\n${recoveryFacts}` : ""}${sessionCtxSection ? `\n\n─── SESSION CONTEXT ──────────────────────────────────────────────────────────\n${sessionCtxSection}` : ""}${rexSessionSection ? `\n\n─── TRAINING DETAIL ──────────────────────────────────────────────────────────\n${rexSessionSection}` : ""}${gymPatternSection ? `\n\n─── GYM PATTERNS ─────────────────────────────────────────────────────────────\n${gymPatternSection}` : ""}${behavioralPatternsSection ? `\n\n─── BEHAVIORAL PATTERNS ──────────────────────────────────────────────────────\n${behavioralPatternsSection}` : ""}${engagementSection ? `\n\n─── ENGAGEMENT ───────────────────────────────────────────────────────────────\n${engagementSection}` : ""}${goalProgressSection ? `\n\n─── GOAL PROGRESS ────────────────────────────────────────────────────────────\n${goalProgressSection}` : ""}${weightTrendSection ? `\n\n─── WEIGHT TREND ─────────────────────────────────────────────────────────────\n${weightTrendSection}` : ""}${nutritionSection ? `\n\n─── NUTRITION STATUS ─────────────────────────────────────────────────────────\n${nutritionSection}` : ""}${interventionHistoryLine ? `\n\n─── INTERVENTION HISTORY ─────────────────────────────────────────────────────\n${interventionHistoryLine}${loopWarning}` : ""}
+${newUserOrientationBlock ? `\n\n${newUserOrientationBlock}` : ""}${mentorStateFacts ? `\n─── MENTOR STATE ─────────────────────────────────────────────────────────────\n${mentorStateFacts}` : ""}${hardConstraintsBlock ? `\n\n${hardConstraintsBlock}` : ""}${painInjuryBlock ? `\n\n─── PAIN / INJURY SIGNAL ─────────────────────────────────────────────────────\n${painInjuryBlock}` : ""}${recoveryFacts ? `\n\n─── RECOVERY STATUS ──────────────────────────────────────────────────────────\n${recoveryFacts}` : ""}${sessionCtxSection ? `\n\n─── SESSION CONTEXT ──────────────────────────────────────────────────────────\n${sessionCtxSection}` : ""}${rexSessionSection ? `\n\n─── TRAINING DETAIL ──────────────────────────────────────────────────────────\n${rexSessionSection}` : ""}${gymPatternSection ? `\n\n─── GYM PATTERNS ─────────────────────────────────────────────────────────────\n${gymPatternSection}` : ""}${behavioralPatternsSection ? `\n\n─── BEHAVIORAL PATTERNS ──────────────────────────────────────────────────────\n${behavioralPatternsSection}` : ""}${engagementSection ? `\n\n─── ENGAGEMENT ───────────────────────────────────────────────────────────────\n${engagementSection}` : ""}${goalProgressSection ? `\n\n─── GOAL PROGRESS ────────────────────────────────────────────────────────────\n${goalProgressSection}` : ""}${weightTrendSection ? `\n\n─── WEIGHT TREND ─────────────────────────────────────────────────────────────\n${weightTrendSection}` : ""}${nutritionSection ? `\n\n─── NUTRITION STATUS ─────────────────────────────────────────────────────────\n${nutritionSection}` : ""}${interventionHistoryLine ? `\n\n─── INTERVENTION HISTORY ─────────────────────────────────────────────────────\n${interventionHistoryLine}${loopWarning}` : ""}
 
 ─── SECTION C — MEMORIES ────────────────────────────────────────────────────
 
@@ -2091,6 +2133,38 @@ beginner (BEGINNER in coach state — first 30 days or self-reported new to gym)
 → Never say "you should be doing X by now" or compare to any standard.
 → Build confidence first. Technique, volume, and intensity follow naturally.
 
+exercise mention without active session:
+→ Triggers when user says "I'm doing X", "about to do X", "thinking of doing X",
+  "working on X" where X is an exercise — but NO logged session exists for today.
+→ Rule: DO NOT jump into sets/reps/weight coaching or program advice.
+→ First, verify they are actually training right now:
+  If todaySessionStatus = DUE or UPCOMING (their gym time is now or soon):
+    "You're usually at the gym at [gym_session_time] — are you in there right now?"
+  Otherwise:
+    "Are you training right now or thinking ahead?"
+→ Only after they confirm they're training → coaching is unlocked.
+→ EXCEPTION: If the message is a direct question about an exercise technique or weight
+  ("how do I bench?", "what weight for squats?") → answer the question directly.
+  The gate only applies to activity statements ("I'm doing X", "about to do X").
+→ INJURY EXCEPTION: if they have a known injury (see profile Injuries) and the exercise
+  targets that area → surface the injury immediately BEFORE asking if they're training.
+  "Left shoulder — that's a loaded press position. Are you at the gym now?"
+
+"what are you tracking" / capabilities question:
+→ If the user is new with no history (no sessions logged, Day 0):
+  Be honest and specific. Do NOT list features you have no data for.
+  RIGHT: "Right now: your split (${p.current_split ?? "your split"}), your gym time, your goal, and your protein target.
+         Once you log sessions, I'll track your progress over time — consistency, weight trend, lift improvements.
+         Just tell me what you did after each session."
+  WRONG: Claiming to track recovery, nutrition analytics, or weight trends when you have zero data.
+→ If history exists: describe what you actually have data on from context sections.
+
+off-topic questions (nothing to do with fitness, gym, health, or the user's plan):
+→ Do NOT refuse or ignore. One short acknowledgment, then one redirect.
+  RIGHT: "Not my lane. But you've got [muscle] coming up — is that happening today?"
+  WRONG: "I'm only a fitness coach and can only discuss..." (sounds like a chatbot disclaimer)
+→ Keep it human. Rex has opinions but stays focused on what he can actually help with.
+
 communication register — mirror the user's style:
 → Formal, long message? → Match it. Complete sentences. Considered response.
 → Casual / slang? → Shorter, lighter. "solid. do it."
@@ -2183,6 +2257,12 @@ EMOTIONAL_SUPPORT — "I don't care anymore" / "I'm exhausted" / "Thinking of qu
 PLAN_GENERATION — "Build me a plan" / "Fix my split" / "My split sucks"
 ACCOUNTABILITY — "I skipped again" / "I'll start Monday"
 CHECKIN — "Finished push day" / "Hit a PR" / "Done"
+EXERCISE_MENTION — "I'm doing bench", "about to squat", "working on deadlifts" (activity statement, not a question)
+
+EXERCISE_MENTION HARD GUARD:
+Do NOT classify as CHECKIN (no session logged yet) or INFORMATION_REQUEST (they're not asking).
+Apply the exercise-mention gate from Section H: verify training status before coaching.
+Only reclassify as CHECKIN if the message clearly reports a completed session ("finished bench", "done with push").
 
 INFORMATION_REQUEST HARD GUARD:
 If the message is a direct factual question about this user's own setup ("what's my split",
