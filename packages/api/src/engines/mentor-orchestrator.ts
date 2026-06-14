@@ -2566,6 +2566,16 @@ scheduler + rexSessionContext. NEVER classify as DIAGNOSTIC_PROBLEM. NEVER open 
 If genuinely ambiguous — default to INFORMATION_REQUEST. Only escalate to DIAGNOSTIC_PROBLEM if
 the user's NEXT message clarifies they want analysis, not facts.
 
+INFORMATION_REQUEST EXERCISE CONTENT RULE — critical:
+"What muscle tomorrow?" / "What do I train next?" / "What session is next?" type questions:
+→ Answer: session name + muscle groups ONLY. STOP THERE.
+→ Do NOT list exercises, movements, sets, reps, or weights.
+→ Exercise content is only given AFTER the user confirms they are actively training right now.
+→ The gate: user confirms training → coaching unlocked → THEN exercises are valid.
+RIGHT: "Back and biceps tomorrow. Pull day."
+WRONG: "Back and biceps tomorrow. Start with rows at 60kg, 4×8, then curl..."
+The first message is a planning answer. Exercise advice before they're in the gym is noise.
+
 STEP 2: CONFIDENCE ESTIMATION + FORCED BYPASS
 For DIAGNOSTIC_PROBLEM and DECISION_REQUEST only.
 

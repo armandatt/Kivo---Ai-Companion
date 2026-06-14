@@ -134,7 +134,12 @@ function normalizeWithParser(
         const r = parseSplit(rawValue);
         // BUILD sentinel means the extractor misidentified — ignore; V3 handles split gen separately
         if (r.extractedValue === "BUILD") return null;
-        return r.isUnknown ? rawValue : (r.extractedValue ?? rawValue);
+        // Only trust the canonical mapping (PPL, Upper/Lower, etc.) when parseSplit matched a
+        // named split template. For partial or custom splits ("Back/Tri, Legs/Shoulders, Chest/Bi"),
+        // parseSplit correctly detects muscles but incorrectly maps them to PPL via hasPush+hasPull+hasLegs.
+        // In those cases, preserve the raw value so the custom split name isn't silently overwritten.
+        if (r.parserReason === "known_split") return r.extractedValue ?? rawValue;
+        return rawValue;
       }
       case "current_bodyweight_kg":
       case "height_cm":
