@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 import {
   BarChart3,
   BookOpen,
+  Calendar,
   Compass,
   Home,
   Map,
@@ -28,6 +29,7 @@ interface SidebarProps {
 
 const navItems = [
   { href: '/home',     label: 'Home',     icon: Home },
+  { href: '/planner',  label: 'Planner',  icon: Calendar },
   { href: '/coach',    label: 'Coach',    icon: Zap },
   { href: '/journey',  label: 'Journey',  icon: Compass },
   { href: '/progress', label: 'Progress', icon: BarChart3 },

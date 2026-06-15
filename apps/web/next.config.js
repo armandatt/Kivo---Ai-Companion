@@ -39,12 +39,24 @@ const nextConfig = {
         destination: `${apiUrl}/api/dashboard`,
       },
       {
+        source: "/api/home",
+        destination: `${apiUrl}/api/home`,
+      },
+      {
         source: "/api/goals",
         destination: `${apiUrl}/api/goals`,
       },
       {
         source: "/api/planner",
         destination: `${apiUrl}/api/planner`,
+      },
+      {
+        source: "/api/coach",
+        destination: `${apiUrl}/api/coach`,
+      },
+      {
+        source: "/api/progress",
+        destination: `${apiUrl}/api/progress`,
       },
       {
         source: "/api/insights",
@@ -105,6 +117,10 @@ const nextConfig = {
       {
         source: "/api/reset-password",
         destination: `${apiUrl}/api/reset-password`,
+      },
+      {
+        source: "/api/journey",
+        destination: `${apiUrl}/api/journey`,
       },
     ]
   },

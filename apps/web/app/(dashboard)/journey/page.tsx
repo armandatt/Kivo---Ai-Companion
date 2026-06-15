@@ -1,111 +1,116 @@
 'use client'
 
-import { motion } from 'framer-motion'
-import { MomentTimeline } from '@/components/journey/moment-timeline'
+import { MessageSquare }      from 'lucide-react'
+import { useJourneyData }     from '@/components/journey/use-journey-data'
+import { JourneySummary }     from '@/components/journey/journey-summary'
+import { JourneyTimeline }    from '@/components/journey/journey-timeline'
+import { JourneyChapters }    from '@/components/journey/journey-chapters'
+import { BiggestWins }        from '@/components/journey/biggest-wins'
+import { Comebacks }          from '@/components/journey/comebacks'
+import { Breakthroughs }      from '@/components/journey/breakthroughs'
+import { MilestoneWall }      from '@/components/journey/milestone-wall'
+import { YearInReview }       from '@/components/journey/year-in-review'
+import { JourneyMemories }    from '@/components/journey/journey-memories'
+import { KivoStory }          from '@/components/journey/kivo-story'
 
-const journeyEvents = [
-  {
-    id: 'moment-1',
-    type: 'struggle' as const,
-    title: 'I always quit after 2 weeks',
-    description:
-      'Pattern of starting strong but fading by day 14. Blamed it on willpower.',
-    date: 'Dec 2023',
-    context:
-      'This was your baseline story—the one you told yourself about why you couldn\'t change.',
-  },
-  {
-    id: 'moment-2',
-    type: 'breakthrough' as const,
-    title: 'Discovered morning consistency',
-    description:
-      'Shifted training to 6am instead of evening. Suddenly, shows were non-negotiable.',
-    date: 'Jan 2024',
-    context:
-      'Breakthrough came from changing the environment, not fixing willpower. The time of day mattered more than motivation.',
-  },
-  {
-    id: 'moment-3',
-    type: 'achievement' as const,
-    title: 'First 30-day streak',
-    description: 'Completed 30 consecutive days of training. First time.',
-    date: 'Feb 2024',
-    context:
-      'This proved the quit pattern was circumstantial, not personality. You could sustain effort.',
-  },
-  {
-    id: 'moment-4',
-    type: 'comeback' as const,
-    title: 'Returned after 8-day silence',
-    description:
-      'Life interrupted. You took 8 days off. Instead of restarting, you came back mid-week.',
-    date: 'Mar 2024',
-    context:
-      'This shifted your identity. You weren\'t someone who never misses. You were someone who returns.',
-  },
-  {
-    id: 'moment-5',
-    type: 'promise' as const,
-    title: 'Committed to 100kg squat',
-    description:
-      'Set a specific strength goal. Made it public to someone who would hold you accountable.',
-    date: 'Apr 2024',
-    context:
-      'Promise changed everything. You needed external structure, not internal motivation.',
-  },
-  {
-    id: 'moment-6',
-    type: 'achievement' as const,
-    title: 'Hit 100kg squat',
-    description:
-      'Achieved the goal 16 weeks after committing. Bodyweight up 4kg, strength up 35%.',
-    date: 'Jul 2024',
-    context:
-      'You didn\'t just lift heavier. You became someone who follows through. That\'s the real achievement.',
-  },
-]
+const BOT = process.env.NEXT_PUBLIC_BOT_USERNAME ?? 'kevo_companion_bot'
+
+function NotConnectedCallout() {
+  return (
+    <div className="border border-white/8 bg-slate-900/50 rounded-2xl p-5">
+      <p className="text-sm font-semibold text-white/60 mb-1">Connect Telegram to unlock your journey</p>
+      <p className="text-[12px] text-white/35 leading-relaxed">
+        Your fitness story lives in Rex. Connect via Telegram to start writing it.
+      </p>
+    </div>
+  )
+}
+
+function NoDataCallout() {
+  return (
+    <div className="border border-white/8 bg-slate-900/50 rounded-2xl p-5 flex items-start gap-3">
+      <MessageSquare className="w-5 h-5 text-white/25 shrink-0 mt-0.5" />
+      <div>
+        <p className="text-sm font-semibold text-white/60 mb-1">Your story hasn&apos;t started yet</p>
+        <p className="text-[12px] text-white/35 leading-relaxed mb-3">
+          Log your first workout with Rex and come back here — this page fills in as you train.
+        </p>
+        <a
+          href={`https://t.me/${BOT}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-sky-400 hover:text-sky-300 transition-colors"
+        >
+          <MessageSquare className="w-3.5 h-3.5" />
+          Open Rex in Telegram
+        </a>
+      </div>
+    </div>
+  )
+}
 
 export default function JourneyPage() {
+  const { data, loading } = useJourneyData()
+
+  const telegramConnected = data?.telegramConnected ?? false
+  const hasAnyData        = data?.hasAnyData        ?? false
+
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.5 }}
-      className="space-y-8"
-    >
-      {/* Header */}
-      <div>
-        <h1 className="text-4xl font-bold text-foreground mb-2">Your Journey</h1>
-        <p className="text-foreground/60 max-w-2xl">
-          The story of your transformation isn&apos;t written in numbers. It&apos;s
-          written in moments. In breakthroughs. In comebacks. In who you&apos;re
-          becoming.
-        </p>
+    <div className="w-full max-w-2xl mx-auto px-4 pt-6 pb-16 space-y-4">
+      <div className="mb-2">
+        <h1 className="text-lg font-bold text-white">Journey</h1>
+        <p className="text-xs text-white/30 mt-0.5">Your fitness story</p>
       </div>
 
-      {/* Timeline */}
-      <MomentTimeline events={journeyEvents} title="Key Moments" />
+      {/* Not connected */}
+      {!loading && !telegramConnected && <NotConnectedCallout />}
 
-      {/* Insight footer */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.8 }}
-        className="p-6 rounded-lg bg-gradient-to-r from-lime-500/10 to-transparent border border-lime-500/20 mt-12"
-      >
-        <h3 className="text-lg font-semibold text-foreground mb-2">
-          What This Timeline Shows
-        </h3>
-        <p className="text-foreground/70 text-sm leading-relaxed mb-3">
-          Your superpower isn&apos;t consistency. It&apos;s comebacks. Your strength
-          isn&apos;t willpower. It&apos;s structure. Your growth isn&apos;t motivation.
-          It&apos;s commitment.
-        </p>
-        <p className="text-foreground/60 text-sm italic">
-          Every moment on this timeline is proof that you&apos;re not meant to be
-          motivated. You&apos;re meant to be accountable.
-        </p>
-      </motion.div>
-    </motion.div>
+      {/* No data yet */}
+      {!loading && telegramConnected && !hasAnyData && <NoDataCallout />}
+
+      {/* S1 — Journey Summary */}
+      <JourneySummary
+        summary={data?.summary ?? {
+          daysWithKivo: 0, sessionsCompleted: 0, weightChangeTotalKg: null,
+          strengthChangeSummary: null, longestStreak: 0, currentStreak: 0,
+          joinedDate: new Date().toISOString().slice(0, 10), latestSessionDate: null,
+        }}
+        loading={loading}
+      />
+
+      {/* S10 — Kivo Story (high up — narrative hook) */}
+      <KivoStory story={data?.story ?? { lines: [] }} loading={loading} />
+
+      {/* S4 — Biggest Wins */}
+      <BiggestWins biggestWins={data?.biggestWins ?? []} loading={loading} />
+
+      {/* S3 — Chapters */}
+      <JourneyChapters chapters={data?.chapters ?? []} loading={loading} />
+
+      {/* S7 — Milestone Wall */}
+      <MilestoneWall milestones={data?.milestones ?? []} loading={loading} />
+
+      {/* S5 — Comebacks */}
+      <Comebacks comebacks={data?.comebacks ?? []} loading={loading} />
+
+      {/* S6 — Breakthroughs */}
+      <Breakthroughs breakthroughs={data?.breakthroughs ?? []} loading={loading} />
+
+      {/* S8 — Year In Review */}
+      <YearInReview
+        yearInReview={data?.yearInReview ?? {
+          thisMonth:   { sessions: 0, weightDelta: null, topLiftLabel: null },
+          last3Months: { sessions: 0, weightDelta: null, topLiftLabel: null },
+          allTime:     { sessions: 0, weightDeltaKg: null, longestStreak: 0, totalPRs: 0 },
+        }}
+        loading={loading}
+      />
+
+      {/* S9 — Memories */}
+      <JourneyMemories memories={data?.memories ?? []} loading={loading} />
+
+      {/* S2 — Timeline (at bottom — chronological story) */}
+      <JourneyTimeline timeline={data?.timeline ?? []} loading={loading} />
+    </div>
   )
 }

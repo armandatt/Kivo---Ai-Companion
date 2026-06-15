@@ -152,7 +152,7 @@ export async function getWeightTrend(
 
     if (entries.length === 0) return null;
 
-    const currentWeight = entries[0].weightKg;
+    const currentWeight = entries[0]!.weightKg;
     const weeklyRate    = calculateWeeklyRate(entries, now);
     const stalled       = detectWeightStall(entries, now);
 

@@ -156,8 +156,8 @@ export function calculateRecoveryScore(
 
   // ── Muscle-group overlap: most-recent vs. second-most-recent ─────────────
   if (recentSessions.length >= 2 && daysSinceLastSession <= 1) {
-    const latestMuscles  = new Set(recentSessions[0].musclesTrained.map(m => m.toLowerCase()));
-    const prevMuscles    = recentSessions[1].musclesTrained.map(m => m.toLowerCase());
+    const latestMuscles  = new Set(recentSessions[0]!.musclesTrained.map(m => m.toLowerCase()));
+    const prevMuscles    = recentSessions[1]!.musclesTrained.map(m => m.toLowerCase());
     const overlap        = prevMuscles.filter(m => latestMuscles.has(m));
     if      (overlap.length >= 2) score -= 15;
     else if (overlap.length === 1) score -= 7;
@@ -225,8 +225,8 @@ export function buildRecoveryFactors(
 
   // Muscle overlap
   if (recentSessions.length >= 2 && daysSinceLastSession <= 1) {
-    const latestMuscles = new Set(recentSessions[0].musclesTrained.map(m => m.toLowerCase()));
-    const prevMuscles   = recentSessions[1].musclesTrained.map(m => m.toLowerCase());
+    const latestMuscles = new Set(recentSessions[0]!.musclesTrained.map(m => m.toLowerCase()));
+    const prevMuscles   = recentSessions[1]!.musclesTrained.map(m => m.toLowerCase());
     const overlap       = prevMuscles.filter(m => latestMuscles.has(m));
     if (overlap.length >= 1) factors.push("Same muscle group trained back-to-back");
   }
