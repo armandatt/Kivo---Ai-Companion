@@ -246,7 +246,8 @@ export function computeTrendAnalysis(
 
   const proteinAdequate = protein ? protein.avgDailyG >= proteinTargetG : null;
   const calorieAligned  = calorie ? calorie.alignedWithGoal : null;
-  const actionNeeded    = proteinAdequate === false || calorieAligned === false;
+  // null protein = gap (can't confirm adequate), so actionNeeded unless explicitly true
+  const actionNeeded    = proteinAdequate !== true || calorieAligned === false;
 
   let summary: string;
   if (protein && calorie) {
@@ -291,7 +292,7 @@ export function computeGrowthAssessment(
     // Identify any sub-optimal limiter even when broadly on track
     if (recoveryStatus && recoveryStatus.constraintLevel !== "unrestricted") {
       primaryLimiter = "recovery";
-    } else if (trendAnalysis.proteinAdequate === false) {
+    } else if (trendAnalysis.proteinAdequate === false || trendAnalysis.proteinAdequate === null) {
       primaryLimiter = "nutrition";
     } else if (consistencyScore < 40) {
       primaryLimiter = "training";
@@ -310,6 +311,17 @@ export function computeGrowthAssessment(
     } else {
       primaryLimiter = "adherence";
     }
+  } else if (goalProgress.status === "unknown") {
+    // No target set — derive best-effort limiter from available signals
+    overallStatus = "on_track"; // conservative default until target is specified
+    if (recoveryStatus && recoveryStatus.constraintLevel !== "unrestricted") {
+      primaryLimiter = "recovery";
+    } else if (trendAnalysis.proteinAdequate === false || trendAnalysis.proteinAdequate === null) {
+      primaryLimiter = "nutrition";
+    } else if (consistencyScore < 40) {
+      primaryLimiter = "training";
+    }
+    // else stays "unknown" — no clear limiter, everything looks fine
   }
 
   // Critical override: weight moving in the wrong direction for goal type
@@ -326,7 +338,7 @@ export function computeGrowthAssessment(
     on_track: "Progress on track.",
     behind:   `Progress behind — primary limiter: ${primaryLimiter}.`,
     critical: `Progress critical — weight moving wrong direction for ${gt} goal.`,
-    unknown:  "No target set — tracking baseline only.",
+    unknown:  `No target set — coaching on best available signal${primaryLimiter !== "unknown" ? `: ${primaryLimiter}` : ""}.`,
   };
 
   return { overallStatus, primaryLimiter, narrative: narrative[overallStatus] };

@@ -3,7 +3,12 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@repo/api/services/fitnessSnapshot.service": ["../../packages/api/src/services/fitnessSnapshot.service"],
+      "@repo/api/services/workoutTracking.service": ["../../packages/api/src/services/workoutTracking.service"],
+      "@repo/api/services/nutrition.service":       ["../../packages/api/src/services/nutrition.service"],
+      "@repo/api/engines/scheduler-intelligence-v2":["../../packages/api/src/engines/scheduler-intelligence-v2"],
+      "@repo/api/engines/user-state-engine":         ["../../packages/api/src/engines/user-state-engine"]
     }
   },
   "include": [

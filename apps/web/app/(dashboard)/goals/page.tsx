@@ -1,130 +1,172 @@
 'use client'
 
-import { motion } from 'framer-motion'
-import { GoalCard } from '@/components/goals/goal-card'
+import { useGoalsData }             from '@/components/goals/use-goals-data'
+import { PrimaryGoal }              from '@/components/goals/primary-goal'
+import { GoalForecast }             from '@/components/goals/goal-forecast'
+import { RexVerdict }               from '@/components/goals/rex-verdict'
+import { GoalHealth }               from '@/components/goals/goal-health'
+import { BiggestLimiter }           from '@/components/goals/biggest-limiter'
+import { WhatMustChange }           from '@/components/goals/what-must-change'
+import { GoalRisks }                from '@/components/goals/goal-risks'
+import { GoalTimeline }             from '@/components/goals/goal-timeline'
+import { AlternativeScenarios }     from '@/components/goals/alternative-scenarios'
+import { GoalHistory }              from '@/components/goals/goal-history'
+import { Target, MessageSquare, Dumbbell } from 'lucide-react'
 
-const goals = [
-  {
-    id: 'goal-1',
-    title: '100kg Squat',
-    description: 'Hit a 100kg one-rep max squat',
-    progress: 92.5,
-    deadline: '18 days left',
-    risk: 'low' as const,
-    daysLeft: 18,
-    relatedMoments: ['First 30-day streak', 'Morning training success'],
-    relatedBreakthroughs: ['Discovered consistent morning training', 'Hit 120kg squat PR'],
-  },
-  {
-    id: 'goal-2',
-    title: '60 Day Streak',
-    description: 'Maintain consecutive training days',
-    progress: 78,
-    deadline: '32 days left',
-    risk: 'medium' as const,
-    daysLeft: 32,
-    relatedMoments: ['Returned after 8-day silence', 'Current 47-day streak'],
-    relatedBreakthroughs: ['Became comeback person', 'Extended streak pattern'],
-  },
-  {
-    id: 'goal-3',
-    title: 'Bodyweight +10kg',
-    description: 'Gain quality mass to 95kg',
-    progress: 65,
-    deadline: '45 days left',
-    risk: 'medium' as const,
-    daysLeft: 45,
-    relatedMoments: ['Volume increase Phase', 'Nutrition consistency'],
-    relatedBreakthroughs: ['Improved recovery', 'Morning nutrition protocol'],
-  },
-  {
-    id: 'goal-4',
-    title: '1000lb Powerlifting Total',
-    description: 'Combined Bench + Squat + Deadlift',
-    progress: 58,
-    deadline: '90 days left',
-    risk: 'medium' as const,
-    daysLeft: 90,
-    relatedMoments: [
-      'Strength progression phase',
-      'Competition prep mindset',
-    ],
-    relatedBreakthroughs: ['All three lifts improving', 'Commitment to program'],
-  },
-]
+const BOT = process.env.NEXT_PUBLIC_BOT_USERNAME ?? 'kevo_companion_bot'
+
+function NoGoalCallout() {
+  return (
+    <div className="border border-white/8 bg-slate-900/50 rounded-2xl p-5 flex items-start gap-3">
+      <Target className="w-5 h-5 text-white/25 shrink-0 mt-0.5" />
+      <div>
+        <p className="text-sm font-semibold text-white/60 mb-1">No goal set yet</p>
+        <p className="text-[12px] text-white/35 leading-relaxed mb-3">
+          Tell Rex what you&apos;re working toward and by when. Examples:
+        </p>
+        <ul className="text-[11px] text-white/30 space-y-1 mb-3">
+          <li>• "I want to lose 8kg by August."</li>
+          <li>• "Goal: bench 140kg by year end."</li>
+          <li>• "Help me gain 5kg of muscle in 6 months."</li>
+        </ul>
+        <a
+          href={`https://t.me/${BOT}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-sky-400 hover:text-sky-300 transition-colors"
+        >
+          <MessageSquare className="w-3.5 h-3.5" />
+          Open Rex in Telegram
+        </a>
+      </div>
+    </div>
+  )
+}
+
+function NoSessionsCallout() {
+  return (
+    <div className="border border-white/8 bg-slate-900/50 rounded-2xl p-5 flex items-start gap-3">
+      <Dumbbell className="w-5 h-5 text-white/25 shrink-0 mt-0.5" />
+      <div>
+        <p className="text-sm font-semibold text-white/60 mb-1">Start logging workouts to unlock forecasting</p>
+        <p className="text-[12px] text-white/35 leading-relaxed">
+          Your goal is set but Rex needs workout data to forecast your pace. Log your first session with Rex to see projections and scenario modelling.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function NotConnectedCallout() {
+  return (
+    <div className="border border-white/8 bg-slate-900/50 rounded-2xl p-5">
+      <p className="text-sm font-semibold text-white/60 mb-1">Connect Telegram to unlock goals</p>
+      <p className="text-[12px] text-white/35 leading-relaxed">
+        Goals forecasting requires Rex via Telegram. Connect in Settings to get started.
+      </p>
+    </div>
+  )
+}
 
 export default function GoalsPage() {
+  const { data, loading } = useGoalsData()
+
+  const telegramConnected = data?.telegramConnected ?? false
+  const isRexUser         = data?.isRexUser         ?? false
+  const hasGoal           = data?.hasGoal            ?? false
+  const hasSessions       = data?.hasSessions        ?? false
+
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.5 }}
-      className="space-y-8"
-    >
-      {/* Header */}
-      <div>
-        <h1 className="text-4xl font-bold text-foreground mb-2">Your Goals</h1>
-        <p className="text-foreground/60 max-w-2xl">
-          Commitments you&apos;ve made to yourself. Deadlines you&apos;ve chosen. Progress you&apos;re tracking.
-        </p>
+    <div className="w-full max-w-2xl mx-auto px-4 pt-6 pb-16 space-y-4">
+      <div className="mb-2">
+        <h1 className="text-lg font-bold text-white">Goals</h1>
+        <p className="text-xs text-white/30 mt-0.5">Am I on track?</p>
       </div>
 
-      {/* Summary Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="p-4 rounded-lg bg-slate-900/40 border border-slate-700/50"
-        >
-          <p className="text-xs text-foreground/60 mb-1">Active Goals</p>
-          <p className="text-3xl font-bold text-lime-400">{goals.length}</p>
-        </motion.div>
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15 }}
-          className="p-4 rounded-lg bg-slate-900/40 border border-slate-700/50"
-        >
-          <p className="text-xs text-foreground/60 mb-1">Average Progress</p>
-          <p className="text-3xl font-bold text-cyan-400">
-            {Math.round(goals.reduce((sum, g) => sum + g.progress, 0) / goals.length)}%
-          </p>
-        </motion.div>
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="p-4 rounded-lg bg-slate-900/40 border border-slate-700/50"
-        >
-          <p className="text-xs text-foreground/60 mb-1">Low Risk</p>
-          <p className="text-3xl font-bold text-orange-400">
-            {goals.filter((g) => g.risk === 'low').length} of {goals.length}
-          </p>
-        </motion.div>
-      </div>
+      {/* Not connected to Telegram */}
+      {!loading && !telegramConnected && (
+        <NotConnectedCallout />
+      )}
 
-      {/* Goals Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {goals.map((goal, idx) => (
-          <GoalCard key={goal.id} {...goal} index={idx} />
-        ))}
-      </div>
+      {/* S1 — Primary Goal */}
+      <PrimaryGoal
+        primaryGoal={data?.primaryGoal ?? null}
+        loading={loading}
+      />
 
-      {/* Insight Footer */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.8 }}
-        className="p-6 rounded-lg bg-gradient-to-r from-lime-500/10 to-transparent border border-lime-500/20"
-      >
-        <h3 className="text-lg font-semibold text-foreground mb-2">About Your Goals</h3>
-        <p className="text-foreground/70 text-sm leading-relaxed">
-          Your goals aren&apos;t wishes. They&apos;re commitments with deadlines and accountability. Each
-          one is connected to moments in your journey—breakthroughs that prove you can achieve them.
-          Trust the process.
-        </p>
-      </motion.div>
-    </motion.div>
+      {/* No goal callout */}
+      {!loading && telegramConnected && !hasGoal && (
+        <NoGoalCallout />
+      )}
+
+      {/* LB3: Chat-only user with goal but no sessions */}
+      {!loading && hasGoal && !hasSessions && (
+        <NoSessionsCallout />
+      )}
+
+      {/* S2 — Forecast */}
+      <GoalForecast
+        forecast={data?.forecast ?? null}
+        loading={loading}
+      />
+
+      {/* S10 — Rex's Verdict */}
+      <RexVerdict
+        verdict={data?.verdict ?? {
+          headline: '—',
+          detail:   'Loading goal data…',
+          limiter:  null,
+          outlook:  'neutral',
+        }}
+        loading={loading}
+      />
+
+      {/* S3 — Goal Health */}
+      <GoalHealth
+        goalHealth={data?.goalHealth ?? {
+          recovery:    { status: 'watch', note: '—' },
+          nutrition:   { status: 'watch', note: '—' },
+          consistency: { status: 'watch', note: '—' },
+          training:    { status: 'watch', note: '—' },
+        }}
+        loading={loading}
+      />
+
+      {/* S4 — Biggest Limiter */}
+      <BiggestLimiter
+        biggestLimiter={data?.biggestLimiter ?? null}
+        loading={loading}
+      />
+
+      {/* S5 — What Must Change */}
+      <WhatMustChange
+        whatMustChange={data?.whatMustChange ?? null}
+        loading={loading}
+      />
+
+      {/* S6 — Risks */}
+      <GoalRisks
+        risks={data?.risks ?? []}
+        loading={loading}
+      />
+
+      {/* S7 — Goal Timeline */}
+      <GoalTimeline
+        timeline={data?.timeline ?? null}
+        loading={loading}
+      />
+
+      {/* S8 — Alternative Scenarios */}
+      <AlternativeScenarios
+        scenarios={data?.scenarios ?? []}
+        loading={loading}
+      />
+
+      {/* S9 — Goal History */}
+      <GoalHistory
+        goalHistory={data?.goalHistory ?? []}
+        loading={loading}
+      />
+    </div>
   )
 }
