@@ -9,7 +9,7 @@ type Intent =
   | "checkin_cancel" | "checkin_schedule" | "schedule_adjust" | "focus_start"
   | "planning" | "streak_check" | "progress_check" | "emotional_trigger"
   | "rest_day" | "deadline_set" | "weekly_review" | "completion" | "goal_set"
-  | "general_chat"
+  | "health_event" | "general_chat"
 
 type Emotion = "positive" | "negative" | "neutral"
 
@@ -26,7 +26,7 @@ const VALID_INTENTS = new Set<string>([
   "checkin_cancel", "checkin_schedule", "schedule_adjust", "focus_start",
   "planning", "streak_check", "progress_check", "emotional_trigger",
   "rest_day", "deadline_set", "weekly_review", "completion", "goal_set",
-  "general_chat",
+  "health_event", "general_chat",
 ])
 
 // ── LLM call ──────────────────────────────────────────────────────────────────
@@ -65,6 +65,7 @@ INTENT OPTIONS (pick exactly one):
   weekly_review     — requesting a weekly summary or review
   completion        — reporting they completed a task, exam, workout, or goal
   goal_set          — setting a new goal
+  health_event      — declaring illness: fever, flu, food poisoning, nausea, vomiting, migraine, unwell
   general_chat      — everything else`
 
 async function llmAnalyze(text: string): Promise<LLMAnalysis> {
@@ -202,6 +203,10 @@ function regexIntent(t: string): Intent {
   // ── Emotional trigger ────────────────────────────────────────────────────
   if (/\b(can.?t do this( anymore)?|giving up|want(ing)? to quit|feel(ing)? like (quitting|giving up)|losing motivation|lost (all |my )?motivation|zero motivation|no motivation (left|at all)?|demotivated|unmotivated|burn(ed|ing)? out|completely overwhelmed|can.?t keep up|falling apart|breaking down|what.?s the (point|use)|not okay|so (stressed out|anxious|depressed|done)|too much (pressure|stress|work)|struggling (really )?(bad|hard|a lot)|can.?t cope|feeling (hopeless|defeated|broken|worthless)|everything (is|feels) (pointless|too much|overwhelming)|ready to (quit|give up|stop))\b/.test(t))
     return "emotional_trigger"
+
+  // ── Health event ─────────────────────────────────────────────────────────
+  if (/\b(fever|flu\b|influenza|food\s*poison(?:ing)?|feeling sick|vomit(?:ing)?|nausea|diarr?h(?:oea)?|puk(?:e|ing)|throwing up|stomach\s+(?:bug|virus)|migraine|unwell|under the weather|not well|i'?m ill\b|bedridden|temperature\s+\d+|temp\s+\d+)\b/.test(t))
+    return "health_event"
 
   // ── Rest day ─────────────────────────────────────────────────────────────
   if (/\b(rest day|taking (a |the )?day off|active recovery day|full rest(ing)?|recovery day|no (training|workout|gym|lifting) today|day off (from (gym|training|workout|lifting))?|skipping (gym|training|workout) (today|intentionally)|gonna (rest|recover|chill) today|light day today|deload (week|day)|taking it easy (today|this week))\b/.test(t))

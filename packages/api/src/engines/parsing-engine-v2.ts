@@ -38,6 +38,7 @@ export enum IntentType {
   TRAVEL_CONTEXT          = "travel_context",
   NUTRITION_CONTEXT       = "nutrition_context",
   ENERGY_CONTEXT          = "energy_context",
+  HEALTH_EVENT            = "health_event",
 
   // ── Conversational ────────────────────────────────────────────────────────
   CONFIRMATION            = "confirmation",
@@ -133,11 +134,15 @@ const RECOMMEND_REQUEST_RE = /\b(?:what\s+should\s+(?:i|I)|(?:can\s+you\s+)?(?:s
 
 // ─── Pain / injury ────────────────────────────────────────────────────────────
 const PAIN_WORDS_RE  = /\b(?:pain|hurt(?:ing|s)?|sore|ache|achy|tight|strain(?:ed)?|tweak(?:ed)?|injur(?:y|ed|ies)|sprain(?:ed)?|pulled?|popped?|snapped?|clicking|burning|pinching|tender)\b/i
-const INJURY_SEVERE_RE = /\b(?:torn|tore|tear|fracture|break|broken|dislocated|ruptured)\b/i
+const INJURY_SEVERE_RE = /\b(?:torn|tore|tear|fracture[sd]?|break|broken|dislocated|ruptured)\b/i
 const BODY_PART_RE  = /\b(?:knee|shoulder|back|wrist|elbow|hip|ankle|neck|chest|quad|hamstring|glute|lat|trap|calf|calves|arm|leg|lower\s+back|upper\s+back|rotator\s+cuff|bicep|tricep)\b/i
 
 // ─── Failure / skip ───────────────────────────────────────────────────────────
 const FAILURE_RE = /\b(?:skipped?|missed|couldn'?t|didn'?t(?:\s+(?:go|train|workout|make\s+it))?|no\s+(?:gym|workout|training|session)\s*(?:today)?|bailed|failed\s+to|haven'?t\s+(?:trained|gone)|haven'?t\s+been)\b/i
+
+// ─── Health event ─────────────────────────────────────────────────────────────
+// Exported for reuse in scheduler suppression (checkGlobalFireRules) and cron gates.
+export const ILLNESS_RE = /\b(?:fever|temperature(?:\s*\d+)?|temp(?:erature)?\s+\d+|flu\b|influenza|food\s*poison(?:ing)?|feeling\s+sick|vomit(?:ing)?|nausea|diarr?h(?:o?ea)?|puk(?:e|ing)|throwing\s+up|stomach\s+(?:bug|virus)|migraine|unwell|under\s+the\s+weather|not\s+well|ill\b|bedridden)\b/i
 
 // ─── Mood / emotional ─────────────────────────────────────────────────────────
 const MOOD_NEG_RE = /\b(?:stressed|overwhelmed|anxious|depressed|demotivated|unmotivated|burnt?\s*out|burnt?\s*out|losing\s+motivation|no\s+motivation|feeling\s+(?:low|down|off|terrible|awful|hopeless)|want(?:ing)?\s+to\s+quit|giving\s+up|can'?t\s+do\s+this|too\s+much)\b/i
@@ -150,7 +155,13 @@ const BUSY_RE   = /\b(?:busy|no\s+time|too\s+much\s+(?:on|going\s+on)|schedule\s
 // ─── Short reply classification ───────────────────────────────────────────────
 const AFFIRM_RE = /^(?:yeah|yes|yep|yup|ya|sure|okay|ok|fine|alright|absolutely|definitely|of\s+course|correct|right|exactly|confirmed?|done|for\s+sure|totally|yep\s+done|did\s+it|yess+|perfect|great|awesome|nice|love\s+it|all\s+good|aight|ight|aiight|good(?:\s+(?:with\s+(?:this|that|it)|to\s+go|enough))?|looks?\s+good(?:\s+to\s+me)?|works?(?:\s+for\s+me)?|sounds?\s+good(?:\s+to\s+me)?|let'?s\s+(?:do\s+it|go)|i'?m\s+good|im\s+good)\.?!?$/i
 const DENY_RE   = /^(?:no|nope|nah|na|not\s+really|not\s+yet|not\s+today|haven'?t|didn'?t|nahh|incorrect|wrong|negative|not\s+(?:good|right|correct)|that'?s\s+(?:not\s+right|wrong)|thats\s+(?:not\s+right|wrong)|change\s+it|don'?t\s+like\s+it|dont\s+like\s+it)\.?!?$/i
-const ACK_RE    = /^(?:k|kay|kk|ok|okay|thanks?|cool|got\s+it|noted|understood|roger|makes?\s+sense)\.?!?$/i
+// Anchored — only matches when the ENTIRE message is an acknowledgement.
+// Covers emoji and spelling variants so emojis / shorthand don't slip through to LLM.
+export const ACK_RE = /^(?:k{1,3}|kay|ok+|okay+|okayiee*|oki(?:e)?|alright|aight|ight|sure|yep|yup|yeah|ya|thanks?|thank\s+you|thx|ty\b|cheers|cool|got\s+(?:it|that)|will\s+do|noted|understood|roger|makes?\s+sense|appreciate\s+(?:it|that)|sounds?\s+(?:good|great)|👍+|❤️|🙏|💪|✅|🤝|😊|😄|🙌|nice|great|awesome|perfect|solid)[.!?\s]*$/iu
+
+// Multi-word closure: catches "Thanks Rex", "Got it man", "Okay sounds good", etc.
+// Anchored to start only — guards in detectMultiWordClosure() enforce full-message closure.
+const MULTI_WORD_CLOSURE_STARTERS_RE = /^(?:thanks?|thank\s+you|thx|got\s+it|will\s+do|okay|cool|alright|sounds?\s+(?:good|great)|appreciate\s+(?:it|that)|nice\s+one|good\s+(?:one|work|stuff)|roger|noted|perfect|awesome|solid)\b/i
 
 // Non-anchored — matches a modification request anywhere in the text
 // (e.g. "swap chest and back day", "can you change the split").
@@ -422,6 +433,28 @@ function detectFailureSignal(text: string): IntentResult | null {
   return makeIntent(IntentType.FAILURE_SIGNAL, 0.85, [text.slice(0, 60)], false)
 }
 
+// Matches phrases where illness keywords appear in a RECOVERY context ("fever is gone",
+// "no longer sick"). These should resolve reality rather than create new health events.
+const ILLNESS_RECOVERY_RE = /\b(?:fever(?:'s|\s+is)?\s+(?:gone|over|passed?)|no\s+longer\s+(?:sick|ill|unwell)|feeling\s+(?:much\s+)?better|all\s+better|fully\s+recovered?|back\s+to\s+(?:normal|myself)|not\s+sick\s+anymore|illness\s+(?:is\s+)?over)\b/i
+
+function detectHealthEvent(text: string): IntentResult | null {
+  if (!ILLNESS_RE.test(text)) return null
+  if (ILLNESS_RECOVERY_RE.test(text)) return null  // "fever is gone" ≠ new fever
+  return makeIntent(IntentType.HEALTH_EVENT, 0.93, [text.slice(0, 60)], true, { action: "health_event" })
+}
+
+// Catches multi-word closure phrases that ACK_RE misses due to its end anchor.
+// "Thanks Rex", "Got it man", "Okay sounds good", "Alright I'll try".
+// Guards: ≤ 5 words, no question mark, no action verbs that indicate a real directive.
+function detectMultiWordClosure(text: string): IntentResult | null {
+  const t = text.trim()
+  if (t.split(/\s+/).length > 5) return null
+  if (/[?]/.test(t)) return null
+  if (/\b(?:remind|what|how|when|where|why|should|please|could\s+you|can\s+you|will\s+you|don.?t|can.?t)\b/i.test(t)) return null
+  if (!MULTI_WORD_CLOSURE_STARTERS_RE.test(t)) return null
+  return makeIntent(IntentType.ACKNOWLEDGEMENT, 0.80, [t.slice(0, 60)], false)
+}
+
 function detectPainContext(text: string): IntentResult | null {
   if (!PAIN_WORDS_RE.test(text) && !INJURY_SEVERE_RE.test(text)) return null
 
@@ -649,6 +682,15 @@ function applyRecommendationGate(
   const outSignals = [...signals]
   const outIntents = [...intents]
 
+  const hasHealthEvent      = intents.some(i => i.type === IntentType.HEALTH_EVENT)
+  if (hasHealthEvent) outSignals.push("HEALTH_EVENT")
+
+  const hasAcknowledgement  = intents.some(i => i.type === IntentType.ACKNOWLEDGEMENT)
+  // Only emit CONVERSATION_CLOSURE when no real directive is also present.
+  // "Thanks remind me to drink water" has ACKNOWLEDGEMENT + REMINDER_CREATE — honor the reminder.
+  const hasNonAckActionable = intents.some(i => i.isActionable && i.type !== IntentType.ACKNOWLEDGEMENT)
+  if (hasAcknowledgement && !hasNonAckActionable) outSignals.push("CONVERSATION_CLOSURE")
+
   if (hasPain) {
     outSignals.push("PAIN_MENTIONED")
     // Emit INJURY_CONTEXT as a distinct signal when severity warrants it —
@@ -697,6 +739,7 @@ const ACTIONABLE_TYPES = new Set<IntentType>([
   IntentType.PROGRESS_QUERY,
   IntentType.CHECKIN_SCHEDULE,
   IntentType.SESSION_CONFIRMATION,
+  IntentType.HEALTH_EVENT,
 ])
 
 function isShortAmbiguous(text: string): boolean {
@@ -738,10 +781,12 @@ export function parseMessage(
     const disambig = disambiguateByConversationState(trimmed, context)
     if (disambig) {
       const entities = extractAllEntities(trimmed)
+      const earlySignals = [...signals]
+      if (disambig.type === IntentType.ACKNOWLEDGEMENT) earlySignals.push("CONVERSATION_CLOSURE")
       return {
         intents:              [disambig],
         entities,
-        signals,
+        signals:              earlySignals,
         actionableIntent:     ACTIONABLE_TYPES.has(disambig.type) ? disambig : null,
         confidence:           disambig.confidence,
         requiresClarification: disambig.requiresClarification,
@@ -779,6 +824,8 @@ export function parseMessage(
   const mood = detectMoodContext(trimmed);         if (mood) rawIntents.push(mood)
   const trav = detectTravelContext(trimmed);       if (trav) rawIntents.push(trav)
   const nctx = detectNutritionContext(trimmed);    if (nctx) rawIntents.push(nctx)
+  const hev  = detectHealthEvent(trimmed);         if (hev)  rawIntents.push(hev)
+  const mwc  = detectMultiWordClosure(trimmed);    if (mwc)  rawIntents.push(mwc)
 
   // Merge stateful answer (highest priority if present)
   if (stateIntent && !rawIntents.some(i => i.type === stateIntent.type)) {
