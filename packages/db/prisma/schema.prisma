@@ -97,6 +97,7 @@ model MessengerUser {
   nutritionLogs        NutritionLog[]
   goalProgressRecords  GoalProgress[]
   bodyweightHistory    BodyweightHistory[]
+  realities            UserReality[]
 
   @@unique([platform, platformChatId])
   @@index([platformChatId])
@@ -598,4 +599,24 @@ model BodyweightHistory {
   user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, recordedAt(sort: Desc)])
+}
+
+model UserReality {
+  id             String    @id @default(cuid())
+  userId         String
+  category       String    // "health" | "injury" | "emotional" | "life_constraint" | "training_context"
+  fact           String    @db.Text
+  confidence     Float     @default(0.8)
+  relevanceScore Float     @default(1.0)
+  sourceText     String?   @db.Text
+  isActive       Boolean   @default(true)
+  expiresAt      DateTime
+  resolvedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive, expiresAt])
+  @@index([userId, category, isActive])
 }

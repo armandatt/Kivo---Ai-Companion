@@ -73,6 +73,8 @@ import { handleWorkoutCommand, handleActiveLoggingMessage, resetReactivationCoun
 //@ts-ignore
 import { handleOffTopicMessage } from "@repo/api/services/offTopicClassifier.service";
 //@ts-ignore
+import { selectClosureContext, pickClosureReply } from "@repo/api/services/acknowledgementPool.service";
+//@ts-ignore
 import { scheduleCheckIn, cancelCheckIn } from "@repo/api/services/scheduleCheckin.service";
 //@ts-ignore
 import { listReminders, cancelReminderByIndex, parseAndCreateReminder, cancelReminderByKeyword, updateReminderByKeyword } from "@repo/api/services/customReminder.service";
@@ -86,6 +88,10 @@ import { runUnderstandingLayer, buildProfileSummary } from "@repo/api/engines/un
 import { routeMessage } from "@repo/api/engines/semantic-router";
 //@ts-ignore
 import { detectTimeMention } from "@repo/api/services/checkin-offer.service";
+//@ts-ignore
+import { readActiveReality, writeRealityFromV2Signals, resolveRealityFromV2Signals, buildConflictReply } from "@repo/api/services/realityLayer.service";
+//@ts-ignore
+import { shouldRunExtractor, extractAndWriteReality } from "@repo/api/services/realityExtractor.service";
 //@ts-ignore
 import { shouldOfferCheckIn } from "@repo/api/services/checkin-offer.service";
 //@ts-ignore
@@ -105,6 +111,11 @@ export const runtime = "nodejs";
 const inFlightChats = new Map<string, number>(); // chatId → acquired timestamp (ms)
 const LOCK_TTL_MS   = 45_000;
 
+// ── Closure reply dedup (per-chat, in-memory) ─────────────────────────────────
+// Prevents the same closure string from being sent twice in a row to the same user.
+// Process-level Map survives requests on single-instance Railway deployment.
+const lastClosureReply = new Map<string, string>(); // chatId → last closure reply
+
 function tryAcquireLock(chatId: string): boolean {
   const since = inFlightChats.get(chatId);
   if (since !== undefined && Date.now() - since < LOCK_TTL_MS) return false;
@@ -113,6 +124,24 @@ function tryAcquireLock(chatId: string): boolean {
 }
 function releaseLock(chatId: string): void {
   inFlightChats.delete(chatId);
+}
+
+// ── Health event reply builder ────────────────────────────────────────────────
+// Single deterministic response when user declares illness.
+// No LLM, no gym shortcircuit, no orchestrator.
+function buildHealthEventReply(text: string): string {
+  const t = text.toLowerCase()
+  if (/food\s*poison/i.test(t))
+    return "Food poisoning is brutal. Rest completely — no training, loads of fluids. Your body is fighting hard right now. Message me when you're back to normal, usually 24–48 hours."
+  if (/fever|temperature|temp\s+\d+/i.test(t))
+    return "Rest up — no training with a fever. Your immune system is already under load and exercise makes it harder to recover. Stay hydrated, sleep as much as you can, and message me when you're back."
+  if (/flu|influenza/i.test(t))
+    return "Flu needs full rest. No gym until you've been symptom-free for at least 24 hours. Hydrate, sleep, and let your body do its job. I'll be here when you're ready to get back."
+  if (/migraine/i.test(t))
+    return "Skip training today — exercising with a migraine can make it significantly worse. Rest in a dark, quiet space and hydrate well. Message me tomorrow."
+  if (/nausea|vomit|puk|throwing\s+up/i.test(t))
+    return "Rest today — no training when you're nauseous or vomiting. Your body needs to recover, not take on more stress. Sip fluids slowly and message me when you feel better."
+  return "Sounds like you're unwell. Rest today — no training. Let your body recover, stay hydrated, and message me when you're feeling better."
 }
 
 // ── Rate-limit busy-message dedup ─────────────────────────────────────────────
@@ -223,6 +252,19 @@ export async function POST(req: Request) {
         }
       }
 
+      // ── Reality conflict gate for /log ────────────────────────────────────
+      // Intercepts /log when user has active health or injury reality to avoid
+      // silently logging a workout while sick/injured without acknowledgement.
+      if (/^\/log\b/i.test(text.trim())) {
+        const reality = await readActiveReality(chatId.toString());
+        const conflict = buildConflictReply(reality);
+        if (conflict) {
+          await addToShortTerm(chatId.toString(), text, { role: "user", intent: "reality_conflict", emotion: "neutral" });
+          await sendAndRemember(chatId, conflict, "reality_conflict", "neutral");
+          return Response.json({ ok: true });
+        }
+      }
+
       // ── Workout commands (/log /pr /progress /history /overload /streak /split)
       const workoutCmd = await handleWorkoutCommand(chatId.toString(), text);
       if (workoutCmd.handled) {
@@ -255,6 +297,12 @@ export async function POST(req: Request) {
       // (e.g. "remind me to drink water and chest is sore" → both intents extracted).
       const v2ParseCtx = await buildParseContext(chatId.toString());
       const v2Parse    = parseMessage(text, v2ParseCtx);
+
+      // ── Dynamic Reality Layer — write + resolve (fire-and-forget) ─────────
+      // Never blocks the response. Extracts health/injury facts from V2 signals
+      // and resolves them if the user declares recovery ("feeling better" etc.).
+      writeRealityFromV2Signals(chatId.toString(), v2Parse.signals, text);
+      resolveRealityFromV2Signals(chatId.toString(), v2Parse.signals, text);
 
       // ── Structured production log (observability) ─────────────────────────
       // One line per user message. Used for debugging intent classification,
@@ -368,6 +416,15 @@ export async function POST(req: Request) {
       // ── Gym short-circuit (runs before general processing) ────────────────
       const processed = await processMessage(text);
       const gymUserId = body.userId || body.user?.id;
+
+      // ── Health event gate ─────────────────────────────────────────────────
+      // Illness declarations short-circuit ALL workout messaging before gym
+      // shortcircuit and orchestrator. Sends exactly one coherent response.
+      if (processed.intent === "health_event" || v2Parse.signals.includes("HEALTH_EVENT")) {
+        const reply = buildHealthEventReply(processed.cleanedText ?? text);
+        await sendAndRemember(chatId, reply, "health_event", "negative");
+        return Response.json({ ok: true });
+      }
 
       if (gymUserId) {
         await resetReengagementFlag(gymUserId);
@@ -506,6 +563,24 @@ export async function POST(req: Request) {
         return Response.json({ ok: true });
       }
 
+      // ── Acknowledgement gate ──────────────────────────────────────────────
+      // Pure closure messages ("okay", "thanks", "Thanks Rex", "Will do man",
+      // 👍, etc.) get a single Rex-voiced reply from a signal-driven pool.
+      // No LLM. No DB reads. No gym short-circuit. No orchestrator. Hard return.
+      //
+      // Pool selection order:
+      //   HEALTH_EVENT / INJURY_CONTEXT signal → HEALTH / INJURY pool
+      //   recent stored intents → EMOTIONAL / ACHIEVEMENT / HEALTH / INJURY
+      //   fallback → GENERAL
+      if (v2Parse.signals.includes("CONVERSATION_CLOSURE")) {
+        const ctx   = selectClosureContext(v2Parse.signals, v2ParseCtx.recentMessages);
+        const reply = pickClosureReply(ctx, lastClosureReply.get(chatId.toString()));
+        lastClosureReply.set(chatId.toString(), reply);
+        await addToShortTerm(chatId.toString(), text, { role: "user", intent: "acknowledgement", emotion: "neutral" });
+        await sendAndRemember(chatId, reply, "acknowledgement", "neutral");
+        return Response.json({ ok: true });
+      }
+
       // ── Off-topic classification (3-layer: regex → hardcoded → cheap LLM) ──
       // Training-related messages pass through instantly (no cost).
       // Everything else is handled here without touching the orchestrator.
@@ -549,6 +624,16 @@ export async function POST(req: Request) {
         reasoning: "ul error", durationMs: 0,
       }));
       const routerDecision = routeMessage(v2Parse, ulResult);
+
+      // ── Phase 2 Reality Extractor (fire-and-forget) ───────────────────────
+      // Only runs for life/emotional disclosures. Skip if Phase 1 already wrote
+      // health/injury facts (HEALTH_EVENT/INJURY_CONTEXT in V2 signals).
+      if (
+        shouldRunExtractor(ulResult.intent, ulResult.topic, ulResult.suggestedIntervention, ulResult.emotion) &&
+        !v2Parse.signals.some((s: string) => s === "HEALTH_EVENT" || s === "INJURY_CONTEXT")
+      ) {
+        extractAndWriteReality(chatId.toString(), text);
+      }
 
       console.log(JSON.stringify({
         ts:               new Date().toISOString(),
@@ -611,6 +696,7 @@ export async function POST(req: Request) {
       //
       // persistMode "full" because the user message was NOT pre-saved above.
       // ══════════════════════════════════════════════════════════════════════
+      const activeReality = await readActiveReality(chatId.toString());
       const result = await runOrchestrator({
         platformChatId: chatId.toString(),
         text,
@@ -619,6 +705,7 @@ export async function POST(req: Request) {
         persistMode:    "full",
         parseResult:    v2Parse,
         routerDecision,
+        activeReality,
       });
 
       // ── Post-pipeline log: full trace including decision and route ─────────

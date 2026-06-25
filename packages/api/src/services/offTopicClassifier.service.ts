@@ -7,7 +7,7 @@ import { computeGymTimeContextFromData } from "./gymTimeContext.service"
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface MessageClassification {
-  type:      "training_related" | "hardcoded" | "gibberish" | "needs_llm"
+  type:      "training_related" | "hardcoded" | "gibberish" | "acknowledgement" | "needs_llm"
   category?: string
   confidence: number
 }
@@ -32,6 +32,12 @@ interface OffTopicContext {
 // Any match here → immediate pass-through to normal mentor flow
 const TRAINING_KEYWORDS =
   /\b(gym|train|training|workout|lift|lifting|squat|bench|deadlift|press|pull|push|protein|calories|calorie|macro|macros|bulk|cut|cutting|sleep|recover|recovery|log|sets|reps|weight|kg|lbs|progress|pr|streak|split|session|exercise|muscle|cardio|run|running|diet|eat|eating|food|form|technique|volume|frequency|overload|deload|hypertrophy|strength|lean|tone|toning|rest|rest\s+day|back|chest|legs|arms|shoulders|bicep|biceps|tricep|triceps|glutes|quads|hamstrings|calves|core|abs|push\s+day|pull\s+day|leg\s+day|upper|lower|full\s+body|monday|tuesday|wednesday|thursday|friday|saturday|sunday|creatine|supplement|soreness|sore|injury|injure|pain|schedule|plan|program|phase|cycle|week|today|tomorrow|next)\b/i
+
+// Pure closure/acknowledgement words — handled before gibberish so they get a
+// minimal reply rather than "That's not a log. What are we doing?".
+const ACKNOWLEDGEMENT_PATTERNS = [
+  /^(?:k{1,3}|kay|ok+|okay+|okayiee*|oki(?:e)?|alright|aight|ight|sure|yep|yup|yeah|ya|thanks?|thank\s+you|thx|ty|cheers|cool|got\s+(?:it|that)|will\s+do|noted|understood|roger|appreciate\s+(?:it|that)|sounds?\s+(?:good|great)|nice|great|awesome|perfect|solid)[.!?\s]*$/iu,
+]
 
 const GIBBERISH_PATTERNS = [
   /^[^a-z0-9\s]{3,}$/i,          // only symbols: @#$%
@@ -60,6 +66,12 @@ export function classifyMessage(text: string): MessageClassification {
   // Training-related → pass straight through (no cost, normal flow)
   if (TRAINING_KEYWORDS.test(t)) {
     return { type: "training_related", confidence: 1 }
+  }
+
+  // Acknowledgements — detected before gibberish so they don't get "That's not a log"
+  // Primary gate is CONVERSATION_CLOSURE signal in the webhook; this is the fallback.
+  if (ACKNOWLEDGEMENT_PATTERNS.some(p => p.test(t))) {
+    return { type: "acknowledgement", confidence: 0.95 }
   }
 
   // Check hardcoded triggers (instant, deterministic)
@@ -358,6 +370,14 @@ export async function handleOffTopicMessage(
   let intent: string
 
   switch (cls.type) {
+    case "acknowledgement": {
+      // Closure message — no new coaching. One-word reply, no investigation re-opened.
+      const CLOSURE_REPLIES = ["Anytime.", "👍", "Noted.", "Got it."]
+      reply  = CLOSURE_REPLIES[Math.floor(Math.random() * CLOSURE_REPLIES.length)]!
+      intent = "acknowledgement"
+      return { handled: true, reply, intent }
+    }
+
     case "hardcoded": {
       reply = buildHardcodedResponse(cls.category!, ctx)
 

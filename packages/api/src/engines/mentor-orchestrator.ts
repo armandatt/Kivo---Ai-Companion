@@ -93,6 +93,9 @@ export interface OrchestratorInput {
   /** Semantic router decision — injected when UL is primary router.
    *  Carries UL intent, suggested intervention, and routing source. */
   routerDecision?: RouterDecision;
+  /** Active reality facts from the Dynamic Reality Layer (hours-to-days TTL).
+   *  Injected by the webhook and surfaced in the system prompt. */
+  activeReality?: import("../services/realityLayer.service").UserRealityFact[];
 }
 
 export interface ScheduledAction {
@@ -232,6 +235,8 @@ function detectConstraints(text: string): DetectedConstraint[] {
     out.push({ type: "family_responsibility",  raw: text, severity: "mild",     isTemporary: true  });
   if (/\b(injured|injury|pain|hurt|can'?t (use|move|lift))\b/.test(t))
     out.push({ type: "injury",                 raw: text, severity: "moderate", isTemporary: true  });
+  if (/\b(fever|flu\b|influenza|food\s*poison(?:ing)?|feeling sick|vomit(?:ing)?|nausea|diarr?h(?:oea)?|puk(?:e|ing)|throwing up|migraine|unwell|under the weather|not well|ill\b|bedridden|temperature\s+\d+|temp\s+\d+)\b/.test(t))
+    out.push({ type: "illness",                raw: text, severity: "severe",   isTemporary: true  });
   if (/\b(burnt? out|burnout|no energy|exhausted|can'?t function)\b/.test(t))
     out.push({ type: "burnout",                raw: text, severity: "severe",   isTemporary: false });
   if (/\b(no money|broke|can'?t afford)\b/.test(t))
@@ -773,6 +778,8 @@ interface RexContext {
   hasPainContext:        boolean;                      // parser: pain/soreness mentioned
   hasInjuryContext:      boolean;                      // parser: severe injury (torn/fracture)
   recommendationBlocked: boolean;                      // parser: RECOMMENDATION_BLOCKED signal
+  hasHealthEvent:        boolean;                      // parser: illness declared (fever/flu/etc.)
+  activeReality:         import("../services/realityLayer.service").UserRealityFact[];
 }
 
 interface V3StateUpdates {
@@ -1374,6 +1381,8 @@ function buildRexContext(
     hasPainContext:        input.parseResult?.signals?.includes("PAIN_MENTIONED") ?? false,
     hasInjuryContext:      input.parseResult?.signals?.includes("INJURY_CONTEXT") ?? false,
     recommendationBlocked: input.parseResult?.signals?.includes("RECOMMENDATION_BLOCKED") ?? false,
+    hasHealthEvent:        input.parseResult?.signals?.includes("HEALTH_EVENT") ?? false,
+    activeReality:         input.activeReality ?? [],
   };
 }
 
@@ -1600,6 +1609,21 @@ function buildRexSystemPrompt(ctx: RexContext): string {
     }
     return lines.join("\n");
   })();
+
+  // Dynamic reality block (persisted hours-to-days context — illness, injury, etc.)
+  const { buildRealityBlock } = await import("../services/realityLayer.service");
+  const realityBlock = buildRealityBlock(ctx.activeReality);
+
+  // Health event suppression block (illness declared in this message or context)
+  const healthEventBlock = ctx.hasHealthEvent
+    ? [
+        "HEALTH_EVENT: ACTIVE (illness declared — fever/flu/food poisoning/nausea/etc.)",
+        "→ SUPPRESS: next workout prompts, overload suggestions, exercise recommendations, muscle reminders, missed-session accountability.",
+        "→ ALLOW: recovery guidance, hydration tips, rest advice, return-to-training guidance once recovered.",
+        "→ Do NOT ask why they missed training. Do NOT reference scheduled muscles.",
+        "→ One coherent response only. Empathize + short recovery advice. No questions about training.",
+      ].join("\n")
+    : null;
 
   // Recovery facts
   const recoveryFacts = ctx.recoveryStatus
@@ -2104,7 +2128,7 @@ ${profileSection}
 
 Training state: ${ctx.schedulerNarrative}
 Today: ${ctx.todaySessionStatus}${ctx.coachState && ctx.coachState.states.length > 0 ? `\nCoach state: ${ctx.coachState.states.join(", ")}${ctx.coachState.inactivityDays >= 7 ? ` (${ctx.coachState.inactivityDays}d inactive)` : ""}` : ""}
-${newUserOrientationBlock ? `\n\n${newUserOrientationBlock}` : ""}${mentorStateFacts ? `\n─── MENTOR STATE ─────────────────────────────────────────────────────────────\n${mentorStateFacts}` : ""}${hardConstraintsBlock ? `\n\n${hardConstraintsBlock}` : ""}${painInjuryBlock ? `\n\n─── PAIN / INJURY SIGNAL ─────────────────────────────────────────────────────\n${painInjuryBlock}` : ""}${recoveryFacts ? `\n\n─── RECOVERY STATUS ──────────────────────────────────────────────────────────\n${recoveryFacts}` : ""}${sessionCtxSection ? `\n\n─── SESSION CONTEXT ──────────────────────────────────────────────────────────\n${sessionCtxSection}` : ""}${rexSessionSection ? `\n\n─── TRAINING DETAIL ──────────────────────────────────────────────────────────\n${rexSessionSection}` : ""}${gymPatternSection ? `\n\n─── GYM PATTERNS ─────────────────────────────────────────────────────────────\n${gymPatternSection}` : ""}${behavioralPatternsSection ? `\n\n─── BEHAVIORAL PATTERNS ──────────────────────────────────────────────────────\n${behavioralPatternsSection}` : ""}${engagementSection ? `\n\n─── ENGAGEMENT ───────────────────────────────────────────────────────────────\n${engagementSection}` : ""}${goalProgressSection ? `\n\n─── GOAL PROGRESS ────────────────────────────────────────────────────────────\n${goalProgressSection}` : ""}${weightTrendSection ? `\n\n─── WEIGHT TREND ─────────────────────────────────────────────────────────────\n${weightTrendSection}` : ""}${nutritionSection ? `\n\n─── NUTRITION STATUS ─────────────────────────────────────────────────────────\n${nutritionSection}` : ""}${interventionHistoryLine ? `\n\n─── INTERVENTION HISTORY ─────────────────────────────────────────────────────\n${interventionHistoryLine}${loopWarning}` : ""}
+${newUserOrientationBlock ? `\n\n${newUserOrientationBlock}` : ""}${mentorStateFacts ? `\n─── MENTOR STATE ─────────────────────────────────────────────────────────────\n${mentorStateFacts}` : ""}${hardConstraintsBlock ? `\n\n${hardConstraintsBlock}` : ""}${realityBlock ? `\n\n─── ACTIVE REALITY ───────────────────────────────────────────────────────────\n${realityBlock}` : ""}${healthEventBlock ? `\n\n─── HEALTH EVENT OVERRIDE ────────────────────────────────────────────────────\n${healthEventBlock}` : ""}${painInjuryBlock ? `\n\n─── PAIN / INJURY SIGNAL ─────────────────────────────────────────────────────\n${painInjuryBlock}` : ""}${recoveryFacts ? `\n\n─── RECOVERY STATUS ──────────────────────────────────────────────────────────\n${recoveryFacts}` : ""}${sessionCtxSection ? `\n\n─── SESSION CONTEXT ──────────────────────────────────────────────────────────\n${sessionCtxSection}` : ""}${rexSessionSection ? `\n\n─── TRAINING DETAIL ──────────────────────────────────────────────────────────\n${rexSessionSection}` : ""}${gymPatternSection ? `\n\n─── GYM PATTERNS ─────────────────────────────────────────────────────────────\n${gymPatternSection}` : ""}${behavioralPatternsSection ? `\n\n─── BEHAVIORAL PATTERNS ──────────────────────────────────────────────────────\n${behavioralPatternsSection}` : ""}${engagementSection ? `\n\n─── ENGAGEMENT ───────────────────────────────────────────────────────────────\n${engagementSection}` : ""}${goalProgressSection ? `\n\n─── GOAL PROGRESS ────────────────────────────────────────────────────────────\n${goalProgressSection}` : ""}${weightTrendSection ? `\n\n─── WEIGHT TREND ─────────────────────────────────────────────────────────────\n${weightTrendSection}` : ""}${nutritionSection ? `\n\n─── NUTRITION STATUS ─────────────────────────────────────────────────────────\n${nutritionSection}` : ""}${interventionHistoryLine ? `\n\n─── INTERVENTION HISTORY ─────────────────────────────────────────────────────\n${interventionHistoryLine}${loopWarning}` : ""}
 
 ─── SECTION C — MEMORIES ────────────────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 import { prisma } from "@repo/db/client"
 import type { GymTimeContext } from "./gymTimeContext.service"
 import type { FeelRating } from "./workoutTracking.service"
+import { readActiveReality } from "./realityLayer.service"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -131,7 +132,14 @@ export async function checkGlobalFireRules(input: GlobalFireRulesInput): Promise
 
   if (await messagedRecently(platformChatId, now, 10)) return false
 
+  if (await userHasActiveHealthEvent(platformChatId, now)) return false
+
   return true
+}
+
+export async function userHasActiveHealthEvent(platformChatId: string, _now: Date): Promise<boolean> {
+  const reality = await readActiveReality(platformChatId)
+  return reality.some(r => r.category === "health")
 }
 
 async function messagedRecently(platformChatId: string, now: Date, minutes: number): Promise<boolean> {
