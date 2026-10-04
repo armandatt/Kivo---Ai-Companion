@@ -5,6 +5,8 @@ const config: Config = {
   testEnvironment: "node",
   extensionsToTreatAsEsm: [".ts"],
   moduleNameMapper: {
+    // Strip .js extension so ts-jest (CJS mode) can resolve TypeScript files
+    "^(\\.{1,2}/.*)\\.js$": "$1",
     "^@repo/db/client$": "<rootDir>/__mocks__/db.ts",
     "^../services/memory.service$": "<rootDir>/__mocks__/memory.service.ts",
     "^../services/openai.service$": "<rootDir>/__mocks__/openai.service.ts",

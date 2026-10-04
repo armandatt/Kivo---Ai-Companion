@@ -10,6 +10,8 @@ import { formatMessengerText } from "@repo/api/services/formatter.service";
 import { runGymCronJobs } from "@repo/api/services/gymCron.service";
 //@ts-ignore
 import { fireCustomReminders } from "@repo/api/services/customReminder.service";
+//@ts-ignore
+import { runNovaProactiveCron } from "@repo/api/nova/proactive/nova-proactive-cron";
 
 export type CheckinCronResult = {
   ok: boolean;
@@ -59,6 +61,14 @@ export async function runCheckinCron(now = new Date()): Promise<CheckinCronResul
     await addToShortTerm(message.chatId, message.text, { role: "assistant", intent: message.intent, emotion: "neutral" });
     sent += 1;
   }
+
+  // ── Nova proactive mentor (academic coaching) ─────────────────────────────
+  const novaResult = await runNovaProactiveCron(now).catch((err: unknown) => {
+    console.error("[CHECKIN] Nova proactive cron failed:", err);
+    return { ok: false, sent: 0, checked: 0, errors: 1 };
+  });
+  sent += novaResult.sent;
+  console.log(`[CHECKIN] Nova proactive: ${novaResult.sent}/${novaResult.checked} sent, ${novaResult.errors} errors`);
 
   return { ok: true, sent };
 }

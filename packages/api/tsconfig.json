@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@repo/db/client": ["../../packages/db/src/index.ts"],
+      "@repo/db/*": ["../../packages/db/src/*"]
+    }
+  },
+  "include": ["src/nova/**/*.ts"],
+  "exclude": ["node_modules", "src/nova/**/__tests__/**"]
+}

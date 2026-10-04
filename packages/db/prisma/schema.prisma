@@ -98,6 +98,7 @@ model MessengerUser {
   goalProgressRecords  GoalProgress[]
   bodyweightHistory    BodyweightHistory[]
   realities            UserReality[]
+  novaAcademicProfile  NovaAcademicProfile?
 
   @@unique([platform, platformChatId])
   @@index([platformChatId])
@@ -604,7 +605,7 @@ model BodyweightHistory {
 model UserReality {
   id             String    @id @default(cuid())
   userId         String
-  category       String    // "health" | "injury" | "emotional" | "life_constraint" | "training_context"
+  category       String    // "health" | "injury" | "emotional" | "life_constraint" | "training_context" | "academic_constraint"
   fact           String    @db.Text
   confidence     Float     @default(0.8)
   relevanceScore Float     @default(1.0)
@@ -619,4 +620,212 @@ model UserReality {
 
   @@index([userId, isActive, expiresAt])
   @@index([userId, category, isActive])
+}
+
+//////////////////////////////////////////////////
+// NOVA — ACADEMIC INTELLIGENCE LAYER
+//////////////////////////////////////////////////
+
+model NovaAcademicProfile {
+  id                        String   @id @default(cuid())
+  userId                    String   @unique
+  yearOfStudy               Int?
+  major                     String?
+  institution               String?
+  degree                    String?
+  targetGpa                 Float?
+  goals                     String[]
+  preferredStudyTime        String?
+  studyStyleNotes           String?
+  biggestStruggle           String?
+  semesterStartDate         DateTime?
+  semesterEndDate           DateTime?
+  preferredStudyHoursPerDay Float    @default(3.0)
+  timezone                  String?
+
+  // Onboarding state
+  onboardingStep            String   @default("not_started")
+  onboardingComplete        Boolean  @default(false)
+
+  subjects          NovaSubject[]
+  exams             NovaExam[]
+  studySessions     NovaStudySession[]
+  cognitiveState    NovaCognitiveState?
+  learningDNA       NovaLearningDNA?
+  proactiveMessages NovaProactiveMessage[]
+
+  user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model NovaSubject {
+  id          String  @id @default(cuid())
+  profileId   String
+  name        String
+  code        String?
+  credits     Int?
+  subjectType String?   // "core" | "elective" | "lab"
+  isWeak      Boolean @default(false)
+  isStrong    Boolean @default(false)
+
+  topics NovaTopicMastery[]
+  exams  NovaExam[]
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([profileId, name])
+  @@index([profileId])
+}
+
+model NovaTopicMastery {
+  id        String @id @default(cuid())
+  subjectId String
+  name      String
+
+  // FSRS-lite state (replaceable — interface is permanent, algorithm is not)
+  masteryProbability Float    @default(0.0)
+  confidenceReported Float    @default(0.0)
+  efFactor           Float    @default(2.5)
+  intervalDays       Int      @default(1)
+  reviewCount        Int      @default(0)
+  lastStudiedAt      DateTime?
+  nextReviewAt       DateTime?
+
+  subject NovaSubject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([subjectId, name])
+  @@index([subjectId])
+  @@index([nextReviewAt])
+}
+
+model NovaExam {
+  id          String   @id @default(cuid())
+  profileId   String
+  subjectId   String?
+  title       String
+  examType    String   @default("midterm")
+  scheduledAt DateTime
+  durationMin Int?
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  subject NovaSubject?        @relation(fields: [subjectId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([profileId, scheduledAt])
+}
+
+model NovaStudySession {
+  id               String   @id @default(cuid())
+  profileId        String
+  subjectId        String?
+  topicId          String?
+  topicName        String?
+  durationMinutes  Int
+  activityType     String   @default("review")
+  performanceScore Float?
+  status           String   @default("completed")
+  sessionDate      DateTime @default(now())
+
+  // Interactive session (Step 4)
+  currentFocus            String?
+  plannedDurationMinutes  Int?
+  confusionPoints         String[]
+  topicsCompleted         String[]
+  energyLevel             String?         // "high" | "medium" | "low"
+  focusQuality            String?         // "deep" | "moderate" | "scattered"
+  pauseCount              Int      @default(0)
+  totalPausedMinutes      Int      @default(0)
+  pausedAt                DateTime?
+  executionReport         Json?
+  reflectionText          String?
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([profileId, sessionDate])
+  @@index([profileId, status])
+}
+
+model NovaCognitiveState {
+  id        String @id @default(cuid())
+  profileId String @unique
+
+  investigationTopic       String?
+  investigationHypotheses  String[]
+  investigationMissingData String[]
+  investigationEvidence    Json?
+  investigationAttempts    Int      @default(0)
+  investigationStatus      String?
+  investigationStartedAt   DateTime?
+  investigationUpdatedAt   DateTime?
+
+  followUpChecks   Json?
+  reasoningHistory Json?
+  stateHistory     Json?
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model NovaLearningDNA {
+  id        String @id @default(cuid())
+  profileId String @unique
+
+  optimalSessionMinutes      Int?
+  attentionCurve             String?
+  preferredReviewStyle       String?
+  retentionBoostTriggers     String[]
+  peakStudyHours             String[]
+  planAdherenceProfile       String?
+  commitmentToCompletionRate Float?
+  historicalCalibrationGap   Float?
+  calibrationTrend           String?
+  overconfidentSubjects      String[]
+  underconfidentSubjects     String[]
+  dataPointCount             Int     @default(0)
+  confidence                 String  @default("low")
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ── Nova Proactive Mentor System ──────────────────────────────────────────────
+// Tracks every proactive message Nova fires — used for cooldown enforcement
+// and deduplication. One record per event fired (approved or suppressed).
+
+model NovaProactiveMessage {
+  id             String   @id @default(cuid())
+  profileId      String
+  eventType      String   // InterventionType value
+  firedAt        DateTime
+  cooldownUntil  DateTime // no same eventType fires before this timestamp
+  priority       Int
+  confidence     Float
+  approved       Boolean  @default(true)
+  suppressReason String?  // set when approved = false
+  text           String?  @db.Text
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([profileId, firedAt])
+  @@index([profileId, eventType, cooldownUntil])
 }

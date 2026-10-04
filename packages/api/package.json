@@ -12,7 +12,15 @@
     "./services/*": "./src/services/*",
     "./engines/*": "./src/engines/*",
     "./engines/understanding-layer": "./src/engines/understanding-layer.ts",
-    "./types/*": "./src/types/*"
+    "./types/*": "./src/types/*",
+    "./nova": "./src/nova/nova-orchestrator.ts",
+    "./nova/types": "./src/nova/types/index.ts",
+    "./nova/engines/*": "./src/nova/engines/*",
+    "./nova/decision/*": "./src/nova/decision/*",
+    "./nova/brains/*": "./src/nova/brains/*",
+    "./nova/adapters/*": "./src/nova/adapters/*",
+    "./nova/context/*": "./src/nova/context/*",
+    "./nova/persistence/*": "./src/nova/persistence/*"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

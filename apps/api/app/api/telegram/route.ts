@@ -36,6 +36,12 @@
 //      (superseded by the W6 review block inside handleOnboardingV2)
 //
 // ═══════════════════════════════════════════════════════════════════════════════
+// ── Nova companion ────────────────────────────────────────────────────────────
+//@ts-ignore
+import { runNovaOrchestrator } from "@repo/api/nova";
+//@ts-ignore
+import { runNovaOnboarding } from "@repo/api/nova/onboarding/nova-onboarding-orchestrator";
+
 //@ts-ignore
 import { processMessage } from "@repo/api/processor/messageProcessor";
 //@ts-ignore
@@ -192,6 +198,44 @@ export async function POST(req: Request) {
 
       // ── /start token handling (web → Telegram connect) ────────────────────
       if (await handleTelegramConnectStart(text, chatId)) {
+        return Response.json({ ok: true });
+      }
+
+      // ── Nova companion branch ─────────────────────────────────────────────
+      // Persona check: one read, then branch. If persona is "nova" the entire
+      // rest of this handler is skipped — Rex's pipeline never runs for Nova users.
+      const messengerUser = await prisma.messengerUser.findUnique({
+        where:  { platform_platformChatId: { platform: "telegram", platformChatId: chatId.toString() } },
+        select: { persona: true, novaAcademicProfile: { select: { id: true, onboardingComplete: true } } },
+      });
+
+      if (messengerUser?.persona === "nova") {
+        // Shared infrastructure: rate limit
+        const novaRateLimit = await checkRateLimit(chatId.toString());
+        if (!novaRateLimit.allowed) {
+          if (shouldSendBusyMessage(chatId.toString())) {
+            await sendTelegramMessage(chatId, "You've hit the free conversation limit for now. I'll be back shortly. Your progress is safe.");
+          }
+          return Response.json({ ok: true });
+        }
+
+        // Shared infrastructure: processing lock
+        const novaLockAcquired = tryAcquireLock(chatId.toString());
+        if (!novaLockAcquired) {
+          await sendTelegramMessage(chatId, "I'm still working on your last message. Give me a moment.");
+          return Response.json({ ok: true });
+        }
+        lockAcquired = true;
+
+        // Route: onboarding if no profile or onboarding not yet complete
+        const isOnboardingDone = messengerUser.novaAcademicProfile?.onboardingComplete === true;
+
+        try {
+          const novaReply = await handleNovaMessage(chatId.toString(), text, isOnboardingDone, new Date());
+          await sendTelegramMessage(chatId, novaReply);
+        } finally {
+          // lock released in outer finally
+        }
         return Response.json({ ok: true });
       }
 
@@ -992,5 +1036,101 @@ async function sendTelegramMessage(chatId: number | string, text: string, parseM
   if (!response.ok) {
     const err = await response.text();
     throw new Error(`Telegram send failed: ${err}`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NOVA COMPANION — message handler
+// Called only when MessengerUser.persona === "nova".
+// All command routing and the orchestrator call live here.
+// Rex's infrastructure (sendTelegramMessage, rate limit, lock) is shared.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const NOVA_HELP_TEXT = `Here's what I can do:
+
+/study [topic] — start a study session or get today's plan
+/done — log that you finished studying
+/explain [topic] — get a clear explanation of a topic
+/quiz [topic] — test yourself on what you know
+/revise — review what's due based on your schedule
+/help — show this message
+
+Or just talk to me. Tell me what you studied, how you're feeling, what you're struggling with. I'll figure out what you need.`;
+
+async function handleNovaMessage(
+  platformChatId:   string,
+  text:             string,
+  onboardingDone:   boolean,
+  timestamp:        Date,
+): Promise<string> {
+  const trimmed = text.trim();
+
+  // ── /help always returns static text (works even during onboarding) ──────────
+  if (/^\/help\b/i.test(trimmed)) {
+    return NOVA_HELP_TEXT;
+  }
+
+  // ── Onboarding gate ──────────────────────────────────────────────────────────
+  // If onboarding is not complete, route ALL messages (including commands) through
+  // the onboarding orchestrator. Commands are still converted to natural text so
+  // they land in the onboarding extraction with proper intent.
+  if (!onboardingDone) {
+    // Commands during onboarding: translate so the extractor sees intent clearly
+    let onboardingText = text;
+    if (/^\/study\b/i.test(trimmed)) {
+      const topic = trimmed.replace(/^\/study\s*/i, "").trim();
+      onboardingText = topic ? `I want to study ${topic}` : "I want to start studying";
+    } else if (/^\/done\b/i.test(trimmed)) {
+      onboardingText = "I finished studying today";
+    } else if (/^\/(explain|quiz|revise)\b/i.test(trimmed)) {
+      onboardingText = text.replace(/^\/\w+\s*/i, "");
+    }
+
+    try {
+      const result = await runNovaOnboarding({ platformChatId, text: onboardingText, timestamp });
+      return result.reply;
+    } catch (err) {
+      console.error("[nova:onboarding] error:", err);
+      return "Something went wrong. Try sending your message again.";
+    }
+  }
+
+  // ── Main orchestrator path (onboarding complete) ──────────────────────────────
+  // Commands → natural language so Understanding Brain classifies correctly.
+  let orchestratorText = text;
+  if (/^\/study\b/i.test(trimmed)) {
+    const topic = trimmed.replace(/^\/study\s*/i, "").trim();
+    orchestratorText = topic
+      ? `I want to study ${topic}. What should I do today?`
+      : "I'm ready to study. What should I focus on today?";
+  } else if (/^\/done\b/i.test(trimmed)) {
+    orchestratorText = "I just finished studying.";
+  } else if (/^\/explain\b/i.test(trimmed)) {
+    const topic = trimmed.replace(/^\/explain\s*/i, "").trim();
+    orchestratorText = topic ? `Can you explain ${topic} to me?` : "Can you explain the topic I'm working on?";
+  } else if (/^\/quiz\b/i.test(trimmed)) {
+    const topic = trimmed.replace(/^\/quiz\s*/i, "").trim();
+    orchestratorText = topic ? `Quiz me on ${topic}.` : "Quiz me on what I've been studying.";
+  } else if (/^\/revise\b/i.test(trimmed)) {
+    orchestratorText = "What should I revise today based on my schedule?";
+  }
+
+  try {
+    const result = await runNovaOrchestrator({ platformChatId, text: orchestratorText, timestamp });
+
+    console.log(JSON.stringify({
+      ts:           new Date().toISOString(),
+      chatId:       platformChatId,
+      layer:        "nova",
+      intervention: result.intervention,
+      mode:         result.reasoningMode,
+      confidence:   result.confidence,
+      message:      text.slice(0, 80),
+    }));
+
+    return result.reply;
+  } catch (err) {
+    console.error("[nova] orchestrator error:", err);
+    return "Something went wrong on my end. Try again in a moment.";
   }
 }
