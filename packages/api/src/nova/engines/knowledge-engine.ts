@@ -7,7 +7,7 @@
 
 import { prisma } from "@repo/db/client";
 import type { TopicMasteryState } from "../types/engine.types";
-import { daysSinceStudied, estimateRetention, reviewDueAt } from "./retention-engine";
+import { daysSinceStudied, estimateRetention } from "./retention-engine";
 
 // ── Mastery levels ────────────────────────────────────────────────────────────
 // The bands every reader uses to put a mastery number into words. A topic
@@ -42,9 +42,8 @@ function toState(topic: TopicRow, now: Date): TopicMasteryState {
     retentionEstimate:  estimateRetention(topic.efFactor, daysSinceStudied(topic.lastStudiedAt, now)),
     confidenceReported: topic.confidenceReported,
     calibrationGap:     topic.masteryProbability - topic.confidenceReported,
-    // When the topic becomes due for review (retention-engine.ts): not the
-    // raw scheduled date.
-    reviewDueAt:        reviewDueAt(topic),
+    // The scheduled review date. It alone decides "due" (retention-engine.ts).
+    reviewDueAt:        topic.nextReviewAt,
     masteryTrend:       computeMasteryTrend(topic.reviewCount, topic.masteryProbability, topic.efFactor),
     reviewCount:        topic.reviewCount,
   };

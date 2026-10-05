@@ -76,7 +76,7 @@ export function NovaKnowledge({ view }: { view: NovaKnowledgeReady }) {
               <ul className="mt-4 space-y-2.5 text-sm leading-relaxed text-foreground/60">
                 <li>A topic&apos;s level moves with how you say each session went. It is an estimate, not a test result.</li>
                 <li>The more sessions behind a topic, the more that level is worth.</li>
-                <li>A topic is due when its review date has passed and Nova estimates you have started to forget it.</li>
+                <li>A topic is due when its scheduled review date arrives. How you said the last session went sets that date.</li>
               </ul>
             </section>
           </aside>

@@ -143,7 +143,7 @@ export async function loadPlanningInputs(
   const availableMinutes = normalizeAvailableMinutes(options.availableMinutes);
   const plan = generateStudyPlan(
     academicState, topics, snapshot.preferredStudyHoursPerDay, examContext,
-    { availableMinutes },
+    { availableMinutes, now },
   );
 
   return {

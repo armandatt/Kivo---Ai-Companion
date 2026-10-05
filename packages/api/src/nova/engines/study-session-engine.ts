@@ -175,9 +175,8 @@ export function computeSessionAction(
 // Mastery Engine takes. Four ordered steps, each landing in its own grade
 // band of that engine (below 0.40 → 1, 0.55 → 3, 0.70 → 4, 0.85 → 5):
 //
-//   struggled   0.30  grade 1: the review interval resets to one day (the
-//                     topic still becomes due only once retention has also
-//                     faded: see "due" in retention-engine.ts)
+//   struggled   0.30  grade 1: the review interval resets to one day, so
+//                     the topic is due again tomorrow
 //   okay        0.60  grade 3: the interval grows, slowly
 //   good        0.75  grade 4: the interval grows
 //   crushed_it  0.90  grade 5: the interval grows fastest

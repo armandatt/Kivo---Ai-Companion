@@ -30,32 +30,20 @@ export function daysSinceStudied(lastStudiedAt: Date | null, now: Date): number 
 // ── Due for review ────────────────────────────────────────────────────────────
 // One definition, used by Home, Planner, Knowledge and the proactive cron.
 //
-//   scheduled  the topic has a next-review date from the spacing algorithm
-//              (NovaTopicMastery.nextReviewAt)
-//   due        that date has passed AND estimated retention has fallen below
-//              RETENTION_TARGET. Both, because a date alone is not a reason
-//              to review: a topic first mentioned in conversation is given
-//              nextReviewAt = now while it is still fresh in mind.
-//   overdue    due, counted in whole days since it became due. Not a
-//              separate state.
+// The schedule is the authority. The spacing algorithm sets each topic's next
+// review date from how its last session went (NovaTopicMastery.nextReviewAt),
+// and that date is the whole rule:
 //
-// reviewDueAt is the moment a topic becomes due: the later of its scheduled
-// date and the day its retention crosses the target. null: never scheduled.
-
-export function reviewDueAt(topic: {
-  nextReviewAt:  Date | null;
-  lastStudiedAt: Date | null;
-  efFactor:      number;
-}): Date | null {
-  if (topic.nextReviewAt === null) return null;
-  if (topic.lastStudiedAt === null) return topic.nextReviewAt;   // never studied: nothing retained
-  // Retention is read in whole days, so it first drops below the target on
-  // the first whole day past the crossing point.
-  const crossing   = -Math.log(RETENTION_TARGET) * BASE_STABILITY_DAYS * topic.efFactor;
-  const fadedAfter = Math.floor(crossing) + 1;
-  const fadedAt    = new Date(topic.lastStudiedAt.getTime() + fadedAfter * DAY_MS);
-  return fadedAt > topic.nextReviewAt ? fadedAt : topic.nextReviewAt;
-}
+//   scheduled  the date is in the future
+//   due        the date has arrived:  reviewDueAt <= now
+//   overdue    the date has passed:   reviewDueAt <  now, counted in whole days
+//
+// Estimated retention is NOT part of the rule. A topic the learner struggled
+// with is scheduled for tomorrow and is due tomorrow, however fresh it still
+// is. Retention is context: it orders the due topics (least retained first)
+// and is shown as a reason, and nothing more.
+//
+// TopicMasteryState.reviewDueAt is that scheduled date. null: never scheduled.
 
 export function isDueForReview(topic: Pick<TopicMasteryState, "reviewDueAt">, now: Date): boolean {
   return topic.reviewDueAt !== null && topic.reviewDueAt <= now;

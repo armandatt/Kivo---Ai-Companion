@@ -7,7 +7,7 @@ import { buildTodayView } from "../product/today";
 import type { PlanningInputs } from "../product/planning-inputs";
 import { computeAcademicState } from "../engines/academic-state-engine";
 import { generateStudyPlan, REVIEW_BLOCK_MINUTES } from "../engines/planning-engine";
-import { daysSinceStudied, estimateRetention, reviewDueAt } from "../engines/retention-engine";
+import { daysSinceStudied, estimateRetention } from "../engines/retention-engine";
 import type { TopicMasteryState } from "../types/engine.types";
 import type { AcademicUnderstanding } from "../types/understanding.types";
 
@@ -29,7 +29,7 @@ function topic(id: string, subjectName: string, topicName: string, mastery: numb
     topicId: id, topicName, subjectName, masteryProbability: mastery, confidenceReported: mastery,
     calibrationGap: 0, masteryTrend: "stable", reviewCount, lastStudied,
     retentionEstimate: estimateRetention(2.5, daysSinceStudied(lastStudied, NOW)),
-    reviewDueAt: reviewDueAt({ nextReviewAt, lastStudiedAt: lastStudied, efFactor: 2.5 }),
+    reviewDueAt: nextReviewAt,
   };
 }
 
@@ -37,7 +37,7 @@ const TOPICS = [
   topic("t1", "Operating Systems", "Deadlocks",     0.32, 2, 12, -2),   // due, weak
   topic("t2", "Operating Systems", "Paging",        0.78, 3, 1,  9),    // scheduled, solid
   topic("t3", "Operating Systems", "Semaphores",    0.55, 1, 9,  -1),   // due, developing
-  topic("t4", "DBMS",              "Normalization", 0.42, 0, 0,  0),    // conversation only
+  topic("t4", "DBMS",              "Normalization", 0.42, 0, 0,  2),    // conversation only
 ];
 
 const session = (over: Partial<SessionRecord>): SessionRecord => ({
@@ -89,6 +89,16 @@ describe("buildKnowledgeView: subjects and topics", () => {
   it("uses the same level bands for every topic", () => {
     const levels = buildKnowledgeView(inputs()).subjects.flatMap(s => s.topics).map(t => [t.topicName, t.level]);
     expect(levels).toEqual(expect.arrayContaining([["Deadlocks", "weak"], ["Semaphores", "developing"], ["Paging", "solid"]]));
+  });
+
+  it("shows a topic scheduled for today as due even while retention is high", () => {
+    // Studied today, review date already here (what a mention in conversation
+    // gets, and what any topic looks like on its review day).
+    const view = buildKnowledgeView(inputs({ topics: [topic("t8", "DBMS", "Joins", 0.4, 1, 0, 0)] }));
+    const joins = view.subjects.find(s => s.subjectName === "DBMS")!.topics[0]!;
+    expect(joins).toMatchObject({ reviewState: "due", retentionPercent: 100, daysOverdue: 0 });
+    expect(view.dueReviews.map(t => t.topicName)).toEqual(["Joins"]);
+    expect(view.dueReviews[0]!.reasons).toEqual(["due today", "retention about 100%"]);   // retention shown, not decisive
   });
 
   it("marks a topic with no review date as unscheduled", () => {

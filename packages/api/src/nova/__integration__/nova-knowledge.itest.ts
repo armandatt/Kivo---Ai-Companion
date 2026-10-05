@@ -24,6 +24,7 @@ const { loadNovaToday }         = await import("../product/today.js");
 const { loadNovaPlanner }       = await import("../product/planner.js");
 const { openStudySession }      = await import("../persistence/nova-persistence.js");
 const { applyMasteryObservation, applySessionObservation } = await import("../consolidation/stores/academic-observation-store.js");
+const { loadOverdueTopics, checkCooldown, persistProactiveDecision } = await import("../proactive/nova-proactive-cron.js");
 
 const STAMP  = Date.now();
 const CHAT   = `nova_itest_know_${STAMP}`;
@@ -120,34 +121,97 @@ test("the session is shown as evidence on its topic, with the answer and the mea
   );
 });
 
-test("struggling brings the topic back for review; Home, Planner and Knowledge agree it is due", async () => {
-  // "Struggled" schedules the next review a day later. It becomes due once
-  // retention has also faded: five days after the session.
-  const early = await knowledge(CHAT, at(2));
-  assert.equal(topicOf(early, "Operating Systems", "Deadlocks")!.reviewState, "scheduled");
-  assert.deepEqual(early.dueReviews, []);
-
-  const now  = at(6);
-  const view = await knowledge(CHAT, now);
-  const due  = view.dueReviews.map(t => t.topicName);
-  // By day 6 all three have faded past their dates. The one the learner
-  // struggled with came due first.
-  assert.deepEqual([...due].sort(), ["Deadlocks", "Dynamic Programming", "Normalization"]);
-  const deadlocks = view.dueReviews.find(t => t.topicName === "Deadlocks")!;
-  assert.equal(deadlocks.reviewState, "due");
-  assert.equal(deadlocks.reviewMinutes, 25);
-  assert.ok(view.dueReviews.every(t => t.daysOverdue <= deadlocks.daysOverdue), "nothing has been due longer than the topic that was struggled with");
-  for (const t of view.dueReviews) assert.ok(t.retentionPercent < 85, `${t.topicName} retention ${t.retentionPercent}`);
-
-  // The same topics, in the same order, on Home and in the Planner.
-  const home    = await loadNovaToday(CHAT, { now });
-  const planner = await loadNovaPlanner(CHAT, { now });
+// Sessions in this file last 30 minutes, so a review scheduled N days after
+// one that started at(0) falls at at(N, 30).
+const everywhere = async (now: Date) => {
+  const [know, home, planner, telegram] = await Promise.all([
+    knowledge(CHAT, now),
+    loadNovaToday(CHAT, { now }),
+    loadNovaPlanner(CHAT, { now }),
+    loadOverdueTopics(profileId, now),
+  ]);
   assert.ok(home.status === "ready" && planner.status === "ready");
-  assert.deepEqual(home.reviewDue.topics.map(t => t.topicName), due);
-  assert.equal(home.reviewDue.count, due.length);
-  assert.equal(home.recommendation?.topicName, due[0]);
-  assert.deepEqual(planner.today.blocks.filter(b => b.activityType === "review" && b.urgency === "high").map(b => b.topicName), due);
-  assert.equal(planner.today.blocks[0]?.durationMinutes, deadlocks.reviewMinutes);
+  return {
+    knowledge: know.dueReviews.map(t => t.topicName),
+    home:      home.reviewDue.topics.map(t => t.topicName),
+    planner:   planner.today.blocks.filter(b => b.activityType === "review" && b.urgency === "high").map(b => b.topicName),
+    telegram:  telegram.map(t => t.topicName),
+    view: know, homeView: home, plannerView: planner,
+  };
+};
+
+test("Struggled: next review is tomorrow, and tomorrow it is due on every surface, still fresh", async () => {
+  const row = await prisma.novaTopicMastery.findFirstOrThrow({ where: { name: "Deadlocks", subjectId: subjects["Operating Systems"] } });
+  assert.equal(row.intervalDays, 1);
+  assert.equal(row.nextReviewAt!.getTime(), at(1, 30).getTime(), "scheduled one day after the session ended");
+
+  const before = await everywhere(at(1, 29));                  // a minute before the date
+  assert.deepEqual([before.knowledge, before.home, before.planner, before.telegram], [[], [], [], []]);
+  assert.equal(topicOf(before.view, "Operating Systems", "Deadlocks")!.reviewState, "scheduled");
+
+  const due = await everywhere(at(1, 31));                     // tomorrow
+  assert.deepEqual(due.knowledge, ["Deadlocks"]);
+  assert.deepEqual(due.home,      ["Deadlocks"]);
+  assert.deepEqual(due.planner,   ["Deadlocks"]);
+  assert.deepEqual(due.telegram,  ["Deadlocks"]);
+  const deadlocks = due.view.dueReviews[0]!;
+  assert.equal(deadlocks.reviewState, "due");
+  assert.equal(deadlocks.daysOverdue, 0);
+  assert.ok(deadlocks.retentionPercent >= 85, `still fresh: retention ${deadlocks.retentionPercent}%`);
+  assert.equal(deadlocks.reviewMinutes, 25);
+  assert.equal(due.homeView.recommendation?.topicName, "Deadlocks");
+  assert.equal(due.plannerView.today.blocks[0]?.topicName, "Deadlocks");
+});
+
+test("Good and Crushed it: not due before their scheduled dates, due on them", async () => {
+  const dp   = await prisma.novaTopicMastery.findFirstOrThrow({ where: { name: "Dynamic Programming" } });
+  const norm = await prisma.novaTopicMastery.findFirstOrThrow({ where: { name: "Normalization", subjectId: subjects["DBMS"] } });
+  assert.equal(dp.nextReviewAt!.getTime(),   at(3, 90).getTime());     // Good, session at(0, 60)
+  assert.equal(norm.nextReviewAt!.getTime(), at(3, 150).getTime());    // Crushed it, session at(0, 120)
+
+  const early = await everywhere(at(2, 600));
+  assert.deepEqual(early.knowledge, ["Deadlocks"], "only the topic that was struggled with");
+  assert.deepEqual([early.home, early.planner, early.telegram], [["Deadlocks"], ["Deadlocks"], ["Deadlocks"]]);
+  assert.equal(topicOf(early.view, "Operating Systems", "Deadlocks")!.daysOverdue, 1);
+
+  const between = await everywhere(at(3, 100));                // Good's date has come, Crushed it's has not
+  assert.deepEqual([...between.knowledge].sort(), ["Deadlocks", "Dynamic Programming"]);
+
+  const later = await everywhere(at(6));
+  assert.deepEqual([...later.knowledge].sort(), ["Deadlocks", "Dynamic Programming", "Normalization"]);
+  // One list, in one order, on every surface.
+  assert.deepEqual(later.home, later.knowledge);
+  assert.deepEqual(later.planner, later.knowledge);
+  assert.deepEqual(later.telegram, later.knowledge);
+  assert.equal(later.homeView.reviewDue.count, 3);
+  assert.equal(later.homeView.recommendation?.topicName, later.knowledge[0]);
+  assert.equal(new Set(later.telegram).size, later.telegram.length, "each due topic once");
+});
+
+test("a due review is not announced twice: the reminder's cooldown holds", async () => {
+  const now = at(6, 600);
+  assert.ok((await loadOverdueTopics(profileId, now)).length > 0, "there is something to remind about");
+  assert.equal(await checkCooldown(profileId, "revision_reminder", now), false, "nothing sent yet");
+
+  // The cron records every reminder it approves, with a cooldown.
+  await persistProactiveDecision(profileId,
+    { approved: true, finalInterventionType: "revision_reminder", suppressReason: null, priority: 4, confidence: 0.8 },
+    "revision_reminder", now);
+  const fired = await prisma.novaProactiveMessage.findFirstOrThrow({ where: { profileId, eventType: "revision_reminder" } });
+  const cooldownMs = fired.cooldownUntil.getTime() - now.getTime();
+  assert.ok(cooldownMs >= 3_600_000, `cooldown of ${cooldownMs / 3_600_000} h`);
+
+  // Every later run inside the cooldown (the cron fires every five minutes)
+  // finds it and is suppressed by the proactive decision graph; the topics
+  // being still due does not send another.
+  for (const minutes of [5, 10, 60]) {
+    const later = new Date(now.getTime() + minutes * 60_000);
+    if (later.getTime() >= fired.cooldownUntil.getTime()) break;
+    assert.ok((await loadOverdueTopics(profileId, later)).length > 0);
+    assert.equal(await checkCooldown(profileId, "revision_reminder", later), true);
+  }
+  assert.equal(await checkCooldown(profileId, "revision_reminder", new Date(fired.cooldownUntil.getTime() + 1000)), false);
+  await prisma.novaProactiveMessage.deleteMany({ where: { profileId } });
 });
 
 test("a review on the same topic updates the same row, and a good answer raises it and pushes the next review out", async () => {

@@ -16,7 +16,7 @@ export type KnowledgeLevel =
 export type KnowledgeReviewState =
   | "unscheduled"  // no review date yet
   | "scheduled"    // next review is in the future
-  | "due";         // due for review now (one definition: retention-engine.ts)
+  | "due";         // its scheduled date has arrived (one definition: retention-engine.ts)
 
 export type KnowledgeOutcome = "struggled" | "okay" | "good" | "crushed_it";
 
@@ -46,7 +46,7 @@ export interface KnowledgeTopic {
   lastStudiedAt:    string | null;
   retentionPercent: number;             // estimated from time since last studied
   reviewState:      KnowledgeReviewState;
-  nextReviewAt:     string | null;      // when it becomes (or became) due
+  nextReviewAt:     string | null;      // the scheduled review date
   daysOverdue:      number;             // 0 unless due
   recentSessions:   KnowledgeSession[]; // newest first, at most three
 }

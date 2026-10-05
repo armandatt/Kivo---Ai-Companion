@@ -266,8 +266,9 @@ async function loadProactiveRealityFacts(userId: string, now: Date): Promise<Nov
 }
 
 // Topics due for review, by the one definition (retention-engine.ts): the
-// same topics Home and the Planner would put first.
-async function loadOverdueTopics(
+// same topics Home, the Planner and Knowledge show as due.
+// Exported, with the cooldown helpers below, for the integration tests.
+export async function loadOverdueTopics(
   profileId: string,
   now:       Date,
 ): Promise<Array<{ topicName: string; nextReviewAt: Date }>> {
@@ -275,7 +276,7 @@ async function loadOverdueTopics(
   return due.slice(0, 5).map(t => ({ topicName: t.topicName, nextReviewAt: t.reviewDueAt! }));
 }
 
-async function checkCooldown(
+export async function checkCooldown(
   profileId:    string,
   eventType:    InterventionType,
   now:          Date,
@@ -292,7 +293,7 @@ async function checkCooldown(
   return existing !== null;
 }
 
-async function persistProactiveDecision(
+export async function persistProactiveDecision(
   profileId:    string,
   decision:     { approved: boolean; finalInterventionType: InterventionType; suppressReason: string | null; priority: number; confidence: number },
   originalType: InterventionType,

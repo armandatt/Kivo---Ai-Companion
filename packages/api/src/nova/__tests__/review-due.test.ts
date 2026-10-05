@@ -1,11 +1,11 @@
-// One definition of "due for review" (retention-engine.ts), and everything
-// that shows or acts on reviews reading it.
+// One definition of "due for review" (retention-engine.ts): the scheduled
+// date is the authority. Retention is context, never a condition.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   RETENTION_TARGET, daysOverdue, daysSinceStudied, estimateRetention,
-  getOverdueTopics, isDueForReview, reviewDueAt,
+  getOverdueTopics, isDueForReview,
 } from "../engines/retention-engine";
 import type { TopicMasteryState } from "../types/engine.types";
 
@@ -15,91 +15,103 @@ const days = (d: number) => new Date(NOW.getTime() + d * DAY);
 
 // A stored topic row, read the way the Knowledge Engine reads it.
 function read(row: { nextReviewAt: Date | null; lastStudiedAt: Date | null; efFactor?: number }, now = NOW): TopicMasteryState {
-  const efFactor = row.efFactor ?? 2.5;
   return {
     topicId: "t", topicName: "Deadlocks", subjectName: "Operating Systems",
     masteryProbability: 0.5, confidenceReported: 0.5, calibrationGap: 0, masteryTrend: "stable", reviewCount: 1,
     lastStudied: row.lastStudiedAt,
-    retentionEstimate: estimateRetention(efFactor, daysSinceStudied(row.lastStudiedAt, now)),
-    reviewDueAt: reviewDueAt({ ...row, efFactor }),
+    retentionEstimate: estimateRetention(row.efFactor ?? 2.5, daysSinceStudied(row.lastStudiedAt, now)),
+    reviewDueAt: row.nextReviewAt,
   };
 }
 
-// The rule the planner used before there was one definition.
-const oldPlannerRule = (row: { nextReviewAt: Date | null; lastStudiedAt: Date | null; efFactor?: number }, now: Date) => {
-  const t = read(row, now);
-  return row.nextReviewAt !== null && row.nextReviewAt <= now && t.retentionEstimate < RETENTION_TARGET;
-};
-
-describe("reviewDueAt", () => {
-  it("is null for a topic that was never scheduled", () => {
-    expect(reviewDueAt({ nextReviewAt: null, lastStudiedAt: days(-30), efFactor: 2.5 })).toBeNull();
-    expect(isDueForReview(read({ nextReviewAt: null, lastStudiedAt: days(-30) }), NOW)).toBe(false);
+describe("due for review: the schedule decides", () => {
+  it("a topic with no review date is not due", () => {
+    const t = read({ nextReviewAt: null, lastStudiedAt: days(-30) });
+    expect(isDueForReview(t, NOW)).toBe(false);
+    expect(daysOverdue(t, NOW)).toBe(0);
   });
 
-  it("a passed date is not enough while the topic is still fresh", () => {
-    // Scheduled two days after study, but retention only falls below the
-    // target on day 5 (ease 2.5): due on day 5, not day 2.
-    const row = { nextReviewAt: days(-1), lastStudiedAt: days(-3) };
-    expect(read(row).retentionEstimate).toBeGreaterThanOrEqual(RETENTION_TARGET);
+  it("is not due before its date, due from the moment the date arrives", () => {
+    const row = { nextReviewAt: days(1), lastStudiedAt: NOW };
     expect(isDueForReview(read(row), NOW)).toBe(false);
-    expect(reviewDueAt({ ...row, efFactor: 2.5 })).toEqual(days(2));
+    expect(isDueForReview(read(row), new Date(days(1).getTime() - 1))).toBe(false);
+    expect(isDueForReview(read(row, days(1)), days(1))).toBe(true);           // nextReviewAt <= now
+    expect(isDueForReview(read(row, days(4)), days(4))).toBe(true);
   });
 
-  it("faded retention is not enough before the scheduled date", () => {
+  it("overdue is counted in whole days past the date", () => {
+    const row = { nextReviewAt: days(-2), lastStudiedAt: days(-9) };
+    expect(daysOverdue(read(row), NOW)).toBe(2);
+    expect(daysOverdue(read({ ...row, nextReviewAt: new Date(NOW.getTime() - 3_600_000) }), NOW)).toBe(0);   // due today
+    expect(daysOverdue(read({ ...row, nextReviewAt: days(3) }), NOW)).toBe(0);                                // not due
+  });
+
+  it("a topic scheduled for tomorrow is due tomorrow even though it is still fresh", () => {
+    // What "Struggled" produces: studied now, next review in one day.
+    const row = { nextReviewAt: days(1), lastStudiedAt: NOW };
+    const tomorrow = days(1);
+    expect(read(row, tomorrow).retentionEstimate).toBeGreaterThanOrEqual(RETENTION_TARGET);
+    expect(isDueForReview(read(row, tomorrow), tomorrow)).toBe(true);
+  });
+
+  it("a topic that has faded is still not due before its date", () => {
     const row = { nextReviewAt: days(4), lastStudiedAt: days(-20) };
     expect(read(row).retentionEstimate).toBeLessThan(RETENTION_TARGET);
     expect(isDueForReview(read(row), NOW)).toBe(false);
-    expect(reviewDueAt({ ...row, efFactor: 2.5 })).toEqual(days(4));
   });
 
-  it("due once both hold", () => {
-    const t = read({ nextReviewAt: days(-2), lastStudiedAt: days(-9) });
-    expect(isDueForReview(t, NOW)).toBe(true);
-    expect(daysOverdue(t, NOW)).toBe(2);
-  });
-
-  it("a topic first mentioned in conversation (scheduled for now, studied now) is not due", () => {
-    const t = read({ nextReviewAt: NOW, lastStudiedAt: NOW });
-    expect(isDueForReview(t, NOW)).toBe(false);
-    expect(t.reviewDueAt).toEqual(days(5));
-  });
-
-  it("a topic never studied is due as soon as its date passes", () => {
-    expect(isDueForReview(read({ nextReviewAt: days(-1), lastStudiedAt: null }), NOW)).toBe(true);
-  });
-
-  it("a topic that fades more slowly comes due later", () => {
-    const base = { nextReviewAt: days(-10), lastStudiedAt: days(-5) };
-    expect(isDueForReview(read({ ...base, efFactor: 2.5 }), NOW)).toBe(true);
-    expect(isDueForReview(read({ ...base, efFactor: 3.5 }), NOW)).toBe(false);
-  });
-
-  it("agrees with the planner's previous rule at every moment, for every row", () => {
+  it("retention does not change the answer, at any ease, age or date", () => {
+    // Every combination of ease factor, days since study, and scheduled date,
+    // judged at 21 moments: due is exactly "the date has arrived".
     const efs = [1.3, 2.0, 2.5, 3.1, 3.5];
-    let checked = 0, due = 0;
+    let checked = 0, due = 0, dueWhileFresh = 0, fadedNotDue = 0;
     for (const ef of efs) for (let studied = 0; studied <= 16; studied++) for (let scheduled = -3; scheduled <= 12; scheduled++) {
-      const row = { efFactor: ef, lastStudiedAt: new Date(NOW.getTime() - studied * DAY - 3_600_000), nextReviewAt: new Date(NOW.getTime() - studied * DAY + scheduled * DAY) };
+      const row = {
+        efFactor: ef,
+        lastStudiedAt: new Date(NOW.getTime() - studied * DAY - 3_600_000),
+        nextReviewAt:  new Date(NOW.getTime() - studied * DAY + scheduled * DAY),
+      };
       for (let ahead = 0; ahead <= 20; ahead++) {
-        const now = new Date(NOW.getTime() + ahead * DAY);
-        const expected = oldPlannerRule(row, now);
-        expect(isDueForReview(read(row, now), now)).toBe(expected);
-        checked++; if (expected) due++;
+        const now      = new Date(NOW.getTime() + ahead * DAY);
+        const topic    = read(row, now);
+        const expected = row.nextReviewAt <= now;
+        expect(isDueForReview(topic, now)).toBe(expected);
+        expect(getOverdueTopics([topic], now).length).toBe(expected ? 1 : 0);
+        checked++;
+        if (expected) due++;
+        if (expected && topic.retentionEstimate >= RETENTION_TARGET) dueWhileFresh++;
+        if (!expected && topic.retentionEstimate < RETENTION_TARGET) fadedNotDue++;
       }
     }
-    expect(checked).toBeGreaterThan(20_000);
+    expect(checked).toBe(28_560);
     expect(due).toBeGreaterThan(1_000);
     expect(due).toBeLessThan(checked);
+    // Both directions occur in the grid, so the test would catch retention
+    // creeping back into the rule either way.
+    expect(dueWhileFresh).toBeGreaterThan(100);
+    expect(fadedNotDue).toBeGreaterThan(100);
   });
 });
 
-describe("getOverdueTopics", () => {
-  it("returns exactly the due topics, the least retained first", () => {
-    const fresh   = { ...read({ nextReviewAt: days(-1), lastStudiedAt: days(-2) }), topicName: "Fresh" };
-    const faded   = { ...read({ nextReviewAt: days(-1), lastStudiedAt: days(-8) }), topicName: "Faded" };
-    const gone    = { ...read({ nextReviewAt: days(-9), lastStudiedAt: days(-40) }), topicName: "Gone" };
-    const later   = { ...read({ nextReviewAt: days(5), lastStudiedAt: days(-30) }), topicName: "Later" };
-    expect(getOverdueTopics([fresh, faded, gone, later], NOW).map(t => t.topicName)).toEqual(["Gone", "Faded"]);
+describe("retention is context", () => {
+  it("still falls with time and is still read through the one curve", () => {
+    expect(estimateRetention(2.5, 0)).toBe(1);
+    expect(estimateRetention(2.5, 4)).toBeGreaterThanOrEqual(RETENTION_TARGET);
+    expect(estimateRetention(2.5, 5)).toBeLessThan(RETENTION_TARGET);
+    expect(estimateRetention(3.5, 5)).toBeGreaterThan(estimateRetention(2.5, 5));   // a higher ease fades more slowly
+    expect(daysSinceStudied(null, NOW)).toBe(999);
+  });
+
+  it("orders the due topics, least retained first, without deciding which are due", () => {
+    const named = (name: string, row: Parameters<typeof read>[0]) => ({ ...read(row), topicName: name });
+    const topics = [
+      named("Fresh, due",      { nextReviewAt: days(-1), lastStudiedAt: days(-1) }),
+      named("Faded, due",      { nextReviewAt: days(-1), lastStudiedAt: days(-8) }),
+      named("Gone, due",       { nextReviewAt: days(-9), lastStudiedAt: days(-40) }),
+      named("Faded, not due",  { nextReviewAt: days(5),  lastStudiedAt: days(-30) }),
+      named("Never scheduled", { nextReviewAt: null,     lastStudiedAt: days(-30) }),
+    ];
+    expect(getOverdueTopics(topics, NOW).map(t => t.topicName)).toEqual(["Gone, due", "Faded, due", "Fresh, due"]);
   });
 });
 
@@ -110,17 +122,24 @@ describe("one definition, every surface", () => {
   const src = (file: string) => readFileSync(resolve(__dirname, "..", file), "utf8");
 
   it.each([
-    ["Home / Today",          "product/today.ts"],
-    ["Knowledge",             "product/knowledge.ts"],
-    ["Planning Engine",       "engines/planning-engine.ts"],
+    ["Home / Today",            "product/today.ts"],
+    ["Knowledge",               "product/knowledge.ts"],
+    ["Planning Engine",         "engines/planning-engine.ts"],
     ["Telegram proactive cron", "proactive/nova-proactive-cron.ts"],
   ])("%s takes its due topics from getOverdueTopics", (_name, file) => {
     expect(src(file)).toMatch(/getOverdueTopics\(/);
   });
 
-  it("the Planner's week view places reviews by the same due date", () => {
+  it("the due date every reader sees is the stored schedule, untouched", () => {
+    expect(src("engines/knowledge-engine.ts")).toMatch(/reviewDueAt:\s+topic\.nextReviewAt,/);
     expect(src("product/planner.ts")).toMatch(/dayKey\(t\.reviewDueAt, timezone\) === date/);
-    expect(src("engines/knowledge-engine.ts")).toMatch(/reviewDueAt:\s+reviewDueAt\(topic\)/);
+  });
+
+  it("the rule itself does not mention retention", () => {
+    const code = src("engines/retention-engine.ts").replace(/\/\/.*$/gm, "");
+    const rule = code.slice(code.indexOf("export function isDueForReview"), code.indexOf("export function daysOverdue"));
+    expect(rule).toMatch(/reviewDueAt <= now/);
+    expect(rule).not.toMatch(/retention/i);
   });
 
   it.each([
@@ -130,6 +149,7 @@ describe("one definition, every surface", () => {
     const code = src(file).replace(/\/\/.*$/gm, "");
     expect(code).not.toMatch(/reviewDueAt\s*(<=?|>=?)\s*now/);
     expect(code).not.toMatch(/nextReviewAt\s*:\s*\{\s*lte?/);
+    expect(code).not.toMatch(/retentionEstimate\s*<\s*(RETENTION_TARGET|0\.85)/);
   });
 
   it("the forgetting curve is defined once", () => {

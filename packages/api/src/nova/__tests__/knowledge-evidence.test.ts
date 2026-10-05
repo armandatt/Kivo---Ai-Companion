@@ -18,6 +18,8 @@ import { computeAcademicState } from "../engines/academic-state-engine";
 import { resolveTurnSignals } from "../engines/turn-signals";
 import { translateNovaCommand } from "../commands";
 import { pausedSecondsOf } from "../engines/session-clock";
+import { RETENTION_TARGET, daysSinceStudied, estimateRetention, getOverdueTopics, isDueForReview } from "../engines/retention-engine";
+import type { TopicMasteryState } from "../types/engine.types";
 import type { ActiveSessionInfo } from "../engines/study-snapshot";
 import type { SessionOutcome } from "../types/session.types";
 import type { AcademicUnderstanding } from "../types/understanding.types";
@@ -357,5 +359,108 @@ describe("conversation stays weaker than a session", () => {
     expect(topics[0]!.intervalDays).toBe(before.intervalDays);
     expect(topics[0]!.nextReviewAt).toEqual(before.nextReviewAt);
     expect(topics[0]!.masteryProbability).toBeCloseTo(0.85 * before.masteryProbability + 0.15 * 0.9, 2);
+  });
+});
+
+// ── The outcome sets the schedule, and the schedule sets "due" ────────────────
+
+// A stored topic row read the way the Knowledge Engine reads it.
+function state(row: Row, now: Date): TopicMasteryState {
+  return {
+    topicId: row.id, topicName: row.name, subjectName: subjectName(row.subjectId)!,
+    masteryProbability: row.masteryProbability, confidenceReported: row.confidenceReported, calibrationGap: 0,
+    masteryTrend: "stable", reviewCount: row.reviewCount, lastStudied: row.lastStudiedAt,
+    retentionEstimate: estimateRetention(row.efFactor, daysSinceStudied(row.lastStudiedAt, now)),
+    reviewDueAt: row.nextReviewAt,
+  };
+}
+const DAY_MIN = 24 * 60;
+const END     = 30;   // sessions here run 30 minutes from T0
+const afterEnd = (days: number, minutes = 0) => at(END + days * DAY_MIN + minutes);
+const dueAt = (now: Date) => isDueForReview(state(topics[0]!, now), now);
+
+describe("an answer schedules the next review, and the topic is due on that date", () => {
+  it("Struggled: next review tomorrow, due tomorrow, while it is still fresh", async () => {
+    await webSession("os", "Deadlocks", T0, "struggled");
+    expect(topics[0]).toMatchObject({ intervalDays: 1 });
+    expect(topics[0]!.nextReviewAt).toEqual(afterEnd(1));
+
+    expect(dueAt(afterEnd(0, 1))).toBe(false);          // just after the session
+    expect(dueAt(afterEnd(1, -1))).toBe(false);         // a minute before the date
+    expect(dueAt(afterEnd(1))).toBe(true);              // tomorrow
+    expect(state(topics[0]!, afterEnd(1)).retentionEstimate).toBeGreaterThanOrEqual(RETENTION_TARGET);
+  });
+
+  it("Good: not due before its scheduled date, due on it", async () => {
+    await webSession("os", "Deadlocks", T0, "good");
+    expect(topics[0]!.nextReviewAt).toEqual(afterEnd(3));
+    expect(dueAt(afterEnd(1))).toBe(false);
+    expect(dueAt(afterEnd(2, DAY_MIN - 1))).toBe(false);
+    expect(dueAt(afterEnd(3))).toBe(true);
+  });
+
+  it("Crushed it: stays not due until its scheduled date, however long that is", async () => {
+    await webSession("os", "Deadlocks", T0, "crushed_it");
+    await webSession("os", "Deadlocks", at(3 * DAY_MIN), "crushed_it");
+    const row = topics[0]!;
+    const due = row.nextReviewAt as Date;
+    expect(row.intervalDays).toBeGreaterThan(3);
+    // Retention fades below the target well before a long interval ends;
+    // the topic is still not due until the date.
+    const dayBefore = new Date(due.getTime() - 24 * 3_600_000);
+    expect(state(row, dayBefore).retentionEstimate).toBeLessThan(RETENTION_TARGET);
+    expect(isDueForReview(state(row, dayBefore), dayBefore)).toBe(false);
+    expect(isDueForReview(state(row, due), due)).toBe(true);
+  });
+
+  it("the better the answer, the later the topic comes due", async () => {
+    const dueAfter = async (first: SessionOutcome, second: SessionOutcome) => {
+      topics = []; sessions = [];
+      await webSession("os", "Deadlocks", T0, first);
+      await webSession("os", "Deadlocks", at(3 * DAY_MIN), second);
+      return (topics[0]!.nextReviewAt as Date).getTime();
+    };
+    const struggled = await dueAfter("good", "struggled");
+    const okay      = await dueAfter("good", "okay");
+    const good      = await dueAfter("good", "good");
+    const crushed   = await dueAfter("good", "crushed_it");
+    expect(struggled).toBeLessThan(okay);
+    expect(okay).toBeLessThanOrEqual(good);
+    expect(good).toBeLessThanOrEqual(crushed);
+    expect(struggled).toBeLessThan(crushed);
+  });
+
+  it("the interval arithmetic is the mastery engine's own, unchanged", async () => {
+    // First session: 1 / 2 / 3 / 3 days by answer.
+    const first: Array<[SessionOutcome, number]> = [["struggled", 1], ["okay", 2], ["good", 3], ["crushed_it", 3]];
+    for (const [outcome, interval] of first) {
+      topics = []; sessions = [];
+      await webSession("os", "Deadlocks", T0, outcome);
+      expect(topics[0]).toMatchObject({ intervalDays: interval, efFactor: 2.5, reviewCount: 1 });
+      expect(topics[0]!.nextReviewAt).toEqual(afterEnd(interval));
+    }
+    // Second session on a topic at interval 3, ease 2.5:
+    //   okay (grade 3)        ease 2.5 − 0.14 = 2.36 → round(3 × 2.36) = 7
+    //   good (grade 4)        ease 2.5        = 2.5  → round(3 × 2.5)  = 8
+    //   crushed it (grade 5)  ease 2.5 + 0.1  = 2.6  → round(3 × 2.6)  = 8
+    //   struggled (grade 1)   ease 2.5 − 0.2  = 2.3  → reset to 1
+    const second: Array<[SessionOutcome, number, number]> = [["okay", 2.36, 7], ["good", 2.5, 8], ["crushed_it", 2.6, 8], ["struggled", 2.3, 1]];
+    for (const [outcome, ef, interval] of second) {
+      topics = []; sessions = [];
+      await webSession("os", "Deadlocks", T0, "good");
+      await webSession("os", "Deadlocks", at(3 * DAY_MIN), outcome);
+      expect(topics[0]).toMatchObject({ efFactor: ef, intervalDays: interval, reviewCount: 2 });
+      expect(topics[0]!.nextReviewAt).toEqual(at(3 * DAY_MIN + END + interval * DAY_MIN));
+    }
+  });
+
+  it("the due list is the topics whose date has arrived, whatever their retention", async () => {
+    await webSession("os", "Deadlocks", T0, "struggled");   // due in 1 day
+    await webSession("os", "Paging", T0, "good");           // due in 3 days
+    const list = (now: Date) => getOverdueTopics(topics.map(t => state(t, now)), now).map(t => t.topicName);
+    expect(list(afterEnd(0, 5))).toEqual([]);
+    expect(list(afterEnd(1))).toEqual(["Deadlocks"]);
+    expect(list(afterEnd(2))).toEqual(["Deadlocks"]);
+    expect(list(afterEnd(3)).sort()).toEqual(["Deadlocks", "Paging"]);
   });
 });
