@@ -1,19 +1,20 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import type { NovaSessionResponse, NovaSessionView } from '@repo/api/nova/product/today.types'
+import type { NovaSessionOutcome, NovaSessionResponse, NovaSessionView } from '@repo/api/nova/product/today.types'
 import { fetchSession, sendSessionCommand } from './nova-api'
 
 const SYNC_MS = 30_000
 
 type Synced = { session: NovaSessionView | null; at: number }
+type Ended  = NonNullable<Extract<NovaSessionResponse, { ok: true }>['ended']>
 
 // The running study session, as the server records it. The clock shown is
 // the server's elapsed time plus the time since it was read; pausing,
 // resuming and ending are server commands. Nothing is kept only in the page.
 export function useNovaSession() {
   const [synced, setSynced]   = useState<Synced | null>(null)
-  const [ended, setEnded]     = useState<{ topicName: string | null; minutes: number } | null>(null)
+  const [ended, setEnded]     = useState<Ended | null>(null)
   const [pending, setPending] = useState<'pause' | 'resume' | 'end' | null>(null)
   const [error, setError]     = useState<string | null>(null)
   const [blocked, setBlocked] = useState<string | null>(null)   // this account cannot have a session
@@ -52,9 +53,17 @@ export function useNovaSession() {
     return () => clearInterval(tick)
   }, [running])
 
-  const command = useCallback(async (action: 'pause' | 'resume' | 'end') => {
+  const command = useCallback(async (action: 'pause' | 'resume') => {
     setPending(action)
     apply(await sendSessionCommand({ action }))
+    setPending(null)
+  }, [apply])
+
+  // Ending carries the learner's answer to "How did it go?". It is the one
+  // thing in the session's report that says how the studying went.
+  const end = useCallback(async (outcome: NovaSessionOutcome) => {
+    setPending('end')
+    apply(await sendSessionCommand({ action: 'end', outcome }))
     setPending(null)
   }, [apply])
 
@@ -63,5 +72,5 @@ export function useNovaSession() {
     ? session.elapsedSeconds + (running && synced ? Math.max(0, (now - synced.at) / 1000) : 0)
     : 0
 
-  return { loading: synced === null && !blocked && !error, session, elapsedSeconds, ended, pending, error, blocked, command, retry: sync }
+  return { loading: synced === null && !blocked && !error, session, elapsedSeconds, ended, pending, error, blocked, command, end, retry: sync }
 }

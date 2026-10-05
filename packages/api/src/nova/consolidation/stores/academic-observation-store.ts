@@ -9,7 +9,7 @@
 
 import { prisma } from "@repo/db/client";
 import type { ConsolidationDecision, RecentSession } from "../../types/consolidation.types";
-import { updateTopicMastery, matchTopicToSubject } from "../../engines/topic-mastery-engine";
+import { updateTopicMastery, resolveTopicSubject } from "../../engines/topic-mastery-engine";
 import type { Db } from "./db";
 
 // Session records are written inside the consolidation transaction.
@@ -48,7 +48,7 @@ export async function applyMasteryObservation(
 ): Promise<void> {
   const w = decision.write;
   if (w?.target !== "academic_observation" || w.op !== "mastery_observation" || !w.topic) return;
-  const match = matchTopicToSubject(w.topic, subjects);
+  const match = await resolveTopicSubject(w.topic, subjects);
   if (!match) return;
   await updateTopicMastery(match.subjectId, match.resolvedName, w.confidence, now, "conversation_signal");
 }
@@ -63,7 +63,7 @@ export async function loadAcademicContext(profileId: string): Promise<{
   const profile = await prisma.novaAcademicProfile.findUnique({
     where:  { id: profileId },
     select: {
-      subjects:      { select: { id: true, name: true } },
+      subjects:      { select: { id: true, name: true, code: true } },
       studySessions: {
         where:  { sessionDate: { gte: ninetyDaysAgo } },
         select: { sessionDate: true, status: true },

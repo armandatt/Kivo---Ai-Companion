@@ -91,29 +91,87 @@ function computeFsrsUpdate(
   };
 }
 
+// ── Topic identity ────────────────────────────────────────────────────────────
+// A topic is (subject, name). The subject comes from the session, which
+// knows it; it is never rediscovered from the topic's wording when the
+// session has one. Names are compared without regard to case or spacing, so
+// "deadlocks" and "Deadlocks " are one topic.
+
+export function normalizeTopicName(name: string): string {
+  return name.trim().replace(/\s+/g, " ");
+}
+
+const sameName = (a: string, b: string) =>
+  normalizeTopicName(a).toLowerCase() === normalizeTopicName(b).toLowerCase();
+
+const words = (text: string) => text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+
+const ACRONYM_SKIP = new Set(["and", "of", "the", "in", "to", "for", "a", "an", "on"]);
+
+// "Operating Systems" → "os"; "Design and Analysis of Algorithms" → "daa".
+function acronymOf(subjectName: string): string {
+  return words(subjectName).filter(w => !ACRONYM_SKIP.has(w)).map(w => w[0]).join("");
+}
+
 // ── Subject matcher ────────────────────────────────────────────────────────────
-// Finds best subject for a given topic string.
-// Returns null if no match — mastery update is skipped.
+// For a topic that arrives with no subject (a chat turn). It answers only
+// "does this text name one of the student's subjects?": the whole name, its
+// code, its acronym, or the subject's name as a whole phrase inside the text
+// ("operating systems deadlocks"). Whole words only: "a" names no subject.
+// A topic that names no subject ("Deadlocks") is not matched; see
+// resolveTopicSubject for the other way a subject can be known.
 
 export function matchTopicToSubject(
   topicName: string,
-  subjects:  Array<{ id: string; name: string }>,
+  subjects:  Array<{ id: string; name: string; code?: string | null }>,
 ): { subjectId: string; resolvedName: string } | null {
-  if (subjects.length === 0 || !topicName) return null;
+  const topic = words(topicName ?? "");
+  if (subjects.length === 0 || topic.length === 0) return null;
+  const text  = topic.join(" ");
 
-  const topic = topicName.toLowerCase().trim();
+  const hit = (s: { id: string }) => ({ subjectId: s.id, resolvedName: normalizeTopicName(topicName) });
 
-  // 1. Exact match
-  const exact = subjects.find(s => s.name.toLowerCase() === topic);
-  if (exact) return { subjectId: exact.id, resolvedName: topicName };
+  // 1. The text is the subject: its name, code, or acronym.
+  for (const s of subjects) {
+    const name = words(s.name).join(" ");
+    if (text === name) return hit(s);
+    if (s.code && text === words(s.code).join(" ")) return hit(s);
+    const acronym = acronymOf(s.name);
+    if (acronym.length >= 2 && text === acronym) return hit(s);
+  }
 
-  // 2. Subject contains topic string (e.g. topic="OS" → subject="Operating Systems")
-  const contained = subjects.find(s =>
-    s.name.toLowerCase().includes(topic) || topic.includes(s.name.toLowerCase())
-  );
-  if (contained) return { subjectId: contained.id, resolvedName: topicName };
+  // 2. The subject's full name appears in the text as a phrase. The longest
+  //    name wins, so "Advanced Algorithms" is not taken for "Algorithms".
+  const containing = subjects
+    .filter(s => {
+      const name = words(s.name).join(" ");
+      return name.length > 0 && ` ${text} `.includes(` ${name} `);
+    })
+    .sort((a, b) => b.name.length - a.name.length)[0];
+  return containing ? hit(containing) : null;
+}
 
-  return null;
+// The subject for a topic that arrived without one. In order:
+//   1. the text names a subject (matchTopicToSubject)
+//   2. the student already has this topic under exactly one subject: a topic
+//      keeps the subject it was first studied in
+// Otherwise null. Nothing is guessed: with no subject, no mastery is written.
+export async function resolveTopicSubject(
+  topicName: string,
+  subjects:  Array<{ id: string; name: string; code?: string | null }>,
+): Promise<{ subjectId: string; resolvedName: string } | null> {
+  const named = matchTopicToSubject(topicName, subjects);
+  if (named) return named;
+  if (subjects.length === 0 || !normalizeTopicName(topicName ?? "")) return null;
+
+  const known = await prisma.novaTopicMastery.findMany({
+    where: {
+      subjectId: { in: subjects.map(s => s.id) },
+      name:      { equals: normalizeTopicName(topicName), mode: "insensitive" },
+    },
+    select: { subjectId: true, name: true },
+  });
+  return known.length === 1 ? { subjectId: known[0]!.subjectId, resolvedName: known[0]!.name } : null;
 }
 
 // ── Source type ───────────────────────────────────────────────────────────────
@@ -133,15 +191,20 @@ export async function updateTopicMastery(
 ): Promise<void> {
   const clampedConf = Math.max(0, Math.min(1, reportedConfidence));
 
-  const existing = await prisma.novaTopicMastery.findUnique({
-    where:  { subjectId_name: { subjectId, name: topicName } },
+  // One row per topic, whatever the casing or spacing it was typed in.
+  const existing = await prisma.novaTopicMastery.findFirst({
+    where:  { subjectId, name: { equals: normalizeTopicName(topicName), mode: "insensitive" } },
     select: {
+      name:               true,
       masteryProbability: true,
       efFactor:           true,
       intervalDays:       true,
       reviewCount:        true,
     },
   });
+
+  topicName = existing?.name ?? normalizeTopicName(topicName);
+  if (!topicName) return;
 
   if (source === "session_report") {
     // ── Evidence path: full FSRS update ──────────────────────────────────────

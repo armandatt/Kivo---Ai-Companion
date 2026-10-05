@@ -4,6 +4,7 @@
 
 import type { ActiveSessionInfo } from "../engines/study-snapshot";
 import { sessionElapsedSeconds } from "../engines/session-clock";
+import { SESSION_OUTCOMES } from "../engines/study-session-engine";
 import type { NovaSessionCommand, NovaSessionError, NovaSessionView } from "./today.types";
 
 export { sessionElapsedSeconds };
@@ -33,7 +34,12 @@ export function parseSessionCommand(body: unknown): NovaSessionCommand | null {
   if (typeof body !== "object" || body === null) return null;
   const b = body as Record<string, unknown>;
 
-  if (b.action === "pause" || b.action === "resume" || b.action === "end") return { action: b.action };
+  if (b.action === "pause" || b.action === "resume") return { action: b.action };
+  if (b.action === "end") {
+    // Anything that is not one of the four answers is "no answer".
+    const outcome = SESSION_OUTCOMES.find(o => o === b.outcome) ?? null;
+    return { action: "end", outcome };
+  }
   if (b.action !== "start") return null;
 
   const topicName = typeof b.topicName === "string" ? b.topicName.trim().slice(0, MAX_TOPIC_LENGTH) : "";

@@ -144,7 +144,11 @@ export type NovaSessionCommand =
   | { action: "start"; topicName: string; subjectName: string | null; plannedMinutes: number | null }
   | { action: "pause" }
   | { action: "resume" }
-  | { action: "end" };
+  // outcome: the learner's one-tap answer to "How did it go?". Without it
+  // the session is still closed, and its report is marked "unreported".
+  | { action: "end"; outcome: NovaSessionOutcome | null };
+
+export type NovaSessionOutcome = "struggled" | "okay" | "good" | "crushed_it";
 
 export type NovaSessionError =
   | "unauthenticated" | "not_connected" | "not_nova" | "onboarding_incomplete"
@@ -155,6 +159,13 @@ export type NovaSessionResponse =
       ok:      true;
       session: NovaSessionView | null;
       // Set by "end": what was recorded.
-      ended:   { topicName: string | null; minutes: number } | null;
+      ended:   {
+        topicName: string | null;
+        minutes:   number;
+        outcome:   NovaSessionOutcome | null;
+        // False when the session had no subject, so its topic could not be
+        // recorded: the session is logged, but Knowledge has nothing new.
+        topicRecorded: boolean;
+      } | null;
     }
   | { ok: false; error: NovaSessionError; message: string };

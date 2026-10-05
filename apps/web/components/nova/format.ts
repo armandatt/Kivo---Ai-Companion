@@ -73,3 +73,11 @@ export function dayOfMonth(dayKey: string): string {
 export function calendarDate(iso: string, timeZone: string): string {
   return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone })
 }
+
+// "today", "yesterday", "5 days ago" for a past instant; "tomorrow",
+// "in 4 days" for a future one. Calendar days in the viewer's own timezone.
+export function relativeDay(iso: string, now: Date = new Date()): string {
+  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const diff = Math.round((startOf(new Date(iso)) - startOf(now)) / 86_400_000)
+  return diff >= 0 ? inDays(diff) : daysAgo(-diff)
+}

@@ -39,7 +39,7 @@ export async function runNovaSessionCommand(
     return { ok: true, session: active ? toSessionView(active, now) : null, ended: null };
   }
 
-  let ended: { topicName: string | null; minutes: number } | null = null;
+  let ended: Extract<NovaSessionResponse, { ok: true }>["ended"] = null;
 
   if (command.action === "start") {
     const subject = command.subjectName
@@ -61,7 +61,8 @@ export async function runNovaSessionCommand(
     });
     if (!user) return { ok: false, error: "not_connected", message: "Connect Telegram to start with Nova." };
     const closed = await persistSessionEnd({
-      userId: user.id, profileId, activeSession: active, subjects: snapshot.subjects, surface: "web", now,
+      userId: user.id, profileId, activeSession: active, subjects: snapshot.subjects, surface: "web",
+      outcome: command.outcome, now,
     });
     // Not closed by this call: it was ended elsewhere a moment ago. Nothing
     // was written twice, and there is nothing new to report.
@@ -69,6 +70,8 @@ export async function runNovaSessionCommand(
       ended = {
         topicName: active.topicName,
         minutes:   Math.max(1, Math.floor(sessionElapsedSeconds(active, now) / 60)),
+        outcome:   command.outcome,
+        topicRecorded: active.subjectId !== null && Boolean(active.topicName),
       };
     }
   }

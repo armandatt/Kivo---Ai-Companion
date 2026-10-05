@@ -27,6 +27,7 @@ import { resolveTurnSignals } from "../engines/turn-signals";
 import { translateNovaCommand } from "../commands";
 import { toSessionView } from "../product/session-view";
 import type { ActiveSessionInfo } from "../engines/study-snapshot";
+import type { SessionOutcome } from "../types/session.types";
 import type { AcademicUnderstanding } from "../types/understanding.types";
 import type { Evidence } from "../types/consolidation.types";
 
@@ -91,6 +92,7 @@ beforeEach(() => {
     companionMessage: {
       create: async ({ data }: Row) => { const row = { id: `msg${messages.length + 1}`, ...data }; messages.push(row); return row; },
     },
+    novaTopicMastery:   { findMany: async () => [] },
     novaLearningDNA:    { findUnique: async () => null, upsert: async () => ({}) },
     novaCognitiveState: { findUnique: async () => null, upsert: async () => ({}) },
   });
@@ -113,8 +115,8 @@ const T0 = new Date("2026-10-05T18:00:00Z");
 const at = (seconds: number) => new Date(T0.getTime() + seconds * 1000);
 const SUBJECTS = [{ id: "s1", name: "Operating Systems" }];
 const start = () => openStudySession("p1", "Deadlocks", SUBJECTS, T0, { subjectId: "s1", durationMinutes: 45 });
-const endOnWeb = (now: Date, active = load()) =>
-  persistSessionEnd({ userId: "u1", profileId: "p1", activeSession: active, subjects: SUBJECTS, surface: "web", now });
+const endOnWeb = (now: Date, active = load(), outcome: SessionOutcome | null = null) =>
+  persistSessionEnd({ userId: "u1", profileId: "p1", activeSession: active, subjects: SUBJECTS, surface: "web", outcome, now });
 
 const consolidations = () => (consolidateTurn as jest.Mock).mock.calls.map(c => c[0]);
 const studyReports = (evidence: Evidence[]) =>
@@ -177,6 +179,8 @@ describe("ending a session from the web", () => {
     expect(row.executionReport).toMatchObject({
       sessionId: "sess1", actualDurationMinutes: 40, plannedDurationMinutes: 45, completionStatus: "natural",
       masteryUpdates: [{ topicName: "Deadlocks", subjectId: "s1", confidence: 0.6 }],
+      // Nobody said how it went: the 0.6 is a placeholder and is marked as one.
+      outcome: null, evidenceBasis: "unreported",
     });
     expect(updateTopicMastery).toHaveBeenCalledTimes(1);
     expect(updateTopicMastery).toHaveBeenCalledWith("s1", "Deadlocks", 0.6, at(40 * 60), "session_report");

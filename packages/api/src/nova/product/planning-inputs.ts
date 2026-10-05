@@ -113,7 +113,7 @@ export async function loadPlanningInputs(
   if (!snapshot.profileId) return { status: "onboarding_incomplete" };
 
   const [topics, constraints] = await Promise.all([
-    getAllTopicMasteries(snapshot.profileId),
+    getAllTopicMasteries(snapshot.profileId, now),
     loadActiveConstraints(user.id, now),
   ]);
 
@@ -143,7 +143,7 @@ export async function loadPlanningInputs(
   const availableMinutes = normalizeAvailableMinutes(options.availableMinutes);
   const plan = generateStudyPlan(
     academicState, topics, snapshot.preferredStudyHoursPerDay, examContext,
-    { availableMinutes },
+    { availableMinutes, now },
   );
 
   return {

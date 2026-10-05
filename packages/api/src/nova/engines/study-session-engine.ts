@@ -16,6 +16,8 @@ import type {
   SessionExecutionReport,
   FocusQuality,
   CompletionStatus,
+  SessionEvidence,
+  SessionOutcome,
 } from "../types/session.types";
 
 // ── Build SessionContext from raw snapshot data ────────────────────────────────
@@ -168,6 +170,50 @@ export function computeSessionAction(
   };
 }
 
+// ── Session evidence ──────────────────────────────────────────────────────────
+// The learner's answer to "How did it go?", as the 0–1 confidence the Topic
+// Mastery Engine takes. Four ordered steps, each landing in its own grade
+// band of that engine (below 0.40 → 1, 0.55 → 3, 0.70 → 4, 0.85 → 5):
+//
+//   struggled   0.30  grade 1: the review interval resets to one day, so
+//                     the topic is due again tomorrow
+//   okay        0.60  grade 3: the interval grows, slowly
+//   good        0.75  grade 4: the interval grows
+//   crushed_it  0.90  grade 5: the interval grows fastest
+//
+// These are a learner's self-report, not a measurement. They replace a
+// constant with something the learner said; they do not make the mastery
+// number a tested result.
+
+export const SESSION_OUTCOME_CONFIDENCE: Record<SessionOutcome, number> = {
+  struggled:  0.30,
+  okay:       0.60,
+  good:       0.75,
+  crushed_it: 0.90,
+};
+
+export const SESSION_OUTCOMES = Object.keys(SESSION_OUTCOME_CONFIDENCE) as SessionOutcome[];
+
+// Used when nobody said how the session went (/done with no claim, or an end
+// request that carries no answer). A neutral value so the topic is still
+// recorded as studied and rescheduled; the report is marked "unreported".
+export const UNREPORTED_SESSION_CONFIDENCE = 0.6;
+
+// The one place a session's evidence is decided. An explicit answer from the
+// learner wins over a claim read from a chat message.
+export function sessionEvidence(input: {
+  outcome?:              SessionOutcome | null;
+  masteryClaimIntensity?: number | null;
+}): SessionEvidence {
+  if (input.outcome) {
+    return { confidence: SESSION_OUTCOME_CONFIDENCE[input.outcome], basis: "learner_outcome", outcome: input.outcome };
+  }
+  if (typeof input.masteryClaimIntensity === "number") {
+    return { confidence: input.masteryClaimIntensity, basis: "mastery_claim", outcome: null };
+  }
+  return { confidence: UNREPORTED_SESSION_CONFIDENCE, basis: "unreported", outcome: null };
+}
+
 // ── Execution report ───────────────────────────────────────────────────────────
 // Pure function — no DB access.
 // Called by persistence layer when session ends.
@@ -175,9 +221,10 @@ export function computeSessionAction(
 export function buildExecutionReport(
   session:            SessionContext,
   reflectionText:     string | null,
-  reportedConfidence: number,   // 0–1, from mastery_claim signal intensity or default
+  evidence:           SessionEvidence,
   now:                Date,
 ): SessionExecutionReport {
+  const reportedConfidence = evidence.confidence;
   const actualDuration = Math.max(
     1,
     session.elapsedMinutes,   // already has paused time subtracted
@@ -235,6 +282,8 @@ export function buildExecutionReport(
     totalPausedMinutes:     session.totalPausedMinutes,
     completionStatus,
     masteryUpdates,
+    outcome:                evidence.outcome,
+    evidenceBasis:          evidence.basis,
     reflectionText,
     producedAt:             now,
   };

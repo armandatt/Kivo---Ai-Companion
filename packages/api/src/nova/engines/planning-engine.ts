@@ -48,10 +48,16 @@ function fitBudgetToAvailableTime(
 export interface PlanOptions {
   // What the student said they have today. Unset: plan from their usual hours.
   availableMinutes?: number | null;
+  // The moment the plan is for. Defaults to the present; a caller that
+  // judges "due" at some other moment passes the same one here.
+  now?: Date;
 }
 
 // The shortest block worth planning. A budget below it yields no blocks.
 export const MIN_BLOCK_MINUTES = 10;
+
+// How long a review of one topic is planned for.
+export const REVIEW_BLOCK_MINUTES = 25;
 
 // ── Block builder helpers ─────────────────────────────────────────────────────
 
@@ -100,7 +106,7 @@ export function generateStudyPlan(
   examContext:          ExamContext | null,
   options:              PlanOptions = {},
 ): StudyPlan {
-  const now            = new Date();
+  const now            = options.now ?? new Date();
   const budget         = fitBudgetToAvailableTime(
     computeDailyBudget(preferredHoursPerDay, state), options.availableMinutes,
   );
@@ -139,10 +145,10 @@ export function generateStudyPlan(
   // ── Standard mode: overdue reviews first, then practice ──────────────────
 
   // 1. Overdue reviews (critical first)
-  const overdue = getOverdueTopics(topics);
+  const overdue = getOverdueTopics(topics, now);
   for (const topic of overdue) {
     if (usedMinutes >= budgetMinutes * 0.6) break;  // max 60% on overdue
-    const mins = Math.min(25, budgetMinutes - usedMinutes);
+    const mins = Math.min(REVIEW_BLOCK_MINUTES, budgetMinutes - usedMinutes);
     if (mins < MIN_BLOCK_MINUTES) break;
     blocks.push(reviewBlock(topic, mins, "high"));
     usedMinutes += mins;

@@ -16,6 +16,8 @@
 //   9. Send Telegram
 //  10. Persist NovaProactiveMessage (cooldown + dedup record)
 
+import { getAllTopicMasteries } from "../engines/knowledge-engine";
+import { getOverdueTopics } from "../engines/retention-engine";
 import { prisma } from "@repo/db/client";
 import { loadStudySnapshot } from "../engines/study-snapshot";
 import { computeAcademicState } from "../engines/academic-state-engine";
@@ -263,25 +265,18 @@ async function loadProactiveRealityFacts(userId: string, now: Date): Promise<Nov
     }));
 }
 
-async function loadOverdueTopics(
+// Topics due for review, by the one definition (retention-engine.ts): the
+// same topics Home, the Planner and Knowledge show as due.
+// Exported, with the cooldown helpers below, for the integration tests.
+export async function loadOverdueTopics(
   profileId: string,
   now:       Date,
 ): Promise<Array<{ topicName: string; nextReviewAt: Date }>> {
-  const overdue = await prisma.novaTopicMastery.findMany({
-    where: {
-      subject: { profileId },
-      nextReviewAt: { lte: now },
-    },
-    orderBy: { nextReviewAt: "asc" },
-    take: 5,
-    select: { name: true, nextReviewAt: true },
-  });
-  return overdue
-    .filter(t => t.nextReviewAt !== null)
-    .map(t => ({ topicName: t.name, nextReviewAt: t.nextReviewAt! }));
+  const due = getOverdueTopics(await getAllTopicMasteries(profileId, now), now);
+  return due.slice(0, 5).map(t => ({ topicName: t.topicName, nextReviewAt: t.reviewDueAt! }));
 }
 
-async function checkCooldown(
+export async function checkCooldown(
   profileId:    string,
   eventType:    InterventionType,
   now:          Date,
@@ -298,7 +293,7 @@ async function checkCooldown(
   return existing !== null;
 }
 
-async function persistProactiveDecision(
+export async function persistProactiveDecision(
   profileId:    string,
   decision:     { approved: boolean; finalInterventionType: InterventionType; suppressReason: string | null; priority: number; confidence: number },
   originalType: InterventionType,

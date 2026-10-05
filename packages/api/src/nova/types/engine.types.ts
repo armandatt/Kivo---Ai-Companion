@@ -55,7 +55,7 @@ export interface TopicMasteryState {
   retentionEstimate:  number;      // 0–1, predicted current retention
   confidenceReported: number;      // 0–1, last self-assessed
   calibrationGap:     number;      // masteryProbability - confidenceReported
-  reviewDueAt:        Date | null;
+  reviewDueAt:        Date | null; // the scheduled review date; due once it arrives (retention-engine.ts)
   masteryTrend:       "rising" | "stable" | "falling";
   reviewCount:        number;
 }

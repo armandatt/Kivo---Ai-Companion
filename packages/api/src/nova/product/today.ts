@@ -6,7 +6,7 @@
 // the facts behind it.
 
 import type { StudySnapshotResult } from "../engines/study-snapshot";
-import { getOverdueTopics } from "../engines/retention-engine";
+import { daysOverdue, getOverdueTopics, isDueForReview } from "../engines/retention-engine";
 import { loadPlanningInputs, planEmptyReason, planMode } from "./planning-inputs";
 import type { AcademicState } from "../types/academic-state.types";
 import type { ExamContext, StudyBlock, StudyPlan, TopicMasteryState } from "../types/engine.types";
@@ -60,8 +60,8 @@ export function reasonsFor(
     else if (pct < 40) reasons.push(`weak mastery (${pct}%)`);
     else if (pct < 70) reasons.push(`developing (${pct}%)`);
 
-    if (topic.reviewDueAt && topic.reviewDueAt < now) {
-      const overdue = daysBetween(now, topic.reviewDueAt);
+    if (isDueForReview(topic, now)) {
+      const overdue = daysOverdue(topic, now);
       reasons.push(overdue <= 0 ? "review due today" : `review ${overdue} day${overdue === 1 ? "" : "s"} overdue`);
     }
     if (topic.calibrationGap < -0.25) reasons.push("feels stronger than it tests");
@@ -105,7 +105,7 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
   const thisWeek  = completed.filter(s => s.sessionDate >= weekAgo);
   const last      = [...completed].sort((a, b) => b.sessionDate.getTime() - a.sessionDate.getTime())[0];
 
-  const overdue = getOverdueTopics(topics);
+  const overdue = getOverdueTopics(topics, now);
   const studied = topics.filter(t => t.reviewCount > 0);
   const weakest = [...studied].sort((a, b) => a.masteryProbability - b.masteryProbability)[0];
 
@@ -151,7 +151,7 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
       subjectName:    weakest.subjectName,
       masteryPercent: Math.round(weakest.masteryProbability * 100),
       lastStudiedAt:  weakest.lastStudied?.toISOString() ?? null,
-      reviewDue:      Boolean(weakest.reviewDueAt && weakest.reviewDueAt < now),
+      reviewDue:      isDueForReview(weakest, now),
     } : null,
 
     reviewDue: {
@@ -159,7 +159,7 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
       topics: overdue.slice(0, 3).map(t => ({
         topicName:   t.topicName,
         subjectName: t.subjectName,
-        daysOverdue: t.reviewDueAt ? Math.max(0, daysBetween(now, t.reviewDueAt)) : 0,
+        daysOverdue: daysOverdue(t, now),
       })),
     },
 

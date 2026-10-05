@@ -194,6 +194,14 @@ describe("session commands", () => {
     expect(parseSessionCommand({ action: "start", topicName: "x" })).toMatchObject({ plannedMinutes: null });
   });
 
+  it("parses the learner's answer on an end command, and treats anything else as no answer", () => {
+    expect(parseSessionCommand({ action: "end", outcome: "struggled" })).toEqual({ action: "end", outcome: "struggled" });
+    expect(parseSessionCommand({ action: "end", outcome: "crushed_it" })).toEqual({ action: "end", outcome: "crushed_it" });
+    expect(parseSessionCommand({ action: "end" })).toEqual({ action: "end", outcome: null });
+    expect(parseSessionCommand({ action: "end", outcome: "amazing" })).toEqual({ action: "end", outcome: null });
+    expect(parseSessionCommand({ action: "end", outcome: 0.99 })).toEqual({ action: "end", outcome: null });
+  });
+
   it("rejects anything that is not a command", () => {
     expect(parseSessionCommand(null)).toBeNull();
     expect(parseSessionCommand("start")).toBeNull();
@@ -209,8 +217,8 @@ describe("session commands", () => {
   });
 
   it("needs a running session to pause, resume or end", () => {
-    for (const action of ["pause", "resume", "end"] as const) {
-      expect(checkSessionCommand({ action }, null)).toMatchObject({ verdict: "reject", error: "no_active_session" });
+    for (const command of [{ action: "pause" }, { action: "resume" }, { action: "end", outcome: null }] as const) {
+      expect(checkSessionCommand(command, null)).toMatchObject({ verdict: "reject", error: "no_active_session" });
     }
   });
 
@@ -219,6 +227,6 @@ describe("session commands", () => {
     expect(checkSessionCommand({ action: "pause" },  { status: "paused" }).verdict).toBe("noop");
     expect(checkSessionCommand({ action: "resume" }, { status: "paused" }).verdict).toBe("apply");
     expect(checkSessionCommand({ action: "resume" }, { status: "in_progress" }).verdict).toBe("noop");
-    expect(checkSessionCommand({ action: "end" },    { status: "paused" }).verdict).toBe("apply");
+    expect(checkSessionCommand({ action: "end", outcome: "good" }, { status: "paused" }).verdict).toBe("apply");
   });
 });
