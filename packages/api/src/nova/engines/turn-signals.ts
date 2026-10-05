@@ -34,8 +34,10 @@ export function resolveTurnSignals(input: {
     signals = withEstablishedSignal(signals, "study_report", "command");
   }
 
-  // "I finished chapter 3 but I'm exhausted" keeps its study report even
-  // though the reply is about the exhaustion, and no regex has to match.
+  // The dominant intent establishes its event by itself. Secondary intents
+  // work through corroboration below: "I finished chapter 3 but I'm
+  // exhausted" keeps its study report because the wording matched AND the
+  // Understanding Brain listed study_report as a secondary intent.
   for (const type of signalsStatedByUnderstanding(understanding)) {
     signals = withEstablishedSignal(signals, type, "understanding");
   }

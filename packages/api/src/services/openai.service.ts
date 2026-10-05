@@ -5,11 +5,15 @@ import {
   buildGeminiRequest,
   geminiKey,
   geminiModelFor,
+  GEMINI_TIMEOUT_MS,
+  geminiAttemptPlan,
   isRetryableStatus,
-  isThinkingConfigRejection,
+  mayBeThinkingConfigRejection,
   openaiKey,
   parseGeminiResponse,
+  retryDelayMs,
   selectProvider,
+  shouldDisableThinking,
   type GeminiResponse,
   type LlmRequest,
 } from "./llmProviders";
@@ -60,36 +64,67 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // extra round-trip happens once per model, not once per call.
 const thinkingNotConfigurable = new Set<string>();
 
-async function generateWithGemini(input: LlmRequest, apiKey: string): Promise<string> {
-  const model = geminiModelFor(input.model, process.env);
+// One attempt against one model. Returns the text, or a reason to try again.
+type GeminiAttempt =
+  | { ok: true; text: string }
+  | { ok: false; retryable: boolean; error: string; waitMs?: number };
 
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const { url, body } = buildGeminiRequest(input, model, {
-      disableThinking: !thinkingNotConfigurable.has(model),
-    });
+async function callGemini(input: LlmRequest, model: string, apiKey: string): Promise<GeminiAttempt> {
+  const disableThinking = shouldDisableThinking(model) && !thinkingNotConfigurable.has(model);
+  const { url, body } = buildGeminiRequest(input, model, { disableThinking });
 
-    const res = await fetch(url, {
+  let res: Response;
+  try {
+    res = await fetch(url, {
       method:  "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body:    JSON.stringify(body),
+      signal:  AbortSignal.timeout(GEMINI_TIMEOUT_MS),
     });
-    const data = await res.json().catch(() => ({})) as GeminiResponse;
-
-    if (res.ok) return parseGeminiResponse(data, model);
-
-    if (isThinkingConfigRejection(res.status, data.error?.message) && !thinkingNotConfigurable.has(model)) {
-      thinkingNotConfigurable.add(model);
-      continue;                       // same request, without the thinking setting
-    }
-    if (isRetryableStatus(res.status) && attempt < 2) {
-      await sleep(1500 * (attempt + 1));
-      continue;
-    }
-    throw new Error(
-      `Gemini request failed (${res.status}, model: ${model}): ${data.error?.message ?? "no error message"}`,
-    );
+  } catch (err) {
+    // Timeout or network failure: worth another attempt.
+    return { ok: false, retryable: true, error: `no response (${(err as Error).name})` };
   }
-  throw new Error(`Gemini request failed after retries (model: ${model})`);
+  const data = await res.json().catch(() => ({})) as GeminiResponse;
+
+  if (res.ok) {
+    try {
+      return { ok: true, text: parseGeminiResponse(data, model) };
+    } catch (err) {
+      return { ok: false, retryable: false, error: (err as Error).message };
+    }
+  }
+  if (mayBeThinkingConfigRejection(res.status, disableThinking)) {
+    thinkingNotConfigurable.add(model);
+    return { ok: false, retryable: true, error: "thinking setting rejected" };
+  }
+  return {
+    ok: false,
+    retryable: isRetryableStatus(res.status),
+    error: `${res.status}: ${(data.error?.message ?? "no error message").split("\n")[0]}`,
+    waitMs: retryDelayMs(res.status, data.error?.message),
+  };
+}
+
+async function generateWithGemini(input: LlmRequest, apiKey: string): Promise<string> {
+  const model = geminiModelFor(input.model, process.env);
+
+  // The chosen model twice, then Google's fallback alias. An overloaded or
+  // retired model degrades to a working one instead of a failed turn.
+  const plan = geminiAttemptPlan(model);
+
+  let lastError = "not attempted";
+  for (let i = 0; i < plan.length; i++) {
+    const attempt = await callGemini(input, plan[i]!, apiKey);
+    if (attempt.ok) return attempt.text;
+
+    lastError = `model ${plan[i]}: ${attempt.error}`;
+    if (!attempt.retryable) break;
+    // A rate limit is per model family and applies to the fallback too, so
+    // it is always waited out; other errors only pause before a same-model retry.
+    if (i < plan.length - 1 && (attempt.waitMs! > 800 || plan[i + 1] === plan[i])) await sleep(attempt.waitMs ?? 800);
+  }
+  throw new Error(`Gemini request failed (${lastError})`);
 }
 
 async function generateWithOpenAI(input: LlmRequest, apiKey: string): Promise<string> {

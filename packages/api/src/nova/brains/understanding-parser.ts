@@ -43,6 +43,8 @@ export function parseRealityObservations(raw: unknown): RealityObservation[] {
     const category = String(r["category"] ?? "");
     const claim    = typeof r["claim"] === "string" ? r["claim"].trim().slice(0, 300) : "";
     if (!isNovaRealityCategory(category) || claim.length < 4) return [];
+    // Someone else's circumstance is not the student's reality.
+    if (r["about"] === "other") return [];
     if (typeof r["confidence"] !== "number") return [];
 
     const hours = r["expectedDurationHours"];

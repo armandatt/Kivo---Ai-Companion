@@ -51,7 +51,7 @@ Set in the Render dashboard. None are in `render.yaml`.
 | `DIRECT_URL` | for Prisma CLI only | Neon direct connection string |
 | `GEMINI_API_KEY` | yes (or `OPENAI_API_KEY`) | When set, every model call goes to Gemini. Free keys come from Google AI Studio |
 | `OPENAI_API_KEY` | only without Gemini | Used when `GEMINI_API_KEY` is empty, or when `LLM_PROVIDER=openai` |
-| `GEMINI_MODEL_FAST`, `GEMINI_MODEL_MAIN` | no | Override the default Gemini models (`gemini-flash-lite-latest`, `gemini-flash-latest`) |
+| `GEMINI_MODEL_FAST`, `GEMINI_MODEL_MAIN` | no | Override the default Gemini models (both `gemini-3.5-flash-lite`; on a paid key set `GEMINI_MODEL_MAIN=gemini-flash-latest`) |
 | `TELEGRAM_BOT_TOKEN` | yes | |
 | `TELEGRAM_WEBHOOK_SECRET` | yes | Any long random string; reused in `setWebhook` below |
 | `JWT_SECRET` | yes | Same value as on Vercel |

@@ -2,12 +2,16 @@
 import {
   GEMINI_DEFAULT_FAST,
   GEMINI_DEFAULT_MAIN,
+  GEMINI_FALLBACK_MODEL,
   GEMINI_OUTPUT_HEADROOM,
+  geminiAttemptPlan,
   buildGeminiRequest,
   geminiModelFor,
   isRetryableStatus,
-  isThinkingConfigRejection,
+  mayBeThinkingConfigRejection,
   parseGeminiResponse,
+  retryDelayMs,
+  shouldDisableThinking,
   selectProvider,
   tierFor,
   unwrapSingleFence,
@@ -42,6 +46,11 @@ describe("model mapping", () => {
     expect(geminiModelFor("gpt-4o-mini", env({}))).toBe(GEMINI_DEFAULT_FAST);
     expect(geminiModelFor("gpt-4o", env({}))).toBe(GEMINI_DEFAULT_MAIN);
     expect(geminiModelFor(undefined, env({}))).toBe(GEMINI_DEFAULT_MAIN);
+  });
+
+  it("defaults both tiers to a Lite model, the only one usable on a free key", () => {
+    expect(GEMINI_DEFAULT_FAST).toMatch(/lite/);
+    expect(GEMINI_DEFAULT_MAIN).toMatch(/lite/);
   });
 
   it("ignores OPENAI_MODEL, and honours the Gemini overrides", () => {
@@ -123,14 +132,34 @@ describe("Gemini response", () => {
 });
 
 describe("error handling decisions", () => {
-  it("recognises a rejected thinking setting", () => {
-    expect(isThinkingConfigRejection(400, "Thinking budget 0 is not supported for this model")).toBe(true);
-    expect(isThinkingConfigRejection(400, "API key not valid")).toBe(false);
-    expect(isThinkingConfigRejection(429, "thinking")).toBe(false);
+  it("sends the thinking-off setting only to models that accept it", () => {
+    // Verified live: Flash-Lite rejects thinkingBudget 0 with a bare 400.
+    expect(shouldDisableThinking("gemini-flash-lite-latest")).toBe(false);
+    expect(shouldDisableThinking("gemini-3.5-flash-lite")).toBe(false);
+    expect(shouldDisableThinking("gemini-flash-latest")).toBe(true);
   });
 
-  it("retries rate limits and server errors, not bad requests or bad keys", () => {
-    expect([429, 500, 503].every(isRetryableStatus)).toBe(true);
-    expect([400, 401, 403, 404].some(isRetryableStatus)).toBe(false);
+  it("treats a 400 as a possible thinking rejection only if the setting was sent", () => {
+    expect(mayBeThinkingConfigRejection(400, true)).toBe(true);
+    expect(mayBeThinkingConfigRejection(400, false)).toBe(false);   // a real bad request
+    expect(mayBeThinkingConfigRejection(503, true)).toBe(false);
+  });
+
+  it("retries rate limits, server errors and retired models, not bad requests or bad keys", () => {
+    expect([404, 429, 500, 503].every(isRetryableStatus)).toBe(true);
+    expect([400, 401, 403].some(isRetryableStatus)).toBe(false);
+  });
+
+  it("waits as long as a rate limit asks, within reason", () => {
+    const msg = "You exceeded your current quota...\nPlease retry in 6.209502925s.";
+    expect(retryDelayMs(429, msg)).toBe(6460);
+    expect(retryDelayMs(429, "Please retry in 58s.")).toBe(10_000);   // capped
+    expect(retryDelayMs(429, "quota")).toBe(2000);
+    expect(retryDelayMs(503, "high demand")).toBe(800);
+  });
+
+  it("tries the chosen model twice, then falls back to Google's alias", () => {
+    expect(geminiAttemptPlan("gemini-3.5-flash-lite")).toEqual(["gemini-3.5-flash-lite", "gemini-3.5-flash-lite", GEMINI_FALLBACK_MODEL]);
+    expect(geminiAttemptPlan(GEMINI_FALLBACK_MODEL)).toEqual([GEMINI_FALLBACK_MODEL, GEMINI_FALLBACK_MODEL]);
   });
 });

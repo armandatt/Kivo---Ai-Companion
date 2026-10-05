@@ -35,10 +35,23 @@ export function selectProvider(env: NodeJS.ProcessEnv): LlmProvider {
 
 // ── Gemini ────────────────────────────────────────────────────────────────────
 
-// Google's moving aliases, so a model retirement does not break the app.
 // Override with GEMINI_MODEL_FAST / GEMINI_MODEL_MAIN.
-export const GEMINI_DEFAULT_FAST = "gemini-flash-lite-latest";
-export const GEMINI_DEFAULT_MAIN = "gemini-flash-latest";
+//
+// Both tiers default to Flash-Lite. Measured on a free-tier key (Oct 2026):
+//   gemini-3.5-flash-lite      about 1.0s, consistently
+//   gemini-flash-lite-latest   about 1s, with occasional 5–30s spikes
+//   full Flash models          mostly "high demand" 503s; 15–30s when they answer
+// The full Flash models are unusable in a chat on a free key. On a paid key,
+// set GEMINI_MODEL_MAIN=gemini-flash-latest for better replies.
+export const GEMINI_DEFAULT_FAST = "gemini-3.5-flash-lite";
+export const GEMINI_DEFAULT_MAIN = "gemini-3.5-flash-lite";
+
+// Google's moving alias. Used when the chosen model fails or has been
+// retired, so a model retirement degrades the app instead of breaking it.
+export const GEMINI_FALLBACK_MODEL = "gemini-flash-lite-latest";
+
+// One request may not hold a chat turn hostage.
+export const GEMINI_TIMEOUT_MS = 12_000;
 
 export type ModelTier = "fast" | "main";
 
@@ -61,6 +74,13 @@ export function geminiModelFor(requestedModel: string | undefined, env: NodeJS.P
 // leave nothing for the answer. So the cap sent to Gemini always includes
 // headroom, and reasoning is switched off where the model allows it.
 export const GEMINI_OUTPUT_HEADROOM = 1024;
+
+// Flash-Lite models do not reason by default and reject "thinkingBudget: 0"
+// with a bare 400. The full Flash models accept it. So the setting is sent
+// only to non-Lite models.
+export function shouldDisableThinking(model: string): boolean {
+  return !/lite/i.test(model);
+}
 
 export function buildGeminiRequest(
   req:   LlmRequest,
@@ -122,12 +142,32 @@ export function parseGeminiResponse(data: GeminiResponse, model: string): string
   return unwrapSingleFence(text);
 }
 
-// A 400 that complains about the thinking setting means this model does not
-// accept "thinkingBudget: 0". The client then retries once without it.
-export function isThinkingConfigRejection(status: number, message: string | undefined): boolean {
-  return status === 400 && /thinking/i.test(message ?? "");
+// A 400 on a request that carried the thinking setting may be that setting
+// being rejected: the API's message is often just "invalid argument". The
+// client retries once without it; a 400 that persists is a real error.
+export function mayBeThinkingConfigRejection(status: number, sentThinkingConfig: boolean): boolean {
+  return status === 400 && sentThinkingConfig;
 }
 
+// 404 is "this model is no longer available": no point repeating the same
+// model, but the fallback alias will work.
 export function isRetryableStatus(status: number): boolean {
-  return status === 429 || status === 500 || status === 503;
+  return status === 404 || status === 429 || status === 500 || status === 503;
+}
+
+// A 429 says how long to wait ("Please retry in 6.2s"). Waiting that long is
+// better than failing a chat turn, up to a limit.
+export const MAX_RATE_LIMIT_WAIT_MS = 10_000;
+
+export function retryDelayMs(status: number, message: string | undefined): number {
+  if (status !== 429) return 800;
+  const m = (message ?? "").match(/retry in ([0-9.]+)\s*s/i);
+  const asked = m ? Math.ceil(parseFloat(m[1]!) * 1000) + 250 : 2000;
+  return Math.min(asked, MAX_RATE_LIMIT_WAIT_MS);
+}
+
+// Which models to try, in order: the chosen one twice, then the fallback alias
+// once if it is a different model.
+export function geminiAttemptPlan(model: string): string[] {
+  return model === GEMINI_FALLBACK_MODEL ? [model, model] : [model, model, GEMINI_FALLBACK_MODEL];
 }

@@ -4,7 +4,8 @@
  * it reads, what it correctly leaves empty, and for mixed messages whether
  * every stated signal survives (secondaryIntents → established signals). Not a test: model output is not deterministic.
  *
- * Run from repo root:  OPENAI_API_KEY=... npx tsx scripts/novaRealityProbe.mts
+ * Run from repo root:  npx tsx scripts/novaRealityProbe.mts [filter]
+ * Uses whichever provider is configured (GEMINI_API_KEY or OPENAI_API_KEY).
  */
 import { runUnderstandingBrain } from "../packages/api/src/nova/brains/understanding-brain.ts";
 import { resolveTurnSignals } from "../packages/api/src/nova/engines/turn-signals.ts";
@@ -41,7 +42,12 @@ const STATE = {
   daysUntilNextExam: null, momentum7dTrend: [0, 0, 0, 0, 0, 0, 0], stateHistory: [],
 } as const;
 
-for (const [label, msg] of cases) {
+// The free tier allows about 15 requests a minute. PROBE_DELAY_MS=0 on a paid key.
+const delayMs = Number(process.env.PROBE_DELAY_MS ?? 4500);
+const only    = process.argv[2]?.toLowerCase();   // e.g. `multi` runs only the MULTI cases
+
+for (const [label, msg] of cases.filter(([l]) => !only || l.toLowerCase().includes(only))) {
+  await new Promise(resolve => setTimeout(resolve, delayMs));
   const u = await runUnderstandingBrain(msg, []);
   const r = (u.realityObservations ?? []).map(o => `${o.category}/${o.subtype} ${o.status} ${o.persistence} ${o.expectedDurationHours ?? "-"}h c=${o.confidence} "${o.claim}"`);
   // What the rest of Nova will actually see for this message.

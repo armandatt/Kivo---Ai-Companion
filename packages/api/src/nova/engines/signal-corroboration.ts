@@ -48,9 +48,16 @@ export function statedIntents(understanding: AcademicUnderstanding): AcademicInt
   return [understanding.intent, ...(understanding.secondaryIntents ?? [])];
 }
 
-// Intents that ARE a behavioral event. When the Understanding Brain reads one,
-// the event is established by that reading alone: it does not depend on a
-// regex also happening to match the wording.
+// Intents that ARE a behavioral event.
+//
+// The DOMINANT intent establishes its event on the Understanding Brain's
+// reading alone: no regex has to match the wording.
+//
+// A SECONDARY intent does not. Live testing showed the model sometimes adds a
+// secondary intent the message never stated ("finals start tomorrow" read as
+// also a study report). So a secondary intent only corroborates: its event
+// exists when the signal engine's regex independently matched the wording too.
+// Two weak sources that agree, or one strong one.
 export const INTENT_SIGNALS: Partial<Record<AcademicIntent, SignalType>> = {
   study_report:      "study_report",
   study_skip_report: "study_skip",
@@ -60,7 +67,8 @@ export const INTENT_SIGNALS: Partial<Record<AcademicIntent, SignalType>> = {
 };
 
 export function signalsStatedByUnderstanding(understanding: AcademicUnderstanding): SignalType[] {
-  return [...new Set(statedIntents(understanding).flatMap(i => INTENT_SIGNALS[i] ?? []))];
+  const signal = INTENT_SIGNALS[understanding.intent];
+  return signal ? [signal] : [];
 }
 
 // The signal engine proposes; the Understanding Brain disposes.

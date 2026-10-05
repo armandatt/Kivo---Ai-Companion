@@ -83,23 +83,20 @@ describe("one message, several signals", () => {
   });
 
   it("CASE 2 — studied, understood one thing better, still confused about another", () => {
+    // Fixture is what the live model returned for this message.
     const t = turn(
       "I studied OS for an hour, understood deadlocks better, but I'm still really confused about Banker's algorithm.",
       {
-        intent: "topic_question", secondaryIntents: ["study_report", "mastery_claim"],
+        intent: "study_report", secondaryIntents: ["topic_question"],
         emotion: "confused", topic: "Banker's algorithm", topicConfidence: 0.9,
-        routingSignal: "knowledge_engine",
+        disclosureClass: "study_context", routingSignal: "knowledge_engine",
       },
     );
-    expect(t.understanding.intent).toBe("topic_question");        // confusion drives the reply
-    expect(t.understanding.emotion).toBe("confused");
-    expect(t.understanding.topic).toBe("Banker's algorithm");     // the weak topic is the one carried
-    expect(t.signalTypes).toEqual(expect.arrayContaining(["study_report", "mastery_claim"]));
-    expect(t.applied).toEqual(expect.arrayContaining([
-      "academic:self_reported_session",   // study activity
-      "academic:mastery_observation",     // learning evidence on the topic
-      "fact:mastery_claim",
-    ]));
+    expect(t.understanding.emotion).toBe("confused");                          // confusion
+    expect(t.understanding.secondaryIntents).toEqual(["topic_question"]);     // …and a question about it
+    expect(t.understanding.topic).toBe("Banker's algorithm");                 // the weak topic is the one carried
+    expect(t.signalTypes).toEqual(expect.arrayContaining(["study_report", "achievement"]));   // studied + understood
+    expect(t.applied).toEqual(expect.arrayContaining(["academic:self_reported_session", "fact:achievement"]));
   });
 
   it("CASE 3 — skipping tonight because the exam moved: reality change AND the skip", () => {
@@ -152,6 +149,37 @@ describe("one message, several signals", () => {
       signals: t.signalTypes, secondaryIntents: t.understanding.secondaryIntents,
     });
     expect(tags).toEqual(expect.arrayContaining(["emotional_vent", "study_report", "overwhelmed"]));
+  });
+
+  // ── Found by the live probe: the model sometimes invents a secondary intent ──
+
+  it("a secondary intent the wording does not support establishes nothing", () => {
+    // Real model output for this message included secondaryIntents ["study_report"].
+    const t = turn("finals week starts tomorrow, three exams in five days", {
+      intent: "exam_anxiety", secondaryIntents: ["study_report"], emotion: "anxious_exam",
+      disclosureClass: "study_context",
+    });
+    expect(t.signalTypes).not.toContain("study_report");
+    expect(t.applied).not.toContain("academic:self_reported_session");
+  });
+
+  it("'can't focus' is not a skipped session, even if the model says so", () => {
+    const t = turn("I've had the flu since Monday, can't focus at all", {
+      intent: "emotional_vent", secondaryIntents: ["study_skip_report"], emotion: "overwhelmed",
+      disclosureClass: "life_event",
+      reality: [{ about: "self", category: "health", subtype: "illness", claim: "Student has had the flu since Monday", status: "active", persistence: "temporary", expectedDurationHours: null, confidence: 1 }],
+    });
+    expect(t.signalTypes).not.toContain("study_skip");
+    expect(t.applied).toEqual(["reality:health/illness"]);
+  });
+
+  it("someone else's circumstance is not the student's reality", () => {
+    const t = turn("my roommate has the flu lol", {
+      intent: "life_disclosure", emotion: "neutral", disclosureClass: "life_event",
+      reality: [{ about: "other", category: "health", subtype: "illness", claim: "Student's roommate has the flu.", status: "active", persistence: "temporary", expectedDurationHours: null, confidence: 1 }],
+    });
+    expect(t.understanding.realityObservations).toEqual([]);
+    expect(t.applied).toEqual([]);
   });
 });
 
