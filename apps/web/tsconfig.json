@@ -25,6 +25,9 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@repo/api/personality/*": [
+        "../../packages/api/src/personality/*"
       ]
     }
   },

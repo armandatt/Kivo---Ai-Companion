@@ -3,6 +3,9 @@ import { prisma } from "@repo/db/client"
 import { getSession } from "../lib/auth/session"
 //@ts-ignore
 import { buildOnboardingSchedulePayload } from "@repo/api/services/mentorIntake.service"
+import { matchMentor, type MentorMatch } from "@repo/api/personality/mentor-compatibility"
+import { scoreSignal, validateSignalAnswers, type PersonalitySignal, type SignalAnswers } from "@repo/api/personality/signal-scoring"
+import { recordOnboardingMatch, type MatchResolution } from "@repo/api/personality/personality.service"
 
 export async function POST(req: Request) {
   try {
@@ -25,7 +28,13 @@ export async function POST(req: Request) {
       )
     }
 
-    const profileData = mapToDB(payload)
+    // Personality signal (questions 7-10). Optional: older clients do not send
+    // it, and an incomplete or invalid set is ignored rather than failing signup.
+    const validation = validateSignalAnswers(body?.signalAnswers)
+    const signalAnswers: SignalAnswers | null = validation.ok ? validation.answers : null
+    const signal: PersonalitySignal | null = signalAnswers ? scoreSignal(signalAnswers) : null
+
+    const { profileData, match, resolution } = mapToDB(payload, signal)
     const savedProfile = await prisma.userProfile.upsert({
       where: { userId: session.userId },
       update: profileData,
@@ -36,9 +45,31 @@ export async function POST(req: Request) {
       },
     })
 
+    // Best effort: once the profile is stored, a failure writing the signal or
+    // the match is logged and does not fail the request. This does NOT cover a
+    // database that lacks the new schema. The upsert above already reads every
+    // UserProfile column, mentorMatch included, so the PersonalityAssessment
+    // table and UserProfile.mentorMatch must exist before this code is deployed.
+    try {
+      await recordOnboardingMatch({
+        userId: session.userId,
+        answers: signalAnswers,
+        signal,
+        resolution,
+        match,
+        assignedMentorId: profileData.primaryPersona,
+      })
+    } catch (error) {
+      console.error("[ONBOARDING] personality signal not stored:", error)
+    }
+
+    // mentorMatch holds the engine's working (need vector, signal-derived tags).
+    // The browser has no use for it, so it is not sent back.
+    const { mentorMatch: _mentorMatch, ...profile } = savedProfile
+
     return NextResponse.json({
       success: true,
-      profile: savedProfile,
+      profile,
     })
   } catch (error) {
     console.error("[ONBOARDING ERROR]", error)
@@ -85,6 +116,10 @@ function normalizePayload(body: unknown): OnboardingPayload | null {
 
   if (!quizAnswers || typeof quizAnswers !== "object") return null
 
+  // Raw personality-signal answers belong only in PersonalityAssessment, so
+  // they never ride along into UserProfile.onboardingAnswers.
+  delete (quizAnswers as Record<string, unknown>).signalAnswers
+
   return {
     quizAnswers,
     personaName: readString(data.personaName),
@@ -110,31 +145,48 @@ function normalizeAccountability(value?: string | null) {
   return value
 }
 
-function domainPersonaFallback(mentorDomain?: string | null): string {
-  if (mentorDomain === "gym") return "REX"
-  if (mentorDomain === "study") return "NOVA"
-  return "ZEN"
-}
-
 const PERSONA_DESCRIPTIONS: Record<string, string> = {
   REX:  "No excuses. Just results.",
   NOVA: "Steady. Structured. Always here.",
   ZEN:  "Slow down. Go further.",
 }
 
-function mapToDB(payload: OnboardingPayload) {
+const LEGACY_PERSONAS = new Set(["REX", "NOVA", "ZEN"])
+
+function mapToDB(payload: OnboardingPayload, signal: PersonalitySignal | null) {
   const words = Array.isArray(payload.quizAnswers.aspirationWords)
     ? payload.quizAnswers.aspirationWords.map((word) => word.trim()).filter(Boolean).slice(0, 3)
     : []
   const accountabilityStyle = normalizeAccountability(payload.quizAnswers.accountabilityStyle)
-  const personaName = payload.personaName ?? domainPersonaFallback(payload.quizAnswers.mentorDomain)
-  const toneModifier = payload.toneModifier ?? null
+
+  // The mentor is decided here, on the server, by the compatibility engine.
+  // The domain answer is a hard constraint; see packages/api/src/personality.
+  const engineMatch: MentorMatch = matchMentor({
+    domain: payload.quizAnswers.mentorDomain,
+    accountabilityStyle,
+    goalCategory: categorizeGoal(payload.quizAnswers.primaryGoal),
+    signal,
+  })
+
+  // Clients that predate the domain question sent only a persona name. Keep
+  // honouring that, as before; everyone else gets the engine's answer.
+  const clientPersona = payload.personaName?.toUpperCase()
+  const legacyClient = !payload.quizAnswers.mentorDomain && !!clientPersona && LEGACY_PERSONAS.has(clientPersona)
+  const personaName = legacyClient ? clientPersona! : engineMatch.mentorId.toUpperCase()
+  const toneModifier = legacyClient ? payload.toneModifier ?? null : engineMatch.toneModifier
+
+  // Say how the assignment came about. When the engine did not choose it, no
+  // match is stored: the engine's guess for a missing domain is not a match.
+  const resolution: Exclude<MatchResolution, "predates_matching"> = legacyClient
+    ? "legacy_client_persona"
+    : payload.quizAnswers.mentorDomain ? "engine" : "domain_missing_default"
+  const match: MentorMatch | null = legacyClient ? null : engineMatch
   const energyPattern = readString(payload.quizAnswers.energyPattern) ?? null
   const preferredCheckInTime = payload.checkInTime ?? null
 
   const schedule = buildOnboardingSchedulePayload({ energyPattern, preferredCheckInTime })
 
-  return {
+  const profileData = {
     primaryPersona: personaName.toLowerCase(),
     tone: accountabilityStyle,
     toneModifier,
@@ -146,7 +198,7 @@ function mapToDB(payload: OnboardingPayload) {
     aspirationWords: words,
     personaName,
     personaDescription:
-      payload.personaDescription ?? PERSONA_DESCRIPTIONS[personaName] ?? "No excuses. Just results.",
+      PERSONA_DESCRIPTIONS[personaName] ?? payload.personaDescription ?? "No excuses. Just results.",
     creatureType: payload.creatureType ? String(payload.creatureType) : null,
     creatureColor: payload.creatureColor ?? null,
     creatureName: payload.creatureName ?? null,
@@ -157,6 +209,8 @@ function mapToDB(payload: OnboardingPayload) {
     onboardingAnswers: payload,
     ...schedule,
   }
+
+  return { profileData, match, resolution }
 }
 
 function categorizeGoal(goal?: string) {

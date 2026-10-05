@@ -73,6 +73,10 @@ export interface NovaContext {
   // Reality (from prior turns)
   activeRealityFacts: NovaRealityFact[];
 
+  // Onboarding personality signal, already phrased as behavioural lines.
+  // Context only: it is evidence about the student, never durable Nova state.
+  operatingStyle?: string[];
+
   // Conversation history
   conversationHistory: ConversationTurn[];
 

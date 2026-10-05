@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronRight, Clock, MapPin } from 'lucide-react';
 import CompanionGuide from '@/components/companion-guide';
+import { matchMentor } from '@repo/api/personality/mentor-compatibility';
 
 // Sample creature data - will be replaced with backend data
 const CREATURES = [
@@ -54,28 +55,19 @@ const PERSONA_CONTENT = {
   zen:  { name: 'ZEN',  description: 'Slow down. Go further.' },
 } as const;
 
+// The reveal uses the same deterministic engine the server runs when it saves
+// onboarding. The server's result is the one that is stored.
 function assignPersona(
   mentorDomain?: string | null,
   accountabilityStyle?: string | null,
 ): { personaName: string; personaDescription: string; toneModifier: string | undefined } {
-  // Primary: domain drives persona
-  let base: keyof typeof PERSONA_CONTENT;
-  if (mentorDomain === 'gym') base = 'rex';
-  else if (mentorDomain === 'study') base = 'nova';
-  else base = 'zen';
-
-  // Secondary: calibrate tone without switching persona
-  let toneModifier: string | undefined;
-  const isHard = accountabilityStyle === 'No mercy';
-  const isSoft = accountabilityStyle === 'Gentle nudges';
-  if (base === 'rex'  && isSoft) toneModifier = 'firm_not_brutal';
-  else if (base === 'nova' && isHard) toneModifier = 'structured_direct';
-  else if (base === 'zen'  && isHard) toneModifier = 'purposeful_direct';
+  const match = matchMentor({ domain: mentorDomain, accountabilityStyle });
+  const base = (match.mentorId in PERSONA_CONTENT ? match.mentorId : 'zen') as keyof typeof PERSONA_CONTENT;
 
   return {
     personaName: PERSONA_CONTENT[base].name,
     personaDescription: PERSONA_CONTENT[base].description,
-    toneModifier,
+    toneModifier: match.toneModifier ?? undefined,
   };
 }
 

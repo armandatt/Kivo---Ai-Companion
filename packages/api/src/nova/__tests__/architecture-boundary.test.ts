@@ -333,6 +333,24 @@ describe("Context builder budget compliance", () => {
     expect(dynamic).toContain("exam_anxiety");
   });
 
+  it("dynamic layer carries the operating-style lines only when the student has them", () => {
+    const state         = makeState();
+    const understanding = makeUnderstanding();
+    const ctx           = makeContext(state, understanding, "Hello");
+
+    const without = buildDynamicLayer(ctx);
+    expect(without).not.toContain("tends to operate");
+
+    ctx.operatingStyle = ["Tends to benefit from external structure: give one concrete next step with a time attached."];
+    const withStyle = buildDynamicLayer(ctx);
+    expect(withStyle).toContain("How this user tends to operate");
+    expect(withStyle).toContain("- Tends to benefit from external structure");
+    expect(withStyle.length).toBeLessThanOrEqual(MAX_DYNAMIC_CHARS);
+
+    ctx.operatingStyle = [];
+    expect(buildDynamicLayer(ctx)).toBe(without);
+  });
+
   it("dynamic layer includes pattern section when dominant pattern is confirmed", () => {
     const state         = makeState();
     const understanding = makeUnderstanding();

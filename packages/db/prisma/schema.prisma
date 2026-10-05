@@ -40,6 +40,7 @@ model User {
   injuryFlags       InjuryFlag[]
   weeklyReviews     WeeklyReview[]
   creatureEvolutions CreatureEvolution[]
+  personalityAssessments PersonalityAssessment[]
 }
 
 //////////////////////////////////////////////////
@@ -279,10 +280,31 @@ model UserProfile {
   mentorIntakeComplete   Boolean  @default(false)
   intakeState            Json?
 
+  // How the mentor was chosen (compatibility engine output). The assignment
+  // itself is primaryPersona. See packages/api/src/personality.
+  mentorMatch            Json?
+
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// One row per completed personality signal (the four onboarding statements).
+// A re-run adds a row; the newest complete row is the current signal.
+model PersonalityAssessment {
+  id                String    @id @default(cuid())
+  userId            String
+  instrumentVersion String    // e.g. "kivo-signal-v1"
+  status            String    @default("complete")
+  responses         Json      // raw answers: item id -> 1..5
+  scores            Json?     // derived signal; never the raw answers
+  completedAt       DateTime?
+  createdAt         DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 model WorkoutLog {

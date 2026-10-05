@@ -124,6 +124,10 @@ const nextConfig = {
         destination: `${apiUrl}/api/nova/:path*`,
       },
       {
+        source: "/api/personality",
+        destination: `${apiUrl}/api/personality`,
+      },
+      {
         source: "/api/journey",
         destination: `${apiUrl}/api/journey`,
       },

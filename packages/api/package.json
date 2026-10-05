@@ -14,6 +14,7 @@
     "./engines/*": "./src/engines/*",
     "./engines/understanding-layer": "./src/engines/understanding-layer.ts",
     "./types/*": "./src/types/*",
+    "./personality/*": "./src/personality/*",
     "./nova": "./src/nova/nova-orchestrator.ts",
     "./nova/types": "./src/nova/types/index.ts",
     "./nova/commands": "./src/nova/commands.ts",
