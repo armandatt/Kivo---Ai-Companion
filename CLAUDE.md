@@ -140,3 +140,13 @@ All are read from `process.env` at call time, so flipping one on Railway needs n
 - **Railway** (`railway.json`, `RAILWAY_DEPLOYMENT.md`) is the previous host, kept until Render is verified. Only one of the two may run the scheduler or receive the Telegram webhook at a time.
 - **Vercel**: Root Directory `apps/web`; `apps/web/vercel.json` runs `prisma generate` before the build.
 - `prisma generate` is not a `postinstall` step. Run it by hand after a fresh install or a schema change.
+
+## Nova on the web (Home → Start session)
+
+The web app renders Nova's decisions; it does not make them. Three routes, all resolving the signed-in account to its Nova learner through `apps/api/lib/nova/resolve-learner.ts`:
+
+- `GET /api/nova/today?minutes=` returns `NovaTodayView`, built by `packages/api/src/nova/product/today.ts` from the existing engines. No LLM call.
+- `POST /api/nova/session` (`start` / `pause` / `resume` / `end`) and `GET /api/nova/session`: deterministic session commands. They call the same session writers a chat turn uses (`persistence/nova-persistence.ts`), so do not add a second place that writes `NovaStudySession`.
+- `POST /api/nova/message` runs a normal Nova turn (used for onboarding and "tell Nova" boxes).
+
+Contracts live in `packages/api/src/nova/product/today.types.ts` (no imports, so the web app imports the types directly). UI is in `apps/web/components/nova/`; `app/(dashboard)/home/page.tsx` renders the Rex home (`components/home/rex-home.tsx`) when the status is `not_nova`. Never add ranking or recommendation logic to React: add a field to the contract instead. The focus timer is derived from the server's `elapsedSeconds`; the page keeps no session state of its own.

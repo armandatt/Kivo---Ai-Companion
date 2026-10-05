@@ -214,18 +214,25 @@ async function persistStateSnapshot(
 
 // ── Session lifecycle ─────────────────────────────────────────────────────────
 
-async function openStudySession(
+// The session writers below are exported for the product session commands
+// (product/session.ts). A button and a chat turn open, pause and close a
+// session through the same code.
+
+export async function openStudySession(
   profileId: string,
   topic:     string | null,
   subjects:  Array<{ id: string; name: string }>,
   now:       Date,
+  // Known when the session starts from a plan block rather than a sentence.
+  planned:   { subjectId?: string | null; durationMinutes?: number | null } = {},
 ): Promise<void> {
   const match = topic ? matchTopicToSubject(topic, subjects) : null;
   await prisma.novaStudySession.create({
     data: {
       profileId,
-      subjectId:       match?.subjectId ?? null,
+      subjectId:       planned.subjectId ?? match?.subjectId ?? null,
       topicName:       topic ?? null,
+      plannedDurationMinutes: planned.durationMinutes ?? null,
       durationMinutes: 0,
       activityType:    "active",
       status:          "in_progress",
@@ -234,7 +241,7 @@ async function openStudySession(
   }).catch(() => {/* swallow — duplicate or constraint */});
 }
 
-async function pauseStudySession(sessionId: string, now: Date): Promise<void> {
+export async function pauseStudySession(sessionId: string, now: Date): Promise<void> {
   await prisma.novaStudySession.update({
     where: { id: sessionId },
     data: {
@@ -245,7 +252,7 @@ async function pauseStudySession(sessionId: string, now: Date): Promise<void> {
   }).catch(() => {});
 }
 
-async function resumeStudySession(sessionId: string, now: Date): Promise<void> {
+export async function resumeStudySession(sessionId: string, now: Date): Promise<void> {
   const session = await prisma.novaStudySession.findUnique({
     where:  { id: sessionId },
     select: { pausedAt: true, totalPausedMinutes: true },
@@ -333,7 +340,7 @@ async function closeStudySession(sessionId: string, now: Date): Promise<void> {
   }).catch(() => {});
 }
 
-async function endStudySession(
+export async function endStudySession(
   sessionId:      string,
   sessionContext: SessionContext,
   confidence:     number,

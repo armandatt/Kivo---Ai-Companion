@@ -18,6 +18,7 @@
     "./nova/types": "./src/nova/types/index.ts",
     "./nova/commands": "./src/nova/commands.ts",
     "./nova/entry": "./src/nova/entry.ts",
+    "./nova/product/today.types": "./src/nova/product/today.types.ts",
     "./nova/product/*": "./src/nova/product/*",
     "./nova/engines/*": "./src/nova/engines/*",
     "./nova/decision/*": "./src/nova/decision/*",

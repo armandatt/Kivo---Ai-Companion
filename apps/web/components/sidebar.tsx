@@ -12,6 +12,7 @@ import {
   Map,
   Settings,
   Target,
+  Timer,
   Zap,
   Menu,
   X,
@@ -38,8 +39,38 @@ const navItems = [
   { href: '/guide',    label: 'Guide',    icon: BookOpen },
 ]
 
+// A Nova learner sees Nova's pages. The other pages are Rex's.
+const novaNavItems = [
+  { href: '/home',  label: 'Today', icon: Home },
+  { href: '/focus', label: 'Focus', icon: Timer },
+]
+
+const PERSONA_KEY = 'kivo:persona'
+
+// Which companion this account uses, from GET /api/nav. Remembered for the
+// tab so the sidebar does not flip on every navigation.
+function usePersona(): string | null {
+  const [persona, setPersona] = useState<string | null>(null)
+
+  React.useEffect(() => {
+    try { setPersona(sessionStorage.getItem(PERSONA_KEY)) } catch { /* storage unavailable */ }
+    fetch('/api/nav')
+      .then(r => (r.ok ? r.json() : null))
+      .then((d: { persona?: string } | null) => {
+        if (!d?.persona) return
+        setPersona(d.persona)
+        try { sessionStorage.setItem(PERSONA_KEY, d.persona) } catch { /* storage unavailable */ }
+      })
+      .catch(() => {})
+  }, [])
+
+  return persona
+}
+
 export function Sidebar({ open, onOpenChange, overlay = false }: SidebarProps) {
   const pathname = usePathname()
+  const isNova   = usePersona() === 'nova'
+  const items    = isNova ? novaNavItems : navItems
   const [isMobileOpen, setIsMobileOpen] = useState(false)
   const [isLargeScreen, setIsLargeScreen] = useState(false)
 
@@ -80,21 +111,27 @@ export function Sidebar({ open, onOpenChange, overlay = false }: SidebarProps) {
         <div className="p-6 border-b border-sidebar-border">
           <Link href="/home" className="flex items-center gap-3 group">
             <div className="relative">
-              <div className="w-10 h-10 bg-linear-to-br from-green-400 to-green-600 rounded-lg flex items-center justify-center font-bold text-black text-lg">
-                R
+              <div className={cn(
+                'w-10 h-10 bg-linear-to-br rounded-lg flex items-center justify-center font-bold text-black text-lg',
+                isNova ? 'from-keppel-300 to-keppel-600' : 'from-green-400 to-green-600',
+              )}>
+                {isNova ? 'N' : 'R'}
               </div>
-              <div className="absolute inset-0 bg-green-400 rounded-lg blur opacity-50 group-hover:opacity-75 transition-opacity -z-10" />
+              <div className={cn(
+                'absolute inset-0 rounded-lg blur opacity-50 group-hover:opacity-75 transition-opacity -z-10',
+                isNova ? 'bg-keppel-400' : 'bg-green-400',
+              )} />
             </div>
             <div className="flex flex-col">
-              <span className="font-semibold text-sm leading-tight">Rex</span>
-              <span className="text-xs text-sidebar-foreground/60">AI Coach</span>
+              <span className="font-semibold text-sm leading-tight">{isNova ? 'Nova' : 'Rex'}</span>
+              <span className="text-xs text-sidebar-foreground/60">{isNova ? 'Learning mentor' : 'AI Coach'}</span>
             </div>
           </Link>
         </div>
 
         {/* Navigation */}
         <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
-          {navItems.map((item) => {
+          {items.map((item) => {
             const Icon = item.icon
             const active = isActive(item.href)
 
@@ -117,7 +154,7 @@ export function Sidebar({ open, onOpenChange, overlay = false }: SidebarProps) {
                   {active && (
                     <motion.div
                       layoutId="sidebar-indicator"
-                      className="absolute left-0 w-1 h-8 bg-green-400 rounded-r-lg"
+                      className={cn('absolute left-0 w-1 h-8 rounded-r-lg', isNova ? 'bg-keppel-400' : 'bg-green-400')}
                       transition={{ type: 'spring', stiffness: 380, damping: 40 }}
                     />
                   )}
