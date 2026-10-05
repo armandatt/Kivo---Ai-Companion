@@ -5,17 +5,11 @@
 // its own: it selects from the plan the Planning Engine produced and reports
 // the facts behind it.
 
-import { prisma } from "@repo/db/client";
-import { loadStudySnapshot, type StudySnapshotResult } from "../engines/study-snapshot";
-import { computeAcademicState } from "../engines/academic-state-engine";
-import { getAllTopicMasteries } from "../engines/knowledge-engine";
+import type { StudySnapshotResult } from "../engines/study-snapshot";
 import { getOverdueTopics } from "../engines/retention-engine";
-import { selectActiveExam } from "../engines/exam-engine";
-import { generateStudyPlan } from "../engines/planning-engine";
-import { normalizeStoredReality } from "../types/reality.types";
+import { loadPlanningInputs, normalizeAvailableMinutes } from "./planning-inputs";
 import type { AcademicState } from "../types/academic-state.types";
 import type { ExamContext, StudyBlock, StudyPlan, TopicMasteryState } from "../types/engine.types";
-import type { AcademicUnderstanding } from "../types/understanding.types";
 import type {
   NovaTodayReady,
   NovaTodayView,
@@ -27,12 +21,6 @@ import { sessionElapsedSeconds } from "./session-view";
 
 const DAY_MS = 86_400_000;
 const MIN_USEFUL_MINUTES = 10;
-
-// No student message is being interpreted when the page loads.
-const NO_MESSAGE: AcademicUnderstanding = {
-  intent: "general_chat", emotion: "neutral", topic: null, topicConfidence: 0,
-  disclosureClass: "none", ambiguityScore: 0, routingSignal: "coaching_only", rawText: "",
-};
 
 // ── Pure builder ──────────────────────────────────────────────────────────────
 
@@ -54,7 +42,7 @@ function daysBetween(later: Date, earlier: Date): number {
 }
 
 // The facts behind a block, stated the way a student would want to hear them.
-function reasonsFor(
+export function reasonsFor(
   block:       StudyBlock,
   topic:       TopicMasteryState | undefined,
   examContext: ExamContext | null,
@@ -83,7 +71,7 @@ function reasonsFor(
   return reasons;
 }
 
-function toAction(
+export function toAction(
   block:            StudyBlock,
   topics:           TopicMasteryState[],
   examContext:      ExamContext | null,
@@ -205,71 +193,21 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
 
 // ── Loader ────────────────────────────────────────────────────────────────────
 
-async function loadActiveConstraints(userId: string, now: Date): Promise<TodayConstraint[]> {
-  const rows = await prisma.userReality.findMany({
-    where:   { userId, isActive: true, expiresAt: { gt: now }, confidence: { gte: 0.5 } },
-    orderBy: { createdAt: "desc" },
-    take:    5,
-    select:  { category: true, subtype: true, fact: true, expiresAt: true },
-  });
-  return rows.map(r => ({
-    ...normalizeStoredReality(r.category, r.subtype),
-    description: r.fact,
-    expiresAt:   r.expiresAt.toISOString(),
-  }));
-}
-
 export async function loadNovaToday(
   platformChatId: string,
   options: { availableMinutes?: number | null; learnerName?: string | null; now?: Date } = {},
 ): Promise<NovaTodayView> {
   const now = options.now ?? new Date();
 
-  const user = await prisma.messengerUser.findUnique({
-    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
-    select: { id: true, novaAcademicProfile: { select: { onboardingComplete: true, goals: true } } },
-  });
-  if (!user) return { status: "not_connected" };
-  if (!user.novaAcademicProfile?.onboardingComplete) return { status: "onboarding_incomplete" };
+  // Home fits its one recommendation to the time available; the day's plan
+  // itself is the student's usual one.
+  const loaded = await loadPlanningInputs(platformChatId, { now });
+  if (loaded.status !== "ready") return { status: loaded.status };
 
-  const snapshot = await loadStudySnapshot(platformChatId);
-  if (!snapshot.profileId) return { status: "onboarding_incomplete" };
-
-  const [topics, constraints] = await Promise.all([
-    getAllTopicMasteries(snapshot.profileId),
-    loadActiveConstraints(user.id, now),
-  ]);
-
-  const academicState = computeAcademicState({
-    semesterStartDate:       snapshot.semesterStartDate,
-    semesterEndDate:         snapshot.semesterEndDate,
-    daysSinceJoined:         snapshot.daysSinceJoined,
-    studySessions:           snapshot.studySessions,
-    upcomingExams:           snapshot.upcomingExams,
-    stateHistory:            snapshot.stateHistory,
-    signals:                 { detectedSignals: [], stateUpdates: [] },
-    mentionedTopicMastery:   null,
-    understanding:           NO_MESSAGE,
-    storedScores:            snapshot.storedScores,
-    storedStreakDays:        snapshot.storedStreakDays,
-    storedConsecutiveMisses: snapshot.storedConsecutiveMisses,
-  }, now);
-
-  const examContext = selectActiveExam(
-    snapshot.upcomingExams.map(e => ({
-      id: e.id, title: e.title, subjectName: e.subjectName, scheduledAt: e.scheduledAt, examType: e.examType,
-    })),
-    {},
-    now,
-  );
-
-  const plan = generateStudyPlan(academicState, topics, snapshot.preferredStudyHoursPerDay, examContext);
-
-  const minutes = options.availableMinutes;
   return buildTodayView({
-    snapshot, academicState, topics, examContext, plan, constraints, now,
-    learnerName: options.learnerName ?? null,
-    goals:       user.novaAcademicProfile.goals.slice(0, 3),
-    availableMinutes: typeof minutes === "number" && minutes > 0 ? Math.min(Math.round(minutes), 600) : null,
+    ...loaded.inputs,
+    learnerName:      options.learnerName ?? null,
+    goals:            loaded.inputs.goals.slice(0, 3),
+    availableMinutes: normalizeAvailableMinutes(options.availableMinutes),
   });
 }

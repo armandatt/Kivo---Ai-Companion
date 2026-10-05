@@ -41,8 +41,9 @@ const navItems = [
 
 // A Nova learner sees Nova's pages. The other pages are Rex's.
 const novaNavItems = [
-  { href: '/home',  label: 'Today', icon: Home },
-  { href: '/focus', label: 'Focus', icon: Timer },
+  { href: '/home',    label: 'Today',   icon: Home },
+  { href: '/planner', label: 'Planner', icon: Calendar },
+  { href: '/focus',   label: 'Focus',   icon: Timer },
 ]
 
 const PERSONA_KEY = 'kivo:persona'

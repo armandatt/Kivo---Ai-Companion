@@ -19,6 +19,7 @@
     "./nova/commands": "./src/nova/commands.ts",
     "./nova/entry": "./src/nova/entry.ts",
     "./nova/product/today.types": "./src/nova/product/today.types.ts",
+    "./nova/product/planner.types": "./src/nova/product/planner.types.ts",
     "./nova/product/*": "./src/nova/product/*",
     "./nova/engines/*": "./src/nova/engines/*",
     "./nova/decision/*": "./src/nova/decision/*",

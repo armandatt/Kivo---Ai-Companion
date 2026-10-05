@@ -1,15 +1,13 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import type { NovaTodayReady, TodayAction } from '@repo/api/nova/product/today.types'
+import type { NovaTodayReady } from '@repo/api/nova/product/today.types'
 import { ActiveSessionCard } from './active-session-card'
 import { RecommendationCard } from './recommendation-card'
 import { TalkToNova } from './talk-to-nova'
 import { TimeAvailable } from './time-available'
 import { AccountingFor, Recently, UpNext, Upcoming, WorkingToward } from './today-sections'
 import { firstName, greeting, inDays } from './format'
-import { sendSessionCommand } from './nova-api'
+import { useStartSession } from './use-start-session'
 
 type Props = {
   view:        NovaTodayReady
@@ -48,26 +46,7 @@ const EMPTY: Record<NonNullable<NovaTodayReady['emptyReason']>, { title: string;
 // Home for a Nova learner. It answers one question, "what should I do right
 // now?", with what Nova's engines already decided.
 export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Props) {
-  const router = useRouter()
-  const [starting, setStarting]     = useState<string | null>(null)
-  const [startError, setStartError] = useState<string | null>(null)
-
-  async function start(action: TodayAction) {
-    setStarting(action.topicName)
-    setStartError(null)
-    const res = await sendSessionCommand({
-      action:         'start',
-      topicName:      action.topicName,
-      subjectName:    action.subjectName,
-      plannedMinutes: action.durationMinutes,
-    })
-    if (res.ok && res.session) {
-      router.push('/focus')
-      return
-    }
-    setStarting(null)
-    setStartError(res.ok ? 'The session did not start. Try again.' : res.message)
-  }
+  const { start, starting, error: startError } = useStartSession()
 
   const name   = firstName(view.learnerName)
   const active = view.activeSession

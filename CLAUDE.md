@@ -151,6 +151,13 @@ The web app renders Nova's decisions; it does not make them. Three routes, all r
 
 Contracts live in `packages/api/src/nova/product/today.types.ts` (no imports, so the web app imports the types directly). UI is in `apps/web/components/nova/`; `app/(dashboard)/home/page.tsx` renders the Rex home (`components/home/rex-home.tsx`) when the status is `not_nova`. Never add ranking or recommendation logic to React: add a field to the contract instead. The focus timer is derived from the server's `elapsedSeconds`; the page keeps no session state of its own.
 
+**Planner** (`GET /api/nova/planner?minutes=`, `product/planner.ts`, UI in `apps/web/components/nova/planner/`). Home and Planner both start from `product/planning-inputs.ts`, so they show the same plan. Things to know before changing it:
+
+- Plans are not stored. The Planning Engine (`generateStudyPlan`) is run on every request and only plans **today**; its `thisWeek` is always empty. The week view shows recorded sessions, today's blocks, reviews the retention schedule has falling due, and exams. Do not fill later days with invented blocks.
+- `minutes` goes to the engine as `availableMinutes`, which refits the whole day. It can shorten a wellbeing cap or exam ramp but never lift one. `StudyPlan.budgetBasis` says which rule set the day's length; the "Why this plan" adjustments are worded from it.
+- `engines/adaptive-planning-engine.ts` is not called by anything. Its output is not applied to any plan, so the Planner does not show it.
+- There is no per-block skip or reschedule: nothing stores a block to move.
+
 Session rules that must hold:
 
 - **One meaning of "session ended".** The web End button is `/done` without a chat turn: `persistSessionEnd` builds the same command-established `study_report` signal, routes it through `computeSessionAction` and the shared `sessionLifecycle` (the function `persistTurn` uses), and hands the same evidence to `consolidateTurn`. Do not write a second end path.

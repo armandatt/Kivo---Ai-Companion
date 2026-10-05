@@ -60,3 +60,16 @@ export function daysAgo(days: number): string {
 export function sentenceCase(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
+
+// A YYYY-MM-DD day key, as the server drew it in the student's timezone.
+export function weekdayOf(dayKey: string, style: 'short' | 'long' = 'short'): string {
+  return new Date(`${dayKey}T12:00:00Z`).toLocaleDateString(undefined, { weekday: style, timeZone: 'UTC' })
+}
+
+export function dayOfMonth(dayKey: string): string {
+  return String(Number(dayKey.slice(8, 10)))
+}
+
+export function calendarDate(iso: string, timeZone: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone })
+}
