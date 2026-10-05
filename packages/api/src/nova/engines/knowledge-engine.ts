@@ -7,21 +7,47 @@
 
 import { prisma } from "@repo/db/client";
 import type { TopicMasteryState } from "../types/engine.types";
+import { daysSinceStudied, estimateRetention, reviewDueAt } from "./retention-engine";
 
-// ── FSRS-lite retention estimate ──────────────────────────────────────────────
-// Simplified retention curve based on Ebbinghaus with efFactor scaling.
-// TODO: replace with full FSRS-4.5 algorithm when implementation is ready.
-// Interface (TopicMasteryState) is permanent and will not change.
+// ── Mastery levels ────────────────────────────────────────────────────────────
+// The bands every reader uses to put a mastery number into words. A topic
+// with no session behind it has no level yet: its number comes from
+// conversation alone.
 
-function estimateRetention(
-  efFactor:      number,   // stability factor (higher = slower forgetting)
-  daysSinceReview: number, // days elapsed since last review
-): number {
-  if (daysSinceReview <= 0) return 1.0;
-  // R(t) = e^(-t / (S * efFactor)) where S is a base constant
-  const S = 10; // base stability constant
-  const R = Math.exp(-(daysSinceReview / (S * efFactor)));
-  return Math.max(0, Math.min(1, R));
+export const WEAK_BELOW       = 0.4;
+export const DEVELOPING_BELOW = 0.7;
+
+export type MasteryLevel = "unverified" | "weak" | "developing" | "solid";
+
+export function masteryLevel(topic: { masteryProbability: number; reviewCount: number }): MasteryLevel {
+  if (topic.reviewCount === 0) return "unverified";
+  if (topic.masteryProbability < WEAK_BELOW) return "weak";
+  if (topic.masteryProbability < DEVELOPING_BELOW) return "developing";
+  return "solid";
+}
+
+type TopicRow = {
+  id: string; name: string; masteryProbability: number; confidenceReported: number;
+  efFactor: number; reviewCount: number; lastStudiedAt: Date | null; nextReviewAt: Date | null;
+  subject: { name: string };
+};
+
+function toState(topic: TopicRow, now: Date): TopicMasteryState {
+  return {
+    topicId:            topic.id,
+    topicName:          topic.name,
+    subjectName:        topic.subject.name,
+    masteryProbability: topic.masteryProbability,
+    lastStudied:        topic.lastStudiedAt,
+    retentionEstimate:  estimateRetention(topic.efFactor, daysSinceStudied(topic.lastStudiedAt, now)),
+    confidenceReported: topic.confidenceReported,
+    calibrationGap:     topic.masteryProbability - topic.confidenceReported,
+    // When the topic becomes due for review (retention-engine.ts): not the
+    // raw scheduled date.
+    reviewDueAt:        reviewDueAt(topic),
+    masteryTrend:       computeMasteryTrend(topic.reviewCount, topic.masteryProbability, topic.efFactor),
+    reviewCount:        topic.reviewCount,
+  };
 }
 
 function computeMasteryTrend(
@@ -40,6 +66,7 @@ function computeMasteryTrend(
 export async function getTopicMastery(
   profileId: string,
   topicName: string,
+  now:       Date = new Date(),
 ): Promise<TopicMasteryState | null> {
   const topic = await prisma.novaTopicMastery.findFirst({
     where: {
@@ -50,60 +77,21 @@ export async function getTopicMastery(
   });
 
   if (!topic) return null;
-
-  const now = new Date();
-  const daysSinceReview = topic.lastStudiedAt
-    ? Math.floor((now.getTime() - topic.lastStudiedAt.getTime()) / 86_400_000)
-    : 999;
-
-  const retentionEstimate = estimateRetention(topic.efFactor, daysSinceReview);
-  const calibrationGap    = topic.masteryProbability - topic.confidenceReported;
-
-  return {
-    topicId:            topic.id,
-    topicName:          topic.name,
-    subjectName:        topic.subject.name,
-    masteryProbability: topic.masteryProbability,
-    lastStudied:        topic.lastStudiedAt,
-    retentionEstimate,
-    confidenceReported: topic.confidenceReported,
-    calibrationGap,
-    reviewDueAt:        topic.nextReviewAt,
-    masteryTrend:       computeMasteryTrend(topic.reviewCount, topic.masteryProbability, topic.efFactor),
-    reviewCount:        topic.reviewCount,
-  };
+  return toState(topic, now);
 }
 
 // ── Get all topics for a profile (for planning) ───────────────────────────────
 
-export async function getAllTopicMasteries(profileId: string): Promise<TopicMasteryState[]> {
+// `now` is the moment retention is estimated for: pass the same one the
+// caller judges "due" by.
+export async function getAllTopicMasteries(profileId: string, now: Date = new Date()): Promise<TopicMasteryState[]> {
   const topics = await prisma.novaTopicMastery.findMany({
     where:   { subject: { profileId } },
     include: { subject: { select: { name: true } } },
     orderBy: { nextReviewAt: "asc" },
   });
 
-  const now = new Date();
-  return topics.map(topic => {
-    const daysSinceReview = topic.lastStudiedAt
-      ? Math.floor((now.getTime() - topic.lastStudiedAt.getTime()) / 86_400_000)
-      : 999;
-
-    const retentionEstimate = estimateRetention(topic.efFactor, daysSinceReview);
-    return {
-      topicId:            topic.id,
-      topicName:          topic.name,
-      subjectName:        topic.subject.name,
-      masteryProbability: topic.masteryProbability,
-      lastStudied:        topic.lastStudiedAt,
-      retentionEstimate,
-      confidenceReported: topic.confidenceReported,
-      calibrationGap:     topic.masteryProbability - topic.confidenceReported,
-      reviewDueAt:        topic.nextReviewAt,
-      masteryTrend:       computeMasteryTrend(topic.reviewCount, topic.masteryProbability, topic.efFactor),
-      reviewCount:        topic.reviewCount,
-    };
-  });
+  return topics.map(topic => toState(topic, now));
 }
 
 // ── Update mastery after a review session ─────────────────────────────────────

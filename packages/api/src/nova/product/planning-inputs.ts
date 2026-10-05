@@ -113,7 +113,7 @@ export async function loadPlanningInputs(
   if (!snapshot.profileId) return { status: "onboarding_incomplete" };
 
   const [topics, constraints] = await Promise.all([
-    getAllTopicMasteries(snapshot.profileId),
+    getAllTopicMasteries(snapshot.profileId, now),
     loadActiveConstraints(user.id, now),
   ]);
 

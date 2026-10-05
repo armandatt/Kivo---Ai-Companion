@@ -53,6 +53,9 @@ export interface PlanOptions {
 // The shortest block worth planning. A budget below it yields no blocks.
 export const MIN_BLOCK_MINUTES = 10;
 
+// How long a review of one topic is planned for.
+export const REVIEW_BLOCK_MINUTES = 25;
+
 // ── Block builder helpers ─────────────────────────────────────────────────────
 
 function reviewBlock(topic: TopicMasteryState, minutes: number, urgency: StudyBlock["urgency"]): StudyBlock {
@@ -142,7 +145,7 @@ export function generateStudyPlan(
   const overdue = getOverdueTopics(topics);
   for (const topic of overdue) {
     if (usedMinutes >= budgetMinutes * 0.6) break;  // max 60% on overdue
-    const mins = Math.min(25, budgetMinutes - usedMinutes);
+    const mins = Math.min(REVIEW_BLOCK_MINUTES, budgetMinutes - usedMinutes);
     if (mins < MIN_BLOCK_MINUTES) break;
     blocks.push(reviewBlock(topic, mins, "high"));
     usedMinutes += mins;

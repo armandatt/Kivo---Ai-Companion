@@ -3,11 +3,25 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Check, Loader2, Pause, Play, Square } from 'lucide-react'
+import type { NovaSessionOutcome } from '@repo/api/nova/product/today.types'
 import { cn } from '@/lib/utils'
 import { clock, minutesLabel } from './format'
 import { useNovaSession } from './use-nova-session'
 
 const RING = 2 * Math.PI * 54
+
+// The four answers, in order. What each one does to the topic is decided on
+// the server (SESSION_OUTCOME_CONFIDENCE); the page only sends the word.
+const OUTCOMES: Array<{ value: NovaSessionOutcome; label: string }> = [
+  { value: 'struggled',  label: 'Struggled' },
+  { value: 'okay',       label: 'Okay' },
+  { value: 'good',       label: 'Good' },
+  { value: 'crushed_it', label: 'Crushed it' },
+]
+
+const OUTCOME_SAID: Record<NovaSessionOutcome, string> = {
+  struggled: 'you struggled', okay: 'it went okay', good: 'it went well', crushed_it: 'you crushed it',
+}
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -37,8 +51,8 @@ function Notice({ title, body }: { title: string; body: string }) {
 // The session screen. Topic, planned length, the clock, pause / resume and
 // end: each control is a server command on the session Nova is tracking.
 export function FocusSession() {
-  const { loading, session, elapsedSeconds, ended, pending, error, blocked, command, retry } = useNovaSession()
-  const [confirmEnd, setConfirmEnd] = useState(false)
+  const { loading, session, elapsedSeconds, ended, pending, error, blocked, command, end, retry } = useNovaSession()
+  const [ending, setEnding] = useState(false)
 
   if (blocked) return <Notice title="Nova isn't set up yet" body={blocked} />
 
@@ -51,11 +65,21 @@ export function FocusSession() {
           </div>
           <h1 className="mt-5 text-2xl font-semibold tracking-tight text-foreground">Session logged</h1>
           <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-foreground/60">
-            {minutesLabel(ended.minutes)}{ended.topicName ? ` on ${ended.topicName}` : ''}. Nova has updated what it knows from this session.
+            {minutesLabel(ended.minutes)}{ended.topicName ? ` on ${ended.topicName}` : ''}
+            {ended.outcome ? <>. You said {OUTCOME_SAID[ended.outcome]}.</> : '.'}
+            {' '}
+            {ended.topicRecorded
+              ? 'Nova has updated this topic and when to revisit it.'
+              : "Nova logged the session, but couldn't tie this topic to one of your subjects, so it isn't in Knowledge yet."}
           </p>
-          <Link href="/home" className="mt-8 inline-flex h-11 items-center justify-center rounded-xl bg-keppel-400 px-6 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300">
-            See what&apos;s next
-          </Link>
+          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <Link href="/home" className="inline-flex h-11 items-center justify-center rounded-xl bg-keppel-400 px-6 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300">
+              See what&apos;s next
+            </Link>
+            <Link href="/knowledge" className="inline-flex h-11 items-center justify-center rounded-xl border border-white/12 px-6 text-sm font-medium text-foreground/80 transition-colors hover:bg-white/5">
+              Open Knowledge
+            </Link>
+          </div>
         </div>
       </Shell>
     )
@@ -129,47 +153,51 @@ export function FocusSession() {
         </div>
       </div>
 
-      <div className="mt-10 flex flex-col items-stretch gap-3 sm:flex-row sm:justify-center">
-        <button
-          type="button"
-          onClick={() => void command(paused ? 'resume' : 'pause')}
-          disabled={pending !== null}
-          className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-keppel-400 px-7 text-[15px] font-semibold text-keppel-950 transition-colors hover:bg-keppel-300 disabled:opacity-70 sm:min-w-40"
-        >
-          {pending === 'pause' || pending === 'resume'
-            ? <Loader2 className="size-4 animate-spin" />
-            : paused ? <><Play className="size-4" /> Resume</> : <><Pause className="size-4" /> Pause</>}
-        </button>
-
-        {confirmEnd ? (
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => void command('end')}
-              disabled={pending !== null}
-              className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/6 px-5 text-[15px] font-medium text-foreground transition-colors hover:bg-white/10 disabled:opacity-70"
-            >
-              {pending === 'end' ? <Loader2 className="size-4 animate-spin" /> : 'End and log it'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfirmEnd(false)}
-              disabled={pending !== null}
-              className="inline-flex h-12 items-center justify-center rounded-xl px-4 text-sm text-foreground/60 transition-colors hover:text-foreground"
-            >
-              Keep going
-            </button>
+      {ending ? (
+        // One tap ends the session and tells Nova how it went.
+        <div className="mt-10" role="group" aria-labelledby="how-did-it-go">
+          <p id="how-did-it-go" className="text-center text-base font-medium text-foreground">How did it go?</p>
+          <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+            {OUTCOMES.map(o => (
+              <button
+                key={o.value}
+                type="button"
+                data-outcome={o.value}
+                onClick={() => void end(o.value)}
+                disabled={pending !== null}
+                className="inline-flex h-12 items-center justify-center rounded-xl border border-white/12 bg-white/4 px-3 text-[15px] font-medium text-foreground transition-colors hover:border-keppel-400/60 hover:bg-keppel-400/10 disabled:opacity-60"
+              >
+                {o.label}
+              </button>
+            ))}
           </div>
-        ) : (
+          <div className="mt-4 flex items-center justify-center gap-3 text-sm">
+            {pending === 'end'
+              ? <span className="inline-flex items-center gap-2 text-foreground/55"><Loader2 className="size-4 animate-spin" /> Logging your session…</span>
+              : <button type="button" onClick={() => setEnding(false)} className="text-foreground/55 transition-colors hover:text-foreground">Keep going</button>}
+          </div>
+        </div>
+      ) : (
+        <div className="mt-10 flex flex-col items-stretch gap-3 sm:flex-row sm:justify-center">
           <button
             type="button"
-            onClick={() => setConfirmEnd(true)}
+            onClick={() => void command(paused ? 'resume' : 'pause')}
+            disabled={pending !== null}
+            className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-keppel-400 px-7 text-[15px] font-semibold text-keppel-950 transition-colors hover:bg-keppel-300 disabled:opacity-70 sm:min-w-40"
+          >
+            {pending === 'pause' || pending === 'resume'
+              ? <Loader2 className="size-4 animate-spin" />
+              : paused ? <><Play className="size-4" /> Resume</> : <><Pause className="size-4" /> Pause</>}
+          </button>
+          <button
+            type="button"
+            onClick={() => setEnding(true)}
             className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-white/12 px-7 text-[15px] font-medium text-foreground/80 transition-colors hover:bg-white/5 hover:text-foreground sm:min-w-40"
           >
             <Square className="size-3.5" /> End session
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {error && <p role="alert" className="mt-4 text-center text-sm text-red-300">{error}</p>}
 

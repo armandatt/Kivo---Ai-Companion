@@ -26,7 +26,7 @@ const REX_PAGES = ["/coach", "/goals", "/journey", "/progress", "/creature", "/g
 describe("routeAccess", () => {
   it("shows a Nova learner Nova's pages", () => {
     for (const { path } of NOVA_ROUTES) expect(routeAccess("nova", path)).toBe("render");
-    expect(NOVA_ROUTES.map(r => r.path)).toEqual(["/home", "/planner", "/focus"]);
+    expect(NOVA_ROUTES.map(r => r.path)).toEqual(["/home", "/planner", "/focus", "/knowledge"]);
   });
 
   it("never shows a Nova learner a Rex page", () => {
@@ -49,6 +49,7 @@ describe("routeAccess", () => {
 
   it("keeps Nova-only pages from a Rex account", () => {
     expect(routeAccess("rex", "/focus")).toBe("not_for_rex");
+    expect(routeAccess("rex", "/knowledge")).toBe("not_for_rex");
   });
 
   it("shares settings", () => {

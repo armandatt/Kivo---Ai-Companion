@@ -78,10 +78,29 @@ export type CompletionStatus = "natural" | "goal_complete" | "exhausted" | "aban
 export type FocusQuality    = "deep" | "moderate" | "scattered";
 export type EnergyTrend     = "rising" | "stable" | "falling";
 
+// ── How a session went ────────────────────────────────────────────────────────
+// The learner's own one-tap answer at the end of a session. It is the only
+// thing in a report that says how the studying went; a timer cannot.
+
+export type SessionOutcome = "struggled" | "okay" | "good" | "crushed_it";
+
+// Where a report's confidence value came from.
+//   learner_outcome  the learner answered "How did it go?"
+//   mastery_claim    the closing chat message claimed mastery ("I've got this")
+//   unreported       nobody said. The value is a neutral placeholder, not
+//                    evidence of how the session went.
+export type SessionEvidenceBasis = "learner_outcome" | "mastery_claim" | "unreported";
+
+export interface SessionEvidence {
+  confidence: number;                 // 0–1, the Topic Mastery Engine's input
+  basis:      SessionEvidenceBasis;
+  outcome:    SessionOutcome | null;  // set only when basis is learner_outcome
+}
+
 export interface TopicCoverageEntry {
   name:       string;
   subjectId:  string | null;
-  confidence: number;   // 0–1, from student self-report or mastery_claim signal
+  confidence: number;   // 0–1, see SessionEvidence for where it came from
 }
 
 export interface MasteryUpdate {
@@ -104,6 +123,9 @@ export interface SessionExecutionReport {
   totalPausedMinutes:     number;
   completionStatus:       CompletionStatus;
   masteryUpdates:         MasteryUpdate[];
+  // How the session went, and who said so (see SessionEvidence).
+  outcome:                SessionOutcome | null;
+  evidenceBasis:          SessionEvidenceBasis;
   reflectionText:         string | null;
   producedAt:             Date;
 }

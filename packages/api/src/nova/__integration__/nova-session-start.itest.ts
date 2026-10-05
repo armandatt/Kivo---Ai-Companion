@@ -130,9 +130,9 @@ test("a whole session through the web commands, against the real tables", async 
   assert.equal(resumed.session.elapsedSeconds, 600, "no jump on resume");
   assert.equal((await loadNovaSession(CHAT_A, at(707)))!.elapsedSeconds, 660, "a reload reads the same clock from the row");
 
-  const ended = await runNovaSessionCommand(CHAT_A, { action: "end" }, at(1847));
+  const ended = await runNovaSessionCommand(CHAT_A, { action: "end", outcome: "good" }, at(1847));
   assert.ok(ended.ok);
-  assert.deepEqual(ended.ok && ended.ended, { topicName: "Deadlocks", minutes: 30 });
+  assert.deepEqual(ended.ok && ended.ended, { topicName: "Deadlocks", minutes: 30, outcome: "good", topicRecorded: true });
   assert.equal(ended.ok && ended.session, null);
 
   const row = await prisma.novaStudySession.findFirstOrThrow({
@@ -161,7 +161,7 @@ test("a whole session through the web commands, against the real tables", async 
   assert.ok(mastery, "the session's topic has a mastery record");
 
   // A second end finds nothing to end and writes nothing.
-  const again = await runNovaSessionCommand(CHAT_A, { action: "end" }, at(1900));
+  const again = await runNovaSessionCommand(CHAT_A, { action: "end", outcome: null }, at(1900));
   assert.equal(again.ok, false);
   assert.equal(await prisma.companionMessage.count({ where: { userId: users[CHAT_A], role: "user" } }), 1);
 });

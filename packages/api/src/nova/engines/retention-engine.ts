@@ -8,7 +8,62 @@
 import type { RetentionSchedule } from "../types/engine.types";
 import type { TopicMasteryState } from "../types/engine.types";
 
-const RETENTION_TARGET = 0.85;  // below this = review is due
+export const RETENTION_TARGET = 0.85;  // below this = review is due
+
+// ── The forgetting curve ──────────────────────────────────────────────────────
+// R(t) = e^(-t / (S * efFactor)). The one definition: the Knowledge Engine
+// reads retention through it and "due" is derived from it.
+
+const BASE_STABILITY_DAYS = 10;
+const DAY_MS = 86_400_000;
+
+export function estimateRetention(efFactor: number, daysSinceReview: number): number {
+  if (daysSinceReview <= 0) return 1.0;
+  return Math.max(0, Math.min(1, Math.exp(-(daysSinceReview / (BASE_STABILITY_DAYS * efFactor)))));
+}
+
+// Whole days since a topic was last studied, the unit retention is read in.
+export function daysSinceStudied(lastStudiedAt: Date | null, now: Date): number {
+  return lastStudiedAt ? Math.floor((now.getTime() - lastStudiedAt.getTime()) / DAY_MS) : 999;
+}
+
+// ── Due for review ────────────────────────────────────────────────────────────
+// One definition, used by Home, Planner, Knowledge and the proactive cron.
+//
+//   scheduled  the topic has a next-review date from the spacing algorithm
+//              (NovaTopicMastery.nextReviewAt)
+//   due        that date has passed AND estimated retention has fallen below
+//              RETENTION_TARGET. Both, because a date alone is not a reason
+//              to review: a topic first mentioned in conversation is given
+//              nextReviewAt = now while it is still fresh in mind.
+//   overdue    due, counted in whole days since it became due. Not a
+//              separate state.
+//
+// reviewDueAt is the moment a topic becomes due: the later of its scheduled
+// date and the day its retention crosses the target. null: never scheduled.
+
+export function reviewDueAt(topic: {
+  nextReviewAt:  Date | null;
+  lastStudiedAt: Date | null;
+  efFactor:      number;
+}): Date | null {
+  if (topic.nextReviewAt === null) return null;
+  if (topic.lastStudiedAt === null) return topic.nextReviewAt;   // never studied: nothing retained
+  // Retention is read in whole days, so it first drops below the target on
+  // the first whole day past the crossing point.
+  const crossing   = -Math.log(RETENTION_TARGET) * BASE_STABILITY_DAYS * topic.efFactor;
+  const fadedAfter = Math.floor(crossing) + 1;
+  const fadedAt    = new Date(topic.lastStudiedAt.getTime() + fadedAfter * DAY_MS);
+  return fadedAt > topic.nextReviewAt ? fadedAt : topic.nextReviewAt;
+}
+
+export function isDueForReview(topic: Pick<TopicMasteryState, "reviewDueAt">, now: Date): boolean {
+  return topic.reviewDueAt !== null && topic.reviewDueAt <= now;
+}
+
+export function daysOverdue(topic: Pick<TopicMasteryState, "reviewDueAt">, now: Date): number {
+  return topic.reviewDueAt ? Math.max(0, Math.floor((now.getTime() - topic.reviewDueAt.getTime()) / DAY_MS)) : 0;
+}
 
 // ── Urgency computation ───────────────────────────────────────────────────────
 // urgencyScore 0–1 where 1 = critically overdue
@@ -56,11 +111,11 @@ export function buildRetentionSchedule(topics: TopicMasteryState[]): RetentionSc
 
 // ── Get topics that need review today ─────────────────────────────────────────
 
-export function getOverdueTopics(topics: TopicMasteryState[]): TopicMasteryState[] {
-  const now = new Date();
-  return topics.filter(t =>
-    t.reviewDueAt !== null && t.reviewDueAt <= now && t.retentionEstimate < RETENTION_TARGET,
-  ).sort((a, b) => a.retentionEstimate - b.retentionEstimate);
+// Topics due for review, the least retained first.
+export function getOverdueTopics(topics: TopicMasteryState[], now: Date = new Date()): TopicMasteryState[] {
+  return topics
+    .filter(t => isDueForReview(t, now))
+    .sort((a, b) => a.retentionEstimate - b.retentionEstimate);
 }
 
 // ── Prioritize for exam (override normal FSRS schedule) ───────────────────────
