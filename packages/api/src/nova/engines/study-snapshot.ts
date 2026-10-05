@@ -6,6 +6,7 @@
 
 import { prisma } from "@repo/db/client";
 import type { AcademicStateSnapshot } from "../types/academic-state.types";
+import { pausedSecondsOf } from "./session-clock";
 
 export interface ActiveSessionInfo {
   id:                     string;
@@ -20,6 +21,7 @@ export interface ActiveSessionInfo {
   topicsCompleted:        string[];
   pauseCount:             number;
   totalPausedMinutes:     number;
+  totalPausedSeconds:     number;    // exact time spent in finished pauses
   pausedAt:               Date | null;
   energyLevel:            string | null;
 }
@@ -179,7 +181,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
       id: true, sessionDate: true, topicName: true, subjectId: true,
       status: true, currentFocus: true, plannedDurationMinutes: true,
       confusionPoints: true, topicsCompleted: true,
-      pauseCount: true, totalPausedMinutes: true, pausedAt: true,
+      pauseCount: true, totalPausedMinutes: true, totalPausedSeconds: true, pausedAt: true,
       energyLevel: true,
     },
   });
@@ -200,6 +202,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
         topicsCompleted:        inProgressSession.topicsCompleted,
         pauseCount:             inProgressSession.pauseCount,
         totalPausedMinutes:     inProgressSession.totalPausedMinutes,
+        totalPausedSeconds:     pausedSecondsOf(inProgressSession),
         pausedAt:               inProgressSession.pausedAt,
         energyLevel:            inProgressSession.energyLevel,
       }

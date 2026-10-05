@@ -1,24 +1,20 @@
 // ─── Session commands ─────────────────────────────────────────────────────────
 // Start / Pause / Resume / End from the web app. The rows are written by the
 // same functions a chat turn uses (persistence/nova-persistence.ts), so a
-// session started on the web is the session Nova sees on Telegram.
+// session started on the web is the session Nova sees on Telegram, and one
+// ended on the web leaves the same evidence as /done.
 // Deterministic: no LLM call.
 
+import { prisma } from "@repo/db/client";
 import { loadStudySnapshot } from "../engines/study-snapshot";
-import { buildSessionContext } from "../engines/study-session-engine";
 import {
-  endStudySession,
   openStudySession,
   pauseStudySession,
+  persistSessionEnd,
   resumeStudySession,
 } from "../persistence/nova-persistence";
 import { checkSessionCommand, sessionElapsedSeconds, toSessionView } from "./session-view";
 import type { NovaSessionCommand, NovaSessionResponse, NovaSessionView } from "./today.types";
-
-// What a session-end counts for when the student has not said how it went.
-// The same default a chat turn uses.
-const DEFAULT_REPORTED_CONFIDENCE = 0.6;
-const NEUTRAL_MASTERY_ESTIMATE    = 0.5;
 
 export async function loadNovaSession(platformChatId: string, now = new Date()): Promise<NovaSessionView | null> {
   const snapshot = await loadStudySnapshot(platformChatId);
@@ -58,17 +54,23 @@ export async function runNovaSessionCommand(
   } else if (active && command.action === "resume") {
     await resumeStudySession(active.id, now);
   } else if (active && command.action === "end") {
-    // Time spent in a pause that is still open does not count as study time.
-    const openPause = active.status === "paused" && active.pausedAt
-      ? Math.max(0, Math.floor((now.getTime() - active.pausedAt.getTime()) / 60_000))
-      : 0;
-    const closing = { ...active, totalPausedMinutes: active.totalPausedMinutes + openPause };
-    const context = buildSessionContext(closing, NEUTRAL_MASTERY_ESTIMATE, now, profileId);
-    await endStudySession(active.id, context, DEFAULT_REPORTED_CONFIDENCE, snapshot.subjects, now);
-    ended = {
-      topicName: active.topicName,
-      minutes:   Math.max(1, Math.floor(sessionElapsedSeconds(active, now) / 60)),
-    };
+    // The End button is /done without a chat turn: same report, same evidence.
+    const user = await prisma.messengerUser.findUnique({
+      where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+      select: { id: true },
+    });
+    if (!user) return { ok: false, error: "not_connected", message: "Connect Telegram to start with Nova." };
+    const closed = await persistSessionEnd({
+      userId: user.id, profileId, activeSession: active, subjects: snapshot.subjects, surface: "web", now,
+    });
+    // Not closed by this call: it was ended elsewhere a moment ago. Nothing
+    // was written twice, and there is nothing new to report.
+    if (closed) {
+      ended = {
+        topicName: active.topicName,
+        minutes:   Math.max(1, Math.floor(sessionElapsedSeconds(active, now) / 60)),
+      };
+    }
   }
 
   // The writers swallow their own errors, so the result is read back rather

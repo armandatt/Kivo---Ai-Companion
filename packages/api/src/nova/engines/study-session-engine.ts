@@ -8,6 +8,7 @@
 import type { AcademicUnderstanding } from "../types/understanding.types";
 import type { SignalEngineOutput } from "../types/engine.types";
 import type { ActiveSessionInfo } from "./study-snapshot";
+import { sessionElapsedSeconds } from "./session-clock";
 import type {
   SessionContext,
   SessionAction,
@@ -26,8 +27,7 @@ export function buildSessionContext(
   now:             Date,
   profileId:       string,
 ): SessionContext {
-  const wallMinutes = Math.floor((now.getTime() - info.startedAt.getTime()) / 60_000);
-  const elapsed     = Math.max(0, wallMinutes - info.totalPausedMinutes);
+  const elapsed = Math.floor(sessionElapsedSeconds(info, now) / 60);
 
   return {
     sessionId:              info.id,
@@ -38,7 +38,7 @@ export function buildSessionContext(
     subjectName:            info.subjectName,
     currentFocus:           info.currentFocus,
     startedAt:              info.startedAt,
-    elapsedMinutes:         elapsed,
+    elapsedMinutes:         elapsed,          // pauses excluded, an open one included
     plannedDurationMinutes: info.plannedDurationMinutes,
     confusionPoints:        info.confusionPoints,
     topicsCompleted:        info.topicsCompleted,

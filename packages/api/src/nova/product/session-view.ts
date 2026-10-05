@@ -3,20 +3,14 @@
 // which session commands are valid in which state.
 
 import type { ActiveSessionInfo } from "../engines/study-snapshot";
+import { sessionElapsedSeconds } from "../engines/session-clock";
 import type { NovaSessionCommand, NovaSessionError, NovaSessionView } from "./today.types";
+
+export { sessionElapsedSeconds };
 
 export const MIN_PLANNED_MINUTES = 5;
 export const MAX_PLANNED_MINUTES = 240;
 const MAX_TOPIC_LENGTH = 120;
-
-type Clocked = Pick<ActiveSessionInfo, "startedAt" | "totalPausedMinutes" | "pausedAt" | "status">;
-
-// Study time so far. While paused the clock stands at the moment of the pause.
-export function sessionElapsedSeconds(session: Clocked, now: Date): number {
-  const until = session.status === "paused" && session.pausedAt ? session.pausedAt : now;
-  const wall  = Math.floor((until.getTime() - session.startedAt.getTime()) / 1000);
-  return Math.max(0, wall - session.totalPausedMinutes * 60);
-}
 
 export function toSessionView(session: ActiveSessionInfo, now: Date): NovaSessionView {
   return {

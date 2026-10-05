@@ -69,7 +69,7 @@ const session = (over: Partial<ActiveSessionInfo> = {}): ActiveSessionInfo => ({
   id: "sess1", startedAt: new Date(NOW.getTime() - 30 * 60_000),
   topicName: "Deadlocks", subjectId: "s1", subjectName: "Operating Systems",
   status: "in_progress", currentFocus: null, plannedDurationMinutes: 45,
-  confusionPoints: [], topicsCompleted: [], pauseCount: 0, totalPausedMinutes: 0,
+  confusionPoints: [], topicsCompleted: [], pauseCount: 0, totalPausedMinutes: 0, totalPausedSeconds: 0,
   pausedAt: null, energyLevel: null,
   ...over,
 });
@@ -135,7 +135,7 @@ describe("buildTodayView", () => {
   });
 
   it("reports the running session, excluding paused time", () => {
-    const snap = snapshot({ activeSession: session({ totalPausedMinutes: 5 }) });
+    const snap = snapshot({ activeSession: session({ totalPausedSeconds: 300 }) });
     const view = buildTodayView(inputs(snap, [topic({})]));
     expect(view.activeSession).toMatchObject({
       id: "sess1", topicName: "Deadlocks", status: "in_progress",
@@ -170,7 +170,7 @@ describe("buildTodayView", () => {
 describe("session view", () => {
   it("counts study time, not wall time", () => {
     expect(sessionElapsedSeconds(session(), NOW)).toBe(30 * 60);
-    expect(sessionElapsedSeconds(session({ totalPausedMinutes: 10 }), NOW)).toBe(20 * 60);
+    expect(sessionElapsedSeconds(session({ totalPausedSeconds: 600 }), NOW)).toBe(20 * 60);
   });
 
   it("stops the clock while paused", () => {
@@ -181,7 +181,7 @@ describe("session view", () => {
   });
 
   it("never goes negative", () => {
-    expect(sessionElapsedSeconds(session({ totalPausedMinutes: 999 }), NOW)).toBe(0);
+    expect(sessionElapsedSeconds(session({ totalPausedSeconds: 99_999 }), NOW)).toBe(0);
   });
 });
 

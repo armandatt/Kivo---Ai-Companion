@@ -21,7 +21,8 @@ export interface TurnEvidenceInput {
   signals:         DetectedSignal[];
   understanding:   AcademicUnderstanding;
   patterns:        PatternAnalysis;
-  brainOutput:     ResponseBrainOutput;
+  // null when no reply was generated (a session command from the web app).
+  brainOutput:     ResponseBrainOutput | null;
 }
 
 export function buildTurnEvidence(input: TurnEvidenceInput): Evidence[] {
@@ -93,8 +94,8 @@ export function buildTurnEvidence(input: TurnEvidenceInput): Evidence[] {
     }
   }
 
-  const inv = input.brainOutput.investigationUpdate;
-  if (inv) {
+  const inv = input.brainOutput?.investigationUpdate;
+  if (inv && input.brainOutput) {
     evidence.push({
       ...base,
       kind:       "investigation_update",
