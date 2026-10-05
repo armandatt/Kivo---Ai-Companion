@@ -41,9 +41,10 @@ npx tsx --tsconfig tsconfig.json scripts/realityAudit.ts
 
 ## Architecture
 
-Turborepo monorepo (npm workspaces) for **Kivo**, an AI accountability companion delivered over Telegram, with a web app for onboarding and a dashboard.
+Turborepo monorepo (npm workspaces) for **Kivo**, an AI accountability companion delivered over Telegram, with a web app for onboarding and a dashboard. The root `README.md` is the unmodified Turborepo starter and describes none of this.
 
-- **`apps/api`**: Next.js used as an API-only server, deployed to Railway. Routes are under `app/api/`. `app/api/telegram/route.ts` is the core runtime loop.
+- **`apps/api`**: Next.js used as an API-only server, deployed to Railway. `app/api/telegram/route.ts` is the core runtime loop. Most other routes are implemented at `apps/api/<name>/route.ts`, outside `app/`; the file Next.js serves, `app/api/<name>/route.ts`, is a two-line re-export (`export { GET } from "../../../me/route"` plus `export const runtime = "nodejs"`). Edit the implementation, and add the re-export when adding a route or an HTTP method. Implemented directly under `app/api/`: `telegram`, `checkin`, `health` and `nova/*`.
+- An `@repo/api/*` import inside `apps/api` type-checks in one of two ways: a `//@ts-ignore` line directly above it (the webhook and `lib/checkin-cron.ts` do this), or a per-module `paths` entry in `apps/api/tsconfig.json` (the dashboard routes rely on these).
 - **`apps/web`**: Next.js marketing site, onboarding quiz and dashboard, deployed to Vercel.
 - **`packages/api`** (`@repo/api`): all business logic, with no HTTP knowledge. Consumed through subpath exports (`@repo/api/services/*`, `@repo/api/engines/*`, `@repo/api/nova`, ...). A new top-level folder under `src/` needs an entry in the `exports` map of `packages/api/package.json`.
 - **LLM calls** all go through one function, `generateOpenAIText` in `packages/api/src/services/openai.service.ts`. The name is historical: it calls Gemini or OpenAI depending on configuration (`services/llmProviders.ts`). Call sites pass OpenAI model names, which are treated as a tier (`*-mini` = fast, anything else = main), so never add a second client or call a provider directly.
@@ -53,6 +54,8 @@ Turborepo monorepo (npm workspaces) for **Kivo**, an AI accountability companion
 ### Web to API
 
 `apps/web` owns only `/api/login`, `/api/signup` and a few local handlers. Every other `/api/*` call is proxied to `apps/api` by the `rewrites()` list in `apps/web/next.config.js` (target `API_URL`, default `http://localhost:3001`). **A new API route that the web app calls needs a rewrite entry there**, or it returns 404 from the web origin.
+
+The local handlers in `apps/web/app/api/` take precedence over a rewrite for the same path. `login` and `signup` forward to the API, then sign the session JWT and set the cookie on the web domain themselves, so `JWT_SECRET` must be identical on web and API. `logout` clears the cookie, `onboarding` forwards it to the API, and `me` and `telegram/generate-token` verify it and query the database directly.
 
 Auth is a JWT cookie named `kevo_session`, verified with `jose`. `apps/web/middleware.ts` guards the protected routes; `apps/api/lib/auth/session.ts` creates and verifies sessions. Email/password and Google OAuth are both supported.
 
@@ -72,6 +75,8 @@ Auth is a JWT cookie named `kevo_session`, verified with `jose`. `apps/web/middl
 9. **Default path**: `runOrchestrator` in `engines/mentor-orchestrator.ts`.
 
 The lock, the closure-reply dedup and the daily-warning set are process-level `Map`s. They are correct only because Railway runs a single persistent instance.
+
+A gate that replies and returns early persists both sides of the turn itself: `addToShortTerm` for the user message, `sendAndRemember` for the reply. `runOrchestrator` persists its own turn (`persistMode: "full"`).
 
 ### Rex: the mentor orchestrator
 
@@ -102,7 +107,7 @@ Two user identities, deliberately not merged:
 
 `MemoryFact` is also Rex's generic state store: onboarding V2 state, active investigations and mentor state history are rows distinguished by `type`/`key`. `UserReality` (the Reality Layer: current illness, injury, travel and similar temporary facts) is kept separate from memory.
 
-Personas are defined in `services/personna.service.ts` (the misspelling is the real filename). The active one is `MessengerUser.persona`.
+Personas are defined in `services/personna.service.ts` (the misspelling is the real filename). The active one is `MessengerUser.persona`. Eight are defined (`rex`, `nova`, `vera`, `zen`, `spark`, `compass`, `anchor`, `lingua`); `getPersona` falls back to `nova` for an unknown value. Only `nova` has its own pipeline; every other persona runs through the Rex path.
 
 ## Feature flags
 
@@ -129,7 +134,8 @@ All are read from `process.env` at call time, so flipping one on Railway needs n
 | `OPENAI_API_KEY` | api | Used only when `GEMINI_API_KEY` is empty or `LLM_PROVIDER=openai`. `OPENAI_MODEL` overrides the default OpenAI model |
 | `TELEGRAM_WEBHOOK_SECRET` | api | Must equal the `secret_token` given to Telegram's `setWebhook`. Unset: webhook requests are not authenticated |
 | `JWT_SECRET` | both | Signs session JWTs |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | api | Google OAuth |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | api | Google OAuth. The redirect URI is `https://<web-domain>/api/auth/google/callback` |
+| `RESEND_API_KEY` / `RESEND_FROM_EMAIL` | api | Password reset emails (`forgot-password`). Without the key no email is sent |
 | `API_URL` | web | Base URL of `apps/api` for the rewrites |
 | `NEXT_PUBLIC_APP_URL` | web | Public URL of the web app |
 | `NEXT_PUBLIC_BOT_USERNAME` / `BOT_USERNAME` | web / api | Bot username without `@`, for "open chat" links and the `?start=TOKEN` deeplink |
