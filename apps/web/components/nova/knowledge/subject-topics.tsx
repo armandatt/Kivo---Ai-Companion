@@ -1,10 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { KnowledgeSession, KnowledgeSubject, KnowledgeTopic } from '@repo/api/nova/product/knowledge.types'
 import { minutesLabel, relativeDay, sentenceCase } from '../format'
+import type { NoteSummary } from '@repo/api/nova/product/notes.types'
+import { fetchNotes } from '../notes/notes-api'
 import { LEVEL_LABEL, LEVEL_TONE, OUTCOME_LABEL, reviewLabel, sessionsLabel } from './labels'
 
 function SessionLine({ session }: { session: KnowledgeSession }) {
@@ -19,7 +22,44 @@ function SessionLine({ session }: { session: KnowledgeSession }) {
   )
 }
 
-function TopicRow({ topic }: { topic: KnowledgeTopic }) {
+// The learner's own notes on a topic, fetched when its panel is opened. They
+// are listed beside the topic's state; they are not part of it and do not
+// feed it.
+function TopicNotes({ subjectId, topicName }: { subjectId: string; topicName: string }) {
+  const [notes, setNotes] = useState<NoteSummary[] | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void fetchNotes({ subjectId, topic: topicName }).then(view => {
+      if (!cancelled) setNotes(view?.status === 'ready' ? view.notes : [])
+    })
+    return () => { cancelled = true }
+  }, [subjectId, topicName])
+
+  const newNote = `/notes/new?subjectId=${encodeURIComponent(subjectId)}&topic=${encodeURIComponent(topicName)}`
+  return (
+    <div className="mt-4" data-topic-notes={topicName}>
+      <p className="text-xs font-medium text-foreground/55">Your notes</p>
+      {notes === null ? (
+        <p className="mt-2 text-sm text-foreground/35">Loading…</p>
+      ) : notes.length === 0 ? (
+        <p className="mt-2 text-sm text-foreground/45">
+          None on this topic yet. <Link href={newNote} className="text-keppel-300 hover:text-keppel-200">Write one</Link>
+        </p>
+      ) : (
+        <ul className="mt-2 space-y-1.5">
+          {notes.map(n => (
+            <li key={n.id}>
+              <Link href={`/notes/${n.id}`} className="text-sm text-foreground/80 underline-offset-4 hover:text-keppel-200 hover:underline">{n.title}</Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function TopicRow({ topic, subjectId }: { topic: KnowledgeTopic; subjectId: string }) {
   const [open, setOpen] = useState(false)
   const verified = topic.level !== 'unverified'
   const panel = `topic-${topic.id}`
@@ -77,6 +117,7 @@ function TopicRow({ topic }: { topic: KnowledgeTopic }) {
               ? <ul className="mt-2 space-y-1.5">{topic.recentSessions.map(s => <SessionLine key={s.id} session={s} />)}</ul>
               : <p className="mt-2 text-sm text-foreground/45">None in the last 90 days.</p>}
           </div>
+          <TopicNotes subjectId={subjectId} topicName={topic.topicName} />
         </div>
       )}
     </li>
@@ -110,7 +151,7 @@ export function SubjectTopics({ subject }: { subject: KnowledgeSubject }) {
         </p>
       ) : (
         <ul className="mt-3 divide-y divide-white/6 overflow-hidden rounded-2xl border border-white/8 bg-card/40">
-          {subject.topics.map(topic => <TopicRow key={topic.id} topic={topic} />)}
+          {subject.topics.map(topic => <TopicRow key={topic.id} topic={topic} subjectId={subject.subjectId} />)}
         </ul>
       )}
     </section>

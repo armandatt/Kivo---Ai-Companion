@@ -296,3 +296,14 @@ test("one learner's knowledge is not another's", async () => {
   assert.deepEqual(other.recentLearning, []);
   assert.deepEqual(await loadNovaKnowledge("nobody_such_chat"), { status: "not_connected" });
 });
+
+test("a topic name is matched as literal text: % and _ are not wildcards", async () => {
+  // "CPU_Scheduling" must not be taken for the existing "CPUxScheduling".
+  await session("Operating Systems", "CPUxScheduling", at(20), "good");
+  await session("Operating Systems", "CPU_Scheduling", at(20, 60), "struggled");
+  await session("Operating Systems", "100% coverage", at(20, 120), "okay");
+  await session("Operating Systems", "100x coverage", at(20, 180), "okay");
+  const names = (await prisma.novaTopicMastery.findMany({ where: { subjectId: subjects["Operating Systems"] }, select: { name: true, reviewCount: true } }))
+    .filter(t => /CPU|100/.test(t.name)).map(t => `${t.name}:${t.reviewCount}`).sort();
+  assert.deepEqual(names, ["100% coverage:1", "100x coverage:1", "CPU_Scheduling:1", "CPUxScheduling:1"]);
+});

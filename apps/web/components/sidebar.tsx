@@ -15,6 +15,7 @@ import {
   Timer,
   Zap,
   Menu,
+  NotebookPen,
   X,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
@@ -43,7 +44,7 @@ const navItems = [
 ]
 
 // Nova's pages, from the one list that also decides route access.
-const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/planner': Calendar, '/focus': Timer, '/knowledge': BookOpen }
+const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/planner': Calendar, '/focus': Timer, '/knowledge': BookOpen, '/notes': NotebookPen }
 const novaNavItems = NOVA_ROUTES.map(r => ({ href: r.path, label: r.label, icon: NOVA_ICONS[r.path] ?? Home }))
 
 export function Sidebar({ open, onOpenChange, overlay = false, companion }: SidebarProps) {
@@ -63,7 +64,8 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
     return () => window.removeEventListener('resize', checkScreen)
   }, [])
 
-  const isActive = (href: string) => pathname === href
+  // A page and the pages under it (a note inside Notes) light the same entry.
+  const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`)
 
   return (
     <>

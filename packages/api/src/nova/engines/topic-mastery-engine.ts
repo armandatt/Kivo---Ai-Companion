@@ -101,6 +101,10 @@ export function normalizeTopicName(name: string): string {
   return name.trim().replace(/\s+/g, " ");
 }
 
+// Case-insensitive matching in Postgres is ILIKE, where % and _ are
+// wildcards. A name is compared as the literal text it is.
+export const likeLiteral = (text: string) => text.replace(/[\\%_]/g, "\\$&");
+
 const sameName = (a: string, b: string) =>
   normalizeTopicName(a).toLowerCase() === normalizeTopicName(b).toLowerCase();
 
@@ -167,7 +171,7 @@ export async function resolveTopicSubject(
   const known = await prisma.novaTopicMastery.findMany({
     where: {
       subjectId: { in: subjects.map(s => s.id) },
-      name:      { equals: normalizeTopicName(topicName), mode: "insensitive" },
+      name:      { equals: likeLiteral(normalizeTopicName(topicName)), mode: "insensitive" },
     },
     select: { subjectId: true, name: true },
   });
@@ -193,7 +197,7 @@ export async function updateTopicMastery(
 
   // One row per topic, whatever the casing or spacing it was typed in.
   const existing = await prisma.novaTopicMastery.findFirst({
-    where:  { subjectId, name: { equals: normalizeTopicName(topicName), mode: "insensitive" } },
+    where:  { subjectId, name: { equals: likeLiteral(normalizeTopicName(topicName)), mode: "insensitive" } },
     select: {
       name:               true,
       masteryProbability: true,

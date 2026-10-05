@@ -116,6 +116,7 @@ export function buildKnowledgeView(input: KnowledgeInputs): NovaKnowledgeReady {
     const own = topics.filter(t => t.subjectName === s.name).map(toTopic).sort((a, b) =>
       Number(b.reviewState === "due") - Number(a.reviewState === "due") || a.masteryPercent - b.masteryPercent);
     return {
+      subjectId:   s.id,
       subjectName: s.name,
       topics:      own,
       summary:     { topicCount: own.length, dueCount: own.filter(t => t.reviewState === "due").length },
