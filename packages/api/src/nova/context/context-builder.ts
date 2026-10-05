@@ -7,6 +7,7 @@
 import type { NovaContext } from "../types/context.types";
 import type { InterventionName } from "../types/intervention.types";
 import type { DecisionGraphOutput } from "../types/response.types";
+import { OPERATING_STYLE_HEADER } from "../../personality/signal-scoring";
 
 // ── Token budget constants ────────────────────────────────────────────────────
 // Rough character-per-token estimate for English: ~4 chars/token.
@@ -28,6 +29,9 @@ function buildStudentSection(ctx: NovaContext): string {
     `Year: ${p.yearOfStudy ?? "unknown"} | Major: ${p.major ?? "unknown"} | Institution: ${p.institution ?? "unknown"}`,
     `Joined: ${state.daysSinceJoined}d ago | Subjects: ${p.subjects.join(", ") || "none yet"}`,
   ];
+  if (ctx.operatingStyle && ctx.operatingStyle.length > 0) {
+    lines.push(OPERATING_STYLE_HEADER, ...ctx.operatingStyle.map(l => `- ${l}`));
+  }
   return lines.join("\n");
 }
 

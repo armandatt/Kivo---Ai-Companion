@@ -63,6 +63,8 @@ import type { ParseResult as V2ParseResult } from "./parsing-engine-v2";
 import type { RouterDecision } from "./semantic-router";
 import { getNutritionContext } from "../services/nutrition.service";
 import type { NutritionContext } from "../services/nutrition.service";
+import { getOperatingStyleForChat } from "../personality/personality.service";
+import { OPERATING_STYLE_HEADER } from "../personality/signal-scoring";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -366,6 +368,7 @@ interface UserContext {
   activeInvestigation: ActiveInvestigation | null;    // V5
   followUpCheck:       FollowUpCheck | null;           // V5
   mentorStateHistory:  MentorStateSnapshot[];          // V5 Step 12
+  operatingStyle?:     string[];                       // personality signal, as behavioural lines
 }
 
 async function loadUserContext(
@@ -581,7 +584,10 @@ async function loadUserContext(
     }
   }
 
-  return { memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel, schedulerContextV2: schedulerCtxV2, fitnessSnapshot, intakeAnswers: userRow.intakeAnswers, rawMemories, interventionHistory, activeInvestigation, followUpCheck, mentorStateHistory };
+  // Onboarding personality signal. [] unless PERSONALITY_SIGNAL_ENABLED=true and the user has one.
+  const operatingStyle = await getOperatingStyleForChat(platformChatId);
+
+  return { operatingStyle, memory, state, persona, isFirstSession, messageCountToday, tonePreference, gymContext, gymPatternReport, engagementContext, rexSessionContext, rexExperienceLevel, schedulerContextV2: schedulerCtxV2, fitnessSnapshot, intakeAnswers: userRow.intakeAnswers, rawMemories, interventionHistory, activeInvestigation, followUpCheck, mentorStateHistory };
 }
 
 function buildMinimalContext(state: MentorState): UserContext {
@@ -775,6 +781,7 @@ interface RexContext {
   mentorStateHistory:    MentorStateSnapshot[];       // V5 Step 12: last 12 snapshots for longitudinal reasoning
   nutritionCtx:          NutritionContext | null;     // Phase 6: protein, calorie balance, growth assessment
   coachState:            CoachState | null;            // Phase 7: multi-state user detection
+  operatingStyle?:       string[];                     // personality signal: context only, never overrides Rex's voice
   multiQuestionCtx:      MultiQuestionContext | null;  // Phase 7: multi-question message handling
   hasPainContext:        boolean;                      // parser: pain/soreness mentioned
   hasInjuryContext:      boolean;                      // parser: severe injury (torn/fracture)
@@ -1378,6 +1385,7 @@ function buildRexContext(
     mentorStateHistory:  userCtx.mentorStateHistory ?? [],
     nutritionCtx,
     coachState,
+    operatingStyle:      userCtx.operatingStyle ?? [],
     multiQuestionCtx,
     hasPainContext:        input.parseResult?.signals?.includes("PAIN_MENTIONED") ?? false,
     hasInjuryContext:      input.parseResult?.signals?.includes("INJURY_CONTEXT") ?? false,
@@ -1543,9 +1551,12 @@ function buildRexSystemPrompt(ctx: RexContext): string {
     const mult = (p.gym_goal === "muscle" || p.gym_goal === "strength") ? 2.0 : 1.8;
     profileLines.push(`Protein: not tracking (target ~${Math.round(bw * mult)}g/day based on ${bw}kg)`);
   }
-  const profileSection = profileLines.length > 0
+  const operatingStyleBlock = ctx.operatingStyle && ctx.operatingStyle.length > 0
+    ? `\n\n${OPERATING_STYLE_HEADER}\n${ctx.operatingStyle.map(l => `- ${l}`).join("\n")}`
+    : "";
+  const profileSection = (profileLines.length > 0
     ? profileLines.join("\n")
-    : "(Profile not yet complete)";
+    : "(Profile not yet complete)") + operatingStyleBlock;
 
   // V5 Step 12: Build mentor state history narrative for longitudinal reasoning
   // Declared before mentorStateFacts so it can be embedded inline.

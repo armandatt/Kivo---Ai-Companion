@@ -14,6 +14,7 @@ interface QuizAnswers {
   primaryGoal?: string;
   accountabilityStyle?: string | null;
   aspirationWords?: string[];
+  signalAnswers?: Record<string, number>;
 }
 
 interface PostQuizData {
@@ -33,6 +34,9 @@ function OnboardingFlowContent() {
   const searchParams = useSearchParams();
   const [step, setStep] = useState<OnboardingStep>('quiz');
   const [quizAnswers, setQuizAnswers] = useState<QuizAnswers>({});
+  // Kept apart from the quiz answers so the raw statement answers are only
+  // ever stored as a personality assessment, never inside the profile.
+  const [signalAnswers, setSignalAnswers] = useState<Record<string, number>>({});
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -52,8 +56,9 @@ function OnboardingFlowContent() {
     }
   }, [searchParams]);
 
-  const handleQuizComplete = (answers: QuizAnswers) => {
+  const handleQuizComplete = ({ signalAnswers: signal, ...answers }: QuizAnswers) => {
     setQuizAnswers(answers);
+    setSignalAnswers(signal ?? {});
     setStep('post-quiz');
   };
 
@@ -65,7 +70,7 @@ function OnboardingFlowContent() {
       const res = await fetch('/api/onboarding', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ ...data, signalAnswers }),
       });
       const result = await res.json();
 

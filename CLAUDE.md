@@ -89,6 +89,36 @@ The lock, the closure-reply dedup and the daily-warning set are process-level `M
 
 **Evidence is not memory (SKILL.md §11.7).** Signals, classifications and LLM output are evidence. Only `nova/consolidation/` may turn evidence into durable state: `consolidator.ts` holds the rules (pure, no DB, no LLM), `run-consolidation.ts` applies them, and each table has one store under `consolidation/stores/`. Nova never touches `MemoryFact`; its conversation log is `CompanionMessage`, via `adapters/conversation-adapter.ts`. A turn's consolidation is a retryable job in Postgres (`NovaConsolidationJob`) applied in one transaction. Regex signals are candidates only: `establishedSignals()` drops any the Understanding Brain does not corroborate, and session start comes from `/study` or the Understanding Brain's `sessionIntent`, never from a regex. The reality vocabulary is shared with Rex in `src/types/reality.types.ts`. `consolidation-boundary.test.ts` fails if a write bypasses this. See `docs/NOVA_CONSOLIDATION_ARCHITECTURE.md`.
 
+### Personality signal and mentor matching
+
+`packages/api/src/personality/` is deterministic and never calls the LLM. Web onboarding ends with four statements (questions 7 to 10, verbatim public-domain IPIP items). They produce a **personality signal** (`kivo-signal-v1`), not a Big Five assessment: one item per dimension is not a validated scale, so never present it as a measured trait, to the user or to the model.
+
+- `signal-items.ts` / `signal-scoring.ts`: the statements, validation, reverse-scoring, 0 to 100 scores, low/mid/high bands, and the behavioural lines that are the only form the signal takes in a prompt.
+- `mentor-registry.ts`: matching metadata for the personas in `personna.service.ts` (assignable, domains, characteristics). The numbers are a product hypothesis. Only `rex`, `nova` and `zen` are assignable.
+- `mentor-compatibility.ts`: `matchMentor`. Domain filtering decides eligibility and is a hard constraint, because a persona selects a whole pipeline; compatibility scoring only ranks eligible mentors. The accountability answer sets intensity outright and the signal may only nudge other dimensions. Each domain has one eligible mentor today (gym → rex, study → nova, general → zen), so the score is recorded but does not yet change the outcome.
+- `personality.service.ts`: persistence. Raw answers and the derived signal live in `PersonalityAssessment` (one row per run); how the mentor was chosen lives in `UserProfile.mentorMatch`; the assignment stays in `UserProfile.primaryPersona`. A re-run (`POST /api/personality`) never changes the assigned mentor.
+
+`UserProfile.mentorMatch.resolution` says how the assignment came about, and `match` is only ever stored when it names the mentor actually assigned:
+
+| `resolution` | Meaning | `match` |
+|---|---|---|
+| `engine` | The user gave a domain and the engine chose | The engine's match |
+| `domain_missing_default` | No domain was given, so the general default (`zen`) was assigned | The engine's match |
+| `legacy_client_persona` | An older client sent no domain but named the persona itself, which is still honoured | `null` |
+| `predates_matching` | The user was assigned before this feature; set the first time they re-run the statements | `null` |
+
+`mentorMatch.reassessment` holds the newest re-run. Its `match` is `null` when the profile has no domain to match against. `mentorMatch` is internal: `POST /api/onboarding` strips it from the profile it returns.
+
+`POST /api/onboarding` runs the engine server-side; the browser's `PostQuizSequence` calls the same function only for the reveal. The signal reaches prompts as at most three behavioural lines, in Rex's profile block (`buildRexSystemPrompt`) and Nova's dynamic layer (via `nova/adapters/operating-style-adapter.ts`), and only when `PERSONALITY_SIGNAL_ENABLED=true`. The lines say how to deliver coaching (structure, sequencing, reasoning, kind of question) and never how hard or gently to push: intensity is the user's explicit accountability choice.
+
+**Deployment order.** Prisma reads every column of a model unless a query has its own `select`, so the new code fails on a database that lacks `UserProfile.mentorMatch` (onboarding, the Telegram `/start` link and settings updates all break).
+
+1. Apply the schema to the target database first: `(cd packages/db && npx prisma db push)`. The change is additive, so the code already running keeps working.
+2. Then deploy the application code.
+3. Leave `PERSONALITY_SIGNAL_ENABLED` unset until the deployed application and database are verified and real replies have been checked with it on.
+
+Known gaps, deliberately not fixed here: `UserProfile.primaryPersona` is never copied to `MessengerUser.persona` (nothing writes that field, so web-onboarded users stay on the default `rex` on Telegram), and the Rex V3 prompt is hard-coded to Rex's voice whatever the persona.
+
 ### Proactive messaging
 
 `runCheckinCron` in `apps/api/lib/checkin-cron.ts` sends dynamic check-ins, custom reminders, gym cues and Nova proactive messages. It is driven by an in-process 5-minute `setInterval` started from `apps/api/instrumentation.ts` (disable with `DISABLE_INTERNAL_CHECKIN_CRON=true`), and is also exposed as `GET /api/checkin` on the API app. The root `vercel.json` still declares a cron for `/api/checkin`, but the web app has neither that route nor a rewrite for it.
@@ -115,6 +145,7 @@ All are read from `process.env` at call time, so flipping one on Railway needs n
 | `PHASE3_CONTEXT_ENABLED` | on (`"false"` disables) | Mentor state context in the Rex prompt |
 | `ONBOARDING_V3_ENABLED` | off (must be `"true"`) | Conversation-first onboarding; off falls back to V2 |
 | `DISABLE_INTERNAL_CHECKIN_CRON` | off | Stops the in-process check-in scheduler |
+| `PERSONALITY_SIGNAL_ENABLED` | off (must be `"true"`) | Adds the onboarding personality signal to the Rex and Nova prompts as behavioural lines |
 
 `BODYWEIGHT_INTELLIGENCE_ENABLED`, `RECOVERY_INTELLIGENCE_ENABLED`, `NUTRITION_INTELLIGENCE_ENABLED` and `GOAL_PROGRESS_ENABLED` gate individual Rex evidence blocks.
 

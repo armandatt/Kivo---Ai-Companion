@@ -35,6 +35,7 @@ import { buildDynamicLayer, buildMicroPrompt } from "./context/context-builder";
 import { runResponseBrain } from "./brains/response-brain";
 import { getRelevantMemories } from "./adapters/memory-adapter";
 import { loadActiveRealityFacts } from "./adapters/reality-adapter";
+import { loadOperatingStyle } from "./adapters/operating-style-adapter";
 import { loadConversationHistory, loadSignalHistory, annotationTags } from "./adapters/conversation-adapter";
 import { loadPriorPatterns } from "./consolidation/stores/behavioral-pattern-store";
 import { persistTurn, persistTurnAsync } from "./persistence/nova-persistence";
@@ -233,9 +234,10 @@ export async function runNovaOrchestrator(
   }
 
   // ── 11. Memory + Reality (parallel) ──────────────────────────────────────
-  const [memoryResult, realityFacts] = await Promise.all([
+  const [memoryResult, realityFacts, operatingStyle] = await Promise.all([
     getRelevantMemories(userId, understanding),
     loadActiveRealityFacts(userId, understanding),
+    loadOperatingStyle(platformChatId),
   ]);
 
   // ── 12. Assemble NovaContext ───────────────────────────────────────────────
@@ -279,6 +281,7 @@ export async function runNovaOrchestrator(
     contrastiveMemories: memoryResult.contrastive,
     cognitiveState,
     activeRealityFacts: realityFacts,
+    operatingStyle,
     conversationHistory,
     decision:           null,  // filled after graph runs
   };

@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { ChevronLeft } from 'lucide-react';
+import { SIGNAL_ITEMS, SIGNAL_SCALE } from '@repo/api/personality/signal-items';
 
 interface QuizAnswers {
   energyPattern: string;
@@ -10,6 +11,8 @@ interface QuizAnswers {
   primaryGoal: string;
   accountabilityStyle: string | null;
   aspirationWords: [string, string, string] | ['', '', ''];
+  // Questions 7-10: statement id -> 1..5
+  signalAnswers: Record<string, number>;
 }
 
 interface PersonalityQuizProps {
@@ -22,7 +25,17 @@ const domainOptions = [
   { label: 'Life & Productivity', subtitle: 'Habits, focus, goals, getting things done', value: 'general' },
 ];
 
-const questions = [
+interface Question {
+  id: number;
+  title: string;
+  question: string;
+  type: string;
+  hint?: string;
+  options?: string[];
+  signalId?: string;
+}
+
+const questions: Question[] = [
   {
     id: 1,
     title: 'Energy pattern',
@@ -65,6 +78,16 @@ const questions = [
     type: 'three-words',
     hint: '',
   },
+  // Questions 7-10: how the user usually operates. Wording and scoring live in
+  // @repo/api/personality; this only renders them.
+  ...SIGNAL_ITEMS.map((item, index) => ({
+    id: 7 + index,
+    title: 'How you operate',
+    question: item.text,
+    type: 'likert',
+    hint: 'No right answers. Go with how you usually are, not how you wish you were.',
+    signalId: item.id,
+  })),
 ];
 
 export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
@@ -76,6 +99,7 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
     primaryGoal: '',
     accountabilityStyle: null,
     aspirationWords: ['', '', ''],
+    signalAnswers: {},
   });
   const [isTransitioning, setIsTransitioning] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -115,6 +139,8 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
       return answers.mentorDomain !== null;
     } else if (question.type === 'cards') {
       return answers.accountabilityStyle !== null;
+    } else if (question.type === 'likert') {
+      return question.signalId !== undefined && answers.signalAnswers[question.signalId] !== undefined;
     } else if (question.type === 'three-words') {
       return (
         answers.aspirationWords[0].trim() !== '' &&
@@ -145,6 +171,13 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
         goToNextQuestion();
       }
     }, 300);
+  };
+
+  const handleLikertSelect = (signalId: string, value: number) => {
+    setAnswers({ ...answers, signalAnswers: { ...answers.signalAnswers, [signalId]: value } });
+    if (currentQuestion < questions.length - 1) {
+      setTimeout(() => goToNextQuestion(), 300);
+    }
   };
 
   const handleWordInput = (index: number, value: string) => {
@@ -207,7 +240,7 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
         {/* Progress Bar */}
         <div className="mb-8">
           <div className="flex gap-1 h-1 bg-[#1a1a24] rounded-full overflow-hidden">
-            {[...Array(6)].map((_, i) => (
+            {questions.map((_, i) => (
               <div
                 key={i}
                 className="flex-1 bg-[#00D9A3] transition-all duration-500 rounded-full"
@@ -302,6 +335,34 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
               </div>
             )}
 
+            {question.type === 'likert' && question.signalId !== undefined && (
+              <div>
+                {/* Five across needs room for the labels; on a phone they stack. */}
+                <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+                  {SIGNAL_SCALE.map((point) => {
+                    const selected = answers.signalAnswers[question.signalId!] === point.value;
+                    return (
+                      <button
+                        key={point.value}
+                        onClick={() => handleLikertSelect(question.signalId!, point.value)}
+                        aria-pressed={selected}
+                        className={`px-3 py-3 rounded-lg border-2 transition-all duration-200 cursor-pointer ${
+                          selected
+                            ? 'border-[#00D9A3] bg-[#00D9A3] text-[#0a0a0a]'
+                            : 'border-[#1a1a24] bg-[#1a1a24] text-white hover:border-[#00D9A3] hover:border-opacity-50'
+                        }`}
+                      >
+                        <p className="font-semibold text-center text-sm">{point.label}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+                {question.hint && (
+                  <p className="text-xs text-gray-600 mt-3">{question.hint}</p>
+                )}
+              </div>
+            )}
+
             {question.type === 'three-words' && (
               <div className="flex gap-3">
                 <input
@@ -339,7 +400,7 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
           </div>
 
           {/* Skip Link */}
-          {question.type !== 'cards' && question.type !== 'cards-domain' && (
+          {question.type !== 'cards' && question.type !== 'cards-domain' && question.type !== 'likert' && (
             <div className="mb-8">
               <button
                 onClick={handleSkip}
