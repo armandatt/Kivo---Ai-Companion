@@ -503,7 +503,7 @@ async function consumeExecutionReport(
   await Promise.allSettled([
     // Knowledge: FSRS update for every topic covered in the session
     ...report.masteryUpdates.map(u =>
-      updateTopicMastery(u.subjectId, u.topicName, u.confidence, now, "session_report")
+      updateTopicMastery(u.subjectId, u.topicName, u.confidence, now, "session_report", report.sessionId)
     ),
 
     // Learning DNA: update from session metrics

@@ -28,6 +28,7 @@ type Row = Record<string, any>;
 let sessions: Row[];
 let topics: Row[];
 let messages: Row[];
+let snapshots: Row[];
 
 const SUBJECTS = [
   { id: "os",  name: "Operating Systems", code: null },
@@ -56,7 +57,7 @@ function assign(row: Row, data: Row) {
 }
 
 beforeEach(() => {
-  sessions = []; topics = []; messages = [];
+  sessions = []; topics = []; messages = []; snapshots = [];
   jest.clearAllMocks();
   Object.assign(prisma as Row, {
     $transaction: async (fn: (tx: Row) => Promise<unknown>) => {
@@ -86,6 +87,16 @@ beforeEach(() => {
         const existing = topics.find(r => r.subjectId === k.subjectId && r.name === k.name);
         if (existing) { assign(existing, update); return existing; }
         const row = { id: `topic${topics.length + 1}`, ...create }; topics.push(row); return row;
+      },
+    },
+    novaSubject: { findUnique: async ({ where }: Row) => (SUBJECTS.some(x => x.id === where.id) ? { profileId: "p1" } : null) },
+    // The engine's record of each change. One per (topic, session), as the table enforces.
+    novaTopicMasterySnapshot: {
+      create: async ({ data }: Row) => {
+        if (data.sessionId && snapshots.some(r => r.topicId === data.topicId && r.sessionId === data.sessionId)) {
+          throw Object.assign(new Error("unique"), { code: "P2002" });
+        }
+        const row = { id: `snap${snapshots.length + 1}`, ...data }; snapshots.push(row); return row;
       },
     },
     companionMessage:   { create: async ({ data }: Row) => { const row = { id: `msg${messages.length + 1}`, ...data }; messages.push(row); return row; } },
@@ -359,6 +370,30 @@ describe("conversation stays weaker than a session", () => {
     expect(topics[0]!.intervalDays).toBe(before.intervalDays);
     expect(topics[0]!.nextReviewAt).toEqual(before.nextReviewAt);
     expect(topics[0]!.masteryProbability).toBeCloseTo(0.85 * before.masteryProbability + 0.15 * 0.9, 2);
+  });
+});
+
+// ── The engine records each change it makes ───────────────────────────────────
+describe("mastery history", () => {
+  it("records the value before and after every change, with what caused it", async () => {
+    await webSession("os", "Deadlocks", T0, "struggled");
+    await updateTopicMastery("os", "deadlocks", 0.9, at(60), "conversation_signal");
+    await webSession("os", "Deadlocks", at(24 * 60), "good");
+
+    expect(snapshots.map(r => [r.source, r.masteryBefore, r.masteryAfter, r.reviewCount, r.sessionId])).toEqual([
+      ["session_report",      null, 0.3,  1, "sess1"],
+      ["conversation_signal", 0.3,  0.39, 1, null],
+      ["session_report",      0.39, 0.53, 2, "sess2"],
+    ]);
+    expect(snapshots.every(r => r.topicId === topics[0]!.id && r.profileId === "p1")).toBe(true);
+    // The record is the topic's own value, not a second calculation.
+    expect(snapshots[2]!.masteryAfter).toBe(topics[0]!.masteryProbability);
+  });
+
+  it("refuses a second record for the same topic and session", async () => {
+    await updateTopicMastery("os", "Deadlocks", 0.75, T0, "session_report", "sessX");
+    await expect(updateTopicMastery("os", "Deadlocks", 0.75, at(1), "session_report", "sessX")).resolves.toBeUndefined();
+    expect(snapshots).toHaveLength(1);
   });
 });
 

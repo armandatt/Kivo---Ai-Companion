@@ -29,7 +29,7 @@ const MAX_REASONS_PER_SUBJECT = 3;
 
 // ── Days in the student's timezone ────────────────────────────────────────────
 
-function resolveTimezone(timezone: string | null): string {
+export function resolveTimezone(timezone: string | null): string {
   if (!timezone) return "UTC";
   try {
     new Intl.DateTimeFormat("en-CA", { timeZone: timezone });
