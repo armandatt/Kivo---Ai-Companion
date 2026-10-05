@@ -663,6 +663,7 @@ model NovaAcademicProfile {
   cognitiveState    NovaCognitiveState?
   learningDNA       NovaLearningDNA?
   proactiveMessages NovaProactiveMessage[]
+  notes             NovaNote[]
 
   user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -684,6 +685,7 @@ model NovaSubject {
 
   topics NovaTopicMastery[]
   exams  NovaExam[]
+  notes  NovaNote[]
 
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
@@ -768,6 +770,29 @@ model NovaStudySession {
 
   @@index([profileId, sessionDate])
   @@index([profileId, status])
+}
+
+// A note the learner wrote. Learner-owned content, not cognitive state:
+// nothing reads it as mastery, memory or reality, and nothing but the
+// learner's own save writes `title` or `body`.
+// The topic is a name beside the subject, as on NovaStudySession, so a note
+// can be about a topic that has no NovaTopicMastery row yet.
+model NovaNote {
+  id        String  @id @default(cuid())
+  profileId String
+  subjectId String?
+  topicName String?
+  title     String
+  body      String  @db.Text
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  subject NovaSubject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([profileId, updatedAt])
+  @@index([profileId, subjectId])
 }
 
 model NovaCognitiveState {

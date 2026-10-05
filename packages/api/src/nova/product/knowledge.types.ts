@@ -59,6 +59,7 @@ export interface KnowledgeDueReview extends KnowledgeTopic {
 }
 
 export interface KnowledgeSubject {
+  subjectId:   string;
   subjectName: string;
   topics:      KnowledgeTopic[];        // due first, then weakest first
   summary:     { topicCount: number; dueCount: number };

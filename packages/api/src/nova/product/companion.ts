@@ -31,13 +31,14 @@ export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
   { path: "/planner", label: "Planner" },
   { path: "/focus",   label: "Focus" },
   { path: "/knowledge", label: "Knowledge" },
+  { path: "/notes",   label: "Notes" },
 ];
 
 // Shared account pages, the same for both companions.
 const SHARED_ROUTES = ["/settings"];
 
 // Pages that exist only for Nova.
-const NOVA_ONLY_ROUTES = ["/focus", "/knowledge"];
+const NOVA_ONLY_ROUTES = ["/focus", "/knowledge", "/notes"];
 
 const under = (pathname: string, route: string) => pathname === route || pathname.startsWith(`${route}/`);
 

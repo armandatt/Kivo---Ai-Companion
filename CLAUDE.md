@@ -171,6 +171,16 @@ Contracts live in `packages/api/src/nova/product/today.types.ts` (no imports, so
 - **Self-reported sessions** (`activityType: "self_reported"`, created by consolidation from "I studied X") carry a placeholder duration. Knowledge returns `measured: false, minutes: null` for them. Home and Planner still sum that placeholder into "minutes this week".
 - No mastery history exists: there is nothing to chart.
 
+**Notes** (`/api/nova/notes`, `/api/nova/notes/[id]`, `product/notes.ts`, UI in `apps/web/components/nova/notes/`). A note is the learner's own content (`NovaNote`: profile, optional subject, optional topic name, title, body). The rules, each held by a test:
+
+- **A note is not cognitive state.** Writing or editing one never touches mastery, the review schedule, `UserFact`, `UserReality`, `BehavioralPattern`, cognitive state or Learning DNA. `product/notes.ts` is the only code that reads or writes `NovaNote`, it writes no other table, and it imports no brain, orchestrator, consolidation module or LLM client (`notes.test.ts` reads the source to enforce this).
+- **Note text never enters the chat pipeline.** Do not pass it to `/api/nova/message`, `handleNovaTurn`, the Understanding Brain or consolidation. Any future AI action on a note needs its own route that calls the LLM client directly and stores nothing in the note.
+- **Only the learner's save writes `title` or `body`.** The body is stored as typed (line endings unified, nothing else).
+- **Ownership comes from the session cookie.** Every note query includes the learner's `profileId`; a note id alone never reaches a note (another learner's note is a 404). No id from the request is read as authority.
+- **Study this** is the ordinary `start` command with the note's subject and topic. The session and its "How did it go?" answer are the evidence; the note is not. There is no note-to-session link in the schema.
+- Search is a case-insensitive substring match. `likeLiteral` (in `topic-mastery-engine.ts`) escapes `%`, `_` and `\` wherever a name or query is compared with `mode: "insensitive"`, which Postgres runs as ILIKE.
+- **Account deletion** goes through `services/accountDeletion.service.ts`, which removes the Nova academic profile linked by `telegramChatId` (cascading to notes, sessions, topics) before the `User`. It leaves the `MessengerUser` row, which is shared with Rex.
+
 Session rules that must hold:
 
 - **One meaning of "session ended".** The web End button is `/done` without a chat turn: `persistSessionEnd` builds the same command-established `study_report` signal, routes it through `computeSessionAction` and the shared `sessionLifecycle` (the function `persistTurn` uses), and hands the same evidence to `consolidateTurn`. Do not write a second end path.
