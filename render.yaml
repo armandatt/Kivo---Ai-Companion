@@ -24,7 +24,9 @@ services:
     autoDeploy: false           # deploy deliberately while Railway is still the live backend
 
     # devDependencies are needed at build time (prisma CLI, typescript).
-    buildCommand: npm ci --include=dev && npx prisma generate --schema packages/db/prisma/schema.prisma && npm run build --workspace api
+    # `npm install`, not `npm ci`: the lockfile is written by a newer npm than
+    # Render's, and `npm ci` rejects it as out of sync.
+    buildCommand: npm install --include=dev && npx prisma generate --schema packages/db/prisma/schema.prisma && npm run build --workspace api
     # Binds 0.0.0.0 on Render's $PORT (apps/api: `next start --port ${PORT:-3001}`).
     startCommand: npm run start --workspace api
     healthCheckPath: /api/health

@@ -15,7 +15,7 @@ Render replaces Railway as the host of `apps/api`. Neon stays the database; noth
 | Database | Neon | Unchanged |
 | Scheduled jobs | Inside the `kivo-api` process | No Render Cron Job, no worker |
 
-- Build: `npm ci --include=dev && npx prisma generate --schema packages/db/prisma/schema.prisma && npm run build --workspace api`
+- Build: `npm install --include=dev && npx prisma generate --schema packages/db/prisma/schema.prisma && npm run build --workspace api`
 - Start: `npm run start --workspace api` (listens on Render's `$PORT`)
 - Health check: `/api/health`
 
