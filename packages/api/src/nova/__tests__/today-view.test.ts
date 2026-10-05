@@ -84,7 +84,6 @@ describe("buildTodayView", () => {
     expect(view.recommendation).toMatchObject({
       topicName: first.topicName, subjectName: first.subjectName,
       durationMinutes: first.durationMinutes, urgency: first.urgency, rationale: first.rationale,
-      trimmedToFit: false,
     });
     expect(view.emptyReason).toBeNull();
     expect(view.recommendation!.reasons).toEqual(
@@ -125,13 +124,13 @@ describe("buildTodayView", () => {
     expect(view.recommendation!.reasons).toContain("exam in 6 days");
   });
 
-  it("trims the recommendation to the time the student has, and says so", () => {
+  it("never changes a block's length: the engine fitted the plan, the page shows it", () => {
     const base = inputs(snapshot(), [topic({})]);
-    const planned = base.plan.today[0]!.durationMinutes;
     const view = buildTodayView({ ...base, availableMinutes: 15 });
-    expect(planned).toBeGreaterThan(15);
-    expect(view.availableMinutes).toBe(15);
-    expect(view.recommendation).toMatchObject({ durationMinutes: 15, trimmedToFit: true });
+    // A plan built without a stated time is shown as it is, whatever number
+    // arrives beside it. Fitting is the engine's job (see home-planner tests).
+    expect(view.recommendation!.durationMinutes).toBe(base.plan.today[0]!.durationMinutes);
+    expect(view.plan).toMatchObject({ budgetBasis: "preferred", budgetMinutes: 180 });
   });
 
   it("reports the running session, excluding paused time", () => {

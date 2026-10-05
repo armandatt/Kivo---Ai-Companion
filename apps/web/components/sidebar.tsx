@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
+import { NOVA_ROUTES, type Companion } from '@repo/api/nova/product/companion'
 import { cn } from '@/lib/utils'
 import { useState } from 'react'
 
@@ -26,6 +27,8 @@ interface SidebarProps {
   onOpenChange: (open: boolean) => void
   /** When true, sidebar always floats as an overlay (never inline-pushes content) */
   overlay?: boolean
+  /** Which companion the account uses: decides the branding and the pages listed */
+  companion: Companion
 }
 
 const navItems = [
@@ -39,37 +42,13 @@ const navItems = [
   { href: '/guide',    label: 'Guide',    icon: BookOpen },
 ]
 
-// A Nova learner sees Nova's pages. The other pages are Rex's.
-const novaNavItems = [
-  { href: '/home',  label: 'Today', icon: Home },
-  { href: '/focus', label: 'Focus', icon: Timer },
-]
+// Nova's pages, from the one list that also decides route access.
+const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/planner': Calendar, '/focus': Timer }
+const novaNavItems = NOVA_ROUTES.map(r => ({ href: r.path, label: r.label, icon: NOVA_ICONS[r.path] ?? Home }))
 
-const PERSONA_KEY = 'kivo:persona'
-
-// Which companion this account uses, from GET /api/nav. Remembered for the
-// tab so the sidebar does not flip on every navigation.
-function usePersona(): string | null {
-  const [persona, setPersona] = useState<string | null>(null)
-
-  React.useEffect(() => {
-    try { setPersona(sessionStorage.getItem(PERSONA_KEY)) } catch { /* storage unavailable */ }
-    fetch('/api/nav')
-      .then(r => (r.ok ? r.json() : null))
-      .then((d: { persona?: string } | null) => {
-        if (!d?.persona) return
-        setPersona(d.persona)
-        try { sessionStorage.setItem(PERSONA_KEY, d.persona) } catch { /* storage unavailable */ }
-      })
-      .catch(() => {})
-  }, [])
-
-  return persona
-}
-
-export function Sidebar({ open, onOpenChange, overlay = false }: SidebarProps) {
+export function Sidebar({ open, onOpenChange, overlay = false, companion }: SidebarProps) {
   const pathname = usePathname()
-  const isNova   = usePersona() === 'nova'
+  const isNova   = companion === 'nova'
   const items    = isNova ? novaNavItems : navItems
   const [isMobileOpen, setIsMobileOpen] = useState(false)
   const [isLargeScreen, setIsLargeScreen] = useState(false)

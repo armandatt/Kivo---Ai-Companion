@@ -316,6 +316,10 @@ const NEUTRAL_MASTERY_ESTIMATE = 0.5;
 // through the same code. Each write is conditional on the state it expects,
 // so a repeated or concurrent command changes nothing.
 
+// One learner, one open session. Two starts can arrive together (two tabs, or
+// the web app and a chat turn), so the check and the insert run under a row
+// lock on the learner's profile: the second start waits, then finds the
+// session the first one opened and creates nothing.
 export async function openStudySession(
   profileId: string,
   topic:     string | null,
@@ -325,18 +329,28 @@ export async function openStudySession(
   planned:   { subjectId?: string | null; durationMinutes?: number | null } = {},
 ): Promise<void> {
   const match = topic ? matchTopicToSubject(topic, subjects) : null;
-  await prisma.novaStudySession.create({
-    data: {
-      profileId,
-      subjectId:       planned.subjectId ?? match?.subjectId ?? null,
-      topicName:       topic ?? null,
-      plannedDurationMinutes: planned.durationMinutes ?? null,
-      durationMinutes: 0,
-      activityType:    "active",
-      status:          "in_progress",
-      sessionDate:     now,
-    },
-  }).catch(() => {/* swallow — duplicate or constraint */});
+  await prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM "NovaAcademicProfile" WHERE id = ${profileId} FOR UPDATE`;
+
+    const open = await tx.novaStudySession.findFirst({
+      where:  { profileId, status: { in: OPEN_STATUSES } },
+      select: { id: true },
+    });
+    if (open) return;
+
+    await tx.novaStudySession.create({
+      data: {
+        profileId,
+        subjectId:       planned.subjectId ?? match?.subjectId ?? null,
+        topicName:       topic ?? null,
+        plannedDurationMinutes: planned.durationMinutes ?? null,
+        durationMinutes: 0,
+        activityType:    "active",
+        status:          "in_progress",
+        sessionDate:     now,
+      },
+    });
+  }).catch(err => console.error("[nova:session] start failed", err));
 }
 
 export async function pauseStudySession(sessionId: string, now: Date): Promise<void> {

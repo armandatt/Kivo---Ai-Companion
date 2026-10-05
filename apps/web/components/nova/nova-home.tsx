@@ -1,15 +1,13 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import type { NovaTodayReady, TodayAction } from '@repo/api/nova/product/today.types'
+import type { NovaTodayReady } from '@repo/api/nova/product/today.types'
 import { ActiveSessionCard } from './active-session-card'
 import { RecommendationCard } from './recommendation-card'
 import { TalkToNova } from './talk-to-nova'
 import { TimeAvailable } from './time-available'
 import { AccountingFor, Recently, UpNext, Upcoming, WorkingToward } from './today-sections'
-import { firstName, greeting, inDays } from './format'
-import { sendSessionCommand } from './nova-api'
+import { firstName, greeting, inDays, minutesLabel } from './format'
+import { useStartSession } from './use-start-session'
 
 type Props = {
   view:        NovaTodayReady
@@ -33,6 +31,11 @@ const EMPTY: Record<NonNullable<NovaTodayReady['emptyReason']>, { title: string;
     body:  'A recommendation comes from what you have studied and how well it stuck. Tell Nova what you covered recently, or what you are working on now, and it will plan from there.',
     ask:   "e.g. I studied deadlocks for 40 minutes, still shaky on Banker's",
   },
+  too_little_time: {
+    title: "That's less time than Nova's shortest block",
+    body:  'Nothing useful fits in the time you chose, so Nova has not recommended anything. Pick a longer time, or come back when you have a little more.',
+    ask:   null,
+  },
   recovery: {
     title: 'Nothing heavy today',
     body:  'Nova is keeping today light after a rough stretch, and there is no comfortable topic on file to revisit yet. Rest counts. If you do study, tell Nova what you covered.',
@@ -48,26 +51,7 @@ const EMPTY: Record<NonNullable<NovaTodayReady['emptyReason']>, { title: string;
 // Home for a Nova learner. It answers one question, "what should I do right
 // now?", with what Nova's engines already decided.
 export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Props) {
-  const router = useRouter()
-  const [starting, setStarting]     = useState<string | null>(null)
-  const [startError, setStartError] = useState<string | null>(null)
-
-  async function start(action: TodayAction) {
-    setStarting(action.topicName)
-    setStartError(null)
-    const res = await sendSessionCommand({
-      action:         'start',
-      topicName:      action.topicName,
-      subjectName:    action.subjectName,
-      plannedMinutes: action.durationMinutes,
-    })
-    if (res.ok && res.session) {
-      router.push('/focus')
-      return
-    }
-    setStarting(null)
-    setStartError(res.ok ? 'The session did not start. Try again.' : res.message)
-  }
+  const { start, starting, error: startError } = useStartSession()
 
   const name   = firstName(view.learnerName)
   const active = view.activeSession
@@ -104,6 +88,8 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
           <RecommendationCard
             action={rec}
             context={whyContext}
+            note={view.plan.budgetBasis === 'stated_time' && view.availableMinutes
+              ? `Today's plan is fitted to the ${minutesLabel(view.availableMinutes)} you have.` : null}
             onStart={() => start(rec)}
             starting={starting === rec.topicName}
             error={startError}

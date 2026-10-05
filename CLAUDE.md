@@ -151,8 +151,33 @@ The web app renders Nova's decisions; it does not make them. Three routes, all r
 
 Contracts live in `packages/api/src/nova/product/today.types.ts` (no imports, so the web app imports the types directly). UI is in `apps/web/components/nova/`; `app/(dashboard)/home/page.tsx` renders the Rex home (`components/home/rex-home.tsx`) when the status is `not_nova`. Never add ranking or recommendation logic to React: add a field to the contract instead. The focus timer is derived from the server's `elapsedSeconds`; the page keeps no session state of its own.
 
+**Planner** (`GET /api/nova/planner?minutes=`, `product/planner.ts`, UI in `apps/web/components/nova/planner/`). Home and Planner both start from `product/planning-inputs.ts`, so they show the same plan. Things to know before changing it:
+
+- Plans are not stored. The Planning Engine (`generateStudyPlan`) is run on every request and only plans **today**; its `thisWeek` is always empty. The week view shows recorded sessions, today's blocks, reviews the retention schedule has falling due, and exams. Do not fill later days with invented blocks.
+- `minutes` goes to the engine as `availableMinutes`, which refits the whole day. It can shorten a wellbeing cap or exam ramp but never lift one. `StudyPlan.budgetBasis` says which rule set the day's length; the "Why this plan" adjustments are worded from it.
+- `engines/adaptive-planning-engine.ts` is not called by anything. Its output is not applied to any plan, so the Planner does not show it.
+- There is no per-block skip or reschedule: nothing stores a block to move.
+
+**One meaning of "I have N minutes".** `loadPlanningInputs(chat, { availableMinutes })` is the only place a stated time enters planning. Home and Planner both call it with the number from `?minutes=`, so the same number gives the same plan: Home's recommendation is the Planner's first block and its "after that" list is the next two. Neither page, and no builder, changes a block's length. `planEmptyReason` (same file) is the one answer to "why are there no blocks", including `too_little_time`.
+
+**Which companion, which pages.** `product/companion.ts` (pure, no imports) holds `companionOf` and `routeAccess`. The API's `resolve-learner.ts` and the web dashboard layout both use `companionOf`; `components/dashboard-shell.tsx` applies `routeAccess` before rendering children. Nova's pages are listed in `NOVA_ROUTES` and everything else in the dashboard is Rex's, so a new Rex page is closed to Nova learners by default (they get `components/nova/nova-unavailable.tsx`). To give Nova a page, add it to `NOVA_ROUTES`; the sidebar reads the same list.
+
 Session rules that must hold:
 
 - **One meaning of "session ended".** The web End button is `/done` without a chat turn: `persistSessionEnd` builds the same command-established `study_report` signal, routes it through `computeSessionAction` and the shared `sessionLifecycle` (the function `persistTurn` uses), and hands the same evidence to `consolidateTurn`. Do not write a second end path.
 - **One clock.** `engines/session-clock.ts` defines study time (`sessionElapsedSeconds`). Paused time is kept in `NovaStudySession.totalPausedSeconds`; `totalPausedMinutes` is only its floor. Pause and resume are written only by `pauseStudySession` / `resumeStudySession`.
+- **One open session per learner.** `openStudySession` checks and inserts inside a transaction that first takes `SELECT … FOR UPDATE` on the learner's `NovaAcademicProfile` row. Every start (web or `/study`) goes through it. Do not create a `NovaStudySession` anywhere else.
 - **Conditional writes.** Pause, resume and end use `updateMany` guarded on the expected state, so a repeated or concurrent command writes nothing and an execution report is consumed once.
+
+## Integration tests (real Postgres)
+
+`npm run test:integration` in `packages/api` runs the `__integration__/*.itest.ts` files against the database in `NOVA_TEST_DATABASE_URL`. They refuse to run without it and refuse the host in `packages/db/.env`. A local throwaway works:
+
+```sh
+docker run -d --rm --name nova-test-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=novatest -p 127.0.0.1:54329:5432 postgres:16-alpine
+export NOVA_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:54329/novatest
+(cd packages/db && DATABASE_URL=$NOVA_TEST_DATABASE_URL DIRECT_URL=$NOVA_TEST_DATABASE_URL npx prisma db push)   # set BOTH: prisma.config.ts prefers DIRECT_URL
+(cd packages/api && npm run test:integration)
+```
+
+`nova-session-start.itest.ts` is the only proof of the session-start lock: concurrency cannot be shown against a mock. Two tests in `nova-persist-turn.itest.ts` fail because of the fixture's own timeline (its turns span four days, but an illness expires after 72 hours); they are not product failures.

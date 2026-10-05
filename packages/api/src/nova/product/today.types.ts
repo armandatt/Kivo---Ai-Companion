@@ -16,9 +16,17 @@ export interface TodayAction {
   // "exam in 6 days", "mastery 32%", "review 3 days overdue".
   reasons:         string[];
   rationale:       string;          // the planning engine's sentence
-  // Set when the student said how long they have.
-  trimmedToFit:    boolean;
 }
+
+// Why there are no blocks, when there are none.
+export type PlanEmptyReason =
+  | "no_topics"        // Nova has no topics on record to plan from
+  | "too_little_time"  // the time the student has is shorter than any block
+  | "recovery"         // recovery mode, and nothing comfortable to revisit
+  | "nothing_due";     // nothing is due and no exam is close
+
+export type PlanBudgetBasisName =
+  | "preferred" | "stated_time" | "exam_ramp" | "exam_crisis" | "recovery" | "no_pressure";
 
 export interface TodayActiveSession {
   id:                     string;
@@ -59,11 +67,13 @@ export interface NovaTodayReady {
   learnerName: string | null;       // from the signed-in account
   goals:       string[];            // what the student said they are working toward
   subjects:    string[];
+  // What the student said they have today. The whole plan below was fitted
+  // to it by the Planning Engine, the same way the Planner's is.
   availableMinutes: number | null;
 
   recommendation: TodayAction | null;
   // Why there is no recommendation, when there is none.
-  emptyReason:    "no_topics" | "recovery" | "nothing_due" | null;
+  emptyReason:    PlanEmptyReason | null;
   alternatives:   TodayAction[];
 
   activeSession: TodayActiveSession | null;
@@ -85,6 +95,10 @@ export interface NovaTodayReady {
     mode:              "exam_crisis" | "recovery" | "standard";
     blockCount:        number;
     totalMinutesToday: number;
+    // The time the day was fitted to and the rule that set it. "stated_time"
+    // means the plan was refitted to availableMinutes.
+    budgetMinutes:     number;
+    budgetBasis:       PlanBudgetBasisName;
     assumptions:       string[];
   };
 }

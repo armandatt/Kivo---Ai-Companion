@@ -4,7 +4,7 @@
 // LLM can express or adjust a plan in a reply, but code owns the algorithm.
 // Owner: Planning Engine.
 
-import type { StudyBlock, StudyPlan } from "../types/engine.types";
+import type { PlanBudgetBasis, StudyBlock, StudyPlan } from "../types/engine.types";
 import type { AcademicState } from "../types/academic-state.types";
 import type { TopicMasteryState } from "../types/engine.types";
 import type { ExamContext } from "../types/engine.types";
@@ -12,24 +12,46 @@ import { getOverdueTopics, getExamPriorityOrder } from "./retention-engine";
 
 // ── Time budget ───────────────────────────────────────────────────────────────
 
-function computeDailyBudgetMinutes(
+// Returns the budget and which rule set it, so a reader of the plan can be
+// told why today is the length it is.
+function computeDailyBudget(
   preferredHoursPerDay: number,
   state:                AcademicState,
-): number {
+): { minutes: number; basis: PlanBudgetBasis } {
   const base = preferredHoursPerDay * 60;
 
-  if (state.hardDirectives.noStudyPressure)  return Math.min(base, 30);
-  if (state.hardDirectives.examCrisisMode)   return Math.min(base * 1.5, 360);
-  if (state.hardDirectives.recoveryMode)     return Math.min(base * 0.6, 60);
+  if (state.hardDirectives.noStudyPressure)  return { minutes: Math.min(base, 30), basis: "no_pressure" };
+  if (state.hardDirectives.examCrisisMode)   return { minutes: Math.min(base * 1.5, 360), basis: "exam_crisis" };
+  if (state.hardDirectives.recoveryMode)     return { minutes: Math.min(base * 0.6, 60), basis: "recovery" };
 
   // Exam within 14 days: scale up linearly toward crisis
   if (state.daysUntilNextExam !== null && state.daysUntilNextExam < 14) {
     const scale = 1 + (14 - state.daysUntilNextExam) / 14 * 0.5;
-    return Math.min(base * scale, 360);
+    return { minutes: Math.min(base * scale, 360), basis: "exam_ramp" };
   }
 
-  return base;
+  return { minutes: base, basis: "preferred" };
 }
+
+// The time the student says they have today replaces their usual hours and
+// is a ceiling on everything else: it cannot lift a wellbeing cap or stretch
+// an exam ramp, only shorten them.
+function fitBudgetToAvailableTime(
+  budget:           { minutes: number; basis: PlanBudgetBasis },
+  availableMinutes: number | null | undefined,
+): { minutes: number; basis: PlanBudgetBasis } {
+  if (typeof availableMinutes !== "number" || availableMinutes <= 0) return budget;
+  if (availableMinutes >= budget.minutes && budget.basis !== "preferred") return budget;
+  return { minutes: availableMinutes, basis: "stated_time" };
+}
+
+export interface PlanOptions {
+  // What the student said they have today. Unset: plan from their usual hours.
+  availableMinutes?: number | null;
+}
+
+// The shortest block worth planning. A budget below it yields no blocks.
+export const MIN_BLOCK_MINUTES = 10;
 
 // ── Block builder helpers ─────────────────────────────────────────────────────
 
@@ -76,9 +98,13 @@ export function generateStudyPlan(
   topics:               TopicMasteryState[],
   preferredHoursPerDay: number,
   examContext:          ExamContext | null,
+  options:              PlanOptions = {},
 ): StudyPlan {
   const now            = new Date();
-  const budgetMinutes  = computeDailyBudgetMinutes(preferredHoursPerDay, state);
+  const budget         = fitBudgetToAvailableTime(
+    computeDailyBudget(preferredHoursPerDay, state), options.availableMinutes,
+  );
+  const budgetMinutes  = budget.minutes;
   const blocks: StudyBlock[] = [];
   const assumptions: string[] = [];
   let usedMinutes = 0;
@@ -94,7 +120,7 @@ export function generateStudyPlan(
       usedMinutes += mins;
     }
     assumptions.push("Assumes full focus mode for exam prep.");
-    return buildPlan(blocks, budgetMinutes, assumptions, now);
+    return buildPlan(blocks, budget, assumptions, now);
   }
 
   // ── Recovery mode: very gentle, single topic ─────────────────────────────
@@ -103,11 +129,11 @@ export function generateStudyPlan(
       .filter(t => t.masteryProbability > 0.5)
       .sort((a, b) => b.masteryProbability - a.masteryProbability)[0];
 
-    if (easiestTopic) {
-      blocks.push(reviewBlock(easiestTopic, 20, "optional"));
+    if (easiestTopic && budgetMinutes >= MIN_BLOCK_MINUTES) {
+      blocks.push(reviewBlock(easiestTopic, Math.min(20, budgetMinutes), "optional"));
       assumptions.push("Light session — recovery mode active. No new material.");
     }
-    return buildPlan(blocks, budgetMinutes, assumptions, now);
+    return buildPlan(blocks, budget, assumptions, now);
   }
 
   // ── Standard mode: overdue reviews first, then practice ──────────────────
@@ -117,7 +143,7 @@ export function generateStudyPlan(
   for (const topic of overdue) {
     if (usedMinutes >= budgetMinutes * 0.6) break;  // max 60% on overdue
     const mins = Math.min(25, budgetMinutes - usedMinutes);
-    if (mins < 10) break;
+    if (mins < MIN_BLOCK_MINUTES) break;
     blocks.push(reviewBlock(topic, mins, "high"));
     usedMinutes += mins;
   }
@@ -129,7 +155,7 @@ export function generateStudyPlan(
       if (usedMinutes >= budgetMinutes * 0.8) break;
       if (overdue.some(o => o.topicId === topic.topicId)) continue; // already added
       const mins = Math.min(30, budgetMinutes - usedMinutes);
-      if (mins < 10) break;
+      if (mins < MIN_BLOCK_MINUTES) break;
       blocks.push(examPrepBlock(topic, mins, state.daysUntilNextExam));
       usedMinutes += mins;
     }
@@ -145,7 +171,7 @@ export function generateStudyPlan(
   for (const topic of practiceReady) {
     if (usedMinutes >= budgetMinutes) break;
     const mins = Math.min(30, budgetMinutes - usedMinutes);
-    if (mins < 10) break;
+    if (mins < MIN_BLOCK_MINUTES) break;
     blocks.push(practiceBlock(topic, mins));
     usedMinutes += mins;
   }
@@ -154,15 +180,16 @@ export function generateStudyPlan(
     assumptions.push("No specific topics loaded yet — plan is incomplete until subjects are added.");
   }
 
-  return buildPlan(blocks, budgetMinutes, assumptions, now);
+  return buildPlan(blocks, budget, assumptions, now);
 }
 
 function buildPlan(
   blocks:        StudyBlock[],
-  budgetMinutes: number,
+  budget:        { minutes: number; basis: PlanBudgetBasis },
   assumptions:   string[],
   now:           Date,
 ): StudyPlan {
+  const budgetMinutes = budget.minutes;
   const totalMinutesToday = blocks.reduce((s, b) => s + b.durationMinutes, 0);
   const confidence        = blocks.length === 0
     ? 0.2
@@ -175,5 +202,7 @@ function buildPlan(
     confidence,
     assumptions,
     totalMinutesToday,
+    budgetMinutes: Math.round(budgetMinutes),
+    budgetBasis:   budget.basis,
   };
 }

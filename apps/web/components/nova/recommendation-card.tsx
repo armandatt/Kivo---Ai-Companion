@@ -10,6 +10,8 @@ type Props = {
   action:      TodayAction
   // Extra decision factors from Nova's state, shown under "Why this?".
   context?:    string[]
+  // A line under the block's length, e.g. that the plan was fitted to a time.
+  note?:       string | null
   onStart:     () => void
   starting?:   boolean
   error?:      string | null
@@ -26,7 +28,7 @@ const URGENCY_TONE: Record<TodayAction['urgency'], string> = {
 // Nova's next best action. Everything shown comes from the Today contract:
 // the topic and length from the planning engine, the reasons from the facts
 // behind that block.
-export function RecommendationCard({ action, context = [], onStart, starting = false, error, className }: Props) {
+export function RecommendationCard({ action, context = [], note, onStart, starting = false, error, className }: Props) {
   const [open, setOpen] = useState(false)
   const hasWhy = action.rationale.length > 0 || context.length > 0
 
@@ -60,9 +62,7 @@ export function RecommendationCard({ action, context = [], onStart, starting = f
           <span className={cn('font-medium', URGENCY_TONE[action.urgency])}>{URGENCY_LABEL[action.urgency]}</span>
         </div>
 
-        {action.trimmedToFit && (
-          <p className="mt-2 text-xs text-foreground/45">Shortened to fit the time you have.</p>
-        )}
+        {note && <p className="mt-2 text-xs text-foreground/45">{note}</p>}
 
         {action.reasons.length > 0 && (
           <ul className="mt-6 flex flex-wrap gap-2" aria-label="Why Nova chose this">

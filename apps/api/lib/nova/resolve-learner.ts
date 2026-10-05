@@ -5,6 +5,8 @@
 // state. The web app never creates a second learner.
 
 import { prisma } from "@repo/db/client"
+//@ts-ignore
+import { companionOf } from "@repo/api/nova/product/companion"
 import { getSession } from "../auth/session"
 
 export type LearnerResolution =
@@ -21,26 +23,29 @@ export async function resolveNovaLearner(): Promise<LearnerResolution> {
     where:  { userId: session.userId },
     select: { primaryPersona: true, telegramChatId: true },
   })
-  if (!profile?.telegramChatId) {
-    // Without a linked chat the only signal is the persona chosen on the web.
-    return profile?.primaryPersona && profile.primaryPersona !== "nova"
-      ? { kind: "not_nova" }
-      : { kind: "not_connected" }
-  }
+  const chatId    = profile?.telegramChatId ?? null
+  const messenger = chatId
+    ? await prisma.messengerUser.findUnique({
+        where:  { platform_platformChatId: { platform: "telegram", platformChatId: chatId } },
+        select: { persona: true, novaAcademicProfile: { select: { onboardingComplete: true } } },
+      })
+    : null
 
-  const messenger = await prisma.messengerUser.findUnique({
-    where:  { platform_platformChatId: { platform: "telegram", platformChatId: profile.telegramChatId } },
-    select: { persona: true, novaAcademicProfile: { select: { onboardingComplete: true } } },
+  // The one rule for which companion an account uses (shared with the web
+  // app's dashboard layout).
+  const companion = companionOf({
+    primaryPersona:   profile?.primaryPersona,
+    hasLinkedChat:    chatId !== null,
+    messengerPersona: messenger ? messenger.persona : undefined,
   })
-  // The Telegram webhook routes on MessengerUser.persona; the web follows it.
-  if (!messenger) return { kind: "not_connected" }
-  if (messenger.persona !== "nova") return { kind: "not_nova" }
+  if (companion !== "nova") return { kind: "not_nova" }
+  if (!chatId || !messenger) return { kind: "not_connected" }
 
   return {
     kind:           "learner",
     userId:         session.userId,
     name:           session.name ?? null,
-    platformChatId: profile.telegramChatId,
+    platformChatId: chatId,
     onboardingDone: messenger.novaAcademicProfile?.onboardingComplete === true,
   }
 }

@@ -97,7 +97,17 @@ export interface StudyPlan {
   confidence:   number;      // 0–1: how achievable
   assumptions:  string[];    // what the plan assumes that might not be true
   totalMinutesToday: number;
+  budgetMinutes:     number;           // the time the plan was fitted to
+  budgetBasis:       PlanBudgetBasis;  // which rule set that time
 }
+
+export type PlanBudgetBasis =
+  | "preferred"     // the student's usual daily hours
+  | "stated_time"   // what the student said they have today
+  | "exam_ramp"     // raised: an exam is within 14 days
+  | "exam_crisis"   // raised: an exam is within 3 days
+  | "recovery"      // cut: recovering from a run of missed days
+  | "no_pressure";  // capped at 30 min: burnout risk
 
 // ── Exam Intelligence Engine ──────────────────────────────────────────────────
 
