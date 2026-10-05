@@ -26,7 +26,7 @@ export interface TodayActiveSession {
   subjectName:            string | null;
   status:                 "in_progress" | "paused";
   startedAt:              string;
-  elapsedMinutes:         number;
+  elapsedMinutes:         number;   // time spent paused is excluded
   plannedDurationMinutes: number;
 }
 
@@ -56,6 +56,8 @@ export interface TodayConstraint {
 export interface NovaTodayReady {
   status:      "ready";
   generatedAt: string;
+  learnerName: string | null;       // from the signed-in account
+  goals:       string[];            // what the student said they are working toward
   subjects:    string[];
   availableMinutes: number | null;
 
@@ -66,6 +68,7 @@ export interface NovaTodayReady {
 
   activeSession: TodayActiveSession | null;
   nextDeadline:  TodayDeadline | null;
+  upcoming:      TodayDeadline[];   // soonest first, nextDeadline included
   weakArea:      TodayWeakArea | null;
   reviewDue:     { count: number; topics: Array<{ topicName: string; subjectName: string; daysOverdue: number }> };
   constraints:   TodayConstraint[];
@@ -102,3 +105,42 @@ export interface NovaMessageRequest {
 export type NovaMessageResponse =
   | { ok: true; reply: string; intervention: string | null }
   | { ok: false; error: "unauthenticated" | "not_connected" | "not_nova" | "rate_limited" | "empty" | "failed"; message: string };
+
+// ── Session commands ──────────────────────────────────────────────────────────
+// What the Start / Pause / Resume / End buttons send. Explicit protocol, like
+// a slash command: handled by deterministic code, no LLM call.
+
+export interface NovaSessionView {
+  id:                     string;
+  topicName:              string | null;
+  subjectName:            string | null;
+  status:                 "in_progress" | "paused";
+  startedAt:              string;
+  pausedAt:               string | null;
+  plannedDurationMinutes: number;      // 0 = no planned length
+  // Study time so far as of serverNow, pauses excluded. The page counts up
+  // from this value; it never keeps a clock of its own.
+  elapsedSeconds:         number;
+  serverNow:              string;
+  pauseCount:             number;
+  confusionPoints:        string[];
+}
+
+export type NovaSessionCommand =
+  | { action: "start"; topicName: string; subjectName: string | null; plannedMinutes: number | null }
+  | { action: "pause" }
+  | { action: "resume" }
+  | { action: "end" };
+
+export type NovaSessionError =
+  | "unauthenticated" | "not_connected" | "not_nova" | "onboarding_incomplete"
+  | "invalid" | "no_active_session" | "not_paused" | "already_paused" | "failed";
+
+export type NovaSessionResponse =
+  | {
+      ok:      true;
+      session: NovaSessionView | null;
+      // Set by "end": what was recorded.
+      ended:   { topicName: string | null; minutes: number } | null;
+    }
+  | { ok: false; error: NovaSessionError; message: string };

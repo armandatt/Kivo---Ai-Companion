@@ -21,7 +21,9 @@ import type {
   NovaTodayView,
   TodayAction,
   TodayConstraint,
+  TodayDeadline,
 } from "./today.types";
+import { sessionElapsedSeconds } from "./session-view";
 
 const DAY_MS = 86_400_000;
 const MIN_USEFUL_MINUTES = 10;
@@ -42,6 +44,8 @@ export interface TodayInputs {
   plan:             StudyPlan;
   constraints:      TodayConstraint[];
   availableMinutes: number | null;
+  learnerName?:     string | null;
+  goals?:           string[];
   now:              Date;
 }
 
@@ -126,12 +130,23 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
   const studied = topics.filter(t => t.reviewCount > 0);
   const weakest = [...studied].sort((a, b) => a.masteryProbability - b.masteryProbability)[0];
 
-  const nextExam = [...snapshot.upcomingExams].sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())[0];
+  const upcoming: TodayDeadline[] = [...snapshot.upcomingExams]
+    .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())
+    .slice(0, 3)
+    .map(e => ({
+      title:       e.title,
+      subjectName: e.subjectName,
+      examType:    e.examType,
+      scheduledAt: e.scheduledAt.toISOString(),
+      daysUntil:   Math.max(0, Math.ceil((e.scheduledAt.getTime() - now.getTime()) / DAY_MS)),
+    }));
   const active   = snapshot.activeSession;
 
   return {
     status:           "ready",
     generatedAt:      now.toISOString(),
+    learnerName:      input.learnerName ?? null,
+    goals:            input.goals ?? [],
     subjects:         snapshot.subjects.map(s => s.name),
     availableMinutes: input.availableMinutes,
 
@@ -145,17 +160,12 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
       subjectName: active.subjectName,
       status:      active.status === "paused" ? "paused" : "in_progress",
       startedAt:   active.startedAt.toISOString(),
-      elapsedMinutes: Math.max(0, Math.floor((now.getTime() - active.startedAt.getTime()) / 60_000) - active.totalPausedMinutes),
+      elapsedMinutes: Math.floor(sessionElapsedSeconds(active, now) / 60),
       plannedDurationMinutes: active.plannedDurationMinutes,
     } : null,
 
-    nextDeadline: nextExam ? {
-      title:       nextExam.title,
-      subjectName: nextExam.subjectName,
-      examType:    nextExam.examType,
-      scheduledAt: nextExam.scheduledAt.toISOString(),
-      daysUntil:   Math.max(0, Math.ceil((nextExam.scheduledAt.getTime() - now.getTime()) / DAY_MS)),
-    } : null,
+    nextDeadline: upcoming[0] ?? null,
+    upcoming,
 
     weakArea: weakest && weakest.masteryProbability < 0.7 ? {
       topicName:      weakest.topicName,
@@ -211,13 +221,13 @@ async function loadActiveConstraints(userId: string, now: Date): Promise<TodayCo
 
 export async function loadNovaToday(
   platformChatId: string,
-  options: { availableMinutes?: number | null; now?: Date } = {},
+  options: { availableMinutes?: number | null; learnerName?: string | null; now?: Date } = {},
 ): Promise<NovaTodayView> {
   const now = options.now ?? new Date();
 
   const user = await prisma.messengerUser.findUnique({
     where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
-    select: { id: true, novaAcademicProfile: { select: { onboardingComplete: true } } },
+    select: { id: true, novaAcademicProfile: { select: { onboardingComplete: true, goals: true } } },
   });
   if (!user) return { status: "not_connected" };
   if (!user.novaAcademicProfile?.onboardingComplete) return { status: "onboarding_incomplete" };
@@ -258,6 +268,8 @@ export async function loadNovaToday(
   const minutes = options.availableMinutes;
   return buildTodayView({
     snapshot, academicState, topics, examContext, plan, constraints, now,
+    learnerName: options.learnerName ?? null,
+    goals:       user.novaAcademicProfile.goals.slice(0, 3),
     availableMinutes: typeof minutes === "number" && minutes > 0 ? Math.min(Math.round(minutes), 600) : null,
   });
 }

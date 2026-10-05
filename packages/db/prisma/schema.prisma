@@ -757,6 +757,7 @@ model NovaStudySession {
   focusQuality            String?         // "deep" | "moderate" | "scattered"
   pauseCount              Int      @default(0)
   totalPausedMinutes      Int      @default(0)
+  totalPausedSeconds      Int      @default(0)   // exact; totalPausedMinutes is its whole-minute floor
   pausedAt                DateTime?
   executionReport         Json?
   reflectionText          String?

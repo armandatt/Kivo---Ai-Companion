@@ -22,6 +22,7 @@ export async function GET(req: Request) {
 
     const view = await loadNovaToday(learner.platformChatId, {
       availableMinutes: minutes !== null && Number.isFinite(minutes) ? minutes : null,
+      learnerName:      learner.name,
     })
     return NextResponse.json(view)
   } catch (err) {

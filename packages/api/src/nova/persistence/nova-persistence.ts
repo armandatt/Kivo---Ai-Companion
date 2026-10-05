@@ -42,7 +42,10 @@ import { saveUserMessage, saveAssistantMessage } from "../adapters/conversation-
 import { buildTurnEvidence } from "../consolidation/evidence-builder";
 import { consolidateTurn } from "../consolidation/run-consolidation";
 import { updateTopicMastery, matchTopicToSubject } from "../engines/topic-mastery-engine";
-import { buildExecutionReport } from "../engines/study-session-engine";
+import { buildExecutionReport, buildSessionContext, computeSessionAction } from "../engines/study-session-engine";
+import { pauseLengthSeconds, pausedSecondsOf, sessionElapsedSeconds } from "../engines/session-clock";
+import { withEstablishedSignal } from "../engines/signal-engine";
+import { translateNovaCommand } from "../commands";
 import type { SessionExecutionReport } from "../types/session.types";
 
 export interface PersistenceInput {
@@ -87,50 +90,10 @@ export async function persistTurn(input: PersistenceInput): Promise<void> {
     sessionContext, sessionAction, now,
   } = input;
 
-  const hasStudyReport  = signals.detectedSignals.some(s => s.type === "study_report");
-  const hasSessionStart = signals.detectedSignals.some(s => s.type === "session_start");
-
-  const masteryConfidence =
-    signals.detectedSignals.find(s => s.type === "mastery_claim")?.intensity ?? 0.6;
-
-  // Build a set of session-lifecycle tasks based on the session action
-  const sessionTasks: Promise<void>[] = [];
-
-  if (profileId) {
-    const action = sessionAction?.type;
-
-    if (hasSessionStart && !activeSession) {
-      // Open a new session
-      sessionTasks.push(openStudySession(profileId, understanding.topic, subjects, now));
-    }
-
-    if (action === "break_recommendation" && activeSession) {
-      // Pause the session
-      sessionTasks.push(pauseStudySession(activeSession.id, now));
-    }
-
-    if (action === "resume_session" && activeSession) {
-      // Resume from break
-      sessionTasks.push(resumeStudySession(activeSession.id, now));
-    }
-
-    if (sessionAction?.writeBack && activeSession) {
-      const wb = sessionAction.writeBack;
-      // Write back confusion / completed topics / energy to the session record
-      sessionTasks.push(applySessionWriteBack(activeSession.id, wb, now));
-    }
-
-    if (action === "end_session" && activeSession && sessionContext) {
-      // Close + produce execution report
-      sessionTasks.push(
-        endStudySession(activeSession.id, sessionContext, masteryConfidence, subjects, now)
-      );
-    } else if (hasStudyReport && activeSession && action !== "end_session") {
-      // study_report signal but session engine didn't route to end_session
-      // (shouldn't normally happen, but handle gracefully)
-      sessionTasks.push(closeStudySession(activeSession.id, now));
-    }
-  }
+  const { tasks: sessionTasks } = sessionLifecycle({
+    profileId, signals, sessionAction, sessionContext, activeSession,
+    topic: understanding.topic, subjects, now,
+  });
 
   // 1. Conversation log first: the user message id is the provenance of
   //    every piece of evidence this turn produces.
@@ -213,19 +176,161 @@ async function persistStateSnapshot(
 }
 
 // ── Session lifecycle ─────────────────────────────────────────────────────────
+// One routing of (signals, session action) to session writes. A chat turn
+// (persistTurn) and a session command from the web app (persistSessionEnd)
+// both go through it, so "the session ended" means one thing.
 
-async function openStudySession(
+const OPEN_STATUSES = ["in_progress", "paused"];
+
+interface SessionLifecycleInput {
+  profileId:      string | null;
+  signals:        SignalEngineOutput;
+  sessionAction:  SessionAction | null;
+  sessionContext: SessionContext | null;
+  activeSession:  ActiveSessionInfo | null;
+  topic:          string | null;
+  subjects:       Array<{ id: string; name: string }>;
+  now:            Date;
+}
+
+function sessionLifecycle(input: SessionLifecycleInput): {
+  tasks: Promise<void>[];
+  // Resolves true when this call closed the session and its execution
+  // report was consumed. null when the turn does not end a session.
+  ended: Promise<boolean> | null;
+} {
+  const { profileId, signals, sessionAction, sessionContext, activeSession, subjects, now } = input;
+  const tasks: Promise<void>[] = [];
+  let ended: Promise<boolean> | null = null;
+  if (!profileId) return { tasks, ended };
+
+  const hasStudyReport  = signals.detectedSignals.some(s => s.type === "study_report");
+  const hasSessionStart = signals.detectedSignals.some(s => s.type === "session_start");
+  const masteryConfidence =
+    signals.detectedSignals.find(s => s.type === "mastery_claim")?.intensity ?? 0.6;
+  const action = sessionAction?.type;
+
+  if (hasSessionStart && !activeSession) {
+    tasks.push(openStudySession(profileId, input.topic, subjects, now));
+  }
+  if (action === "break_recommendation" && activeSession) {
+    tasks.push(pauseStudySession(activeSession.id, now));
+  }
+  if (action === "resume_session" && activeSession) {
+    tasks.push(resumeStudySession(activeSession.id, now));
+  }
+  if (sessionAction?.writeBack && activeSession) {
+    // Confusion points, completed topics and energy on the session record.
+    tasks.push(applySessionWriteBack(activeSession.id, sessionAction.writeBack));
+  }
+
+  if (action === "end_session" && activeSession && sessionContext) {
+    // Close + produce the execution report
+    ended = endStudySession(activeSession.id, sessionContext, masteryConfidence, subjects, now);
+    tasks.push(ended.then(() => undefined));
+  } else if (hasStudyReport && activeSession && action !== "end_session") {
+    // study_report signal but the session engine didn't route to end_session
+    // (shouldn't normally happen, but handle gracefully)
+    tasks.push(closeStudySession(activeSession.id, now));
+  }
+  return { tasks, ended };
+}
+
+// ── Session end from a command surface ────────────────────────────────────────
+// The web app's End session button is the /done command without a chat turn.
+// It produces what /done produces: the same established study_report signal,
+// routed by the same session engine to the same execution report, and the
+// same evidence handed to the same consolidation job. No LLM call.
+// Returns false when there was nothing to end (already ended elsewhere).
+
+export interface SessionEndInput {
+  userId:        string;                 // MessengerUser.id
+  profileId:     string;
+  activeSession: ActiveSessionInfo;
+  subjects:      Array<{ id: string; name: string }>;
+  surface:       "web";
+  now:           Date;
+}
+
+export async function persistSessionEnd(input: SessionEndInput): Promise<boolean> {
+  const { userId, profileId, activeSession, subjects, now } = input;
+
+  // What the command states. Nothing here is a reading of the student's
+  // words: the intent is the command's own, the topic is the session's.
+  const { text } = translateNovaCommand("/done");
+  const signals  = withEstablishedSignal({ detectedSignals: [], stateUpdates: [] }, "study_report", "command");
+  const understanding: AcademicUnderstanding = {
+    intent: "study_report", emotion: "neutral",
+    topic: activeSession.topicName, topicConfidence: activeSession.topicName ? 1 : 0,
+    disclosureClass: "none", ambiguityScore: 0, routingSignal: "coaching_only", rawText: text,
+  };
+
+  const sessionContext = buildSessionContext(activeSession, NEUTRAL_MASTERY_ESTIMATE, now, profileId);
+  const sessionAction  = computeSessionAction(understanding, signals, sessionContext);
+
+  const { tasks, ended } = sessionLifecycle({
+    profileId, signals, sessionAction, sessionContext, activeSession,
+    topic: understanding.topic, subjects, now,
+  });
+  const [closed] = await Promise.all([ended ?? Promise.resolve(false), Promise.allSettled(tasks)]);
+  // Another request or a chat turn got there first: it owns the evidence.
+  if (!closed) return false;
+
+  let sourceMessageId: string | null = null;
+  try {
+    sourceMessageId = await saveUserMessage(userId, text, {
+      intent:  understanding.intent,
+      emotion: understanding.emotion,
+      signals: signals.detectedSignals.map(s => s.type),
+      surface: input.surface,
+    }, now);
+  } catch (err) {
+    console.error("[nova:persistence] session-end message save failed:", err);
+  }
+  // No source message, no provenance: the session row and its report stand,
+  // nothing else becomes durable.
+  if (sourceMessageId === null) return true;
+
+  const evidence = buildTurnEvidence({
+    userId, profileId, sourceMessageId, userText: text,
+    observedAt:  now,
+    signals:     signals.detectedSignals,
+    understanding,
+    patterns:    { detectedPatterns: [], dominantPattern: null, analysisRunAt: now, messagesSinceLastRun: 0 },
+    brainOutput: null,
+  });
+  await consolidateTurn({
+    messageId: sourceMessageId,
+    userId, profileId, evidence, now,
+    patternScanRan:   false,
+    hasActiveSession: true,   // as in a chat turn: the state the command arrived in
+  }).catch(err => console.error("[nova:persistence] session-end consolidation failed:", err));
+
+  return true;
+}
+
+const NEUTRAL_MASTERY_ESTIMATE = 0.5;
+
+// The session writers below are exported for the product session commands
+// (product/session.ts). A button and a chat turn open and pause a session
+// through the same code. Each write is conditional on the state it expects,
+// so a repeated or concurrent command changes nothing.
+
+export async function openStudySession(
   profileId: string,
   topic:     string | null,
   subjects:  Array<{ id: string; name: string }>,
   now:       Date,
+  // Known when the session starts from a plan block rather than a sentence.
+  planned:   { subjectId?: string | null; durationMinutes?: number | null } = {},
 ): Promise<void> {
   const match = topic ? matchTopicToSubject(topic, subjects) : null;
   await prisma.novaStudySession.create({
     data: {
       profileId,
-      subjectId:       match?.subjectId ?? null,
+      subjectId:       planned.subjectId ?? match?.subjectId ?? null,
       topicName:       topic ?? null,
+      plannedDurationMinutes: planned.durationMinutes ?? null,
       durationMinutes: 0,
       activityType:    "active",
       status:          "in_progress",
@@ -234,9 +339,9 @@ async function openStudySession(
   }).catch(() => {/* swallow — duplicate or constraint */});
 }
 
-async function pauseStudySession(sessionId: string, now: Date): Promise<void> {
-  await prisma.novaStudySession.update({
-    where: { id: sessionId },
+export async function pauseStudySession(sessionId: string, now: Date): Promise<void> {
+  await prisma.novaStudySession.updateMany({
+    where: { id: sessionId, status: "in_progress" },
     data: {
       status:   "paused",
       pausedAt: now,
@@ -245,30 +350,34 @@ async function pauseStudySession(sessionId: string, now: Date): Promise<void> {
   }).catch(() => {});
 }
 
-async function resumeStudySession(sessionId: string, now: Date): Promise<void> {
+export async function resumeStudySession(sessionId: string, now: Date): Promise<void> {
   const session = await prisma.novaStudySession.findUnique({
     where:  { id: sessionId },
-    select: { pausedAt: true, totalPausedMinutes: true },
+    select: { pausedAt: true, totalPausedMinutes: true, totalPausedSeconds: true },
   });
   if (!session?.pausedAt) return;
 
-  const pausedMinutes = Math.floor((now.getTime() - session.pausedAt.getTime()) / 60_000);
-  const totalPaused   = session.totalPausedMinutes + Math.max(0, pausedMinutes);
+  const totalPaused = pausedSecondsOf(session) + pauseLengthSeconds(session.pausedAt, now);
 
-  await prisma.novaStudySession.update({
-    where: { id: sessionId },
+  // Conditional on the pause being the one that was read: a second resume
+  // finds it gone and adds nothing.
+  await prisma.novaStudySession.updateMany({
+    where: { id: sessionId, status: "paused", pausedAt: session.pausedAt },
     data: {
-      status:            "in_progress",
-      pausedAt:          null,
-      totalPausedMinutes: totalPaused,
+      status:             "in_progress",
+      pausedAt:           null,
+      totalPausedSeconds: totalPaused,
+      totalPausedMinutes: Math.floor(totalPaused / 60),
     },
   }).catch(() => {});
 }
 
+// Pausing and resuming are not written here: break_recommendation and
+// resume_session go through pauseStudySession / resumeStudySession, the one
+// place the pause clock is kept.
 async function applySessionWriteBack(
   sessionId: string,
   wb:        SessionAction["writeBack"],
-  now:       Date,
 ): Promise<void> {
   const data: Record<string, unknown> = {};
 
@@ -295,19 +404,6 @@ async function applySessionWriteBack(
   }
 
   if (wb.energyLevel) data["energyLevel"] = wb.energyLevel;
-  if (wb.pauseStarted) { data["status"] = "paused"; data["pausedAt"] = now; data["pauseCount"] = { increment: 1 }; }
-  if (wb.pauseEnded) {
-    const session = await prisma.novaStudySession.findUnique({
-      where:  { id: sessionId },
-      select: { pausedAt: true, totalPausedMinutes: true },
-    });
-    if (session?.pausedAt) {
-      const mins = Math.floor((now.getTime() - session.pausedAt.getTime()) / 60_000);
-      data["status"]             = "in_progress";
-      data["pausedAt"]           = null;
-      data["totalPausedMinutes"] = session.totalPausedMinutes + Math.max(0, mins);
-    }
-  }
 
   if (Object.keys(data).length === 0) return;
 
@@ -320,16 +416,18 @@ async function applySessionWriteBack(
 async function closeStudySession(sessionId: string, now: Date): Promise<void> {
   const session = await prisma.novaStudySession.findUnique({
     where:  { id: sessionId },
-    select: { sessionDate: true, totalPausedMinutes: true },
+    select: { sessionDate: true, status: true, pausedAt: true, totalPausedMinutes: true, totalPausedSeconds: true },
   });
   if (!session) return;
 
-  const wallMinutes     = Math.floor((now.getTime() - session.sessionDate.getTime()) / 60_000);
-  const durationMinutes = Math.max(1, wallMinutes - session.totalPausedMinutes);
+  const seconds = sessionElapsedSeconds({
+    startedAt: session.sessionDate, status: session.status, pausedAt: session.pausedAt,
+    totalPausedSeconds: pausedSecondsOf(session),
+  }, now);
 
-  await prisma.novaStudySession.update({
-    where: { id: sessionId },
-    data:  { status: "completed", durationMinutes },
+  await prisma.novaStudySession.updateMany({
+    where: { id: sessionId, status: { in: OPEN_STATUSES } },
+    data:  { status: "completed", durationMinutes: Math.max(1, Math.floor(seconds / 60)) },
   }).catch(() => {});
 }
 
@@ -339,24 +437,28 @@ async function endStudySession(
   confidence:     number,
   subjects:       Array<{ id: string; name: string }>,
   now:            Date,
-): Promise<void> {
+): Promise<boolean> {
   // 1. Produce execution report (pure function — no DB)
   const report = buildExecutionReport(sessionContext, null, confidence, now);
 
-  // 2. Close session with report + accurate duration
-  await prisma.novaStudySession.update({
-    where: { id: sessionId },
+  // 2. Close session with report + accurate duration. Conditional on the
+  //    session still being open: only the call that closes it goes on to
+  //    feed the engines, so a report is consumed exactly once.
+  const closed = await prisma.novaStudySession.updateMany({
+    where: { id: sessionId, status: { in: OPEN_STATUSES } },
     data: {
       status:          "completed",
       durationMinutes: report.actualDurationMinutes,
       focusQuality:    report.focusQuality,
       executionReport: JSON.parse(JSON.stringify(report)) as object,
     },
-  }).catch(err => console.error("[nova:session] end failed", err));
+  }).then(r => r.count === 1).catch(err => { console.error("[nova:session] end failed", err); return false; });
+  if (!closed) return false;
 
   // 3. Feed all long-term engines from the execution report.
   //    This is the ONLY place that uses source="session_report".
   await consumeExecutionReport(report, subjects, now);
+  return true;
 }
 
 // ── consumeExecutionReport ────────────────────────────────────────────────────

@@ -140,3 +140,19 @@ All are read from `process.env` at call time, so flipping one on Railway needs n
 - **Railway** (`railway.json`, `RAILWAY_DEPLOYMENT.md`) is the previous host, kept until Render is verified. Only one of the two may run the scheduler or receive the Telegram webhook at a time.
 - **Vercel**: Root Directory `apps/web`; `apps/web/vercel.json` runs `prisma generate` before the build.
 - `prisma generate` is not a `postinstall` step. Run it by hand after a fresh install or a schema change.
+
+## Nova on the web (Home → Start session)
+
+The web app renders Nova's decisions; it does not make them. Three routes, all resolving the signed-in account to its Nova learner through `apps/api/lib/nova/resolve-learner.ts`:
+
+- `GET /api/nova/today?minutes=` returns `NovaTodayView`, built by `packages/api/src/nova/product/today.ts` from the existing engines. No LLM call.
+- `POST /api/nova/session` (`start` / `pause` / `resume` / `end`) and `GET /api/nova/session`: deterministic session commands. They call the same session writers a chat turn uses (`persistence/nova-persistence.ts`), so do not add a second place that writes `NovaStudySession`.
+- `POST /api/nova/message` runs a normal Nova turn (used for onboarding and "tell Nova" boxes).
+
+Contracts live in `packages/api/src/nova/product/today.types.ts` (no imports, so the web app imports the types directly). UI is in `apps/web/components/nova/`; `app/(dashboard)/home/page.tsx` renders the Rex home (`components/home/rex-home.tsx`) when the status is `not_nova`. Never add ranking or recommendation logic to React: add a field to the contract instead. The focus timer is derived from the server's `elapsedSeconds`; the page keeps no session state of its own.
+
+Session rules that must hold:
+
+- **One meaning of "session ended".** The web End button is `/done` without a chat turn: `persistSessionEnd` builds the same command-established `study_report` signal, routes it through `computeSessionAction` and the shared `sessionLifecycle` (the function `persistTurn` uses), and hands the same evidence to `consolidateTurn`. Do not write a second end path.
+- **One clock.** `engines/session-clock.ts` defines study time (`sessionElapsedSeconds`). Paused time is kept in `NovaStudySession.totalPausedSeconds`; `totalPausedMinutes` is only its floor. Pause and resume are written only by `pauseStudySession` / `resumeStudySession`.
+- **Conditional writes.** Pause, resume and end use `updateMany` guarded on the expected state, so a repeated or concurrent command writes nothing and an execution report is consumed once.

@@ -11,7 +11,7 @@ export type LearnerResolution =
   | { kind: "unauthenticated" }
   | { kind: "not_nova" }
   | { kind: "not_connected" }
-  | { kind: "learner"; userId: string; platformChatId: string; onboardingDone: boolean }
+  | { kind: "learner"; userId: string; name: string | null; platformChatId: string; onboardingDone: boolean }
 
 export async function resolveNovaLearner(): Promise<LearnerResolution> {
   const session = await getSession()
@@ -39,6 +39,7 @@ export async function resolveNovaLearner(): Promise<LearnerResolution> {
   return {
     kind:           "learner",
     userId:         session.userId,
+    name:           session.name ?? null,
     platformChatId: profile.telegramChatId,
     onboardingDone: messenger.novaAcademicProfile?.onboardingComplete === true,
   }

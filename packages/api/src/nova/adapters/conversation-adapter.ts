@@ -19,6 +19,9 @@ export interface UserTurnAnnotation {
   emotion: string;
   signals: string[];
   secondaryIntents?: string[];
+  // Set when the turn is a command issued from a surface other than chat
+  // (the web app's End session button), so the log says what happened.
+  surface?: string;
 }
 
 interface NovaMessageMetadata {
@@ -52,6 +55,7 @@ export async function saveUserMessage(
         companion: COMPANION,
         signals:   annotation.signals,
         secondaryIntents: annotation.secondaryIntents ?? [],
+        ...(annotation.surface ? { surface: annotation.surface } : {}),
       },
       createdAt: now,
     },
