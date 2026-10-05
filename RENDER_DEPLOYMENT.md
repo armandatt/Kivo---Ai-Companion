@@ -21,7 +21,7 @@ Render replaces Railway as the host of `apps/api`. Neon stays the database; noth
 
 Two constraints come from the application itself:
 
-- **Always-on plan.** The scheduler is a timer inside the API process. A free instance that sleeps stops every scheduled job and makes Telegram wait through a cold start.
+- **Always-on plan for real use.** The scheduler is a timer inside the API process. `render.yaml` starts on the free plan, which is enough to verify the deploy, but a free instance sleeps after about 15 minutes without traffic: scheduled jobs stop and Telegram waits through a cold start. Switch `plan` to `starter` before cutover.
 - **Exactly one instance.** Per-chat locks and the scheduler's "already running" guard live in process memory. Two instances would send every scheduled message twice.
 
 ## Scheduled jobs: who runs what

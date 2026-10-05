@@ -15,7 +15,10 @@ services:
     name: kivo-api
     runtime: node
     region: virginia            # same region as the Neon database (us-east-1)
-    plan: starter               # must be an always-on plan: a sleeping instance stops the scheduler
+    # "free" sleeps after ~15 minutes without traffic. While asleep the in-process
+    # scheduler does not run and the first Telegram message waits for a cold
+    # start. Fine for verifying the deploy; switch to "starter" before real use.
+    plan: free
     numInstances: 1             # per-chat locks and the scheduler live in process memory; do not scale out
     branch: main
     autoDeploy: false           # deploy deliberately while Railway is still the live backend
