@@ -3,7 +3,7 @@
 // Pure function — no LLM, no DB. All data provided by caller.
 // Owner: Phase 5 Proactive Mentor System.
 
-import type { AdaptedPlan, PlanChange, MomentumState } from "../types/proactive.types.js";
+import type { AdaptedPlan, PlanChange, MomentumState } from "../types/proactive.types";
 
 export interface TopicMasterySnapshot {
   topicName:          string;

@@ -17,9 +17,9 @@
 // coaching where reasoning depth matters.
 // Owner: Response Brain layer.
 
-import { generateOpenAIText } from "../../services/openai.service.js";
-import type { AcademicExtractionResult, OnboardingCurrentState } from "./nova-onboarding-extractor.js";
-import type { OnboardingDecision }                                from "./nova-onboarding-decision-engine.js";
+import { generateOpenAIText } from "../../services/openai.service";
+import type { AcademicExtractionResult, OnboardingCurrentState } from "./nova-onboarding-extractor";
+import type { OnboardingDecision }                                from "./nova-onboarding-decision-engine";
 
 // ── Next focus → question instructions ───────────────────────────────────────
 

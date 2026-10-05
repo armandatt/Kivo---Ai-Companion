@@ -3,12 +3,12 @@
 // LLM never selects interventions. LLM only expresses the selected one.
 // Owner: Decision Engine. All scorers are pure functions.
 
-import type { AcademicUnderstanding } from "../types/understanding.types.js";
-import type { AcademicState } from "../types/academic-state.types.js";
-import type { PatternAnalysis, DecisionEngineInput, DecisionEngineOutput, InterventionScore } from "../types/engine.types.js";
-import type { InterventionName } from "../types/intervention.types.js";
-import { INTERVENTIONS, INTERVENTION_FAMILIES } from "../types/intervention.types.js";
-import type { NovaUserFact } from "../types/memory.types.js";
+import type { AcademicUnderstanding } from "../types/understanding.types";
+import type { AcademicState } from "../types/academic-state.types";
+import type { PatternAnalysis, DecisionEngineInput, DecisionEngineOutput, InterventionScore } from "../types/engine.types";
+import type { InterventionName } from "../types/intervention.types";
+import { INTERVENTIONS, INTERVENTION_FAMILIES } from "../types/intervention.types";
+import type { NovaUserFact } from "../types/memory.types";
 
 // ── Blocklist: hard rules that prevent certain interventions ───────────────────
 // SKILL.md §7.2: Decision Engine enforces directives structurally.

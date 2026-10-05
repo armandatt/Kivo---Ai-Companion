@@ -12,8 +12,8 @@
 // The Response Brain translates this decision into conversational language.
 // Owner: Decision Engine layer.
 
-import type { AcademicExtractionResult, OnboardingCurrentState } from "./nova-onboarding-extractor.js";
-import type { ValidatedExtraction }                               from "./nova-onboarding-validator.js";
+import type { AcademicExtractionResult, OnboardingCurrentState } from "./nova-onboarding-extractor";
+import type { ValidatedExtraction }                               from "./nova-onboarding-validator";
 
 // ── Output types ──────────────────────────────────────────────────────────────
 

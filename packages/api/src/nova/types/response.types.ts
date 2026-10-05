@@ -2,8 +2,8 @@
 // SKILL.md §6 — the Response Brain's sole job: turn a pre-made decision into
 // words in Nova's voice. JSON always. Never prose.
 
-import type { InterventionName } from "./intervention.types.js";
-import type { ActiveInvestigation, FollowUpCheck } from "./memory.types.js";
+import type { InterventionName } from "./intervention.types";
+import type { ActiveInvestigation, FollowUpCheck } from "./memory.types";
 
 export type ReasoningMode =
   | "reflective"

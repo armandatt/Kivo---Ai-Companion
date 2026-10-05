@@ -10,7 +10,7 @@ import type {
   StudyRhythm,
   RecoveryTrend,
   MotivationTrend,
-} from "../types/proactive.types.js";
+} from "../types/proactive.types";
 
 // Input shape — only the fields this engine actually needs.
 export interface MomentumInput {

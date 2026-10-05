@@ -23,7 +23,7 @@ const BASE_STATE: AcademicState = {
   stateHistory:         [],
 };
 
-const EMPTY_SIGNALS: SignalEngineOutput = { detectedSignals: [], stateUpdates: [], memoryWrites: [] };
+const EMPTY_SIGNALS: SignalEngineOutput = { detectedSignals: [], stateUpdates: [] };
 const EMPTY_PATTERNS = {
   detectedPatterns: [], dominantPattern: null, analysisRunAt: new Date(), messagesSinceLastRun: 0,
 };
@@ -102,7 +102,7 @@ describe("Decision Graph", () => {
     it("handles study_report signal", () => {
       const signals: SignalEngineOutput = {
         detectedSignals: [{ type: "study_report", intensity: 0.75, valence: "positive", confidence: 0.9, evidence: "finished" }],
-        stateUpdates: [], memoryWrites: [],
+        stateUpdates: [],
       };
       const out = runDecisionGraph(
         { ...BASE_UNDERSTANDING, intent: "study_report" },
@@ -114,7 +114,7 @@ describe("Decision Graph", () => {
     it("empathizes on skip when emotional", () => {
       const signals: SignalEngineOutput = {
         detectedSignals: [{ type: "study_skip", intensity: 0.75, valence: "negative", confidence: 0.9, evidence: "didn't study" }],
-        stateUpdates: [], memoryWrites: [],
+        stateUpdates: [],
       };
       const out = runDecisionGraph(
         { ...BASE_UNDERSTANDING, intent: "study_skip_report", emotion: "discouraged" },

@@ -5,8 +5,8 @@
 // knowledge-engine.ts after a session is confirmed complete).
 // Owner: Retention Engine.
 
-import type { RetentionSchedule } from "../types/engine.types.js";
-import type { TopicMasteryState } from "../types/engine.types.js";
+import type { RetentionSchedule } from "../types/engine.types";
+import type { TopicMasteryState } from "../types/engine.types";
 
 const RETENTION_TARGET = 0.85;  // below this = review is due
 

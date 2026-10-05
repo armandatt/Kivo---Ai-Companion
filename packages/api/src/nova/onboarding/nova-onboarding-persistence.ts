@@ -5,8 +5,9 @@
 // Owner: Persistence layer. No LLM calls.
 
 import { prisma } from "@repo/db/client";
-import { writeRealityFact } from "../adapters/reality-adapter.js";
-import type { ValidatedExtraction } from "./nova-onboarding-validator.js";
+import { buildOnboardingRealityEvidence } from "../consolidation/evidence-builder";
+import { runConsolidation } from "../consolidation/run-consolidation";
+import type { ValidatedExtraction } from "./nova-onboarding-validator";
 
 // ─── Main write function ──────────────────────────────────────────────────────
 
@@ -117,20 +118,23 @@ export async function persistOnboardingExtraction(
     );
   }
 
-  // 4. Write reality facts (academic constraints, work, health)
+  // 4. Reality facts (academic constraints, work, health) are claims from an
+  //    LLM extraction: evidence, consolidated like any other (SKILL.md §11.7).
   if (validated.realityFacts.length > 0) {
-    await Promise.allSettled(
-      validated.realityFacts.map(rf =>
-        writeRealityFact(
-          userId,
-          mapRealityCategory(rf.category),
-          rf.description,
-          rf.description,
-          0.85,
-          180, // 180-day TTL — reality facts are semi-permanent
-        )
-      )
-    );
+    const now = new Date();
+    await runConsolidation({
+      userId, profileId, now,
+      evidence: buildOnboardingRealityEvidence({
+        userId, profileId,
+        observedAt:   now,
+        confidence:   0.85,
+        realityFacts: validated.realityFacts,
+      }),
+      patternScanRan:   false,
+      hasActiveSession: false,
+      recentSessions:   [],
+      subjects:         [],
+    });
   }
 
   return profileId;
@@ -211,17 +215,6 @@ export async function loadOnboardingState(userId: string): Promise<{
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function mapRealityCategory(raw: string): import("../types/reality.types.js").RealityCategory {
-  const map: Record<string, import("../types/reality.types.js").RealityCategory> = {
-    time_constraint:     "time_constraint",
-    work_constraint:     "work_constraint",
-    health_constraint:   "health_constraint",
-    academic_constraint: "academic_constraint",
-    other:               "other",
-  };
-  return map[raw] ?? "other";
-}
 
 function parseRelativeDate(raw: string | null): Date | null {
   if (!raw) return null;

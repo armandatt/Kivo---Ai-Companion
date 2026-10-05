@@ -1,0 +1,74 @@
+# Render Blueprint — Kivo / Nova API
+#
+#   Vercel (apps/web)  →  Render (apps/api)  →  Neon PostgreSQL
+#
+# One service. The API is a long-running Next.js server that also runs the
+# 5-minute scheduler in-process (apps/api/instrumentation.ts), so there is no
+# Render Cron Job and no Background Worker: adding either would run the same
+# jobs twice.
+#
+# Secrets are never written here. `sync: false` means "set the value in the
+# Render dashboard".
+
+services:
+  - type: web
+    name: kivo-api
+    runtime: node
+    region: virginia            # same region as the Neon database (us-east-1)
+    plan: starter               # must be an always-on plan: a sleeping instance stops the scheduler
+    numInstances: 1             # per-chat locks and the scheduler live in process memory; do not scale out
+    branch: main
+    autoDeploy: false           # deploy deliberately while Railway is still the live backend
+
+    # devDependencies are needed at build time (prisma CLI, typescript).
+    buildCommand: npm ci --include=dev && npx prisma generate --schema packages/db/prisma/schema.prisma && npm run build --workspace api
+    # Binds 0.0.0.0 on Render's $PORT (apps/api: `next start --port ${PORT:-3001}`).
+    startCommand: npm run start --workspace api
+    healthCheckPath: /api/health
+
+    envVars:
+      - key: NODE_VERSION
+        value: 22.14.0          # Next 16 and Prisma 7 need a current Node 22
+
+      # ── Database: the existing Neon project. Nothing is migrated. ───────────
+      - key: DATABASE_URL       # pooled connection string; required at build and at runtime
+        sync: false
+      - key: DIRECT_URL         # direct connection; used only by the Prisma CLI
+        sync: false
+
+      # ── Secrets ─────────────────────────────────────────────────────────────
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET   # must equal the secret_token given to setWebhook
+        sync: false
+      - key: JWT_SECRET                # must equal the value on Vercel
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+
+      # ── Non-secret configuration: copy the values from Railway ──────────────
+      - key: GOOGLE_REDIRECT_URI       # https://<web-domain>/api/auth/google/callback
+        sync: false
+      - key: NEXT_PUBLIC_APP_URL       # https://<web-domain>
+        sync: false
+      - key: BOT_USERNAME              # Telegram bot username, without @
+        sync: false
+      - key: OPENAI_MODEL              # optional; omit to use the code default
+        sync: false
+
+      # ── Feature flags: must match Railway exactly, or behaviour changes ─────
+      - key: MENTOR_V3_ENABLED
+        sync: false
+      - key: ONBOARDING_V3_ENABLED
+        sync: false
+
+      # ── Scheduler ownership ─────────────────────────────────────────────────
+      # "true" while Railway is still live, so only ONE backend runs the
+      # check-in / proactive / retry / cleanup jobs. Set to "false" at cutover,
+      # in the same step that stops the scheduler on Railway.
+      - key: DISABLE_INTERNAL_CHECKIN_CRON
+        value: "true"

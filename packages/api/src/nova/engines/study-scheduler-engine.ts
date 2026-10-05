@@ -4,8 +4,8 @@
 // NEVER makes LLM calls. Deterministic.
 // Owner: Phase 5 Proactive Mentor System.
 
-import type { SchedulingDecision, InterventionType, MomentumState } from "../types/proactive.types.js";
-import { INTERVENTION_BASE_PRIORITY } from "../types/proactive.types.js";
+import type { SchedulingDecision, InterventionType, MomentumState } from "../types/proactive.types";
+import { INTERVENTION_BASE_PRIORITY } from "../types/proactive.types";
 
 export interface SchedulerInput {
   momentum:                 MomentumState;

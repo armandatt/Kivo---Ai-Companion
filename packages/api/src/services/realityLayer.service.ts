@@ -17,13 +17,26 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { prisma } from "@repo/db/client";
+import {
+  normalizeSubtype,
+  realityProvenance,
+  type RealityCategory as SharedRealityCategory,
+} from "../types/reality.types";
 
-export type RealityCategory =
-  | "health"
-  | "injury"
-  | "emotional"
-  | "life_constraint"
-  | "training_context";
+// The categories Rex writes: a subset of the shared canonical vocabulary
+// (src/types/reality.types.ts). Rex does not define its own.
+export type RealityCategory = Exclude<SharedRealityCategory, "academic_constraint">;
+
+// Canonical shape for every row Rex writes: subtype from the shared closed
+// list, and provenance in the shared shape.
+function canonicalFields(category: RealityCategory, subtype: string | null, source: string, confidence: number) {
+  return {
+    subtype:    normalizeSubtype(category, subtype),
+    provenance: realityProvenance({
+      source, sourceMessageId: null, observedAt: new Date().toISOString(), confidence,
+    }),
+  };
+}
 
 export interface UserRealityFact {
   id: string;
@@ -82,6 +95,7 @@ export async function writeRealityFact(
   relevanceScore: number,
   ttlHours: number,
   sourceText?: string,
+  subtype: string | null = null,
 ): Promise<void> {
   const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000);
   const user = await prisma.messengerUser.findUnique({
@@ -99,7 +113,10 @@ export async function writeRealityFact(
   if (user.realities.length > 0) return; // dedup: same category written in last 4h
 
   await prisma.userReality.create({
-    data: { userId: user.id, category, fact, confidence, relevanceScore, sourceText, expiresAt },
+    data: {
+      userId: user.id, category, fact, confidence, relevanceScore, sourceText, expiresAt,
+      ...canonicalFields(category, subtype, "rex_extractor", confidence),
+    },
   });
   const all = await prisma.userReality.findMany({
     where: { userId: user.id, isActive: true },
@@ -120,6 +137,7 @@ async function writeReality(
   fact: string,
   confidence: number,
   sourceText?: string,
+  subtype: string | null = null,
 ): Promise<void> {
   const expiresAt = new Date(Date.now() + CATEGORY_TTL_HOURS[category] * 60 * 60 * 1000);
 
@@ -130,7 +148,10 @@ async function writeReality(
   if (!user) return;
 
   await prisma.userReality.create({
-    data: { userId: user.id, category, fact, confidence, sourceText, expiresAt },
+    data: {
+      userId: user.id, category, fact, confidence, sourceText, expiresAt,
+      ...canonicalFields(category, subtype, "rex_parser", confidence),
+    },
   });
 
   // Trim oldest entries beyond the cap
@@ -165,6 +186,7 @@ export function writeRealityFromV2Signals(
           `User reported illness: "${snippet}"`,
           0.9,
           text,
+          "illness",
         );
       }
       if (signals.includes("INJURY_CONTEXT")) {
@@ -174,6 +196,7 @@ export function writeRealityFromV2Signals(
           `User reported injury: "${snippet}"`,
           0.9,
           text,
+          "injury",
         );
       }
     } catch (err) {

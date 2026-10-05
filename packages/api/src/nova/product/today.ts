@@ -1,0 +1,263 @@
+// ─── Today view builder ───────────────────────────────────────────────────────
+// Composes the Home page's answer to "what should I do right now?" from the
+// engines that already decide it: Academic State, Knowledge, Retention, Exam,
+// and Planning. Read-only. No LLM call, no writes, and no decision logic of
+// its own: it selects from the plan the Planning Engine produced and reports
+// the facts behind it.
+
+import { prisma } from "@repo/db/client";
+import { loadStudySnapshot, type StudySnapshotResult } from "../engines/study-snapshot";
+import { computeAcademicState } from "../engines/academic-state-engine";
+import { getAllTopicMasteries } from "../engines/knowledge-engine";
+import { getOverdueTopics } from "../engines/retention-engine";
+import { selectActiveExam } from "../engines/exam-engine";
+import { generateStudyPlan } from "../engines/planning-engine";
+import { normalizeStoredReality } from "../types/reality.types";
+import type { AcademicState } from "../types/academic-state.types";
+import type { ExamContext, StudyBlock, StudyPlan, TopicMasteryState } from "../types/engine.types";
+import type { AcademicUnderstanding } from "../types/understanding.types";
+import type {
+  NovaTodayReady,
+  NovaTodayView,
+  TodayAction,
+  TodayConstraint,
+} from "./today.types";
+
+const DAY_MS = 86_400_000;
+const MIN_USEFUL_MINUTES = 10;
+
+// No student message is being interpreted when the page loads.
+const NO_MESSAGE: AcademicUnderstanding = {
+  intent: "general_chat", emotion: "neutral", topic: null, topicConfidence: 0,
+  disclosureClass: "none", ambiguityScore: 0, routingSignal: "coaching_only", rawText: "",
+};
+
+// ── Pure builder ──────────────────────────────────────────────────────────────
+
+export interface TodayInputs {
+  snapshot:         StudySnapshotResult;
+  academicState:    AcademicState;
+  topics:           TopicMasteryState[];
+  examContext:      ExamContext | null;
+  plan:             StudyPlan;
+  constraints:      TodayConstraint[];
+  availableMinutes: number | null;
+  now:              Date;
+}
+
+function daysBetween(later: Date, earlier: Date): number {
+  return Math.floor((later.getTime() - earlier.getTime()) / DAY_MS);
+}
+
+// The facts behind a block, stated the way a student would want to hear them.
+function reasonsFor(
+  block:       StudyBlock,
+  topic:       TopicMasteryState | undefined,
+  examContext: ExamContext | null,
+  now:         Date,
+): string[] {
+  const reasons: string[] = [];
+
+  if (examContext && (block.activityType === "exam_prep" || examContext.subjectName === block.subjectName)) {
+    reasons.push(examContext.daysUntil <= 0 ? "exam today"
+      : examContext.daysUntil === 1 ? "exam tomorrow"
+      : `exam in ${examContext.daysUntil} days`);
+  }
+  if (topic) {
+    const pct = Math.round(topic.masteryProbability * 100);
+    if (topic.reviewCount === 0) reasons.push("not studied yet");
+    else if (pct < 40) reasons.push(`weak mastery (${pct}%)`);
+    else if (pct < 70) reasons.push(`developing (${pct}%)`);
+
+    if (topic.reviewDueAt && topic.reviewDueAt < now) {
+      const overdue = daysBetween(now, topic.reviewDueAt);
+      reasons.push(overdue <= 0 ? "review due today" : `review ${overdue} day${overdue === 1 ? "" : "s"} overdue`);
+    }
+    if (topic.calibrationGap < -0.25) reasons.push("feels stronger than it tests");
+  }
+  if (block.urgency === "critical" && reasons.length === 0) reasons.push("highest priority today");
+  return reasons;
+}
+
+function toAction(
+  block:            StudyBlock,
+  topics:           TopicMasteryState[],
+  examContext:      ExamContext | null,
+  availableMinutes: number | null,
+  now:              Date,
+): TodayAction {
+  const topic = topics.find(t => t.topicId === block.topicId)
+    ?? topics.find(t => t.topicName === block.topicName && t.subjectName === block.subjectName);
+  const fits = availableMinutes === null || block.durationMinutes <= availableMinutes;
+  return {
+    topicName:       block.topicName,
+    subjectName:     block.subjectName,
+    activityType:    block.activityType,
+    durationMinutes: fits ? block.durationMinutes : Math.max(MIN_USEFUL_MINUTES, availableMinutes!),
+    urgency:         block.urgency,
+    reasons:         reasonsFor(block, topic, examContext, now),
+    rationale:       block.rationale,
+    trimmedToFit:    !fits,
+  };
+}
+
+export function buildTodayView(input: TodayInputs): NovaTodayReady {
+  const { snapshot, academicState, topics, examContext, plan, now } = input;
+
+  const actions = plan.today.map(b => toAction(b, topics, examContext, input.availableMinutes, now));
+  const recommendation = actions[0] ?? null;
+
+  const mode: NovaTodayReady["plan"]["mode"] =
+    academicState.hardDirectives.examCrisisMode ? "exam_crisis"
+    : academicState.hardDirectives.recoveryMode ? "recovery"
+    : "standard";
+
+  const emptyReason: NovaTodayReady["emptyReason"] = recommendation ? null
+    : topics.length === 0 ? "no_topics"
+    : mode === "recovery" ? "recovery"
+    : "nothing_due";
+
+  const weekAgo   = new Date(now.getTime() - 7 * DAY_MS);
+  const completed = snapshot.studySessions.filter(s => s.status === "completed");
+  const thisWeek  = completed.filter(s => s.sessionDate >= weekAgo);
+  const last      = [...completed].sort((a, b) => b.sessionDate.getTime() - a.sessionDate.getTime())[0];
+
+  const overdue = getOverdueTopics(topics);
+  const studied = topics.filter(t => t.reviewCount > 0);
+  const weakest = [...studied].sort((a, b) => a.masteryProbability - b.masteryProbability)[0];
+
+  const nextExam = [...snapshot.upcomingExams].sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())[0];
+  const active   = snapshot.activeSession;
+
+  return {
+    status:           "ready",
+    generatedAt:      now.toISOString(),
+    subjects:         snapshot.subjects.map(s => s.name),
+    availableMinutes: input.availableMinutes,
+
+    recommendation,
+    emptyReason,
+    alternatives: actions.slice(1, 3),
+
+    activeSession: active ? {
+      id:          active.id,
+      topicName:   active.topicName,
+      subjectName: active.subjectName,
+      status:      active.status === "paused" ? "paused" : "in_progress",
+      startedAt:   active.startedAt.toISOString(),
+      elapsedMinutes: Math.max(0, Math.floor((now.getTime() - active.startedAt.getTime()) / 60_000) - active.totalPausedMinutes),
+      plannedDurationMinutes: active.plannedDurationMinutes,
+    } : null,
+
+    nextDeadline: nextExam ? {
+      title:       nextExam.title,
+      subjectName: nextExam.subjectName,
+      examType:    nextExam.examType,
+      scheduledAt: nextExam.scheduledAt.toISOString(),
+      daysUntil:   Math.max(0, Math.ceil((nextExam.scheduledAt.getTime() - now.getTime()) / DAY_MS)),
+    } : null,
+
+    weakArea: weakest && weakest.masteryProbability < 0.7 ? {
+      topicName:      weakest.topicName,
+      subjectName:    weakest.subjectName,
+      masteryPercent: Math.round(weakest.masteryProbability * 100),
+      lastStudiedAt:  weakest.lastStudied?.toISOString() ?? null,
+      reviewDue:      Boolean(weakest.reviewDueAt && weakest.reviewDueAt < now),
+    } : null,
+
+    reviewDue: {
+      count:  overdue.length,
+      topics: overdue.slice(0, 3).map(t => ({
+        topicName:   t.topicName,
+        subjectName: t.subjectName,
+        daysOverdue: t.reviewDueAt ? Math.max(0, daysBetween(now, t.reviewDueAt)) : 0,
+      })),
+    },
+
+    constraints: input.constraints,
+
+    progress: {
+      sessionsThisWeek:     thisWeek.length,
+      minutesThisWeek:      thisWeek.reduce((sum, s) => sum + s.durationMinutes, 0),
+      streakDays:           academicState.studyStreakDays,
+      daysSinceLastSession: last ? Math.max(0, daysBetween(now, last.sessionDate)) : null,
+      lastSession:          last ? { topicName: last.topicName, date: last.sessionDate.toISOString(), minutes: last.durationMinutes } : null,
+    },
+
+    plan: {
+      mode,
+      blockCount:        plan.today.length,
+      totalMinutesToday: plan.totalMinutesToday,
+      assumptions:       plan.assumptions,
+    },
+  };
+}
+
+// ── Loader ────────────────────────────────────────────────────────────────────
+
+async function loadActiveConstraints(userId: string, now: Date): Promise<TodayConstraint[]> {
+  const rows = await prisma.userReality.findMany({
+    where:   { userId, isActive: true, expiresAt: { gt: now }, confidence: { gte: 0.5 } },
+    orderBy: { createdAt: "desc" },
+    take:    5,
+    select:  { category: true, subtype: true, fact: true, expiresAt: true },
+  });
+  return rows.map(r => ({
+    ...normalizeStoredReality(r.category, r.subtype),
+    description: r.fact,
+    expiresAt:   r.expiresAt.toISOString(),
+  }));
+}
+
+export async function loadNovaToday(
+  platformChatId: string,
+  options: { availableMinutes?: number | null; now?: Date } = {},
+): Promise<NovaTodayView> {
+  const now = options.now ?? new Date();
+
+  const user = await prisma.messengerUser.findUnique({
+    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    select: { id: true, novaAcademicProfile: { select: { onboardingComplete: true } } },
+  });
+  if (!user) return { status: "not_connected" };
+  if (!user.novaAcademicProfile?.onboardingComplete) return { status: "onboarding_incomplete" };
+
+  const snapshot = await loadStudySnapshot(platformChatId);
+  if (!snapshot.profileId) return { status: "onboarding_incomplete" };
+
+  const [topics, constraints] = await Promise.all([
+    getAllTopicMasteries(snapshot.profileId),
+    loadActiveConstraints(user.id, now),
+  ]);
+
+  const academicState = computeAcademicState({
+    semesterStartDate:       snapshot.semesterStartDate,
+    semesterEndDate:         snapshot.semesterEndDate,
+    daysSinceJoined:         snapshot.daysSinceJoined,
+    studySessions:           snapshot.studySessions,
+    upcomingExams:           snapshot.upcomingExams,
+    stateHistory:            snapshot.stateHistory,
+    signals:                 { detectedSignals: [], stateUpdates: [] },
+    mentionedTopicMastery:   null,
+    understanding:           NO_MESSAGE,
+    storedScores:            snapshot.storedScores,
+    storedStreakDays:        snapshot.storedStreakDays,
+    storedConsecutiveMisses: snapshot.storedConsecutiveMisses,
+  }, now);
+
+  const examContext = selectActiveExam(
+    snapshot.upcomingExams.map(e => ({
+      id: e.id, title: e.title, subjectName: e.subjectName, scheduledAt: e.scheduledAt, examType: e.examType,
+    })),
+    {},
+    now,
+  );
+
+  const plan = generateStudyPlan(academicState, topics, snapshot.preferredStudyHoursPerDay, examContext);
+
+  const minutes = options.availableMinutes;
+  return buildTodayView({
+    snapshot, academicState, topics, examContext, plan, constraints, now,
+    availableMinutes: typeof minutes === "number" && minutes > 0 ? Math.min(Math.round(minutes), 600) : null,
+  });
+}

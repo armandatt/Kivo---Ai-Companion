@@ -11,14 +11,14 @@ import type {
   HardDirectives,
   MomentaryState,
   SemesterPhase,
-} from "../types/academic-state.types.js";
+} from "../types/academic-state.types";
 import {
   STATE_BASELINES,
   STATE_DECAY_RATES,
-} from "../types/academic-state.types.js";
-import type { AcademicUnderstanding } from "../types/understanding.types.js";
-import type { SignalEngineOutput } from "../types/engine.types.js";
-import type { TopicMasteryState } from "../types/engine.types.js";
+} from "../types/academic-state.types";
+import type { AcademicUnderstanding } from "../types/understanding.types";
+import type { SignalEngineOutput } from "../types/engine.types";
+import type { TopicMasteryState } from "../types/engine.types";
 
 // ── Raw DB data for state computation ─────────────────────────────────────────
 

@@ -5,9 +5,9 @@
 // NEVER makes LLM calls. NEVER modifies DB.
 // Owner: Study Session Engine.
 
-import type { AcademicUnderstanding } from "../types/understanding.types.js";
-import type { SignalEngineOutput } from "../types/engine.types.js";
-import type { ActiveSessionInfo } from "./study-snapshot.js";
+import type { AcademicUnderstanding } from "../types/understanding.types";
+import type { SignalEngineOutput } from "../types/engine.types";
+import type { ActiveSessionInfo } from "./study-snapshot";
 import type {
   SessionContext,
   SessionAction,
@@ -15,7 +15,7 @@ import type {
   SessionExecutionReport,
   FocusQuality,
   CompletionStatus,
-} from "../types/session.types.js";
+} from "../types/session.types";
 
 // ── Build SessionContext from raw snapshot data ────────────────────────────────
 // Called by the orchestrator after snapshot load.

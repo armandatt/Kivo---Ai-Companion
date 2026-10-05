@@ -4,7 +4,7 @@
 // Every function here is pure: same input always produces same output.
 // Owner: Validator layer.
 
-import type { AcademicExtractedFacts } from "./nova-onboarding-extractor.js";
+import type { AcademicExtractedFacts } from "./nova-onboarding-extractor";
 
 // ── Degree normalization ──────────────────────────────────────────────────────
 

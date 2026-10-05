@@ -52,6 +52,19 @@ export type RoutingSignal =
   | "coaching_only"         // no engine needed, pure coaching
   | "reality_extraction";   // disclosure that warrants reality extractor
 
+// A real-world circumstance the student disclosed, as the Understanding Brain
+// read it. This is an observation, not a stored fact: it becomes evidence,
+// and only consolidation decides whether UserReality changes (SKILL.md §9).
+export interface RealityObservation {
+  category:    import("./reality.types").NovaRealityCategory;
+  subtype:     string;
+  claim:       string;                    // third person, present tense
+  status:      "active" | "resolved";     // "resolved": the student says it has ended
+  persistence: "temporary" | "standing";
+  expectedDurationHours: number | null;
+  confidence:  number;                    // 0–1
+}
+
 export interface AcademicUnderstanding {
   intent: AcademicIntent;
   emotion: AcademicEmotion;
@@ -61,4 +74,15 @@ export interface AcademicUnderstanding {
   ambiguityScore: number;            // 0–1 — triggers disambiguation pass if > 0.6
   routingSignal: RoutingSignal;
   rawText: string;                   // original message, for downstream use
+  // Other things the same message clearly says, beyond `intent`. One message
+  // can report studying and vent in the same breath; `intent` is the dominant
+  // one and drives the reply, and the rest are kept here so their evidence is
+  // not lost. At most two. Absent is treated as none.
+  secondaryIntents?: AcademicIntent[];
+  // "start": the student says they are beginning or resuming studying right now.
+  // "break": the student says they are stopping for a break.
+  // Absent is treated as "none".
+  sessionIntent?: "start" | "break" | "none";
+  // Absent or empty: the message disclosed no real-world circumstance.
+  realityObservations?: RealityObservation[];
 }

@@ -4,11 +4,11 @@
 // LLM can express or adjust a plan in a reply, but code owns the algorithm.
 // Owner: Planning Engine.
 
-import type { StudyBlock, StudyPlan } from "../types/engine.types.js";
-import type { AcademicState } from "../types/academic-state.types.js";
-import type { TopicMasteryState } from "../types/engine.types.js";
-import type { ExamContext } from "../types/engine.types.js";
-import { getOverdueTopics, getExamPriorityOrder } from "./retention-engine.js";
+import type { StudyBlock, StudyPlan } from "../types/engine.types";
+import type { AcademicState } from "../types/academic-state.types";
+import type { TopicMasteryState } from "../types/engine.types";
+import type { ExamContext } from "../types/engine.types";
+import { getOverdueTopics, getExamPriorityOrder } from "./retention-engine";
 
 // ── Time budget ───────────────────────────────────────────────────────────────
 

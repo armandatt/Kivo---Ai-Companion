@@ -52,7 +52,8 @@ function intervention(overrides: Partial<InterventionDecision> = {}): Interventi
 function healthFact(): NovaRealityFact {
   return {
     id:          "r1",
-    category:    "health_constraint",
+    category:    "health",
+    subtype:     "illness",
     description: "flu",
     confidence:  0.9,
     relevance:   0.9,

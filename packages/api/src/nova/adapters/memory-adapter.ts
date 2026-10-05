@@ -1,13 +1,13 @@
 // ─── Memory Adapter ───────────────────────────────────────────────────────────
-// Bridges NovaUserFact and NovaCognitiveState to the DB.
-// Reuses Rex's MemoryFact table (userId + type + key as compound unique).
+// Read side of the UserFact store: scored retrieval for the current turn.
 // SKILL.md §11: UserFacts = scored retrieval, CognitiveState = typed retrieval.
+// Read-only. Facts are written by the consolidation layer and nowhere else.
 // Owner: Memory Adapter. No LLM calls.
 
 import { prisma } from "@repo/db/client";
-import type { NovaUserFact, NovaCognitiveState } from "../types/memory.types.js";
-import { MEMORY_INTENT_OVERLAP } from "../types/memory.types.js";
-import type { AcademicUnderstanding } from "../types/understanding.types.js";
+import type { NovaUserFact, NovaCognitiveState } from "../types/memory.types";
+import { MEMORY_INTENT_OVERLAP } from "../types/memory.types";
+import type { AcademicUnderstanding } from "../types/understanding.types";
 
 // ── Retrieve relevant memories ─────────────────────────────────────────────────
 
@@ -16,9 +16,9 @@ export async function getRelevantMemories(
   understanding: AcademicUnderstanding,
   limit = 6,
 ): Promise<{ top: NovaUserFact[]; contrastive: NovaUserFact[] }> {
-  const facts = await prisma.memoryFact.findMany({
-    where:   { userId },
-    orderBy: { createdAt: "desc" },
+  const facts = await prisma.userFact.findMany({
+    where:   { userId, status: "active" },
+    orderBy: { lastObservedAt: "desc" },
     take:    50,
   });
 
@@ -28,7 +28,7 @@ export async function getRelevantMemories(
     const intentOverlap = MEMORY_INTENT_OVERLAP[understanding.intent];
     if (intentOverlap?.includes(f.type as NovaUserFact["factType"])) score += 20;
 
-    const ageDays = (Date.now() - f.createdAt.getTime()) / 86_400_000;
+    const ageDays = (Date.now() - f.lastObservedAt.getTime()) / 86_400_000;
     score += Math.max(0, 30 - ageDays * 0.5);
 
     score += f.confidence * 15;
@@ -48,8 +48,8 @@ export async function getRelevantMemories(
     value:         s.fact.value,
     confidence:    s.fact.confidence,
     relevance:     Math.min(1, s.score / 100),
-    lastUpdated:   s.fact.createdAt,
-    evidenceCount: 1,
+    lastUpdated:   s.fact.lastObservedAt,
+    evidenceCount: s.fact.evidenceCount,
   });
 
   const top = scored.slice(0, limit).map(toFact);
@@ -60,29 +60,6 @@ export async function getRelevantMemories(
     .map(toFact);
 
   return { top, contrastive };
-}
-
-// ── Write a memory fact ────────────────────────────────────────────────────────
-
-export async function writeMemoryFact(
-  userId:     string,
-  factType:   string,
-  key:        string,
-  value:      string,
-  confidence: number,
-  upsert:     boolean,
-): Promise<void> {
-  if (upsert) {
-    await prisma.memoryFact.upsert({
-      where:  { userId_type_key: { userId, type: factType, key } },
-      update: { value, confidence },
-      create: { userId, type: factType, key, value, confidence },
-    });
-  } else {
-    await prisma.memoryFact.create({
-      data: { userId, type: factType, key, value, confidence },
-    });
-  }
 }
 
 // ── Load cognitive state ──────────────────────────────────────────────────────
@@ -102,31 +79,4 @@ export async function loadCognitiveState(profileId: string): Promise<NovaCogniti
     followUpChecks:           stored?.followUpChecks ?? null,
     reasoningHistory:         stored?.reasoningHistory ?? null,
   };
-}
-
-// ── Persist cognitive state update (from Response Brain output) ────────────────
-
-export async function persistCognitiveStateUpdate(
-  profileId: string,
-  update:    import("../types/response.types.js").ResponseBrainOutput["investigationUpdate"],
-): Promise<void> {
-  if (!update) return;
-
-  await prisma.novaCognitiveState.upsert({
-    where:  { profileId },
-    update: {
-      investigationTopic:       update.topic ?? undefined,
-      investigationStatus:      update.status ?? undefined,
-      investigationAttempts:    { increment: 1 },
-      investigationHypotheses:  update.hypotheses ?? undefined,
-      investigationUpdatedAt:   new Date(),
-    },
-    create: {
-      profileId,
-      investigationTopic:      update.topic ?? null,
-      investigationStatus:     update.status ?? null,
-      investigationAttempts:   1,
-      investigationHypotheses: update.hypotheses ?? [],
-    },
-  });
 }

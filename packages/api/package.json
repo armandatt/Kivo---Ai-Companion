@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "jest --config jest.config.ts"
+    "test": "jest --config jest.config.ts",
+    "test:integration": "tsx --test src/nova/__integration__/nova-persist-turn.itest.ts"
   },
   "exports": {
     "./processor/*": "./src/processor/*",
@@ -15,12 +16,17 @@
     "./types/*": "./src/types/*",
     "./nova": "./src/nova/nova-orchestrator.ts",
     "./nova/types": "./src/nova/types/index.ts",
+    "./nova/commands": "./src/nova/commands.ts",
+    "./nova/entry": "./src/nova/entry.ts",
+    "./nova/product/*": "./src/nova/product/*",
     "./nova/engines/*": "./src/nova/engines/*",
     "./nova/decision/*": "./src/nova/decision/*",
     "./nova/brains/*": "./src/nova/brains/*",
     "./nova/adapters/*": "./src/nova/adapters/*",
     "./nova/context/*": "./src/nova/context/*",
-    "./nova/persistence/*": "./src/nova/persistence/*"
+    "./nova/persistence/*": "./src/nova/persistence/*",
+    "./nova/proactive/*": "./src/nova/proactive/*",
+    "./nova/onboarding/*": "./src/nova/onboarding/*"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

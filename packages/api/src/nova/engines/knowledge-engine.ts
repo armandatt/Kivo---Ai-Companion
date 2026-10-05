@@ -6,7 +6,7 @@
 // Owner: Knowledge Engine.
 
 import { prisma } from "@repo/db/client";
-import type { TopicMasteryState } from "../types/engine.types.js";
+import type { TopicMasteryState } from "../types/engine.types";
 
 // ── FSRS-lite retention estimate ──────────────────────────────────────────────
 // Simplified retention curve based on Ebbinghaus with efFactor scaling.

@@ -53,7 +53,8 @@ function scheduling(overrides: Partial<SchedulingDecision> = {}): SchedulingDeci
 function healthFact(): NovaRealityFact {
   return {
     id:          "reality-1",
-    category:    "health_constraint",
+    category:    "health",
+    subtype:     "illness",
     description: "recovering from illness",
     confidence:  0.9,
     relevance:   0.9,

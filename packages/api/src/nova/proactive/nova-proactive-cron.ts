@@ -17,18 +17,21 @@
 //  10. Persist NovaProactiveMessage (cooldown + dedup record)
 
 import { prisma } from "@repo/db/client";
-import { loadStudySnapshot } from "../engines/study-snapshot.js";
-import { computeAcademicState } from "../engines/academic-state-engine.js";
-import { computeMomentumState } from "../engines/study-momentum-engine.js";
-import { computeSchedulingDecision } from "../engines/study-scheduler-engine.js";
-import { computeIntervention } from "../engines/intervention-engine.js";
-import { runProactiveDecisionGraph } from "../decision/proactive-decision-graph.js";
-import { runProactiveResponseBrain } from "./nova-proactive-response.js";
-import { getLocalHHMM, isInQuietHours } from "../../services/schedulerEngine.service.js";
-import { STATE_BASELINES } from "../types/academic-state.types.js";
-import type { NovaRealityFact, RealityCategory } from "../types/reality.types.js";
-import type { InterventionType } from "../types/proactive.types.js";
-import { INTERVENTION_COOLDOWN_HOURS } from "../types/proactive.types.js";
+import { loadStudySnapshot } from "../engines/study-snapshot";
+import { computeAcademicState } from "../engines/academic-state-engine";
+import { computeMomentumState } from "../engines/study-momentum-engine";
+import { computeSchedulingDecision } from "../engines/study-scheduler-engine";
+import { computeIntervention } from "../engines/intervention-engine";
+import { runProactiveDecisionGraph } from "../decision/proactive-decision-graph";
+import { runProactiveResponseBrain } from "./nova-proactive-response";
+import { getLocalHHMM, isInQuietHours } from "../../services/schedulerEngine.service";
+import { STATE_BASELINES } from "../types/academic-state.types";
+import type { NovaRealityFact } from "../types/reality.types";
+import { normalizeStoredReality } from "../types/reality.types";
+import type { InterventionType } from "../types/proactive.types";
+import { INTERVENTION_COOLDOWN_HOURS } from "../types/proactive.types";
+import { saveAssistantMessage, userMessagedSince } from "../adapters/conversation-adapter";
+import { retryPendingConsolidations } from "../consolidation/run-consolidation";
 
 export interface NovaProactiveCronResult {
   ok:       boolean;
@@ -41,6 +44,12 @@ export interface NovaProactiveCronResult {
 
 export async function runNovaProactiveCron(now = new Date()): Promise<NovaProactiveCronResult> {
   console.log(`[nova:cron] Proactive tick at ${now.toISOString()}`);
+
+  // Consolidation retry worker: failed, abandoned or never-started jobs.
+  // Independent of sending, so it runs before the token check.
+  await retryPendingConsolidations(now)
+    .then(r => { if (r.retried > 0) console.log(`[nova:cron] consolidation retries: ${r.completed}/${r.retried} completed`); })
+    .catch(err => console.error("[nova:cron] consolidation retry failed", err));
 
   const token = process.env.TELEGRAM_BOT_TOKEN ?? process.env.BOT_TOKEN;
   if (!token) {
@@ -115,7 +124,7 @@ async function processNovaUser(
   }
 
   // Check if messaged in last 5 minutes (lighter than Rex's 10-min check)
-  const recentlyMessaged = await messagedRecently(chatId, now, 5);
+  const recentlyMessaged = await userMessagedSince(profile.user.id, new Date(now.getTime() - 5 * 60_000));
   if (recentlyMessaged) return false;
 
   // ── Step 1: Load Academic Snapshot + Reality (parallel) ───────────────────
@@ -134,7 +143,7 @@ async function processNovaUser(
     studySessions:           snapshot.studySessions,
     upcomingExams:           snapshot.upcomingExams,
     stateHistory:            snapshot.stateHistory,
-    signals:                 { detectedSignals: [], stateUpdates: [], memoryWrites: [] },
+    signals:                 { detectedSignals: [], stateUpdates: [] },
     mentionedTopicMastery:   null,
     understanding:           buildNullUnderstanding(),
     storedScores:            snapshot.storedScores,
@@ -226,28 +235,13 @@ async function processNovaUser(
   await sendTelegramMessage(chatId, text, token);
 
   // ── Step 10: Persist conversation turn ────────────────────────────────────
-  await persistProactiveMessage(snapshot.profileId!, chatId, text, decision.finalInterventionType);
+  await persistProactiveMessage(profile.user.id, text, decision.finalInterventionType, now);
 
   console.log(`[nova:cron] Sent ${decision.finalInterventionType} to ${chatId}`);
   return true;
 }
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
-
-async function messagedRecently(chatId: string, now: Date, minutes: number): Promise<boolean> {
-  const since = new Date(now.getTime() - minutes * 60_000);
-  const user  = await prisma.messengerUser.findUnique({
-    where:  { platform_platformChatId: { platform: "telegram", platformChatId: chatId } },
-    select: {
-      messages: {
-        where:  { role: "user", createdAt: { gte: since } },
-        select: { id: true },
-        take:   1,
-      },
-    },
-  });
-  return Boolean(user?.messages.length);
-}
 
 async function loadProactiveRealityFacts(userId: string, now: Date): Promise<NovaRealityFact[]> {
   const stored = await prisma.userReality.findMany({
@@ -260,7 +254,7 @@ async function loadProactiveRealityFacts(userId: string, now: Date): Promise<Nov
     .filter(r => r.confidence >= 0.5)
     .map(r => ({
       id:          r.id,
-      category:    (r.category ?? "other") as RealityCategory,
+      ...normalizeStoredReality(r.category, r.subtype),
       description: r.fact,
       confidence:  r.confidence,
       relevance:   0.8,   // all active facts are relevant to proactive decisions
@@ -329,26 +323,14 @@ async function persistProactiveDecision(
 }
 
 async function persistProactiveMessage(
-  profileId:        string,
-  chatId:           string,
+  userId:           string,
   text:             string,
   interventionType: InterventionType,
+  now:              Date,
 ): Promise<void> {
-  // Store as a CompanionMessage so it appears in conversation history
-  const user = await prisma.messengerUser.findUnique({
-    where:  { platform_platformChatId: { platform: "telegram", platformChatId: chatId } },
-    select: { id: true },
-  });
-  if (!user) return;
-
-  await prisma.companionMessage.create({
-    data: {
-      userId:  user.id,
-      role:    "assistant",
-      text,
-      intent:  `nova_proactive_${interventionType}`,
-    },
-  }).catch(err => console.error("[nova:cron] persist message failed", err));
+  // Goes through the conversation adapter so it appears in Nova's history.
+  await saveAssistantMessage(userId, text, `nova_proactive_${interventionType}`, { interventionType }, now)
+    .catch(err => console.error("[nova:cron] persist message failed", err));
 }
 
 // ── Send ──────────────────────────────────────────────────────────────────────

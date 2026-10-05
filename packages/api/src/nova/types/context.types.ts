@@ -3,14 +3,14 @@
 // and state loaders have run. The Decision Graph consumes it. The Context
 // Builder produces the dynamic layer from it for the Response Brain.
 
-import type { AcademicUnderstanding } from "./understanding.types.js";
-import type { AcademicState } from "./academic-state.types.js";
-import type { SignalEngineOutput, TopicMasteryState, ExamContext, StudyPlan, PatternAnalysis } from "./engine.types.js";
-import type { NovaUserFact, NovaCognitiveState } from "./memory.types.js";
-import type { NovaRealityFact } from "./reality.types.js";
-import type { DecisionGraphOutput } from "./response.types.js";
-import type { ActiveSessionInfo } from "../engines/study-snapshot.js";
-import type { SessionContext, SessionAction } from "./session.types.js";
+import type { AcademicUnderstanding } from "./understanding.types";
+import type { AcademicState } from "./academic-state.types";
+import type { SignalEngineOutput, TopicMasteryState, ExamContext, StudyPlan, PatternAnalysis } from "./engine.types";
+import type { NovaUserFact, NovaCognitiveState } from "./memory.types";
+import type { NovaRealityFact } from "./reality.types";
+import type { DecisionGraphOutput } from "./response.types";
+import type { ActiveSessionInfo } from "../engines/study-snapshot";
+import type { SessionContext, SessionAction } from "./session.types";
 
 export interface NovaUserProfile {
   displayName:              string;
@@ -86,4 +86,10 @@ export interface NovaOrchestratorInput {
   platformChatId: string;
   text:           string;
   timestamp?:     Date;
+  // Set when the message was an explicit slash command (see commands.ts).
+  // Commands are protocol and may trigger deterministic effects.
+  command?:       import("../commands").NovaCommand | null;
+  // Wait for the turn to be persisted before returning. Used by the web app,
+  // which reads state immediately after the reply. Telegram leaves it off.
+  awaitPersistence?: boolean;
 }

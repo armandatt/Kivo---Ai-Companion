@@ -4,10 +4,10 @@
 // The scheduler, intervention engine, and decision graph are all deterministic.
 // Owner: Phase 5 Proactive Mentor System.
 
-import { generateOpenAIText } from "../../services/openai.service.js";
-import { NOVA_STATIC_LAYER } from "../brains/prompts/nova-static-layer.prompt.js";
-import type { ProactiveDecision, MomentumState } from "../types/proactive.types.js";
-import type { AcademicState } from "../types/academic-state.types.js";
+import { generateOpenAIText } from "../../services/openai.service";
+import { NOVA_STATIC_LAYER } from "../brains/prompts/nova-static-layer.prompt";
+import type { ProactiveDecision, MomentumState } from "../types/proactive.types";
+import type { AcademicState } from "../types/academic-state.types";
 
 export interface ProactiveResponseInput {
   studentName:       string;

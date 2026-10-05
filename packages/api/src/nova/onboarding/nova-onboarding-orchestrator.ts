@@ -8,17 +8,17 @@
 //   4. makeOnboardingDecision() (Decision Engine — deterministic, no LLM)
 //   5. persistOnboardingExtraction() (DB writes, blocks before reply)
 //   6. generateOnboardingReply()  (Response Brain — gpt-4o-mini, expression only)
-//   7. saveConversationTurn()  (fire-and-forget for next-turn context)
+//   7. save conversation turn  (fire-and-forget for next-turn context)
 //
 // Owner: Orchestrator. Coordinates — does not own any one layer's logic.
 
 import { prisma } from "@repo/db/client";
-import { extractAcademicFacts }         from "./nova-onboarding-extractor.js";
-import { validateExtraction }            from "./nova-onboarding-validator.js";
-import { makeOnboardingDecision }        from "./nova-onboarding-decision-engine.js";
-import { generateOnboardingReply }       from "./nova-onboarding-response.js";
-import { persistOnboardingExtraction, loadOnboardingState } from "./nova-onboarding-persistence.js";
-import { saveConversationTurn, loadConversationHistory }    from "../adapters/scheduler-adapter.js";
+import { extractAcademicFacts }         from "./nova-onboarding-extractor";
+import { validateExtraction }            from "./nova-onboarding-validator";
+import { makeOnboardingDecision }        from "./nova-onboarding-decision-engine";
+import { generateOnboardingReply }       from "./nova-onboarding-response";
+import { persistOnboardingExtraction, loadOnboardingState } from "./nova-onboarding-persistence";
+import { saveUserMessage, saveAssistantMessage, loadConversationHistory } from "../adapters/conversation-adapter";
 
 export interface OnboardingResult {
   reply:    string;
@@ -109,15 +109,18 @@ export async function runNovaOnboarding(input: {
     history: historyForBrains,
   });
 
-  // 8. Save conversation turn (fire-and-forget — next turn context)
-  saveConversationTurn(userId, text, reply, {
-    intervention:  "onboarding",
-    reasoningMode: "empathetic",
-    confidence:    extraction.confidence,
-    graphNode:     "onboarding",
-  }).catch(err => {
-    console.error("[nova:onboarding] turn save error:", err);
-  });
+  // 8. Save conversation turn (fire-and-forget — next turn context).
+  //    intent "intake": mandatory onboarding turns do not count against the
+  //    rate limit, same rule as Rex.
+  const turnAt = new Date();
+  saveUserMessage(userId, text, { intent: "intake", emotion: "neutral", signals: [] }, turnAt)
+    .then(() => saveAssistantMessage(userId, reply, "nova_onboarding", {
+      intervention: "onboarding",
+      confidence:   extraction.confidence,
+    }, turnAt))
+    .catch(err => {
+      console.error("[nova:onboarding] turn save error:", err);
+    });
 
   // 9. Structured log
   console.log(JSON.stringify({

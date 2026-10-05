@@ -1,4 +1,5 @@
 import { prisma } from "@repo/db/client";
+import { buildRealityBlock } from "../services/realityLayer.service";
 import { generateOpenAIText } from "../services/openai.service";
 import { processMessage } from "../processor/messageProcessor";
 import { addToShortTerm, addToLongTerm } from "../services/memory.service";
@@ -1611,7 +1612,6 @@ function buildRexSystemPrompt(ctx: RexContext): string {
   })();
 
   // Dynamic reality block (persisted hours-to-days context — illness, injury, etc.)
-  const { buildRealityBlock } = await import("../services/realityLayer.service");
   const realityBlock = buildRealityBlock(ctx.activeReality);
 
   // Health event suppression block (illness declared in this message or context)

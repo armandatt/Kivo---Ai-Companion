@@ -6,7 +6,6 @@ import { generateOpenAIText } from "@repo/api/services/openai.service";
 
 async function main() {
   console.log("key present:", !!(process.env.OPEN_API_KEY || process.env.OPENAI_API_KEY));
-  console.log("key prefix:", (process.env.OPEN_API_KEY ?? process.env.OPENAI_API_KEY ?? "").slice(0, 15));
   try {
     const raw = await generateOpenAIText({
       systemInstruction: 'You extract facts. Return ONLY valid JSON array: [{"category":"emotional","fact":"user is grieving","confidence":0.95,"relevanceScore":0.95,"ttlHours":96}]',

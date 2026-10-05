@@ -17,20 +17,33 @@
 //
 //   NO engine may run a full FSRS update from conversation if an execution
 //   report exists. consumeExecutionReport() is the ONLY entry point for evidence.
-//   persistTopicMasteryUpdate() is the ONLY entry point for observations.
+//   Observations are decided by the consolidation layer.
+//
+// ── Consolidation boundary (SKILL.md §11.7) ──────────────────────────────────
+//
+//   This module writes three things directly:
+//     1. the conversation log (the record of what happened)
+//     2. the interactive study-session lifecycle (an entity the student is
+//        explicitly operating: start, pause, resume, end)
+//     3. the academic-state score snapshot (the State Engine's own time series)
+//   Everything inferred from the turn — facts, reality, behavioral patterns,
+//   investigation state, self-reported sessions — is emitted as evidence and
+//   written only by the consolidation runner. A turn's consolidation is a
+//   retryable job in Postgres, applied in one transaction.
 
 import { prisma } from "@repo/db/client";
-import type { AcademicState, AcademicStateSnapshot } from "../types/academic-state.types.js";
-import type { ResponseBrainOutput } from "../types/response.types.js";
-import type { SignalEngineOutput } from "../types/engine.types.js";
-import type { AcademicUnderstanding } from "../types/understanding.types.js";
-import type { ActiveSessionInfo } from "../engines/study-snapshot.js";
-import type { SessionContext, SessionAction } from "../types/session.types.js";
-import { writeMemoryFact, persistCognitiveStateUpdate } from "../adapters/memory-adapter.js";
-import { saveConversationTurn } from "../adapters/scheduler-adapter.js";
-import { updateTopicMastery, matchTopicToSubject } from "../engines/topic-mastery-engine.js";
-import { buildExecutionReport } from "../engines/study-session-engine.js";
-import type { SessionExecutionReport } from "../types/session.types.js";
+import type { AcademicState, AcademicStateSnapshot } from "../types/academic-state.types";
+import type { ResponseBrainOutput } from "../types/response.types";
+import type { PatternAnalysis, SignalEngineOutput } from "../types/engine.types";
+import type { AcademicUnderstanding } from "../types/understanding.types";
+import type { ActiveSessionInfo } from "../engines/study-snapshot";
+import type { SessionContext, SessionAction } from "../types/session.types";
+import { saveUserMessage, saveAssistantMessage } from "../adapters/conversation-adapter";
+import { buildTurnEvidence } from "../consolidation/evidence-builder";
+import { consolidateTurn } from "../consolidation/run-consolidation";
+import { updateTopicMastery, matchTopicToSubject } from "../engines/topic-mastery-engine";
+import { buildExecutionReport } from "../engines/study-session-engine";
+import type { SessionExecutionReport } from "../types/session.types";
 
 export interface PersistenceInput {
   userId:          string;
@@ -49,6 +62,10 @@ export interface PersistenceInput {
   // Step 4: Interactive Study Session
   sessionContext:  SessionContext | null;
   sessionAction:   SessionAction | null;
+  // Consolidation
+  patterns:        PatternAnalysis;
+  patternScanRan:  boolean;
+  now:             Date;
 }
 
 // ── Fire-and-forget wrapper ────────────────────────────────────────────────────
@@ -62,18 +79,15 @@ export function persistTurnAsync(input: PersistenceInput): void {
 
 // ── Full turn persistence ──────────────────────────────────────────────────────
 
-async function persistTurn(input: PersistenceInput): Promise<void> {
+export async function persistTurn(input: PersistenceInput): Promise<void> {
   const {
     userId, profileId, userText, brainOutput,
     academicState, signals, graphNode, intervention,
     understanding, activeSession, subjects,
-    sessionContext, sessionAction,
+    sessionContext, sessionAction, now,
   } = input;
 
-  const now = new Date();
-
   const hasStudyReport  = signals.detectedSignals.some(s => s.type === "study_report");
-  const hasStudySkip    = signals.detectedSignals.some(s => s.type === "study_skip");
   const hasSessionStart = signals.detectedSignals.some(s => s.type === "session_start");
 
   const masteryConfidence =
@@ -111,49 +125,58 @@ async function persistTurn(input: PersistenceInput): Promise<void> {
       sessionTasks.push(
         endStudySession(activeSession.id, sessionContext, masteryConfidence, subjects, now)
       );
-    } else if (hasStudyReport && !activeSession) {
-      // No tracked session — fall back to self-report estimate
-      sessionTasks.push(persistStudySessionFromSignal(profileId, now));
     } else if (hasStudyReport && activeSession && action !== "end_session") {
       // study_report signal but session engine didn't route to end_session
       // (shouldn't normally happen, but handle gracefully)
       sessionTasks.push(closeStudySession(activeSession.id, now));
     }
-
-    if (hasStudySkip) {
-      sessionTasks.push(persistStudySkipFromSignal(profileId, now));
-    }
-
-    // Conversation-level mastery observation (no session backing).
-    // Uses "conversation_signal" source — no FSRS, no reviewCount++.
-    if (hasStudyReport && understanding.topic && !activeSession) {
-      sessionTasks.push(persistTopicMasteryObservation(understanding.topic, subjects, masteryConfidence, now));
-    }
   }
 
-  await Promise.allSettled([
-    // 1. Conversation turn
-    saveConversationTurn(userId, userText, brainOutput.reply, {
-      intervention,
-      reasoningMode:  brainOutput.reasoningMode,
-      confidence:     brainOutput.confidence,
-      graphNode,
-    }),
+  // 1. Conversation log first: the user message id is the provenance of
+  //    every piece of evidence this turn produces.
+  let sourceMessageId: string | null = null;
+  try {
+    sourceMessageId = await saveUserMessage(userId, userText, {
+      intent:  understanding.intent,
+      emotion: understanding.emotion,
+      signals: signals.detectedSignals.map(s => s.type),
+      secondaryIntents: understanding.secondaryIntents,
+    }, now);
+  } catch (err) {
+    console.error("[nova:persistence] user message save failed:", err);
+  }
 
-    // 2. Signal memory writes
-    ...signals.memoryWrites.map(mw =>
-      writeMemoryFact(userId, mw.type, mw.key, mw.value, mw.confidence, mw.shouldUpsert)
-    ),
+  // 2. Evidence → Consolidation → Durable state.
+  const evidence = buildTurnEvidence({
+    userId, profileId, sourceMessageId, userText,
+    observedAt:    now,
+    signals:       signals.detectedSignals,
+    understanding,
+    patterns:      input.patterns,
+    brainOutput,
+  });
+
+  await Promise.allSettled([
+    saveAssistantMessage(userId, brainOutput.reply, `nova_${intervention}`, {
+      intervention,
+      reasoningMode: brainOutput.reasoningMode,
+      confidence:    brainOutput.confidence,
+      graphNode,
+    }, now),
+
+    // No source message, no provenance: nothing from this turn may become
+    // durable state.
+    sourceMessageId === null ? Promise.resolve(null) : consolidateTurn({
+      messageId: sourceMessageId,
+      userId, profileId, evidence, now,
+      patternScanRan:   input.patternScanRan,
+      hasActiveSession: activeSession !== null,
+    }),
 
     // 3. Academic state snapshot
     profileId ? persistStateSnapshot(profileId, academicState, now) : Promise.resolve(),
 
-    // 4. Cognitive state update
-    profileId && brainOutput.investigationUpdate
-      ? persistCognitiveStateUpdate(profileId, brainOutput.investigationUpdate)
-      : Promise.resolve(),
-
-    // 5. Session lifecycle tasks (all fire in parallel)
+    // 4. Session lifecycle tasks (all fire in parallel)
     ...sessionTasks,
   ]);
 }
@@ -355,61 +378,6 @@ async function consumeExecutionReport(
     // Learning DNA: update from session metrics
     updateLearningDna(report.profileId, report, now),
   ]);
-}
-
-// ── Self-reported session (fallback — no active session) ──────────────────────
-
-async function persistStudySessionFromSignal(
-  profileId: string,
-  now:       Date,
-): Promise<void> {
-  const profile = await prisma.novaAcademicProfile.findUnique({
-    where:  { id: profileId },
-    select: { preferredStudyHoursPerDay: true },
-  });
-
-  const duration = profile ? Math.round(profile.preferredStudyHoursPerDay * 60 / 2) : 60;
-
-  await prisma.novaStudySession.create({
-    data: {
-      profileId,
-      durationMinutes: duration,
-      activityType:    "self_reported",
-      status:          "completed",
-      sessionDate:     now,
-    },
-  }).catch(() => {});
-}
-
-async function persistStudySkipFromSignal(
-  profileId: string,
-  now:       Date,
-): Promise<void> {
-  await prisma.novaStudySession.create({
-    data: {
-      profileId,
-      durationMinutes: 0,
-      activityType:    "self_reported",
-      status:          "skipped",
-      sessionDate:     now,
-    },
-  }).catch(() => {});
-}
-
-// ── Observation-only mastery (no session backing) ─────────────────────────────
-// Used when a study_report signal fires in conversation without an active session.
-// Source is ALWAYS "conversation_signal" — no FSRS interval update, no reviewCount++.
-// This is the observation path. Evidence comes only from consumeExecutionReport().
-
-async function persistTopicMasteryObservation(
-  topicName:  string,
-  subjects:   Array<{ id: string; name: string }>,
-  confidence: number,
-  now:        Date,
-): Promise<void> {
-  const match = matchTopicToSubject(topicName, subjects);
-  if (!match) return;
-  await updateTopicMastery(match.subjectId, match.resolvedName, confidence, now, "conversation_signal");
 }
 
 // ── Learning DNA update from execution report ─────────────────────────────────

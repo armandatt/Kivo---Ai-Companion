@@ -32,6 +32,28 @@ describe("Pattern Detector", () => {
       expect(out.detectedPatterns.some(p => p.type === "ghosting")).toBe(true);
     });
 
+    it("does not detect ghosting for a new student with no sessions at all", () => {
+      const out = runPatternDetector({ ...BASE_INPUT, studySessions: [] }, NOW);
+      expect(out.detectedPatterns.some(p => p.type === "ghosting")).toBe(false);
+    });
+
+    it("does not detect ghosting when the only records are skipped sessions", () => {
+      const out = runPatternDetector({
+        ...BASE_INPUT,
+        studySessions: [{ sessionDate: daysAgo(9), status: "skipped", durationMinutes: 0 }],
+      }, NOW);
+      expect(out.detectedPatterns.some(p => p.type === "ghosting")).toBe(false);
+    });
+
+    it("confidence grows with the length of the absence", () => {
+      const at = (days: number) => runPatternDetector({
+        ...BASE_INPUT,
+        studySessions: [{ sessionDate: daysAgo(days), status: "completed", durationMinutes: 60 }],
+      }, NOW).detectedPatterns.find(p => p.type === "ghosting")!.confidence;
+      expect(at(7)).toBeLessThan(at(14));
+      expect(at(60)).toBe(0.95);
+    });
+
     it("does not detect ghosting with recent session", () => {
       const input: PatternDetectorInput = {
         ...BASE_INPUT,

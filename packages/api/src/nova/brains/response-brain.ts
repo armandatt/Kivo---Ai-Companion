@@ -6,9 +6,9 @@
 // NEVER makes routing decisions.
 // Owner: Response Brain.
 
-import { generateOpenAIText } from "../../services/openai.service.js";
-import type { ResponseBrainOutput, ReasoningMode } from "../types/response.types.js";
-import { NOVA_STATIC_LAYER } from "./prompts/nova-static-layer.prompt.js";
+import { generateOpenAIText } from "../../services/openai.service";
+import type { ResponseBrainOutput, ReasoningMode } from "../types/response.types";
+import { NOVA_STATIC_LAYER } from "./prompts/nova-static-layer.prompt";
 
 // ── Output parser ──────────────────────────────────────────────────────────────
 

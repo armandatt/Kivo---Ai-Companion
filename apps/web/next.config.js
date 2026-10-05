@@ -119,6 +119,10 @@ const nextConfig = {
         destination: `${apiUrl}/api/reset-password`,
       },
       {
+        source: "/api/nova/:path*",
+        destination: `${apiUrl}/api/nova/:path*`,
+      },
+      {
         source: "/api/journey",
         destination: `${apiUrl}/api/journey`,
       },

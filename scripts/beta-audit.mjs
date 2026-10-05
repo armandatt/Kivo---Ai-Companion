@@ -8,7 +8,13 @@
 import pg from 'pg';
 const { Client } = pg;
 
-const DB_URL = "postgresql://neondb_owner:npg_B52lgHGDZTXd@ep-late-band-a46kxn8z-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require";
+// Reads the database URL from the environment; never hardcode it here.
+//   node --env-file=packages/db/.env scripts/beta-audit.mjs
+const DB_URL = process.env.DATABASE_URL;
+if (!DB_URL) {
+  console.error("DATABASE_URL is not set. Run: node --env-file=packages/db/.env scripts/beta-audit.mjs");
+  process.exit(1);
+}
 
 // ── Heuristics ────────────────────────────────────────────────────────────────
 

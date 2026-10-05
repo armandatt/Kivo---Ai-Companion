@@ -3,7 +3,7 @@
 // NEVER makes LLM calls. NEVER modifies DB.
 // Owner: Exam Engine.
 
-import type { ExamContext, ExamMode, TopicMasteryState } from "../types/engine.types.js";
+import type { ExamContext, ExamMode, TopicMasteryState } from "../types/engine.types";
 
 export interface RawExam {
   id:          string;

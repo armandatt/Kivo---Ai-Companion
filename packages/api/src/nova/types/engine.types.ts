@@ -2,10 +2,10 @@
 // SKILL.md §8 — every engine has typed inputs, typed outputs, and stated
 // prohibitions. Violating an engine's contract is an architecture violation.
 
-import type { AcademicUnderstanding } from "./understanding.types.js";
-import type { AcademicState } from "./academic-state.types.js";
-import type { InterventionName } from "./intervention.types.js";
-import type { NovaUserFact } from "./memory.types.js";
+import type { AcademicUnderstanding } from "./understanding.types";
+import type { AcademicState } from "./academic-state.types";
+import type { InterventionName } from "./intervention.types";
+import type { NovaUserFact } from "./memory.types";
 
 // ── Signal Engine ─────────────────────────────────────────────────────────────
 
@@ -33,24 +33,15 @@ export interface DetectedSignal {
 }
 
 export interface SignalStateUpdate {
-  field: keyof import("./academic-state.types.js").AcademicScores;
+  field: keyof import("./academic-state.types").AcademicScores;
   delta: number;
   reason: string;
   triggerSignal: SignalType;
 }
 
-export interface SignalMemoryWrite {
-  type: string;
-  key: string;
-  value: string;
-  confidence: number;
-  shouldUpsert: boolean;
-}
-
 export interface SignalEngineOutput {
   detectedSignals: DetectedSignal[];
   stateUpdates:   SignalStateUpdate[];
-  memoryWrites:   SignalMemoryWrite[];
 }
 
 // ── Knowledge Engine ──────────────────────────────────────────────────────────

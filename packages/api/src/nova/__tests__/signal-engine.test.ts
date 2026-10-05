@@ -40,10 +40,10 @@ describe("Signal Engine", () => {
       expect(engagementUpdate?.delta).toBeGreaterThan(0);
     });
 
-    it("produces memory write", () => {
+    it("emits evidence only — no memory write instruction (SKILL.md §11.7)", () => {
       const out = extractSignals("I completed the exercises for chapter 2", NEUTRAL_STATE);
-      const mw = out.memoryWrites.find(m => m.type === "study_session");
-      expect(mw).toBeDefined();
+      expect(out).not.toHaveProperty("memoryWrites");
+      expect(Object.keys(out).sort()).toEqual(["detectedSignals", "stateUpdates"]);
     });
   });
 
@@ -71,10 +71,10 @@ describe("Signal Engine", () => {
       expect(out.detectedSignals.some(s => s.type === "commitment")).toBe(true);
     });
 
-    it("upserts commitment memory (not creates)", () => {
+    it("reports the matched text as evidence", () => {
       const out = extractSignals("I'm going to review everything this weekend", NEUTRAL_STATE);
-      const mw = out.memoryWrites.find(m => m.type === "commitment");
-      expect(mw?.shouldUpsert).toBe(true);
+      const signal = out.detectedSignals.find(s => s.type === "commitment");
+      expect(signal?.evidence.length).toBeGreaterThan(0);
     });
   });
 

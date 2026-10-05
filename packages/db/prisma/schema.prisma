@@ -98,6 +98,8 @@ model MessengerUser {
   goalProgressRecords  GoalProgress[]
   bodyweightHistory    BodyweightHistory[]
   realities            UserReality[]
+  userFacts            UserFact[]
+  behavioralPatterns   BehavioralPattern[]
   novaAcademicProfile  NovaAcademicProfile?
 
   @@unique([platform, platformChatId])
@@ -114,7 +116,8 @@ model CompanionMessage {
   metadata  Json?
   createdAt DateTime @default(now())
 
-  user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             MessengerUser         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  consolidationJob NovaConsolidationJob?
 
   @@index([userId, createdAt])
 }
@@ -605,11 +608,18 @@ model BodyweightHistory {
 model UserReality {
   id             String    @id @default(cuid())
   userId         String
-  category       String    // "health" | "injury" | "emotional" | "life_constraint" | "training_context" | "academic_constraint"
+  // Canonical shared vocabulary (SKILL.md §9.2):
+  //   "health" | "injury" | "emotional" | "life_constraint" | "academic_constraint" | "training_context"
+  category       String
+  subtype        String?   // detail within a category, e.g. "travel", "work", "exam"
   fact           String    @db.Text
   confidence     Float     @default(0.8)
   relevanceScore Float     @default(1.0)
   sourceText     String?   @db.Text
+  provenance     Json?     // { sources: [{ source, sourceMessageId, observedAt, confidence }] }
+  // Lifecycle: ACTIVE   = isActive && expiresAt > now
+  //            RESOLVED = resolvedAt set (the user said it ended)
+  //            EXPIRED  = !isActive && resolvedAt null (TTL elapsed)
   isActive       Boolean   @default(true)
   expiresAt      DateTime
   resolvedAt     DateTime?
@@ -828,4 +838,88 @@ model NovaProactiveMessage {
 
   @@index([profileId, firedAt])
   @@index([profileId, eventType, cooldownUntil])
+}
+
+// ─── Consolidated durable state ───────────────────────────────────────────────
+// Written ONLY by a companion's consolidation layer (SKILL.md §11.7, §16.4).
+// Evidence (messages, signals, extractions) never lands here directly.
+
+// Stable semantic facts about the user. Never conversation turns, sessions,
+// transient signals or companion control state.
+model UserFact {
+  id              String   @id @default(cuid())
+  userId          String
+  type            String
+  key             String
+  value           String   @db.Text
+  confidence      Float    @default(0.7)
+  evidenceCount   Int      @default(1)
+  status          String   @default("active") // "active" | "archived"
+  sourceCompanion String                      // companion whose consolidator wrote it
+  sourceMessageId String?                     // CompanionMessage behind the latest evidence
+  provenance      Json?                       // { sources: [...], history: [superseded values] }
+  firstObservedAt DateTime @default(now())
+  lastObservedAt  DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type, key])
+  @@index([userId, status])
+}
+
+// Inferred recurring behavior. A pattern is an inference from evidence:
+// `confidence` is its accumulated strength, and `status` follows from it.
+model BehavioralPattern {
+  id              String    @id @default(cuid())
+  userId          String
+  companion       String
+  patternType     String
+  description     String    @db.Text
+  confidence      Float
+  evidenceCount   Int       @default(1)
+  severity        String    @default("emerging")  // "emerging" | "confirmed" | "critical"
+  status          String    @default("emerging")  // "emerging" | "active" | "weakening" | "resolved" | "expired"
+  evidence        Json?                           // latest supporting observations + source message ids
+  firstObservedAt DateTime  @default(now())
+  lastObservedAt  DateTime  @default(now())
+  resolvedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companion, patternType])
+  @@index([userId, status])
+}
+
+// One row per Nova user turn whose evidence has to be consolidated.
+// It is the retry record: pending → processing → completed, and a failed or
+// abandoned attempt goes back to a retryable state. The primary key is the
+// turn-level idempotency: a turn can have only one job.
+model NovaConsolidationJob {
+  messageId   String    @id                 // CompanionMessage.id of the user turn
+  userId      String
+  status      String    @default("pending") // "pending" | "processing" | "completed" | "failed"
+  attempts    Int       @default(0)
+  payload     Json?                         // evidence + run context; emptied on completion
+  claimedAt   DateTime?                     // start of the current attempt (lease)
+  completedAt DateTime?
+  lastError   String?   @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  message CompanionMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([status, updatedAt])
+}
+
+// Telegram webhook idempotency. One row per update_id; the unique key is the
+// dedup. A retried or replayed update fails the insert and is dropped.
+model ProcessedTelegramUpdate {
+  updateId   BigInt   @id
+  receivedAt DateTime @default(now())
+
+  @@index([receivedAt])
 }

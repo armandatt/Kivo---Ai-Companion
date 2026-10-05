@@ -12,7 +12,7 @@ export function startInternalCheckinScheduler() {
   const globalState = globalThis as SchedulerGlobal;
 
   if (process.env.DISABLE_INTERNAL_CHECKIN_CRON === "true") {
-    console.log("[CHECKIN] Internal Railway scheduler disabled by DISABLE_INTERNAL_CHECKIN_CRON=true");
+    console.log("[CHECKIN] Internal scheduler disabled by DISABLE_INTERNAL_CHECKIN_CRON=true");
     return;
   }
 
@@ -21,7 +21,7 @@ export function startInternalCheckinScheduler() {
   }
 
   globalState.__kevoCheckinSchedulerStarted = true;
-  console.log("[CHECKIN] Internal Railway scheduler started; interval=5m");
+  console.log("[CHECKIN] Internal scheduler started; interval=5m");
 
   const tick = async () => {
     if (globalState.__kevoCheckinSchedulerRunning) {

@@ -13,9 +13,9 @@ import type {
   MomentumState,
   ProactiveDecision,
   InterventionType,
-} from "../types/proactive.types.js";
-import type { AcademicState } from "../types/academic-state.types.js";
-import type { NovaRealityFact } from "../types/reality.types.js";
+} from "../types/proactive.types";
+import type { AcademicState } from "../types/academic-state.types";
+import type { NovaRealityFact } from "../types/reality.types";
 
 export interface ProactiveDecisionInput {
   intervention:    InterventionDecision;
@@ -61,7 +61,7 @@ export function runProactiveDecisionGraph(input: ProactiveDecisionInput): Proact
 
   // ── Gate 4: Active health reality — block all pressure interventions ──────
   // Loaded reality facts are already filtered to isActive=true by the adapter.
-  const hasActiveHealth = realityFacts.some(r => r.category === "health_constraint");
+  const hasActiveHealth = realityFacts.some(r => r.category === "health" || r.category === "injury");
   if (hasActiveHealth) {
     const isPressure = PRESSURE_INTERVENTION_TYPES.has(intervention.type);
     if (isPressure) {

@@ -4,7 +4,7 @@
 // NOT called on every message — fired every N messages to amortize cost.
 // Owner: Pattern Detector.
 
-import type { DetectedPattern, NovaPatternType, PatternAnalysis } from "../types/engine.types.js";
+import type { DetectedPattern, NovaPatternType, PatternAnalysis } from "../types/engine.types";
 
 export interface PatternDetectorInput {
   // Study session history (last 60 days)
@@ -56,10 +56,12 @@ const PATTERN_DEFINITIONS: PatternDefinition[] = [
         .filter(s => s.status === "completed")
         .sort((a, b) => b.sessionDate.getTime() - a.sessionDate.getTime());
       const lastCompleted = recent[0];
-      const daysSince = lastCompleted
-        ? Math.floor((now.getTime() - lastCompleted.sessionDate.getTime()) / 86_400_000)
-        : 999;
+      // Ghosting is stopping after having started. With no completed session
+      // on record there is nothing to have stopped: absence of data is not
+      // evidence of a behavior.
+      if (!lastCompleted) return { matches: false, evidence: [], confidence: 0 };
 
+      const daysSince = Math.floor((now.getTime() - lastCompleted.sessionDate.getTime()) / 86_400_000);
       if (daysSince < 5) return { matches: false, evidence: [], confidence: 0 };
       const confidence = Math.min(0.95, 0.5 + daysSince / 30);
       return {

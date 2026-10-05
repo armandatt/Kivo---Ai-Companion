@@ -12,6 +12,8 @@ import { runGymCronJobs } from "@repo/api/services/gymCron.service";
 import { fireCustomReminders } from "@repo/api/services/customReminder.service";
 //@ts-ignore
 import { runNovaProactiveCron } from "@repo/api/nova/proactive/nova-proactive-cron";
+//@ts-ignore
+import { purgeProcessedTelegramUpdates } from "@repo/api/services/telegramTransport.service";
 
 export type CheckinCronResult = {
   ok: boolean;
@@ -21,6 +23,9 @@ export type CheckinCronResult = {
 
 export async function runCheckinCron(now = new Date()): Promise<CheckinCronResult> {
   console.log(`[CHECKIN] Cron fired at ${now.toISOString()}`);
+
+  // Housekeeping: drop webhook dedup rows past their retention window.
+  await purgeProcessedTelegramUpdates(now).catch((err: unknown) => console.error("[CHECKIN] update purge failed", err));
 
   const token = process.env.TELEGRAM_BOT_TOKEN ?? process.env.BOT_TOKEN;
   if (!token) {

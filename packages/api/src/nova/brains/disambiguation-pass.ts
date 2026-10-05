@@ -5,8 +5,8 @@
 // Returns refined AcademicUnderstanding or original if refinement fails.
 // Owner: Understanding Brain (same brain, second pass).
 
-import { generateOpenAIText } from "../../services/openai.service.js";
-import type { AcademicUnderstanding } from "../types/understanding.types.js";
+import { generateOpenAIText } from "../../services/openai.service";
+import type { AcademicUnderstanding } from "../types/understanding.types";
 
 const DISAMBIGUATION_SYSTEM_PROMPT = `You are a clarification module. The student's message was ambiguous. Based on the conversation context provided, determine:
 1. What subject or topic is most likely being discussed?

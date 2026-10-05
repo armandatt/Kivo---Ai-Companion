@@ -11,38 +11,40 @@
 //   8. Academic State patch (with pattern results)
 //   9. Exam Engine (if exam active)
 //  10. Planning Engine (if plan requested)
-//  11. Memory + Reality load (parallel)
+//  11. Memory + Reality load (parallel, read-only)
 //  12. Decision Graph
 //  13. Context Builder (dynamic layer + micro-prompt)
 //  14. Response Brain (gpt-4o)
-//  15. Persistence (fire-and-forget)
+//  15. Persistence (fire-and-forget): conversation log, then
+//      evidence → consolidation → durable state (SKILL.md §11.7)
 // Owner: Nova Orchestrator.
 
-import { loadStudySnapshot } from "./engines/study-snapshot.js";
-import { runUnderstandingBrain } from "./brains/understanding-brain.js";
-import { runDisambiguationPass } from "./brains/disambiguation-pass.js";
-import { extractSignals } from "./engines/signal-engine.js";
-import { computeAcademicState, patchMomentaryState } from "./engines/academic-state-engine.js";
-import { getTopicMastery, getAllTopicMasteries } from "./engines/knowledge-engine.js";
-import { buildRetentionSchedule } from "./engines/retention-engine.js";
-import { generateStudyPlan } from "./engines/planning-engine.js";
-import { selectActiveExam, buildExamContext } from "./engines/exam-engine.js";
-import { runPatternDetector } from "./engines/pattern-detector.js";
-import { buildSessionContext, computeSessionAction } from "./engines/study-session-engine.js";
-import { runDecisionGraph } from "./decision/decision-graph.js";
-import { buildDynamicLayer, buildMicroPrompt } from "./context/context-builder.js";
-import { runResponseBrain } from "./brains/response-brain.js";
-import { getRelevantMemories } from "./adapters/memory-adapter.js";
-import { loadActiveRealityFacts } from "./adapters/reality-adapter.js";
-import { loadConversationHistory } from "./adapters/scheduler-adapter.js";
-import { persistTurnAsync } from "./persistence/nova-persistence.js";
+import { loadStudySnapshot } from "./engines/study-snapshot";
+import { runUnderstandingBrain } from "./brains/understanding-brain";
+import { runDisambiguationPass } from "./brains/disambiguation-pass";
+import { resolveTurnSignals } from "./engines/turn-signals";
+import { computeAcademicState, patchMomentaryState } from "./engines/academic-state-engine";
+import { getTopicMastery, getAllTopicMasteries } from "./engines/knowledge-engine";
+import { buildRetentionSchedule } from "./engines/retention-engine";
+import { generateStudyPlan } from "./engines/planning-engine";
+import { selectActiveExam, buildExamContext } from "./engines/exam-engine";
+import { runPatternDetector } from "./engines/pattern-detector";
+import { buildSessionContext, computeSessionAction } from "./engines/study-session-engine";
+import { runDecisionGraph } from "./decision/decision-graph";
+import { buildDynamicLayer, buildMicroPrompt } from "./context/context-builder";
+import { runResponseBrain } from "./brains/response-brain";
+import { getRelevantMemories } from "./adapters/memory-adapter";
+import { loadActiveRealityFacts } from "./adapters/reality-adapter";
+import { loadConversationHistory, loadSignalHistory, annotationTags } from "./adapters/conversation-adapter";
+import { loadPriorPatterns } from "./consolidation/stores/behavioral-pattern-store";
+import { persistTurn, persistTurnAsync } from "./persistence/nova-persistence";
 import { prisma } from "@repo/db/client";
-import type { NovaOrchestratorInput, NovaContext, ConversationTurn } from "./types/context.types.js";
-import type { NovaOrchestratorResult } from "./types/response.types.js";
-import type { NovaCognitiveState } from "./types/memory.types.js";
-import type { PatternAnalysis } from "./types/engine.types.js";
-import type { SessionContext, SessionAction } from "./types/session.types.js";
-import { STATE_BASELINES } from "./types/academic-state.types.js";
+import type { NovaOrchestratorInput, NovaContext, ConversationTurn } from "./types/context.types";
+import type { NovaOrchestratorResult } from "./types/response.types";
+import type { NovaCognitiveState } from "./types/memory.types";
+import type { PatternAnalysis } from "./types/engine.types";
+import type { SessionContext, SessionAction } from "./types/session.types";
+import { STATE_BASELINES } from "./types/academic-state.types";
 
 // How often to run the pattern detector (every N messages per user).
 const PATTERN_DETECTOR_INTERVAL = 5;
@@ -78,9 +80,11 @@ export async function runNovaOrchestrator(
   const userId = user.id;
 
   // ── 1. Study Snapshot + Conversation History (parallel) ───────────────────
-  const [snapshot, conversationHistory] = await Promise.all([
+  const [snapshot, conversationHistory, signalHistory, priorPatterns] = await Promise.all([
     loadStudySnapshot(platformChatId),
     loadConversationHistory(userId),
+    loadSignalHistory(userId),
+    loadPriorPatterns(userId),
   ]);
 
   // ── 2. Understanding Brain ────────────────────────────────────────────────
@@ -103,7 +107,10 @@ export async function runNovaOrchestrator(
   // state next. Use empty state placeholder for signal extraction (signals
   // don't depend on state).
   const EMPTY_STATE = buildEmptyAcademicState(snapshot.daysSinceJoined);
-  const signals = extractSignals(text, EMPTY_STATE);
+
+  // The signal engine proposes; commands and the Understanding Brain
+  // establish; everything uncorroborated is dropped (engines/turn-signals.ts).
+  const signals = resolveTurnSignals({ text, command: input.command, understanding, state: EMPTY_STATE });
 
   // ── 5. Academic State Engine ──────────────────────────────────────────────
   let academicState = computeAcademicState({
@@ -170,7 +177,19 @@ export async function runNovaOrchestrator(
     const allTopics = await getAllTopicMasteries(snapshot.profileId);
     patternAnalysis = runPatternDetector({
       studySessions:        snapshot.studySessions,
-      signalHistory:        [],  // TODO: load from memory facts
+      // Prior turns from the conversation log, plus this turn.
+      signalHistory:        [
+        ...signalHistory,
+        {
+          timestamp: now,
+          signals:   annotationTags({
+            intent:  understanding.intent,
+            emotion: understanding.emotion,
+            signals: signals.detectedSignals.map(s => s.type),
+            secondaryIntents: understanding.secondaryIntents,
+          }),
+        },
+      ],
       topicMasteries:       allTopics.map(t => ({
         topicName:          t.topicName,
         masteryProbability: t.masteryProbability,
@@ -178,9 +197,9 @@ export async function runNovaOrchestrator(
         reviewCount:        t.reviewCount,
         lastStudiedAt:      t.lastStudied,
       })),
-      priorPatterns:        [],  // TODO: load from cognitive state
+      priorPatterns,
       messagesSinceLastRun: 1,
-    });
+    }, now);
   }
 
   // ── 8. Patch momentary state with pattern results ──────────────────────────
@@ -282,7 +301,7 @@ export async function runNovaOrchestrator(
   const brainOutput = await runResponseBrain(dynamicLayer, microPrompt);
 
   // ── 16. Persistence (fire-and-forget) ─────────────────────────────────────
-  persistTurnAsync({
+  const persistence = {
     userId,
     profileId:      snapshot.profileId,
     platformChatId,
@@ -297,7 +316,16 @@ export async function runNovaOrchestrator(
     subjects:       snapshot.subjects,
     sessionContext,
     sessionAction,
-  });
+    patterns:       patternAnalysis,
+    patternScanRan: shouldRunPatterns && snapshot.profileId !== null,
+    now,
+  };
+
+  if (input.awaitPersistence) {
+    await persistTurn(persistence).catch(err => console.error("[nova:persistence] Write failed:", err));
+  } else {
+    persistTurnAsync(persistence);
+  }
 
   return {
     reply:         brainOutput.reply,

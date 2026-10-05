@@ -4,10 +4,10 @@
 // NEVER makes LLM calls. Deterministic.
 // Owner: Phase 5 Proactive Mentor System.
 
-import type { InterventionDecision, SchedulingDecision, MomentumState } from "../types/proactive.types.js";
-import { INTERVENTION_COOLDOWN_HOURS } from "../types/proactive.types.js";
-import type { AcademicState } from "../types/academic-state.types.js";
-import type { NovaRealityFact } from "../types/reality.types.js";
+import type { InterventionDecision, SchedulingDecision, MomentumState } from "../types/proactive.types";
+import { INTERVENTION_COOLDOWN_HOURS } from "../types/proactive.types";
+import type { AcademicState } from "../types/academic-state.types";
+import type { NovaRealityFact } from "../types/reality.types";
 
 export interface InterventionInput {
   scheduling:    SchedulingDecision;
@@ -57,6 +57,11 @@ export function computeIntervention(input: InterventionInput): InterventionDecis
 // Constraints are informational strings passed to the Response Brain context.
 // They do NOT gate firing — that's the Decision Graph's job.
 
+// Illness and injury both mean: no study pressure.
+function isHealthReality(r: NovaRealityFact): boolean {
+  return r.category === "health" || r.category === "injury";
+}
+
 function buildConstraints(
   state:        AcademicState,
   realityFacts: NovaRealityFact[],
@@ -72,11 +77,11 @@ function buildConstraints(
   if (momentum.weeklyConsistency === "poor")   c.push("low_consistency");
 
   // All loaded reality facts are already active (adapter pre-filters by isActive)
-  const hasHealth   = realityFacts.some(r => r.category === "health_constraint");
-  const hasWorkload = realityFacts.some(r => r.category === "work_constraint");
+  const hasHealth   = realityFacts.some(isHealthReality);
+  const hasWorkload = realityFacts.some(r => r.category === "life_constraint" && r.subtype === "work");
   const hasTravel   = realityFacts.some(r =>
-    r.category === "time_constraint" &&
-    r.description.toLowerCase().includes("travel")
+    r.category === "life_constraint" &&
+    (r.subtype === "travel" || r.description.toLowerCase().includes("travel"))
   );
 
   if (hasHealth)   c.push("health_constraint");
@@ -107,7 +112,7 @@ function checkRealityBlock(
   if (eventType === "morning_brief")      return null;
 
   // All loaded facts are already active (adapter pre-filters by isActive=true)
-  const hasActiveHealth = realityFacts.some(r => r.category === "health_constraint");
+  const hasActiveHealth = realityFacts.some(isHealthReality);
   if (hasActiveHealth && PRESSURE_INTERVENTIONS.has(eventType)) {
     return "health constraint active";
   }

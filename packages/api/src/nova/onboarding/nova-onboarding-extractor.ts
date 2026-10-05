@@ -7,7 +7,7 @@
 // Decision Engine (determines what to ask) and Response Brain (writes the reply).
 // Owner: Understanding Brain layer. No DB access.
 
-import { generateOpenAIText } from "../../services/openai.service.js";
+import { generateOpenAIText } from "../../services/openai.service";
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ export interface ExamInput {
 }
 
 export interface RealityInput {
-  category:    "time_constraint" | "work_constraint" | "health_constraint" | "academic_constraint" | "other";
+  category:    "health" | "injury" | "emotional" | "life_constraint" | "academic_constraint";
   description: string;
 }
 
@@ -131,7 +131,7 @@ ${historyText}
     "biggestStruggle": string | null,
     "strongSubjectNames": string[],
     "weakSubjectNames": string[],
-    "realityFacts": [{ "category": "time_constraint"|"work_constraint"|"health_constraint"|"academic_constraint"|"other", "description": string }]
+    "realityFacts": [{ "category": "health"|"injury"|"emotional"|"life_constraint"|"academic_constraint", "description": string }]
   },
   "confidence": 0.0-1.0,
   "intent": "info"|"question"|"correction"|"offtopic",
@@ -201,10 +201,10 @@ exams:
   Set scheduledAt = null (relative dates resolved downstream)
 
 realityFacts:
-  "part-time job" → work_constraint: "has a part-time job"
-  "long commute" → time_constraint: "long daily commute"
-  "health issues" → health_constraint: <description>
-  "family responsibilities" → time_constraint: "family responsibilities"
+  "part-time job" → life_constraint: "has a part-time job"
+  "long commute" → life_constraint: "long daily commute"
+  "health issues" → health: <description>
+  "family responsibilities" → life_constraint: "family responsibilities"
 
 preferredStudyHoursPerDay: number (not string)
   "3 hours" → 3.0 | "2-3 hours" → 2.5 | "4+ hours" → 4.0
@@ -282,13 +282,13 @@ function parseExtraction(raw: string): AcademicExtractionResult {
   }
 
   if (Array.isArray(e["realityFacts"])) {
-    const CATS = ["time_constraint","work_constraint","health_constraint","academic_constraint","other"] as const;
+    const CATS = ["health","injury","emotional","life_constraint","academic_constraint"] as const;
     extracted.realityFacts = (e["realityFacts"] as unknown[]).flatMap(rf => {
       if (typeof rf !== "object" || rf === null) return [];
       const fact = rf as Record<string, unknown>;
       if (typeof fact["description"] !== "string" || !fact["description"]) return [];
       return [{
-        category:    CATS.find(c => c === fact["category"]) ?? "other",
+        category:    CATS.find(c => c === fact["category"]) ?? "life_constraint",
         description: fact["description"],
       }] satisfies RealityInput[];
     });

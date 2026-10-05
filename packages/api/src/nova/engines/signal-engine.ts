@@ -1,18 +1,21 @@
 // ─── Nova Signal Engine ───────────────────────────────────────────────────────
 // SKILL.md §8.6 — deterministic structural signal extraction.
 // Regex for patterns that are unambiguous without context.
+// Starting a session is NOT one of them: it comes from an explicit command
+// or from the Understanding Brain (see withEstablishedSignal).
 // NEVER classifies emotion (Understanding Brain owns that).
 // NEVER makes coaching decisions.
+// NEVER decides what is remembered: a match is evidence (§11.7), and only
+// the consolidation layer turns evidence into durable state.
 // Owner: Signal Engine.
 
-import type { AcademicState } from "../types/academic-state.types.js";
+import type { AcademicState } from "../types/academic-state.types";
 import type {
   DetectedSignal,
   SignalEngineOutput,
-  SignalMemoryWrite,
   SignalStateUpdate,
   SignalType,
-} from "../types/engine.types.js";
+} from "../types/engine.types";
 
 // ── Structural signal patterns (regex only) ───────────────────────────────────
 // Pattern = structural, unambiguous, context-independent.
@@ -38,8 +41,6 @@ const BURNOUT_BEHAVIORAL_RE = /\b(exhausted|burned?\s+out|can'?t\s+(keep|continu
 
 const CONSISTENCY_POSITIVE_RE = /\b(every\s+day|daily|consistently|on\s+track|sticking\s+to|keeping\s+up|didn'?t\s+miss\s+a\s+day|streak)\b/i;
 
-const SESSION_START_RE = /\b(starting\s+(to\s+)?(study|work\s+on|review|revise)|about\s+to\s+start\s+(studying|working|revising)|just\s+start(ed|ing)\s+(studying|my\s+session)|beginning\s+(to\s+)?study|starting\s+my\s+session|okay\s+starting|ok\s+starting|let'?s\s+(start|begin)\s+(studying|with))\b/i;
-
 const BREAK_REQUEST_RE = /\b(need\s+a\s+break|taking\s+a\s+break|want\s+a\s+break|going\s+to\s+take\s+a\s+break|break\s+time|need\s+to\s+rest|need\s+to\s+stop|stepping\s+away|need\s+to\s+step\s+away|pausing\s+(my\s+)?(session|studying))\b/i;
 
 const DISTRACTION_RE = /\b(distracted|can'?t\s+(concentrate|focus)|mind\s+(is\s+)?wandering|lost\s+(my\s+)?focus|keep\s+getting\s+distracted|spacing\s+out|can'?t\s+pay\s+attention|losing\s+focus|zoning\s+out)\b/i;
@@ -58,7 +59,7 @@ function computeIntensity(text: string, basePattern: RegExp): number {
 
 // ── State delta tables ────────────────────────────────────────────────────────
 
-const SIGNAL_STATE_DELTAS: Record<SignalType, Partial<Record<keyof import("../types/academic-state.types.js").AcademicScores, number>>> = {
+const SIGNAL_STATE_DELTAS: Record<SignalType, Partial<Record<keyof import("../types/academic-state.types").AcademicScores, number>>> = {
   study_report:       { engagement: +8,  momentum: +6,  planAdherence: +5,  burnoutRisk: -3  },
   study_skip:         { engagement: -6,  momentum: -5,  planAdherence: -4                    },
   session_start:      { engagement: +5,  momentum: +4                                         },
@@ -74,28 +75,6 @@ const SIGNAL_STATE_DELTAS: Record<SignalType, Partial<Record<keyof import("../ty
   comeback:           { engagement: +6,  momentum: +4                                        },
 };
 
-// ── Memory write definitions ──────────────────────────────────────────────────
-
-function buildMemoryWrite(signal: DetectedSignal, text: string): SignalMemoryWrite | null {
-  const snippet = text.slice(0, 150).replace(/\n/g, " ");
-  switch (signal.type) {
-    case "study_report":
-      return { type: "study_session",  key: `session_${Date.now()}`, value: snippet, confidence: signal.confidence, shouldUpsert: false };
-    case "study_skip":
-      return { type: "missed_session", key: `miss_${Date.now()}`,    value: snippet, confidence: signal.confidence, shouldUpsert: false };
-    case "commitment":
-      return { type: "commitment",     key: "latest_commitment",     value: snippet, confidence: signal.confidence, shouldUpsert: true  };
-    case "excuse":
-      return { type: "excuse_pattern", key: `excuse_${Date.now()}`,  value: snippet, confidence: signal.confidence, shouldUpsert: false };
-    case "achievement":
-      return { type: "achievement",    key: `win_${Date.now()}`,     value: snippet, confidence: signal.confidence, shouldUpsert: false };
-    case "mastery_claim":
-      return { type: "mastery_claim",  key: "latest_mastery_claim",  value: snippet, confidence: signal.confidence, shouldUpsert: true  };
-    default:
-      return null;
-  }
-}
-
 // ── Core extraction ───────────────────────────────────────────────────────────
 
 interface SignalDefinition {
@@ -107,7 +86,6 @@ interface SignalDefinition {
 const SIGNAL_DEFINITIONS: SignalDefinition[] = [
   { type: "study_report",       pattern: STUDY_REPORT_RE,         valence: "positive" },
   { type: "study_skip",         pattern: STUDY_SKIP_RE,           valence: "negative" },
-  { type: "session_start",      pattern: SESSION_START_RE,        valence: "positive" },
   { type: "break_request",      pattern: BREAK_REQUEST_RE,        valence: "neutral"  },
   { type: "distraction",        pattern: DISTRACTION_RE,          valence: "negative" },
   { type: "commitment",         pattern: COMMITMENT_RE,           valence: "positive" },
@@ -120,13 +98,63 @@ const SIGNAL_DEFINITIONS: SignalDefinition[] = [
   { type: "consistency",        pattern: CONSISTENCY_POSITIVE_RE, valence: "positive" },
 ];
 
+// ── Established events ────────────────────────────────────────────────────────
+// Some signals are not read off the message text at all. "The student is
+// starting a session" is either an explicit command (protocol) or a judgement
+// about what a sentence means (Understanding Brain). Once one of those has
+// established the event, it is added here so every downstream consumer sees
+// one uniform signal list. This function never looks at message text.
+
+export type EstablishedBy = "command" | "understanding";
+
+const ESTABLISHED_VALENCE: Partial<Record<SignalType, DetectedSignal["valence"]>> = {
+  study_skip: "negative", excuse: "negative", mastery_claim: "neutral",
+};
+
+export function withEstablishedSignal(
+  output: SignalEngineOutput,
+  type:   SignalType,
+  source: EstablishedBy,
+): SignalEngineOutput {
+  const existing = output.detectedSignals.find(s => s.type === type);
+  if (existing) {
+    // The wording also matched. Keep the match's intensity, but record that
+    // the event is established independently of it.
+    if (existing.evidence === "command" || existing.evidence === "understanding") return output;
+    return {
+      ...output,
+      detectedSignals: output.detectedSignals.map(s => s === existing ? { ...s, evidence: source } : s),
+    };
+  }
+
+  const signal: DetectedSignal = {
+    type,
+    intensity:  0.75,
+    valence:    ESTABLISHED_VALENCE[type] ?? "positive",
+    confidence: source === "command" ? 1.0 : 0.85,
+    evidence:   source,
+  };
+  const stateUpdates: SignalStateUpdate[] = (
+    Object.entries(SIGNAL_STATE_DELTAS[type]) as Array<[keyof AcademicScores, number]>
+  ).map(([field, raw]) => ({
+    field,
+    delta:         parseFloat((raw * signal.intensity).toFixed(1)),
+    reason:        `established:${type} by:${source}`,
+    triggerSignal: type,
+  }));
+
+  return {
+    detectedSignals: [...output.detectedSignals, signal],
+    stateUpdates:    [...output.stateUpdates, ...stateUpdates],
+  };
+}
+
 export function extractSignals(
   text: string,
   state: AcademicState,
 ): SignalEngineOutput {
   const detectedSignals: DetectedSignal[] = [];
   const stateUpdates:   SignalStateUpdate[] = [];
-  const memoryWrites:   SignalMemoryWrite[] = [];
 
   for (const def of SIGNAL_DEFINITIONS) {
     if (!def.pattern.test(text)) continue;
@@ -156,9 +184,6 @@ export function extractSignals(
         });
       }
     }
-
-    const mw = buildMemoryWrite(signal, text);
-    if (mw) memoryWrites.push(mw);
   }
 
   // Consistency bonus: study_report with no skip/excuse this turn → extra adherence
@@ -173,8 +198,8 @@ export function extractSignals(
     });
   }
 
-  return { detectedSignals, stateUpdates, memoryWrites };
+  return { detectedSignals, stateUpdates };
 }
 
 // Needed for the import in engine.types.ts to resolve correctly at runtime
-type AcademicScores = import("../types/academic-state.types.js").AcademicScores;
+type AcademicScores = import("../types/academic-state.types").AcademicScores;

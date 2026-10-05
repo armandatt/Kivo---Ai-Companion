@@ -8,19 +8,19 @@
 //   N1: Crisis Gate       — life event? → crisis_redirect
 //   N2: Directive Gate    — hard directive active? → constrained family
 //   N3: Routing Gate      — routingSignal from Understanding Brain → family
-//   N4: Pattern Gate      — pattern detected? → pattern-aware family
+//   N4: Pattern Gate      — pattern detected? → pattern-aware family 
 //   N5: Momentum Gate     — streak/win signal? → celebrate/push
 //   N6: Signal Gate       — study_report or skip? → report family
 //   N7: Default Gate      — fallback to Decision Engine scorer
 
-import type { AcademicUnderstanding } from "../types/understanding.types.js";
-import type { AcademicState } from "../types/academic-state.types.js";
-import type { SignalEngineOutput, PatternAnalysis, DecisionEngineInput } from "../types/engine.types.js";
-import type { InterventionName } from "../types/intervention.types.js";
-import type { DecisionGraphOutput } from "../types/response.types.js";
-import type { NovaUserFact } from "../types/memory.types.js";
-import { INTERVENTIONS, INTERVENTION_FAMILIES } from "../types/intervention.types.js";
-import { runDecisionEngine } from "./decision-engine.js";
+import type { AcademicUnderstanding } from "../types/understanding.types";
+import type { AcademicState } from "../types/academic-state.types";
+import type { SignalEngineOutput, PatternAnalysis, DecisionEngineInput } from "../types/engine.types";
+import type { InterventionName } from "../types/intervention.types";
+import type { DecisionGraphOutput } from "../types/response.types";
+import type { NovaUserFact } from "../types/memory.types";
+import { INTERVENTIONS, INTERVENTION_FAMILIES } from "../types/intervention.types";
+import { runDecisionEngine } from "./decision-engine";
 
 type GraphNode = (ctx: GraphContext) => GraphResult | null;
 

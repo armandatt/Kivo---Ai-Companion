@@ -125,7 +125,8 @@ describe("Engine isolation", () => {
 
     expect(out).toHaveProperty("detectedSignals");
     expect(out).toHaveProperty("stateUpdates");
-    expect(out).toHaveProperty("memoryWrites");
+    // A signal is evidence. The engine must not decide what is remembered (§11.7).
+    expect(out).not.toHaveProperty("memoryWrites");
     expect(Array.isArray(out.detectedSignals)).toBe(true);
   });
 

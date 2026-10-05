@@ -5,7 +5,7 @@
 // Owner: Study Snapshot. No LLM calls. Pure DB reads.
 
 import { prisma } from "@repo/db/client";
-import type { AcademicStateSnapshot } from "../types/academic-state.types.js";
+import type { AcademicStateSnapshot } from "../types/academic-state.types";
 
 export interface ActiveSessionInfo {
   id:                     string;
@@ -66,7 +66,7 @@ export interface StudySnapshotResult {
   }>;
 
   // Prior state
-  storedScores:            import("../types/academic-state.types.js").AcademicScores | null;
+  storedScores:            import("../types/academic-state.types").AcademicScores | null;
   storedStreakDays:        number;
   storedConsecutiveMisses: number;
   stateHistory:            AcademicStateSnapshot[];
@@ -206,7 +206,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
     : null;
 
   // Parse stored state from cognitiveState.stateHistory
-  let storedScores:            import("../types/academic-state.types.js").AcademicScores | null = null;
+  let storedScores:            import("../types/academic-state.types").AcademicScores | null = null;
   let storedStreakDays         = 0;
   let storedConsecutiveMisses  = 0;
   let stateHistory:            AcademicStateSnapshot[] = [];

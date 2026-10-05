@@ -19,7 +19,7 @@ const BASE_INPUT: AcademicStateInput = {
   studySessions:     [],
   upcomingExams:     [],
   stateHistory:      [],
-  signals:           { detectedSignals: [], stateUpdates: [], memoryWrites: [] },
+  signals:           { detectedSignals: [], stateUpdates: [] },
   mentionedTopicMastery: null,
   understanding: {
     intent: "general_chat", emotion: "neutral", topic: null, topicConfidence: 0,
