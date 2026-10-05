@@ -49,7 +49,9 @@ Set in the Render dashboard. None are in `render.yaml`.
 |---|---|---|
 | `DATABASE_URL` | yes, at build and runtime | Neon pooled connection string |
 | `DIRECT_URL` | for Prisma CLI only | Neon direct connection string |
-| `OPENAI_API_KEY` | yes | |
+| `GEMINI_API_KEY` | yes (or `OPENAI_API_KEY`) | When set, every model call goes to Gemini. Free keys come from Google AI Studio |
+| `OPENAI_API_KEY` | only without Gemini | Used when `GEMINI_API_KEY` is empty, or when `LLM_PROVIDER=openai` |
+| `GEMINI_MODEL_FAST`, `GEMINI_MODEL_MAIN` | no | Override the default Gemini models (`gemini-flash-lite-latest`, `gemini-flash-latest`) |
 | `TELEGRAM_BOT_TOKEN` | yes | |
 | `TELEGRAM_WEBHOOK_SECRET` | yes | Any long random string; reused in `setWebhook` below |
 | `JWT_SECRET` | yes | Same value as on Vercel |
@@ -57,7 +59,7 @@ Set in the Render dashboard. None are in `render.yaml`.
 | `GOOGLE_REDIRECT_URI` | for Google sign-in | `https://<web-domain>/api/auth/google/callback`. It points at the web domain, so it does not change with this migration |
 | `NEXT_PUBLIC_APP_URL` | yes | `https://<web-domain>` |
 | `BOT_USERNAME` | yes | Bot username without `@` |
-| `OPENAI_MODEL` | no | Omit to use the code default |
+| `OPENAI_MODEL` | no | OpenAI only. Ignored when Gemini is the provider |
 | `MENTOR_V3_ENABLED`, `ONBOARDING_V3_ENABLED` | copy from Railway | Off unless set to `true` |
 | `DISABLE_INTERNAL_CHECKIN_CRON` | set by `render.yaml` | `true` until cutover |
 | `NODE_VERSION` | set by `render.yaml` | `22.14.0` |

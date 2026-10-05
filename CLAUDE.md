@@ -46,6 +46,7 @@ Turborepo monorepo (npm workspaces) for **Kivo**, an AI accountability companion
 - **`apps/api`**: Next.js used as an API-only server, deployed to Railway. Routes are under `app/api/`. `app/api/telegram/route.ts` is the core runtime loop.
 - **`apps/web`**: Next.js marketing site, onboarding quiz and dashboard, deployed to Vercel.
 - **`packages/api`** (`@repo/api`): all business logic, with no HTTP knowledge. Consumed through subpath exports (`@repo/api/services/*`, `@repo/api/engines/*`, `@repo/api/nova`, ...). A new top-level folder under `src/` needs an entry in the `exports` map of `packages/api/package.json`.
+- **LLM calls** all go through one function, `generateOpenAIText` in `packages/api/src/services/openai.service.ts`. The name is historical: it calls Gemini or OpenAI depending on configuration (`services/llmProviders.ts`). Call sites pass OpenAI model names, which are treated as a tier (`*-mini` = fast, anything else = main), so never add a second client or call a provider directly.
 - **`packages/db`** (`@repo/db/client`): Prisma client using `@prisma/adapter-pg`. Schema at `packages/db/prisma/schema.prisma`; `prisma.config.ts` prefers `DIRECT_URL` over `DATABASE_URL`.
 - **`packages/ui`**: minimal shared React stubs.
 
@@ -124,7 +125,8 @@ All are read from `process.env` at call time, so flipping one on Railway needs n
 | `DATABASE_URL` | both | Neon PostgreSQL pooled connection |
 | `DIRECT_URL` | api | Neon direct connection, used by the Prisma CLI |
 | `TELEGRAM_BOT_TOKEN` (or `BOT_TOKEN`) | api | Telegram Bot API token |
-| `OPENAI_API_KEY` | api | OpenAI key. `OPENAI_MODEL` overrides the default model for Rex calls |
+| `GEMINI_API_KEY` | api | When set, every model call goes to Gemini. `GEMINI_MODEL_FAST` / `GEMINI_MODEL_MAIN` override the defaults |
+| `OPENAI_API_KEY` | api | Used only when `GEMINI_API_KEY` is empty or `LLM_PROVIDER=openai`. `OPENAI_MODEL` overrides the default OpenAI model |
 | `TELEGRAM_WEBHOOK_SECRET` | api | Must equal the `secret_token` given to Telegram's `setWebhook`. Unset: webhook requests are not authenticated |
 | `JWT_SECRET` | both | Signs session JWTs |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | api | Google OAuth |

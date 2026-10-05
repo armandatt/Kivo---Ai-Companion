@@ -1,6 +1,18 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  buildGeminiRequest,
+  geminiKey,
+  geminiModelFor,
+  isRetryableStatus,
+  isThinkingConfigRejection,
+  openaiKey,
+  parseGeminiResponse,
+  selectProvider,
+  type GeminiResponse,
+  type LlmRequest,
+} from "./llmProviders";
 
 const DEFAULT_OPENAI_MODEL = "gpt-5";
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -33,24 +45,55 @@ function loadPackageEnv() {
   }
 }
 
-function getOpenAIKey() {
-  loadPackageEnv();
-  return process.env.OPENAI_API_KEY || process.env.OPEN_API_KEY;
+// ─── The one LLM client ───────────────────────────────────────────────────────
+// Every model call in the codebase goes through generateOpenAIText(). The name
+// is historical: it now talks to whichever provider is configured.
+//
+//   LLM_PROVIDER=gemini|openai   explicit choice
+//   otherwise                    Gemini if GEMINI_API_KEY is set, else OpenAI
+//
+// Callers pass OpenAI model names; llmProviders.ts maps them to a tier.
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Models that rejected "thinkingBudget: 0". Remembered for the process so the
+// extra round-trip happens once per model, not once per call.
+const thinkingNotConfigurable = new Set<string>();
+
+async function generateWithGemini(input: LlmRequest, apiKey: string): Promise<string> {
+  const model = geminiModelFor(input.model, process.env);
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { url, body } = buildGeminiRequest(input, model, {
+      disableThinking: !thinkingNotConfigurable.has(model),
+    });
+
+    const res = await fetch(url, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body:    JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({})) as GeminiResponse;
+
+    if (res.ok) return parseGeminiResponse(data, model);
+
+    if (isThinkingConfigRejection(res.status, data.error?.message) && !thinkingNotConfigurable.has(model)) {
+      thinkingNotConfigurable.add(model);
+      continue;                       // same request, without the thinking setting
+    }
+    if (isRetryableStatus(res.status) && attempt < 2) {
+      await sleep(1500 * (attempt + 1));
+      continue;
+    }
+    throw new Error(
+      `Gemini request failed (${res.status}, model: ${model}): ${data.error?.message ?? "no error message"}`,
+    );
+  }
+  throw new Error(`Gemini request failed after retries (model: ${model})`);
 }
 
-export async function generateOpenAIText(input: {
-  prompt: string;
-  systemInstruction?: string;
-  maxOutputTokens?: number;
-  model?: string;             // per-call override; falls back to OPENAI_MODEL env → gpt-4o-mini
-}) {
-  const apiKey = getOpenAIKey();
-
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not set");
-  }
-
-  const model = input.model ?? process.env.OPENAI_MODEL ?? DEFAULT_OPENAI_MODEL;
+async function generateWithOpenAI(input: LlmRequest, apiKey: string): Promise<string> {
+  const model = input.model ?? (process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL);
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -101,4 +144,24 @@ export async function generateOpenAIText(input: {
   }
 
   return text;
+}
+
+export async function generateOpenAIText(input: {
+  prompt: string;
+  systemInstruction?: string;
+  maxOutputTokens?: number;
+  model?: string;             // an OpenAI model name, used as a tier on other providers
+}) {
+  loadPackageEnv();
+  const provider = selectProvider(process.env);
+
+  if (provider === "gemini") {
+    const apiKey = geminiKey(process.env);
+    if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
+    return generateWithGemini(input, apiKey);
+  }
+
+  const apiKey = openaiKey(process.env);
+  if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+  return generateWithOpenAI(input, apiKey);
 }

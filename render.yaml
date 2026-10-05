@@ -42,6 +42,10 @@ services:
         sync: false
 
       # ── Secrets ─────────────────────────────────────────────────────────────
+      # LLM provider: Gemini is used whenever GEMINI_API_KEY has a value.
+      # OPENAI_API_KEY is only read when it does not (or LLM_PROVIDER=openai).
+      - key: GEMINI_API_KEY
+        sync: false
       - key: OPENAI_API_KEY
         sync: false
       - key: TELEGRAM_BOT_TOKEN
@@ -62,7 +66,7 @@ services:
         sync: false
       - key: BOT_USERNAME              # Telegram bot username, without @
         sync: false
-      - key: OPENAI_MODEL              # optional; omit to use the code default
+      - key: OPENAI_MODEL              # OpenAI only; ignored when Gemini is the provider
         sync: false
 
       # ── Feature flags: must match Railway exactly, or behaviour changes ─────
