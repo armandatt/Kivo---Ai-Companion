@@ -422,7 +422,10 @@ export async function handleOffTopicMessage(
     case "needs_llm": {
       try {
         reply = await callLLMFallback(text, ctx)
-      } catch {
+      } catch (err) {
+        // Never swallow this silently: a dead API key looks exactly like
+        // "Rex says the same line to everything".
+        console.error("[offTopic] LLM fallback failed, using canned reply:", (err as Error)?.message ?? err)
         reply = buildHardcodedResponse("offtopic", ctx)
       }
       if (evasionCtx) {
