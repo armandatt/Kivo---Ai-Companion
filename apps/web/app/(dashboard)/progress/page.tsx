@@ -1,97 +1,85 @@
 'use client'
 
-import { useProgressData }        from '@/components/progress/use-progress-data'
-import { ProgressScorecard }      from '@/components/progress/progress-scorecard'
-import { WeightJourney }          from '@/components/progress/weight-journey'
-import { StrengthProgression }    from '@/components/progress/strength-progression'
-import { ConsistencyHeatmap }     from '@/components/progress/consistency-heatmap'
-import { RecoveryTrend }          from '@/components/progress/recovery-trend'
-import { NutritionTrend }         from '@/components/progress/nutrition-trend'
-import { PlateauDetector }        from '@/components/progress/plateau-detector'
-import { MilestonesTimeline }     from '@/components/progress/milestones-timeline'
-import { MonthlyDiff }            from '@/components/progress/monthly-diff'
-import { CoachingInsights }       from '@/components/progress/coaching-insights'
+import Link from 'next/link'
+import { RexProgress } from '@/components/progress/rex-progress'
+import { NovaProgress } from '@/components/nova/progress/nova-progress'
+import { useNovaProgress } from '@/components/nova/use-nova-progress'
 
+function Frame({ children }: { children: React.ReactNode }) {
+  return <div className="mx-auto w-full max-w-6xl pb-20 pt-10 lg:pt-4">{children}</div>
+}
+
+function Notice({ title, body }: { title: string; body: string }) {
+  return (
+    <Frame>
+      <section className="rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+        <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">{body}</p>
+        <Link href="/home" className="mt-6 inline-flex h-11 items-center justify-center rounded-xl bg-keppel-400 px-6 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300">
+          Go to Today
+        </Link>
+      </section>
+    </Frame>
+  )
+}
+
+// One Progress route, two companions. The server says which learner this
+// account is (GET /api/nova/progress); the page renders that answer. A Rex
+// account gets Rex's page and never Nova's.
 export default function ProgressPage() {
-  const { data, loading } = useProgressData()
+  const { view, loading, refreshing, error, refresh } = useNovaProgress()
+
+  if (loading) {
+    return (
+      <Frame>
+        <div aria-busy="true" aria-label="Loading your progress" className="space-y-6">
+          <div className="h-8 w-64 animate-pulse rounded-lg bg-white/5" />
+          <div className="h-4 w-96 max-w-full animate-pulse rounded bg-white/4" />
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {[0, 1, 2, 3].map(i => <div key={i} className="h-24 animate-pulse rounded-2xl bg-white/3" />)}
+          </div>
+          <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
+            <div className="h-72 animate-pulse rounded-2xl bg-white/3" />
+            <div className="h-72 animate-pulse rounded-2xl bg-white/3" />
+          </div>
+        </div>
+      </Frame>
+    )
+  }
+
+  if (!view) {
+    return (
+      <Frame>
+        <section role="alert" className="rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9">
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Couldn&apos;t load your progress</h1>
+          <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">
+            The server didn&apos;t answer. Nothing is lost; your sessions and what Nova knows are saved.
+          </p>
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            disabled={refreshing}
+            className="mt-6 inline-flex h-11 items-center justify-center rounded-xl border border-white/12 px-6 text-sm font-medium text-foreground transition-colors hover:bg-white/5 disabled:opacity-60"
+          >
+            {refreshing ? 'Trying…' : 'Try again'}
+          </button>
+        </section>
+      </Frame>
+    )
+  }
+
+  if (view.status === 'not_nova') return <RexProgress />
+  if (view.status === 'not_connected') return <Notice title="Connect Nova first" body="Nova has no learner linked to this account yet, so there is no journey to show. Connect it on Today." />
+  if (view.status === 'onboarding_incomplete') return <Notice title="Nova needs to know what you're studying" body="Finish the short setup conversation on Today. Your journey starts with your first session after that." />
 
   return (
-    <div className="w-full max-w-2xl mx-auto px-4 pt-6 pb-16 space-y-4">
-      <div className="mb-2">
-        <h1 className="text-lg font-bold text-white">Progress</h1>
-        <p className="text-xs text-white/30 mt-0.5">Am I actually improving?</p>
-      </div>
-
-      {/* S9 — Monthly diff first: most actionable for returning users */}
-      <MonthlyDiff
-        monthlyDiff={data?.monthlyDiff ?? {
-          period: 'Last 30 days',
-          weight: { delta: null, label: 'No data', invertColor: false }, strength: { delta: null, label: 'No data' },
-          consistency: { delta: null, label: 'No data' }, protein: { delta: null, label: 'No data' },
-          burnout: { delta: null, label: 'No data' },
-        }}
-        loading={loading}
-      />
-
-      {/* S1 — Scorecard pulse */}
-      <ProgressScorecard
-        scorecard={data?.scorecard ?? {
-          weight: null, strength: null,
-          consistency: { value: '—', direction: 'unknown', delta: null, status: 'unknown' },
-          recovery: null, nutrition: null,
-        }}
-        loading={loading}
-      />
-
-      {/* S10 — Coaching insights (high priority) */}
-      <CoachingInsights
-        coachingInsights={data?.coachingInsights ?? []}
-        loading={loading}
-      />
-
-      {/* S7 — Plateau detector (only renders when relevant) */}
-      {(loading || (data?.plateauDetector && data.plateauDetector.stalledLifts.length > 0)) && (
-        <PlateauDetector plateauDetector={data?.plateauDetector ?? null} />
+    <>
+      {error && (
+        <p role="status" className="mx-auto mb-2 w-full max-w-6xl pt-10 text-xs text-amber-300/80 lg:pt-0">
+          Showing what loaded last. Reconnecting…
+        </p>
       )}
-
-      {/* S2 — Weight journey */}
-      <WeightJourney
-        weightJourney={data?.weightJourney ?? null}
-        loading={loading}
-      />
-
-      {/* S3 — Strength PRs */}
-      <StrengthProgression
-        strengthProgression={data?.strengthProgression ?? null}
-        loading={loading}
-      />
-
-      {/* S4 — Consistency heatmap */}
-      <ConsistencyHeatmap
-        consistency={data?.consistency ?? {
-          sessions: [], currentStreak: 0, longestStreak: 0,
-          completionRate7d: 0, completionRate30d: 0, totalSessions: 0, daysPerWeek: 3,
-        }}
-        loading={loading}
-      />
-
-      {/* S4 + S5 — Recovery and Nutrition side by side */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <RecoveryTrend
-          recoveryTrend={data?.recoveryTrend ?? null}
-          loading={loading}
-        />
-        <NutritionTrend
-          nutritionTrend={data?.nutritionTrend ?? null}
-          loading={loading}
-        />
-      </div>
-
-      {/* S8 — Milestones */}
-      <MilestonesTimeline
-        milestones={data?.milestones ?? []}
-        loading={loading}
-      />
-    </div>
+      <NovaProgress view={view} />
+    </>
   )
 }

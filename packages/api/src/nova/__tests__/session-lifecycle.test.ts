@@ -183,7 +183,7 @@ describe("ending a session from the web", () => {
       outcome: null, evidenceBasis: "unreported",
     });
     expect(updateTopicMastery).toHaveBeenCalledTimes(1);
-    expect(updateTopicMastery).toHaveBeenCalledWith("s1", "Deadlocks", 0.6, at(40 * 60), "session_report");
+    expect(updateTopicMastery).toHaveBeenCalledWith("s1", "Deadlocks", 0.6, at(40 * 60), "session_report", "sess1");
   });
 
   it("records the command in the conversation log and hands a study report to consolidation", async () => {

@@ -32,6 +32,7 @@ export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
   { path: "/focus",   label: "Focus" },
   { path: "/knowledge", label: "Knowledge" },
   { path: "/notes",   label: "Notes" },
+  { path: "/progress", label: "Progress" },
 ];
 
 // Shared account pages, the same for both companions.
