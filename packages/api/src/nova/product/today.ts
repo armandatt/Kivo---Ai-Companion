@@ -7,7 +7,7 @@
 
 import type { StudySnapshotResult } from "../engines/study-snapshot";
 import { getOverdueTopics } from "../engines/retention-engine";
-import { loadPlanningInputs, normalizeAvailableMinutes } from "./planning-inputs";
+import { loadPlanningInputs, planEmptyReason, planMode } from "./planning-inputs";
 import type { AcademicState } from "../types/academic-state.types";
 import type { ExamContext, StudyBlock, StudyPlan, TopicMasteryState } from "../types/engine.types";
 import type {
@@ -20,7 +20,6 @@ import type {
 import { sessionElapsedSeconds } from "./session-view";
 
 const DAY_MS = 86_400_000;
-const MIN_USEFUL_MINUTES = 10;
 
 // ── Pure builder ──────────────────────────────────────────────────────────────
 
@@ -71,43 +70,35 @@ export function reasonsFor(
   return reasons;
 }
 
+// A block as the pages show it. The length is the engine's: the plan was
+// already fitted to the time available, so nothing is trimmed here.
 export function toAction(
-  block:            StudyBlock,
-  topics:           TopicMasteryState[],
-  examContext:      ExamContext | null,
-  availableMinutes: number | null,
-  now:              Date,
+  block:       StudyBlock,
+  topics:      TopicMasteryState[],
+  examContext: ExamContext | null,
+  now:         Date,
 ): TodayAction {
   const topic = topics.find(t => t.topicId === block.topicId)
     ?? topics.find(t => t.topicName === block.topicName && t.subjectName === block.subjectName);
-  const fits = availableMinutes === null || block.durationMinutes <= availableMinutes;
   return {
     topicName:       block.topicName,
     subjectName:     block.subjectName,
     activityType:    block.activityType,
-    durationMinutes: fits ? block.durationMinutes : Math.max(MIN_USEFUL_MINUTES, availableMinutes!),
+    durationMinutes: block.durationMinutes,
     urgency:         block.urgency,
     reasons:         reasonsFor(block, topic, examContext, now),
     rationale:       block.rationale,
-    trimmedToFit:    !fits,
   };
 }
 
 export function buildTodayView(input: TodayInputs): NovaTodayReady {
   const { snapshot, academicState, topics, examContext, plan, now } = input;
 
-  const actions = plan.today.map(b => toAction(b, topics, examContext, input.availableMinutes, now));
+  const actions = plan.today.map(b => toAction(b, topics, examContext, now));
   const recommendation = actions[0] ?? null;
 
-  const mode: NovaTodayReady["plan"]["mode"] =
-    academicState.hardDirectives.examCrisisMode ? "exam_crisis"
-    : academicState.hardDirectives.recoveryMode ? "recovery"
-    : "standard";
-
-  const emptyReason: NovaTodayReady["emptyReason"] = recommendation ? null
-    : topics.length === 0 ? "no_topics"
-    : mode === "recovery" ? "recovery"
-    : "nothing_due";
+  const mode        = planMode(academicState);
+  const emptyReason = planEmptyReason(input);
 
   const weekAgo   = new Date(now.getTime() - 7 * DAY_MS);
   const completed = snapshot.studySessions.filter(s => s.status === "completed");
@@ -186,6 +177,8 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
       mode,
       blockCount:        plan.today.length,
       totalMinutesToday: plan.totalMinutesToday,
+      budgetMinutes:     plan.budgetMinutes,
+      budgetBasis:       plan.budgetBasis,
       assumptions:       plan.assumptions,
     },
   };
@@ -199,15 +192,14 @@ export async function loadNovaToday(
 ): Promise<NovaTodayView> {
   const now = options.now ?? new Date();
 
-  // Home fits its one recommendation to the time available; the day's plan
-  // itself is the student's usual one.
-  const loaded = await loadPlanningInputs(platformChatId, { now });
+  // The time the student has goes to the Planning Engine, exactly as it does
+  // for the Planner. Home then shows the first blocks of that plan.
+  const loaded = await loadPlanningInputs(platformChatId, { availableMinutes: options.availableMinutes, now });
   if (loaded.status !== "ready") return { status: loaded.status };
 
   return buildTodayView({
     ...loaded.inputs,
     learnerName:      options.learnerName ?? null,
     goals:            loaded.inputs.goals.slice(0, 3),
-    availableMinutes: normalizeAvailableMinutes(options.availableMinutes),
   });
 }

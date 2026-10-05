@@ -7,7 +7,8 @@ const nextConfig = {
     unoptimized: true,
   },
   // three and simplex-noise are ESM-only; transpile them for SSR compatibility
-  transpilePackages: ["three", "simplex-noise"],
+  // @repo/api ships TypeScript source; the dashboard runs its companion rule.
+  transpilePackages: ["three", "simplex-noise", "@repo/api"],
   async rewrites() {
     const apiUrl = process.env.API_URL ?? "http://localhost:3001"
 

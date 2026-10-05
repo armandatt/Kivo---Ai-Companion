@@ -55,7 +55,7 @@ function inputs(
   snap: StudySnapshotResult,
   topics: TopicMasteryState[],
   opts: { availableMinutes?: number | null; state?: (s: AcademicState) => AcademicState; over?: Partial<PlanningInputs> } = {},
-): PlanningInputs & { availableMinutes: number | null } {
+): PlanningInputs {
   let academicState = computeAcademicState({
     semesterStartDate: null, semesterEndDate: null, daysSinceJoined: snap.daysSinceJoined,
     studySessions: snap.studySessions, upcomingExams: snap.upcomingExams, stateHistory: [],
@@ -127,7 +127,7 @@ describe("buildPlannerView: today", () => {
     expect(view.today.blocks.map(b => [b.topicName, b.subjectName, b.durationMinutes, b.activityType, b.urgency, b.rationale]))
       .toEqual(input.plan.today.map(b => [b.topicName, b.subjectName, b.durationMinutes, b.activityType, b.urgency, b.rationale]));
     expect(view.today.blocks.map(b => b.order)).toEqual(input.plan.today.map((_, i) => i + 1));
-    expect(view.today.blocks.every(b => b.status === "planned" && !b.trimmedToFit)).toBe(true);
+    expect(view.today.blocks.every(b => b.status === "planned")).toBe(true);
     expect(view.today.emptyReason).toBeNull();
   });
 

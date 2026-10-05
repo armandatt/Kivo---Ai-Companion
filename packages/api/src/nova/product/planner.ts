@@ -9,7 +9,7 @@
 // what the engines produced and reports the facts behind it.
 
 import { buildExamContext } from "../engines/exam-engine";
-import { loadPlanningInputs, normalizeAvailableMinutes, type PlanningInputs } from "./planning-inputs";
+import { loadPlanningInputs, planEmptyReason, planMode, type PlanningInputs } from "./planning-inputs";
 import { sessionElapsedSeconds } from "./session-view";
 import { toAction } from "./today";
 import type {
@@ -68,10 +68,7 @@ function buildReasoning(input: PlanningInputs, blocks: PlannerBlock[]): PlannerR
   const usualMinutes = Math.round(snapshot.preferredStudyHoursPerDay * 60);
   const budget       = plan.budgetMinutes;
 
-  const mode: PlannerReasoning["mode"] =
-    academicState.hardDirectives.examCrisisMode ? "exam_crisis"
-    : academicState.hardDirectives.recoveryMode ? "recovery"
-    : "standard";
+  const mode = planMode(academicState);
 
   const adjustments: PlannerReasoning["adjustments"] = [];
   const exam = examContext ? `${examContext.examTitle} is ${inDays(examContext.daysUntil)}` : null;
@@ -162,21 +159,18 @@ function buildReasoning(input: PlanningInputs, blocks: PlannerBlock[]): PlannerR
 
 // ── Pure builder ──────────────────────────────────────────────────────────────
 
-export function buildPlannerView(
-  input: PlanningInputs & { availableMinutes: number | null },
-): NovaPlannerReady {
+export function buildPlannerView(input: PlanningInputs): NovaPlannerReady {
   const { snapshot, academicState, topics, examContext, plan, now } = input;
   const timezone = resolveTimezone(input.timezone);
   const today    = dayKey(now, timezone);
   const active   = snapshot.activeSession;
 
-  // Today: the engine's blocks. The plan was already fitted to the time
-  // available by the engine, so nothing is trimmed here.
+  // Today: the engine's blocks.
   const blocks: PlannerBlock[] = plan.today.map((b, i) => {
     const running = active !== null && sameTopic(active.topicName, b.topicName)
       && (active.subjectName === null || sameTopic(active.subjectName, b.subjectName));
     return {
-      ...toAction(b, topics, examContext, null, now),
+      ...toAction(b, topics, examContext, now),
       id:     `${b.topicId}:${i}`,
       order:  i + 1,
       status: !running ? "planned" : active!.status === "paused" ? "paused" : "in_progress",
@@ -186,12 +180,7 @@ export function buildPlannerView(
   const activeBlock = blocks.find(b => b.status !== "planned") ?? null;
   for (const b of blocks) if (b !== activeBlock) b.status = "planned";
 
-  const mode = academicState.hardDirectives.examCrisisMode ? "exam_crisis"
-    : academicState.hardDirectives.recoveryMode ? "recovery" : "standard";
-  const emptyReason: NovaPlannerReady["today"]["emptyReason"] = blocks.length > 0 ? null
-    : topics.length === 0 ? "no_topics"
-    : mode === "recovery" ? "recovery"
-    : "nothing_due";
+  const emptyReason = planEmptyReason(input);
 
   const entry = (s: StudySnapshotSession): PlannerSessionEntry => ({
     id:        s.id,
@@ -303,12 +292,10 @@ export async function loadNovaPlanner(
   platformChatId: string,
   options: { availableMinutes?: number | null; now?: Date } = {},
 ): Promise<NovaPlannerView> {
-  const availableMinutes = normalizeAvailableMinutes(options.availableMinutes);
-
-  // The time the student has goes to the Planning Engine, which refits the
-  // whole day to it.
-  const loaded = await loadPlanningInputs(platformChatId, { planForMinutes: availableMinutes, now: options.now });
+  // The same call Home makes. The Planning Engine refits the whole day to
+  // the time the student has.
+  const loaded = await loadPlanningInputs(platformChatId, { availableMinutes: options.availableMinutes, now: options.now });
   if (loaded.status !== "ready") return { status: loaded.status };
 
-  return buildPlannerView({ ...loaded.inputs, availableMinutes });
+  return buildPlannerView(loaded.inputs);
 }

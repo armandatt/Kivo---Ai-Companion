@@ -10,12 +10,12 @@ import { loadStudySnapshot, type StudySnapshotResult } from "../engines/study-sn
 import { computeAcademicState } from "../engines/academic-state-engine";
 import { getAllTopicMasteries } from "../engines/knowledge-engine";
 import { selectActiveExam } from "../engines/exam-engine";
-import { generateStudyPlan } from "../engines/planning-engine";
+import { generateStudyPlan, MIN_BLOCK_MINUTES } from "../engines/planning-engine";
 import { normalizeStoredReality } from "../types/reality.types";
 import type { AcademicState } from "../types/academic-state.types";
 import type { ExamContext, StudyPlan, TopicMasteryState } from "../types/engine.types";
 import type { AcademicUnderstanding } from "../types/understanding.types";
-import type { TodayConstraint } from "./today.types";
+import type { PlanEmptyReason, TodayConstraint } from "./today.types";
 
 // No student message is being interpreted when a page loads.
 const NO_MESSAGE: AcademicUnderstanding = {
@@ -31,7 +31,28 @@ export function normalizeAvailableMinutes(minutes: number | null | undefined): n
     : null;
 }
 
+export type PlanMode = "exam_crisis" | "recovery" | "standard";
+
+export function planMode(state: AcademicState): PlanMode {
+  return state.hardDirectives.examCrisisMode ? "exam_crisis"
+    : state.hardDirectives.recoveryMode ? "recovery"
+    : "standard";
+}
+
+// Why a plan has no blocks. One answer for every page.
+export function planEmptyReason(
+  input: Pick<PlanningInputs, "plan" | "topics" | "academicState">,
+): PlanEmptyReason | null {
+  if (input.plan.today.length > 0) return null;
+  if (input.topics.length === 0) return "no_topics";
+  if (input.plan.budgetBasis === "stated_time" && input.plan.budgetMinutes < MIN_BLOCK_MINUTES) return "too_little_time";
+  if (planMode(input.academicState) === "recovery") return "recovery";
+  return "nothing_due";
+}
+
 export interface PlanningInputs {
+  // What the student said they have today, as the plan was fitted to it.
+  availableMinutes: number | null;
   snapshot:      StudySnapshotResult;
   academicState: AcademicState;
   topics:        TopicMasteryState[];
@@ -66,9 +87,11 @@ async function loadActiveConstraints(userId: string, now: Date): Promise<TodayCo
 export async function loadPlanningInputs(
   platformChatId: string,
   options: {
-    // Passed to the Planning Engine as the day's time budget.
-    planForMinutes?: number | null;
-    now?:            Date;
+    // What the student says they have today. The Planning Engine refits the
+    // whole day to it. This is the only place a stated time enters planning,
+    // so every page that passes the same number gets the same plan.
+    availableMinutes?: number | null;
+    now?:              Date;
   } = {},
 ): Promise<PlanningInputsResult> {
   const now = options.now ?? new Date();
@@ -117,14 +140,16 @@ export async function loadPlanningInputs(
     now,
   );
 
+  const availableMinutes = normalizeAvailableMinutes(options.availableMinutes);
   const plan = generateStudyPlan(
     academicState, topics, snapshot.preferredStudyHoursPerDay, examContext,
-    { availableMinutes: normalizeAvailableMinutes(options.planForMinutes) },
+    { availableMinutes },
   );
 
   return {
     status: "ready",
     inputs: {
+      availableMinutes,
       snapshot, academicState, topics, examContext, plan, constraints, now,
       goals:              profile.goals,
       timezone:           profile.timezone,

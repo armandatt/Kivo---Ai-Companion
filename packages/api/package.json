@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "jest --config jest.config.ts",
-    "test:integration": "tsx --test src/nova/__integration__/nova-persist-turn.itest.ts"
+    "test:integration": "tsx --test src/nova/__integration__/nova-persist-turn.itest.ts src/nova/__integration__/nova-session-start.itest.ts"
   },
   "exports": {
     "./processor/*": "./src/processor/*",
@@ -20,6 +20,7 @@
     "./nova/entry": "./src/nova/entry.ts",
     "./nova/product/today.types": "./src/nova/product/today.types.ts",
     "./nova/product/planner.types": "./src/nova/product/planner.types.ts",
+    "./nova/product/companion": "./src/nova/product/companion.ts",
     "./nova/product/*": "./src/nova/product/*",
     "./nova/engines/*": "./src/nova/engines/*",
     "./nova/decision/*": "./src/nova/decision/*",

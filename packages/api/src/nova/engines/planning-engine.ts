@@ -50,6 +50,9 @@ export interface PlanOptions {
   availableMinutes?: number | null;
 }
 
+// The shortest block worth planning. A budget below it yields no blocks.
+export const MIN_BLOCK_MINUTES = 10;
+
 // ── Block builder helpers ─────────────────────────────────────────────────────
 
 function reviewBlock(topic: TopicMasteryState, minutes: number, urgency: StudyBlock["urgency"]): StudyBlock {
@@ -126,8 +129,8 @@ export function generateStudyPlan(
       .filter(t => t.masteryProbability > 0.5)
       .sort((a, b) => b.masteryProbability - a.masteryProbability)[0];
 
-    if (easiestTopic) {
-      blocks.push(reviewBlock(easiestTopic, 20, "optional"));
+    if (easiestTopic && budgetMinutes >= MIN_BLOCK_MINUTES) {
+      blocks.push(reviewBlock(easiestTopic, Math.min(20, budgetMinutes), "optional"));
       assumptions.push("Light session — recovery mode active. No new material.");
     }
     return buildPlan(blocks, budget, assumptions, now);
@@ -140,7 +143,7 @@ export function generateStudyPlan(
   for (const topic of overdue) {
     if (usedMinutes >= budgetMinutes * 0.6) break;  // max 60% on overdue
     const mins = Math.min(25, budgetMinutes - usedMinutes);
-    if (mins < 10) break;
+    if (mins < MIN_BLOCK_MINUTES) break;
     blocks.push(reviewBlock(topic, mins, "high"));
     usedMinutes += mins;
   }
@@ -152,7 +155,7 @@ export function generateStudyPlan(
       if (usedMinutes >= budgetMinutes * 0.8) break;
       if (overdue.some(o => o.topicId === topic.topicId)) continue; // already added
       const mins = Math.min(30, budgetMinutes - usedMinutes);
-      if (mins < 10) break;
+      if (mins < MIN_BLOCK_MINUTES) break;
       blocks.push(examPrepBlock(topic, mins, state.daysUntilNextExam));
       usedMinutes += mins;
     }
@@ -168,7 +171,7 @@ export function generateStudyPlan(
   for (const topic of practiceReady) {
     if (usedMinutes >= budgetMinutes) break;
     const mins = Math.min(30, budgetMinutes - usedMinutes);
-    if (mins < 10) break;
+    if (mins < MIN_BLOCK_MINUTES) break;
     blocks.push(practiceBlock(topic, mins));
     usedMinutes += mins;
   }

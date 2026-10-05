@@ -4,6 +4,8 @@
 // what makes it adaptive. The page renders it and plans nothing itself.
 
 import type {
+  PlanBudgetBasisName,
+  PlanEmptyReason,
   TodayAction,
   TodayActiveSession,
   TodayConstraint,
@@ -12,6 +14,8 @@ import type {
 
 export type PlannerBlockStatus = "planned" | "in_progress" | "paused";
 
+// A block the Planning Engine produced for today. Blocks have an order and a
+// length, never a clock time: Nova does not schedule hours.
 export interface PlannerBlock extends TodayAction {
   id:     string;                 // stable within one response
   order:  number;                 // the planner's own order, 1-based
@@ -27,14 +31,19 @@ export interface PlannerSessionEntry {
   minutes:   number;
 }
 
+// One day of the week. Its four lists are different kinds of thing and are
+// never mixed:
+//   sessions    records of what happened
+//   planned     blocks the Planning Engine produced (today only: it plans
+//               one day at a time, so no other day ever has any)
+//   reviewsDue  dates from the retention schedule, not planned work: no
+//               length, no order, and Nova may plan something else that day
+//   exams       dates the student gave
 export interface PlannerDay {
   date:     string;               // YYYY-MM-DD in the student's timezone
   relation: "past" | "today" | "future";
-  // What happened.
   sessions: PlannerSessionEntry[];
-  // Today only: the Planning Engine plans one day at a time.
   planned:  Array<{ topicName: string; subjectName: string; minutes: number }>;
-  // Later days: reviews the retention schedule already has falling due.
   reviewsDue:      Array<{ topicName: string; subjectName: string }>;
   reviewsDueCount: number;
   exams:    Array<{ title: string; subjectName: string | null }>;
@@ -63,10 +72,12 @@ export interface PlannerReasoning {
     minutes:        number;       // what today was fitted to
     plannedMinutes: number;       // what the blocks add up to
     usualMinutes:   number;       // the student's usual daily study time
-    basis:          "preferred" | "stated_time" | "exam_ramp" | "exam_crisis" | "recovery" | "no_pressure";
+    basis:          PlanBudgetBasisName;
   };
-  // Every way today's plan departs from the student's usual day, with the
-  // fact that caused it. Empty when it does not depart.
+  // What is shaping today's plan: every way it departs from the student's
+  // usual day, with the fact that caused it. Empty when it does not depart.
+  // These describe today only. Plans are not stored, so there is no
+  // comparison with an earlier plan here.
   adjustments: Array<{ kind: PlannerAdjustmentKind; text: string }>;
   // Where the time goes, and the evidence behind each subject's share.
   subjects: Array<{
@@ -93,7 +104,7 @@ export interface NovaPlannerReady {
   today: {
     date:          string;
     blocks:        PlannerBlock[];
-    emptyReason:   "no_topics" | "recovery" | "nothing_due" | null;
+    emptyReason:   PlanEmptyReason | null;
     // The running session, and the block it belongs to if it is one of today's.
     activeSession: TodayActiveSession | null;
     activeBlockId: string | null;

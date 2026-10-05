@@ -6,7 +6,7 @@ import { RecommendationCard } from './recommendation-card'
 import { TalkToNova } from './talk-to-nova'
 import { TimeAvailable } from './time-available'
 import { AccountingFor, Recently, UpNext, Upcoming, WorkingToward } from './today-sections'
-import { firstName, greeting, inDays } from './format'
+import { firstName, greeting, inDays, minutesLabel } from './format'
 import { useStartSession } from './use-start-session'
 
 type Props = {
@@ -30,6 +30,11 @@ const EMPTY: Record<NonNullable<NovaTodayReady['emptyReason']>, { title: string;
     title: "Nova doesn't know your topics yet",
     body:  'A recommendation comes from what you have studied and how well it stuck. Tell Nova what you covered recently, or what you are working on now, and it will plan from there.',
     ask:   "e.g. I studied deadlocks for 40 minutes, still shaky on Banker's",
+  },
+  too_little_time: {
+    title: "That's less time than Nova's shortest block",
+    body:  'Nothing useful fits in the time you chose, so Nova has not recommended anything. Pick a longer time, or come back when you have a little more.',
+    ask:   null,
   },
   recovery: {
     title: 'Nothing heavy today',
@@ -83,6 +88,8 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
           <RecommendationCard
             action={rec}
             context={whyContext}
+            note={view.plan.budgetBasis === 'stated_time' && view.availableMinutes
+              ? `Today's plan is fitted to the ${minutesLabel(view.availableMinutes)} you have.` : null}
             onStart={() => start(rec)}
             starting={starting === rec.topicName}
             error={startError}

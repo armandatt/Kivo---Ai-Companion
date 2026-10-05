@@ -49,11 +49,27 @@ function assign(row: Row, data: Row) {
   }
 }
 
+// Stands in for `SELECT … FOR UPDATE` on the profile row: one transaction at
+// a time per profile. The real lock is exercised against Postgres in
+// __integration__/nova-session-start.itest.ts.
+let rowLocks: Map<string, Promise<void>>;
+
 beforeEach(() => {
   sessions = [];
   messages = [];
+  rowLocks = new Map();
   jest.clearAllMocks();
   Object.assign(prisma as Row, {
+    $transaction: async (fn: (tx: Row) => Promise<unknown>) => {
+      let release: (() => void) | undefined;
+      const tx = Object.create(prisma as Row) as Row;
+      tx.$queryRaw = async (_sql: TemplateStringsArray, profileId: string) => {
+        const held = rowLocks.get(profileId) ?? Promise.resolve();
+        rowLocks.set(profileId, held.then(() => new Promise<void>(resolve => { release = resolve; })));
+        await held;
+      };
+      try { return await fn(tx); } finally { release?.(); }
+    },
     novaStudySession: {
       create: async ({ data }: Row) => {
         const row = {
@@ -64,6 +80,7 @@ beforeEach(() => {
         return row;
       },
       findUnique: async ({ where }: Row) => sessions.find(r => r.id === where.id) ?? null,
+      findFirst: async ({ where }: Row) => sessions.find(r => matches(r, where)) ?? null,
       update: async ({ where, data }: Row) => { const r = sessions.find(x => x.id === where.id)!; assign(r, data); return r; },
       updateMany: async ({ where, data }: Row) => {
         const hit = sessions.filter(r => matches(r, where));
@@ -332,5 +349,42 @@ describe("repeated commands", () => {
     await pauseStudySession("sess1", at(140));
     expect(sessions[0]).toMatchObject({ status: "paused", pauseCount: 1 });
     expect(sessions[0]!.pausedAt).toEqual(at(100));
+  });
+});
+
+// ── Starting ──────────────────────────────────────────────────────────────────
+
+describe("starting a session", () => {
+  const open = () => sessions.filter(s => s.status === "in_progress" || s.status === "paused");
+
+  it("a second start while one is open creates nothing", async () => {
+    await start();
+    await openStudySession("p1", "Paging", SUBJECTS, at(60));
+    expect(open()).toHaveLength(1);
+    expect(open()[0]).toMatchObject({ topicName: "Deadlocks", plannedDurationMinutes: 45 });
+  });
+
+  it("a paused session still counts as open", async () => {
+    await start();
+    await pauseStudySession("sess1", at(30));
+    await openStudySession("p1", "Paging", SUBJECTS, at(60));
+    expect(sessions).toHaveLength(1);
+  });
+
+  it("starts at the same moment open one session", async () => {
+    await Promise.all([start(), start(), openStudySession("p1", "Paging", SUBJECTS, T0)]);
+    expect(open()).toHaveLength(1);
+  });
+
+  it("a new session can start once the last one ended", async () => {
+    await start();
+    await endOnWeb(at(1800));
+    await openStudySession("p1", "Paging", SUBJECTS, at(2000));
+    expect(sessions.map(s => s.status)).toEqual(["completed", "in_progress"]);
+  });
+
+  it("different learners start independently", async () => {
+    await Promise.all([start(), openStudySession("p2", "Graphs", [], T0)]);
+    expect(open().map(s => s.profileId).sort()).toEqual(["p1", "p2"]);
   });
 });

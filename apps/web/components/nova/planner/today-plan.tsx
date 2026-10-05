@@ -26,6 +26,10 @@ const EMPTY: Record<NonNullable<NovaPlannerReady['today']['emptyReason']>, { tit
     title: 'Nova needs a little more learning context before it can build a useful plan',
     body:  'A plan comes from the topics you have studied and how well each one stuck. Nova has none on record yet. Tell it what you covered recently, on Today or in Telegram, and blocks will appear here.',
   },
+  too_little_time: {
+    title: "That's less time than Nova's shortest block",
+    body:  'Nothing useful fits in the time you chose, so nothing is planned. Pick a longer time above.',
+  },
   recovery: {
     title: 'Nothing is planned today',
     body:  'Nova is keeping today light after a run of missed days, and there is no comfortable topic on record to revisit. Rest counts.',
