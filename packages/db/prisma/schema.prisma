@@ -30,6 +30,7 @@ model User {
   sessions Session[]
 
   passwordResetTokens PasswordResetToken[]
+  novaExtensionConnections NovaExtensionConnection[]
 
   userProfile UserProfile?
   workoutLogs       WorkoutLog[]
@@ -687,6 +688,7 @@ model NovaAcademicProfile {
   proactiveMessages NovaProactiveMessage[]
   notes             NovaNote[]
   masterySnapshots  NovaTopicMasterySnapshot[]
+  learningEvents    NovaLearningEvent[]
 
   user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -709,6 +711,7 @@ model NovaSubject {
   topics NovaTopicMastery[]
   exams  NovaExam[]
   notes  NovaNote[]
+  learningEvents NovaLearningEvent[]
 
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
@@ -1009,4 +1012,60 @@ model ProcessedTelegramUpdate {
   receivedAt DateTime @default(now())
 
   @@index([receivedAt])
+}
+
+// ─── Nova browser extension ───────────────────────────────────────────────────
+
+// Something the learner explicitly did with a page in their browser: saved
+// it, or asked to study it. It is a record of that action and nothing more:
+// not a session, not mastery, not memory. Only product/learning-events.ts
+// reads or writes it, and it holds no page content: the address, the title
+// and where the learner filed it.
+model NovaLearningEvent {
+  id            String   @id @default(cuid())
+  profileId     String
+  eventType     String   // "resource_saved" | "study_requested"
+  source        String   // "browser_extension": set by the server from the credential used
+  // The id the client gave this one action. A retry carries the same id and
+  // creates nothing.
+  clientEventId String
+  url           String   @db.Text
+  domain        String
+  title         String
+  subjectId     String?
+  topicName     String?
+  occurredAt    DateTime
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  subject NovaSubject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@unique([profileId, clientEventId])
+  @@index([profileId, eventType, occurredAt])
+  @@index([profileId, subjectId])
+}
+
+// A browser the learner connected to their account. It starts as a one-time
+// pairing code shown on the web app and becomes a connection when the
+// extension redeems the code. Only hashes are stored: neither the code nor
+// the extension's credential can be read back from this table. The
+// credential opens the extension routes and nothing else, and stops working
+// when the row is revoked or goes unused for 30 days.
+model NovaExtensionConnection {
+  id            String    @id @default(cuid())
+  userId        String
+  label         String?   // what the extension called itself, so the learner can tell connections apart
+  codeHash      String?   @unique
+  codeExpiresAt DateTime?
+  tokenHash     String?   @unique
+  connectedAt   DateTime?
+  lastUsedAt    DateTime?
+  revokedAt     DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }

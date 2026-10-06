@@ -32,6 +32,7 @@ export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
   { path: "/focus",   label: "Focus" },
   { path: "/knowledge", label: "Knowledge" },
   { path: "/notes",   label: "Notes" },
+  { path: "/saved",   label: "Saved" },
   { path: "/progress", label: "Progress" },
   { path: "/learning-dna", label: "Learning DNA" },
 ];
@@ -40,7 +41,7 @@ export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
 const SHARED_ROUTES = ["/settings"];
 
 // Pages that exist only for Nova.
-const NOVA_ONLY_ROUTES = ["/focus", "/knowledge", "/notes", "/learning-dna"];
+const NOVA_ONLY_ROUTES = ["/focus", "/knowledge", "/notes", "/saved", "/learning-dna"];
 
 const under = (pathname: string, route: string) => pathname === route || pathname.startsWith(`${route}/`);
 

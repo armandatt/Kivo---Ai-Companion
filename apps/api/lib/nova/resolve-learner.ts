@@ -18,9 +18,15 @@ export type LearnerResolution =
 export async function resolveNovaLearner(): Promise<LearnerResolution> {
   const session = await getSession()
   if (!session) return { kind: "unauthenticated" }
+  return resolveLearnerForUser(session.userId, session.name ?? null)
+}
 
+// The same mapping for an account identified some other way than the session
+// cookie (the browser extension's own credential). One rule for who is a
+// Nova learner, whatever the caller proved their identity with.
+export async function resolveLearnerForUser(userId: string, name: string | null): Promise<Exclude<LearnerResolution, { kind: "unauthenticated" }>> {
   const profile = await prisma.userProfile.findUnique({
-    where:  { userId: session.userId },
+    where:  { userId },
     select: { primaryPersona: true, telegramChatId: true },
   })
   const chatId    = profile?.telegramChatId ?? null
@@ -43,8 +49,8 @@ export async function resolveNovaLearner(): Promise<LearnerResolution> {
 
   return {
     kind:           "learner",
-    userId:         session.userId,
-    name:           session.name ?? null,
+    userId,
+    name,
     platformChatId: chatId,
     onboardingDone: messenger.novaAcademicProfile?.onboardingComplete === true,
   }
