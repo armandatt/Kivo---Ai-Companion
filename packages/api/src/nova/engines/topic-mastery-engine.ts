@@ -1,7 +1,8 @@
 // ─── Topic Mastery Engine ─────────────────────────────────────────────────────
 // SKILL.md §8 — FSRS-lite (SM-2 inspired) mastery tracking.
-// NEVER makes LLM calls. NEVER reads DB (caller provides subjectId).
-// Writes go through updateTopicMastery() which owns the upsert.
+// NEVER makes LLM calls. The caller provides the subjectId.
+// Writes go through updateTopicMastery(), which owns the upsert and the
+// record of each change (NovaTopicMasterySnapshot), in one transaction.
 // Owner: Topic Mastery Engine.
 //
 // ── Source hierarchy (MUST be respected by all callers) ──────────────────────
@@ -192,79 +193,117 @@ export async function updateTopicMastery(
   reportedConfidence: number,
   now:                Date,
   source:             MasteryUpdateSource = "conversation_signal",
+  // The session whose execution report this is. With it, the same report
+  // cannot move the topic twice.
+  sessionId:          string | null = null,
 ): Promise<void> {
   const clampedConf = Math.max(0, Math.min(1, reportedConfidence));
 
-  // One row per topic, whatever the casing or spacing it was typed in.
-  const existing = await prisma.novaTopicMastery.findFirst({
-    where:  { subjectId, name: { equals: likeLiteral(normalizeTopicName(topicName)), mode: "insensitive" } },
-    select: {
-      name:               true,
-      masteryProbability: true,
-      efFactor:           true,
-      intervalDays:       true,
-      reviewCount:        true,
-    },
+  // The change and the record of it (NovaTopicMasterySnapshot) are one
+  // write: both happen or neither does.
+  await prisma.$transaction(async tx => {
+    // One row per topic, whatever the casing or spacing it was typed in.
+    const existing = await tx.novaTopicMastery.findFirst({
+      where:  { subjectId, name: { equals: likeLiteral(normalizeTopicName(topicName)), mode: "insensitive" } },
+      select: {
+        name:               true,
+        masteryProbability: true,
+        efFactor:           true,
+        intervalDays:       true,
+        reviewCount:        true,
+      },
+    });
+
+    const name = existing?.name ?? normalizeTopicName(topicName);
+    if (!name) return;
+    const masteryBefore = existing?.masteryProbability ?? null;
+
+    let written: { id: string; masteryProbability: number; reviewCount: number };
+
+    if (source === "session_report") {
+      // ── Evidence path: full FSRS update ────────────────────────────────────
+      const update = computeFsrsUpdate(existing, clampedConf, now);
+
+      written = await tx.novaTopicMastery.upsert({
+        where:  { subjectId_name: { subjectId, name } },
+        update: {
+          masteryProbability: update.masteryProbability,
+          confidenceReported: clampedConf,
+          efFactor:           update.efFactor,
+          intervalDays:       update.intervalDays,
+          nextReviewAt:       update.nextReviewAt,
+          lastStudiedAt:      now,
+          reviewCount:        { increment: 1 },
+        },
+        create: {
+          subjectId,
+          name,
+          masteryProbability: update.masteryProbability,
+          confidenceReported: clampedConf,
+          efFactor:           update.efFactor,
+          intervalDays:       update.intervalDays,
+          nextReviewAt:       update.nextReviewAt,
+          lastStudiedAt:      now,
+          reviewCount:        1,
+        },
+        select: { id: true, masteryProbability: true, reviewCount: true },
+      });
+    } else {
+      // ── Observation path: soft update only ──────────────────────────────────
+      // No FSRS interval change. No reviewCount increment.
+      // masteryProbability updated with a 0.15 weight (vs 0.40 for evidence).
+      // If no prior record exists, create with reviewCount = 0 and discounted mastery.
+      const newMastery = existing
+        ? Math.min(1, Math.round((0.85 * existing.masteryProbability + 0.15 * clampedConf) * 100) / 100)
+        : Math.round(clampedConf * 0.7 * 100) / 100;  // discount first-time conversation mention
+
+      written = await tx.novaTopicMastery.upsert({
+        where:  { subjectId_name: { subjectId, name } },
+        update: {
+          masteryProbability: newMastery,
+          confidenceReported: clampedConf,
+          lastStudiedAt:      now,
+          // intentionally NOT updating: efFactor, intervalDays, nextReviewAt, reviewCount
+        },
+        create: {
+          subjectId,
+          name,
+          masteryProbability: newMastery,
+          confidenceReported: clampedConf,
+          efFactor:           2.5,    // default, unchanged until first session
+          intervalDays:       1,
+          nextReviewAt:       now,    // due immediately — no session evidence yet
+          lastStudiedAt:      now,
+          reviewCount:        0,      // not a verified review
+        },
+        select: { id: true, masteryProbability: true, reviewCount: true },
+      });
+    }
+
+    // The engine's record of what it just did. Progress reads these rows;
+    // they are never an input to mastery.
+    const subject = await tx.novaSubject.findUnique({ where: { id: subjectId }, select: { profileId: true } });
+    if (!subject) return;
+    await tx.novaTopicMasterySnapshot.create({
+      data: {
+        topicId:       written.id,
+        profileId:     subject.profileId,
+        source,
+        sessionId:     source === "session_report" ? sessionId : null,
+        masteryBefore,
+        masteryAfter:  written.masteryProbability,
+        confidence:    clampedConf,
+        reviewCount:   written.reviewCount,
+        recordedAt:    now,
+      },
+    });
+  }).catch(err => {
+    // This session's report already moved this topic (unique topic+session):
+    // the transaction rolled back, so the replay changed nothing.
+    if (isUniqueViolation(err)) return;
+    throw err;
   });
-
-  topicName = existing?.name ?? normalizeTopicName(topicName);
-  if (!topicName) return;
-
-  if (source === "session_report") {
-    // ── Evidence path: full FSRS update ──────────────────────────────────────
-    const update = computeFsrsUpdate(existing, clampedConf, now);
-
-    await prisma.novaTopicMastery.upsert({
-      where:  { subjectId_name: { subjectId, name: topicName } },
-      update: {
-        masteryProbability: update.masteryProbability,
-        confidenceReported: clampedConf,
-        efFactor:           update.efFactor,
-        intervalDays:       update.intervalDays,
-        nextReviewAt:       update.nextReviewAt,
-        lastStudiedAt:      now,
-        reviewCount:        { increment: 1 },
-      },
-      create: {
-        subjectId,
-        name:               topicName,
-        masteryProbability: update.masteryProbability,
-        confidenceReported: clampedConf,
-        efFactor:           update.efFactor,
-        intervalDays:       update.intervalDays,
-        nextReviewAt:       update.nextReviewAt,
-        lastStudiedAt:      now,
-        reviewCount:        1,
-      },
-    });
-  } else {
-    // ── Observation path: soft update only ────────────────────────────────────
-    // No FSRS interval change. No reviewCount increment.
-    // masteryProbability updated with a 0.15 weight (vs 0.40 for evidence).
-    // If no prior record exists, create with reviewCount = 0 and discounted mastery.
-    const newMastery = existing
-      ? Math.min(1, Math.round((0.85 * existing.masteryProbability + 0.15 * clampedConf) * 100) / 100)
-      : Math.round(clampedConf * 0.7 * 100) / 100;  // discount first-time conversation mention
-
-    await prisma.novaTopicMastery.upsert({
-      where:  { subjectId_name: { subjectId, name: topicName } },
-      update: {
-        masteryProbability: newMastery,
-        confidenceReported: clampedConf,
-        lastStudiedAt:      now,
-        // intentionally NOT updating: efFactor, intervalDays, nextReviewAt, reviewCount
-      },
-      create: {
-        subjectId,
-        name:               topicName,
-        masteryProbability: newMastery,
-        confidenceReported: clampedConf,
-        efFactor:           2.5,    // default, unchanged until first session
-        intervalDays:       1,
-        nextReviewAt:       now,    // due immediately — no session evidence yet
-        lastStudiedAt:      now,
-        reviewCount:        0,      // not a verified review
-      },
-    });
-  }
 }
+
+const isUniqueViolation = (err: unknown) =>
+  typeof err === "object" && err !== null && (err as { code?: unknown }).code === "P2002";

@@ -28,7 +28,7 @@ export function NovaPlanner({ view, minutes, onMinutes, refreshing }: Props) {
         <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Planner</h1>
         <p className="mt-1.5 max-w-prose text-sm leading-relaxed text-foreground/55">
           What Nova thinks you should get done, and why. It is worked out again from everything Nova knows each time you open it.
-          {view.preferredStudyTime && <> You usually study in the {view.preferredStudyTime}.</>}
+          {view.preferredStudyTime && <> You told Nova you study in the {view.preferredStudyTime}.</>}
         </p>
       </header>
 

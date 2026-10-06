@@ -1,9 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { RexProgress } from '@/components/progress/rex-progress'
-import { NovaProgress } from '@/components/nova/progress/nova-progress'
-import { useNovaProgress } from '@/components/nova/use-nova-progress'
+import { NovaLearningDna } from '@/components/nova/learning-dna/nova-learning-dna'
+import { useNovaLearningDna } from '@/components/nova/use-nova-learning-dna'
 
 function Frame({ children }: { children: React.ReactNode }) {
   return <div className="mx-auto w-full max-w-6xl pb-20 pt-10 lg:pt-4">{children}</div>
@@ -23,23 +22,21 @@ function Notice({ title, body }: { title: string; body: string }) {
   )
 }
 
-// One Progress route, two companions. The server says which learner this
-// account is (GET /api/nova/progress); the page renders that answer. A Rex
-// account gets Rex's page and never Nova's.
-export default function ProgressPage() {
-  const { view, loading, refreshing, error, refresh } = useNovaProgress()
+// Nova only. The dashboard shell keeps Rex accounts off this route
+// (product/companion.ts); the API answers them "not_nova" as well.
+export default function LearningDnaPage() {
+  const { view, loading, refreshing, error, refresh } = useNovaLearningDna()
 
   if (loading) {
     return (
       <Frame>
-        <div aria-busy="true" aria-label="Loading your progress" className="space-y-6">
-          <div className="h-8 w-64 animate-pulse rounded-lg bg-white/5" />
+        <div aria-busy="true" aria-label="Loading your Learning DNA" className="space-y-6">
+          <div className="h-8 w-56 animate-pulse rounded-lg bg-white/5" />
           <div className="h-4 w-96 max-w-full animate-pulse rounded bg-white/4" />
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {[0, 1, 2, 3].map(i => <div key={i} className="h-24 animate-pulse rounded-2xl bg-white/3" />)}
-          </div>
           <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
-            <div className="h-72 animate-pulse rounded-2xl bg-white/3" />
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {[0, 1, 2, 3].map(i => <div key={i} className="h-44 animate-pulse rounded-2xl bg-white/3" />)}
+            </div>
             <div className="h-72 animate-pulse rounded-2xl bg-white/3" />
           </div>
         </div>
@@ -51,7 +48,7 @@ export default function ProgressPage() {
     return (
       <Frame>
         <section role="alert" className="rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Couldn&apos;t load your progress</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Couldn&apos;t load your Learning DNA</h1>
           <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">
             The server didn&apos;t answer. Nothing is lost; your sessions and what Nova knows are saved.
           </p>
@@ -68,9 +65,9 @@ export default function ProgressPage() {
     )
   }
 
-  if (view.status === 'not_nova') return <RexProgress />
-  if (view.status === 'not_connected') return <Notice title="Connect Nova first" body="Nova has no learner linked to this account yet, so there is no journey to show. Connect it on Today." />
-  if (view.status === 'onboarding_incomplete') return <Notice title="Nova needs to know what you're studying" body="Finish the short setup conversation on Today. Your journey starts with your first session after that." />
+  if (view.status === 'not_nova') return <Notice title="Learning DNA is part of Nova" body="This account uses a different companion, so there is nothing to show here." />
+  if (view.status === 'not_connected') return <Notice title="Connect Nova first" body="Nova has no learner linked to this account yet. Connect it on Today." />
+  if (view.status === 'onboarding_incomplete') return <Notice title="Nova needs to know what you're studying" body="Finish the short setup conversation on Today. Nova starts learning how you work from your first sessions after that." />
 
   return (
     <>
@@ -79,7 +76,7 @@ export default function ProgressPage() {
           Showing what loaded last. Reconnecting…
         </p>
       )}
-      <NovaProgress view={view} />
+      <NovaLearningDna view={view} />
     </>
   )
 }

@@ -200,7 +200,7 @@ Contracts live in `packages/api/src/nova/product/today.types.ts` (no imports, so
 - **"Mastery" is a self-report-driven heuristic**, not a tested result, and there is no measure of how certain it is. Do not add UI copy that implies one. `reviewCount` (finished sessions that fed the topic) is the only indication of how much stands behind a number. A topic with `reviewCount` 0 has no level ("unverified").
 - **One definition of "due for review"**, in `retention-engine.ts`: the schedule is the authority. A topic is due when its scheduled date has arrived (`reviewDueAt <= now`, where `TopicMasteryState.reviewDueAt` is the stored `nextReviewAt`) and overdue once it has passed. Estimated retention is not part of the rule: it only orders the due topics and appears as a reason. So "Struggled" (interval reset to one day) is due tomorrow. `isDueForReview` / `getOverdueTopics` are the only way to ask; Home, Planner, Knowledge and the proactive cron all use them, and `review-due.test.ts` fails if one grows its own comparison or retention creeps back into the rule. Callers that judge "due" at a moment other than the present pass the same `now` to `getAllTopicMasteries` and `generateStudyPlan`.
 - **Self-reported sessions** (`activityType: "self_reported"`, created by consolidation from "I studied X") carry a placeholder duration. Knowledge returns `measured: false, minutes: null` for them. Home and Planner still sum that placeholder into "minutes this week".
-- No mastery history exists: there is nothing to chart.
+- **Mastery history** is `NovaTopicMasterySnapshot`: one row per change `updateTopicMastery` makes (value before, value after, source, session), written in the same transaction as the change. It is that engine's record, not an input: nothing reads it back into mastery, and Progress is its only reader. `@@unique([topicId, sessionId])` means one session's report moves a topic once; a replay fails there and the mastery write rolls back with it. Topics changed before the table existed have no rows until their next write.
 
 **Notes** (`/api/nova/notes`, `/api/nova/notes/[id]`, `product/notes.ts`, UI in `apps/web/components/nova/notes/`). A note is the learner's own content (`NovaNote`: profile, optional subject, optional topic name, title, body). The rules, each held by a test:
 
@@ -211,6 +211,38 @@ Contracts live in `packages/api/src/nova/product/today.types.ts` (no imports, so
 - **Study this** is the ordinary `start` command with the note's subject and topic. The session and its "How did it go?" answer are the evidence; the note is not. There is no note-to-session link in the schema.
 - Search is a case-insensitive substring match. `likeLiteral` (in `topic-mastery-engine.ts`) escapes `%`, `_` and `\` wherever a name or query is compared with `mode: "insensitive"`, which Postgres runs as ILIKE.
 - **Account deletion** goes through `services/accountDeletion.service.ts`, which removes the Nova academic profile linked by `telegramChatId` (cascading to notes, sessions, topics) before the `User`. It leaves the `MessengerUser` row, which is shared with Rex.
+
+**Progress** (`GET /api/nova/progress`, `product/progress.ts`, UI in `apps/web/components/nova/progress/`). A read model answering "have I actually changed?" from records that already exist. It writes nothing, calls no LLM and takes no parameters. `/progress` is one route with two pages, like Home and Planner: a Rex account gets `components/progress/rex-progress.tsx`. The definitions, all in `progress.ts` and held by `progress-view.test.ts`:
+
+- **Counted session**: finished, timed by Nova (`activityType` not `self_reported`) and at least `MIN_BLOCK_MINUTES` (10) long. Every number on the page uses this; the response says how many finished sessions it left out (`overview.notCounted`).
+- **Active day**: a calendar day in the learner's timezone (`NovaAcademicProfile.timezone`, else UTC, via the Planner's `dayKey`) with a counted session. A chat message is never one. Weeks run Monday to Sunday.
+- **Comeback**: a counted session on an active day 4 or more calendar days after the previous one (the Academic State Engine's "returning" threshold). A first session is not a comeback.
+- **Consistency trend**: average active days a week over the last four finished weeks against the four before, and only when the learner had started by the first of those eight. Otherwise `not_enough_history`.
+- **Topic growth**: a topic has moved when its mastery number is 10 points from the earliest recorded value that already had a session behind it. With no recorded history, direction comes from the learner's own "How did it go?" answers, and no movement is drawn. Mastery numbers and levels are the Knowledge Engine's (`masteryLevel`); Progress has no bands of its own.
+- **Journey events** are derived at read time, never stored: first session, the 5th/10th/25th/… counted session, comebacks, a session that moved a topic into a higher level, and "Good" or "Crushed it" after "Struggled". Each carries the id of the session or mastery record it rests on.
+- **Not shown, because nothing on record supports it**: a daily streak (the Academic State Engine owns the only one, in server time, and Home shows it), focus quality and energy (derived from pause counts; `energyTrend` is a constant), reflections (`reflectionText` is never written), goal completion (`goals` is free text with no state), behavioural patterns and reality. Learning DNA contributes only the usual session length, and only once its own `confidence` is above `low` (ten sessions).
+- Sessions and mastery records are read 365 days back; older counted sessions arrive as totals from one aggregate, so the query count is fixed and the response does not grow with history.
+
+**Learning DNA** (`GET /api/nova/learning-dna`, UI in `apps/web/components/nova/learning-dna/`). How this learner studies, as beliefs that carry their own support and can change. One owner, three files:
+
+- `engines/learning-dna-engine.ts` (pure) computes every signal. Nothing else may: Progress shows the stored session length, it does not work one out (`learning-dna.test.ts` reads the source to hold this).
+- `persistence/learning-dna-store.ts` is the only reader of DNA evidence and the only writer of `NovaLearningDNA`. `refreshLearningDna` runs when a session ends (`consumeExecutionReport`); reading writes nothing.
+- `product/learning-dna.ts` lays the signals out for the page and holds the timezone write.
+
+The rules that keep one unusual day from becoming a belief, each with a test:
+
+- **Evidence** is counted sessions (`isCountedSession` in `study-session-engine.ts`, shared with Progress) from the last 90 days, at most 60. Older sessions leave the window, so a belief nobody renews fades.
+- **Levels**: `unknown` below 5 pieces of evidence, `emerging` from 5, `supported` from 10, `strong` from 20. A signal at `unknown` has no value; it says what it would need.
+- **Typical values** are a median with its middle half, never an average.
+- **Comparisons** ("this length goes better") use only the learner's "How did it go?" answers, need 4 answered sessions on each of two sides and a 20-point lead, and are as confident as their smaller side (4 / 8 / 15). Otherwise there is no conclusion.
+- **Weakening**: every conclusion is rechecked against the latest sessions (the last 8, or the latest half for comparisons). Disagreement marks it `weakening` before it changes.
+- **Time of day** is claimed only when `NovaAcademicProfile.timezone` holds a real zone. The setup conversation never asks, so the learner's device reports it once through `PUT /api/nova/timezone`; it is stored only while none is stored and cannot be moved by a later request.
+- `NovaLearningDNA.signals` is bookkeeping (since when a conclusion has held, what it replaced), not the conclusions: those are recomputed from sessions on every read. The older columns (`optimalSessionMinutes`, `planAdherenceProfile`, `dataPointCount`, `confidence`) are filled by `legacyDnaColumns` from the same signals.
+- **Not computed, because nothing on record supports it**: distraction, burnout, preferred formats, focus, energy. The page lists them under "What Nova doesn't know". Do not derive them from pauses, short sessions or gaps.
+- `preferredStudyTime` is what the learner said in setup. It is shown as their statement and feeds no signal.
+- Learning DNA is not memory: it writes no `UserFact`, `UserReality`, `BehavioralPattern` or mastery, and a future source of evidence (a browser extension's learning events) should arrive as sessions or as a new evidence type in the store, not as a second calculation.
+
+`engines/learner-calendar.ts` holds the day, week and clock-hour helpers Planner, Progress and Learning DNA share.
 
 Session rules that must hold:
 
@@ -230,4 +262,4 @@ export NOVA_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:54329/novates
 (cd packages/api && npm run test:integration)
 ```
 
-`nova-session-start.itest.ts` is the only proof of the session-start lock: concurrency cannot be shown against a mock. Two tests in `nova-persist-turn.itest.ts` fail because of the fixture's own timeline (its turns span four days, but an illness expires after 72 hours); they are not product failures.
+`nova-learning-dna.itest.ts` covers the refresh on session end and the timezone write. `nova-progress.itest.ts` is the only proof that a replayed or concurrent session report moves a topic once (the unique key and the rollback need a real database). `nova-session-start.itest.ts` is the only proof of the session-start lock: concurrency cannot be shown against a mock. Two tests in `nova-persist-turn.itest.ts` fail because of the fixture's own timeline (its turns span four days, but an illness expires after 72 hours); they are not product failures.

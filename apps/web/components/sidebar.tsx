@@ -8,11 +8,13 @@ import {
   BookOpen,
   Calendar,
   Compass,
+  Dna,
   Home,
   Map,
   Settings,
   Target,
   Timer,
+  TrendingUp,
   Zap,
   Menu,
   NotebookPen,
@@ -44,7 +46,7 @@ const navItems = [
 ]
 
 // Nova's pages, from the one list that also decides route access.
-const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/planner': Calendar, '/focus': Timer, '/knowledge': BookOpen, '/notes': NotebookPen }
+const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/planner': Calendar, '/focus': Timer, '/knowledge': BookOpen, '/notes': NotebookPen, '/progress': TrendingUp, '/learning-dna': Dna }
 const novaNavItems = NOVA_ROUTES.map(r => ({ href: r.path, label: r.label, icon: NOVA_ICONS[r.path] ?? Home }))
 
 export function Sidebar({ open, onOpenChange, overlay = false, companion }: SidebarProps) {

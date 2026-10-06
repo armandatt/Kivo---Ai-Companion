@@ -686,6 +686,7 @@ model NovaAcademicProfile {
   learningDNA       NovaLearningDNA?
   proactiveMessages NovaProactiveMessage[]
   notes             NovaNote[]
+  masterySnapshots  NovaTopicMasterySnapshot[]
 
   user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -732,7 +733,8 @@ model NovaTopicMastery {
   lastStudiedAt      DateTime?
   nextReviewAt       DateTime?
 
-  subject NovaSubject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  subject   NovaSubject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  snapshots NovaTopicMasterySnapshot[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -740,6 +742,35 @@ model NovaTopicMastery {
   @@unique([subjectId, name])
   @@index([subjectId])
   @@index([nextReviewAt])
+}
+
+// One row per change the Topic Mastery Engine made to a topic: the value
+// before, the value after, and what caused it. It is that engine's own
+// record of its writes (updateTopicMastery is the only writer, in the same
+// transaction as the change), not a second estimate. Progress reads it;
+// nothing else does. A topic changed before this table existed has no rows.
+model NovaTopicMasterySnapshot {
+  id            String   @id @default(cuid())
+  topicId       String
+  profileId     String
+  source        String   // "session_report" | "conversation_signal"
+  sessionId     String?  // the NovaStudySession whose report caused it; null for a conversation observation
+  masteryBefore Float?   // null: this write created the topic
+  masteryAfter  Float
+  confidence    Float    // the 0-1 input the engine was given
+  reviewCount   Int      // finished sessions behind the topic after this write
+  recordedAt    DateTime
+
+  topic   NovaTopicMastery    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  // A session's report moves a topic once. A replay fails here and the
+  // mastery write in the same transaction is rolled back with it.
+  @@unique([topicId, sessionId])
+  @@index([profileId, recordedAt])
+  @@index([topicId, recordedAt])
 }
 
 model NovaExam {
@@ -857,6 +888,14 @@ model NovaLearningDNA {
   underconfidentSubjects     String[]
   dataPointCount             Int     @default(0)
   confidence                 String  @default("low")
+
+  // What the Learning DNA engine concluded the last time a session ended,
+  // one entry per signal: its conclusion, how well supported it was, since
+  // when, and what it replaced. Bookkeeping for "is this belief changing";
+  // the conclusions themselves are always recomputed from sessions.
+  // Written only by persistence/learning-dna-store.ts.
+  signals                    Json?
+  computedAt                 DateTime?
 
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
