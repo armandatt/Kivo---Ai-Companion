@@ -134,7 +134,7 @@ export interface TurnTrace {
   type:          TelegramEvent["kind"];
   command:       string | null;
   profileId:     string | null;
-  understanding: { attempted: boolean; ok: boolean; ms: number; confidence: number | null; request: string | null; intent: string | null; estInputTokens: number };
+  understanding: { attempted: boolean; ok: boolean; ms: number; confidence: number | null; request: string | null; clarity: string | null; changeOfMind: boolean; intent: string | null; estInputTokens: number };
   decision:      string | null;
   operation:     { name: string | null; ok: boolean | null };
   evidence:      { kinds: string[]; consolidationQueued: boolean };

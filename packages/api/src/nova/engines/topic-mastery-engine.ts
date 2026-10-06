@@ -156,6 +156,19 @@ export function matchTopicToSubject(
   return containing ? hit(containing) : null;
 }
 
+// Every subject a short text names: by its name, code or acronym, as whole
+// words anywhere in the text ("OS exam" names Operating Systems). Used where
+// the text is a label the student gave something, such as an exam.
+export function subjectsNamedIn<S extends { name: string; code?: string | null }>(text: string, subjects: S[]): S[] {
+  const said = ` ${words(text ?? "").join(" ")} `;
+  if (said.trim().length === 0) return [];
+  return subjects.filter(s => {
+    const acronym = acronymOf(s.name);
+    const names = [words(s.name).join(" "), s.code ? words(s.code).join(" ") : "", acronym.length >= 2 ? acronym : ""];
+    return names.some(n => n.length > 0 && said.includes(` ${n} `));
+  });
+}
+
 // The subject for a topic that arrived without one. In order:
 //   1. the text names a subject (matchTopicToSubject)
 //   2. the student already has this topic under exactly one subject: a topic

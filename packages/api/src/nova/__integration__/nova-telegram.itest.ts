@@ -94,7 +94,7 @@ function fakeTelegram() {
 // ── The models, stood in ──────────────────────────────────────────────────────
 
 const BASE = { intent: "general_chat", emotion: "neutral", topic: null, topicConfidence: 0, disclosureClass: "none", ambiguityScore: 0.1, routingSignal: "coaching_only", secondaryIntents: [], sessionIntent: "none", reality: [] };
-const REQ  = { action: "none", confidence: 0.9, promptAnswer: null, availableMinutes: null, sessionOutcome: null, deferUntil: null, struggleTopic: null, exam: null };
+const REQ  = { clarity: "clear", changeOfMind: false, action: "none", confidence: 0.9, promptAnswer: null, availableMinutes: null, sessionOutcome: null, deferUntil: null, struggleTopic: null, exam: null };
 
 function brains() {
   const script = new Map<string, Record<string, unknown>>();
@@ -678,6 +678,259 @@ test("a start asked for in words runs only when the reading is confident", async
   // "OS" is a subject: the plan's own block for it is what starts.
   assert.deepEqual([row!.status, row!.topicName, row!.subjectId, row!.plannedDurationMinutes], ["in_progress", "Deadlocks", l.subjectId, 20]);
   assert.equal((await sessions(l)).length, 1, "the turn itself did not open a second one");
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// The model can be wrong; the state stays right
+// ══════════════════════════════════════════════════════════════════════════════
+// The readings marked "real" are what the model returned in the evaluation
+// run of 2026-10-06, including the wrong ones.
+
+// Everything a message could have changed, for comparing before and after.
+async function stateOf(l: Learner) {
+  const [sessionRows, topics, exams, reality, factCount, patternCount, jobRows, profile, ch, proactive] = await Promise.all([
+    sessions(l),
+    prisma.novaTopicMastery.findMany({ where: { subjectId: l.subjectId }, orderBy: { name: "asc" }, select: { name: true, masteryProbability: true, reviewCount: true, intervalDays: true, nextReviewAt: true, lastStudiedAt: true } }),
+    prisma.novaExam.count({ where: { profileId: l.profileId } }),
+    prisma.userReality.count({ where: { userId: l.userId } }),
+    facts(l), patterns(l),
+    prisma.novaConsolidationJob.count({ where: { userId: l.userId } }),
+    prisma.novaAcademicProfile.findUniqueOrThrow({ where: { id: l.profileId }, select: { statedMinutes: true, statedMinutesDay: true } }),
+    prisma.novaTelegramChannel.findUnique({ where: { profileId: l.profileId }, select: { proactiveEnabled: true, proactivePausedUntil: true } }),
+    prisma.novaProactiveMessage.count({ where: { profileId: l.profileId } }),
+  ]);
+  return {
+    sessions: sessionRows.map(r => [r.id, r.status, r.totalPausedSeconds]), topics, exams, reality, factCount, patternCount, jobRows, profile,
+    snapshots: await prisma.novaTopicMasterySnapshot.count({ where: { topic: { subjectId: l.subjectId } } }),
+    dna: await prisma.novaLearningDNA.count({ where: { profileId: l.profileId } }),
+    nudges: ch ? [ch.proactiveEnabled, ch.proactivePausedUntil?.toISOString() ?? null] : null, proactive,
+  };
+}
+
+test("gibberish changes nothing, whatever the model claims to have found in it", async () => {
+  const l = await seedLearner("Gib");
+  const { tg, ai, send } = harness();
+  await send(l, "/status");                       // creates the channel row, so before/after compare like with like
+  const idle = await stateOf(l);
+
+  // The model says "unintelligible" and still fills in an action, a topic, a
+  // struggle, an exam, an outcome, minutes and an illness.
+  const loaded = {
+    ...BASE, intent: "study_report", emotion: "distressed", topic: "Deadlocks", topicConfidence: 1, sessionIntent: "start", secondaryIntents: ["mastery_claim"],
+    reality: [{ about: "self", category: "health", subtype: "illness", claim: "Student is ill", status: "active", persistence: "temporary", expectedDurationHours: null, confidence: 1 }],
+    request: { ...REQ, clarity: "unintelligible", action: "start_session", confidence: 1, promptAnswer: "a", availableMinutes: 45, sessionOutcome: "crushed_it",
+      deferUntil: "tomorrow", struggleTopic: "Deadlocks", exam: { title: "OS", date: dayKey(new Date(clock.getTime() + 3 * 86_400_000), "Asia/Kolkata") } },
+  };
+  for (const text of ["asdfghjkl", "????", "123123", "skibidi 92837", "deadlocks asdf"]) {
+    ai.read(text, loaded);
+    const trace = await send(l, text);
+    assert.equal(trace.decision, "clarify:unintelligible");
+    // /status left its buttons up, so those are the options: nothing new is opened.
+    assert.equal(tg.last().text, "I didn't catch that. The buttons above still work, or tell me in a few more words.");
+    assert.equal(tg.last().buttons.length, 0);
+    assert.deepEqual(trace.evidence, { kinds: [], consolidationQueued: false });
+  }
+  // With nothing open, the fixed choices.
+  await prisma.novaTelegramPrompt.updateMany({ where: { profileId: l.profileId }, data: { openKey: null, resolvedAt: clock } });
+  await send(l, "asdfghjkl");
+  assert.equal(tg.last().text, "Not sure what you need there. Pick one:");
+  assert.deepEqual(tg.labels(), ["What should I do?", "Where do I stand?", "Nothing"]);
+  assert.deepEqual(await stateOf(l), idle, "idle: nothing moved");
+  assert.equal(ai.worded.length, 0, "noise is never sent to the Response Brain");
+  // It is in the conversation log, and nowhere else.
+  assert.equal(await prisma.companionMessage.count({ where: { userId: l.userId, role: "user" } }), 6);
+
+  // With an offer open: the offer stays open and nothing starts.
+  await send(l, "/today");
+  const offer = tg.data("Start 25 min");
+  await send(l, "asdfghjkl");
+  assert.equal(tg.last().text, "I didn't catch that. The buttons above still work, or tell me in a few more words.");
+  assert.equal(tg.last().buttons.length, 0);
+  assert.deepEqual(await stateOf(l), idle);
+
+  // With a session running: it keeps running, untouched, and nothing is asked of it.
+  await harness().tapData(l, offer);
+  const running = await stateOf(l);
+  assert.equal(running.sessions.length, 1);
+  tick(5);
+  await send(l, "????");
+  assert.deepEqual(await stateOf(l), running, "running: nothing moved");
+  assert.equal((await loadNovaSession(l.chat, clock))?.status, "in_progress");
+  await runNovaSessionCommand(l.chat, { action: "end", outcome: "okay" }, clock, "web");
+});
+
+test("\"I finished deadlocks\" while a session runs asks how it went, and only the answer ends it", async () => {
+  const l = await seedLearner("Fin");
+  const { tg, ai, send, tap } = harness();
+  await send(l, "/today");
+  await tap(l, "Start 25 min");
+  tick(20);
+
+  // real: a study report with no request and no outcome.
+  ai.read("I finished deadlocks", { ...BASE, intent: "study_report", emotion: "proud", topic: "Deadlocks", topicConfidence: 1, request: { ...REQ, action: "none", confidence: 1 } });
+  const trace = await send(l, "I finished deadlocks");
+  assert.equal(trace.decision, "ask_outcome:report_during_session");
+  assert.equal(tg.last().text, "Deadlocks. How did it go?");
+  assert.deepEqual(tg.labels(), ["Struggled", "Okay", "Good", "Crushed it"]);
+  // Asked, not ended: no report, no mastery, no history yet.
+  const open = (await sessions(l))[0]!;
+  assert.equal(open.status, "in_progress");
+  assert.equal(open.executionReport, null);
+  assert.equal(await prisma.novaTopicMasterySnapshot.count({ where: { topicId: l.deadlocksId } }), 0);
+  assert.equal(ai.worded.length, 0);
+
+  // The answer goes through the same end the web app uses.
+  await tap(l, "Good");
+  const ended = (await sessions(l))[0]!;
+  assert.deepEqual([ended.status, (ended.executionReport as { outcome: string }).outcome, ended.durationMinutes], ["completed", "good", 20]);
+  assert.equal(await prisma.novaTopicMasterySnapshot.count({ where: { topicId: l.deadlocksId, sessionId: ended.id } }), 1);
+  assert.equal((await loadNovaSession(l.chat, clock)), null, "the web app sees it closed too");
+});
+
+test("a stated time never starts a session, however sure the model is that it should", async () => {
+  const l = await seedLearner("Tim");
+  const { tg, ai, send } = harness();
+
+  // real: "bro I have 30 mins" read as a confident start.
+  ai.read("bro I have 30 mins", { ...BASE, intent: "accountability_request", emotion: "motivated", sessionIntent: "start", request: { ...REQ, action: "start_session", confidence: 0.9, availableMinutes: 30 } });
+  const trace = await send(l, "bro I have 30 mins");
+  assert.equal(trace.decision, "offer_start:start_needs_confirmation");
+  assert.equal((await sessions(l)).length, 0, "nothing started");
+  assert.deepEqual(tg.labels(), ["Start 15 min", "Start 25 min", "Something else", "Later"]);
+  // What was actually said is kept: thirty minutes, for today, on every surface.
+  const today = await loadNovaToday(l.chat, { now: clock });
+  assert.ok(today.status === "ready" && today.availableMinutes === 30);
+
+  // A confident start that names something the plan does not have is offered too.
+  ai.read("start quantum basket weaving for 25", { ...BASE, topic: "quantum basket weaving", topicConfidence: 0.9, sessionIntent: "start", request: { ...REQ, action: "start_session", confidence: 1, availableMinutes: 25 } });
+  await send(l, "start quantum basket weaving for 25");
+  assert.equal((await sessions(l)).length, 0, "a word from a sentence is not a session");
+  assert.ok(tg.last().text.startsWith("quantum basket weaving"), tg.last().text);
+
+  // The one start words can make: asked for outright, by a name the plan knows.
+  ai.read("start deadlocks for 25", { ...BASE, topic: "deadlocks", topicConfidence: 1, sessionIntent: "start", request: { ...REQ, action: "start_session", confidence: 1, availableMinutes: 25 } });
+  await send(l, "start deadlocks for 25");
+  const [row] = await sessions(l);
+  assert.deepEqual([row!.status, row!.topicName, row!.subjectId, row!.plannedDurationMinutes], ["in_progress", "Deadlocks", l.subjectId, 25]);
+  assert.ok(tg.last().text.startsWith("Started."), "said after the row exists");
+  await runNovaSessionCommand(l.chat, { action: "end", outcome: "okay" }, clock, "web");
+});
+
+test("changing an open offer re-offers it at that length and starts nothing", async () => {
+  // real readings, each wrong in a different way.
+  const cases: Array<[string, Record<string, unknown>, number, string[]]> = [
+    ["make it 20 mins",             { ...REQ, action: "start_session", confidence: 0.95, availableMinutes: 20 }, 20, ["Start 15 min", "Something else", "Later"]],
+    ["actually I only got 10 mins", { ...REQ, action: "something_else", confidence: 0.9, availableMinutes: 10, promptAnswer: "c" }, 10, ["Start 10 min", "Something else", "Later"]],
+    ["nah actually make it 20",     { ...REQ, action: "start_session", confidence: 0.95, availableMinutes: 20, promptAnswer: "c" }, 20, ["Start 15 min", "Something else", "Later"]],
+  ];
+  for (const [text, request, minutes, labels] of cases) {
+    const l = await seedLearner("Chg");
+    const { tg, ai, send, tap } = harness();
+    await send(l, "/today");
+    const before = tg.last().text;
+    ai.read(text, { ...BASE, intent: "plan_request", request });
+    const trace = await send(l, text);
+    assert.equal(trace.decision, "show_today:offer_changed", text);
+    assert.equal((await sessions(l)).length, 0, `${text}: nothing started`);
+    assert.deepEqual(tg.labels(), labels, text);
+    assert.equal(tg.last().text.split("\n")[0], before.split("\n")[0], `${text}: the same topic, not a different one`);
+    const today = await loadNovaToday(l.chat, { now: clock });
+    assert.ok(today.status === "ready" && today.availableMinutes === minutes, `${text}: the stated time reaches Today and the Planner`);
+    // Accepting is a separate act.
+    await tap(l, labels[0]!);
+    assert.equal((await sessions(l)).length, 1);
+    await runNovaSessionCommand(l.chat, { action: "end", outcome: "okay" }, clock, "web");
+  }
+});
+
+test("typed \"not today\" quiets Nova until the learner's midnight, with or without an offer open", async () => {
+  const l = await seedLearner("Nat");
+  const { tg, ai, send } = harness();
+  ai.read("not today", { ...BASE, intent: "commitment_made", emotion: "avoidant", request: { ...REQ, action: "not_now", confidence: 0.95, deferUntil: "tomorrow" } });
+  await send(l, "not today");
+  assert.equal(tg.last().text, "Got it. Nothing more from me today.");
+  const paused = (await channel(l)).proactivePausedUntil!;
+  assert.ok(paused > clock);
+  assert.equal(dayKey(paused, "Asia/Kolkata"), dayKey(new Date(clock.getTime() + 86_400_000), "Asia/Kolkata"));
+  assert.notEqual(dayKey(new Date(paused.getTime() - 1), "Asia/Kolkata"), dayKey(paused, "Asia/Kolkata"), "the first instant of tomorrow");
+
+  // Against an offer whose only decline is "Later" (real: the model picks it).
+  const m = await seedLearner("Nan");
+  const second = harness();
+  await second.send(m, "/today");
+  second.ai.read("nah not today", { ...BASE, intent: "commitment_made", request: { ...REQ, action: "not_now", confidence: 1, deferUntil: "tomorrow", promptAnswer: "e" } });
+  const trace = await second.send(m, "nah not today");
+  assert.equal(trace.decision, "defer:declined_for_today");
+  assert.ok((await channel(m)).proactivePausedUntil! > clock);
+
+  // "later" is only later.
+  const n = await seedLearner("Lat");
+  const third = harness();
+  await third.send(n, "/today");
+  third.ai.read("later", { ...BASE, request: { ...REQ, action: "not_now", confidence: 1, deferUntil: "later", promptAnswer: "e" } });
+  await third.send(n, "later");
+  assert.equal(third.tg.last().text, "OK. It'll keep.");
+  assert.equal((await channel(n)).proactivePausedUntil, null);
+});
+
+test("\"exam is tomorrow\" cannot make a second exam", async () => {
+  const l = await seedLearner("Exa", { exam: true });      // Operating Systems final, tomorrow
+  const { tg, ai, send } = harness();
+  const tomorrow = dayKey(new Date(clock.getTime() + 26 * 3_600_000), "Asia/Kolkata");
+  // real: the model titles it "exam", and "OS exam" for the second phrase.
+  for (const [text, title] of [["exam is tomorrow", "exam"], ["my OS exam is tomorrow", "OS exam"], ["cs final tmrw", "final"]] as const) {
+    ai.read(text, { ...BASE, intent: "exam_anxiety", emotion: "anxious_exam", request: { ...REQ, exam: { title, date: tomorrow } } });
+    await send(l, text);
+    assert.ok(!tg.labels().some(label => label.startsWith("Add exam")), `${text}: not offered`);
+  }
+  assert.equal(await prisma.novaExam.count({ where: { profileId: l.profileId } }), 1);
+
+  // With no exam on record, a subject-less "exam" is still not offered: there is nothing to file it under.
+  const m = await seedLearner("Exb");
+  const second = harness();
+  second.ai.read("exam is tomorrow", { ...BASE, intent: "exam_anxiety", emotion: "anxious_exam", request: { ...REQ, exam: { title: "exam", date: tomorrow } } });
+  await second.send(m, "exam is tomorrow");
+  assert.ok(!second.tg.labels().some(label => label.startsWith("Add exam")));
+  assert.equal(await prisma.novaExam.count({ where: { profileId: m.profileId } }), 0);
+  // The Response Brain is told nothing was done, so it cannot say it was.
+  assert.ok(second.ai.worded.at(-1)!.includes("took no action this turn"), second.ai.worded.at(-1));
+});
+
+test("a message that takes itself back starts nothing", async () => {
+  const l = await seedLearner("Con");
+  const { tg, ai, send } = harness();
+  ai.read("start deadlocks for 30 but don't start yet", { ...BASE, topic: "deadlocks", topicConfidence: 1, sessionIntent: "start", request: { ...REQ, changeOfMind: true, action: "start_session", confidence: 0.95, availableMinutes: 30 } });
+  const trace = await send(l, "start deadlocks for 30 but don't start yet");
+  assert.equal(trace.decision, "offer_start:start_needs_confirmation");
+  assert.equal((await sessions(l)).length, 0);
+  assert.ok(tg.labels().includes("Start 25 min"));
+
+  // "wait, don't" against the offer, with the model still picking Start.
+  ai.read("wait, don't start yet", { ...BASE, request: { ...REQ, changeOfMind: true, action: "start_session", confidence: 0.9, promptAnswer: "a" } });
+  await send(l, "wait, don't start yet");
+  assert.equal((await sessions(l)).length, 0);
+});
+
+test("the Response Brain is not asked to word an action that did not happen", async () => {
+  const l = await seedLearner("Rsp");
+  const { tg, ai, send, tap } = harness();
+  await send(l, "/today");
+  await tap(l, "Start 25 min");
+  tick(3);
+
+  // The session is ended on the web while the message is being read, so the
+  // pause the message asks for has nothing to pause.
+  const trace = await handleNovaTelegramEvent(say(l.chat, "ugh i need a break") as never, {
+    client: tg.client, now: () => clock, webUrl: "https://nova.test", respond: ai.respond,
+    understand: (async (text: string) => {
+      await runNovaSessionCommand(l.chat, { action: "end", outcome: "okay" }, clock, "web");
+      return parseUnderstandingResponse(JSON.stringify({ ...BASE, emotion: "overwhelmed", sessionIntent: "break", request: { ...REQ, action: "pause_session", confidence: 1 } }), text);
+    }) as never,
+  });
+  assert.deepEqual(trace.operation, { name: "session_pause", ok: false });
+  assert.equal(ai.worded.length, 0, "a failed action is stated plainly, never worded as if it worked");
+  assert.equal(tg.last().text, "Nothing is running. /focus starts a session.");
+  assert.equal((await sessions(l)).filter(r => r.status === "completed").length, 1);
 });
 
 // ══════════════════════════════════════════════════════════════════════════════

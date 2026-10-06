@@ -92,8 +92,9 @@ export async function showStatus(ctx: ActionContext): Promise<ActionResult> {
 
 // An offer to start, for /focus and for a start request that is not sure
 // enough to start a timer by itself.
-export async function offerStart(ctx: ActionContext, named: string | null): Promise<ActionResult> {
-  const [view, session] = await Promise.all([todayView(ctx, null), loadNovaSession(ctx.chatId, ctx.now)]);
+export async function offerStart(ctx: ActionContext, named: string | null, statedMinutes: number | null = null): Promise<ActionResult> {
+  if (statedMinutes !== null) await recordStatedMinutes(ctx.chatId, statedMinutes, ctx.now);
+  const [view, session] = await Promise.all([todayView(ctx, statedMinutes), loadNovaSession(ctx.chatId, ctx.now)]);
   if (!view) return done("offer_start", { text: TEXT.finishSetup }, false);
   if (session) return done("offer_start", sessionReply(session, "You already have one going."));
   const pick = pickStart(view, named, named ? (await loadStudySnapshot(ctx.chatId)).subjects : []);
@@ -130,13 +131,16 @@ export async function startSession(
   return done("session_start", sessionReply(result.session, "Started."));
 }
 
-// A start asked for in words: find what to start, then start it.
-export async function startFromRequest(ctx: ActionContext, named: string | null, minutes: number | null): Promise<ActionResult> {
-  if (minutes !== null) await recordStatedMinutes(ctx.chatId, minutes, ctx.now);
+// A start asked for in words, naming what to study. It runs only when the
+// name is something Nova already has on today's plan (a topic, or a subject
+// with a block). A name the plan does not know is offered instead: a timer
+// is not started on a word the model picked out of a sentence.
+export async function startFromRequest(ctx: ActionContext, named: string, minutes: number | null): Promise<ActionResult> {
   const view = await todayView(ctx, minutes);
   if (!view) return done("session_start", { text: TEXT.finishSetup }, false);
-  const pick = pickStart(view, named, named ? (await loadStudySnapshot(ctx.chatId)).subjects : []);
-  if (!pick) return done("session_start", todayReply(view, await loadNovaSession(ctx.chatId, ctx.now)), false);
+  const pick = pickStart(view, named, (await loadStudySnapshot(ctx.chatId)).subjects);
+  if (!pick || !("urgency" in pick)) return offerStart(ctx, named, minutes);
+  if (minutes !== null) await recordStatedMinutes(ctx.chatId, minutes, ctx.now);
   return startSession(ctx, {
     topicName:   pick.topicName,
     subjectName: pick.subjectName,

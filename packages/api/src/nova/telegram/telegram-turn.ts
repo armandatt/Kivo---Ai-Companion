@@ -17,14 +17,15 @@
 import { prisma } from "@repo/db/client";
 import { checkRateLimit } from "../../services/rateLimit.service";
 import { runUnderstandingBrain } from "../brains/understanding-brain";
-import { decideAction, type TurnAction } from "../decision/action-decision";
+import { decideAction, type ActionContext as DecisionContext, type TurnAction } from "../decision/action-decision";
+import { safeReading } from "../decision/interpretation-safety";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
 import { handleNovaTurn } from "../entry";
 import { runNovaOrchestrator } from "../nova-orchestrator";
-import { examAlreadyKnown } from "../product/exams";
+import { examToOffer } from "../product/exams";
 import { loadNovaSession } from "../product/session";
 import { loadStudySnapshot } from "../engines/study-snapshot";
-import { loadConversationHistory } from "../adapters/conversation-adapter";
+import { loadConversationHistory, saveAssistantMessage, saveUserMessage } from "../adapters/conversation-adapter";
 import type { NovaOrchestratorInput } from "../types/context.types";
 import type { AcademicUnderstanding, UnderstandingContext } from "../types/understanding.types";
 import {
@@ -71,7 +72,7 @@ function newTrace(event: Event): TurnTrace {
     surface: "telegram", type: event.kind,
     command: event.kind === "command" ? event.command : null,
     profileId: null,
-    understanding: { attempted: false, ok: false, ms: 0, confidence: null, request: null, intent: null, estInputTokens: 0 },
+    understanding: { attempted: false, ok: false, ms: 0, confidence: null, request: null, clarity: null, changeOfMind: false, intent: null, estInputTokens: 0 },
     decision: null,
     operation: { name: null, ok: null },
     evidence: { kinds: [], consolidationQueued: false },
@@ -252,12 +253,12 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       };
 
       // The one reading of this message.
-      let understanding: AcademicUnderstanding;
+      let read: AcademicUnderstanding;
       const readStarted = Date.now();
       trace.understanding.attempted = true;
-      trace.understanding.estInputTokens = Math.round((event.text.length + 4200) / 4);
+      trace.understanding.estInputTokens = Math.round((event.text.length + 6200) / 4);
       try {
-        understanding = await (deps.understand ?? runUnderstandingBrain)(event.text, history, context);
+        read = await (deps.understand ?? runUnderstandingBrain)(event.text, history, context);
       } catch (err) {
         trace.understanding.ms = Date.now() - readStarted;
         console.error(`[nova:telegram] ${trace.correlationId} understanding failed:`, (err as Error).message);
@@ -265,39 +266,57 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
         return finish("understanding_failed");
       }
       trace.understanding.ms = Date.now() - readStarted;
-      if (understanding.malformed) {
+      if (read.malformed) {
         // Unreadable output proposes nothing, so nothing is done.
         await deliver({ text: TEXT.notUnderstood });
         return finish("understanding_malformed");
       }
-      trace.understanding.ok         = true;
-      trace.understanding.intent     = understanding.intent;
-      trace.understanding.request    = understanding.request?.action ?? null;
-      trace.understanding.confidence = understanding.request?.confidence ?? null;
+      // What of that reading may be used at all. Everything below, the
+      // decision and the evidence alike, sees only this.
+      const understanding = safeReading(read, { today: day });
+      trace.understanding.ok           = true;
+      trace.understanding.intent       = understanding.intent;
+      trace.understanding.request      = understanding.request?.action ?? null;
+      trace.understanding.confidence   = understanding.request?.confidence ?? null;
+      trace.understanding.clarity      = understanding.request?.clarity ?? null;
+      trace.understanding.changeOfMind = understanding.request?.changeOfMind ?? false;
 
-      const decision = decideAction(understanding, {
-        session: context.session,
-        prompt:  prompt ? { kind: prompt.kind, optionIds: prompt.options.map(o => o.id) } : null,
-      });
+      const decision = decideAction(understanding, { session: context.session, prompt: promptFacts(prompt) });
       trace.decision = `${decision.action.type}:${decision.reason}`;
 
       // The action, through the same functions the buttons use.
       const acted = await act(decision.action, ctx, prompt, understanding, now);
       let reply: TelegramReply | null = acted ? report(acted) : null;
 
-      // An exam the student dated, which Nova does not have: offer to add it.
+      // Noise: answered, and nothing else. It does not enter the canonical
+      // turn, so no signal, evidence or state can come of it. Only the
+      // conversation log records that it was said.
+      if (understanding.request?.clarity === "unintelligible") {
+        const text = reply?.text ?? TEXT.clarifyOpen;
+        if (userRow) {
+          await saveUserMessage(userRow.id, event.text, { intent: "general_chat", emotion: "neutral", signals: [], surface: "telegram" }, now)
+            .then(() => saveAssistantMessage(userRow.id, text, "nova_clarify", {}, now))
+            .catch(err => console.error(`[nova:telegram] ${trace.correlationId} conversation log failed`, err));
+        }
+        await deliver(reply ?? { text });
+        return finish();
+      }
+
+      // An exam the student dated, for a subject of theirs that has none on
+      // that day: offer to add it.
       if (decision.proposeExam) {
         const snapshot = await loadStudySnapshot(event.chatId);
-        if (!examAlreadyKnown(snapshot.upcomingExams, decision.proposeExam)) {
-          reply = withExamOffer(reply ?? { text: "" }, decision.proposeExam);
-        }
+        const offer = examToOffer(decision.proposeExam, snapshot.subjects, snapshot.upcomingExams);
+        if (offer) reply = withExamOffer(reply ?? { text: "" }, offer);
       }
 
       // The canonical Nova turn: the message is logged, evidence is built
       // and consolidated, state is updated. The Response Brain speaks only
-      // when the decision calls for wording and today's budget allows it.
+      // when the decision calls for wording, the action it would describe
+      // actually happened, and today's budget allows it.
       const plain    = reply?.text.trim() ?? "";
-      const generate = decision.generate && await spendModelCall(profile.id, "response", day);
+      const happened = acted === null || acted.operation.ok;
+      const generate = decision.generate && happened && await spendModelCall(profile.id, "response", day);
       const fallback = plain || TEXT.converseFallback;
       const respondStarted = Date.now();
       try {
@@ -313,8 +332,8 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
             ? {
                 responseFallback: fallback,
                 directive: plain
-                  ? `Nova's system already did or offered this: "${plain.slice(0, 400)}". Say it in your own words in at most three short sentences. Buttons for the next step are attached, so do not list options.`
-                  : undefined,
+                  ? `Nova's system already did or offered exactly this, and nothing else: "${plain.slice(0, 400)}". Say it in your own words in at most three short sentences. Buttons for the next step are attached, so do not list options. Do not say anything else was started, ended, saved, added or scheduled.`
+                  : NOTHING_WAS_DONE,
               }
             : { scriptedReply: fallback }),
         });
@@ -349,6 +368,21 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
   }
 }
 
+// Said to the Response Brain on a turn with no product action, so that a
+// reply cannot claim one.
+const NOTHING_WAS_DONE =
+  "Nova's system took no action this turn: nothing was started, paused, ended, saved, added or scheduled, and no reminder was set. Do not say or imply otherwise, and do not offer to do something this chat has no button for. Reply in at most three short sentences.";
+
+// The open prompt as the decision sees it: which options exist and what each
+// one is. Read from Nova's own record, never from the message.
+function promptFacts(prompt: OpenPrompt | null): DecisionContext["prompt"] {
+  if (!prompt) return null;
+  return {
+    kind: prompt.kind,
+    options: prompt.options.map(o => ({ id: o.id, type: o.action.type, minutes: o.action.type === "start" ? o.action.minutes : null })),
+  };
+}
+
 // What a decided action runs. null: the turn is a conversation and has no
 // product action.
 async function act(
@@ -368,6 +402,7 @@ async function act(
       return runOptionAction(resolved.option.action, ctx);
     }
     case "show_today":     return showToday(ctx, action.minutes);
+    case "offer_start":    return offerStart(ctx, action.topic, action.minutes);
     case "start_session":  return startFromRequest(ctx, action.topic, action.minutes);
     case "pause_session":  return pauseOrResume(ctx, "pause");
     case "resume_session": return pauseOrResume(ctx, "resume");
@@ -382,7 +417,13 @@ async function act(
         : { reply: { text: TEXT.finishSetup }, operation: { name: "show_alternative", ok: false } };
     }
     case "acknowledge_report": return { reply: { text: TEXT.selfReport }, operation: { name: "acknowledge_report", ok: true } };
-    case "clarify":            return { reply: clarifyReply(await loadNovaSession(ctx.chatId, now)), operation: { name: "clarify", ok: true } };
+    case "unsupported":        return { reply: { text: TEXT.unsupported }, operation: { name: "unsupported", ok: true } };
+    // With a question still open, its buttons are the options: the prompt
+    // stays as it is. Otherwise, the fixed choices.
+    case "clarify":
+      return prompt
+        ? { reply: { text: TEXT.clarifyOpen }, operation: { name: "clarify", ok: true } }
+        : { reply: clarifyReply(await loadNovaSession(ctx.chatId, now)), operation: { name: "clarify", ok: true } };
     case "converse":           return null;
   }
 }

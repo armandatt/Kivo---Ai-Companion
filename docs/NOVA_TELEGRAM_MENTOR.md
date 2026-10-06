@@ -6,7 +6,8 @@ Telegram is a surface over Nova, not a second Nova. It owns no session, plan, ma
 update ─ admit (secret, update_id) ─ normalise ─┬─ command  ─┐
                                                  ├─ callback ─┼─ action ─ product function ─ reply
                                                  └─ text ─ Understanding (1 call, with context)
-                                                           └─ decideAction (pure) ─┘
+                                                           └─ safeReading (pure): what of it may be used
+                                                           └─ decideAction (pure): what is allowed ─┘
                                                               └─ canonical turn: log, evidence, consolidation,
                                                                  Response Brain only if the reply needs wording
 ```
@@ -23,7 +24,8 @@ update ─ admit (secret, update_id) ─ normalise ─┬─ command  ─┐
 | Limits, lease, delivery state | `nova/telegram/channel-store.ts` | Only writer of `NovaTelegramChannel`. |
 | Delivery | `nova/telegram/telegram-client.ts` | Reports sent / blocked / rate-limited / unknown. |
 | Account linking | `nova/telegram/telegram-link.ts` | Expiry, single use, one chat per account, sets the Nova persona. |
-| Reading → action | `nova/decision/action-decision.ts` | Pure. Risk and confidence rules. |
+| What of a reading may be used | `nova/decision/interpretation-safety.ts` | Pure. Noise becomes a neutral reading; an unclear one keeps only the feeling and circumstance; values are range-checked. |
+| Reading → action | `nova/decision/action-decision.ts` | Pure. Preconditions per action; confidence is only a floor. |
 | Tone | `nova/decision/register.ts` | Pure. serious / steady / playful. |
 | Proactive decision | `nova/decision/proactive-decision.ts` | Pure. Candidates, gates, rank. |
 | Proactive delivery | `nova/proactive/proactive-outbox.ts`, `nova-proactive-cron.ts` | Only writer of `NovaProactiveMessage`. |
@@ -31,7 +33,21 @@ update ─ admit (secret, update_id) ─ normalise ─┬─ command  ─┐
 ## Rules that must hold
 
 - **One reader of meaning.** Free text goes to the Understanding Brain once, with a context block (today's date, the running session, the open question). The orchestrator is handed that reading and does not read the message again. No regex, keyword list, yes/no parser or disambiguation pass exists on the Telegram path; `telegram-mentor.test.ts` reads the source to hold this.
-- **A reading is a proposal.** `parseLearnerRequest` drops anything outside the closed vocabulary. `decideAction` runs a reversible request (start, pause, resume, show) only at confidence 0.75 or more, offers it as buttons from 0.5, and never ends a session or adds an exam from a sentence.
+- **A reading is a proposal, and confidence is not permission.** The model can be wrong and sure of it. `safeReading` decides what of a reading may be used at all; `decideAction` then checks each action's own preconditions against the reading and the real state. A reading that fails them becomes an offer or a question.
+
+  | Action | Runs only when | Otherwise |
+  |---|---|---|
+  | Start a session | an explicit start request that names a topic today's plan has, with no session open; or the answer to a Start option | the offer, with Start buttons |
+  | Pause / resume | an explicit request and a session in the matching state | the session's status |
+  | End a session | never from a sentence; the answer to "How did it go?" | "How did it go?" |
+  | Add an exam | never from a sentence; the Add option, which exists only for one of the learner's subjects with no exam that day | nothing is offered |
+  | Pause nudges for the day | an explicit "not today" (`deferUntil: tomorrow`) | "Later", which pauses nothing |
+  | Record stated time | minutes in a clear message, no session open | not recorded |
+  | Change an open offer | minutes stated while a Start offer is open | re-offered at that length; nothing starts |
+
+  Nothing that changes state runs when `clarity` is not `clear`, or when the message takes back what it asks for (`changeOfMind`).
+- **Noise does nothing.** A reading marked `unintelligible` is replaced by a neutral one before anything sees it, is answered with a question, and does not enter the canonical turn: no signal, evidence, consolidation job or state. Only the conversation log records it. `ambiguous` and `unsupported` readings keep the feeling and any stated circumstance and lose everything they could act or record on.
+- **The Response Brain cannot claim an action.** It is asked to word a result only when the operation succeeded, and is told exactly what was done. On a turn with no action it is told nothing was done. A failed operation is stated by its template.
 - **Ending a session needs an outcome.** `/done`, the End button and "I finished" all ask "How did it go?". The answer (a tap, or a typed reply read against that open prompt) is the confirmation, and it is what calls the canonical `end` command.
 - **One open prompt per learner.** `openKey` is unique while a prompt is open. Resolving is one conditional write, so a double tap, an old button, a replaced prompt, an expired prompt and another learner's prompt id all change nothing.
 - **Nothing in process memory.** The prompt, the turn lease, the action limiter and the model budget are rows in Postgres.
@@ -49,8 +65,10 @@ update ─ admit (secret, update_id) ─ normalise ─┬─ command  ─┐
 | "I can't study tonight, family stuff" | reality claim → consolidation → `UserReality` (temporary, expiring); proactive paused to local midnight | Today constraints, register, proactive gates |
 | "family thing is sorted" | reality resolution → consolidation | the same |
 | "I keep messing up deadlocks" | `topic_struggle` → consolidation → soft mastery observation (0.15 weight, no interval change, no review counted), at most once per topic per 20 h | Knowledge, Today's weak area, plan ranking |
-| "I have my OS exam Friday" | nothing until the learner taps Add; then `addExam` | Exam engine, plan, exam countdown |
-| "Not today" | `NovaTelegramChannel.proactivePausedUntil` | proactive gate |
+| "I have my OS exam Friday" | nothing until the learner taps Add; then `addExam`, under the subject the title names | Exam engine, plan, exam countdown |
+| "exam is tomorrow" (no subject) | nothing, and nothing is offered | — |
+| "asdfghjkl" | nothing | — |
+| "Not today" (button or typed) | `NovaTelegramChannel.proactivePausedUntil`, to the learner's local midnight | proactive gate |
 
 Not stored: raw updates, parsed intents as state, a Telegram transcript (the conversation log is `CompanionMessage`, as for the web), any Telegram copy of a session.
 
@@ -84,7 +102,7 @@ The static layer keeps "never shame or guilt-trip" and "no emoji unless the stud
 2. Set `TELEGRAM_WEBHOOK_SECRET` on the API and register the webhook with the same `secret_token` and `allowed_updates` including `message` and `callback_query`. **In production Nova ignores every update without a valid secret.** Rex is unchanged by this.
 3. Set `NEXT_PUBLIC_APP_URL` (https) on the API for "Open Nova" buttons.
 4. Deploy. Connect links issued before the deploy have no expiry on record and are refused; the dashboard issues a new one.
-5. Before real learners: `npx tsx --tsconfig tsconfig.json scripts/novaTelegramEval.ts` and read what the model makes of the listed phrases.
+5. Before real learners, and after any change to the Understanding prompt or the action decision: `npx tsx --tsconfig tsconfig.json scripts/novaTelegramEval.ts 3`. Each case lists the decisions that are right and the ones that would corrupt state; the run exits 1 on any of the second kind.
 
 | Variable | Purpose |
 |---|---|
@@ -108,4 +126,8 @@ Worth alerting on: `failure` of `internal`, `operation_failed`, `understanding_f
 - Templates are English only.
 - Quiet hours are fixed at 23:00–07:00 local.
 - The connect limiter and one-chat-per-account rule are enforced in code, not by a database constraint.
-- What the real model reads from messy text is not covered by automated tests, which use recorded model outputs. The evaluation script is the check.
+- What the real model reads from messy text is not covered by automated tests, which use recorded model outputs (including the wrong ones the model really gave). The evaluation script is the check, and it needs a model key.
+- A start asked for in words runs only for a topic or subject on today's plan. A topic the learner has but today's plan does not is offered, one tap from starting.
+- An exam is offered from chat only for one of the learner's own subjects. Any other exam is added in the Planner.
+- A session left running is never closed by Nova. It ends when the learner ends it.
+- The same Understanding Brain reads web chat, where `sessionIntent: "start"` can still start a session from a sentence. This hardening covers the Telegram path only.

@@ -192,9 +192,9 @@ export function clarifyReply(session: NovaSessionView | null): TelegramReply {
   };
 }
 
-export function withExamOffer(reply: TelegramReply, exam: { title: string; date: string }): TelegramReply {
-  const ask    = `Add ${exam.title} on ${exam.date} to your exams?`;
-  const offer  = { label: `Add exam (${exam.date})`, action: { type: "add_exam" as const, title: exam.title, subjectName: exam.title, date: exam.date } };
+export function withExamOffer(reply: TelegramReply, exam: { title: string; subjectName: string; date: string }): TelegramReply {
+  const ask    = `Add your ${exam.subjectName} exam on ${exam.date}?`;
+  const offer  = { label: `Add exam (${exam.date})`, action: { type: "add_exam" as const, title: exam.title, subjectName: exam.subjectName, date: exam.date } };
   if (reply.prompt) {
     const merged = [...reply.prompt.options.map(o => ({ label: o.label, action: o.action })), offer];
     return { ...reply, text: `${reply.text}\n\n${ask}`, prompt: { kind: reply.prompt.kind, options: options(merged) } };
@@ -231,6 +231,10 @@ export const TEXT = {
   budget:          "I've done a lot of reading for you today, so I'm on buttons until tomorrow. /today, /focus and /done all still work.",
   selfReport:      "Noted. There was no timer running, so I can only count that as something you told me.",
   converseFallback: "Got that. /today shows what's next.",
+  // Noise, or words with nothing to attach them to, while a question is
+  // still open: the buttons already on screen are the options.
+  clarifyOpen:     "I didn't catch that. The buttons above still work, or tell me in a few more words.",
+  unsupported:     "That's outside what I do here. I can tell you what to study, run a session, or take note of what's come up. /settings has nudges and timezone.",
   nudgesOn:        "Nudges are on.",
   nudgesOff:       "Nudges are off. I'll only speak when you do.",
 };

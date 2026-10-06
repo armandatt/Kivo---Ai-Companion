@@ -8,6 +8,7 @@
 import { prisma } from "@repo/db/client";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
 import { isIsoDay } from "../brains/understanding-parser";
+import { subjectsNamedIn } from "../engines/topic-mastery-engine";
 
 export const EXAM_HORIZON_DAYS = 366;
 const DAY_MS = 86_400_000;
@@ -42,16 +43,19 @@ export async function addExam(
   const at = examInstant(input.date);
   if (at.getTime() - now.getTime() > EXAM_HORIZON_DAYS * DAY_MS) return { status: "invalid", reason: "too_far" };
 
-  const wanted  = (input.subjectName ?? title).trim().toLowerCase();
-  const subject = profile.subjects.find(s => s.name.toLowerCase() === wanted || (s.code ?? "").toLowerCase() === wanted) ?? null;
+  // The subject is the one the label names. Two or none: no subject.
+  const named   = subjectsNamedIn(input.subjectName ?? title, profile.subjects);
+  const subject = named.length === 1 ? named[0]! : null;
 
-  // The same exam, said twice or already known from setup: same subject (or
-  // the same title when there is no subject) within a day of that date.
+  // The same exam, said twice or already known from setup: the same subject
+  // within a day of that date. With no subject to compare, any exam on that
+  // day is taken to be the one meant: a second, nameless exam on the same day
+  // is far more likely a duplicate than a new obligation.
   const near = await prisma.novaExam.findMany({
     where:  { profileId: profile.id, scheduledAt: { gte: new Date(at.getTime() - DAY_MS), lte: new Date(at.getTime() + DAY_MS) } },
     select: { title: true, subjectId: true },
   });
-  const duplicate = near.some(e => subject ? e.subjectId === subject.id : e.title.trim().toLowerCase() === title.toLowerCase());
+  const duplicate = subject ? near.some(e => e.subjectId === subject.id) : near.length > 0;
   if (duplicate) return { status: "exists", title, date: input.date };
 
   await prisma.novaExam.create({
@@ -60,18 +64,22 @@ export async function addExam(
   return { status: "added", title, date: input.date };
 }
 
-// Whether an exam on (about) that day is already on record, so Nova does not
-// ask to add what it already has.
-export function examAlreadyKnown(
-  upcoming: Array<{ title: string; subjectName?: string | null; scheduledAt: Date }>,
+// What Nova may offer to add when a message names an exam and its day.
+// Only an exam for one of the learner's own subjects is offered, and only
+// when that subject has no exam on (about) that day already. An exam that
+// names no subject ("exam is tomorrow") is never offered: the learner's
+// existing exam for that day is almost certainly the one they mean, and an
+// exam with no subject cannot be planned for.
+export function examToOffer(
   exam:     { title: string; date: string },
-): boolean {
-  if (!isIsoDay(exam.date)) return true;
-  const at   = examInstant(exam.date).getTime();
-  const name = exam.title.trim().toLowerCase();
-  return upcoming.some(e => {
-    if (Math.abs(e.scheduledAt.getTime() - at) > 1.5 * DAY_MS) return false;
-    const names = [e.title, e.subjectName ?? ""].map(n => n.trim().toLowerCase()).filter(Boolean);
-    return names.some(n => n.includes(name) || name.includes(n));
-  });
+  subjects: Array<{ id: string; name: string; code?: string | null }>,
+  upcoming: Array<{ subjectId: string | null; scheduledAt: Date }>,
+): { title: string; subjectName: string; date: string } | null {
+  if (!isIsoDay(exam.date)) return null;
+  const named = subjectsNamedIn(exam.title, subjects);
+  if (named.length !== 1) return null;
+  const subject = named[0]!;
+  const at = examInstant(exam.date).getTime();
+  const known = upcoming.some(e => e.subjectId === subject.id && Math.abs(e.scheduledAt.getTime() - at) <= 1.5 * DAY_MS);
+  return known ? null : { title: exam.title.trim().slice(0, 80), subjectName: subject.name, date: exam.date };
 }

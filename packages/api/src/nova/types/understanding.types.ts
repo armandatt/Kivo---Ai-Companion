@@ -99,7 +99,7 @@ export interface AcademicUnderstanding {
 // (if anything) runs, against the session and prompt that actually exist.
 // Closed vocabulary; anything else the model returns is dropped by the parser.
 
-export const UNDERSTANDING_ENVELOPE_VERSION = 2;
+export const UNDERSTANDING_ENVELOPE_VERSION = 3;
 
 export const REQUESTED_ACTIONS = [
   "what_now", "start_session", "pause_session", "resume_session",
@@ -109,7 +109,20 @@ export type RequestedAction = typeof REQUESTED_ACTIONS[number];
 
 export type StatedOutcome = "struggled" | "okay" | "good" | "crushed_it";
 
+// How well the message could be read at all. Only a "clear" reading can lead
+// to an action or to evidence; the others are answered without acting.
+//   ambiguous       real words, but what they refer to cannot be told
+//   unintelligible  no meaning to read (random characters, noise)
+//   unsupported     a clear request for something Nova does not do here
+export const READING_CLARITY = ["clear", "ambiguous", "unintelligible", "unsupported"] as const;
+export type ReadingClarity = typeof READING_CLARITY[number];
+
 export interface LearnerRequest {
+  clarity:          ReadingClarity;
+  // The message takes back, holds or reverses something it (or the student's
+  // previous message) asked for: "start OS but not yet", "wait, don't".
+  // Nothing that changes state runs on such a message.
+  changeOfMind:     boolean;
   action:           RequestedAction;
   confidence:       number;                 // 0–1, in the action reading
   // The option of Nova's open question this message picks, by id. null when

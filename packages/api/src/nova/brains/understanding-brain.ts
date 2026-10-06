@@ -37,7 +37,7 @@ export async function runUnderstandingBrain(
     model:            "gpt-4o-mini",
     systemInstruction: UNDERSTANDING_BRAIN_SYSTEM_PROMPT,
     prompt,
-    maxOutputTokens:  450,
+    maxOutputTokens:  600,
   });
 
   return parseUnderstandingResponse(raw, userText);

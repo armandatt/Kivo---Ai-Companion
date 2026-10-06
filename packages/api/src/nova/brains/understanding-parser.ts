@@ -7,7 +7,7 @@ import type {
   AcademicUnderstanding, AcademicIntent, AcademicEmotion, DisclosureClass, RoutingSignal, RealityObservation,
   LearnerRequest, RequestedAction, StatedOutcome,
 } from "../types/understanding.types";
-import { REQUESTED_ACTIONS } from "../types/understanding.types";
+import { READING_CLARITY, REQUESTED_ACTIONS } from "../types/understanding.types";
 import { isNovaRealityCategory, normalizeSubtype } from "../types/reality.types";
 
 const VALID_INTENTS = new Set<string>([
@@ -87,6 +87,7 @@ export function isIsoDay(v: unknown): v is string {
 }
 
 export const NO_REQUEST: LearnerRequest = {
+  clarity: "ambiguous", changeOfMind: false,
   action: "none", confidence: 0, promptAnswer: null, availableMinutes: null,
   sessionOutcome: null, deferUntil: null, struggleTopic: null, exam: null,
 };
@@ -101,6 +102,9 @@ export function parseLearnerRequest(raw: unknown): LearnerRequest {
   const examTitle = exam ? shortText(exam["title"], 80) : null;
 
   return {
+    // A reading that does not say how clear it is is not treated as clear.
+    clarity:      READING_CLARITY.find(c => c === r["clarity"]) ?? "ambiguous",
+    changeOfMind: r["changeOfMind"] === true,
     action:       action ?? "none",
     confidence:   typeof r["confidence"] === "number" && action ? Math.max(0, Math.min(1, r["confidence"])) : 0,
     promptAnswer: shortText(r["promptAnswer"], 8),

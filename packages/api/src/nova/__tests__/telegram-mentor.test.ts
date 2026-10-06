@@ -24,7 +24,8 @@ import { endedReply, outcomeReply, startLengths, withExamOffer, recommendationRe
 import { nextLocalMidnight, pickStart } from "../telegram/telegram-actions";
 import { classifySendFailure } from "../telegram/telegram-client";
 import { proactiveFallback, wordProactiveMessage } from "../proactive/nova-proactive-response";
-import { examAlreadyKnown } from "../product/exams";
+import { examToOffer } from "../product/exams";
+import { safeReading } from "../decision/interpretation-safety";
 import { PROMPT_TTL_MINUTES } from "../telegram/telegram.types";
 import type { AcademicUnderstanding, LearnerRequest } from "../types/understanding.types";
 import type { NovaTodayReady, TodayAction } from "../product/today.types";
@@ -32,6 +33,7 @@ import type { NovaTodayReady, TodayAction } from "../product/today.types";
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 const request = (over: Partial<LearnerRequest> = {}): LearnerRequest => ({
+  clarity: "clear", changeOfMind: false,
   action: "none", confidence: 0.9, promptAnswer: null, availableMinutes: null,
   sessionOutcome: null, deferUntil: null, struggleTopic: null, exam: null, ...over,
 });
@@ -40,7 +42,12 @@ const reading = (req: Partial<LearnerRequest> = {}, over: Partial<AcademicUnders
   ambiguityScore: 0.1, routingSignal: "coaching_only", rawText: "", request: request(req), ...over,
 });
 const NO_CONTEXT: ActionContext = { session: "none", prompt: null };
-const START_PROMPT: ActionContext = { session: "none", prompt: { kind: "start", optionIds: ["a", "b", "c", "d"] } };
+// The offer /today makes: Start 15, Start 25, Something else, Later.
+const START_OPTIONS = [
+  { id: "a", type: "start", minutes: 15 }, { id: "b", type: "start", minutes: 25 },
+  { id: "c", type: "something_else", minutes: null }, { id: "d", type: "later", minutes: null },
+];
+const START_PROMPT: ActionContext = { session: "none", prompt: { kind: "start", options: START_OPTIONS } };
 const PAUSED: ActionContext = { session: "paused", prompt: null };
 
 const message = (text: string, chat: Record<string, unknown> = { id: 42, type: "private" }) =>
@@ -104,7 +111,7 @@ describe("the request envelope", () => {
   const parse = (request: unknown) => parseUnderstandingResponse(JSON.stringify({ intent: "plan_request", emotion: "neutral", request }), "x");
 
   it("keeps a well-formed request", () => {
-    const u = parse({ action: "what_now", confidence: 0.92, availableMinutes: 30, promptAnswer: null, exam: { title: "OS", date: "2026-10-09" } });
+    const u = parse({ clarity: "clear", action: "what_now", confidence: 0.92, availableMinutes: 30, promptAnswer: null, exam: { title: "OS", date: "2026-10-09" } });
     expect(u.request).toEqual(request({ action: "what_now", confidence: 0.92, availableMinutes: 30, exam: { title: "OS", date: "2026-10-09" } }));
     expect(u.malformed).toBeUndefined();
   });
@@ -119,10 +126,12 @@ describe("the request envelope", () => {
       action: "start_session", confidence: 7, availableMinutes: 100000, sessionOutcome: "amazing",
       deferUntil: "next year", struggleTopic: "x".repeat(500), promptAnswer: { id: "a" }, exam: { title: "OS", date: "Friday" },
     });
-    expect(r).toEqual(request({ action: "start_session", confidence: 1 }));
+    // A reading that does not say it is clear is not treated as clear.
+    expect(r).toEqual(request({ action: "start_session", confidence: 1, clarity: "ambiguous" }));
     expect(parseLearnerRequest({ availableMinutes: -5 }).availableMinutes).toBeNull();
-    expect(parseLearnerRequest("start the session")).toEqual(request({ confidence: 0 }));
-    expect(parseLearnerRequest([{ action: "start_session" }])).toEqual(request({ confidence: 0 }));
+    expect(parseLearnerRequest("start the session")).toEqual(request({ confidence: 0, clarity: "ambiguous" }));
+    expect(parseLearnerRequest([{ action: "start_session" }])).toEqual(request({ confidence: 0, clarity: "ambiguous" }));
+    expect(parseLearnerRequest({ clarity: "certain", changeOfMind: "yes" })).toMatchObject({ clarity: "ambiguous", changeOfMind: false });
   });
 
   it("accepts only real calendar days", () => {
@@ -170,7 +179,8 @@ describe("deciding what a message does", () => {
     ["yes (to an offer)",             request({ action: "start_session", promptAnswer: "a" }),             START_PROMPT, { type: "answer_prompt", optionId: "a" }],
     ["yeah let's do that",            request({ action: "start_session", promptAnswer: "b" }),             START_PROMPT, { type: "answer_prompt", optionId: "b" }],
     ["no (to an offer)",              request({ action: "not_now", promptAnswer: "d" }),                   START_PROMPT, { type: "answer_prompt", optionId: "d" }],
-    ["start it (nothing offered)",    request({ action: "start_session", confidence: 0.9 }),               NO_CONTEXT, { type: "start_session", topic: null, minutes: null }],
+    // Asked to start, with nothing named and nothing offered: an offer, one tap from starting.
+    ["start it (nothing offered)",    request({ action: "start_session", confidence: 0.9 }),               NO_CONTEXT, { type: "offer_start", topic: null, minutes: null }],
     ["continue (paused)",             request({ action: "resume_session" }),                               PAUSED, { type: "resume_session" }],
     ["continue (nothing paused)",     request({ action: "resume_session" }),                               NO_CONTEXT, { type: "show_today", minutes: null }],
     ["nah not today",                 request({ action: "not_now", deferUntil: "tomorrow" }),              NO_CONTEXT, { type: "defer", until: "tomorrow" }],
@@ -213,7 +223,7 @@ describe("deciding what a message does", () => {
     });
 
     it("the answer to 'How did it go?' is what ends it", () => {
-      const asked: ActionContext = { session: "running", prompt: { kind: "session_outcome", optionIds: ["a", "b", "c", "d"] } };
+      const asked: ActionContext = { session: "running", prompt: { kind: "session_outcome", options: ["a", "b", "c", "d"].map(id => ({ id, type: "end", minutes: null })) } };
       expect(decideAction(reading({ promptAnswer: "a", sessionOutcome: "struggled" }), asked).action).toEqual({ type: "answer_prompt", optionId: "a" });
     });
 
@@ -226,7 +236,7 @@ describe("deciding what a message does", () => {
   describe("confidence and risk", () => {
     it("a start that is only plausible is offered, not run", () => {
       const unsure = decideAction(reading({ action: "start_session", confidence: EXECUTE_CONFIDENCE - 0.1 }, { topic: "Deadlocks" }), NO_CONTEXT);
-      expect(unsure.action).toEqual({ type: "show_today", minutes: null });
+      expect(unsure.action).toEqual({ type: "offer_start", topic: "Deadlocks", minutes: null });
       const sure = decideAction(reading({ action: "start_session", confidence: EXECUTE_CONFIDENCE, availableMinutes: 25 }, { topic: "Deadlocks" }), NO_CONTEXT);
       expect(sure.action).toEqual({ type: "start_session", topic: "Deadlocks", minutes: 25 });
     });
@@ -271,6 +281,202 @@ describe("deciding what a message does", () => {
       expect(d.action.type).toBe("converse");
       expect(d.generate).toBe(true);
     });
+  });
+});
+
+// ── Hardening: the model can be wrong, and the state stays right ──────────────
+// The readings below are what the real model returned in the evaluation run
+// of 2026-10-06, including the wrong ones.
+
+describe("a wrong reading cannot change state", () => {
+  const RUNNING: ActionContext = { session: "running", prompt: null };
+  const STATE_CHANGING = new Set(["start_session", "pause_session", "resume_session", "answer_prompt"]);
+
+  describe("finishing statements while a session is open", () => {
+    it("'I finished deadlocks', read as a study report with no request, asks how it went", () => {
+      const real = reading({ action: "none", confidence: 1 }, { intent: "study_report", emotion: "proud", topic: "Deadlocks" });
+      expect(decideAction(real, RUNNING)).toMatchObject({ action: { type: "ask_outcome", stated: null }, generate: false });
+      expect(decideAction(real, PAUSED).action.type).toBe("ask_outcome");
+    });
+
+    it("a report carried as a second intent asks too", () => {
+      const real = reading({ action: "none" }, { intent: "emotional_vent", secondaryIntents: ["study_report"], emotion: "frustrated" });
+      expect(decideAction(real, RUNNING).action.type).toBe("ask_outcome");
+    });
+
+    it("no reading of any kind ends a session: the most it does is ask", () => {
+      for (const action of ["finish_session", "none", "not_now", "something_else", "status", "what_now"] as const) {
+        for (const sessionOutcome of [null, "struggled", "crushed_it"] as const) {
+          const d = decideAction(reading({ action, confidence: 1, sessionOutcome }, { intent: "study_report" }), RUNNING);
+          expect(d.action).toEqual({ type: "ask_outcome", stated: sessionOutcome });
+        }
+      }
+    });
+
+    it("a struggle voiced mid-session is not a finish, even when the model attaches an outcome to it", () => {
+      // "i keep fucking up deadlocks" while studying: the model returned sessionOutcome "struggled".
+      const real = reading({ action: "none", confidence: 1, sessionOutcome: "struggled", struggleTopic: "Deadlocks" }, { intent: "emotional_vent", emotion: "frustrated", topic: "Deadlocks" });
+      expect(decideAction(real, RUNNING).action).toEqual({ type: "converse" });
+    });
+
+    it("an explicit pause is a pause, not an end", () => {
+      expect(decideAction(reading({ action: "pause_session" }, { intent: "study_report" }), RUNNING).action).toEqual({ type: "pause_session" });
+    });
+
+    it("with no session open, the same report is a conversation and ends nothing", () => {
+      expect(decideAction(reading({ action: "none" }, { intent: "study_report" }), NO_CONTEXT).action.type).toBe("converse");
+    });
+  });
+
+  describe("time is not a request to start", () => {
+    it("'bro I have 30 mins', misread as a confident start, is offered at 30 and not started", () => {
+      const real = reading({ action: "start_session", confidence: 0.9, availableMinutes: 30 }, { intent: "accountability_request", sessionIntent: "start" });
+      expect(decideAction(real, NO_CONTEXT).action).toEqual({ type: "offer_start", topic: null, minutes: 30 });
+    });
+
+    it("no confidence is enough without a named topic", () => {
+      for (const confidence of [0.75, 0.9, 0.99, 1]) {
+        expect(decideAction(reading({ action: "start_session", confidence }), NO_CONTEXT).action.type).toBe("offer_start");
+      }
+    });
+
+    it("a topic alone, or time and a topic with no start asked, starts nothing", () => {
+      expect(decideAction(reading({ action: "none" }, { topic: "Deadlocks" }), NO_CONTEXT).action.type).toBe("converse");
+      expect(decideAction(reading({ action: "what_now", availableMinutes: 30 }, { topic: "Deadlocks" }), NO_CONTEXT).action).toEqual({ type: "show_today", minutes: 30 });
+    });
+
+    it("a named topic with an explicit start is the one start words can make", () => {
+      const real = reading({ action: "start_session", confidence: 1, availableMinutes: 25 }, { topic: "deadlocks" });
+      expect(decideAction(real, NO_CONTEXT).action).toEqual({ type: "start_session", topic: "deadlocks", minutes: 25 });
+    });
+  });
+
+  describe("changing an open offer is not accepting it", () => {
+    it.each([
+      ["make it 20 mins",             request({ action: "start_session", confidence: 0.95, availableMinutes: 20 }), 20],
+      ["actually I only got 10 mins", request({ action: "something_else", confidence: 0.9, availableMinutes: 10 }), 10],
+      ["actually I only got 10 mins (option c)", request({ action: "something_else", confidence: 0.9, availableMinutes: 10, promptAnswer: "c" }), 10],
+      ["nah actually make it 20",     request({ action: "start_session", confidence: 0.95, availableMinutes: 20, promptAnswer: "c" }), 20],
+      ["wait make that 25 (wrong option)", request({ action: "start_session", confidence: 0.9, availableMinutes: 25, promptAnswer: "a" }), 25],
+      ["no wait make it 40 and start", request({ action: "start_session", confidence: 0.95, availableMinutes: 40 }), 40],
+    ] as Array<[string, LearnerRequest, number]>)("%s re-offers at that length", (_t, req, minutes) => {
+      expect(decideAction(reading(req), START_PROMPT).action).toEqual({ type: "show_today", minutes });
+    });
+
+    it("accepting an option at its own length is still an answer", () => {
+      const real = reading({ action: "start_session", confidence: 1, availableMinutes: 15, promptAnswer: "a" });
+      expect(decideAction(real, START_PROMPT).action).toEqual({ type: "answer_prompt", optionId: "a" });
+    });
+
+    it("a start that names its topic is its own request, whatever is on offer", () => {
+      const real = reading({ action: "start_session", confidence: 1, availableMinutes: 25 }, { topic: "deadlocks" });
+      expect(decideAction(real, START_PROMPT).action.type).toBe("start_session");
+    });
+  });
+
+  describe("'not today' quiets Nova for the day", () => {
+    it("typed against an offer whose only decline is Later, it is still 'not today'", () => {
+      const real = reading({ action: "not_now", confidence: 1, deferUntil: "tomorrow", promptAnswer: "d" });
+      expect(decideAction(real, START_PROMPT).action).toEqual({ type: "defer", until: "tomorrow" });
+    });
+    it("'later' against the same offer is the Later option", () => {
+      const real = reading({ action: "not_now", confidence: 1, deferUntil: "later", promptAnswer: "d" });
+      expect(decideAction(real, START_PROMPT).action).toEqual({ type: "answer_prompt", optionId: "d" });
+    });
+  });
+
+  describe("noise, ambiguity and unsupported requests", () => {
+    it("an unintelligible reading does nothing but ask, whatever else the model filled in", () => {
+      const noise = reading(
+        { clarity: "unintelligible", action: "start_session", confidence: 1, availableMinutes: 92837 % 600, promptAnswer: "a",
+          struggleTopic: "asdf", exam: { title: "OS", date: "2026-10-09" }, sessionOutcome: "crushed_it" },
+        { topic: "deadlocks", intent: "study_report" },
+      );
+      for (const ctx of [NO_CONTEXT, START_PROMPT, RUNNING, PAUSED]) {
+        expect(decideAction(noise, ctx)).toEqual({ action: { type: "clarify" }, proposeExam: null, generate: false, reason: "unintelligible" });
+      }
+    });
+
+    it("safeReading leaves nothing of an unintelligible reading for evidence to be built from", () => {
+      const noise = reading(
+        { clarity: "unintelligible", action: "start_session", struggleTopic: "asdf", exam: { title: "OS", date: "2026-10-09" }, sessionOutcome: "good", availableMinutes: 30 },
+        { topic: "deadlocks", intent: "study_report", emotion: "distressed", sessionIntent: "start", secondaryIntents: ["mastery_claim"],
+          realityObservations: [{ category: "health", subtype: "illness", claim: "x", status: "active", persistence: "temporary", expectedDurationHours: null, confidence: 1 }] },
+      );
+      const safe = safeReading(noise, { today: "2026-10-06" });
+      expect(safe).toMatchObject({ intent: "general_chat", emotion: "neutral", topic: null, sessionIntent: "none", secondaryIntents: [], realityObservations: [] });
+      expect(safe.request).toMatchObject({ clarity: "unintelligible", action: "none", struggleTopic: null, exam: null, sessionOutcome: null, availableMinutes: null, promptAnswer: null });
+      // …and so no topic_struggle signal either.
+      const signals = resolveTurnSignals({ text: "asdfghjkl deadlocks", command: null, understanding: safe, state: {} as never });
+      expect(signals.detectedSignals).toEqual([]);
+    });
+
+    it("an ambiguous or unsupported reading keeps the feeling and drops everything it could act or record on", () => {
+      for (const clarity of ["ambiguous", "unsupported"] as const) {
+        const safe = safeReading(reading(
+          { clarity, action: "start_session", availableMinutes: 30, struggleTopic: "deadlocks", exam: { title: "OS", date: "2026-10-09" }, sessionOutcome: "good" },
+          { emotion: "overwhelmed", topic: "deadlocks", sessionIntent: "start" },
+        ), { today: "2026-10-06" });
+        expect(safe.emotion).toBe("overwhelmed");
+        expect(safe.sessionIntent).toBe("none");
+        expect(safe.request).toMatchObject({ clarity, action: "none", availableMinutes: null, struggleTopic: null, exam: null, sessionOutcome: null });
+      }
+    });
+
+    it("an ambiguous reading never runs anything, even with an option picked", () => {
+      const vague = reading({ clarity: "ambiguous", action: "start_session", confidence: 1, promptAnswer: "a", availableMinutes: 25 }, { topic: "deadlocks" });
+      for (const ctx of [NO_CONTEXT, START_PROMPT, RUNNING, PAUSED]) {
+        expect(STATE_CHANGING.has(decideAction(vague, ctx).action.type)).toBe(false);
+      }
+      expect(decideAction(vague, START_PROMPT).action).toEqual({ type: "clarify" });
+    });
+
+    it("an unsupported request is told so, and nothing runs", () => {
+      const weather = reading({ clarity: "unsupported", action: "something_else", confidence: 0.8 });
+      expect(decideAction(weather, START_PROMPT)).toMatchObject({ action: { type: "unsupported" }, generate: false, proposeExam: null });
+    });
+
+    it("an exam in the past or more than a year out is dropped before anything sees it", () => {
+      const at = (date: string) => safeReading(reading({ exam: { title: "OS", date } }), { today: "2026-10-06" }).request?.exam;
+      expect(at("2026-10-05")).toBeNull();
+      expect(at("2028-01-01")).toBeNull();
+      expect(at("2026-10-06")).toEqual({ title: "OS", date: "2026-10-06" });
+    });
+  });
+
+  describe("a message that takes itself back", () => {
+    it("'start deadlocks for 30 but don't start yet' starts nothing", () => {
+      const held = reading({ action: "start_session", confidence: 0.95, availableMinutes: 30, changeOfMind: true }, { topic: "deadlocks" });
+      expect(decideAction(held, NO_CONTEXT).action).toEqual({ type: "offer_start", topic: null, minutes: 30 });
+    });
+
+    it("no state-changing action survives a change of mind, in any context, with any option picked", () => {
+      for (const action of ["start_session", "pause_session", "resume_session", "finish_session", "not_now", "none"] as const) {
+        for (const ctx of [NO_CONTEXT, START_PROMPT, RUNNING, PAUSED]) {
+          const d = decideAction(reading({ action, confidence: 1, changeOfMind: true, promptAnswer: "a", sessionOutcome: "good" }, { topic: "deadlocks", intent: "study_report" }), ctx);
+          expect(STATE_CHANGING.has(d.action.type)).toBe(false);
+          expect(d.action).not.toEqual({ type: "defer", until: "tomorrow" });
+        }
+      }
+    });
+  });
+
+  it("several things in one message are each handled by their own rule", () => {
+    // "I've got 30 mins, start deadlocks, I'm exhausted and my OS exam is Friday"
+    const d = decideAction(reading(
+      { action: "start_session", confidence: 0.95, availableMinutes: 30, exam: { title: "OS", date: "2026-10-09" } },
+      { topic: "deadlocks", emotion: "overwhelmed" },
+    ), NO_CONTEXT);
+    expect(d.action).toEqual({ type: "start_session", topic: "deadlocks", minutes: 30 });   // explicit, named
+    expect(d.proposeExam).toEqual({ title: "OS", date: "2026-10-09" });                     // offered, never added
+    expect(d.generate).toBe(true);                                                          // the feeling is answered
+  });
+
+  it("the decision is made of preconditions, with confidence only as a floor", () => {
+    const source = readFileSync(join(resolve(__dirname, ".."), "decision/action-decision.ts"), "utf8");
+    // Confidence is read in two places only: the floor under an explicit request, and the floor under a read-only one.
+    expect(source.split("req.confidence").length - 1).toBe(2);
+    expect(source).not.toMatch(/import .*prisma|generateOpenAIText|rawText/);
   });
 });
 
@@ -366,17 +572,42 @@ describe("replies", () => {
   });
 
   it("an exam offer joins the existing buttons instead of replacing them", () => {
-    const merged = withExamOffer(recommendationReply(view, action), { title: "OS", date: "2026-10-07" });
-    expect(merged.prompt?.options.at(-1)?.action).toEqual({ type: "add_exam", title: "OS", subjectName: "OS", date: "2026-10-07" });
+    const offer  = { title: "OS", subjectName: "Operating Systems", date: "2026-10-07" };
+    const merged = withExamOffer(recommendationReply(view, action), offer);
+    expect(merged.prompt?.options.at(-1)?.action).toEqual({ type: "add_exam", ...offer });
     expect(merged.prompt?.options.length).toBe(5);
-    expect(withExamOffer({ text: "ok" }, { title: "OS", date: "2026-10-07" }).prompt?.kind).toBe("confirm_exam");
+    expect(withExamOffer({ text: "ok" }, offer).prompt?.kind).toBe("confirm_exam");
   });
 
-  it("does not offer to add an exam Nova already has", () => {
-    const upcoming = [{ title: "Operating Systems final", subjectName: "Operating Systems", scheduledAt: new Date("2026-10-07T09:00:00Z") }];
-    expect(examAlreadyKnown(upcoming, { title: "operating systems", date: "2026-10-07" })).toBe(true);
-    expect(examAlreadyKnown(upcoming, { title: "Databases", date: "2026-10-07" })).toBe(false);
-    expect(examAlreadyKnown(upcoming, { title: "Operating Systems", date: "2026-10-20" })).toBe(false);
+  describe("which exam may be offered", () => {
+    const subjects = [{ id: "s-os", name: "Operating Systems", code: "CS301" }, { id: "s-db", name: "Databases", code: null }];
+    const upcoming = [{ subjectId: "s-os", scheduledAt: new Date("2026-10-07T09:00:00Z") }];
+
+    it("does not offer to add an exam Nova already has, however the learner names it", () => {
+      for (const title of ["operating systems", "OS", "OS exam", "my os final", "CS301"]) {
+        expect(examToOffer({ title, date: "2026-10-07" }, subjects, upcoming)).toBeNull();
+      }
+    });
+
+    it("'exam is tomorrow' names no subject, so nothing is offered and no second exam can be made", () => {
+      for (const title of ["exam", "Exam", "my exam", "the test", "final"]) {
+        expect(examToOffer({ title, date: "2026-10-07" }, subjects, upcoming)).toBeNull();
+        expect(examToOffer({ title, date: "2026-10-20" }, subjects, [])).toBeNull();
+      }
+    });
+
+    it("offers an exam for a subject of theirs that has none on that day, filed under that subject", () => {
+      expect(examToOffer({ title: "Databases", date: "2026-10-07" }, subjects, upcoming))
+        .toEqual({ title: "Databases", subjectName: "Databases", date: "2026-10-07" });
+      expect(examToOffer({ title: "OS exam", date: "2026-10-20" }, subjects, upcoming))
+        .toEqual({ title: "OS exam", subjectName: "Operating Systems", date: "2026-10-20" });
+    });
+
+    it("a title that names two subjects, or a subject they do not take, is not offered", () => {
+      expect(examToOffer({ title: "OS and Databases", date: "2026-10-20" }, subjects, [])).toBeNull();
+      expect(examToOffer({ title: "Chemistry", date: "2026-10-20" }, subjects, [])).toBeNull();
+      expect(examToOffer({ title: "OS", date: "next friday" }, subjects, [])).toBeNull();
+    });
   });
 
   it("every prompt kind expires", () => {
