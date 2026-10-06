@@ -23,6 +23,7 @@ import { loadStudySnapshot } from "./engines/study-snapshot";
 import { learnerKey } from "./product/learner-key";
 import { runUnderstandingBrain } from "./brains/understanding-brain";
 import { runDisambiguationPass } from "./brains/disambiguation-pass";
+import { safeReading } from "./decision/interpretation-safety";
 import { resolveTurnSignals } from "./engines/turn-signals";
 import { computeAcademicState, patchMomentaryState } from "./engines/academic-state-engine";
 import { getTopicMastery, getAllTopicMasteries } from "./engines/knowledge-engine";
@@ -95,9 +96,12 @@ export async function runNovaOrchestrator(
   // ── 2. Understanding Brain ────────────────────────────────────────────────
   // A surface that already read the message (with its own conversation
   // context) hands the reading in: one message, one reading.
-  let understanding = input.understanding ?? await runUnderstandingBrain(
-    text,
-    conversationHistory,
+  // A reading the orchestrator makes itself (the web chat box) goes through
+  // the same check a surface applies to its own: noise becomes a neutral
+  // reading, and an unclear message keeps only its feeling and circumstance.
+  let understanding = input.understanding ?? safeReading(
+    await runUnderstandingBrain(text, conversationHistory),
+    { today: now.toISOString().slice(0, 10) },
   );
 
   // ── 3. Disambiguation Pass (if needed) ────────────────────────────────────

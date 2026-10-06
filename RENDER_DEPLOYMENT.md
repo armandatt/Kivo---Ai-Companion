@@ -37,7 +37,9 @@ All jobs run from one 5-minute tick (`apps/api/lib/internal-checkin-scheduler.ts
 | Nova consolidation retries | `kivo-api` process |
 | Nova proactive mentor | `kivo-api` process |
 
-Only one backend may run the scheduler at a time. `DISABLE_INTERNAL_CHECKIN_CRON=true` turns it off. During the migration it is `true` on Render until cutover, and set to `true` on Railway at cutover.
+Only one backend may run the scheduler at a time. `DISABLE_INTERNAL_CHECKIN_CRON=true` turns it off. Render is the backend that runs it: `render.yaml` sets the flag to `false`. Any other host that is still deployed (the old Railway service) must have it set to `true`.
+
+`GET /api/health` says what this process is doing: `scheduler.state` is `running` or `disabled`, with `lastTickAt` and `lastTickOk`. A `running` scheduler whose `lastTickAt` is more than ten minutes old means the process was asleep (free plan) or the tick is failing.
 
 Do not create a Render Cron Job for `/api/checkin`. That endpoint runs the same jobs, so a cron job plus the in-process scheduler would double every message. The root `vercel.json` also declares a cron for `/api/checkin`; the web app has no such route, so it does nothing.
 
@@ -61,7 +63,8 @@ Set in the Render dashboard. None are in `render.yaml`.
 | `BOT_USERNAME` | yes | Bot username without `@` |
 | `OPENAI_MODEL` | no | OpenAI only. Ignored when Gemini is the provider |
 | `MENTOR_V3_ENABLED`, `ONBOARDING_V3_ENABLED` | copy from Railway | Off unless set to `true` |
-| `DISABLE_INTERNAL_CHECKIN_CRON` | set by `render.yaml` | `true` until cutover |
+| `DISABLE_INTERNAL_CHECKIN_CRON` | set by `render.yaml` | `false`: Render runs the scheduler. Set `true` here only to hand it to another host |
+| `CRON_SECRET` | recommended | When set, `GET /api/checkin` requires `Authorization: Bearer <value>`. The in-process scheduler does not use that endpoint and is unaffected |
 | `NODE_VERSION` | set by `render.yaml` | `22.14.0` |
 
 Copy every other variable that is set on Railway (for example `COGNITIVE_LAYER_V5_ENABLED`, `PHASE3_CONTEXT_ENABLED`). A flag that differs between the two hosts changes behaviour.

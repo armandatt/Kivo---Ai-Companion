@@ -51,7 +51,8 @@ export const GEMINI_DEFAULT_MAIN = "gemini-3.5-flash-lite";
 export const GEMINI_FALLBACK_MODEL = "gemini-flash-lite-latest";
 
 // One request may not hold a chat turn hostage.
-export const GEMINI_TIMEOUT_MS = 12_000;
+// GEMINI_TIMEOUT_MS overrides it, for an evaluation run against a slow model.
+export const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) > 0 ? Number(process.env.GEMINI_TIMEOUT_MS) : 12_000;
 
 export type ModelTier = "fast" | "main";
 

@@ -419,6 +419,13 @@ describe("a wrong reading cannot change state", () => {
         ), { today: "2026-10-06" });
         expect(safe.emotion).toBe("overwhelmed");
         expect(safe.sessionIntent).toBe("none");
+        // …and it is not a statement that they studied, skipped, mastered or promised anything.
+        for (const intent of ["study_report", "study_skip_report", "mastery_claim", "commitment_made"] as const) {
+          const unclear = safeReading(reading({ clarity }, { intent, secondaryIntents: ["study_report", "emotional_vent"] }), { today: "2026-10-06" });
+          expect(unclear.intent).toBe("general_chat");
+          expect(unclear.secondaryIntents).toEqual(["emotional_vent"]);
+        }
+        expect(safeReading(reading({ clarity }, { intent: "emotional_vent" }), { today: "2026-10-06" }).intent).toBe("emotional_vent");
         expect(safe.request).toMatchObject({ clarity, action: "none", availableMinutes: null, struggleTopic: null, exam: null, sessionOutcome: null });
       }
     });
@@ -669,7 +676,7 @@ describe("the proactive decision", () => {
   });
 
   it("with nothing on record to speak about, says nothing", () => {
-    expect(decideProactive(facts({ hasPlan: false }), gates())).toEqual({ chosen: null, suppressed: [] });
+    expect(decideProactive(facts({ hasPlan: false }), gates())).toEqual({ chosen: null, informOnly: false, suppressed: [] });
     expect(generateCandidates(facts({ studiedToday: true }))).toEqual([]);
     // An exam four days out is not yet a countdown; a lapse of eight days is past recovery.
     expect(generateCandidates(facts({ hasPlan: false, exams: [{ id: "e", title: "x", daysUntil: 4 }], daysSinceLastSession: 8 }))).toEqual([]);
@@ -701,7 +708,7 @@ describe("the proactive decision", () => {
     ["the last one was an hour ago", { lastSentAt: new Date("2026-10-06T12:00:00Z"), sentToday: [{ type: "review_due", at: new Date("2026-10-06T12:00:00Z") }] }, "too_soon_after_last"],
   ])("says nothing when %s", (_name, over, reason) => {
     const f = facts({ exams: [{ id: "e1", title: "OS final", daysUntil: 0 }], reviewDueCount: 5 });
-    expect(decideProactive(f, gates(over))).toEqual({ chosen: null, suppressed: [{ type: "all", reason }] });
+    expect(decideProactive(f, gates(over))).toEqual({ chosen: null, informOnly: false, suppressed: [{ type: "all", reason }] });
   });
 
   it("never more than two a day", () => {
@@ -850,7 +857,8 @@ describe("Telegram is a surface, not a second Nova", () => {
     expect(turn).not.toMatch(/runDisambiguationPass|translateNovaCommand/);
     // The orchestrator does not read the message again when it is handed a reading.
     const orch = code(FILES.find(f => f.path === "nova-orchestrator.ts")!.src);
-    expect(orch).toMatch(/input\.understanding \?\? await runUnderstandingBrain\(/);
+    // …and a reading it makes itself goes through the same check a surface applies.
+    expect(orch).toMatch(/input\.understanding \?\? safeReading\(\s*await runUnderstandingBrain\(/);
     expect(orch).toMatch(/if \(!input\.understanding && understanding\.ambiguityScore/);
   });
 

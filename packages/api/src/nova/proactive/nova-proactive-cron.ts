@@ -22,7 +22,7 @@ import { loadOperatingStyle, loadAccountabilityStyle } from "../adapters/operati
 import { retryPendingConsolidations } from "../consolidation/run-consolidation";
 import { chooseRegister } from "../decision/register";
 import {
-  decideProactive, holdReason, isQuietHour, studyWindow, RECENT_MESSAGE_MINUTES,
+  decideProactive, holdReason, informOnly, isQuietHour, studyWindow, RECENT_MESSAGE_MINUTES,
   type ProactiveCandidate, type ProactiveFacts, type ProactiveGates,
 } from "../decision/proactive-decision";
 import { loadLearningDna } from "../persistence/learning-dna-store";
@@ -167,7 +167,7 @@ async function processLearner(
     proactiveEnabled: channel.proactiveEnabled, paused, undeliverable: false, hasTimezone: true,
     activeSession: view.activeSession !== null, messagedRecently: messagedRecently || finishedRecently,
     sentToday: delivered.today, lastSentAt: delivered.lastSentAt,
-    realityCategories: view.constraints.map(c => c.category), now,
+    realityCategories: passingConstraints(view, now), now,
   };
 
   // ── Something a previous tick approved but did not deliver ─────────────────
@@ -183,7 +183,7 @@ async function processLearner(
       console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", profileId: profile.id, type: waiting.type, occurrence: waiting.occurrenceKey, outcome: "held", reason: held }));
       return false;
     }
-    return deliver(waiting, profile, view, now, client, word, null);
+    return deliver(waiting, profile, view, now, client, word, null, informOnly(waiting.type as ProactiveType, gates));
   }
 
   const decision = decideProactive(facts, gates);
@@ -197,7 +197,17 @@ async function processLearner(
   // ── Claim ──────────────────────────────────────────────────────────────────
   const row = await claimOccurrence(profile.id, decision.chosen, day, PRIORITY[decision.chosen.type], now);
   if (!row) return false;   // this occurrence already has an owner
-  return deliver(row, profile, view, now, client, word, { candidate: decision.chosen, facts, windowBasis: facts.window.basis, dueTopics: dueTopics.map(t => t.topicName) });
+  return deliver(row, profile, view, now, client, word, { candidate: decision.chosen, facts, windowBasis: facts.window.basis, dueTopics: dueTopics.map(t => t.topicName) }, decision.informOnly);
+}
+
+// Circumstances that will pass. A temporary one lasts two weeks at most
+// (consolidation/policies/reality-policy.ts); a standing one is believed for
+// months, and silencing Nova for that long is not what it is for.
+const PASSING_WITHIN_MS = 15 * 86_400_000;
+function passingConstraints(view: NovaTodayReady, now: Date): string[] {
+  return view.constraints
+    .filter(c => c.expiresAt !== null && new Date(c.expiresAt).getTime() - now.getTime() <= PASSING_WITHIN_MS)
+    .map(c => c.category);
 }
 
 // Words (if not yet worded), then sends, one outbox row.
@@ -209,27 +219,30 @@ async function deliver(
   client:  TelegramClient,
   word:    NonNullable<ProactiveDeps["word"]>,
   fresh:   { candidate: ProactiveCandidate; facts: ProactiveFacts; windowBasis: string; dueTopics: string[] } | null,
+  // Inform, do not ask: no recommended block and no Start button.
+  quiet:   boolean,
 ): Promise<boolean> {
   const chatId = profile.user.platformChatId;
   const zone   = profile.timezone!;
   const type   = row.type as ProactiveType;
-  const rec    = view.recommendation;
+  const rec    = quiet ? null : view.recommendation;
 
   let text = row.text;
   if (!text) {
     const lines: string[] = [];
     if (fresh) lines.push(capitalize(fresh.candidate.reason));
     if (rec)   lines.push(`Recommended now: ${rec.topicName} (${rec.subjectName}), ${rec.durationMinutes} min${rec.reasons[0] ? `, because ${rec.reasons[0]}` : ""}`);
-    if (fresh?.windowBasis === "learning_dna") lines.push("Their recorded sessions usually fall around this time of day");
+    if (fresh?.windowBasis === "learning_dna" && !quiet) lines.push("Their recorded sessions usually fall around this time of day");
     const input: ProactiveWordingInput = {
       type, studentName: profile.user.displayName, facts: lines,
       register: chooseRegister({
         emotion: "neutral", daysUntilNextExam: view.nextDeadline?.daysUntil ?? null,
-        activeReality: view.constraints.map(c => c.category),
+        activeReality: passingConstraints(view, now),
         accountability: await loadAccountabilityStyle(chatId),
       }),
       operatingStyle: await loadOperatingStyle(chatId),
       hasStartButton: rec !== null,
+      informOnly:     quiet,
     };
     // Past today's budget for generated wording, the plain line goes out.
     const worded = await spendModelCall(profile.id, "response", dayKey(now, zone))

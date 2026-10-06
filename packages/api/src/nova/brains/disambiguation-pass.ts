@@ -22,6 +22,16 @@ Return JSON only:
 
 Use the same intent values as before. If still unclear, keep ambiguityScore above 0.6.`;
 
+// The second pass guesses from the conversation what an unclear message was
+// about, so Nova can answer it. A guess may point the reply at a topic or a
+// kind of question. It may not turn an unclear message into a statement the
+// student made: a study report, a skipped session, a mastery claim, a
+// commitment or a disclosure are evidence, and evidence comes only from what
+// the first reading found in the message itself.
+const INTENTS_A_GUESS_MAY_SET: ReadonlySet<string> = new Set([
+  "topic_question", "plan_request", "progress_check", "schedule_query", "general_chat",
+]);
+
 export async function runDisambiguationPass(
   original:            AcademicUnderstanding,
   conversationHistory: Array<{ role: "user" | "nova"; text: string }>,
@@ -65,7 +75,7 @@ export async function runDisambiguationPass(
       ambiguityScore:  typeof refined["ambiguityScore"] === "number"
         ? refined["ambiguityScore"]
         : original.ambiguityScore,
-      intent:          typeof refined["intent"] === "string" && refined["intent"]
+      intent:          typeof refined["intent"] === "string" && INTENTS_A_GUESS_MAY_SET.has(refined["intent"])
         ? refined["intent"] as AcademicUnderstanding["intent"]
         : original.intent,
     };

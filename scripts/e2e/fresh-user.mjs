@@ -20,6 +20,7 @@
 import http from "node:http";
 import { execFileSync } from "node:child_process";
 
+const CRON = { authorization: "Bearer e2e-cron-secret" };
 const WEB = "http://127.0.0.1:3000", API = "http://127.0.0.1:3001", HOOK = "e2e-hook-secret";
 const stamp = Date.now();
 const results = [];
@@ -237,19 +238,19 @@ sql(`update "CompanionMessage" set "createdAt"=now() - interval '3 hours' where 
 sql(`update "NovaStudySession" set "sessionDate"=now() - interval '2 days' where "profileId"='${profileBefore}'`);
 sql(`update "NovaTelegramChannel" set "proactivePausedUntil"=null where "profileId"='${profileBefore}'`);
 const beforeN = sentTo(chat).length;
-r = await fetch(API + "/api/checkin").then(x => x.json());
+r = await fetch(API + "/api/checkin", { headers: CRON }).then(x => x.json());
 await sleep(500);
 const out1 = sql(`select "eventType"||'|'||status||'|'||coalesce("telegramMessageId"::text,'-') from "NovaProactiveMessage" where "profileId"='${profileBefore}' order by "createdAt"`);
 step(20, "the scheduler decides, claims and sends one grounded message", sentTo(chat).length === beforeN + 1 && /\|sent\|\d+/.test(out1), `outbox=${out1} | text: ${(lastTo(chat)?.text ?? "").slice(0, 220).replace(/\n/g, " / ")} | buttons: ${(lastTo(chat)?.reply_markup?.inline_keyboard ?? []).flat().map(x => x.text).join(", ")}`);
 const nudge = lastTo(chat);
 step(21, "delivery is recorded with Telegram's message id", out1.endsWith("|" + mid), `outbox=${out1} message_id=${mid}`);
-await fetch(API + "/api/checkin"); await fetch(API + "/api/checkin");
+await fetch(API + "/api/checkin", { headers: CRON }); await fetch(API + "/api/checkin", { headers: CRON });
 step(22, "running the scheduler again sends nothing more", sentTo(chat).length === beforeN + 1 && sql(`select count(*) from "NovaProactiveMessage" where "profileId"='${profileBefore}'`) === "1", `messages=${sentTo(chat).length - beforeN}`);
 // The process restarts (as on a Render deploy); the scheduler runs again.
 execFileSync("pkill", ["-f", "next start -p 3001"]); await sleep(1500);
 execFileSync(new URL("./servers.sh", import.meta.url).pathname, ["api"]);
 for (let i = 0; i < 40; i++) { try { if ((await fetch(API + "/api/health")).status === 200) break; } catch {} await sleep(500); }
-await fetch(API + "/api/checkin");
+await fetch(API + "/api/checkin", { headers: CRON });
 step(22.1, "after a restart the scheduler still sends nothing more, and the state is all there", sentTo(chat).length === beforeN + 1 && sql(`select count(*) from "NovaProactiveMessage" where "profileId"='${profileBefore}'`) === "1" && (await me.get("/api/nova/today")).data?.status === "ready", `messages=${sentTo(chat).length - beforeN}`);
 const startBtn = (nudge?.reply_markup?.inline_keyboard ?? []).flat().find(x => x.text.startsWith("Start"));
 await tap(chat, startBtn?.callback_data);
@@ -259,6 +260,9 @@ await me.post("/api/nova/session", { action: "end", outcome: "good" });
 globalThis.__state = { chat, userId, profileBefore, beforeN, nudge };
 
 // Security
+const openTick = await fetch(API + "/api/checkin").then(x => x.status);
+const health   = await fetch(API + "/api/health").then(x => x.json());
+step(22.9, "the scheduler endpoint refuses a caller without the secret, and health reports the scheduler", openTick === 401 && typeof health.scheduler?.state === "string", `checkin without secret=${openTick} health=${JSON.stringify(health)}`);
 const unsignedBefore = sentTo(chat).length;
 const st = await say(chat, "/today", undefined, "");
 const st2 = await say(chat, "/today", undefined, "wrong-secret");

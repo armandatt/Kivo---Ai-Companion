@@ -11,7 +11,9 @@
 //                    out of noise.
 //   ambiguous        the feeling and any stated circumstance (those have
 //   unsupported      their own rules downstream); nothing that names an
-//                    action, a time, an outcome, a struggle or an exam.
+//                    action, a time, an outcome, a struggle or an exam, and
+//                    no claim that the student studied, skipped, mastered
+//                    or promised anything.
 //   clear            everything, after each value is checked against what is
 //                    possible: an exam is in the future and inside a year.
 //
@@ -19,6 +21,10 @@
 
 import { NO_REQUEST } from "../brains/understanding-parser";
 import type { AcademicUnderstanding, LearnerRequest } from "../types/understanding.types";
+
+// Intents that say the student did, skipped, knows or promised something.
+// Each becomes evidence downstream, so each needs a message that was clear.
+const STATEMENT_INTENTS: ReadonlySet<string> = new Set(["study_report", "study_skip_report", "mastery_claim", "commitment_made"]);
 
 export const EXAM_HORIZON_DAYS = 366;
 const DAY_MS = 86_400_000;
@@ -47,8 +53,13 @@ export function safeReading(reading: AcademicUnderstanding, context: { today: st
   }
 
   if (req.clarity !== "clear") {
+    // A message the model could not place is not a statement that the
+    // student studied, skipped, mastered or promised something.
+    const states = (intent: string) => STATEMENT_INTENTS.has(intent);
     return {
       ...reading,
+      intent:           states(reading.intent) ? "general_chat" : reading.intent,
+      secondaryIntents: (reading.secondaryIntents ?? []).filter(i => !states(i)),
       sessionIntent: "none",
       request: { ...NO_REQUEST, clarity: req.clarity, changeOfMind: req.changeOfMind, promptAnswer: req.promptAnswer },
     };

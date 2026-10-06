@@ -561,6 +561,58 @@ test("on the web, a sentence the model reads as 'start' or 'done' runs no sessio
   await runNovaSessionCommand(id, { action: "end", outcome: "okay" }, clock, "web");
 });
 
+test("ten unclear things typed on the web, each read the worst way a model could, change no session, mastery or exam", async () => {
+  const phrases = ["maybe I should study deadlocks", "should probably study", "do it", "yeah", "20 minutes", "actually no", "never mind", "help me with OS", "start deadlocks", "done"];
+  // Confidently wrong in every direction: a start, a finish, a break, a
+  // mastery claim, an exam, minutes and an outcome, all marked clear.
+  const worst = [
+    { ...BASE, intent: "commitment_made", topic: "Deadlocks", topicConfidence: 1, sessionIntent: "start", request: { ...REQ, action: "start_session", confidence: 1, availableMinutes: 20 } },
+    { ...BASE, intent: "study_report", topic: "Deadlocks", topicConfidence: 1, sessionIntent: "break", secondaryIntents: ["mastery_claim"], request: { ...REQ, action: "finish_session", confidence: 1, sessionOutcome: "crushed_it" } },
+    { ...BASE, intent: "mastery_claim", topic: "Deadlocks", topicConfidence: 1, sessionIntent: "break", request: { ...REQ, action: "pause_session", confidence: 1, exam: { title: "OS", date: dayKey(new Date(clock.getTime() + 3 * 86_400_000), "Asia/Kolkata") } } },
+  ];
+  const directive = "This message did not start, pause, resume or end a study session.";
+  for (const running of [false, true]) {
+    const userId = await newAccount();
+    const id = ((await resolveLearnerForAccount(userId)) as { platformChatId: string }).platformChatId;
+    const l = await finishSetup(id);
+    if (running) await runNovaSessionCommand(id, { action: "start", topicName: "Paging", subjectName: "Operating Systems", plannedMinutes: 25 }, clock, "web");
+    const canonical = async () => JSON.stringify({
+      // A reported study session ("I studied X") is evidence consolidation may record; the timed ones are what must not move.
+      timed:   (await prisma.novaStudySession.findMany({ where: { profileId: l.profileId, activityType: { not: "self_reported" } }, orderBy: { createdAt: "asc" }, select: { id: true, status: true, pausedAt: true, totalPausedSeconds: true, executionReport: true } })),
+      mastery: await prisma.novaTopicMastery.findMany({ where: { subjectId: l.subjectId }, orderBy: { name: "asc" }, select: { name: true, reviewCount: true, intervalDays: true, nextReviewAt: true } }),
+      history: await prisma.novaTopicMasterySnapshot.count({ where: { topic: { subjectId: l.subjectId }, source: "session_report" } }),
+      exams:   await prisma.novaExam.count({ where: { profileId: l.profileId } }),
+      dna:     await prisma.novaLearningDNA.count({ where: { profileId: l.profileId } }),
+      stated:  (await prisma.novaAcademicProfile.findUniqueOrThrow({ where: { id: l.profileId }, select: { statedMinutes: true } })).statedMinutes,
+    });
+    const before = await canonical();
+    for (const text of phrases) {
+      for (const model of worst) {
+        // Exactly what nova/entry.ts passes for a message with no typed command.
+        await runNovaOrchestrator({
+          platformChatId: id, text, timestamp: clock, awaitPersistence: true, respond,
+          understanding: parseUnderstandingResponse(JSON.stringify(model), text),
+          sessionCommands: "surface", directive,
+        });
+        tick(1);
+      }
+    }
+    assert.equal(await canonical(), before, `${running ? "session running" : "no session"}: nothing consequential moved in ${phrases.length * worst.length} turns`);
+    // What consolidation did keep, by its own rules, from readings that were
+    // marked clear: a record that the learner SAID something (a commitment, a
+    // claim), each with its source message, and at most an "emerging" pattern.
+    // Nothing is established, and nothing above moved because of them. That a
+    // confidently wrong reading can leave a false "you said" is a known limit
+    // of consolidation, not of the web surface.
+    const facts = await prisma.userFact.findMany({ where: { userId: l.messengerId }, select: { type: true, sourceMessageId: true } });
+    assert.deepEqual([...new Set(facts.map(f => f.type))].sort().filter(t => t !== "commitment" && t !== "mastery_claim"), []);
+    assert.ok(facts.every(f => f.sourceMessageId !== null), "every record names the message it came from");
+    const patterns = await prisma.behavioralPattern.findMany({ where: { userId: l.messengerId }, select: { status: true } });
+    assert.ok(patterns.every(p => p.status === "emerging"), "no pattern is established by a burst of messages");
+    if (running) await runNovaSessionCommand(id, { action: "end", outcome: "okay" }, clock, "web");
+  }
+});
+
 // ══════════════════════════════════════════════════════════════════════════════
 // 5. Proactive: a learner's evening, tick by tick
 // ══════════════════════════════════════════════════════════════════════════════
@@ -655,4 +707,52 @@ test("exam in two days, a review due, yesterday missed: what Nova sends, withhol
   assert.notEqual((await prisma.novaTelegramChannel.findUniqueOrThrow({ where: { profileId: l.profileId } })).undeliverableSince, null);
   tick(5); await run(); tick(5); await run();
   assert.equal(tg.to(chat).length, before + 1, "no further attempts at a chat that refused");
+});
+
+test("an exam two days out reaches a learner as their life allows: in full, as a date only, or not at all", async () => {
+  const zone = zoneWhereHourIs(18);
+  const seed = async (reality: { category: string; subtype: string; fact: string; days: number } | null) => {
+    const userId = await newAccount();
+    const webId = ((await resolveLearnerForAccount(userId)) as { platformChatId: string }).platformChatId;
+    const l = await finishSetup(webId, zone);
+    const chat = newChat();
+    await linkTelegramChat(await issueToken(userId, 20 + chats.length), { id: chat, type: "private" }, clock);
+    await prisma.messengerUser.update({ where: { id: l.messengerId }, data: { displayName: `Exam ${chat}` } });
+    assert.equal((await addExam(chat, { title: "OS final", subjectName: "Operating Systems", date: dayKey(new Date(clock.getTime() + 2 * 86_400_000), zone) }, clock)).status, "added");
+    if (reality) await prisma.userReality.create({ data: { userId: l.messengerId, category: reality.category, subtype: reality.subtype, fact: reality.fact, confidence: 0.9, expiresAt: new Date(clock.getTime() + reality.days * 86_400_000) } });
+    return { chat, name: `Exam ${chat}`, profileId: l.profileId };
+  };
+  const normal   = await seed(null);
+  const family   = await seed({ category: "life_constraint", subtype: "family", fact: "Student has a family matter this week", days: 3 });
+  const grieving = await seed({ category: "emotional", subtype: "grief", fact: "Student lost a grandparent", days: 2 });
+  const ill      = await seed({ category: "health", subtype: "illness", fact: "Student has the flu", days: 2 });
+  const job      = await seed({ category: "life_constraint", subtype: "work", fact: "Student works evenings", days: 180 });   // standing
+  const studying = await seed(null);
+  await runNovaSessionCommand(studying.chat, { action: "start", topicName: "Deadlocks", subjectName: "Operating Systems", plannedMinutes: 25 }, clock, "web");
+
+  const tg = fakeTelegram();
+  const asked = new Map<string, { type: string; informOnly: boolean; facts: string[] }>();
+  await runNovaProactiveCron(clock, { client: tg.client, word: (async (input: { studentName: string | null; type: string; facts: string[]; informOnly?: boolean }) => {
+    asked.set(input.studentName ?? "", { type: input.type, informOnly: input.informOnly === true, facts: input.facts });
+    return { text: `SAID:${input.type}`, generated: true };
+  }) as never });
+  const got = (l: { chat: string }) => tg.to(l.chat).map(m => [m.text, m.buttons.flat().map(b => b.text).join(",")]);
+
+  // Nothing in the way: the countdown, with what to do and a way to start.
+  assert.deepEqual(got(normal), [["SAID:exam_countdown", "Start 15 min,Start 25 min,Start 45 min,Later,Not today"]]);
+  assert.equal(asked.get(normal.name)!.informOnly, false);
+  assert.ok(asked.get(normal.name)!.facts.some(f => f.startsWith("Recommended now:")));
+  // A family matter: the date, and nothing that asks them to study.
+  assert.deepEqual(got(family), [["SAID:exam_countdown", ""]]);
+  assert.deepEqual([asked.get(family.name)!.informOnly, asked.get(family.name)!.facts], [true, ["OS final in 2 days"]]);
+  // Grief, or illness: silence, and nothing recorded as sent or owed.
+  for (const l of [grieving, ill]) {
+    assert.deepEqual(got(l), []);
+    assert.equal(await prisma.novaProactiveMessage.count({ where: { profileId: l.profileId } }), 0);
+  }
+  // A standing arrangement is not a reason for months of silence.
+  assert.deepEqual(got(job), [["SAID:exam_countdown", "Start 15 min,Start 25 min,Start 45 min,Later,Not today"]]);
+  // A session in progress: silence.
+  assert.deepEqual(got(studying), []);
+  await runNovaSessionCommand(studying.chat, { action: "end", outcome: "okay" }, clock, "web");
 });

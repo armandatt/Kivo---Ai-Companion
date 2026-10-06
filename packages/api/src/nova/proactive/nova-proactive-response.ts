@@ -20,7 +20,14 @@ export interface ProactiveWordingInput {
   // never how hard to push.
   operatingStyle: string[];
   hasStartButton: boolean;
+  // Something in the learner's life is limiting study right now. The message
+  // gives the fact (an exam date) and asks for nothing.
+  informOnly?: boolean;
 }
+
+// Said to the model for an inform-only message. An instruction, so it lives
+// in the prompt and never among the facts, which can be sent as they are.
+const INFORM_ONLY = "Something in their life is limiting their study right now. Give them the date, plainly and kindly, and nothing more: do not ask them to study, do not suggest a session, do not mention what is limiting them.";
 
 const INSTRUCTIONS: Record<ProactiveType, string> = {
   exam_countdown:       "An exam is close. Name it and when it is. Say the one thing worth doing today. Calm and direct, no alarm.",
@@ -36,7 +43,9 @@ export function proactiveFallback(input: ProactiveWordingInput): string {
     missed_plan_recovery: "Easy way back in.",
     daily_nudge:          "Good time for a session.",
   };
-  return [lead[input.type], ...input.facts.slice(0, 2).map(f => `${f}.`)].join(" ");
+  // Informing only: the one fact, and no recommendation.
+  const facts = input.informOnly ? input.facts.slice(0, 1) : input.facts.slice(0, 2);
+  return [input.informOnly ? "For your calendar." : lead[input.type], ...facts.map(f => `${f}.`)].join(" ");
 }
 
 export async function wordProactiveMessage(
@@ -56,7 +65,7 @@ export async function wordProactiveMessage(
 
   const prompt = [
     `Reason for the message: ${input.type}`,
-    `Instruction: ${INSTRUCTIONS[input.type]}`,
+    `Instruction: ${input.informOnly ? INFORM_ONLY : INSTRUCTIONS[input.type]}`,
     registerLine(input.register),
     input.hasStartButton ? "A Start button is attached under the message, so do not ask them to reply." : null,
     "At most two sentences. Plain text only: no JSON, no labels, no quotes, no questions that need an answer.",

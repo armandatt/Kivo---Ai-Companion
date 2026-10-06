@@ -62,7 +62,11 @@ export interface ProactiveGates {
   // Proactive messages already delivered (or possibly delivered) today.
   sentToday:         Array<{ type: string; at: Date }>;
   lastSentAt:        Date | null;
-  realityCategories: string[];  // active reality, by category
+  // What is limiting the learner right now, by category. Only circumstances
+  // that will pass (an illness, a bad week, a family matter). A standing
+  // arrangement (a job, a commute, a chronic condition) shapes the plan; it
+  // is not a reason for Nova to stay silent for months.
+  realityCategories: string[];
   now:               Date;
 }
 
@@ -77,6 +81,10 @@ export interface ProactiveCandidate {
 
 export interface ProactiveDecision {
   chosen:     ProactiveCandidate | null;
+  // The message may inform but must not ask them to study: no recommended
+  // block, no Start button. An exam date reaching someone who has said
+  // something is in the way this week.
+  informOnly: boolean;
   // Why nothing (or not everything) went out. For logs, never for storage.
   suppressed: Array<{ type: ProactiveType | "all"; reason: string }>;
 }
@@ -132,6 +140,9 @@ export function globalBlock(g: ProactiveGates, localHour: number): string | null
   if (g.lastSentAt && g.now.getTime() - g.lastSentAt.getTime() < MIN_GAP_HOURS * 3_600_000) return "too_soon_after_last";
   // Illness or injury: Nova says nothing first, whatever is due.
   if (g.realityCategories.some(c => c === "health" || c === "injury")) return "health_constraint";
+  // Grief, burnout, a hard stretch: the same. An exam being near does not
+  // make it the moment to bring up studying.
+  if (g.realityCategories.includes("emotional")) return "emotional_constraint";
   return null;
 }
 
@@ -142,8 +153,8 @@ function candidateBlock(c: ProactiveCandidate, f: ProactiveFacts, g: ProactiveGa
     return null;
   }
   if (!inWindow(f.localHour, f.window)) return "outside_window";
-  // Something real is in the way (a family matter, a loss): no study pressure.
-  if (g.realityCategories.some(r => r === "emotional" || r === "life_constraint")) return "reality_constraint";
+  // Something real is in the way (a family matter, a trip): no study pressure.
+  if (g.realityCategories.includes("life_constraint")) return "reality_constraint";
   if (f.studiedToday) return "studied_today";
   // One push to study a day. A second reason does not earn a second message.
   if (g.sentToday.some(s => PRESSURE.has(s.type as ProactiveType))) return "already_nudged_today";
@@ -158,12 +169,18 @@ export function holdReason(type: ProactiveType, facts: ProactiveFacts, gates: Pr
   return globalBlock(gates, facts.localHour) ?? candidateBlock({ type, occurrenceKey: "", reason: "" }, facts, gates);
 }
 
+// An exam date is information, so it still reaches a learner with a life
+// constraint (a family matter, a work week). But only as information.
+export function informOnly(type: ProactiveType, gates: ProactiveGates): boolean {
+  return type === "exam_countdown" && gates.realityCategories.includes("life_constraint");
+}
+
 export function decideProactive(facts: ProactiveFacts, gates: ProactiveGates): ProactiveDecision {
   const candidates = generateCandidates(facts);
-  if (candidates.length === 0) return { chosen: null, suppressed: [] };
+  if (candidates.length === 0) return { chosen: null, informOnly: false, suppressed: [] };
 
   const blocked = globalBlock(gates, facts.localHour);
-  if (blocked) return { chosen: null, suppressed: [{ type: "all", reason: blocked }] };
+  if (blocked) return { chosen: null, informOnly: false, suppressed: [{ type: "all", reason: blocked }] };
 
   const suppressed: ProactiveDecision["suppressed"] = [];
   const eligible = candidates.filter(c => {
@@ -172,7 +189,7 @@ export function decideProactive(facts: ProactiveFacts, gates: ProactiveGates): P
     return !why;
   });
   const chosen = [...eligible].sort((a, b) => RANK[b.type] - RANK[a.type])[0] ?? null;
-  return { chosen, suppressed };
+  return { chosen, informOnly: chosen !== null && informOnly(chosen.type, gates), suppressed };
 }
 
 // ── When the learner usually studies ──────────────────────────────────────────

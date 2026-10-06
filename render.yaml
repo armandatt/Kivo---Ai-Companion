@@ -76,8 +76,11 @@ services:
         sync: false
 
       # ── Scheduler ownership ─────────────────────────────────────────────────
-      # "true" while Railway is still live, so only ONE backend runs the
-      # check-in / proactive / retry / cleanup jobs. Set to "false" at cutover,
-      # in the same step that stops the scheduler on Railway.
+      # Render is the one backend that runs the check-in / proactive / retry /
+      # cleanup jobs, from the timer inside this process. "false" = it runs.
+      # Exactly one backend may run it: if another host (the old Railway
+      # service) is still deployed, its own DISABLE_INTERNAL_CHECKIN_CRON must
+      # be "true", or every Rex reminder is sent twice. GET /api/health reports
+      # whether this process's scheduler is running and when it last ticked.
       - key: DISABLE_INTERNAL_CHECKIN_CRON
-        value: "true"
+        value: "false"

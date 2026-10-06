@@ -13,7 +13,8 @@ export JWT_SECRET=e2e-secret-e2e-secret-e2e-secret
 export TELEGRAM_BOT_TOKEN=test-token BOT_TOKEN=test-token
 export TELEGRAM_API_BASE=http://127.0.0.1:3999
 export TELEGRAM_WEBHOOK_SECRET=e2e-hook-secret
-export DISABLE_INTERNAL_CHECKIN_CRON=true
+export DISABLE_INTERNAL_CHECKIN_CRON=true      # the journey runs each tick itself
+export CRON_SECRET=e2e-cron-secret
 export NEXT_PUBLIC_APP_URL=https://nova.test
 export BOT_USERNAME=nova_e2e_bot NEXT_PUBLIC_BOT_USERNAME=nova_e2e_bot
 export API_URL=http://127.0.0.1:3001
