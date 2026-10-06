@@ -18,7 +18,7 @@ import {
   type PersonalitySignal,
   type SignalAnswers,
 } from "./signal-scoring";
-import { matchMentor, type MentorMatch } from "./mentor-compatibility";
+import { matchMentor, normalizeAccountability, type MentorMatch } from "./mentor-compatibility";
 
 // The slice of Prisma this module uses. Declared here so tests can pass a fake.
 export interface PersonalityDb {
@@ -126,6 +126,23 @@ export async function getOperatingStyleForChat(
   } catch (error) {
     console.error("[personality] operating style lookup failed:", error);
     return [];
+  }
+}
+
+// The user's explicit answer to "how hard should I push you". It sets
+// intensity outright and is never inferred. Never throws.
+export async function getAccountabilityForChat(
+  platformChatId: string,
+  db:             PersonalityDb = defaultDb,
+): Promise<"hard" | "soft" | null> {
+  try {
+    const profile = await db.userProfile.findFirst({
+      where:  { telegramChatId: platformChatId },
+      select: { accountabilityStyle: true },
+    });
+    return normalizeAccountability((profile as { accountabilityStyle?: string | null } | null)?.accountabilityStyle);
+  } catch {
+    return null;
   }
 }
 

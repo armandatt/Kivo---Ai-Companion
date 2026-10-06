@@ -50,7 +50,9 @@ export function buildTurnEvidence(input: TurnEvidenceInput): Evidence[] {
       // any other signal list is still weighed honestly.
       corroborated: s.evidence === "command" || s.evidence === "understanding"
         || isCorroborated(s.type, input.understanding),
-      topic:        input.understanding.topic,
+      topic:        s.type === "topic_struggle"
+        ? input.understanding.request?.struggleTopic ?? input.understanding.topic
+        : input.understanding.topic,
     });
   }
 

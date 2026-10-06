@@ -85,4 +85,50 @@ export interface AcademicUnderstanding {
   sessionIntent?: "start" | "break" | "none";
   // Absent or empty: the message disclosed no real-world circumstance.
   realityObservations?: RealityObservation[];
+  // What the student is asking Nova to do, if anything. Absent: nothing was
+  // read (an older caller, or a command that never reached the model).
+  request?: LearnerRequest;
+  // True when the model's output could not be read at all and every field
+  // here is a neutral default. A caller that would act on the reading must
+  // not act on this one.
+  malformed?: boolean;
+}
+
+// ── The request part of the envelope ──────────────────────────────────────────
+// A proposal, never an instruction: decision/action-decision.ts decides what
+// (if anything) runs, against the session and prompt that actually exist.
+// Closed vocabulary; anything else the model returns is dropped by the parser.
+
+export const UNDERSTANDING_ENVELOPE_VERSION = 2;
+
+export const REQUESTED_ACTIONS = [
+  "what_now", "start_session", "pause_session", "resume_session",
+  "finish_session", "status", "not_now", "something_else", "none",
+] as const;
+export type RequestedAction = typeof REQUESTED_ACTIONS[number];
+
+export type StatedOutcome = "struggled" | "okay" | "good" | "crushed_it";
+
+export interface LearnerRequest {
+  action:           RequestedAction;
+  confidence:       number;                 // 0–1, in the action reading
+  // The option of Nova's open question this message picks, by id. null when
+  // there is no open question or the message does not answer it.
+  promptAnswer:     string | null;
+  availableMinutes: number | null;          // "I have 30 mins", "make it 20"
+  sessionOutcome:   StatedOutcome | null;   // only when they say how it went
+  deferUntil:       "later" | "tomorrow" | null;
+  // A topic the student says they are failing at, do not understand or have
+  // forgotten. A statement about themselves, not a question.
+  struggleTopic:    string | null;
+  exam:             { title: string; date: string } | null;   // date: YYYY-MM-DD
+}
+
+// What the model is told about the conversation before it reads the message.
+// Facts from Nova's own records, so "yeah" and "done" can be read in context.
+export interface UnderstandingContext {
+  today:      string;            // "Tuesday 2026-10-06"
+  session:    "running" | "paused" | "none";
+  sessionTopic: string | null;
+  openPrompt: { question: string; options: Array<{ id: string; label: string }> } | null;
 }

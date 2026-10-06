@@ -106,7 +106,15 @@ import { getPendingOffer, setPendingOffer, clearPendingOffer } from "@repo/api/s
 import { buildOfferMessage } from "@repo/api/services/checkin-offer.service";
 import { prisma } from "@repo/db/client";
 //@ts-ignore
-import { admitTelegramUpdate, TELEGRAM_SECRET_HEADER } from "@repo/api/services/telegramTransport.service";
+import { admitTelegramUpdate, verifyTelegramSecret, TELEGRAM_SECRET_HEADER } from "@repo/api/services/telegramTransport.service";
+//@ts-ignore
+import { normalizeTelegramUpdate } from "@repo/api/nova/telegram/telegram-event";
+//@ts-ignore
+import { handleNovaTelegramEvent } from "@repo/api/nova/telegram/telegram-turn";
+//@ts-ignore
+import { createTelegramClient, NOVA_CHAT_COMMANDS } from "@repo/api/nova/telegram/telegram-client";
+//@ts-ignore
+import { linkTelegramChat, LINK_MESSAGES, NOVA_LINK_GREETING } from "@repo/api/nova/telegram/telegram-link";
 
 export const runtime = "nodejs";
 
@@ -191,6 +199,17 @@ export async function POST(req: Request) {
       return Response.json({ ok: admission.status === 200 }, { status: admission.status });
     }
 
+    // ── Nova: button taps ────────────────────────────────────────────────────
+    // Rex has no buttons, so a callback is only ever Nova's. (Messages reach
+    // Nova further down, at the persona branch.)
+    const event = normalizeTelegramUpdate(body);
+    if (event.kind === "callback") {
+      if (await isNovaChat(event.chatId) && novaMayProcess(req)) {
+        await handleNovaTelegramEvent(event, novaDeps());
+      }
+      return Response.json({ ok: true });
+    }
+
     const text   = body.message?.text || "";
     const chatId = body.message?.chat?.id;
     const from   = body.message?.from;
@@ -208,7 +227,7 @@ export async function POST(req: Request) {
       });
 
       // ── /start token handling (web → Telegram connect) ────────────────────
-      if (await handleTelegramConnectStart(text, chatId)) {
+      if (await handleTelegramConnectStart(text, chatId, body.message?.chat?.type ?? null)) {
         return Response.json({ ok: true });
       }
 
@@ -221,35 +240,11 @@ export async function POST(req: Request) {
       });
 
       if (messengerUser?.persona === "nova") {
-        // Shared infrastructure: rate limit
-        const novaRateLimit = await checkRateLimit(chatId.toString());
-        if (!novaRateLimit.allowed) {
-          if (shouldSendBusyMessage(chatId.toString())) {
-            await sendTelegramMessage(chatId, "You've hit the free conversation limit for now. I'll be back shortly. Your progress is safe.");
-          }
-          return Response.json({ ok: true });
-        }
-
-        // Shared infrastructure: processing lock
-        const novaLockAcquired = tryAcquireLock(chatId.toString());
-        if (!novaLockAcquired) {
-          await sendTelegramMessage(chatId, "I'm still working on your last message. Give me a moment.");
-          return Response.json({ ok: true });
-        }
-        lockAcquired = true;
-
-        // Route: onboarding if no profile or onboarding not yet complete
-        const isOnboardingDone = messengerUser.novaAcademicProfile?.onboardingComplete === true;
-
-        try {
-          // Same entry point the web app uses: one Nova, one state.
-          const novaTurn = await handleNovaTurn({
-            platformChatId: chatId.toString(), text, onboardingDone: isOnboardingDone,
-            timestamp: new Date(), surface: "telegram",
-          });
-          await sendTelegramMessage(chatId, novaTurn.reply);
-        } finally {
-          // lock released in outer finally
+        // One Nova, one state: the handler below runs the same product
+        // functions the web app does. It needs an authenticated update and a
+        // private chat; anything else is dropped here.
+        if (event.kind !== "ignored" && novaMayProcess(req)) {
+          await handleNovaTelegramEvent(event, novaDeps());
         }
         return Response.json({ ok: true });
       }
@@ -847,31 +842,53 @@ export async function POST(req: Request) {
 // TELEGRAM CONNECT — /start <token> from web dashboard
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function handleTelegramConnectStart(text: string, chatId: number | string): Promise<boolean> {
+// Nova acts only on updates Telegram signed. Without a configured secret
+// anyone who knows a chat id could post as that learner, so in production an
+// unsigned update never reaches Nova. (Outside production it is allowed, so a
+// local bot works without a webhook secret.)
+function novaMayProcess(req: Request): boolean {
+  const secret = verifyTelegramSecret(req.headers.get(TELEGRAM_SECRET_HEADER));
+  if (secret === "ok") return true;
+  if (secret === "not_configured" && process.env.NODE_ENV !== "production") return true;
+  console.error("[telegram] Nova update dropped: TELEGRAM_WEBHOOK_SECRET is not set, so the update is not authenticated");
+  return false;
+}
+
+function novaDeps() {
+  return {
+    client: createTelegramClient(),
+    webUrl: process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? null,
+  };
+}
+
+async function isNovaChat(chatId: string): Promise<boolean> {
+  const row = await prisma.messengerUser.findUnique({
+    where:  { platform_platformChatId: { platform: "telegram", platformChatId: chatId } },
+    select: { persona: true },
+  });
+  return row?.persona === "nova";
+}
+
+async function handleTelegramConnectStart(text: string, chatId: number | string, chatType: string | null): Promise<boolean> {
   const match   = text.trim().match(/^\/start(?:@\w+)?(?:\s+(.+))?$/i);
   const payload = match?.[1]?.trim();
   if (!match || !payload) return false;
 
-  const profile = await prisma.userProfile.findUnique({
-    where:  { telegramConnectToken: payload },
-    select: { id: true },
-  });
-
-  if (!profile) {
-    await sendTelegramMessage(chatId, "That link has expired. Go back to your dashboard and try again.");
+  // Expiry, single use, private chat and one-account-per-chat are enforced
+  // in one place for both companions.
+  const link = await linkTelegramChat(payload, { id: String(chatId), type: chatType });
+  const client = createTelegramClient();
+  if (link.status !== "linked") {
+    await client.sendMessage(String(chatId), LINK_MESSAGES[link.status as keyof typeof LINK_MESSAGES]);
     return true;
   }
-
-  await prisma.userProfile.update({
-    where: { id: profile.id },
-    data:  {
-      telegramChatId:       String(chatId),
-      telegramConnected:    true,
-      telegramConnectedAt:  new Date(),
-      telegramConnectToken: null,
-      lastActivityAt:       new Date(),
-    },
-  });
+  if (link.companion === "nova") {
+    await client.sendMessage(String(chatId), link.onboarded ? NOVA_LINK_GREETING.onboarded : NOVA_LINK_GREETING.fresh);
+    // The command menu is set for this chat only: Rex chats on the same bot keep theirs.
+    await client.setChatCommands(String(chatId), NOVA_CHAT_COMMANDS);
+    return true;
+  }
+  const profile = { id: link.profileId };
 
   // Check if this user already completed intake.
   // Reconnecting (e.g. after deleting chat history) should never restart the intake flow.

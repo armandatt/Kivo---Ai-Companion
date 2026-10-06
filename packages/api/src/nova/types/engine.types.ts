@@ -19,6 +19,7 @@ export type SignalType =
   | "excuse"
   | "achievement"
   | "mastery_claim"
+  | "topic_struggle"     // student says they keep failing at, or have forgotten, a named topic
   | "avoidance"
   | "consistency"
   | "burnout_behavioral"

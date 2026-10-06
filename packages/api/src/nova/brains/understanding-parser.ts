@@ -3,7 +3,11 @@
 // It checks shape and vocabulary only. It never reads the user's message to
 // decide what it means; that is the Understanding Brain's job.
 
-import type { AcademicUnderstanding, AcademicIntent, AcademicEmotion, DisclosureClass, RoutingSignal, RealityObservation } from "../types/understanding.types";
+import type {
+  AcademicUnderstanding, AcademicIntent, AcademicEmotion, DisclosureClass, RoutingSignal, RealityObservation,
+  LearnerRequest, RequestedAction, StatedOutcome,
+} from "../types/understanding.types";
+import { REQUESTED_ACTIONS } from "../types/understanding.types";
 import { isNovaRealityCategory, normalizeSubtype } from "../types/reality.types";
 
 const VALID_INTENTS = new Set<string>([
@@ -60,6 +64,55 @@ export function parseRealityObservations(raw: unknown): RealityObservation[] {
   });
 }
 
+// ── The request ───────────────────────────────────────────────────────────────
+// Shape and vocabulary only. Whether the request is carried out is decided
+// later, against real state; here an unknown action simply becomes "none".
+
+const OUTCOMES: readonly StatedOutcome[] = ["struggled", "okay", "good", "crushed_it"];
+const MAX_STATED_MINUTES = 600;
+
+const shortText = (v: unknown, max: number): string | null => {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t.length > 0 && t.length <= max && t !== "null" ? t : null;
+};
+
+// A calendar date written YYYY-MM-DD that is a real day.
+export function isIsoDay(v: unknown): v is string {
+  if (typeof v !== "string" || v.length !== 10 || v[4] !== "-" || v[7] !== "-") return false;
+  const [y, m, d] = [Number(v.slice(0, 4)), Number(v.slice(5, 7)), Number(v.slice(8, 10))];
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return false;
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
+export const NO_REQUEST: LearnerRequest = {
+  action: "none", confidence: 0, promptAnswer: null, availableMinutes: null,
+  sessionOutcome: null, deferUntil: null, struggleTopic: null, exam: null,
+};
+
+export function parseLearnerRequest(raw: unknown): LearnerRequest {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { ...NO_REQUEST };
+  const r = raw as Record<string, unknown>;
+
+  const action = REQUESTED_ACTIONS.find(a => a === r["action"]) as RequestedAction | undefined;
+  const minutes = r["availableMinutes"];
+  const exam = typeof r["exam"] === "object" && r["exam"] !== null ? r["exam"] as Record<string, unknown> : null;
+  const examTitle = exam ? shortText(exam["title"], 80) : null;
+
+  return {
+    action:       action ?? "none",
+    confidence:   typeof r["confidence"] === "number" && action ? Math.max(0, Math.min(1, r["confidence"])) : 0,
+    promptAnswer: shortText(r["promptAnswer"], 8),
+    availableMinutes: typeof minutes === "number" && Number.isFinite(minutes) && minutes >= 1 && minutes <= MAX_STATED_MINUTES
+      ? Math.round(minutes) : null,
+    sessionOutcome: OUTCOMES.find(o => o === r["sessionOutcome"]) ?? null,
+    deferUntil:     r["deferUntil"] === "later" || r["deferUntil"] === "tomorrow" ? r["deferUntil"] : null,
+    struggleTopic:  shortText(r["struggleTopic"], 80),
+    exam:           exam && examTitle && isIsoDay(exam["date"]) ? { title: examTitle, date: exam["date"] } : null,
+  };
+}
+
 const MAX_SECONDARY_INTENTS = 2;
 
 function parseSecondaryIntents(raw: unknown, primary: string): AcademicIntent[] {
@@ -108,6 +161,7 @@ export function parseUnderstandingResponse(
     sessionIntent:       parsed["sessionIntent"] === "start" ? "start"
                        : parsed["sessionIntent"] === "break" ? "break" : "none",
     realityObservations: parseRealityObservations(parsed["reality"]),
+    request:             parseLearnerRequest(parsed["request"]),
   };
 }
 
@@ -121,5 +175,6 @@ function fallbackUnderstanding(rawText: string): AcademicUnderstanding {
     ambiguityScore:  0.5,
     routingSignal:   "coaching_only",
     rawText,
+    malformed:       true,
   };
 }

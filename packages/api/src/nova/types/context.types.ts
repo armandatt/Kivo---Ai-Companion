@@ -96,4 +96,23 @@ export interface NovaOrchestratorInput {
   // Wait for the turn to be persisted before returning. Used by the web app,
   // which reads state immediately after the reply. Telegram leaves it off.
   awaitPersistence?: boolean;
+
+  // ── Set by a surface that has already done part of the turn ────────────────
+  // The message's reading, when the caller already asked the Understanding
+  // Brain (with conversation context). The brain is then not called again.
+  understanding?: import("./understanding.types").AcademicUnderstanding;
+  // The reply, when the turn's outcome is a product action whose result is
+  // stated plainly ("Started: 25 min on Deadlocks"). The Response Brain is
+  // not called. Everything else about the turn still happens: the engines
+  // run, the message is logged, evidence is built and consolidated.
+  scriptedReply?: string;
+  // What was decided, for the Response Brain to word. It never chooses it.
+  directive?: string;
+  // Used instead of failing the turn when the Response Brain cannot answer.
+  responseFallback?: string;
+  // "surface": the caller runs start / pause / resume / end itself through
+  // the session commands, so the turn must not run them a second time.
+  sessionCommands?: "turn" | "surface";
+  // Test seam: stands in for the Response Brain.
+  respond?: (dynamicLayer: string, microPrompt: string) => Promise<import("./response.types").ResponseBrainOutput>;
 }

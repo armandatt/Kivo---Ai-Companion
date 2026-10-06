@@ -243,6 +243,9 @@ model UserProfile {
 
   // 🔹 Telegram connection
   telegramConnectToken  String?   @unique
+  // A link token is good for a few minutes. A token with no expiry (issued
+  // before this column existed) is treated as expired.
+  telegramConnectTokenExpiresAt DateTime?
   telegramChatId        String?
   telegramConnected     Boolean   @default(false)
   telegramConnectedAt   DateTime?
@@ -674,6 +677,11 @@ model NovaAcademicProfile {
   semesterEndDate           DateTime?
   preferredStudyHoursPerDay Float    @default(3.0)
   timezone                  String?
+  // What the learner said they have today ("I've only got 30 minutes"), and
+  // the local day it was said on. It lapses when that day ends. Written only
+  // by product/planning-inputs.ts.
+  statedMinutes             Int?
+  statedMinutesDay          String?
 
   // Onboarding state
   onboardingStep            String   @default("not_started")
@@ -687,6 +695,8 @@ model NovaAcademicProfile {
   proactiveMessages NovaProactiveMessage[]
   notes             NovaNote[]
   masterySnapshots  NovaTopicMasterySnapshot[]
+  telegramChannel   NovaTelegramChannel?
+  telegramPrompts   NovaTelegramPrompt[]
 
   user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -910,21 +920,39 @@ model NovaLearningDNA {
 model NovaProactiveMessage {
   id             String   @id @default(cuid())
   profileId      String
-  eventType      String   // InterventionType value
+  eventType      String   // ProactiveType value
   firedAt        DateTime
-  cooldownUntil  DateTime // no same eventType fires before this timestamp
+  cooldownUntil  DateTime // legacy column; nothing reads it. Spacing comes from sent rows.
   priority       Int
   confidence     Float
   approved       Boolean  @default(true)
-  suppressReason String?  // set when approved = false
+  suppressReason String?  // legacy rows only: suppressed decisions are no longer stored
   text           String?  @db.Text
+
+  // ── Outbox (proactive/proactive-outbox.ts is the only writer) ──────────────
+  // One row per logical occurrence ("nudge:2026-10-06"). The unique key is the
+  // claim: only one tick, on one instance, can create it.
+  // status: claimed → ready (worded) → sending → sent
+  //         sending → failed (retryable) → abandoned
+  //         sending → unknown (the process died mid-send; never resent)
+  // Rows written before the outbox existed have a null status and key.
+  occurrenceKey     String?
+  status            String?
+  localDay          String?   // YYYY-MM-DD in the learner's timezone
+  attempts          Int       @default(0)
+  telegramMessageId Int?
+  sentAt            DateTime?
+  lastError         String?
 
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
+  @@unique([profileId, occurrenceKey])
   @@index([profileId, firedAt])
   @@index([profileId, eventType, cooldownUntil])
+  @@index([profileId, localDay, status])
+  @@index([status, firedAt])
 }
 
 // ─── Consolidated durable state ───────────────────────────────────────────────
@@ -1009,4 +1037,59 @@ model ProcessedTelegramUpdate {
   receivedAt DateTime @default(now())
 
   @@index([receivedAt])
+}
+
+// ── Nova on Telegram ──────────────────────────────────────────────────────────
+// Per-learner state of the Telegram surface. It holds nothing about learning:
+// whether Nova may message first, whether the chat can be reached, and the
+// counters that bound one chat's load. Owner: nova/telegram/channel-store.ts.
+model NovaTelegramChannel {
+  profileId            String    @id
+  proactiveEnabled     Boolean   @default(true)
+  proactivePausedUntil DateTime? // "Not today": no proactive message before this
+  undeliverableSince   DateTime? // Telegram refused delivery (bot blocked); cleared by any inbound update
+  lastDeliveredAt      DateTime?
+
+  // One free-text turn at a time per chat, across instances and restarts.
+  // A lease, not a lock: it expires by itself if the process dies.
+  turnLockedUntil      DateTime?
+
+  // Commands and button taps per minute.
+  actionWindowStart    DateTime?
+  actionCount          Int       @default(0)
+
+  // Model calls today (learner-local day), for the daily budget.
+  usageDay             String?
+  understandingCalls   Int       @default(0)
+  responseCalls        Int       @default(0)
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// A message Nova sent that offers choices. Conversation state, not learner
+// state: the session, the plan and mastery stay where they are. At most one
+// prompt per learner is open; openKey (the profile id while open, null once
+// resolved) makes the database hold that. A button carries only the prompt id
+// and an option id; what the option does is read from this row.
+// Owner: nova/telegram/prompt-store.ts. Resolved rows are purged after 30 days.
+model NovaTelegramPrompt {
+  id                String    @id @default(cuid())
+  profileId         String
+  chatId            String
+  kind              String
+  options           Json      // [{ id, label, action }]
+  telegramMessageId Int?
+  openKey           String?   @unique
+  createdAt         DateTime  @default(now())
+  expiresAt         DateTime
+  resolvedAt        DateTime?
+  resolution        Json?     // { by, optionId }
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, createdAt])
+  @@index([resolvedAt])
 }

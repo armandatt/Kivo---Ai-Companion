@@ -62,7 +62,7 @@ Auth is a JWT cookie named `kevo_session`, verified with `jose`. `apps/web/middl
 
 0. **Transport safety** (`services/telegramTransport.service.ts`): secret-token check, then `update_id` dedup in Postgres (`ProcessedTelegramUpdate`). A replayed update returns 200 and reaches no pipeline. Applies to every persona.
 1. Profile update, then `/start <token>` handling (links a web account to a chat).
-2. **Persona branch.** If `MessengerUser.persona === "nova"`, the message goes to the Nova pipeline and nothing below runs. Everything below is Rex.
+2. **Persona branch.** If `MessengerUser.persona === "nova"`, the update goes to `handleNovaTelegramEvent` (`packages/api/src/nova/telegram/telegram-turn.ts`) and nothing below runs. Button taps (`callback_query`) are routed to the same handler before step 1, because only Nova has buttons. Everything below is Rex. `/start <token>` linking for both companions is `nova/telegram/telegram-link.ts`.
 3. **Intake / onboarding.** `needsIntake()` routes to onboarding V3 (`ONBOARDING_V3_ENABLED=true`), else V2 (`isV2Active()`), else the V1 `intake.service` for legacy users. Then the post-onboarding activation flow.
 4. **Slash commands**: `/log`, `/pr`, `/progress`, `/history`, `/overload`, `/streak`, `/split` (`workoutTracking.service`), `/reminders`, `/cancel N`. `/log` is first checked against the Reality Layer for an active illness or injury.
 5. **Parsing Engine V2** (`engines/parsing-engine-v2.ts`) does structured extraction, while the **Understanding Layer** (`engines/understanding-layer.ts`, an LLM call) runs concurrently for semantic intent.
@@ -121,7 +121,7 @@ Known gaps, deliberately not fixed here: `UserProfile.primaryPersona` is never c
 
 ### Proactive messaging
 
-`runCheckinCron` in `apps/api/lib/checkin-cron.ts` sends dynamic check-ins, custom reminders, gym cues and Nova proactive messages. It is driven by an in-process 5-minute `setInterval` started from `apps/api/instrumentation.ts` (disable with `DISABLE_INTERNAL_CHECKIN_CRON=true`), and is also exposed as `GET /api/checkin` on the API app. The root `vercel.json` still declares a cron for `/api/checkin`, but the web app has neither that route nor a rewrite for it.
+`runCheckinCron` in `apps/api/lib/checkin-cron.ts` sends dynamic check-ins, custom reminders, gym cues and Nova proactive messages; each job has its own `try`, so one failing does not stop the others. It is driven by an in-process 5-minute `setInterval` started from `apps/api/instrumentation.ts` (disable with `DISABLE_INTERNAL_CHECKIN_CRON=true`), and is also exposed as `GET /api/checkin` on the API app. The root `vercel.json` still declares a cron for `/api/checkin`, but the web app has neither that route nor a rewrite for it. Nova's part is described under "Nova on Telegram".
 
 ### Data model
 
@@ -146,6 +146,7 @@ All are read from `process.env` at call time, so flipping one on Railway needs n
 | `ONBOARDING_V3_ENABLED` | off (must be `"true"`) | Conversation-first onboarding; off falls back to V2 |
 | `DISABLE_INTERNAL_CHECKIN_CRON` | off | Stops the in-process check-in scheduler |
 | `PERSONALITY_SIGNAL_ENABLED` | off (must be `"true"`) | Adds the onboarding personality signal to the Rex and Nova prompts as behavioural lines |
+| `NOVA_PROACTIVE_DISABLED` | off | Stops Nova's proactive Telegram messages; replies, commands and buttons still work |
 
 `BODYWEIGHT_INTELLIGENCE_ENABLED`, `RECOVERY_INTELLIGENCE_ENABLED`, `NUTRITION_INTELLIGENCE_ENABLED` and `GOAL_PROGRESS_ENABLED` gate individual Rex evidence blocks.
 
@@ -158,7 +159,7 @@ All are read from `process.env` at call time, so flipping one on Railway needs n
 | `TELEGRAM_BOT_TOKEN` (or `BOT_TOKEN`) | api | Telegram Bot API token |
 | `GEMINI_API_KEY` | api | When set, every model call goes to Gemini. `GEMINI_MODEL_FAST` / `GEMINI_MODEL_MAIN` override the defaults |
 | `OPENAI_API_KEY` | api | Used only when `GEMINI_API_KEY` is empty or `LLM_PROVIDER=openai`. `OPENAI_MODEL` overrides the default OpenAI model |
-| `TELEGRAM_WEBHOOK_SECRET` | api | Must equal the `secret_token` given to Telegram's `setWebhook`. Unset: webhook requests are not authenticated |
+| `TELEGRAM_WEBHOOK_SECRET` | api | Must equal the `secret_token` given to Telegram's `setWebhook`. Unset: Rex requests are not authenticated, and in production Nova ignores every update |
 | `JWT_SECRET` | both | Signs session JWTs |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | api | Google OAuth |
 | `API_URL` | web | Base URL of `apps/api` for the rewrites |
@@ -251,6 +252,25 @@ Session rules that must hold:
 - **One open session per learner.** `openStudySession` checks and inserts inside a transaction that first takes `SELECT … FOR UPDATE` on the learner's `NovaAcademicProfile` row. Every start (web or `/study`) goes through it. Do not create a `NovaStudySession` anywhere else.
 - **Conditional writes.** Pause, resume and end use `updateMany` guarded on the expected state, so a repeated or concurrent command writes nothing and an execution report is consumed once.
 
+## Nova on Telegram
+
+Full description: `docs/NOVA_TELEGRAM_MENTOR.md`. Telegram is a surface: it owns no session, plan, mastery, memory or timer, and every state change goes through a function the web app also calls. The rules, each held by `telegram-mentor.test.ts` or `nova-telegram.itest.ts`:
+
+- **Three inputs, one path each.** A command and a button tap are protocol and call no model. Anything else is text: one Understanding Brain call with a context block (date, running session, open question), then `decision/action-decision.ts` (pure), then the same actions the buttons run, then the canonical turn (`runNovaOrchestrator` with the reading passed in as `understanding`). Do not add a regex, keyword list, yes/no check or second classifier anywhere on this path.
+- **A reading is a proposal.** The request envelope (`LearnerRequest` in `types/understanding.types.ts`) is a closed vocabulary validated by `parseLearnerRequest`. Reversible actions run at confidence ≥ 0.75; ending a session and adding an exam never run from a sentence.
+- **Ending needs an outcome.** `/done`, End and "I finished" ask "How did it go?"; the answer calls the ordinary `end` command with that outcome. There is no unreported end from Telegram.
+- **One open prompt per learner** (`NovaTelegramPrompt`, `telegram/prompt-store.ts`). A button carries `p:<promptId>:<optionId>` and nothing else; what it does is read from the row. Resolving is one conditional write.
+- **No process memory.** The turn lease, action limiter, model budget and delivery state are `NovaTelegramChannel` (`telegram/channel-store.ts`).
+- **`sessionCommands: "surface"`** tells the turn that the surface runs session commands, so `sessionLifecycle` starts and ends nothing. Use it for any surface that calls `runNovaSessionCommand` itself.
+- **`scriptedReply` / `directive` / `responseFallback`** on the orchestrator input: a product result is stated without the Response Brain; a decided action is handed to it to word; a model failure falls back to the plain statement. The Response Brain never chooses the action.
+- **Register** (`decision/register.ts`) is chosen by code and applies to every Nova reply, web included. Playful needs the learner's explicit "push me hard" and nothing serious going on.
+- **`topic_struggle`** is a signal with no wording pattern: only the Understanding Brain's `struggleTopic` establishes it. Consolidation turns it into a soft mastery observation, at most once per topic per 20 hours, never a `UserFact`.
+- **Stated time** ("I've only got 30 minutes") is `NovaAcademicProfile.statedMinutes` for that local day, read and written only by `product/planning-inputs.ts`; a `minutes` parameter still wins.
+- **Exams after onboarding** are added by `product/exams.ts`, only on the learner's confirmation.
+- **Proactive**: `decision/proactive-decision.ts` (pure) generates every candidate, gates, then ranks. `proactive/proactive-outbox.ts` is the only writer of `NovaProactiveMessage`: claim by unique occurrence key, word, store, send. Only delivered rows count toward the cap of two a day. No timezone means no proactive message. Do not add a type without a fact on record behind it, and do not compare clock minutes for equality.
+- **In production Nova ignores updates without a valid `TELEGRAM_WEBHOOK_SECRET`.** `NOVA_PROACTIVE_DISABLED=true` stops Nova messaging first.
+- `scripts/novaTelegramEval.ts` runs the listed real phrases through the configured model and prints the decision for each. It is the only check of what the model actually reads.
+
 ## Integration tests (real Postgres)
 
 `npm run test:integration` in `packages/api` runs the `__integration__/*.itest.ts` files against the database in `NOVA_TEST_DATABASE_URL`. They refuse to run without it and refuse the host in `packages/db/.env`. A local throwaway works:
@@ -262,4 +282,4 @@ export NOVA_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:54329/novates
 (cd packages/api && npm run test:integration)
 ```
 
-`nova-learning-dna.itest.ts` covers the refresh on session end and the timezone write. `nova-progress.itest.ts` is the only proof that a replayed or concurrent session report moves a topic once (the unique key and the rollback need a real database). `nova-session-start.itest.ts` is the only proof of the session-start lock: concurrency cannot be shown against a mock. Two tests in `nova-persist-turn.itest.ts` fail because of the fixture's own timeline (its turns span four days, but an illness expires after 72 hours); they are not product failures.
+`nova-telegram.itest.ts` covers Telegram end to end with Telegram and both models stood in: sessions shared with the web app, prompts answered once, linking, limits, model failure, and the proactive outbox. `nova-learning-dna.itest.ts` covers the refresh on session end and the timezone write. `nova-progress.itest.ts` is the only proof that a replayed or concurrent session report moves a topic once (the unique key and the rollback need a real database). `nova-session-start.itest.ts` is the only proof of the session-start lock: concurrency cannot be shown against a mock. Two tests in `nova-persist-turn.itest.ts` fail because of the fixture's own timeline (its turns span four days, but an illness expires after 72 hours); they are not product failures.

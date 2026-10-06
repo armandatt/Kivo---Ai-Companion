@@ -1,377 +1,272 @@
-// ─── Nova Proactive Cron ──────────────────────────────────────────────────────
-// Entry point for the 5-minute Nova proactive tick.
-// Loads all onboarded Nova users and runs the per-user pipeline.
-// Reuses Rex's global fire rules (quiet hours, recently messaged check).
-// Owner: Phase 5 Proactive Mentor System.
+// ─── Nova proactive tick ──────────────────────────────────────────────────────
+// Runs every five minutes inside the API process (apps/api/lib/checkin-cron).
+// For each learner it gathers facts, asks the proactive decision whether
+// anything is worth saying, and if so delivers it through the outbox:
 //
-// Pipeline per user:
-//   1. Load Academic Snapshot + Reality Facts (parallel)
-//   2. Compute Academic State (deterministic, reuse existing engine)
-//   3. Compute Momentum State (new — study-momentum-engine)
-//   4. Compute Scheduling Decision (new — study-scheduler-engine)
-//   5. Compute Intervention Decision (new — intervention-engine)
-//   6. Check cooldown (DB query for NovaProactiveMessage)
-//   7. Run Proactive Decision Graph (new — proactive-decision-graph)
-//   8. If approved → Response Brain → text
-//   9. Send Telegram
-//  10. Persist NovaProactiveMessage (cooldown + dedup record)
+//   facts → decideProactive (pure) → claim → word → ready → send → sent
+//
+// Nothing is sent that was not first claimed, and a claim is unique per
+// logical occurrence, so a late tick, a restart or a second instance cannot
+// send the same thing twice. A tick that sends nothing writes nothing.
+//
+// Timing is by window, never by matching a minute: a tick that runs late
+// still finds the window open, and the claim keeps it to once.
 
+import { prisma } from "@repo/db/client";
 import { getAllTopicMasteries } from "../engines/knowledge-engine";
 import { getOverdueTopics } from "../engines/retention-engine";
-import { prisma } from "@repo/db/client";
-import { loadStudySnapshot } from "../engines/study-snapshot";
-import { computeAcademicState } from "../engines/academic-state-engine";
-import { computeMomentumState } from "../engines/study-momentum-engine";
-import { computeSchedulingDecision } from "../engines/study-scheduler-engine";
-import { computeIntervention } from "../engines/intervention-engine";
-import { runProactiveDecisionGraph } from "../decision/proactive-decision-graph";
-import { runProactiveResponseBrain } from "./nova-proactive-response";
-import { getLocalHHMM, isInQuietHours } from "../../services/schedulerEngine.service";
-import { STATE_BASELINES } from "../types/academic-state.types";
-import type { NovaRealityFact } from "../types/reality.types";
-import { normalizeStoredReality } from "../types/reality.types";
-import type { InterventionType } from "../types/proactive.types";
-import { INTERVENTION_COOLDOWN_HOURS } from "../types/proactive.types";
+import { dayKey, dayNumber, isValidTimezone, localHour } from "../engines/learner-calendar";
+import { STUDY_WINDOWS } from "../engines/learning-dna-engine";
 import { saveAssistantMessage, userMessagedSince } from "../adapters/conversation-adapter";
+import { loadOperatingStyle, loadAccountabilityStyle } from "../adapters/operating-style-adapter";
 import { retryPendingConsolidations } from "../consolidation/run-consolidation";
+import { chooseRegister } from "../decision/register";
+import {
+  decideProactive, isQuietHour, studyWindow, RECENT_MESSAGE_MINUTES,
+  type ProactiveCandidate, type ProactiveFacts,
+} from "../decision/proactive-decision";
+import { loadLearningDna } from "../persistence/learning-dna-store";
+import { loadNovaToday } from "../product/today";
+import type { NovaTodayReady } from "../product/today.types";
+import type { ProactiveType } from "../types/proactive.types";
+import { ensureChannel, loadChannel, markDelivered, markUndeliverable, spendModelCall } from "../telegram/channel-store";
+import { closeOpenPrompt, openPrompt, purgeOldPrompts, recordPromptMessage } from "../telegram/prompt-store";
+import { createTelegramClient } from "../telegram/telegram-client";
+import { encodeCallback } from "../telegram/telegram-event";
+import { recommendationReply } from "../telegram/telegram-replies";
+import type { InlineButton, PromptSpec, TelegramClient } from "../telegram/telegram.types";
+import {
+  beginSend, claimOccurrence, loadDelivered, markReady, markSendFailed, markSent, purgeLegacyDecisions, recoverPending,
+  type OutboxRow,
+} from "./proactive-outbox";
+import { proactiveFallback, wordProactiveMessage, type ProactiveWordingInput } from "./nova-proactive-response";
 
 export interface NovaProactiveCronResult {
-  ok:       boolean;
-  sent:     number;
-  checked:  number;
-  errors:   number;
+  ok:      boolean;
+  sent:    number;
+  checked: number;
+  errors:  number;
 }
 
-// ── Main export ────────────────────────────────────────────────────────────────
-
-export async function runNovaProactiveCron(now = new Date()): Promise<NovaProactiveCronResult> {
-  console.log(`[nova:cron] Proactive tick at ${now.toISOString()}`);
-
-  // Consolidation retry worker: failed, abandoned or never-started jobs.
-  // Independent of sending, so it runs before the token check.
-  await retryPendingConsolidations(now)
-    .then(r => { if (r.retried > 0) console.log(`[nova:cron] consolidation retries: ${r.completed}/${r.retried} completed`); })
-    .catch(err => console.error("[nova:cron] consolidation retry failed", err));
-
-  const token = process.env.TELEGRAM_BOT_TOKEN ?? process.env.BOT_TOKEN;
-  if (!token) {
-    console.error("[nova:cron] TELEGRAM_BOT_TOKEN not set");
-    return { ok: false, sent: 0, checked: 0, errors: 0 };
-  }
-
-  // Load all onboarded Nova users with their Telegram chat IDs
-  const profiles = await prisma.novaAcademicProfile.findMany({
-    where: { onboardingComplete: true },
-    select: {
-      id:                        true,
-      timezone:                  true,
-      preferredStudyTime:        true,
-      preferredStudyHoursPerDay: true,
-      user: {
-        select: {
-          id:             true,
-          platformChatId: true,
-          timezone:       true,
-          intakeAnswers:  true,
-          displayName:    true,
-        },
-      },
-    },
-  });
-
-  console.log(`[nova:cron] Found ${profiles.length} onboarded Nova users`);
-
-  let sent   = 0;
-  let errors = 0;
-
-  for (const profile of profiles) {
-    try {
-      const fired = await processNovaUser(profile, now, token);
-      if (fired) sent++;
-    } catch (err) {
-      console.error(`[nova:cron] Error for profile ${profile.id}:`, err);
-      errors++;
-    }
-  }
-
-  return { ok: true, sent, checked: profiles.length, errors };
+export interface ProactiveDeps {
+  client?: TelegramClient;
+  word?:   (input: ProactiveWordingInput) => Promise<{ text: string; generated: boolean }>;
 }
 
-// ── Per-user pipeline ─────────────────────────────────────────────────────────
-
-async function processNovaUser(
-  profile: {
-    id:                        string;
-    timezone:                  string | null;
-    preferredStudyTime:        string | null;
-    preferredStudyHoursPerDay: number;
-    user: {
-      id:             string;
-      platformChatId: string;
-      timezone:       string | null;
-      intakeAnswers:  unknown;
-      displayName:    string | null;
-    };
-  },
-  now:   Date,
-  token: string,
-): Promise<boolean> {
-  const chatId   = profile.user.platformChatId;
-  const timezone = profile.timezone ?? profile.user.timezone ?? "UTC";
-
-  // ── Global fire rules (reused from Rex) ────────────────────────────────────
-  const localHHMM = getLocalHHMM(now, timezone);
-  if (isInQuietHours(profile.user.intakeAnswers, localHHMM)) {
-    return false;
-  }
-
-  // Check if messaged in last 5 minutes (lighter than Rex's 10-min check)
-  const recentlyMessaged = await userMessagedSince(profile.user.id, new Date(now.getTime() - 5 * 60_000));
-  if (recentlyMessaged) return false;
-
-  // ── Step 1: Load Academic Snapshot + Reality (parallel) ───────────────────
-  const [snapshot, realityFacts] = await Promise.all([
-    loadStudySnapshot(chatId),
-    loadProactiveRealityFacts(profile.user.id, now),
-  ]);
-
-  if (!snapshot.profileId) return false;
-
-  // ── Step 2: Compute Academic State ───────────────────────────────────────
-  const academicState = computeAcademicState({
-    semesterStartDate:       snapshot.semesterStartDate,
-    semesterEndDate:         snapshot.semesterEndDate,
-    daysSinceJoined:         snapshot.daysSinceJoined,
-    studySessions:           snapshot.studySessions,
-    upcomingExams:           snapshot.upcomingExams,
-    stateHistory:            snapshot.stateHistory,
-    signals:                 { detectedSignals: [], stateUpdates: [] },
-    mentionedTopicMastery:   null,
-    understanding:           buildNullUnderstanding(),
-    storedScores:            snapshot.storedScores,
-    storedStreakDays:        snapshot.storedStreakDays,
-    storedConsecutiveMisses: snapshot.storedConsecutiveMisses,
-  }, now);
-
-  // ── Step 3: Compute Momentum State ────────────────────────────────────────
-  const momentum = computeMomentumState({
-    studySessions:     snapshot.studySessions,
-    consecutiveMisses: academicState.consecutiveMisses,
-    studyStreakDays:   academicState.studyStreakDays,
-    stateHistory:      snapshot.stateHistory.map(h => ({
-      engagement: typeof h.scores?.engagement === "number" ? h.scores.engagement : undefined,
-    })),
-    now,
-  });
-
-  // ── Step 4: Compute Scheduling Decision ───────────────────────────────────
-  const studiedToday    = academicState.daysSinceLastSession === 0;
-  const hasActiveSession = snapshot.activeSession !== null;
-
-  // Load overdue topics from knowledge engine
-  const overdueTopics = await loadOverdueTopics(snapshot.profileId!, now);
-
-  const scheduling = computeSchedulingDecision({
-    momentum,
-    preferredStudyTime:       profile.preferredStudyTime,
-    preferredStudyHoursPerDay: profile.preferredStudyHoursPerDay,
-    upcomingExams:            snapshot.upcomingExams.map(e => ({
-      title:       e.title,
-      subjectName: e.subjectName ?? "Unknown",
-      scheduledAt: e.scheduledAt,
-    })),
-    topicsOverdueForReview: overdueTopics,
-    studiedToday,
-    hasActiveSession,
-    now: localNow(now, timezone),   // local time for window checks
-  });
-
-  // ── Step 5: Compute Intervention Decision ─────────────────────────────────
-  const intervention = computeIntervention({
-    scheduling,
-    momentum,
-    academicState,
-    realityFacts,
-  });
-
-  // ── Step 6: Cooldown check ────────────────────────────────────────────────
-  const isInCooldown = await checkCooldown(snapshot.profileId!, intervention.type, now);
-
-  // ── Step 7: Proactive Decision Graph ──────────────────────────────────────
-  const decision = runProactiveDecisionGraph({
-    intervention,
-    academicState,
-    momentum,
-    realityFacts,
-    hasActiveSession,
-    studiedToday,
-    isInCooldown,
-    messagedRecently: false,  // already checked above
-    isQuietHours:     false,  // already checked above
-  });
-
-  // ── Persist decision (even if suppressed — for analytics) ─────────────────
-  await persistProactiveDecision(snapshot.profileId!, decision, intervention.type, now);
-
-  if (!decision.approved) {
-    console.log(`[nova:cron] ${chatId} suppressed: ${decision.suppressReason}`);
-    return false;
-  }
-
-  // ── Step 8: Response Brain ────────────────────────────────────────────────
-  const upcomingExam   = snapshot.upcomingExams[0] ?? null;
-  const studentName    = profile.user.displayName ?? "Student";
-
-  const text = await runProactiveResponseBrain({
-    studentName,
-    decision,
-    momentum,
-    academicState,
-    upcomingExamTitle: upcomingExam?.title ?? null,
-    overdueTopics:     overdueTopics.map(t => t.topicName),
-    studiedToday,
-    preferredStudyHoursPerDay: profile.preferredStudyHoursPerDay,
-  });
-
-  // ── Step 9: Send Telegram ─────────────────────────────────────────────────
-  await sendTelegramMessage(chatId, text, token);
-
-  // ── Step 10: Persist conversation turn ────────────────────────────────────
-  await persistProactiveMessage(profile.user.id, text, decision.finalInterventionType, now);
-
-  console.log(`[nova:cron] Sent ${decision.finalInterventionType} to ${chatId}`);
-  return true;
-}
-
-// ── DB helpers ────────────────────────────────────────────────────────────────
-
-async function loadProactiveRealityFacts(userId: string, now: Date): Promise<NovaRealityFact[]> {
-  const stored = await prisma.userReality.findMany({
-    where:   { userId, isActive: true, expiresAt: { gte: now } },
-    orderBy: { createdAt: "desc" },
-    take:    10,
-  });
-
-  return stored
-    .filter(r => r.confidence >= 0.5)
-    .map(r => ({
-      id:          r.id,
-      ...normalizeStoredReality(r.category, r.subtype),
-      description: r.fact,
-      confidence:  r.confidence,
-      relevance:   0.8,   // all active facts are relevant to proactive decisions
-      expiresAt:   r.expiresAt,
-      sourceText:  r.sourceText ?? null,
-    }));
-}
+const PRIORITY: Record<ProactiveType, number> = { exam_countdown: 9, missed_plan_recovery: 6, review_due: 4, daily_nudge: 3 };
 
 // Topics due for review, by the one definition (retention-engine.ts): the
 // same topics Home, the Planner and Knowledge show as due.
-// Exported, with the cooldown helpers below, for the integration tests.
-export async function loadOverdueTopics(
-  profileId: string,
-  now:       Date,
-): Promise<Array<{ topicName: string; nextReviewAt: Date }>> {
+export async function loadOverdueTopics(profileId: string, now: Date): Promise<Array<{ topicName: string; nextReviewAt: Date }>> {
   const due = getOverdueTopics(await getAllTopicMasteries(profileId, now), now);
   return due.slice(0, 5).map(t => ({ topicName: t.topicName, nextReviewAt: t.reviewDueAt! }));
 }
 
-export async function checkCooldown(
-  profileId:    string,
-  eventType:    InterventionType,
-  now:          Date,
-): Promise<boolean> {
-  if (eventType === "none") return true;
-  const existing = await prisma.novaProactiveMessage.findFirst({
-    where: {
-      profileId,
-      eventType,
-      cooldownUntil: { gte: now },
+export async function runNovaProactiveCron(now = new Date(), deps: ProactiveDeps = {}): Promise<NovaProactiveCronResult> {
+  // Housekeeping that does not depend on sending.
+  await retryPendingConsolidations(now)
+    .then(r => { if (r.retried > 0) console.log(`[nova:cron] consolidation retries: ${r.completed}/${r.retried} completed`); })
+    .catch(err => console.error("[nova:cron] consolidation retry failed", err));
+  await purgeOldPrompts(now).catch(err => console.error("[nova:cron] prompt purge failed", err));
+  await purgeLegacyDecisions(now).catch(err => console.error("[nova:cron] legacy decision purge failed", err));
+
+  // Operational switch: stops Nova messaging first without a deploy. Replies
+  // to learners, commands and buttons are unaffected.
+  if (process.env.NOVA_PROACTIVE_DISABLED === "true") return { ok: true, sent: 0, checked: 0, errors: 0 };
+
+  const client = deps.client ?? createTelegramClient();
+  const word   = deps.word ?? wordProactiveMessage;
+
+  // Learners Nova may message first at all. A learner with no timezone is
+  // not asked: Nova will not guess what time it is for them.
+  const profiles = await prisma.novaAcademicProfile.findMany({
+    where:  { onboardingComplete: true, timezone: { not: null }, user: { persona: "nova", platform: "telegram" } },
+    select: {
+      id: true, timezone: true, preferredStudyTime: true,
+      user: { select: { id: true, platformChatId: true, displayName: true } },
     },
-    select: { id: true },
   });
-  return existing !== null;
-}
 
-export async function persistProactiveDecision(
-  profileId:    string,
-  decision:     { approved: boolean; finalInterventionType: InterventionType; suppressReason: string | null; priority: number; confidence: number },
-  originalType: InterventionType,
-  now:          Date,
-): Promise<void> {
-  const eventType    = decision.finalInterventionType;
-  const cooldownHrs  = INTERVENTION_COOLDOWN_HOURS[eventType] ?? 4;
-  const cooldownUntil = new Date(now.getTime() + cooldownHrs * 3_600_000);
-
-  await prisma.novaProactiveMessage.create({
-    data: {
-      profileId,
-      eventType,
-      firedAt:       now,
-      cooldownUntil,
-      priority:      decision.priority,
-      confidence:    decision.confidence,
-      approved:      decision.approved,
-      suppressReason: decision.suppressReason,
-    },
-  }).catch(err => console.error("[nova:cron] persist decision failed", err));
-}
-
-async function persistProactiveMessage(
-  userId:           string,
-  text:             string,
-  interventionType: InterventionType,
-  now:              Date,
-): Promise<void> {
-  // Goes through the conversation adapter so it appears in Nova's history.
-  await saveAssistantMessage(userId, text, `nova_proactive_${interventionType}`, { interventionType }, now)
-    .catch(err => console.error("[nova:cron] persist message failed", err));
-}
-
-// ── Send ──────────────────────────────────────────────────────────────────────
-
-async function sendTelegramMessage(chatId: string, text: string, token: string): Promise<void> {
-  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({ chat_id: chatId, text }),
-  });
-  if (!res.ok) {
-    console.error(`[nova:cron] Telegram send failed for ${chatId}: ${res.status}`);
+  let sent = 0, errors = 0;
+  for (const profile of profiles) {
+    try {
+      if (await processLearner(profile, now, client, word)) sent++;
+    } catch (err) {
+      // One learner's failure never stops the rest of the tick.
+      console.error(`[nova:cron] profile ${profile.id} failed:`, err);
+      errors++;
+    }
   }
+  return { ok: true, sent, checked: profiles.length, errors };
 }
 
-// ── Academic State null understanding ─────────────────────────────────────────
-// The academic state engine requires an understanding object but the proactive
-// cron has no student message. We pass a neutral placeholder.
+type LearnerRow = {
+  id: string; timezone: string | null; preferredStudyTime: string | null;
+  user: { id: string; platformChatId: string; displayName: string | null };
+};
 
-function buildNullUnderstanding() {
-  return {
-    intent:          "general_chat" as const,
-    emotion:         "neutral" as const,
-    topic:           null,
-    topicConfidence: 0,
-    ambiguityScore:  0,
-    disclosureClass: "none" as const,
-    routingSignal:   "coaching_only" as const,
-    confidence:      1,
-    reasoning:       "proactive cron — no student message",
-    rawText:         "",
+async function processLearner(
+  profile: LearnerRow,
+  now:     Date,
+  client:  TelegramClient,
+  word:    NonNullable<ProactiveDeps["word"]>,
+): Promise<boolean> {
+  const zone = profile.timezone && isValidTimezone(profile.timezone) ? profile.timezone : null;
+  if (!zone) return false;
+  const hour = localHour(now, zone);
+  const day  = dayKey(now, zone);
+  // The cheapest gate first: most ticks for most learners end here.
+  if (isQuietHour(hour)) return false;
+
+  await ensureChannel(profile.id);
+  const channel = await loadChannel(profile.id);
+  if (!channel.proactiveEnabled || channel.undeliverableSince) return false;
+  const paused = channel.proactivePausedUntil !== null && channel.proactivePausedUntil > now;
+
+  const chatId = profile.user.platformChatId;
+  const view   = await loadNovaToday(chatId, { learnerName: profile.user.displayName, now });
+  if (view.status !== "ready") return false;
+
+  // ── Something a previous tick claimed but did not finish ───────────────────
+  // It was already decided, so it is not decided again. It is only held back
+  // while sending it now would be wrong.
+  const pending = await recoverPending(profile.id, now);
+  if (pending.length > 0) {
+    if (paused || view.activeSession) return false;
+    return deliver(pending[0]!, profile, view, now, client, word, null);
+  }
+
+  // ── Decide ─────────────────────────────────────────────────────────────────
+  const [delivered, dna, dueTopics, messagedRecently] = await Promise.all([
+    loadDelivered(profile.id, day),
+    loadLearningDna(profile.id, now),
+    loadOverdueTopics(profile.id, now),
+    userMessagedSince(profile.user.id, new Date(now.getTime() - RECENT_MESSAGE_MINUTES * 60_000)),
+  ]);
+
+  // Where their sessions actually fall, once Learning DNA supports it.
+  const usual = dna?.signals.find(s => s.key === "usual_study_window");
+  const usualWindow = usual && (usual.level === "supported" || usual.level === "strong") && !usual.weakening
+    ? STUDY_WINDOWS.find(w => w.key === usual.valueKey) ?? null
+    : null;
+
+  const today   = dayNumber(day);
+  const lastDay = view.progress.lastSession ? dayKey(new Date(view.progress.lastSession.date), zone) : null;
+  const facts: ProactiveFacts = {
+    localDay: day, localHour: hour,
+    window:   studyWindow({ dnaWindow: usualWindow, statedPreference: profile.preferredStudyTime }),
+    studiedToday:         lastDay === day,
+    daysSinceLastSession: lastDay ? today - dayNumber(lastDay) : null,
+    lastSessionDay:       lastDay,
+    exams: view.upcoming.map(e => ({
+      id: `${e.title}:${e.scheduledAt.slice(0, 10)}`.slice(0, 80), title: e.title,
+      // The Today view's own count, so Telegram and the web app never
+      // disagree about how far away an exam is.
+      daysUntil: e.daysUntil,
+    })),
+    reviewDueCount: dueTopics.length,
+    hasPlan:        view.recommendation !== null,
   };
+  const decision = decideProactive(facts, {
+    proactiveEnabled: channel.proactiveEnabled, paused, undeliverable: false, hasTimezone: true,
+    activeSession: view.activeSession !== null, messagedRecently,
+    sentToday: delivered.today, lastSentAt: delivered.lastSentAt,
+    realityCategories: view.constraints.map(c => c.category), now,
+  });
+  if (!decision.chosen) {
+    if (decision.suppressed.length > 0) {
+      console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", profileId: profile.id, sent: false, suppressed: decision.suppressed }));
+    }
+    return false;
+  }
+
+  // ── Claim ──────────────────────────────────────────────────────────────────
+  const row = await claimOccurrence(profile.id, decision.chosen, day, PRIORITY[decision.chosen.type], now);
+  if (!row) return false;   // this occurrence already has an owner
+  return deliver(row, profile, view, now, client, word, { candidate: decision.chosen, facts, windowBasis: facts.window.basis, dueTopics: dueTopics.map(t => t.topicName) });
 }
 
-// ── Local time conversion ─────────────────────────────────────────────────────
-// Returns a Date whose getHours() returns local hours for the given timezone.
-// Used by scheduler engine window checks.
+// Words (if not yet worded), then sends, one outbox row.
+async function deliver(
+  row:     OutboxRow,
+  profile: LearnerRow,
+  view:    NovaTodayReady,
+  now:     Date,
+  client:  TelegramClient,
+  word:    NonNullable<ProactiveDeps["word"]>,
+  fresh:   { candidate: ProactiveCandidate; facts: ProactiveFacts; windowBasis: string; dueTopics: string[] } | null,
+): Promise<boolean> {
+  const chatId = profile.user.platformChatId;
+  const zone   = profile.timezone!;
+  const type   = row.type as ProactiveType;
+  const rec    = view.recommendation;
 
-function localNow(now: Date, timezone: string): Date {
-  const localStr  = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-  }).format(now);
+  let text = row.text;
+  if (!text) {
+    const lines: string[] = [];
+    if (fresh) lines.push(capitalize(fresh.candidate.reason));
+    if (rec)   lines.push(`Recommended now: ${rec.topicName} (${rec.subjectName}), ${rec.durationMinutes} min${rec.reasons[0] ? `, because ${rec.reasons[0]}` : ""}`);
+    if (fresh?.windowBasis === "learning_dna") lines.push("Their recorded sessions usually fall around this time of day");
+    const input: ProactiveWordingInput = {
+      type, studentName: profile.user.displayName, facts: lines,
+      register: chooseRegister({
+        emotion: "neutral", daysUntilNextExam: view.nextDeadline?.daysUntil ?? null,
+        activeReality: view.constraints.map(c => c.category),
+        accountability: await loadAccountabilityStyle(chatId),
+      }),
+      operatingStyle: await loadOperatingStyle(chatId),
+      hasStartButton: rec !== null,
+    };
+    // Past today's budget for generated wording, the plain line goes out.
+    const worded = await spendModelCall(profile.id, "response", dayKey(now, zone))
+      ? await word(input)
+      : { text: proactiveFallback(input), generated: false };
+    text = worded.text;
+    await markReady(row.id, text);
+  }
 
-  // "2024-11-13, 14:30:00" → parse as local Date
-  // Intl returns "YYYY-MM-DD, HH:mm:ss" in en-CA locale
-  const cleaned = localStr.replace(",", "");
-  return new Date(cleaned + " GMT+0000");   // treat as UTC so getHours() gives local hours
+  if (!await beginSend(row.id, now)) return false;
+
+  // The same Start buttons /today gives, as a prompt of kind "nudge".
+  const spec: PromptSpec | null = rec ? recommendationReply(view, rec, { kind: "nudge" }).prompt ?? null : null;
+  const prompt = spec ? await openPrompt(profile.id, chatId, spec, now) : null;
+  const buttons: InlineButton[][] = [];
+  if (prompt) {
+    const all = prompt.options.map(o => ({ text: o.label, callback_data: encodeCallback(prompt.id, o.id) }));
+    for (let i = 0; i < all.length; i += 2) buttons.push(all.slice(i, i + 2));
+  }
+
+  const result = await client.sendMessage(chatId, text, buttons);
+  const log = (outcome: string) => console.log(JSON.stringify({
+    ts: now.toISOString(), layer: "nova_proactive", profileId: profile.id, type, occurrence: row.occurrenceKey,
+    outcome, attempt: row.attempts + 1, messageId: result.ok ? result.messageId : null,
+  }));
+
+  if (result.ok) {
+    await markSent(row.id, result.messageId, now);
+    if (prompt) await recordPromptMessage(prompt.id, result.messageId);
+    await markDelivered(profile.id, now).catch(() => {});
+    // In Nova's conversation history only once it has actually been said.
+    await saveAssistantMessage(profile.user.id, text, `nova_proactive_${type}`, { proactiveType: type }, now)
+      .catch(err => console.error("[nova:cron] conversation log failed", err));
+    log("sent");
+    return true;
+  }
+
+  // Not delivered (or not known to be): these buttons are not an open question.
+  if (prompt && result.kind !== "unknown") await closeOpenPrompt(profile.id, "undelivered", now, prompt.id).catch(() => {});
+  if (result.kind === "blocked") {
+    await markSendFailed(row.id, "permanent", result.detail);
+    await markUndeliverable(profile.id, now);
+  } else if (result.kind === "unknown") {
+    await markSendFailed(row.id, "unknown", result.detail);
+  } else if (result.kind === "bad_request") {
+    await markSendFailed(row.id, "permanent", result.detail);
+  } else {
+    await markSendFailed(row.id, "retryable", result.detail);
+  }
+  log(result.kind);
+  return false;
 }
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

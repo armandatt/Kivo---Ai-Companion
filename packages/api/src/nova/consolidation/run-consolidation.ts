@@ -22,6 +22,7 @@ import {
   applyMasteryObservation,
   applySessionObservation,
   loadAcademicContext,
+  loadRecentlyObservedTopics,
 } from "./stores/academic-observation-store";
 import {
   claimJob,
@@ -58,16 +59,17 @@ async function consolidateAndApply(
 ): Promise<ConsolidationDecision[]> {
   const { userId, profileId, now } = input;
 
-  const [facts, realities, patterns, investigation] = await Promise.all([
+  const [facts, realities, patterns, investigation, recentlyObservedTopics] = await Promise.all([
     loadActiveFacts(userId),
     loadActiveRealityRows(userId),
     loadPatterns(userId),
     profileId ? loadInvestigation(profileId) : Promise.resolve(null),
+    profileId ? loadRecentlyObservedTopics(profileId, now) : Promise.resolve([]),
   ]);
 
   const decisions = consolidate({
     evidence:         input.evidence,
-    state:            { facts, realities, patterns, investigation, recentSessions: input.recentSessions },
+    state:            { facts, realities, patterns, investigation, recentSessions: input.recentSessions, recentlyObservedTopics },
     now,
     patternScanRan:   input.patternScanRan,
     hasActiveSession: input.hasActiveSession,

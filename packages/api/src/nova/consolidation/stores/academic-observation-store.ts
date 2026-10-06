@@ -53,6 +53,23 @@ export async function applyMasteryObservation(
   await updateTopicMastery(match.subjectId, match.resolvedName, w.confidence, now, "conversation_signal");
 }
 
+// Topics touched in the last day (a session, or an earlier observation),
+// lower-cased. The consolidator uses it so that repeating a complaint does
+// not keep moving the same topic, and so a statement made just after a
+// session does not override what the session recorded.
+export const OBSERVATION_WINDOW_HOURS = 20;
+
+export async function loadRecentlyObservedTopics(profileId: string, now: Date): Promise<string[]> {
+  const rows = await prisma.novaTopicMastery.findMany({
+    where: {
+      subject: { profileId },
+      lastStudiedAt: { gte: new Date(now.getTime() - OBSERVATION_WINDOW_HOURS * 3_600_000) },
+    },
+    select: { name: true },
+  });
+  return [...new Set(rows.map(r => r.name.trim().toLowerCase()))];
+}
+
 // What consolidation needs to know about the student's academic records.
 // Loaded fresh, so a retried job sees the current state.
 export async function loadAcademicContext(profileId: string): Promise<{

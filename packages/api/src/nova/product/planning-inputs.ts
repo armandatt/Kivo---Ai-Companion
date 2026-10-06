@@ -3,7 +3,8 @@
 // plan: the snapshot, the academic state, topic mastery, the active exam,
 // active constraints, and the plan the Planning Engine produces from them.
 // Home and Planner both start here, so they cannot disagree about the plan.
-// Read-only. No LLM call, no writes.
+// No LLM call. One write: the time the learner said they have today
+// (recordStatedMinutes), which is theirs to state.
 
 import { prisma } from "@repo/db/client";
 import { loadStudySnapshot, type StudySnapshotResult } from "../engines/study-snapshot";
@@ -11,6 +12,7 @@ import { computeAcademicState } from "../engines/academic-state-engine";
 import { getAllTopicMasteries } from "../engines/knowledge-engine";
 import { selectActiveExam } from "../engines/exam-engine";
 import { generateStudyPlan, MIN_BLOCK_MINUTES } from "../engines/planning-engine";
+import { dayKey, resolveTimezone } from "../engines/learner-calendar";
 import { normalizeStoredReality } from "../types/reality.types";
 import type { AcademicState } from "../types/academic-state.types";
 import type { ExamContext, StudyPlan, TopicMasteryState } from "../types/engine.types";
@@ -84,6 +86,36 @@ async function loadActiveConstraints(userId: string, now: Date): Promise<TodayCo
   }));
 }
 
+// ── "I've only got 30 minutes" ────────────────────────────────────────────────
+// What the learner says they have today is theirs to state and is true for
+// that day only. It is stored with the local day it was said on and ignored
+// once that day is over. This file is its only reader and writer.
+
+function statedMinutesFor(
+  profile: { statedMinutes: number | null; statedMinutesDay: string | null; timezone: string | null },
+  now:     Date,
+): number | null {
+  if (profile.statedMinutes === null || profile.statedMinutesDay === null) return null;
+  if (profile.statedMinutesDay !== dayKey(now, resolveTimezone(profile.timezone))) return null;
+  return normalizeAvailableMinutes(profile.statedMinutes);
+}
+
+export async function recordStatedMinutes(platformChatId: string, minutes: number, now = new Date()): Promise<number | null> {
+  const normalized = normalizeAvailableMinutes(minutes);
+  if (normalized === null) return null;
+  const user = await prisma.messengerUser.findUnique({
+    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    select: { novaAcademicProfile: { select: { id: true, timezone: true } } },
+  });
+  const profile = user?.novaAcademicProfile;
+  if (!profile) return null;
+  await prisma.novaAcademicProfile.update({
+    where: { id: profile.id },
+    data:  { statedMinutes: normalized, statedMinutesDay: dayKey(now, resolveTimezone(profile.timezone)) },
+  });
+  return normalized;
+}
+
 export async function loadPlanningInputs(
   platformChatId: string,
   options: {
@@ -101,7 +133,10 @@ export async function loadPlanningInputs(
     select: {
       id: true,
       novaAcademicProfile: {
-        select: { onboardingComplete: true, goals: true, timezone: true, preferredStudyTime: true },
+        select: {
+          onboardingComplete: true, goals: true, timezone: true, preferredStudyTime: true,
+          statedMinutes: true, statedMinutesDay: true,
+        },
       },
     },
   });
@@ -140,7 +175,10 @@ export async function loadPlanningInputs(
     now,
   );
 
-  const availableMinutes = normalizeAvailableMinutes(options.availableMinutes);
+  // A number on the request wins. Without one, what the learner said earlier
+  // today (on any surface) still stands until their day ends.
+  const availableMinutes = normalizeAvailableMinutes(options.availableMinutes)
+    ?? statedMinutesFor(profile, now);
   const plan = generateStudyPlan(
     academicState, topics, snapshot.preferredStudyHoursPerDay, examContext,
     { availableMinutes, now },

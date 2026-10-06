@@ -136,6 +136,9 @@ export interface ConsolidationState {
   patterns:       StoredPattern[];
   investigation:  StoredInvestigation | null;
   recentSessions: RecentSession[];
+  // Topics that already received a conversation-based mastery observation
+  // recently (lower-cased names). Absent is treated as none.
+  recentlyObservedTopics?: string[];
 }
 
 export interface ConsolidationInput {

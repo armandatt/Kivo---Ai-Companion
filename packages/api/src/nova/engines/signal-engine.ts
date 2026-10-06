@@ -69,6 +69,7 @@ const SIGNAL_STATE_DELTAS: Record<SignalType, Partial<Record<keyof import("../ty
   excuse:             { engagement: -3,  momentum: -4,  planAdherence: -5,  confidence: -2   },
   achievement:        { engagement: +10, momentum: +8,  confidence: +6,     burnoutRisk: -4  },
   mastery_claim:      { confidence: +5                                                        },
+  topic_struggle:     { confidence: -4                                                        },
   avoidance:          { engagement: -5,  momentum: -4,  planAdherence: -3                    },
   consistency:        { engagement: +5,  momentum: +7,  planAdherence: +4                    },
   burnout_behavioral: { burnoutRisk: +15, engagement: -8, momentum: -10                      },
@@ -108,7 +109,7 @@ const SIGNAL_DEFINITIONS: SignalDefinition[] = [
 export type EstablishedBy = "command" | "understanding";
 
 const ESTABLISHED_VALENCE: Partial<Record<SignalType, DetectedSignal["valence"]>> = {
-  study_skip: "negative", excuse: "negative", mastery_claim: "neutral",
+  study_skip: "negative", excuse: "negative", mastery_claim: "neutral", topic_struggle: "negative",
 };
 
 export function withEstablishedSignal(

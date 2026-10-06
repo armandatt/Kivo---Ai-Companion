@@ -69,7 +69,17 @@ export interface PersistenceInput {
   // Consolidation
   patterns:        PatternAnalysis;
   patternScanRan:  boolean;
+  // True when the surface that received the message runs session commands
+  // itself (Telegram: through product/session.ts, with an outcome). The turn
+  // then starts, pauses, resumes and ends nothing; it still records what the
+  // student said during a session (a confusion point).
+  sessionCommandsHandled?: boolean;
   now:             Date;
+}
+
+export interface PersistedTurn {
+  evidenceKinds:       string[];
+  consolidationQueued: boolean;
 }
 
 // ── Fire-and-forget wrapper ────────────────────────────────────────────────────
@@ -83,7 +93,7 @@ export function persistTurnAsync(input: PersistenceInput): void {
 
 // ── Full turn persistence ──────────────────────────────────────────────────────
 
-export async function persistTurn(input: PersistenceInput): Promise<void> {
+export async function persistTurn(input: PersistenceInput): Promise<PersistedTurn> {
   const {
     userId, profileId, userText, brainOutput,
     academicState, signals, graphNode, intervention,
@@ -94,6 +104,7 @@ export async function persistTurn(input: PersistenceInput): Promise<void> {
   const { tasks: sessionTasks } = sessionLifecycle({
     profileId, signals, sessionAction, sessionContext, activeSession,
     topic: understanding.topic, subjects, now,
+    commandsHandled: input.sessionCommandsHandled === true,
   });
 
   // 1. Conversation log first: the user message id is the provenance of
@@ -143,6 +154,11 @@ export async function persistTurn(input: PersistenceInput): Promise<void> {
     // 4. Session lifecycle tasks (all fire in parallel)
     ...sessionTasks,
   ]);
+
+  return {
+    evidenceKinds: [...new Set(evidence.map(e => e.kind === "signal" ? `signal:${e.signalType}` : e.kind))],
+    consolidationQueued: sourceMessageId !== null,
+  };
 }
 
 // ── State snapshot ────────────────────────────────────────────────────────────
@@ -184,6 +200,7 @@ async function persistStateSnapshot(
 const OPEN_STATUSES = ["in_progress", "paused"];
 
 interface SessionLifecycleInput {
+  commandsHandled?: boolean;
   profileId:      string | null;
   signals:        SignalEngineOutput;
   sessionAction:  SessionAction | null;
@@ -207,6 +224,14 @@ function sessionLifecycle(input: SessionLifecycleInput): {
   const tasks: Promise<void>[] = [];
   let ended: Promise<boolean> | null = null;
   if (!profileId) return { tasks, ended };
+
+  if (input.commandsHandled) {
+    // The surface ran (or will run) the command. Only what the student said
+    // about the work is kept: confusion on the session record.
+    const point = sessionAction?.writeBack?.confusionPoint;
+    if (point && activeSession) tasks.push(applySessionWriteBack(activeSession.id, { confusionPoint: point }));
+    return { tasks, ended };
+  }
 
   const hasStudyReport  = signals.detectedSignals.some(s => s.type === "study_report");
   const hasSessionStart = signals.detectedSignals.some(s => s.type === "session_start");
@@ -256,7 +281,7 @@ export interface SessionEndInput {
   profileId:     string;
   activeSession: ActiveSessionInfo;
   subjects:      Array<{ id: string; name: string }>;
-  surface:       "web";
+  surface:       "web" | "telegram";
   // The learner's one-tap answer. null when the end request carried none:
   // the report is then marked "unreported".
   outcome:       SessionOutcome | null;

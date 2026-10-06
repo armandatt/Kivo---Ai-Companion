@@ -32,7 +32,10 @@ import { runPatternDetector } from "./engines/pattern-detector";
 import { buildSessionContext, computeSessionAction } from "./engines/study-session-engine";
 import { runDecisionGraph } from "./decision/decision-graph";
 import { buildDynamicLayer, buildMicroPrompt } from "./context/context-builder";
-import { runResponseBrain } from "./brains/response-brain";
+import { runResponseBrain, UNREADABLE_RESPONSE_REPLY } from "./brains/response-brain";
+import { chooseRegister, registerLine } from "./decision/register";
+import { loadAccountabilityStyle } from "./adapters/operating-style-adapter";
+import type { ResponseBrainOutput } from "./types/response.types";
 import { getRelevantMemories } from "./adapters/memory-adapter";
 import { loadActiveRealityFacts } from "./adapters/reality-adapter";
 import { loadOperatingStyle } from "./adapters/operating-style-adapter";
@@ -89,13 +92,15 @@ export async function runNovaOrchestrator(
   ]);
 
   // ── 2. Understanding Brain ────────────────────────────────────────────────
-  let understanding = await runUnderstandingBrain(
+  // A surface that already read the message (with its own conversation
+  // context) hands the reading in: one message, one reading.
+  let understanding = input.understanding ?? await runUnderstandingBrain(
     text,
     conversationHistory,
   );
 
   // ── 3. Disambiguation Pass (if needed) ────────────────────────────────────
-  if (understanding.ambiguityScore > 0.80 && understanding.topic === null) {
+  if (!input.understanding && understanding.ambiguityScore > 0.80 && understanding.topic === null) {
     understanding = await runDisambiguationPass(
       understanding,
       conversationHistory,
@@ -301,7 +306,49 @@ export async function runNovaOrchestrator(
   const microPrompt  = buildMicroPrompt(decision, ctx);
 
   // ── 15. Response Brain ────────────────────────────────────────────────────
-  const brainOutput = await runResponseBrain(dynamicLayer, microPrompt);
+  // A scripted reply states the result of an action that already happened.
+  // Otherwise the Response Brain words the decision: it is told the register
+  // and, when a surface decided an action, what that action is.
+  const scripted = (reply: string): ResponseBrainOutput => ({
+    reply, reasoningMode: "direct", confidence: 1,
+    stateUpdates: undefined, investigationUpdate: null, followUpCheck: null,
+  });
+  let brainOutput: ResponseBrainOutput;
+  let responseGenerated = false;
+  let responseOk        = true;
+  let register: string | null = null;
+
+  if (input.scriptedReply) {
+    brainOutput = scripted(input.scriptedReply);
+  } else {
+    responseGenerated = true;
+    const chosen = chooseRegister({
+      emotion:           understanding.emotion,
+      daysUntilNextExam: academicState.daysUntilNextExam,
+      // What is already on record, and what the student has just said: a
+      // circumstance disclosed in this message sets the tone of its own reply.
+      activeReality:     [
+        ...realityFacts.map(r => r.category),
+        ...(understanding.realityObservations ?? []).filter(o => o.status === "active").map(o => o.category),
+      ],
+      accountability:    await loadAccountabilityStyle(platformChatId),
+    });
+    register = chosen;
+    const prompt = [microPrompt, registerLine(chosen), input.directive ? `Decided action (word this, do not change it): ${input.directive}` : null]
+      .filter(Boolean).join("\n\n");
+    try {
+      brainOutput = await (input.respond ?? runResponseBrain)(dynamicLayer, prompt);
+      if (input.responseFallback && brainOutput.reply === UNREADABLE_RESPONSE_REPLY) {
+        responseOk  = false;
+        brainOutput = scripted(input.responseFallback);
+      }
+    } catch (err) {
+      if (!input.responseFallback) throw err;
+      console.error("[nova] response brain failed, using fallback:", (err as Error).message);
+      responseOk  = false;
+      brainOutput = scripted(input.responseFallback);
+    }
+  }
 
   // ── 16. Persistence (fire-and-forget) ─────────────────────────────────────
   const persistence = {
@@ -321,11 +368,13 @@ export async function runNovaOrchestrator(
     sessionAction,
     patterns:       patternAnalysis,
     patternScanRan: shouldRunPatterns && snapshot.profileId !== null,
+    sessionCommandsHandled: input.sessionCommands === "surface",
     now,
   };
 
+  let persisted: Awaited<ReturnType<typeof persistTurn>> | null = null;
   if (input.awaitPersistence) {
-    await persistTurn(persistence).catch(err => console.error("[nova:persistence] Write failed:", err));
+    persisted = await persistTurn(persistence).catch(err => { console.error("[nova:persistence] Write failed:", err); return null; });
   } else {
     persistTurnAsync(persistence);
   }
@@ -335,6 +384,12 @@ export async function runNovaOrchestrator(
     intervention:  decision.selectedIntervention,
     reasoningMode: brainOutput.reasoningMode,
     confidence:    brainOutput.confidence,
+    trace: {
+      responseGenerated, responseOk, register,
+      persisted:           persisted !== null,
+      evidenceKinds:       persisted?.evidenceKinds ?? [],
+      consolidationQueued: persisted?.consolidationQueued ?? false,
+    },
   };
 }
 

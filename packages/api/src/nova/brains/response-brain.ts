@@ -54,6 +54,9 @@ function parseResponseBrainOutput(raw: string, fallbackReply: string): ResponseB
   };
 }
 
+// What the parser returns when the model's output could not be read.
+export const UNREADABLE_RESPONSE_REPLY = "I hear you. Tell me more.";
+
 function buildFallback(reply: string): ResponseBrainOutput {
   return {
     reply:             reply || "Let me check in with you on that.",
@@ -72,7 +75,7 @@ export async function runResponseBrain(
   microPrompt:  string,  // selected intervention + evidence (≤ 300 tokens)
 ): Promise<ResponseBrainOutput> {
   const fullSystemPrompt = `${NOVA_STATIC_LAYER}\n\n${dynamicLayer}`;
-  const fallbackReply    = "I hear you. Tell me more.";
+  const fallbackReply    = UNREADABLE_RESPONSE_REPLY;
 
   const raw = await generateOpenAIText({
     model:             "gpt-4o",

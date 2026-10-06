@@ -271,6 +271,36 @@ function consolidateAcademic(
   return out;
 }
 
+// ── A stated struggle ─────────────────────────────────────────────────────────
+// "I keep messing up deadlocks" is something the student said about a topic.
+// It is not a fact about the student and never becomes a UserFact or a
+// pattern. It is a mastery OBSERVATION: the Knowledge Engine's soft path,
+// which nudges the topic's number, changes no review interval and counts no
+// review. One statement moves a topic at most once a day, however often it is
+// repeated, and a running session owns its own evidence.
+
+export const STRUGGLE_REPORTED_MASTERY = 0.3;   // the "Struggled" value (study-session-engine.ts)
+
+function consolidateStruggle(e: SignalEvidence, input: ConsolidationInput): ConsolidationDecision {
+  if (!e.profileId) return ignore("academic_observation", "no_academic_profile", e);
+  if (!e.topic)     return ignore("academic_observation", "no_topic_named", e);
+  if (effectiveConfidence(e) < ACADEMIC_MIN_CONFIDENCE) {
+    return ignore("academic_observation", "insufficient_confidence", e);
+  }
+  if (input.hasActiveSession) return ignore("academic_observation", "owned_by_active_session", e);
+  if ((input.state.recentlyObservedTopics ?? []).includes(e.topic.trim().toLowerCase())) {
+    return ignore("academic_observation", "topic_already_observed_today", e);
+  }
+  return {
+    action: "UPDATE", target: "academic_observation", reason: "struggle_observation", targetId: null,
+    write: {
+      target: "academic_observation", op: "mastery_observation", topic: e.topic,
+      confidence: STRUGGLE_REPORTED_MASTERY,
+    },
+    provenance: provenanceOf(e),
+  };
+}
+
 // ── Reality ───────────────────────────────────────────────────────────────────
 // Identity of a constraint is (category, subtype). One live record per
 // identity. Lifecycle: active → resolved | expired.
@@ -550,6 +580,10 @@ export function consolidate(input: ConsolidationInput): ConsolidationDecision[] 
       case "signal": {
         if (e.signalType === "study_report" || e.signalType === "study_skip") {
           decisions.push(...consolidateAcademic(e, input));
+          break;
+        }
+        if (e.signalType === "topic_struggle") {
+          decisions.push(consolidateStruggle(e, input));
           break;
         }
         const cand = factCandidate(e);

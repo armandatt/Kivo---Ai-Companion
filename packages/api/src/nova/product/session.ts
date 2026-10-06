@@ -25,6 +25,9 @@ export async function runNovaSessionCommand(
   platformChatId: string,
   command:        NovaSessionCommand,
   now = new Date(),
+  // Where the command came from. It is recorded with the session's closing
+  // entry in the conversation log; it changes nothing about what is written.
+  surface: "web" | "telegram" = "web",
 ): Promise<NovaSessionResponse> {
   const snapshot = await loadStudySnapshot(platformChatId);
   const profileId = snapshot.profileId;
@@ -61,7 +64,7 @@ export async function runNovaSessionCommand(
     });
     if (!user) return { ok: false, error: "not_connected", message: "Connect Telegram to start with Nova." };
     const closed = await persistSessionEnd({
-      userId: user.id, profileId, activeSession: active, subjects: snapshot.subjects, surface: "web",
+      userId: user.id, profileId, activeSession: active, subjects: snapshot.subjects, surface,
       outcome: command.outcome, now,
     });
     // Not closed by this call: it was ended elsewhere a moment ago. Nothing

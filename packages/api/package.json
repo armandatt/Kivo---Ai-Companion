@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "jest --config jest.config.ts",
-    "test:integration": "tsx --test src/nova/__integration__/nova-persist-turn.itest.ts src/nova/__integration__/nova-session-start.itest.ts src/nova/__integration__/nova-knowledge.itest.ts src/nova/__integration__/nova-notes.itest.ts src/nova/__integration__/nova-progress.itest.ts src/nova/__integration__/nova-learning-dna.itest.ts"
+    "test:integration": "tsx --test src/nova/__integration__/nova-persist-turn.itest.ts src/nova/__integration__/nova-session-start.itest.ts src/nova/__integration__/nova-knowledge.itest.ts src/nova/__integration__/nova-notes.itest.ts src/nova/__integration__/nova-progress.itest.ts src/nova/__integration__/nova-learning-dna.itest.ts src/nova/__integration__/nova-telegram.itest.ts"
   },
   "exports": {
     "./processor/*": "./src/processor/*",
@@ -34,6 +34,7 @@
     "./nova/context/*": "./src/nova/context/*",
     "./nova/persistence/*": "./src/nova/persistence/*",
     "./nova/proactive/*": "./src/nova/proactive/*",
+    "./nova/telegram/*": "./src/nova/telegram/*",
     "./nova/onboarding/*": "./src/nova/onboarding/*"
   },
   "devDependencies": {

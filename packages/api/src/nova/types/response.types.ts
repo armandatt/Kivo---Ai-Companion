@@ -59,4 +59,13 @@ export interface NovaOrchestratorResult {
   intervention:  InterventionName;
   reasoningMode: ReasoningMode;
   confidence:    number;
+  // What the turn did besides replying. Absent on the early "not set up" return.
+  trace?: {
+    responseGenerated:   boolean;
+    responseOk:          boolean;
+    register:            string | null;
+    persisted:           boolean;      // false when persistence was not awaited
+    evidenceKinds:       string[];
+    consolidationQueued: boolean;
+  };
 }

@@ -6,6 +6,10 @@ const SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET ?? "fallback-dev-secret-change-in-production"
 )
 
+// A connect link is good for 15 minutes (LINK_TOKEN_MINUTES in
+// packages/api/src/nova/telegram/telegram-link.ts, which enforces it).
+const tokenExpiry = () => new Date(Date.now() + 15 * 60_000)
+
 function randomHex(bytes = 16): string {
   // Web Crypto API — available in all Next.js environments (Edge + Node)
   const arr = new Uint8Array(bytes)
@@ -62,13 +66,14 @@ export async function POST() {
     if (existing) {
       await prisma.userProfile.update({
         where: { userId },
-        data:  { telegramConnectToken: connectToken },
+        data:  { telegramConnectToken: connectToken, telegramConnectTokenExpiresAt: tokenExpiry() },
       })
     } else {
       await prisma.userProfile.create({
         data: {
           userId,
           telegramConnectToken: connectToken,
+          telegramConnectTokenExpiresAt: tokenExpiry(),
           secondaryDomains: [],
           aspirationWords:  [],
         },

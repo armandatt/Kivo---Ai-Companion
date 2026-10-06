@@ -24,7 +24,8 @@ const { loadNovaToday }         = await import("../product/today.js");
 const { loadNovaPlanner }       = await import("../product/planner.js");
 const { openStudySession }      = await import("../persistence/nova-persistence.js");
 const { applyMasteryObservation, applySessionObservation } = await import("../consolidation/stores/academic-observation-store.js");
-const { loadOverdueTopics, checkCooldown, persistProactiveDecision } = await import("../proactive/nova-proactive-cron.js");
+const { loadOverdueTopics } = await import("../proactive/nova-proactive-cron.js");
+const { claimOccurrence, loadDelivered } = await import("../proactive/proactive-outbox.js");
 
 const STAMP  = Date.now();
 const CHAT   = `nova_itest_know_${STAMP}`;
@@ -188,29 +189,22 @@ test("Good and Crushed it: not due before their scheduled dates, due on them", a
   assert.equal(new Set(later.telegram).size, later.telegram.length, "each due topic once");
 });
 
-test("a due review is not announced twice: the reminder's cooldown holds", async () => {
+test("a due review is not announced twice: one claim per day, and only a sent message counts", async () => {
   const now = at(6, 600);
   assert.ok((await loadOverdueTopics(profileId, now)).length > 0, "there is something to remind about");
-  assert.equal(await checkCooldown(profileId, "revision_reminder", now), false, "nothing sent yet");
+  const candidate = { type: "review_due" as const, occurrenceKey: "review:2026-01-07", reason: "3 topics due for review" };
 
-  // The cron records every reminder it approves, with a cooldown.
-  await persistProactiveDecision(profileId,
-    { approved: true, finalInterventionType: "revision_reminder", suppressReason: null, priority: 4, confidence: 0.8 },
-    "revision_reminder", now);
-  const fired = await prisma.novaProactiveMessage.findFirstOrThrow({ where: { profileId, eventType: "revision_reminder" } });
-  const cooldownMs = fired.cooldownUntil.getTime() - now.getTime();
-  assert.ok(cooldownMs >= 3_600_000, `cooldown of ${cooldownMs / 3_600_000} h`);
-
-  // Every later run inside the cooldown (the cron fires every five minutes)
-  // finds it and is suppressed by the proactive decision graph; the topics
-  // being still due does not send another.
+  // The tick that gets there first owns the occurrence. Every later tick
+  // that day (the cron fires every five minutes) finds it claimed.
+  const first = await claimOccurrence(profileId, candidate, "2026-01-07", 4, now);
+  assert.ok(first, "the first tick claims it");
   for (const minutes of [5, 10, 60]) {
-    const later = new Date(now.getTime() + minutes * 60_000);
-    if (later.getTime() >= fired.cooldownUntil.getTime()) break;
-    assert.ok((await loadOverdueTopics(profileId, later)).length > 0);
-    assert.equal(await checkCooldown(profileId, "revision_reminder", later), true);
+    assert.equal(await claimOccurrence(profileId, candidate, "2026-01-07", 4, new Date(now.getTime() + minutes * 60_000)), null);
   }
-  assert.equal(await checkCooldown(profileId, "revision_reminder", new Date(fired.cooldownUntil.getTime() + 1000)), false);
+  assert.equal(await prisma.novaProactiveMessage.count({ where: { profileId } }), 1);
+
+  // A claim that has not been delivered does not count as a message sent.
+  assert.deepEqual((await loadDelivered(profileId, "2026-01-07")).today, []);
   await prisma.novaProactiveMessage.deleteMany({ where: { profileId } });
 });
 

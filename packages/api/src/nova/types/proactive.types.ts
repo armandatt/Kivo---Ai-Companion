@@ -2,61 +2,18 @@
 // SKILL.md §1.6 — Proactive system types.
 // Owner: Phase 5 engines. No LLM types here.
 
-// ── Intervention types ────────────────────────────────────────────────────────
-// Exactly the events from the spec — no additions.
+// ── What Nova may say first ───────────────────────────────────────────────────
+// Four reasons to message a learner who has not written. Each one names a
+// fact on record; none of them is a mood or a score. Anything else Nova could
+// say first (a morning brief, a streak, a weekly reflection, a check-in in
+// the middle of a session) is deliberately not here.
+// Decision: decision/proactive-decision.ts.
 
-export type InterventionType =
-  | "morning_brief"
-  | "study_reminder"
-  | "session_check_in"
-  | "mid_session_support"
-  | "missed_session"
-  | "reflection_reminder"
-  | "revision_reminder"
-  | "exam_countdown"
-  | "weekly_review"
-  | "milestone_celebration"
-  | "consistency_recovery"
-  | "burnout_prevention"
-  | "none";
-
-// ── Cooldowns per intervention type ───────────────────────────────────────────
-// After one fires, suppress the same type until cooldown expires.
-
-export const INTERVENTION_COOLDOWN_HOURS: Record<InterventionType, number> = {
-  morning_brief:          22,    // once per day
-  study_reminder:          4,    // max ~twice per awake window
-  session_check_in:        2,    // brief in-session only
-  mid_session_support:     1,    // light-touch during session
-  missed_session:          8,    // follow up once after a miss
-  reflection_reminder:    12,    // once per evening
-  revision_reminder:      12,    // once per afternoon cycle
-  exam_countdown:          6,    // max twice on exam day
-  weekly_review:         168,    // once per week (7 * 24)
-  milestone_celebration:  24,    // once per achievement
-  consistency_recovery:   48,    // twice a week max
-  burnout_prevention:     24,    // once per day
-  none:                    0,
-};
-
-// ── Priority weights ──────────────────────────────────────────────────────────
-// 1 = lowest, 10 = highest. Higher always wins in merge conflicts.
-
-export const INTERVENTION_BASE_PRIORITY: Record<InterventionType, number> = {
-  exam_countdown:         9,
-  burnout_prevention:     8,
-  consistency_recovery:   7,
-  missed_session:         6,
-  morning_brief:          5,
-  study_reminder:         5,
-  revision_reminder:      4,
-  reflection_reminder:    3,
-  milestone_celebration:  3,
-  weekly_review:          2,
-  session_check_in:       2,
-  mid_session_support:    1,
-  none:                   0,
-};
+export type ProactiveType =
+  | "exam_countdown"        // an exam is within three days
+  | "review_due"            // the retention schedule has topics due
+  | "missed_plan_recovery"  // no session for a few days, said once per lapse
+  | "daily_nudge";          // the usual study time, nothing done yet today
 
 // ── Momentum ──────────────────────────────────────────────────────────────────
 
@@ -77,29 +34,6 @@ export interface MomentumState {
   studyRhythm:          StudyRhythm;
   averageSessionMinutes: number;
   sessionsLast7Days:    number;
-}
-
-// ── Scheduling ────────────────────────────────────────────────────────────────
-
-export interface SchedulingDecision {
-  eventType:      InterventionType;
-  reason:         string;
-  priority:       number;       // 1–10 (may exceed base if urgent override)
-  scheduledFor:   Date;
-  isUrgent:       boolean;
-  triggeringFact: string | null;
-}
-
-// ── Intervention ──────────────────────────────────────────────────────────────
-
-export interface InterventionDecision {
-  type:          InterventionType;
-  reason:        string;
-  priority:      number;
-  confidence:    number;         // 0–1
-  constraints:   string[];       // active flags: "no_pressure", "exam_mode", etc.
-  cooldownHours: number;
-  shouldFire:    boolean;
 }
 
 // ── Adaptive planning ─────────────────────────────────────────────────────────
@@ -126,24 +60,3 @@ export interface AdaptedPlan {
   isSignificantChange: boolean;
 }
 
-// ── Proactive decision ────────────────────────────────────────────────────────
-
-export interface ProactiveDecision {
-  approved:              boolean;
-  finalInterventionType: InterventionType;
-  suppressReason:        string | null;
-  overrideReason:        string | null;
-  priority:              number;
-  confidence:            number;
-}
-
-// ── Proactive message (output for send layer) ─────────────────────────────────
-
-export interface ProactiveMessage {
-  chatId:           string;
-  text:             string;
-  intent:           InterventionType;
-  profileId:        string;
-  priority:         number;
-  confidence:       number;
-}

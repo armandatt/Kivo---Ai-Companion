@@ -1,120 +1,84 @@
-// ─── Nova Proactive Response Brain ───────────────────────────────────────────
-// Generates the text for a proactive message.
-// This is the ONLY LLM call in the entire proactive system.
-// The scheduler, intervention engine, and decision graph are all deterministic.
-// Owner: Phase 5 Proactive Mentor System.
+// ─── Proactive wording ────────────────────────────────────────────────────────
+// Words a message Nova has already decided to send. The decision, the facts
+// and the register arrive from code; this only phrases them. It is the one
+// model call in the proactive pipeline, and the pipeline does not depend on
+// it: when the model is unavailable, the same facts go out as a plain line.
 
 import { generateOpenAIText } from "../../services/openai.service";
 import { NOVA_STATIC_LAYER } from "../brains/prompts/nova-static-layer.prompt";
-import type { ProactiveDecision, MomentumState } from "../types/proactive.types";
-import type { AcademicState } from "../types/academic-state.types";
+import { registerLine, type Register } from "../decision/register";
+import type { ProactiveType } from "../types/proactive.types";
 
-export interface ProactiveResponseInput {
-  studentName:       string;
-  decision:          ProactiveDecision;
-  momentum:          MomentumState;
-  academicState:     AcademicState;
-  upcomingExamTitle: string | null;
-  overdueTopics:     string[];
-  studiedToday:      boolean;
-  preferredStudyHoursPerDay: number;
+export interface ProactiveWordingInput {
+  type:        ProactiveType;
+  studentName: string | null;
+  // What the message rests on, at most three lines, each a fact on record:
+  // "Operating Systems exam is tomorrow", "Recommended now: Deadlocks, 25 min".
+  facts:       string[];
+  register:    Register;
+  // Behavioural lines from the onboarding signal, if enabled. How to deliver,
+  // never how hard to push.
+  operatingStyle: string[];
+  hasStartButton: boolean;
 }
 
-// ── Instruction templates (per intervention type) ─────────────────────────────
-// Response Brain receives one of these as the instruction.
-// Constraints come from the decision — they modify tone, not content.
-
-const PROACTIVE_INSTRUCTIONS: Record<string, string> = {
-  morning_brief: `It's the start of the student's day. Send a warm, energising morning brief. Include: what they should focus on today (based on their plan/upcoming exams), a motivational nudge, and one concrete first step. Max 3 sentences. No questions.`,
-
-  study_reminder: `The student's study window is now. Send a brief, friendly nudge to start studying. Reference what they planned or should be working on. One sentence of encouragement, one actionable suggestion. Max 2 sentences.`,
-
-  session_check_in: `The student is in an active study session. Check in briefly — acknowledge they're working, ask how it's going in one sentence. Keep it light and non-disruptive.`,
-
-  mid_session_support: `The student is mid-session. Offer brief, focused support. Acknowledge their effort, and give one helpful tip or encouragement for the current topic. Max 2 sentences.`,
-
-  missed_session: `The student missed a study session. Acknowledge it without judgment. Don't guilt-trip — just ask what got in the way and if they'd like to pick up now. Keep it warm and brief.`,
-
-  reflection_reminder: `The student studied today. Prompt a brief evening reflection: one question about what they learned and how they feel. Keep it soft and introspective. Max 2 sentences.`,
-
-  revision_reminder: `The student has topics overdue for review. Remind them warmly — name the topic(s), explain why now is a good time to revisit. Keep it practical, not pressuring. Max 2 sentences.`,
-
-  exam_countdown: `There's an exam coming soon. Give an energising, focused countdown message. Name the exam. Mention the timeline. Suggest the most important thing to focus on today. Keep it direct and calm — no panic. Max 3 sentences.`,
-
-  weekly_review: `It's the end of the week. Send a brief weekly wrap-up: acknowledge what they accomplished, what to carry into next week, and one goal for Monday. Tone: reflective and forward-looking.`,
-
-  milestone_celebration: `The student hit a study streak or milestone. Celebrate it genuinely — but briefly. One sentence of celebration, one sentence connecting it to their bigger goal. No emojis.`,
-
-  consistency_recovery: `The student has had multiple missed sessions. Don't lecture. Acknowledge things get hard. Ask what one small step they can take today to get back. Warm, not pushy.`,
-
-  burnout_prevention: `The student shows signs of burnout or overwork. Back off all study pressure entirely. Tell them explicitly it's okay to rest. Suggest one restorative activity (walk, sleep, break). Tone: calm, permission-giving.`,
+const INSTRUCTIONS: Record<ProactiveType, string> = {
+  exam_countdown:       "An exam is close. Name it and when it is. Say the one thing worth doing today. Calm and direct, no alarm.",
+  review_due:           "Topics are due for review. Name the one recommended. Say a short retrieval pass is enough.",
+  missed_plan_recovery: "They have not studied for a few days. Do not mention guilt or the gap as a failure. Make starting small and easy.",
+  daily_nudge:          "It is around the time they study and nothing is done yet today. Point at the one recommended thing.",
 };
 
-// ── Public export ─────────────────────────────────────────────────────────────
-
-export async function runProactiveResponseBrain(
-  input: ProactiveResponseInput,
-): Promise<string> {
-  const instruction = PROACTIVE_INSTRUCTIONS[input.decision.finalInterventionType]
-    ?? "Send a brief, supportive check-in message to the student.";
-
-  const dynamicContext = buildProactiveContext(input);
-  const fullSystem     = `${NOVA_STATIC_LAYER}\n\n${dynamicContext}`;
-
-  const prompt = [
-    `Intervention type: ${input.decision.finalInterventionType}`,
-    input.decision.overrideReason ? `Override reason: ${input.decision.overrideReason}` : null,
-    ``,
-    `Instruction: ${instruction}`,
-    ``,
-    `IMPORTANT: Reply with plain text only. No JSON. No labels. No quotes. Just the message Nova sends.`,
-  ].filter(Boolean).join("\n");
-
-  const raw = await generateOpenAIText({
-    model:             "gpt-4o",
-    systemInstruction: fullSystem,
-    prompt,
-    maxOutputTokens:   300,
-  });
-
-  return raw.trim();
+export function proactiveFallback(input: ProactiveWordingInput): string {
+  const lead: Record<ProactiveType, string> = {
+    exam_countdown:       "Exam check.",
+    review_due:           "Review is due.",
+    missed_plan_recovery: "Easy way back in.",
+    daily_nudge:          "Good time for a session.",
+  };
+  return [lead[input.type], ...input.facts.slice(0, 2).map(f => `${f}.`)].join(" ");
 }
 
-// ── Context builder for proactive messages ────────────────────────────────────
-// Proactive context is leaner than conversational context — no conversation
-// history, no raw message analysis. Just what the mentor needs to know.
+export async function wordProactiveMessage(
+  input: ProactiveWordingInput,
+  // Test seam; production calls the model.
+  generate?: typeof generateOpenAIText,
+): Promise<{ text: string; generated: boolean }> {
+  const context = [
+    "## Proactive Mentor Context",
+    "Mode: PROACTIVE. The student has not written; Nova is starting the conversation.",
+    input.studentName ? `Student: ${input.studentName}` : null,
+    "",
+    "## Facts on record (use at most two; state nothing that is not here)",
+    ...input.facts.slice(0, 3).map(f => `- ${f}`),
+    ...(input.operatingStyle.length > 0 ? ["", "## How this student likes coaching delivered", ...input.operatingStyle.map(l => `- ${l}`)] : []),
+  ].filter(l => l !== null).join("\n");
 
-function buildProactiveContext(input: ProactiveResponseInput): string {
-  const { studentName, momentum, academicState, upcomingExamTitle, overdueTopics, studiedToday } = input;
-  const s = academicState;
+  const prompt = [
+    `Reason for the message: ${input.type}`,
+    `Instruction: ${INSTRUCTIONS[input.type]}`,
+    registerLine(input.register),
+    input.hasStartButton ? "A Start button is attached under the message, so do not ask them to reply." : null,
+    "At most two sentences. Plain text only: no JSON, no labels, no quotes, no questions that need an answer.",
+  ].filter(Boolean).join("\n");
 
-  const lines: string[] = [
-    `## Proactive Mentor Context`,
-    `Student: ${studentName}`,
-    `Mode: PROACTIVE (no student message — Nova is initiating)`,
-    ``,
-    `## Academic State`,
-    `Phase: ${s.semesterPhase} | Momentary: ${s.momentaryState}`,
-    `Streak: ${momentum.currentStreak}d | Last session: ${momentum.lastSessionDaysAgo}d ago | Misses: ${momentum.consecutiveMisses}`,
-    `Momentum: ${momentum.currentMomentum} | Consistency: ${momentum.weeklyConsistency}`,
-    `Burnout risk: ${s.scores.burnoutRisk}/100 | Engagement: ${s.scores.engagement}/100`,
-    studiedToday ? `Studied today: YES` : `Studied today: NO`,
-  ];
-
-  if (upcomingExamTitle && s.daysUntilNextExam !== null) {
-    lines.push(`Upcoming exam: ${upcomingExamTitle} in ${s.daysUntilNextExam} day(s)`);
+  try {
+    const request = { model: "gpt-4o", systemInstruction: `${NOVA_STATIC_LAYER}\n\n${context}`, prompt, maxOutputTokens: 200 };
+    const raw  = generate ? await generate(request) : await generateOpenAIText(request);
+    const text = raw.trim();
+    // The static layer asks for JSON in conversation; here plain text was
+    // asked for. If JSON came back anyway, take its reply.
+    if (text.startsWith("{")) {
+      try {
+        const reply = (JSON.parse(text) as { reply?: unknown }).reply;
+        if (typeof reply === "string" && reply.trim()) return { text: reply.trim().slice(0, 600), generated: true };
+      } catch { /* fall through to the plain line */ }
+      return { text: proactiveFallback(input), generated: false };
+    }
+    if (!text) return { text: proactiveFallback(input), generated: false };
+    return { text: text.slice(0, 600), generated: true };
+  } catch (err) {
+    console.error("[nova:proactive] wording failed, sending the plain line:", (err as Error).message);
+    return { text: proactiveFallback(input), generated: false };
   }
-
-  if (overdueTopics.length > 0) {
-    lines.push(`Overdue for review: ${overdueTopics.slice(0, 3).join(", ")}`);
-  }
-
-  const activeDirectives = Object.entries(s.hardDirectives)
-    .filter(([_, v]) => v === true)
-    .map(([k]) => k);
-  if (activeDirectives.length > 0) {
-    lines.push(`Active directives: ${activeDirectives.join(", ")}`);
-  }
-
-  return lines.join("\n");
 }

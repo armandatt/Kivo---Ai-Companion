@@ -38,6 +38,12 @@ export function resolveTurnSignals(input: {
   // work through corroboration below: "I finished chapter 3 but I'm
   // exhausted" keeps its study report because the wording matched AND the
   // Understanding Brain listed study_report as a secondary intent.
+  // A stated struggle with a named topic. There is no wording pattern for
+  // it: it exists only when the Understanding Brain names the topic.
+  if (understanding.request?.struggleTopic) {
+    signals = withEstablishedSignal(signals, "topic_struggle", "understanding");
+  }
+
   for (const type of signalsStatedByUnderstanding(understanding)) {
     signals = withEstablishedSignal(signals, type, "understanding");
   }
