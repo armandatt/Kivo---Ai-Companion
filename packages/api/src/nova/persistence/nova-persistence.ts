@@ -47,6 +47,7 @@ import { pauseLengthSeconds, pausedSecondsOf, sessionElapsedSeconds } from "../e
 import { withEstablishedSignal } from "../engines/signal-engine";
 import { translateNovaCommand } from "../commands";
 import type { SessionEvidence, SessionExecutionReport, SessionOutcome } from "../types/session.types";
+import { refreshLearningDna } from "./learning-dna-store";
 
 export interface PersistenceInput {
   userId:          string;
@@ -500,81 +501,12 @@ async function consumeExecutionReport(
   subjects: Array<{ id: string; name: string }>,
   now:      Date,
 ): Promise<void> {
-  await Promise.allSettled([
-    // Knowledge: FSRS update for every topic covered in the session
-    ...report.masteryUpdates.map(u =>
-      updateTopicMastery(u.subjectId, u.topicName, u.confidence, now, "session_report", report.sessionId)
-    ),
+  // Knowledge: FSRS update for every topic covered in the session
+  await Promise.allSettled(report.masteryUpdates.map(u =>
+    updateTopicMastery(u.subjectId, u.topicName, u.confidence, now, "session_report", report.sessionId)
+  ));
 
-    // Learning DNA: update from session metrics
-    updateLearningDna(report.profileId, report, now),
-  ]);
-}
-
-// ── Learning DNA update from execution report ─────────────────────────────────
-// Only called from consumeExecutionReport() — never from conversation paths.
-// Computes: optimalSessionMinutes, planAdherenceProfile, confidence tier.
-
-async function updateLearningDna(
-  profileId: string,
-  report:    SessionExecutionReport,
-  now:       Date,
-): Promise<void> {
-  const existing = await prisma.novaLearningDNA.findUnique({
-    where:  { profileId },
-    select: {
-      optimalSessionMinutes: true,
-      dataPointCount:        true,
-      planAdherenceProfile:  true,
-    },
-  });
-
-  const count    = (existing?.dataPointCount ?? 0) + 1;
-
-  // Optimal session minutes: moving average over sessions that completed their goal
-  let optimalMinutes = existing?.optimalSessionMinutes ?? null;
-  if (
-    report.completionStatus === "goal_complete" ||
-    report.completionStatus === "natural"
-  ) {
-    optimalMinutes = optimalMinutes === null
-      ? report.actualDurationMinutes
-      : Math.round(0.7 * optimalMinutes + 0.3 * report.actualDurationMinutes);
-  }
-
-  // Plan adherence: actual / planned ratio across this session
-  const adherenceRatio = report.plannedDurationMinutes > 0
-    ? report.actualDurationMinutes / report.plannedDurationMinutes
-    : null;
-
-  let planAdherenceProfile = existing?.planAdherenceProfile ?? null;
-  if (adherenceRatio !== null) {
-    planAdherenceProfile =
-      adherenceRatio >= 0.8 ? "consistent" :
-      adherenceRatio <= 0.4 ? "inconsistent" :
-      "variable";
-  }
-
-  // Confidence tier: low < 3 data points, medium < 10, high >= 10
-  const dnaTier =
-    count >= 10 ? "high" :
-    count >= 3  ? "medium" :
-    "low";
-
-  await prisma.novaLearningDNA.upsert({
-    where:  { profileId },
-    update: {
-      dataPointCount:       count,
-      optimalSessionMinutes: optimalMinutes,
-      planAdherenceProfile,
-      confidence:           dnaTier,
-    },
-    create: {
-      profileId,
-      dataPointCount:       count,
-      optimalSessionMinutes: optimalMinutes,
-      planAdherenceProfile,
-      confidence:           dnaTier,
-    },
-  }).catch(err => console.error("[nova:dna] update failed", err));
+  // Learning DNA: recomputed from the learner's recent sessions, this one
+  // included. One session never sets a value by itself (learning-dna-engine.ts).
+  await refreshLearningDna(report.profileId, now).catch(err => console.error("[nova:dna] refresh failed", err));
 }

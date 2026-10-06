@@ -889,6 +889,14 @@ model NovaLearningDNA {
   dataPointCount             Int     @default(0)
   confidence                 String  @default("low")
 
+  // What the Learning DNA engine concluded the last time a session ended,
+  // one entry per signal: its conclusion, how well supported it was, since
+  // when, and what it replaced. Bookkeeping for "is this belief changing";
+  // the conclusions themselves are always recomputed from sessions.
+  // Written only by persistence/learning-dna-store.ts.
+  signals                    Json?
+  computedAt                 DateTime?
+
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())

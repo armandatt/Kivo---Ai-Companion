@@ -26,7 +26,7 @@ const REX_PAGES = ["/coach", "/goals", "/journey", "/creature", "/guide"];
 describe("routeAccess", () => {
   it("shows a Nova learner Nova's pages", () => {
     for (const { path } of NOVA_ROUTES) expect(routeAccess("nova", path)).toBe("render");
-    expect(NOVA_ROUTES.map(r => r.path)).toEqual(["/home", "/planner", "/focus", "/knowledge", "/notes", "/progress"]);
+    expect(NOVA_ROUTES.map(r => r.path)).toEqual(["/home", "/planner", "/focus", "/knowledge", "/notes", "/progress", "/learning-dna"]);
   });
 
   it("never shows a Nova learner a Rex page", () => {
@@ -50,6 +50,9 @@ describe("routeAccess", () => {
   it("keeps Nova-only pages from a Rex account", () => {
     expect(routeAccess("rex", "/focus")).toBe("not_for_rex");
     expect(routeAccess("rex", "/knowledge")).toBe("not_for_rex");
+    expect(routeAccess("rex", "/notes")).toBe("not_for_rex");
+    expect(routeAccess("rex", "/learning-dna")).toBe("not_for_rex");
+    expect(routeAccess("rex", "/learning-dna/anything")).toBe("not_for_rex");
   });
 
   // Home, Planner and Progress are one route with a page for each companion:

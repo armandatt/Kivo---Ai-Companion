@@ -113,7 +113,8 @@ export function NovaProgress({ view }: { view: NovaProgressReady }) {
               <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Your usual session</h2>
               <p className="mt-3 text-base font-medium text-foreground">About {minutesLabel(view.usualSession.minutes)}</p>
               <p className="mt-1 text-xs leading-relaxed text-foreground/45">
-                A running average of the sessions you saw through, over {view.usualSession.basedOnSessions} finished sessions.
+                The middle of your last {view.usualSession.basedOnSessions} sessions.{' '}
+                <Link href="/learning-dna" className="text-keppel-300 hover:text-keppel-200">See how Nova knows</Link>
               </p>
             </section>
           )}

@@ -220,8 +220,29 @@ Contracts live in `packages/api/src/nova/product/today.types.ts` (no imports, so
 - **Consistency trend**: average active days a week over the last four finished weeks against the four before, and only when the learner had started by the first of those eight. Otherwise `not_enough_history`.
 - **Topic growth**: a topic has moved when its mastery number is 10 points from the earliest recorded value that already had a session behind it. With no recorded history, direction comes from the learner's own "How did it go?" answers, and no movement is drawn. Mastery numbers and levels are the Knowledge Engine's (`masteryLevel`); Progress has no bands of its own.
 - **Journey events** are derived at read time, never stored: first session, the 5th/10th/25th/… counted session, comebacks, a session that moved a topic into a higher level, and "Good" or "Crushed it" after "Struggled". Each carries the id of the session or mastery record it rests on.
-- **Not shown, because nothing on record supports it**: a daily streak (the Academic State Engine owns the only one, in server time, and Home shows it), focus quality and energy (derived from pause counts; `energyTrend` is a constant), reflections (`reflectionText` is never written), goal completion (`goals` is free text with no state), behavioural patterns and reality. Learning DNA contributes only the usual session length, and only once its own `confidence` is above `low`.
+- **Not shown, because nothing on record supports it**: a daily streak (the Academic State Engine owns the only one, in server time, and Home shows it), focus quality and energy (derived from pause counts; `energyTrend` is a constant), reflections (`reflectionText` is never written), goal completion (`goals` is free text with no state), behavioural patterns and reality. Learning DNA contributes only the usual session length, and only once its own `confidence` is above `low` (ten sessions).
 - Sessions and mastery records are read 365 days back; older counted sessions arrive as totals from one aggregate, so the query count is fixed and the response does not grow with history.
+
+**Learning DNA** (`GET /api/nova/learning-dna`, UI in `apps/web/components/nova/learning-dna/`). How this learner studies, as beliefs that carry their own support and can change. One owner, three files:
+
+- `engines/learning-dna-engine.ts` (pure) computes every signal. Nothing else may: Progress shows the stored session length, it does not work one out (`learning-dna.test.ts` reads the source to hold this).
+- `persistence/learning-dna-store.ts` is the only reader of DNA evidence and the only writer of `NovaLearningDNA`. `refreshLearningDna` runs when a session ends (`consumeExecutionReport`); reading writes nothing.
+- `product/learning-dna.ts` lays the signals out for the page and holds the timezone write.
+
+The rules that keep one unusual day from becoming a belief, each with a test:
+
+- **Evidence** is counted sessions (`isCountedSession` in `study-session-engine.ts`, shared with Progress) from the last 90 days, at most 60. Older sessions leave the window, so a belief nobody renews fades.
+- **Levels**: `unknown` below 5 pieces of evidence, `emerging` from 5, `supported` from 10, `strong` from 20. A signal at `unknown` has no value; it says what it would need.
+- **Typical values** are a median with its middle half, never an average.
+- **Comparisons** ("this length goes better") use only the learner's "How did it go?" answers, need 4 answered sessions on each of two sides and a 20-point lead, and are as confident as their smaller side (4 / 8 / 15). Otherwise there is no conclusion.
+- **Weakening**: every conclusion is rechecked against the latest sessions (the last 8, or the latest half for comparisons). Disagreement marks it `weakening` before it changes.
+- **Time of day** is claimed only when `NovaAcademicProfile.timezone` holds a real zone. The setup conversation never asks, so the learner's device reports it once through `PUT /api/nova/timezone`; it is stored only while none is stored and cannot be moved by a later request.
+- `NovaLearningDNA.signals` is bookkeeping (since when a conclusion has held, what it replaced), not the conclusions: those are recomputed from sessions on every read. The older columns (`optimalSessionMinutes`, `planAdherenceProfile`, `dataPointCount`, `confidence`) are filled by `legacyDnaColumns` from the same signals.
+- **Not computed, because nothing on record supports it**: distraction, burnout, preferred formats, focus, energy. The page lists them under "What Nova doesn't know". Do not derive them from pauses, short sessions or gaps.
+- `preferredStudyTime` is what the learner said in setup. It is shown as their statement and feeds no signal.
+- Learning DNA is not memory: it writes no `UserFact`, `UserReality`, `BehavioralPattern` or mastery, and a future source of evidence (a browser extension's learning events) should arrive as sessions or as a new evidence type in the store, not as a second calculation.
+
+`engines/learner-calendar.ts` holds the day, week and clock-hour helpers Planner, Progress and Learning DNA share.
 
 Session rules that must hold:
 
@@ -241,4 +262,4 @@ export NOVA_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:54329/novates
 (cd packages/api && npm run test:integration)
 ```
 
-`nova-progress.itest.ts` is the only proof that a replayed or concurrent session report moves a topic once (the unique key and the rollback need a real database). `nova-session-start.itest.ts` is the only proof of the session-start lock: concurrency cannot be shown against a mock. Two tests in `nova-persist-turn.itest.ts` fail because of the fixture's own timeline (its turns span four days, but an illness expires after 72 hours); they are not product failures.
+`nova-learning-dna.itest.ts` covers the refresh on session end and the timezone write. `nova-progress.itest.ts` is the only proof that a replayed or concurrent session report moves a topic once (the unique key and the rollback need a real database). `nova-session-start.itest.ts` is the only proof of the session-start lock: concurrency cannot be shown against a mock. Two tests in `nova-persist-turn.itest.ts` fail because of the fixture's own timeline (its turns span four days, but an illness expires after 72 hours); they are not product failures.

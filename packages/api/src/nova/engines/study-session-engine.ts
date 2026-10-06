@@ -288,3 +288,17 @@ export function buildExecutionReport(
     producedAt:             now,
   };
 }
+
+// ── Which finished sessions count as study ────────────────────────────────────
+// The one definition, used by Progress and Learning DNA. A session the
+// learner only told Nova about ("self_reported") has a placeholder duration
+// and no timer behind it; a timer stopped inside ten minutes is not a study
+// session. Ten minutes is the shortest block the Planning Engine schedules
+// (MIN_BLOCK_MINUTES).
+
+export const SELF_REPORTED_ACTIVITY  = "self_reported";
+export const COUNTED_SESSION_MINUTES = 10;
+
+export const isTimedSession   = (s: { activityType: string }) => s.activityType !== SELF_REPORTED_ACTIVITY;
+export const isCountedSession = (s: { activityType: string; durationMinutes: number }) =>
+  isTimedSession(s) && s.durationMinutes >= COUNTED_SESSION_MINUTES;

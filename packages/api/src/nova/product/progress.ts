@@ -10,11 +10,10 @@
 
 import { prisma } from "@repo/db/client";
 import { getAllTopicMasteries, masteryLevel } from "../engines/knowledge-engine";
-import { MIN_BLOCK_MINUTES } from "../engines/planning-engine";
-import { SESSION_OUTCOMES } from "../engines/study-session-engine";
+import { COUNTED_SESSION_MINUTES, SELF_REPORTED_ACTIVITY, SESSION_OUTCOMES, isCountedSession, isTimedSession } from "../engines/study-session-engine";
 import { normalizeTopicName } from "../engines/topic-mastery-engine";
 import type { TopicMasteryState } from "../types/engine.types";
-import { dayKey, resolveTimezone } from "./planner";
+import { dayKey, dayKeyOfNumber, dayNumber, mondayOf, resolveTimezone } from "../engines/learner-calendar";
 import type {
   ConsistencyTrend,
   JourneyEvent,
@@ -31,9 +30,7 @@ import type {
 
 // ── Definitions ───────────────────────────────────────────────────────────────
 
-// A session counts once it is at least as long as the shortest block the
-// Planning Engine will schedule.
-export const COUNTED_SESSION_MINUTES = MIN_BLOCK_MINUTES;
+export { COUNTED_SESSION_MINUTES };
 // The Academic State Engine calls a learner "returning" after more than
 // three days without a session. A comeback is the session that ends such a
 // gap: the fourth calendar day after the previous active day, or later.
@@ -47,7 +44,6 @@ export const PROGRESS_WINDOW_DAYS    = 365;
 export const FINISHED_WEEKS          = 8;
 export const RECENT_DAYS             = 30;
 
-const SELF_REPORTED_ACTIVITY = "self_reported";
 const OUTCOMES_PER_TOPIC     = 6;
 const JOURNEY_LIMIT          = 40;
 const CHANGES_LIMIT          = 5;
@@ -64,9 +60,7 @@ export interface ProgressSessionRecord {
   executionReport: unknown;
 }
 
-export const isTimedSession   = (s: { activityType: string }) => s.activityType !== SELF_REPORTED_ACTIVITY;
-export const isCountedSession = (s: { activityType: string; durationMinutes: number }) =>
-  isTimedSession(s) && s.durationMinutes >= COUNTED_SESSION_MINUTES;
+export { isCountedSession, isTimedSession };
 
 // A row of the Topic Mastery Engine's record of its changes.
 export interface MasteryRecord {
@@ -104,14 +98,10 @@ export const NO_EARLIER_SESSIONS: ProgressInputs["before"] = {
 
 // ── Calendar days ─────────────────────────────────────────────────────────────
 // A day is a YYYY-MM-DD key in the learner's timezone (planner.ts dayKey),
-// held as a whole number of days so that gaps and weeks are subtraction.
+// held as a whole number of days so that gaps and weeks are subtraction
+// (engines/learner-calendar.ts).
 
-const dayNumber = (key: string): number => {
-  const [y, m, d] = key.split("-").map(Number) as [number, number, number];
-  return Math.floor(Date.UTC(y, m - 1, d) / DAY_MS);
-};
-const keyOf    = (day: number): string => new Date(day * DAY_MS).toISOString().slice(0, 10);
-const mondayOf = (day: number): number => day - ((new Date(day * DAY_MS).getUTCDay() + 6) % 7);
+const keyOf = dayKeyOfNumber;
 
 // ── Wording ───────────────────────────────────────────────────────────────────
 

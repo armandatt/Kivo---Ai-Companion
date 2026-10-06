@@ -212,11 +212,16 @@ test("the journey holds only moments with a record behind them, and every record
   assert.equal(view.changes[2]!.text, "You've completed 4 focused sessions in the last 30 days.");
 });
 
-test("Learning DNA is shown only once it has marked itself as more than a single session", async () => {
+test("the usual session length is Learning DNA's, and is shown only once Learning DNA supports it", async () => {
+  // Four counted sessions: Learning DNA concludes nothing, and stores "low".
   const dna = await prisma.novaLearningDNA.findUniqueOrThrow({ where: { profileId: profile.a } });
-  assert.ok(dna.dataPointCount >= 3 && dna.confidence !== "low");
-  const view = await progress(CHAT.a);
-  assert.deepEqual(view.usualSession, { minutes: dna.optimalSessionMinutes, basedOnSessions: dna.dataPointCount });
+  assert.deepEqual([dna.dataPointCount, dna.confidence], [4, "low"]);
+  assert.equal((await progress(CHAT.a)).usualSession, null, "four sessions are not a habit");
+
+  // Once Learning DNA holds a supported conclusion, Progress shows that number and no other.
+  await prisma.novaLearningDNA.update({ where: { profileId: profile.a }, data: { optimalSessionMinutes: 30, dataPointCount: 12, confidence: "medium" } });
+  assert.deepEqual((await progress(CHAT.a)).usualSession, { minutes: 30, basedOnSessions: 12 });
+  await prisma.novaLearningDNA.update({ where: { profileId: profile.a }, data: { optimalSessionMinutes: dna.optimalSessionMinutes, dataPointCount: dna.dataPointCount, confidence: dna.confidence } });
 
   await session(CHAT.b, "DBMS", "Joins", ago(2), "good", 30);
   assert.equal((await progress(CHAT.b)).usualSession, null, "one session is not a pattern");

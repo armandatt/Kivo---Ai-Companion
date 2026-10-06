@@ -22,6 +22,7 @@ import type {
   PlannerSessionEntry,
   PlannerUnknown,
 } from "./planner.types";
+import { dayKey, resolveTimezone } from "../engines/learner-calendar";
 
 const DAY_MS = 86_400_000;
 const MAX_REVIEWS_PER_DAY = 4;
@@ -29,21 +30,7 @@ const MAX_REASONS_PER_SUBJECT = 3;
 
 // ── Days in the student's timezone ────────────────────────────────────────────
 
-export function resolveTimezone(timezone: string | null): string {
-  if (!timezone) return "UTC";
-  try {
-    new Intl.DateTimeFormat("en-CA", { timeZone: timezone });
-    return timezone;
-  } catch {
-    return "UTC";
-  }
-}
-
-export function dayKey(date: Date, timezone: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(date);
-}
+export { dayKey, resolveTimezone };
 
 // Monday to Sunday of the week containing `today` (a YYYY-MM-DD key).
 export function weekOf(today: string): string[] {
