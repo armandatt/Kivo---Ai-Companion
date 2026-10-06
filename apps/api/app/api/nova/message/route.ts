@@ -27,13 +27,13 @@ export async function POST(req: Request) {
   const learner = await resolveNovaLearner()
   if (learner.kind === "unauthenticated") return fail(401, "unauthenticated", "Sign in to talk to Nova.")
   if (learner.kind === "not_nova")        return fail(409, "not_nova", "This account is not set up with Nova.")
-  if (learner.kind === "not_connected")   return fail(409, "not_connected", "Connect Telegram to start with Nova.")
+  if (learner.kind === "not_connected")   return fail(409, "not_connected", "Choose Nova in setup first.")
 
   const body = await req.json().catch(() => null) as { text?: unknown } | null
   const text = typeof body?.text === "string" ? body.text.trim().slice(0, MAX_TEXT_LENGTH) : ""
   if (!text) return fail(400, "empty", "Say something first.")
 
-  const limit = await checkRateLimit(learner.platformChatId)
+  const limit = await checkRateLimit(learner.platformChatId, learner.channel)
   if (!limit.allowed) return fail(429, "rate_limited", "You've reached the message limit for now. Try again shortly.")
 
   const since = inFlight.get(learner.platformChatId)

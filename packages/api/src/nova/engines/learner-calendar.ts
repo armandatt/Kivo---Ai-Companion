@@ -46,6 +46,15 @@ export function dayNumber(key: string): number {
   return Math.floor(Date.UTC(y, m - 1, d) / DAY_MS);
 }
 
+// Whole calendar days from now to an instant, in the learner's timezone:
+// 0 is today, 1 is tomorrow, whatever the hour. This is what "in N days"
+// means to a person; elapsed time rounded up calls tomorrow afternoon's exam
+// "in 2 days" all morning.
+export function calendarDaysUntil(at: Date, now: Date, timezone: string | null): number {
+  const zone = resolveTimezone(timezone);
+  return Math.max(0, dayNumber(dayKey(at, zone)) - dayNumber(dayKey(now, zone)));
+}
+
 export const dayKeyOfNumber = (day: number): string => new Date(day * DAY_MS).toISOString().slice(0, 10);
 
 // The Monday of the week a day falls in.

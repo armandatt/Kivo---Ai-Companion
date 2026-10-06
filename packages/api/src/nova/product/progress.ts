@@ -9,6 +9,7 @@
 // functions directly below. They are documented in progress.types.ts.
 
 import { prisma } from "@repo/db/client";
+import { learnerKey } from "./learner-key";
 import { getAllTopicMasteries, masteryLevel } from "../engines/knowledge-engine";
 import { COUNTED_SESSION_MINUTES, SELF_REPORTED_ACTIVITY, SESSION_OUTCOMES, isCountedSession, isTimedSession } from "../engines/study-session-engine";
 import { normalizeTopicName } from "../engines/topic-mastery-engine";
@@ -427,7 +428,7 @@ export async function loadNovaProgress(
   const now = options.now ?? new Date();
 
   const user = await prisma.messengerUser.findUnique({
-    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    where:  learnerKey(platformChatId),
     select: {
       novaAcademicProfile: {
         select: {

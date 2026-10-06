@@ -14,6 +14,7 @@ import { recordStatedMinutes } from "../product/planning-inputs";
 import { addExam } from "../product/exams";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
 import { loadStudySnapshot } from "../engines/study-snapshot";
+import { subjectsNamedIn } from "../engines/topic-mastery-engine";
 import type { NovaTodayReady, TodayAction } from "../product/today.types";
 import { loadChannel, pauseProactiveUntil, setProactiveEnabled } from "./channel-store";
 import {
@@ -97,20 +98,36 @@ export async function offerStart(ctx: ActionContext, named: string | null, state
   const [view, session] = await Promise.all([todayView(ctx, statedMinutes), loadNovaSession(ctx.chatId, ctx.now)]);
   if (!view) return done("offer_start", { text: TEXT.finishSetup }, false);
   if (session) return done("offer_start", sessionReply(session, "You already have one going."));
-  const pick = pickStart(view, named, named ? (await loadStudySnapshot(ctx.chatId)).subjects : []);
+  const subjects = named ? (await loadStudySnapshot(ctx.chatId)).subjects : [];
+  const pick = pickStart(view, named, subjects);
   if (!pick) return done("offer_start", todayReply(view, null));
-  const asAction: TodayAction = "urgency" in pick ? pick : {
-    topicName: pick.topicName, subjectName: "your choice", activityType: "practice",
-    durationMinutes: 25, urgency: "normal", reasons: [], rationale: "",
+  if ("urgency" in pick) return done("offer_start", recommendationReply(view, pick));
+
+  // A topic today's plan does not have. It can be studied, but it has to be
+  // filed under one of the learner's subjects for the session to count
+  // toward anything, and Nova does not guess which. If the name itself says
+  // (a subject's name or code is in it), that is the subject; otherwise the
+  // learner picks.
+  const minutes = clampMinutes(statedMinutes ?? 25);
+  const said    = subjectsNamedIn(pick.topicName, subjects);
+  const choices = said.length === 1 ? said : subjects.slice(0, 4);
+  if (choices.length === 0) return done("offer_start", { text: TEXT.finishSetup }, false);
+  const reply: TelegramReply = {
+    text: choices.length === 1
+      ? `${pick.topicName} (${choices[0]!.name})\nNot on today's plan, but it's yours to pick.`
+      : `${pick.topicName}\nNot on today's plan yet. Which subject is it part of?`,
+    prompt: {
+      kind: "start",
+      options: [
+        ...choices.map((subject, i) => ({
+          id: "abcd"[i]!,
+          label: choices.length === 1 ? `Start ${minutes} min` : `${subject.name} · ${minutes} min`.slice(0, 40),
+          action: { type: "start" as const, topicName: pick.topicName, subjectName: subject.name, minutes },
+        })),
+        { id: "e", label: "Later", action: { type: "later" as const } },
+      ],
+    },
   };
-  const reply = recommendationReply(view, asAction);
-  // A topic the plan does not know has no subject to file it under.
-  if (!("urgency" in pick) && reply.prompt) {
-    reply.text = `${pick.topicName}\nNot on today's plan, but it's yours to pick.`;
-    reply.prompt.options = reply.prompt.options
-      .filter(o => o.action.type !== "something_else")
-      .map(o => o.action.type === "start" ? { ...o, action: { ...o.action, subjectName: null } } : o);
-  }
   return done("offer_start", reply);
 }
 

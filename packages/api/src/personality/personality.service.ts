@@ -99,14 +99,20 @@ export async function getLatestSignal(
   return parseStoredSignal(row?.scores);
 }
 
-// Telegram-side lookup. MessengerUser has no foreign key to User; the link is
-// UserProfile.telegramChatId. Users who never did web onboarding have no signal.
+// The web account behind a learner. A learner is named either by their
+// Telegram chat id (the link is UserProfile.telegramChatId; MessengerUser has
+// no foreign key to User) or, before they connect Telegram, by "web:<userId>"
+// (nova/product/learner-key.ts).
+const accountOfLearner = (learnerId: string): { userId: string } | { telegramChatId: string } =>
+  learnerId.startsWith("web:") ? { userId: learnerId.slice(4) } : { telegramChatId: learnerId };
+
+// Lookup by learner. Users who never did web onboarding have no signal.
 export async function getSignalForChat(
   platformChatId: string,
   db:             PersonalityDb = defaultDb,
 ): Promise<PersonalitySignal | null> {
   const profile = await db.userProfile.findFirst({
-    where:  { telegramChatId: platformChatId },
+    where:  accountOfLearner(platformChatId),
     select: { userId: true },
   });
   const userId = profile?.userId;
@@ -137,7 +143,7 @@ export async function getAccountabilityForChat(
 ): Promise<"hard" | "soft" | null> {
   try {
     const profile = await db.userProfile.findFirst({
-      where:  { telegramChatId: platformChatId },
+      where:  accountOfLearner(platformChatId),
       select: { accountabilityStyle: true },
     });
     return normalizeAccountability((profile as { accountabilityStyle?: string | null } | null)?.accountabilityStyle);

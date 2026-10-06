@@ -80,6 +80,8 @@ Four reasons only: `exam_countdown` (the Today view's `daysUntil` ≤ 3), `revie
 - **Study pressure also needs**: the learner's window (Learning DNA's usual window once supported, else what they said in setup, else 17:00–20:00), no emotional or life constraint, nothing studied today, no earlier push today.
 - **Outbox**: `claimed → ready → sending → sent`. The claim is the unique `(profileId, occurrenceKey)`. Text is stored before sending, so a retry does not ask the model again. A send with no answer becomes `unknown` and is never resent. Only `sent`, `sending` and `unknown` count toward the cap. A decision not to send writes nothing.
 - **Timing is a window**, never a minute. A late tick still finds the window open.
+- **A retry is asked again.** A message approved on an earlier tick and not yet delivered goes out only if `holdReason` (the same gates, with what is true now) allows it; held, it waits, and is dropped when its three-hour retry window passes. A session finished in the last 30 minutes counts as recent contact, like a message.
+- **Web-only learners are never messaged**: the tick selects `platform: "telegram"` rows.
 
 ## Model calls
 
@@ -121,7 +123,8 @@ Worth alerting on: `failure` of `internal`, `operation_failed`, `understanding_f
 
 ## Known limits
 
-- A Nova learner still cannot exist without a linked Telegram chat. That is an identity decision outside this work.
+- Telegram is optional. A Nova account is a learner from its first request (`nova/product/learner-identity.ts`); its row is keyed `web:<userId>` until a chat is connected, when `telegram-link.ts` re-keys that same row to the chat. There is no unlink: once connected, the chat is the learner's key.
+- A chat that already holds a Nova learner, or a finished Rex setup, cannot be connected to an account that has its own Nova learner. It is refused, not merged.
 - Token counts in the turn log are estimates; the shared model client does not report usage.
 - Templates are English only.
 - Quiet hours are fixed at 23:00–07:00 local.

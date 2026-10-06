@@ -22,8 +22,8 @@ import { loadOperatingStyle, loadAccountabilityStyle } from "../adapters/operati
 import { retryPendingConsolidations } from "../consolidation/run-consolidation";
 import { chooseRegister } from "../decision/register";
 import {
-  decideProactive, isQuietHour, studyWindow, RECENT_MESSAGE_MINUTES,
-  type ProactiveCandidate, type ProactiveFacts,
+  decideProactive, holdReason, isQuietHour, studyWindow, RECENT_MESSAGE_MINUTES,
+  type ProactiveCandidate, type ProactiveFacts, type ProactiveGates,
 } from "../decision/proactive-decision";
 import { loadLearningDna } from "../persistence/learning-dna-store";
 import { loadNovaToday } from "../product/today";
@@ -127,15 +127,6 @@ async function processLearner(
   const view   = await loadNovaToday(chatId, { learnerName: profile.user.displayName, now });
   if (view.status !== "ready") return false;
 
-  // ── Something a previous tick claimed but did not finish ───────────────────
-  // It was already decided, so it is not decided again. It is only held back
-  // while sending it now would be wrong.
-  const pending = await recoverPending(profile.id, now);
-  if (pending.length > 0) {
-    if (paused || view.activeSession) return false;
-    return deliver(pending[0]!, profile, view, now, client, word, null);
-  }
-
   // ── Decide ─────────────────────────────────────────────────────────────────
   const [delivered, dna, dueTopics, messagedRecently] = await Promise.all([
     loadDelivered(profile.id, day),
@@ -167,12 +158,35 @@ async function processLearner(
     reviewDueCount: dueTopics.length,
     hasPlan:        view.recommendation !== null,
   };
-  const decision = decideProactive(facts, {
+  // Someone who has just closed a session was with Nova a moment ago, on
+  // whichever surface: that is recent contact, the same as a message.
+  const last = view.progress.lastSession;
+  const finishedRecently = last !== null
+    && now.getTime() - (new Date(last.date).getTime() + last.minutes * 60_000) < RECENT_MESSAGE_MINUTES * 60_000;
+  const gates: ProactiveGates = {
     proactiveEnabled: channel.proactiveEnabled, paused, undeliverable: false, hasTimezone: true,
-    activeSession: view.activeSession !== null, messagedRecently,
+    activeSession: view.activeSession !== null, messagedRecently: messagedRecently || finishedRecently,
     sentToday: delivered.today, lastSentAt: delivered.lastSentAt,
     realityCategories: view.constraints.map(c => c.category), now,
-  });
+  };
+
+  // ── Something a previous tick approved but did not deliver ─────────────────
+  // It is not decided again, and nothing new is considered while it waits.
+  // But it goes out only if it would still be right to send: the gates are
+  // asked again with what is true now. Held, it is tried on a later tick, and
+  // the outbox drops it once its retry window has passed.
+  const pending = await recoverPending(profile.id, now);
+  if (pending.length > 0) {
+    const waiting = pending[0]!;
+    const held    = holdReason(waiting.type as ProactiveType, facts, gates);
+    if (held) {
+      console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", profileId: profile.id, type: waiting.type, occurrence: waiting.occurrenceKey, outcome: "held", reason: held }));
+      return false;
+    }
+    return deliver(waiting, profile, view, now, client, word, null);
+  }
+
+  const decision = decideProactive(facts, gates);
   if (!decision.chosen) {
     if (decision.suppressed.length > 0) {
       console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", profileId: profile.id, sent: false, suppressed: decision.suppressed }));

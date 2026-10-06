@@ -85,14 +85,15 @@ export function ConnectNova({ onCheck }: { onCheck: () => void }) {
   )
 }
 
-// Linked, but Nova has not finished learning the basics. The conversation
-// below is Nova's own onboarding, the same one it runs on Telegram.
+// Nova has not finished learning the basics. The conversation below is
+// Nova's own onboarding, the same one it runs on Telegram. Telegram itself is
+// optional and is connected from Settings.
 export function NovaOnboarding({ onProgress }: { onProgress: () => void }) {
   return (
-    <SetupFrame step="Step 2 of 2" title="Tell Nova what you're studying">
+    <SetupFrame step="Getting started" title="Tell Nova what you're studying">
       <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">
         Nova can only recommend what it knows about. It needs your course and year, the subjects you are
-        taking this term, and any exams or deadlines coming up. Answer here or in Telegram; it is the same conversation.
+        taking this term, and any exams or deadlines coming up. You can connect Telegram later in Settings; it is optional.
       </p>
       <TalkToNova
         className="mt-6"

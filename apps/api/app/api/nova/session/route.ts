@@ -15,7 +15,7 @@ async function resolveOnboardedLearner() {
   const learner = await resolveNovaLearner()
   if (learner.kind === "unauthenticated") return { error: fail(401, "unauthenticated", "Sign in to study with Nova.") }
   if (learner.kind === "not_nova")        return { error: fail(409, "not_nova", "This account is not set up with Nova.") }
-  if (learner.kind === "not_connected")   return { error: fail(409, "not_connected", "Connect Telegram to start with Nova.") }
+  if (learner.kind === "not_connected")   return { error: fail(409, "not_connected", "Choose Nova in setup first.") }
   if (!learner.onboardingDone)            return { error: fail(409, "onboarding_incomplete", "Finish setting up with Nova first.") }
   return { learner }
 }

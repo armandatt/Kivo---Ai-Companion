@@ -332,7 +332,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
             ? {
                 responseFallback: fallback,
                 directive: plain
-                  ? `Nova's system already did or offered exactly this, and nothing else: "${plain.slice(0, 400)}". Say it in your own words in at most three short sentences. Buttons for the next step are attached, so do not list options. Do not say anything else was started, ended, saved, added or scheduled.`
+                  ? `Nova's system already did or offered exactly this, and nothing else: "${plain.slice(0, 400)}". Say it in your own words in at most three short sentences. Buttons for the next step are attached, so do not list options. Do not say anything else was started, ended, saved, added or scheduled, and do not state a date, a number of days or any other figure that is not in that sentence or the context above.`
                   : NOTHING_WAS_DONE,
               }
             : { scriptedReply: fallback }),
@@ -371,7 +371,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
 // Said to the Response Brain on a turn with no product action, so that a
 // reply cannot claim one.
 const NOTHING_WAS_DONE =
-  "Nova's system took no action this turn: nothing was started, paused, ended, saved, added or scheduled, and no reminder was set. Do not say or imply otherwise, and do not offer to do something this chat has no button for. Reply in at most three short sentences.";
+  "Nova's system took no action this turn: nothing was started, paused, ended, saved, added or scheduled, and no reminder was set. Do not say or imply otherwise, and do not offer to do something this chat has no button for. Do not state a date, a number of days or any other figure that is not written in the context above. Reply in at most three short sentences.";
 
 // The open prompt as the decision sees it: which options exist and what each
 // one is. Read from Nova's own record, never from the message.

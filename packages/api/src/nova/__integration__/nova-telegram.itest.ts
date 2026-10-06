@@ -885,15 +885,25 @@ test("\"exam is tomorrow\" cannot make a second exam", async () => {
   }
   assert.equal(await prisma.novaExam.count({ where: { profileId: l.profileId } }), 1);
 
-  // With no exam on record, a subject-less "exam" is still not offered: there is nothing to file it under.
+  // The Response Brain was told nothing was done, so it cannot say it was.
+  assert.ok(ai.worded.at(-1)!.includes("took no action this turn"), ai.worded.at(-1));
+
+  // With no exam on that day, Nova cannot tell which subject "exam" means, and
+  // does not guess: the learner picks, and the exam is filed under their pick.
   const m = await seedLearner("Exb");
+  await prisma.novaSubject.create({ data: { profileId: m.profileId, name: "Databases" } });
   const second = harness();
   second.ai.read("exam is tomorrow", { ...BASE, intent: "exam_anxiety", emotion: "anxious_exam", request: { ...REQ, exam: { title: "exam", date: tomorrow } } });
   await second.send(m, "exam is tomorrow");
-  assert.ok(!second.tg.labels().some(label => label.startsWith("Add exam")));
-  assert.equal(await prisma.novaExam.count({ where: { profileId: m.profileId } }), 0);
-  // The Response Brain is told nothing was done, so it cannot say it was.
-  assert.ok(second.ai.worded.at(-1)!.includes("took no action this turn"), second.ai.worded.at(-1));
+  assert.deepEqual(second.tg.labels().sort(), ["Add: Databases", "Add: Operating Systems", "No"]);
+  assert.equal(await prisma.novaExam.count({ where: { profileId: m.profileId } }), 0, "asking adds nothing");
+  await second.tap(m, "Add: Operating Systems");
+  const added = await prisma.novaExam.findMany({ where: { profileId: m.profileId } });
+  assert.deepEqual(added.map(e => [e.title, e.subjectId]), [["Operating Systems exam", m.subjectId]]);
+  // Said again: that day now has an exam, so nothing more is offered.
+  await second.send(m, "exam is tomorrow");
+  assert.ok(!second.tg.labels().some(label => label.startsWith("Add")));
+  assert.equal(await prisma.novaExam.count({ where: { profileId: m.profileId } }), 1);
 });
 
 test("a message that takes itself back starts nothing", async () => {

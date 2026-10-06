@@ -150,6 +150,14 @@ function candidateBlock(c: ProactiveCandidate, f: ProactiveFacts, g: ProactiveGa
   return null;
 }
 
+// Whether a message that was approved on an earlier tick, and not yet
+// delivered, may still go out now. The same gates, asked again: a send that
+// failed an hour ago is not owed to a learner who has since started studying,
+// fallen ill or said "not today". null: it may. Otherwise, why not.
+export function holdReason(type: ProactiveType, facts: ProactiveFacts, gates: ProactiveGates): string | null {
+  return globalBlock(gates, facts.localHour) ?? candidateBlock({ type, occurrenceKey: "", reason: "" }, facts, gates);
+}
+
 export function decideProactive(facts: ProactiveFacts, gates: ProactiveGates): ProactiveDecision {
   const candidates = generateCandidates(facts);
   if (candidates.length === 0) return { chosen: null, suppressed: [] };

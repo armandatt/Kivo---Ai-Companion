@@ -127,7 +127,8 @@ describe("notes boundary: a note is content, not cognitive state", () => {
   it("the notes module imports no brain, orchestrator, consolidation, conversation log or LLM client", () => {
     const imports = [...notes.matchAll(/from\s+"([^"]+)"/g)].map(m => m[1]!);
     expect(imports.sort()).toEqual([
-      "../engines/planning-engine", "../engines/topic-mastery-engine", "./notes.types", "@repo/db/client",
+      // learner-key: a pure helper with no imports (how a learner's row is named).
+      "../engines/planning-engine", "../engines/topic-mastery-engine", "./learner-key", "./notes.types", "@repo/db/client",
     ]);
     for (const banned of ["brains", "consolidation", "orchestrator", "entry", "conversation-adapter", "openai", "persistence", "knowledge-engine"]) {
       expect(imports.some(i => i.includes(banned))).toBe(false);

@@ -6,6 +6,7 @@
 // No LLM call.
 
 import { prisma } from "@repo/db/client";
+import { learnerKey } from "./learner-key";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
 import { isIsoDay } from "../brains/understanding-parser";
 import { subjectsNamedIn } from "../engines/topic-mastery-engine";
@@ -32,7 +33,7 @@ export async function addExam(
   if (!isIsoDay(input.date)) return { status: "invalid", reason: "bad_date" };
 
   const user = await prisma.messengerUser.findUnique({
-    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    where:  learnerKey(platformChatId),
     select: { novaAcademicProfile: { select: { id: true, timezone: true, subjects: { select: { id: true, name: true, code: true } } } } },
   });
   const profile = user?.novaAcademicProfile;
@@ -64,22 +65,32 @@ export async function addExam(
   return { status: "added", title, date: input.date };
 }
 
-// What Nova may offer to add when a message names an exam and its day.
-// Only an exam for one of the learner's own subjects is offered, and only
-// when that subject has no exam on (about) that day already. An exam that
-// names no subject ("exam is tomorrow") is never offered: the learner's
-// existing exam for that day is almost certainly the one they mean, and an
-// exam with no subject cannot be planned for.
+// What Nova may offer to add when a message names an exam and its day, and
+// under which of the learner's subjects. Nova never picks the subject itself.
+//
+//   the label names one subject   offered under it, unless that subject has an
+//                                 exam on (about) that day already
+//   it names none ("exam is       if any exam is on that day, that one is
+//   tomorrow", "Databases" for    almost certainly meant: nothing is offered.
+//   "Database Management          Otherwise it is offered with the learner's
+//   Systems")                     subjects to choose from
+//   it names several              offered with those to choose from
+//
+// An exam is never offered without a subject: one cannot be planned for.
+export interface ExamOffer { title: string; date: string; subjectNames: string[] }
+export const EXAM_SUBJECT_CHOICES = 4;
+
 export function examToOffer(
   exam:     { title: string; date: string },
   subjects: Array<{ id: string; name: string; code?: string | null }>,
   upcoming: Array<{ subjectId: string | null; scheduledAt: Date }>,
-): { title: string; subjectName: string; date: string } | null {
-  if (!isIsoDay(exam.date)) return null;
+): ExamOffer | null {
+  if (!isIsoDay(exam.date) || subjects.length === 0) return null;
+  const at    = examInstant(exam.date).getTime();
+  const near  = upcoming.filter(e => Math.abs(e.scheduledAt.getTime() - at) <= 1.5 * DAY_MS);
   const named = subjectsNamedIn(exam.title, subjects);
-  if (named.length !== 1) return null;
-  const subject = named[0]!;
-  const at = examInstant(exam.date).getTime();
-  const known = upcoming.some(e => e.subjectId === subject.id && Math.abs(e.scheduledAt.getTime() - at) <= 1.5 * DAY_MS);
-  return known ? null : { title: exam.title.trim().slice(0, 80), subjectName: subject.name, date: exam.date };
+  if (named.length === 0 && near.length > 0) return null;
+  const free  = (named.length > 0 ? named : subjects).filter(s => !near.some(e => e.subjectId === s.id));
+  if (free.length === 0) return null;
+  return { title: exam.title.trim().slice(0, 80), date: exam.date, subjectNames: free.slice(0, EXAM_SUBJECT_CHOICES).map(s => s.name) };
 }

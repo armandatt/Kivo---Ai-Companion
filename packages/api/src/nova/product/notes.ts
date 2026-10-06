@@ -15,6 +15,7 @@
 // from a note, through the ordinary session route.
 
 import { prisma } from "@repo/db/client";
+import { learnerKey } from "./learner-key";
 import { REVIEW_BLOCK_MINUTES } from "../engines/planning-engine";
 import { likeLiteral, normalizeTopicName } from "../engines/topic-mastery-engine";
 import {
@@ -97,7 +98,7 @@ export type NoteLearner =
 // query string is ever passed here.
 export async function resolveNoteLearner(platformChatId: string): Promise<NoteLearner> {
   const user = await prisma.messengerUser.findUnique({
-    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    where:  learnerKey(platformChatId),
     select: { novaAcademicProfile: { select: { id: true, onboardingComplete: true } } },
   });
   if (!user) return { status: "not_connected" };

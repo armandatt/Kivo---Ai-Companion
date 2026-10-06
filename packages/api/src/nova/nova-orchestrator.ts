@@ -20,6 +20,7 @@
 // Owner: Nova Orchestrator.
 
 import { loadStudySnapshot } from "./engines/study-snapshot";
+import { learnerKey } from "./product/learner-key";
 import { runUnderstandingBrain } from "./brains/understanding-brain";
 import { runDisambiguationPass } from "./brains/disambiguation-pass";
 import { resolveTurnSignals } from "./engines/turn-signals";
@@ -57,7 +58,7 @@ const PATTERN_DETECTOR_INTERVAL = 5;
 
 async function resolveUserId(platformChatId: string): Promise<{ id: string } | null> {
   const user = await prisma.messengerUser.findUnique({
-    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    where:  learnerKey(platformChatId),
     select: { id: true },
   });
   return user;

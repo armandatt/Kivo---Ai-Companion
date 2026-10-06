@@ -23,7 +23,7 @@ export const OUTCOME_LABEL: Record<NovaSessionOutcome, string> = {
 };
 
 const EMPTY_PLAN: Record<PlanEmptyReason, string> = {
-  no_topics:       "I don't have any topics for you yet. Add your subjects in Nova and I'll have something to point at.",
+  no_topics:       "I don't have any topics for you yet. Send /focus and the topic you're on (for example: /focus deadlocks) and we'll start there.",
   too_little_time: `That's shorter than anything worth starting. ${MIN_SESSION_MINUTES} minutes is the smallest block I plan.`,
   recovery:        "Recovery day. Nothing I'd push on you today.",
   nothing_due:     "Nothing is due and no exam is close. Your call today.",
@@ -192,14 +192,20 @@ export function clarifyReply(session: NovaSessionView | null): TelegramReply {
   };
 }
 
-export function withExamOffer(reply: TelegramReply, exam: { title: string; subjectName: string; date: string }): TelegramReply {
-  const ask    = `Add your ${exam.subjectName} exam on ${exam.date}?`;
-  const offer  = { label: `Add exam (${exam.date})`, action: { type: "add_exam" as const, title: exam.title, subjectName: exam.subjectName, date: exam.date } };
+export function withExamOffer(reply: TelegramReply, exam: { title: string; date: string; subjectNames: string[] }): TelegramReply {
+  const one    = exam.subjectNames.length === 1;
+  const ask    = one ? `Add your ${exam.subjectNames[0]} exam on ${exam.date}?` : `Add an exam on ${exam.date}? Pick the subject it's for.`;
+  // With one subject the learner's own words are the title. When they pick
+  // the subject, the title is that subject's: their words named none.
+  const offers = exam.subjectNames.map(subjectName => ({
+    label:  one ? `Add exam (${exam.date})` : `Add: ${subjectName}`.slice(0, 40),
+    action: { type: "add_exam" as const, title: one ? exam.title : `${subjectName} exam`, subjectName, date: exam.date },
+  }));
   if (reply.prompt) {
-    const merged = [...reply.prompt.options.map(o => ({ label: o.label, action: o.action })), offer];
+    const merged = [...reply.prompt.options.map(o => ({ label: o.label, action: o.action })), ...offers];
     return { ...reply, text: `${reply.text}\n\n${ask}`, prompt: { kind: reply.prompt.kind, options: options(merged) } };
   }
-  const prompt: PromptSpec = { kind: "confirm_exam", options: options([offer, { label: "No", action: { type: "dismiss" } }]) };
+  const prompt: PromptSpec = { kind: "confirm_exam", options: options([...offers, { label: "No", action: { type: "dismiss" } }]) };
   return { ...reply, text: `${reply.text}\n\n${ask}`, prompt };
 }
 

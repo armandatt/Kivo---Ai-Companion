@@ -45,6 +45,12 @@ export async function deleteAccount(userId: string): Promise<AccountDeletionResu
       if (!removed) kept = "no_nova_profile";
     }
 
+    // A Nova learner who never connected Telegram lives on a row that belongs
+    // to this account alone ("web:<userId>", nova/product/learner-key.ts).
+    // It goes with the account, and its cascade takes everything Nova kept.
+    const own = await tx.messengerUser.deleteMany({ where: { platform: "web", platformChatId: `web:${userId}` } });
+    if (own.count > 0) { removed = true; kept = null; }
+
     await tx.user.delete({ where: { id: userId } });
     return { deleted: true, novaProfileRemoved: removed, novaProfileKept: kept };
   });

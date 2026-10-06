@@ -5,6 +5,7 @@
 // does not already own. Learning DNA is a different owner and is not read.
 
 import { prisma } from "@repo/db/client";
+import { learnerKey } from "./learner-key";
 import { getAllTopicMasteries, masteryLevel } from "../engines/knowledge-engine";
 import { REVIEW_BLOCK_MINUTES } from "../engines/planning-engine";
 import { daysOverdue, getOverdueTopics, isDueForReview } from "../engines/retention-engine";
@@ -144,7 +145,7 @@ export async function loadNovaKnowledge(
   const now = options.now ?? new Date();
 
   const user = await prisma.messengerUser.findUnique({
-    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    where:  learnerKey(platformChatId),
     select: {
       novaAcademicProfile: {
         select: {

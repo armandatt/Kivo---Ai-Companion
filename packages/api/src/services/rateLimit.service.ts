@@ -8,18 +8,20 @@ const limitsByTier = {
   elite: { hourly: 400, daily: 2000 },
 };
 
-export async function checkRateLimit(platformChatId: string) {
+// platform: "telegram" for a chat; "web" for a Nova learner with no chat
+// (their row is keyed by the web account, see nova/product/learner-key.ts).
+export async function checkRateLimit(platformChatId: string, platform: "telegram" | "web" = "telegram") {
   try {
     const user = await prisma.messengerUser.upsert({
       where: {
         platform_platformChatId: {
-          platform: "telegram",
+          platform,
           platformChatId,
         },
       },
       update: {},
       create: {
-        platform: "telegram",
+        platform,
         platformChatId,
       },
     });

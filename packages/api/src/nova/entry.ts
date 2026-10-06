@@ -35,6 +35,11 @@ export interface NovaTurnResult {
   ok:           boolean;
 }
 
+// Said to the Response Brain on a turn made of words, so the reply cannot
+// claim a session command the turn did not run.
+const SENTENCE_RUNS_NO_SESSION =
+  "This message did not start, pause, resume or end a study session, and nothing was added or scheduled. Do not say or imply otherwise. If the student wants to start or end a session, point them to the Start button on this page or to Focus.";
+
 export async function handleNovaTurn(input: NovaTurnInput): Promise<NovaTurnResult> {
   const { platformChatId, text } = input;
   const timestamp = input.timestamp ?? new Date();
@@ -64,9 +69,14 @@ export async function handleNovaTurn(input: NovaTurnInput): Promise<NovaTurnResu
   }
 
   try {
+    // A typed command (/study, /done) is protocol and runs. A sentence does
+    // not start, pause or end a session: the page it is typed on has buttons
+    // for that, and the model's reading of a sentence is not a button press.
+    // What the sentence says is still read, logged and consolidated.
     const result = await runNovaOrchestrator({
       platformChatId, text: plainText, timestamp, command,
       awaitPersistence: input.awaitPersistence,
+      ...(command ? {} : { sessionCommands: "surface" as const, directive: SENTENCE_RUNS_NO_SESSION }),
     });
 
     console.log(JSON.stringify({

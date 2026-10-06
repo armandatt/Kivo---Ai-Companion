@@ -4,6 +4,7 @@
 // nothing itself. Read-only, no LLM call.
 
 import { prisma } from "@repo/db/client";
+import { learnerKey } from "./learner-key";
 import { currentZoneName, isValidTimezone } from "../engines/learner-calendar";
 import {
   DNA_EMERGING_AT, DNA_EVIDENCE_DAYS, DNA_LEAD, DNA_MIN_PER_SIDE, DNA_STRONG_AT, DNA_SUPPORTED_AT,
@@ -78,7 +79,7 @@ type Learner =
 
 async function resolveLearner(platformChatId: string): Promise<Learner> {
   const user = await prisma.messengerUser.findUnique({
-    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    where:  learnerKey(platformChatId),
     select: { novaAcademicProfile: { select: { id: true, onboardingComplete: true, timezone: true, preferredStudyTime: true } } },
   });
   if (!user) return { status: "not_connected" };

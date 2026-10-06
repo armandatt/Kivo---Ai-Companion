@@ -19,6 +19,8 @@ export type Register = "serious" | "steady" | "playful";
 const HEAVY_EMOTIONS: ReadonlySet<AcademicEmotion> = new Set<AcademicEmotion>([
   "distressed", "overwhelmed", "discouraged", "self_doubt", "identity_threat",
   "anxious_exam", "anxious_general",
+  // Someone fed up with a topic is not in the mood to be teased about it.
+  "frustrated",
 ]);
 
 // Circumstances in which teasing is out of place whatever the student asked for.

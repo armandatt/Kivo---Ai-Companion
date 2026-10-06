@@ -22,7 +22,7 @@ import type {
   PlannerSessionEntry,
   PlannerUnknown,
 } from "./planner.types";
-import { dayKey, resolveTimezone } from "../engines/learner-calendar";
+import { calendarDaysUntil, dayKey, resolveTimezone } from "../engines/learner-calendar";
 
 const DAY_MS = 86_400_000;
 const MAX_REVIEWS_PER_DAY = 4;
@@ -219,7 +219,7 @@ export function buildPlannerView(input: PlanningInputs): NovaPlannerReady {
         subjectName: e.subjectName,
         examType:    e.examType,
         scheduledAt: e.scheduledAt.toISOString(),
-        daysUntil:   Math.max(0, Math.ceil((e.scheduledAt.getTime() - now.getTime()) / DAY_MS)),
+        daysUntil:   calendarDaysUntil(e.scheduledAt, now, input.timezone),
         drivesPlan:  examContext?.examId === e.id,
         preparation: context ? {
           mode:       context.mode,

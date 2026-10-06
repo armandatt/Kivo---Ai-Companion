@@ -6,6 +6,7 @@
 // Deterministic: no LLM call.
 
 import { prisma } from "@repo/db/client";
+import { learnerKey } from "./learner-key";
 import { loadStudySnapshot } from "../engines/study-snapshot";
 import {
   openStudySession,
@@ -59,7 +60,7 @@ export async function runNovaSessionCommand(
   } else if (active && command.action === "end") {
     // The End button is /done without a chat turn: same report, same evidence.
     const user = await prisma.messengerUser.findUnique({
-      where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+      where:  learnerKey(platformChatId),
       select: { id: true },
     });
     if (!user) return { ok: false, error: "not_connected", message: "Connect Telegram to start with Nova." };

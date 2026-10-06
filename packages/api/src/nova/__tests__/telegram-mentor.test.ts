@@ -572,41 +572,55 @@ describe("replies", () => {
   });
 
   it("an exam offer joins the existing buttons instead of replacing them", () => {
-    const offer  = { title: "OS", subjectName: "Operating Systems", date: "2026-10-07" };
+    const offer  = { title: "OS", subjectNames: ["Operating Systems"], date: "2026-10-07" };
     const merged = withExamOffer(recommendationReply(view, action), offer);
-    expect(merged.prompt?.options.at(-1)?.action).toEqual({ type: "add_exam", ...offer });
+    expect(merged.prompt?.options.at(-1)?.action).toEqual({ type: "add_exam", title: "OS", subjectName: "Operating Systems", date: "2026-10-07" });
     expect(merged.prompt?.options.length).toBe(5);
     expect(withExamOffer({ text: "ok" }, offer).prompt?.kind).toBe("confirm_exam");
   });
 
+  it("an exam whose subject Nova cannot tell is offered with the learner's subjects to pick from", () => {
+    const asked = withExamOffer({ text: "" }, { title: "Databases", subjectNames: ["Database Management Systems", "Operating Systems"], date: "2026-10-09" });
+    expect(asked.text.trim()).toBe("Add an exam on 2026-10-09? Pick the subject it's for.");
+    expect(asked.prompt?.options.map(o => o.label)).toEqual(["Add: Database Management Systems", "Add: Operating Systems", "No"]);
+    expect(asked.prompt?.options[0]?.action).toEqual({ type: "add_exam", title: "Database Management Systems exam", subjectName: "Database Management Systems", date: "2026-10-09" });
+  });
+
   describe("which exam may be offered", () => {
-    const subjects = [{ id: "s-os", name: "Operating Systems", code: "CS301" }, { id: "s-db", name: "Databases", code: null }];
+    const subjects = [{ id: "s-os", name: "Operating Systems", code: "CS301" }, { id: "s-db", name: "Database Management Systems", code: null }];
     const upcoming = [{ subjectId: "s-os", scheduledAt: new Date("2026-10-07T09:00:00Z") }];
+    const names = (title: string, date: string, known = upcoming) => examToOffer({ title, date }, subjects, known)?.subjectNames ?? null;
 
     it("does not offer to add an exam Nova already has, however the learner names it", () => {
-      for (const title of ["operating systems", "OS", "OS exam", "my os final", "CS301"]) {
-        expect(examToOffer({ title, date: "2026-10-07" }, subjects, upcoming)).toBeNull();
+      for (const title of ["operating systems", "OS", "OS exam", "my os final", "CS301"]) expect(names(title, "2026-10-07")).toBeNull();
+    });
+
+    it("'exam is tomorrow', with an exam already on that day, offers nothing: no second exam can be made", () => {
+      for (const title of ["exam", "Exam", "my exam", "the test", "final", "Databases"]) expect(names(title, "2026-10-07")).toBeNull();
+    });
+
+    it("offers an exam under the one subject its label names", () => {
+      expect(examToOffer({ title: "OS exam", date: "2026-10-20" }, subjects, upcoming)).toEqual({ title: "OS exam", date: "2026-10-20", subjectNames: ["Operating Systems"] });
+      expect(names("database management systems midterm", "2026-10-07")).toEqual(["Database Management Systems"]);
+    });
+
+    it("a label that names none of their subjects, on a free day, is offered with their subjects to choose from", () => {
+      expect(names("Databases", "2026-10-20")).toEqual(["Operating Systems", "Database Management Systems"]);
+      expect(names("exam", "2026-10-20")).toEqual(["Operating Systems", "Database Management Systems"]);
+    });
+
+    it("a label naming two subjects offers those two, less any that already has an exam that day", () => {
+      const both = "OS and Database Management Systems";
+      expect(names(both, "2026-10-20")).toEqual(["Operating Systems", "Database Management Systems"]);
+      expect(names(both, "2026-10-07")).toEqual(["Database Management Systems"]);
+    });
+
+    it("never offers an exam without a subject, a real date, or for a learner with no subjects", () => {
+      expect(names("OS", "next friday")).toBeNull();
+      expect(examToOffer({ title: "OS", date: "2026-10-20" }, [], [])).toBeNull();
+      for (const title of ["exam", "OS", "Chemistry"]) {
+        for (const name of names(title, "2026-10-20") ?? []) expect(subjects.map(s => s.name)).toContain(name);
       }
-    });
-
-    it("'exam is tomorrow' names no subject, so nothing is offered and no second exam can be made", () => {
-      for (const title of ["exam", "Exam", "my exam", "the test", "final"]) {
-        expect(examToOffer({ title, date: "2026-10-07" }, subjects, upcoming)).toBeNull();
-        expect(examToOffer({ title, date: "2026-10-20" }, subjects, [])).toBeNull();
-      }
-    });
-
-    it("offers an exam for a subject of theirs that has none on that day, filed under that subject", () => {
-      expect(examToOffer({ title: "Databases", date: "2026-10-07" }, subjects, upcoming))
-        .toEqual({ title: "Databases", subjectName: "Databases", date: "2026-10-07" });
-      expect(examToOffer({ title: "OS exam", date: "2026-10-20" }, subjects, upcoming))
-        .toEqual({ title: "OS exam", subjectName: "Operating Systems", date: "2026-10-20" });
-    });
-
-    it("a title that names two subjects, or a subject they do not take, is not offered", () => {
-      expect(examToOffer({ title: "OS and Databases", date: "2026-10-20" }, subjects, [])).toBeNull();
-      expect(examToOffer({ title: "Chemistry", date: "2026-10-20" }, subjects, [])).toBeNull();
-      expect(examToOffer({ title: "OS", date: "next friday" }, subjects, [])).toBeNull();
     });
   });
 

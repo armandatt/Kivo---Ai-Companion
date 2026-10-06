@@ -6,6 +6,7 @@
 // the facts behind it.
 
 import type { StudySnapshotResult } from "../engines/study-snapshot";
+import { calendarDaysUntil } from "../engines/learner-calendar";
 import { daysOverdue, getOverdueTopics, isDueForReview } from "../engines/retention-engine";
 import { loadPlanningInputs, planEmptyReason, planMode } from "./planning-inputs";
 import type { AcademicState } from "../types/academic-state.types";
@@ -31,6 +32,8 @@ export interface TodayInputs {
   plan:             StudyPlan;
   constraints:      TodayConstraint[];
   availableMinutes: number | null;
+  // The learner's timezone, so "in N days" counts their calendar days.
+  timezone?:        string | null;
   learnerName?:     string | null;
   goals?:           string[];
   now:              Date;
@@ -117,7 +120,7 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
       subjectName: e.subjectName,
       examType:    e.examType,
       scheduledAt: e.scheduledAt.toISOString(),
-      daysUntil:   Math.max(0, Math.ceil((e.scheduledAt.getTime() - now.getTime()) / DAY_MS)),
+      daysUntil:   calendarDaysUntil(e.scheduledAt, now, input.timezone ?? null),
     }));
   const active   = snapshot.activeSession;
 

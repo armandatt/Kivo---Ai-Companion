@@ -7,6 +7,7 @@
 // (recordStatedMinutes), which is theirs to state.
 
 import { prisma } from "@repo/db/client";
+import { learnerKey } from "./learner-key";
 import { loadStudySnapshot, type StudySnapshotResult } from "../engines/study-snapshot";
 import { computeAcademicState } from "../engines/academic-state-engine";
 import { getAllTopicMasteries } from "../engines/knowledge-engine";
@@ -104,7 +105,7 @@ export async function recordStatedMinutes(platformChatId: string, minutes: numbe
   const normalized = normalizeAvailableMinutes(minutes);
   if (normalized === null) return null;
   const user = await prisma.messengerUser.findUnique({
-    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    where:  learnerKey(platformChatId),
     select: { novaAcademicProfile: { select: { id: true, timezone: true } } },
   });
   const profile = user?.novaAcademicProfile;
@@ -129,7 +130,7 @@ export async function loadPlanningInputs(
   const now = options.now ?? new Date();
 
   const user = await prisma.messengerUser.findUnique({
-    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    where:  learnerKey(platformChatId),
     select: {
       id: true,
       novaAcademicProfile: {

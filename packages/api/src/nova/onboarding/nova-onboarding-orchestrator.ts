@@ -13,6 +13,7 @@
 // Owner: Orchestrator. Coordinates — does not own any one layer's logic.
 
 import { prisma } from "@repo/db/client";
+import { learnerKey } from "../product/learner-key";
 import { extractAcademicFacts }         from "./nova-onboarding-extractor";
 import { validateExtraction }            from "./nova-onboarding-validator";
 import { makeOnboardingDecision }        from "./nova-onboarding-decision-engine";
@@ -36,7 +37,7 @@ export async function runNovaOnboarding(input: {
 
   // 1. Resolve MessengerUser
   const user = await prisma.messengerUser.findUnique({
-    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    where:  learnerKey(platformChatId),
     select: { id: true },
   });
 
@@ -148,7 +149,7 @@ export async function runNovaOnboarding(input: {
 
 export async function isOnboardingComplete(platformChatId: string): Promise<boolean> {
   const user = await prisma.messengerUser.findUnique({
-    where:  { platform_platformChatId: { platform: "telegram", platformChatId } },
+    where:  learnerKey(platformChatId),
     select: { novaAcademicProfile: { select: { onboardingComplete: true } } },
   });
   return user?.novaAcademicProfile?.onboardingComplete === true;

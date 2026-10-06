@@ -5,6 +5,7 @@
 // Owner: Study Snapshot. No LLM calls. Pure DB reads.
 
 import { prisma } from "@repo/db/client";
+import { learnerKey } from "../product/learner-key";
 import type { AcademicStateSnapshot } from "../types/academic-state.types";
 import { pausedSecondsOf } from "./session-clock";
 
@@ -108,7 +109,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
 
   // Resolve MessengerUser
   const user = await prisma.messengerUser.findUnique({
-    where: { platform_platformChatId: { platform: "telegram", platformChatId } },
+    where: learnerKey(platformChatId),
     select: { id: true, createdAt: true, novaAcademicProfile: {
       select: {
         id: true, yearOfStudy: true, major: true, institution: true,

@@ -2,6 +2,7 @@
 
 import type { NovaTodayReady } from '@repo/api/nova/product/today.types'
 import { ActiveSessionCard } from './active-session-card'
+import { FirstSession } from './first-session'
 import { RecommendationCard } from './recommendation-card'
 import { TalkToNova } from './talk-to-nova'
 import { TimeAvailable } from './time-available'
@@ -28,8 +29,8 @@ function contextLine(view: NovaTodayReady): string {
 const EMPTY: Record<NonNullable<NovaTodayReady['emptyReason']>, { title: string; body: string; ask: string | null }> = {
   no_topics: {
     title: "Nova doesn't know your topics yet",
-    body:  'A recommendation comes from what you have studied and how well it stuck. Tell Nova what you covered recently, or what you are working on now, and it will plan from there.',
-    ask:   "e.g. I studied deadlocks for 40 minutes, still shaky on Banker's",
+    body:  'A recommendation comes from what you have studied and how well it stuck. Start a session on whatever you are working on now. When it ends, tell Nova how it went, and it will plan from there.',
+    ask:   null,
   },
   too_little_time: {
     title: "That's less time than Nova's shortest block",
@@ -101,6 +102,14 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
             <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">{empty.body}</p>
             {view.subjects.length > 0 && (
               <p className="mt-3 text-xs text-foreground/45">Subjects on file: {view.subjects.join(', ')}</p>
+            )}
+            {view.emptyReason === 'no_topics' && (
+              <FirstSession
+                subjects={view.subjects}
+                starting={starting !== null}
+                error={startError}
+                onStart={(topicName, subjectName) => start({ topicName, subjectName, durationMinutes: 25 })}
+              />
             )}
             {empty.ask && <TalkToNova className="mt-6" placeholder={empty.ask} onReplied={onRefresh} />}
           </section>

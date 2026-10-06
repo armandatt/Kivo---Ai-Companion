@@ -173,13 +173,25 @@ All are read from `process.env` at call time, so flipping one on Railway needs n
 - **Vercel**: Root Directory `apps/web`; `apps/web/vercel.json` runs `prisma generate` before the build.
 - `prisma generate` is not a `postinstall` step. Run it by hand after a fresh install or a schema change.
 
+## Who a Nova learner is
+
+One learner per person, with or without Telegram. `nova/product/learner-identity.ts` (`resolveLearnerForAccount`) is the only place an account becomes a learner; `apps/api/lib/nova/resolve-learner.ts` supplies the account from the session cookie and nothing from the request.
+
+- A learner is a `NovaAcademicProfile` on a `MessengerUser` row, named by one string that every product function takes as `platformChatId`: a Telegram chat id, or `web:<userId>` for a Nova account with no chat (`nova/product/learner-key.ts`, pure). Look a learner up with `learnerKey(id)`; never write `platform: "telegram"` into a Nova lookup (`lifecycle-hardening.test.ts` reads the source to hold this).
+- The web row is made on the account's first request, only when `primaryPersona` is `nova`, and the unique key makes that idempotent.
+- **Connecting Telegram re-keys the row** (`nova/telegram/telegram-link.ts`, one transaction): the same row id, profile and history, now found by the chat id. The placeholder row the webhook made for that chat is set aside (`platform: "telegram_replaced"`), not deleted. A chat that already has a Nova learner (`chat_has_learner`) or a finished Rex setup (`chat_is_rex`) is refused when the account has its own learner. There is no unlink.
+- Nova messages first only on Telegram: the proactive tick selects `platform: "telegram"`.
+- Account deletion removes a web-keyed learner row outright (it belongs to the account alone); a chat-keyed `MessengerUser` is still left, because Rex shares it.
+- A learner with subjects and no topics is started by the learner: Home's first-session form sends the ordinary `start` with a subject they chose; on Telegram `/focus <topic>` asks which subject. Nova never guesses a subject.
+
 ## Nova on the web (Home → Start session)
 
 The web app renders Nova's decisions; it does not make them. Three routes, all resolving the signed-in account to its Nova learner through `apps/api/lib/nova/resolve-learner.ts`:
 
 - `GET /api/nova/today?minutes=` returns `NovaTodayView`, built by `packages/api/src/nova/product/today.ts` from the existing engines. No LLM call.
 - `POST /api/nova/session` (`start` / `pause` / `resume` / `end`) and `GET /api/nova/session`: deterministic session commands. They call the same session writers a chat turn uses (`persistence/nova-persistence.ts`), so do not add a second place that writes `NovaStudySession`.
-- `POST /api/nova/message` runs a normal Nova turn (used for onboarding and "tell Nova" boxes).
+- `POST /api/nova/message` runs a normal Nova turn (used for onboarding and "tell Nova" boxes). **A sentence typed there never starts, pauses or ends a session**: `nova/entry.ts` passes `sessionCommands: "surface"` unless the text is a typed command (`/study`, `/done`), and tells the Response Brain so. The page has buttons for those; the model's reading of a sentence is not one. What the sentence says is still logged and consolidated.
+- **"In N days" is the learner's calendar** (`calendarDaysUntil` in `engines/learner-calendar.ts`) on Today, the Planner, Telegram and proactive messages. The engines' own pressure thresholds still use elapsed time.
 
 Contracts live in `packages/api/src/nova/product/today.types.ts` (no imports, so the web app imports the types directly). UI is in `apps/web/components/nova/`; `app/(dashboard)/home/page.tsx` renders the Rex home (`components/home/rex-home.tsx`) when the status is `not_nova`. Never add ranking or recommendation logic to React: add a field to the contract instead. The focus timer is derived from the server's `elapsedSeconds`; the page keeps no session state of its own.
 
@@ -266,9 +278,9 @@ Full description: `docs/NOVA_TELEGRAM_MENTOR.md`. Telegram is a surface: it owns
 - **Register** (`decision/register.ts`) is chosen by code and applies to every Nova reply, web included. Playful needs the learner's explicit "push me hard" and nothing serious going on.
 - **`topic_struggle`** is a signal with no wording pattern: only the Understanding Brain's `struggleTopic` establishes it. Consolidation turns it into a soft mastery observation, at most once per topic per 20 hours, never a `UserFact`.
 - **Stated time** ("I've only got 30 minutes") is `NovaAcademicProfile.statedMinutes` for that local day, read and written only by `product/planning-inputs.ts`; a `minutes` parameter still wins.
-- **Exams after onboarding** are added by `product/exams.ts`, only on the learner's confirmation. `examToOffer` offers one only when its title names exactly one of the learner's subjects and that subject has no exam on that day, so "exam is tomorrow" can never create a second, subject-less exam.
+- **Exams after onboarding** are added by `product/exams.ts`, only on the learner's confirmation, always under one of their subjects. `examToOffer`: a label naming one subject is offered under it; a label naming none is offered with their subjects to choose from, unless an exam is already on that day (then that one is meant and nothing is offered). So "exam is tomorrow" can never create a second or subject-less exam.
 - **The Response Brain is told what happened.** It words a result only when the operation succeeded; a turn with no action carries a directive saying nothing was done.
-- **Proactive**: `decision/proactive-decision.ts` (pure) generates every candidate, gates, then ranks. `proactive/proactive-outbox.ts` is the only writer of `NovaProactiveMessage`: claim by unique occurrence key, word, store, send. Only delivered rows count toward the cap of two a day. No timezone means no proactive message. Do not add a type without a fact on record behind it, and do not compare clock minutes for equality.
+- **Proactive**: a message approved earlier and not yet delivered is re-checked with `holdReason` before every retry. `decision/proactive-decision.ts` (pure) generates every candidate, gates, then ranks. `proactive/proactive-outbox.ts` is the only writer of `NovaProactiveMessage`: claim by unique occurrence key, word, store, send. Only delivered rows count toward the cap of two a day. No timezone means no proactive message. Do not add a type without a fact on record behind it, and do not compare clock minutes for equality.
 - **In production Nova ignores updates without a valid `TELEGRAM_WEBHOOK_SECRET`.** `NOVA_PROACTIVE_DISABLED=true` stops Nova messaging first.
 - `scripts/novaTelegramEval.ts [repeats] [group] [raw]` runs real phrases through the configured model, the parser, `safeReading` and `decideAction`, and prints the decision and what it would write. Each case names the decisions that would corrupt state; the run exits 1 on any. It is the only check of what the model actually reads: run it after changing the Understanding prompt or the action decision.
 
@@ -283,4 +295,6 @@ export NOVA_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:54329/novates
 (cd packages/api && npm run test:integration)
 ```
 
-`nova-telegram.itest.ts` covers Telegram end to end with Telegram and both models stood in: sessions shared with the web app, prompts answered once, linking, limits, model failure, and the proactive outbox. `nova-learning-dna.itest.ts` covers the refresh on session end and the timezone write. `nova-progress.itest.ts` is the only proof that a replayed or concurrent session report moves a topic once (the unique key and the rollback need a real database). `nova-session-start.itest.ts` is the only proof of the session-start lock: concurrency cannot be shown against a mock. Two tests in `nova-persist-turn.itest.ts` fail because of the fixture's own timeline (its turns span four days, but an illness expires after 72 hours); they are not product failures.
+The files run one at a time (`--test-concurrency=1`): a proactive tick visits every learner in the database, so two files ticking at once would act on each other's learners.
+
+`nova-lifecycle.itest.ts` follows a new account: a learner with no Telegram, the whole study loop on the web alone, a first session with no topics on record, connecting Telegram (same row, refusals, a spent token), web and Telegram as two views of one learner, a web sentence that runs no session command, and one learner's evenings of proactive ticks (rank, spacing, session, a failed send held and retried, a blocked bot). `nova-telegram.itest.ts` covers Telegram end to end with Telegram and both models stood in: sessions shared with the web app, prompts answered once, linking, limits, model failure, and the proactive outbox. `nova-learning-dna.itest.ts` covers the refresh on session end and the timezone write. `nova-progress.itest.ts` is the only proof that a replayed or concurrent session report moves a topic once (the unique key and the rollback need a real database). `nova-session-start.itest.ts` is the only proof of the session-start lock: concurrency cannot be shown against a mock. Two tests in `nova-persist-turn.itest.ts` fail because of the fixture's own timeline (its turns span four days, but an illness expires after 72 hours); they are not product failures.
