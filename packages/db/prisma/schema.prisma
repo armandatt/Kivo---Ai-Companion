@@ -676,6 +676,10 @@ model NovaAcademicProfile {
   semesterStartDate         DateTime?
   semesterEndDate           DateTime?
   preferredStudyHoursPerDay Float    @default(3.0)
+  // What the learner said they usually have on a normal day, in minutes.
+  // null: they have not said. Planning then assumes a figure and says so;
+  // the default above is never read as something the learner stated.
+  dailyStudyMinutes         Int?
   timezone                  String?
   // What the learner said they have today ("I've only got 30 minutes"), and
   // the local day it was said on. It lapses when that day ends. Written only

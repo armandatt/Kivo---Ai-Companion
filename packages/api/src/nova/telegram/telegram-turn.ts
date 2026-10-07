@@ -20,7 +20,8 @@ import { runUnderstandingBrain } from "../brains/understanding-brain";
 import { decideAction, type ActionContext as DecisionContext, type TurnAction } from "../decision/action-decision";
 import { safeReading } from "../decision/interpretation-safety";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
-import { handleNovaTurn } from "../entry";
+import { runSetupTurn, setupAsk, SETUP_INTRO } from "../interaction/setup-turn";
+import { ensureSetupProfile, loadSetup } from "../product/setup";
 import { runNovaOrchestrator } from "../nova-orchestrator";
 import { examToOffer } from "../product/exams";
 import { loadNovaSession } from "../product/session";
@@ -146,7 +147,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       where:  { platform_platformChatId: { platform: "telegram", platformChatId: event.chatId } },
       select: { displayName: true, novaAcademicProfile: { select: { id: true, onboardingComplete: true, timezone: true } } },
     });
-    const profile = user?.novaAcademicProfile ?? null;
+    let profile = user?.novaAcademicProfile ?? null;
 
     // In a private chat the sender is the chat. Anything else is not ours.
     if (event.fromId !== null && event.fromId !== event.chatId) {
@@ -155,18 +156,16 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     }
 
     // ── Still setting up ─────────────────────────────────────────────────────
-    // Nova's own onboarding conversation, unchanged. Buttons and commands
-    // have nothing to act on yet.
-    if (!profile?.onboardingComplete) {
-      if (event.kind === "callback") { await client.answerCallback(event.callbackId, TEXT.stale); return finish("stale_prompt"); }
-      if (event.kind !== "text") { await deliver({ text: event.kind === "command" && event.command === "help" ? TEXT.help : TEXT.finishSetup }); return finish(); }
-      const turn = await handleNovaTurn({
-        platformChatId: event.chatId, text: event.text, onboardingDone: false, timestamp: now, surface: "telegram", awaitPersistence: true,
-      });
-      trace.decision = "onboarding";
-      await deliver({ text: turn.reply });
-      return finish(turn.ok ? "none" : "internal");
+    // There is nothing to plan from yet. A message can add to the setup
+    // (interaction/setup-turn.ts) and a button can confirm what was shown
+    // back; everything else is answered with the one thing Nova still needs.
+    const settingUp = !profile?.onboardingComplete;
+    if (settingUp) {
+      const ensured = await ensureSetupProfile(event.chatId);
+      if (!ensured) { await deliver({ text: TEXT.finishSetup }); return finish(); }
+      profile = { id: ensured.profileId, onboardingComplete: false, timezone: ensured.timezone };
     }
+    if (!profile) return finish("internal");
 
     trace.profileId = profile.id;
     ctx = { chatId: event.chatId, profileId: profile.id, timezone: profile.timezone, name: user?.displayName ?? null, now };
@@ -205,6 +204,12 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     }
 
     // ── A command ────────────────────────────────────────────────────────────
+    if (event.kind === "command" && settingUp) {
+      trace.decision = `command:${event.command}:setup`;
+      const view = await loadSetup(event.chatId, now);
+      await deliver(setupAsk(view, event.command === "start" || (view?.subjects.length ?? 0) === 0 ? SETUP_INTRO : "I can't plan for you yet. "));
+      return finish();
+    }
     if (event.kind === "command") {
       trace.decision = `command:${event.command}`;
       switch (event.command) {
@@ -237,6 +242,26 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       if (!await spendModelCall(profile.id, "understanding", day)) {
         await deliver({ text: TEXT.budget });
         return finish("budget_exhausted");
+      }
+
+      // Setup is not finished: the message can only add to it.
+      if (settingUp) {
+        const row = await prisma.messengerUser.findUnique({
+          where: { platform_platformChatId: { platform: "telegram", platformChatId: event.chatId } }, select: { id: true },
+        });
+        trace.understanding.attempted = true;
+        const turn = await runSetupTurn({ ctx, text: event.text, history: row ? await loadConversationHistory(row.id) : [], understand: deps.understand });
+        trace.understanding.ok   = turn.decision !== "unreadable";
+        trace.understanding.kind = turn.kind;
+        trace.decision           = turn.decision;
+        if (!turn.ok && turn.decision === "unreadable") trace.failure = "understanding_malformed";
+        if (row) {
+          await saveUserMessage(row.id, event.text, { intent: "general_chat", emotion: "neutral", signals: [], surface: "telegram" }, now)
+            .then(() => saveAssistantMessage(row.id, turn.reply.text, "nova_setup", {}, now))
+            .catch(err => console.error(`[nova:telegram] ${trace.correlationId} conversation log failed`, err));
+        }
+        await deliver(turn.reply);
+        return finish();
       }
 
       // Before reading the message: what is true right now.

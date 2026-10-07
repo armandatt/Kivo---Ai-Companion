@@ -94,6 +94,7 @@ export const NO_REQUEST: LearnerRequest = {
 };
 
 const MAX_SETUP_TOPICS = 12;
+const MAX_SETUP_SUBJECTS = 12;
 const MAX_DAILY_MINUTES = 16 * 60;
 
 // What the student says a subject covers and how they usually study. Shape
@@ -111,8 +112,14 @@ export function parseSetupStatement(raw: unknown): SetupStatement | null {
   const dailyMinutes = typeof daily === "number" && Number.isFinite(daily) && daily >= 10 && daily <= MAX_DAILY_MINUTES
     ? Math.round(daily) : null;
   const studyTime = STUDY_TIMES.find(t => t === r["studyTime"]) ?? null;
-  if (topics.length === 0 && dailyMinutes === null && studyTime === null) return null;
-  return { subject: shortText(r["subject"], 80), topics, dailyMinutes, studyTime };
+  const named = new Set<string>();
+  const subjects = (Array.isArray(r["subjects"]) ? r["subjects"] : [])
+    .map(t => shortText(t, 80)?.split(" ").filter(Boolean).join(" ") ?? null)
+    .filter((t): t is string => t !== null && t.length >= 2)
+    .filter(t => !named.has(t.toLowerCase()) && Boolean(named.add(t.toLowerCase())))
+    .slice(0, MAX_SETUP_SUBJECTS);
+  if (subjects.length === 0 && topics.length === 0 && dailyMinutes === null && studyTime === null) return null;
+  return { ...(subjects.length > 0 ? { subjects } : {}), subject: shortText(r["subject"], 80), topics, dailyMinutes, studyTime };
 }
 
 export function parseLearnerRequest(raw: unknown): LearnerRequest {

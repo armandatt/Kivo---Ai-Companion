@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { ArrowRight, Loader2 } from 'lucide-react'
-import { TalkToNova } from './talk-to-nova'
+import { SetupForm } from './setup-form'
 
 function SetupFrame({ step, title, children }: { step: string; title: string; children: React.ReactNode }) {
   return (
@@ -85,22 +85,19 @@ export function ConnectNova({ onCheck }: { onCheck: () => void }) {
   )
 }
 
-// Nova has not finished learning the basics. The conversation below is
-// Nova's own onboarding, the same one it runs on Telegram. Telegram itself is
-// optional and is connected from Settings.
+// Nova has nothing to plan from yet. This is the study setup: what the
+// learner is taking, what it covers, when the exams are and how they usually
+// study. It is the same setup Telegram and the chat box add to; anything
+// already said there is shown here. Telegram is optional and is connected
+// from Settings. The personality quiz is separate and is not asked again.
 export function NovaOnboarding({ onProgress }: { onProgress: () => void }) {
   return (
-    <SetupFrame step="Getting started" title="Tell Nova what you're studying">
+    <SetupFrame step="Getting started" title="Set up what you're studying">
       <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">
-        Nova can only recommend what it knows about. It needs your course and year, the subjects you are
-        taking this term, and any exams or deadlines coming up. You can connect Telegram later in Settings; it is optional.
+        Nova plans from this and nothing else: your subjects, what each one covers, and any exam dates.
+        Skip what you don&apos;t know yet. Everything else it learns from your sessions.
       </p>
-      <TalkToNova
-        className="mt-6"
-        opening="Hey, I'm Nova. Tell me about your studies: which year are you in, and where?"
-        placeholder="e.g. Second year CS at …"
-        onReplied={onProgress}
-      />
+      <SetupForm onSaved={onProgress} />
     </SetupFrame>
   )
 }

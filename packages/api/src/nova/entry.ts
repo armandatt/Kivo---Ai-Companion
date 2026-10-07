@@ -5,8 +5,7 @@
 
 import { translateNovaCommand } from "./commands";
 import { runNovaOrchestrator } from "./nova-orchestrator";
-import { runWebSentence } from "./interaction/web-sentence";
-import { runNovaOnboarding } from "./onboarding/nova-onboarding-orchestrator";
+import { runWebSentence, runWebSetupSentence } from "./interaction/web-sentence";
 
 export const NOVA_HELP_TEXT = `Here's what I can do:
 
@@ -49,20 +48,14 @@ export async function handleNovaTurn(input: NovaTurnInput): Promise<NovaTurnResu
 
   const { command, text: plainText } = translateNovaCommand(text);
 
-  // Until onboarding is complete every message, commands included, goes to the
-  // onboarding orchestrator, as a plain sentence.
+  // Until setup is complete a message can only add to it. The same turn
+  // Telegram runs for such a learner, ending at the same setup writer.
   if (!input.onboardingDone) {
-    const arg = trimmed.replace(/^\/\w+\s*/i, "").trim();
-    const onboardingText =
-      command === "study" ? (arg ? `I want to study ${arg}` : "I want to start studying")
-      : command === "done" ? "I finished studying today"
-      : command ? arg
-      : text;
     try {
-      const result = await runNovaOnboarding({ platformChatId, text: onboardingText, timestamp });
-      return { reply: result.reply, intervention: "onboarding", ok: true };
+      const turn = await runWebSetupSentence({ platformChatId, text: command ? plainText : text, timestamp, understand: input.understand });
+      return { reply: turn.reply, intervention: "setup", ok: true };
     } catch (err) {
-      console.error("[nova:onboarding] error:", err);
+      console.error("[nova:setup] error:", err);
       return { reply: "Something went wrong. Try sending your message again.", intervention: null, ok: false };
     }
   }

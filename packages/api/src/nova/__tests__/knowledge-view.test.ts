@@ -125,7 +125,7 @@ describe("buildKnowledgeView: due reviews", () => {
     };
     const snapshot: PlanningInputs["snapshot"] = {
       profileId: "p1", yearOfStudy: 2, major: "CS", institution: null, semesterStartDate: null, semesterEndDate: null,
-      preferredStudyHoursPerDay: 3, daysSinceJoined: 60, activeSession: null,
+      preferredStudyHoursPerDay: 3, dailyMinutesStated: null, daysSinceJoined: 60, activeSession: null,
       subjects: SUBJECTS.map(s => ({ ...s, code: null })), studySessions: [], upcomingExams: [],
       storedScores: null, storedStreakDays: 0, storedConsecutiveMisses: 0, stateHistory: [], cognitiveState: null, learningDNA: null,
     };

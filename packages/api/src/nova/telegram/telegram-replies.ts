@@ -225,25 +225,36 @@ export function setupOfferReply(proposal: SetupProposal): TelegramReply {
   if (proposal.studyTime !== null) routine.push(proposal.studyTime === "night" ? "usually at night" : `usually in the ${proposal.studyTime}`);
   const list  = proposal.topics.join(", ");
   const one   = proposal.subjectChoices.length === 1;
+  const isNew = (name: string) => proposal.newSubjects.includes(name);
+  // New subjects that are not just the home of the topics below.
+  const others = proposal.newSubjects.filter(n => !(one && proposal.topics.length > 0 && proposal.subjectChoices[0] === n));
   const lines: string[] = [];
-  if (proposal.topics.length > 0) lines.push(one ? `Add to ${proposal.subjectChoices[0]}: ${list}?` : `${list}\nWhich subject are these part of?`);
-  if (routine.length > 0) lines.push(`${proposal.topics.length > 0 ? "And note" : "Note"} that you study ${routine.join(", ")}?`);
+  if (others.length > 0) lines.push(`Add ${others.length === 1 ? "this subject" : "these subjects"}: ${others.join(", ")}?`);
+  if (proposal.topics.length > 0) {
+    lines.push(one
+      ? `Add ${isNew(proposal.subjectChoices[0]!) ? `${proposal.subjectChoices[0]} as a subject, with` : `to ${proposal.subjectChoices[0]}`}: ${list}?`
+      : `${list}\nWhich subject are these part of?`);
+  }
+  if (routine.length > 0) lines.push(`${lines.length > 0 ? "And note" : "Note"} that you study ${routine.join(", ")}?`);
   const save = (subjectName: string | null) => ({
-    type: "save_setup" as const, subjectName, topics: proposal.topics, dailyMinutes: proposal.dailyMinutes, studyTime: proposal.studyTime,
+    type: "save_setup" as const, subjects: proposal.newSubjects, subjectName,
+    topics: proposal.topics, dailyMinutes: proposal.dailyMinutes, studyTime: proposal.studyTime,
   });
-  const choices = proposal.topics.length === 0 ? [{ label: "Save", action: save(null) }]
+  const choices = proposal.topics.length === 0 ? [{ label: others.length > 0 ? "Add" : "Save", action: save(null) }]
     : one ? [{ label: "Add them", action: save(proposal.subjectChoices[0]!) }]
     : proposal.subjectChoices.map(name => ({ label: name.slice(0, 40), action: save(name) }));
   return { text: lines.join("\n"), prompt: { kind: "confirm_setup", options: options([...choices, { label: "No", action: { type: "dismiss" } }]) } };
 }
 
-export function setupSavedText(saved: { subjectName: string | null; added: string[]; existing: string[]; dailyMinutes: number | null; studyTime: string | null }): string {
+export function setupSavedText(saved: { subjectName: string | null; addedSubjects?: string[]; added: string[]; existing: string[]; dailyMinutes: number | null; studyTime: string | null }): string {
   const parts: string[] = [];
+  const subjects = (saved.addedSubjects ?? []).filter(n => n !== saved.subjectName || saved.added.length === 0);
+  if (subjects.length > 0) parts.push(`Added ${subjects.length === 1 ? "subject" : "subjects"}: ${subjects.join(", ")}.`);
   if (saved.subjectName && saved.added.length > 0) parts.push(`Added to ${saved.subjectName}: ${saved.added.join(", ")}.`);
   if (saved.subjectName && saved.added.length === 0 && saved.existing.length > 0) parts.push(`${saved.subjectName} already had those.`);
   if (saved.dailyMinutes !== null) parts.push(`Normal day: about ${saved.dailyMinutes} min.`);
   if (saved.studyTime !== null) parts.push(`Usual time: ${saved.studyTime}.`);
-  return parts.join(" ") || "Nothing new to save.";
+  return parts.join(" ") || "That was already on record.";
 }
 
 // "20-30 mins": both ends, for the learner to pick. Neither is recorded

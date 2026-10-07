@@ -1,6 +1,7 @@
 // ─── What Nova still needs to know to plan ────────────────────────────────────
 // The minimum a study plan rests on: the subjects this term, what each one
-// covers, when the exams are, and when the learner usually studies. Pure: no
+// covers, when the exams are, how long a normal day allows and when the
+// learner usually studies. Pure: no
 // DB, no LLM.
 //
 // It answers one question: of those, what is not on record, and which single
@@ -14,9 +15,10 @@ export interface SetupFacts {
   subjects:      Array<{ name: string; topicCount: number }>;
   upcomingExams: number;
   studyTime:     string | null;   // when they usually study
+  dailyMinutes:  number | null;   // what they usually have on a normal day; null: not said
 }
 
-export type SetupGap = "subjects" | "topics" | "exams" | "study_time";
+export type SetupGap = "subjects" | "topics" | "exams" | "daily_minutes" | "study_time";
 
 // Most blocking first: without subjects there is nothing to file a topic
 // under, and without topics there is nothing to plan.
@@ -25,6 +27,7 @@ export function setupGaps(facts: SetupFacts): SetupGap[] {
   if (facts.subjects.length === 0) return ["subjects"];
   if (facts.subjects.some(s => s.topicCount === 0)) gaps.push("topics");
   if (facts.upcomingExams === 0) gaps.push("exams");
+  if (facts.dailyMinutes === null) gaps.push("daily_minutes");
   if (!facts.studyTime) gaps.push("study_time");
   return gaps;
 }
@@ -51,6 +54,8 @@ export function nextSetupQuestion(facts: SetupFacts): SetupQuestion | null {
     }
     case "exams":
       return { gap, question: "Any exam or deadline dates yet? Tell me the subject and the day." };
+    case "daily_minutes":
+      return { gap, question: "How long do you usually have to study on a normal day?" };
     case "study_time":
       return { gap, question: "When do you usually study: morning, afternoon, evening or night?" };
   }

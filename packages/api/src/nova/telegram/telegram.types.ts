@@ -56,7 +56,7 @@ export type OptionAction =
   | { type: "set_proactive"; enabled: boolean }
   // What the learner said a subject covers, or how they usually study, as it
   // was shown back to them. Saved by product/setup.ts when they confirm.
-  | { type: "save_setup"; subjectName: string | null; topics: string[]; dailyMinutes: number | null; studyTime: StudyTime | null };
+  | { type: "save_setup"; subjects?: string[]; subjectName: string | null; topics: string[]; dailyMinutes: number | null; studyTime: StudyTime | null };
 
 export interface PromptOption {
   id:     string;      // short, unique within the prompt: "a", "b", …

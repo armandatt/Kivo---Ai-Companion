@@ -12,7 +12,7 @@
 // what they said about their term, and adding an exam.
 
 import { prisma } from "@repo/db/client";
-import { loadConversationHistory } from "../adapters/conversation-adapter";
+import { loadConversationHistory, saveAssistantMessage, saveUserMessage } from "../adapters/conversation-adapter";
 import { runUnderstandingBrain } from "../brains/understanding-brain";
 import { decideAction, type TurnAction } from "../decision/action-decision";
 import { safeReading } from "../decision/interpretation-safety";
@@ -32,7 +32,9 @@ import { alternativeReply, TEXT, withExamOffer } from "../telegram/telegram-repl
 import type { PromptKind, TelegramReply } from "../telegram/telegram.types";
 import type { NovaOrchestratorInput } from "../types/context.types";
 import type { UnderstandingContext } from "../types/understanding.types";
+import { ensureSetupProfile } from "../product/setup";
 import { interpret } from "./semantics";
+import { runSetupTurn } from "./setup-turn";
 
 // The questions the web chat can ask and have answered in words. A Start
 // offer made on Telegram is not one of them: "yes" typed here must not start
@@ -195,4 +197,26 @@ async function act(
     case "clarify":            return { reply: { text: "I didn't catch that. Tell me in a few more words." }, operation: { name: "clarify", ok: true } };
     default:                   return null;
   }
+}
+
+// ── Before setup is finished ──────────────────────────────────────────────────
+// The chat box on a page that cannot plan yet. The shared setup turn decides
+// the reply; this opens its question so "yes" typed here can answer it, and
+// logs both sides of the exchange.
+export async function runWebSetupSentence(input: {
+  platformChatId: string; text: string; timestamp: Date; understand?: typeof runUnderstandingBrain;
+}): Promise<{ reply: string }> {
+  const ensured = await ensureSetupProfile(input.platformChatId);
+  if (!ensured) throw new Error("no Nova learner behind this key");
+  const ctx: ActionContext = { chatId: input.platformChatId, profileId: ensured.profileId, timezone: ensured.timezone, name: null, now: input.timestamp };
+  const turn = await runSetupTurn({ ctx, text: input.text, history: await loadConversationHistory(ensured.userId), understand: input.understand });
+  let reply = turn.reply.text;
+  if (turn.reply.prompt && WEB_PROMPTS.has(turn.reply.prompt.kind)) {
+    await openPrompt(ensured.profileId, input.platformChatId, turn.reply.prompt, input.timestamp);
+    reply = `${reply}\n(${turn.reply.prompt.options.map(o => o.label).join(" / ")})`;
+  }
+  await saveUserMessage(ensured.userId, input.text, { intent: "general_chat", emotion: "neutral", signals: [], surface: "web" }, input.timestamp)
+    .then(() => saveAssistantMessage(ensured.userId, reply, "nova_setup", {}, input.timestamp))
+    .catch(err => console.error("[nova:setup] conversation log failed", err));
+  return { reply };
 }

@@ -350,9 +350,27 @@ describe("study setup is offered, never saved from a sentence", () => {
     expect(reply.prompt!.options.map(o => o.label)).toEqual(["Operating Systems", "Databases", "No"]);
     expect(reply.prompt!.options[1]!.action).toMatchObject({ type: "save_setup", subjectName: "Databases", topics: ["Deadlocks", "Paging"] });
   });
-  it("a subject the learner does not have is never invented", () => {
-    expect(proposeSetup({ ...stated, subject: "Astrophysics" }, subjects)!.subjectChoices).toEqual(["Operating Systems", "Databases"]);
-    expect(proposeSetup(stated, [])).toBeNull();
+  it("a subject the learner does not have is never chosen for them: they pick from their own", () => {
+    const proposal = proposeSetup({ ...stated, subject: "Astrophysics" }, subjects)!;
+    expect(proposal.subjectChoices).toEqual(["Operating Systems", "Databases"]);
+    expect(proposal.newSubjects).toEqual([]);
+  });
+  it("a learner with no subjects yet who names one with its topics is offered it as a new subject", () => {
+    const proposal = proposeSetup(stated, [])!;
+    expect(proposal).toMatchObject({ newSubjects: ["OS"], subjectChoices: ["OS"], topics: ["Deadlocks", "Paging"] });
+    const reply = setupOfferReply(proposal);
+    expect(reply.text).toBe("Add OS as a subject, with: Deadlocks, Paging?");
+    expect(reply.prompt!.options[0]!.action).toMatchObject({ type: "save_setup", subjects: ["OS"], subjectName: "OS" });
+    // Topics with no subject named and none on record have nowhere to go.
+    expect(proposeSetup({ ...stated, subject: null }, [])).toBeNull();
+  });
+  it("subjects named for the term are offered as subjects; ones already on record are not offered again", () => {
+    const proposal = proposeSetup({ subjects: ["OS", "Maths", "maths", "Compilers"], subject: null, topics: [], dailyMinutes: null, studyTime: null }, subjects)!;
+    expect(proposal.newSubjects).toEqual(["Maths", "Compilers"]);
+    const reply = setupOfferReply(proposal);
+    expect(reply.text).toBe("Add these subjects: Maths, Compilers?");
+    expect(reply.prompt!.options.map(o => o.label)).toEqual(["Add", "No"]);
+    expect(proposeSetup({ subjects: ["operating systems"], subject: null, topics: [], dailyMinutes: null, studyTime: null }, subjects)).toBeNull();
   });
   it("a subject's own name is not one of its topics", () => {
     expect(proposeSetup({ ...stated, topics: ["Operating Systems", "OS", "Paging"] }, subjects)!.topics).toEqual(["Paging"]);
@@ -365,10 +383,10 @@ describe("study setup is offered, never saved from a sentence", () => {
 });
 
 describe("what Nova still needs to know", () => {
-  const facts = (over = {}) => ({ subjects: [{ name: "OS", topicCount: 3 }, { name: "DB", topicCount: 0 }], upcomingExams: 1, studyTime: "night", ...over });
+  const facts = (over = {}) => ({ subjects: [{ name: "OS", topicCount: 3 }, { name: "DB", topicCount: 0 }], upcomingExams: 1, studyTime: "night", dailyMinutes: 120, ...over });
   it("asks for one thing, the most blocking first", () => {
-    expect(setupGaps({ subjects: [], upcomingExams: 0, studyTime: null })).toEqual(["subjects"]);
-    expect(setupGaps(facts({ upcomingExams: 0, studyTime: null }))).toEqual(["topics", "exams", "study_time"]);
+    expect(setupGaps({ subjects: [], upcomingExams: 0, studyTime: null, dailyMinutes: null })).toEqual(["subjects"]);
+    expect(setupGaps(facts({ upcomingExams: 0, studyTime: null, dailyMinutes: null }))).toEqual(["topics", "exams", "daily_minutes", "study_time"]);
     expect(nextSetupQuestion(facts())!.question).toContain("What does DB cover");
   });
   it("never asks for what is on record", () => {

@@ -1044,15 +1044,17 @@ test("a blocked bot is noticed and forgiven when the learner writes again", asyn
   assert.ok(await loadOpenPrompt(l.profileId, clock));
 });
 
-test("before setup is finished, buttons and commands have nothing to act on", async () => {
+test("before setup is finished, a command gets the one thing Nova needs and a button it never sent does nothing", async () => {
   const chat = `${STAMP}99`;
   chats.push(chat);
   await prisma.messengerUser.create({ data: { platform: "telegram", platformChatId: chat, persona: "nova" } });
   const tg = fakeTelegram();
   const run = (event: ReturnType<typeof normalizeTelegramUpdate>) => handleNovaTelegramEvent(event as never, { client: tg.client, now: () => clock });
   await run(say(chat, "/today"));
-  assert.equal(tg.last().text, "Finish setting up with Nova first. It takes a couple of minutes.");
-  assert.equal((await run(tapUpdate(chat, "p:x:a"))).failure, "stale_prompt");
+  assert.equal(tg.last().text, "I'm Nova. Before I can plan anything I need to know what you're studying. Which subjects are you taking this term?");
+  assert.equal((await run(tapUpdate(chat, "p:x:a"))).failure, "forged_callback");
+  const profile = await prisma.novaAcademicProfile.findFirstOrThrow({ where: { user: { platformChatId: chat } }, select: { onboardingComplete: true, _count: { select: { subjects: true, studySessions: true } } } });
+  assert.deepEqual([profile.onboardingComplete, profile._count.subjects, profile._count.studySessions], [false, 0, 0]);
 });
 
 // ══════════════════════════════════════════════════════════════════════════════

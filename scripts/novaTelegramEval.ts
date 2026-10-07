@@ -107,6 +107,13 @@ const CASES: Case[] = [
   c("semantic", "you already know I have 2 hours",         NONE,    ["converse", "clarify", "show_today"], WRITES),
   c("semantic", "for OS we have deadlocks, paging and scheduling this term", NONE, ["offer_setup"], WRITES, kinds(["onboarding_input"])),
   c("semantic", "I usually get about 2 hours a day, mostly at night", NONE, ["offer_setup"], WRITES, kinds(["onboarding_input"])),
+  c("setup", "this sem I have OS, DBMS and maths",            NONE, ["offer_setup"], WRITES, kinds(["onboarding_input"])),
+  c("setup", "I'm taking operating systems and compilers",     NONE, ["offer_setup"], WRITES, kinds(["onboarding_input"])),
+  c("setup", "DBMS covers normalisation, indexing and transactions", NONE, ["offer_setup"], WRITES, kinds(["onboarding_input"])),
+  c("setup", "OS exam is on the 20th",                          NONE, ["converse", "show_today"], WRITES),
+  c("setup", "I study about an hour most days",                 NONE, ["offer_setup"], WRITES, kinds(["onboarding_input"])),
+  c("setup", "I'm in second year doing CS",                     NONE, ["converse", "clarify"], WRITES),
+  c("setup", "I studied OS for 2 hours last night",             NONE, ["converse", "acknowledge_report"], WRITES, { note: "a report of what they did, not how their term is set up" }),
 
   // ── Session ────────────────────────────────────────────────────────────────
   c("session", "I finished deadlocks",          RUNNING, ["ask_outcome"]),

@@ -157,6 +157,8 @@ export const STUDY_TIMES = ["morning", "afternoon", "evening", "night"] as const
 export type StudyTime = typeof STUDY_TIMES[number];
 
 export interface SetupStatement {
+  // Subjects or courses they say they are taking this term. Absent: none.
+  subjects?:    string[];
   subject:      string | null;     // the subject the topics belong to, as named
   topics:       string[];          // topics, chapters or units of that subject
   dailyMinutes: number | null;     // what they usually have on a normal day

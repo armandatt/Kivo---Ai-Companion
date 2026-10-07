@@ -270,7 +270,8 @@ export async function runOptionAction(action: OptionAction, ctx: ActionContext):
       const facts = await loadSetupFacts(ctx.chatId, ctx.now);
       const ask   = facts ? nextSetupQuestion(facts) : null;
       const lead  = setupSavedText(saved);
-      if (ask && ask.gap === "topics") return done("save_setup", { text: `${lead}\n\n${ask.question}` });
+      // Not enough to plan from yet, or a subject still has nothing in it.
+      if (ask && (!saved.complete || ask.gap === "topics")) return done("save_setup", { text: `${lead}\n\n${ask.question}` });
       const today = await showToday(ctx, null);
       return done("save_setup", { ...today.reply, text: `${lead}\n\n${today.reply.text}` });
     }

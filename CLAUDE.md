@@ -303,6 +303,19 @@ A sentence typed to Nova takes the same path on Telegram (`telegram/telegram-tur
 - **Two model calls per turn at most**: the reading, and the wording. The web path no longer runs the second-pass disambiguation; only a typed slash command still takes the older turn.
 - The action functions both surfaces call live in `telegram/telegram-actions.ts` and the prompt store in `telegram/prompt-store.ts`. They are channel-neutral in behaviour; the directory name is historical.
 
+## Study setup: one setup, three ways in
+
+`product/setup.ts` is the only reader and writer of a learner's study setup: subjects, topics, exam dates, normal daily minutes and usual study time. The rules, each held by `study-setup.test.ts` or `nova-setup.itest.ts`:
+
+- **Three ways in, one writer.** The setup page (`apps/web/components/nova/setup-form.tsx` → `POST /api/nova/setup`), the web chat and Telegram all end at `saveSetup`. A sentence goes Understanding → `safeReading` → `decideAction` (`offer_setup`) → `proposeSetup` → the `confirm_setup` prompt → `applySetup` → `saveSetup`.
+- **Nothing is saved before it is confirmed.** `POST /api/nova/setup { draft }` returns what saving would change and writes nothing; `{ draft, confirm: true }` saves. In chat the confirmation is a button, or a typed "yes" on the web.
+- **Saving merges and never duplicates.** Subjects and topics are matched case-insensitively; exams go through `addExam`, which already refuses a duplicate. A draft with any problem is refused whole.
+- **Unknown stays unknown.** `NovaAcademicProfile.dailyStudyMinutes` is null until the learner says. `statedDailyMinutes` (study snapshot) is the one reader; planning then uses `ASSUMED_DAILY_HOURS` and adds an assumption line to the plan. The older `preferredStudyHoursPerDay` default (3.0) is never read as a stated value.
+- **The setup page replaces a routine value** (leaving it empty means "not sure" and clears it); **a sentence merges** (it says nothing about the rest).
+- **Setup is complete when one subject has one topic.** That sets `onboardingComplete`; year, goals and the rest are not asked. The Planning Engine then has `new_material` blocks to offer at once.
+- **Before setup is complete** a message on either surface runs `interaction/setup-turn.ts`: one reading, the decision, and either a setup offer, a confirmation, or the one thing Nova still needs. No Response Brain, no canonical turn. The older conversation in `nova/onboarding/` is no longer called by any surface.
+- **The personality quiz is separate** and unchanged: it sets the companion and the tone, and nothing here reads it.
+
 ## Integration tests (real Postgres)
 
 `npm run test:integration` in `packages/api` runs the `__integration__/*.itest.ts` files against the database in `NOVA_TEST_DATABASE_URL`. They refuse to run without it and refuse the host in `packages/db/.env`. A local throwaway works:
