@@ -103,7 +103,12 @@ export const UNDERSTANDING_ENVELOPE_VERSION = 4;
 
 export const REQUESTED_ACTIONS = [
   "what_now", "start_session", "pause_session", "resume_session",
-  "finish_session", "status", "not_now", "something_else", "none",
+  "finish_session", "status", "not_now", "something_else",
+  // Asks Nova to remind or message them at a later time. Read so that it is
+  // never mistaken for anything else; Nova has no reminder to create, so the
+  // decision answers that plainly and nothing is scheduled.
+  "set_reminder",
+  "none",
 ] as const;
 export type RequestedAction = typeof REQUESTED_ACTIONS[number];
 

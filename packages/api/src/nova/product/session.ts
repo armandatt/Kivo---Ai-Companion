@@ -15,6 +15,7 @@ import {
   resumeStudySession,
 } from "../persistence/nova-persistence";
 import { checkSessionCommand, sessionElapsedSeconds, toSessionView } from "./session-view";
+import { COUNTED_SESSION_MINUTES } from "../engines/study-session-engine";
 import type { NovaSessionCommand, NovaSessionResponse, NovaSessionView } from "./today.types";
 
 export async function loadNovaSession(platformChatId: string, now = new Date()): Promise<NovaSessionView | null> {
@@ -76,6 +77,7 @@ export async function runNovaSessionCommand(
         minutes:   Math.max(1, Math.floor(sessionElapsedSeconds(active, now) / 60)),
         outcome:   command.outcome,
         topicRecorded: active.subjectId !== null && Boolean(active.topicName),
+        counted:       sessionElapsedSeconds(active, now) >= COUNTED_SESSION_MINUTES * 60,
       };
     }
   }

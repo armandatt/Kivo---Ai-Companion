@@ -194,6 +194,7 @@ async function act(
     }
     case "acknowledge_report": return { reply: { text: TEXT.selfReport }, operation: { name: "acknowledge_report", ok: true } };
     case "unsupported":        return { reply: { text: TEXT.unsupported }, operation: { name: "unsupported", ok: true } };
+    case "reminder_unavailable": return { reply: { text: TEXT.reminderUnavailableWeb }, operation: { name: "reminder_unavailable", ok: true } };
     case "clarify":            return { reply: { text: "I didn't catch that. Tell me in a few more words." }, operation: { name: "clarify", ok: true } };
     default:                   return null;
   }

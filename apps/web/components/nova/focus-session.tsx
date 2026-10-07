@@ -68,7 +68,9 @@ export function FocusSession() {
             {minutesLabel(ended.minutes)}{ended.topicName ? ` on ${ended.topicName}` : ''}
             {ended.outcome ? <>. You said {OUTCOME_SAID[ended.outcome]}.</> : '.'}
             {' '}
-            {ended.topicRecorded
+            {ended.counted === false
+              ? 'That was under ten minutes, so Nova kept it as a session but changed nothing in Knowledge or Progress.'
+              : ended.topicRecorded
               ? 'Nova has updated this topic and when to revisit it.'
               : "Nova logged the session, but couldn't tie this topic to one of your subjects, so it isn't in Knowledge yet."}
           </p>

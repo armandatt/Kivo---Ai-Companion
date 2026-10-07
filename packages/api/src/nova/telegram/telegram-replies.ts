@@ -153,10 +153,13 @@ export function outcomeReply(topicName: string | null, stated: NovaSessionOutcom
   };
 }
 
-export function endedReply(ended: { topicName: string | null; minutes: number; outcome: NovaSessionOutcome | null; topicRecorded: boolean }): TelegramReply {
+export function endedReply(ended: { topicName: string | null; minutes: number; outcome: NovaSessionOutcome | null; topicRecorded: boolean; counted?: boolean }): TelegramReply {
   const what = ended.topicName ? ` on ${ended.topicName}` : "";
   const how  = ended.outcome ? ` ${OUTCOME_LABEL[ended.outcome]}.` : "";
-  const note = !ended.topicRecorded
+  // Said exactly as it is: a short session is kept, and changed nothing else.
+  const note = ended.counted === false
+    ? ` Under ${MIN_SESSION_MINUTES} minutes, so it's kept as a session but nothing changed in Knowledge or Progress.`
+    : !ended.topicRecorded
     ? " It had no subject, so it's logged as time studied and nothing changed in Knowledge."
     : ended.outcome === "struggled" ? " It comes back for review tomorrow." : "";
   return { text: `Logged: ${ended.minutes} min${what}.${how}${note}`, link: { label: "Open Nova", path: "/knowledge" } };
@@ -185,7 +188,7 @@ export function settingsReply(state: { proactiveEnabled: boolean; pausedUntil: D
 
 export function clarifyReply(session: NovaSessionView | null): TelegramReply {
   return {
-    text: "Not sure what you need there. Pick one:",
+    text: "I didn't catch that. Tell me what you need, or pick one:",
     prompt: {
       kind: "clarify",
       options: options([
@@ -289,7 +292,9 @@ export const TEXT = {
   notToday:        "Got it. Nothing more from me today.",
   dismissed:       "OK.",
   failed:          "That didn't go through on my side. Try again.",
-  notUnderstood:   "I couldn't read that just now. Say it again in a moment.",
+  // The model that reads messages did not answer. Nothing was wrong with
+  // what they wrote, and the commands do not need it.
+  notUnderstood:   "I can't read messages right now, so I didn't take that in. /today, /focus and /done still work. Try me again in a minute.",
   budget:          "I've done a lot of reading for you today, so I'm on buttons until tomorrow. /today, /focus and /done all still work.",
   selfReport:      "Noted. There was no timer running, so I can only count that as something you told me.",
   converseFallback: "Got that. Ask me what to study whenever you're ready.",
@@ -298,8 +303,12 @@ export const TEXT = {
   nothingOnRecord: "I don't have that on record.",
   // Noise, or words with nothing to attach them to, while a question is
   // still open: the buttons already on screen are the options.
-  clarifyOpen:     "I didn't catch that. The buttons above still work, or tell me in a few more words.",
+  clarifyOpen:     "I didn't catch that. Tell me what you need, or use the buttons above.",
   unsupported:     "That's outside what I do here. I can tell you what to study, explain a topic, run a session, or take note of what's come up.",
+  // Asked for a reminder at a set time. There is no such thing to create, so
+  // this says so and says what does exist. Never "I'll remind you".
+  reminderUnavailable:    "I can't set a reminder for a set time yet, so nothing has been scheduled. What I do send on my own is a nudge when something is due, at most two a day. /settings shows whether those are on.",
+  reminderUnavailableWeb: "I can't set a reminder for a set time yet, so nothing has been scheduled.",
   nudgesOn:        "Nudges are on.",
   nudgesOff:       "Nudges are off. I'll only speak when you do.",
 };

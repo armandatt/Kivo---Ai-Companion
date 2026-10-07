@@ -14,6 +14,10 @@ import { UNDERSTANDING_BRAIN_SYSTEM_PROMPT } from "./prompts/understanding-brain
 
 // ── Understanding Brain call ───────────────────────────────────────────────────
 
+// A reading that has not arrived by now is not waited for: the turn answers
+// without it, and says so.
+export const UNDERSTANDING_DEADLINE_MS = Number(process.env.NOVA_UNDERSTANDING_DEADLINE_MS) > 0 ? Number(process.env.NOVA_UNDERSTANDING_DEADLINE_MS) : 6_000;
+
 export async function runUnderstandingBrain(
   userText:            string,
   conversationHistory: Array<{ role: "user" | "nova"; text: string }>,
@@ -38,6 +42,7 @@ export async function runUnderstandingBrain(
     systemInstruction: UNDERSTANDING_BRAIN_SYSTEM_PROMPT,
     prompt,
     maxOutputTokens:  600,
+    deadlineMs:       UNDERSTANDING_DEADLINE_MS,
   });
 
   return parseUnderstandingResponse(raw, userText);

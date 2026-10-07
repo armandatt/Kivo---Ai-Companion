@@ -47,6 +47,7 @@ import { interpret } from "../interaction/semantics";
 import type {
   FailureCategory, InlineButton, PromptKind, TelegramClient, TelegramEvent, TelegramReply, TurnTrace,
 } from "./telegram.types";
+import { slowestStage } from "./telegram.types";
 
 export interface TelegramDeps {
   client:       TelegramClient;
@@ -55,6 +56,12 @@ export interface TelegramDeps {
   // only https links, so anything else means no link button.
   webUrl?:      string | null;
   // Test seams. Production uses the real brains.
+  // When the webhook received this update, so the time it spent before this
+  // handler ran is counted in what the learner waited.
+  receivedAt?:  number;
+  // Called once the reply has been sent. The webhook shows "typing" while a
+  // message is handled; it stops here, not when the turn has been recorded.
+  onReplied?:   () => void;
   generate?:    Parameters<typeof wordFirstUse>[1];
   understand?:  typeof runUnderstandingBrain;
   respond?:     NovaOrchestratorInput["respond"];
@@ -89,6 +96,9 @@ function newTrace(event: Event): TurnTrace {
     promptId: null, failure: "none",
     textLength: event.kind === "text" ? event.text.length : 0,
     totalMs: 0,
+    timings: { webhookMs: 0, learnerMs: 0, contextMs: 0, understandingMs: 0, decisionMs: 0, actionMs: 0, responseMs: 0, telegramSendMs: 0, replyMs: 0, persistMs: 0, totalMs: 0 },
+    modelCalls: 0,
+    slowStage: null,
   };
 }
 
@@ -108,28 +118,62 @@ const weekdayIn = (now: Date, zone: string) =>
   new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone: zone }).format(now);
 
 export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps): Promise<TurnTrace> {
-  const started = Date.now();
-  const now     = deps.now ? deps.now() : new Date();
+  const started  = Date.now();
+  const received = deps.receivedAt ?? started;
+  const now      = deps.now ? deps.now() : new Date();
   const trace   = newTrace(event);
   const { client } = deps;
 
+  // When the reply went out. null: nothing has been sent for this update.
+  let repliedAt: number | null = null;
   const finish = (failure?: FailureCategory): TurnTrace => {
     if (failure) trace.failure = failure;
-    trace.totalMs = Date.now() - started;
+    const ended = Date.now();
+    trace.totalMs = ended - started;
+    trace.timings.webhookMs = Math.max(0, started - received);
+    trace.timings.totalMs   = ended - received;
+    trace.timings.replyMs   = (repliedAt ?? ended) - received;
+    trace.timings.persistMs = repliedAt === null ? 0 : ended - repliedAt;
+    trace.understanding.ms  = trace.timings.understandingMs;
+    trace.slowStage = slowestStage(trace.timings);
     console.log(JSON.stringify({ ts: new Date().toISOString(), layer: "nova_telegram", ...trace }));
     return trace;
+  };
+  // A stage's duration, added to its total. `since` is when it began.
+  const spent = (stage: "learnerMs" | "contextMs" | "understandingMs" | "decisionMs" | "actionMs" | "responseMs" | "telegramSendMs", since: number) => {
+    trace.timings[stage] += Date.now() - since;
+  };
+  // Every Telegram API call this update makes, timed together.
+  const telegram = async <T>(call: Promise<T>): Promise<T> => {
+    const since = Date.now();
+    try { return await call; } finally { spent("telegramSendMs", since); }
   };
 
   // Sends a reply. A reply with choices opens the prompt first, so every
   // button already has something to refer to when it arrives.
+  //
+  // One update, one reply: whatever path the turn took, the first reply is
+  // the only one. A second is a bug in the turn, and is dropped and logged
+  // here so the learner never sees two answers to one message.
   let ctx: ActionContext | null = null;
+  // When the product action now running began. Its time is counted up to
+  // the moment its reply is handed over for sending.
+  let actingSince: number | null = null;
   const deliver = async (reply: TelegramReply): Promise<void> => {
+    if (repliedAt !== null) {
+      console.error(`[nova:telegram] ${trace.correlationId} a second reply to one update was dropped`);
+      return;
+    }
+    repliedAt = Date.now();
+    if (actingSince !== null) { spent("actionMs", actingSince); actingSince = null; }
     let prompt: OpenPrompt | null = null;
     if (ctx && reply.prompt && reply.prompt.options.length > 0) {
       prompt = await openPrompt(ctx.profileId, event.chatId, reply.prompt, now);
       trace.promptId = prompt.id;
     }
-    const sent = await client.sendMessage(event.chatId, reply.text, buttonRows(reply, prompt, deps.webUrl));
+    const sent = await telegram(client.sendMessage(event.chatId, reply.text, buttonRows(reply, prompt, deps.webUrl)));
+    repliedAt = Date.now();
+    deps.onReplied?.();
     if (sent.ok) {
       trace.send = { status: "sent", messageId: sent.messageId, failure: null };
       if (prompt) await recordPromptMessage(prompt.id, sent.messageId);
@@ -149,13 +193,20 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     // secret was checked before this function was called.
     const user = await prisma.messengerUser.findUnique({
       where:  { platform_platformChatId: { platform: "telegram", platformChatId: event.chatId } },
-      select: { displayName: true, novaAcademicProfile: { select: { id: true, onboardingComplete: true, timezone: true } } },
+      select: {
+        id: true, displayName: true,
+        novaAcademicProfile: {
+          select: { id: true, onboardingComplete: true, timezone: true, telegramChannel: { select: { undeliverableSince: true } } },
+        },
+      },
     });
-    let profile = user?.novaAcademicProfile ?? null;
+    let profile: { id: string; onboardingComplete: boolean; timezone: string | null } | null = user?.novaAcademicProfile ?? null;
+    // The channel row, read with the learner: null when there is none yet.
+    const channel = user?.novaAcademicProfile?.telegramChannel ?? null;
 
     // In a private chat the sender is the chat. Anything else is not ours.
     if (event.fromId !== null && event.fromId !== event.chatId) {
-      if (event.kind === "callback") await client.answerCallback(event.callbackId, TEXT.stale);
+      if (event.kind === "callback") await telegram(client.answerCallback(event.callbackId, TEXT.stale));
       return finish("forged_callback");
     }
 
@@ -173,15 +224,18 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
 
     trace.profileId = profile.id;
     ctx = { chatId: event.chatId, profileId: profile.id, timezone: profile.timezone, name: user?.displayName ?? null, now };
-    await ensureChannel(profile.id);
-    await noteInbound(profile.id);
+    // The row is made once, and "reachable again" is written only when the
+    // chat had been marked unreachable: most updates need neither.
+    if (!channel || settingUp) await ensureChannel(profile.id);
+    if (!channel || channel.undeliverableSince !== null) await noteInbound(profile.id);
 
     // One chat cannot flood the system with taps and commands. Over the
     // limit, the update is dropped without a reply.
     if (!await allowAction(profile.id, now)) {
-      if (event.kind === "callback") await client.answerCallback(event.callbackId, TEXT.rateLimited);
+      if (event.kind === "callback") await telegram(client.answerCallback(event.callbackId, TEXT.rateLimited));
       return finish("rate_limited");
     }
+    spent("learnerMs", started);
 
     const report = (result: ActionResult) => {
       trace.operation = result.operation;
@@ -195,15 +249,25 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       const resolved = ref ? await resolvePrompt(profile.id, ref.promptId, ref.optionId, "callback", now) : null;
       if (!resolved || !resolved.ok) {
         // Old, already answered, or not this learner's. Nothing happens.
-        await client.answerCallback(event.callbackId, TEXT.stale);
-        if (event.messageId !== null) await client.clearButtons(event.chatId, event.messageId);
+        await telegram(Promise.all([
+          client.answerCallback(event.callbackId, TEXT.stale),
+          event.messageId !== null ? client.clearButtons(event.chatId, event.messageId) : null,
+        ]));
         return finish(!resolved || resolved.reason === "unknown" ? "forged_callback" : "stale_prompt");
       }
       trace.promptId = ref!.promptId;
       trace.decision = `option:${resolved.option.action.type}`;
-      await client.answerCallback(event.callbackId);
-      if (event.messageId !== null) await client.clearButtons(event.chatId, event.messageId);
-      await deliver(report(await runOptionAction(resolved.option.action, ctx)));
+      // The tap is acknowledged and its buttons cleared while the action
+      // runs: neither depends on the other, and the tap is already resolved.
+      const acknowledged = telegram(Promise.all([
+        client.answerCallback(event.callbackId),
+        event.messageId !== null ? client.clearButtons(event.chatId, event.messageId) : null,
+      ])).catch(() => {});
+      const acting = Date.now();
+      const result = await runOptionAction(resolved.option.action, ctx);
+      spent("actionMs", acting);
+      await acknowledged;
+      await deliver(report(result));
       return finish();
     }
 
@@ -216,6 +280,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     }
     if (event.kind === "command") {
       trace.decision = `command:${event.command}`;
+      actingSince = Date.now();
       switch (event.command) {
         case "start": {
           // The first message in this chat is the mentor's, from the record.
@@ -227,12 +292,16 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
           const reply = report(await firstUse(ctx, async (decision, hasButtons, activeReality, daysUntilNextExam) => {
             // Wording is optional: within today's budget, and never required.
             if (!await spendModelCall(profile!.id, "response", dayKey(now, zone))) return decision.fallback;
+            if (actingSince !== null) { spent("actionMs", actingSince); actingSince = null; }
+            trace.modelCalls++;
+            const wording = Date.now();
             const worded = await wordFirstUse({
               decision, hasButtons, studentName: ctx!.name,
               register:       chooseRegister({ emotion: "neutral", daysUntilNextExam, activeReality, accountability: await loadAccountabilityStyle(event.chatId) }),
               operatingStyle: await loadOperatingStyle(event.chatId),
             }, deps.generate);
-            trace.response = { generated: true, ok: worded.generated, ms: 0, fallback: !worded.generated };
+            spent("responseMs", wording);
+            trace.response = { generated: true, ok: worded.generated, ms: Date.now() - wording, fallback: !worded.generated };
             return worded.text;
           }));
           await deliver(reply);
@@ -258,6 +327,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     }
 
     // ── Words ────────────────────────────────────────────────────────────────
+    const limited = Date.now();
     const limit = await checkRateLimit(event.chatId);
     if (!limit.allowed) { await deliver({ text: TEXT.rateLimited }); return finish("rate_limited"); }
     if (!await acquireTurn(profile.id, now)) { await deliver({ text: TEXT.busy }); return finish("busy"); }
@@ -269,14 +339,22 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
         await deliver({ text: TEXT.budget });
         return finish("budget_exhausted");
       }
+      spent("learnerMs", limited);
+      const gathering = Date.now();
 
       // Setup is not finished: the message can only add to it.
       if (settingUp) {
-        const row = await prisma.messengerUser.findUnique({
+        // The row read at the top, unless this update is what created it.
+        const row = user ?? await prisma.messengerUser.findUnique({
           where: { platform_platformChatId: { platform: "telegram", platformChatId: event.chatId } }, select: { id: true },
         });
         trace.understanding.attempted = true;
-        const turn = await runSetupTurn({ ctx, text: event.text, history: row ? await loadConversationHistory(row.id) : [], understand: deps.understand });
+        trace.modelCalls++;
+        const history = row ? await loadConversationHistory(row.id) : [];
+        spent("contextMs", gathering);
+        const reading = Date.now();
+        const turn = await runSetupTurn({ ctx, text: event.text, history, understand: deps.understand });
+        spent("understandingMs", reading);
         trace.understanding.ok   = turn.decision !== "unreadable";
         trace.understanding.kind = turn.kind;
         trace.decision           = turn.decision;
@@ -291,14 +369,15 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       }
 
       // Before reading the message: what is true right now.
-      const [session, prompt, userRow] = await Promise.all([
+      // Three independent reads, together. The learner's row was read at the
+      // top of the turn and is not read again.
+      const userRow = user ? { id: user.id } : null;
+      const [session, prompt, history] = await Promise.all([
         loadNovaSession(event.chatId, now),
         loadOpenPrompt(profile.id, now),
-        prisma.messengerUser.findUnique({
-          where: { platform_platformChatId: { platform: "telegram", platformChatId: event.chatId } }, select: { id: true },
-        }),
+        userRow ? loadConversationHistory(userRow.id) : Promise.resolve([]),
       ]);
-      const history = userRow ? await loadConversationHistory(userRow.id) : [];
+      spent("contextMs", gathering);
       const context: UnderstandingContext = {
         today:        `${weekdayIn(now, zone)} ${day}`,
         session:      session ? (session.status === "paused" ? "paused" : "running") : "none",
@@ -310,16 +389,18 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       let read: AcademicUnderstanding;
       const readStarted = Date.now();
       trace.understanding.attempted = true;
+      trace.modelCalls++;
       trace.understanding.estInputTokens = Math.round((event.text.length + 6200) / 4);
       try {
         read = await (deps.understand ?? runUnderstandingBrain)(event.text, history, context);
       } catch (err) {
-        trace.understanding.ms = Date.now() - readStarted;
+        spent("understandingMs", readStarted);
         console.error(`[nova:telegram] ${trace.correlationId} understanding failed:`, (err as Error).message);
         await deliver({ text: TEXT.notUnderstood });
         return finish("understanding_failed");
       }
-      trace.understanding.ms = Date.now() - readStarted;
+      spent("understandingMs", readStarted);
+      const deciding = Date.now();
       if (read.malformed) {
         // Unreadable output proposes nothing, so nothing is done.
         await deliver({ text: TEXT.notUnderstood });
@@ -342,9 +423,12 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
 
       const decision = decideAction(understanding, { session: context.session, prompt: promptFacts(prompt) });
       trace.decision = `${decision.action.type}:${decision.reason}`;
+      spent("decisionMs", deciding);
 
       // The action, through the same functions the buttons use.
+      const acting = Date.now();
       const acted = await act(decision.action, ctx, prompt, understanding, now);
+      spent("actionMs", acting);
       let reply: TelegramReply | null = acted ? report(acted) : null;
 
       // Noise: answered, and nothing else. It does not enter the canonical
@@ -378,7 +462,15 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       const generate = decision.generate && happened && await spendModelCall(profile.id, "response", day);
       const explaining = decision.action.type === "explain";
       const fallback = plain || (explaining ? TEXT.explainFallback : TEXT.converseFallback);
-      const respondStarted = Date.now();
+      // The reply, whoever words it: these buttons, this link.
+      const shell = (text: string): TelegramReply => ({ ...(reply ?? {}), text });
+
+      // A reply that code already wrote is sent now. The canonical turn
+      // below records the message (log, evidence, consolidation) and cannot
+      // change what was said or done, so the learner is not kept waiting for
+      // it. It still runs, and is still awaited, before this update ends.
+      if (!generate) await deliver(shell(fallback));
+
       try {
         const turn = await runNovaOrchestrator({
           platformChatId:   event.chatId,
@@ -395,26 +487,32 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
                 directive: plain
                   ? `Nova's system already did or offered exactly this, and nothing else: "${plain.slice(0, 400)}". Say it in your own words in at most three short sentences. Buttons for the next step are attached, so do not list options. Do not say anything else was started, ended, saved, added or scheduled, and do not state a date, a number of days or any other figure that is not in that sentence or the context above.`
                   : explaining ? EXPLAINED_ONLY : NOTHING_WAS_DONE,
+                // Worded: sent the moment the wording exists, before the
+                // turn is recorded.
+                hooks: { beforeResponse: () => { trace.modelCalls++; }, reply: (text: string) => deliver(shell(text)) },
               }
             : { scriptedReply: fallback }),
         });
         trace.response = {
           generated: turn.trace?.responseGenerated ?? false,
           ok:        turn.trace?.responseGenerated ? turn.trace.responseOk : null,
-          ms:        turn.trace?.responseGenerated ? Date.now() - respondStarted : 0,
+          ms:        turn.trace?.responseGenerated ? turn.trace.responseMs ?? 0 : 0,
           fallback:  turn.trace?.responseGenerated === true && turn.trace.responseOk === false,
         };
+        if (generate) {
+          trace.timings.contextMs  += turn.trace?.contextMs ?? 0;
+          trace.timings.responseMs += turn.trace?.responseMs ?? 0;
+        }
         if (trace.response.fallback) trace.failure = "response_failed";
         trace.evidence = { kinds: turn.trace?.evidenceKinds ?? [], consolidationQueued: turn.trace?.consolidationQueued ?? false };
-        reply = { ...(reply ?? {}), text: turn.reply };
       } catch (err) {
-        // The action above already happened and stands. Say what it was.
+        // The action above already happened and stands.
         console.error(`[nova:telegram] ${trace.correlationId} turn failed after the action:`, (err as Error).message);
         trace.failure = "internal";
-        reply = { ...(reply ?? {}), text: fallback };
       }
 
-      await deliver(reply);
+      // The turn failed before it had a reply: say what the action was.
+      if (repliedAt === null) await deliver(shell(fallback));
       return finish();
     } finally {
       await releaseTurn(profile.id);
@@ -422,9 +520,12 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
   } catch (err) {
     console.error(`[nova:telegram] ${trace.correlationId} failed:`, err);
     trace.failure = "internal";
-    // Never claim success. One plain line, best effort.
-    if (event.kind === "callback") await client.answerCallback(event.callbackId, TEXT.failed).catch(() => {});
-    else await client.sendMessage(event.chatId, TEXT.failed).catch(() => {});
+    // Never claim success. One plain line, best effort, and only when this
+    // update has not been answered already.
+    if (repliedAt === null) {
+      if (event.kind === "callback") await client.answerCallback(event.callbackId, TEXT.failed).catch(() => {});
+      else await client.sendMessage(event.chatId, TEXT.failed).catch(() => {});
+    }
     return finish();
   }
 }
@@ -432,7 +533,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
 // Said to the Response Brain on a turn with no product action, so that a
 // reply cannot claim one.
 const NOTHING_WAS_DONE =
-  "Nova's system took no action this turn: nothing was started, paused, ended, saved, added or scheduled, and no reminder was set. Do not say or imply otherwise, and do not offer to do something this chat has no button for. Do not state a date, a number of days or any other figure that is not written in the context above. Reply in at most three short sentences.";
+  "Nova's system took no action this turn: nothing was started, paused, ended, saved, added or scheduled, and no reminder was set. Do not say or imply otherwise, do not promise to do anything later (remind, check in, message, follow up), and do not offer to do something this chat has no button for. Say nothing about how the student feels or what they usually do unless they said it in this message or it is in the context above. Do not state a date, a number of days or any other figure that is not written in the context above. Reply in at most three short sentences.";
 
 const EXPLAINED_ONLY =
   "Nova's system took no action this turn: nothing was started, saved, added or scheduled. Do not say or imply otherwise.";
@@ -488,6 +589,8 @@ async function act(
     case "explain":     return null;
     case "acknowledge_report": return { reply: { text: TEXT.selfReport }, operation: { name: "acknowledge_report", ok: true } };
     case "unsupported":        return { reply: { text: TEXT.unsupported }, operation: { name: "unsupported", ok: true } };
+    // Nothing is created: there is no reminder to create.
+    case "reminder_unavailable": return { reply: { text: TEXT.reminderUnavailable }, operation: { name: "reminder_unavailable", ok: true } };
     // With a question still open, its buttons are the options: the prompt
     // stays as it is. Otherwise, the fixed choices.
     case "clarify":

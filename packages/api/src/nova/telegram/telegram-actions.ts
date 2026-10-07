@@ -96,12 +96,13 @@ export async function showToday(ctx: ActionContext, statedMinutes: number | null
 // "Should I study deadlocks tonight?" Answered from today's plan and the
 // record. When the answer is yes, the way to start is attached.
 export async function advise(ctx: ActionContext, topic: string): Promise<ActionResult> {
-  const view = await todayView(ctx, null);
+  // Everything the answer and its offer need, read once and together.
+  const [view, snapshot, session] = await Promise.all([todayView(ctx, null), loadStudySnapshot(ctx.chatId), loadNovaSession(ctx.chatId, ctx.now)]);
   if (!view) return done("advise", { text: TEXT.finishSetup }, false);
-  const subjects = (await loadStudySnapshot(ctx.chatId)).subjects;
+  const subjects = snapshot.subjects;
   const advice   = adviseOnTopic(view, topic, subjects);
   const offer    = advice.block ? recommendationReply(view, advice.block).prompt
-    : advice.verdict === "review_due" || advice.verdict === "not_planned" ? (await offerStart(ctx, topic)).reply.prompt
+    : advice.verdict === "review_due" || advice.verdict === "not_planned" ? offerFrom(view, session, subjects, topic, null).reply.prompt
     : undefined;
   return { reply: { text: advice.text, ...(offer ? { prompt: offer } : {}) }, operation: { name: `advise:${advice.verdict}`, ok: true }, facts: advice.facts };
 }
@@ -148,10 +149,23 @@ export async function showStatus(ctx: ActionContext): Promise<ActionResult> {
 // enough to start a timer by itself.
 export async function offerStart(ctx: ActionContext, named: string | null, statedMinutes: number | null = null): Promise<ActionResult> {
   if (statedMinutes !== null) await recordStatedMinutes(ctx.chatId, statedMinutes, ctx.now);
-  const [view, session] = await Promise.all([todayView(ctx, statedMinutes), loadNovaSession(ctx.chatId, ctx.now)]);
+  const [view, session, snapshot] = await Promise.all([
+    todayView(ctx, statedMinutes), loadNovaSession(ctx.chatId, ctx.now), named ? loadStudySnapshot(ctx.chatId) : null,
+  ]);
   if (!view) return done("offer_start", { text: TEXT.finishSetup }, false);
+  return offerFrom(view, session, snapshot?.subjects ?? [], named, statedMinutes);
+}
+
+// The offer itself, from state the caller has already read. No reads, no
+// writes: a caller that holds the Today view does not load it a second time.
+function offerFrom(
+  view:          NovaTodayReady,
+  session:       Awaited<ReturnType<typeof loadNovaSession>>,
+  subjects:      Array<{ name: string; code?: string | null }>,
+  named:         string | null,
+  statedMinutes: number | null,
+): ActionResult {
   if (session) return done("offer_start", sessionReply(session, "You already have one going."));
-  const subjects = named ? (await loadStudySnapshot(ctx.chatId)).subjects : [];
   const pick = pickStart(view, named, subjects);
   if (!pick) return done("offer_start", todayReply(view, null));
   if ("urgency" in pick) return done("offer_start", recommendationReply(view, pick));
@@ -206,10 +220,14 @@ export async function startSession(
 // with a block). A name the plan does not know is offered instead: a timer
 // is not started on a word the model picked out of a sentence.
 export async function startFromRequest(ctx: ActionContext, named: string, minutes: number | null): Promise<ActionResult> {
-  const view = await todayView(ctx, minutes);
+  const [view, snapshot] = await Promise.all([todayView(ctx, minutes), loadStudySnapshot(ctx.chatId)]);
   if (!view) return done("session_start", { text: TEXT.finishSetup }, false);
-  const pick = pickStart(view, named, (await loadStudySnapshot(ctx.chatId)).subjects);
-  if (!pick || !("urgency" in pick)) return offerStart(ctx, named, minutes);
+  const pick = pickStart(view, named, snapshot.subjects);
+  if (!pick || !("urgency" in pick)) {
+    // Not on today's plan: offered, from the plan already in hand.
+    if (minutes !== null) await recordStatedMinutes(ctx.chatId, minutes, ctx.now);
+    return offerFrom(view, await loadNovaSession(ctx.chatId, ctx.now), snapshot.subjects, named, minutes);
+  }
   if (minutes !== null) await recordStatedMinutes(ctx.chatId, minutes, ctx.now);
   return startSession(ctx, {
     topicName:   pick.topicName,

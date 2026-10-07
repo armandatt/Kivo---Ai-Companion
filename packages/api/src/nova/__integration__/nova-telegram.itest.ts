@@ -281,7 +281,7 @@ test("an expired prompt cannot be answered, by tap or by typing", async () => {
   ai.read("yes", { ...BASE, ambiguityScore: 0.9, request: { ...REQ, action: "none", confidence: 0.2 } });
   await send(l, "yes");
   assert.equal(ai.seen.at(-1)!.context!.openPrompt, null);
-  assert.equal(tg.last().text, "Not sure what you need there. Pick one:");
+  assert.equal(tg.last().text, "I didn't catch that. Tell me what you need, or pick one:");
   assert.equal((await sessions(l)).length, 0);
 });
 
@@ -617,7 +617,7 @@ test("short replies are read against the open question, or not at all", async ()
   // "yeah" with nothing asked.
   ai.read("yeah", { ...BASE, ambiguityScore: 0.9, request: { ...REQ, action: "none", confidence: 0.2 } });
   await send(l, "yeah");
-  assert.equal(tg.last().text, "Not sure what you need there. Pick one:");
+  assert.equal(tg.last().text, "I didn't catch that. Tell me what you need, or pick one:");
   assert.equal((await sessions(l)).length, 0);
 
   // A model that answers a question nobody asked is not believed.
@@ -726,14 +726,14 @@ test("gibberish changes nothing, whatever the model claims to have found in it",
     const trace = await send(l, text);
     assert.equal(trace.decision, "clarify:unintelligible");
     // /status left its buttons up, so those are the options: nothing new is opened.
-    assert.equal(tg.last().text, "I didn't catch that. The buttons above still work, or tell me in a few more words.");
+    assert.equal(tg.last().text, "I didn't catch that. Tell me what you need, or use the buttons above.");
     assert.equal(tg.last().buttons.length, 0);
     assert.deepEqual(trace.evidence, { kinds: [], consolidationQueued: false });
   }
   // With nothing open, the fixed choices.
   await prisma.novaTelegramPrompt.updateMany({ where: { profileId: l.profileId }, data: { openKey: null, resolvedAt: clock } });
   await send(l, "asdfghjkl");
-  assert.equal(tg.last().text, "Not sure what you need there. Pick one:");
+  assert.equal(tg.last().text, "I didn't catch that. Tell me what you need, or pick one:");
   assert.deepEqual(tg.labels(), ["What should I do?", "Where do I stand?", "Nothing"]);
   assert.deepEqual(await stateOf(l), idle, "idle: nothing moved");
   assert.equal(ai.worded.length, 0, "noise is never sent to the Response Brain");
@@ -744,7 +744,7 @@ test("gibberish changes nothing, whatever the model claims to have found in it",
   await send(l, "/today");
   const offer = tg.data("Start 25 min");
   await send(l, "asdfghjkl");
-  assert.equal(tg.last().text, "I didn't catch that. The buttons above still work, or tell me in a few more words.");
+  assert.equal(tg.last().text, "I didn't catch that. Tell me what you need, or use the buttons above.");
   assert.equal(tg.last().buttons.length, 0);
   assert.deepEqual(await stateOf(l), idle);
 
@@ -955,7 +955,8 @@ test("with the model down, commands and buttons still work and words do nothing"
 
   const trace = await send(l, "start it");
   assert.deepEqual([trace.failure, trace.understanding.ok], ["understanding_failed", false]);
-  assert.ok(tg.last().text.startsWith("I couldn't read that just now."));
+  assert.ok(tg.last().text.startsWith("I can't read messages right now, so I didn't take that in."));
+  assert.match(tg.last().text, /\/today, \/focus and \/done still work/, "and says what does work without the model");
   assert.equal((await sessions(l)).length, 0, "an unread message runs nothing");
   assert.equal(await prisma.companionMessage.count({ where: { userId: l.userId } }), 0);
 

@@ -14,6 +14,27 @@ export interface LlmRequest {
   systemInstruction?: string;
   maxOutputTokens?:   number;
   model?:             string;   // the model the caller asked for (an OpenAI name)
+  // The longest the caller will wait for an answer, across every attempt and
+  // every pause between attempts. Absent: the provider's own timeouts and
+  // retries apply. A chat turn sets it so a slow or rate-limited provider
+  // fails in time for the turn to answer without it.
+  deadlineMs?:        number;
+}
+
+// An attempt shorter than this cannot succeed, so it is not started.
+export const MIN_ATTEMPT_MS = 1_000;
+
+// How long the next attempt may run, given the caller's deadline and the time
+// already spent. null: no time for another attempt.
+export function attemptTimeoutMs(deadlineMs: number | undefined, elapsedMs: number, providerTimeoutMs: number): number | null {
+  if (deadlineMs === undefined) return providerTimeoutMs;
+  const left = deadlineMs - elapsedMs;
+  return left < MIN_ATTEMPT_MS ? null : Math.min(providerTimeoutMs, left);
+}
+
+// Whether a pause before the next attempt still leaves time for that attempt.
+export function mayWait(deadlineMs: number | undefined, elapsedMs: number, waitMs: number): boolean {
+  return deadlineMs === undefined || deadlineMs - elapsedMs - waitMs >= MIN_ATTEMPT_MS;
 }
 
 // ── Provider selection ────────────────────────────────────────────────────────

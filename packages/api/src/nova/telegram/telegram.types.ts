@@ -127,6 +127,35 @@ export interface TelegramClient {
   setChatCommands(chatId: string, commands: Array<{ command: string; description: string }>): Promise<void>;
 }
 
+// Where one update's time went, in milliseconds. Durations only: nothing the
+// learner wrote and nothing about them.
+//   webhookMs       the webhook before Nova's handler ran: authentication,
+//                   the replay check, the persona lookup
+//   learnerMs       who this is, and the limits (rate, lease, budget)
+//   contextMs       what is true right now (session, open question, recent
+//                   lines), and the canonical turn's own reads before wording
+//   understandingMs the Understanding Brain
+//   decisionMs      safeReading, interpret, decideAction (pure)
+//   actionMs        the product action (the plan, a session command)
+//   responseMs      the Response Brain, or the first message's wording
+//   telegramSendMs  Telegram's API, every call this update made
+//   replyMs         from the webhook receiving the update to the reply being
+//                   sent: what the learner waits
+//   persistMs       recording the turn after the reply was sent
+//   totalMs         the whole update
+export interface TurnTimings {
+  webhookMs: number; learnerMs: number; contextMs: number; understandingMs: number; decisionMs: number; actionMs: number;
+  responseMs: number; telegramSendMs: number; replyMs: number; persistMs: number; totalMs: number;
+}
+export const SLOW_STAGE_MS = 1_500;
+const STAGES = ["webhookMs", "learnerMs", "contextMs", "understandingMs", "decisionMs", "actionMs", "responseMs", "telegramSendMs", "persistMs"] as const;
+// The stage that took longest, when it took long enough to matter.
+export function slowestStage(t: TurnTimings): string | null {
+  let worst: typeof STAGES[number] | null = null;
+  for (const stage of STAGES) if (t[stage] >= SLOW_STAGE_MS && (worst === null || t[stage] > t[worst])) worst = stage;
+  return worst;
+}
+
 // ── One line per turn ─────────────────────────────────────────────────────────
 // What happened to an update, without its content. `correlationId` appears on
 // every log line the turn produces.
@@ -152,4 +181,9 @@ export interface TurnTrace {
   failure:       FailureCategory;
   textLength:    number;
   totalMs:       number;
+  // Where the time went, how many model calls the update made, and the
+  // slowest stage when one was slow. See TurnTimings.
+  timings:       TurnTimings;
+  modelCalls:    number;
+  slowStage:     string | null;
 }

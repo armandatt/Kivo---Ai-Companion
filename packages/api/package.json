@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "jest --config jest.config.ts",
-    "test:integration": "tsx --test --test-concurrency=1 src/nova/__integration__/nova-persist-turn.itest.ts src/nova/__integration__/nova-session-start.itest.ts src/nova/__integration__/nova-knowledge.itest.ts src/nova/__integration__/nova-notes.itest.ts src/nova/__integration__/nova-progress.itest.ts src/nova/__integration__/nova-learning-dna.itest.ts src/nova/__integration__/nova-telegram.itest.ts src/nova/__integration__/nova-lifecycle.itest.ts src/nova/__integration__/nova-semantic.itest.ts src/nova/__integration__/nova-setup.itest.ts src/nova/__integration__/nova-first-use.itest.ts"
+    "test:integration": "tsx --test --test-concurrency=1 src/nova/__integration__/nova-persist-turn.itest.ts src/nova/__integration__/nova-session-start.itest.ts src/nova/__integration__/nova-knowledge.itest.ts src/nova/__integration__/nova-notes.itest.ts src/nova/__integration__/nova-progress.itest.ts src/nova/__integration__/nova-learning-dna.itest.ts src/nova/__integration__/nova-telegram.itest.ts src/nova/__integration__/nova-lifecycle.itest.ts src/nova/__integration__/nova-semantic.itest.ts src/nova/__integration__/nova-setup.itest.ts src/nova/__integration__/nova-first-use.itest.ts src/nova/__integration__/nova-hardening.itest.ts"
   },
   "exports": {
     "./processor/*": "./src/processor/*",

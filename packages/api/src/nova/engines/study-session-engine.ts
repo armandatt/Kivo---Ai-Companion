@@ -260,7 +260,14 @@ export function buildExecutionReport(
     confidence: reportedConfidence,
   }));
 
-  const masteryUpdates = topicsCovered
+  // A timer stopped before it is a counted session (ten minutes of study)
+  // says nothing reliable about the topic, whatever answer is given to "How
+  // did it go?". The session is closed and kept, with that answer on it; it
+  // moves no mastery, reschedules no review and writes no mastery history.
+  // The same rule Progress and Learning DNA use to count a session.
+  const countedAsStudy = session.elapsedMinutes >= COUNTED_SESSION_MINUTES;
+
+  const masteryUpdates = !countedAsStudy ? [] : topicsCovered
     .filter(t => t.subjectId !== null)
     .map(t => ({
       topicName:  t.name,
@@ -282,6 +289,7 @@ export function buildExecutionReport(
     totalPausedMinutes:     session.totalPausedMinutes,
     completionStatus,
     masteryUpdates,
+    countedAsStudy,
     outcome:                evidence.outcome,
     evidenceBasis:          evidence.basis,
     reflectionText,
