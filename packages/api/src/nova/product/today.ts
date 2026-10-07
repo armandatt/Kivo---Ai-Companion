@@ -49,13 +49,15 @@ export function reasonsFor(
   topic:       TopicMasteryState | undefined,
   examContext: ExamContext | null,
   now:         Date,
+  timezone:    string | null = null,
 ): string[] {
   const reasons: string[] = [];
 
   if (examContext && (block.activityType === "exam_prep" || examContext.subjectName === block.subjectName)) {
-    reasons.push(examContext.daysUntil <= 0 ? "exam today"
-      : examContext.daysUntil === 1 ? "exam tomorrow"
-      : `exam in ${examContext.daysUntil} days`);
+    // The learner's calendar days, the same count the deadline list shows,
+    // so one message never gives two numbers for the same exam.
+    const days = calendarDaysUntil(examContext.scheduledAt, now, timezone);
+    reasons.push(days <= 0 ? "exam today" : days === 1 ? "exam tomorrow" : `exam in ${days} days`);
   }
   if (topic) {
     const pct = Math.round(topic.masteryProbability * 100);
@@ -80,6 +82,7 @@ export function toAction(
   topics:      TopicMasteryState[],
   examContext: ExamContext | null,
   now:         Date,
+  timezone:    string | null = null,
 ): TodayAction {
   const topic = topics.find(t => t.topicId === block.topicId)
     ?? topics.find(t => t.topicName === block.topicName && t.subjectName === block.subjectName);
@@ -89,7 +92,7 @@ export function toAction(
     activityType:    block.activityType,
     durationMinutes: block.durationMinutes,
     urgency:         block.urgency,
-    reasons:         reasonsFor(block, topic, examContext, now),
+    reasons:         reasonsFor(block, topic, examContext, now, timezone),
     rationale:       block.rationale,
   };
 }
@@ -97,7 +100,7 @@ export function toAction(
 export function buildTodayView(input: TodayInputs): NovaTodayReady {
   const { snapshot, academicState, topics, examContext, plan, now } = input;
 
-  const actions = plan.today.map(b => toAction(b, topics, examContext, now));
+  const actions = plan.today.map(b => toAction(b, topics, examContext, now, input.timezone ?? null));
   const recommendation = actions[0] ?? null;
 
   const mode        = planMode(academicState);

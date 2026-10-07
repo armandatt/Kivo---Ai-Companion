@@ -138,6 +138,7 @@ describe("consolidation boundary", () => {
     const llmCallers = FILES.filter(f => /generateOpenAIText\(/.test(f.src)).map(f => f.path).sort();
     expect(llmCallers).toEqual([
       "brains/disambiguation-pass.ts",
+      "brains/first-use-wording.ts",   // words the one first message of a linked chat; facts decided in code
       "brains/response-brain.ts",
       "brains/understanding-brain.ts",
       "onboarding/nova-onboarding-extractor.ts",

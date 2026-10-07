@@ -114,7 +114,7 @@ import { handleNovaTelegramEvent } from "@repo/api/nova/telegram/telegram-turn";
 //@ts-ignore
 import { createTelegramClient, NOVA_CHAT_COMMANDS } from "@repo/api/nova/telegram/telegram-client";
 //@ts-ignore
-import { linkTelegramChat, LINK_MESSAGES, NOVA_LINK_GREETING } from "@repo/api/nova/telegram/telegram-link";
+import { linkTelegramChat, LINK_MESSAGES, NOVA_LINKED_PLAIN } from "@repo/api/nova/telegram/telegram-link";
 
 export const runtime = "nodejs";
 
@@ -227,7 +227,9 @@ export async function POST(req: Request) {
       });
 
       // ── /start token handling (web → Telegram connect) ────────────────────
-      if (await handleTelegramConnectStart(text, chatId, body.message?.chat?.type ?? null)) {
+      if (await handleTelegramConnectStart(text, chatId, body.message?.chat?.type ?? null, {
+        updateId: typeof body.update_id === "number" ? body.update_id : null, allowed: novaMayProcess(req),
+      })) {
         return Response.json({ ok: true });
       }
 
@@ -869,7 +871,11 @@ async function isNovaChat(chatId: string): Promise<boolean> {
   return row?.persona === "nova";
 }
 
-async function handleTelegramConnectStart(text: string, chatId: number | string, chatType: string | null): Promise<boolean> {
+async function handleTelegramConnectStart(
+  text: string, chatId: number | string, chatType: string | null,
+  // The update this came in, and whether Nova may act on it.
+  nova: { updateId: number | null; allowed: boolean },
+): Promise<boolean> {
   const match   = text.trim().match(/^\/start(?:@\w+)?(?:\s+(.+))?$/i);
   const payload = match?.[1]?.trim();
   if (!match || !payload) return false;
@@ -883,7 +889,20 @@ async function handleTelegramConnectStart(text: string, chatId: number | string,
     return true;
   }
   if (link.companion === "nova") {
-    await client.sendMessage(String(chatId), link.onboarded ? NOVA_LINK_GREETING.onboarded : NOVA_LINK_GREETING.fresh);
+    // The link is committed. What Nova says first comes from the learner's
+    // record, through the same turn every other update takes: the plan's
+    // first block with its Start button, the session that is running, or
+    // the one thing still missing from setup. It is sent once per chat
+    // (telegram/channel-store.ts claimFirstUse); a replayed update never gets
+    // this far, because admitTelegramUpdate dropped it.
+    if (nova.allowed) {
+      await handleNovaTelegramEvent(
+        { kind: "command", command: "start", argument: "", updateId: nova.updateId, chatId: String(chatId), fromId: String(chatId) },
+        novaDeps(),
+      );
+    } else {
+      await client.sendMessage(String(chatId), NOVA_LINKED_PLAIN);
+    }
     // The command menu is set for this chat only: Rex chats on the same bot keep theirs.
     await client.setChatCommands(String(chatId), NOVA_CHAT_COMMANDS);
     return true;

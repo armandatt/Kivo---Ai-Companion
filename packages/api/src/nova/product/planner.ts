@@ -157,7 +157,7 @@ export function buildPlannerView(input: PlanningInputs): NovaPlannerReady {
     const running = active !== null && sameTopic(active.topicName, b.topicName)
       && (active.subjectName === null || sameTopic(active.subjectName, b.subjectName));
     return {
-      ...toAction(b, topics, examContext, now),
+      ...toAction(b, topics, examContext, now, input.timezone ?? null),
       id:     `${b.topicId}:${i}`,
       order:  i + 1,
       status: !running ? "planned" : active!.status === "paused" ? "paused" : "in_progress",

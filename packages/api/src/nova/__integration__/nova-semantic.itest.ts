@@ -67,7 +67,9 @@ let updateId = 700_000;
 function telegram(chat: string) {
   const run = (event: ReturnType<typeof normalizeTelegramUpdate>, output?: Record<string, unknown>) => {
     assert.notEqual(event.kind, "ignored");
-    return handleNovaTelegramEvent(event as never, { client, now: () => clock, webUrl: "https://nova.test", respond, understand: understandAs(output) });
+    // No model in these tests: the first-use wording falls back to its plain message.
+    const generate = (async () => { throw new Error("no model in tests"); }) as never;
+    return handleNovaTelegramEvent(event as never, { client, now: () => clock, webUrl: "https://nova.test", respond, generate, understand: understandAs(output) });
   };
   const callback = (data: string) =>
     run(normalizeTelegramUpdate({ update_id: updateId++, callback_query: { id: `cb${updateId}`, data, from: { id: Number(chat) }, message: { message_id: 1, chat: { id: Number(chat), type: "private" } } } }));
@@ -388,8 +390,8 @@ test("setup is saved only under a subject of the learner's own", async () => {
 test("a chat that has just been linked is told what to do now, not handed a list of commands", async () => {
   const ready = await learner();
   await telegram(ready.id).say("/start");
-  assert.match(lastTo(ready.id).text, /^Connected\. I'm Nova\./);
-  assert.match(lastTo(ready.id).text, /Deadlocks \(Operating Systems\)/);
+  assert.match(lastTo(ready.id).text, /^You're set\./);
+  assert.match(lastTo(ready.id).text, /Deadlocks is first on your plan: 25 min/);
   assert.ok(labels(ready.id).includes("Start 25 min"));
   assert.doesNotMatch(lastTo(ready.id).text, /\/today|\/focus|\/status/);
 

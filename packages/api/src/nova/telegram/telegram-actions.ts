@@ -23,6 +23,7 @@ import {
 } from "./telegram-replies";
 import type { OptionAction, TelegramReply } from "./telegram.types";
 import { adviseOnTopic, planBlockFor } from "../interaction/advice";
+import { decideFirstUse, type FirstUse } from "../interaction/first-use";
 import { nextSetupQuestion } from "../interaction/initialization";
 import { applySetup, loadSetupFacts, proposeSetup } from "../product/setup";
 import type { SetupStatement } from "../types/understanding.types";
@@ -117,11 +118,24 @@ export async function offerSetup(ctx: ActionContext, stated: SetupStatement): Pr
   return done("offer_setup", setupOfferReply(proposal));
 }
 
-// What Nova says first in a chat that has just been linked: what to do now,
-// or the one thing it still needs to know. Never a list of commands.
-export async function welcome(ctx: ActionContext): Promise<ActionResult> {
-  const today = await showToday(ctx, null);
-  return done("welcome", { ...today.reply, text: `${TEXT.linked}\n\n${today.reply.text}` }, today.operation.ok);
+// The first message in a newly connected chat: what Nova would do now, from
+// the learner's record, with the way to do it attached. What it is about is
+// decided by interaction/first-use.ts; the Response Brain may word it. Never
+// a list of commands.
+export async function firstUse(
+  ctx:  ActionContext,
+  word: (decision: FirstUse, hasButtons: boolean, activeReality: string[], daysUntilExam: number | null) => Promise<string>,
+): Promise<ActionResult> {
+  const [view, session] = await Promise.all([todayView(ctx, null), loadNovaSession(ctx.chatId, ctx.now)]);
+  if (!view) return done("first_use", { text: TEXT.finishSetup }, false);
+  const facts    = view.emptyReason === "no_topics" ? await loadSetupFacts(ctx.chatId, ctx.now) : null;
+  const decision = decideFirstUse(view, facts ? nextSetupQuestion(facts) : null);
+  // The same buttons the plan and a running session already carry.
+  const prompt = decision.kind === "session" && session ? sessionReply(session).prompt
+    : decision.kind === "recommend" && decision.block ? recommendationReply(view, decision.block).prompt
+    : undefined;
+  const text = await word(decision, prompt !== undefined, view.constraints.map(c => c.category), view.nextDeadline?.daysUntil ?? null);
+  return { reply: { text, ...(prompt ? { prompt } : {}) }, operation: { name: `first_use:${decision.kind}`, ok: true }, facts: decision.facts };
 }
 
 export async function showStatus(ctx: ActionContext): Promise<ActionResult> {
