@@ -23,6 +23,17 @@
 //   change an offer     minutes stated while a Start offer is open re-offer
 //                       it at that length. Changing a proposal is not
 //                       accepting it.
+//   save setup          never from a sentence. What the student says a
+//                       subject covers is offered back; Save is what saves it.
+//
+// And the turns that change nothing but still need deciding:
+//
+//   a general question  ("what is deadlock?") is answered as it stands. It
+//                       reads and writes nothing of the learner's.
+//   a learner question  about a named topic ("should I do deadlocks
+//                       tonight?") is answered from the plan and the record.
+//   a range of time     ("20-30 mins") is asked back as a choice. Neither
+//                       end is picked for them.
 //
 // Nothing that changes state runs when the reading is not clear, or when the
 // message takes back what it asks for (changeOfMind).
@@ -31,7 +42,7 @@
 // picks the topic; the Decision Graph picks the intervention; the Response
 // Brain words it.
 
-import type { AcademicEmotion, AcademicIntent, AcademicUnderstanding, StatedOutcome } from "../types/understanding.types";
+import type { AcademicEmotion, AcademicIntent, AcademicUnderstanding, SetupStatement, StatedOutcome } from "../types/understanding.types";
 
 // A floor under an explicit request, never a sufficient reason to act.
 export const EXECUTE_CONFIDENCE = 0.75;
@@ -55,6 +66,16 @@ export type TurnAction =
   // The student reported studying with no timer running. Nothing to end;
   // consolidation decides what the report becomes.
   | { type: "acknowledge_report" }
+  // A question about the subject matter itself. Answered; nothing is read
+  // from or written to the learner's record.
+  | { type: "explain"; topic: string | null }
+  // A question about a topic of theirs: answered from the plan and the record.
+  | { type: "advise"; topic: string }
+  // A range of time: asked back as a choice between its two ends.
+  | { type: "ask_minutes"; choices: [number, number] }
+  // What the student says a subject covers or how they usually study, shown
+  // back with a Save option.
+  | { type: "offer_setup"; setup: SetupStatement }
   // A clear request for something Nova does not do in this chat.
   | { type: "unsupported" }
   | { type: "clarify" }
@@ -91,6 +112,7 @@ const NEEDS_A_HUMAN_ANSWER: ReadonlySet<AcademicEmotion> = new Set<AcademicEmoti
 ]);
 
 const OFFERS_A_START: ReadonlySet<string> = new Set(["start", "nudge"]);
+const DECLINES: ReadonlySet<string> = new Set(["later", "not_today", "dismiss"]);
 
 export function decideAction(understanding: AcademicUnderstanding, ctx: ActionContext): ActionDecision {
   const req = understanding.request;
@@ -107,7 +129,10 @@ export function decideAction(understanding: AcademicUnderstanding, ctx: ActionCo
 
   // Only a clear reading carries values that anything may rest on.
   const clear    = req.clarity === "clear";
-  const minutes  = clear ? req.availableMinutes : null;
+  // A range is not a length: neither end is used until the student picks one.
+  const range: [number, number] | null = clear && req.availableMinutes !== null && req.availableMinutesMax !== null
+    ? [req.availableMinutes, req.availableMinutesMax] : null;
+  const minutes  = clear && !range ? req.availableMinutes : null;
   const outcome  = clear ? req.sessionOutcome : null;
   const struggle = clear ? req.struggleTopic : null;
   const asked    = clear ? req.action : "none";
@@ -147,7 +172,9 @@ export function decideAction(understanding: AcademicUnderstanding, ctx: ActionCo
     if (asked === "not_now" && req.deferUntil === "tomorrow" && chosen.type === "later") {
       return decided({ type: "defer", until: "tomorrow" }, "declined_for_today");
     }
-    return decided({ type: "answer_prompt", optionId: chosen.id }, "answered_open_prompt", false);
+    // Declining an offer because of how they feel or what has come up is
+    // still a decline, but it is answered by Nova and not by "OK."
+    return decided({ type: "answer_prompt", optionId: chosen.id }, "answered_open_prompt", feeling && DECLINES.has(chosen.type));
   }
 
   // ── 2. A changed proposal ──────────────────────────────────────────────────
@@ -190,11 +217,33 @@ export function decideAction(understanding: AcademicUnderstanding, ctx: ActionCo
   // With a session open, that is the session: ask how it went. Asking writes
   // nothing, so it needs no more than the report. A feeling about the topic
   // with no report ("I keep messing this up") is not a finish.
-  if (openSession && !req.changeOfMind && clear && says("study_report")) {
+  // "I keep messing up deadlocks", said mid-session, is a struggle and not a
+  // finish, even when the model lists a report beside it: with a struggle
+  // stated and nothing said about how the session went, nobody is asked to
+  // rate it.
+  const reported = understanding.intent === "study_report"
+    || (says("study_report") && !(struggle !== null && outcome === null));
+  if (openSession && !req.changeOfMind && clear && reported) {
     return decided({ type: "ask_outcome", stated: outcome }, "report_during_session", false);
   }
 
-  // ── 6. Requests that change nothing, or only Nova's own nudging ────────────
+  // ── 6. Questions ───────────────────────────────────────────────────────────
+  // Asking is not requesting: none of these starts or changes anything.
+  const onlyAsking = asked === "none" || asked === "what_now";
+  if (clear && onlyAsking && req.asks === "knowledge") {
+    return { action: { type: "explain", topic: understanding.topic }, proposeExam: null, generate: true, reason: "general_question" };
+  }
+  if (clear && onlyAsking && req.asks === "about_me" && understanding.topic !== null) {
+    return decided({ type: "advise", topic: understanding.topic }, "question_about_topic", true);
+  }
+  if (range && onlyAsking && !openSession) {
+    return decided({ type: "ask_minutes", choices: range }, "time_range", false);
+  }
+  if (clear && asked === "none" && req.asks === "none" && req.setup !== null && !req.changeOfMind) {
+    return decided({ type: "offer_setup", setup: req.setup }, "setup_stated", false);
+  }
+
+  // ── 7. Requests that change nothing, or only Nova's own nudging ────────────
   if (asked === "what_now" && plausible) return decided({ type: "show_today", minutes }, "asked_what_now");
   if (asked === "status" && plausible)   return decided({ type: "show_status" }, "asked_status");
   if (asked === "something_else" && plausible) return decided({ type: "something_else" }, "asked_for_alternative");
@@ -208,7 +257,7 @@ export function decideAction(understanding: AcademicUnderstanding, ctx: ActionCo
     return decided({ type: "show_today", minutes }, "stated_time");
   }
 
-  // ── 7. Nothing actionable ──────────────────────────────────────────────────
+  // ── 8. Nothing actionable ──────────────────────────────────────────────────
   if (clear && req.exam) return decided({ type: "converse" }, "exam_mentioned", true);
   // A short reply with nothing to attach it to, or a message the model could
   // not place: ask, with buttons. Never guess.

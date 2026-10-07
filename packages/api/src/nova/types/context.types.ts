@@ -110,6 +110,12 @@ export interface NovaOrchestratorInput {
   directive?: string;
   // Used instead of failing the turn when the Response Brain cannot answer.
   responseFallback?: string;
+  // Which parts of the learner's record this reply can draw on
+  // (interaction/semantics.ts), and any lines the surface read from the
+  // product views. Without it the Response Brain is given the whole layer.
+  // mode "explain": the message is a question about the subject matter and
+  // is answered as one; no intervention is worded.
+  focus?: { needs: readonly import("../interaction/semantics").ContextNeed[]; facts?: readonly string[]; mode?: "explain" };
   // "surface": the caller runs start / pause / resume / end itself through
   // the session commands, so the turn must not run them a second time.
   sessionCommands?: "turn" | "surface";

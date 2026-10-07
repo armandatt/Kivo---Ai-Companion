@@ -8,6 +8,7 @@ import type { NovaContext } from "../types/context.types";
 import type { InterventionName } from "../types/intervention.types";
 import type { DecisionGraphOutput } from "../types/response.types";
 import { OPERATING_STYLE_HEADER } from "../../personality/signal-scoring";
+import type { ContextNeed } from "../interaction/semantics";
 
 // ── Token budget constants ────────────────────────────────────────────────────
 // Rough character-per-token estimate for English: ~4 chars/token.
@@ -247,6 +248,57 @@ export function buildDynamicLayer(ctx: NovaContext): string {
   }
 
   return assembled;
+}
+
+// ── Focused layer ─────────────────────────────────────────────────────────────
+// The same sections, but only the ones the message calls for
+// (interaction/semantics.ts decides which). A question about the subject
+// matter gets none of the learner's record; a question about their evening
+// gets the plan, the exams and what is going on, and not their memories.
+// `facts` are lines a surface read from the product views (today's plan, what
+// is due, the time stated): the only figures such a reply may use.
+
+function buildRealitySection(ctx: NovaContext): string {
+  if (ctx.activeRealityFacts.length === 0) return "";
+  return [`## On record about their circumstances`, ...ctx.activeRealityFacts.slice(0, 3).map(f => `- [${f.category}] ${f.description}`)].join("\n");
+}
+
+function buildMessageSection(ctx: NovaContext): string {
+  return [`## This Message`, `Text: "${ctx.rawMessage.slice(0, 200)}"`, `Emotion: ${ctx.understanding.emotion}`].join("\n");
+}
+
+export function buildFocusedLayer(ctx: NovaContext, needs: readonly ContextNeed[], facts: readonly string[] = []): string {
+  const has = (n: ContextNeed) => needs.includes(n);
+  const knowledge = buildKnowledgeSection({
+    ...ctx,
+    topicMastery: has("topic") ? ctx.topicMastery : null,
+    examContext:  has("exams") ? ctx.examContext : null,
+    studyPlan:    has("plan") ? ctx.studyPlan : null,
+  });
+  const sections = [
+    has("profile") ? buildStudentSection(ctx) : "",
+    has("state") ? buildStateSection(ctx) : "",
+    buildMessageSection(ctx),
+    has("session") ? buildActiveSessionSection({ ...ctx, sessionAction: null }) : "",
+    has("reality") ? buildRealitySection(ctx) : "",
+    has("memory") ? buildMemorySection(ctx) : "",
+    knowledge,
+    has("patterns") ? buildPatternSection(ctx) : "",
+    facts.length > 0 ? [`## What Nova has on record (the only figures you may state)`, ...facts.map(f => `- ${f}`)].join("\n") : "",
+    has("recent") ? buildConversationHistorySection(ctx) : "",
+  ].filter(Boolean);
+  const assembled = sections.join("\n\n");
+  return assembled.length > MAX_DYNAMIC_CHARS ? assembled.slice(0, MAX_DYNAMIC_CHARS) + "\n[...context truncated]" : assembled;
+}
+
+// A question about the subject matter. No intervention is being chosen:
+// the student asked something and gets the answer.
+export function buildExplainPrompt(ctx: NovaContext): string {
+  return [
+    `Student question: "${ctx.rawMessage.slice(0, 300)}"`,
+    ``,
+    `Instruction: This is a question about the subject itself. Answer it correctly and plainly, the way a sharp classmate would: the answer first, then one concrete example if it helps. At most 110 words. Do not mention the student's plan, exams, progress or history, do not coach, and do not suggest starting a session.`,
+  ].join("\n");
 }
 
 // ── Micro-prompt (intervention + evidence) ────────────────────────────────────

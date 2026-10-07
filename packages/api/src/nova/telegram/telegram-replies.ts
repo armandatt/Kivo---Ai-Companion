@@ -8,6 +8,8 @@
 
 import type { NovaSessionView, NovaTodayReady, TodayAction, NovaSessionOutcome, PlanEmptyReason } from "../product/today.types";
 import type { PromptOption, PromptSpec, TelegramReply, OptionAction } from "./telegram.types";
+import type { SetupProposal } from "../product/setup";
+import type { SetupQuestion } from "../interaction/initialization";
 
 export const START_LENGTHS = [15, 25, 45];
 export const MIN_SESSION_MINUTES = 10;
@@ -23,19 +25,21 @@ export const OUTCOME_LABEL: Record<NovaSessionOutcome, string> = {
 };
 
 const EMPTY_PLAN: Record<PlanEmptyReason, string> = {
-  no_topics:       "I don't have any topics for you yet. Send /focus and the topic you're on (for example: /focus deadlocks) and we'll start there.",
+  no_topics:       "I don't have any topics for you yet, so there's nothing to plan from. Tell me what one of your subjects covers this term and I'll take it from there.",
   too_little_time: `That's shorter than anything worth starting. ${MIN_SESSION_MINUTES} minutes is the smallest block I plan.`,
   recovery:        "Recovery day. Nothing I'd push on you today.",
   nothing_due:     "Nothing is due and no exam is close. Your call today.",
 };
 
 // Session lengths on offer: the standard three, cut to what the learner said
-// they have. A stated time shorter than all of them is offered as it is.
+// they have, plus the length they said when it is not one of the three. They
+// said "20", so 20 is there to pick, not only 15.
+const MAX_OFFERED_MINUTES = 180;
 export function startLengths(statedMinutes: number | null): number[] {
   if (statedMinutes === null) return START_LENGTHS;
   const fitting = START_LENGTHS.filter(m => m <= statedMinutes);
-  if (fitting.length > 0) return fitting;
-  return statedMinutes >= MIN_SESSION_MINUTES ? [statedMinutes] : [];
+  const own = statedMinutes >= MIN_SESSION_MINUTES && statedMinutes <= MAX_OFFERED_MINUTES && !fitting.includes(statedMinutes);
+  return own ? [...fitting, statedMinutes] : fitting;
 }
 
 function describe(action: TodayAction): string {
@@ -96,9 +100,12 @@ export function sessionReply(session: NovaSessionView, lead?: string): TelegramR
   };
 }
 
-export function todayReply(view: NovaTodayReady, session: NovaSessionView | null): TelegramReply {
+// `ask`: the one thing Nova still needs before it can plan, when the plan is
+// empty because there are no topics. Asked instead of the generic line.
+export function todayReply(view: NovaTodayReady, session: NovaSessionView | null, ask: SetupQuestion | null = null): TelegramReply {
   if (session) return sessionReply(session);
   if (!view.recommendation) {
+    if (view.emptyReason === "no_topics" && ask) return { text: `Nothing to plan from yet. ${ask.question}` };
     return { text: EMPTY_PLAN[view.emptyReason ?? "nothing_due"], link: { label: "Open Nova", path: "/home" } };
   }
   return recommendationReply(view, view.recommendation);
@@ -209,6 +216,45 @@ export function withExamOffer(reply: TelegramReply, exam: { title: string; date:
   return { ...reply, text: `${reply.text}\n\n${ask}`, prompt };
 }
 
+// What the learner said about their term, shown back before anything is
+// saved. With one subject the option saves; with several, each option is a
+// subject and picking it saves under that one.
+export function setupOfferReply(proposal: SetupProposal): TelegramReply {
+  const routine: string[] = [];
+  if (proposal.dailyMinutes !== null) routine.push(`about ${proposal.dailyMinutes} min on a normal day`);
+  if (proposal.studyTime !== null) routine.push(proposal.studyTime === "night" ? "usually at night" : `usually in the ${proposal.studyTime}`);
+  const list  = proposal.topics.join(", ");
+  const one   = proposal.subjectChoices.length === 1;
+  const lines: string[] = [];
+  if (proposal.topics.length > 0) lines.push(one ? `Add to ${proposal.subjectChoices[0]}: ${list}?` : `${list}\nWhich subject are these part of?`);
+  if (routine.length > 0) lines.push(`${proposal.topics.length > 0 ? "And note" : "Note"} that you study ${routine.join(", ")}?`);
+  const save = (subjectName: string | null) => ({
+    type: "save_setup" as const, subjectName, topics: proposal.topics, dailyMinutes: proposal.dailyMinutes, studyTime: proposal.studyTime,
+  });
+  const choices = proposal.topics.length === 0 ? [{ label: "Save", action: save(null) }]
+    : one ? [{ label: "Add them", action: save(proposal.subjectChoices[0]!) }]
+    : proposal.subjectChoices.map(name => ({ label: name.slice(0, 40), action: save(name) }));
+  return { text: lines.join("\n"), prompt: { kind: "confirm_setup", options: options([...choices, { label: "No", action: { type: "dismiss" } }]) } };
+}
+
+export function setupSavedText(saved: { subjectName: string | null; added: string[]; existing: string[]; dailyMinutes: number | null; studyTime: string | null }): string {
+  const parts: string[] = [];
+  if (saved.subjectName && saved.added.length > 0) parts.push(`Added to ${saved.subjectName}: ${saved.added.join(", ")}.`);
+  if (saved.subjectName && saved.added.length === 0 && saved.existing.length > 0) parts.push(`${saved.subjectName} already had those.`);
+  if (saved.dailyMinutes !== null) parts.push(`Normal day: about ${saved.dailyMinutes} min.`);
+  if (saved.studyTime !== null) parts.push(`Usual time: ${saved.studyTime}.`);
+  return parts.join(" ") || "Nothing new to save.";
+}
+
+// "20-30 mins": both ends, for the learner to pick. Neither is recorded
+// until they do.
+export function minutesChoiceReply(choices: [number, number]): TelegramReply {
+  return {
+    text: `${choices[0]} or ${choices[1]} minutes?`,
+    prompt: { kind: "pick_minutes", options: options(choices.map(minutes => ({ label: `${minutes} min`, action: { type: "today" as const, minutes } }))) },
+  };
+}
+
 export const TEXT = {
   help: [
     "/today: what to do now",
@@ -219,13 +265,13 @@ export const TEXT = {
     "",
     "Or just tell me: how long you have, what came up, what isn't clicking.",
   ].join("\n"),
-  linked:          "Connected. I'm Nova, and this chat is the quick way to reach me. /today tells you what to do now.",
+  linked:          "Connected. I'm Nova. Talk to me the way you'd text a friend who knows your syllabus: ask what to study, tell me how long you've got, or ask me to explain something.",
   finishSetup:     "Finish setting up with Nova first. It takes a couple of minutes.",
   webOnly:         "That one needs room to work. It lives in Nova on the web.",
   unknownCommand:  "I don't know that command. /today, /focus, /done, /status and /settings are the ones I do.",
   notText:         "I can only read text here. Type it out, or use /today.",
   stale:           "That one's closed.",
-  nothingRunning:  "Nothing is running. /focus starts a session.",
+  nothingRunning:  "Nothing is running. Tell me what you want to study and I'll set it up.",
   alreadyEnded:    "That session was already closed. Nothing was logged twice.",
   busy:            "Still on your last message. One moment.",
   rateLimited:     "That's a lot at once. Give it a minute.",
@@ -233,14 +279,17 @@ export const TEXT = {
   notToday:        "Got it. Nothing more from me today.",
   dismissed:       "OK.",
   failed:          "That didn't go through on my side. Try again.",
-  notUnderstood:   "I couldn't read that just now. /today and /status still work, or say it again in a moment.",
+  notUnderstood:   "I couldn't read that just now. Say it again in a moment.",
   budget:          "I've done a lot of reading for you today, so I'm on buttons until tomorrow. /today, /focus and /done all still work.",
   selfReport:      "Noted. There was no timer running, so I can only count that as something you told me.",
-  converseFallback: "Got that. /today shows what's next.",
+  converseFallback: "Got that. Ask me what to study whenever you're ready.",
+  explainFallback: "I can't explain that properly right now. Ask me again in a moment.",
+  setupNoSubject:  "I couldn't tell which of your subjects that belongs to. Tell me the subject along with its topics.",
+  nothingOnRecord: "I don't have that on record.",
   // Noise, or words with nothing to attach them to, while a question is
   // still open: the buttons already on screen are the options.
   clarifyOpen:     "I didn't catch that. The buttons above still work, or tell me in a few more words.",
-  unsupported:     "That's outside what I do here. I can tell you what to study, run a session, or take note of what's come up. /settings has nudges and timezone.",
+  unsupported:     "That's outside what I do here. I can tell you what to study, explain a topic, run a session, or take note of what's come up.",
   nudgesOn:        "Nudges are on.",
   nudgesOff:       "Nudges are off. I'll only speak when you do.",
 };

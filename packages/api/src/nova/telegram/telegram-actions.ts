@@ -18,10 +18,14 @@ import { subjectsNamedIn } from "../engines/topic-mastery-engine";
 import type { NovaTodayReady, TodayAction } from "../product/today.types";
 import { loadChannel, pauseProactiveUntil, setProactiveEnabled } from "./channel-store";
 import {
-  alternativeReply, endedReply, outcomeReply, recommendationReply, sessionReply, settingsReply,
-  statusReply, todayReply, MIN_SESSION_MINUTES, TEXT,
+  alternativeReply, endedReply, minutesChoiceReply, outcomeReply, recommendationReply, sessionReply, settingsReply,
+  setupOfferReply, setupSavedText, statusReply, todayReply, MIN_SESSION_MINUTES, TEXT,
 } from "./telegram-replies";
 import type { OptionAction, TelegramReply } from "./telegram.types";
+import { adviseOnTopic, planBlockFor } from "../interaction/advice";
+import { nextSetupQuestion } from "../interaction/initialization";
+import { applySetup, loadSetupFacts, proposeSetup } from "../product/setup";
+import type { SetupStatement } from "../types/understanding.types";
 
 export interface ActionContext {
   chatId:    string;       // the platform chat id, which is how Nova's product functions name a learner
@@ -34,6 +38,9 @@ export interface ActionContext {
 export interface ActionResult {
   reply:     TelegramReply;
   operation: { name: string; ok: boolean };
+  // Lines from the record the reply rests on, for a reply that will be
+  // reworded: the only figures the wording may use.
+  facts?:    string[];
 }
 
 const MAX_SESSION_MINUTES = 180;
@@ -69,10 +76,7 @@ export function pickStart(
 ): TodayAction | { topicName: string; subjectName: null; durationMinutes: null } | null {
   const planned = [view.recommendation, ...view.alternatives].filter((a): a is TodayAction => a !== null);
   if (!named) return planned[0] ?? null;
-  const want    = named.trim().toLowerCase();
-  const subject = subjects.find(s => s.name.toLowerCase() === want || (s.code ?? "").toLowerCase() === want)?.name.toLowerCase() ?? want;
-  return planned.find(a => a.topicName.toLowerCase() === want)
-    ?? planned.find(a => a.subjectName.toLowerCase() === subject)
+  return planBlockFor(view, named, subjects)
     ?? { topicName: named.trim().slice(0, 120), subjectName: null, durationMinutes: null };
 }
 
@@ -82,7 +86,42 @@ export async function showToday(ctx: ActionContext, statedMinutes: number | null
   if (statedMinutes !== null) await recordStatedMinutes(ctx.chatId, statedMinutes, ctx.now);
   const [view, session] = await Promise.all([todayView(ctx, statedMinutes), loadNovaSession(ctx.chatId, ctx.now)]);
   if (!view) return done("show_today", { text: TEXT.finishSetup }, false);
-  return done("show_today", todayReply(view, session));
+  // Nothing to plan from: ask for the one thing that is missing, not for
+  // anything already on record.
+  const facts = !session && view.emptyReason === "no_topics" ? await loadSetupFacts(ctx.chatId, ctx.now) : null;
+  return done("show_today", todayReply(view, session, facts ? nextSetupQuestion(facts) : null));
+}
+
+// "Should I study deadlocks tonight?" Answered from today's plan and the
+// record. When the answer is yes, the way to start is attached.
+export async function advise(ctx: ActionContext, topic: string): Promise<ActionResult> {
+  const view = await todayView(ctx, null);
+  if (!view) return done("advise", { text: TEXT.finishSetup }, false);
+  const subjects = (await loadStudySnapshot(ctx.chatId)).subjects;
+  const advice   = adviseOnTopic(view, topic, subjects);
+  const offer    = advice.block ? recommendationReply(view, advice.block).prompt
+    : advice.verdict === "review_due" || advice.verdict === "not_planned" ? (await offerStart(ctx, topic)).reply.prompt
+    : undefined;
+  return { reply: { text: advice.text, ...(offer ? { prompt: offer } : {}) }, operation: { name: `advise:${advice.verdict}`, ok: true }, facts: advice.facts };
+}
+
+export async function askMinutes(choices: [number, number]): Promise<ActionResult> {
+  return done("ask_minutes", minutesChoiceReply(choices));
+}
+
+// What the learner said a subject covers, shown back. Nothing is saved here.
+export async function offerSetup(ctx: ActionContext, stated: SetupStatement): Promise<ActionResult> {
+  const subjects = (await loadStudySnapshot(ctx.chatId)).subjects;
+  const proposal = proposeSetup(stated, subjects);
+  if (!proposal) return done("offer_setup", { text: subjects.length === 0 ? TEXT.finishSetup : TEXT.setupNoSubject }, false);
+  return done("offer_setup", setupOfferReply(proposal));
+}
+
+// What Nova says first in a chat that has just been linked: what to do now,
+// or the one thing it still needs to know. Never a list of commands.
+export async function welcome(ctx: ActionContext): Promise<ActionResult> {
+  const today = await showToday(ctx, null);
+  return done("welcome", { ...today.reply, text: `${TEXT.linked}\n\n${today.reply.text}` }, today.operation.ok);
 }
 
 export async function showStatus(ctx: ActionContext): Promise<ActionResult> {
@@ -223,6 +262,18 @@ export async function runOptionAction(action: OptionAction, ctx: ActionContext):
     case "set_proactive":
       await setProactiveEnabled(ctx.profileId, action.enabled);
       return done("set_proactive", { text: action.enabled ? TEXT.nudgesOn : TEXT.nudgesOff });
+    case "save_setup": {
+      const saved = await applySetup(ctx.chatId, action);
+      if (saved.status !== "saved") return done("save_setup", { text: saved.status === "unknown_subject" ? TEXT.setupNoSubject : TEXT.finishSetup }, false);
+      // Then the next thing, if there is one: the plan it made possible, or
+      // the one piece still missing.
+      const facts = await loadSetupFacts(ctx.chatId, ctx.now);
+      const ask   = facts ? nextSetupQuestion(facts) : null;
+      const lead  = setupSavedText(saved);
+      if (ask && ask.gap === "topics") return done("save_setup", { text: `${lead}\n\n${ask.question}` });
+      const today = await showToday(ctx, null);
+      return done("save_setup", { ...today.reply, text: `${lead}\n\n${today.reply.text}` });
+    }
     case "add_exam": {
       const result = await addExam(ctx.chatId, action, ctx.now);
       if (result.status === "added" || result.status === "exists") {

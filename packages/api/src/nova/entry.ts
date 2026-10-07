@@ -5,6 +5,7 @@
 
 import { translateNovaCommand } from "./commands";
 import { runNovaOrchestrator } from "./nova-orchestrator";
+import { runWebSentence } from "./interaction/web-sentence";
 import { runNovaOnboarding } from "./onboarding/nova-onboarding-orchestrator";
 
 export const NOVA_HELP_TEXT = `Here's what I can do:
@@ -27,6 +28,9 @@ export interface NovaTurnInput {
   // The web app reads state straight after the reply, so it waits for the
   // turn to be persisted. Telegram does not.
   awaitPersistence?: boolean;
+  // Test seams. Production uses the real brains.
+  understand?: import("./interaction/web-sentence").WebSentenceInput["understand"];
+  respond?:    import("./interaction/web-sentence").WebSentenceInput["respond"];
 }
 
 export interface NovaTurnResult {
@@ -34,11 +38,6 @@ export interface NovaTurnResult {
   intervention: string | null;
   ok:           boolean;
 }
-
-// Said to the Response Brain on a turn made of words, so the reply cannot
-// claim a session command the turn did not run.
-const SENTENCE_RUNS_NO_SESSION =
-  "This message did not start, pause, resume or end a study session, and nothing was added or scheduled. Do not say or imply otherwise. If the student wants to start or end a session, point them to the Start button on this page or to Focus.";
 
 export async function handleNovaTurn(input: NovaTurnInput): Promise<NovaTurnResult> {
   const { platformChatId, text } = input;
@@ -69,14 +68,25 @@ export async function handleNovaTurn(input: NovaTurnInput): Promise<NovaTurnResu
   }
 
   try {
-    // A typed command (/study, /done) is protocol and runs. A sentence does
-    // not start, pause or end a session: the page it is typed on has buttons
-    // for that, and the model's reading of a sentence is not a button press.
-    // What the sentence says is still read, logged and consolidated.
+    // A typed command (/study, /done) is protocol and runs. A sentence takes
+    // the path Telegram's words take (interaction/web-sentence.ts): read
+    // once, checked, decided, and only then acted on. It does not start,
+    // pause or end a session: the page it is typed on has buttons for that.
+    if (!command) {
+      const turn = await runWebSentence({
+        platformChatId, text: plainText, timestamp,
+        awaitPersistence: input.awaitPersistence, understand: input.understand, respond: input.respond,
+      });
+      console.log(JSON.stringify({
+        ts: new Date().toISOString(), chatId: platformChatId, layer: "nova", surface: input.surface,
+        kind: turn.kind, decision: turn.decision, intervention: turn.intervention, textLength: text.length,
+      }));
+      return { reply: turn.reply, intervention: turn.intervention, ok: true };
+    }
+
     const result = await runNovaOrchestrator({
       platformChatId, text: plainText, timestamp, command,
       awaitPersistence: input.awaitPersistence,
-      ...(command ? {} : { sessionCommands: "surface" as const, directive: SENTENCE_RUNS_NO_SESSION }),
     });
 
     console.log(JSON.stringify({

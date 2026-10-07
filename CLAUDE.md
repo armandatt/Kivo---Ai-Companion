@@ -287,6 +287,22 @@ Full description: `docs/NOVA_TELEGRAM_MENTOR.md`. Telegram is a surface: it owns
 - **In production Nova ignores updates without a valid `TELEGRAM_WEBHOOK_SECRET`.** `NOVA_PROACTIVE_DISABLED=true` stops Nova messaging first.
 - `scripts/novaTelegramEval.ts [repeats] [group] [raw]` runs real phrases through the configured model, the parser, `safeReading` and `decideAction`, and prints the decision and what it would write. Each case names the decisions that would corrupt state; the run exits 1 on any. It is the only check of what the model actually reads: run it after changing the Understanding prompt or the action decision.
 
+## Talking to Nova: one reading, one decision, both surfaces
+
+A sentence typed to Nova takes the same path on Telegram (`telegram/telegram-turn.ts`) and on the web (`interaction/web-sentence.ts`): one Understanding call with context, `safeReading`, `interpret`, `decideAction`, the shared action functions, then the canonical turn. The rules, each held by `semantic-interaction.test.ts` or `nova-semantic.itest.ts`:
+
+- **The kind of a message is derived, not classified twice.** `interaction/semantics.ts` (pure) names a reading (`general_question`, `learner_question`, `action_request`, `context_signal`, `reality_signal`, `emotional_signal`, `onboarding_input`, `status_request`, `conversation`, `unsupported`, `unclear`) from fields the Understanding Brain already filled. The model adds three fields to the request envelope (v4): `asks` (`knowledge` / `about_me` / `none`), `availableMinutesMax` (a range) and `setup`. A kind describes; it authorises nothing.
+- **Focused context.** `contextNeeds` says which parts of the learner's record a reply may use, and `buildFocusedLayer` in the context builder includes only those. A general question gets the last few lines of the conversation and nothing else. The orchestrator takes this as `focus: { needs, facts, mode }`; without it, it builds the whole layer as before.
+- **A general question** ("what is deadlock?") decides `explain`: no product action, `mode: "explain"`, and the Response Brain answers the question. It reads and writes nothing of the learner's.
+- **A learner question about a topic** ("should I study deadlocks tonight?") decides `advise`. `interaction/advice.ts` (pure) finds the topic in the Today view and returns the verdict, its sentence and the facts behind it; the Response Brain may reword the sentence, with those facts as the only figures it may state.
+- **A range of time** ("20-30 mins") decides `ask_minutes`: both ends are offered and neither is recorded until one is picked. A single stated time is offered as its own Start length next to the standard ones.
+- **Study setup is offered, never saved from a sentence.** `product/setup.ts` is its one reader and writer: `proposeSetup` (pure) turns a `setup` statement into a proposal under a subject of the learner's own, the `confirm_setup` prompt shows it back, and `applySetup` runs on confirmation, in one transaction, idempotently. Topics are created by `declareTopics` in the topic mastery engine with no mastery, no review and no snapshot.
+- **What is still missing** is `interaction/initialization.ts` (pure): of subjects, topics, exams and usual study time, what is not on record and which one thing to ask for next. An empty plan asks that question. Nothing on record is asked for again.
+- **The Planning Engine schedules syllabus topics that were never studied** (`new_material`): two when the plan is otherwise empty, one otherwise, in the order they were given.
+- **The web page's contract.** A sentence typed on the web runs no session action (`PAGE_BUTTONS_ONLY`): it is answered in words and pointed at the page's buttons. The web answers in words only questions it asked there (`WEB_PROMPTS`: saving setup, adding an exam, picking a length), so a typed "yes" cannot accept a Start offer made on Telegram.
+- **Two model calls per turn at most**: the reading, and the wording. The web path no longer runs the second-pass disambiguation; only a typed slash command still takes the older turn.
+- The action functions both surfaces call live in `telegram/telegram-actions.ts` and the prompt store in `telegram/prompt-store.ts`. They are channel-neutral in behaviour; the directory name is historical.
+
 ## Integration tests (real Postgres)
 
 `npm run test:integration` in `packages/api` runs the `__integration__/*.itest.ts` files against the database in `NOVA_TEST_DATABASE_URL`. They refuse to run without it and refuse the host in `packages/db/.env`. A local throwaway works:

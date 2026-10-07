@@ -457,7 +457,7 @@ test("web and Telegram are two views of one learner (cases A to M)", async () =>
   ]);
   assert.equal([w, dup].filter(r => r.ok && r.ended).length, 1, "a double click ends it once");
   await t.send("/done");
-  assert.equal(t.last().text, "Nothing is running. /focus starts a session.");
+  assert.equal(t.last().text, "Nothing is running. Tell me what you want to study and I'll set it up.");
   const paging = await prisma.novaTopicMastery.findFirstOrThrow({ where: { subjectId: l.subjectId, name: "Paging" } });
   assert.equal(await prisma.novaTopicMasterySnapshot.count({ where: { topicId: paging.id } }), 1, "one outcome, one mastery record");
   await t.send("/status");

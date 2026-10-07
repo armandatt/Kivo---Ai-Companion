@@ -33,12 +33,13 @@ import {
 } from "./channel-store";
 import { closeOpenPrompt, loadOpenPrompt, openPrompt, recordPromptMessage, resolvePrompt, type OpenPrompt } from "./prompt-store";
 import {
-  askOutcome, offerStart, pauseOrResume, runOptionAction, showSettings, showStatus, showToday, startFromRequest,
+  advise, askMinutes, askOutcome, offerSetup, offerStart, pauseOrResume, runOptionAction, showSettings, showStatus, showToday, startFromRequest, welcome,
   type ActionContext, type ActionResult,
 } from "./telegram-actions";
 import { decodeCallback, encodeCallback } from "./telegram-event";
 import { alternativeReply, clarifyReply, TEXT, withExamOffer } from "./telegram-replies";
 import { loadNovaToday } from "../product/today";
+import { interpret } from "../interaction/semantics";
 import type {
   FailureCategory, InlineButton, PromptKind, TelegramClient, TelegramEvent, TelegramReply, TurnTrace,
 } from "./telegram.types";
@@ -62,6 +63,8 @@ const PROMPT_QUESTION: Record<PromptKind, string> = {
   session:         "Your session: pause, resume or end it?",
   session_outcome: "How did the study session go?",
   confirm_exam:    "Add this exam?",
+  confirm_setup:   "Save what you told me about your term?",
+  pick_minutes:    "How many minutes do you have?",
   clarify:         "What do you need?",
   settings:        "Change a setting?",
 };
@@ -72,7 +75,7 @@ function newTrace(event: Event): TurnTrace {
     surface: "telegram", type: event.kind,
     command: event.kind === "command" ? event.command : null,
     profileId: null,
-    understanding: { attempted: false, ok: false, ms: 0, confidence: null, request: null, clarity: null, changeOfMind: false, intent: null, estInputTokens: 0 },
+    understanding: { attempted: false, ok: false, ms: 0, confidence: null, kind: null, request: null, clarity: null, changeOfMind: false, intent: null, estInputTokens: 0 },
     decision: null,
     operation: { name: null, ok: null },
     evidence: { kinds: [], consolidationQueued: false },
@@ -205,7 +208,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     if (event.kind === "command") {
       trace.decision = `command:${event.command}`;
       switch (event.command) {
-        case "start":    await deliver({ text: `${TEXT.linked}\n\n${TEXT.help}` }); break;
+        case "start":    await deliver(report(await welcome(ctx))); break;
         case "help":     await deliver({ text: TEXT.help }); break;
         case "today":    await deliver(report(await showToday(ctx, null))); break;
         case "focus":
@@ -281,6 +284,11 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       trace.understanding.clarity      = understanding.request?.clarity ?? null;
       trace.understanding.changeOfMind = understanding.request?.changeOfMind ?? false;
 
+      // What kind of message it is, and which parts of the record a reply
+      // to it can use. It describes; the decision below is what acts.
+      const interaction = interpret(understanding);
+      trace.understanding.kind = interaction.kind;
+
       const decision = decideAction(understanding, { session: context.session, prompt: promptFacts(prompt) });
       trace.decision = `${decision.action.type}:${decision.reason}`;
 
@@ -317,7 +325,8 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       const plain    = reply?.text.trim() ?? "";
       const happened = acted === null || acted.operation.ok;
       const generate = decision.generate && happened && await spendModelCall(profile.id, "response", day);
-      const fallback = plain || TEXT.converseFallback;
+      const explaining = decision.action.type === "explain";
+      const fallback = plain || (explaining ? TEXT.explainFallback : TEXT.converseFallback);
       const respondStarted = Date.now();
       try {
         const turn = await runNovaOrchestrator({
@@ -328,12 +337,13 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
           awaitPersistence: true,
           sessionCommands:  "surface",
           respond:          deps.respond,
+          focus:            { needs: interaction.needs, facts: acted?.facts, ...(explaining ? { mode: "explain" as const } : {}) },
           ...(generate
             ? {
                 responseFallback: fallback,
                 directive: plain
                   ? `Nova's system already did or offered exactly this, and nothing else: "${plain.slice(0, 400)}". Say it in your own words in at most three short sentences. Buttons for the next step are attached, so do not list options. Do not say anything else was started, ended, saved, added or scheduled, and do not state a date, a number of days or any other figure that is not in that sentence or the context above.`
-                  : NOTHING_WAS_DONE,
+                  : explaining ? EXPLAINED_ONLY : NOTHING_WAS_DONE,
               }
             : { scriptedReply: fallback }),
         });
@@ -372,6 +382,9 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
 // reply cannot claim one.
 const NOTHING_WAS_DONE =
   "Nova's system took no action this turn: nothing was started, paused, ended, saved, added or scheduled, and no reminder was set. Do not say or imply otherwise, and do not offer to do something this chat has no button for. Do not state a date, a number of days or any other figure that is not written in the context above. Reply in at most three short sentences.";
+
+const EXPLAINED_ONLY =
+  "Nova's system took no action this turn: nothing was started, saved, added or scheduled. Do not say or imply otherwise.";
 
 // The open prompt as the decision sees it: which options exist and what each
 // one is. Read from Nova's own record, never from the message.
@@ -416,6 +429,12 @@ async function act(
         ? { reply: alternativeReply(view, skip), operation: { name: "show_alternative", ok: true } }
         : { reply: { text: TEXT.finishSetup }, operation: { name: "show_alternative", ok: false } };
     }
+    case "advise":      return advise(ctx, action.topic);
+    case "ask_minutes": return askMinutes(action.choices);
+    case "offer_setup": return offerSetup(ctx, action.setup);
+    // A question about the subject matter: no product action, and the
+    // Response Brain answers it.
+    case "explain":     return null;
     case "acknowledge_report": return { reply: { text: TEXT.selfReport }, operation: { name: "acknowledge_report", ok: true } };
     case "unsupported":        return { reply: { text: TEXT.unsupported }, operation: { name: "unsupported", ok: true } };
     // With a question still open, its buttons are the options: the prompt

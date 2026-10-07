@@ -320,3 +320,39 @@ export async function updateTopicMastery(
 
 const isUniqueViolation = (err: unknown) =>
   typeof err === "object" && err !== null && (err as { code?: unknown }).code === "P2002";
+
+// ── Declared topics ───────────────────────────────────────────────────────────
+// A topic the student says a subject covers, before any of it is studied. The
+// row is created with nothing in it: no mastery, no review, no date. It says
+// the topic exists, which is what lets the Planning Engine schedule it; what
+// the student knows of it is still written only by updateTopicMastery, from a
+// session. A name the subject already has (in any casing) is left alone.
+
+export const MAX_TOPICS_PER_SUBJECT = 80;
+
+export async function declareTopics(
+  tx:        Pick<typeof prisma, "novaTopicMastery">,
+  subjectId: string,
+  names:     string[],
+): Promise<{ added: string[]; existing: string[] }> {
+  const have  = await tx.novaTopicMastery.findMany({ where: { subjectId }, select: { name: true } });
+  const known = new Set(have.map(t => normalizeTopicName(t.name).toLowerCase()));
+  const added: string[] = [];
+  const existing: string[] = [];
+  for (const raw of names) {
+    const name = normalizeTopicName(raw).slice(0, 120);
+    if (!name) continue;
+    if (known.has(name.toLowerCase())) { existing.push(name); continue; }
+    if (known.size >= MAX_TOPICS_PER_SUBJECT) break;
+    known.add(name.toLowerCase());
+    added.push(name);
+  }
+  if (added.length > 0) {
+    // A millisecond apart, so the order the learner listed them in is kept.
+    const at = Date.now();
+    await tx.novaTopicMastery.createMany({
+      data: added.map((name, i) => ({ subjectId, name, createdAt: new Date(at + i) })), skipDuplicates: true,
+    });
+  }
+  return { added, existing };
+}

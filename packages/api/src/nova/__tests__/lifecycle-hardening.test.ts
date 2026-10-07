@@ -47,12 +47,22 @@ describe("one name for a learner", () => {
 });
 
 describe("a sentence typed on the web is not a session command", () => {
-  const entry = read("entry.ts");
-  it("only a typed command lets the turn run session commands", () => {
-    expect(entry).toContain('...(command ? {} : { sessionCommands: "surface" as const, directive: SENTENCE_RUNS_NO_SESSION })');
+  const entry    = read("entry.ts");
+  const sentence = read("interaction/web-sentence.ts");
+  it("only a typed command reaches the turn that runs session commands", () => {
+    // A sentence is handed to the web sentence path before the command turn.
+    expect(entry.indexOf("if (!command) {")).toBeGreaterThan(-1);
+    expect(entry.indexOf("if (!command) {")).toBeLessThan(entry.indexOf("const result = await runNovaOrchestrator({"));
+    expect(sentence).toMatch(/sessionCommands:\s+"surface"/);
+  });
+  it("no session action decided from a sentence is run on the page", () => {
+    for (const action of ["start_session", "offer_start", "pause_session", "resume_session", "ask_outcome"]) {
+      expect(sentence).toMatch(new RegExp(`PAGE_BUTTONS_ONLY[^;]*"${action}"`, "s"));
+    }
+    expect(sentence).not.toMatch(/runNovaSessionCommand|startSession|startFromRequest|pauseOrResume|endSession/);
   });
   it("the reply is told nothing was started or ended", () => {
-    expect(entry).toContain("did not start, pause, resume or end a study session");
+    expect(sentence).toContain("did not start, pause, resume or end a study session");
   });
 });
 
@@ -232,7 +242,7 @@ describe("the web path's second pass may sharpen a reply, never manufacture evid
   it("it writes nothing and runs no session command: on the web a sentence never does", () => {
     const pass = read("brains/disambiguation-pass.ts");
     expect(pass).not.toMatch(/prisma|runNovaSessionCommand|openStudySession/);
-    expect(read("entry.ts")).toContain('sessionCommands: "surface"');
+    expect(read("interaction/web-sentence.ts")).toMatch(/sessionCommands:\s+"surface"/);
   });
 });
 
