@@ -1,0 +1,31 @@
+# Render's free plan stops the API after about 15 minutes without traffic, and
+# the check-in scheduler stops with it. This requests the health route often
+# enough that the service stays up; the health route also starts the scheduler
+# again after a restart.
+#
+# GitHub runs schedules late under load, so each run pings three times over
+# eight minutes rather than once. Delete this file once the API is on a paid
+# instance.
+name: Keep API awake
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Request the health route
+        run: |
+          for attempt in 1 2 3; do
+            curl -fsS --max-time 90 --retry 2 --retry-delay 5 "$HEALTH_URL"
+            echo
+            if [ "$attempt" -lt 3 ]; then sleep 240; fi
+          done
+        env:
+          HEALTH_URL: https://kivo-api-6jh4.onrender.com/api/health
