@@ -91,7 +91,7 @@ export function Header() {
                 <Button
                   asChild
                   className={`
-                    hidden md:flex items-center gap-1.5 rounded-full
+                    flex items-center gap-1.5 rounded-full
                     px-4 py-2 h-auto text-sm font-semibold
                     transition-all duration-500
                     ${scrolled ? "opacity-0 pointer-events-none" : "opacity-100"}
@@ -102,7 +102,7 @@ export function Header() {
                     color: "#00E5A0",
                   }}
                 >
-                  <Link href="/dashboard">
+                  <Link href="/home">
                     <SquaresFour weight="bold" className="h-4 w-4" />
                     Dashboard
                   </Link>
@@ -129,8 +129,9 @@ export function Header() {
                   onClick={handleLogout}
                   disabled={loggingOut}
                   variant="ghost"
+                  aria-label="Sign out"
                   className={`
-                    hidden md:flex items-center gap-1.5 rounded-full border border-[var(--color-baltic-sea-700)]
+                    flex items-center gap-1.5 rounded-full border border-[var(--color-baltic-sea-700)]
                     px-4 py-2 h-auto text-sm text-[var(--color-baltic-sea-300)]
                     hover:border-[var(--color-baltic-sea-500)] hover:text-white hover:bg-[var(--color-baltic-sea-800)]
                     transition-all duration-500
@@ -138,7 +139,7 @@ export function Header() {
                   `}
                 >
                   <SignOut weight="bold" className="h-4 w-4" />
-                  {loggingOut ? "Signing out…" : "Sign out"}
+                  <span className="hidden sm:inline">{loggingOut ? "Signing out…" : "Sign out"}</span>
                 </Button>
               </>
             ) : (
@@ -146,7 +147,7 @@ export function Header() {
                 <a
                   href="/signin"
                   className={`
-                    hidden text-sm text-[var(--color-baltic-sea-400)] hover:text-[var(--color-baltic-sea-100)] transition-all duration-500 md:block
+                    text-sm text-[var(--color-baltic-sea-400)] hover:text-[var(--color-baltic-sea-100)] transition-all duration-500
                     ${scrolled ? "opacity-0 pointer-events-none" : "opacity-100"}
                   `}
                 >
@@ -155,7 +156,7 @@ export function Header() {
                 <Button
                   asChild
                   className={`
-                    hidden md:flex bg-[var(--color-keppel-400)] text-[var(--color-keppel-950)] hover:bg-[var(--color-keppel-300)]
+                    flex bg-[var(--color-keppel-400)] text-[var(--color-keppel-950)] hover:bg-[var(--color-keppel-300)]
                     rounded-full px-5 py-2.5 h-auto text-sm
                     transition-all duration-500
                     ${scrolled ? "opacity-0 pointer-events-none" : "opacity-100"}
@@ -190,7 +191,7 @@ export function Header() {
               color: "#00E5A0",
             }}
           >
-            <Link href="/dashboard">
+            <Link href="/home">
               <SquaresFour weight="bold" className="mr-1.5 h-4 w-4" />
               Dashboard
             </Link>

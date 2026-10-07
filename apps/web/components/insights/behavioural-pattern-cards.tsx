@@ -127,7 +127,7 @@ export default function BehaviouralPatternCards({ tier }: { tier: string }) {
               Patterns unlock with Pro
             </p>
             <a
-              href="/dashboard/settings"
+              href="/settings"
               style={{ fontSize: "13px", fontWeight: 600, color: "#00F5A0", textDecoration: "none" }}
             >
               Unlock patterns →

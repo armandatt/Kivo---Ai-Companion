@@ -9,7 +9,9 @@ import {
   Calendar,
   Compass,
   Dna,
+  Globe,
   Home,
+  LogOut,
   Map,
   Settings,
   Target,
@@ -55,6 +57,17 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
   const items    = isNova ? novaNavItems : navItems
   const [isMobileOpen, setIsMobileOpen] = useState(false)
   const [isLargeScreen, setIsLargeScreen] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
+
+  // A full page load, so nothing of the signed-in dashboard stays mounted.
+  const signOut = async () => {
+    setSigningOut(true)
+    try {
+      await fetch('/api/logout', { method: 'POST' })
+    } finally {
+      window.location.href = '/'
+    }
+  }
 
   // Check screen size on client
   React.useEffect(() => {
@@ -160,6 +173,26 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
               <Settings className="w-5 h-5 shrink-0" />
               <span className="font-medium text-sm">Settings</span>
             </Link>
+          </motion.div>
+          <motion.div whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }}>
+            <Link
+              href="/"
+              className="flex items-center gap-3 px-4 py-3 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition-all duration-200"
+            >
+              <Globe className="w-5 h-5 shrink-0" />
+              <span className="font-medium text-sm">Kivo home page</span>
+            </Link>
+          </motion.div>
+          <motion.div whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }}>
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              disabled={signingOut}
+              className="flex w-full items-center gap-3 px-4 py-3 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition-all duration-200 disabled:opacity-60"
+            >
+              <LogOut className="w-5 h-5 shrink-0" />
+              <span className="font-medium text-sm">{signingOut ? 'Signing out…' : 'Sign out'}</span>
+            </button>
           </motion.div>
         </div>
       </motion.aside>

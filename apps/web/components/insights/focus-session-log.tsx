@@ -171,7 +171,7 @@ export default function FocusSessionLog({ sessions, tier }: FocusSessionLogProps
               }}
             >
               <a
-                href="/dashboard/settings"
+                href="/settings"
                 style={{ fontSize: "13px", fontWeight: 600, color: "#00F5A0", textDecoration: "none" }}
               >
                 Unlock 90 days →

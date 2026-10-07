@@ -455,7 +455,7 @@ export default function CompanionGuide({
                 </button>
               ) : (
                 <a
-                  href="/dashboard"
+                  href="/home"
                   style={{
                     display:         'inline-block',
                     fontSize:        '15px',
@@ -474,8 +474,8 @@ export default function CompanionGuide({
               {!ctaLabel && (
                 <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', marginTop: '14px' }}>
                   This guide lives at{' '}
-                  <a href="/dashboard/guide" style={{ color: accent, textDecoration: 'none', opacity: 0.8 }}>
-                    /dashboard/guide
+                  <a href="/guide" style={{ color: accent, textDecoration: 'none', opacity: 0.8 }}>
+                    /guide
                   </a>
                   {' '}— come back any time.
                 </p>

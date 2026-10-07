@@ -17,7 +17,7 @@ export function AuthAwareLink({
   useEffect(() => {
     fetch("/api/me")
       .then((res) => {
-        setHref(res.ok ? "/dashboard" : loggedOutHref)
+        setHref(res.ok ? "/home" : loggedOutHref)
       })
       .catch(() => setHref(loggedOutHref))
   }, [loggedOutHref])
