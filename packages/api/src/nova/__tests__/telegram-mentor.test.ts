@@ -35,7 +35,8 @@ import type { NovaTodayReady, TodayAction } from "../product/today.types";
 const request = (over: Partial<LearnerRequest> = {}): LearnerRequest => ({
   clarity: "clear", changeOfMind: false,
   action: "none", confidence: 0.9, promptAnswer: null, availableMinutes: null,
-  sessionOutcome: null, deferUntil: null, struggleTopic: null, exam: null, ...over,
+  sessionOutcome: null, deferUntil: null, struggleTopic: null, exam: null,
+  asks: "none", availableMinutesMax: null, setup: null, ...over,
 });
 const reading = (req: Partial<LearnerRequest> = {}, over: Partial<AcademicUnderstanding> = {}): AcademicUnderstanding => ({
   intent: "general_chat", emotion: "neutral", topic: null, topicConfidence: 0, disclosureClass: "none",
@@ -541,7 +542,9 @@ describe("replies", () => {
 
   it("offers only the session lengths that fit the time the learner has", () => {
     expect(startLengths(null)).toEqual([15, 25, 45]);
-    expect(startLengths(30)).toEqual([15, 25]);
+    expect(startLengths(30)).toEqual([15, 25, 30]);
+    expect(startLengths(20)).toEqual([15, 20]);
+    expect(startLengths(25)).toEqual([15, 25]);
     expect(startLengths(12)).toEqual([12]);
     expect(startLengths(5)).toEqual([]);
   });
@@ -552,9 +555,9 @@ describe("replies", () => {
     expect(reply.text).toContain("Why: exam in 1 day, mastery 32%.");
     expect(reply.text).not.toContain("third");
     expect(reply.text).toContain("OS final: tomorrow.");
-    expect(reply.prompt?.options.map(o => o.label)).toEqual(["Start 15 min", "Start 25 min", "Something else", "Later"]);
+    expect(reply.prompt?.options.map(o => o.label)).toEqual(["Start 15 min", "Start 25 min", "Start 30 min", "Something else", "Later"]);
     expect(reply.prompt?.options[1]?.action).toEqual({ type: "start", topicName: "Deadlocks", subjectName: "Operating Systems", minutes: 25 });
-    expect(new Set(reply.prompt?.options.map(o => o.id)).size).toBe(4);
+    expect(new Set(reply.prompt?.options.map(o => o.id)).size).toBe(5);
   });
 
   it("what to start comes from the plan; a topic the plan lacks has no subject", () => {
@@ -582,7 +585,7 @@ describe("replies", () => {
     const offer  = { title: "OS", subjectNames: ["Operating Systems"], date: "2026-10-07" };
     const merged = withExamOffer(recommendationReply(view, action), offer);
     expect(merged.prompt?.options.at(-1)?.action).toEqual({ type: "add_exam", title: "OS", subjectName: "Operating Systems", date: "2026-10-07" });
-    expect(merged.prompt?.options.length).toBe(5);
+    expect(merged.prompt?.options.length).toBe(6);
     expect(withExamOffer({ text: "ok" }, offer).prompt?.kind).toBe("confirm_exam");
   });
 

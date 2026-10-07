@@ -87,7 +87,8 @@ export async function getAllTopicMasteries(profileId: string, now: Date = new Da
   const topics = await prisma.novaTopicMastery.findMany({
     where:   { subject: { profileId } },
     include: { subject: { select: { name: true } } },
-    orderBy: { nextReviewAt: "asc" },
+    // Topics with no review date keep the order they were added in.
+    orderBy: [{ nextReviewAt: "asc" }, { createdAt: "asc" }],
   });
 
   return topics.map(topic => toState(topic, now));

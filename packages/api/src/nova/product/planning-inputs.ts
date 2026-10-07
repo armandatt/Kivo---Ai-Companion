@@ -8,7 +8,7 @@
 
 import { prisma } from "@repo/db/client";
 import { learnerKey } from "./learner-key";
-import { loadStudySnapshot, type StudySnapshotResult } from "../engines/study-snapshot";
+import { ASSUMED_DAILY_HOURS, loadStudySnapshot, type StudySnapshotResult } from "../engines/study-snapshot";
 import { computeAcademicState } from "../engines/academic-state-engine";
 import { getAllTopicMasteries } from "../engines/knowledge-engine";
 import { selectActiveExam } from "../engines/exam-engine";
@@ -184,6 +184,12 @@ export async function loadPlanningInputs(
     academicState, topics, snapshot.preferredStudyHoursPerDay, examContext,
     { availableMinutes, now },
   );
+
+  // The learner has not said what a normal day allows and gave no time
+  // today: the day was sized on an assumption, and the plan says so.
+  if (snapshot.dailyMinutesStated === null && availableMinutes === null) {
+    plan.assumptions.push(`Assumes about ${ASSUMED_DAILY_HOURS} hours a day: you haven't said what you usually have.`);
+  }
 
   return {
     status: "ready",

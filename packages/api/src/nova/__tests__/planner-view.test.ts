@@ -41,7 +41,7 @@ function snapshot(over: Partial<StudySnapshotResult> = {}): StudySnapshotResult 
   return {
     profileId: "p1", yearOfStudy: 2, major: "CS", institution: null,
     semesterStartDate: null, semesterEndDate: null,
-    preferredStudyHoursPerDay: 3, daysSinceJoined: 60,
+    preferredStudyHoursPerDay: 3, dailyMinutesStated: null, daysSinceJoined: 60,
     activeSession: null,
     subjects: [{ id: "s1", name: "Operating Systems", code: null }, { id: "s2", name: "DBMS", code: null }],
     studySessions: [], upcomingExams: [],

@@ -58,6 +58,7 @@ export const MIN_BLOCK_MINUTES = 10;
 
 // How long a review of one topic is planned for.
 export const REVIEW_BLOCK_MINUTES = 25;
+export const NEW_MATERIAL_BLOCK_MINUTES = 25;
 
 // ── Block builder helpers ─────────────────────────────────────────────────────
 
@@ -81,6 +82,18 @@ function practiceBlock(topic: TopicMasteryState, minutes: number): StudyBlock {
     durationMinutes: minutes,
     activityType:    "practice",
     rationale:       `Mastery at ${Math.round(topic.masteryProbability * 100)}% — active practice to deepen retention.`,
+    urgency:         "normal",
+  };
+}
+
+function newMaterialBlock(topic: TopicMasteryState, minutes: number): StudyBlock {
+  return {
+    topicId:         topic.topicId,
+    topicName:       topic.topicName,
+    subjectName:     topic.subjectName,
+    durationMinutes: minutes,
+    activityType:    "new_material",
+    rationale:       "On your syllabus and not started yet.",
     urgency:         "normal",
   };
 }
@@ -179,6 +192,23 @@ export function generateStudyPlan(
     const mins = Math.min(30, budgetMinutes - usedMinutes);
     if (mins < MIN_BLOCK_MINUTES) break;
     blocks.push(practiceBlock(topic, mins));
+    usedMinutes += mins;
+  }
+
+  // 4. Topics on the syllabus that have never been studied. One a day once
+  //    there is other work, two when there is nothing else: a learner who has
+  //    just said what a subject covers gets somewhere to start. In the order
+  //    they were given.
+  const notStarted = topics
+    .filter(t => t.reviewCount === 0 && t.lastStudied === null)
+    .filter(t => !blocks.some(b => b.topicId === t.topicId))
+    .slice(0, blocks.length === 0 ? 2 : 1);
+
+  for (const topic of notStarted) {
+    if (usedMinutes >= budgetMinutes) break;
+    const mins = Math.min(NEW_MATERIAL_BLOCK_MINUTES, budgetMinutes - usedMinutes);
+    if (mins < MIN_BLOCK_MINUTES) break;
+    blocks.push(newMaterialBlock(topic, mins));
     usedMinutes += mins;
   }
 

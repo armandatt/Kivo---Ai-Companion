@@ -35,7 +35,10 @@ export interface StudySnapshotResult {
   institution:              string | null;
   semesterStartDate:        Date | null;
   semesterEndDate:          Date | null;
+  // What planning uses. When the learner has not said, it is the assumed
+  // figure below, and dailyMinutesStated is null.
   preferredStudyHoursPerDay: number;
+  dailyMinutesStated:       number | null;
   daysSinceJoined:          number;
 
   // Active session (in_progress, if any)
@@ -102,6 +105,18 @@ export interface StudySnapshotResult {
   } | null;
 }
 
+// The time planning assumes when the learner has not said what they usually
+// have. An assumption, shown as one; never a fact about the learner.
+export const ASSUMED_DAILY_HOURS = 3;
+
+// What the learner said they usually have, in minutes, or null. Profiles
+// from before dailyStudyMinutes existed carry the answer only in the hours
+// column, where the schema default (3.0) means "never asked".
+export function statedDailyMinutes(profile: { dailyStudyMinutes: number | null; preferredStudyHoursPerDay: number }): number | null {
+  if (profile.dailyStudyMinutes !== null) return profile.dailyStudyMinutes;
+  return profile.preferredStudyHoursPerDay !== 3.0 ? Math.round(profile.preferredStudyHoursPerDay * 60) : null;
+}
+
 export async function loadStudySnapshot(platformChatId: string): Promise<StudySnapshotResult> {
   const now          = new Date();
   const ninetyDaysAgo = new Date(now);
@@ -115,6 +130,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
         id: true, yearOfStudy: true, major: true, institution: true,
         semesterStartDate: true, semesterEndDate: true,
         preferredStudyHoursPerDay: true,
+        dailyStudyMinutes:         true,
         subjects: { select: { id: true, name: true, code: true } },
         studySessions: {
           where: { sessionDate: { gte: ninetyDaysAgo } },
@@ -162,7 +178,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
     return {
       profileId: null, yearOfStudy: null, major: null, institution: null,
       semesterStartDate: null, semesterEndDate: null,
-      preferredStudyHoursPerDay: 3.0,
+      preferredStudyHoursPerDay: ASSUMED_DAILY_HOURS, dailyMinutesStated: null,
       daysSinceJoined,
       activeSession: null,
       subjects: [], studySessions: [], upcomingExams: [],
@@ -226,6 +242,8 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
     } catch { /* malformed state history — start fresh */ }
   }
 
+  const stated = statedDailyMinutes(p);
+
   return {
     profileId:                p.id,
     yearOfStudy:              p.yearOfStudy,
@@ -233,7 +251,8 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
     institution:              p.institution,
     semesterStartDate:        p.semesterStartDate,
     semesterEndDate:          p.semesterEndDate,
-    preferredStudyHoursPerDay: p.preferredStudyHoursPerDay,
+    preferredStudyHoursPerDay: stated !== null ? stated / 60 : ASSUMED_DAILY_HOURS,
+    dailyMinutesStated:        stated,
     daysSinceJoined,
     activeSession,
     subjects:   p.subjects,

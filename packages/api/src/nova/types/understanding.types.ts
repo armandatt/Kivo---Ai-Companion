@@ -99,7 +99,7 @@ export interface AcademicUnderstanding {
 // (if anything) runs, against the session and prompt that actually exist.
 // Closed vocabulary; anything else the model returns is dropped by the parser.
 
-export const UNDERSTANDING_ENVELOPE_VERSION = 3;
+export const UNDERSTANDING_ENVELOPE_VERSION = 4;
 
 export const REQUESTED_ACTIONS = [
   "what_now", "start_session", "pause_session", "resume_session",
@@ -135,6 +135,34 @@ export interface LearnerRequest {
   // forgotten. A statement about themselves, not a question.
   struggleTopic:    string | null;
   exam:             { title: string; date: string } | null;   // date: YYYY-MM-DD
+  // Whether the message is a question, and whose answer it is.
+  //   knowledge  about the subject matter; the answer is the same for anyone
+  //   about_me   about this student's own plan, progress, exams or time
+  // It decides how much of the learner's record a reply needs, never what
+  // Nova does.
+  asks:             AskScope;
+  // The larger number when the student gave a range of time ("20-30 mins");
+  // availableMinutes then holds the smaller. null: one number, or none.
+  availableMinutesMax: number | null;
+  // Something the student states about how they study this term: what a
+  // subject covers, how long they usually have, when they usually study.
+  // Offered back for confirmation; never saved on the reading alone.
+  setup:            SetupStatement | null;
+}
+
+export const ASK_SCOPES = ["knowledge", "about_me", "none"] as const;
+export type AskScope = typeof ASK_SCOPES[number];
+
+export const STUDY_TIMES = ["morning", "afternoon", "evening", "night"] as const;
+export type StudyTime = typeof STUDY_TIMES[number];
+
+export interface SetupStatement {
+  // Subjects or courses they say they are taking this term. Absent: none.
+  subjects?:    string[];
+  subject:      string | null;     // the subject the topics belong to, as named
+  topics:       string[];          // topics, chapters or units of that subject
+  dailyMinutes: number | null;     // what they usually have on a normal day
+  studyTime:    StudyTime | null;  // when they usually study
 }
 
 // What the model is told about the conversation before it reads the message.

@@ -5,7 +5,7 @@
 
 import { translateNovaCommand } from "./commands";
 import { runNovaOrchestrator } from "./nova-orchestrator";
-import { runNovaOnboarding } from "./onboarding/nova-onboarding-orchestrator";
+import { runWebSentence, runWebSetupSentence } from "./interaction/web-sentence";
 
 export const NOVA_HELP_TEXT = `Here's what I can do:
 
@@ -27,6 +27,9 @@ export interface NovaTurnInput {
   // The web app reads state straight after the reply, so it waits for the
   // turn to be persisted. Telegram does not.
   awaitPersistence?: boolean;
+  // Test seams. Production uses the real brains.
+  understand?: import("./interaction/web-sentence").WebSentenceInput["understand"];
+  respond?:    import("./interaction/web-sentence").WebSentenceInput["respond"];
 }
 
 export interface NovaTurnResult {
@@ -34,11 +37,6 @@ export interface NovaTurnResult {
   intervention: string | null;
   ok:           boolean;
 }
-
-// Said to the Response Brain on a turn made of words, so the reply cannot
-// claim a session command the turn did not run.
-const SENTENCE_RUNS_NO_SESSION =
-  "This message did not start, pause, resume or end a study session, and nothing was added or scheduled. Do not say or imply otherwise. If the student wants to start or end a session, point them to the Start button on this page or to Focus.";
 
 export async function handleNovaTurn(input: NovaTurnInput): Promise<NovaTurnResult> {
   const { platformChatId, text } = input;
@@ -50,33 +48,38 @@ export async function handleNovaTurn(input: NovaTurnInput): Promise<NovaTurnResu
 
   const { command, text: plainText } = translateNovaCommand(text);
 
-  // Until onboarding is complete every message, commands included, goes to the
-  // onboarding orchestrator, as a plain sentence.
+  // Until setup is complete a message can only add to it. The same turn
+  // Telegram runs for such a learner, ending at the same setup writer.
   if (!input.onboardingDone) {
-    const arg = trimmed.replace(/^\/\w+\s*/i, "").trim();
-    const onboardingText =
-      command === "study" ? (arg ? `I want to study ${arg}` : "I want to start studying")
-      : command === "done" ? "I finished studying today"
-      : command ? arg
-      : text;
     try {
-      const result = await runNovaOnboarding({ platformChatId, text: onboardingText, timestamp });
-      return { reply: result.reply, intervention: "onboarding", ok: true };
+      const turn = await runWebSetupSentence({ platformChatId, text: command ? plainText : text, timestamp, understand: input.understand });
+      return { reply: turn.reply, intervention: "setup", ok: true };
     } catch (err) {
-      console.error("[nova:onboarding] error:", err);
+      console.error("[nova:setup] error:", err);
       return { reply: "Something went wrong. Try sending your message again.", intervention: null, ok: false };
     }
   }
 
   try {
-    // A typed command (/study, /done) is protocol and runs. A sentence does
-    // not start, pause or end a session: the page it is typed on has buttons
-    // for that, and the model's reading of a sentence is not a button press.
-    // What the sentence says is still read, logged and consolidated.
+    // A typed command (/study, /done) is protocol and runs. A sentence takes
+    // the path Telegram's words take (interaction/web-sentence.ts): read
+    // once, checked, decided, and only then acted on. It does not start,
+    // pause or end a session: the page it is typed on has buttons for that.
+    if (!command) {
+      const turn = await runWebSentence({
+        platformChatId, text: plainText, timestamp,
+        awaitPersistence: input.awaitPersistence, understand: input.understand, respond: input.respond,
+      });
+      console.log(JSON.stringify({
+        ts: new Date().toISOString(), chatId: platformChatId, layer: "nova", surface: input.surface,
+        kind: turn.kind, decision: turn.decision, intervention: turn.intervention, textLength: text.length,
+      }));
+      return { reply: turn.reply, intervention: turn.intervention, ok: true };
+    }
+
     const result = await runNovaOrchestrator({
       platformChatId, text: plainText, timestamp, command,
       awaitPersistence: input.awaitPersistence,
-      ...(command ? {} : { sessionCommands: "surface" as const, directive: SENTENCE_RUNS_NO_SESSION }),
     });
 
     console.log(JSON.stringify({

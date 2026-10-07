@@ -20,7 +20,8 @@ import { runUnderstandingBrain } from "../brains/understanding-brain";
 import { decideAction, type ActionContext as DecisionContext, type TurnAction } from "../decision/action-decision";
 import { safeReading } from "../decision/interpretation-safety";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
-import { handleNovaTurn } from "../entry";
+import { runSetupTurn, setupAsk, SETUP_INTRO } from "../interaction/setup-turn";
+import { ensureSetupProfile, loadSetup } from "../product/setup";
 import { runNovaOrchestrator } from "../nova-orchestrator";
 import { examToOffer } from "../product/exams";
 import { loadNovaSession } from "../product/session";
@@ -33,12 +34,13 @@ import {
 } from "./channel-store";
 import { closeOpenPrompt, loadOpenPrompt, openPrompt, recordPromptMessage, resolvePrompt, type OpenPrompt } from "./prompt-store";
 import {
-  askOutcome, offerStart, pauseOrResume, runOptionAction, showSettings, showStatus, showToday, startFromRequest,
+  advise, askMinutes, askOutcome, offerSetup, offerStart, pauseOrResume, runOptionAction, showSettings, showStatus, showToday, startFromRequest, welcome,
   type ActionContext, type ActionResult,
 } from "./telegram-actions";
 import { decodeCallback, encodeCallback } from "./telegram-event";
 import { alternativeReply, clarifyReply, TEXT, withExamOffer } from "./telegram-replies";
 import { loadNovaToday } from "../product/today";
+import { interpret } from "../interaction/semantics";
 import type {
   FailureCategory, InlineButton, PromptKind, TelegramClient, TelegramEvent, TelegramReply, TurnTrace,
 } from "./telegram.types";
@@ -62,6 +64,8 @@ const PROMPT_QUESTION: Record<PromptKind, string> = {
   session:         "Your session: pause, resume or end it?",
   session_outcome: "How did the study session go?",
   confirm_exam:    "Add this exam?",
+  confirm_setup:   "Save what you told me about your term?",
+  pick_minutes:    "How many minutes do you have?",
   clarify:         "What do you need?",
   settings:        "Change a setting?",
 };
@@ -72,7 +76,7 @@ function newTrace(event: Event): TurnTrace {
     surface: "telegram", type: event.kind,
     command: event.kind === "command" ? event.command : null,
     profileId: null,
-    understanding: { attempted: false, ok: false, ms: 0, confidence: null, request: null, clarity: null, changeOfMind: false, intent: null, estInputTokens: 0 },
+    understanding: { attempted: false, ok: false, ms: 0, confidence: null, kind: null, request: null, clarity: null, changeOfMind: false, intent: null, estInputTokens: 0 },
     decision: null,
     operation: { name: null, ok: null },
     evidence: { kinds: [], consolidationQueued: false },
@@ -143,7 +147,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       where:  { platform_platformChatId: { platform: "telegram", platformChatId: event.chatId } },
       select: { displayName: true, novaAcademicProfile: { select: { id: true, onboardingComplete: true, timezone: true } } },
     });
-    const profile = user?.novaAcademicProfile ?? null;
+    let profile = user?.novaAcademicProfile ?? null;
 
     // In a private chat the sender is the chat. Anything else is not ours.
     if (event.fromId !== null && event.fromId !== event.chatId) {
@@ -152,18 +156,16 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     }
 
     // ── Still setting up ─────────────────────────────────────────────────────
-    // Nova's own onboarding conversation, unchanged. Buttons and commands
-    // have nothing to act on yet.
-    if (!profile?.onboardingComplete) {
-      if (event.kind === "callback") { await client.answerCallback(event.callbackId, TEXT.stale); return finish("stale_prompt"); }
-      if (event.kind !== "text") { await deliver({ text: event.kind === "command" && event.command === "help" ? TEXT.help : TEXT.finishSetup }); return finish(); }
-      const turn = await handleNovaTurn({
-        platformChatId: event.chatId, text: event.text, onboardingDone: false, timestamp: now, surface: "telegram", awaitPersistence: true,
-      });
-      trace.decision = "onboarding";
-      await deliver({ text: turn.reply });
-      return finish(turn.ok ? "none" : "internal");
+    // There is nothing to plan from yet. A message can add to the setup
+    // (interaction/setup-turn.ts) and a button can confirm what was shown
+    // back; everything else is answered with the one thing Nova still needs.
+    const settingUp = !profile?.onboardingComplete;
+    if (settingUp) {
+      const ensured = await ensureSetupProfile(event.chatId);
+      if (!ensured) { await deliver({ text: TEXT.finishSetup }); return finish(); }
+      profile = { id: ensured.profileId, onboardingComplete: false, timezone: ensured.timezone };
     }
+    if (!profile) return finish("internal");
 
     trace.profileId = profile.id;
     ctx = { chatId: event.chatId, profileId: profile.id, timezone: profile.timezone, name: user?.displayName ?? null, now };
@@ -202,10 +204,16 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     }
 
     // ── A command ────────────────────────────────────────────────────────────
+    if (event.kind === "command" && settingUp) {
+      trace.decision = `command:${event.command}:setup`;
+      const view = await loadSetup(event.chatId, now);
+      await deliver(setupAsk(view, event.command === "start" || (view?.subjects.length ?? 0) === 0 ? SETUP_INTRO : "I can't plan for you yet. "));
+      return finish();
+    }
     if (event.kind === "command") {
       trace.decision = `command:${event.command}`;
       switch (event.command) {
-        case "start":    await deliver({ text: `${TEXT.linked}\n\n${TEXT.help}` }); break;
+        case "start":    await deliver(report(await welcome(ctx))); break;
         case "help":     await deliver({ text: TEXT.help }); break;
         case "today":    await deliver(report(await showToday(ctx, null))); break;
         case "focus":
@@ -234,6 +242,26 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       if (!await spendModelCall(profile.id, "understanding", day)) {
         await deliver({ text: TEXT.budget });
         return finish("budget_exhausted");
+      }
+
+      // Setup is not finished: the message can only add to it.
+      if (settingUp) {
+        const row = await prisma.messengerUser.findUnique({
+          where: { platform_platformChatId: { platform: "telegram", platformChatId: event.chatId } }, select: { id: true },
+        });
+        trace.understanding.attempted = true;
+        const turn = await runSetupTurn({ ctx, text: event.text, history: row ? await loadConversationHistory(row.id) : [], understand: deps.understand });
+        trace.understanding.ok   = turn.decision !== "unreadable";
+        trace.understanding.kind = turn.kind;
+        trace.decision           = turn.decision;
+        if (!turn.ok && turn.decision === "unreadable") trace.failure = "understanding_malformed";
+        if (row) {
+          await saveUserMessage(row.id, event.text, { intent: "general_chat", emotion: "neutral", signals: [], surface: "telegram" }, now)
+            .then(() => saveAssistantMessage(row.id, turn.reply.text, "nova_setup", {}, now))
+            .catch(err => console.error(`[nova:telegram] ${trace.correlationId} conversation log failed`, err));
+        }
+        await deliver(turn.reply);
+        return finish();
       }
 
       // Before reading the message: what is true right now.
@@ -281,6 +309,11 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       trace.understanding.clarity      = understanding.request?.clarity ?? null;
       trace.understanding.changeOfMind = understanding.request?.changeOfMind ?? false;
 
+      // What kind of message it is, and which parts of the record a reply
+      // to it can use. It describes; the decision below is what acts.
+      const interaction = interpret(understanding);
+      trace.understanding.kind = interaction.kind;
+
       const decision = decideAction(understanding, { session: context.session, prompt: promptFacts(prompt) });
       trace.decision = `${decision.action.type}:${decision.reason}`;
 
@@ -317,7 +350,8 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       const plain    = reply?.text.trim() ?? "";
       const happened = acted === null || acted.operation.ok;
       const generate = decision.generate && happened && await spendModelCall(profile.id, "response", day);
-      const fallback = plain || TEXT.converseFallback;
+      const explaining = decision.action.type === "explain";
+      const fallback = plain || (explaining ? TEXT.explainFallback : TEXT.converseFallback);
       const respondStarted = Date.now();
       try {
         const turn = await runNovaOrchestrator({
@@ -328,12 +362,13 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
           awaitPersistence: true,
           sessionCommands:  "surface",
           respond:          deps.respond,
+          focus:            { needs: interaction.needs, facts: acted?.facts, ...(explaining ? { mode: "explain" as const } : {}) },
           ...(generate
             ? {
                 responseFallback: fallback,
                 directive: plain
                   ? `Nova's system already did or offered exactly this, and nothing else: "${plain.slice(0, 400)}". Say it in your own words in at most three short sentences. Buttons for the next step are attached, so do not list options. Do not say anything else was started, ended, saved, added or scheduled, and do not state a date, a number of days or any other figure that is not in that sentence or the context above.`
-                  : NOTHING_WAS_DONE,
+                  : explaining ? EXPLAINED_ONLY : NOTHING_WAS_DONE,
               }
             : { scriptedReply: fallback }),
         });
@@ -372,6 +407,9 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
 // reply cannot claim one.
 const NOTHING_WAS_DONE =
   "Nova's system took no action this turn: nothing was started, paused, ended, saved, added or scheduled, and no reminder was set. Do not say or imply otherwise, and do not offer to do something this chat has no button for. Do not state a date, a number of days or any other figure that is not written in the context above. Reply in at most three short sentences.";
+
+const EXPLAINED_ONLY =
+  "Nova's system took no action this turn: nothing was started, saved, added or scheduled. Do not say or imply otherwise.";
 
 // The open prompt as the decision sees it: which options exist and what each
 // one is. Read from Nova's own record, never from the message.
@@ -416,6 +454,12 @@ async function act(
         ? { reply: alternativeReply(view, skip), operation: { name: "show_alternative", ok: true } }
         : { reply: { text: TEXT.finishSetup }, operation: { name: "show_alternative", ok: false } };
     }
+    case "advise":      return advise(ctx, action.topic);
+    case "ask_minutes": return askMinutes(action.choices);
+    case "offer_setup": return offerSetup(ctx, action.setup);
+    // A question about the subject matter: no product action, and the
+    // Response Brain answers it.
+    case "explain":     return null;
     case "acknowledge_report": return { reply: { text: TEXT.selfReport }, operation: { name: "acknowledge_report", ok: true } };
     case "unsupported":        return { reply: { text: TEXT.unsupported }, operation: { name: "unsupported", ok: true } };
     // With a question still open, its buttons are the options: the prompt

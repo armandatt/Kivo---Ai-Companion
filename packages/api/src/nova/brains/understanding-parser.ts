@@ -5,9 +5,9 @@
 
 import type {
   AcademicUnderstanding, AcademicIntent, AcademicEmotion, DisclosureClass, RoutingSignal, RealityObservation,
-  LearnerRequest, RequestedAction, StatedOutcome,
+  LearnerRequest, RequestedAction, SetupStatement, StatedOutcome,
 } from "../types/understanding.types";
-import { READING_CLARITY, REQUESTED_ACTIONS } from "../types/understanding.types";
+import { ASK_SCOPES, READING_CLARITY, REQUESTED_ACTIONS, STUDY_TIMES } from "../types/understanding.types";
 import { isNovaRealityCategory, normalizeSubtype } from "../types/reality.types";
 
 const VALID_INTENTS = new Set<string>([
@@ -90,7 +90,37 @@ export const NO_REQUEST: LearnerRequest = {
   clarity: "ambiguous", changeOfMind: false,
   action: "none", confidence: 0, promptAnswer: null, availableMinutes: null,
   sessionOutcome: null, deferUntil: null, struggleTopic: null, exam: null,
+  asks: "none", availableMinutesMax: null, setup: null,
 };
+
+const MAX_SETUP_TOPICS = 12;
+const MAX_SETUP_SUBJECTS = 12;
+const MAX_DAILY_MINUTES = 16 * 60;
+
+// What the student says a subject covers and how they usually study. Shape
+// only: which subject it is, and whether anything is saved, is decided later.
+export function parseSetupStatement(raw: unknown): SetupStatement | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const seen = new Set<string>();
+  const topics = (Array.isArray(r["topics"]) ? r["topics"] : [])
+    .map(t => shortText(t, 80)?.split(" ").filter(Boolean).join(" ") ?? null)
+    .filter((t): t is string => t !== null && t.length >= 2)
+    .filter(t => !seen.has(t.toLowerCase()) && Boolean(seen.add(t.toLowerCase())))
+    .slice(0, MAX_SETUP_TOPICS);
+  const daily = r["dailyMinutes"];
+  const dailyMinutes = typeof daily === "number" && Number.isFinite(daily) && daily >= 10 && daily <= MAX_DAILY_MINUTES
+    ? Math.round(daily) : null;
+  const studyTime = STUDY_TIMES.find(t => t === r["studyTime"]) ?? null;
+  const named = new Set<string>();
+  const subjects = (Array.isArray(r["subjects"]) ? r["subjects"] : [])
+    .map(t => shortText(t, 80)?.split(" ").filter(Boolean).join(" ") ?? null)
+    .filter((t): t is string => t !== null && t.length >= 2)
+    .filter(t => !named.has(t.toLowerCase()) && Boolean(named.add(t.toLowerCase())))
+    .slice(0, MAX_SETUP_SUBJECTS);
+  if (subjects.length === 0 && topics.length === 0 && dailyMinutes === null && studyTime === null) return null;
+  return { ...(subjects.length > 0 ? { subjects } : {}), subject: shortText(r["subject"], 80), topics, dailyMinutes, studyTime };
+}
 
 export function parseLearnerRequest(raw: unknown): LearnerRequest {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { ...NO_REQUEST };
@@ -101,6 +131,10 @@ export function parseLearnerRequest(raw: unknown): LearnerRequest {
   const exam = typeof r["exam"] === "object" && r["exam"] !== null ? r["exam"] as Record<string, unknown> : null;
   const examTitle = exam ? shortText(exam["title"], 80) : null;
 
+  const statedMinutes = typeof minutes === "number" && Number.isFinite(minutes) && minutes >= 1 && minutes <= MAX_STATED_MINUTES
+    ? Math.round(minutes) : null;
+  const max = r["availableMinutesMax"];
+
   return {
     // A reading that does not say how clear it is is not treated as clear.
     clarity:      READING_CLARITY.find(c => c === r["clarity"]) ?? "ambiguous",
@@ -108,12 +142,15 @@ export function parseLearnerRequest(raw: unknown): LearnerRequest {
     action:       action ?? "none",
     confidence:   typeof r["confidence"] === "number" && action ? Math.max(0, Math.min(1, r["confidence"])) : 0,
     promptAnswer: shortText(r["promptAnswer"], 8),
-    availableMinutes: typeof minutes === "number" && Number.isFinite(minutes) && minutes >= 1 && minutes <= MAX_STATED_MINUTES
-      ? Math.round(minutes) : null,
+    availableMinutes: statedMinutes,
     sessionOutcome: OUTCOMES.find(o => o === r["sessionOutcome"]) ?? null,
     deferUntil:     r["deferUntil"] === "later" || r["deferUntil"] === "tomorrow" ? r["deferUntil"] : null,
     struggleTopic:  shortText(r["struggleTopic"], 80),
     exam:           exam && examTitle && isIsoDay(exam["date"]) ? { title: examTitle, date: exam["date"] } : null,
+    asks:           ASK_SCOPES.find(a => a === r["asks"]) ?? "none",
+    availableMinutesMax: statedMinutes !== null && typeof max === "number" && Number.isFinite(max) && max > statedMinutes && max <= MAX_STATED_MINUTES
+      ? Math.round(max) : null,
+    setup:          parseSetupStatement(r["setup"]),
   };
 }
 

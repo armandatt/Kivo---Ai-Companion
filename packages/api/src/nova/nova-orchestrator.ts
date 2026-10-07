@@ -33,7 +33,7 @@ import { selectActiveExam, buildExamContext } from "./engines/exam-engine";
 import { runPatternDetector } from "./engines/pattern-detector";
 import { buildSessionContext, computeSessionAction } from "./engines/study-session-engine";
 import { runDecisionGraph } from "./decision/decision-graph";
-import { buildDynamicLayer, buildMicroPrompt } from "./context/context-builder";
+import { buildDynamicLayer, buildExplainPrompt, buildFocusedLayer, buildMicroPrompt } from "./context/context-builder";
 import { runResponseBrain, UNREADABLE_RESPONSE_REPLY } from "./brains/response-brain";
 import { chooseRegister, registerLine } from "./decision/register";
 import { loadAccountabilityStyle } from "./adapters/operating-style-adapter";
@@ -307,8 +307,11 @@ export async function runNovaOrchestrator(
   ctx.decision = decision;
 
   // ── 14. Context Builder ───────────────────────────────────────────────────
-  const dynamicLayer = buildDynamicLayer(ctx);
-  const microPrompt  = buildMicroPrompt(decision, ctx);
+  // A surface that classified the message says which parts of the record the
+  // reply needs; only those are put in front of the Response Brain.
+  const explaining   = input.focus?.mode === "explain";
+  const dynamicLayer = input.focus ? buildFocusedLayer(ctx, input.focus.needs, input.focus.facts) : buildDynamicLayer(ctx);
+  const microPrompt  = explaining ? buildExplainPrompt(ctx) : buildMicroPrompt(decision, ctx);
 
   // ── 15. Response Brain ────────────────────────────────────────────────────
   // A scripted reply states the result of an action that already happened.
@@ -339,7 +342,8 @@ export async function runNovaOrchestrator(
       accountability:    await loadAccountabilityStyle(platformChatId),
     });
     register = chosen;
-    const prompt = [microPrompt, registerLine(chosen), input.directive ? `Decided action (word this, do not change it): ${input.directive}` : null]
+    // An explanation has no register to play with: it is plain either way.
+    const prompt = [microPrompt, explaining ? null : registerLine(chosen), input.directive ? `Decided action (word this, do not change it): ${input.directive}` : null]
       .filter(Boolean).join("\n\n");
     try {
       brainOutput = await (input.respond ?? runResponseBrain)(dynamicLayer, prompt);

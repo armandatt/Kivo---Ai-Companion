@@ -121,6 +121,24 @@ One JSON line per update, `layer: "nova_telegram"`, with a `correlationId`, the 
 
 Worth alerting on: `failure` of `internal`, `operation_failed`, `understanding_failed`; proactive `outcome` of `unknown` or `blocked`; outbox rows stuck in `claimed` or `ready`.
 
+## What a message is, and what a reply may know
+
+Added after V1; shared with the web chat. See "Talking to Nova" in `CLAUDE.md` for the rules and their tests.
+
+| The learner says | Kind | What Nova does | Record shown to the Response Brain |
+|---|---|---|---|
+| "what is deadlock?" | general question | answers it | none (recent lines only) |
+| "what should I study?" | learner question | today's plan, with Start options | not worded unless they are upset |
+| "should I study deadlocks tonight?" | learner question | a verdict decided from the plan, reworded | plan, exams, reviews, time, circumstances, the topic |
+| "I've only got 30 mins" | context signal | records it for today and refits the offer | not worded |
+| "maybe 20-30 mins" | context signal | asks which; records neither | not worded |
+| "start deadlocks for 25" | action request | starts it if it is on today's plan, else offers | not worded |
+| "I'm exhausted, can't study" | reality signal | starts nothing; evidence goes to consolidation | session, circumstances, state, memories |
+| "for OS we have deadlocks, paging" | onboarding input | shows it back; saves on confirmation | not worded |
+| "yeah" with nothing open | unclear | asks, with options | not worded |
+
+A chat that has just been linked gets what to do now (or the one thing Nova still needs to know), not a list of commands. Commands still work as shortcuts.
+
 ## Known limits
 
 - Telegram is optional. A Nova account is a learner from its first request (`nova/product/learner-identity.ts`); its row is keyed `web:<userId>` until a chat is connected, when `telegram-link.ts` re-keys that same row to the chat. There is no unlink: once connected, the chat is the learner's key.

@@ -422,7 +422,7 @@ test("two ends at once close the session once: one report, one mastery record", 
   const webEnded      = web.ok && web.ended !== null;
   assert.equal(Number(telegramEnded) + Number(webEnded), 1);
   // The one that came second is told the truth: there was nothing left to end.
-  if (!telegramEnded) assert.ok(["That session was already closed. Nothing was logged twice.", "Nothing is running. /focus starts a session."].includes(tg.last().text));
+  if (!telegramEnded) assert.ok(["That session was already closed. Nothing was logged twice.", "Nothing is running. Tell me what you want to study and I'll set it up."].includes(tg.last().text));
 });
 
 test("a start from Telegram and a start from the web at the same moment leave one session", async () => {
@@ -464,7 +464,7 @@ test("\"bro I'm fucked, exam is tomorrow and I've only got 30 mins\": understood
   assert.ok(ai.worded[0]!.includes("Deadlocks (Operating Systems)"), "the recommendation is given to the model, not chosen by it");
   assert.equal(tg.last().text, "WORDED(1)");
   // Only lengths that fit thirty minutes are offered.
-  assert.deepEqual(tg.labels(), ["Start 15 min", "Start 25 min", "Something else", "Later"]);
+  assert.deepEqual(tg.labels(), ["Start 15 min", "Start 25 min", "Start 30 min", "Something else", "Later"]);
   // The exam is already on record, so Nova does not ask to add it again.
   assert.equal(await prisma.novaExam.count({ where: { profileId: l.profileId } }), 1);
 
@@ -632,7 +632,7 @@ test("short replies are read against the open question, or not at all", async ()
   ai.read("make it 20 mins", { ...BASE, request: { ...REQ, availableMinutes: 20 } });
   await send(l, "make it 20 mins");
   assert.deepEqual(ai.seen.at(-1)!.context!.openPrompt?.options.map(o => o.label), ["Start 15 min", "Start 25 min", "Start 45 min", "Something else", "Later"]);
-  assert.deepEqual(tg.labels(), ["Start 15 min", "Something else", "Later"]);
+  assert.deepEqual(tg.labels(), ["Start 15 min", "Start 20 min", "Something else", "Later"]);
   const offered = tg.data("Start 15 min");
 
   ai.read("yeah let's do that", { ...BASE, request: { ...REQ, action: "start_session", promptAnswer: "a" } });
@@ -796,7 +796,7 @@ test("a stated time never starts a session, however sure the model is that it sh
   const trace = await send(l, "bro I have 30 mins");
   assert.equal(trace.decision, "offer_start:start_needs_confirmation");
   assert.equal((await sessions(l)).length, 0, "nothing started");
-  assert.deepEqual(tg.labels(), ["Start 15 min", "Start 25 min", "Something else", "Later"]);
+  assert.deepEqual(tg.labels(), ["Start 15 min", "Start 25 min", "Start 30 min", "Something else", "Later"]);
   // What was actually said is kept: thirty minutes, for today, on every surface.
   const today = await loadNovaToday(l.chat, { now: clock });
   assert.ok(today.status === "ready" && today.availableMinutes === 30);
@@ -819,9 +819,9 @@ test("a stated time never starts a session, however sure the model is that it sh
 test("changing an open offer re-offers it at that length and starts nothing", async () => {
   // real readings, each wrong in a different way.
   const cases: Array<[string, Record<string, unknown>, number, string[]]> = [
-    ["make it 20 mins",             { ...REQ, action: "start_session", confidence: 0.95, availableMinutes: 20 }, 20, ["Start 15 min", "Something else", "Later"]],
+    ["make it 20 mins",             { ...REQ, action: "start_session", confidence: 0.95, availableMinutes: 20 }, 20, ["Start 15 min", "Start 20 min", "Something else", "Later"]],
     ["actually I only got 10 mins", { ...REQ, action: "something_else", confidence: 0.9, availableMinutes: 10, promptAnswer: "c" }, 10, ["Start 10 min", "Something else", "Later"]],
-    ["nah actually make it 20",     { ...REQ, action: "start_session", confidence: 0.95, availableMinutes: 20, promptAnswer: "c" }, 20, ["Start 15 min", "Something else", "Later"]],
+    ["nah actually make it 20",     { ...REQ, action: "start_session", confidence: 0.95, availableMinutes: 20, promptAnswer: "c" }, 20, ["Start 15 min", "Start 20 min", "Something else", "Later"]],
   ];
   for (const [text, request, minutes, labels] of cases) {
     const l = await seedLearner("Chg");
@@ -939,7 +939,7 @@ test("the Response Brain is not asked to word an action that did not happen", as
   });
   assert.deepEqual(trace.operation, { name: "session_pause", ok: false });
   assert.equal(ai.worded.length, 0, "a failed action is stated plainly, never worded as if it worked");
-  assert.equal(tg.last().text, "Nothing is running. /focus starts a session.");
+  assert.equal(tg.last().text, "Nothing is running. Tell me what you want to study and I'll set it up.");
   assert.equal((await sessions(l)).filter(r => r.status === "completed").length, 1);
 });
 
@@ -1044,15 +1044,17 @@ test("a blocked bot is noticed and forgiven when the learner writes again", asyn
   assert.ok(await loadOpenPrompt(l.profileId, clock));
 });
 
-test("before setup is finished, buttons and commands have nothing to act on", async () => {
+test("before setup is finished, a command gets the one thing Nova needs and a button it never sent does nothing", async () => {
   const chat = `${STAMP}99`;
   chats.push(chat);
   await prisma.messengerUser.create({ data: { platform: "telegram", platformChatId: chat, persona: "nova" } });
   const tg = fakeTelegram();
   const run = (event: ReturnType<typeof normalizeTelegramUpdate>) => handleNovaTelegramEvent(event as never, { client: tg.client, now: () => clock });
   await run(say(chat, "/today"));
-  assert.equal(tg.last().text, "Finish setting up with Nova first. It takes a couple of minutes.");
-  assert.equal((await run(tapUpdate(chat, "p:x:a"))).failure, "stale_prompt");
+  assert.equal(tg.last().text, "I'm Nova. Before I can plan anything I need to know what you're studying. Which subjects are you taking this term?");
+  assert.equal((await run(tapUpdate(chat, "p:x:a"))).failure, "forged_callback");
+  const profile = await prisma.novaAcademicProfile.findFirstOrThrow({ where: { user: { platformChatId: chat } }, select: { onboardingComplete: true, _count: { select: { subjects: true, studySessions: true } } } });
+  assert.deepEqual([profile.onboardingComplete, profile._count.subjects, profile._count.studySessions], [false, 0, 0]);
 });
 
 // ══════════════════════════════════════════════════════════════════════════════

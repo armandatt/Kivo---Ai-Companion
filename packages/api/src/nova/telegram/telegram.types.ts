@@ -10,6 +10,7 @@
 //                                  deterministic action path as the other two
 
 import type { NovaSessionOutcome } from "../product/today.types";
+import type { StudyTime } from "../types/understanding.types";
 
 // ── Inbound ───────────────────────────────────────────────────────────────────
 
@@ -52,7 +53,10 @@ export type OptionAction =
   | { type: "not_today" }
   | { type: "add_exam"; title: string; subjectName: string | null; date: string }   // date: YYYY-MM-DD
   | { type: "dismiss" }
-  | { type: "set_proactive"; enabled: boolean };
+  | { type: "set_proactive"; enabled: boolean }
+  // What the learner said a subject covers, or how they usually study, as it
+  // was shown back to them. Saved by product/setup.ts when they confirm.
+  | { type: "save_setup"; subjects?: string[]; subjectName: string | null; topics: string[]; dailyMinutes: number | null; studyTime: StudyTime | null };
 
 export interface PromptOption {
   id:     string;      // short, unique within the prompt: "a", "b", …
@@ -66,6 +70,8 @@ export type PromptKind =
   | "session_outcome"  // "How did it go?"
   | "nudge"            // a proactive message
   | "confirm_exam"
+  | "confirm_setup"    // "Add these topics to Operating Systems?"
+  | "pick_minutes"     // a range of time, asked back as a choice
   | "clarify"
   | "settings";
 
@@ -77,6 +83,8 @@ export const PROMPT_TTL_MINUTES: Record<PromptKind, number> = {
   session_outcome: 120,
   nudge:           720,
   confirm_exam:    30,
+  confirm_setup:   30,
+  pick_minutes:    15,
   clarify:         15,
   settings:        30,
 };
@@ -134,7 +142,7 @@ export interface TurnTrace {
   type:          TelegramEvent["kind"];
   command:       string | null;
   profileId:     string | null;
-  understanding: { attempted: boolean; ok: boolean; ms: number; confidence: number | null; request: string | null; clarity: string | null; changeOfMind: boolean; intent: string | null; estInputTokens: number };
+  understanding: { attempted: boolean; ok: boolean; ms: number; confidence: number | null; kind: string | null; request: string | null; clarity: string | null; changeOfMind: boolean; intent: string | null; estInputTokens: number };
   decision:      string | null;
   operation:     { name: string | null; ok: boolean | null };
   evidence:      { kinds: string[]; consolidationQueued: boolean };
