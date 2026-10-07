@@ -17,6 +17,9 @@
 import { prisma } from "@repo/db/client";
 import { checkRateLimit } from "../../services/rateLimit.service";
 import { runUnderstandingBrain } from "../brains/understanding-brain";
+import { wordFirstUse } from "../brains/first-use-wording";
+import { chooseRegister } from "../decision/register";
+import { loadAccountabilityStyle, loadOperatingStyle } from "../adapters/operating-style-adapter";
 import { decideAction, type ActionContext as DecisionContext, type TurnAction } from "../decision/action-decision";
 import { safeReading } from "../decision/interpretation-safety";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
@@ -30,11 +33,11 @@ import { loadConversationHistory, saveAssistantMessage, saveUserMessage } from "
 import type { NovaOrchestratorInput } from "../types/context.types";
 import type { AcademicUnderstanding, UnderstandingContext } from "../types/understanding.types";
 import {
-  acquireTurn, allowAction, ensureChannel, markDelivered, markUndeliverable, noteInbound, releaseTurn, spendModelCall,
+  acquireTurn, allowAction, claimFirstUse, ensureChannel, markDelivered, releaseFirstUse, markUndeliverable, noteInbound, releaseTurn, spendModelCall,
 } from "./channel-store";
 import { closeOpenPrompt, loadOpenPrompt, openPrompt, recordPromptMessage, resolvePrompt, type OpenPrompt } from "./prompt-store";
 import {
-  advise, askMinutes, askOutcome, offerSetup, offerStart, pauseOrResume, runOptionAction, showSettings, showStatus, showToday, startFromRequest, welcome,
+  advise, askMinutes, askOutcome, firstUse, offerSetup, offerStart, pauseOrResume, runOptionAction, showSettings, showStatus, showToday, startFromRequest,
   type ActionContext, type ActionResult,
 } from "./telegram-actions";
 import { decodeCallback, encodeCallback } from "./telegram-event";
@@ -52,6 +55,7 @@ export interface TelegramDeps {
   // only https links, so anything else means no link button.
   webUrl?:      string | null;
   // Test seams. Production uses the real brains.
+  generate?:    Parameters<typeof wordFirstUse>[1];
   understand?:  typeof runUnderstandingBrain;
   respond?:     NovaOrchestratorInput["respond"];
 }
@@ -213,7 +217,29 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     if (event.kind === "command") {
       trace.decision = `command:${event.command}`;
       switch (event.command) {
-        case "start":    await deliver(report(await welcome(ctx))); break;
+        case "start": {
+          // The first message in this chat is the mentor's, from the record.
+          // After that, /start is simply "what now".
+          const first = await claimFirstUse(profile.id, now);
+          if (!first) { await deliver(report(await showToday(ctx, null))); break; }
+          trace.decision = "command:start:first_use";
+          const zone = resolveTimezone(profile.timezone);
+          const reply = report(await firstUse(ctx, async (decision, hasButtons, activeReality, daysUntilNextExam) => {
+            // Wording is optional: within today's budget, and never required.
+            if (!await spendModelCall(profile!.id, "response", dayKey(now, zone))) return decision.fallback;
+            const worded = await wordFirstUse({
+              decision, hasButtons, studentName: ctx!.name,
+              register:       chooseRegister({ emotion: "neutral", daysUntilNextExam, activeReality, accountability: await loadAccountabilityStyle(event.chatId) }),
+              operatingStyle: await loadOperatingStyle(event.chatId),
+            }, deps.generate);
+            trace.response = { generated: true, ok: worded.generated, ms: 0, fallback: !worded.generated };
+            return worded.text;
+          }));
+          await deliver(reply);
+          // Nobody saw it: the chat has still not had its first message.
+          if (trace.send.status !== "sent") await releaseFirstUse(profile.id, now);
+          break;
+        }
         case "help":     await deliver({ text: TEXT.help }); break;
         case "today":    await deliver(report(await showToday(ctx, null))); break;
         case "focus":

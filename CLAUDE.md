@@ -303,6 +303,16 @@ A sentence typed to Nova takes the same path on Telegram (`telegram/telegram-tur
 - **Two model calls per turn at most**: the reading, and the wording. The web path no longer runs the second-pass disambiguation; only a typed slash command still takes the older turn.
 - The action functions both surfaces call live in `telegram/telegram-actions.ts` and the prompt store in `telegram/prompt-store.ts`. They are channel-neutral in behaviour; the directory name is historical.
 
+## The first message in a linked Telegram chat
+
+Held by `first-use.test.ts` and `nova-first-use.itest.ts`.
+
+- **Where it comes from.** After `linkTelegramChat` commits, the webhook hands a `start` command to `handleNovaTelegramEvent`. There is no fixed greeting.
+- **What it is about** is decided by `interaction/first-use.ts` (pure) from the Today view: a running session, a circumstance that means no push (health, injury, emotional), the plan's first block, the one missing piece of setup, or nothing pressing. It carries the buttons the plan or session already has.
+- **Wording** is `brains/first-use-wording.ts`: one model call given only those facts and the register, with the plain sentence as fallback. A reply that mentions a command is discarded for the fallback.
+- **Once per chat.** `claimFirstUse` in the channel store takes `NovaTelegramChannel.lastDeliveredAt` while it is null, in one conditional write, and gives it back if the send failed. After that `/start` is the Today reply. A replayed update never gets this far: `admitTelegramUpdate` drops it.
+- **Setup not finished:** the setup question, as for any other command.
+
 ## Study setup: one setup, three ways in
 
 `product/setup.ts` is the only reader and writer of a learner's study setup: subjects, topics, exam dates, normal daily minutes and usual study time. The rules, each held by `study-setup.test.ts` or `nova-setup.itest.ts`:

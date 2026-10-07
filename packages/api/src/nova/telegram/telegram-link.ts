@@ -170,7 +170,7 @@ export const LINK_MESSAGES: Record<Exclude<LinkResult["status"], "linked">, stri
   chat_is_rex:    "This Telegram chat is set up with Rex. Connect Nova from a different Telegram account so neither loses its history.",
 };
 
-export const NOVA_LINK_GREETING = {
-  onboarded: "Connected. This chat is the quick way to reach me.\n\n/today tells you what to do now.",
-  fresh:     "Connected. I'm Nova. Tell me about your studies: which year are you in, and where?",
-};
+// Said only when the update that linked the chat cannot be handed to Nova
+// (an unsigned update in production). Every other link is greeted from the
+// learner's record by the Telegram turn.
+export const NOVA_LINKED_PLAIN = "Connected. Send me a message and we'll pick it up from there.";

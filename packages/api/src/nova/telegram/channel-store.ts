@@ -42,6 +42,20 @@ export async function noteInbound(profileId: string): Promise<void> {
   });
 }
 
+// The first message Nova sends in a chat is a different message from every
+// later one. A chat Nova has never delivered to has no delivery time, and
+// taking that slot is one conditional write: of two attempts at the same
+// moment, one gets it. `release` gives it back when the message did not go.
+export async function claimFirstUse(profileId: string, now: Date): Promise<boolean> {
+  await ensureChannel(profileId);
+  const claimed = await prisma.novaTelegramChannel.updateMany({ where: { profileId, lastDeliveredAt: null }, data: { lastDeliveredAt: now } });
+  return claimed.count === 1;
+}
+
+export async function releaseFirstUse(profileId: string, claimedAt: Date): Promise<void> {
+  await prisma.novaTelegramChannel.updateMany({ where: { profileId, lastDeliveredAt: claimedAt }, data: { lastDeliveredAt: null } });
+}
+
 export async function markDelivered(profileId: string, now: Date): Promise<void> {
   await prisma.novaTelegramChannel.updateMany({ where: { profileId }, data: { lastDeliveredAt: now, undeliverableSince: null } });
 }

@@ -276,7 +276,6 @@ export const TEXT = {
     "",
     "Or just tell me: how long you have, what came up, what isn't clicking.",
   ].join("\n"),
-  linked:          "Connected. I'm Nova. Talk to me the way you'd text a friend who knows your syllabus: ask what to study, tell me how long you've got, or ask me to explain something.",
   finishSetup:     "Finish setting up with Nova first. It takes a couple of minutes.",
   webOnly:         "That one needs room to work. It lives in Nova on the web.",
   unknownCommand:  "I don't know that command. /today, /focus, /done, /status and /settings are the ones I do.",
