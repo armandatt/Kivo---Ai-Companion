@@ -756,3 +756,49 @@ test("an exam two days out reaches a learner as their life allows: in full, as a
   assert.deepEqual(got(studying), []);
   await runNovaSessionCommand(studying.chat, { action: "end", outcome: "okay" }, clock, "web");
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// What the web app's "Connect Telegram" reads and does
+// ══════════════════════════════════════════════════════════════════════════════
+
+// The flag GET /api/telegram/check-connection reports for an account.
+const connectedFlag = async (userId: string) =>
+  (await prisma.userProfile.findUniqueOrThrow({ where: { userId }, select: { telegramConnected: true } })).telegramConnected;
+
+test("connecting from the web: disconnected until the link is used, then connected, for that account only, and never required", async () => {
+  const me    = await newAccount();
+  const other = await newAccount();
+  const mine  = (await resolveLearnerForAccount(me)) as { platformChatId: string };
+  await resolveLearnerForAccount(other);
+  await finishSetup(mine.platformChatId);
+
+  // Disconnected, and everything works: Telegram is not what makes a learner.
+  assert.equal(await connectedFlag(me), false);
+  assert.equal((await loadNovaToday(mine.platformChatId, { now: clock })).status, "ready");
+  assert.equal((await loadNovaPlanner(mine.platformChatId, { now: clock })).status, "ready");
+
+  // A link that ran out leaves the account as it was.
+  const chat = newChat();
+  await prisma.userProfile.update({ where: { userId: me }, data: { telegramConnectToken: token(71), telegramConnectTokenExpiresAt: new Date(clock.getTime() - 1000) } });
+  assert.deepEqual(await linkTelegramChat(token(71), { id: chat, type: "private" }, clock), { status: "expired" });
+  assert.deepEqual(await linkTelegramChat("not-a-real-token-000000", { id: chat, type: "private" }, clock), { status: "invalid" });
+  assert.equal(await connectedFlag(me), false);
+
+  // The link from "Connect Telegram", opened in time.
+  const linked = await linkTelegramChat(await issueToken(me, 72), { id: chat, type: "private" }, clock);
+  assert.equal(linked.status, "linked");
+  assert.equal(await connectedFlag(me), true);
+  assert.equal(await connectedFlag(other), false, "one account connecting says nothing about another");
+
+  // The same learner, now reachable by the chat: nothing was duplicated or lost.
+  const now = (await resolveLearnerForAccount(me)) as { platformChatId: string; channel: string };
+  assert.deepEqual([now.platformChatId, now.channel], [chat, "telegram"]);
+  assert.equal((await loadNovaToday(chat, { now: clock })).status, "ready");
+
+  // The link is spent, and another account cannot take the chat with its own.
+  assert.equal((await linkTelegramChat(token(72), { id: chat, type: "private" }, clock)).status, "invalid");
+  const refused = await linkTelegramChat(await issueToken(other, 73), { id: chat, type: "private" }, clock);
+  assert.notEqual(refused.status, "linked");
+  assert.equal(await connectedFlag(other), false);
+  assert.equal((await prisma.userProfile.findUniqueOrThrow({ where: { userId: me }, select: { telegramChatId: true } })).telegramChatId, chat);
+});
