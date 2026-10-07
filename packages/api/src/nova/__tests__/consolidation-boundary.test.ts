@@ -139,6 +139,7 @@ describe("consolidation boundary", () => {
     expect(llmCallers).toEqual([
       "brains/disambiguation-pass.ts",
       "brains/first-use-wording.ts",   // words the one first message of a linked chat; facts decided in code
+      "brains/language-wording.ts",    // says a reply code already wrote in the learner's language; adds nothing
       "brains/response-brain.ts",
       "brains/understanding-brain.ts",
       "onboarding/nova-onboarding-extractor.ts",

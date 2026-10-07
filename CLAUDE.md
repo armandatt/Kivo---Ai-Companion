@@ -291,7 +291,7 @@ Full description: `docs/NOVA_TELEGRAM_MENTOR.md`. Telegram is a surface: it owns
 
 A sentence typed to Nova takes the same path on Telegram (`telegram/telegram-turn.ts`) and on the web (`interaction/web-sentence.ts`): one Understanding call with context, `safeReading`, `interpret`, `decideAction`, the shared action functions, then the canonical turn. The rules, each held by `semantic-interaction.test.ts` or `nova-semantic.itest.ts`:
 
-- **The kind of a message is derived, not classified twice.** `interaction/semantics.ts` (pure) names a reading (`general_question`, `learner_question`, `action_request`, `context_signal`, `reality_signal`, `emotional_signal`, `onboarding_input`, `status_request`, `conversation`, `unsupported`, `unclear`) from fields the Understanding Brain already filled. The model adds three fields to the request envelope (v4): `asks` (`knowledge` / `about_me` / `none`), `availableMinutesMax` (a range) and `setup`. A kind describes; it authorises nothing.
+- **The kind of a message is derived, not classified twice.** `interaction/semantics.ts` (pure) names a reading (`general_question`, `learner_question`, `action_request`, `context_signal`, `reality_signal`, `emotional_signal`, `onboarding_input`, `status_request`, `conversation`, `unsupported`, `unclear`) from fields the Understanding Brain already filled. The model adds three fields to the request envelope (v4): `asks` (`knowledge` / `about_me` / `none`), `availableMinutesMax` (a range) and `setup`. (v5 adds `language`; see "Reply language".) A kind describes; it authorises nothing.
 - **Focused context.** `contextNeeds` says which parts of the learner's record a reply may use, and `buildFocusedLayer` in the context builder includes only those. A general question gets the last few lines of the conversation and nothing else. The orchestrator takes this as `focus: { needs, facts, mode }`; without it, it builds the whole layer as before.
 - **A general question** ("what is deadlock?") decides `explain`: no product action, `mode: "explain"`, and the Response Brain answers the question. It reads and writes nothing of the learner's.
 - **A learner question about a topic** ("should I study deadlocks tonight?") decides `advise`. `interaction/advice.ts` (pure) finds the topic in the Today view and returns the verdict, its sentence and the facts behind it; the Response Brain may reword the sentence, with those facts as the only figures it may state.
@@ -312,6 +312,27 @@ Held by `first-use.test.ts` and `nova-first-use.itest.ts`.
 - **Wording** is `brains/first-use-wording.ts`: one model call given only those facts and the register, with the plain sentence as fallback. A reply that mentions a command is discarded for the fallback.
 - **Once per chat.** `claimFirstUse` in the channel store takes `NovaTelegramChannel.lastDeliveredAt` while it is null, in one conditional write, and gives it back if the send failed. After that `/start` is the Today reply. A replayed update never gets this far: `admitTelegramUpdate` drops it.
 - **Setup not finished:** the setup question, as for any other command.
+
+## Reply language (English and Hinglish)
+
+Held by `reply-language.test.ts` and `nova-language.itest.ts`. Nova answers in the language the learner writes in. Language is wording: the decision, every name and every figure are the same in both.
+
+- **Who says which language a message is in:** the Understanding Brain, as `request.language` (`english` / `hinglish` / null when a message is too short to tell, such as a number, "ok" or a bare topic name). Envelope v5. There is no keyword list and no script check on the learner's words.
+- **Where it is kept:** nowhere new. The canonical turn stores it with the user message in the conversation log (`metadata.language`), and `loadReplyLanguage` in the conversation adapter reads the latest one. No column, no table, no setting. Writing in the other language switches at once.
+- **A reply the Response Brain words** (a conversation turn, the first message, a proactive message) gets one extra line, `languageLine` from `interaction/language.ts`. English adds nothing.
+- **A reply code wrote, to a typed message** (the plan, an advice sentence, a setup question) is said in Hinglish by `brains/language-wording.ts`: one `gpt-4o-mini` call given only that text. `faithful` throws the rendering away unless it carries exactly the same figures, is in Roman letters and has not grown; then the English text goes out. It spends from the daily wording budget and never runs on a turn the Response Brain worded, so a turn is still two model calls at most.
+- **Commands and buttons call no model**, in either language. Their fixed lines (`TEXT_HINGLISH` in `telegram-replies.ts`, one for every line of `TEXT`) are in the learner's language; the plan, status and session lines go out as code wrote them.
+- **Button labels, topic names, numbers and dates are never translated.** The web chat's fixed lines stay English.
+
+## The Creature page for a Nova learner
+
+Held by `creature-view.test.ts` and `nova-language.itest.ts`. `/creature` is one page with two sources, like Home and Progress.
+
+- `GET /api/nova/creature` returns `NovaCreatureView` (`product/creature.ts`, contract in `creature.types.ts`). It is a read model over two views that already exist: the streak is Today's (`progress.streakDays`, the one Home shows) and active days are Progress's. It runs no query of its own, writes nothing and calls no model.
+- **Level** is 1 plus one for every 5 active days. **World health** is 40 plus 10 for each active day in this week and the last, capped at 100. It never falls below 40: a week off, or a week ill, dims the world slightly and nothing more.
+- The page asks that route first. A Nova learner's world is drawn from the answer; `not_nova` gets Rex's world, which still runs on the page's fixed figures; a failed request shows an error and no numbers. Nothing mounts before the answer, because the engine is built once from the seed.
+- The seed is a hash of the learner key, so each learner has their own terrain and it names nobody.
+- Nova does not mention the creature in chat, and no message is sent about it.
 
 ## Study setup: one setup, three ways in
 

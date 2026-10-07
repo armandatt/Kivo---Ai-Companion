@@ -8,6 +8,7 @@
 
 import { prisma } from "@repo/db/client";
 import type { ConversationTurn } from "../types/context.types";
+import { REPLY_LANGUAGES, type ReplyLanguage } from "../types/understanding.types";
 
 const COMPANION = "nova";
 const NOVA_INTENT_PREFIX = "nova_";
@@ -22,6 +23,8 @@ export interface UserTurnAnnotation {
   // Set when the turn is a command issued from a surface other than chat
   // (the web app's End session button), so the log says what happened.
   surface?: string;
+  // The language the message was written in, when the reading could tell.
+  language?: ReplyLanguage | null;
 }
 
 interface NovaMessageMetadata {
@@ -56,6 +59,7 @@ export async function saveUserMessage(
         signals:   annotation.signals,
         secondaryIntents: annotation.secondaryIntents ?? [],
         ...(annotation.surface ? { surface: annotation.surface } : {}),
+        ...(annotation.language ? { language: annotation.language } : {}),
       },
       createdAt: now,
     },
@@ -108,6 +112,27 @@ export async function loadConversationHistory(
       text:      r.text,
       createdAt: r.createdAt,
     }));
+}
+
+// The language of the learner's most recent message that had one. A command
+// or a button tap is not written in a language, so the reply to it uses
+// this. Nothing is stored for it: it is read off the log each time, and it
+// changes the moment the learner writes in the other language.
+const LANGUAGE_LOOKBACK = 30;
+export async function loadReplyLanguage(userId: string): Promise<ReplyLanguage> {
+  const rows = await prisma.companionMessage.findMany({
+    where:   { userId, role: "user" },
+    orderBy: { createdAt: "desc" },
+    take:    LANGUAGE_LOOKBACK,
+    select:  { intent: true, metadata: true },
+  });
+  for (const row of rows) {
+    if (!isNovaRow(row)) continue;
+    const said = (row.metadata as NovaMessageMetadata | null)?.["language"];
+    const known = REPLY_LANGUAGES.find(l => l === said);
+    if (known) return known;
+  }
+  return "english";
 }
 
 // Per-message classification history for the pattern detector, oldest first.

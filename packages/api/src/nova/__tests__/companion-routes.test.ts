@@ -21,12 +21,12 @@ describe("companionOf", () => {
   });
 });
 
-const REX_PAGES = ["/coach", "/goals", "/journey", "/creature", "/guide"];
+const REX_PAGES = ["/coach", "/goals", "/journey", "/guide"];
 
 describe("routeAccess", () => {
   it("shows a Nova learner Nova's pages", () => {
     for (const { path } of NOVA_ROUTES) expect(routeAccess("nova", path)).toBe("render");
-    expect(NOVA_ROUTES.map(r => r.path)).toEqual(["/home", "/planner", "/focus", "/knowledge", "/notes", "/progress", "/learning-dna"]);
+    expect(NOVA_ROUTES.map(r => r.path)).toEqual(["/home", "/planner", "/focus", "/knowledge", "/notes", "/progress", "/learning-dna", "/creature"]);
   });
 
   it("never shows a Nova learner a Rex page", () => {
@@ -60,6 +60,13 @@ describe("routeAccess", () => {
   it("opens Progress to both companions, each to its own page", () => {
     expect(routeAccess("nova", "/progress")).toBe("render");
     expect(routeAccess("rex", "/progress")).toBe("render");
+  });
+
+  // One page, two sources: Nova's numbers come from the learner's study
+  // record, Rex's are the page's own.
+  it("opens the Creature world to both companions", () => {
+    expect(routeAccess("nova", "/creature")).toBe("render");
+    expect(routeAccess("rex", "/creature")).toBe("render");
   });
 
   it("shares settings", () => {

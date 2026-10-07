@@ -8,6 +8,7 @@ import { generateOpenAIText } from "../../services/openai.service";
 import { NOVA_STATIC_LAYER } from "../brains/prompts/nova-static-layer.prompt";
 import { registerLine, type Register } from "../decision/register";
 import type { ProactiveType } from "../types/proactive.types";
+import { languageLine, type ReplyLanguage } from "../interaction/language";
 
 export interface ProactiveWordingInput {
   type:        ProactiveType;
@@ -20,6 +21,8 @@ export interface ProactiveWordingInput {
   // never how hard to push.
   operatingStyle: string[];
   hasStartButton: boolean;
+  // The language the learner last wrote in. Absent: English.
+  language?:      ReplyLanguage;
   // Something in the learner's life is limiting study right now. The message
   // gives the fact (an exam date) and asks for nothing.
   informOnly?: boolean;
@@ -67,6 +70,7 @@ export async function wordProactiveMessage(
     `Reason for the message: ${input.type}`,
     `Instruction: ${input.informOnly ? INFORM_ONLY : INSTRUCTIONS[input.type]}`,
     registerLine(input.register),
+    languageLine(input.language ?? "english"),
     input.hasStartButton ? "A Start button is attached under the message, so do not ask them to reply." : null,
     "At most two sentences. Plain text only: no JSON, no labels, no quotes, no questions that need an answer.",
   ].filter(Boolean).join("\n");

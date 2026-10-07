@@ -17,7 +17,7 @@ import { getAllTopicMasteries } from "../engines/knowledge-engine";
 import { getOverdueTopics } from "../engines/retention-engine";
 import { dayKey, dayNumber, isValidTimezone, localHour } from "../engines/learner-calendar";
 import { STUDY_WINDOWS } from "../engines/learning-dna-engine";
-import { saveAssistantMessage, userMessagedSince } from "../adapters/conversation-adapter";
+import { loadReplyLanguage, saveAssistantMessage, userMessagedSince } from "../adapters/conversation-adapter";
 import { loadOperatingStyle, loadAccountabilityStyle } from "../adapters/operating-style-adapter";
 import { retryPendingConsolidations } from "../consolidation/run-consolidation";
 import { chooseRegister } from "../decision/register";
@@ -243,6 +243,7 @@ async function deliver(
       operatingStyle: await loadOperatingStyle(chatId),
       hasStartButton: rec !== null,
       informOnly:     quiet,
+      language:       await loadReplyLanguage(profile.user.id),
     };
     // Past today's budget for generated wording, the plain line goes out.
     const worded = await spendModelCall(profile.id, "response", dayKey(now, zone))

@@ -7,6 +7,7 @@
 import { generateOpenAIText } from "../../services/openai.service";
 import { registerLine, type Register } from "../decision/register";
 import type { FirstUse } from "../interaction/first-use";
+import { languageLine, type ReplyLanguage } from "../interaction/language";
 import { NOVA_STATIC_LAYER } from "./prompts/nova-static-layer.prompt";
 
 export interface FirstUseWordingInput {
@@ -15,6 +16,8 @@ export interface FirstUseWordingInput {
   register:       Register;
   operatingStyle: string[];
   hasButtons:     boolean;
+  // Absent: English.
+  language?:      ReplyLanguage;
 }
 
 export async function wordFirstUse(
@@ -40,6 +43,7 @@ export async function wordFirstUse(
   const prompt = [
     `Instruction: ${decision.instruction}`,
     registerLine(input.register),
+    languageLine(input.language ?? "english"),
     input.hasButtons ? "Buttons for the next step are attached under the message, so do not list options or ask them to type anything in particular." : null,
     "Do not mention commands, menus, slash commands or how to use this chat. Do not state a date, a duration, a number or a circumstance that is not in the facts.",
     "At most four short sentences, with a blank line between the greeting and the rest. Plain text only: no JSON, no labels, no quotes.",

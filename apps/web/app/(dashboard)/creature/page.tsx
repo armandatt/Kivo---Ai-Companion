@@ -9,12 +9,31 @@ import { CreatureIntro } from '@/components/creature/creature-intro'
 import { AmbientOverlay } from '@/components/creature/ambient-overlay'
 import { BIOME_UNLOCKS, STRUCTURE_UNLOCKS, type BiomeType } from '@/lib/creature/game-state'
 import { Sun, Moon } from 'lucide-react'
+import type { NovaCreatureView } from '@repo/api/nova/product/creature.types'
 
 const MOCK_STREAK       = 47
 const MOCK_TOTAL_DAYS   = 180
 const MOCK_LEVEL        = 12
 const MOCK_WORLD_HEALTH = 85
 const INTRO_KEY         = 'kivo_intro_v3'
+
+// The numbers the world is drawn from.
+type World = { seed: string; streak: number; totalDays: number; level: number; health: number }
+
+// Rex's world still runs on these fixed figures.
+const REX_WORLD: World = {
+  seed: `kivo-${MOCK_TOTAL_DAYS}`, streak: MOCK_STREAK, totalDays: MOCK_TOTAL_DAYS, level: MOCK_LEVEL, health: MOCK_WORLD_HEALTH,
+}
+// A Nova learner with nothing on record yet: the world as it starts.
+const NEW_WORLD: World = { seed: 'nova-new', streak: 0, totalDays: 0, level: 1, health: 40 }
+
+// A Nova learner's world comes from their own study record, worked out on
+// the server. Any other account gets Rex's.
+function worldFrom(view: NovaCreatureView): World {
+  if (view.status === 'not_nova') return REX_WORLD
+  if (view.status !== 'ready') return NEW_WORLD
+  return { seed: view.seed, streak: view.streakDays, totalDays: view.activeDays, level: view.level, health: view.worldHealth }
+}
 
 function hasSeenIntro() {
   if (typeof window === 'undefined') return false
@@ -25,10 +44,48 @@ function markIntroSeen() {
 }
 
 export default function CreaturePage() {
+  // null until the server has said whose world this is. The engine is built
+  // once from these numbers, so nothing mounts before they are known.
+  const [world, setWorld]   = useState<World | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  const load = useCallback(() => {
+    setFailed(false)
+    fetch('/api/nova/creature', { cache: 'no-store' })
+      .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json() })
+      .then((view: NovaCreatureView) => setWorld(worldFrom(view)))
+      .catch(() => setFailed(true))
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  // Whose world this is could not be read: show no numbers at all.
+  if (failed) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-black p-6" role="alert">
+        <div className="max-w-sm text-center">
+          <p className="text-base font-medium text-white/90">Couldn&apos;t load your world</p>
+          <p className="mt-2 text-sm text-white/55">The server didn&apos;t answer. Nothing is lost.</p>
+          <button
+            type="button"
+            onClick={load}
+            className="mt-5 inline-flex h-10 items-center justify-center rounded-xl border border-white/15 px-5 text-sm font-medium text-white/85 transition-colors hover:bg-white/5"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    )
+  }
+  if (!world) return <div className="h-screen w-full bg-black" aria-busy="true" />
+  return <CreatureWorld world={world} />
+}
+
+function CreatureWorld({ world }: { world: World }) {
   const unlockedBiomes = (Object.entries(BIOME_UNLOCKS) as Array<[BiomeType, number]>)
-    .filter(([, days]) => MOCK_STREAK >= days).map(([b]) => b)
+    .filter(([, days]) => world.streak >= days).map(([b]) => b)
   const unlockedStructures = Object.entries(STRUCTURE_UNLOCKS)
-    .filter(([, days]) => MOCK_STREAK >= days).map(([s]) => s)
+    .filter(([, days]) => world.streak >= days).map(([s]) => s)
 
   const [cameraYaw, setCameraYaw]     = useState(0)
   const [currentTime, setCurrentTime] = useState(14)
@@ -106,9 +163,9 @@ export default function CreaturePage() {
     <div className="relative w-full h-screen overflow-hidden bg-black">
       {/* 3D world — always mounted so it loads during intro */}
       <BabylonTilemap
-        userSeed={`kivo-${MOCK_TOTAL_DAYS}`}
+        userSeed={world.seed}
         unlockedBiomes={unlockedBiomes}
-        worldHealth={MOCK_WORLD_HEALTH}
+        worldHealth={world.health}
         playerX={0}
         playerY={0}
         currentTime={displayTime}
@@ -118,14 +175,14 @@ export default function CreaturePage() {
       />
 
       {/* Ambient life — birds, butterflies, fireflies, leaves */}
-      <AmbientOverlay currentTime={displayTime} worldHealth={MOCK_WORLD_HEALTH} />
+      <AmbientOverlay currentTime={displayTime} worldHealth={world.health} />
 
       {/* HUD */}
       {hudVisible && (
         <GameHUD
-          playerLevel={MOCK_LEVEL}
-          currentStreak={MOCK_STREAK}
-          worldHealth={MOCK_WORLD_HEALTH}
+          playerLevel={world.level}
+          currentStreak={world.streak}
+          worldHealth={world.health}
           currentTime={currentTime}
           playerX={0}
           playerY={0}
@@ -135,8 +192,8 @@ export default function CreaturePage() {
       {/* Milestone overlay */}
       {hudVisible && (
         <GameOverlay
-          currentStreak={MOCK_STREAK}
-          totalDays={MOCK_TOTAL_DAYS}
+          currentStreak={world.streak}
+          totalDays={world.totalDays}
           unlockedStructures={unlockedStructures}
         />
       )}
@@ -175,8 +232,8 @@ export default function CreaturePage() {
       {showIntro && introReady && !!creatureName && (
         <CreatureIntro
           creatureName={creatureName}
-          level={MOCK_LEVEL}
-          streak={MOCK_STREAK}
+          level={world.level}
+          streak={world.streak}
           onReveal={handleReveal}
           onComplete={handleIntroComplete}
         />

@@ -19,14 +19,14 @@ import type { NovaTodayReady, TodayAction } from "../product/today.types";
 import { loadChannel, pauseProactiveUntil, setProactiveEnabled } from "./channel-store";
 import {
   alternativeReply, endedReply, minutesChoiceReply, outcomeReply, recommendationReply, sessionReply, settingsReply,
-  setupOfferReply, setupSavedText, statusReply, todayReply, MIN_SESSION_MINUTES, TEXT,
+  setupOfferReply, setupSavedText, statusReply, todayReply, MIN_SESSION_MINUTES, textFor,
 } from "./telegram-replies";
 import type { OptionAction, TelegramReply } from "./telegram.types";
 import { adviseOnTopic, planBlockFor } from "../interaction/advice";
 import { decideFirstUse, type FirstUse } from "../interaction/first-use";
 import { nextSetupQuestion } from "../interaction/initialization";
 import { applySetup, loadSetupFacts, proposeSetup } from "../product/setup";
-import type { SetupStatement } from "../types/understanding.types";
+import type { ReplyLanguage, SetupStatement } from "../types/understanding.types";
 
 export interface ActionContext {
   chatId:    string;       // the platform chat id, which is how Nova's product functions name a learner
@@ -34,6 +34,8 @@ export interface ActionContext {
   timezone:  string | null;
   name:      string | null;
   now:       Date;
+  // The language replies are worded in (interaction/language.ts).
+  language:  ReplyLanguage;
 }
 
 export interface ActionResult {
@@ -86,7 +88,7 @@ export async function showToday(ctx: ActionContext, statedMinutes: number | null
   // Home fit the same day to it until the day ends.
   if (statedMinutes !== null) await recordStatedMinutes(ctx.chatId, statedMinutes, ctx.now);
   const [view, session] = await Promise.all([todayView(ctx, statedMinutes), loadNovaSession(ctx.chatId, ctx.now)]);
-  if (!view) return done("show_today", { text: TEXT.finishSetup }, false);
+  if (!view) return done("show_today", { text: textFor(ctx.language).finishSetup }, false);
   // Nothing to plan from: ask for the one thing that is missing, not for
   // anything already on record.
   const facts = !session && view.emptyReason === "no_topics" ? await loadSetupFacts(ctx.chatId, ctx.now) : null;
@@ -97,7 +99,7 @@ export async function showToday(ctx: ActionContext, statedMinutes: number | null
 // record. When the answer is yes, the way to start is attached.
 export async function advise(ctx: ActionContext, topic: string): Promise<ActionResult> {
   const view = await todayView(ctx, null);
-  if (!view) return done("advise", { text: TEXT.finishSetup }, false);
+  if (!view) return done("advise", { text: textFor(ctx.language).finishSetup }, false);
   const subjects = (await loadStudySnapshot(ctx.chatId)).subjects;
   const advice   = adviseOnTopic(view, topic, subjects);
   const offer    = advice.block ? recommendationReply(view, advice.block).prompt
@@ -114,7 +116,7 @@ export async function askMinutes(choices: [number, number]): Promise<ActionResul
 export async function offerSetup(ctx: ActionContext, stated: SetupStatement): Promise<ActionResult> {
   const subjects = (await loadStudySnapshot(ctx.chatId)).subjects;
   const proposal = proposeSetup(stated, subjects);
-  if (!proposal) return done("offer_setup", { text: subjects.length === 0 ? TEXT.finishSetup : TEXT.setupNoSubject }, false);
+  if (!proposal) return done("offer_setup", { text: subjects.length === 0 ? textFor(ctx.language).finishSetup : textFor(ctx.language).setupNoSubject }, false);
   return done("offer_setup", setupOfferReply(proposal));
 }
 
@@ -127,7 +129,7 @@ export async function firstUse(
   word: (decision: FirstUse, hasButtons: boolean, activeReality: string[], daysUntilExam: number | null) => Promise<string>,
 ): Promise<ActionResult> {
   const [view, session] = await Promise.all([todayView(ctx, null), loadNovaSession(ctx.chatId, ctx.now)]);
-  if (!view) return done("first_use", { text: TEXT.finishSetup }, false);
+  if (!view) return done("first_use", { text: textFor(ctx.language).finishSetup }, false);
   const facts    = view.emptyReason === "no_topics" ? await loadSetupFacts(ctx.chatId, ctx.now) : null;
   const decision = decideFirstUse(view, facts ? nextSetupQuestion(facts) : null);
   // The same buttons the plan and a running session already carry.
@@ -140,7 +142,7 @@ export async function firstUse(
 
 export async function showStatus(ctx: ActionContext): Promise<ActionResult> {
   const [view, session] = await Promise.all([todayView(ctx, null), loadNovaSession(ctx.chatId, ctx.now)]);
-  if (!view) return done("show_status", { text: TEXT.finishSetup }, false);
+  if (!view) return done("show_status", { text: textFor(ctx.language).finishSetup }, false);
   return done("show_status", statusReply(view, session));
 }
 
@@ -149,7 +151,7 @@ export async function showStatus(ctx: ActionContext): Promise<ActionResult> {
 export async function offerStart(ctx: ActionContext, named: string | null, statedMinutes: number | null = null): Promise<ActionResult> {
   if (statedMinutes !== null) await recordStatedMinutes(ctx.chatId, statedMinutes, ctx.now);
   const [view, session] = await Promise.all([todayView(ctx, statedMinutes), loadNovaSession(ctx.chatId, ctx.now)]);
-  if (!view) return done("offer_start", { text: TEXT.finishSetup }, false);
+  if (!view) return done("offer_start", { text: textFor(ctx.language).finishSetup }, false);
   if (session) return done("offer_start", sessionReply(session, "You already have one going."));
   const subjects = named ? (await loadStudySnapshot(ctx.chatId)).subjects : [];
   const pick = pickStart(view, named, subjects);
@@ -164,7 +166,7 @@ export async function offerStart(ctx: ActionContext, named: string | null, state
   const minutes = clampMinutes(statedMinutes ?? 25);
   const said    = subjectsNamedIn(pick.topicName, subjects);
   const choices = said.length === 1 ? said : subjects.slice(0, 4);
-  if (choices.length === 0) return done("offer_start", { text: TEXT.finishSetup }, false);
+  if (choices.length === 0) return done("offer_start", { text: textFor(ctx.language).finishSetup }, false);
   const reply: TelegramReply = {
     text: choices.length === 1
       ? `${pick.topicName} (${choices[0]!.name})\nNot on today's plan, but it's yours to pick.`
@@ -197,7 +199,7 @@ export async function startSession(
     plannedMinutes: clampMinutes(start.minutes),
   }, ctx.now, "telegram");
   // Read back: "Started" is said about the session that now exists.
-  if (!result.ok || !result.session) return done("session_start", { text: result.ok ? TEXT.failed : result.message }, false);
+  if (!result.ok || !result.session) return done("session_start", { text: result.ok ? textFor(ctx.language).failed : result.message }, false);
   return done("session_start", sessionReply(result.session, "Started."));
 }
 
@@ -207,7 +209,7 @@ export async function startSession(
 // is not started on a word the model picked out of a sentence.
 export async function startFromRequest(ctx: ActionContext, named: string, minutes: number | null): Promise<ActionResult> {
   const view = await todayView(ctx, minutes);
-  if (!view) return done("session_start", { text: TEXT.finishSetup }, false);
+  if (!view) return done("session_start", { text: textFor(ctx.language).finishSetup }, false);
   const pick = pickStart(view, named, (await loadStudySnapshot(ctx.chatId)).subjects);
   if (!pick || !("urgency" in pick)) return offerStart(ctx, named, minutes);
   if (minutes !== null) await recordStatedMinutes(ctx.chatId, minutes, ctx.now);
@@ -221,15 +223,15 @@ export async function startFromRequest(ctx: ActionContext, named: string, minute
 export async function pauseOrResume(ctx: ActionContext, action: "pause" | "resume"): Promise<ActionResult> {
   const result = await runNovaSessionCommand(ctx.chatId, { action }, ctx.now, "telegram");
   if (!result.ok) {
-    return done(`session_${action}`, { text: result.error === "no_active_session" ? TEXT.nothingRunning : result.message }, false);
+    return done(`session_${action}`, { text: result.error === "no_active_session" ? textFor(ctx.language).nothingRunning : result.message }, false);
   }
-  if (!result.session) return done(`session_${action}`, { text: TEXT.nothingRunning }, false);
+  if (!result.session) return done(`session_${action}`, { text: textFor(ctx.language).nothingRunning }, false);
   return done(`session_${action}`, sessionReply(result.session));
 }
 
 export async function askOutcome(ctx: ActionContext, stated: OptionActionOutcome | null): Promise<ActionResult> {
   const session = await loadNovaSession(ctx.chatId, ctx.now);
-  if (!session) return done("ask_outcome", { text: TEXT.nothingRunning }, false);
+  if (!session) return done("ask_outcome", { text: textFor(ctx.language).nothingRunning }, false);
   return done("ask_outcome", outcomeReply(session.topicName, stated));
 }
 type OptionActionOutcome = Extract<OptionAction, { type: "end" }>["outcome"];
@@ -237,11 +239,11 @@ type OptionActionOutcome = Extract<OptionAction, { type: "end" }>["outcome"];
 export async function endSession(ctx: ActionContext, outcome: OptionActionOutcome): Promise<ActionResult> {
   const result = await runNovaSessionCommand(ctx.chatId, { action: "end", outcome }, ctx.now, "telegram");
   if (!result.ok) {
-    return done("session_end", { text: result.error === "no_active_session" ? TEXT.nothingRunning : result.message }, false);
+    return done("session_end", { text: result.error === "no_active_session" ? textFor(ctx.language).nothingRunning : result.message }, false);
   }
   // Closed by someone else a moment ago (the web app, a second tap): the
   // evidence is theirs and nothing was written twice.
-  if (!result.ended) return done("session_end", { text: TEXT.alreadyEnded }, false);
+  if (!result.ended) return done("session_end", { text: textFor(ctx.language).alreadyEnded }, false);
   return done("session_end", endedReply(result.ended));
 }
 
@@ -266,19 +268,19 @@ export async function runOptionAction(action: OptionAction, ctx: ActionContext):
     case "something_else": {
       const view = await todayView(ctx, null);
       return view ? done("show_alternative", alternativeReply(view, action.skip))
-                  : done("show_alternative", { text: TEXT.finishSetup }, false);
+                  : done("show_alternative", { text: textFor(ctx.language).finishSetup }, false);
     }
-    case "later":   return done("later", { text: TEXT.later });
-    case "dismiss": return done("dismiss", { text: TEXT.dismissed });
+    case "later":   return done("later", { text: textFor(ctx.language).later });
+    case "dismiss": return done("dismiss", { text: textFor(ctx.language).dismissed });
     case "not_today":
       await pauseProactiveUntil(ctx.profileId, nextLocalMidnight(ctx.now, ctx.timezone));
-      return done("pause_nudges", { text: TEXT.notToday });
+      return done("pause_nudges", { text: textFor(ctx.language).notToday });
     case "set_proactive":
       await setProactiveEnabled(ctx.profileId, action.enabled);
-      return done("set_proactive", { text: action.enabled ? TEXT.nudgesOn : TEXT.nudgesOff });
+      return done("set_proactive", { text: action.enabled ? textFor(ctx.language).nudgesOn : textFor(ctx.language).nudgesOff });
     case "save_setup": {
       const saved = await applySetup(ctx.chatId, action);
-      if (saved.status !== "saved") return done("save_setup", { text: saved.status === "unknown_subject" ? TEXT.setupNoSubject : TEXT.finishSetup }, false);
+      if (saved.status !== "saved") return done("save_setup", { text: saved.status === "unknown_subject" ? textFor(ctx.language).setupNoSubject : textFor(ctx.language).finishSetup }, false);
       // Then the next thing, if there is one: the plan it made possible, or
       // the one piece still missing.
       const facts = await loadSetupFacts(ctx.chatId, ctx.now);

@@ -18,6 +18,8 @@ import { prisma } from "@repo/db/client";
 import { checkRateLimit } from "../../services/rateLimit.service";
 import { runUnderstandingBrain } from "../brains/understanding-brain";
 import { wordFirstUse } from "../brains/first-use-wording";
+import { sayInLanguage } from "../brains/language-wording";
+import { chooseLanguage, languageLine } from "../interaction/language";
 import { chooseRegister } from "../decision/register";
 import { loadAccountabilityStyle, loadOperatingStyle } from "../adapters/operating-style-adapter";
 import { decideAction, type ActionContext as DecisionContext, type TurnAction } from "../decision/action-decision";
@@ -29,7 +31,7 @@ import { runNovaOrchestrator } from "../nova-orchestrator";
 import { examToOffer } from "../product/exams";
 import { loadNovaSession } from "../product/session";
 import { loadStudySnapshot } from "../engines/study-snapshot";
-import { loadConversationHistory, saveAssistantMessage, saveUserMessage } from "../adapters/conversation-adapter";
+import { loadConversationHistory, loadReplyLanguage, saveAssistantMessage, saveUserMessage } from "../adapters/conversation-adapter";
 import type { NovaOrchestratorInput } from "../types/context.types";
 import type { AcademicUnderstanding, UnderstandingContext } from "../types/understanding.types";
 import {
@@ -41,7 +43,7 @@ import {
   type ActionContext, type ActionResult,
 } from "./telegram-actions";
 import { decodeCallback, encodeCallback } from "./telegram-event";
-import { alternativeReply, clarifyReply, TEXT, withExamOffer } from "./telegram-replies";
+import { alternativeReply, clarifyReply, isFixedText, textFor, withExamOffer } from "./telegram-replies";
 import { loadNovaToday } from "../product/today";
 import { interpret } from "../interaction/semantics";
 import type {
@@ -123,7 +125,26 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
   // Sends a reply. A reply with choices opens the prompt first, so every
   // button already has something to refer to when it arrives.
   let ctx: ActionContext | null = null;
-  const deliver = async (reply: TelegramReply): Promise<void> => {
+  // The fixed lines, in the learner's language once it is known.
+  const say = () => textFor(ctx?.language ?? "english");
+  // Says a reply Nova's code wrote, in the learner's language. Wording only:
+  // within today's budget, never required, and the plain text is the fallback.
+  // Only a message the learner typed is reworded. A command or a button tap
+  // calls no model: its fixed lines are already in their language, and the
+  // plan, the status and the session line go out as code wrote them.
+  // `budgetDay` is the learner's local day, for the model budget.
+  let budgetDay: string | null = null;
+  const inLanguage = async (text: string): Promise<string> => {
+    if (event.kind !== "text") return text;
+    if (!ctx || ctx.language === "english" || !text.trim() || isFixedText(text, ctx.language)) return text;
+    if (!budgetDay || !await spendModelCall(ctx.profileId, "response", budgetDay)) return text;
+    const said = await sayInLanguage({ text, language: ctx.language }, deps.generate);
+    trace.language = { language: ctx.language, rendered: said.rendered };
+    return said.text;
+  };
+  // `worded`: the text is already in the learner's language.
+  const deliver = async (reply: TelegramReply, worded = false): Promise<void> => {
+    if (!worded) reply = { ...reply, text: await inLanguage(reply.text) };
     let prompt: OpenPrompt | null = null;
     if (ctx && reply.prompt && reply.prompt.options.length > 0) {
       prompt = await openPrompt(ctx.profileId, event.chatId, reply.prompt, now);
@@ -149,13 +170,13 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     // secret was checked before this function was called.
     const user = await prisma.messengerUser.findUnique({
       where:  { platform_platformChatId: { platform: "telegram", platformChatId: event.chatId } },
-      select: { displayName: true, novaAcademicProfile: { select: { id: true, onboardingComplete: true, timezone: true } } },
+      select: { id: true, displayName: true, novaAcademicProfile: { select: { id: true, onboardingComplete: true, timezone: true } } },
     });
     let profile = user?.novaAcademicProfile ?? null;
 
     // In a private chat the sender is the chat. Anything else is not ours.
     if (event.fromId !== null && event.fromId !== event.chatId) {
-      if (event.kind === "callback") await client.answerCallback(event.callbackId, TEXT.stale);
+      if (event.kind === "callback") await client.answerCallback(event.callbackId, say().stale);
       return finish("forged_callback");
     }
 
@@ -166,20 +187,25 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     const settingUp = !profile?.onboardingComplete;
     if (settingUp) {
       const ensured = await ensureSetupProfile(event.chatId);
-      if (!ensured) { await deliver({ text: TEXT.finishSetup }); return finish(); }
+      if (!ensured) { await deliver({ text: say().finishSetup }); return finish(); }
       profile = { id: ensured.profileId, onboardingComplete: false, timezone: ensured.timezone };
     }
     if (!profile) return finish("internal");
 
     trace.profileId = profile.id;
-    ctx = { chatId: event.chatId, profileId: profile.id, timezone: profile.timezone, name: user?.displayName ?? null, now };
+    ctx = {
+      chatId: event.chatId, profileId: profile.id, timezone: profile.timezone, name: user?.displayName ?? null, now,
+      // Until this message is read: the language they last wrote in.
+      language: user ? await loadReplyLanguage(user.id) : "english",
+    };
+    budgetDay = dayKey(now, resolveTimezone(profile.timezone));
     await ensureChannel(profile.id);
     await noteInbound(profile.id);
 
     // One chat cannot flood the system with taps and commands. Over the
     // limit, the update is dropped without a reply.
     if (!await allowAction(profile.id, now)) {
-      if (event.kind === "callback") await client.answerCallback(event.callbackId, TEXT.rateLimited);
+      if (event.kind === "callback") await client.answerCallback(event.callbackId, say().rateLimited);
       return finish("rate_limited");
     }
 
@@ -195,7 +221,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       const resolved = ref ? await resolvePrompt(profile.id, ref.promptId, ref.optionId, "callback", now) : null;
       if (!resolved || !resolved.ok) {
         // Old, already answered, or not this learner's. Nothing happens.
-        await client.answerCallback(event.callbackId, TEXT.stale);
+        await client.answerCallback(event.callbackId, say().stale);
         if (event.messageId !== null) await client.clearButtons(event.chatId, event.messageId);
         return finish(!resolved || resolved.reason === "unknown" ? "forged_callback" : "stale_prompt");
       }
@@ -223,50 +249,53 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
           const first = await claimFirstUse(profile.id, now);
           if (!first) { await deliver(report(await showToday(ctx, null))); break; }
           trace.decision = "command:start:first_use";
+          let firstWorded = false;
           const zone = resolveTimezone(profile.timezone);
           const reply = report(await firstUse(ctx, async (decision, hasButtons, activeReality, daysUntilNextExam) => {
             // Wording is optional: within today's budget, and never required.
             if (!await spendModelCall(profile!.id, "response", dayKey(now, zone))) return decision.fallback;
             const worded = await wordFirstUse({
-              decision, hasButtons, studentName: ctx!.name,
+              decision, hasButtons, studentName: ctx!.name, language: ctx!.language,
               register:       chooseRegister({ emotion: "neutral", daysUntilNextExam, activeReality, accountability: await loadAccountabilityStyle(event.chatId) }),
               operatingStyle: await loadOperatingStyle(event.chatId),
             }, deps.generate);
             trace.response = { generated: true, ok: worded.generated, ms: 0, fallback: !worded.generated };
+            firstWorded = worded.generated;
             return worded.text;
           }));
-          await deliver(reply);
+          // One wording call for this message: a fallback goes out as it is.
+          await deliver(reply, firstWorded || trace.response.generated);
           // Nobody saw it: the chat has still not had its first message.
           if (trace.send.status !== "sent") await releaseFirstUse(profile.id, now);
           break;
         }
-        case "help":     await deliver({ text: TEXT.help }); break;
+        case "help":     await deliver({ text: say().help }); break;
         case "today":    await deliver(report(await showToday(ctx, null))); break;
         case "focus":
         case "study":    await deliver(report(await offerStart(ctx, event.argument || null))); break;
         case "done":     await deliver(report(await askOutcome(ctx, null))); break;
         case "status":   await deliver(report(await showStatus(ctx))); break;
         case "settings": await deliver(report(await showSettings(ctx))); break;
-        default:         await deliver({ text: TEXT.webOnly, link: { label: "Open Nova", path: "/home" } });
+        default:         await deliver({ text: say().webOnly, link: { label: "Open Nova", path: "/home" } });
       }
       return finish();
     }
 
     if (event.kind === "unsupported") {
-      await deliver({ text: event.reason === "unknown_command" ? TEXT.unknownCommand : TEXT.notText });
+      await deliver({ text: event.reason === "unknown_command" ? say().unknownCommand : say().notText });
       return finish();
     }
 
     // ── Words ────────────────────────────────────────────────────────────────
     const limit = await checkRateLimit(event.chatId);
-    if (!limit.allowed) { await deliver({ text: TEXT.rateLimited }); return finish("rate_limited"); }
-    if (!await acquireTurn(profile.id, now)) { await deliver({ text: TEXT.busy }); return finish("busy"); }
+    if (!limit.allowed) { await deliver({ text: say().rateLimited }); return finish("rate_limited"); }
+    if (!await acquireTurn(profile.id, now)) { await deliver({ text: say().busy }); return finish("busy"); }
 
     try {
       const zone = resolveTimezone(profile.timezone);
       const day  = dayKey(now, zone);
       if (!await spendModelCall(profile.id, "understanding", day)) {
-        await deliver({ text: TEXT.budget });
+        await deliver({ text: say().budget });
         return finish("budget_exhausted");
       }
 
@@ -282,7 +311,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
         trace.decision           = turn.decision;
         if (!turn.ok && turn.decision === "unreadable") trace.failure = "understanding_malformed";
         if (row) {
-          await saveUserMessage(row.id, event.text, { intent: "general_chat", emotion: "neutral", signals: [], surface: "telegram" }, now)
+          await saveUserMessage(row.id, event.text, { intent: "general_chat", emotion: "neutral", signals: [], surface: "telegram", language: turn.language }, now)
             .then(() => saveAssistantMessage(row.id, turn.reply.text, "nova_setup", {}, now))
             .catch(err => console.error(`[nova:telegram] ${trace.correlationId} conversation log failed`, err));
         }
@@ -316,18 +345,20 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       } catch (err) {
         trace.understanding.ms = Date.now() - readStarted;
         console.error(`[nova:telegram] ${trace.correlationId} understanding failed:`, (err as Error).message);
-        await deliver({ text: TEXT.notUnderstood });
+        await deliver({ text: say().notUnderstood });
         return finish("understanding_failed");
       }
       trace.understanding.ms = Date.now() - readStarted;
       if (read.malformed) {
         // Unreadable output proposes nothing, so nothing is done.
-        await deliver({ text: TEXT.notUnderstood });
+        await deliver({ text: say().notUnderstood });
         return finish("understanding_malformed");
       }
       // What of that reading may be used at all. Everything below, the
       // decision and the evidence alike, sees only this.
       const understanding = safeReading(read, { today: day });
+      // This reply is in the language the message was written in.
+      ctx.language = chooseLanguage(understanding.request?.language, ctx.language);
       trace.understanding.ok           = true;
       trace.understanding.intent       = understanding.intent;
       trace.understanding.request      = understanding.request?.action ?? null;
@@ -351,9 +382,9 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       // turn, so no signal, evidence or state can come of it. Only the
       // conversation log records that it was said.
       if (understanding.request?.clarity === "unintelligible") {
-        const text = reply?.text ?? TEXT.clarifyOpen;
+        const text = reply?.text ?? say().clarifyOpen;
         if (userRow) {
-          await saveUserMessage(userRow.id, event.text, { intent: "general_chat", emotion: "neutral", signals: [], surface: "telegram" }, now)
+          await saveUserMessage(userRow.id, event.text, { intent: "general_chat", emotion: "neutral", signals: [], surface: "telegram", language: understanding.request?.language ?? null }, now)
             .then(() => saveAssistantMessage(userRow.id, text, "nova_clarify", {}, now))
             .catch(err => console.error(`[nova:telegram] ${trace.correlationId} conversation log failed`, err));
         }
@@ -377,7 +408,12 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       const happened = acted === null || acted.operation.ok;
       const generate = decision.generate && happened && await spendModelCall(profile.id, "response", day);
       const explaining = decision.action.type === "explain";
-      const fallback = plain || (explaining ? TEXT.explainFallback : TEXT.converseFallback);
+      const english  = plain || (explaining ? say().explainFallback : say().converseFallback);
+      // A reply that the Response Brain will not word is said in the
+      // learner's language here, so the log holds what they were sent.
+      const fallback = generate ? english : await inLanguage(english);
+      const inTheirLanguage = languageLine(ctx.language);
+      const told = (directive: string) => inTheirLanguage ? `${directive}\n${inTheirLanguage}` : directive;
       const respondStarted = Date.now();
       try {
         const turn = await runNovaOrchestrator({
@@ -392,9 +428,9 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
           ...(generate
             ? {
                 responseFallback: fallback,
-                directive: plain
+                directive: told(plain
                   ? `Nova's system already did or offered exactly this, and nothing else: "${plain.slice(0, 400)}". Say it in your own words in at most three short sentences. Buttons for the next step are attached, so do not list options. Do not say anything else was started, ended, saved, added or scheduled, and do not state a date, a number of days or any other figure that is not in that sentence or the context above.`
-                  : explaining ? EXPLAINED_ONLY : NOTHING_WAS_DONE,
+                  : explaining ? EXPLAINED_ONLY : NOTHING_WAS_DONE),
               }
             : { scriptedReply: fallback }),
         });
@@ -414,7 +450,8 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
         reply = { ...(reply ?? {}), text: fallback };
       }
 
-      await deliver(reply);
+      // Worded by the Response Brain in their language, or said in it above.
+      await deliver(reply, true);
       return finish();
     } finally {
       await releaseTurn(profile.id);
@@ -423,8 +460,8 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     console.error(`[nova:telegram] ${trace.correlationId} failed:`, err);
     trace.failure = "internal";
     // Never claim success. One plain line, best effort.
-    if (event.kind === "callback") await client.answerCallback(event.callbackId, TEXT.failed).catch(() => {});
-    else await client.sendMessage(event.chatId, TEXT.failed).catch(() => {});
+    if (event.kind === "callback") await client.answerCallback(event.callbackId, say().failed).catch(() => {});
+    else await client.sendMessage(event.chatId, say().failed).catch(() => {});
     return finish();
   }
 }
@@ -462,7 +499,7 @@ async function act(
       // The same single-use resolution a tap goes through: if a tap got
       // there first, this answer changes nothing.
       const resolved = await resolvePrompt(ctx.profileId, prompt.id, action.optionId, "text", now);
-      if (!resolved.ok) return { reply: { text: TEXT.stale }, operation: { name: "answer_prompt", ok: false } };
+      if (!resolved.ok) return { reply: { text: textFor(ctx.language).stale }, operation: { name: "answer_prompt", ok: false } };
       return runOptionAction(resolved.option.action, ctx);
     }
     case "show_today":     return showToday(ctx, action.minutes);
@@ -478,7 +515,7 @@ async function act(
       const skip = [understanding.topic, view.status === "ready" ? view.recommendation?.topicName : null].filter((t): t is string => Boolean(t));
       return view.status === "ready"
         ? { reply: alternativeReply(view, skip), operation: { name: "show_alternative", ok: true } }
-        : { reply: { text: TEXT.finishSetup }, operation: { name: "show_alternative", ok: false } };
+        : { reply: { text: textFor(ctx.language).finishSetup }, operation: { name: "show_alternative", ok: false } };
     }
     case "advise":      return advise(ctx, action.topic);
     case "ask_minutes": return askMinutes(action.choices);
@@ -486,13 +523,13 @@ async function act(
     // A question about the subject matter: no product action, and the
     // Response Brain answers it.
     case "explain":     return null;
-    case "acknowledge_report": return { reply: { text: TEXT.selfReport }, operation: { name: "acknowledge_report", ok: true } };
-    case "unsupported":        return { reply: { text: TEXT.unsupported }, operation: { name: "unsupported", ok: true } };
+    case "acknowledge_report": return { reply: { text: textFor(ctx.language).selfReport }, operation: { name: "acknowledge_report", ok: true } };
+    case "unsupported":        return { reply: { text: textFor(ctx.language).unsupported }, operation: { name: "unsupported", ok: true } };
     // With a question still open, its buttons are the options: the prompt
     // stays as it is. Otherwise, the fixed choices.
     case "clarify":
       return prompt
-        ? { reply: { text: TEXT.clarifyOpen }, operation: { name: "clarify", ok: true } }
+        ? { reply: { text: textFor(ctx.language).clarifyOpen }, operation: { name: "clarify", ok: true } }
         : { reply: clarifyReply(await loadNovaSession(ctx.chatId, now)), operation: { name: "clarify", ok: true } };
     case "converse":           return null;
   }
