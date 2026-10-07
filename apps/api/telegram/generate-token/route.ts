@@ -2,24 +2,7 @@ import crypto from "node:crypto"
 import { NextResponse } from "next/server"
 import { prisma } from "@repo/db/client"
 import { getSession } from "../../lib/auth/session"
-
-async function getTelegramBotName() {
-  const configuredName = process.env.TELEGRAM_BOT_USERNAME ?? process.env.BOT_USERNAME
-  if (configuredName) return configuredName.replace(/^@/, "")
-
-  const botToken = process.env.TELEGRAM_BOT_TOKEN ?? process.env.BOT_TOKEN
-  if (!botToken) return "YourBotName"
-
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${botToken}/getMe`, {
-      cache: "no-store",
-    })
-    const data = (await res.json()) as { ok?: boolean; result?: { username?: string } }
-    return data.result?.username ?? "YourBotName"
-  } catch {
-    return "YourBotName"
-  }
-}
+import { getTelegramBotName } from "../../lib/telegram/bot-name"
 
 export async function POST() {
   const session = await getSession()

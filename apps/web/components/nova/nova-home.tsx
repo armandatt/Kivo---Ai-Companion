@@ -3,6 +3,7 @@
 import type { NovaTodayReady } from '@repo/api/nova/product/today.types'
 import { ActiveSessionCard } from './active-session-card'
 import { FirstSession } from './first-session'
+import { TelegramCard } from './telegram-connect'
 import { RecommendationCard } from './recommendation-card'
 import { TalkToNova } from './talk-to-nova'
 import { TimeAvailable } from './time-available'
@@ -115,6 +116,9 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
           </section>
         ) : null}
       </div>
+
+      {/* Optional, and below what to do now: it never stands in front of the plan. */}
+      <TelegramCard className="mt-8" />
 
       <div className="mt-10 grid grid-cols-1 gap-x-12 gap-y-8 md:grid-cols-2">
         <UpNext actions={later} onStart={active ? undefined : start} disabled={starting !== null} />
