@@ -142,6 +142,8 @@ export interface TurnTrace {
   type:          TelegramEvent["kind"];
   command:       string | null;
   profileId:     string | null;
+  // Set when a reply written by code was said in another language.
+  language?:     { language: string; rendered: boolean };
   understanding: { attempted: boolean; ok: boolean; ms: number; confidence: number | null; kind: string | null; request: string | null; clarity: string | null; changeOfMind: boolean; intent: string | null; estInputTokens: number };
   decision:      string | null;
   operation:     { name: string | null; ok: boolean | null };

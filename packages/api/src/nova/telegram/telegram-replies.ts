@@ -10,6 +10,7 @@ import type { NovaSessionView, NovaTodayReady, TodayAction, NovaSessionOutcome, 
 import type { PromptOption, PromptSpec, TelegramReply, OptionAction } from "./telegram.types";
 import type { SetupProposal } from "../product/setup";
 import type { SetupQuestion } from "../interaction/initialization";
+import type { ReplyLanguage } from "../interaction/language";
 
 export const START_LENGTHS = [15, 25, 45];
 export const MIN_SESSION_MINUTES = 10;
@@ -303,3 +304,53 @@ export const TEXT = {
   nudgesOn:        "Nudges are on.",
   nudgesOff:       "Nudges are off. I'll only speak when you do.",
 };
+
+// The same lines in Hinglish. They are fixed so that an acknowledgement, an
+// error or the day's budget running out never needs a model to be said.
+// Nova does not use gendered first-person verbs here.
+export const TEXT_HINGLISH: typeof TEXT = {
+  help: [
+    "/today: abhi kya karna hai",
+    "/focus: session start karo",
+    "/done: session khatam karo aur batao kaisa gaya",
+    "/status: tum kahan khade ho",
+    "/settings: nudges aur timezone",
+    "",
+    "Ya seedha bata do: kitna time hai, kya beech mein aa gaya, kya samajh nahi aa raha.",
+  ].join("\n"),
+  finishSetup:     "Pehle Nova pe setup poora kar lo. Do minute lagenge.",
+  webOnly:         "Iske liye thodi jagah chahiye. Ye Nova ke web app pe milega.",
+  unknownCommand:  "Ye command yahan nahi chalti. /today, /focus, /done, /status aur /settings chalti hain.",
+  notText:         "Yahan sirf text chalta hai. Likh ke bhejo, ya /today use karo.",
+  stale:           "Ye wala band ho chuka hai.",
+  nothingRunning:  "Abhi kuch chal nahi raha. Batao kya padhna hai, set ho jayega.",
+  alreadyEnded:    "Wo session pehle hi band ho chuka tha. Kuch bhi do baar log nahi hua.",
+  busy:            "Tumhara pichla message abhi chal raha hai. Ek second.",
+  rateLimited:     "Ek saath bahut zyada ho gaya. Ek minute ruko.",
+  later:           "Theek hai. Baad mein sahi.",
+  notToday:        "Theek hai. Aaj meri taraf se aur kuch nahi.",
+  dismissed:       "Theek hai.",
+  failed:          "Meri taraf se ye ho nahi paya. Dobara try karo.",
+  notUnderstood:   "Abhi ye padha nahi gaya. Thodi der mein dobara bhejo.",
+  budget:          "Aaj tumhare liye kaafi padhna ho gaya, to kal tak sirf buttons. /today, /focus aur /done abhi bhi chalte hain.",
+  selfReport:      "Note kar liya. Timer nahi chal raha tha, to ye sirf tumhari batayi hui baat ke taur pe gina jayega.",
+  converseFallback: "Theek hai. Jab ready ho, pooch lena kya padhna hai.",
+  explainFallback: "Abhi ye theek se explain nahi ho payega. Thodi der mein dobara poochho.",
+  setupNoSubject:  "Samajh nahi aaya ye kis subject ka hai. Subject ke saath uske topics batao.",
+  nothingOnRecord: "Ye mere record mein nahi hai.",
+  clarifyOpen:     "Ye samajh nahi aaya. Upar wale buttons abhi bhi chalte hain, ya thode aur words mein batao.",
+  unsupported:     "Ye yahan ke kaam ke bahar hai. Yahan ye milta hai: kya padhna hai, kisi topic ka explanation, study session, ya jo beech mein aa gaya uska note.",
+  nudgesOn:        "Nudges on hain.",
+  nudgesOff:       "Nudges off hain. Ab pehla message tumhara hi hoga.",
+};
+
+const TEXTS: Record<ReplyLanguage, typeof TEXT> = { english: TEXT, hinglish: TEXT_HINGLISH };
+export const textFor = (language: ReplyLanguage): typeof TEXT => TEXTS[language];
+
+// Whether a text is already one of the fixed lines of that language, so it
+// needs no wording.
+const FIXED: Record<ReplyLanguage, ReadonlySet<string>> = {
+  english:  new Set(Object.values(TEXT)),
+  hinglish: new Set(Object.values(TEXT_HINGLISH)),
+};
+export const isFixedText = (text: string, language: ReplyLanguage): boolean => FIXED[language].has(text);

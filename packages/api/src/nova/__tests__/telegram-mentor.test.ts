@@ -36,7 +36,7 @@ const request = (over: Partial<LearnerRequest> = {}): LearnerRequest => ({
   clarity: "clear", changeOfMind: false,
   action: "none", confidence: 0.9, promptAnswer: null, availableMinutes: null,
   sessionOutcome: null, deferUntil: null, struggleTopic: null, exam: null,
-  asks: "none", availableMinutesMax: null, setup: null, ...over,
+  asks: "none", availableMinutesMax: null, setup: null, language: null, ...over,
 });
 const reading = (req: Partial<LearnerRequest> = {}, over: Partial<AcademicUnderstanding> = {}): AcademicUnderstanding => ({
   intent: "general_chat", emotion: "neutral", topic: null, topicConfidence: 0, disclosureClass: "none",

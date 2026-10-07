@@ -91,7 +91,7 @@ export async function runWebSentence(input: WebSentenceInput): Promise<WebSenten
   const profile = user?.novaAcademicProfile;
   if (!user || !profile) throw new Error("no Nova learner behind this key");
 
-  const ctx: ActionContext = { chatId: platformChatId, profileId: profile.id, timezone: profile.timezone, name: user.displayName ?? null, now };
+  const ctx: ActionContext = { chatId: platformChatId, profileId: profile.id, timezone: profile.timezone, name: user.displayName ?? null, now, language: "english" };
   const zone = resolveTimezone(profile.timezone);
   const day  = dayKey(now, zone);
 
@@ -208,7 +208,7 @@ export async function runWebSetupSentence(input: {
 }): Promise<{ reply: string }> {
   const ensured = await ensureSetupProfile(input.platformChatId);
   if (!ensured) throw new Error("no Nova learner behind this key");
-  const ctx: ActionContext = { chatId: input.platformChatId, profileId: ensured.profileId, timezone: ensured.timezone, name: null, now: input.timestamp };
+  const ctx: ActionContext = { chatId: input.platformChatId, profileId: ensured.profileId, timezone: ensured.timezone, name: null, now: input.timestamp, language: "english" };
   const turn = await runSetupTurn({ ctx, text: input.text, history: await loadConversationHistory(ensured.userId), understand: input.understand });
   let reply = turn.reply.text;
   if (turn.reply.prompt && WEB_PROMPTS.has(turn.reply.prompt.kind)) {

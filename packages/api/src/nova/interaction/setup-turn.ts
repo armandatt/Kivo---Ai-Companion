@@ -17,9 +17,9 @@ import { examToOffer } from "../product/exams";
 import { loadSetup, proposeSetup, type SetupView } from "../product/setup";
 import { loadOpenPrompt, resolvePrompt } from "../telegram/prompt-store";
 import { runOptionAction, type ActionContext } from "../telegram/telegram-actions";
-import { setupOfferReply, TEXT, withExamOffer } from "../telegram/telegram-replies";
+import { setupOfferReply, textFor, withExamOffer } from "../telegram/telegram-replies";
 import type { PromptKind, TelegramReply } from "../telegram/telegram.types";
-import type { UnderstandingContext } from "../types/understanding.types";
+import type { ReplyLanguage, UnderstandingContext } from "../types/understanding.types";
 import { interpret } from "./semantics";
 
 const SETUP_PROMPTS: ReadonlySet<PromptKind> = new Set<PromptKind>(["confirm_setup", "confirm_exam"]);
@@ -35,7 +35,11 @@ export function setupAsk(view: SetupView | null, lead = ""): TelegramReply {
 
 export const SETUP_INTRO = "I'm Nova. Before I can plan anything I need to know what you're studying. ";
 
-export interface SetupTurnResult { reply: TelegramReply; decision: string; kind: string; ok: boolean }
+export interface SetupTurnResult {
+  reply: TelegramReply; decision: string; kind: string; ok: boolean;
+  // The language the message was written in, when the reading could tell.
+  language: ReplyLanguage | null;
+}
 
 export async function runSetupTurn(input: {
   ctx:         ActionContext;
@@ -55,19 +59,22 @@ export async function runSetupTurn(input: {
   };
 
   const read = await (input.understand ?? runUnderstandingBrain)(text, input.history, context);
-  if (read.malformed) return { reply: { text: TEXT.notUnderstood }, decision: "unreadable", kind: "unclear", ok: false };
+  if (read.malformed) return { reply: { text: textFor(ctx.language).notUnderstood }, decision: "unreadable", kind: "unclear", ok: false, language: null };
   const understanding = safeReading(read, { today: day });
   const kind = interpret(understanding).kind;
   const decision = decideAction(understanding, {
     session: "none",
     prompt:  prompt ? { kind: prompt.kind, options: prompt.options.map(o => ({ id: o.id, type: o.action.type, minutes: null })) } : null,
   });
-  const done = (reply: TelegramReply, ok = true): SetupTurnResult => ({ reply, decision: `setup:${decision.action.type}`, kind, ok });
+  const language = understanding.request?.language ?? null;
+  // The rest of this turn answers in the language it was written in.
+  if (language) ctx.language = language;
+  const done = (reply: TelegramReply, ok = true): SetupTurnResult => ({ reply, decision: `setup:${decision.action.type}`, kind, ok, language });
 
   // Yes or no to what Nova showed back.
   if (decision.action.type === "answer_prompt" && prompt) {
     const resolved = await resolvePrompt(ctx.profileId, prompt.id, decision.action.optionId, "text", ctx.now);
-    if (!resolved.ok) return done({ text: TEXT.stale }, false);
+    if (!resolved.ok) return done({ text: textFor(ctx.language).stale }, false);
     const acted = await runOptionAction(resolved.option.action, ctx);
     return done(acted.reply, acted.operation.ok);
   }

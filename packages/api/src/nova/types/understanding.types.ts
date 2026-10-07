@@ -99,7 +99,7 @@ export interface AcademicUnderstanding {
 // (if anything) runs, against the session and prompt that actually exist.
 // Closed vocabulary; anything else the model returns is dropped by the parser.
 
-export const UNDERSTANDING_ENVELOPE_VERSION = 4;
+export const UNDERSTANDING_ENVELOPE_VERSION = 5;
 
 export const REQUESTED_ACTIONS = [
   "what_now", "start_session", "pause_session", "resume_session",
@@ -116,6 +116,11 @@ export type StatedOutcome = "struggled" | "okay" | "good" | "crushed_it";
 //   unsupported     a clear request for something Nova does not do here
 export const READING_CLARITY = ["clear", "ambiguous", "unintelligible", "unsupported"] as const;
 export type ReadingClarity = typeof READING_CLARITY[number];
+
+// The languages Nova replies in. Hinglish is Hindi in Roman letters mixed
+// with English, the way Indian students text.
+export const REPLY_LANGUAGES = ["english", "hinglish"] as const;
+export type ReplyLanguage = typeof REPLY_LANGUAGES[number];
 
 export interface LearnerRequest {
   clarity:          ReadingClarity;
@@ -148,6 +153,10 @@ export interface LearnerRequest {
   // subject covers, how long they usually have, when they usually study.
   // Offered back for confirmation; never saved on the reading alone.
   setup:            SetupStatement | null;
+  // The language the message itself is written in. null: too short or too
+  // mixed to say ("ok", "30", a topic name). It chooses the language of the
+  // reply and nothing else. Absent on a reading made before this field.
+  language?:        ReplyLanguage | null;
 }
 
 export const ASK_SCOPES = ["knowledge", "about_me", "none"] as const;

@@ -7,7 +7,7 @@ import type {
   AcademicUnderstanding, AcademicIntent, AcademicEmotion, DisclosureClass, RoutingSignal, RealityObservation,
   LearnerRequest, RequestedAction, SetupStatement, StatedOutcome,
 } from "../types/understanding.types";
-import { ASK_SCOPES, READING_CLARITY, REQUESTED_ACTIONS, STUDY_TIMES } from "../types/understanding.types";
+import { ASK_SCOPES, READING_CLARITY, REPLY_LANGUAGES, REQUESTED_ACTIONS, STUDY_TIMES } from "../types/understanding.types";
 import { isNovaRealityCategory, normalizeSubtype } from "../types/reality.types";
 
 const VALID_INTENTS = new Set<string>([
@@ -90,7 +90,7 @@ export const NO_REQUEST: LearnerRequest = {
   clarity: "ambiguous", changeOfMind: false,
   action: "none", confidence: 0, promptAnswer: null, availableMinutes: null,
   sessionOutcome: null, deferUntil: null, struggleTopic: null, exam: null,
-  asks: "none", availableMinutesMax: null, setup: null,
+  asks: "none", availableMinutesMax: null, setup: null, language: null,
 };
 
 const MAX_SETUP_TOPICS = 12;
@@ -151,6 +151,7 @@ export function parseLearnerRequest(raw: unknown): LearnerRequest {
     availableMinutesMax: statedMinutes !== null && typeof max === "number" && Number.isFinite(max) && max > statedMinutes && max <= MAX_STATED_MINUTES
       ? Math.round(max) : null,
     setup:          parseSetupStatement(r["setup"]),
+    language:       REPLY_LANGUAGES.find(l => l === r["language"]) ?? null,
   };
 }
 
