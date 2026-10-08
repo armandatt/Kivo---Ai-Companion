@@ -17,12 +17,19 @@ export async function GET() {
     if (!userId) return NextResponse.json({ creatureName: null, telegramConnected: false }, { status: 401 })
 
     const { prisma } = await import('@repo/db/client')
-    const profile = await prisma.userProfile.findUnique({
-      where: { userId },
-      select: { creatureName: true, telegramConnected: true, telegramChatId: true },
-    })
+    const [user, profile] = await Promise.all([
+      prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } }),
+      prisma.userProfile.findUnique({
+        where: { userId },
+        select: { creatureName: true, telegramConnected: true, telegramChatId: true },
+      }),
+    ])
+    // A cookie for an account that no longer exists is not a signed-in user.
+    if (!user) return NextResponse.json({ creatureName: null, telegramConnected: false }, { status: 401 })
 
     return NextResponse.json({
+      // Who is signed in, for the landing page's header (Dashboard, not Sign in).
+      user,
       creatureName:       profile?.creatureName       ?? null,
       telegramConnected:  profile?.telegramConnected  ?? false,
       telegramChatId:     profile?.telegramChatId     ?? null,
