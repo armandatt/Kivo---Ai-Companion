@@ -21,6 +21,7 @@ function Shell({ children, actions }: { children: React.ReactNode; actions?: boo
           <div className="flex flex-wrap gap-2">
             <Link href="/notes/new" className={ACTION}>New note</Link>
             <Link href="/saved" className={ACTION}>Saved pages</Link>
+            <Link href="/settings/study" className={ACTION}>Add subjects</Link>
             <Link href="/knowledge" className={ACTION}>Topic list</Link>
           </div>
         )}
@@ -76,7 +77,7 @@ export default function KnowledgeMapPage() {
         <Notice
           title="Your map is empty"
           body="Add a subject and its topics, write a note, or save a page from your browser. Each one becomes a point here, joined to the subject you file it under."
-          href="/home" cta="Add subjects on Today"
+          href="/settings/study" cta="Add subjects and topics"
         />
       </Shell>
     )

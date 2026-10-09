@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, ArrowRight, Loader2, Plus, X } from 'lucide-react'
 import type { SetupChanges, SetupDraft, SetupIssue, SetupView } from '@repo/api/nova/product/setup.types'
+import { STUDY_TEMPLATES, templateTaskKey, type StudyTemplate } from '@repo/api/nova/product/templates'
 import { cn } from '@/lib/utils'
 
 // The first-run study setup. The page collects and shows; the server
@@ -46,6 +47,55 @@ function Chips<T>({ options, value, onChange, name }: { options: Array<{ label: 
   )
 }
 
+// The tasks a template adds, created through the ordinary task route once the
+// setup is saved. Each carries the template's own key, so choosing the same
+// template again creates nothing twice. A task whose subject was renamed or
+// removed in the form is still created, without a subject.
+async function createTemplateTasks(template: StudyTemplate): Promise<void> {
+  let subjects: Array<{ id: string; name: string }> = []
+  try {
+    const res  = await fetch('/api/nova/tasks', { cache: 'no-store' })
+    const data = await res.json() as { status?: string; subjects?: Array<{ id: string; name: string }> }
+    if (data.status === 'ready') subjects = data.subjects ?? []
+  } catch { /* created without subjects */ }
+  for (const task of template.tasks) {
+    const subject = task.subject ? subjects.find(s => s.name.toLowerCase() === task.subject!.toLowerCase()) : undefined
+    await fetch('/api/nova/tasks', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: task.title, priority: task.priority ?? null, subjectId: subject?.id ?? null, clientKey: templateTaskKey(template.id, task.key) }),
+    }).catch(() => {})
+  }
+}
+
+function TemplatePicker({ chosen, onChoose }: { chosen: StudyTemplate | null; onChoose: (t: StudyTemplate | null) => void }) {
+  return (
+    <div className="mt-6">
+      <p className={label}>Start from a template <span className="normal-case tracking-normal text-foreground/35">(optional)</span></p>
+      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+        {STUDY_TEMPLATES.map(t => {
+          const on = chosen?.id === t.id
+          return (
+            <button
+              key={t.id} type="button" aria-pressed={on} onClick={() => onChoose(on ? null : t)}
+              className={cn('rounded-2xl border p-4 text-left transition-colors', on ? 'border-keppel-400 bg-keppel-400/10' : 'border-white/8 bg-white/3 hover:border-white/16')}
+            >
+              <span className="block text-sm font-semibold text-foreground">{t.name}</span>
+              <span className="mt-1.5 block text-xs leading-relaxed text-foreground/55">{t.description}</span>
+              <span className="mt-3 block text-[11px] font-medium uppercase tracking-[0.14em] text-foreground/40">Adds</span>
+              <ul className="mt-1 space-y-0.5 text-xs text-foreground/65">{t.creates.map(c => <li key={c}>{c}</li>)}</ul>
+            </button>
+          )
+        })}
+      </div>
+      {chosen && (
+        <p className="mt-3 text-xs leading-relaxed text-foreground/50">
+          {chosen.name} is in the form below. Edit anything; nothing is saved until you review and confirm. It adds no progress: every topic starts unstudied and every task as to do.
+        </p>
+      )}
+    </div>
+  )
+}
+
 function Review({ draft, changes }: { draft: SetupDraft; changes: SetupChanges }) {
   const rows: Array<[string, string]> = []
   for (const s of draft.subjects) {
@@ -68,7 +118,8 @@ function Review({ draft, changes }: { draft: SetupDraft; changes: SetupChanges }
   )
 }
 
-export function SetupForm({ onSaved }: { onSaved: () => void }) {
+export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' }: { onSaved: () => void; confirmLabel?: string }) {
+  const [template, setTemplate] = useState<StudyTemplate | null>(null)
   const [subjects, setSubjects] = useState<SubjectRow[]>([{ name: '', topics: '' }])
   const [exams, setExams]       = useState<ExamRow[]>([])
   const [daily, setDaily]       = useState<number | null>(null)
@@ -95,6 +146,30 @@ export function SetupForm({ onSaved }: { onSaved: () => void }) {
   }, [])
 
   const named = subjects.map(s => s.name.trim()).filter(Boolean)
+
+  // Choosing a template adds its subjects to the form. It never removes or
+  // overwrites what is already there: a subject of the same name keeps its
+  // own topics and gains the template's.
+  const choose = (next: StudyTemplate | null) => {
+    setTemplate(next)
+    if (!next) return
+    setSubjects(rows => {
+      const kept = rows.filter(row => row.name.trim() || row.topics.trim())
+      const out  = [...kept]
+      for (const subject of next.subjects) {
+        const at = subject.name ? out.findIndex(row => row.name.trim().toLowerCase() === subject.name.toLowerCase()) : -1
+        if (at >= 0) {
+          const have = new Set(splitTopics(out[at]!.topics).map(t => t.toLowerCase()))
+          const add  = subject.topics.filter(t => !have.has(t.toLowerCase()))
+          out[at] = { ...out[at]!, topics: [out[at]!.topics.trim(), ...add].filter(Boolean).join('\n') }
+        } else {
+          out.push({ name: subject.name, topics: subject.topics.join('\n') })
+        }
+      }
+      return out.length > 0 ? out : [{ name: '', topics: '' }]
+    })
+    if (next.asksExamDate) setExams(rows => (rows.length > 0 ? rows : [{ subjectName: '', date: '' }]))
+  }
   const draft = (): SetupDraft => ({
     subjects:     subjects.filter(s => s.name.trim()).map(s => ({ name: s.name.trim(), topics: splitTopics(s.topics) })),
     exams:        exams.filter(e => e.subjectName && e.date).map(e => ({ subjectName: e.subjectName, date: e.date, title: null })),
@@ -108,7 +183,12 @@ export function SetupForm({ onSaved }: { onSaved: () => void }) {
       const res  = await fetch('/api/nova/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ draft: review?.draft ?? draft(), confirm }) })
       if (res.status === 401) { window.location.href = '/signin'; return }
       const data = await res.json() as { ok: boolean; saved?: boolean; draft?: SetupDraft; changes?: SetupChanges; issues?: SetupIssue[] }
-      if (confirm && data.ok && data.saved) { onSaved(); return }
+      if (confirm && data.ok && data.saved) {
+        // The setup is saved; the template's tasks follow it.
+        if (template) await createTemplateTasks(template)
+        onSaved()
+        return
+      }
       setIssues(data.issues ?? [])
       if (!confirm && data.ok && data.draft && data.changes && (data.issues ?? []).length === 0) setReview({ draft: data.draft, changes: data.changes })
       else if (!data.ok && !data.issues) setFailed(true)
@@ -135,6 +215,13 @@ export function SetupForm({ onSaved }: { onSaved: () => void }) {
       <div className="mt-6">
         <p className="text-sm text-foreground/65">Check this is right. Nothing is saved until you confirm.</p>
         <Review draft={review.draft} changes={review.changes} />
+        {template && template.tasks.length > 0 && (
+          <div className="mt-4 rounded-2xl border border-white/8 px-4 py-3">
+            <p className="text-sm font-medium text-foreground">Tasks from {template.name}</p>
+            <ul className="mt-2 space-y-1 text-sm text-foreground/65">{template.tasks.map(t => <li key={t.key}>{t.title}</li>)}</ul>
+            <p className="mt-2 text-xs text-foreground/45">Added to your task board as to do. Any you already have from this template are left as they are.</p>
+          </div>
+        )}
         {!review.changes.complete && (
           <p role="alert" className="mt-4 text-sm text-amber-300/90">Add at least one topic to one subject, so there is something to plan.</p>
         )}
@@ -146,7 +233,7 @@ export function SetupForm({ onSaved }: { onSaved: () => void }) {
           </button>
           <button type="button" onClick={() => void send(true)} disabled={busy || !review.changes.complete}
             className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-keppel-400 px-6 text-[15px] font-semibold text-keppel-950 transition-colors hover:bg-keppel-300 disabled:opacity-50">
-            {busy ? <><Loader2 className="size-4 animate-spin" /> Saving…</> : <>Confirm and build my plan <ArrowRight className="size-4" /></>}
+            {busy ? <><Loader2 className="size-4 animate-spin" /> Saving…</> : <>{confirmLabel} <ArrowRight className="size-4" /></>}
           </button>
         </div>
       </div>
@@ -155,14 +242,15 @@ export function SetupForm({ onSaved }: { onSaved: () => void }) {
 
   return (
     <form className="mt-6" onSubmit={e => { e.preventDefault(); void send(false) }}>
-      <p className={label}>Subjects this term, and what each covers</p>
+      <TemplatePicker chosen={template} onChoose={choose} />
+      <p className={cn(label, 'mt-9')}>Your subjects, and what each covers</p>
       <div className="mt-3 space-y-4">
         {subjects.map((s, i) => (
           <div key={i} className="rounded-2xl border border-white/8 bg-white/3 p-4">
             <div className="flex gap-2">
               <label className="sr-only" htmlFor={`subject-${i}`}>Subject name</label>
               <input id={`subject-${i}`} value={s.name} maxLength={80} onChange={e => setSubject(i, { name: e.target.value })}
-                placeholder="Subject, e.g. Operating Systems" className={cn(field, 'h-11')} />
+                placeholder={template?.namePrompt && !s.name ? template.namePrompt : 'Subject, e.g. Operating Systems'} className={cn(field, 'h-11')} />
               {subjects.length > 1 && (
                 <button type="button" aria-label="Remove subject" onClick={() => setSubjects(rows => rows.filter((_, k) => k !== i))}
                   className="inline-flex size-11 shrink-0 items-center justify-center rounded-xl border border-white/10 text-foreground/50 hover:bg-white/5">
