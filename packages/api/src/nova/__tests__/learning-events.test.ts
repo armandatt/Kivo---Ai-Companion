@@ -216,7 +216,8 @@ describe("a learning event is a record of an action, and nothing else", () => {
     expect(readers.sort()).toEqual(["product/knowledge-map.ts", "product/learning-events.ts"]);
     const map = read("product/knowledge-map.ts");
     expect(map).not.toMatch(/prisma\.novaLearningEvent/);
-    expect(map).not.toMatch(/updateTopicMastery|novaStudySession|masteryProbability:\s*[^t]/);
+    expect(map).not.toMatch(/updateTopicMastery|novaStudySession/);
+    expect(map).not.toMatch(/\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/);
     for (const engine of ["product/planner.ts", "product/planning-inputs.ts", "product/knowledge.ts", "product/progress.ts", "product/today.ts", "engines/planning-engine.ts", "engines/learning-dna-engine.ts"]) {
       expect([engine, readers.includes(engine)]).toEqual([engine, false]);
     }
