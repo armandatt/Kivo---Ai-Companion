@@ -62,7 +62,7 @@ export default function HomePage() {
   return (
     <>
       {error && (
-        <p role="status" className="mx-auto mb-2 w-full max-w-3xl pt-10 text-xs text-amber-300/80 lg:pt-0">
+        <p role="status" className="mx-auto mb-2 w-full max-w-6xl pt-10 text-xs text-amber-300/80 lg:pt-0">
           Showing what loaded last. Reconnecting…
         </p>
       )}
