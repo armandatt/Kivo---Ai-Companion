@@ -17,7 +17,7 @@ export interface MapLayout {
 const TOPIC_GAP  = 92     // room along the ring for one topic
 const LEAF_GAP   = 46     // room along an arc for one note or page
 const INNER_RING = 96     // items filed under the subject only
-const MIN_TOPIC_RING = 190
+const MIN_TOPIC_RING = 150
 const LEAF_OUT   = 84     // how far behind its topic a leaf sits
 const LOOSE_COLS = 6
 const LOOSE_DX   = 150
@@ -105,5 +105,6 @@ export function layoutMap(nodes: MapNode[], edges: MapEdge[]): MapLayout {
   }
 
   const b = edge()
-  return { at, bounds: { minX: b.minX - 130, minY: b.minY - 90, maxX: b.maxX + 130, maxY: b.maxY + 90 }, loose }
+  // Room at the bottom for the caption that sits over the map.
+  return { at, bounds: { minX: b.minX - 130, minY: b.minY - 80, maxX: b.maxX + 130, maxY: b.maxY + 150 }, loose }
 }

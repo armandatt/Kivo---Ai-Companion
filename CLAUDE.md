@@ -361,6 +361,43 @@ Held by `telegram-hardening.test.ts` and `nova-hardening.itest.ts`.
 - **Where the time went** is on the one `nova_telegram` log line: `timings` (`webhookMs`, `learnerMs`, `contextMs`, `understandingMs`, `decisionMs`, `actionMs`, `responseMs`, `telegramSendMs`, `replyMs`, `persistMs`, `totalMs`), `modelCalls` and `slowStage`. `replyMs` is what the learner waits. `scripts/novaTelegramLatency.ts` turns a log download into P50/P95 per kind of update.
 - **A second message sent while the first is still being recorded** gets "Still on your last message". The turn lease is unchanged; waiting for it needs a timer, which `telegram-mentor.test.ts` forbids in these files.
 
+## Tasks and the Planner's board
+
+Held by `tasks.test.ts` and `nova-workspace.itest.ts`. The Planner has two tabs: the study plan the engine works out, and the learner's own task board (`/planner?view=board`).
+
+- **`NovaTask` is the learner's to-do list** (title, status `todo` / `in_progress` / `done`, priority, subject, topic name, due day). `product/tasks.ts` is its only reader and writer; routes are `/api/nova/tasks` and `/api/nova/tasks/[id]`.
+- **A task is only a task.** Making, moving or finishing one writes that row and nothing else: no session, no mastery, no exam, no stated time. The Planning Engine does not read tasks, so moving a card never changes the plan. Do not feed tasks into planning or evidence without a decision to; a finished task about a topic is not a session on it.
+- **A due day is a calendar day** (`dueDay`, `YYYY-MM-DD`), counted from the learner's own today (`dueInDays`).
+- **`clientKey` makes a create idempotent** (`@@unique([profileId, clientKey])`): a double click, a retry or a template applied twice returns the task that exists, as it now is.
+- The board (`components/nova/tasks/`) moves a card by drag and drop or by the arrows on it; both are the same `PATCH { status }`. Home's "Your tasks" is the same rows.
+
+## Knowledge Map
+
+Held by `knowledge-map.test.ts` and `nova-workspace.itest.ts`. `/map`, `GET /api/nova/knowledge-map`, `product/knowledge-map.ts`.
+
+- **A read model of links that are stored.** Nodes are subjects, topics, notes and saved pages. Edges are: a topic's subject; a note or saved page filed under a subject; and under a topic when it names one of that subject's topics (compared trimmed, single-spaced, any case). Nothing is inferred and no edge is added for looks. What is filed under nothing is drawn unconnected, and the view says how many such items there are.
+- It writes nothing, calls no model, and reads notes and saved pages only through `listNoteLinks` and `listResourceLinks` in their owning modules. A note's body is never read for the map.
+- A topic has a level only when a session stands behind it; one with none is drawn as a dashed ring.
+- The layout (`components/nova/knowledge-map/layout.ts`) is deterministic and has no dependency: the same data draws the same map. Do not add a physics library or generate edges with a model.
+
+## Themes
+
+`components/theme/kivo-theme.tsx` and the light block in `app/globals.css`.
+
+- Light, Dark and Match device, chosen in Settings or the sidebar, kept in `localStorage` (`kivo-theme`) and written to `<html data-kivo-theme>` by an inline script in the dashboard layout before first paint.
+- **The light theme is one block of tokens** scoped to `.kivo-app`. The app is written against a dark surface with translucent white (`border-white/8`, `bg-white/5`); in light, `--color-white` becomes ink and the surface tokens become paper, so components need no light-specific classes. Write new UI with the same tokens (`text-foreground/60`, `bg-card`, `border-white/8`) and it works in both. Avoid hard-coded hex colours and `text-white` on a coloured fill.
+- `.kivo-dark` puts the dark tokens back for a region that is always dark (the Creature world). The landing page is outside `.kivo-app` and stays dark.
+- A custom property that points at another (`--x: var(--background)`) is resolved where it is declared, so it does not follow the theme: use `var(--background)` directly.
+
+## Templates and editing setup
+
+Held by `templates.test.ts` and `nova-workspace.itest.ts`.
+
+- `product/templates.ts` is three fixed starting points (Engineering semester, Exam preparation, Personal learning) as pure data. Choosing one fills the setup form; the learner edits, reviews and confirms; `saveSetup` saves it. Its tasks are then created through the task route under `template:<id>:<key>`, so applying one twice makes each task once.
+- A template states no progress: topics are declared unstudied and tasks start as to do.
+- `/settings/study` is the setup form for a learner who has finished onboarding. Saving merges; nothing is removed.
+- **Onboarding has no domain question.** Kivo is study and productivity, so the quiz sends `mentorDomain: "study"` and a new account is always a Nova learner. Rex accounts that already exist are unchanged.
+
 ## Study setup: one setup, three ways in
 
 `product/setup.ts` is the only reader and writer of a learner's study setup: subjects, topics, exam dates, normal daily minutes and usual study time. The rules, each held by `study-setup.test.ts` or `nova-setup.itest.ts`:

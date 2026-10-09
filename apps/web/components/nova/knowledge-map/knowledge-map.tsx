@@ -201,7 +201,12 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
     return q ? nodes.filter(n => n.label.toLowerCase().includes(q)).slice(0, 8) : []
   }, [query, nodes])
 
-  const labelled = (n: MapNode) => n.type === 'subject' || n.type === 'topic' || t.k >= 0.8 || neighbourIds?.has(n.id)
+  // Subjects are always named; topics once there is room; notes and pages
+  // when zoomed in or when they belong to what is selected.
+  const labelled = (n: MapNode) => n.type === 'subject' || (n.type === 'topic' && t.k >= 0.45) || t.k >= 0.9 || neighbourIds?.has(n.id)
+  // Labels keep a readable size on screen whatever the zoom: the map can be
+  // far out and its names still legible.
+  const textScale = 1 / Math.max(t.k, 0.0001)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-white/8 bg-card/50 lg:flex-row">
@@ -267,7 +272,7 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
             <svg className="absolute inset-0 size-full" role="img" aria-label={`Knowledge map: ${nodes.length} items and ${edges.length} links`}>
               <g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>
                 {layout.loose && (
-                  <text x={layout.loose.x - 40} y={layout.loose.y - 44} className="fill-foreground/40" fontSize={12}>Not filed under a subject</text>
+                  <text x={layout.loose.x - 40} y={layout.loose.y - 44} className="fill-foreground/45" fontSize={12 * Math.min(textScale, 2.2)}>Not filed under a subject</text>
                 )}
                 {edges.map(e => {
                   const a = layout.at.get(e.from), b = layout.at.get(e.to)
@@ -290,7 +295,7 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
                   const unstudied = n.type === 'topic' && n.sessions === 0
                   return (
                     <g
-                      key={n.id} transform={`translate(${p.x} ${p.y})`} opacity={dim ? 0.3 : 1}
+                      key={n.id} transform={`translate(${p.x} ${p.y})`} opacity={dim ? 0.4 : 1}
                       role="button" tabIndex={0} aria-label={`${TYPE_LABEL[n.type]}: ${n.label}`} aria-pressed={on}
                       className="cursor-pointer outline-none [&:focus-visible>circle]:stroke-[var(--color-keppel-300)]"
                       onPointerDown={e => e.stopPropagation()}
@@ -301,11 +306,12 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
                       {on && <circle r={r + 7} fill="none" stroke="var(--color-keppel-400)" strokeWidth={2} />}
                       {n.type === 'resource'
                         ? <rect x={-r} y={-r} width={r * 2} height={r * 2} rx={3} fill={FILL.resource} />
-                        : <circle r={r} fill={unstudied ? 'var(--map-surface)' : FILL[n.type]} stroke={unstudied ? FILL.topic : 'none'} strokeWidth={unstudied ? 1.6 : 0} strokeDasharray={unstudied ? '3 3' : undefined} />}
+                        : <circle r={r} fill={unstudied ? 'var(--background)' : FILL[n.type]} stroke={unstudied ? FILL.topic : 'none'} strokeWidth={unstudied ? 1.6 : 0} strokeDasharray={unstudied ? '3 3' : undefined} />}
                       {labelled(n) && (
-                        <text y={r + 15} textAnchor="middle" fontSize={n.type === 'subject' ? 14 : n.type === 'topic' ? 12 : 10.5}
+                        <text y={r + 6} dy={(n.type === 'subject' ? 13 : 11) * Math.min(textScale, 2.2)} textAnchor="middle"
+                          fontSize={(n.type === 'subject' ? 13 : n.type === 'topic' ? 11.5 : 10.5) * Math.min(textScale, 2.2)}
                           fontWeight={n.type === 'subject' ? 600 : 400} className={n.type === 'subject' ? 'fill-foreground' : 'fill-foreground/75'}
-                          style={{ paintOrder: 'stroke', stroke: 'var(--map-surface)', strokeWidth: 3, strokeLinejoin: 'round' }}>
+                          style={{ paintOrder: 'stroke', stroke: 'var(--background)', strokeWidth: 3 * Math.min(textScale, 2.2), strokeLinejoin: 'round' }}>
                           {short(n.label, n.type === 'subject' ? 26 : 22)}
                         </text>
                       )}
@@ -322,7 +328,7 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
             <button type="button" onClick={fit} aria-label="Fit the whole map" className="border-t border-white/8 p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground"><Maximize2 className="size-4" /></button>
           </div>
 
-          <p className="pointer-events-none absolute bottom-3 left-3 max-w-[60%] text-[11px] leading-relaxed text-foreground/40">
+          <p className="pointer-events-none absolute bottom-3 left-3 hidden max-w-[58%] rounded-lg sm:block bg-background/70 px-2 py-1 text-[11px] leading-relaxed text-foreground/45 backdrop-blur-sm">
             Drag to move, scroll to zoom. A dashed ring is a topic with no session yet; a dashed line is filed under the subject only.
             {view.unconnected > 0 && <> {view.unconnected} {view.unconnected === 1 ? 'item is' : 'items are'} not connected to anything.</>}
             {(view.notShown.notes > 0 || view.notShown.resources > 0) && <> Older notes and pages beyond the newest 150 of each are not drawn.</>}

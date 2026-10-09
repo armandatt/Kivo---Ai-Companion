@@ -74,7 +74,6 @@
   --map-note: oklch(80% 0.13 82);
   --map-resource: oklch(74% 0.11 235);
   --map-line: oklch(100% 0 0 / 0.16);
-  --map-surface: var(--background);
 }
 
 /* ── The app's light theme ─────────────────────────────────────────────────────
