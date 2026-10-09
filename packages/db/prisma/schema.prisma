@@ -703,6 +703,7 @@ model NovaAcademicProfile {
   telegramChannel   NovaTelegramChannel?
   telegramPrompts   NovaTelegramPrompt[]
   learningEvents    NovaLearningEvent[]
+  tasks             NovaTask[]
 
   user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -726,6 +727,7 @@ model NovaSubject {
   exams  NovaExam[]
   notes  NovaNote[]
   learningEvents NovaLearningEvent[]
+  tasks  NovaTask[]
 
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
@@ -1155,4 +1157,40 @@ model NovaExtensionConnection {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+// ─── Nova tasks ───────────────────────────────────────────────────────────────
+
+// Something the learner has decided to do: an assignment, a chapter to revise,
+// a form to hand in. It is the learner's own to-do list and nothing more: not
+// a study session, not evidence, not mastery, and not an input to the
+// Planning Engine. Only product/tasks.ts reads or writes it. The Planner's
+// list and its board are two views of these rows.
+model NovaTask {
+  id          String    @id @default(cuid())
+  profileId   String
+  subjectId   String?
+  topicName   String?
+  title       String
+  status      String    @default("todo")   // "todo" | "in_progress" | "done"
+  priority    String?                      // "low" | "medium" | "high"; null: not set
+  // The day it is due, as the learner's own calendar day (YYYY-MM-DD). A day,
+  // not an instant: it does not move when a timezone does.
+  dueDay      String?
+  // Set when the task enters "done", cleared when it leaves.
+  completedAt DateTime?
+  // A key the creator gave this task, unique for the learner. A retried
+  // request, a double click or a template applied twice carries the same key
+  // and creates nothing.
+  clientKey   String?
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  subject NovaSubject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([profileId, clientKey])
+  @@index([profileId, status])
+  @@index([profileId, dueDay])
 }
