@@ -1,5 +1,6 @@
+import { Suspense } from 'react'
 import { FocusSession } from '@/components/nova/focus-session'
 
 export default function FocusPage() {
-  return <FocusSession />
+  return <Suspense fallback={null}><FocusSession /></Suspense>
 }

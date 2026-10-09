@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "jest --config jest.config.ts",
-    "test:integration": "tsx --test --test-concurrency=1 src/nova/__integration__/nova-persist-turn.itest.ts src/nova/__integration__/nova-session-start.itest.ts src/nova/__integration__/nova-knowledge.itest.ts src/nova/__integration__/nova-notes.itest.ts src/nova/__integration__/nova-progress.itest.ts src/nova/__integration__/nova-learning-dna.itest.ts src/nova/__integration__/nova-telegram.itest.ts src/nova/__integration__/nova-lifecycle.itest.ts src/nova/__integration__/nova-semantic.itest.ts src/nova/__integration__/nova-setup.itest.ts src/nova/__integration__/nova-first-use.itest.ts src/nova/__integration__/nova-hardening.itest.ts src/nova/__integration__/nova-language.itest.ts"
+    "test:integration": "tsx --test --test-concurrency=1 src/nova/__integration__/nova-persist-turn.itest.ts src/nova/__integration__/nova-session-start.itest.ts src/nova/__integration__/nova-knowledge.itest.ts src/nova/__integration__/nova-notes.itest.ts src/nova/__integration__/nova-progress.itest.ts src/nova/__integration__/nova-learning-dna.itest.ts src/nova/__integration__/nova-telegram.itest.ts src/nova/__integration__/nova-lifecycle.itest.ts src/nova/__integration__/nova-semantic.itest.ts src/nova/__integration__/nova-setup.itest.ts src/nova/__integration__/nova-first-use.itest.ts src/nova/__integration__/nova-hardening.itest.ts src/nova/__integration__/nova-language.itest.ts src/nova/__integration__/nova-learning-events.itest.ts"
   },
   "exports": {
     "./processor/*": "./src/processor/*",
@@ -29,6 +29,7 @@
     "./nova/product/progress.types": "./src/nova/product/progress.types.ts",
     "./nova/product/learning-dna.types": "./src/nova/product/learning-dna.types.ts",
     "./nova/product/creature.types": "./src/nova/product/creature.types.ts",
+    "./nova/product/learning-events.types": "./src/nova/product/learning-events.types.ts",
     "./nova/product/*": "./src/nova/product/*",
     "./nova/engines/*": "./src/nova/engines/*",
     "./nova/decision/*": "./src/nova/decision/*",

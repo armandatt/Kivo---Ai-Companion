@@ -19,13 +19,20 @@ export type LearnerResolution =
 export async function resolveNovaLearner(): Promise<LearnerResolution> {
   const session = await getSession()
   if (!session) return { kind: "unauthenticated" }
+  return resolveLearnerForUser(session.userId, session.name ?? null)
+}
 
-  const learner = await resolveLearnerForAccount(session.userId, session.name ?? null)
+// The same mapping for an account identified some other way than the session
+// cookie (the browser extension's own credential). One rule for who is a
+// Nova learner, whatever the caller proved their identity with: the same
+// function, so a learner with no Telegram chat is a learner here too.
+export async function resolveLearnerForUser(userId: string, name: string | null): Promise<Exclude<LearnerResolution, { kind: "unauthenticated" }>> {
+  const learner = await resolveLearnerForAccount(userId, name)
   if (learner.kind !== "learner") return { kind: learner.kind }
   return {
     kind:           "learner",
-    userId:         session.userId,
-    name:           session.name ?? null,
+    userId,
+    name,
     platformChatId: learner.platformChatId,
     channel:        learner.channel,
     onboardingDone: learner.onboardingDone,
