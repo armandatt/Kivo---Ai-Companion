@@ -31,6 +31,7 @@
     "./nova/product/creature.types": "./src/nova/product/creature.types.ts",
     "./nova/product/learning-events.types": "./src/nova/product/learning-events.types.ts",
     "./nova/product/tasks.types": "./src/nova/product/tasks.types.ts",
+    "./nova/product/knowledge-map.types": "./src/nova/product/knowledge-map.types.ts",
     "./nova/product/*": "./src/nova/product/*",
     "./nova/engines/*": "./src/nova/engines/*",
     "./nova/decision/*": "./src/nova/decision/*",

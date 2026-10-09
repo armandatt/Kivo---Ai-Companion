@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { TelegramSettings } from '@/components/nova/telegram-connect'
+import { ThemePicker } from '@/components/theme/kivo-theme'
 
 // Settings. One section so far: the Telegram connection.
 export default function SettingsPage() {
@@ -23,6 +24,13 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Settings</h1>
         <p className="mt-1.5 text-sm text-foreground/55">Where you reach {companion ?? 'your companion'}, and how.</p>
       </header>
+
+      <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Appearance</p>
+      <section className="mt-3 rounded-3xl border border-white/8 bg-card/70 p-6">
+        <h2 className="text-base font-semibold text-foreground">Theme</h2>
+        <p className="mt-1 text-sm text-foreground/55">Applies everywhere in the app on this device. The Creature world keeps its own sky.</p>
+        <div className="mt-4"><ThemePicker /></div>
+      </section>
 
       <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Connections</p>
       <div className="mt-3">

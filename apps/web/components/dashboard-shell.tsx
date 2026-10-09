@@ -59,7 +59,7 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
 
   if (companion === null) {
     return (
-      <div className="flex h-screen items-center justify-center bg-background p-6" aria-busy={!failed}>
+      <div className="kivo-app flex h-screen items-center justify-center bg-background p-6" aria-busy={!failed}>
         {failed ? (
           <div role="alert" className="max-w-sm text-center">
             <p className="text-base font-medium text-foreground">Couldn&apos;t load your account</p>
@@ -81,12 +81,12 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
 
   if (isCreature && access === 'render') {
     return (
-      <div className="flex h-screen overflow-hidden bg-black">
+      <div className="kivo-app flex h-screen overflow-hidden bg-black">
         {/* Sidebar in overlay mode — always fixed, never pushes the world */}
         <Sidebar open={sidebarOpen} onOpenChange={setSidebarOpen} companion={companion} overlay />
 
         {/* Full-bleed world — no padding, no overflow */}
-        <main className="w-full h-screen overflow-hidden">
+        <main className="kivo-dark w-full h-screen overflow-hidden">
           {children}
         </main>
 
@@ -105,7 +105,7 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
   }
 
   return (
-    <div className="flex h-screen bg-background">
+    <div className="kivo-app flex h-screen bg-background">
       <Sidebar open={access === 'render' ? sidebarOpen : true} onOpenChange={setSidebarOpen} companion={companion} />
       <main className="flex-1 overflow-auto">
         <div className="relative h-full p-6">

@@ -68,6 +68,86 @@
 
   /* reduced shadow opacity from 1f (~12%) to 0f (~6%) - 50% less intense */
   --bento-shadow: inset 0 -20px 80px -20px #ffffff0f;
+
+  /* Knowledge Map: one colour per kind of thing, and the lines between them. */
+  --map-topic: oklch(86% 0.02 292);
+  --map-note: oklch(80% 0.13 82);
+  --map-resource: oklch(74% 0.11 235);
+  --map-line: oklch(100% 0 0 / 0.16);
+  --map-surface: var(--background);
+}
+
+/* ── The app's light theme ─────────────────────────────────────────────────────
+   Scoped to the signed-in app (.kivo-app), so the landing page keeps its own
+   look. The app is written against a dark surface: translucent white for
+   borders and fills (border-white/8, bg-white/5) and tints of the foreground
+   for text. Tailwind resolves those through --color-white and the tokens
+   below, so the light theme is this one block: white becomes ink, the
+   surfaces become paper, and the pale status colours get versions that read
+   on paper. A component needs no light-specific class.
+   html[data-kivo-theme] is set before first paint by ThemeScript. */
+html[data-kivo-theme="light"] .kivo-app {
+  color-scheme: light;
+  --color-white: oklch(24% 0.02 290);
+  --background: oklch(98.2% 0.004 95);
+  --foreground: oklch(23% 0.02 290);
+  --card: oklch(100% 0 0);
+  --card-foreground: oklch(23% 0.02 290);
+  --popover: oklch(100% 0 0);
+  --popover-foreground: oklch(23% 0.02 290);
+  --primary: oklch(23% 0.02 290);
+  --primary-foreground: oklch(98% 0.004 95);
+  --secondary: oklch(95% 0.005 290);
+  --secondary-foreground: oklch(30% 0.02 290);
+  --muted: oklch(95% 0.005 290);
+  --muted-foreground: oklch(48% 0.02 290);
+  --accent: var(--color-keppel-500);
+  --accent-foreground: var(--color-keppel-950);
+  --border: oklch(89% 0.006 290);
+  --input: oklch(96% 0.004 290);
+  --ring: var(--color-keppel-500);
+  --sidebar: oklch(96.4% 0.005 95);
+  --sidebar-foreground: oklch(23% 0.02 290);
+  --sidebar-accent: oklch(92% 0.006 290);
+  --sidebar-accent-foreground: oklch(23% 0.02 290);
+  --sidebar-border: oklch(89% 0.006 290);
+  /* Accent and status text that was pale-on-dark, darkened to read on paper. */
+  --color-keppel-200: oklch(46% 0.08 181);
+  --color-keppel-300: oklch(60% 0.105 179.6);
+  --color-amber-200: oklch(47% 0.11 70);
+  --color-amber-300: oklch(52% 0.13 70);
+  --color-rose-300: oklch(52% 0.19 15);
+  --color-red-200: oklch(46% 0.18 27);
+  --color-red-300: oklch(51% 0.2 27);
+  --color-sky-300: oklch(50% 0.13 235);
+  --color-emerald-300: oklch(48% 0.12 160);
+  --map-topic: oklch(42% 0.03 292);
+  --map-note: oklch(68% 0.15 75);
+  --map-resource: oklch(58% 0.14 240);
+  --map-line: oklch(24% 0.02 290 / 0.2);
+  background: var(--background);
+  color: var(--foreground);
+}
+html[data-kivo-theme="light"] .kivo-app ::selection { background: oklch(88% 0.06 179); }
+
+/* A part of the app that is always dark (the Creature world), whatever the
+   theme: the tokens above are put back to what :root gives everything else. */
+html[data-kivo-theme="light"] .kivo-app .kivo-dark {
+  color-scheme: dark;
+  --color-white: #fff;
+  --background: hsl(255, 11.11%, 7.06%);
+  --foreground: var(--color-baltic-sea-100);
+  --card: var(--color-baltic-sea-900);
+  --card-foreground: var(--color-baltic-sea-100);
+  --border: var(--color-baltic-sea-700);
+  --sidebar: var(--color-baltic-sea-900);
+  --sidebar-foreground: var(--color-baltic-sea-100);
+  --sidebar-accent: var(--color-baltic-sea-800);
+  --sidebar-accent-foreground: var(--color-baltic-sea-100);
+  --sidebar-border: var(--color-baltic-sea-700);
+  --color-keppel-200: oklch(87.75% 0.06 177.32);
+  --color-keppel-300: oklch(79.68% 0.09 178.36);
+  color: var(--foreground);
 }
 
 @theme inline {

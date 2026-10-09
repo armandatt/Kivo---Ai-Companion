@@ -3,6 +3,7 @@ import { redirect } from "next/navigation"
 import { jwtVerify } from "jose"
 import { companionOf, type Companion } from "@repo/api/nova/product/companion"
 import { DashboardShell } from "@/components/dashboard-shell"
+import { THEME_SCRIPT } from "@/components/theme/kivo-theme"
 
 export const dynamic = "force-dynamic"
 
@@ -60,5 +61,11 @@ export default async function DashboardLayout({
     console.error("[dashboard/layout] DB unavailable, skipping onboarding check:", err)
   }
 
-  return <DashboardShell companion={companion}>{children}</DashboardShell>
+  return (
+    <>
+      {/* Sets the theme before anything paints. */}
+      <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      <DashboardShell companion={companion}>{children}</DashboardShell>
+    </>
+  )
 }
