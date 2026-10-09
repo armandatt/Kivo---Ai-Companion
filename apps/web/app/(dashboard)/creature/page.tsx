@@ -25,7 +25,7 @@ const REX_WORLD: World = {
   seed: `kivo-${MOCK_TOTAL_DAYS}`, streak: MOCK_STREAK, totalDays: MOCK_TOTAL_DAYS, level: MOCK_LEVEL, health: MOCK_WORLD_HEALTH,
 }
 // A Nova learner with nothing on record yet: the world as it starts.
-const NEW_WORLD: World = { seed: 'nova-new', streak: 0, totalDays: 0, level: 1, health: 40 }
+const NEW_WORLD: World = { seed: 'nova-new', streak: 0, totalDays: 0, level: 1, health: 70 }
 
 // A Nova learner's world comes from their own study record, worked out on
 // the server. Any other account gets Rex's.

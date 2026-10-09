@@ -243,6 +243,11 @@ describe("waiting on a model", () => {
   it("is bounded for both of Nova's calls, and unbounded for nobody else by default", () => {
     expect(read("brains/understanding-brain.ts")).toContain("deadlineMs:       UNDERSTANDING_DEADLINE_MS,");
     expect(read("brains/response-brain.ts")).toContain("deadlineMs:        RESPONSE_DEADLINE_MS,");
+    // Every other model call a Telegram turn or a proactive message makes.
+    expect(read("brains/first-use-wording.ts")).toContain("deadlineMs: RESPONSE_DEADLINE_MS");
+    expect(read("brains/language-wording.ts")).toContain("deadlineMs: LANGUAGE_DEADLINE_MS");
+    expect(read("proactive/nova-proactive-response.ts")).toContain("deadlineMs: RESPONSE_DEADLINE_MS");
+    expect(read("brains/disambiguation-pass.ts").includes("generateOpenAIText")).toBe(true);
     const client = readFileSync(join(__dirname, "../../services/openai.service.ts"), "utf8");
     expect(client).toContain("attemptTimeoutMs(input.deadlineMs, Date.now() - started, GEMINI_TIMEOUT_MS)");
     expect(client).toContain("input.deadlineMs !== undefined ? { signal: AbortSignal.timeout(input.deadlineMs) } : {}");

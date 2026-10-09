@@ -342,7 +342,7 @@ Held by `reply-language.test.ts` and `nova-language.itest.ts`. Nova answers in t
 Held by `creature-view.test.ts` and `nova-language.itest.ts`. `/creature` is one page with two sources, like Home and Progress.
 
 - `GET /api/nova/creature` returns `NovaCreatureView` (`product/creature.ts`, contract in `creature.types.ts`). It is a read model over two views that already exist: the streak is Today's (`progress.streakDays`, the one Home shows) and active days are Progress's. It runs no query of its own, writes nothing and calls no model.
-- **Level** is 1 plus one for every 5 active days. **World health** is 40 plus 10 for each active day in this week and the last, capped at 100. It never falls below 40: a week off, or a week ill, dims the world slightly and nothing more.
+- **Level** is 1 plus one for every 5 active days. **World health** is 70 plus 5 for each active day in this week and the last, capped at 100. 70 is where the world is drawn clear, so a week off, or a week ill, never brings fog.
 - The page asks that route first. A Nova learner's world is drawn from the answer; `not_nova` gets Rex's world, which still runs on the page's fixed figures; a failed request shows an error and no numbers. Nothing mounts before the answer, because the engine is built once from the seed.
 - The seed is a hash of the learner key, so each learner has their own terrain and it names nobody.
 - Nova does not mention the creature in chat, and no message is sent about it.

@@ -121,6 +121,13 @@ describe("the map is a read model", () => {
 
   it("reads only the learner's own rows", () => {
     expect(source).toContain("learnerKey(platformChatId)");
-    expect(source.split("where: { profileId }").length - 1 + source.split("where: { subject: { profileId } }").length - 1).toBe(6);
+    expect(source).toContain("where: { profileId }");
+    expect(source).toContain("where: { subject: { profileId } }");
+    // Notes and saved pages come from their owners, by profile.
+    expect(source).toContain("listNoteLinks(profileId, MAP_NOTES_MAX)");
+    expect(source).toContain("listResourceLinks(profileId, MAP_RESOURCES_MAX)");
+    expect(source).not.toMatch(/prisma\.(novaNote|novaLearningEvent)\b/);
+    // And nothing of what a note says is read for the map.
+    expect(read("product/notes.ts").split("listNoteLinks")[1]).not.toMatch(/body: true/);
   });
 });

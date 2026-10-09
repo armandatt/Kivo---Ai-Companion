@@ -40,6 +40,22 @@ export function AmbientOverlay({ currentTime, worldHealth }: AmbientOverlayProps
   const frameRef = useRef<number>(undefined)
   const tickRef  = useRef(0)
 
+  // Someone who asked their device for less motion gets a still sky: no
+  // drifting particles and no meteors. The world itself is unchanged.
+  const [still, setStill] = useState(false)
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const apply = () => setStill(media.matches)
+    apply()
+    media.addEventListener('change', apply)
+    return () => media.removeEventListener('change', apply)
+  }, [])
+
+  // A meteor now and then on a clear night. One timer, set again after each
+  // fall; nothing is asked of the server, and none falls while the page is
+  // hidden or the sky is still.
+  const [meteor, setMeteor] = useState<{ id: number; x: number; y: number } | null>(null)
+
   const isNight = currentTime > 20 || currentTime < 6
   const isDusk  = (currentTime >= 18 && currentTime <= 21) || (currentTime >= 5 && currentTime <= 7)
   const isDay   = !isNight
@@ -52,9 +68,25 @@ export function AmbientOverlay({ currentTime, worldHealth }: AmbientOverlayProps
     setParticles(init)
   }, [])
 
+  useEffect(() => {
+    if (!isNight || still) { setMeteor(null); return }
+    let timer: ReturnType<typeof setTimeout>
+    const schedule = () => {
+      timer = setTimeout(() => {
+        if (!document.hidden) setMeteor({ id: Date.now(), x: 12 + Math.random() * 60, y: 4 + Math.random() * 22 })
+        schedule()
+      }, 45_000 + Math.random() * 105_000)
+    }
+    schedule()
+    return () => clearTimeout(timer)
+  }, [isNight, still])
+
   // Animation loop
   useEffect(() => {
+    if (still) { setParticles([]); return }
     const animate = () => {
+      // A hidden page draws nothing, so nothing is worked out for it.
+      if (document.hidden) { frameRef.current = requestAnimationFrame(animate); return }
       tickRef.current++
       const tick = tickRef.current
 
@@ -100,7 +132,7 @@ export function AmbientOverlay({ currentTime, worldHealth }: AmbientOverlayProps
     }
     frameRef.current = requestAnimationFrame(animate)
     return () => { if (frameRef.current) cancelAnimationFrame(frameRef.current) }
-  }, [isNight, isDay, worldHealth])
+  }, [isNight, isDay, worldHealth, still])
 
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden z-10">
@@ -144,6 +176,18 @@ export function AmbientOverlay({ currentTime, worldHealth }: AmbientOverlayProps
 
         return null
       })}
+
+      {meteor && (
+        <span
+          key={meteor.id} aria-hidden onAnimationEnd={() => setMeteor(null)}
+          style={{
+            position: 'absolute', left: `${meteor.x}%`, top: `${meteor.y}%`, width: 120, height: 2, borderRadius: 2,
+            background: 'linear-gradient(to left, rgba(255,255,255,0.95), rgba(180,215,255,0.35) 40%, transparent)',
+            transformOrigin: 'right center', animation: 'kivo-meteor 1.1s ease-out forwards',
+          }}
+        />
+      )}
+      <style>{`@keyframes kivo-meteor { from { transform: rotate(-24deg) translateX(-60px); opacity: 0 } 15% { opacity: 1 } to { transform: rotate(-24deg) translateX(260px); opacity: 0 } }`}</style>
 
       {/* Low world health fog */}
       {worldHealth < 70 && (

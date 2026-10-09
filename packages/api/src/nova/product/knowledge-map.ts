@@ -15,6 +15,8 @@
 
 import { prisma } from "@repo/db/client";
 import { learnerKey } from "./learner-key";
+import { listResourceLinks } from "./learning-events";
+import { listNoteLinks } from "./notes";
 import { masteryLevel } from "../engines/knowledge-engine";
 import { normalizeTopicName } from "../engines/topic-mastery-engine";
 import {
@@ -114,8 +116,7 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
   };
 }
 
-// A fixed number of queries whatever the learner has: one for the learner,
-// then six together.
+// A fixed number of queries whatever the learner has.
 export async function loadNovaKnowledgeMap(platformChatId: string): Promise<NovaKnowledgeMapView> {
   const user = await prisma.messengerUser.findUnique({
     where:  learnerKey(platformChatId),
@@ -126,22 +127,19 @@ export async function loadNovaKnowledgeMap(platformChatId: string): Promise<Nova
   if (!profile?.onboardingComplete) return { status: "onboarding_incomplete" };
   const profileId = profile.id;
 
-  const [subjects, topics, notes, resources, noteTotal, resourceTotal] = await Promise.all([
+  // Notes and saved pages are read through their owners: this file touches
+  // neither table.
+  const [subjects, topics, noted, saved] = await Promise.all([
     prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.novaTopicMastery.findMany({
       where: { subject: { profileId } }, orderBy: { name: "asc" },
       select: { id: true, subjectId: true, name: true, masteryProbability: true, reviewCount: true },
     }),
-    prisma.novaNote.findMany({
-      where: { profileId }, orderBy: { updatedAt: "desc" }, take: MAP_NOTES_MAX,
-      select: { id: true, title: true, subjectId: true, topicName: true, updatedAt: true },
-    }),
-    prisma.novaLearningEvent.findMany({
-      where: { profileId }, orderBy: { occurredAt: "desc" }, take: MAP_RESOURCES_MAX,
-      select: { id: true, title: true, url: true, domain: true, eventType: true, subjectId: true, topicName: true, occurredAt: true },
-    }),
-    prisma.novaNote.count({ where: { profileId } }),
-    prisma.novaLearningEvent.count({ where: { profileId } }),
+    listNoteLinks(profileId, MAP_NOTES_MAX),
+    listResourceLinks(profileId, MAP_RESOURCES_MAX),
   ]);
-  return buildKnowledgeMap({ subjects, topics, notes, resources, totals: { notes: noteTotal, resources: resourceTotal } });
+  return buildKnowledgeMap({
+    subjects, topics, notes: noted.notes, resources: saved.resources,
+    totals: { notes: noted.total, resources: saved.total },
+  });
 }

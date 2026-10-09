@@ -209,7 +209,17 @@ describe("a learning event is a record of an action, and nothing else", () => {
 
   it("is read by no engine: Planner, Knowledge, Progress and Learning DNA do not see events", () => {
     const readers = files.filter(f => /learning-events"|loadSavedResources|recordLearningEvent/.test(f.src)).map(f => f.path);
-    expect(readers).toEqual(["product/learning-events.ts"]);
+    // The Knowledge Map draws a saved page as a point filed under its subject.
+    // It is a picture of what is on record, not an engine: it computes
+    // nothing about the learner from an event, and it reads them only
+    // through this module's own listResourceLinks.
+    expect(readers.sort()).toEqual(["product/knowledge-map.ts", "product/learning-events.ts"]);
+    const map = read("product/knowledge-map.ts");
+    expect(map).not.toMatch(/prisma\.novaLearningEvent/);
+    expect(map).not.toMatch(/updateTopicMastery|novaStudySession|masteryProbability:\s*[^t]/);
+    for (const engine of ["product/planner.ts", "product/planning-inputs.ts", "product/knowledge.ts", "product/progress.ts", "product/today.ts", "engines/planning-engine.ts", "engines/learning-dna-engine.ts"]) {
+      expect([engine, readers.includes(engine)]).toEqual([engine, false]);
+    }
   });
 
   it("has a contract the web app can import without pulling in the server", () => {

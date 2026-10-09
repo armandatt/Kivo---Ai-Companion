@@ -6,6 +6,7 @@
 
 import { generateOpenAIText } from "../../services/openai.service";
 import { NOVA_STATIC_LAYER } from "../brains/prompts/nova-static-layer.prompt";
+import { RESPONSE_DEADLINE_MS } from "../brains/response-brain";
 import { registerLine, type Register } from "../decision/register";
 import type { ProactiveType } from "../types/proactive.types";
 import { languageLine, type ReplyLanguage } from "../interaction/language";
@@ -76,7 +77,7 @@ export async function wordProactiveMessage(
   ].filter(Boolean).join("\n");
 
   try {
-    const request = { model: "gpt-4o", systemInstruction: `${NOVA_STATIC_LAYER}\n\n${context}`, prompt, maxOutputTokens: 200 };
+    const request = { model: "gpt-4o", systemInstruction: `${NOVA_STATIC_LAYER}\n\n${context}`, prompt, maxOutputTokens: 200, deadlineMs: RESPONSE_DEADLINE_MS };
     const raw  = generate ? await generate(request) : await generateOpenAIText(request);
     const text = raw.trim();
     // The static layer asks for JSON in conversation; here plain text was

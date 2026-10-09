@@ -260,7 +260,7 @@ test("the Creature view is the learner's own streak and active days, and an unto
   const fresh = await loadNovaCreature(l.chat, { now: clock });
   assert.equal(fresh.status, "ready");
   if (fresh.status !== "ready") return;
-  assert.deepEqual({ streakDays: fresh.streakDays, activeDays: fresh.activeDays, level: fresh.level, worldHealth: fresh.worldHealth }, { streakDays: 0, activeDays: 0, level: 1, worldHealth: 40 });
+  assert.deepEqual({ streakDays: fresh.streakDays, activeDays: fresh.activeDays, level: fresh.level, worldHealth: fresh.worldHealth }, { streakDays: 0, activeDays: 0, level: 1, worldHealth: 70 });
 
   // One timed session of 25 minutes, finished an hour ago.
   const subject = await prisma.novaSubject.findFirstOrThrow({ where: { profileId: l.profileId }, select: { id: true } });
@@ -275,7 +275,7 @@ test("the Creature view is the learner's own streak and active days, and an unto
   assert.equal(today.status, "ready");
   if (after.status !== "ready" || today.status !== "ready") return;
   assert.equal(after.activeDays, 1);
-  assert.equal(after.worldHealth, 50);
+  assert.equal(after.worldHealth, 75);
   assert.equal(after.level, 1);
   assert.equal(after.streakDays, today.progress.streakDays, "the streak Home shows");
   assert.equal(after.seed, fresh.seed, "the same world");

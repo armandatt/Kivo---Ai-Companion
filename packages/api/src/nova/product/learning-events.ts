@@ -317,3 +317,20 @@ export async function recordLearningEvent(
     throw err;
   }
 }
+
+// ── For the Knowledge Map ─────────────────────────────────────────────────────
+// The newest `take` saved pages with what each was filed under, and how many
+// there are in all.
+export async function listResourceLinks(profileId: string, take: number): Promise<{
+  resources: Array<{ id: string; title: string; url: string; domain: string; eventType: string; subjectId: string | null; topicName: string | null; occurredAt: Date }>;
+  total: number;
+}> {
+  const [resources, total] = await Promise.all([
+    prisma.novaLearningEvent.findMany({
+      where: { profileId }, orderBy: { occurredAt: "desc" }, take,
+      select: { id: true, title: true, url: true, domain: true, eventType: true, subjectId: true, topicName: true, occurredAt: true },
+    }),
+    prisma.novaLearningEvent.count({ where: { profileId } }),
+  ]);
+  return { resources, total };
+}
