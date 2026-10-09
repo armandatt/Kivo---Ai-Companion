@@ -186,6 +186,8 @@ function markWarned(chatId: string): void {
 }
 
 export async function POST(req: Request) {
+  // When this update arrived, for Nova's account of where its time went.
+  const receivedAt = Date.now();
   try {
     const body   = await req.json();
 
@@ -205,7 +207,7 @@ export async function POST(req: Request) {
     const event = normalizeTelegramUpdate(body);
     if (event.kind === "callback") {
       if (await isNovaChat(event.chatId) && novaMayProcess(req)) {
-        await handleNovaTelegramEvent(event, novaDeps());
+        await handleNovaTelegramEvent(event, novaDeps({ receivedAt }));
       }
       return Response.json({ ok: true });
     }
@@ -246,7 +248,9 @@ export async function POST(req: Request) {
         // functions the web app does. It needs an authenticated update and a
         // private chat; anything else is dropped here.
         if (event.kind !== "ignored" && novaMayProcess(req)) {
-          await handleNovaTelegramEvent(event, novaDeps());
+          // "Typing" stops when the reply is sent, not when the turn has
+          // been recorded: Nova answers first and records after.
+          await handleNovaTelegramEvent(event, novaDeps({ receivedAt, onReplied: stopTyping }));
         }
         return Response.json({ ok: true });
       }
@@ -856,8 +860,9 @@ function novaMayProcess(req: Request): boolean {
   return false;
 }
 
-function novaDeps() {
+function novaDeps(turn: { receivedAt?: number; onReplied?: () => void } = {}) {
   return {
+    ...turn,
     client: createTelegramClient(),
     webUrl: process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? null,
   };

@@ -182,7 +182,15 @@ test("the Topic Mastery Engine's record of its changes is what topic growth is d
     fromPercent: 30, toPercent: 55, fromLevel: "weak", toLevel: "developing", since: records[0]!.recordedAt.toISOString(),
   });
   assert.deepEqual(view.growth.improving[0]!.outcomes, ["struggled", "okay", "good"]);
-  assert.deepEqual(view.growth.justStarted.map(t => t.topicName), ["Indexing", "Normalization"]);
+  // Indexing was a timer stopped at four minutes. It is kept as a session
+  // (counted above under underTenMinutes) and is not a topic the learner has
+  // started: a session that short moves no mastery, whatever they answered.
+  assert.deepEqual(view.growth.justStarted.map(t => t.topicName), ["Normalization"]);
+  assert.equal(await prisma.novaTopicMastery.count({ where: { subject: { profileId: profile.a }, name: "Indexing" } }), 0);
+  const short = await prisma.novaStudySession.findFirstOrThrow({ where: { profileId: profile.a, topicName: "Indexing" }, select: { status: true, executionReport: true } });
+  assert.equal(short.status, "completed", "the session itself is on record");
+  assert.equal((short.executionReport as { outcome?: string }).outcome, "good", "with the answer they gave");
+  assert.equal(await prisma.novaTopicMasterySnapshot.count({ where: { profileId: profile.a, topic: { name: "Indexing" } } }), 0);
   assert.equal(view.overview.topicsImproved, 1);
 
   // Progress and Knowledge show the same number for the same topic.

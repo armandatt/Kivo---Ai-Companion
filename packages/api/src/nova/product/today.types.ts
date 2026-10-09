@@ -166,6 +166,10 @@ export type NovaSessionResponse =
         // False when the session had no subject, so its topic could not be
         // recorded: the session is logged, but Knowledge has nothing new.
         topicRecorded: boolean;
+        // False when the timer was stopped before ten minutes of study. The
+        // session is kept with the answer the learner gave, but it changed
+        // nothing in Knowledge and is not counted by Progress.
+        counted: boolean;
       } | null;
     }
   | { ok: false; error: NovaSessionError; message: string };

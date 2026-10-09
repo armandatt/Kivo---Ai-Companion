@@ -70,6 +70,7 @@ export function createTelegramClient(options: { token?: string; baseUrl?: string
     async setChatCommands(chatId, commands) {
       await call("setMyCommands", { commands, scope: { type: "chat", chat_id: chatId } });
     },
+
   };
 }
 

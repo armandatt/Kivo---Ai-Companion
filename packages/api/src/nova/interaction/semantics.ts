@@ -50,7 +50,7 @@ const HEAVY: ReadonlySet<AcademicEmotion> = new Set<AcademicEmotion>([
 export function kindOf(u: AcademicUnderstanding): InteractionKind {
   const req = u.request;
   if (!req || u.malformed) return "unclear";
-  if (req.clarity === "unsupported") return "unsupported";
+  if (req.clarity === "unsupported" || req.action === "set_reminder") return "unsupported";
   const circumstance = (u.realityObservations ?? []).some(o => o.status === "active");
   // An unclear message keeps its feeling and its circumstance, and nothing else.
   if (req.clarity !== "clear") {

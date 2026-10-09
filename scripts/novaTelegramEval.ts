@@ -192,6 +192,36 @@ const CASES: Case[] = [
   c("gibberish", "deadlocks asdf",              NONE, ["clarify", "converse"]),
   c("gibberish", "30",                          NONE, ["clarify", "show_today", "converse"]),
 
+  // ── Seen in real use ───────────────────────────────────────────────────────
+  // Short noise a learner actually sent. Asked about; never acted on.
+  c("dogfood", "b ruh",                         NONE,    ["clarify", "converse"]),
+  c("dogfood", "rhtqtaf",                       NONE,    ["clarify"]),
+  c("dogfood", "rhtqtaf",                       RUNNING, ["clarify"]),
+  c("dogfood", "end session",                   RUNNING, ["ask_outcome"]),
+  c("dogfood", "end",                           RUNNING, ["ask_outcome"]),
+  c("dogfood", "do it",                         NONE,    ["clarify", "converse"]),
+  c("dogfood", "actually I only have 10 minutes", OFFER, ["show_today"]),
+  c("dogfood", "what should I study if I have 20 minutes?", NONE, ["show_today"]),
+  c("dogfood", "today is a mess, I can't study", OFFER,  ["converse", "defer", "answer_prompt"], STARTS),
+  c("dogfood", "I've got an exam tomorrow and I'm freaking out", NONE, ["converse", "show_today"]),
+
+  // ── Reminders ──────────────────────────────────────────────────────────────
+  // Nova has no reminder to create. A request for one must be read as one,
+  // so that it is answered with that fact: never quieted as a "not today"
+  // (defer), never taken as time available (show_today), never left to the
+  // Response Brain to word as a promise (converse).
+  ...[
+    "remind me to study at 8 am tomorrow",
+    "remind me to study deadlocks tomorrow at 8",
+    "remind me tomorrow morning",
+    "remind me in two hours to review paging",
+    "remind me every Monday at 7pm to revise DAA",
+    "ping me at 9 tonight to start",
+    "can you remind me before my OS exam",
+  ].flatMap(text => [NONE, OFFER].map(scene =>
+    c("reminder", text, scene, ["reminder_unavailable"], [...WRITES, "defer", "show_today", "converse", "offer_start"]))),
+  c("reminder", "don't remind me today",        OFFER,   ["defer", "answer_prompt"], STARTS),
+
   // ── Taking it back; several things at once ─────────────────────────────────
   c("contradiction", "start deadlocks for 30 but don't start yet", NONE, ["offer_start", "show_today", "converse", "defer"]),
   c("contradiction", "wait, don't start yet",   OFFER, ["converse", "clarify", "defer"], WRITES, { history: START_TALK }),

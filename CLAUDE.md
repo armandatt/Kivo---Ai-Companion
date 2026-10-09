@@ -333,6 +333,20 @@ Held by `creature-view.test.ts` and `nova-language.itest.ts`. `/creature` is one
 - The page asks that route first. A Nova learner's world is drawn from the answer; `not_nova` gets Rex's world, which still runs on the page's fixed figures; a failed request shows an error and no numbers. Nothing mounts before the answer, because the engine is built once from the seed.
 - The seed is a hash of the learner key, so each learner has their own terrain and it names nobody.
 - Nova does not mention the creature in chat, and no message is sent about it.
+## Telegram hardening: what real use showed
+
+Held by `telegram-hardening.test.ts` and `nova-hardening.itest.ts`.
+
+- **Nova has no reminder for a set time.** Rex's `CustomReminder` is not used: it parses times with regexes and a second model call, falls back to `Asia/Kolkata`, and is sent with no outbox or retry. So a request for one is read (`request.action = "set_reminder"`), decided (`reminder_unavailable`, before every other rule, so it is never a "not today") and answered by code with `TEXT.reminderUnavailable`: nothing was scheduled. It is never worded by the model. Do not add a reminder writer on the Telegram path; a real one belongs in `proactive/proactive-outbox.ts` with its own type.
+- **The Response Brain may not claim or promise an action** (static layer rules 11 and 12): nothing was done unless the prompt says so, and nothing is said about the student that is not on record.
+- **One update, one reply.** `deliver` in `telegram-turn.ts` drops and logs a second reply to the same update, and the last-resort "that didn't go through" line is sent only when nothing has been.
+- **Noise and a model that is down are different replies.** Noise (`clarity: unintelligible`) is "I didn't catch that", with the fixed choices once and no second set while those are open. A reading that failed is `TEXT.notUnderstood`, which says the commands still work. In production, repeated `understanding_failed` in the log means the model provider is refusing calls (a quota or rate limit), not that the messages were unreadable.
+- **A model call has a deadline** (`deadlineMs` on the one LLM client; 6 s for a reading, 8 s for wording, `NOVA_UNDERSTANDING_DEADLINE_MS` / `NOVA_RESPONSE_DEADLINE_MS`). Every attempt and every wait between attempts fits inside it, so a rate-limited provider fails in time for the turn to answer. Callers that pass none (Rex) are unchanged.
+- **A session stopped before ten minutes** is ended and rated like any other and is kept, with the learner's answer, on the session. It moves no mastery, reschedules no review and writes no mastery history (`countedAsStudy` on the execution report, decided in `study-session-engine.ts` with the same `COUNTED_SESSION_MINUTES` Progress and Learning DNA use). Both surfaces say so (`ended.counted`).
+- **The reply is sent before the turn is recorded.** A reply code wrote goes out before `runNovaOrchestrator`; a worded one goes out from the orchestrator's `hooks.reply`, before `persistTurn`. Recording still runs and is still awaited inside the same request: nothing is left running after the webhook returns.
+- **Typing** is the webhook's existing indicator. It stops when the reply is sent (`onReplied`), not when the turn has been recorded.
+- **Where the time went** is on the one `nova_telegram` log line: `timings` (`webhookMs`, `learnerMs`, `contextMs`, `understandingMs`, `decisionMs`, `actionMs`, `responseMs`, `telegramSendMs`, `replyMs`, `persistMs`, `totalMs`), `modelCalls` and `slowStage`. `replyMs` is what the learner waits. `scripts/novaTelegramLatency.ts` turns a log download into P50/P95 per kind of update.
+- **A second message sent while the first is still being recorded** gets "Still on your last message". The turn lease is unchanged; waiting for it needs a timer, which `telegram-mentor.test.ts` forbids in these files.
 
 ## Study setup: one setup, three ways in
 

@@ -25,6 +25,8 @@
 //                       accepting it.
 //   save setup          never from a sentence. What the student says a
 //                       subject covers is offered back; Save is what saves it.
+//   set a reminder      never. Nova has no reminder for a set time, so a
+//                       request for one is answered with that fact, by code.
 //
 // And the turns that change nothing but still need deciding:
 //
@@ -78,6 +80,9 @@ export type TurnAction =
   | { type: "offer_setup"; setup: SetupStatement }
   // A clear request for something Nova does not do in this chat.
   | { type: "unsupported" }
+  // A reminder for a set time. Nova has nothing that creates one, so nothing
+  // is created and the reply says exactly that.
+  | { type: "reminder_unavailable" }
   | { type: "clarify" }
   // No product action. The turn is a conversation: Decision Graph, then the
   // Response Brain.
@@ -149,6 +154,14 @@ export function decideAction(understanding: AcademicUnderstanding, ctx: ActionCo
     || (understanding.realityObservations ?? []).length > 0;
   const decided = (action: TurnAction, reason: string, generate = feeling): ActionDecision =>
     ({ action, proposeExam: clear ? req.exam : null, generate, reason });
+
+  // A reminder was asked for. There is no reminder to create, so this turn
+  // creates nothing, changes nothing (it is not a "not today") and is never
+  // worded by the model: a generated reply here is how "sure, I'll remind
+  // you" gets said about something that does not exist.
+  if (req.action === "set_reminder") {
+    return { action: { type: "reminder_unavailable" }, proposeExam: null, generate: false, reason: "reminder_not_supported" };
+  }
 
   if (req.clarity === "unsupported") return decided({ type: "unsupported" }, "unsupported_request", false);
 

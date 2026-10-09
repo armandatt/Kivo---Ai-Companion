@@ -71,6 +71,7 @@ export async function runNovaOrchestrator(
   input: NovaOrchestratorInput,
 ): Promise<NovaOrchestratorResult> {
   const now = input.timestamp ?? new Date();
+  const turnStartedAt = Date.now();
   const { platformChatId, text } = input;
 
   // ── 0. Resolve user ───────────────────────────────────────────────────────
@@ -325,6 +326,9 @@ export async function runNovaOrchestrator(
   let responseGenerated = false;
   let responseOk        = true;
   let register: string | null = null;
+  // Where the turn's time went, for the surface's one log line.
+  const contextMs = Date.now() - turnStartedAt;
+  let responseMs  = 0;
 
   if (input.scriptedReply) {
     brainOutput = scripted(input.scriptedReply);
@@ -345,8 +349,11 @@ export async function runNovaOrchestrator(
     // An explanation has no register to play with: it is plain either way.
     const prompt = [microPrompt, explaining ? null : registerLine(chosen), input.directive ? `Decided action (word this, do not change it): ${input.directive}` : null]
       .filter(Boolean).join("\n\n");
+    input.hooks?.beforeResponse?.();
+    const respondStartedAt = Date.now();
     try {
       brainOutput = await (input.respond ?? runResponseBrain)(dynamicLayer, prompt);
+      responseMs  = Date.now() - respondStartedAt;
       if (input.responseFallback && brainOutput.reply === UNREADABLE_RESPONSE_REPLY) {
         responseOk  = false;
         brainOutput = scripted(input.responseFallback);
@@ -354,6 +361,7 @@ export async function runNovaOrchestrator(
     } catch (err) {
       if (!input.responseFallback) throw err;
       console.error("[nova] response brain failed, using fallback:", (err as Error).message);
+      responseMs  = Date.now() - respondStartedAt;
       responseOk  = false;
       brainOutput = scripted(input.responseFallback);
     }
@@ -381,6 +389,10 @@ export async function runNovaOrchestrator(
     now,
   };
 
+  // The reply exists. A surface that sends it itself does so now; what
+  // follows records the turn and does not change the reply.
+  if (input.hooks?.reply) await input.hooks.reply(brainOutput.reply);
+
   let persisted: Awaited<ReturnType<typeof persistTurn>> | null = null;
   if (input.awaitPersistence) {
     persisted = await persistTurn(persistence).catch(err => { console.error("[nova:persistence] Write failed:", err); return null; });
@@ -394,7 +406,7 @@ export async function runNovaOrchestrator(
     reasoningMode: brainOutput.reasoningMode,
     confidence:    brainOutput.confidence,
     trace: {
-      responseGenerated, responseOk, register,
+      responseGenerated, responseOk, register, contextMs, responseMs,
       persisted:           persisted !== null,
       evidenceKinds:       persisted?.evidenceKinds ?? [],
       consolidationQueued: persisted?.consolidationQueued ?? false,
