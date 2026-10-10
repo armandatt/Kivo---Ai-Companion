@@ -430,3 +430,13 @@ The files run one at a time (`--test-concurrency=1`): a proactive tick visits ev
 ## Guide
 
 `/guide` is one address with two guides: `app/(dashboard)/guide/page.tsx` reads the companion from `useDashboardCompanion()` (a context the dashboard shell provides) and renders `components/guide/nova-guide.tsx` or `components/guide/rex-guide.tsx`. Nova's guide is static copy describing behaviour that exists: when a Telegram command, the extension's permissions or popup labels, the ten-minute session rule or a nav page changes, change the guide with it.
+
+## Saving a link (web app and bookmarklet)
+
+A saved page has one way in: `POST /api/nova/learning-events` → `recordLearningEvent` (`product/learning-events.ts`). It has two callers. A request with `Authorization: Bearer` is the extension's; one without is the signed-in web app's (`handleWebSave`: session cookie, JSON content type, `resource_saved` only, `source: "web"`). Do not add another save endpoint or table.
+
+- `product/resource-link.ts` is pure and shared with the browser: `normalizeResourceUrl` (the one definition of an address Nova keeps), `checkLink` for typed input, `titleFromUrl`, and the bookmarklet (`bookmarkletCode`, `readCapture`). It has no regex and no imports beyond the types file; tests hold both.
+- Nova never fetches a saved address, so a pasted link's title is read off the address and the learner edits it.
+- The bookmarklet opens `/saved#save=<address>&title=<title>`. The capture is in the fragment (not sent to a server) and carries no credential. `components/nova/saved/pending-capture.ts` takes it once; the sign-in page parks it in `sessionStorage` for ten minutes when the learner was signed out.
+- Nothing is saved until the learner presses Save: a capture only opens the review.
+- The release ZIP for the store comes from `npm run package --workspace nova-extension`; listing and privacy drafts are in `apps/extension/store/`.

@@ -1114,7 +1114,7 @@ model NovaLearningEvent {
   id            String   @id @default(cuid())
   profileId     String
   eventType     String   // "resource_saved" | "study_requested"
-  source        String   // "browser_extension": set by the server from the credential used
+  source        String   // "browser_extension" | "web": set by the server from the credential used
   // The id the client gave this one action. A retry carries the same id and
   // creates nothing.
   clientEventId String

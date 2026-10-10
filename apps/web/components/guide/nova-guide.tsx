@@ -72,7 +72,7 @@ const PAGES = [
   { href: '/knowledge',    label: 'Knowledge',     icon: BookOpen,    body: 'Every topic by subject, with where each one stands.' },
   { href: '/map',          label: 'Knowledge Map', icon: Waypoints,   body: 'Subjects, topics, notes and saved pages as a graph you can pan, zoom and filter.' },
   { href: '/notes',        label: 'Notes',         icon: NotebookPen, body: 'Your own notes, filed under a subject and topic.' },
-  { href: '/saved',        label: 'Saved',         icon: Bookmark,    body: 'Pages sent from the browser extension, and where you connect a browser.' },
+  { href: '/saved',        label: 'Saved',         icon: Bookmark,    body: 'Links you want to come back to: paste one, send it with the Save to Kivo bookmark, or use the extension.' },
   { href: '/progress',     label: 'Progress',      icon: TrendingUp,  body: 'What has changed since your first session, from sessions you finished.' },
   { href: '/learning-dna', label: 'Learning DNA',  icon: Dna,         body: 'What Nova has learned about how you study, with how sure it is and why.' },
   { href: '/creature',     label: 'Creature',      icon: Map,         body: 'A small world that grows with the days you study. It never shrinks for a day off.' },
@@ -272,6 +272,18 @@ export function NovaGuide() {
             </Link>
           </div>
           <PopupMock />
+        </div>
+
+        <div className={`${CARD} mt-6 flex flex-wrap items-center justify-between gap-4 p-6 sm:px-8`}>
+          <div className="min-w-0">
+            <p className="text-base font-semibold text-foreground">Nothing to install</p>
+            <p className="mt-1 max-w-prose text-sm leading-relaxed text-foreground/60">
+              In any browser, Safari and phones included: paste a link on Saved, or add the Save to Kivo bookmark there and send pages with one click. Both save a page; starting a session from a page you saved is one more click on Saved.
+            </p>
+          </div>
+          <Link href="/saved" className="inline-flex h-10 items-center rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/85 transition-colors hover:bg-white/5">
+            Save a link
+          </Link>
         </div>
 
         <div className={`${CARD} mt-6 p-6 sm:p-8`}>
