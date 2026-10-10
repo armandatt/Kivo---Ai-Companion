@@ -38,6 +38,8 @@ export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
   { path: "/learning-dna", label: "Learning DNA" },
   // The same world page Rex has, fed by Nova's own numbers (product/creature.ts).
   { path: "/creature", label: "Creature" },
+  // Rex has a guide at the same address; the page shows each companion its own.
+  { path: "/guide",   label: "Guide" },
 ];
 
 // Shared account pages, the same for both companions.

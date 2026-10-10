@@ -1,11 +1,16 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { Menu } from 'lucide-react'
 import { routeAccess, type Companion } from '@repo/api/nova/product/companion'
 import { Sidebar } from '@/components/sidebar'
 import { NovaUnavailable } from '@/components/nova/nova-unavailable'
+
+// A page both companions have (the Guide) reads which one it is showing for
+// from here. Pages mount only once the companion is known.
+const CompanionContext = createContext<Companion>('rex')
+export const useDashboardCompanion = () => useContext(CompanionContext)
 
 type Props = {
   children:  React.ReactNode
@@ -87,7 +92,7 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
 
         {/* Full-bleed world — no padding, no overflow */}
         <main className="kivo-dark w-full h-screen overflow-hidden">
-          {children}
+          <CompanionContext.Provider value={companion}>{children}</CompanionContext.Provider>
         </main>
 
         {/* Floating three-line button — visible only when sidebar is closed */}
@@ -109,7 +114,7 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
       <Sidebar open={access === 'render' ? sidebarOpen : true} onOpenChange={setSidebarOpen} companion={companion} />
       <main className="flex-1 overflow-auto">
         <div className="relative h-full p-6">
-          {access === 'render' ? children
+          {access === 'render' ? <CompanionContext.Provider value={companion}>{children}</CompanionContext.Provider>
             : access === 'nova_unavailable' ? <NovaUnavailable pathname={pathname} />
             : null /* a Rex account on a Nova-only page: being sent to Home */}
         </div>
