@@ -1,6 +1,6 @@
 import { Header } from "@/components/header"
 import { HeroSection } from "@/components/hero-section"
-import { DualCompanionChat } from "@/components/dual-companion-chat"
+import { NovaShowcase } from "@/components/nova-showcase"
 import { BentoGrid } from "@/components/bento-grid"
 import { HowItWorks } from "@/components/how-it-works"
 import { CreatureReveal } from "@/components/creature-reveal"
@@ -16,7 +16,7 @@ export default function Home() {
       <Header />
       <main>
         <HeroSection />
-        <DualCompanionChat />
+        <NovaShowcase />
         <BentoGrid />
         <HowItWorks />
         <CreatureReveal />
