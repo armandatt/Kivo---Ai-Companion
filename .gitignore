@@ -39,3 +39,6 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
+
+# The extension's release ZIP (npm run package --workspace nova-extension)
+apps/extension/release

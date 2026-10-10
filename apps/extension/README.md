@@ -27,6 +27,14 @@ npm test --workspace nova-extension
 
 `NOVA_URL` is the address of the Nova **web app** (not the API). It must be `https`, or `localhost` for development (the default is `http://localhost:3000`). Then in Chrome: `chrome://extensions` → Developer mode → **Load unpacked** → choose `apps/extension/dist`.
 
+## Releasing
+
+```sh
+NOVA_URL=https://your-nova.example npm run package --workspace nova-extension   # writes apps/extension/release/nova-extension-<version>.zip
+```
+
+The ZIP is what the Chrome Web Store takes. It is reproducible (same sources and address, same bytes; the SHA-256 is printed), and the step refuses an address that is not https or is local, and any build that asks for more than the two permissions. Listing text, the privacy statement draft and the submission steps are in `store/`.
+
 ## Connecting
 
 1. Click the Nova icon → **Get a code from Nova**. Nova opens on its Saved page.
