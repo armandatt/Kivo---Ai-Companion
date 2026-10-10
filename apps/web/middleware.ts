@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server"
 
 const PROTECTED_ROUTES = [
   "/home", "/coach", "/journey", "/progress", "/goals", "/creature", "/settings",
+  "/planner", "/focus", "/knowledge", "/map", "/notes", "/saved", "/learning-dna",
   "/onboarding",
 ]
 
@@ -32,5 +33,12 @@ export const config = {
     "/creature/:path*",
     "/settings/:path*",
     "/onboarding/:path*",
+    "/planner/:path*",
+    "/focus/:path*",
+    "/knowledge/:path*",
+    "/map/:path*",
+    "/notes/:path*",
+    "/saved/:path*",
+    "/learning-dna/:path*",
   ],
 }

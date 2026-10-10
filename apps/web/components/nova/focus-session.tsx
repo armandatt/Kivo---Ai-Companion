@@ -1,11 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { ArrowLeft, Check, Loader2, Pause, Play, Square } from 'lucide-react'
 import type { NovaSessionOutcome } from '@repo/api/nova/product/today.types'
 import { cn } from '@/lib/utils'
 import { clock, minutesLabel } from './format'
+import { StudyRequest } from './saved/study-request'
 import { useNovaSession } from './use-nova-session'
 
 const RING = 2 * Math.PI * 54
@@ -53,6 +55,10 @@ function Notice({ title, body }: { title: string; body: string }) {
 export function FocusSession() {
   const { loading, session, elapsedSeconds, ended, pending, error, blocked, command, end, retry } = useNovaSession()
   const [ending, setEnding] = useState(false)
+  // A page the learner asked to study, from the browser extension or Saved.
+  const studyId = useSearchParams().get('study')
+  // Starting from the card moves to /focus with no query: read the session again at once.
+  useEffect(() => { void retry() }, [studyId, retry])
 
   if (blocked) return <Notice title="Nova isn't set up yet" body={blocked} />
 
@@ -68,7 +74,9 @@ export function FocusSession() {
             {minutesLabel(ended.minutes)}{ended.topicName ? ` on ${ended.topicName}` : ''}
             {ended.outcome ? <>. You said {OUTCOME_SAID[ended.outcome]}.</> : '.'}
             {' '}
-            {ended.topicRecorded
+            {ended.counted === false
+              ? 'That was under ten minutes, so Nova kept it as a session but changed nothing in Knowledge or Progress.'
+              : ended.topicRecorded
               ? 'Nova has updated this topic and when to revisit it.'
               : "Nova logged the session, but couldn't tie this topic to one of your subjects, so it isn't in Knowledge yet."}
           </p>
@@ -110,6 +118,7 @@ export function FocusSession() {
         </Shell>
       )
     }
+    if (studyId) return <Shell><StudyRequest id={studyId} /></Shell>
     return <Notice title="No session running" body="Start one from Home. Nova will have picked what matters most right now." />
   }
 
@@ -121,6 +130,11 @@ export function FocusSession() {
 
   return (
     <Shell>
+      {studyId && (
+        <p role="status" className="mt-6 rounded-xl border border-white/10 bg-white/3 px-4 py-3 text-center text-xs leading-relaxed text-foreground/65" data-study-waiting>
+          You already have a session running. Finish this one first; the page you picked is in <Link href="/saved" className="text-keppel-300 hover:text-keppel-200">Saved</Link>.
+        </p>
+      )}
       <div className="mt-10 text-center">
         {session.subjectName && <p className="text-sm text-foreground/55">{session.subjectName}</p>}
         <h1 className="mt-1 text-3xl font-semibold leading-tight tracking-tight text-foreground sm:text-4xl">

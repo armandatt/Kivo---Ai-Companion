@@ -7,7 +7,13 @@ import { TelegramCard } from './telegram-connect'
 import { RecommendationCard } from './recommendation-card'
 import { TalkToNova } from './talk-to-nova'
 import { TimeAvailable } from './time-available'
-import { AccountingFor, Recently, UpNext, Upcoming, WorkingToward } from './today-sections'
+import type { NovaNotesView } from '@repo/api/nova/product/notes.types'
+import type { NovaCreatureView } from '@repo/api/nova/product/creature.types'
+import { AccountingFor, UpNext, WorkingToward } from './today-sections'
+import { CompanionCard, ContinueLearning, Deadlines, QuickActions, WeekSoFar } from './home-panels'
+import { TodayTasks } from './tasks/today-tasks'
+import { useTasks } from './tasks/use-tasks'
+import { useNovaView } from './use-nova-view'
 import { firstName, greeting, inDays, minutesLabel } from './format'
 import { useStartSession } from './use-start-session'
 
@@ -50,10 +56,15 @@ const EMPTY: Record<NonNullable<NovaTodayReady['emptyReason']>, { title: string;
   },
 }
 
-// Home for a Nova learner. It answers one question, "what should I do right
-// now?", with what Nova's engines already decided.
+// Home for a Nova learner. One question leads the page, "what should I do
+// right now?", answered with what Nova's engines already decided; the
+// learner's own tasks come next; everything else is context in the margin.
+// The page lays out what the server returned and decides nothing itself.
 export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Props) {
   const { start, starting, error: startError } = useStartSession()
+  const board    = useTasks()
+  const notes    = useNovaView<NovaNotesView>('/api/nova/notes')
+  const creature = useNovaView<NovaCreatureView>('/api/nova/creature')
 
   const name   = firstName(view.learnerName)
   const active = view.activeSession
@@ -67,65 +78,90 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
     ...view.constraints.map(c => `Accounting for: ${c.description}`),
     ...view.plan.assumptions,
   ]
+  const tasks = board.view?.status === 'ready' ? board.tasks : null
+  const recentNotes = notes.view?.status === 'ready' ? notes.view.notes : []
 
   return (
-    <div className="mx-auto w-full max-w-3xl pb-20 pt-10 lg:pt-4">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-          {greeting(new Date())}{name ? `, ${name}` : ''}
-        </h1>
-        <p className="mt-1.5 text-sm text-foreground/55">{contextLine(view)}</p>
+    <div className="mx-auto w-full max-w-6xl pb-20 pt-10 lg:pt-4">
+      <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+            {greeting(new Date())}{name ? `, ${name}` : ''}
+          </h1>
+          <p className="mt-2 text-sm text-foreground/55">{contextLine(view)}</p>
+        </div>
+        <QuickActions />
       </header>
 
-      {!active && (
-        <div className="mt-6">
-          <TimeAvailable minutes={minutes} onChange={onMinutes} busy={refreshing} />
-        </div>
-      )}
-
-      <div className="mt-6">
-        {active ? (
-          <ActiveSessionCard session={active} />
-        ) : rec ? (
-          <RecommendationCard
-            action={rec}
-            context={whyContext}
-            note={view.plan.budgetBasis === 'stated_time' && view.availableMinutes
-              ? `Today's plan is fitted to the ${minutesLabel(view.availableMinutes)} you have.` : null}
-            onStart={() => start(rec)}
-            starting={starting === rec.topicName}
-            error={startError}
-          />
-        ) : empty ? (
-          <section className="rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9">
-            <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">No recommendation yet</p>
-            <h2 className="mt-5 text-2xl font-semibold leading-tight tracking-tight text-foreground sm:text-3xl">{empty.title}</h2>
-            <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">{empty.body}</p>
-            {view.subjects.length > 0 && (
-              <p className="mt-3 text-xs text-foreground/45">Subjects on file: {view.subjects.join(', ')}</p>
+      <div className="mt-8 grid grid-cols-1 gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        {/* ── What to do ─────────────────────────────────────────────────── */}
+        <div className="min-w-0 space-y-10">
+          <section aria-label="Focus now">
+            {!active && (
+              <div className="mb-5">
+                <TimeAvailable minutes={minutes} onChange={onMinutes} busy={refreshing} />
+              </div>
             )}
-            {view.emptyReason === 'no_topics' && (
-              <FirstSession
-                subjects={view.subjects}
-                starting={starting !== null}
+            {active ? (
+              <ActiveSessionCard session={active} />
+            ) : rec ? (
+              <RecommendationCard
+                action={rec}
+                context={whyContext}
+                note={view.plan.budgetBasis === 'stated_time' && view.availableMinutes
+                  ? `Today's plan is fitted to the ${minutesLabel(view.availableMinutes)} you have.` : null}
+                onStart={() => start(rec)}
+                starting={starting === rec.topicName}
                 error={startError}
-                onStart={(topicName, subjectName) => start({ topicName, subjectName, durationMinutes: 25 })}
               />
-            )}
-            {empty.ask && <TalkToNova className="mt-6" placeholder={empty.ask} onReplied={onRefresh} />}
+            ) : empty ? (
+              <section className="rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9">
+                <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">No recommendation yet</p>
+                <h2 className="mt-5 text-2xl font-semibold leading-tight tracking-tight text-foreground sm:text-3xl">{empty.title}</h2>
+                <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">{empty.body}</p>
+                {view.subjects.length > 0 && (
+                  <p className="mt-3 text-xs text-foreground/45">Subjects on file: {view.subjects.join(', ')}</p>
+                )}
+                {view.emptyReason === 'no_topics' && (
+                  <FirstSession
+                    subjects={view.subjects}
+                    starting={starting !== null}
+                    error={startError}
+                    onStart={(topicName, subjectName) => start({ topicName, subjectName, durationMinutes: 25 })}
+                  />
+                )}
+                {empty.ask && <TalkToNova className="mt-6" placeholder={empty.ask} onReplied={onRefresh} />}
+              </section>
+            ) : null}
           </section>
-        ) : null}
-      </div>
 
-      {/* Optional, and below what to do now: it never stands in front of the plan. */}
-      <TelegramCard className="mt-8" />
+          <TodayTasks
+            tasks={tasks} failed={board.loadError} error={board.error}
+            onCreate={board.create} onUpdate={board.update}
+          />
 
-      <div className="mt-10 grid grid-cols-1 gap-x-12 gap-y-8 md:grid-cols-2">
-        <UpNext actions={later} onStart={active ? undefined : start} disabled={starting !== null} />
-        <Upcoming items={view.upcoming} />
-        <WorkingToward goals={view.goals} />
-        <Recently view={view} />
-        <AccountingFor constraints={view.constraints} />
+          <UpNext actions={later} onStart={active ? undefined : start} disabled={starting !== null} />
+        </div>
+
+        {/* ── Context ────────────────────────────────────────────────────── */}
+        <aside className="space-y-9">
+          <Deadlines exams={view.upcoming} tasks={tasks ?? []} />
+          <WeekSoFar view={view} />
+          <ContinueLearning
+            view={view} notes={recentNotes} busy={starting !== null}
+            onResume={topicName => {
+              // The plan's own block for that topic if it has one; else a
+              // standard block. The subject comes from the plan, never guessed.
+              const planned = [view.recommendation, ...view.alternatives].find(a => a?.topicName === topicName)
+              if (planned) void start(planned)
+              else window.location.assign('/focus')
+            }}
+          />
+          <CompanionCard creature={creature.view} name={null} />
+          <TelegramCard />
+          <WorkingToward goals={view.goals} />
+          <AccountingFor constraints={view.constraints} />
+        </aside>
       </div>
     </div>
   )

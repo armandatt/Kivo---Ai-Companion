@@ -189,7 +189,7 @@ async function speak(n, label, text, expectRegister) {
   const hasEmoji = /\p{Extended_Pictographic}/u.test(reply);
   const claims = /\b(i('ve| have)? (started|added|saved|scheduled|set a reminder|logged)|session (is )?(started|running now))\b/i.test(reply);
   // A fallback line means the model did not answer: that is not a tone result.
-  const fallback = /^I couldn't read that just now|^Got that\. \/today shows what's next\.$/.test(reply);
+  const fallback = /^I couldn't read that just now|^I can't read messages right now|^Got that\. \/today shows what's next\.$/.test(reply);
   if (fallback) { step(n, `tone: ${label}`, false, `MODEL UNAVAILABLE (fallback reply) "${text}" -> ${reply}`); return; }
   tone.push({ label, text, reply });
   step(n, `tone: ${label}`, reply.length > 0 && reply.length <= 420 && !hasEmoji && !(claims && open === "0"), `(${reply.length} chars${hasEmoji ? ", EMOJI" : ""}${claims ? ", CLAIMS AN ACTION" : ""}; expected ${expectRegister}) "${text}" -> ${reply.replace(/\n/g, " / ")}`);

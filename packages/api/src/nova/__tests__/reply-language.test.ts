@@ -217,7 +217,8 @@ describe("where the language is kept", () => {
     const turn = read("telegram/telegram-turn.ts");
     // Either the Response Brain words it, or the language step does.
     expect(turn).toContain("const fallback = generate ? english : await inLanguage(english);");
-    expect(turn).toContain("await deliver(reply, true);");
+    expect(turn).toContain("if (!generate) await deliver(shell(fallback), true);");
+    expect(turn).toContain("reply: (text: string) => deliver(shell(text), true)");
     // A command or a button tap is never reworded by a model.
     expect(turn).toContain('if (event.kind !== "text") return text;');
     // The language step spends from the same daily wording budget.

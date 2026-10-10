@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Nova",
+  "version": "1.0.0",
+  "description": "Save what you're reading to Nova, or study it. Nova sees a page only when you click its button on that page.",
+  "minimum_chrome_version": "110",
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "action": {
+    "default_title": "Nova",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/16.png", "48": "icons/48.png" }
+  },
+  "permissions": ["activeTab", "storage"]
+}

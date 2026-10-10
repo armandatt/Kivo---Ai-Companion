@@ -8,6 +8,10 @@
 import { generateOpenAIText } from "../../services/openai.service";
 import { languageLine, type ReplyLanguage } from "../interaction/language";
 
+// Rewording is a courtesy. If it has not come back by now, the reply goes
+// out as code wrote it.
+export const LANGUAGE_DEADLINE_MS = 5_000;
+
 const DIGITS = "0123456789";
 
 // Every run of digits in a text, in order of appearance, sorted. Two texts
@@ -61,7 +65,7 @@ export async function sayInLanguage(
   const line  = languageLine(input.language);
   if (!line || !input.text.trim()) return plain;
   try {
-    const request = { model: "gpt-4o-mini", systemInstruction: `${SYSTEM}\n${line}`, prompt: input.text, maxOutputTokens: 400 };
+    const request = { model: "gpt-4o-mini", systemInstruction: `${SYSTEM}\n${line}`, prompt: input.text, maxOutputTokens: 400, deadlineMs: LANGUAGE_DEADLINE_MS };
     const raw  = generate ? await generate(request) : await generateOpenAIText(request);
     const text = raw.trim();
     return faithful(input.text, text) ? { text, rendered: true } : plain;

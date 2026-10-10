@@ -70,6 +70,11 @@ function buildFallback(reply: string): ResponseBrainOutput {
 
 // ── Response Brain call ───────────────────────────────────────────────────────
 
+// Wording that has not arrived by now is not waited for. A caller that gave a
+// fallback sends that; the reply is bounded by the prompt (150 words at
+// most), so the token cap below is only a backstop.
+export const RESPONSE_DEADLINE_MS = Number(process.env.NOVA_RESPONSE_DEADLINE_MS) > 0 ? Number(process.env.NOVA_RESPONSE_DEADLINE_MS) : 8_000;
+
 export async function runResponseBrain(
   dynamicLayer: string,  // assembled by Context Builder (≤ 2,000 tokens)
   microPrompt:  string,  // selected intervention + evidence (≤ 300 tokens)
@@ -82,6 +87,7 @@ export async function runResponseBrain(
     systemInstruction: fullSystemPrompt,
     prompt:            microPrompt,
     maxOutputTokens:   800,
+    deadlineMs:        RESPONSE_DEADLINE_MS,
   });
 
   return parseResponseBrainOutput(raw, fallbackReply);

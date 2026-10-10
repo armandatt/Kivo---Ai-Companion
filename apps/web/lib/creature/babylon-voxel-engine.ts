@@ -835,6 +835,7 @@ export class BabylonVoxelEngine {
   private skyDome:     THREE.Mesh
   private water:       THREE.Mesh
   private campfire:    THREE.PointLight
+  private campfireBase = 1.5
   private kivo:        Kivo
   private heightFn:    (x:number,z:number)=>number
   private camPos     = new THREE.Vector3(0, 9, 14)
@@ -1270,8 +1271,11 @@ export class BabylonVoxelEngine {
     this.hemi.intensity   = isDay ? 0.85 : 0.3
     this.sun.position.set(Math.cos(ang)*110, Math.abs(Math.sin(ang))*110, 45)
 
-    // Campfire flicker
-    this.campfire.intensity = 1.5 + Math.sin(t * 7.3) * 0.4 + Math.sin(t * 13.7) * 0.25
+    // Campfire: embers by day, a proper fire once it is dark. It eases
+    // between the two, and flickers either way.
+    const fire = isNight ? 2.6 : 0.7
+    this.campfireBase += (fire - this.campfireBase) * 0.02
+    this.campfire.intensity = this.campfireBase * (1 + Math.sin(t * 7.3) * 0.18 + Math.sin(t * 13.7) * 0.1)
 
     // House lamp — warm glow at night only
     if (this.houseLampLight) {

@@ -132,7 +132,7 @@ test("a whole session through the web commands, against the real tables", async 
 
   const ended = await runNovaSessionCommand(CHAT_A, { action: "end", outcome: "good" }, at(1847));
   assert.ok(ended.ok);
-  assert.deepEqual(ended.ok && ended.ended, { topicName: "Deadlocks", minutes: 30, outcome: "good", topicRecorded: true });
+  assert.deepEqual(ended.ok && ended.ended, { topicName: "Deadlocks", minutes: 30, outcome: "good", topicRecorded: true, counted: true });
   assert.equal(ended.ok && ended.session, null);
 
   const row = await prisma.novaStudySession.findFirstOrThrow({

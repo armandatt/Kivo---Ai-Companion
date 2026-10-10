@@ -49,6 +49,7 @@ Turborepo monorepo (npm workspaces) for **Kivo**, an AI accountability companion
 - **LLM calls** all go through one function, `generateOpenAIText` in `packages/api/src/services/openai.service.ts`. The name is historical: it calls Gemini or OpenAI depending on configuration (`services/llmProviders.ts`). Call sites pass OpenAI model names, which are treated as a tier (`*-mini` = fast, anything else = main), so never add a second client or call a provider directly.
 - **`packages/db`** (`@repo/db/client`): Prisma client using `@prisma/adapter-pg`. Schema at `packages/db/prisma/schema.prisma`; `prisma.config.ts` prefers `DIRECT_URL` over `DATABASE_URL`.
 - **`packages/ui`**: minimal shared React stubs.
+- **`apps/extension`**: the Nova browser extension (Manifest V3, plain ES modules, no dependencies). `npm run build --workspace nova-extension` writes `dist/`; `npm test --workspace nova-extension` runs its tests. See its `README.md`.
 
 ### Web to API
 
@@ -259,6 +260,18 @@ The rules that keep one unusual day from becoming a belief, each with a test:
 
 `engines/learner-calendar.ts` holds the day, week and clock-hour helpers Planner, Progress and Learning DNA share.
 
+**Browser extension and learning events** (`apps/extension`, `product/learning-events.ts`, `product/extension-connection.ts`, web UI in `apps/web/components/nova/saved/`). The extension is a context bridge: it sends what the learner explicitly asked for and decides nothing.
+
+- **A learning event is a record of an action, not evidence of learning.** `resource_saved` and `study_requested` are the only types. `learning-events.ts` is the only code that touches `NovaLearningEvent` and writes no other table: no mastery, session, Learning DNA, fact, reality, pattern or note, and no engine reads events (`learning-events.test.ts` reads the source to hold this). Do not add a `page_viewed` type or derive anything from event counts.
+- **Study this starts nothing by itself.** The extension posts `study_requested` and opens `/focus?study=<eventId>`; the Focus screen shows the page and its subject and topic, and the learner's click sends the ordinary `start` command. There is still one place that opens a session.
+- **Only this is stored about a page**: its address (http/https only, with login, fragment and credential parameters removed by `normalizeResourceUrl`), its title, the site (derived from the address), and the subject and topic the learner chose. The request body is capped at 8 KB and every field not in `LearningEventInput` is ignored. The server never fetches a saved address.
+- **Idempotency**: `clientEventId` is unique per learner. A retry returns the stored event and writes nothing; it cannot rewrite it. Saving an address that is already saved re-files that one entry.
+- **Rate limit**: 20 events a minute per learner, counted in the table.
+- **The extension has its own credential, not the web session.** The signed-in web app makes a one-time pairing code (`POST /api/nova/extension/pair`), the learner types it into the extension, and `POST /api/nova/extension/connect` exchanges it for a bearer token. `NovaExtensionConnection` stores SHA-256 hashes only. The token opens `GET /api/nova/extension/context`, `POST /api/nova/extension/disconnect` and `POST /api/nova/learning-events`, and nothing else; it dies on disconnect or after 30 idle days. `apps/api/lib/nova/extension-access.ts` resolves it to a learner through the same `companionOf` rule as the cookie. Do not accept it on any other route.
+- **Those three routes and `connect` answer cross-origin requests from `chrome-extension://` origins only**, because the extension asks for no host permission. They never take the session cookie. Do not add these headers to a cookie-authenticated route.
+- **Extension permissions are `activeTab` and `storage`.** No host permissions, content scripts or background script; `apps/extension/test/extension.test.mjs` fails if one is added or if the code reaches for another browser API. Its Nova address is fixed at build time (`NOVA_URL`).
+- Site-specific behaviour (a video's progress, a solved problem) belongs in a new adapter in `apps/extension/src/lib/page.js` plus a new event type handled in `learning-events.ts`, not in special cases.
+
 Session rules that must hold:
 
 - **One meaning of "session ended".** The web End button is `/done` without a chat turn: `persistSessionEnd` builds the same command-established `study_report` signal, routes it through `computeSessionAction` and the shared `sessionLifecycle` (the function `persistTurn` uses), and hands the same evidence to `consolidateTurn`. Do not write a second end path.
@@ -329,10 +342,61 @@ Held by `reply-language.test.ts` and `nova-language.itest.ts`. Nova answers in t
 Held by `creature-view.test.ts` and `nova-language.itest.ts`. `/creature` is one page with two sources, like Home and Progress.
 
 - `GET /api/nova/creature` returns `NovaCreatureView` (`product/creature.ts`, contract in `creature.types.ts`). It is a read model over two views that already exist: the streak is Today's (`progress.streakDays`, the one Home shows) and active days are Progress's. It runs no query of its own, writes nothing and calls no model.
-- **Level** is 1 plus one for every 5 active days. **World health** is 40 plus 10 for each active day in this week and the last, capped at 100. It never falls below 40: a week off, or a week ill, dims the world slightly and nothing more.
+- **Level** is 1 plus one for every 5 active days. **World health** is 70 plus 5 for each active day in this week and the last, capped at 100. 70 is where the world is drawn clear, so a week off, or a week ill, never brings fog.
 - The page asks that route first. A Nova learner's world is drawn from the answer; `not_nova` gets Rex's world, which still runs on the page's fixed figures; a failed request shows an error and no numbers. Nothing mounts before the answer, because the engine is built once from the seed.
 - The seed is a hash of the learner key, so each learner has their own terrain and it names nobody.
 - Nova does not mention the creature in chat, and no message is sent about it.
+## Telegram hardening: what real use showed
+
+Held by `telegram-hardening.test.ts` and `nova-hardening.itest.ts`.
+
+- **Nova has no reminder for a set time.** Rex's `CustomReminder` is not used: it parses times with regexes and a second model call, falls back to `Asia/Kolkata`, and is sent with no outbox or retry. So a request for one is read (`request.action = "set_reminder"`), decided (`reminder_unavailable`, before every other rule, so it is never a "not today") and answered by code with `TEXT.reminderUnavailable`: nothing was scheduled. It is never worded by the model. Do not add a reminder writer on the Telegram path; a real one belongs in `proactive/proactive-outbox.ts` with its own type.
+- **The Response Brain may not claim or promise an action** (static layer rules 11 and 12): nothing was done unless the prompt says so, and nothing is said about the student that is not on record.
+- **One update, one reply.** `deliver` in `telegram-turn.ts` drops and logs a second reply to the same update, and the last-resort "that didn't go through" line is sent only when nothing has been.
+- **Noise and a model that is down are different replies.** Noise (`clarity: unintelligible`) is "I didn't catch that", with the fixed choices once and no second set while those are open. A reading that failed is `TEXT.notUnderstood`, which says the commands still work. In production, repeated `understanding_failed` in the log means the model provider is refusing calls (a quota or rate limit), not that the messages were unreadable.
+- **A model call has a deadline** (`deadlineMs` on the one LLM client; 6 s for a reading, 8 s for wording, `NOVA_UNDERSTANDING_DEADLINE_MS` / `NOVA_RESPONSE_DEADLINE_MS`). Every attempt and every wait between attempts fits inside it, so a rate-limited provider fails in time for the turn to answer. Callers that pass none (Rex) are unchanged.
+- **A session stopped before ten minutes** is ended and rated like any other and is kept, with the learner's answer, on the session. It moves no mastery, reschedules no review and writes no mastery history (`countedAsStudy` on the execution report, decided in `study-session-engine.ts` with the same `COUNTED_SESSION_MINUTES` Progress and Learning DNA use). Both surfaces say so (`ended.counted`).
+- **The reply is sent before the turn is recorded.** A reply code wrote goes out before `runNovaOrchestrator`; a worded one goes out from the orchestrator's `hooks.reply`, before `persistTurn`. Recording still runs and is still awaited inside the same request: nothing is left running after the webhook returns.
+- **Typing** is the webhook's existing indicator. It stops when the reply is sent (`onReplied`), not when the turn has been recorded.
+- **Where the time went** is on the one `nova_telegram` log line: `timings` (`webhookMs`, `learnerMs`, `contextMs`, `understandingMs`, `decisionMs`, `actionMs`, `responseMs`, `telegramSendMs`, `replyMs`, `persistMs`, `totalMs`), `modelCalls` and `slowStage`. `replyMs` is what the learner waits. `scripts/novaTelegramLatency.ts` turns a log download into P50/P95 per kind of update.
+- **A second message sent while the first is still being recorded** gets "Still on your last message". The turn lease is unchanged; waiting for it needs a timer, which `telegram-mentor.test.ts` forbids in these files.
+
+## Tasks and the Planner's board
+
+Held by `tasks.test.ts` and `nova-workspace.itest.ts`. The Planner has two tabs: the study plan the engine works out, and the learner's own task board (`/planner?view=board`).
+
+- **`NovaTask` is the learner's to-do list** (title, status `todo` / `in_progress` / `done`, priority, subject, topic name, due day). `product/tasks.ts` is its only reader and writer; routes are `/api/nova/tasks` and `/api/nova/tasks/[id]`.
+- **A task is only a task.** Making, moving or finishing one writes that row and nothing else: no session, no mastery, no exam, no stated time. The Planning Engine does not read tasks, so moving a card never changes the plan. Do not feed tasks into planning or evidence without a decision to; a finished task about a topic is not a session on it.
+- **A due day is a calendar day** (`dueDay`, `YYYY-MM-DD`), counted from the learner's own today (`dueInDays`).
+- **`clientKey` makes a create idempotent** (`@@unique([profileId, clientKey])`): a double click, a retry or a template applied twice returns the task that exists, as it now is.
+- The board (`components/nova/tasks/`) moves a card by drag and drop or by the arrows on it; both are the same `PATCH { status }`. Home's "Your tasks" is the same rows.
+
+## Knowledge Map
+
+Held by `knowledge-map.test.ts` and `nova-workspace.itest.ts`. `/map`, `GET /api/nova/knowledge-map`, `product/knowledge-map.ts`.
+
+- **A read model of links that are stored.** Nodes are subjects, topics, notes and saved pages. Edges are: a topic's subject; a note or saved page filed under a subject; and under a topic when it names one of that subject's topics (compared trimmed, single-spaced, any case). Nothing is inferred and no edge is added for looks. What is filed under nothing is drawn unconnected, and the view says how many such items there are.
+- It writes nothing, calls no model, and reads notes and saved pages only through `listNoteLinks` and `listResourceLinks` in their owning modules. A note's body is never read for the map.
+- A topic has a level only when a session stands behind it; one with none is drawn as a dashed ring.
+- The layout (`components/nova/knowledge-map/layout.ts`) is deterministic and has no dependency: the same data draws the same map. Do not add a physics library or generate edges with a model.
+
+## Themes
+
+`components/theme/kivo-theme.tsx` and the light block in `app/globals.css`.
+
+- Light, Dark and Match device, chosen in Settings or the sidebar, kept in `localStorage` (`kivo-theme`) and written to `<html data-kivo-theme>` by an inline script in the dashboard layout before first paint.
+- **The light theme is one block of tokens** scoped to `.kivo-app`. The app is written against a dark surface with translucent white (`border-white/8`, `bg-white/5`); in light, `--color-white` becomes ink and the surface tokens become paper, so components need no light-specific classes. Write new UI with the same tokens (`text-foreground/60`, `bg-card`, `border-white/8`) and it works in both. Avoid hard-coded hex colours and `text-white` on a coloured fill.
+- `.kivo-dark` puts the dark tokens back for a region that is always dark (the Creature world). The landing page is outside `.kivo-app` and stays dark.
+- A custom property that points at another (`--x: var(--background)`) is resolved where it is declared, so it does not follow the theme: use `var(--background)` directly.
+
+## Templates and editing setup
+
+Held by `templates.test.ts` and `nova-workspace.itest.ts`.
+
+- `product/templates.ts` is three fixed starting points (Engineering semester, Exam preparation, Personal learning) as pure data. Choosing one fills the setup form; the learner edits, reviews and confirms; `saveSetup` saves it. Its tasks are then created through the task route under `template:<id>:<key>`, so applying one twice makes each task once.
+- A template states no progress: topics are declared unstudied and tasks start as to do.
+- `/settings/study` is the setup form for a learner who has finished onboarding. Saving merges; nothing is removed.
+- **Onboarding has no domain question.** Kivo is study and productivity, so the quiz sends `mentorDomain: "study"` and a new account is always a Nova learner. Rex accounts that already exist are unchanged.
 
 ## Study setup: one setup, three ways in
 
@@ -361,3 +425,4 @@ export NOVA_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:54329/novates
 The files run one at a time (`--test-concurrency=1`): a proactive tick visits every learner in the database, so two files ticking at once would act on each other's learners.
 
 `nova-lifecycle.itest.ts` follows a new account: a learner with no Telegram, the whole study loop on the web alone, a first session with no topics on record, connecting Telegram (same row, refusals, a spent token), web and Telegram as two views of one learner, a web sentence that runs no session command, and one learner's evenings of proactive ticks (rank, spacing, session, a failed send held and retried, a blocked bot). `nova-telegram.itest.ts` covers Telegram end to end with Telegram and both models stood in: sessions shared with the web app, prompts answered once, linking, limits, model failure, and the proactive outbox. `nova-learning-dna.itest.ts` covers the refresh on session end and the timezone write. `nova-progress.itest.ts` is the only proof that a replayed or concurrent session report moves a topic once (the unique key and the rollback need a real database). `nova-session-start.itest.ts` is the only proof of the session-start lock: concurrency cannot be shown against a mock. Two tests in `nova-persist-turn.itest.ts` fail because of the fixture's own timeline (its turns span four days, but an illness expires after 72 hours); they are not product failures.
+`nova-learning-dna.itest.ts` covers the refresh on session end and the timezone write. `nova-learning-events.itest.ts` covers pairing, the extension credential's lifetime, idempotent events and the save → study → session path. `nova-progress.itest.ts` is the only proof that a replayed or concurrent session report moves a topic once (the unique key and the rollback need a real database). `nova-session-start.itest.ts` is the only proof of the session-start lock: concurrency cannot be shown against a mock. Two tests in `nova-persist-turn.itest.ts` fail because of the fixture's own timeline (its turns span four days, but an illness expires after 72 hours); they are not product failures.

@@ -121,4 +121,13 @@ export interface NovaOrchestratorInput {
   sessionCommands?: "turn" | "surface";
   // Test seam: stands in for the Response Brain.
   respond?: (dynamicLayer: string, microPrompt: string) => Promise<import("./response.types").ResponseBrainOutput>;
+  // Called at two points of a turn, for a surface that sends the reply itself.
+  //   beforeResponse  just before the Response Brain is called (a surface
+  //                   can show that Nova is writing).
+  //   reply           with the reply, as soon as it exists and before the
+  //                   turn is persisted. The surface sends it here, so the
+  //                   learner is not kept waiting for writes that do not
+  //                   change what they are told. Persistence still runs, and
+  //                   is still awaited, after it returns.
+  hooks?: { beforeResponse?: () => void; reply?: (reply: string) => Promise<void> };
 }

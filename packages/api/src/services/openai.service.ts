@@ -12,6 +12,8 @@ import {
   openaiKey,
   parseGeminiResponse,
   retryDelayMs,
+  attemptTimeoutMs,
+  mayWait,
   selectProvider,
   shouldDisableThinking,
   type GeminiResponse,
@@ -69,7 +71,7 @@ type GeminiAttempt =
   | { ok: true; text: string }
   | { ok: false; retryable: boolean; error: string; waitMs?: number };
 
-async function callGemini(input: LlmRequest, model: string, apiKey: string): Promise<GeminiAttempt> {
+async function callGemini(input: LlmRequest, model: string, apiKey: string, timeoutMs: number = GEMINI_TIMEOUT_MS): Promise<GeminiAttempt> {
   const disableThinking = shouldDisableThinking(model) && !thinkingNotConfigurable.has(model);
   const { url, body } = buildGeminiRequest(input, model, { disableThinking });
 
@@ -79,7 +81,7 @@ async function callGemini(input: LlmRequest, model: string, apiKey: string): Pro
       method:  "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body:    JSON.stringify(body),
-      signal:  AbortSignal.timeout(GEMINI_TIMEOUT_MS),
+      signal:  AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     // Timeout or network failure: worth another attempt.
@@ -114,15 +116,23 @@ async function generateWithGemini(input: LlmRequest, apiKey: string): Promise<st
   const plan = geminiAttemptPlan(model);
 
   let lastError = "not attempted";
+  const started = Date.now();
   for (let i = 0; i < plan.length; i++) {
-    const attempt = await callGemini(input, plan[i]!, apiKey);
+    // A caller with a deadline gets its answer, or its failure, inside it.
+    const timeoutMs = attemptTimeoutMs(input.deadlineMs, Date.now() - started, GEMINI_TIMEOUT_MS);
+    if (timeoutMs === null) { lastError = `${lastError}; out of time after ${Date.now() - started}ms`; break; }
+    const attempt = await callGemini(input, plan[i]!, apiKey, timeoutMs);
     if (attempt.ok) return attempt.text;
 
     lastError = `model ${plan[i]}: ${attempt.error}`;
     if (!attempt.retryable) break;
     // A rate limit is per model family and applies to the fallback too, so
     // it is always waited out; other errors only pause before a same-model retry.
-    if (i < plan.length - 1 && (attempt.waitMs! > 800 || plan[i + 1] === plan[i])) await sleep(attempt.waitMs ?? 800);
+    if (i < plan.length - 1 && (attempt.waitMs! > 800 || plan[i + 1] === plan[i])) {
+      const waitMs = attempt.waitMs ?? 800;
+      if (!mayWait(input.deadlineMs, Date.now() - started, waitMs)) { lastError = `${lastError}; no time to wait ${waitMs}ms and retry`; break; }
+      await sleep(waitMs);
+    }
   }
   throw new Error(`Gemini request failed (${lastError})`);
 }
@@ -135,6 +145,7 @@ async function generateWithOpenAI(input: LlmRequest, apiKey: string): Promise<st
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
+    ...(input.deadlineMs !== undefined ? { signal: AbortSignal.timeout(input.deadlineMs) } : {}),
     body: JSON.stringify({
       model,
       messages: [
@@ -186,6 +197,7 @@ export async function generateOpenAIText(input: {
   systemInstruction?: string;
   maxOutputTokens?: number;
   model?: string;             // an OpenAI model name, used as a tier on other providers
+  deadlineMs?: number;        // the longest the caller will wait, retries included
 }) {
   loadPackageEnv();
   const provider = selectProvider(process.env);

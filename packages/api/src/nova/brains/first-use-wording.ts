@@ -9,6 +9,7 @@ import { registerLine, type Register } from "../decision/register";
 import type { FirstUse } from "../interaction/first-use";
 import { languageLine, type ReplyLanguage } from "../interaction/language";
 import { NOVA_STATIC_LAYER } from "./prompts/nova-static-layer.prompt";
+import { RESPONSE_DEADLINE_MS } from "./response-brain";
 
 export interface FirstUseWordingInput {
   decision:       FirstUse;
@@ -50,7 +51,7 @@ export async function wordFirstUse(
   ].filter(Boolean).join("\n");
 
   try {
-    const request = { model: "gpt-4o", systemInstruction: `${NOVA_STATIC_LAYER}\n\n${context}`, prompt, maxOutputTokens: 220 };
+    const request = { model: "gpt-4o", systemInstruction: `${NOVA_STATIC_LAYER}\n\n${context}`, prompt, maxOutputTokens: 220, deadlineMs: RESPONSE_DEADLINE_MS };
     const raw  = generate ? await generate(request) : await generateOpenAIText(request);
     let text = raw.trim();
     // The static layer asks for JSON in conversation; here plain text was

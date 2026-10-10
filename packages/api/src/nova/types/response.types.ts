@@ -67,5 +67,8 @@ export interface NovaOrchestratorResult {
     persisted:           boolean;      // false when persistence was not awaited
     evidenceKinds:       string[];
     consolidationQueued: boolean;
+    // Time until the reply was ready to be worded, and the wording itself.
+    contextMs?:          number;
+    responseMs?:         number;
   };
 }

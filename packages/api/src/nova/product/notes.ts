@@ -264,3 +264,21 @@ export async function deleteNote(profileId: string, noteId: string): Promise<boo
   const deleted = await prisma.novaNote.deleteMany({ where: { id: noteId, profileId } });
   return deleted.count === 1;
 }
+
+// ── For the Knowledge Map ─────────────────────────────────────────────────────
+// What a note is filed under, and nothing of what it says: the map draws a
+// note as a point and never reads its body. The newest `take`, and how many
+// there are in all.
+export async function listNoteLinks(profileId: string, take: number): Promise<{
+  notes: Array<{ id: string; title: string; subjectId: string | null; topicName: string | null; updatedAt: Date }>;
+  total: number;
+}> {
+  const [notes, total] = await Promise.all([
+    prisma.novaNote.findMany({
+      where: { profileId }, orderBy: { updatedAt: "desc" }, take,
+      select: { id: true, title: true, subjectId: true, topicName: true, updatedAt: true },
+    }),
+    prisma.novaNote.count({ where: { profileId } }),
+  ]);
+  return { notes, total };
+}

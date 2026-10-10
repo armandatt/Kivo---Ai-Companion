@@ -6,6 +6,8 @@ import { usePathname } from 'next/navigation'
 import {
   BarChart3,
   BookOpen,
+  Bookmark,
+  Waypoints,
   Calendar,
   Compass,
   Dna,
@@ -25,6 +27,7 @@ import {
 import { motion } from 'framer-motion'
 import { NOVA_ROUTES, type Companion } from '@repo/api/nova/product/companion'
 import { cn } from '@/lib/utils'
+import { ThemePicker } from '@/components/theme/kivo-theme'
 import { useState } from 'react'
 
 interface SidebarProps {
@@ -48,7 +51,7 @@ const navItems = [
 ]
 
 // Nova's pages, from the one list that also decides route access.
-const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/planner': Calendar, '/focus': Timer, '/knowledge': BookOpen, '/notes': NotebookPen, '/progress': TrendingUp, '/learning-dna': Dna, '/creature': Map }
+const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/planner': Calendar, '/focus': Timer, '/knowledge': BookOpen, '/map': Waypoints, '/notes': NotebookPen, '/saved': Bookmark, '/progress': TrendingUp, '/learning-dna': Dna, '/creature': Map }
 const novaNavItems = NOVA_ROUTES.map(r => ({ href: r.path, label: r.label, icon: NOVA_ICONS[r.path] ?? Home }))
 
 export function Sidebar({ open, onOpenChange, overlay = false, companion }: SidebarProps) {
@@ -183,6 +186,10 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
               <span className="font-medium text-sm">Kivo home page</span>
             </Link>
           </motion.div>
+          <div className="flex items-center justify-between gap-3 px-4 py-2">
+            <span className="text-xs font-medium text-sidebar-foreground/55">Theme</span>
+            <ThemePicker compact />
+          </div>
           <motion.div whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }}>
             <button
               type="button"

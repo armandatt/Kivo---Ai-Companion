@@ -19,11 +19,9 @@ interface PersonalityQuizProps {
   onComplete: (answers: QuizAnswers) => void;
 }
 
-const domainOptions = [
-  { label: 'Gym & Fitness', subtitle: 'Training, nutrition, recovery, body goals', value: 'gym' },
-  { label: 'Study & Coding', subtitle: 'Exams, DSA, skills, learning, placement', value: 'study' },
-  { label: 'Life & Productivity', subtitle: 'Habits, focus, goals, getting things done', value: 'general' },
-];
+// Kivo is a study and productivity product, so there is one domain and it is
+// not asked for. The value is what the mentor match on the server expects.
+const KIVO_DOMAIN = 'study';
 
 interface Question {
   id: number;
@@ -37,32 +35,11 @@ interface Question {
 
 const questions: Question[] = [
   {
-    id: 1,
-    title: 'Energy pattern',
-    question: "It's 7am on a Tuesday. Which version of you shows up?",
-    type: 'text',
-    hint: '',
-  },
-  {
-    id: 2,
-    title: 'Core pain point',
-    question: "What's the one thing you keep saying you'll fix but never do?",
-    type: 'text',
-    hint: 'be honest, nobody\'s watching',
-  },
-  {
-    id: 3,
-    title: 'Mentor domain',
-    question: 'What do you need the most help with right now?',
-    type: 'cards-domain',
-    hint: '',
-  },
-  {
     id: 4,
-    title: '30-day goal',
-    question: 'What does a win look like for you in 30 days?',
+    title: 'What you are working toward',
+    question: 'What are you working toward right now?',
     type: 'text',
-    hint: '',
+    hint: 'an exam, a course, a skill, a project. Skip it if you are not sure yet.',
   },
   {
     id: 5,
@@ -71,17 +48,10 @@ const questions: Question[] = [
     type: 'cards',
     options: ['Gentle nudges', 'No mercy'],
   },
-  {
-    id: 6,
-    title: 'Aspiration anchor',
-    question: 'Describe the ideal version of yourself in 3 words.',
-    type: 'three-words',
-    hint: '',
-  },
-  // Questions 7-10: how the user usually operates. Wording and scoring live in
+  // The remaining questions: how the user usually operates. Wording and scoring live in
   // @repo/api/personality; this only renders them.
   ...SIGNAL_ITEMS.map((item, index) => ({
-    id: 7 + index,
+    id: 6 + index,
     title: 'How you operate',
     question: item.text,
     type: 'likert',
@@ -95,7 +65,7 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
   const [answers, setAnswers] = useState<QuizAnswers>({
     energyPattern: '',
     corePain: '',
-    mentorDomain: null,
+    mentorDomain: KIVO_DOMAIN,
     primaryGoal: '',
     accountabilityStyle: null,
     aspirationWords: ['', '', ''],
@@ -120,24 +90,12 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
   }, [currentQuestion, question.type]);
 
   const getCurrentAnswer = (): string => {
-    switch (currentQuestion) {
-      case 0:
-        return answers.energyPattern;
-      case 1:
-        return answers.corePain;
-      case 3:
-        return answers.primaryGoal;
-      case 5:
-        return answers.aspirationWords.join(' ');
-      default:
-        return '';
-    }
+    // The one written answer is the first question.
+    return currentQuestion === 0 ? answers.primaryGoal : '';
   };
 
   const isAnswerFilled = (): boolean => {
-    if (question.type === 'cards-domain') {
-      return answers.mentorDomain !== null;
-    } else if (question.type === 'cards') {
+    if (question.type === 'cards') {
       return answers.accountabilityStyle !== null;
     } else if (question.type === 'likert') {
       return question.signalId !== undefined && answers.signalAnswers[question.signalId] !== undefined;
@@ -152,16 +110,7 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
   };
 
   const handleTextInput = (value: string) => {
-    const newAnswers = { ...answers };
-    if (currentQuestion === 0) newAnswers.energyPattern = value;
-    else if (currentQuestion === 1) newAnswers.corePain = value;
-    else if (currentQuestion === 3) newAnswers.primaryGoal = value;
-    setAnswers(newAnswers);
-  };
-
-  const handleDomainSelect = (value: string) => {
-    setAnswers({ ...answers, mentorDomain: value });
-    setTimeout(() => goToNextQuestion(), 300);
+    if (currentQuestion === 0) setAnswers({ ...answers, primaryGoal: value });
   };
 
   const handleCardSelect = (option: string) => {
@@ -298,25 +247,6 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
               </div>
             )}
 
-            {question.type === 'cards-domain' && (
-              <div className="flex flex-col gap-3">
-                {domainOptions.map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => handleDomainSelect(opt.value)}
-                    className={`w-full p-5 rounded-xl border-2 text-left transition-all duration-200 cursor-pointer ${
-                      answers.mentorDomain === opt.value
-                        ? 'border-[#00D9A3] bg-[#00D9A3] bg-opacity-10'
-                        : 'border-[#1a1a24] bg-[#1a1a24] hover:border-[#00D9A3] hover:border-opacity-50'
-                    }`}
-                  >
-                    <p className="text-white font-semibold text-base">{opt.label}</p>
-                    <p className="text-gray-500 text-sm mt-1">{opt.subtitle}</p>
-                  </button>
-                ))}
-              </div>
-            )}
-
             {question.type === 'cards' && (
               <div className="grid grid-cols-2 gap-4">
                 {question.options?.map((option) => (
@@ -400,7 +330,7 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
           </div>
 
           {/* Skip Link */}
-          {question.type !== 'cards' && question.type !== 'cards-domain' && question.type !== 'likert' && (
+          {question.type !== 'cards' && question.type !== 'likert' && (
             <div className="mb-8">
               <button
                 onClick={handleSkip}

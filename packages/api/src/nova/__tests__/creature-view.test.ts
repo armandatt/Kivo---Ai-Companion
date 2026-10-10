@@ -32,22 +32,23 @@ describe("level", () => {
 });
 
 describe("world health", () => {
-  it("is 40 with no recent study, and never lower", () => {
-    expect(creatureHealth([])).toBe(40);
-    expect(creatureHealth([week(0), week(0, { current: true })])).toBe(40);
+  it("is 70 with no recent study, and never lower", () => {
+    expect(creatureHealth([])).toBe(70);
+    expect(creatureHealth([week(0), week(0, { current: true })])).toBe(70);
   });
 
-  it("adds ten for each active day in this week and the last one", () => {
-    expect(creatureHealth([week(5), week(3), week(1, { current: true })])).toBe(80);
-    expect(creatureHealth([week(2, { current: true })])).toBe(60);
+  it("adds five for each active day in this week and the last one", () => {
+    expect(creatureHealth([week(5), week(3), week(1, { current: true })])).toBe(90);
+    expect(creatureHealth([week(2, { current: true })])).toBe(80);
   });
 
   it("stops at 100", () => {
     expect(creatureHealth([week(7), week(5, { current: true })])).toBe(100);
+    expect(creatureHealth([week(3), week(3, { current: true })])).toBe(100);
   });
 
   it("does not count weeks from before the learner started", () => {
-    expect(creatureHealth([week(0, { beforeStart: true }), week(0, { beforeStart: true }), week(2, { current: true })])).toBe(60);
+    expect(creatureHealth([week(0, { beforeStart: true }), week(0, { beforeStart: true }), week(2, { current: true })])).toBe(80);
   });
 });
 
@@ -59,7 +60,7 @@ describe("the view", () => {
 
   it("is an untouched world for a learner with no counted session", () => {
     const view = buildCreatureView({ seed: "nova-abc", streakDays: 0, progress: progress(0, []) });
-    expect(view).toMatchObject({ streakDays: 0, activeDays: 0, level: 1, worldHealth: 40 });
+    expect(view).toMatchObject({ streakDays: 0, activeDays: 0, level: 1, worldHealth: 70 });
   });
 
   it("gives each learner a stable seed that does not contain their id", () => {

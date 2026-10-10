@@ -8,13 +8,14 @@
 //   activeDays   days with a counted session in the last year, exactly as
 //                Progress shows it.
 //   level        1, plus one for every 5 active days.
-//   worldHealth  40 to 100: 40, plus 10 for each active day in this week and
-//                the last one. It never falls below 40, so a week off (or a
-//                week ill) dims the world a little and nothing more.
+//   worldHealth  70 to 100: 70, plus 5 for each active day in this week and
+//                the last one. 70 is where the world is drawn clear, so a
+//                week off (or a week ill) takes away some sparkle and never
+//                brings fog: the world does not suffer for a missed day.
 
 export const CREATURE_DAYS_PER_LEVEL = 5;
-export const CREATURE_BASE_HEALTH    = 40;
-export const CREATURE_HEALTH_PER_DAY = 10;
+export const CREATURE_BASE_HEALTH    = 70;
+export const CREATURE_HEALTH_PER_DAY = 5;
 
 export interface NovaCreatureReady {
   status:      "ready";

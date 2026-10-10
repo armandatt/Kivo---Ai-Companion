@@ -123,6 +123,9 @@ export interface SessionExecutionReport {
   totalPausedMinutes:     number;
   completionStatus:       CompletionStatus;
   masteryUpdates:         MasteryUpdate[];
+  // False when the timer was stopped before ten minutes of study: the
+  // session is kept, and masteryUpdates is empty.
+  countedAsStudy:         boolean;
   // How the session went, and who said so (see SessionEvidence).
   outcome:                SessionOutcome | null;
   evidenceBasis:          SessionEvidenceBasis;
