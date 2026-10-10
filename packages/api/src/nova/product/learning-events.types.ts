@@ -10,7 +10,10 @@
 // extension's tests can read the types directly.
 
 export type LearningEventType   = "resource_saved" | "study_requested";
-export type LearningEventSource = "browser_extension";
+// Where the action was taken: the extension's popup, or the web app's own
+// "Save a link" box (which the bookmarklet also opens). Set by the server from
+// the kind of credential the request carried, never read from the request.
+export type LearningEventSource = "browser_extension" | "web";
 
 export const EVENT_URL_MAX   = 2048;
 export const EVENT_TITLE_MAX = 300;

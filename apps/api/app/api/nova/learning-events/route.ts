@@ -3,7 +3,7 @@ import { NextResponse } from "next/server"
 import { loadSavedResources, recordLearningEvent, resolveEventLearner } from "@repo/api/nova/product/learning-events"
 //@ts-ignore
 import { EVENT_BODY_MAX_BYTES } from "@repo/api/nova/product/learning-events.types"
-import { eventFail, readSmallJson, requireWebLearner, resolveExtensionCaller, preflight, withCors } from "../../../../lib/nova/extension-access"
+import { eventFail, fromExtensionOrigin, readSmallJson, requireWebLearner, resolveExtensionCaller, preflight, withCors } from "../../../../lib/nova/extension-access"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -13,12 +13,51 @@ export const dynamic = "force-dynamic"
 // record and goes nowhere else: not to mastery, sessions, Learning DNA,
 // memory or the chat pipeline.
 
-// POST /api/nova/learning-events  (the browser extension)
+// POST /api/nova/learning-events
 // Request: LearningEventInput. Response: LearningEventResponse.
-// Whose event it is comes from the extension's credential. `source` is set
-// here, from the kind of credential, not from the body.
+// Two callers, one way of saving:
+//   the browser extension, with its own credential (Authorization: Bearer);
+//   the signed-in web app's "Save a link" box, with the session cookie.
+// Whose event it is comes from that credential, and so does `source`: neither
+// is read from the body. A request that carries a bearer credential is the
+// extension's and is never answered for a cookie.
 export async function POST(req: Request) {
-  return withCors(req, await handlePOST(req))
+  return withCors(req, req.headers.has("authorization") ? await handlePOST(req) : await handleWebSave(req))
+}
+
+const answer = (result: Awaited<ReturnType<typeof recordLearningEvent>>) =>
+  result.success
+    ? NextResponse.json(result, { status: result.duplicate || result.action === "already_saved" ? 200 : 201 })
+    : NextResponse.json(result, { status: result.error === "rate_limited" ? 429 : 400 })
+
+// The web app saving a link the learner pasted, or one the bookmarklet
+// brought. It saves and nothing else: studying a page starts from Saved.
+// The session cookie is SameSite=Lax, and the body has to be declared as
+// JSON, which no other site's form can send; an extension is told to use
+// its own credential.
+async function handleWebSave(req: Request): Promise<NextResponse> {
+  try {
+    if (fromExtensionOrigin(req)) return eventFail(401, "unauthenticated", "Connect Nova again.")
+    if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+      return eventFail(400, "invalid", "That isn't something Nova can save.")
+    }
+    const access = await requireWebLearner()
+    if (access.denied) return access.denied
+
+    const read = await readSmallJson(req, EVENT_BODY_MAX_BYTES)
+    if (!read.ok) {
+      return read.reason === "too_large"
+        ? eventFail(413, "too_large", "That's more than Nova keeps about a page.")
+        : eventFail(400, "invalid", "That isn't something Nova can save.")
+    }
+    if ((read.body as { eventType?: unknown } | null)?.eventType !== "resource_saved") {
+      return eventFail(400, "invalid", "Nova can only save a page from here.")
+    }
+    return answer(await recordLearningEvent(access.profileId, read.body, { source: "web" }))
+  } catch (err) {
+    console.error("[nova/learning-events]", err)
+    return eventFail(500, "failed", "That didn't save. Try again.")
+  }
 }
 
 async function handlePOST(req: Request): Promise<NextResponse> {
@@ -41,9 +80,7 @@ async function handlePOST(req: Request): Promise<NextResponse> {
     const learner = await resolveEventLearner(caller.platformChatId)
     if (learner.status !== "ready") return eventFail(409, learner.status, "Finish setting up with Nova first.")
 
-    const result = await recordLearningEvent(learner.profileId, read.body, { source: "browser_extension" })
-    if (result.success) return NextResponse.json(result, { status: result.duplicate || result.action === "already_saved" ? 200 : 201 })
-    return NextResponse.json(result, { status: result.error === "rate_limited" ? 429 : 400 })
+    return answer(await recordLearningEvent(learner.profileId, read.body, { source: "browser_extension" }))
   } catch (err) {
     console.error("[nova/learning-events]", err)
     return eventFail(500, "failed", "That didn't save. Try again.")

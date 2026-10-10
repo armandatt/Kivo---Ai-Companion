@@ -75,15 +75,20 @@ export function allowAttempt(key: string, limit: number, windowMs: number, now =
 // ── Cross-origin answers for the extension ────────────────────────────────────
 // The extension asks for no access to any website, Nova's included, so its
 // requests are ordinary cross-origin ones and need these headers. They are
-// given to extension origins only. The routes that carry them take a bearer
-// credential (or a one-time code), never the session cookie, and cookies are
-// not allowed on them: a web page gains nothing from these headers.
+// given to extension origins only, and cookies are not allowed with them: an
+// extension is answered for its bearer credential (or a one-time code), never
+// for the session cookie, so a web page gains nothing from these headers.
 
 const EXTENSION_ORIGINS = ["chrome-extension://"]
 
+export const fromExtensionOrigin = (req: Request) => {
+  const origin = req.headers.get("origin") ?? ""
+  return EXTENSION_ORIGINS.some(prefix => origin.startsWith(prefix))
+}
+
 export function extensionCors(req: Request): Record<string, string> {
   const origin = req.headers.get("origin") ?? ""
-  if (!EXTENSION_ORIGINS.some(prefix => origin.startsWith(prefix)) || origin.length > 100) return {}
+  if (!fromExtensionOrigin(req) || origin.length > 100) return {}
   return {
     "access-control-allow-origin":  origin,
     "access-control-allow-headers": "authorization, content-type",

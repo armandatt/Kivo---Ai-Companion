@@ -6,6 +6,7 @@
   "description": "Nova browser extension: save a page to Nova, or study it, when you ask.",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "package": "node scripts/package.mjs",
     "test": "node --test test/extension.test.mjs"
   }
 }

@@ -14,6 +14,7 @@
 // title and where the learner filed it, and nothing of the page itself.
 
 import { learnerKey } from "./learner-key";
+import { normalizeResourceUrl } from "./resource-link";
 import { prisma } from "@repo/db/client";
 import { REVIEW_BLOCK_MINUTES } from "../engines/planning-engine";
 import { likeLiteral, normalizeTopicName } from "../engines/topic-mastery-engine";
@@ -31,36 +32,9 @@ type Failure = Extract<LearningEventResponse, { success: false }>;
 const fail = (error: Failure["error"], message: string): Failure => ({ success: false, error, message });
 
 // ── The address ───────────────────────────────────────────────────────────────
-
-// Query parameters that carry credentials rather than say which page it is.
-// They are dropped before the address is stored.
-const CREDENTIAL_PARAMS = new Set([
-  "token", "access_token", "id_token", "refresh_token", "auth", "authorization", "apikey", "api_key", "key",
-  "password", "passwd", "pwd", "secret", "signature", "sig", "session", "sessionid", "session_id", "sid", "otp",
-]);
-const CREDENTIAL_PARAM_PREFIXES = ["x-amz-", "x-goog-"];
-
-// A web page address, cleaned for keeping: http or https only, no login in
-// it, no fragment, no credential parameters. null: not an address Nova keeps.
-export function normalizeResourceUrl(raw: unknown): { url: string; domain: string } | null {
-  if (typeof raw !== "string" || raw.length === 0 || raw.length > EVENT_URL_MAX) return null;
-  let parsed: URL;
-  try { parsed = new URL(raw.trim()); } catch { return null; }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-  if (!parsed.hostname) return null;
-
-  parsed.username = "";
-  parsed.password = "";
-  parsed.hash     = "";
-  for (const name of [...parsed.searchParams.keys()]) {
-    const lower = name.toLowerCase();
-    if (CREDENTIAL_PARAMS.has(lower) || CREDENTIAL_PARAM_PREFIXES.some(p => lower.startsWith(p))) parsed.searchParams.delete(name);
-  }
-  const url = parsed.toString();
-  if (url.length > EVENT_URL_MAX) return null;
-  const host = parsed.hostname.toLowerCase();
-  return { url, domain: host.startsWith("www.") ? host.slice(4) : host };
-}
+// One definition of an address Nova keeps, shared with the web app's own
+// check (product/resource-link.ts).
+export { normalizeResourceUrl };
 
 // ── Validation ────────────────────────────────────────────────────────────────
 

@@ -1,11 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ExternalLink } from 'lucide-react'
 import type { LearningResource, NovaSavedResourcesReady } from '@repo/api/nova/product/learning-events.types'
 import { relativeDay, sentenceCase } from '../format'
+import { BookmarkletPanel } from './bookmarklet-panel'
 import { ExtensionPanel } from './extension-panel'
+import { takeCapture, type Capture } from './pending-capture'
+import { SaveLink } from './save-link'
 import { removeResource } from './saved-api'
 
 function ResourceRow({ resource, onRemoved }: { resource: LearningResource; onRemoved: () => void }) {
@@ -21,7 +24,7 @@ function ResourceRow({ resource, onRemoved }: { resource: LearningResource; onRe
 
   return (
     <li data-resource={resource.id} data-resource-title={resource.title} className="px-4 py-4 sm:px-5">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0">
           <a href={resource.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-full items-center gap-1.5 text-[15px] font-medium text-foreground/90 underline-offset-4 hover:text-keppel-200 hover:underline">
             <span className="truncate">{resource.title}</span>
@@ -48,26 +51,37 @@ function ResourceRow({ resource, onRemoved }: { resource: LearningResource; onRe
   )
 }
 
-// The pages the learner saved from their browser, and the browsers they
-// connected. A saved page is a bookmark with a subject, nothing more: Nova
+// The pages the learner saved (pasted here, sent by the bookmark, or sent by
+// the extension) and the browsers they connected. A saved page is a bookmark with a subject, nothing more: Nova
 // learns nothing about the learner from it until they study it.
 export function NovaSaved({ view, connect, onChanged }: { view: NovaSavedResourcesReady; connect: boolean; onChanged: () => void }) {
+  // A page the bookmark brought, read once when the screen opens.
+  // Taking it empties the address, so it is taken exactly once per visit.
+  const [capture, setCapture] = useState<Capture | null>(null)
+  const taken = useRef(false)
+  useEffect(() => {
+    if (taken.current) return
+    taken.current = true
+    setCapture(takeCapture())
+  }, [])
+
   return (
     <div className="mx-auto w-full max-w-6xl pb-20 pt-10 lg:pt-4" data-saved={view.resources.length > 0 ? 'ready' : 'empty'}>
       <header>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Saved</h1>
         <p className="mt-1.5 max-w-prose text-sm leading-relaxed text-foreground/55">
-          Pages you saved from your browser. Saving one tells Nova it matters to you, not that you know it.
+          Pages you want to come back to. Saving one tells Nova it matters to you, not that you know it.
         </p>
       </header>
 
       <div className="mt-8 grid grid-cols-1 gap-x-10 gap-y-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="min-w-0">
+        <div className="min-w-0 space-y-6">
+          <SaveLink subjects={view.subjects} resources={view.resources} capture={capture} onSaved={onChanged} />
           {view.resources.length === 0 ? (
             <section className="rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9" data-empty="saved">
               <h2 className="text-xl font-semibold tracking-tight text-foreground">Nothing saved yet</h2>
               <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/60">
-                Connect the Nova browser extension, and when you come across something worth studying, save it from there. It will be waiting here.
+                Paste a link above, or add the Save to Kivo bookmark and send pages here as you read. They will be waiting when you want to study them.
               </p>
             </section>
           ) : (
@@ -78,6 +92,7 @@ export function NovaSaved({ view, connect, onChanged }: { view: NovaSavedResourc
         </div>
 
         <aside className="space-y-6">
+          <BookmarkletPanel />
           <ExtensionPanel open={connect} />
           <section className="rounded-2xl border border-white/8 bg-card/50 p-5">
             <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">What Nova keeps</h2>

@@ -1,11 +1,12 @@
 'use client'
 
-import { Suspense, type FormEvent, useState } from 'react'
+import { Suspense, type FormEvent, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { parkCapture } from '@/components/nova/saved/pending-capture'
 
 function SigninForm() {
   const router = useRouter()
@@ -17,6 +18,10 @@ function SigninForm() {
   const [isRetrying, setIsRetrying] = useState(false)
 
   const resetSuccess = searchParams.get('reset') === 'success'
+
+  // Sent here by the Save to Kivo bookmark while signed out: keep the page
+  // it was bringing, so Saved still has it after sign-in.
+  useEffect(() => { parkCapture() }, [])
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -47,7 +52,9 @@ function SigninForm() {
         return
       }
 
-      router.push('/home')
+      // Back to where they were headed, when that is a page of this site.
+      const from = searchParams.get('from') ?? ''
+      router.push(from.startsWith('/') && !from.startsWith('//') && !from.includes('\\') ? from : '/home')
       router.refresh()
     } catch {
       setError('Something went wrong. Please try again.')

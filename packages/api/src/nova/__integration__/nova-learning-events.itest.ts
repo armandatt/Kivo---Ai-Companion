@@ -270,6 +270,44 @@ test("saving a page that is already saved re-files it; there is one entry per pa
   assert.deepEqual([other.action, other.eventId !== first.eventId], ["saved", true]);
 });
 
+test("a link saved from the web app is the same kind of record, marked with where it came from", async () => {
+  const before = await cognitiveState("b");
+  const web = { source: "web" as const };
+  const action = input({ url: "https://user:pw@docs.example.org/os/deadlocks?token=SECRET#coffman", title: "Deadlocks", subjectId: subject.b!["Operating Systems"], topicName: "Deadlocks" });
+
+  const first = saved(await recordLearningEvent(profile.b!, { ...action, profileId: profile.a, source: "browser_extension" }, web));
+  assert.deepEqual([first.action, first.duplicate, first.focusPath, first.resource.url], ["saved", false, null, "https://docs.example.org/os/deadlocks"]);
+  const row = await prisma.novaLearningEvent.findUniqueOrThrow({ where: { id: first.eventId } });
+  assert.deepEqual([row.source, row.profileId, row.eventType], ["web", profile.b, "resource_saved"]);
+
+  // Pressing Save twice, or retrying after a dropped connection: one row.
+  const retry = saved(await recordLearningEvent(profile.b!, action, web));
+  assert.deepEqual([retry.eventId, retry.duplicate], [first.eventId, true]);
+  const burst = input({ url: "https://docs.example.org/os/paging", title: "Paging" });
+  const all = await Promise.all(Array.from({ length: 6 }, () => recordLearningEvent(profile.b!, burst, web)));
+  assert.equal(new Set(all.map(r => saved(r).eventId)).size, 1);
+  assert.equal(await prisma.novaLearningEvent.count({ where: { profileId: profile.b, url: "https://docs.example.org/os/paging" } }), 1);
+
+  // The same page again, as a new action from the web and then from the
+  // extension: still one saved entry, re-filed, and it keeps where it first came from.
+  const again = saved(await recordLearningEvent(profile.b!, input({ url: "https://docs.example.org/os/deadlocks#again", title: "Deadlocks (Coffman conditions)" }), web));
+  const fromExtension = saved(await recordLearningEvent(profile.b!, input({ url: "https://docs.example.org/os/deadlocks", title: "Deadlocks" }), source));
+  assert.deepEqual([again.action, again.eventId, fromExtension.action, fromExtension.eventId], ["already_saved", first.eventId, "already_saved", first.eventId]);
+  assert.equal(await prisma.novaLearningEvent.count({ where: { profileId: profile.b, url: "https://docs.example.org/os/deadlocks" } }), 1);
+  assert.equal((await prisma.novaLearningEvent.findUniqueOrThrow({ where: { id: first.eventId } })).source, "web");
+
+  assert.equal(await cognitiveState("b"), before, "saving links changed nothing Nova knows about the learner: no session, no mastery");
+});
+
+test("a link Nova does not keep is refused from the web app too, and nothing is stored", async () => {
+  const count = (await events("b")).length;
+  for (const url of ["javascript:alert(1)", "file:///etc/passwd", "chrome://settings", "ftp://example.com/a", "example.com/no-scheme", "", `https://example.com/${"a".repeat(3000)}`]) {
+    const result = await recordLearningEvent(profile.b!, input({ url }), { source: "web" });
+    assert.deepEqual([url.slice(0, 30), result.success, !result.success && result.error], [url.slice(0, 30), false, "invalid_url"]);
+  }
+  assert.equal((await events("b")).length, count);
+});
+
 test("invalid events are refused and nothing is stored", async () => {
   const count = (await events("b")).length;
   const cases: Array<[Record<string, unknown>, string]> = [

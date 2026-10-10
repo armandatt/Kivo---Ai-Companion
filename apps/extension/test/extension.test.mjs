@@ -243,3 +243,51 @@ test('a damaged stored value is treated as not connected', async () => {
     assert.equal(await createStore(storage).token(), null)
   }
 })
+
+// ── The release ZIP ───────────────────────────────────────────────────────────
+
+const packageWith = (env, release = mkdtempSync(join(tmpdir(), 'nova-ext-release-'))) => {
+  const clean = { ...process.env }
+  delete clean.NOVA_URL
+  const out = execFileSync(process.execPath, [join(root, 'scripts', 'package.mjs')], { env: { ...clean, NOVA_EXTENSION_RELEASE: release, ...env }, stdio: 'pipe' }).toString()
+  return { out, zip: readFileSync(join(release, readdirSync(release)[0])), name: readdirSync(release)[0] }
+}
+
+// The names in a ZIP's central directory, in order.
+function zipNames(buf) {
+  const names = []
+  for (let at = buf.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02])); at !== -1 && buf.readUInt32LE(at) === 0x02014b50; ) {
+    const length = buf.readUInt16LE(at + 28)
+    names.push(buf.subarray(at + 46, at + 46 + length).toString('utf8'))
+    at += 46 + length + buf.readUInt16LE(at + 30) + buf.readUInt16LE(at + 32)
+  }
+  return names
+}
+
+test('a release is refused without an https address that is somewhere else', () => {
+  for (const env of [{}, { NOVA_URL: 'http://kivo.example' }, { NOVA_URL: 'https://localhost:3000' }, { NOVA_URL: 'https://127.0.0.1' }, { NOVA_URL: 'https://user:pw@kivo.example' }, { NOVA_URL: 'nonsense' }]) {
+    assert.throws(() => packageWith(env), /Cannot package/, JSON.stringify(env))
+  }
+})
+
+test('the release ZIP holds the built extension and nothing else', () => {
+  const { zip, name, out } = packageWith({ NOVA_URL: 'https://kivo.example/some/path' })
+  assert.equal(name, `nova-extension-${JSON.parse(src('manifest.template.json')).version}.zip`)
+  assert.deepEqual(zipNames(zip), ['config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/api.js', 'lib/page.js', 'lib/store.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js'])
+  assert.match(out, /sha256 [0-9a-f]{64}/)
+  assert.match(out, /for https:\/\/kivo\.example\n/)
+})
+
+test('the same sources and address give the same ZIP, byte for byte', () => {
+  const first = packageWith({ NOVA_URL: 'https://kivo.example' }).zip
+  const again = packageWith({ NOVA_URL: 'https://kivo.example' }).zip
+  assert.ok(first.equals(again))
+  assert.ok(!first.equals(packageWith({ NOVA_URL: 'https://other.example' }).zip), 'the address is part of what is shipped')
+})
+
+test('the extension and its package.json agree on the version, and the description fits the store', () => {
+  const manifest = JSON.parse(src('manifest.template.json'))
+  assert.equal(manifest.version, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version)
+  assert.ok(manifest.description.length <= 132)
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/)
+})

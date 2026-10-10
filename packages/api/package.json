@@ -33,6 +33,7 @@
     "./nova/product/tasks.types": "./src/nova/product/tasks.types.ts",
     "./nova/product/knowledge-map.types": "./src/nova/product/knowledge-map.types.ts",
     "./nova/product/templates": "./src/nova/product/templates.ts",
+    "./nova/product/resource-link": "./src/nova/product/resource-link.ts",
     "./nova/product/*": "./src/nova/product/*",
     "./nova/engines/*": "./src/nova/engines/*",
     "./nova/decision/*": "./src/nova/decision/*",
