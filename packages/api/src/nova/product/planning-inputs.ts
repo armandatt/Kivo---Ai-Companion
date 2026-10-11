@@ -14,6 +14,8 @@ import { getAllTopicMasteries } from "../engines/knowledge-engine";
 import { selectActiveExam } from "../engines/exam-engine";
 import { generateStudyPlan, MIN_BLOCK_MINUTES } from "../engines/planning-engine";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
+import { DNA_LEVEL_RANK, type DnaSignal } from "../engines/learning-dna-engine";
+import { loadLearningDna } from "../persistence/learning-dna-store";
 import { normalizeStoredReality } from "../types/reality.types";
 import type { AcademicState } from "../types/academic-state.types";
 import type { ExamContext, StudyPlan, TopicMasteryState } from "../types/engine.types";
@@ -32,6 +34,16 @@ export function normalizeAvailableMinutes(minutes: number | null | undefined): n
   return typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0
     ? Math.min(Math.round(minutes), MAX_AVAILABLE_MINUTES)
     : null;
+}
+
+// The length their sessions usually run, if their record supports saying so:
+// enough sessions that agree (supported or strong), and the latest ones not
+// pulling away from it. One short session, or a handful all over the place,
+// concludes nothing and changes nothing.
+export function usualSessionMinutes(signals: DnaSignal[]): number | null {
+  const typical = signals.find(s => s.key === "typical_session");
+  if (!typical || typical.weakening || DNA_LEVEL_RANK[typical.level] < DNA_LEVEL_RANK.supported) return null;
+  return typical.value?.kind === "minutes" ? typical.value.typical : null;
 }
 
 export type PlanMode = "exam_crisis" | "recovery" | "standard";
@@ -148,9 +160,12 @@ export async function loadPlanningInputs(
   const snapshot = await loadStudySnapshot(platformChatId);
   if (!snapshot.profileId) return { status: "onboarding_incomplete" };
 
-  const [topics, constraints] = await Promise.all([
+  const [topics, constraints, dna] = await Promise.all([
     getAllTopicMasteries(snapshot.profileId, now),
     loadActiveConstraints(user.id, now),
+    // What their own record says about how they study. The plan does not
+    // depend on it: unreadable, it is planned as for anyone.
+    loadLearningDna(snapshot.profileId, now).catch(() => null),
   ]);
 
   const academicState = computeAcademicState({
@@ -182,7 +197,7 @@ export async function loadPlanningInputs(
     ?? statedMinutesFor(profile, now);
   const plan = generateStudyPlan(
     academicState, topics, snapshot.preferredStudyHoursPerDay, examContext,
-    { availableMinutes, now },
+    { availableMinutes, now, usualSessionMinutes: usualSessionMinutes(dna?.signals ?? []) },
   );
 
   // The learner has not said what a normal day allows and gave no time
