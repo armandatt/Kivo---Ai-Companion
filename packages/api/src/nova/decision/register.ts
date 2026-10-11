@@ -5,16 +5,22 @@
 // Pure. No DB, no LLM.
 //
 //   serious  the student is in distress, something real is constraining
-//            them, or an exam is close. No jokes.
-//   steady   the default. Warm and direct.
-//   playful  only for a student who asked to be pushed hard, and only when
-//            nothing above applies.
+//            them, or an exam is close. No jokes. This overrides what they
+//            asked for: nobody is pushed hard while they are struggling.
+//   gentle   they chose Gentle Nudges in onboarding, and nothing above applies.
+//   steady   the default, for a student who never chose. Warm and direct.
+//   playful  they chose No Mercy, and nothing above applies: firm, brief,
+//            and allowed to tease a habit the evidence shows.
+//
+// The choice is the student's own (UserProfile.accountabilityStyle, set in
+// onboarding and in Settings). It is a manner of speaking and nothing else:
+// the same facts, the same plan and the same decisions reach every register.
 //
 // There are no joke templates. The Response Brain owns the wording.
 
 import type { AcademicEmotion } from "../types/understanding.types";
 
-export type Register = "serious" | "steady" | "playful";
+export type Register = "serious" | "gentle" | "steady" | "playful";
 
 const HEAVY_EMOTIONS: ReadonlySet<AcademicEmotion> = new Set<AcademicEmotion>([
   "distressed", "overwhelmed", "discouraged", "self_doubt", "identity_threat",
@@ -37,13 +43,14 @@ export function chooseRegister(input: {
   if (HEAVY_EMOTIONS.has(input.emotion)) return "serious";
   if (input.activeReality.some(c => HEAVY_REALITY.has(c))) return "serious";
   if (input.daysUntilNextExam !== null && input.daysUntilNextExam <= EXAM_SERIOUS_DAYS) return "serious";
-  return input.accountability === "hard" ? "playful" : "steady";
+  return input.accountability === "hard" ? "playful" : input.accountability === "soft" ? "gentle" : "steady";
 }
 
 const LINES: Record<Register, string> = {
-  serious: "Register: serious. No jokes and no teasing. Calm, plain, specific. One clear next step.",
+  serious: "Register: serious. No jokes and no teasing. Calm, plain, specific. If they said they are stressed or overwhelmed, acknowledge that in a few words first, without analysing it or reassuring at length; then give exactly one small next step, not a plan or a list. Keep the topic and the time they chose.",
+  gentle:  "Register: gentle. This student chose Gentle Nudges. Calm, supportive, never judging. Make the next step small enough to start now, and offer a realistic choice when there is one. After a missed day, make restarting easy and do not bring up the gap as a failure. No pep talk, no teasing. One clear next step.",
   steady:  "Register: steady. Warm and direct. No teasing.",
-  playful: "Register: playful. This student asked to be pushed hard. Light teasing about a habit the evidence above shows is welcome; never about them, their ability or their worth. Still end on one clear next step.",
+  playful: "Register: playful. This student chose No Mercy: be direct, firm and brief, and lead with the next action. If the evidence above shows an avoidable delay, name it plainly; light teasing about that habit is welcome, never about them, their ability or their worth. No shaming, no threats, no guessing at their motives, and respect the time, energy and limits they have stated. End on one clear next step.",
 };
 
 export const registerLine = (register: Register): string => LINES[register];

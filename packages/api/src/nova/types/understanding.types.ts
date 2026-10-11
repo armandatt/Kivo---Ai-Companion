@@ -124,7 +124,7 @@ export type ReadingClarity = typeof READING_CLARITY[number];
 
 // The languages Nova replies in. Hinglish is Hindi in Roman letters mixed
 // with English, the way Indian students text.
-export const REPLY_LANGUAGES = ["english", "hinglish"] as const;
+export const REPLY_LANGUAGES = ["english", "hinglish", "hindi"] as const;
 export type ReplyLanguage = typeof REPLY_LANGUAGES[number];
 
 export interface LearnerRequest {

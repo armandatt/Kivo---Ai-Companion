@@ -53,6 +53,21 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
   // so a Rex page never mounts (or fetches) for a Nova learner.
   const access = companion ? routeAccess(companion, pathname) : null
 
+  // A Nova learner's device reports its timezone once per visit. The server
+  // keeps it only while it has none, so Nova knows what time it is for them
+  // (their days, and when a check-in is due) without their having to open
+  // any particular page.
+  useEffect(() => {
+    if (companion !== 'nova') return
+    try {
+      if (window.sessionStorage.getItem('kivo-tz-reported')) return
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+      if (!timezone) return
+      window.sessionStorage.setItem('kivo-tz-reported', '1')
+      void fetch('/api/nova/timezone', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ timezone }) }).catch(() => {})
+    } catch { /* no storage or no Intl: the next visit tries again */ }
+  }, [companion])
+
   // Auto-collapse when entering creature page, restore when leaving
   useEffect(() => {
     setSidebarOpen(!isCreature)

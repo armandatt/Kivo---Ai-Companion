@@ -9,6 +9,7 @@ import type {
 } from "../types/understanding.types";
 import { ASK_SCOPES, READING_CLARITY, REPLY_LANGUAGES, REQUESTED_ACTIONS, STUDY_TIMES } from "../types/understanding.types";
 import { isNovaRealityCategory, normalizeSubtype } from "../types/reality.types";
+import { scriptLanguage, type ReplyLanguage } from "../interaction/language";
 
 const VALID_INTENTS = new Set<string>([
   "study_report", "study_skip_report", "topic_question",
@@ -155,6 +156,17 @@ export function parseLearnerRequest(raw: unknown): LearnerRequest {
   };
 }
 
+function readRequest(raw: unknown, rawText: string): LearnerRequest {
+  const request = parseLearnerRequest(raw);
+  return { ...request, language: languageOf(rawText, request.language ?? null) };
+}
+
+// The language of the message, with the script having the last word: a
+// message in Devanagari is Hindi whatever the model called it.
+export function languageOf(rawText: string, read: ReplyLanguage | null): ReplyLanguage | null {
+  return scriptLanguage(rawText) ?? (read === "hindi" ? "hinglish" : read);
+}
+
 const MAX_SECONDARY_INTENTS = 2;
 
 function parseSecondaryIntents(raw: unknown, primary: string): AcademicIntent[] {
@@ -203,7 +215,7 @@ export function parseUnderstandingResponse(
     sessionIntent:       parsed["sessionIntent"] === "start" ? "start"
                        : parsed["sessionIntent"] === "break" ? "break" : "none",
     realityObservations: parseRealityObservations(parsed["reality"]),
-    request:             parseLearnerRequest(parsed["request"]),
+    request:             readRequest(parsed["request"], rawText),
   };
 }
 

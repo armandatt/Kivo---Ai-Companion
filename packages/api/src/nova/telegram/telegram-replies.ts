@@ -166,10 +166,14 @@ export function endedReply(ended: { topicName: string | null; minutes: number; o
   return { text: `Logged: ${ended.minutes} min${what}.${how}${note}`, link: { label: "Open Nova", path: "/knowledge" } };
 }
 
-export function settingsReply(state: { proactiveEnabled: boolean; pausedUntil: Date | null; timezone: string | null }, now: Date): TelegramReply {
+export function settingsReply(state: { proactiveEnabled: boolean; pausedUntil: Date | null; timezone: string | null; checkinTime?: string | null }, now: Date): TelegramReply {
   const paused = state.pausedUntil !== null && state.pausedUntil > now;
   const lines = [
-    `Nudges: ${state.proactiveEnabled ? (paused ? "paused for today" : "on") : "off"}. At most two a day, never between 11pm and 7am.`,
+    `Nudges: ${state.proactiveEnabled ? (paused ? "paused for today" : "on") : "off"}. At most two a day, never between 11pm and 7am unless that is the time you chose.`,
+    // What the time they picked actually does, and where it is changed.
+    state.checkinTime
+      ? `Daily check-in: around ${state.checkinTime}, your time, on days you haven't studied yet. Change it in Settings on the web.`
+      : "Daily check-in: no time chosen, so I nudge around your usual study time. Pick a time in Settings on the web.",
     state.timezone
       ? `Timezone: ${state.timezone}.`
       : "Timezone: not set, so I won't message first. Open Nova on the web once and your device tells me.",
@@ -355,7 +359,9 @@ export const TEXT_HINGLISH: typeof TEXT = {
   nudgesOff:       "Nudges off hain. Ab pehla message tumhara hi hoga.",
 };
 
-const TEXTS: Record<ReplyLanguage, typeof TEXT> = { english: TEXT, hinglish: TEXT_HINGLISH };
+// Hindi in Devanagari has no table of its own yet: its fixed lines are the
+// Roman-script Hindi ones. Generated replies are in Devanagari.
+const TEXTS: Record<ReplyLanguage, typeof TEXT> = { english: TEXT, hinglish: TEXT_HINGLISH, hindi: TEXT_HINGLISH };
 export const textFor = (language: ReplyLanguage): typeof TEXT => TEXTS[language];
 
 // Whether a text is already one of the fixed lines of that language, so it
@@ -363,5 +369,6 @@ export const textFor = (language: ReplyLanguage): typeof TEXT => TEXTS[language]
 const FIXED: Record<ReplyLanguage, ReadonlySet<string>> = {
   english:  new Set(Object.values(TEXT)),
   hinglish: new Set(Object.values(TEXT_HINGLISH)),
+  hindi:    new Set(Object.values(TEXT_HINGLISH)),
 };
 export const isFixedText = (text: string, language: ReplyLanguage): boolean => FIXED[language].has(text);

@@ -11,18 +11,25 @@
 //
 // Timing is by window, never by matching a minute: a tick that runs late
 // still finds the window open, and the claim keeps it to once.
+//
+// The daily check-in is one of the reasons, not a second job. A learner who
+// chose a check-in time (web onboarding or Settings) gets it from that time,
+// for CHECKIN_WINDOW_MINUTES; one who chose none is nudged in their study
+// window as before. Every learner the tick looks at ends in exactly one
+// outcome, and the tick logs the count of each.
 
 import { prisma } from "@repo/db/client";
 import { getAllTopicMasteries } from "../engines/knowledge-engine";
 import { getOverdueTopics } from "../engines/retention-engine";
-import { dayKey, dayNumber, isValidTimezone, localHour } from "../engines/learner-calendar";
+import { dayKey, dayNumber, localHour, localMinute } from "../engines/learner-calendar";
 import { STUDY_WINDOWS } from "../engines/learning-dna-engine";
 import { loadReplyLanguage, saveAssistantMessage, userMessagedSince } from "../adapters/conversation-adapter";
 import { loadOperatingStyle, loadAccountabilityStyle } from "../adapters/operating-style-adapter";
+import { ensureLearnerTimezone, loadAccountPreferences } from "../adapters/account-preferences-adapter";
 import { retryPendingConsolidations } from "../consolidation/run-consolidation";
 import { chooseRegister } from "../decision/register";
 import {
-  decideProactive, holdReason, informOnly, isQuietHour, studyWindow, RECENT_MESSAGE_MINUTES,
+  decideProactive, holdReason, inCheckinWindow, informOnly, isQuietFor, studyWindow, RECENT_MESSAGE_MINUTES,
   type ProactiveCandidate, type ProactiveFacts, type ProactiveGates,
 } from "../decision/proactive-decision";
 import { loadLearningDna } from "../persistence/learning-dna-store";
@@ -46,14 +53,27 @@ export interface NovaProactiveCronResult {
   sent:    number;
   checked: number;
   errors:  number;
+  // How many learners ended the tick in each outcome ("sent", "no_timezone",
+  // "quiet_hours", "nothing_due", "suppressed", …). Counts only.
+  outcomes?: Record<string, number>;
 }
+
+// Why nothing is sent on an ordinary tick: not yet time, or today's message
+// has already gone.
+const ROUTINE: ReadonlySet<string> = new Set(["outside_window", "too_soon_after_last", "daily_cap", "already_nudged_today", "already_sent_today", "studied_today"]);
+
+// What happened to one learner this tick.
+type Outcome =
+  | "sent" | "send_failed" | "held" | "claimed_elsewhere"
+  | "no_timezone" | "quiet_hours" | "proactive_off" | "undeliverable" | "not_ready"
+  | "nothing_due" | "suppressed";
 
 export interface ProactiveDeps {
   client?: TelegramClient;
   word?:   (input: ProactiveWordingInput) => Promise<{ text: string; generated: boolean }>;
 }
 
-const PRIORITY: Record<ProactiveType, number> = { exam_countdown: 9, missed_plan_recovery: 6, review_due: 4, daily_nudge: 3 };
+const PRIORITY: Record<ProactiveType, number> = { exam_countdown: 9, missed_plan_recovery: 6, review_due: 4, daily_checkin: 3, daily_nudge: 3 };
 
 // Topics due for review, by the one definition (retention-engine.ts): the
 // same topics Home, the Planner and Knowledge show as due.
@@ -72,15 +92,20 @@ export async function runNovaProactiveCron(now = new Date(), deps: ProactiveDeps
 
   // Operational switch: stops Nova messaging first without a deploy. Replies
   // to learners, commands and buttons are unaffected.
-  if (process.env.NOVA_PROACTIVE_DISABLED === "true") return { ok: true, sent: 0, checked: 0, errors: 0 };
+  if (process.env.NOVA_PROACTIVE_DISABLED === "true") {
+    console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", tick: "disabled", reason: "NOVA_PROACTIVE_DISABLED" }));
+    return { ok: true, sent: 0, checked: 0, errors: 0, outcomes: {} };
+  }
 
   const client = deps.client ?? createTelegramClient();
   const word   = deps.word ?? wordProactiveMessage;
 
-  // Learners Nova may message first at all. A learner with no timezone is
-  // not asked: Nova will not guess what time it is for them.
+  // Learners Nova may message first at all: set up, and on Telegram. One
+  // whose timezone nobody has reported is still looked at, so that the zone
+  // their browser gave at sign-up can be adopted, and so that being skipped
+  // for want of one is counted instead of invisible.
   const profiles = await prisma.novaAcademicProfile.findMany({
-    where:  { onboardingComplete: true, timezone: { not: null }, user: { persona: "nova", platform: "telegram" } },
+    where:  { onboardingComplete: true, user: { persona: "nova", platform: "telegram" } },
     select: {
       id: true, timezone: true, preferredStudyTime: true,
       user: { select: { id: true, platformChatId: true, displayName: true } },
@@ -88,16 +113,23 @@ export async function runNovaProactiveCron(now = new Date(), deps: ProactiveDeps
   });
 
   let sent = 0, errors = 0;
+  const outcomes: Record<string, number> = {};
   for (const profile of profiles) {
+    let outcome: string;
     try {
-      if (await processLearner(profile, now, client, word)) sent++;
+      outcome = await processLearner(profile, now, client, word);
+      if (outcome === "sent") sent++;
     } catch (err) {
       // One learner's failure never stops the rest of the tick.
       console.error(`[nova:cron] profile ${profile.id} failed:`, err);
       errors++;
+      outcome = "error";
     }
+    outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
   }
-  return { ok: true, sent, checked: profiles.length, errors };
+  // One line per tick: what the job did, whether or not anything was sent.
+  console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", tick: "done", checked: profiles.length, sent, errors, outcomes }));
+  return { ok: true, sent, checked: profiles.length, errors, outcomes };
 }
 
 type LearnerRow = {
@@ -110,22 +142,28 @@ async function processLearner(
   now:     Date,
   client:  TelegramClient,
   word:    NonNullable<ProactiveDeps["word"]>,
-): Promise<boolean> {
-  const zone = profile.timezone && isValidTimezone(profile.timezone) ? profile.timezone : null;
-  if (!zone) return false;
-  const hour = localHour(now, zone);
-  const day  = dayKey(now, zone);
+): Promise<Outcome> {
+  const chatId  = profile.user.platformChatId;
+  // What they chose on the web: a check-in time, and the zone their browser
+  // reported. Nova will not guess what time it is for a learner.
+  const account = await loadAccountPreferences(chatId);
+  const zone    = await ensureLearnerTimezone(profile, chatId, account);
+  if (!zone) return "no_timezone";
+  const hour   = localHour(now, zone);
+  const minute = localMinute(now, zone);
+  const day    = dayKey(now, zone);
+  const clock  = { localHour: hour, localMinute: minute, checkinMinute: account.checkinMinute };
   // The cheapest gate first: most ticks for most learners end here.
-  if (isQuietHour(hour)) return false;
+  if (isQuietFor(clock as ProactiveFacts)) return "quiet_hours";
 
   await ensureChannel(profile.id);
   const channel = await loadChannel(profile.id);
-  if (!channel.proactiveEnabled || channel.undeliverableSince) return false;
+  if (!channel.proactiveEnabled) return "proactive_off";
+  if (channel.undeliverableSince) return "undeliverable";
   const paused = channel.proactivePausedUntil !== null && channel.proactivePausedUntil > now;
 
-  const chatId = profile.user.platformChatId;
   const view   = await loadNovaToday(chatId, { learnerName: profile.user.displayName, now });
-  if (view.status !== "ready") return false;
+  if (view.status !== "ready") return "not_ready";
 
   // ── Decide ─────────────────────────────────────────────────────────────────
   const [delivered, dna, dueTopics, messagedRecently] = await Promise.all([
@@ -144,8 +182,10 @@ async function processLearner(
   const today   = dayNumber(day);
   const lastDay = view.progress.lastSession ? dayKey(new Date(view.progress.lastSession.date), zone) : null;
   const facts: ProactiveFacts = {
-    localDay: day, localHour: hour,
-    window:   studyWindow({ dnaWindow: usualWindow, statedPreference: profile.preferredStudyTime }),
+    localDay: day, localHour: hour, localMinute: minute, checkinMinute: account.checkinMinute,
+    window:   account.checkinMinute !== null
+      ? { from: Math.floor(account.checkinMinute / 60), to: Math.min(24, Math.floor(account.checkinMinute / 60) + 3), basis: "chosen" }
+      : studyWindow({ dnaWindow: usualWindow, statedPreference: profile.preferredStudyTime }),
     studiedToday:         lastDay === day,
     daysSinceLastSession: lastDay ? today - dayNumber(lastDay) : null,
     lastSessionDay:       lastDay,
@@ -166,6 +206,11 @@ async function processLearner(
   const gates: ProactiveGates = {
     proactiveEnabled: channel.proactiveEnabled, paused, undeliverable: false, hasTimezone: true,
     activeSession: view.activeSession !== null, messagedRecently: messagedRecently || finishedRecently,
+    // Once today's check-in time has come round, a learner who has already
+    // written to Nova is not checked in on as well.
+    messagedSinceCheckin: account.checkinMinute !== null && inCheckinWindow(facts)
+      ? await userMessagedSince(profile.user.id, new Date(now.getTime() - (hour * 60 + minute - account.checkinMinute) * 60_000))
+      : false,
     sentToday: delivered.today, lastSentAt: delivered.lastSentAt,
     realityCategories: passingConstraints(view, now), now,
   };
@@ -181,23 +226,29 @@ async function processLearner(
     const held    = holdReason(waiting.type as ProactiveType, facts, gates);
     if (held) {
       console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", profileId: profile.id, type: waiting.type, occurrence: waiting.occurrenceKey, outcome: "held", reason: held }));
-      return false;
+      return "held";
     }
-    return deliver(waiting, profile, view, now, client, word, null, informOnly(waiting.type as ProactiveType, gates));
+    return await deliver(waiting, profile, zone, view, now, client, word, null, informOnly(waiting.type as ProactiveType, gates)) ? "sent" : "send_failed";
   }
 
   const decision = decideProactive(facts, gates);
   if (!decision.chosen) {
-    if (decision.suppressed.length > 0) {
-      console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", profileId: profile.id, sent: false, suppressed: decision.suppressed }));
+    if (decision.suppressed.length === 0) return "nothing_due";
+    // Most ticks find the day's message not yet due or already sent. That is
+    // the ordinary state, not news. Any other reason is why a message that
+    // was due did not go out, and is logged.
+    const reasons = decision.suppressed.filter(s => !ROUTINE.has(s.reason));
+    if (reasons.length > 0) {
+      console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", profileId: profile.id, sent: false, suppressed: reasons }));
     }
-    return false;
+    return reasons.length > 0 ? "suppressed" : "nothing_due";
   }
 
   // ── Claim ──────────────────────────────────────────────────────────────────
   const row = await claimOccurrence(profile.id, decision.chosen, day, PRIORITY[decision.chosen.type], now);
-  if (!row) return false;   // this occurrence already has an owner
-  return deliver(row, profile, view, now, client, word, { candidate: decision.chosen, facts, windowBasis: facts.window.basis, dueTopics: dueTopics.map(t => t.topicName) }, decision.informOnly);
+  if (!row) return "claimed_elsewhere";   // this occurrence already has an owner
+  console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", profileId: profile.id, type: decision.chosen.type, occurrence: decision.chosen.occurrenceKey, outcome: "due" }));
+  return await deliver(row, profile, zone, view, now, client, word, { candidate: decision.chosen, facts, windowBasis: facts.window.basis, dueTopics: dueTopics.map(t => t.topicName) }, decision.informOnly) ? "sent" : "send_failed";
 }
 
 // Circumstances that will pass. A temporary one lasts two weeks at most
@@ -214,6 +265,7 @@ function passingConstraints(view: NovaTodayReady, now: Date): string[] {
 async function deliver(
   row:     OutboxRow,
   profile: LearnerRow,
+  zone:    string,
   view:    NovaTodayReady,
   now:     Date,
   client:  TelegramClient,
@@ -223,15 +275,17 @@ async function deliver(
   quiet:   boolean,
 ): Promise<boolean> {
   const chatId = profile.user.platformChatId;
-  const zone   = profile.timezone!;
   const type   = row.type as ProactiveType;
   const rec    = quiet ? null : view.recommendation;
 
   let text = row.text;
   if (!text) {
     const lines: string[] = [];
-    if (fresh) lines.push(capitalize(fresh.candidate.reason));
+    // A check-in's reason is that they asked for it; that is not a fact to tell them.
+    if (fresh && type !== "daily_checkin") lines.push(capitalize(fresh.candidate.reason));
     if (rec)   lines.push(`Recommended now: ${rec.topicName} (${rec.subjectName}), ${rec.durationMinutes} min${rec.reasons[0] ? `, because ${rec.reasons[0]}` : ""}`);
+    // A check-in with nothing to recommend asks; it never invents a plan.
+    if (type === "daily_checkin" && !rec) lines.push("Nothing is planned for today yet");
     if (fresh?.windowBasis === "learning_dna" && !quiet) lines.push("Their recorded sessions usually fall around this time of day");
     const input: ProactiveWordingInput = {
       type, studentName: profile.user.displayName, facts: lines,
@@ -242,6 +296,8 @@ async function deliver(
       }),
       operatingStyle: await loadOperatingStyle(chatId),
       hasStartButton: rec !== null,
+      // The one message that may ask: there is no plan to point at.
+      asksWhatToday:  type === "daily_checkin" && !rec,
       informOnly:     quiet,
       language:       await loadReplyLanguage(profile.user.id),
     };

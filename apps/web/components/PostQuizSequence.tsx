@@ -288,7 +288,7 @@ export default function PostQuizSequence({ quizAnswers, onComplete }: PostQuizSe
           <div className="max-w-md w-full">
             <h2 className="text-3xl font-bold text-white mb-2 text-center">Daily check-in</h2>
             <p className="text-gray-400 text-center mb-10">
-              What time tomorrow do you want me to show up?
+              What time should I check in with you each day?
             </p>
 
             <div className="bg-gray-900/50 border border-gray-700 rounded-2xl p-8 mb-8">
@@ -309,7 +309,7 @@ export default function PostQuizSequence({ quizAnswers, onComplete }: PostQuizSe
             </div>
 
             <p className="text-gray-500 text-sm text-center mb-6">
-              Pick a time that actually works, not an optimistic one
+              I message you on Telegram around this time on days you haven&apos;t studied yet, once you connect Telegram. Pick a time that actually works; you can change it in Settings.
             </p>
 
             <button
@@ -338,7 +338,7 @@ export default function PostQuizSequence({ quizAnswers, onComplete }: PostQuizSe
           <div className="egg-animation text-9xl mb-8">🥚</div>
           <h2 className="text-3xl font-bold text-white mb-2">Your companion is on the way</h2>
           <p className="text-gray-400 max-w-md">
-            Meet {data.creatureName} tomorrow at {data.checkInTime}
+            {data.creatureName} is waiting in your world. Connect Telegram and your first check-in comes around {data.checkInTime}.
           </p>
 
           <button

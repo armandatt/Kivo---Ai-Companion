@@ -4,6 +4,7 @@
 // LLM can express or adjust a plan in a reply, but code owns the algorithm.
 // Owner: Planning Engine.
 
+import { examCoversSubject } from "./exam-engine";
 import type { PlanBudgetBasis, StudyBlock, StudyPlan } from "../types/engine.types";
 import type { AcademicState } from "../types/academic-state.types";
 import type { TopicMasteryState } from "../types/engine.types";
@@ -128,9 +129,15 @@ export function generateStudyPlan(
   const assumptions: string[] = [];
   let usedMinutes = 0;
 
+  // Exam prep is for the topics the exam is about: its own subject's. A
+  // topic from another subject is never called exam prep for this exam.
+  const examTopics = examContext ? topics.filter(t => examCoversSubject(examContext, t.subjectName)) : [];
+
   // ── Exam crisis: all blocks are exam prep ────────────────────────────────
-  if (examContext && state.hardDirectives.examCrisisMode) {
-    const prioritized = getExamPriorityOrder(topics, examContext.topicWeights);
+  // With no topic on record for the exam's subject there is nothing to
+  // prepare from, and the day is planned the ordinary way instead.
+  if (examContext && state.hardDirectives.examCrisisMode && examTopics.length > 0) {
+    const prioritized = getExamPriorityOrder(examTopics, examContext.topicWeights);
     for (const topic of prioritized) {
       if (usedMinutes >= budgetMinutes) break;
       const remaining = budgetMinutes - usedMinutes;
@@ -169,8 +176,7 @@ export function generateStudyPlan(
 
   // 2. Exam context: high-weight low-mastery topics
   if (examContext && state.daysUntilNextExam !== null && state.daysUntilNextExam < 14) {
-    const examTopics = getExamPriorityOrder(topics, examContext.topicWeights).slice(0, 3);
-    for (const topic of examTopics) {
+    for (const topic of getExamPriorityOrder(examTopics, examContext.topicWeights).slice(0, 3)) {
       if (usedMinutes >= budgetMinutes * 0.8) break;
       if (overdue.some(o => o.topicId === topic.topicId)) continue; // already added
       const mins = Math.min(30, budgetMinutes - usedMinutes);

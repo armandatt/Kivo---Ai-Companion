@@ -5,6 +5,7 @@
 // its own: it selects from the plan the Planning Engine produced and reports
 // the facts behind it.
 
+import { examCoversSubject } from "../engines/exam-engine";
 import type { StudySnapshotResult } from "../engines/study-snapshot";
 import { calendarDaysUntil } from "../engines/learner-calendar";
 import { daysOverdue, getOverdueTopics, isDueForReview } from "../engines/retention-engine";
@@ -53,7 +54,10 @@ export function reasonsFor(
 ): string[] {
   const reasons: string[] = [];
 
-  if (examContext && (block.activityType === "exam_prep" || examContext.subjectName === block.subjectName)) {
+  // Only for a block in the exam's own subject (or any block, when the exam
+  // has no subject on record). Another subject's topic is not urgent because
+  // of this exam, whatever kind of block it is.
+  if (examContext && examCoversSubject(examContext, block.subjectName)) {
     // The learner's calendar days, the same count the deadline list shows,
     // so one message never gives two numbers for the same exam.
     const days = calendarDaysUntil(examContext.scheduledAt, now, timezone);

@@ -19,7 +19,8 @@ import { checkRateLimit } from "../../services/rateLimit.service";
 import { runUnderstandingBrain } from "../brains/understanding-brain";
 import { wordFirstUse } from "../brains/first-use-wording";
 import { sayInLanguage } from "../brains/language-wording";
-import { chooseLanguage, languageLine } from "../interaction/language";
+import { chooseLanguage, languageLine, scriptLanguage } from "../interaction/language";
+import { ensureLearnerTimezone } from "../adapters/account-preferences-adapter";
 import { chooseRegister } from "../decision/register";
 import { loadAccountabilityStyle, loadOperatingStyle } from "../adapters/operating-style-adapter";
 import { decideAction, type ActionContext as DecisionContext, type TurnAction } from "../decision/action-decision";
@@ -245,12 +246,16 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       profile = { id: ensured.profileId, onboardingComplete: false, timezone: ensured.timezone };
     }
     if (!profile) return finish("internal");
+    // No timezone on record: take the one their browser reported at sign-up,
+    // if there is one, so their days and their check-ins are drawn right.
+    if (!profile.timezone) profile.timezone = await ensureLearnerTimezone(profile, event.chatId).catch(() => null);
 
     trace.profileId = profile.id;
     ctx = {
       chatId: event.chatId, profileId: profile.id, timezone: profile.timezone, name: user?.displayName ?? null, now,
-      // Until this message is read: the language they last wrote in.
-      language: user ? await loadReplyLanguage(user.id) : "english",
+      // Until this message is read: the language they last wrote in. A
+      // message in Devanagari says so itself, model or no model.
+      language: (event.kind === "text" ? scriptLanguage(event.text) : null) ?? (user ? await loadReplyLanguage(user.id) : "english"),
     };
     budgetDay = dayKey(now, resolveTimezone(profile.timezone));
     // The row is made once, and "reachable again" is written only when the
