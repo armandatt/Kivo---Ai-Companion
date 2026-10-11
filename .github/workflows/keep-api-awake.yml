@@ -11,8 +11,14 @@
 # keeps it to one run at a time.
 #
 # This is a stopgap for the free plan, and it is not a guarantee: there is
-# still a gap between one run ending and GitHub starting the next. Delete this
-# file once the API is on an instance that does not sleep.
+# still a gap between one run ending and GitHub starting the next, and it
+# holds a runner almost all day. It only pings the health route, which never
+# runs a scheduler tick, so it cannot cause a duplicate message.
+#
+# Delete this file as soon as either is true (RENDER_DEPLOYMENT.md, "Keeping
+# the scheduler running"):
+#   - the API is on an instance that does not sleep, or
+#   - an uptime monitor pings /api/health every five minutes.
 name: Keep API awake
 
 on:

@@ -452,3 +452,16 @@ Nova has one scheduler path for speaking first: the five-minute tick (`apps/api/
 - **Tone.** `UserProfile.accountabilityStyle` ("soft" = Gentle Nudges, "hard" = No Mercy) reaches wording only, through `chooseRegister` (`decision/register.ts`): `gentle`, `playful` (firm), `steady` when unset, and `serious` overriding all three on distress, a hard stretch or an exam within three days. No decision reads it.
 - **Language.** A reply follows the message it answers. Devanagari is decided from the script (`scriptLanguage`, `interaction/language.ts`) with no model; English versus Hinglish is the reading's. Fixed lines have no Devanagari table: Hindi uses the Roman-script Hindi ones.
 - **Exam attribution.** Exam prep blocks and the "exam in N days" reason belong to the exam's own subject (`examCoversSubject`, `engines/exam-engine.ts`); an exam with no subject on record covers the syllabus.
+
+## What the record changes in the plan
+
+Learning DNA (`engines/learning-dna-engine.ts`) already grades each conclusion `unknown` / `emerging` / `supported` / `strong` and flags one its latest evidence is pulling away from (`weakening`). A conclusion may change a decision only at `supported` or stronger and not weakening, and only through the engines, never through a prompt. Two do today:
+
+- `usual_study_window` times the study-window nudge (`nova-proactive-cron.ts`), unless the learner chose a check-in time.
+- `typical_session` caps block length (`usualSessionMinutes` in `product/planning-inputs.ts` → `PlanOptions.usualSessionMinutes` → `sessionCap` in `engines/planning-engine.ts`). It only shortens, never under `MIN_BLOCK_MINUTES`, and not when the learner said how long they have today.
+
+The other signals (`plan_follow_through`, `days_per_week`, `best_session_size`, `best_study_window`, `revision_spacing`, `needs_more_retrieval`) are shown on the Learning DNA page and reach no decision. Wiring one in means a new `PlanOptions` field or decision fact with the same evidence gate, and a test in `__tests__/learner-adaptation.test.ts`.
+
+## Web and API deploy separately
+
+Vercel deploys `apps/web` on every merge to `main`; Render deploys `apps/api` only on Manual Deploy. A web change that needs a new API behaviour will reach users before the API does. `GET /api/health` reports the API's `commit`. The web app must not treat an unexpected API answer as "signed out": `saveLink` (`components/nova/saved/saved-api.ts`) checks `/api/me` before believing a 401.
