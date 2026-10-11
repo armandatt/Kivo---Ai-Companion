@@ -6,6 +6,7 @@ import { Menu } from 'lucide-react'
 import { routeAccess, type Companion } from '@repo/api/nova/product/companion'
 import { Sidebar } from '@/components/sidebar'
 import { NovaUnavailable } from '@/components/nova/nova-unavailable'
+import { hasParkedCapture } from '@/components/nova/saved/pending-capture'
 
 // A page both companions have (the Guide) reads which one it is showing for
 // from here. Pages mount only once the companion is known.
@@ -67,6 +68,12 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
       void fetch('/api/nova/timezone', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ timezone }) }).catch(() => {})
     } catch { /* no storage or no Intl: the next visit tries again */ }
   }, [companion])
+
+  // A page the Save to Kivo bookmark brought, held while they signed in:
+  // whichever page sign-in landed on, take them to Saved to review it.
+  useEffect(() => {
+    if (companion === 'nova' && pathname !== '/saved' && hasParkedCapture()) router.replace('/saved')
+  }, [companion, pathname, router])
 
   // Auto-collapse when entering creature page, restore when leaving
   useEffect(() => {
