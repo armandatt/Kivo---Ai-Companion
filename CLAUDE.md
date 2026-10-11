@@ -120,6 +120,87 @@ The lock, the closure-reply dedup and the daily-warning set are process-level `M
 
 Known gaps, deliberately not fixed here: `UserProfile.primaryPersona` is never copied to `MessengerUser.persona` (nothing writes that field, so web-onboarded users stay on the default `rex` on Telegram), and the Rex V3 prompt is hard-coded to Rex's voice whatever the persona.
 
+### Personality system checkpoint (2026-10-06): Phase 2 is PAUSED
+
+Read this before any personality work. This section is the full record of the checkpoint. Phase 2 is designed, not implemented; do not assume otherwise because the design exists.
+
+**Until a human explicitly resumes this work, do NOT:**
+
+- implement Phase 2 or the Mini-IPIP;
+- modify onboarding;
+- extend Phase 1;
+- add a personality MCP or any runtime dependency for personality;
+- change the database (no schema change, no `prisma db push`);
+- deploy anything;
+- make any of the open product decisions below on your own.
+
+**Phase 1: complete and approved.** The lightweight personality / mentor-matching signal described above.
+
+- PR #6, `feat: add personality mentor signal to onboarding`, branch `feature/personality-mentor-signal`, commit `331b3da1e6dfaf99544350899fb255ff3db785bd`, base `main` at `55c43f0`.
+- Status: merged into `main` on 2026-10-05 (merge commit `932316f`). Deploy status is not recorded here; check it before acting on it.
+- What it does: the six existing onboarding questions stay; four deterministic personality-signal questions are added; a versioned `PersonalityAssessment` is stored; scoring and mentor compatibility are deterministic; domain and the explicit accountability preference outrank personality; the signal is a hypothesis, not a validated personality test; raw answers and scores are never sent to the LLM; the prompt gets at most three behavioural lines when `PERSONALITY_SIGNAL_ENABLED=true`; the flag defaults off; legacy mentor matching behaviour is preserved.
+- No production database was touched and `prisma db push` was never run.
+
+Verification after the rebase onto `55c43f0`:
+
+| Check | Result |
+|---|---|
+| Personality tests | 91/91 |
+| Nova tests | 455/455 |
+| Combined | 546/546 |
+| Full Jest | 1127/1128; the remaining failures are pre-existing and unrelated |
+| Type checks (api, web, packages/api) | pass |
+| Builds (api, web) | pass |
+| Prisma validation | pass |
+| Browser | desktop and 390px passed; 320px has known short-scroll issues on a few onboarding questions |
+| Prompt audit (provider intercepted) | passed |
+| Real-model test | **blocked**: no LLM API key was available, so no real reply has been inspected with the flag on |
+
+**Phase 2: research and design only.** End goal: a new user signs up, completes a genuinely validated personality assessment, gets a persistent personality profile, is matched to an appropriate mentor, personality influences mentor behaviour, and real behavioural evidence can refine the initial profile over time.
+
+Research recommendation (provisional):
+
+- Mini-IPIP, 20 items, a public-domain IPIP instrument.
+- BFI-2-S has stronger psychometrics but would need permission for commercial use.
+- IPIP-50 is the upgrade path, but longer.
+- No invented percentiles until Kivo has appropriate norms.
+- Personality is a prior, not a permanent fact. Behavioural evidence stays separate evidence and can eventually refine the current estimate.
+
+Phase 2A onboarding flow (proposed, not implemented):
+
+1. Part 1: the six existing Kivo questions.
+2. A bridge screen explaining a short 20-item personality section.
+3. Part 2: the 20 Mini-IPIP statements, one per screen, five standard response options, auto-advance.
+4. Confirmation.
+5. Mentor reveal.
+6. The existing companion setup.
+
+- Estimated total onboarding: about 5 minutes (an estimate, not measured).
+- The assessment can be deferred. An incomplete assessment is never scored.
+- Existing Phase 1 users keep their old signal and can optionally complete the Mini-IPIP later.
+- A new Mini-IPIP profile becomes the current profile; the old assessment remains as history.
+- No schema change is expected for the assessment itself.
+- A new operating-style adapter maps the personality factors into Kivo's internal dimensions.
+- Domain and accountability stay higher priority than personality.
+- Agreeableness is proposed to be stored but not used for mentor behaviour.
+
+Rules that carry into Phase 2: use the Mini-IPIP items unchanged and invent no replacement questions; never call it a diagnostic or clinical assessment; never claim it validates Kivo's mentor-personality mapping; invent no psychometric properties.
+
+Open decisions, all needing human approval before implementation:
+
+1. Mandatory vs optional assessment.
+2. Whether results should be shown to users (current recommendation: no).
+3. Mini-IPIP presentation: "I…" lead-in vs bare stems.
+4. Standard IPIP labels vs simpler labels.
+5. Whether Q1 (energy pattern) should change format.
+6. Low/high cut-offs for internal bands.
+7. Exact factor → Kivo operating-style mapping.
+8. Whether Agreeableness should influence anything beyond storage.
+
+Not yet verified, check before implementing: the Mini-IPIP's published administration order (confirm from the primary source, not from memory), and which code reads the stored free text of Q1 (before changing its format).
+
+When the work resumes: review this checkpoint, resolve the open decisions, then implement the Mini-IPIP on a new branch, test, browser-test, audit the prompts and open a new PR.
+
 ### Proactive messaging
 
 `runCheckinCron` in `apps/api/lib/checkin-cron.ts` sends dynamic check-ins, custom reminders, gym cues and Nova proactive messages; each job has its own `try`, so one failing does not stop the others. It is driven by an in-process 5-minute `setInterval` started from `apps/api/instrumentation.ts` (disable with `DISABLE_INTERNAL_CHECKIN_CRON=true`). `render.yaml` sets that flag to `false`: Render is the one host that runs it. `GET /api/health` reports `scheduler.state` (`running` / `disabled`) with the time and result of the last tick. `GET /api/checkin` runs one tick by hand; nothing deployed calls it, and it requires `Authorization: Bearer $CRON_SECRET` (closed in production when `CRON_SECRET` is unset). The root `vercel.json` still declares a cron for `/api/checkin`, but the web app has neither that route nor a rewrite for it. Nova's part is described under "Nova on Telegram".
