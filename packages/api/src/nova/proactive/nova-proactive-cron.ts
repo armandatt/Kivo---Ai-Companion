@@ -29,7 +29,7 @@ import { ensureLearnerTimezone, loadAccountPreferences } from "../adapters/accou
 import { retryPendingConsolidations } from "../consolidation/run-consolidation";
 import { chooseRegister } from "../decision/register";
 import {
-  decideProactive, holdReason, inCheckinWindow, informOnly, isQuietFor, studyWindow, RECENT_MESSAGE_MINUTES,
+  decideProactive, generateCandidates, holdReason, inCheckinWindow, informOnly, isQuietFor, studyWindow, RECENT_MESSAGE_MINUTES,
   type ProactiveCandidate, type ProactiveFacts, type ProactiveGates,
 } from "../decision/proactive-decision";
 import { loadLearningDna } from "../persistence/learning-dna-store";
@@ -43,7 +43,7 @@ import { encodeCallback } from "../telegram/telegram-event";
 import { recommendationReply } from "../telegram/telegram-replies";
 import type { InlineButton, PromptSpec, TelegramClient } from "../telegram/telegram.types";
 import {
-  beginSend, claimOccurrence, loadDelivered, markReady, markSendFailed, markSent, purgeLegacyDecisions, recoverPending,
+  beginSend, claimOccurrence, dropUnworded, loadDelivered, markReady, markSendFailed, markSent, purgeLegacyDecisions, recoverPending,
   type OutboxRow,
 } from "./proactive-outbox";
 import { proactiveFallback, wordProactiveMessage, type ProactiveWordingInput } from "./nova-proactive-response";
@@ -228,7 +228,20 @@ async function processLearner(
       console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", profileId: profile.id, type: waiting.type, occurrence: waiting.occurrenceKey, outcome: "held", reason: held }));
       return "held";
     }
-    return await deliver(waiting, profile, zone, view, now, client, word, null, informOnly(waiting.type as ProactiveType, gates)) ? "sent" : "send_failed";
+    // Claimed, and the process ended before it was worded: it is worded now,
+    // from what is true now. If its reason has gone (the exam was removed,
+    // the review was done), nothing is said.
+    let fresh: Parameters<typeof deliver>[7] = null;
+    if (!waiting.text) {
+      const candidate = generateCandidates(facts).find(c => c.occurrenceKey === waiting.occurrenceKey);
+      if (!candidate) {
+        await dropUnworded(waiting.id);
+        console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", profileId: profile.id, type: waiting.type, occurrence: waiting.occurrenceKey, outcome: "dropped", reason: "reason_no_longer_holds" }));
+        return "nothing_due";
+      }
+      fresh = { candidate, facts, windowBasis: facts.window.basis, dueTopics: dueTopics.map(t => t.topicName) };
+    }
+    return await deliver(waiting, profile, zone, view, now, client, word, fresh, informOnly(waiting.type as ProactiveType, gates)) ? "sent" : "send_failed";
   }
 
   const decision = decideProactive(facts, gates);
