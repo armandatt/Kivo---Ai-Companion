@@ -1,10 +1,8 @@
 import { cookies } from "next/headers"
 import { NextResponse } from "next/server"
 import { jwtVerify } from "jose"
+import { sessionSecret } from "@/lib/auth/session-secret"
 
-const SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET ?? "fallback-dev-secret-change-in-production"
-)
 
 // A connect link is good for 15 minutes (LINK_TOKEN_MINUTES in
 // packages/api/src/nova/telegram/telegram-link.ts, which enforces it).
@@ -42,7 +40,7 @@ export async function POST() {
     if (!sessionToken) {
       return NextResponse.json({ error: "Not signed in" }, { status: 401 })
     }
-    const { payload } = await jwtVerify(sessionToken, SECRET)
+    const { payload } = await jwtVerify(sessionToken, sessionSecret())
     const uid = (payload as { userId?: string }).userId
     if (!uid) return NextResponse.json({ error: "Invalid session" }, { status: 401 })
     userId = uid

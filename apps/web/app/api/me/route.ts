@@ -1,10 +1,8 @@
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import { jwtVerify } from 'jose'
+import { sessionSecret } from '@/lib/auth/session-secret'
 
-const SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET ?? 'fallback-dev-secret-change-in-production'
-)
 
 export async function GET() {
   try {
@@ -12,7 +10,7 @@ export async function GET() {
     const token = store.get('kevo_session')?.value
     if (!token) return NextResponse.json({ creatureName: null, telegramConnected: false }, { status: 401 })
 
-    const { payload } = await jwtVerify(token, SECRET)
+    const { payload } = await jwtVerify(token, sessionSecret())
     const userId = (payload as { userId?: string }).userId
     if (!userId) return NextResponse.json({ creatureName: null, telegramConnected: false }, { status: 401 })
 

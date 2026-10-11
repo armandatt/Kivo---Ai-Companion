@@ -1,111 +1,75 @@
-import { prisma } from "@repo/db/client"
 import { NextResponse } from "next/server"
+import { cookies } from "next/headers"
+import { errorLabel } from "@repo/api/auth/error-label"
+import { readGoogleClaims, resolveGoogleSignIn } from "@repo/api/auth/google-signin.service"
+import { safeEqual } from "@repo/api/auth/secrets"
 import { createSession, SESSION_COOKIE_NAME, SESSION_COOKIE_OPTIONS } from "../../../lib/auth/session"
+import {
+  appUrl,
+  exchangeCodeForIdToken,
+  googleConfig,
+  OAUTH_COOKIE_NAME,
+  OAUTH_COOKIE_OPTIONS,
+  verifyGoogleIdToken,
+} from "../../../lib/auth/google-oidc"
+
+// Every way out of the callback ends this sign-in attempt, so every response
+// clears the state cookie.
+function finish(path: string) {
+  const response = NextResponse.redirect(`${appUrl()}${path}`)
+  response.cookies.set(OAUTH_COOKIE_NAME, "", { ...OAUTH_COOKIE_OPTIONS, maxAge: 0 })
+  return response
+}
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url)
     const code = searchParams.get("code")
-    const error = searchParams.get("error")
+    const state = searchParams.get("state")
 
     // User denied access
-    if (error || !code) {
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_APP_URL}/signin?error=google_denied`
-      )
+    if (searchParams.get("error") || !code) {
+      return finish("/signin?error=google_denied")
     }
 
-    // ── Exchange code for tokens ──
-    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        code,
-        client_id: process.env.GOOGLE_CLIENT_ID!,
-        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-        redirect_uri: process.env.GOOGLE_REDIRECT_URI!,
-        grant_type: "authorization_code",
-      }),
-    })
+    const config = googleConfig()
+    if (!config) return finish("/signin?error=google_config")
 
-    if (!tokenRes.ok) {
+    // The state must be the one this browser was sent to Google with.
+    const cookieStore = await cookies()
+    const [expectedState, expectedNonce] = (cookieStore.get(OAUTH_COOKIE_NAME)?.value ?? "").split(".")
+    if (!state || !expectedState || !expectedNonce || !safeEqual(state, expectedState)) {
+      return finish("/signin?error=google_state")
+    }
+
+    const idToken = await exchangeCodeForIdToken(code, config)
+    if (!idToken) {
       console.error("[GOOGLE CALLBACK] Token exchange failed")
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_APP_URL}/signin?error=token_exchange`
-      )
+      return finish("/signin?error=token_exchange")
     }
 
-    const tokens = await tokenRes.json()
-
-    // ── Get user info from Google ──
-    const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-      headers: { Authorization: `Bearer ${tokens.access_token}` },
-    })
-
-    if (!userInfoRes.ok) {
-      return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_APP_URL}/signin?error=userinfo_failed`
-      )
+    let payload
+    try {
+      payload = await verifyGoogleIdToken(idToken, config.clientId)
+    } catch {
+      console.error("[GOOGLE CALLBACK] ID token failed verification")
+      return finish("/signin?error=google_token")
     }
 
-    const googleUser = await userInfoRes.json()
-    // googleUser: { id, email, name, picture, verified_email }
+    const claims = readGoogleClaims(payload, expectedNonce)
+    if (!claims.ok) return finish("/signin?error=google_token")
 
-    // ── Upsert user in DB ──
-    let user = await prisma.user.findUnique({
-      where: { email: googleUser.email },
-    })
-
-    if (!user) {
-      // New user — create
-      user = await prisma.user.create({
-        data: {
-          email: googleUser.email,
-          name: googleUser.name ?? null,
-          image: googleUser.picture ?? null,
-          emailVerified: new Date(),
-        },
-      })
-    } else if (!user.image && googleUser.picture) {
-      // Existing user — update image if missing
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: { image: googleUser.picture, emailVerified: new Date() },
-      })
+    const result = await resolveGoogleSignIn(claims.identity)
+    if (!result.ok) {
+      const error = {
+        password_reset_required: "google_link",
+        email_not_authoritative: "google_manual",
+        email_unverified: "google_unverified",
+      }[result.reason]
+      return finish(`/signin?error=${error}`)
     }
 
-    // ── Upsert Google account link ──
-    await prisma.account.upsert({
-      where: {
-        provider_providerAccountId: {
-          provider: "google",
-          providerAccountId: googleUser.id,
-        },
-      },
-      create: {
-        userId: user.id,
-        type: "oauth",
-        provider: "google",
-        providerAccountId: googleUser.id,
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token ?? null,
-        expires_at: tokens.expires_in
-          ? Math.floor(Date.now() / 1000) + tokens.expires_in
-          : null,
-        token_type: tokens.token_type,
-        scope: tokens.scope,
-        id_token: tokens.id_token ?? null,
-      },
-      update: {
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token ?? null,
-        expires_at: tokens.expires_in
-          ? Math.floor(Date.now() / 1000) + tokens.expires_in
-          : null,
-        id_token: tokens.id_token ?? null,
-      },
-    })
-
+    const { user } = result
     const token = await createSession({
       userId: user.id,
       email: user.email,
@@ -113,16 +77,12 @@ export async function GET(req: Request) {
       image: user.image,
     })
 
-    const nextPath = "/home"
-    const redirectResponse = NextResponse.redirect(
-      `${process.env.NEXT_PUBLIC_APP_URL}${nextPath}`
-    )
-    redirectResponse.cookies.set(SESSION_COOKIE_NAME, token, SESSION_COOKIE_OPTIONS)
-    return redirectResponse
+    const response = finish("/home")
+    response.cookies.set(SESSION_COOKIE_NAME, token, SESSION_COOKIE_OPTIONS)
+    return response
   } catch (error) {
-    console.error("[GOOGLE CALLBACK ERROR]", error)
-    return NextResponse.redirect(
-      `${process.env.NEXT_PUBLIC_APP_URL}/signin?error=server_error`
-    )
+    // The kind of error only: the error itself can quote an email address.
+    console.error(`[GOOGLE CALLBACK ERROR] ${errorLabel(error)}`)
+    return finish("/signin?error=server_error")
   }
 }

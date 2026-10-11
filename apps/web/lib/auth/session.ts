@@ -1,10 +1,7 @@
 import { SignJWT, jwtVerify } from "jose"
 import { cookies } from "next/headers"
 import type { JWTPayload } from "jose"
-
-const SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET ?? "fallback-dev-secret-change-in-production"
-)
+import { sessionSecret } from "./session-secret"
 
 export interface SessionPayload extends JWTPayload {
   userId: string
@@ -21,7 +18,7 @@ export async function createSession(payload: SessionPayload) {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("30d")
-    .sign(SECRET)
+    .sign(sessionSecret())
 
   const cookieStore = await cookies()
   cookieStore.set(COOKIE_NAME, token, {
@@ -41,7 +38,7 @@ export async function getSession(): Promise<SessionPayload | null> {
     const token = cookieStore.get(COOKIE_NAME)?.value
     if (!token) return null
 
-    const { payload } = await jwtVerify(token, SECRET)
+    const { payload } = await jwtVerify(token, sessionSecret())
     return payload as unknown as SessionPayload
   } catch {
     return null

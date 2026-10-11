@@ -416,6 +416,39 @@ model PasswordResetToken {
   @@index([userId])
 }
 
+// One attempt at an email signup that has not been verified yet. The User row
+// is created only when the emailed code is confirmed, so these rows are the
+// whole of an unfinished registration. An address can have several attempts
+// at once (one per browser that started one); none can read or change
+// another, because each is reached only through its own token.
+// tokenHash and codeHash are hashes; the token and the code are never stored.
+// attempts counts wrong codes for the life of the attempt, across resends.
+model PendingSignup {
+  id            String   @id @default(cuid())
+  email         String
+  name          String?
+  passwordHash  String
+  tokenHash     String   @unique
+  codeHash      String
+  codeExpiresAt DateTime
+  attempts      Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([email])
+  @@index([createdAt])
+}
+
+// Counters behind the auth limits that must hold whoever is asking and across
+// restarts: failed sign-ins per address, and emails sent per address. key is
+// a hash of the limit's name and the address, so no address is stored here.
+model AuthThrottle {
+  key         String   @id
+  count       Int      @default(0)
+  windowStart DateTime
+  lastAt      DateTime
+}
+
 model Account {
   id                 String  @id @default(cuid())
   userId             String
