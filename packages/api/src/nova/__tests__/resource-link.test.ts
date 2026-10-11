@@ -189,6 +189,30 @@ describe("one way of saving a page", () => {
     expect(box.slice(box.indexOf("useEffect(() => {\n    if (capture)"), box.indexOf("const already"))).not.toContain("save(");
   });
 
+  it("believes \"unauthenticated\" from a save only when the session is really gone", () => {
+    // The API deploys separately from the web app. One that predates saving
+    // from the web answers 401 to a signed-in learner; that is not a sign-in problem.
+    const save = webApi.slice(webApi.indexOf("export async function saveLink"));
+    expect(save).toContain("if (res.status === 401 && await stillSignedIn())");
+    expect(save.indexOf("await stillSignedIn()")).toBeLessThan(save.indexOf("error: res.status === 401 ? 'unauthenticated'"));
+    expect(webApi).toContain("fetch('/api/me', { cache: 'no-store' })");
+    // Unknown is not "signed in": a failed check still offers sign-in.
+    expect(webApi.slice(webApi.indexOf("async function stillSignedIn"), webApi.indexOf("// Saving a link from the web app"))).toContain("return false");
+  });
+
+  it("brings a parked capture back to the review whichever page sign-in lands on", () => {
+    const shell = read("apps/web/components/dashboard-shell.tsx");
+    expect(shell).toContain("pathname !== '/saved' && hasParkedCapture()) router.replace('/saved')");
+    const pending = read("apps/web/components/nova/saved/pending-capture.ts");
+    expect(pending).toContain("Date.now() - saved.at < KEEP_MS");
+    // Looking does not consume it; Saved takes it, once.
+    expect(pending.slice(pending.indexOf("export function hasParkedCapture"), pending.indexOf("export function takeCapture"))).not.toContain("removeItem(KEY)\n    return true");
+  });
+
+  it("the health check says which commit the API was built from", () => {
+    expect(read("apps/api/app/api/health/route.ts")).toContain("RENDER_GIT_COMMIT");
+  });
+
   it("puts no credential in an address", () => {
     for (const src of [helper, box, read("apps/web/components/nova/saved/pending-capture.ts"), read("apps/web/components/nova/saved/bookmarklet-panel.tsx")]) {
       expect(src).not.toMatch(/kevo_session|document\.cookie|Bearer|nvx_/);

@@ -1261,6 +1261,70 @@ test("a send interrupted by a restart is treated as unknown, not resent", async 
   assert.deepEqual((await outbox(l)).map(r => r.status), ["unknown"]);
 });
 
+test("a claim the process never got to word is worded on the next tick, with its reason, and sent once", async () => {
+  const l = await eveningLearner("Kit");
+  await ensureChannel(l.profileId);
+  const day = dayKey(clock, zoneWhereHourIs(18));
+  await prisma.novaProactiveMessage.create({
+    data: { profileId: l.profileId, eventType: "review_due", occurrenceKey: `review:${day}`, localDay: day, status: "claimed",
+            firedAt: new Date(clock.getTime() - 10 * MIN), cooldownUntil: clock, priority: 4, confidence: 1 },
+  });
+  const { tg, asked, run } = proactive();
+  await run();
+  const said = asked.find(a => a.startsWith("Kit: "))!;
+  assert.ok(said.startsWith("Kit: review_due|steady|1 topic due for review / Recommended now: Deadlocks"), said);
+  assert.equal(mine(tg, l).length, 1);
+  assert.deepEqual((await outbox(l)).map(r => [r.status, r.attempts]), [["sent", 1]]);
+  tick(5);
+  await run();
+  assert.equal(mine(tg, l).length, 1);
+});
+
+test("a claim whose reason has gone by the time it is recovered is dropped, and what is due now goes out instead", async () => {
+  const l = await eveningLearner("Lux");
+  await ensureChannel(l.profileId);
+  const day = dayKey(clock, zoneWhereHourIs(18));
+  // An exam countdown claimed before a restart; the exam has since been removed.
+  await prisma.novaProactiveMessage.create({
+    data: { profileId: l.profileId, eventType: "exam_countdown", occurrenceKey: `exam:Removed exam:2030-01-01:${day}`, localDay: day, status: "claimed",
+            firedAt: new Date(clock.getTime() - 10 * MIN), cooldownUntil: clock, priority: 9, confidence: 1 },
+  });
+  const { tg, asked, run } = proactive();
+  await run();
+  assert.equal(mine(tg, l).length, 0, "no exam message about an exam that is not there");
+  assert.equal(asked.filter(a => a.startsWith("Lux: ")).length, 0);
+  assert.deepEqual((await outbox(l)).map(r => [r.eventType, r.status]), [["exam_countdown", "abandoned"]]);
+
+  tick(5);
+  await run();
+  assert.deepEqual((await outbox(l)).map(r => [r.eventType, r.status]), [["exam_countdown", "abandoned"], ["review_due", "sent"]]);
+  assert.equal(mine(tg, l).length, 1);
+});
+
+test("Telegram accepts the message and recording it fails: it is not sent again, and counts as today's", async () => {
+  const l = await eveningLearner("Mog");
+  const tg = fakeTelegram();
+  let failed = false;
+  const client: TelegramClient = {
+    ...tg.client,
+    async sendMessage(chatId, text, buttons) {
+      const result = await tg.client.sendMessage(chatId, text, buttons);
+      if (chatId === l.chat && !failed) { failed = true; throw new Error("database went away after the send"); }
+      return result;
+    },
+  };
+  const word = (async (input: { studentName: string | null }) => ({ text: `NUDGE(${input.studentName})`, generated: true })) as never;
+  const first = await runNovaProactiveCron(clock, { client, word });
+  assert.ok(first.errors >= 1, "the failure is counted, not swallowed");
+  assert.equal(mine(tg, l).length, 1, "it did reach the learner");
+  assert.deepEqual((await outbox(l)).map(r => r.status), ["sending"], "not recorded as sent: nothing confirmed it");
+
+  // The next ticks cannot know whether it arrived, so they do not send it again.
+  for (let i = 0; i < 3; i++) { tick(5); await runNovaProactiveCron(clock, { client, word }); }
+  assert.equal(mine(tg, l).length, 1);
+  assert.deepEqual((await outbox(l)).map(r => r.status), ["unknown"]);
+});
+
 test("no timezone, nudges off, 'Not today', quiet hours and a recent message each mean silence, with nothing stored", async () => {
   const noZone = await seedLearner("Dee", { timezone: null, preferredStudyTime: "evening" });
   const off    = await eveningLearner("Eli");

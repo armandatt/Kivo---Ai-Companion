@@ -1,31 +1,49 @@
 # Render's free plan stops the API after about 15 minutes without traffic, and
-# the check-in scheduler stops with it. This requests the health route often
-# enough that the service stays up; the health route also starts the scheduler
-# again after a restart.
+# the in-process scheduler (check-ins, nudges, reminders) stops with it. This
+# requests the health route often enough that the service stays up; the health
+# route also starts the scheduler again after a restart.
 #
-# GitHub runs schedules late under load, so each run pings three times over
-# eight minutes rather than once. Delete this file once the API is on a paid
-# instance.
+# GitHub does not run a schedule when it says it will: on this repository a
+# "*/10" schedule was started about once every six hours, which left the API
+# asleep, and every check-in unsent, for most of the day. So one run now stays
+# for most of six hours (the longest a job may last) and pings every four
+# minutes, and the schedule only has to start the next one. `concurrency`
+# keeps it to one run at a time.
+#
+# This is a stopgap for the free plan, and it is not a guarantee: there is
+# still a gap between one run ending and GitHub starting the next, and it
+# holds a runner almost all day. It only pings the health route, which never
+# runs a scheduler tick, so it cannot cause a duplicate message.
+#
+# Delete this file as soon as either is true (RENDER_DEPLOYMENT.md, "Keeping
+# the scheduler running"):
+#   - the API is on an instance that does not sleep, or
+#   - an uptime monitor pings /api/health every five minutes.
 name: Keep API awake
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "7,37 * * * *"
   workflow_dispatch:
 
 permissions: {}
 
+concurrency:
+  group: keep-api-awake
+  cancel-in-progress: false
+
 jobs:
   ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 350
     steps:
-      - name: Request the health route
+      - name: Request the health route every four minutes
         run: |
-          for attempt in 1 2 3; do
-            curl -fsS --max-time 90 --retry 2 --retry-delay 5 "$HEALTH_URL"
+          # 85 pings, four minutes apart: about 5 h 40 min.
+          for attempt in $(seq 1 85); do
+            curl -fsS --max-time 90 --retry 2 --retry-delay 5 "$HEALTH_URL" || echo "ping $attempt failed"
             echo
-            if [ "$attempt" -lt 3 ]; then sleep 240; fi
+            sleep 240
           done
         env:
           HEALTH_URL: https://kivo-api-6jh4.onrender.com/api/health

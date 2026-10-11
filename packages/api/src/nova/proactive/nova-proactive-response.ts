@@ -22,6 +22,9 @@ export interface ProactiveWordingInput {
   // never how hard to push.
   operatingStyle: string[];
   hasStartButton: boolean;
+  // A check-in for a learner with nothing planned: ask what they are working
+  // on today, since there is nothing to recommend.
+  asksWhatToday?: boolean;
   // The language the learner last wrote in. Absent: English.
   language?:      ReplyLanguage;
   // Something in the learner's life is limiting study right now. The message
@@ -38,7 +41,11 @@ const INSTRUCTIONS: Record<ProactiveType, string> = {
   review_due:           "Topics are due for review. Name the one recommended. Say a short retrieval pass is enough.",
   missed_plan_recovery: "They have not studied for a few days. Do not mention guilt or the gap as a failure. Make starting small and easy.",
   daily_nudge:          "It is around the time they study and nothing is done yet today. Point at the one recommended thing.",
+  daily_checkin:        "This is the daily check-in they asked for, at the time they chose. Open briefly, without a greeting ritual, and point at the one recommended thing for today. Do not say they have not studied: nothing recorded today is not a failure.",
 };
+
+// The check-in when nothing is planned: one question, and nothing made up.
+const ASK_WHAT_TODAY = "This is the daily check-in they asked for, at the time they chose. Nothing is planned yet, so ask one short question: what are they working on today, or how much time do they have. Recommend nothing and name no topic.";
 
 export function proactiveFallback(input: ProactiveWordingInput): string {
   const lead: Record<ProactiveType, string> = {
@@ -46,7 +53,9 @@ export function proactiveFallback(input: ProactiveWordingInput): string {
     review_due:           "Review is due.",
     missed_plan_recovery: "Easy way back in.",
     daily_nudge:          "Good time for a session.",
+    daily_checkin:        "Checking in.",
   };
+  if (input.asksWhatToday) return "Checking in. What are you working on today? Tell me how much time you have and I'll fit a session to it.";
   // Informing only: the one fact, and no recommendation.
   const facts = input.informOnly ? input.facts.slice(0, 1) : input.facts.slice(0, 2);
   return [input.informOnly ? "For your calendar." : lead[input.type], ...facts.map(f => `${f}.`)].join(" ");
@@ -69,11 +78,13 @@ export async function wordProactiveMessage(
 
   const prompt = [
     `Reason for the message: ${input.type}`,
-    `Instruction: ${input.informOnly ? INFORM_ONLY : INSTRUCTIONS[input.type]}`,
+    `Instruction: ${input.informOnly ? INFORM_ONLY : input.asksWhatToday ? ASK_WHAT_TODAY : INSTRUCTIONS[input.type]}`,
     registerLine(input.register),
     languageLine(input.language ?? "english"),
     input.hasStartButton ? "A Start button is attached under the message, so do not ask them to reply." : null,
-    "At most two sentences. Plain text only: no JSON, no labels, no quotes, no questions that need an answer.",
+    input.asksWhatToday
+      ? "At most two sentences. Plain text only: no JSON, no labels, no quotes. Exactly one question."
+      : "At most two sentences. Plain text only: no JSON, no labels, no quotes, no questions that need an answer.",
   ].filter(Boolean).join("\n");
 
   try {

@@ -110,7 +110,7 @@ export function buildExamContext(
   return {
     examId:           exam.id,
     examTitle:        exam.title,
-    subjectName:      exam.subjectName ?? "Unknown Subject",
+    subjectName:      exam.subjectName ?? NO_EXAM_SUBJECT,
     daysUntil,
     scheduledAt:      exam.scheduledAt,
     mode,
@@ -123,6 +123,16 @@ export function buildExamContext(
 
 // ── Select most urgent exam ────────────────────────────────────────────────────
 // Returns context for the soonest exam within 14 days.
+
+// Whether an exam is about a subject. An exam is its own subject's: an
+// Operating Systems exam says nothing about Data Structures. An exam with no
+// subject on record covers the whole syllabus.
+export const NO_EXAM_SUBJECT = "Unknown Subject";
+export function examCoversSubject(exam: Pick<ExamContext, "subjectName">, subjectName: string): boolean {
+  const own = exam.subjectName.trim().toLowerCase();
+  if (!own || own === NO_EXAM_SUBJECT.toLowerCase()) return true;
+  return own === subjectName.trim().toLowerCase();
+}
 
 export function selectActiveExam(
   exams:         RawExam[],

@@ -23,26 +23,37 @@ export const EXAM_WINDOW        = { from: 9, to: 21 };
 export const RECOVERY_MIN_DAYS  = 2;
 export const RECOVERY_MAX_DAYS  = 7;
 export const RECENT_MESSAGE_MINUTES = 30;
+// A check-in the learner asked for at a time is good for this long after it.
+// A tick that runs late (a restart, a sleeping host) still delivers it inside
+// the window; after that it has expired and is not sent late.
+export const CHECKIN_WINDOW_MINUTES = 180;
 
 const RANK: Record<ProactiveType, number> = {
-  exam_countdown: 4, missed_plan_recovery: 3, review_due: 2, daily_nudge: 1,
+  exam_countdown: 4, missed_plan_recovery: 3, review_due: 2, daily_checkin: 1, daily_nudge: 1,
 };
 
 // Reasons that ask the learner to study now. An exam countdown informs; these
 // press, so they yield to more.
-const PRESSURE: ReadonlySet<ProactiveType> = new Set<ProactiveType>(["review_due", "missed_plan_recovery", "daily_nudge"]);
+const PRESSURE: ReadonlySet<ProactiveType> = new Set<ProactiveType>(["review_due", "missed_plan_recovery", "daily_nudge", "daily_checkin"]);
 
 export interface StudyWindow {
   from:  number;   // local hour, inclusive
   to:    number;   // local hour, exclusive
   // learning_dna: where their counted sessions actually fall (supported or
   // stronger). stated: what they said in setup. default: neither is known.
-  basis: "learning_dna" | "stated" | "default";
+  // chosen: the check-in time they picked; `checkinMinute` on the facts holds
+  // it to the minute and is what the gates use.
+  basis: "learning_dna" | "stated" | "default" | "chosen";
 }
 
 export interface ProactiveFacts {
   localDay:   string;        // YYYY-MM-DD, learner's timezone
   localHour:  number;
+  // Minutes past the hour (0–59). Only a chosen check-in time needs it.
+  localMinute?: number;
+  // The daily check-in time the learner chose, as minutes after local
+  // midnight. null or absent: they chose none, and the study window decides.
+  checkinMinute?: number | null;
   window:     StudyWindow;
   studiedToday:         boolean;
   daysSinceLastSession: number | null;   // in local calendar days; null: never studied
@@ -59,6 +70,9 @@ export interface ProactiveGates {
   hasTimezone:       boolean;
   activeSession:     boolean;
   messagedRecently:  boolean;
+  // They have written to Nova since today's check-in time came round: the
+  // conversation the check-in would open is already happening.
+  messagedSinceCheckin?: boolean;
   // Proactive messages already delivered (or possibly delivered) today.
   sentToday:         Array<{ type: string; at: Date }>;
   lastSentAt:        Date | null;
@@ -95,6 +109,38 @@ export function isQuietHour(hour: number): boolean {
   return hour >= QUIET_FROM_HOUR || hour < QUIET_UNTIL_HOUR;
 }
 
+// ── The chosen check-in time ──────────────────────────────────────────────────
+// "HH:MM" as the learner entered it, to minutes after midnight. null: not a time.
+export function parseCheckinTime(raw: string | null | undefined): number | null {
+  if (typeof raw !== "string") return null;
+  const parts = raw.trim().split(":");
+  if (parts.length < 2 || parts.length > 3) return null;
+  const [h, m] = [parts[0]!, parts[1]!];
+  const digits = (s: string) => s.length >= 1 && s.length <= 2 && [...s].every(ch => ch >= "0" && ch <= "9");
+  if (!digits(h) || !digits(m)) return null;
+  const hour = Number(h), minute = Number(m);
+  return hour <= 23 && minute <= 59 ? hour * 60 + minute : null;
+}
+
+const hasCheckin = (f: ProactiveFacts): f is ProactiveFacts & { checkinMinute: number } =>
+  typeof f.checkinMinute === "number";
+
+// Whether today's chosen check-in is due and has not expired. The window
+// never runs past midnight, so one local day holds one check-in.
+export function inCheckinWindow(f: ProactiveFacts): boolean {
+  if (!hasCheckin(f)) return false;
+  const minute = f.localHour * 60 + (f.localMinute ?? 0);
+  return minute >= f.checkinMinute && minute < Math.min(f.checkinMinute + CHECKIN_WINDOW_MINUTES, 24 * 60);
+}
+
+// When the messages that ask the learner to study may go out: from the time
+// they chose, if they chose one; else their study window.
+const inPressureWindow = (f: ProactiveFacts): boolean => (hasCheckin(f) ? inCheckinWindow(f) : inWindow(f.localHour, f.window));
+
+// Quiet hours protect the learner from a time Nova picked. A time the learner
+// picked is theirs: a 6:30 check-in is sent at 6:30.
+export const isQuietFor = (f: ProactiveFacts): boolean => isQuietHour(f.localHour) && !inCheckinWindow(f);
+
 export function generateCandidates(f: ProactiveFacts): ProactiveCandidate[] {
   const out: ProactiveCandidate[] = [];
 
@@ -121,19 +167,25 @@ export function generateCandidates(f: ProactiveFacts): ProactiveCandidate[] {
       reason: `${f.reviewDueCount} topic${f.reviewDueCount === 1 ? "" : "s"} due for review`,
     });
   }
-  if (!f.studiedToday && f.hasPlan) {
+  if (hasCheckin(f)) {
+    // The check-in they asked for. It does not wait for a plan: a learner
+    // with nothing planned yet is the one who most needs to be asked.
+    if (!f.studiedToday) {
+      out.push({ type: "daily_checkin", occurrenceKey: `checkin:${f.localDay}`, reason: "the daily check-in time they chose, nothing done yet today" });
+    }
+  } else if (!f.studiedToday && f.hasPlan) {
     out.push({ type: "daily_nudge", occurrenceKey: `nudge:${f.localDay}`, reason: "usual study time, nothing done yet today" });
   }
   return out;
 }
 
 // Gates that silence everything, in the order they are cheapest to explain.
-export function globalBlock(g: ProactiveGates, localHour: number): string | null {
+export function globalBlock(g: ProactiveGates, f: ProactiveFacts): string | null {
   if (!g.proactiveEnabled) return "proactive_disabled";
   if (g.undeliverable)     return "chat_undeliverable";
   if (!g.hasTimezone)      return "timezone_unknown";
   if (g.paused)            return "paused_by_learner";
-  if (isQuietHour(localHour)) return "quiet_hours";
+  if (isQuietFor(f))       return "quiet_hours";
   if (g.activeSession)     return "session_running";
   if (g.messagedRecently)  return "learner_active_in_chat";
   if (g.sentToday.length >= MAX_PER_DAY) return "daily_cap";
@@ -152,12 +204,13 @@ function candidateBlock(c: ProactiveCandidate, f: ProactiveFacts, g: ProactiveGa
     if (g.sentToday.some(s => s.type === "exam_countdown")) return "already_sent_today";
     return null;
   }
-  if (!inWindow(f.localHour, f.window)) return "outside_window";
+  if (!inPressureWindow(f)) return "outside_window";
   // Something real is in the way (a family matter, a trip): no study pressure.
   if (g.realityCategories.includes("life_constraint")) return "reality_constraint";
   if (f.studiedToday) return "studied_today";
   // One push to study a day. A second reason does not earn a second message.
   if (g.sentToday.some(s => PRESSURE.has(s.type as ProactiveType))) return "already_nudged_today";
+  if (c.type === "daily_checkin" && g.messagedSinceCheckin) return "learner_already_here";
   return null;
 }
 
@@ -166,7 +219,7 @@ function candidateBlock(c: ProactiveCandidate, f: ProactiveFacts, g: ProactiveGa
 // failed an hour ago is not owed to a learner who has since started studying,
 // fallen ill or said "not today". null: it may. Otherwise, why not.
 export function holdReason(type: ProactiveType, facts: ProactiveFacts, gates: ProactiveGates): string | null {
-  return globalBlock(gates, facts.localHour) ?? candidateBlock({ type, occurrenceKey: "", reason: "" }, facts, gates);
+  return globalBlock(gates, facts) ?? candidateBlock({ type, occurrenceKey: "", reason: "" }, facts, gates);
 }
 
 // An exam date is information, so it still reaches a learner with a life
@@ -179,7 +232,7 @@ export function decideProactive(facts: ProactiveFacts, gates: ProactiveGates): P
   const candidates = generateCandidates(facts);
   if (candidates.length === 0) return { chosen: null, informOnly: false, suppressed: [] };
 
-  const blocked = globalBlock(gates, facts.localHour);
+  const blocked = globalBlock(gates, facts);
   if (blocked) return { chosen: null, informOnly: false, suppressed: [{ type: "all", reason: blocked }] };
 
   const suppressed: ProactiveDecision["suppressed"] = [];

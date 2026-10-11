@@ -6,6 +6,7 @@ import { Menu } from 'lucide-react'
 import { routeAccess, type Companion } from '@repo/api/nova/product/companion'
 import { Sidebar } from '@/components/sidebar'
 import { NovaUnavailable } from '@/components/nova/nova-unavailable'
+import { hasParkedCapture } from '@/components/nova/saved/pending-capture'
 
 // A page both companions have (the Guide) reads which one it is showing for
 // from here. Pages mount only once the companion is known.
@@ -52,6 +53,27 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
   // Each companion sees its own pages only. Decided before anything renders,
   // so a Rex page never mounts (or fetches) for a Nova learner.
   const access = companion ? routeAccess(companion, pathname) : null
+
+  // A Nova learner's device reports its timezone once per visit. The server
+  // keeps it only while it has none, so Nova knows what time it is for them
+  // (their days, and when a check-in is due) without their having to open
+  // any particular page.
+  useEffect(() => {
+    if (companion !== 'nova') return
+    try {
+      if (window.sessionStorage.getItem('kivo-tz-reported')) return
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+      if (!timezone) return
+      window.sessionStorage.setItem('kivo-tz-reported', '1')
+      void fetch('/api/nova/timezone', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ timezone }) }).catch(() => {})
+    } catch { /* no storage or no Intl: the next visit tries again */ }
+  }, [companion])
+
+  // A page the Save to Kivo bookmark brought, held while they signed in:
+  // whichever page sign-in landed on, take them to Saved to review it.
+  useEffect(() => {
+    if (companion === 'nova' && pathname !== '/saved' && hasParkedCapture()) router.replace('/saved')
+  }, [companion, pathname, router])
 
   // Auto-collapse when entering creature page, restore when leaving
   useEffect(() => {

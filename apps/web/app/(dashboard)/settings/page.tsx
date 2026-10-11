@@ -3,10 +3,11 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
+import { CheckinSettings } from '@/components/nova/checkin-settings'
 import { TelegramSettings } from '@/components/nova/telegram-connect'
 import { ThemePicker } from '@/components/theme/kivo-theme'
 
-// Settings. One section so far: the Telegram connection.
+// Settings: appearance, study setup, the daily check-in and the Telegram connection.
 export default function SettingsPage() {
   // Which companion this account talks to, so the page can name it.
   const [companion, setCompanion] = useState<'Nova' | 'Rex' | null>(null)
@@ -44,6 +45,13 @@ export default function SettingsPage() {
             </span>
             <ArrowRight className="size-4 shrink-0 text-foreground/45" />
           </Link>
+        </>
+      )}
+
+      {companion === 'Nova' && (
+        <>
+          <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Check-ins</p>
+          <div className="mt-3"><CheckinSettings /></div>
         </>
       )}
 

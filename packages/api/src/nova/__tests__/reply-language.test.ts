@@ -23,16 +23,19 @@ const read = (file: string) => readFileSync(join(__dirname, "..", file), "utf8")
 beforeEach(() => generateOpenAIText.mockReset());
 
 describe("the reading says which language a message is in", () => {
-  it("keeps english and hinglish, and nothing else", () => {
+  it("keeps english, hinglish and hindi, and nothing else", () => {
     expect(parseLearnerRequest({ action: "none", language: "hinglish" }).language).toBe("hinglish");
     expect(parseLearnerRequest({ action: "none", language: "english" }).language).toBe("english");
-    for (const other of ["hindi", "Hinglish", "tamil", "", 3, null, undefined, ["hinglish"]]) {
+    // Hindi in Devanagari. Whether a message really is in that script is
+    // checked against the message itself (daily-checkin.test.ts).
+    expect(parseLearnerRequest({ action: "none", language: "hindi" }).language).toBe("hindi");
+    for (const other of ["Hindi", "Hinglish", "tamil", "", 3, null, undefined, ["hinglish"]]) {
       expect(parseLearnerRequest({ action: "none", language: other }).language).toBeNull();
     }
   });
 
   it("asks the model for it, as a description of the writing only", () => {
-    expect(UNDERSTANDING_BRAIN_SYSTEM_PROMPT).toContain("- language: english | hinglish | null");
+    expect(UNDERSTANDING_BRAIN_SYSTEM_PROMPT).toContain("- language: english | hinglish | hindi | null");
     expect(UNDERSTANDING_BRAIN_SYSTEM_PROMPT).toContain("it never changes any other field");
   });
 

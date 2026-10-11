@@ -18,6 +18,26 @@ export function parkCapture(): void {
   } catch { /* storage refused: the link can be pasted instead */ }
 }
 
+// Parks a link the learner was in the middle of saving when their session
+// turned out to have ended, so it is waiting for them after they sign in.
+export function parkDraft(url: string, title: string): void {
+  try { window.sessionStorage.setItem(KEY, JSON.stringify({ url, title, at: Date.now() })) } catch { /* storage refused */ }
+}
+
+// Whether a capture is parked and still fresh. Sign-in does not always land
+// on Saved (Google sign-in returns to Home), so the dashboard asks this and
+// sends the learner on to Saved, where the capture is waiting to be reviewed.
+export function hasParkedCapture(): boolean {
+  try {
+    const parked = window.sessionStorage.getItem(KEY)
+    if (!parked) return false
+    const saved = JSON.parse(parked) as { url?: unknown; at?: unknown }
+    if (typeof saved.at === 'number' && Date.now() - saved.at < KEEP_MS && typeof saved.url === 'string') return true
+    window.sessionStorage.removeItem(KEY)
+  } catch { /* nothing parked */ }
+  return false
+}
+
 // The capture for this visit, taken once: from the address, or parked.
 export function takeCapture(): Capture | null {
   let capture: Capture | null = null

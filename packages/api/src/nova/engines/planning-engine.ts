@@ -4,6 +4,7 @@
 // LLM can express or adjust a plan in a reply, but code owns the algorithm.
 // Owner: Planning Engine.
 
+import { examCoversSubject } from "./exam-engine";
 import type { PlanBudgetBasis, StudyBlock, StudyPlan } from "../types/engine.types";
 import type { AcademicState } from "../types/academic-state.types";
 import type { TopicMasteryState } from "../types/engine.types";
@@ -51,6 +52,22 @@ export interface PlanOptions {
   // The moment the plan is for. Defaults to the present; a caller that
   // judges "due" at some other moment passes the same one here.
   now?: Date;
+  // How long this learner's own sessions run, when their record supports a
+  // conclusion (Learning DNA "typical_session", supported or stronger and not
+  // weakening). A block is never planned longer than this: a learner whose
+  // sessions run 15 minutes is not handed 30-minute blocks they do not do.
+  // It only shortens, and only when they have not said how long they have.
+  usualSessionMinutes?: number | null;
+}
+
+// The longest a block may be for this learner, or null for no limit of
+// their own. Rounded to five minutes, and never under the shortest block.
+export function sessionCap(options: PlanOptions): number | null {
+  const usual = options.usualSessionMinutes;
+  if (typeof usual !== "number" || !Number.isFinite(usual) || usual <= 0) return null;
+  // They said how long they have today: that is the answer, not their habit.
+  if (typeof options.availableMinutes === "number" && options.availableMinutes > 0) return null;
+  return Math.max(MIN_BLOCK_MINUTES, Math.round(usual / 5) * 5);
 }
 
 // The shortest block worth planning. A budget below it yields no blocks.
@@ -127,14 +144,25 @@ export function generateStudyPlan(
   const blocks: StudyBlock[] = [];
   const assumptions: string[] = [];
   let usedMinutes = 0;
+  // Every block length below goes through this: the engine's size for the
+  // kind of block, or the learner's own usual session if that is shorter.
+  const cap  = sessionCap(options);
+  const size = (wanted: number) => (cap === null ? wanted : Math.min(wanted, cap));
+  if (cap !== null && cap < REVIEW_BLOCK_MINUTES) assumptions.push(`Blocks are kept to about ${cap} minutes, the length your own sessions usually run.`);
+
+  // Exam prep is for the topics the exam is about: its own subject's. A
+  // topic from another subject is never called exam prep for this exam.
+  const examTopics = examContext ? topics.filter(t => examCoversSubject(examContext, t.subjectName)) : [];
 
   // ── Exam crisis: all blocks are exam prep ────────────────────────────────
-  if (examContext && state.hardDirectives.examCrisisMode) {
-    const prioritized = getExamPriorityOrder(topics, examContext.topicWeights);
+  // With no topic on record for the exam's subject there is nothing to
+  // prepare from, and the day is planned the ordinary way instead.
+  if (examContext && state.hardDirectives.examCrisisMode && examTopics.length > 0) {
+    const prioritized = getExamPriorityOrder(examTopics, examContext.topicWeights);
     for (const topic of prioritized) {
       if (usedMinutes >= budgetMinutes) break;
       const remaining = budgetMinutes - usedMinutes;
-      const mins      = Math.min(45, remaining);
+      const mins      = Math.min(size(45), remaining);
       blocks.push(examPrepBlock(topic, mins, examContext.daysUntil));
       usedMinutes += mins;
     }
@@ -149,7 +177,7 @@ export function generateStudyPlan(
       .sort((a, b) => b.masteryProbability - a.masteryProbability)[0];
 
     if (easiestTopic && budgetMinutes >= MIN_BLOCK_MINUTES) {
-      blocks.push(reviewBlock(easiestTopic, Math.min(20, budgetMinutes), "optional"));
+      blocks.push(reviewBlock(easiestTopic, Math.min(size(20), budgetMinutes), "optional"));
       assumptions.push("Light session — recovery mode active. No new material.");
     }
     return buildPlan(blocks, budget, assumptions, now);
@@ -161,7 +189,7 @@ export function generateStudyPlan(
   const overdue = getOverdueTopics(topics, now);
   for (const topic of overdue) {
     if (usedMinutes >= budgetMinutes * 0.6) break;  // max 60% on overdue
-    const mins = Math.min(REVIEW_BLOCK_MINUTES, budgetMinutes - usedMinutes);
+    const mins = Math.min(size(REVIEW_BLOCK_MINUTES), budgetMinutes - usedMinutes);
     if (mins < MIN_BLOCK_MINUTES) break;
     blocks.push(reviewBlock(topic, mins, "high"));
     usedMinutes += mins;
@@ -169,11 +197,10 @@ export function generateStudyPlan(
 
   // 2. Exam context: high-weight low-mastery topics
   if (examContext && state.daysUntilNextExam !== null && state.daysUntilNextExam < 14) {
-    const examTopics = getExamPriorityOrder(topics, examContext.topicWeights).slice(0, 3);
-    for (const topic of examTopics) {
+    for (const topic of getExamPriorityOrder(examTopics, examContext.topicWeights).slice(0, 3)) {
       if (usedMinutes >= budgetMinutes * 0.8) break;
       if (overdue.some(o => o.topicId === topic.topicId)) continue; // already added
-      const mins = Math.min(30, budgetMinutes - usedMinutes);
+      const mins = Math.min(size(30), budgetMinutes - usedMinutes);
       if (mins < MIN_BLOCK_MINUTES) break;
       blocks.push(examPrepBlock(topic, mins, state.daysUntilNextExam));
       usedMinutes += mins;
@@ -189,7 +216,7 @@ export function generateStudyPlan(
 
   for (const topic of practiceReady) {
     if (usedMinutes >= budgetMinutes) break;
-    const mins = Math.min(30, budgetMinutes - usedMinutes);
+    const mins = Math.min(size(30), budgetMinutes - usedMinutes);
     if (mins < MIN_BLOCK_MINUTES) break;
     blocks.push(practiceBlock(topic, mins));
     usedMinutes += mins;
@@ -206,7 +233,7 @@ export function generateStudyPlan(
 
   for (const topic of notStarted) {
     if (usedMinutes >= budgetMinutes) break;
-    const mins = Math.min(NEW_MATERIAL_BLOCK_MINUTES, budgetMinutes - usedMinutes);
+    const mins = Math.min(size(NEW_MATERIAL_BLOCK_MINUTES), budgetMinutes - usedMinutes);
     if (mins < MIN_BLOCK_MINUTES) break;
     blocks.push(newMaterialBlock(topic, mins));
     usedMinutes += mins;

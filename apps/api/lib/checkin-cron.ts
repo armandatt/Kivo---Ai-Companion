@@ -19,6 +19,9 @@ export type CheckinCronResult = {
   ok: boolean;
   sent: number;
   error?: string;
+  // What Nova's proactive job did this tick: how many learners it looked at
+  // and how each ended. Counts only, for the health check.
+  nova?: { checked: number; sent: number; errors: number; outcomes: Record<string, number> };
 };
 
 export async function runCheckinCron(now = new Date()): Promise<CheckinCronResult> {
@@ -85,12 +88,12 @@ export async function runCheckinCron(now = new Date()): Promise<CheckinCronResul
   // ── Nova proactive mentor (academic coaching) ─────────────────────────────
   const novaResult = await runNovaProactiveCron(now).catch((err: unknown) => {
     console.error("[CHECKIN] Nova proactive cron failed:", err);
-    return { ok: false, sent: 0, checked: 0, errors: 1 };
+    return { ok: false, sent: 0, checked: 0, errors: 1, outcomes: {} as Record<string, number> };
   });
   sent += novaResult.sent;
   console.log(`[CHECKIN] Nova proactive: ${novaResult.sent}/${novaResult.checked} sent, ${novaResult.errors} errors`);
 
-  return { ok: true, sent };
+  return { ok: true, sent, nova: { checked: novaResult.checked, sent: novaResult.sent, errors: novaResult.errors, outcomes: novaResult.outcomes ?? {} } };
 }
 
 async function sendTelegramMessage(chatId: string, text: string) {

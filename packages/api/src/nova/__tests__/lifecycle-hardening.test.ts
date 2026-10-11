@@ -126,7 +126,7 @@ describe("a proactive message approved earlier is checked again before it is sen
     const cron = read("proactive/nova-proactive-cron.ts");
     expect(cron).toContain("holdReason(waiting.type as ProactiveType, facts, gates)");
     // …and before the stored message is handed to delivery.
-    expect(cron.indexOf("holdReason(waiting.type")).toBeLessThan(cron.indexOf("return deliver(waiting"));
+    expect(cron.indexOf("holdReason(waiting.type")).toBeLessThan(cron.indexOf("await deliver(waiting"));
     expect(cron).toContain('outcome: "held"');
   });
 });
@@ -148,7 +148,8 @@ describe("register: a learner who asked to be pushed is still not teased when it
   it("playful needs their explicit choice and nothing heavy", () => {
     expect(chooseRegister({ ...hard, emotion: "neutral" })).toBe("playful");
     expect(chooseRegister({ ...hard, emotion: "avoidant" })).toBe("playful");
-    expect(chooseRegister({ ...hard, emotion: "neutral", accountability: "soft" })).toBe("steady");
+    // Gentle Nudges has a manner of its own; it is never the teasing one.
+    expect(chooseRegister({ ...hard, emotion: "neutral", accountability: "soft" })).toBe("gentle");
     expect(chooseRegister({ ...hard, emotion: "neutral", accountability: null })).toBe("steady");
   });
   it.each(["frustrated", "distressed", "overwhelmed", "discouraged", "self_doubt", "identity_threat", "anxious_exam", "anxious_general"] as const)("never playful when they are %s", emotion => {

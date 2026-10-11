@@ -31,7 +31,7 @@ const COMMANDS = [
   { cmd: '/focus',    desc: 'Start a session. Add a topic to choose it yourself: /focus deadlocks.' },
   { cmd: '/done',     desc: 'End the session and say how it went.' },
   { cmd: '/status',   desc: 'Where you stand: a running session, your next exam, what is due for review.' },
-  { cmd: '/settings', desc: 'Turn nudges on or off and check your timezone.' },
+  { cmd: '/settings', desc: 'Turn nudges on or off, and see your check-in time and timezone.' },
   { cmd: '/help',     desc: 'This list, inside the chat.' },
 ]
 
@@ -239,15 +239,15 @@ export function NovaGuide() {
             </ul>
           </div>
           <div className={`${CARD} p-6`}>
-            <p className="text-base font-semibold text-foreground">English or Hinglish</p>
+            <p className="text-base font-semibold text-foreground">English, Hinglish or Hindi</p>
             <p className="mt-2 text-sm leading-relaxed text-foreground/60">
-              Write in Hinglish and Nova answers in Hinglish, commands included. Switch back to English any time by writing in English.
+              Write in Hinglish and Nova answers in Hinglish, commands included; write in Hindi (Devanagari) and its replies are in Hindi. Each reply follows the message it answers, so switching is just writing in the other language.
             </p>
           </div>
           <div className={`${CARD} p-6`}>
             <p className="text-base font-semibold text-foreground">Nudges, not alarms</p>
             <p className="mt-2 text-sm leading-relaxed text-foreground/60">
-              Nova messages first only when something is due, at most twice a day, and <span className="font-mono text-keppel-300">/settings</span> turns that off. It cannot set a reminder for a time you choose yet.
+              Nova checks in around the time you picked, on days you haven&apos;t studied yet, and otherwise messages first only when something is due: at most twice a day. Change the time in Settings; <span className="font-mono text-keppel-300">/settings</span> on Telegram turns it all off. It cannot set a one-off reminder yet.
             </p>
           </div>
         </div>

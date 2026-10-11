@@ -440,3 +440,28 @@ A saved page has one way in: `POST /api/nova/learning-events` → `recordLearnin
 - The bookmarklet opens `/saved#save=<address>&title=<title>`. The capture is in the fragment (not sent to a server) and carries no credential. `components/nova/saved/pending-capture.ts` takes it once; the sign-in page parks it in `sessionStorage` for ten minutes when the learner was signed out.
 - Nothing is saved until the learner presses Save: a capture only opens the review.
 - The release ZIP for the store comes from `npm run package --workspace nova-extension`; listing and privacy drafts are in `apps/extension/store/`.
+
+## Daily check-in and proactive timing
+
+Nova has one scheduler path for speaking first: the five-minute tick (`apps/api/lib/internal-checkin-scheduler.ts` → `checkin-cron.ts` → `nova/proactive/nova-proactive-cron.ts`) → `decideProactive` → the outbox (`proactive-outbox.ts`). The daily check-in is a fifth reason in that decision (`daily_checkin`), not a second job. Do not add another timer, queue or outbox for it.
+
+- **What the onboarding time means.** `UserProfile.preferredCheckInTime` ("HH:MM", written by web onboarding and by Settings → Check-ins via `PATCH /api/settings`) is the start of a window of `CHECKIN_WINDOW_MINUTES` (180) in the learner's local day. A tick anywhere inside the window delivers; after it the check-in has expired and is not sent late. It replaces the study-window `daily_nudge` for that learner, needs no plan (with nothing to recommend it asks one question), counts as the day's one push to study, and is skipped when they have studied today or have already written to Nova since the time came round. A time inside quiet hours is honoured because the learner chose it. `UserProfile.nextMessageTime` and `messageSchedule` are legacy fields nothing reads.
+- **Where Nova reads account preferences.** `adapters/account-preferences-adapter.ts` only: the check-in time and the browser-reported timezone. `ensureLearnerTimezone` copies a valid account timezone onto `NovaAcademicProfile.timezone` while that is unset; the tick and the Telegram turn both call it, and the dashboard shell reports the device timezone once per visit. A learner with no timezone anywhere is not messaged first and is counted as `no_timezone`.
+- **Observability.** Each tick logs one `{"layer":"nova_proactive","tick":"done", checked, sent, errors, outcomes}` line; `outcomes` counts how each learner ended (`sent`, `send_failed`, `held`, `no_timezone`, `quiet_hours`, `proactive_off`, `undeliverable`, `not_ready`, `nothing_due`, `suppressed`). `GET /api/health` returns the same counts for the last tick plus `startedAt` and `stale`.
+- **Hosting.** The tick only runs while the API process is awake. On Render's free plan it sleeps; `.github/workflows/keep-api-awake.yml` is a stopgap, not a guarantee.
+- **Tone.** `UserProfile.accountabilityStyle` ("soft" = Gentle Nudges, "hard" = No Mercy) reaches wording only, through `chooseRegister` (`decision/register.ts`): `gentle`, `playful` (firm), `steady` when unset, and `serious` overriding all three on distress, a hard stretch or an exam within three days. No decision reads it.
+- **Language.** A reply follows the message it answers. Devanagari is decided from the script (`scriptLanguage`, `interaction/language.ts`) with no model; English versus Hinglish is the reading's. Fixed lines have no Devanagari table: Hindi uses the Roman-script Hindi ones.
+- **Exam attribution.** Exam prep blocks and the "exam in N days" reason belong to the exam's own subject (`examCoversSubject`, `engines/exam-engine.ts`); an exam with no subject on record covers the syllabus.
+
+## What the record changes in the plan
+
+Learning DNA (`engines/learning-dna-engine.ts`) already grades each conclusion `unknown` / `emerging` / `supported` / `strong` and flags one its latest evidence is pulling away from (`weakening`). A conclusion may change a decision only at `supported` or stronger and not weakening, and only through the engines, never through a prompt. Two do today:
+
+- `usual_study_window` times the study-window nudge (`nova-proactive-cron.ts`), unless the learner chose a check-in time.
+- `typical_session` caps block length (`usualSessionMinutes` in `product/planning-inputs.ts` → `PlanOptions.usualSessionMinutes` → `sessionCap` in `engines/planning-engine.ts`). It only shortens, never under `MIN_BLOCK_MINUTES`, and not when the learner said how long they have today.
+
+The other signals (`plan_follow_through`, `days_per_week`, `best_session_size`, `best_study_window`, `revision_spacing`, `needs_more_retrieval`) are shown on the Learning DNA page and reach no decision. Wiring one in means a new `PlanOptions` field or decision fact with the same evidence gate, and a test in `__tests__/learner-adaptation.test.ts`.
+
+## Web and API deploy separately
+
+Vercel deploys `apps/web` on every merge to `main`; Render deploys `apps/api` only on Manual Deploy. A web change that needs a new API behaviour will reach users before the API does. `GET /api/health` reports the API's `commit`. The web app must not treat an unexpected API answer as "signed out": `saveLink` (`components/nova/saved/saved-api.ts`) checks `/api/me` before believing a 401.

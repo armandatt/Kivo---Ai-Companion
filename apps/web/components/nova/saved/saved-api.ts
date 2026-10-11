@@ -55,6 +55,17 @@ export async function disconnectBrowser(id: string): Promise<boolean> {
   }
 }
 
+// Whether this browser still has a session, asked of the web app itself.
+// Unknown (the check failed) counts as no: the learner is offered sign-in.
+async function stillSignedIn(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/me', { cache: 'no-store' })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 // Saving a link from the web app: the same request the extension makes, to
 // the same endpoint, as the signed-in learner. `clientEventId` is made once
 // per link and sent again on a retry, so a retry never saves twice.
@@ -67,6 +78,13 @@ export async function saveLink(input: { clientEventId: string; url: string; titl
       body: JSON.stringify(body),
     })
     const json = await res.json().catch(() => null) as LearningEventResponse | null
+    // "Unauthenticated" from the save is believed only if the session really
+    // is gone. A server that does not accept saves from the web app yet (the
+    // API is deployed separately and can be a version behind) answers the
+    // same way, and sending a signed-in learner to sign in fixes nothing.
+    if (res.status === 401 && await stillSignedIn()) {
+      return { success: false, error: 'failed', message: "You're signed in, but Nova's server can't save links from here yet. Nothing is lost: try again in a little while." }
+    }
     if (json && typeof json === 'object' && 'success' in json) return json
     return { success: false, error: res.status === 401 ? 'unauthenticated' : 'failed', message: res.status === 401 ? 'Sign in to save this.' : "That didn't save. Try again." }
   } catch {

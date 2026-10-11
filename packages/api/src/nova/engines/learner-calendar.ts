@@ -65,3 +65,10 @@ export function localHour(date: Date, timezone: string): number {
   const hour = new Intl.DateTimeFormat("en-GB", { timeZone: timezone, hour: "2-digit", hourCycle: "h23" }).format(date);
   return Number(hour) % 24;
 }
+
+// Minutes past the hour (0–59) of an instant, in a timezone. Not every zone
+// is a whole number of hours from UTC, so this is asked of the zone too.
+export function localMinute(date: Date, timezone: string): number {
+  const minute = new Intl.DateTimeFormat("en-GB", { timeZone: timezone, minute: "2-digit" }).format(date);
+  return Number(minute) % 60;
+}

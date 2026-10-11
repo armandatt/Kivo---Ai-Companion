@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint --max-warnings 0",
+    "test": "tsx --test components/nova/saved/saved-api.test.ts",
     "check-types": "next typegen && tsc --noEmit"
   },
   "dependencies": {

@@ -38,10 +38,11 @@ const hasDevanagari = (text: string) => {
 };
 
 // Whether a rendering may replace the text it was made from: the same
-// figures, Roman script, and not grown into something else.
-export function faithful(plain: string, rendered: string): boolean {
+// figures, the script the language is written in, and not grown into
+// something else.
+export function faithful(plain: string, rendered: string, language: ReplyLanguage = "hinglish"): boolean {
   if (!rendered.trim()) return false;
-  if (hasDevanagari(rendered)) return false;
+  if (hasDevanagari(rendered) !== (language === "hindi")) return false;
   if (rendered.length > plain.length * 2 + 80) return false;
   const a = figuresIn(plain);
   const b = figuresIn(rendered);
@@ -68,7 +69,7 @@ export async function sayInLanguage(
     const request = { model: "gpt-4o-mini", systemInstruction: `${SYSTEM}\n${line}`, prompt: input.text, maxOutputTokens: 400, deadlineMs: LANGUAGE_DEADLINE_MS };
     const raw  = generate ? await generate(request) : await generateOpenAIText(request);
     const text = raw.trim();
-    return faithful(input.text, text) ? { text, rendered: true } : plain;
+    return faithful(input.text, text, input.language) ? { text, rendered: true } : plain;
   } catch (err) {
     console.error("[nova:language] wording failed, sending the plain text:", (err as Error).message);
     return plain;

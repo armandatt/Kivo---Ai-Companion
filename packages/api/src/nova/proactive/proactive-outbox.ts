@@ -125,6 +125,15 @@ export async function markSendFailed(id: string, outcome: "retryable" | "permane
   });
 }
 
+// A claim that was never worded, whose reason no longer holds: there is
+// nothing true left to say, so it is closed instead of sent.
+export async function dropUnworded(id: string): Promise<void> {
+  await prisma.novaProactiveMessage.updateMany({
+    where: { id, status: "claimed" },
+    data:  { status: "abandoned", lastError: "reason no longer holds" },
+  });
+}
+
 // Work a restart or a failed send left behind, for one learner:
 //   stale "sending"  → unknown (never resent)
 //   stale "claimed"  → abandoned if too old to matter, else returned to be worded

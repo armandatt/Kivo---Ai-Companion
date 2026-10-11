@@ -793,7 +793,7 @@ describe("register", () => {
   it("is playful only for a student who asked to be pushed, when nothing serious is going on", () => {
     expect(chooseRegister(base)).toBe("playful");
     expect(chooseRegister({ ...base, accountability: null })).toBe("steady");
-    expect(chooseRegister({ ...base, accountability: "soft" })).toBe("steady");
+    expect(chooseRegister({ ...base, accountability: "soft" })).toBe("gentle");
   });
   it.each([
     ["distress",        { emotion: "distressed" as const }],
@@ -894,7 +894,7 @@ describe("Telegram is a surface, not a second Nova", () => {
 
   it("the proactive tick claims before it words or sends, and logs a message only once it is sent", () => {
     const cron = code(FILES.find(f => f.path === "proactive/nova-proactive-cron.ts")!.src);
-    expect(cron.indexOf("claimOccurrence(")).toBeLessThan(cron.indexOf("return deliver(row"));
+    expect(cron.indexOf("claimOccurrence(")).toBeLessThan(cron.indexOf("await deliver(row"));
     const deliver = cron.slice(cron.indexOf("async function deliver("));
     expect(deliver.indexOf("markReady(")).toBeLessThan(deliver.indexOf("beginSend("));
     expect(deliver.indexOf("beginSend(")).toBeLessThan(deliver.indexOf("client.sendMessage("));

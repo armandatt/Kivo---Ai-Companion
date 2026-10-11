@@ -6,7 +6,7 @@ import { Check, Link2 } from 'lucide-react'
 import type { LearningResource } from '@repo/api/nova/product/learning-events.types'
 import { EVENT_TITLE_MAX, EVENT_TOPIC_MAX } from '@repo/api/nova/product/learning-events.types'
 import { LINK_PROBLEM_TEXT, checkLink, samePage, titleFromUrl } from '@repo/api/nova/product/resource-link'
-import type { Capture } from './pending-capture'
+import { parkDraft, type Capture } from './pending-capture'
 import { saveLink } from './saved-api'
 
 const FIELD = 'mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-background px-3 text-sm text-foreground placeholder:text-foreground/30 disabled:opacity-50'
@@ -151,7 +151,7 @@ export function SaveLink({ subjects, resources, capture, onSaved }: {
           {error && (
             <p role="alert" className="text-sm text-amber-300/90" data-link-error>
               {error.text}{' '}
-              {error.signIn && <Link href="/signin?from=/saved" className="font-medium underline underline-offset-4">Sign in</Link>}
+              {error.signIn && <Link href="/signin?from=/saved" onClick={() => parkDraft(draft.url, draft.title.trim())} className="font-medium underline underline-offset-4">Sign in</Link>}
             </p>
           )}
 

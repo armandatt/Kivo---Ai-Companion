@@ -123,3 +123,40 @@ Both backends use the same Neon database and the schema changes are additive, so
 ## Retire Railway
 
 Only after Render has run cleanly: delete the Railway service, then remove `railway.json` and `RAILWAY_DEPLOYMENT.md` from the repository.
+
+## Keeping the scheduler running (read this before relying on check-ins)
+
+Everything Nova and Rex send first (daily check-ins, nudges, exam countdowns, reminders) comes from one timer inside this API process. **While the process is asleep, nothing is sent.** Render's free plan puts the service to sleep after about 15 minutes without traffic.
+
+What was measured on 2026-10-11: the `keep-api-awake` GitHub workflow was scheduled every 10 minutes and GitHub actually started it about every 6 hours (19 runs, median gap 354 minutes), so the scheduler was awake for roughly 25 minutes in every six hours. A check-in window is three hours long; most were missed.
+
+Options, simplest first:
+
+| Option | Cost | Reliability | What to do |
+|---|---|---|---|
+| **A non-sleeping instance (recommended)** | Render Starter, about US$7/month | The timer runs continuously. Restarts and deploys are covered by the delivery window and the outbox claim. | Render dashboard → kivo-api → Settings → Instance Type → Starter. Then delete `.github/workflows/keep-api-awake.yml`. Keep `numInstances: 1`. |
+| An uptime monitor pinging `/api/health` every 5 minutes | Free (UptimeRobot, cron-job.org, Better Stack) | Good while the monitor runs; pings are on time, unlike GitHub schedules. Still a free-plan service that Render may restart or throttle. | Create an HTTP monitor for `https://<api-host>/api/health`, 5-minute interval. Then delete the workflow. |
+| The GitHub workflow | Free on a public repository, but it holds a runner almost continuously | Best effort only. There is still a gap between one run ending and GitHub starting the next. | Nothing; it is in the repository as a stopgap. |
+| An external scheduler calling `GET /api/checkin` | Free to cheap | Not recommended alongside the in-process timer: both would tick. Nova's outbox prevents a second Nova message, but Rex's reminders have no such claim and could be sent twice. | Only if the in-process timer is turned off (`DISABLE_INTERNAL_CHECKIN_CRON=true`) and `CRON_SECRET` is set; the endpoint is closed in production without it. |
+
+Do not run more than one of these that *ticks* the scheduler. Pinging `/api/health` is safe to do from several places: it starts the timer if it is not running and never runs a tick itself.
+
+### Checking it
+
+`GET /api/health` answers:
+
+- `commit`: the commit this API was built from. The web app deploys on every merge and this API only on Manual Deploy, so compare this with `main` after merging anything that touches `apps/api` or `packages/api`. A web app ahead of the API is how "Save a link" came to tell signed-in learners to sign in.
+- `scheduler.state`: `running`, or `disabled` (another host must be running it).
+- `scheduler.startedAt`: when this process started its timer. A time a few minutes ago, every time you look, means the service keeps sleeping.
+- `scheduler.stale`: `true` when no tick has run for over 16 minutes.
+- `scheduler.nova`: what the last tick did for Nova learners (`checked`, `sent`, `errors`, and `outcomes` such as `no_timezone`, `nothing_due`, `suppressed`).
+
+### Verifying a real check-in (use your own test account)
+
+1. Deploy, then confirm `commit` matches and `stale` is `false`.
+2. In the web app: Settings → Check-ins, set the time three or four minutes ahead. Do not message the bot.
+3. Within about five minutes of that time the Telegram message should arrive. In the Render log, look for `"layer":"nova_proactive"` lines with `"outcome":"due"` then `"outcome":"sent"` for the same `occurrence`.
+4. Wait one more tick: no second message, and no new `"due"` line for that occurrence.
+5. Set the time back to what you want.
+
+If nothing arrives, the tick line's `outcomes` says why (`no_timezone`, `proactive_off`, `undeliverable`, `not_ready`, `suppressed`).

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@repo/db/client"
 import { getSession } from "../lib/auth/session"
+//@ts-ignore
+import { parseCheckinTime } from "@repo/api/nova/decision/proactive-decision"
+//@ts-ignore
+import { normalizeAccountability } from "@repo/api/personality/mentor-compatibility"
 
 export async function GET() {
   const session = await getSession()
@@ -67,8 +71,18 @@ export async function PATCH(req: NextRequest) {
 
     const profileUpdates: Record<string, unknown> = {}
     if (persona !== undefined) profileUpdates.primaryPersona = String(persona)
-    if (checkInTime !== undefined) profileUpdates.preferredCheckInTime = String(checkInTime)
-    if (accountabilityStyle !== undefined) profileUpdates.accountabilityStyle = String(accountabilityStyle)
+    // A check-in time is "HH:MM", or nothing (null or "" clears it). Anything
+    // else is refused: the scheduler would silently ignore it.
+    if (checkInTime !== undefined) {
+      if (checkInTime === null || checkInTime === "") profileUpdates.preferredCheckInTime = null
+      else {
+        const minute = parseCheckinTime(String(checkInTime))
+        if (minute === null) return NextResponse.json({ error: "Check-in time must be HH:MM" }, { status: 400 })
+        profileUpdates.preferredCheckInTime = `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`
+      }
+    }
+    // Stored the way onboarding stores it: "soft" (Gentle Nudges) or "hard" (No Mercy).
+    if (accountabilityStyle !== undefined) profileUpdates.accountabilityStyle = normalizeAccountability(String(accountabilityStyle)) ?? String(accountabilityStyle)
     if (timezone !== undefined) profileUpdates.timezone = String(timezone)
 
     if (Object.keys(profileUpdates).length > 0) {

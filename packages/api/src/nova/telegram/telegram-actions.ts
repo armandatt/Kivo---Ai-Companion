@@ -8,6 +8,7 @@
 // database. "Started" is never said on the strength of having asked.
 // No LLM call.
 
+import { loadAccountPreferences } from "../adapters/account-preferences-adapter";
 import { loadNovaToday } from "../product/today";
 import { loadNovaSession, runNovaSessionCommand } from "../product/session";
 import { recordStatedMinutes } from "../product/planning-inputs";
@@ -267,9 +268,10 @@ export async function endSession(ctx: ActionContext, outcome: OptionActionOutcom
 }
 
 export async function showSettings(ctx: ActionContext): Promise<ActionResult> {
-  const state = await loadChannel(ctx.profileId);
+  const [state, account] = await Promise.all([loadChannel(ctx.profileId), loadAccountPreferences(ctx.chatId)]);
   return done("show_settings", settingsReply({
     proactiveEnabled: state.proactiveEnabled, pausedUntil: state.proactivePausedUntil, timezone: ctx.timezone,
+    checkinTime: account.checkinTime,
   }, ctx.now));
 }
 
