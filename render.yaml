@@ -58,11 +58,15 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
+      - key: RESEND_API_KEY            # sends signup codes and password-reset links; email signup fails without it
+        sync: false
 
       # ── Non-secret configuration: copy the values from Railway ──────────────
       - key: GOOGLE_REDIRECT_URI       # https://<web-domain>/api/auth/google/callback
         sync: false
       - key: NEXT_PUBLIC_APP_URL       # https://<web-domain>
+        sync: false
+      - key: RESEND_FROM_EMAIL         # a sender on a domain verified with Resend, e.g. no-reply@<your-domain>
         sync: false
       - key: BOT_USERNAME              # Telegram bot username, without @
         sync: false

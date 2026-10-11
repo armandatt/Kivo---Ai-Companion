@@ -28,6 +28,9 @@
       ],
       "@repo/api/personality/*": [
         "../../packages/api/src/personality/*"
+      ],
+      "@repo/api/auth/*": [
+        "../../packages/api/src/auth/*"
       ]
     }
   },

@@ -2,9 +2,16 @@ import { SignJWT, jwtVerify } from "jose"
 import { cookies } from "next/headers"
 import type { JWTPayload } from "jose"
 
-const SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET ?? "fallback-dev-secret-change-in-production"
-)
+// Read when a session is signed or checked, not when this file loads. In
+// production a missing JWT_SECRET is an error: with a known default anyone
+// could sign a session for any account.
+function sessionSecret() {
+  const secret = process.env.JWT_SECRET
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new Error("JWT_SECRET is not set")
+  }
+  return new TextEncoder().encode(secret ?? "fallback-dev-secret-change-in-production")
+}
 
 export interface SessionPayload extends JWTPayload {
   userId: string
@@ -30,7 +37,7 @@ export async function createSession(payload: SessionPayload): Promise<string> {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("30d")
-    .sign(SECRET)
+    .sign(sessionSecret())
 }
 
 export async function getSession(): Promise<SessionPayload | null> {
@@ -39,7 +46,7 @@ export async function getSession(): Promise<SessionPayload | null> {
     const token = cookieStore.get(SESSION_COOKIE_NAME)?.value
     if (!token) return null
 
-    const { payload } = await jwtVerify(token, SECRET)
+    const { payload } = await jwtVerify(token, sessionSecret())
     return payload as unknown as SessionPayload
   } catch {
     return null

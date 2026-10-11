@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "jest --config jest.config.ts",
-    "test:integration": "tsx --test --test-concurrency=1 src/nova/__integration__/nova-persist-turn.itest.ts src/nova/__integration__/nova-session-start.itest.ts src/nova/__integration__/nova-knowledge.itest.ts src/nova/__integration__/nova-notes.itest.ts src/nova/__integration__/nova-progress.itest.ts src/nova/__integration__/nova-learning-dna.itest.ts src/nova/__integration__/nova-telegram.itest.ts src/nova/__integration__/nova-lifecycle.itest.ts src/nova/__integration__/nova-semantic.itest.ts src/nova/__integration__/nova-setup.itest.ts src/nova/__integration__/nova-first-use.itest.ts src/nova/__integration__/nova-hardening.itest.ts src/nova/__integration__/nova-language.itest.ts src/nova/__integration__/nova-learning-events.itest.ts src/nova/__integration__/nova-workspace.itest.ts src/nova/__integration__/nova-checkin.itest.ts src/nova/__integration__/nova-adaptation.itest.ts"
+    "test:integration": "tsx --test --test-concurrency=1 src/nova/__integration__/nova-persist-turn.itest.ts src/nova/__integration__/nova-session-start.itest.ts src/nova/__integration__/nova-knowledge.itest.ts src/nova/__integration__/nova-notes.itest.ts src/nova/__integration__/nova-progress.itest.ts src/nova/__integration__/nova-learning-dna.itest.ts src/nova/__integration__/nova-telegram.itest.ts src/nova/__integration__/nova-lifecycle.itest.ts src/nova/__integration__/nova-semantic.itest.ts src/nova/__integration__/nova-setup.itest.ts src/nova/__integration__/nova-first-use.itest.ts src/nova/__integration__/nova-hardening.itest.ts src/nova/__integration__/nova-language.itest.ts src/nova/__integration__/nova-learning-events.itest.ts src/nova/__integration__/nova-workspace.itest.ts src/nova/__integration__/nova-checkin.itest.ts src/nova/__integration__/nova-adaptation.itest.ts src/auth/__integration__/auth.itest.ts"
   },
   "exports": {
     "./processor/*": "./src/processor/*",
@@ -15,6 +15,7 @@
     "./engines/understanding-layer": "./src/engines/understanding-layer.ts",
     "./types/*": "./src/types/*",
     "./personality/*": "./src/personality/*",
+    "./auth/*": "./src/auth/*",
     "./nova": "./src/nova/nova-orchestrator.ts",
     "./nova/types": "./src/nova/types/index.ts",
     "./nova/commands": "./src/nova/commands.ts",

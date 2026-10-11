@@ -56,8 +56,10 @@ Set in the Render dashboard. None are in `render.yaml`.
 | `GEMINI_MODEL_FAST`, `GEMINI_MODEL_MAIN` | no | Override the default Gemini models (both `gemini-3.5-flash-lite`; on a paid key set `GEMINI_MODEL_MAIN=gemini-flash-latest`) |
 | `TELEGRAM_BOT_TOKEN` | yes | |
 | `TELEGRAM_WEBHOOK_SECRET` | yes | Any long random string; reused in `setWebhook` below |
-| `JWT_SECRET` | yes | Same value as on Vercel |
+| `JWT_SECRET` | yes | Same value as on Vercel. The API refuses to sign or check sessions without it, and uses it to recognise requests forwarded by the web app |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | for Google sign-in | |
+| `RESEND_API_KEY` | for email sign-up and password reset | Resend API key. Without it no verification code or reset link can be sent, so nobody can sign up by email |
+| `RESEND_FROM_EMAIL` | with `RESEND_API_KEY` | A sender on a domain verified with Resend. The default, `onboarding@resend.dev`, only delivers to the Resend account's own address |
 | `GOOGLE_REDIRECT_URI` | for Google sign-in | `https://<web-domain>/api/auth/google/callback`. It points at the web domain, so it does not change with this migration |
 | `NEXT_PUBLIC_APP_URL` | yes | `https://<web-domain>` |
 | `BOT_USERNAME` | yes | Bot username without `@` |

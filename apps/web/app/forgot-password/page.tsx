@@ -58,6 +58,9 @@ export default function ForgotPasswordPage() {
               <div className="rounded-md border border-[#00D9A3]/30 bg-[#00D9A3]/10 px-4 py-3 text-sm text-[#00D9A3]">
                 Check your inbox — if an account with that email exists, we&apos;ve sent a reset link. It expires in 1 hour.
               </div>
+              <p className="text-sm text-gray-400">
+                Signed up with Google? Your account has no password to reset: go back and choose Continue with Google.
+              </p>
               <Link
                 href="/signin"
                 className="block text-center text-sm text-[#00D9A3] hover:text-[#00c896] font-medium"

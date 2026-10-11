@@ -3,10 +3,18 @@
 // connecting Telegram, sessions across both surfaces, an exam, free text,
 // tone, the proactive scheduler, a process restart, and ownership checks.
 //
-// Telegram is a local stand-in (TELEGRAM_API_BASE). The database is the
-// throwaway test Postgres from CLAUDE.md ("Integration tests"), never the
-// app's. The models are real, so it needs a model key with quota left: a
-// step that got a fallback reply is reported as failed, not passed.
+// Telegram is a local stand-in (TELEGRAM_API_BASE), and so is the email
+// provider (RESEND_API_BASE): both are the server this script starts on 3999.
+// Signup is the real thing. The API generates the verification code, stores
+// its hash and sends it; this script reads the code out of the message the
+// stand-in received and submits it with its signup token, exactly as a person
+// would from their inbox. Nothing here skips or pre-approves verification.
+// The addresses are @gmail.com in shape only: no message leaves this machine.
+//
+// The database is the throwaway test Postgres from CLAUDE.md ("Integration
+// tests"), never the app's. The models are real, so it needs a model key with
+// quota left: a step that got a fallback reply is reported as failed, not
+// passed.
 //
 //   docker run -d --rm --name nova-test-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=novatest -p 127.0.0.1:54329:5432 postgres:16-alpine
 //   (cd packages/db && DATABASE_URL=postgresql://postgres:test@127.0.0.1:54329/novatest DIRECT_URL=$DATABASE_URL npx prisma db push)
@@ -28,12 +36,18 @@ const step = (n, name, ok, detail = "") => { results.push({ n, name, ok }); cons
 const sql = q => execFileSync("docker", ["exec", "nova-test-pg", "psql", "-U", "postgres", "-d", "novatest", "-At", "-c", q], { encoding: "utf8", timeout: 20000 }).trim();
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// ── Telegram, stood in ─────────────────────────────────────────────────────
+// ── Telegram and the email provider, stood in ──────────────────────────────
 const tg = []; let mid = 100;
+const mail = [];
 const server = http.createServer((req, res) => {
   let body = ""; req.on("data", c => body += c); req.on("end", () => {
     const method = req.url.split("/").pop();
     let json = {}; try { json = JSON.parse(body || "{}"); } catch {}
+    if (method === "emails") {
+      mail.push(json);
+      res.setHeader("content-type", "application/json");
+      return res.end(JSON.stringify({ id: "e2e-" + mail.length }));
+    }
     tg.push({ method, ...json });
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify({ ok: true, result: method === "sendMessage" ? { message_id: ++mid } : true }));
@@ -43,6 +57,9 @@ await new Promise(r => server.listen(3999, "127.0.0.1", r));
 const sentTo = chat => tg.filter(m => m.method === "sendMessage" && String(m.chat_id) === String(chat));
 const lastTo = chat => sentTo(chat).at(-1);
 const button = (chat, label) => (lastTo(chat)?.reply_markup?.inline_keyboard ?? []).flat().find(b => b.text === label || b.text.startsWith(label));
+const mailTo = address => mail.filter(m => [m.to].flat().includes(address));
+// The code in the newest message to an address, as its owner would read it.
+const emailedCode = address => /\b(\d{8})\b/.exec(mailTo(address).at(-1)?.text ?? "")?.[1] ?? null;
 
 // ── A browser, stood in ────────────────────────────────────────────────────
 function browser() {
@@ -61,14 +78,43 @@ const hook = (body, secret = HOOK) => fetch(API + "/api/telegram", { method: "PO
 const say = (chat, text, id = ++upd, secret) => hook({ update_id: id, message: { message_id: id, chat: { id: chat, type: "private" }, from: { id: chat, first_name: "Asha" }, text } }, secret);
 const tap = (chat, data, id = ++upd) => hook({ update_id: id, callback_query: { id: "cb" + id, data, from: { id: chat }, message: { message_id: 1, chat: { id: chat, type: "private" } } } });
 
+// Signs a browser up the way a person does: ask for a code, read it from the
+// inbox, send it back with the token the first reply gave this browser.
+async function signUp(who, address, password, name) {
+  const started = await who.post("/api/signup", { email: address, password, name });
+  const signupToken = started.data?.signupToken;
+  const code = emailedCode(address);
+  const verified = code && signupToken
+    ? await who.post("/api/signup/verify", { email: address, code, signupToken })
+    : { status: "no code or token", data: null };
+  return { started, signupToken, code, verified };
+}
+
 const me = browser();
-const email = `e2e_${stamp}@test.local`;
+const email = `e2e_${stamp}@gmail.com`;
 const chat = 7_000_000_000 + (stamp % 100_000_000);
 
-// 1. Signup
+// 1. Signup, with the emailed code
 let r = await me.post("/api/signup", { email, password: "correct horse 42", name: "Asha Rao" });
-step(1, "signup creates an account and a session", (r.status === 200 || r.status === 201) && !!me.cookie(), `status ${r.status}`);
+const signupToken = r.data?.signupToken;
+const code = emailedCode(email);
+const accountsBefore = sql(`select count(*) from "User" where email='${email}'`);
+step(0.1, "signup emails a code and grants nothing yet: no session, no account", r.status === 200 && !me.cookie() && !r.data?.user && /^[0-9a-f]{64}$/.test(signupToken ?? "") && /^\d{8}$/.test(code ?? "") && accountsBefore === "0", `status ${r.status} cookie=${!!me.cookie()} code=${code ? "received" : "none"} accounts=${accountsBefore}`);
+const stored = sql(`select "codeHash" || ' ' || "tokenHash" || ' ' || "passwordHash" from "PendingSignup" where email='${email}'`);
+step(0.2, "the code, the token and the password are stored only as hashes", !!stored && !stored.includes(code) && !stored.includes(signupToken) && !stored.includes("correct horse 42"), `stored ${stored.length} chars`);
+const wrong = code === "00000000" ? "00000001" : "00000000";
+const badCode = await me.post("/api/signup/verify", { email, code: wrong, signupToken });
+const noToken = await browser().post("/api/signup/verify", { email, code });
+const badToken = await browser().post("/api/signup/verify", { email, code, signupToken: "ab".repeat(32) });
+step(0.3, "a wrong code, or the right code without this browser's token, is refused", badCode.status === 400 && noToken.status === 400 && badToken.status === 400 && !me.cookie(), `wrong code=${badCode.status} no token=${noToken.status} other token=${badToken.status}`);
+const forged = await fetch(WEB + "/api/login", { method: "POST", headers: { "content-type": "application/json", origin: "https://evil.test" }, body: "{}" }).then(x => x.status);
+const formPost = await fetch(WEB + "/api/login", { method: "POST", headers: { "content-type": "text/plain" }, body: "{}" }).then(x => x.status);
+step(0.4, "an auth request from another site, or sent as a form would send it, is refused", forged === 403 && formPost === 415, `other origin=${forged} text/plain=${formPost}`);
+r = await me.post("/api/signup/verify", { email, code, signupToken });
+step(1, "the emailed code and the token create the account and a session", r.status === 201 && !!me.cookie() && !!r.data?.user?.id, `status ${r.status}`);
 const userId = r.data?.user?.id;
+const replay = await browser().post("/api/signup/verify", { email, code, signupToken });
+step(1.05, "the code cannot be used a second time", replay.status === 400, `status ${replay.status}`);
 r = await browser().get("/api/nova/today");
 step(1.1, "no session, no access", r.status === 401, `status ${r.status}`);
 
@@ -268,7 +314,7 @@ const st = await say(chat, "/today", undefined, "");
 const st2 = await say(chat, "/today", undefined, "wrong-secret");
 step(23, "an unsigned or wrongly signed webhook call reaches nothing", sentTo(chat).length === unsignedBefore && st2 === 401, `no-secret status=${st} wrong-secret status=${st2} replies=${sentTo(chat).length - unsignedBefore}`);
 const other = browser();
-await other.post("/api/signup", { email: `e2e_b_${stamp}@test.local`, password: "correct horse 43", name: "Other" });
+await signUp(other, `e2e_b_${stamp}@gmail.com`, "correct horse 43", "Other");
 await other.post("/api/onboarding", { quizAnswers: { mentorDomain: "study", accountabilityStyle: "gentle nudges" } });
 const note = await me.post("/api/nova/notes", { title: "Mine", body: "private", subjectName: null, topicName: null });
 const noteId = note.data?.note?.id ?? note.data?.id;

@@ -1,6 +1,7 @@
 #!/bin/zsh
 # Starts the built API (3001) and web app (3000) for scripts/e2e/fresh-user.mjs,
-# against the throwaway test database and a local Telegram stand-in.
+# against the throwaway test database and a local stand-in for Telegram and
+# for the email provider (the journey reads its signup code from there).
 #   servers.sh        both apps
 #   servers.sh api    the API only (the journey restarts it part-way through)
 # Every value here is a test value. The model key is read from
@@ -13,6 +14,8 @@ export JWT_SECRET=e2e-secret-e2e-secret-e2e-secret
 export TELEGRAM_BOT_TOKEN=test-token BOT_TOKEN=test-token
 export TELEGRAM_API_BASE=http://127.0.0.1:3999
 export TELEGRAM_WEBHOOK_SECRET=e2e-hook-secret
+export RESEND_API_BASE=http://127.0.0.1:3999   # auth mail goes to the stand-in, nowhere else
+export RESEND_API_KEY=e2e-resend-key RESEND_FROM_EMAIL=e2e@nova.test
 export DISABLE_INTERNAL_CHECKIN_CRON=true      # the journey runs each tick itself
 export CRON_SECRET=e2e-cron-secret
 export NEXT_PUBLIC_APP_URL=https://nova.test

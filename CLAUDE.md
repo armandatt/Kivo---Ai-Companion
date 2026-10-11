@@ -53,9 +53,31 @@ Turborepo monorepo (npm workspaces) for **Kivo**, an AI accountability companion
 
 ### Web to API
 
-`apps/web` owns only `/api/login`, `/api/signup` and a few local handlers. Every other `/api/*` call is proxied to `apps/api` by the `rewrites()` list in `apps/web/next.config.js` (target `API_URL`, default `http://localhost:3001`). **A new API route that the web app calls needs a rewrite entry there**, or it returns 404 from the web origin.
+`apps/web` owns only the auth POSTs (`/api/login`, `/api/signup`, `/api/signup/verify`, `/api/signup/resend`, `/api/forgot-password`, `/api/reset-password`, all through `app/api/auth-proxy.ts`, which also signs the session cookie on the web side) and a few local handlers. Every other `/api/*` call is proxied to `apps/api` by the `rewrites()` list in `apps/web/next.config.js` (target `API_URL`, default `http://localhost:3001`). **A new API route that the web app calls needs a rewrite entry there**, or it returns 404 from the web origin.
 
 Auth is a JWT cookie named `kevo_session`, verified with `jose`. `apps/web/middleware.ts` guards the protected routes; `apps/api/lib/auth/session.ts` creates and verifies sessions. Email/password and Google OAuth are both supported.
+
+### Authentication
+
+The rules live in `packages/api/src/auth/` and are tested there: unit tests against an in-memory fake, and `__integration__/auth.itest.ts` against real Postgres (the only proof of the concurrency guarantees). The route files in `apps/api` are one line each: `lib/auth/auth-route.ts` calls `handleAuthRequest` (`auth/http.ts`) and sets the cookie. Each service takes its database, hasher and mailer as `AuthDeps`.
+
+- **Every auth POST from the browser goes through `apps/web/app/api/auth-proxy.ts`**, as a local route handler, never a rewrite. The proxy refuses cross-site requests and tells the API which browser is asking. A new auth POST needs a handler there.
+- **Cross-site requests are refused** (`request-origin.ts`, applied by the proxy and again by the API): `Content-Type` must be `application/json`, an `Origin` header must be the app's own, and `Sec-Fetch-Site` must not say another site. A request with no `Origin` is not from a browser page and is let through to the limits.
+- **Email signup is two requests.** `POST /api/signup` stores a `PendingSignup` (password already hashed, the eight-digit code as an HMAC keyed with `JWT_SECRET`), emails the code and returns a random `signupToken`. `POST /api/signup/verify` needs the token and the code, and only then creates the `User` and grants the session. No `User` row exists before that. Manual signup accepts `@gmail.com` only; login, reset and Google do not have that restriction.
+- **A signup belongs to the browser that started it.** Each start is its own row, reached only by its token (stored as SHA-256). A second start for the same address makes a second row and cannot change, resend or verify the first. Never go back to one row per address updated in place: that let a second caller put their password on someone else's signup.
+- **Wrong codes are counted per attempt, across resends** (`PendingSignup.attempts`, never reset), and the count is taken with a guarded write before the code is compared. A resend without the attempt's token sends nothing and uses none of the address's sends.
+- **Single use comes from guarded writes**, not from reading first: the code is consumed by a `deleteMany` on `(id, codeHash)`, a reset token by an `updateMany` on `used: false`.
+- **Limits that protect an account are per address and in Postgres** (`throttle.ts`, table `AuthThrottle`, keys hashed): sign-in tries (10 per 15 minutes, taken before the password is checked, given back on success or a completed reset), signup emails (one a minute, 5 an hour, 10 a day) and reset requests (3 an hour). They are pauses that end by themselves, never locks.
+- **Limits per caller are in memory and secondary** (`rate-limiter.ts`, `createCallerLimits`). The API believes a browser address only when the request carries the web proxy's proof (`proxyProof`, derived from `JWT_SECRET`). `X-Forwarded-For` is never read. Callers without the proof share one allowance per route.
+- **Nothing says whether an address has an account.** Signup, resend and forgot-password give the same reply either way and tell the owner by email instead (including "this account signs in with Google"); an address with an account goes through the same steps as a new one. Login has one refusal and always compares a hash. Keep it that way when adding a branch.
+- **Login is not gated on `emailVerified`.** Accounts created before verification existed have it null and still sign in.
+- **Google** uses the authorization-code flow with `state` and a nonce in the `kevo_oauth` cookie. `lib/auth/google-oidc.ts` verifies the ID token with `jose` (signature, issuer, audience, expiry); `google-signin.service.ts` then decides the account. An account is recognised by Google's `sub` first. A matching email links only when Google is authoritative for the address (`email_verified` and either `@gmail.com` or an `hd` claim naming the address's own domain) and the Kivo account has no password or a verified email. Otherwise nothing is linked: `/signin?error=google_link` (reset the password first, which sets `emailVerified`) or `google_manual` (sign in with the password). Google's tokens are not stored.
+- **Reset tokens are stored as SHA-256** in `PasswordResetToken.token`. The link carries the only copy.
+- **`JWT_SECRET` has no default in production.** The session code (`apps/api/lib/auth/session.ts`, `apps/web/lib/auth/session-secret.ts`) and `serverSecret()` throw when it is missing; the development fallback applies only outside production.
+- **Sessions cannot be revoked.** A password reset does not end sessions issued before it; they last until the 30-day JWT expires.
+- Auth mail goes through `auth-email.ts` (Resend). Codes, tokens, passwords and recipient addresses are never logged, and an unexpected error is logged by name only.
+- `RESEND_API_BASE` points mail at another host. It is for an end-to-end harness's local stand-in (like `TELEGRAM_API_BASE`), so a test reads the real code from the captured message. Never set it in a deployed environment.
+- `scripts/e2e/fresh-user.mjs` signs up the real way: its stand-in on port 3999 serves as the email provider too (`servers.sh` sets `RESEND_API_BASE`), and the script reads the code from the captured message and verifies it with its `signupToken`. Its `sql` helper calls `docker exec nova-test-pg psql`.
 
 ### Telegram webhook: an ordered chain of gates
 
@@ -162,8 +184,11 @@ All are read from `process.env` at call time, so flipping one on Railway needs n
 | `GEMINI_API_KEY` | api | When set, every model call goes to Gemini. `GEMINI_MODEL_FAST` / `GEMINI_MODEL_MAIN` override the defaults |
 | `OPENAI_API_KEY` | api | Used only when `GEMINI_API_KEY` is empty or `LLM_PROVIDER=openai`. `OPENAI_MODEL` overrides the default OpenAI model |
 | `TELEGRAM_WEBHOOK_SECRET` | api | Must equal the `secret_token` given to Telegram's `setWebhook`. Unset: Rex requests are not authenticated, and in production Nova ignores every update |
-| `JWT_SECRET` | both | Signs session JWTs |
+| `JWT_SECRET` | both | Signs session JWTs, keys signup codes, and proves the web proxy to the API. Must be the same on both. Required in production: there is no default |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | api | Google OAuth |
+| `GOOGLE_REDIRECT_URI` | api | `https://<web-domain>/api/auth/google/callback`. Must be on the web domain: the state cookie is set there |
+| `RESEND_API_KEY` | api | Sends signup codes and reset links. Unset: email signup returns 503 and no reset mail is sent |
+| `RESEND_FROM_EMAIL` | api | Sender on a domain verified with Resend. The default `onboarding@resend.dev` only reaches the Resend account's own address |
 | `API_URL` | web | Base URL of `apps/api` for the rewrites |
 | `NEXT_PUBLIC_APP_URL` | web | Public URL of the web app |
 | `NEXT_PUBLIC_BOT_USERNAME` / `BOT_USERNAME` | web / api | Bot username without `@`, for "open chat" links and the `?start=TOKEN` deeplink |

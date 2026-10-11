@@ -4,19 +4,17 @@ import { jwtVerify } from "jose"
 import { companionOf, type Companion } from "@repo/api/nova/product/companion"
 import { DashboardShell } from "@/components/dashboard-shell"
 import { THEME_SCRIPT } from "@/components/theme/kivo-theme"
+import { sessionSecret } from "@/lib/auth/session-secret"
 
 export const dynamic = "force-dynamic"
 
-const SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET ?? "fallback-dev-secret-change-in-production"
-)
 
 async function getUserId(): Promise<string | null> {
   try {
     const store = await cookies()
     const token = store.get("kevo_session")?.value
     if (!token) return null
-    const { payload } = await jwtVerify(token, SECRET)
+    const { payload } = await jwtVerify(token, sessionSecret())
     return (payload as { userId?: string }).userId ?? null
   } catch {
     return null

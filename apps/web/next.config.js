@@ -13,8 +13,10 @@ const nextConfig = {
     const apiUrl = process.env.API_URL ?? "http://localhost:3001"
 
     return [
-      // NOTE: /api/login and /api/signup are handled by local route handlers —
-      // no rewrites needed for those paths.
+      // NOTE: every auth POST (/api/login, /api/signup, /api/signup/verify,
+      // /api/signup/resend, /api/forgot-password, /api/reset-password) is
+      // handled by a local route handler, not a rewrite: the handler checks
+      // the request's origin and tells the API which browser is asking.
       {
         source: "/api/logout",
         destination: `${apiUrl}/api/logout`,
@@ -110,14 +112,6 @@ const nextConfig = {
       {
         source: "/api/telegram/check-connection",
         destination: `${apiUrl}/api/telegram/check-connection`,
-      },
-      {
-        source: "/api/forgot-password",
-        destination: `${apiUrl}/api/forgot-password`,
-      },
-      {
-        source: "/api/reset-password",
-        destination: `${apiUrl}/api/reset-password`,
       },
       {
         source: "/api/nova/:path*",
