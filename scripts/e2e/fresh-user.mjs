@@ -360,6 +360,22 @@ r = await me.get("/api/nova/today");
 const tgWeek = /This week: (\d+) session/.exec(lastTo(chat)?.text ?? "")?.[1];
 step(25, "web and Telegram report the same state", r.data?.status === "ready" && String(r.data.progress.sessionsThisWeek) === tgWeek || true, `web sessionsThisWeek=${r.data?.progress?.sessionsThisWeek} telegram="${(lastTo(chat)?.text ?? "").replace(/\n/g, " / ").slice(0, 160)}"`);
 
+// 26. Deleting the account, from the settings page's own request. The reply
+// is believed only when it says ok; it clears the session; and nothing of the
+// learner's is left, the Telegram chat and its conversation included.
+const hadBefore = left(chat);
+const oldCookie = me.cookie();
+const del = await fetch(WEB + "/api/delete-account", { method: "DELETE", headers: { cookie: oldCookie } });
+const delBody = await del.json().catch(() => null);
+const cleared = (del.headers.getSetCookie?.() ?? []).some(c => c.startsWith("kevo_session=;") || (c.startsWith("kevo_session=") && /max-age=0|expires=thu, 01 jan 1970/i.test(c)));
+const gone = sql(`select (select count(*) from "User" where id='${userId}')||'|'||(select count(*) from "NovaAcademicProfile" where id='${profileBefore}')||'|'||(select count(*) from "NovaStudySession" where "profileId"='${profileBefore}')`);
+step(26, "deleting the account removes the learner, the chat and its conversation, and signs the browser out", del.status === 200 && delBody?.ok === true && cleared && hadBefore !== "0|0|0|0" && left(chat) === "0|0|0|0" && gone === "0|0|0", `status=${del.status} cookie cleared=${cleared} chat before=${hadBefore} after=${left(chat)} account|profile|sessions=${gone}`);
+const afterDelete = { home: await fetch(WEB + "/home", { redirect: "manual", headers: { cookie: oldCookie } }), again: await fetch(WEB + "/api/delete-account", { method: "DELETE", headers: { cookie: oldCookie } }) };
+step(26.1, "the old session opens nothing, and asking again is not an error", afterDelete.home.status === 307 && (afterDelete.home.headers.get("location") ?? "").endsWith("/signin") && afterDelete.again.status === 200, `home=${afterDelete.home.status} ${afterDelete.home.headers.get("location") ?? ""} delete again=${afterDelete.again.status}`);
+await say(chat, "/today");
+await sleep(300);
+step(26.2, "the Telegram chat is an unconnected one again", UNCONNECTED.test(lastTo(chat)?.text ?? "") && left(chat) === "0|0|0|0", (lastTo(chat)?.text ?? "").slice(0, 70));
+
 const failed = results.filter(x => !x.ok);
 console.log(`\nE2E: ${results.length - failed.length}/${results.length} passed${failed.length ? " | FAILED: " + failed.map(f => f.n + " " + f.name).join("; ") : ""}`);
 server.close();

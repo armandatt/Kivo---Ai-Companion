@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
+import { requestAccountDeletion } from "./delete-account"
 
 const TIMEZONES = [
   "(UTC-12:00) International Date Line West",
@@ -41,6 +42,7 @@ export default function AccountSettings({ email, name, isGoogleOAuth, timezone }
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [deleteInput, setDeleteInput] = useState("")
   const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
 
   async function handleSave() {
     setSaving(true)
@@ -60,12 +62,16 @@ export default function AccountSettings({ email, name, isGoogleOAuth, timezone }
   async function handleDeleteAccount() {
     if (deleteInput !== "DELETE") return
     setDeleting(true)
-    try {
-      await fetch("/api/delete-account", { method: "DELETE" })
+    setDeleteError("")
+    // Nothing is said to be deleted, and the page is not left, until the
+    // server has confirmed it.
+    const outcome = await requestAccountDeletion()
+    if (outcome.ok) {
       window.location.href = "/"
-    } catch {
-      setDeleting(false)
+      return
     }
+    setDeleteError(outcome.message)
+    setDeleting(false)
   }
 
   return (
@@ -315,11 +321,17 @@ export default function AccountSettings({ email, name, isGoogleOAuth, timezone }
                 marginBottom: "16px",
               }}
             />
+            {deleteError && (
+              <p role="alert" style={{ fontSize: "12px", color: "#F87171", margin: "0 0 14px", lineHeight: 1.5 }}>
+                {deleteError}
+              </p>
+            )}
             <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
               <button
                 onClick={() => {
                   setShowDeleteModal(false)
                   setDeleteInput("")
+                  setDeleteError("")
                 }}
                 style={{
                   padding: "8px 18px",
