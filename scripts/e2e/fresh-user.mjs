@@ -118,11 +118,19 @@ step(1.05, "the code cannot be used a second time", replay.status === 400, `stat
 r = await browser().get("/api/nova/today");
 step(1.1, "no session, no access", r.status === 401, `status ${r.status}`);
 
+// 1.2. Signed up, quiz not done: the dashboard sends them to the quiz, and the
+// quiz does not send them back. (A first Google sign-in arrives in this state.)
+const page = async path => { const res = await fetch(WEB + path, { redirect: "manual", headers: { cookie: me.cookie() } }); return { status: res.status, to: res.headers.get("location") ?? "" }; };
+const early = { home: await page("/home"), planner: await page("/planner"), quiz: await page("/onboarding") };
+step(1.2, "before the quiz, dashboard pages lead to the quiz and the quiz stays put", early.home.status === 307 && early.home.to.endsWith("/onboarding") && early.planner.status === 307 && early.planner.to.endsWith("/onboarding") && early.quiz.status === 200, `home=${early.home.status} ${early.home.to} planner=${early.planner.status} ${early.planner.to} quiz=${early.quiz.status}`);
+
 // 2–3. Onboarding quiz, companion assignment
 r = await me.post("/api/onboarding", { quizAnswers: { mentorDomain: "study", energyPattern: "evening", corePain: "procrastination", primaryGoal: "Do well in my exams", accountabilityStyle: "gentle nudges", aspirationWords: ["focused"] }, timezone: "Asia/Kolkata" });
 const persona = sql(`select "primaryPersona" from "UserProfile" where "userId"='${userId}'`);
 step(2, "onboarding quiz completes", r.status === 200 && r.data?.success !== false, `status ${r.status}`);
 step(3, "study domain assigns Nova, deterministically", persona === "nova", `primaryPersona=${persona}`);
+const late = { home: await page("/home"), quiz: await page("/onboarding") };
+step(3.05, "after the quiz, the dashboard opens and nothing bounces between the two", late.home.status === 200 && late.quiz.status === 200, `home=${late.home.status} ${late.home.to} quiz=${late.quiz.status} ${late.quiz.to}`);
 r = await me.get("/api/nova/companion");
 step(3.1, "the API agrees the account is Nova's", r.data?.companion === "nova", JSON.stringify(r.data));
 

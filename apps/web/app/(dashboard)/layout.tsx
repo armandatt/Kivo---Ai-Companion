@@ -4,6 +4,7 @@ import { jwtVerify } from "jose"
 import { companionOf, type Companion } from "@repo/api/nova/product/companion"
 import { DashboardShell } from "@/components/dashboard-shell"
 import { THEME_SCRIPT } from "@/components/theme/kivo-theme"
+import { dashboardEntry, type DashboardEntry } from "@/lib/auth/dashboard-entry"
 import { sessionSecret } from "@/lib/auth/session-secret"
 
 export const dynamic = "force-dynamic"
@@ -30,34 +31,42 @@ export default async function DashboardLayout({
   if (!userId) redirect("/signin")
 
   // Dynamic import: avoids Prisma loading DATABASE_URL at build time.
-  // Wrapped in try/catch — if DB is unavailable (e.g. missing env in Preview
-  // deployments), let the authenticated user through rather than hard-crashing.
-  // The companion is then left unknown and the shell asks the API for it
-  // before showing any companion-specific page.
+  // The lookup is guarded: if the DB is unavailable (e.g. missing env in
+  // Preview deployments), let the authenticated user through rather than
+  // hard-crashing. The companion is then left unknown and the shell asks the
+  // API for it before showing any companion-specific page.
+  //
+  // Nothing in the try block redirects. redirect() works by throwing, and a
+  // redirect thrown in here would be caught as a database failure.
   let companion: Companion | null = null
+  let entry: DashboardEntry = "enter"
   try {
     const { prisma } = await import("@repo/db/client")
-    const profile = await prisma.userProfile.findUnique({
-      where: { userId },
-      select: { onboardingComplete: true, primaryPersona: true, telegramChatId: true },
+    const account = await prisma.user.findUnique({
+      where:  { id: userId },
+      select: { userProfile: { select: { onboardingComplete: true, primaryPersona: true, telegramChatId: true } } },
     })
-    if (!profile?.onboardingComplete) redirect("/onboarding")
+    const profile = account?.userProfile ?? null
+    entry = dashboardEntry({ exists: account !== null, onboardingComplete: profile?.onboardingComplete })
 
-    const messenger = profile.telegramChatId
-      ? await prisma.messengerUser.findUnique({
-          where:  { platform_platformChatId: { platform: "telegram", platformChatId: profile.telegramChatId } },
-          select: { persona: true },
-        })
-      : null
-    // The same rule the API uses to decide who is a Nova learner.
-    companion = companionOf({
-      primaryPersona:   profile.primaryPersona,
-      hasLinkedChat:    profile.telegramChatId !== null,
-      messengerPersona: messenger ? messenger.persona : undefined,
-    })
+    if (entry === "enter" && profile) {
+      const messenger = profile.telegramChatId
+        ? await prisma.messengerUser.findUnique({
+            where:  { platform_platformChatId: { platform: "telegram", platformChatId: profile.telegramChatId } },
+            select: { persona: true },
+          })
+        : null
+      // The same rule the API uses to decide who is a Nova learner.
+      companion = companionOf({
+        primaryPersona:   profile.primaryPersona,
+        hasLinkedChat:    profile.telegramChatId !== null,
+        messengerPersona: messenger ? messenger.persona : undefined,
+      })
+    }
   } catch (err) {
     console.error("[dashboard/layout] DB unavailable, skipping onboarding check:", err)
   }
+  if (entry !== "enter") redirect(entry)
 
   return (
     <>
