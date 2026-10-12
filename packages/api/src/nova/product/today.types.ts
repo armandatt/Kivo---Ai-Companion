@@ -152,7 +152,10 @@ export type NovaSessionOutcome = "struggled" | "okay" | "good" | "crushed_it";
 
 export type NovaSessionError =
   | "unauthenticated" | "not_connected" | "not_nova" | "onboarding_incomplete"
-  | "invalid" | "no_active_session" | "not_paused" | "already_paused" | "failed";
+  | "invalid" | "no_active_session" | "not_paused" | "already_paused" | "failed"
+  // Nothing is running because the last session was left open past its limit
+  // and closed uncounted. A kind of "no active session" that can be explained.
+  | "session_abandoned";
 
 export type NovaSessionResponse =
   | {

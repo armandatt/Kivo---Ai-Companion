@@ -35,6 +35,7 @@ const { loadNovaToday }             = await import("../product/today.js");
 const { loadNovaPlanner }           = await import("../product/planner.js");
 const { loadNovaKnowledge }         = await import("../product/knowledge.js");
 const { runNovaProactiveCron }      = await import("../proactive/nova-proactive-cron.js");
+const { abandonStaleSessions }      = await import("../persistence/nova-persistence.js");
 const { localHour, dayKey }         = await import("../engines/learner-calendar.js");
 
 import type { InlineButton, SendResult, TelegramClient, TurnTrace } from "../telegram/telegram.types.js";
@@ -1185,8 +1186,11 @@ test("a due review at the learner's usual hour is sent once, with a prompt, howe
   await h.tapData(l, start);
   assert.equal((await sessions(l))[0]!.status, "in_progress");
 
-  // While it runs, Nova says nothing, whatever is due.
+  // While it runs, Nova says nothing, whatever is due. (Five hours on, past
+  // the gap between messages; the session is one started ten minutes ago,
+  // since one left open that long would be closed as abandoned.)
   tick(5 * 60);
+  await prisma.novaStudySession.updateMany({ where: { profileId: l.profileId, status: "in_progress" }, data: { sessionDate: new Date(clock.getTime() - 10 * MIN) } });
   await prisma.novaAcademicProfile.update({ where: { id: l.profileId }, data: { timezone: zoneWhereHourIs(10) } });
   await prisma.novaExam.create({ data: { profileId: l.profileId, title: "OS quiz", scheduledAt: new Date(clock.getTime() + 20 * 3_600_000) } });
   await run();
@@ -1323,6 +1327,34 @@ test("Telegram accepts the message and recording it fails: it is not sent again,
   for (let i = 0; i < 3; i++) { tick(5); await runNovaProactiveCron(clock, { client, word }); }
   assert.equal(mine(tg, l).length, 1);
   assert.deepEqual((await outbox(l)).map(r => r.status), ["unknown"]);
+});
+
+test("a session left open and closed as abandoned is explained in the chat, not answered with 'nothing is running'", async () => {
+  const l = await eveningLearner("Ned");
+  const h = harness();
+  await h.send(l, "/focus deadlocks");
+  await h.tap(l, "Start 25 min");
+  assert.equal((await sessions(l))[0]!.status, "in_progress");
+
+  // Six hours later the tick's sweep has closed it.
+  tick(6 * 60);
+  assert.equal(await abandonStaleSessions(clock, l.profileId), 1);
+  assert.deepEqual((await sessions(l)).map(s => [s.status, s.durationMinutes]), [["abandoned", 25]]);
+
+  const EXPLAINED = "That session was left open past its time, so I closed it and didn't count it. Start a new one when you're ready.";
+  await h.send(l, "/done");
+  assert.equal(h.tg.last().text, EXPLAINED);
+  await h.send(l, "/done");
+  assert.equal(h.tg.last().text, EXPLAINED, "the same answer as long as it is the last thing that happened");
+  assert.deepEqual((await sessions(l)).map(s => s.status), ["abandoned"], "and nothing reopened or counted it");
+  assert.equal(await prisma.novaTopicMasterySnapshot.count({ where: { profileId: l.profileId } }), 0);
+
+  // A new session, ended in the ordinary way: the explanation is not repeated.
+  await h.send(l, "/focus deadlocks");
+  await h.tap(l, "Start 25 min");
+  tick(30);
+  await h.send(l, "/done");
+  assert.ok(h.tg.last().text.includes("How did it go?"), h.tg.last().text);
 });
 
 test("no timezone, nudges off, 'Not today', quiet hours and a recent message each mean silence, with nothing stored", async () => {

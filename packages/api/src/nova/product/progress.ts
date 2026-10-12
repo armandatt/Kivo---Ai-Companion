@@ -8,6 +8,7 @@
 // The definitions this page rests on are the constants and the three
 // functions directly below. They are documented in progress.types.ts.
 
+import { ABANDONED_STATUS } from "../engines/session-clock";
 import { prisma } from "@repo/db/client";
 import { learnerKey } from "./learner-key";
 import { getAllTopicMasteries, masteryLevel } from "../engines/knowledge-engine";
@@ -82,6 +83,8 @@ export interface ProgressInputs {
   sessions: ProgressSessionRecord[];   // completed, within the window
   masteryRecords: MasteryRecord[];     // within the window
   // Finished sessions older than the window, as totals.
+  // Sessions closed as abandoned, all time. They are in none of the numbers.
+  abandoned?: number;
   before: {
     counted: number; minutes: number;
     firstAt: Date | null; lastAt: Date | null;
@@ -391,6 +394,7 @@ export function buildProgressView(input: ProgressInputs): NovaProgressReady {
       notCounted: {
         selfReported:    before.selfReported + finished.filter(s => !isTimedSession(s)).length,
         underTenMinutes: before.underTenMinutes + timed.filter(s => !isCountedSession(s)).length,
+        ...(input.abandoned ? { abandoned: input.abandoned } : {}),
       },
     },
     changes: changes.slice(0, CHANGES_LIMIT),
@@ -451,7 +455,7 @@ export async function loadNovaProgress(
   const earlier  = { profileId: profile.id, status: "completed", sessionDate: { lt: since } };
   const timedRow = { activityType: { not: SELF_REPORTED_ACTIVITY } };
 
-  const [topics, sessions, masteryRecords, countedBefore, selfReportedBefore, shortBefore] = await Promise.all([
+  const [topics, sessions, masteryRecords, countedBefore, selfReportedBefore, shortBefore, abandoned] = await Promise.all([
     getAllTopicMasteries(profile.id, now),
     prisma.novaStudySession.findMany({
       where:   { profileId: profile.id, status: "completed", sessionDate: { gte: since, lte: now } },
@@ -475,6 +479,7 @@ export async function loadNovaProgress(
     }),
     prisma.novaStudySession.count({ where: { ...earlier, activityType: SELF_REPORTED_ACTIVITY } }),
     prisma.novaStudySession.count({ where: { ...earlier, ...timedRow, durationMinutes: { lt: COUNTED_SESSION_MINUTES } } }),
+    prisma.novaStudySession.count({ where: { profileId: profile.id, status: ABANDONED_STATUS, sessionDate: { lte: now } } }),
   ]);
 
   return buildProgressView({
@@ -483,6 +488,7 @@ export async function loadNovaProgress(
     topics,
     sessions,
     masteryRecords,
+    abandoned,
     before: {
       counted: countedBefore._count._all,
       minutes: countedBefore._sum.durationMinutes ?? 0,

@@ -43,7 +43,7 @@ import { buildTurnEvidence } from "../consolidation/evidence-builder";
 import { consolidateTurn } from "../consolidation/run-consolidation";
 import { normalizeTopicName, resolveTopicSubject, updateTopicMastery } from "../engines/topic-mastery-engine";
 import { buildExecutionReport, buildSessionContext, computeSessionAction, sessionEvidence } from "../engines/study-session-engine";
-import { pauseLengthSeconds, pausedSecondsOf, sessionElapsedSeconds } from "../engines/session-clock";
+import { ABANDONED_STATUS, pauseLengthSeconds, pausedSecondsOf, sessionAbandonment, sessionElapsedSeconds, type Abandonment } from "../engines/session-clock";
 import { withEstablishedSignal } from "../engines/signal-engine";
 import { translateNovaCommand } from "../commands";
 import type { SessionEvidence, SessionExecutionReport, SessionOutcome } from "../types/session.types";
@@ -375,9 +375,11 @@ export async function openStudySession(
 
     const open = await tx.novaStudySession.findFirst({
       where:  { profileId, status: { in: OPEN_STATUSES } },
-      select: { id: true },
+      select: ABANDON_SELECT,
     });
-    if (open) return;
+    // A session nobody came back to does not stand in the way of a new one.
+    const stale = open ? abandonmentOf(open, now) : null;
+    if (open && !(stale && await abandonRow(tx, open, stale))) return;
 
     await tx.novaStudySession.create({
       data: {
@@ -395,7 +397,70 @@ export async function openStudySession(
   }).catch(err => console.error("[nova:session] start failed", err));
 }
 
+// ── Sessions nobody came back to ──────────────────────────────────────────────
+// The rule is engines/session-clock.ts (sessionAbandonment). These are its
+// only writers: the tick's sweep, a Start over a session left open, and a
+// Pause or Resume that arrives past the limit. Ending is not one of them (see
+// endStudySession): the limit is for sessions nobody is attending, and an End
+// is someone attending. Once a session is abandoned, nothing reopens it.
+
+const ABANDON_SELECT = {
+  id: true, profileId: true, sessionDate: true, status: true, pausedAt: true,
+  totalPausedMinutes: true, totalPausedSeconds: true, plannedDurationMinutes: true,
+} as const;
+type AbandonRow = {
+  id: string; profileId: string; sessionDate: Date; status: string; pausedAt: Date | null;
+  totalPausedMinutes: number; totalPausedSeconds: number; plannedDurationMinutes: number | null;
+};
+
+const abandonmentOf = (row: AbandonRow, now: Date): Abandonment | null => sessionAbandonment({
+  startedAt: row.sessionDate, status: row.status, pausedAt: row.pausedAt,
+  totalPausedSeconds: pausedSecondsOf(row), plannedDurationMinutes: row.plannedDurationMinutes,
+}, now);
+
+// Conditional on the session still being as it was judged: a resume, an end
+// or another tick that got there first leaves this with nothing to do. No
+// report is written and no engine is fed, so nothing here can move mastery.
+async function abandonRow(
+  db:      Pick<typeof prisma, "novaStudySession">,
+  row:     AbandonRow,
+  verdict: Abandonment,
+): Promise<boolean> {
+  const closed = await db.novaStudySession.updateMany({
+    where: { id: row.id, status: row.status, pausedAt: row.pausedAt },
+    data:  { status: ABANDONED_STATUS, durationMinutes: verdict.countedMinutes },
+  });
+  if (closed.count === 1) {
+    console.log(JSON.stringify({ layer: "nova:session", sessionId: row.id, profileId: row.profileId, outcome: "abandoned", reason: verdict.reason, countedMinutes: verdict.countedMinutes }));
+  }
+  return closed.count === 1;
+}
+
+// true: the session was past its limit and is now closed as abandoned.
+export async function abandonIfStale(sessionId: string, now: Date): Promise<boolean> {
+  const row = await prisma.novaStudySession.findUnique({ where: { id: sessionId }, select: ABANDON_SELECT });
+  const verdict = row ? abandonmentOf(row, now) : null;
+  return row !== null && verdict !== null && abandonRow(prisma, row, verdict);
+}
+
+// Every open session past its limit, for one learner or for all of them.
+// Run by the proactive tick before it looks at anyone, so a forgotten timer
+// stops holding back that learner's messages on the next tick.
+export async function abandonStaleSessions(now: Date, profileId?: string): Promise<number> {
+  const open = await prisma.novaStudySession.findMany({
+    where:  { status: { in: OPEN_STATUSES }, ...(profileId ? { profileId } : {}) },
+    select: ABANDON_SELECT,
+  });
+  let closed = 0;
+  for (const row of open) {
+    const verdict = abandonmentOf(row, now);
+    if (verdict && await abandonRow(prisma, row, verdict)) closed++;
+  }
+  return closed;
+}
+
 export async function pauseStudySession(sessionId: string, now: Date): Promise<void> {
+  if (await abandonIfStale(sessionId, now).catch(() => false)) return;
   await prisma.novaStudySession.updateMany({
     where: { id: sessionId, status: "in_progress" },
     data: {
@@ -407,6 +472,7 @@ export async function pauseStudySession(sessionId: string, now: Date): Promise<v
 }
 
 export async function resumeStudySession(sessionId: string, now: Date): Promise<void> {
+  if (await abandonIfStale(sessionId, now).catch(() => false)) return;
   const session = await prisma.novaStudySession.findUnique({
     where:  { id: sessionId },
     select: { pausedAt: true, totalPausedMinutes: true, totalPausedSeconds: true },
@@ -494,6 +560,16 @@ async function endStudySession(
   subjects:       Array<{ id: string; name: string }>,
   now:            Date,
 ): Promise<boolean> {
+  // An End is the learner saying they were here, so it is never judged
+  // against the abandonment limit: a session that is still open is ended as
+  // a session, with all of its study time, however far past its plan it ran.
+  //
+  // End and the abandonment sweep race on one row, and the row decides: each
+  // is a single conditional UPDATE on the session still being open, so the
+  // database lets exactly one of them through. Whichever commits first owns
+  // the outcome; the other matches no row and writes nothing. An End that
+  // finds the session already abandoned returns false here, and nothing is
+  // counted.
   // 1. Produce execution report (pure function — no DB)
   const report = buildExecutionReport(sessionContext, null, evidence, now);
 

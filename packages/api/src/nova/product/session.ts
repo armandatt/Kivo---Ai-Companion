@@ -13,14 +13,32 @@ import {
   pauseStudySession,
   persistSessionEnd,
   resumeStudySession,
+  abandonIfStale,
 } from "../persistence/nova-persistence";
 import { checkSessionCommand, sessionElapsedSeconds, toSessionView } from "./session-view";
-import { COUNTED_SESSION_MINUTES } from "../engines/study-session-engine";
+import { COUNTED_SESSION_MINUTES, SELF_REPORTED_ACTIVITY } from "../engines/study-session-engine";
+import { ABANDONED_STATUS } from "../engines/session-clock";
 import type { NovaSessionCommand, NovaSessionResponse, NovaSessionView } from "./today.types";
 
 export async function loadNovaSession(platformChatId: string, now = new Date()): Promise<NovaSessionView | null> {
   const snapshot = await loadStudySnapshot(platformChatId);
   return snapshot.activeSession ? toSessionView(snapshot.activeSession, now) : null;
+}
+
+const SESSION_ABANDONED = {
+  ok: false as const, error: "session_abandoned" as const,
+  message: "That session was left open past its time, so it was closed and not counted. Start a new one when you're ready.",
+};
+
+// Whether the learner's most recent session is one that was closed as
+// abandoned. False again as soon as they start another.
+export async function lastSessionWasAbandoned(profileId: string): Promise<boolean> {
+  const last = await prisma.novaStudySession.findFirst({
+    where:   { profileId, activityType: { not: SELF_REPORTED_ACTIVITY } },
+    orderBy: { createdAt: "desc" },
+    select:  { status: true },
+  });
+  return last?.status === ABANDONED_STATUS;
 }
 
 export async function runNovaSessionCommand(
@@ -37,9 +55,22 @@ export async function runNovaSessionCommand(
     return { ok: false, error: "onboarding_incomplete", message: "Finish setting up with Nova first." };
   }
 
-  const active = snapshot.activeSession;
+  // An End is taken as it comes: a session that is still open is ended as a
+  // session, however long it ran (persistence/nova-persistence.ts,
+  // endStudySession). Any other command first closes a session that is past
+  // its limit, so a Start starts afresh and a Pause or Resume has nothing
+  // left to act on.
+  const left   = command.action !== "end" && snapshot.activeSession !== null
+    && await abandonIfStale(snapshot.activeSession.id, now).catch(() => false);
+  const active = left ? null : snapshot.activeSession;
+  if (left && command.action !== "start") return SESSION_ABANDONED;
   const check  = checkSessionCommand(command, active);
-  if (check.verdict === "reject") return { ok: false, error: check.error, message: check.message };
+  if (check.verdict === "reject") {
+    // "Nothing is running" has a reason worth giving when the reason is that
+    // the last session was closed for them.
+    if (check.error === "no_active_session" && await lastSessionWasAbandoned(profileId)) return SESSION_ABANDONED;
+    return { ok: false, error: check.error, message: check.message };
+  }
   if (check.verdict === "noop") {
     return { ok: true, session: active ? toSessionView(active, now) : null, ended: null };
   }
@@ -69,8 +100,10 @@ export async function runNovaSessionCommand(
       userId: user.id, profileId, activeSession: active, subjects: snapshot.subjects, surface,
       outcome: command.outcome, now,
     });
-    // Not closed by this call: it was ended elsewhere a moment ago. Nothing
-    // was written twice, and there is nothing new to report.
+    // Not closed by this call. Either it was ended elsewhere a moment ago
+    // (nothing was written twice, and there is nothing new to report), or
+    // the sweep abandoned it first, which the learner is told.
+    if (!closed && await lastSessionWasAbandoned(profileId)) return SESSION_ABANDONED;
     if (closed) {
       ended = {
         topicName: active.topicName,

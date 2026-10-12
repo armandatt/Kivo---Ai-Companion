@@ -27,6 +27,7 @@ import { loadReplyLanguage, saveAssistantMessage, userMessagedSince } from "../a
 import { loadOperatingStyle, loadAccountabilityStyle } from "../adapters/operating-style-adapter";
 import { ensureLearnerTimezone, loadAccountPreferences } from "../adapters/account-preferences-adapter";
 import { retryPendingConsolidations } from "../consolidation/run-consolidation";
+import { abandonStaleSessions } from "../persistence/nova-persistence";
 import { chooseRegister } from "../decision/register";
 import {
   decideProactive, generateCandidates, holdReason, inCheckinWindow, informOnly, isQuietFor, studyWindow, RECENT_MESSAGE_MINUTES,
@@ -83,6 +84,12 @@ export async function loadOverdueTopics(profileId: string, now: Date): Promise<A
 }
 
 export async function runNovaProactiveCron(now = new Date(), deps: ProactiveDeps = {}): Promise<NovaProactiveCronResult> {
+  // Sessions nobody came back to are closed first, so a forgotten timer does
+  // not hold back that learner's messages in this tick or any later one.
+  await abandonStaleSessions(now)
+    .then(n => { if (n > 0) console.log(`[nova:cron] abandoned sessions closed: ${n}`); })
+    .catch(err => console.error("[nova:cron] abandoned-session sweep failed", err));
+
   // Housekeeping that does not depend on sending.
   await retryPendingConsolidations(now)
     .then(r => { if (r.retried > 0) console.log(`[nova:cron] consolidation retries: ${r.completed}/${r.retried} completed`); })

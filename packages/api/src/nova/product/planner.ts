@@ -8,6 +8,7 @@
 // Read-only. No LLM call, no writes, and no planning of its own: it arranges
 // what the engines produced and reports the facts behind it.
 
+import { ABANDONED_STATUS } from "../engines/session-clock";
 import { buildExamContext } from "../engines/exam-engine";
 import { loadPlanningInputs, planEmptyReason, planMode, type PlanningInputs } from "./planning-inputs";
 import { sessionElapsedSeconds } from "./session-view";
@@ -173,7 +174,7 @@ export function buildPlannerView(input: PlanningInputs): NovaPlannerReady {
     id:        s.id,
     topicName: s.topicName,
     status:    s.status === "skipped" ? "skipped" : s.status === "paused" ? "paused"
-             : s.status === "in_progress" ? "in_progress" : "completed",
+             : s.status === "in_progress" ? "in_progress" : s.status === ABANDONED_STATUS ? "abandoned" : "completed",
     minutes:   s.durationMinutes,
   });
 

@@ -21,6 +21,7 @@ function notCountedLine(n: NovaProgressReady['overview']['notCounted']): string 
   const parts: string[] = []
   if (n.selfReported > 0) parts.push(`${n.selfReported} you told Nova about in chat (not timed)`)
   if (n.underTenMinutes > 0) parts.push(`${n.underTenMinutes} under 10 minutes`)
+  if (n.abandoned) parts.push(`${n.abandoned} left running or paused and closed as abandoned`)
   return parts.length > 0 ? `Not counted here: ${parts.join(', and ')}.` : null
 }
 

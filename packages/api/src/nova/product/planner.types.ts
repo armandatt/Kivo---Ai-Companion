@@ -27,7 +27,8 @@ export interface PlannerBlock extends TodayAction {
 export interface PlannerSessionEntry {
   id:        string;
   topicName: string | null;
-  status:    "completed" | "skipped" | "in_progress" | "paused";
+  // abandoned: left running or paused past its limit, and closed uncounted.
+  status:    "completed" | "skipped" | "in_progress" | "paused" | "abandoned";
   minutes:   number;
 }
 

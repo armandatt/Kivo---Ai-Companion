@@ -10,7 +10,7 @@
 
 import { loadAccountPreferences } from "../adapters/account-preferences-adapter";
 import { loadNovaToday } from "../product/today";
-import { loadNovaSession, runNovaSessionCommand } from "../product/session";
+import { lastSessionWasAbandoned, loadNovaSession, runNovaSessionCommand } from "../product/session";
 import { recordStatedMinutes } from "../product/planning-inputs";
 import { addExam } from "../product/exams";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
@@ -240,10 +240,16 @@ export async function startFromRequest(ctx: ActionContext, named: string, minute
   });
 }
 
+// Why a session command found nothing to act on, in the learner's language.
+function notRunningText(ctx: ActionContext, result: { error: string; message: string }): string {
+  if (result.error === "session_abandoned") return textFor(ctx.language).sessionAbandoned;
+  return result.error === "no_active_session" ? textFor(ctx.language).nothingRunning : result.message;
+}
+
 export async function pauseOrResume(ctx: ActionContext, action: "pause" | "resume"): Promise<ActionResult> {
   const result = await runNovaSessionCommand(ctx.chatId, { action }, ctx.now, "telegram");
   if (!result.ok) {
-    return done(`session_${action}`, { text: result.error === "no_active_session" ? textFor(ctx.language).nothingRunning : result.message }, false);
+    return done(`session_${action}`, { text: notRunningText(ctx, result) }, false);
   }
   if (!result.session) return done(`session_${action}`, { text: textFor(ctx.language).nothingRunning }, false);
   return done(`session_${action}`, sessionReply(result.session));
@@ -251,7 +257,10 @@ export async function pauseOrResume(ctx: ActionContext, action: "pause" | "resum
 
 export async function askOutcome(ctx: ActionContext, stated: OptionActionOutcome | null): Promise<ActionResult> {
   const session = await loadNovaSession(ctx.chatId, ctx.now);
-  if (!session) return done("ask_outcome", { text: textFor(ctx.language).nothingRunning }, false);
+  if (!session) {
+    const text = await lastSessionWasAbandoned(ctx.profileId) ? textFor(ctx.language).sessionAbandoned : textFor(ctx.language).nothingRunning;
+    return done("ask_outcome", { text }, false);
+  }
   return done("ask_outcome", outcomeReply(session.topicName, stated));
 }
 type OptionActionOutcome = Extract<OptionAction, { type: "end" }>["outcome"];
@@ -259,7 +268,7 @@ type OptionActionOutcome = Extract<OptionAction, { type: "end" }>["outcome"];
 export async function endSession(ctx: ActionContext, outcome: OptionActionOutcome): Promise<ActionResult> {
   const result = await runNovaSessionCommand(ctx.chatId, { action: "end", outcome }, ctx.now, "telegram");
   if (!result.ok) {
-    return done("session_end", { text: result.error === "no_active_session" ? textFor(ctx.language).nothingRunning : result.message }, false);
+    return done("session_end", { text: notRunningText(ctx, result) }, false);
   }
   // Closed by someone else a moment ago (the web app, a second tap): the
   // evidence is theirs and nothing was written twice.

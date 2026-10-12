@@ -32,7 +32,9 @@ export interface ProgressOverview {
   activeDays:      number;          // within the last year
   topicsImproved:  number;          // topics in growth.improving
   // Finished sessions left out of every number on this page, and why.
-  notCounted: { selfReported: number; underTenMinutes: number };
+  // abandoned: sessions left running or paused past their limit and closed
+  // uncounted. Present only when there are any.
+  notCounted: { selfReported: number; underTenMinutes: number; abandoned?: number };
 }
 
 // ── Topic growth ──────────────────────────────────────────────────────────────
