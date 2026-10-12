@@ -136,22 +136,36 @@ export function parseLearnerRequest(raw: unknown): LearnerRequest {
     ? Math.round(minutes) : null;
   const max = r["availableMinutesMax"];
 
+  const validExam      = exam && examTitle && isIsoDay(exam["date"]) ? { title: examTitle, date: exam["date"] as string } : null;
+  const struggleTopic  = shortText(r["struggleTopic"], 80);
+  const sessionOutcome = OUTCOMES.find(o => o === r["sessionOutcome"]) ?? null;
+  const setup          = parseSetupStatement(r["setup"]);
+  // A reading that does not say how clear it is is not treated as clear.
+  const read = READING_CLARITY.find(c => c === r["clarity"]) ?? "ambiguous";
+  // "Unsupported" means the message asks for something outside studying. A
+  // reading that found an exam with its date, a stated amount of time, a
+  // topic they are struggling with, how a session went or part of their
+  // setup in the same message has contradicted itself: that is studying, and
+  // the content it found is what is believed. (The model does this to an
+  // ordinary message that follows an off-topic one.)
+  const studyContent = validExam !== null || statedMinutes !== null || struggleTopic !== null || sessionOutcome !== null || setup !== null;
+  const clarity = read === "unsupported" && studyContent ? "clear" : read;
+
   return {
-    // A reading that does not say how clear it is is not treated as clear.
-    clarity:      READING_CLARITY.find(c => c === r["clarity"]) ?? "ambiguous",
+    clarity,
     changeOfMind: r["changeOfMind"] === true,
     action:       action ?? "none",
     confidence:   typeof r["confidence"] === "number" && action ? Math.max(0, Math.min(1, r["confidence"])) : 0,
     promptAnswer: shortText(r["promptAnswer"], 8),
     availableMinutes: statedMinutes,
-    sessionOutcome: OUTCOMES.find(o => o === r["sessionOutcome"]) ?? null,
+    sessionOutcome,
     deferUntil:     r["deferUntil"] === "later" || r["deferUntil"] === "tomorrow" ? r["deferUntil"] : null,
-    struggleTopic:  shortText(r["struggleTopic"], 80),
-    exam:           exam && examTitle && isIsoDay(exam["date"]) ? { title: examTitle, date: exam["date"] } : null,
+    struggleTopic,
+    exam:           validExam,
     asks:           ASK_SCOPES.find(a => a === r["asks"]) ?? "none",
     availableMinutesMax: statedMinutes !== null && typeof max === "number" && Number.isFinite(max) && max > statedMinutes && max <= MAX_STATED_MINUTES
       ? Math.round(max) : null,
-    setup:          parseSetupStatement(r["setup"]),
+    setup,
     language:       REPLY_LANGUAGES.find(l => l === r["language"]) ?? null,
   };
 }

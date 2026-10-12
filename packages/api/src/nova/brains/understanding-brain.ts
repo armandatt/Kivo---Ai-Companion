@@ -32,8 +32,13 @@ export async function runUnderstandingBrain(
     .map(t => `${t.role === "user" ? "Student" : "Nova"}: ${t.text}`)
     .join("\n");
 
+  // The earlier turns are there so a "yes" or "that one" can be attached to
+  // something. They are not to be classified again, and what they were says
+  // nothing about the new message: read with the old framing, a perfectly
+  // ordinary message sent after an off-topic one was called off-topic too,
+  // and an English one sent after a Hinglish reply was called Hinglish.
   const body = historySnippet
-    ? `Recent conversation:\n${historySnippet}\n\nNow classify this new message:\n"${userText}"`
+    ? `Earlier messages, already dealt with. Use them only to work out what the new message refers to. Do not classify them, and do not carry anything about them over to the new message: not their language, not whether they were unsupported or unclear, not their intent or emotion.\n${historySnippet}\n\nNew message. Classify this one alone, from its own words:\n"${userText}"`
     : `Classify this message:\n"${userText}"`;
   const prompt = context ? `${contextBlock(context)}\n\n${body}` : body;
 
