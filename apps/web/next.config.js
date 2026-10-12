@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url"
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   typescript: {
@@ -9,6 +11,10 @@ const nextConfig = {
   // three and simplex-noise are ESM-only; transpile them for SSR compatibility
   // @repo/api ships TypeScript source; the dashboard runs its companion rule.
   transpilePackages: ["three", "simplex-noise", "@repo/api"],
+  // The monorepo root, where node_modules and the shared packages live. Next
+  // looks for it itself, but stops at the nearest .git directory, and a stray
+  // one inside this app would make it stop here and resolve nothing hoisted.
+  turbopack: { root: fileURLToPath(new URL("../..", import.meta.url)) },
   async rewrites() {
     const apiUrl = process.env.API_URL ?? "http://localhost:3001"
 
