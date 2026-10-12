@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url"
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   images: {
     unoptimized: true,
@@ -15,6 +15,20 @@ const nextConfig = {
   // looks for it itself, but stops at the nearest .git directory, and a stray
   // one inside this app would make it stop here and resolve nothing hoisted.
   turbopack: { root: fileURLToPath(new URL("../..", import.meta.url)) },
+  // Sent with every page and response from this app. The app is never meant
+  // to be shown inside another site's frame, and nothing it serves should be
+  // read as a different content type than it declares.
+  async headers() {
+    return [{
+      source: "/:path*",
+      headers: [
+        { key: "X-Frame-Options", value: "DENY" },
+        { key: "X-Content-Type-Options", value: "nosniff" },
+        { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+      ],
+    }]
+  },
   async rewrites() {
     const apiUrl = process.env.API_URL ?? "http://localhost:3001"
 
