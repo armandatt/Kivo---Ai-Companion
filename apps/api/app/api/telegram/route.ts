@@ -114,7 +114,7 @@ import { handleNovaTelegramEvent } from "@repo/api/nova/telegram/telegram-turn";
 //@ts-ignore
 import { createTelegramClient, NOVA_CHAT_COMMANDS } from "@repo/api/nova/telegram/telegram-client";
 //@ts-ignore
-import { linkTelegramChat, LINK_MESSAGES, NOVA_LINKED_PLAIN } from "@repo/api/nova/telegram/telegram-link";
+import { linkTelegramChat, isLinkedTelegramChat, notConnectedMessage, LINK_MESSAGES, NOVA_LINKED_PLAIN } from "@repo/api/nova/telegram/telegram-link";
 
 export const runtime = "nodejs";
 
@@ -217,6 +217,21 @@ export async function POST(req: Request) {
     const from   = body.message?.from;
 
     if (!text || !chatId) return Response.json({ ok: true });
+
+    // ── A chat nobody has connected ──────────────────────────────────────────
+    // Before anything is written for it and before either companion sees it.
+    // Its one way in is the connect link from the dashboard ("/start <token>");
+    // anything else is answered with how to connect. It gets no row, no
+    // onboarding and no model call.
+    if (!await isLinkedTelegramChat(chatId.toString())) {
+      const connecting = await handleTelegramConnectStart(text, chatId, body.message?.chat?.type ?? null, {
+        updateId: typeof body.update_id === "number" ? body.update_id : null, allowed: novaMayProcess(req), from,
+      });
+      if (!connecting) {
+        await createTelegramClient().sendMessage(chatId.toString(), notConnectedMessage(process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? null));
+      }
+      return Response.json({ ok: true });
+    }
 
     const stopTyping = startTelegramTyping(chatId);
     let lockAcquired = false;
@@ -878,8 +893,9 @@ async function isNovaChat(chatId: string): Promise<boolean> {
 
 async function handleTelegramConnectStart(
   text: string, chatId: number | string, chatType: string | null,
-  // The update this came in, and whether Nova may act on it.
-  nova: { updateId: number | null; allowed: boolean },
+  // The update this came in, and whether Nova may act on it. `from` is the
+  // sender, given when the chat had no row of its own before this link.
+  nova: { updateId: number | null; allowed: boolean; from?: { first_name?: string; last_name?: string; username?: string } },
 ): Promise<boolean> {
   const match   = text.trim().match(/^\/start(?:@\w+)?(?:\s+(.+))?$/i);
   const payload = match?.[1]?.trim();
@@ -913,6 +929,15 @@ async function handleTelegramConnectStart(
     return true;
   }
   const profile = { id: link.profileId };
+
+  // A chat connected by a Rex account for the first time has no row yet (an
+  // unconnected chat is given none). Rex's setup below expects one.
+  if (nova.from) {
+    await updateUserProfile(String(chatId), {
+      displayName: [nova.from.first_name, nova.from.last_name].filter(Boolean).join(" ") || undefined,
+      username:    nova.from.username,
+    });
+  }
 
   // Check if this user already completed intake.
   // Reconnecting (e.g. after deleting chat history) should never restart the intake flow.

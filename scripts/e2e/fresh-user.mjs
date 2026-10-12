@@ -188,7 +188,30 @@ r = await me.post("/api/telegram/generate-token");
 const token = String(r.data?.deeplink ?? "").split("start=")[1];
 step(7, "a connect link is issued", !!token, String(r.data?.deeplink ?? JSON.stringify(r.data)).replace(token ?? "", "<token>"));
 const profileBefore = sql(`select p.id from "NovaAcademicProfile" p join "MessengerUser" m on m.id=p."userId" where m."platformChatId"='web:${userId}'`);
-await say(chat, "hello");                               // the chat writes before linking: Rex's default row is made
+// 7.1–7.4. A chat nobody has connected. It is told how to connect, by whatever
+// it sends, and nothing is made for it: no row, no Rex setup, no conversation.
+const stranger = chat + 1;
+const UNCONNECTED = /isn't connected to a Kivo account/;
+const left = id => sql(`select (select count(*) from "MessengerUser" where "platformChatId" like '${id}%')||'|'||(select count(*) from "UserProfile" where "telegramChatId"='${id}')||'|'||(select count(*) from "CompanionMessage" c join "MessengerUser" m on m.id=c."userId" where m."platformChatId" like '${id}%')||'|'||(select count(*) from "MemoryFact" f join "MessengerUser" m on m.id=f."userId" where m."platformChatId" like '${id}%')`);
+for (const [n, text] of [[7.1, "/start"], [7.2, "hey, can you help me with my exams?"], [7.3, "/log bench press 80kg 5x5"]]) {
+  const before = sentTo(stranger).length;
+  await say(stranger, text);
+  await sleep(300);
+  const got = sentTo(stranger).slice(before);
+  step(n, `an unconnected chat sending "${text}" is told how to connect, once, and nothing is made for it`, got.length === 1 && UNCONNECTED.test(got[0].text) && !/Rex|gym|workout|Nova/i.test(got[0].text) && !got[0].reply_markup && left(stranger) === "0|0|0|0", `replies=${got.length} left=${left(stranger)} | ${(got[0]?.text ?? "").slice(0, 90)}`);
+}
+// A Rex chat that finished Rex's setup, with no web account: Rex's, as before.
+const rexChat = chat + 2;
+sql(`insert into "MessengerUser"(id, platform, "platformChatId", persona, "intakeComplete", "intakeStep", "aspirationWords", "activeModules", "updatedAt") values ('e2e_rex_${stamp}', 'telegram', '${rexChat}', 'rex', true, 'complete', '{}', '{}', now())`);
+await say(rexChat, "hello");
+await sleep(1500);
+step(7.4, "a Rex chat that finished its setup is not treated as unconnected", sentTo(rexChat).every(m => !UNCONNECTED.test(m.text)) && sql(`select persona||'|'||"intakeComplete" from "MessengerUser" where "platformChatId"='${rexChat}'`) === "rex|true", `connect messages=${sentTo(rexChat).filter(m => UNCONNECTED.test(m.text)).length}`);
+
+// The learner's own chat writes before linking, as people do. It is told how
+// to connect, and no Rex row is made for it to trip the link over.
+await say(chat, "hello");
+await sleep(300);
+step(7.5, "the learner's chat, before linking, is told how to connect and is given no row", UNCONNECTED.test(lastTo(chat)?.text ?? "") && left(chat) === "0|0|0|0", `left=${left(chat)} | ${(lastTo(chat)?.text ?? "").slice(0, 60)}`);
 await say(chat, `/start ${token}`);
 await sleep(500);
 const linked = sql(`select m.platform||'|'||m.persona||'|'||p.id from "MessengerUser" m join "NovaAcademicProfile" p on p."userId"=m.id where m."platformChatId"='${chat}' and m.platform='telegram'`);

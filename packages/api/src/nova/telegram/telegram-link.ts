@@ -160,6 +160,40 @@ export async function linkTelegramChat(
   };
 }
 
+// ── A chat nobody has connected ───────────────────────────────────────────────
+// Kivo is entered from the web: an account is made there, and its connect
+// link is what ties a Telegram chat to it. A chat with no such tie has no
+// companion, so the webhook answers it with how to connect and nothing else:
+// no row is made for it, and it is given to neither companion's pipeline.
+//
+// "Connected" is read from what is already stored, in either of the two
+// places a tie is kept:
+//   the account      a web account names this chat (UserProfile.telegramChatId)
+//   the chat itself  its own row is a Nova chat, or a Rex chat that finished
+//                    Rex's setup. Both predate this rule or were made by a
+//                    link, and carry on exactly as before.
+// A row left by a chat that only ever wrote to the bot (no account, no
+// finished setup) is not a connection.
+export async function isLinkedTelegramChat(chatId: string): Promise<boolean> {
+  const [account, row] = await Promise.all([
+    prisma.userProfile.findFirst({ where: { telegramChatId: chatId }, select: { id: true } }),
+    prisma.messengerUser.findUnique({
+      where:  { platform_platformChatId: { platform: "telegram", platformChatId: chatId } },
+      select: { persona: true, intakeComplete: true },
+    }),
+  ]);
+  return account !== null || row?.persona === "nova" || row?.intakeComplete === true;
+}
+
+// What an unconnected chat is told. Names no companion. The address is added
+// only when this deployment knows its own web address; none is made up.
+export function notConnectedMessage(webUrl: string | null | undefined): string {
+  const said = "This chat isn't connected to a Kivo account yet. Sign in to Kivo on the web, choose Connect Telegram on your dashboard, and open the link it gives you. That link is what connects this chat.";
+  let base = (webUrl ?? "").trim();
+  while (base.endsWith("/")) base = base.slice(0, -1);
+  return base.startsWith("https://") || base.startsWith("http://") ? `${said}\n\n${base}` : said;
+}
+
 export const LINK_MESSAGES: Record<Exclude<LinkResult["status"], "linked">, string> = {
   invalid:        "That link isn't valid any more. Go back to your dashboard and make a new one.",
   expired:        "That link has expired. Go back to your dashboard and make a new one.",
