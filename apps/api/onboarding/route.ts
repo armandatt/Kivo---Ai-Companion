@@ -2,6 +2,10 @@ import { NextResponse } from "next/server"
 import { prisma } from "@repo/db/client"
 import { getSession } from "../lib/auth/session"
 //@ts-ignore
+import { parseCheckinTime } from "@repo/api/nova/decision/proactive-decision"
+//@ts-ignore
+import { currentZoneName, isValidTimezone } from "@repo/api/nova/engines/learner-calendar"
+//@ts-ignore
 import { buildOnboardingSchedulePayload } from "@repo/api/services/mentorIntake.service"
 import { matchMentor, type MentorMatch } from "@repo/api/personality/mentor-compatibility"
 import { scoreSignal, validateSignalAnswers, type PersonalitySignal, type SignalAnswers } from "@repo/api/personality/signal-scoring"
@@ -16,6 +20,12 @@ export async function POST(req: Request) {
         { success: false, error: "Not authenticated" },
         { status: 401 }
       )
+    }
+
+    // A session can outlive its account. There is no one to onboard.
+    const account = await prisma.user.findUnique({ where: { id: session.userId }, select: { id: true } })
+    if (!account) {
+      return NextResponse.json({ success: false, error: "Not authenticated" }, { status: 401 })
     }
 
     const body = await req.json()
@@ -128,9 +138,22 @@ function normalizePayload(body: unknown): OnboardingPayload | null {
     creatureType: readString(data.creatureType),
     creatureColor: readString(data.creatureColor),
     creatureName: readString(data.creatureName),
-    checkInTime: readString(data.checkInTime),
-    timezone: readString(data.timezone),
+    checkInTime: readCheckInTime(data.checkInTime),
+    timezone: readTimezone(data.timezone),
   }
+}
+
+// "HH:MM", stored the way Settings stores it. Anything else is no time: the
+// scheduler would ignore it, and the learner would be told nothing.
+function readCheckInTime(value: unknown) {
+  const minute = parseCheckinTime(readString(value))
+  return minute === null ? undefined : `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`
+}
+
+// A real timezone, under its current name, or none.
+function readTimezone(value: unknown) {
+  const zone = readString(value)
+  return zone && zone.length <= 64 && isValidTimezone(zone) ? currentZoneName(zone) : undefined
 }
 
 function readString(value: unknown) {

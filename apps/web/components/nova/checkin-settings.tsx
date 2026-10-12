@@ -22,6 +22,8 @@ export function CheckinSettings() {
   const [style, setStyle]   = useState<Style | null>(null)
   const [saving, setSaving] = useState(false)
   const [note, setNote]     = useState<{ ok: boolean; text: string } | null>(null)
+  // The timezone Nova keeps the learner's days in, and the one this device is on.
+  const [zone, setZone]     = useState<{ stored: string | null; device: string | null }>({ stored: null, device: null })
 
   useEffect(() => {
     let live = true
@@ -37,6 +39,38 @@ export function CheckinSettings() {
       .catch(() => { if (live) setFailed(true) })
     return () => { live = false }
   }, [])
+
+  // Asks which timezone Nova has for this learner. The request reports this
+  // device's zone, which Nova stores only if it has none: the same report the
+  // dashboard makes on every visit.
+  useEffect(() => {
+    let live = true
+    let device: string | null = null
+    try { device = Intl.DateTimeFormat().resolvedOptions().timeZone || null } catch { device = null }
+    if (!device) return
+    fetch('/api/nova/timezone', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ timezone: device }) })
+      .then(r => (r.ok ? r.json() : null))
+      .then((d: { ok?: boolean; timezone?: string } | null) => { if (live) setZone({ stored: d?.ok && d.timezone ? d.timezone : null, device }) })
+      .catch(() => { if (live) setZone({ stored: null, device }) })
+    return () => { live = false }
+  }, [])
+
+  // The learner's own choice: the one thing that moves a timezone on record.
+  async function switchToDeviceZone() {
+    if (!zone.device) return
+    setSaving(true); setNote(null)
+    try {
+      const res = await fetch('/api/nova/timezone', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ timezone: zone.device, replace: true }) })
+      const d = await res.json().catch(() => null) as { ok?: boolean; timezone?: string } | null
+      if (!res.ok || !d?.ok || !d.timezone) throw new Error(String(res.status))
+      setZone(prev => ({ ...prev, stored: d.timezone! }))
+      setNote({ ok: true, text: `Timezone changed to ${d.timezone}.` })
+    } catch {
+      setNote({ ok: false, text: "The timezone didn't change. Try again." })
+    } finally {
+      setSaving(false)
+    }
+  }
 
   async function save(next: { checkInTime?: string | null; accountabilityStyle?: Style }) {
     setSaving(true); setNote(null)
@@ -103,6 +137,19 @@ export function CheckinSettings() {
               : 'No time is set, so Nova nudges around the time you usually study.'}
             {' '}To stop Nova messaging first altogether, send /settings to it on Telegram.
           </p>
+          {zone.stored && (
+            <p className="mt-3 text-xs leading-relaxed text-foreground/60" data-checkin-timezone>
+              Your days and this time are kept in <span className="font-medium text-foreground/80">{zone.stored}</span>.
+              {zone.device && zone.device !== zone.stored && (
+                <>
+                  {' '}This device is on {zone.device}.{' '}
+                  <button type="button" disabled={saving} onClick={() => void switchToDeviceZone()} className="font-medium text-keppel-300 underline underline-offset-2 disabled:opacity-50" data-use-device-zone>
+                    Use {zone.device}
+                  </button>
+                </>
+              )}
+            </p>
+          )}
           {!loaded.telegram && (
             <p className="mt-3 rounded-xl border border-amber-300/20 bg-amber-300/5 px-3 py-2 text-xs leading-relaxed text-foreground/75" data-checkin-needs-telegram>
               Telegram isn&apos;t connected, so no check-in can be sent yet. Connect it below.

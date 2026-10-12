@@ -5,6 +5,10 @@ import { getSession } from "../lib/auth/session"
 import { parseCheckinTime } from "@repo/api/nova/decision/proactive-decision"
 //@ts-ignore
 import { normalizeAccountability } from "@repo/api/personality/mentor-compatibility"
+//@ts-ignore
+import { currentZoneName, isValidTimezone } from "@repo/api/nova/engines/learner-calendar"
+
+const COMPANIONS = new Set(["nova", "rex", "zen"])
 
 export async function GET() {
   const session = await getSession()
@@ -66,11 +70,22 @@ export async function PATCH(req: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 })
 
   try {
+    // A session can outlive its account (the cookie lasts thirty days). There
+    // is nothing to save settings on, and trying would fail on the database.
+    const account = await prisma.user.findUnique({ where: { id: session.userId }, select: { id: true } })
+    if (!account) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 })
+
     const body = await req.json()
     const { persona, checkInTime, accountabilityStyle, timezone, name } = body
 
     const profileUpdates: Record<string, unknown> = {}
-    if (persona !== undefined) profileUpdates.primaryPersona = String(persona)
+    // The companion is one of the ones that exist. It decides which learner
+    // the account is, so nothing else may be written here.
+    if (persona !== undefined) {
+      const chosen = String(persona).trim().toLowerCase()
+      if (!COMPANIONS.has(chosen)) return NextResponse.json({ error: "Unknown companion" }, { status: 400 })
+      profileUpdates.primaryPersona = chosen
+    }
     // A check-in time is "HH:MM", or nothing (null or "" clears it). Anything
     // else is refused: the scheduler would silently ignore it.
     if (checkInTime !== undefined) {
@@ -83,7 +98,13 @@ export async function PATCH(req: NextRequest) {
     }
     // Stored the way onboarding stores it: "soft" (Gentle Nudges) or "hard" (No Mercy).
     if (accountabilityStyle !== undefined) profileUpdates.accountabilityStyle = normalizeAccountability(String(accountabilityStyle)) ?? String(accountabilityStyle)
-    if (timezone !== undefined) profileUpdates.timezone = String(timezone)
+    // A real timezone, or nothing. Anything else is refused: the scheduler
+    // would read it as "no timezone" and lose the one already on record.
+    if (timezone !== undefined) {
+      if (timezone === null || timezone === "") profileUpdates.timezone = null
+      else if (typeof timezone === "string" && timezone.length <= 64 && isValidTimezone(timezone)) profileUpdates.timezone = currentZoneName(timezone)
+      else return NextResponse.json({ error: "Unknown timezone" }, { status: 400 })
+    }
 
     if (Object.keys(profileUpdates).length > 0) {
       await prisma.userProfile.upsert({

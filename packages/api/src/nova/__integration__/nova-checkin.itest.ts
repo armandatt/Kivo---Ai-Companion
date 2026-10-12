@@ -28,6 +28,8 @@ const { runNovaProactiveCron } = await import("../proactive/nova-proactive-cron.
 const { saveSetup }            = await import("../product/setup.js");
 const { loadAccountPreferences, ensureLearnerTimezone } = await import("../adapters/account-preferences-adapter.js");
 const { dayKey }               = await import("../engines/learner-calendar.js");
+const { recordLearnerTimezone } = await import("../product/learning-dna.js");
+const { changeLearnerTimezone } = await import("../product/learner-timezone.js");
 
 import type { InlineButton, SendResult, TelegramClient } from "../telegram/telegram.types.js";
 import type { ProactiveWordingInput } from "../proactive/nova-proactive-response.js";
@@ -224,6 +226,32 @@ test("one learner's failure does not stop the others in the same tick", async ()
 });
 
 // ── Who is eligible, and what they are told ───────────────────────────────────
+
+test("a learner can change their own timezone; a device reporting another one cannot; the check-in follows the change", async () => {
+  const l = await learner();                       // check-in at 11:00, account zone Kolkata
+  await tick(ist("10:50"));
+  assert.equal(await studyTz(l.profileId), ZONE);
+
+  // A second device, somewhere else, opens the dashboard: nothing moves.
+  assert.deepEqual(await recordLearnerTimezone(l.chat, "Europe/London"), { ok: true, timezone: ZONE, changed: false });
+  assert.equal(await studyTz(l.profileId), ZONE);
+
+  // The learner has moved, and says so in Settings.
+  assert.deepEqual(await changeLearnerTimezone(l.chat, "Asia/Dubai"), { ok: true, timezone: "Asia/Dubai", changed: true });
+  assert.deepEqual(await changeLearnerTimezone(l.chat, "Asia/Dubai"), { ok: true, timezone: "Asia/Dubai", changed: false }, "choosing it again changes nothing");
+  // Not a timezone: refused, and the one on record stays.
+  assert.deepEqual(await changeLearnerTimezone(l.chat, "Mars/Olympus_Mons"), { ok: false, error: "invalid_timezone" });
+  assert.deepEqual(await changeLearnerTimezone(l.chat, "(UTC+05:30) Mumbai, Kolkata"), { ok: false, error: "invalid_timezone" });
+  assert.equal(await studyTz(l.profileId), "Asia/Dubai");
+
+  // 11:00 in Kolkata is 09:30 in Dubai: no longer their check-in time.
+  await tick(ist("11:00"));
+  assert.equal(to(l.chat).length, 0);
+  // 11:00 in Dubai (12:30 in Kolkata) is.
+  await tick(ist("12:30"));
+  assert.deepEqual(to(l.chat).map(s => s.text), ["SAID:daily_checkin"]);
+  assert.deepEqual((await outbox(l.profileId)).map(r => [r.eventType, r.status, r.localDay]), [["daily_checkin", "sent", dayKey(ist("12:30"), "Asia/Dubai")]]);
+});
 
 test("a learner nobody has a timezone for is not messaged, and is counted as such instead of vanishing", async () => {
   const l = await learner({ accountZone: null });
