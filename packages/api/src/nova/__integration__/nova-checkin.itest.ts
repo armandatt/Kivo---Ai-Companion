@@ -253,6 +253,30 @@ test("a learner can change their own timezone; a device reporting another one ca
   assert.deepEqual((await outbox(l.profileId)).map(r => [r.eventType, r.status, r.localDay]), [["daily_checkin", "sent", dayKey(ist("12:30"), "Asia/Dubai")]]);
 });
 
+test("if the Start buttons cannot be opened, nothing is sent and nothing is written off: the next tick sends it once", async () => {
+  const l = await learner();
+  await tick(ist("10:50"));
+  // Opening the prompt fails, for this learner only.
+  await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION checkin_itest_block() RETURNS trigger AS $$ BEGIN IF NEW."profileId" = '${l.profileId}' THEN RAISE EXCEPTION 'checkin_itest: simulated failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql`);
+  await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS checkin_itest_block ON "NovaTelegramPrompt"`);
+  await prisma.$executeRawUnsafe(`CREATE TRIGGER checkin_itest_block BEFORE INSERT ON "NovaTelegramPrompt" FOR EACH ROW EXECUTE FUNCTION checkin_itest_block()`);
+  try {
+    const failed = await tick(ist("11:00"));
+    assert.ok(failed.errors >= 1, "the failure is counted");
+    assert.equal(to(l.chat).length, 0, "nothing reached Telegram");
+    // Worded and waiting. Not "sending", which a later tick would have to
+    // treat as possibly delivered and never send again.
+    assert.deepEqual((await outbox(l.profileId)).map(r => [r.status, r.attempts]), [["ready", 0]]);
+  } finally {
+    await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS checkin_itest_block ON "NovaTelegramPrompt"`);
+    await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS checkin_itest_block()`);
+  }
+  await tick(ist("11:05"));
+  await tick(ist("11:10"));
+  assert.deepEqual(to(l.chat).map(s => s.text), ["SAID:daily_checkin"]);
+  assert.deepEqual((await outbox(l.profileId)).map(r => [r.status, r.attempts]), [["sent", 1]]);
+});
+
 test("a learner nobody has a timezone for is not messaged, and is counted as such instead of vanishing", async () => {
   const l = await learner({ accountZone: null });
   const none = await tick(ist("11:00"));

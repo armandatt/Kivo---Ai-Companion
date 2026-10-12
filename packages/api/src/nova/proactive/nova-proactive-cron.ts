@@ -329,11 +329,19 @@ async function deliver(
     await markReady(row.id, text);
   }
 
-  if (!await beginSend(row.id, now)) return false;
-
-  // The same Start buttons /today gives, as a prompt of kind "nudge".
+  // The same Start buttons /today gives, as a prompt of kind "nudge". Opened
+  // before the send is taken: if it cannot be opened, the row is still only
+  // "ready" and a later tick tries again, instead of being left "sending" and
+  // written off as possibly delivered when nothing was sent.
   const spec: PromptSpec | null = rec ? recommendationReply(view, rec, { kind: "nudge" }).prompt ?? null : null;
   const prompt = spec ? await openPrompt(profile.id, chatId, spec, now) : null;
+
+  if (!await beginSend(row.id, now)) {
+    // Someone else has the row, or it is finished: these buttons are not an open question.
+    if (prompt) await closeOpenPrompt(profile.id, "undelivered", now, prompt.id).catch(() => {});
+    return false;
+  }
+
   const buttons: InlineButton[][] = [];
   if (prompt) {
     const all = prompt.options.map(o => ({ text: o.label, callback_data: encodeCallback(prompt.id, o.id) }));

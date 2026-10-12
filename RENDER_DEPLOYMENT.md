@@ -145,6 +145,8 @@ Do not run more than one of these that *ticks* the scheduler. Pinging `/api/heal
 
 ### Checking it
 
+`GET /api/health/scheduler` is the one to point a second monitor at. `/api/health` answers 200 whenever the process is up, which is what Render's own health check needs, so a timer that has stopped ticking does not show there. `/api/health/scheduler` answers 200 while the scheduler is ticking (or was told not to), and 503 when it has not started or has gone three intervals without a tick. It only reports: it starts nothing and runs no tick. Do not use it as Render's health check path, or a stuck timer would make Render restart a process that is otherwise serving requests.
+
 `GET /api/health` answers:
 
 - `commit`: the commit this API was built from. The web app deploys on every merge and this API only on Manual Deploy, so compare this with `main` after merging anything that touches `apps/api` or `packages/api`. A web app ahead of the API is how "Save a link" came to tell signed-in learners to sign in.
