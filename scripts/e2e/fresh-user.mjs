@@ -12,9 +12,10 @@
 // The addresses are @gmail.com in shape only: no message leaves this machine.
 //
 // The database is the throwaway test Postgres from CLAUDE.md ("Integration
-// tests"), never the app's. The models are real, so it needs a model key with
-// quota left: a step that got a fallback reply is reported as failed, not
-// passed.
+// tests"), never the app's. Setup, sessions, linking, the scheduler, deletion
+// and the ownership checks need no model. The free-text steps (tone, an exam
+// said in chat) use the real models, so they need a model key with quota
+// left: a step that got a fallback reply is reported as failed, not passed.
 //
 //   docker run -d --rm --name nova-test-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=novatest -p 127.0.0.1:54329:5432 postgres:16-alpine
 //   (cd packages/db && DATABASE_URL=postgresql://postgres:test@127.0.0.1:54329/novatest DIRECT_URL=$DATABASE_URL npx prisma db push)
@@ -129,6 +130,14 @@ r = await me.post("/api/onboarding", { quizAnswers: { mentorDomain: "study", ene
 const persona = sql(`select "primaryPersona" from "UserProfile" where "userId"='${userId}'`);
 step(2, "onboarding quiz completes", r.status === 200 && r.data?.success !== false, `status ${r.status}`);
 step(3, "study domain assigns Nova, deterministically", persona === "nova", `primaryPersona=${persona}`);
+// 3.02. Settings takes only what it can use: a real timezone, a real
+// check-in time, a companion that exists.
+const patch = async body => { const res = await fetch(WEB + "/api/settings", { method: "PATCH", headers: { "content-type": "application/json", cookie: me.cookie() }, body: JSON.stringify(body) }); return res.status; };
+const refused = [await patch({ timezone: "(UTC+05:30) Mumbai, Kolkata" }), await patch({ timezone: "Mars/Olympus" }), await patch({ persona: "admin" }), await patch({ checkInTime: "25:99" })];
+const accepted = [await patch({ timezone: "Asia/Calcutta" }), await patch({ checkInTime: "9:05" })];
+const kept = sql(`select timezone||'|'||"preferredCheckInTime"||'|'||"primaryPersona" from "UserProfile" where "userId"='${userId}'`);
+await patch({ checkInTime: null });   // the scheduler steps below assume no fixed check-in time
+step(3.02, "Settings refuses a timezone, a time and a companion that are not real, and stores real ones in one form", refused.every(x => x === 400) && accepted.every(x => x === 200) && kept === "Asia/Kolkata|09:05|nova", `refused=${refused} accepted=${accepted} stored=${kept}`);
 const late = { home: await page("/home"), quiz: await page("/onboarding") };
 step(3.05, "after the quiz, the dashboard opens and nothing bounces between the two", late.home.status === 200 && late.quiz.status === 200, `home=${late.home.status} ${late.home.to} quiz=${late.quiz.status} ${late.quiz.to}`);
 r = await me.get("/api/nova/companion");
@@ -141,27 +150,17 @@ await Promise.all([me.get("/api/nova/today"), me.get("/api/nova/planner"), me.ge
 const learners = sql(`select count(*) from "MessengerUser" where "platformChatId"='web:${userId}'`);
 step(4.1, "refresh and parallel requests make one learner", learners === "1", `rows=${learners}`);
 
-// Setup conversation, with the real model
+// Setup, through the form the web app's setup page posts: three subjects, the
+// topics of one, an exam date, daily time and usual hours. No model is used.
 const examDay = new Date(Date.now() + 9 * 86400000).toISOString().slice(0, 10);
-const lines = [
-  "I'm in my second year of BTech Computer Science at IIT Delhi.",
-  "This semester I'm taking Operating Systems, Databases and Computer Networks.",
-  `My Operating Systems exam is on ${examDay}.`,
-  "My goal is to get an A in Operating Systems. I usually study in the evening for about two hours, and my biggest struggle is procrastination.",
-  "That's everything for now. Let's get started.", "Nothing else to add, let's begin.", "Yes, that's all.",
-];
-let setup = "onboarding_incomplete", turns = 0; const novaSaid = [];
-for (const line of lines) {
-  turns++;
-  let m = await me.post("/api/nova/message", { text: line });
-  if (m.status === 429) { await sleep(30000); m = await me.post("/api/nova/message", { text: line }); }
-  novaSaid.push(`[${m.status}] ${String(m.data?.reply ?? m.data?.message ?? "").slice(0, 160)}`);
-  setup = (await me.get("/api/nova/today")).data?.status;
-  if (setup !== "onboarding_incomplete") break;
-  await sleep(1500);
-}
-step(4.2, "Nova's setup conversation completes on the web", setup === "ready", `after ${turns} turns, status=${setup}`);
-for (const s of novaSaid) console.log("      nova: " + s);
+const draft = {
+  subjects: [{ name: "Operating Systems", topics: ["Deadlocks", "Paging"] }, { name: "Databases", topics: [] }, { name: "Computer Networks", topics: [] }],
+  exams: [{ subjectName: "Operating Systems", date: examDay, title: null }], dailyMinutes: 120, studyTime: "evening",
+};
+const previewed = await me.post("/api/nova/setup", { draft });
+const savedSetup = await me.post("/api/nova/setup", { draft, confirm: true });
+const setup = (await me.get("/api/nova/today")).data?.status;
+step(4.2, "the setup form previews without writing, then saves, and Nova is ready", previewed.data?.saved === false && savedSetup.data?.saved === true && setup === "ready", `preview saved=${previewed.data?.saved} save=${savedSetup.status} status=${setup}`);
 const subjects = sql(`select string_agg(s.name, ', ' order by s.name) from "NovaSubject" s join "NovaAcademicProfile" p on p.id=s."profileId" join "MessengerUser" m on m.id=p."userId" where m."platformChatId"='web:${userId}'`);
 console.log("      subjects on record: " + subjects);
 r = await me.put("/api/nova/timezone", { timezone: "Asia/Kolkata" });
@@ -169,7 +168,7 @@ step(4.3, "the device's timezone is stored", r.data?.ok === true || r.data?.erro
 
 // 5–6. Today, Planner
 r = await me.get("/api/nova/today");
-step(5, "Today is ready and honest about a learner with no topics", r.data?.status === "ready" && r.data.recommendation === null && r.data.emptyReason === "no_topics", `rec=${JSON.stringify(r.data?.recommendation)} empty=${r.data?.emptyReason} subjects=${JSON.stringify(r.data?.subjects)} upcoming=${JSON.stringify((r.data?.upcoming ?? []).map(e => [e.title, e.daysUntil]))}`);
+step(5, "Today is ready and recommends a topic from the setup, with its reason", r.data?.status === "ready" && r.data.recommendation?.topicName && (r.data.recommendation.reasons ?? []).length > 0 && r.data.emptyReason === null, `rec=${JSON.stringify(r.data?.recommendation?.topicName)} reasons=${JSON.stringify(r.data?.recommendation?.reasons)} upcoming=${JSON.stringify((r.data?.upcoming ?? []).map(e => [e.title, e.daysUntil]))}`);
 const subject = (r.data?.subjects ?? []).find(s => /operating/i.test(s)) ?? r.data?.subjects?.[0];
 r = await me.get("/api/nova/planner");
 step(6, "Planner is ready", r.data?.status === "ready", `status=${r.data?.status}`);
@@ -217,7 +216,7 @@ await sleep(500);
 const linked = sql(`select m.platform||'|'||m.persona||'|'||p.id from "MessengerUser" m join "NovaAcademicProfile" p on p."userId"=m.id where m."platformChatId"='${chat}' and m.platform='telegram'`);
 const profiles = sql(`select count(*) from "NovaAcademicProfile" p join "MessengerUser" m on m.id=p."userId" where m."platformChatId" in ('${chat}','web:${userId}')`);
 step(8, "linking keeps the same learner and makes it a Nova chat", linked === `telegram|nova|${profileBefore}` && profiles === "1", `row=${linked.replace(profileBefore, "<same profile>")} profiles=${profiles}`);
-step(8.1, "Nova greets in the chat", /Connected/.test(lastTo(chat)?.text ?? ""), (lastTo(chat)?.text ?? "").slice(0, 80));
+step(8.1, "Nova opens the chat with what to do now and a way to start it", !!button(chat, "Start") && !UNCONNECTED.test(lastTo(chat)?.text ?? ""), `${(lastTo(chat)?.text ?? "").slice(0, 60).replace(/\n/g, " / ")} | ${(lastTo(chat)?.reply_markup?.inline_keyboard ?? []).flat().map(x => x.text).join(", ")}`);
 await say(chat, `/start ${token}`);
 step(8.2, "the link cannot be used twice", /isn't valid|expired/.test(lastTo(chat)?.text ?? ""), (lastTo(chat)?.text ?? "").slice(0, 60));
 r = await me.get("/api/nova/today");
@@ -244,7 +243,9 @@ await tap(chat, good, dupId); await tap(chat, good, dupId); await tap(chat, good
 r = await me.get("/api/nova/session");
 const reports = sql(`select count(*) from "NovaStudySession" s join "NovaAcademicProfile" p on p.id=s."profileId" where p.id='${profileBefore}' and s.status='completed' and s."executionReport" is not null`);
 const history = sql(`select count(*) from "NovaTopicMasterySnapshot" h join "NovaTopicMastery" t on t.id=h."topicId" join "NovaSubject" s on s.id=t."subjectId" where s."profileId"='${profileBefore}'`);
-step(14, "the outcome ends it once: replayed update and double tap add nothing", r.data?.session === null && reports === "2" && history === "2", `web session=${JSON.stringify(r.data?.session)} reports=${reports} mastery records=${history}`);
+// Both sessions so far lasted seconds: each is kept with its report, and
+// neither is ten minutes of study, so neither moves mastery.
+step(14, "the outcome ends it once: a replayed update and a double tap add nothing", r.data?.session === null && reports === "2" && history === "0", `web session=${JSON.stringify(r.data?.session)} reports=${reports} mastery records=${history}`);
 
 // 15–17. Knowledge, Progress, Learning DNA
 r = await me.get("/api/nova/knowledge");
@@ -339,7 +340,9 @@ globalThis.__state = { chat, userId, profileBefore, beforeN, nudge };
 // Security
 const openTick = await fetch(API + "/api/checkin").then(x => x.status);
 const health   = await fetch(API + "/api/health").then(x => x.json());
-step(22.9, "the scheduler endpoint refuses a caller without the secret, and health reports the scheduler", openTick === 401 && typeof health.scheduler?.state === "string", `checkin without secret=${openTick} health=${JSON.stringify(health)}`);
+const sched = await fetch(API + "/api/health/scheduler");
+const schedBody = await sched.json().catch(() => null);
+step(22.9, "the scheduler endpoint refuses a caller without the secret, and health reports the scheduler", openTick === 401 && typeof health.scheduler?.state === "string" && sched.status === 200 && schedBody?.scheduler?.state === health.scheduler.state, `checkin without secret=${openTick} health=${JSON.stringify(health)} scheduler status=${sched.status}`);
 const unsignedBefore = sentTo(chat).length;
 const st = await say(chat, "/today", undefined, "");
 const st2 = await say(chat, "/today", undefined, "wrong-secret");
@@ -371,7 +374,9 @@ const cleared = (del.headers.getSetCookie?.() ?? []).some(c => c.startsWith("kev
 const gone = sql(`select (select count(*) from "User" where id='${userId}')||'|'||(select count(*) from "NovaAcademicProfile" where id='${profileBefore}')||'|'||(select count(*) from "NovaStudySession" where "profileId"='${profileBefore}')`);
 step(26, "deleting the account removes the learner, the chat and its conversation, and signs the browser out", del.status === 200 && delBody?.ok === true && cleared && hadBefore !== "0|0|0|0" && left(chat) === "0|0|0|0" && gone === "0|0|0", `status=${del.status} cookie cleared=${cleared} chat before=${hadBefore} after=${left(chat)} account|profile|sessions=${gone}`);
 const afterDelete = { home: await fetch(WEB + "/home", { redirect: "manual", headers: { cookie: oldCookie } }), again: await fetch(WEB + "/api/delete-account", { method: "DELETE", headers: { cookie: oldCookie } }) };
-step(26.1, "the old session opens nothing, and asking again is not an error", afterDelete.home.status === 307 && (afterDelete.home.headers.get("location") ?? "").endsWith("/signin") && afterDelete.again.status === 200, `home=${afterDelete.home.status} ${afterDelete.home.headers.get("location") ?? ""} delete again=${afterDelete.again.status}`);
+const ghost = async (method, path, body) => (await fetch(WEB + path, { method, headers: { "content-type": "application/json", cookie: oldCookie }, body: JSON.stringify(body) })).status;
+const ghostWrites = [await ghost("PATCH", "/api/settings", { checkInTime: "09:00" }), await ghost("POST", "/api/onboarding", { quizAnswers: { mentorDomain: "study", primaryGoal: "x" } })];
+step(26.1, "the old session opens nothing and can write nothing, and asking to delete again is not an error", afterDelete.home.status === 307 && (afterDelete.home.headers.get("location") ?? "").endsWith("/signin") && afterDelete.again.status === 200 && ghostWrites.every(x => x === 401) && sql(`select count(*) from "UserProfile" where "userId"='${userId}'`) === "0", `home=${afterDelete.home.status} ${afterDelete.home.headers.get("location") ?? ""} delete again=${afterDelete.again.status} settings,onboarding=${ghostWrites}`);
 await say(chat, "/today");
 await sleep(300);
 step(26.2, "the Telegram chat is an unconnected one again", UNCONNECTED.test(lastTo(chat)?.text ?? "") && left(chat) === "0|0|0|0", (lastTo(chat)?.text ?? "").slice(0, 70));

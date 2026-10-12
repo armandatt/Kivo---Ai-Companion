@@ -276,6 +276,14 @@ test("a failed consolidation is retried from Postgres and applied exactly once",
 });
 
 test("the next turn reads the fact and the reality back", async () => {
+  // The illness was recorded at T0, four days ago, and an illness is believed
+  // for three (reality-policy.ts). The readers below use the real clock, not
+  // the fixture's, so to them it had lapsed a day before this ran. It is put
+  // back to "still current", which is what the turn at T0 found.
+  // (An earlier step in this file, which also runs on the real clock, had
+  // already retired it as lapsed.)
+  await prisma.userReality.updateMany({ where: { userId, resolvedAt: null }, data: { expiresAt: new Date(Date.now() + DAY_MS), isActive: true } });
+
   const understanding = parseUnderstandingResponse(ubJson({ intent: "plan_request" }), "what should I do today?");
   const { top } = await getRelevantMemories(userId, understanding);
   assert.deepEqual(top.map(f => f.factType), ["commitment"]);
