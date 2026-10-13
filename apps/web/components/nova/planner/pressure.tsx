@@ -1,7 +1,9 @@
 'use client'
 
+import Link from 'next/link'
 import type { NovaPlannerReady, PlannerPressure } from '@repo/api/nova/product/planner.types'
 import { calendarDate, inDays } from '../format'
+import { GOALS_HREF } from '@repo/api/nova/product/goals.types'
 
 function Preparation({ item }: { item: PlannerPressure }) {
   const prep = item.preparation
@@ -74,7 +76,9 @@ export function UpcomingPressure({ pressure, timezone, goals }: {
             {goals.map(goal => <li key={goal} className="text-sm leading-relaxed text-foreground/75">{goal}</li>)}
           </ul>
         ) : (
-          <p className="mt-2 text-sm text-foreground/50" data-unknown="no_goals">No active learning goals yet.</p>
+          <p className="mt-2 text-sm leading-relaxed text-foreground/50" data-unknown="no_goals">
+            You haven&apos;t told Nova what you&apos;re working toward. <Link href={GOALS_HREF} className="font-medium text-keppel-300 hover:text-keppel-200">Add a goal</Link>
+          </p>
         )}
       </div>
     </section>

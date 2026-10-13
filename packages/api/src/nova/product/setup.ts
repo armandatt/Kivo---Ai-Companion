@@ -22,6 +22,7 @@ import { declareTopics, normalizeTopicName, subjectsNamedIn } from "../engines/t
 import { nextSetupQuestion, setupGaps, type SetupFacts, type SetupGap } from "../interaction/initialization";
 import { STUDY_TIMES, type SetupStatement, type StudyTime } from "../types/understanding.types";
 import { addExam, EXAM_HORIZON_DAYS } from "./exams";
+import { seedGoalFromSignup } from "./goals";
 import { learnerKey } from "./learner-key";
 import type { SetupChanges, SetupDraft, SetupIssue, SetupView } from "./setup.types";
 
@@ -242,10 +243,14 @@ export async function saveSetup(platformChatId: string, raw: unknown, now = new 
   const { draft } = preview;
   const learner = (await loadLearner(platformChatId))!;
 
+  // A profile made here is the learner's first: it starts with what they said
+  // at sign-up they are working toward. One that exists is left as it is.
+  const firstGoals = learner.novaAcademicProfile ? [] : await seedGoalFromSignup(prisma, platformChatId);
+
   const write = () => prisma.$transaction(async tx => {
     const profile = await tx.novaAcademicProfile.upsert({
       where:  { userId: learner.id },
-      create: { userId: learner.id },
+      create: { userId: learner.id, goals: firstGoals },
       update: {},
       select: { id: true, subjects: { select: { id: true, name: true } } },
     });
@@ -383,11 +388,17 @@ export async function applySetup(platformChatId: string, change: SetupChange, no
 }
 
 // A learner who has not finished setup still needs a profile row for the
-// rest of setup to hang on. Created empty: it claims nothing.
+// rest of setup to hang on. Created empty but for the goal they gave at
+// sign-up (product/goals.ts): it claims nothing else.
 export async function ensureSetupProfile(platformChatId: string): Promise<{ profileId: string; timezone: string | null; userId: string } | null> {
   const learner = await loadLearner(platformChatId);
   if (!learner) return null;
   const profile = learner.novaAcademicProfile
-    ?? await prisma.novaAcademicProfile.upsert({ where: { userId: learner.id }, create: { userId: learner.id }, update: {}, select: { id: true, timezone: true } });
+    ?? await prisma.novaAcademicProfile.upsert({
+      where:  { userId: learner.id },
+      create: { userId: learner.id, goals: await seedGoalFromSignup(prisma, platformChatId) },
+      update: {},
+      select: { id: true, timezone: true },
+    });
   return { profileId: profile.id, timezone: profile.timezone, userId: learner.id };
 }

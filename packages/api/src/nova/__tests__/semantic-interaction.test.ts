@@ -523,7 +523,7 @@ function fullContext(understanding: AcademicUnderstanding): NovaContext {
       daysSinceJoined: 40, daysSinceLastSession: 1, consecutiveMisses: 0, studyStreakDays: 4, daysUntilNextExam: 5, momentum7dTrend: [0, 0, 0, 0, 0, 0, 0], stateHistory: [],
     } as never,
     signals: { detectedSignals: [], stateUpdates: [] },
-    userProfile: { displayName: "Student", yearOfStudy: 2, major: "CS", institution: "Bennett", preferredStudyHoursPerDay: 3, subjects: ["Operating Systems"], daysSinceJoined: 40 },
+    userProfile: { displayName: "Asha", goals: ["Clear the OS midterm with an A"], yearOfStudy: 2, major: "CS", institution: "Bennett", preferredStudyHoursPerDay: 3, subjects: ["Operating Systems"], daysSinceJoined: 40 },
     topicMastery: { topicName: "Deadlocks", subjectName: "Operating Systems", masteryProbability: 0.38, retentionEstimate: 0.5, confidenceReported: 0.6, calibrationGap: 0.22, masteryTrend: "rising", reviewCount: 2, lastStudied: null } as never,
     examContext: { examTitle: "OS midterm", subjectName: "Operating Systems", daysUntil: 5, mode: "ramp", primaryFocus: "weak topics", riskMatrix: { critical: ["Deadlocks"] }, recommendedDailyHours: 3 } as never,
     studyPlan: null, activeSession: null, sessionContext: null, sessionAction: null,

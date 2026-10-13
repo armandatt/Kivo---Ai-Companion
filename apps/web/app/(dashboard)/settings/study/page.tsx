@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Check } from 'lucide-react'
 import { SetupForm } from '@/components/nova/setup-form'
+import { GoalsEditor } from '@/components/nova/goals-editor'
 
 // Subjects, topics, exam dates and study routine, after the first setup: the
 // same form, showing what is on record. Saving merges; nothing is removed.
@@ -28,6 +29,9 @@ export default function StudySetupPage() {
           <Link href="/home" className="ml-auto font-medium text-keppel-300 hover:text-keppel-200">Go to Today</Link>
         </p>
       )}
+
+      {/* Its own save: a goal is not part of the setup draft below. */}
+      <div className="mt-6"><GoalsEditor /></div>
 
       <section className="mt-6 rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9">
         {/* Remounted after a save, so the form shows what is now on record. */}

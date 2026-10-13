@@ -1,6 +1,8 @@
 'use client'
 
+import Link from 'next/link'
 import type { NovaTodayReady, TodayAction } from '@repo/api/nova/product/today.types'
+import { GOALS_HREF } from '@repo/api/nova/product/goals.types'
 import { ACTIVITY_LABEL, daysAgo, inDays, minutesLabel } from './format'
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -68,13 +70,20 @@ export function Upcoming({ items }: { items: NovaTodayReady['upcoming'] }) {
   )
 }
 
+// What the learner said they are working toward. With nothing said, the way
+// to say it: no goal is ever shown that they did not give.
 export function WorkingToward({ goals }: { goals: string[] }) {
-  if (goals.length === 0) return null
   return (
     <Section title="Working toward">
-      <ul className="space-y-2">
-        {goals.map(goal => <li key={goal} className="text-sm leading-relaxed text-foreground/80">{goal}</li>)}
-      </ul>
+      {goals.length > 0 ? (
+        <ul className="space-y-2">
+          {goals.map(goal => <li key={goal} className="text-sm leading-relaxed text-foreground/80">{goal}</li>)}
+        </ul>
+      ) : (
+        <p className="text-sm leading-relaxed text-foreground/50" data-unknown="no_goals">
+          Nothing yet. <Link href={GOALS_HREF} className="font-medium text-keppel-300 hover:text-keppel-200">Add what you&apos;re working toward</Link>
+        </p>
+      )}
     </Section>
   )
 }

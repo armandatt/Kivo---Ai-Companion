@@ -82,6 +82,7 @@ function makeContext(
     signals:        extractSignals(message, state),
     userProfile: {
       displayName:               "Test Student",
+      goals:                     [],
       yearOfStudy:               2,
       major:                     "Computer Science",
       institution:               "Test University",

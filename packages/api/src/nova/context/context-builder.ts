@@ -17,6 +17,14 @@ import type { ContextNeed } from "../interaction/semantics";
 
 const MAX_DYNAMIC_CHARS  = 7_500;
 const MAX_MICRO_CHARS    = 1_100;
+const MAX_NAME_CHARS        = 60;
+const MAX_GOALS_IN_CONTEXT  = 3;
+
+// A value that came from outside (a name on an account or a chat), as one
+// line: line breaks, tabs and runs of spaces become a single space, so it can
+// never start a line of its own in the layer.
+const singleLine = (text: string): string =>
+  [...text].map(ch => (ch.trim() === "" || ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127 ? " " : ch)).join("").split(" ").filter(Boolean).join(" ");
 
 // ── Section builders ──────────────────────────────────────────────────────────
 
@@ -24,16 +32,34 @@ function buildStudentSection(ctx: NovaContext): string {
   const p     = ctx.userProfile;
   const state = ctx.academicState;
 
-  const lines: string[] = [
-    `## Student`,
-    `Name: ${p.displayName}`,
-    `Year: ${p.yearOfStudy ?? "unknown"} | Major: ${p.major ?? "unknown"} | Institution: ${p.institution ?? "unknown"}`,
-    `Joined: ${state.daysSinceJoined}d ago | Subjects: ${p.subjects.join(", ") || "none yet"}`,
-  ];
+  // Only what is on record. A name, a year or a college nobody gave is left
+  // out: a placeholder in its place reads to the model as a fact.
+  const academic = [
+    p.yearOfStudy !== null ? `Year: ${p.yearOfStudy}` : "",
+    p.major       ? `Major: ${p.major}` : "",
+    p.institution ? `Institution: ${p.institution}` : "",
+  ].filter(Boolean);
+
+  const lines: string[] = [`## Student`];
+  const name = p.displayName ? singleLine(p.displayName).slice(0, MAX_NAME_CHARS).trim() : "";
+  if (name) lines.push(`Name: ${name}`);
+  if (academic.length > 0) lines.push(academic.join(" | "));
+  lines.push(`Joined: ${state.daysSinceJoined}d ago | Subjects: ${p.subjects.join(", ") || "none yet"}`);
   if (ctx.operatingStyle && ctx.operatingStyle.length > 0) {
     lines.push(OPERATING_STYLE_HEADER, ...ctx.operatingStyle.map(l => `- ${l}`));
   }
   return lines.join("\n");
+}
+
+// What the learner said they are working toward. Absent when they have said
+// nothing: the model is then told nothing, and has no goal to speak of.
+function buildGoalsSection(ctx: NovaContext): string {
+  const goals = ctx.userProfile.goals.slice(0, MAX_GOALS_IN_CONTEXT);
+  if (goals.length === 0) return "";
+  return [
+    `## Working toward (their own words; an aim they stated, not something they have done)`,
+    ...goals.map(g => `- ${g}`),
+  ].join("\n");
 }
 
 function buildStateSection(ctx: NovaContext): string {
@@ -230,6 +256,7 @@ function buildConversationHistorySection(ctx: NovaContext): string {
 export function buildDynamicLayer(ctx: NovaContext): string {
   const sections = [
     buildStudentSection(ctx),
+    buildGoalsSection(ctx),
     buildStateSection(ctx),
     buildUnderstandingSection(ctx),
     buildActiveSessionSection(ctx),
@@ -277,6 +304,9 @@ export function buildFocusedLayer(ctx: NovaContext, needs: readonly ContextNeed[
   });
   const sections = [
     has("profile") ? buildStudentSection(ctx) : "",
+    // Only when the message calls for it (interaction/semantics.ts): starting
+    // a session or saying how long they have is not a reason to bring it up.
+    has("goals") ? buildGoalsSection(ctx) : "",
     has("state") ? buildStateSection(ctx) : "",
     buildMessageSection(ctx),
     has("session") ? buildActiveSessionSection({ ...ctx, sessionAction: null }) : "",

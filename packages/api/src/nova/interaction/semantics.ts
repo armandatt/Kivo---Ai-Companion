@@ -29,7 +29,9 @@ export type InteractionKind =
 // includes a part only when it is named here.
 export type ContextNeed =
   | "profile" | "state" | "session" | "plan" | "topic" | "exams" | "reviews"
-  | "time" | "reality" | "memory" | "patterns" | "recent";
+  | "time" | "reality" | "memory" | "patterns" | "recent"
+  // What they said they are working toward (product/goals.ts).
+  | "goals";
 
 export interface Interaction {
   kind:                InteractionKind;
@@ -88,6 +90,10 @@ export function contextNeeds(u: AcademicUnderstanding, kind: InteractionKind = k
       add("session", "plan", "exams", "reviews", "time", "reality");
       if (u.topic) add("topic");
       if (u.intent === "progress_check") add("state");
+      // A question about themselves that names no topic and asks for no
+      // action ("what am I working toward?", "am I on track?") may be about
+      // their goal. One about a topic, or "what now", is answered from the plan.
+      if (u.request?.asks === "about_me" && u.request.action === "none" && !u.topic) add("goals");
       break;
     case "status_request":
       add("session", "state", "exams", "reviews");
@@ -108,7 +114,7 @@ export function contextNeeds(u: AcademicUnderstanding, kind: InteractionKind = k
       add("profile");
       break;
     case "conversation":
-      add("profile", "session", "memory", "patterns", "state");
+      add("profile", "session", "memory", "patterns", "state", "goals");
       if (u.topic) add("topic");
       break;
   }

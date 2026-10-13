@@ -57,12 +57,16 @@ const PATTERN_DETECTOR_INTERVAL = 5;
 
 // ── User resolution ───────────────────────────────────────────────────────────
 
-async function resolveUserId(platformChatId: string): Promise<{ id: string } | null> {
+// Who the learner is, as far as it is on record: the name on their account or
+// chat, and what they said they are working toward. Either may be missing,
+// and a missing one stays missing: nothing stands in for it.
+async function resolveUser(platformChatId: string): Promise<{ id: string; displayName: string | null; goals: string[] } | null> {
   const user = await prisma.messengerUser.findUnique({
     where:  learnerKey(platformChatId),
-    select: { id: true },
+    select: { id: true, displayName: true, novaAcademicProfile: { select: { goals: true } } },
   });
-  return user;
+  if (!user) return null;
+  return { id: user.id, displayName: user.displayName?.trim() || null, goals: user.novaAcademicProfile?.goals ?? [] };
 }
 
 // ── Orchestrator ──────────────────────────────────────────────────────────────
@@ -75,7 +79,7 @@ export async function runNovaOrchestrator(
   const { platformChatId, text } = input;
 
   // ── 0. Resolve user ───────────────────────────────────────────────────────
-  const user = await resolveUserId(platformChatId);
+  const user = await resolveUser(platformChatId);
   if (!user) {
     return {
       reply:         "Hey! Looks like you're not set up yet. Let me get you started.",
@@ -273,7 +277,8 @@ export async function runNovaOrchestrator(
     academicState,
     signals,
     userProfile: {
-      displayName:              "Student",  // TODO: load from MessengerUser.name
+      displayName:              user.displayName,
+      goals:                    user.goals,
       yearOfStudy:              snapshot.yearOfStudy,
       major:                    snapshot.major,
       institution:              snapshot.institution,

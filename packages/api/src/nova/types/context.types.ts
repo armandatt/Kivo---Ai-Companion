@@ -13,7 +13,12 @@ import type { ActiveSessionInfo } from "../engines/study-snapshot";
 import type { SessionContext, SessionAction } from "./session.types";
 
 export interface NovaUserProfile {
-  displayName:              string;
+  // The name on the learner's account or chat. null: none on record.
+  displayName:              string | null;
+  // What they said they are working toward, in their words. A statement of
+  // intent: never evidence of anything studied.
+  goals:                    string[];
+  // Academic details. Each is null unless the learner gave it.
   yearOfStudy:              number | null;
   major:                    string | null;
   institution:              string | null;

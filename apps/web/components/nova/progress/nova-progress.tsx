@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import type { NovaProgressReady } from '@repo/api/nova/product/progress.types'
 import { calendarDate, inDays, minutesLabel } from '../format'
+import { GOALS_HREF } from '@repo/api/nova/product/goals.types'
 import { Consistency } from './consistency'
 import { Growth } from './growth'
 import { Journey } from './journey'
@@ -99,15 +100,23 @@ export function NovaProgress({ view }: { view: NovaProgressReady }) {
             </section>
           )}
 
-          {view.goals.length > 0 && (
-            <section className="rounded-2xl border border-white/8 bg-card/50 p-5" data-section="goals">
-              <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">What you&apos;re working toward</h2>
-              <ul className="mt-3 space-y-2 text-sm leading-relaxed text-foreground/80">
-                {view.goals.map(goal => <li key={goal}>{goal}</li>)}
-              </ul>
-              <p className="mt-3 text-xs leading-relaxed text-foreground/40">In your words, from setup. Nova doesn&apos;t track how far along these are.</p>
-            </section>
-          )}
+          <section className="rounded-2xl border border-white/8 bg-card/50 p-5" data-section="goals">
+            <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">What you&apos;re working toward</h2>
+            {view.goals.length > 0 ? (
+              <>
+                <ul className="mt-3 space-y-2 text-sm leading-relaxed text-foreground/80">
+                  {view.goals.map(goal => <li key={goal}>{goal}</li>)}
+                </ul>
+                <p className="mt-3 text-xs leading-relaxed text-foreground/40">
+                  In your words. Nova doesn&apos;t track how far along these are. <Link href={GOALS_HREF} className="text-foreground/60 underline underline-offset-2 hover:text-foreground">Edit</Link>
+                </p>
+              </>
+            ) : (
+              <p className="mt-3 text-sm leading-relaxed text-foreground/50" data-unknown="no_goals">
+                You haven&apos;t told Nova what you&apos;re working toward. <Link href={GOALS_HREF} className="font-medium text-keppel-300 hover:text-keppel-200">Add a goal</Link>
+              </p>
+            )}
+          </section>
 
           {view.usualSession && (
             <section className="rounded-2xl border border-white/8 bg-card/50 p-5" data-section="usual-session">

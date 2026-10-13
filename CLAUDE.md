@@ -436,6 +436,17 @@ Held by `templates.test.ts` and `nova-workspace.itest.ts`.
 - **Before setup is complete** a message on either surface runs `interaction/setup-turn.ts`: one reading, the decision, and either a setup offer, a confirmation, or the one thing Nova still needs. No Response Brain, no canonical turn. The older conversation in `nova/onboarding/` is no longer called by any surface.
 - **The personality quiz is separate** and unchanged: it sets the companion and the tone, and nothing here reads it.
 
+## Goals: what the learner is working toward
+
+Held by `goals.test.ts` and `nova-goals.itest.ts`. `product/goals.ts`, `GET`/`PUT /api/nova/goals`, editor in `apps/web/components/nova/goals-editor.tsx` (on `/settings/study`).
+
+- **One store.** `NovaAcademicProfile.goals`: up to three lines of the learner's own text (`GOALS_MAX`, `GOAL_TEXT_MAX` in `goals.types.ts`). Today, the Planner, Progress and Nova's context read that field. Do not add a second goal field or read `UserProfile.primaryGoal30d` anywhere else in Nova.
+- **The sign-up answer is copied once.** The quiz stores it on the web account (`primaryGoal30d`). `seedGoalFromSignup` supplies it to the `create` half of the upserts that make a Nova profile (`saveSetup`, `ensureSetupProfile`) and to nothing else. Those upserts keep `update: {}`, so a profile that exists is never reseeded.
+- **A saved list replaces the list; an empty one clears it**, and a cleared goal stays cleared through later setup saves. Goals saved before setup make the profile with exactly that list. A list that is too long, or holds a goal that is, is refused whole: nothing is cut to fit. Validation is bounded: `normalizeGoals` stops at the fourth distinct goal and never processes an entry far over the limit, and the route reads the body through `readSmallJson` (`GOALS_BODY_MAX_BYTES`), refusing a larger one unread.
+- **A goal is a statement of intent.** It is not evidence, mastery or memory, feeds no engine and does not change the plan. Nova does not track completion.
+- **In Nova's context** the goals are their own short section (`buildGoalsSection`), included in the full layer and, in a focused layer, only when `contextNeeds` names `goals`: ordinary conversation, and a question about the learner that names no topic and asks for no action ("what am I working toward?", "am I on track?"). Starting a session, saying how long they have, "what now", a question about a topic and a question about the subject matter get none of it. Having the plan in context is not a reason to include the goal. With no goal the section is absent.
+- **Who the learner is, in the prompt, is only what is on record**: `MessengerUser.displayName` when there is one (flattened to one line, at most 60 characters), and year, major and institution only when set. No placeholder stands in for a missing value.
+
 ## Integration tests (real Postgres)
 
 `npm run test:integration` in `packages/api` runs the `__integration__/*.itest.ts` files against the database in `NOVA_TEST_DATABASE_URL`. They refuse to run without it and refuse the host in `packages/db/.env`. A local throwaway works:
