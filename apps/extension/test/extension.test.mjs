@@ -11,7 +11,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 
 import { ADAPTERS, describePage } from '../src/lib/page.js'
-import { WORDS, buildEvent, createClient, newActionId } from '../src/lib/api.js'
+import { WORDS, buildEvent, createClient, disconnectOutcome, newActionId } from '../src/lib/api.js'
 import { createStore } from '../src/lib/store.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -178,6 +178,29 @@ test('redeeming a code sends no credential', async () => {
   assert.deepEqual(JSON.parse(calls[0].init.body), { code: 'ABCDE-FGHJK', label: 'Chrome on macOS' })
 })
 
+// The popup's own function, run against a stand-in for the browser's navigator.
+const labelIn = navigator => new Function('navigator', `${src('popup.js').match(/function browserLabel\(\) \{[\s\S]*?\n\}/)[0]}\nreturn browserLabel()`)(navigator)
+
+test('a connection is labelled with the browser it was made in', () => {
+  const chromeAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36'
+  const safariAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15'
+  const hints = (brand, platform) => ({ platform, brands: [{ brand: 'Not?A_Brand' }, { brand: 'Chromium' }, { brand }] })
+
+  // Chrome and its relatives say who they are, and are believed as before.
+  assert.equal(labelIn({ userAgentData: hints('Google Chrome', 'macOS'), userAgent: chromeAgent, platform: 'MacIntel' }), 'Google Chrome on macOS')
+  assert.equal(labelIn({ userAgentData: hints('Microsoft Edge', 'Windows'), userAgent: chromeAgent, platform: 'Win32' }), 'Microsoft Edge on Windows')
+  assert.equal(labelIn({ userAgentData: { platform: 'macOS', brands: [{ brand: 'Chromium' }] }, userAgent: chromeAgent, platform: 'MacIntel' }), 'Chrome on macOS')
+
+  // Safari does not, and was being called Chrome.
+  assert.equal(labelIn({ userAgent: safariAgent, platform: 'MacIntel' }), 'Safari on macOS')
+  assert.equal(labelIn({ userAgent: safariAgent.replace('Macintosh; Intel Mac OS X 10_15_7', 'iPhone; CPU iPhone OS 26_0 like Mac OS X'), platform: 'iPhone' }), 'Safari on iPhone')
+
+  // Anything else that says nothing keeps the old answer.
+  assert.equal(labelIn({ userAgent: chromeAgent, platform: 'MacIntel' }), 'Chrome on MacIntel')
+  assert.equal(labelIn({}), 'Chrome')
+  for (const navigator of [{ userAgent: safariAgent, platform: 'MacIntel' }, { userAgentData: hints('Google Chrome', 'macOS') }, {}]) assert.ok(labelIn(navigator).length <= 60, 'fits the label Nova keeps')
+})
+
 test('with no credential, nothing is sent at all', async () => {
   const { calls, api } = client(() => json(200, {}), null)
   assert.deepEqual(await api.sendEvent({ any: 'thing' }), { ok: false, kind: 'unauthenticated', message: WORDS.unauthenticated })
@@ -235,6 +258,41 @@ test('disconnecting forgets the credential completely', async () => {
   await store.clear()
   assert.equal(await store.token(), null)
   assert.deepEqual(storage.data, {})
+})
+
+test('Disconnect says Nova closed the connection only when Nova did', async () => {
+  const answer = (status, body = {}) => createClient({ baseUrl: 'https://kivo.example', getToken: async () => 'nvx_abc', fetch: async () => new Response(JSON.stringify(body), { status }) }).disconnect()
+  const down   = createClient({ baseUrl: 'https://kivo.example', getToken: async () => 'nvx_abc', fetch: async () => { throw new TypeError('Load failed') } }).disconnect()
+
+  // Nova said so, or no longer knows the credential: closed either way.
+  assert.deepEqual(disconnectOutcome(await answer(200, { ok: true })), { confirmed: true, message: WORDS.disconnected })
+  assert.deepEqual(disconnectOutcome(await answer(401, { error: 'Unauthenticated' })), { confirmed: true, message: WORDS.disconnected })
+
+  // Nova was not reached, or failed: nothing was closed there, and the words say so.
+  for (const result of [await down, await answer(500, { error: 'Failed to disconnect' }), await answer(429), await answer(502)]) {
+    const outcome = disconnectOutcome(result)
+    assert.equal(outcome.confirmed, false)
+    assert.equal(outcome.message, WORDS.disconnect_unconfirmed)
+    assert.match(outcome.message, /Saved page/)
+    assert.doesNotMatch(outcome.message, /can no longer save/)
+  }
+})
+
+test('the browser forgets its credential on Disconnect whatever Nova answered', () => {
+  const body = code(src('popup.js')).match(/async function disconnect\(\) \{[\s\S]*?\n\}/)[0]
+  assert.match(body, /disconnectOutcome\(await client\.disconnect\(\)\)/)
+  assert.match(body, /await store\.clear\(\)/, 'cleared without a condition')
+  assert.doesNotMatch(body, /\bif\b|\?\s*await|return/, 'no path leaves the credential in place')
+  assert.match(body, /outcome\.confirmed \? null : /, 'an unconfirmed disconnect points at Saved')
+})
+
+test('the Safari project matches the extension: same version, and an app that opens on the macOS the extension supports', () => {
+  const project = readFileSync(join(root, 'safari/Nova/Nova.xcodeproj/project.pbxproj'), 'utf8')
+  const all = name => [...project.matchAll(new RegExp(`${name} = ([^;]+);`, 'g'))].map(m => m[1])
+  const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
+  assert.deepEqual([...new Set(all('MARKETING_VERSION'))], [version])
+  assert.deepEqual([...new Set(all('MACOSX_DEPLOYMENT_TARGET'))], ['12.0'])
+  assert.ok(all('MARKETING_VERSION').length === 4 && all('MACOSX_DEPLOYMENT_TARGET').length === 4)
 })
 
 test('a damaged stored value is treated as not connected', async () => {

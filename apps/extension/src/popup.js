@@ -8,7 +8,7 @@
 // It decides nothing about the learner: no mastery, no plan, no pattern.
 
 import { NOVA_URL } from './config.js'
-import { buildEvent, createClient, newActionId } from './lib/api.js'
+import { buildEvent, createClient, disconnectOutcome, newActionId } from './lib/api.js'
 import { describePage } from './lib/page.js'
 import { createStore } from './lib/store.js'
 
@@ -52,7 +52,7 @@ const privacy = () => el('details', { dataset: { privacy: '' } },
 
 // ── Not connected ─────────────────────────────────────────────────────────────
 
-function renderConnect(note) {
+function renderConnect(note, followUp) {
   setStatus('disconnected', 'Not connected')
   const code   = el('input', { class: 'code', id: 'code', placeholder: 'XXXXX-XXXXX', maxLength: 14, autocomplete: 'off', spellcheck: false, ariaLabel: 'Code from Nova' })
   const button = el('button', { class: 'primary wide', type: 'submit' }, 'Connect')
@@ -75,16 +75,23 @@ function renderConnect(note) {
   show('connect',
     el('h1', {}, 'Connect Nova'),
     el('p', {}, 'Nova can then save what you are reading, or start a study session on it, when you ask.'),
-    note ? el('p', { class: 'small', dataset: { note: '' } }, note) : null,
+    note ? el('p', { class: 'small', role: 'status', dataset: { note: '' } }, note) : null,
+    followUp ? el('button', { class: 'link', type: 'button', dataset: { followUp: '' }, onclick: () => openNova(followUp.path) }, followUp.label) : null,
     el('button', { class: 'wide', type: 'button', dataset: { getCode: '' }, onclick: () => openNova('/saved?connect=1') }, 'Get a code from Nova'),
     form,
     privacy(),
   )
 }
 
+// What this browser is called in Nova's list of connected browsers. Chrome
+// and its relatives describe themselves (userAgentData); Safari does not, so
+// it is recognised by its user agent, which names Safari and no Chrome.
 function browserLabel() {
-  const platform = navigator.userAgentData?.platform || navigator.platform || ''
-  const brand = (navigator.userAgentData?.brands ?? []).map(b => b.brand).find(b => !/not.?a.?brand|chromium/i.test(b)) || 'Chrome'
+  const hints  = navigator.userAgentData
+  const agent  = navigator.userAgent || ''
+  const safari = !hints && agent.includes('Safari/') && !agent.includes('Chrome/') && !agent.includes('Chromium/')
+  const platform = hints?.platform || (safari && (navigator.platform || '').startsWith('Mac') ? 'macOS' : navigator.platform) || ''
+  const brand = (hints?.brands ?? []).map(b => b.brand).find(b => !/not.?a.?brand|chromium/i.test(b)) || (safari ? 'Safari' : 'Chrome')
   return platform ? `${brand} on ${platform}` : brand
 }
 
@@ -104,10 +111,12 @@ function footer() {
 }
 
 async function disconnect() {
-  // Told to Nova so the credential stops working there; forgotten here either way.
-  await client.disconnect()
+  // Told to Nova so the credential stops working there; forgotten here either
+  // way. If Nova could not be told, the learner is: the connection is still
+  // open there until they close it on Saved.
+  const outcome = disconnectOutcome(await client.disconnect())
   await store.clear()
-  renderConnect('Disconnected. This browser can no longer save to Nova.')
+  renderConnect(outcome.message, outcome.confirmed ? null : { label: "Open Nova's Saved page", path: '/saved' })
 }
 
 function renderReady(page, context) {

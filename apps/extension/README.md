@@ -27,6 +27,33 @@ npm test --workspace nova-extension
 
 `NOVA_URL` is the address of the Nova **web app** (not the API). It must be `https`, or `localhost` for development (the default is `http://localhost:3000`). Then in Chrome: `chrome://extensions` → Developer mode → **Load unpacked** → choose `apps/extension/dist`.
 
+## Safari (macOS)
+
+Safari runs the same extension. It does not load one from a folder: it loads one that is inside a Mac app, so `safari/Nova/` holds a small Xcode project that wraps `dist/`. The project refers to `dist/` by relative path and holds no copy of the extension, so there is still one source. It was generated with `xcrun safari-web-extension-converter` and contains no code written for Nova: the app only shows how to turn the extension on.
+
+```sh
+NOVA_URL=https://your-nova.example npm run build:safari --workspace nova-extension
+```
+
+That builds `dist/` for the address and then the app. `dist/` must exist before Xcode can build, which is why the script does both; `NOVA_URL` works exactly as above. Xcode prints where it put `Nova.app` (its DerivedData folder). To run it from Xcode instead, build `dist/` first, open `safari/Nova/Nova.xcodeproj` and press Run.
+
+Then, in Safari:
+
+1. Settings → Advanced → **Show features for web developers**.
+2. Settings → Developer → **Allow unsigned extensions** (asks for your password or Touch ID). Safari turns this off again every time it quits, and Nova then leaves the Extensions list until you turn it back on.
+3. Open `Nova.app` once, so macOS registers the extension.
+4. Settings → Extensions → tick **Nova**.
+
+If Nova is missing from the Extensions list, turn on step 2 and then build again: Safari drops an unsigned extension it saw while the setting was off, and has only been seen to look again once the extension is re-registered, which a build does. The Nova button does not appear in Private Browsing windows.
+
+What this is and is not:
+
+- **Signing.** The project has no development team, so Xcode signs the app to run on this Mac only ("Sign to Run Locally"). That is why step 2 is needed. This locally signed build is the only one that has been run. A build signed with an Apple Developer team should not need step 2, going by Apple's documentation; that has not been tried, because the project has no team.
+- **Distribution.** Nothing here is ready for the App Store or TestFlight: that needs Apple Developer Program membership, a team and a final bundle identifier in the project (it is `app.kivo.Nova` today, a placeholder), a real app icon (the current one is the toolbar's plain teal square, drawn at each size) and Apple's review.
+- **Platforms.** macOS only, 12 or later for both the app and the extension. It has been built and run on one Mac, on macOS 27; no earlier macOS has been tried. There is no iOS target.
+- **Versions.** The project's version is the manifest's, and a test holds them together: change `MARKETING_VERSION` in the project when `package.json` and the manifest change.
+- **The server** must answer Safari's extension origin, `safari-web-extension://<id>`. It does: see `EXTENSION_ORIGINS` in `apps/api/lib/nova/extension-access.ts`.
+
 ## Releasing
 
 ```sh
@@ -41,7 +68,7 @@ The ZIP is what the Chrome Web Store takes. It is reproducible (same sources and
 2. **Connect a browser** shows a one-time code (ten minutes, single use).
 3. Type it into the extension.
 
-The extension receives a credential of its own. It is not your web session: it can list your subjects, send a learning event and disconnect itself, and nothing else. It stops working when you disconnect (from the popup or from Saved) or after thirty days without use.
+The extension receives a credential of its own. It is not your web session: it can list your subjects, send a learning event and disconnect itself, and nothing else. It stops working when you disconnect (from the popup or from Saved) or after thirty days without use. **Disconnect** in the popup always makes this browser forget the credential. If Nova could not be reached to close its side, the popup says so and points at Saved, where the browser is still listed and can be disconnected.
 
 ## What a click sends
 

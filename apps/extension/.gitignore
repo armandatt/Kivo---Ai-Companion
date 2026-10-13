@@ -1,1 +1,6 @@
 dist
+
+# Xcode: per-user state and build output of the Safari wrapper (safari/)
+xcuserdata/
+DerivedData/
+*.xcuserstate

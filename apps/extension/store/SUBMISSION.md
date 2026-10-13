@@ -70,7 +70,7 @@ Choose whether it publishes automatically on approval or waits for you (the "Pub
 ### 7. After approval
 
 - Install it from the store listing in a clean browser profile and repeat step 3.
-- Note the extension's ID. The API answers cross-origin requests from any `chrome-extension://` origin today (`apps/api/lib/nova/extension-access.ts`); it could be narrowed to this ID afterwards, but that would also block unpacked development builds.
+- Note the extension's ID. The API answers cross-origin requests from an extension's own origin, by scheme: any `chrome-extension://` origin and any `safari-web-extension://` origin (`EXTENSION_ORIGINS` in `apps/api/lib/nova/extension-access.ts`). The Chrome entry could be narrowed to this ID afterwards, but that would also block unpacked development builds. The Safari entry cannot be narrowed the same way: Safari gives each installation its own identifier.
 - Add the store link to the web app (Saved page and Guide), which currently assume the extension is already installed.
 
 ## Releasing an update
@@ -80,4 +80,10 @@ Choose whether it publishes automatically on approval or waits for you (the "Pub
 
 ## Other browsers
 
-Edge, Brave and Arc install from the Chrome Web Store. Edge also has its own store, which takes the same ZIP. Safari needs a separate Xcode conversion and an Apple Developer account, and has not been attempted.
+Edge, Brave and Arc install from the Chrome Web Store. Edge also has its own store, which takes the same ZIP.
+
+Safari does not take the ZIP. It runs the same extension from inside a Mac app, built from the Xcode project in `apps/extension/safari/` (`npm run build:safari --workspace nova-extension`; steps in the extension's `README.md`). What has been done and what has not:
+
+- It builds, and has been run in Safari on macOS from a locally signed build with **Allow unsigned extensions** turned on: connecting with a code, loading subjects, saving a page and disconnecting.
+- It has not been submitted anywhere. Distribution through the App Store or TestFlight needs Apple Developer Program membership, a signing team and a final bundle identifier in the project, a proper app icon, App Store privacy answers and Apple's review. None of that is in this repository.
+- There is no iOS or iPadOS target.
