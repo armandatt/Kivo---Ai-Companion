@@ -82,9 +82,15 @@ function renderConnect(note) {
   )
 }
 
+// What this browser is called in Nova's list of connected browsers. Chrome
+// and its relatives describe themselves (userAgentData); Safari does not, so
+// it is recognised by its user agent, which names Safari and no Chrome.
 function browserLabel() {
-  const platform = navigator.userAgentData?.platform || navigator.platform || ''
-  const brand = (navigator.userAgentData?.brands ?? []).map(b => b.brand).find(b => !/not.?a.?brand|chromium/i.test(b)) || 'Chrome'
+  const hints  = navigator.userAgentData
+  const agent  = navigator.userAgent || ''
+  const safari = !hints && agent.includes('Safari/') && !agent.includes('Chrome/') && !agent.includes('Chromium/')
+  const platform = hints?.platform || (safari && (navigator.platform || '').startsWith('Mac') ? 'macOS' : navigator.platform) || ''
+  const brand = (hints?.brands ?? []).map(b => b.brand).find(b => !/not.?a.?brand|chromium/i.test(b)) || (safari ? 'Safari' : 'Chrome')
   return platform ? `${brand} on ${platform}` : brand
 }
 

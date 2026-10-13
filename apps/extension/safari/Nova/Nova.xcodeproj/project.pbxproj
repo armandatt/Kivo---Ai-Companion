@@ -1,0 +1,601 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 110;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A1A047C2307E9A5B0053929F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A047C1307E9A5B0053929F /* AppDelegate.swift */; };
+		A1A047C6307E9A5B0053929F /* Main.html in Resources */ = {isa = PBXBuildFile; fileRef = A1A047C4307E9A5B0053929F /* Main.html */; };
+		A1A047C8307E9A5B0053929F /* Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = A1A047C7307E9A5B0053929F /* Icon.png */; };
+		A1A047CA307E9A5B0053929F /* Style.css in Resources */ = {isa = PBXBuildFile; fileRef = A1A047C9307E9A5B0053929F /* Style.css */; };
+		A1A047CC307E9A5B0053929F /* Script.js in Resources */ = {isa = PBXBuildFile; fileRef = A1A047CB307E9A5B0053929F /* Script.js */; };
+		A1A047CE307E9A5B0053929F /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A047CD307E9A5B0053929F /* ViewController.swift */; };
+		A1A047D1307E9A5B0053929F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = A1A047CF307E9A5B0053929F /* Main.storyboard */; };
+		A1A047D3307E9A5C0053929F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1A047D2307E9A5C0053929F /* Assets.xcassets */; };
+		A1A047DA307E9A5C0053929F /* Nova Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A1A047D9307E9A5C0053929F /* Nova Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A1A047DF307E9A5C0053929F /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A047DE307E9A5C0053929F /* SafariWebExtensionHandler.swift */; };
+		A1A047F2307E9A5C0053929F /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = A1A047EB307E9A5C0053929F /* popup.js */; };
+		A1A047F3307E9A5C0053929F /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = A1A047EC307E9A5C0053929F /* popup.html */; };
+		A1A047F4307E9A5C0053929F /* config.js in Resources */ = {isa = PBXBuildFile; fileRef = A1A047ED307E9A5C0053929F /* config.js */; };
+		A1A047F5307E9A5C0053929F /* icons in Resources */ = {isa = PBXBuildFile; fileRef = A1A047EE307E9A5C0053929F /* icons */; };
+		A1A047F6307E9A5C0053929F /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = A1A047EF307E9A5C0053929F /* manifest.json */; };
+		A1A047F7307E9A5C0053929F /* lib in Resources */ = {isa = PBXBuildFile; fileRef = A1A047F0307E9A5C0053929F /* lib */; };
+		A1A047F8307E9A5C0053929F /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = A1A047F1307E9A5C0053929F /* popup.css */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A1A047DB307E9A5C0053929F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1A047B6307E9A5B0053929F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A1A047D8307E9A5C0053929F;
+			remoteInfo = "Nova Extension";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A1A047E6307E9A5C0053929F /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			dstPath = "";
+			dstSubfolder = PlugIns;
+			files = (
+				A1A047DA307E9A5C0053929F /* Nova Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		A1A047BE307E9A5B0053929F /* Nova.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Nova.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1A047C1307E9A5B0053929F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		A1A047C5307E9A5B0053929F /* Base */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = Base; path = Base.lproj/Main.html; sourceTree = "<group>"; };
+		A1A047C7307E9A5B0053929F /* Icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icon.png; sourceTree = "<group>"; };
+		A1A047C9307E9A5B0053929F /* Style.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = Style.css; sourceTree = "<group>"; };
+		A1A047CB307E9A5B0053929F /* Script.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Script.js; sourceTree = "<group>"; };
+		A1A047CD307E9A5B0053929F /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
+		A1A047D0307E9A5B0053929F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		A1A047D2307E9A5C0053929F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A1A047D4307E9A5C0053929F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A1A047D9307E9A5C0053929F /* Nova Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Nova Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1A047DE307E9A5C0053929F /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		A1A047E0307E9A5C0053929F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A1A047EB307E9A5C0053929F /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = popup.js; path = ../../../dist/popup.js; sourceTree = "<group>"; };
+		A1A047EC307E9A5C0053929F /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = popup.html; path = ../../../dist/popup.html; sourceTree = "<group>"; };
+		A1A047ED307E9A5C0053929F /* config.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = config.js; path = ../../../dist/config.js; sourceTree = "<group>"; };
+		A1A047EE307E9A5C0053929F /* icons */ = {isa = PBXFileReference; lastKnownFileType = folder; name = icons; path = ../../../dist/icons; sourceTree = "<group>"; };
+		A1A047EF307E9A5C0053929F /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = ../../../dist/manifest.json; sourceTree = "<group>"; };
+		A1A047F0307E9A5C0053929F /* lib */ = {isa = PBXFileReference; lastKnownFileType = folder; name = lib; path = ../../../dist/lib; sourceTree = "<group>"; };
+		A1A047F1307E9A5C0053929F /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = popup.css; path = ../../../dist/popup.css; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A1A047BB307E9A5B0053929F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		A1A047D6307E9A5C0053929F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A1A047B5307E9A5B0053929F = {
+			isa = PBXGroup;
+			children = (
+				A1A047C0307E9A5B0053929F /* Nova */,
+				A1A047DD307E9A5C0053929F /* Nova Extension */,
+				A1A047BF307E9A5B0053929F /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A1A047BF307E9A5B0053929F /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A1A047BE307E9A5B0053929F /* Nova.app */,
+				A1A047D9307E9A5C0053929F /* Nova Extension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A1A047C0307E9A5B0053929F /* Nova */ = {
+			isa = PBXGroup;
+			children = (
+				A1A047C1307E9A5B0053929F /* AppDelegate.swift */,
+				A1A047CD307E9A5B0053929F /* ViewController.swift */,
+				A1A047CF307E9A5B0053929F /* Main.storyboard */,
+				A1A047D2307E9A5C0053929F /* Assets.xcassets */,
+				A1A047D4307E9A5C0053929F /* Info.plist */,
+				A1A047C3307E9A5B0053929F /* Resources */,
+			);
+			path = Nova;
+			sourceTree = "<group>";
+		};
+		A1A047C3307E9A5B0053929F /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A1A047C4307E9A5B0053929F /* Main.html */,
+				A1A047C7307E9A5B0053929F /* Icon.png */,
+				A1A047C9307E9A5B0053929F /* Style.css */,
+				A1A047CB307E9A5B0053929F /* Script.js */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		A1A047DD307E9A5C0053929F /* Nova Extension */ = {
+			isa = PBXGroup;
+			children = (
+				A1A047EA307E9A5C0053929F /* Resources */,
+				A1A047DE307E9A5C0053929F /* SafariWebExtensionHandler.swift */,
+				A1A047E0307E9A5C0053929F /* Info.plist */,
+			);
+			path = "Nova Extension";
+			sourceTree = "<group>";
+		};
+		A1A047EA307E9A5C0053929F /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A1A047EB307E9A5C0053929F /* popup.js */,
+				A1A047EC307E9A5C0053929F /* popup.html */,
+				A1A047ED307E9A5C0053929F /* config.js */,
+				A1A047EE307E9A5C0053929F /* icons */,
+				A1A047EF307E9A5C0053929F /* manifest.json */,
+				A1A047F0307E9A5C0053929F /* lib */,
+				A1A047F1307E9A5C0053929F /* popup.css */,
+			);
+			name = Resources;
+			path = "Nova Extension";
+			sourceTree = SOURCE_ROOT;
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A1A047BD307E9A5B0053929F /* Nova */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1A047E7307E9A5C0053929F /* Build configuration list for PBXNativeTarget "Nova" */;
+			buildPhases = (
+				A1A047BA307E9A5B0053929F /* Sources */,
+				A1A047BB307E9A5B0053929F /* Frameworks */,
+				A1A047BC307E9A5B0053929F /* Resources */,
+				A1A047E6307E9A5C0053929F /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A1A047DC307E9A5C0053929F /* PBXTargetDependency */,
+			);
+			name = Nova;
+			productName = Nova;
+			productReference = A1A047BE307E9A5B0053929F /* Nova.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A1A047D8307E9A5C0053929F /* Nova Extension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1A047E3307E9A5C0053929F /* Build configuration list for PBXNativeTarget "Nova Extension" */;
+			buildPhases = (
+				A1A047D5307E9A5C0053929F /* Sources */,
+				A1A047D6307E9A5C0053929F /* Frameworks */,
+				A1A047D7307E9A5C0053929F /* Resources */,
+			);
+			buildRules = (
+			);
+			name = "Nova Extension";
+			productName = "Nova Extension";
+			productReference = A1A047D9307E9A5C0053929F /* Nova Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A1A047B6307E9A5B0053929F /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					A1A047BD307E9A5B0053929F = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					A1A047D8307E9A5C0053929F = {
+						CreatedOnToolsVersion = 27.0;
+					};
+				};
+			};
+			buildConfigurationList = A1A047B9307E9A5B0053929F /* Build configuration list for PBXProject "Nova" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A1A047B5307E9A5B0053929F;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A1A047BF307E9A5B0053929F /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A1A047BD307E9A5B0053929F /* Nova */,
+				A1A047D8307E9A5C0053929F /* Nova Extension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A1A047BC307E9A5B0053929F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+				A1A047C8307E9A5B0053929F /* Icon.png in Resources */,
+				A1A047D1307E9A5B0053929F /* Main.storyboard in Resources */,
+				A1A047CC307E9A5B0053929F /* Script.js in Resources */,
+				A1A047C6307E9A5B0053929F /* Main.html in Resources */,
+				A1A047D3307E9A5C0053929F /* Assets.xcassets in Resources */,
+				A1A047CA307E9A5B0053929F /* Style.css in Resources */,
+			);
+		};
+		A1A047D7307E9A5C0053929F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+				A1A047F7307E9A5C0053929F /* lib in Resources */,
+				A1A047F8307E9A5C0053929F /* popup.css in Resources */,
+				A1A047F4307E9A5C0053929F /* config.js in Resources */,
+				A1A047F5307E9A5C0053929F /* icons in Resources */,
+				A1A047F6307E9A5C0053929F /* manifest.json in Resources */,
+				A1A047F2307E9A5C0053929F /* popup.js in Resources */,
+				A1A047F3307E9A5C0053929F /* popup.html in Resources */,
+			);
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A1A047BA307E9A5B0053929F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				A1A047CE307E9A5B0053929F /* ViewController.swift in Sources */,
+				A1A047C2307E9A5B0053929F /* AppDelegate.swift in Sources */,
+			);
+		};
+		A1A047D5307E9A5C0053929F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+				A1A047DF307E9A5C0053929F /* SafariWebExtensionHandler.swift in Sources */,
+			);
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A1A047DC307E9A5C0053929F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A1A047D8307E9A5C0053929F /* Nova Extension */;
+			targetProxy = A1A047DB307E9A5C0053929F /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		A1A047C4307E9A5B0053929F /* Main.html */ = {
+			isa = PBXVariantGroup;
+			children = (
+				A1A047C5307E9A5B0053929F /* Base */,
+			);
+			name = Main.html;
+			sourceTree = "<group>";
+		};
+		A1A047CF307E9A5B0053929F /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				A1A047D0307E9A5B0053929F /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		A1A047E1307E9A5C0053929F /* Debug configuration for PBXProject "Nova" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A1A047E2307E9A5C0053929F /* Release configuration for PBXProject "Nova" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		A1A047E4307E9A5C0053929F /* Debug configuration for PBXNativeTarget "Nova Extension" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Nova Extension/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Nova Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = app.kivo.Nova.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A1A047E5307E9A5C0053929F /* Release configuration for PBXNativeTarget "Nova Extension" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Nova Extension/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Nova Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = app.kivo.Nova.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A1A047E8307E9A5C0053929F /* Debug configuration for PBXNativeTarget "Nova" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Nova/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Nova;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_NSViewGestureRecognizerIsExclusive = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = app.kivo.Nova;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A1A047E9307E9A5C0053929F /* Release configuration for PBXNativeTarget "Nova" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Nova/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Nova;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_NSViewGestureRecognizerIsExclusive = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = app.kivo.Nova;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A1A047B9307E9A5B0053929F /* Build configuration list for PBXProject "Nova" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1A047E1307E9A5C0053929F /* Debug configuration for PBXProject "Nova" */,
+				A1A047E2307E9A5C0053929F /* Release configuration for PBXProject "Nova" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		A1A047E3307E9A5C0053929F /* Build configuration list for PBXNativeTarget "Nova Extension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1A047E4307E9A5C0053929F /* Debug configuration for PBXNativeTarget "Nova Extension" */,
+				A1A047E5307E9A5C0053929F /* Release configuration for PBXNativeTarget "Nova Extension" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		A1A047E7307E9A5C0053929F /* Build configuration list for PBXNativeTarget "Nova" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1A047E8307E9A5C0053929F /* Debug configuration for PBXNativeTarget "Nova" */,
+				A1A047E9307E9A5C0053929F /* Release configuration for PBXNativeTarget "Nova" */,
+			);
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A1A047B6307E9A5B0053929F /* Project object */;
+	validationLevel = 1;
+}

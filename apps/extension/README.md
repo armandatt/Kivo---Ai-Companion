@@ -27,6 +27,32 @@ npm test --workspace nova-extension
 
 `NOVA_URL` is the address of the Nova **web app** (not the API). It must be `https`, or `localhost` for development (the default is `http://localhost:3000`). Then in Chrome: `chrome://extensions` → Developer mode → **Load unpacked** → choose `apps/extension/dist`.
 
+## Safari (macOS)
+
+Safari runs the same extension. It does not load one from a folder: it loads one that is inside a Mac app, so `safari/Nova/` holds a small Xcode project that wraps `dist/`. The project refers to `dist/` by relative path and holds no copy of the extension, so there is still one source. It was generated with `xcrun safari-web-extension-converter` and contains no code written for Nova: the app only shows how to turn the extension on.
+
+```sh
+NOVA_URL=https://your-nova.example npm run build:safari --workspace nova-extension
+```
+
+That builds `dist/` for the address and then the app. `dist/` must exist before Xcode can build, which is why the script does both; `NOVA_URL` works exactly as above. Xcode prints where it put `Nova.app` (its DerivedData folder). To run it from Xcode instead, build `dist/` first, open `safari/Nova/Nova.xcodeproj` and press Run.
+
+Then, in Safari:
+
+1. Settings → Advanced → **Show features for web developers**.
+2. Settings → Developer → **Allow unsigned extensions** (asks for your password or Touch ID). Safari turns this off again every time it quits.
+3. Open `Nova.app` once, so macOS registers the extension.
+4. Settings → Extensions → tick **Nova**.
+
+If Nova is missing from the Extensions list, turn on step 2 and then build again: Safari drops an unsigned extension it saw while the setting was off, and looks again only when the extension is re-registered. The Nova button does not appear in Private Browsing windows.
+
+What this is and is not:
+
+- **Signing.** The project has no development team, so Xcode signs the app to run on this Mac only ("Sign to Run Locally"). That is why step 2 is needed. A build signed with an Apple Developer team does not need it.
+- **Distribution.** Nothing here is ready for the App Store or TestFlight: that needs Apple Developer Program membership, a team and a final bundle identifier in the project (it is `app.kivo.Nova` today, a placeholder), a real app icon (the current one is the toolbar icon scaled up) and Apple's review.
+- **Platforms.** macOS only. There is no iOS target.
+- **The server** must answer Safari's extension origin, `safari-web-extension://<id>`. It does: see `EXTENSION_ORIGINS` in `apps/api/lib/nova/extension-access.ts`.
+
 ## Releasing
 
 ```sh
