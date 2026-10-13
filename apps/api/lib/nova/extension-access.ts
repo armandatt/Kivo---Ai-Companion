@@ -78,8 +78,12 @@ export function allowAttempt(key: string, limit: number, windowMs: number, now =
 // given to extension origins only, and cookies are not allowed with them: an
 // extension is answered for its bearer credential (or a one-time code), never
 // for the session cookie, so a web page gains nothing from these headers.
+//
+// One scheme per browser family: Chrome, Edge, Brave and Arc send
+// chrome-extension://<id>, Safari sends safari-web-extension://<id>. A web
+// page cannot be served from either, so neither can be claimed by a site.
 
-const EXTENSION_ORIGINS = ["chrome-extension://"]
+const EXTENSION_ORIGINS = ["chrome-extension://", "safari-web-extension://"]
 
 export const fromExtensionOrigin = (req: Request) => {
   const origin = req.headers.get("origin") ?? ""
