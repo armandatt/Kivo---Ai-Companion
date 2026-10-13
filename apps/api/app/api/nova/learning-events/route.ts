@@ -3,15 +3,22 @@ import { NextResponse } from "next/server"
 import { loadSavedResources, recordLearningEvent, resolveEventLearner } from "@repo/api/nova/product/learning-events"
 //@ts-ignore
 import { EVENT_BODY_MAX_BYTES } from "@repo/api/nova/product/learning-events.types"
+//@ts-ignore
+import { processSavedResource } from "@repo/api/nova/product/resource-processing"
 import { eventFail, fromExtensionOrigin, readSmallJson, requireWebLearner, resolveExtensionCaller, preflight, withCors } from "../../../../lib/nova/extension-access"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 // Learning events: what a learner explicitly did with a page in their
-// browser. Deterministic, no LLM call. An event is kept as the learner's
-// record and goes nowhere else: not to mastery, sessions, Learning DNA,
-// memory or the chat pipeline.
+// browser. Saving is deterministic and makes no LLM call. An event is kept
+// as the learner's record and goes nowhere else: not to mastery, sessions,
+// Learning DNA, memory or the chat pipeline.
+//
+// Once a page is saved and the answer is decided, it is looked at for what it
+// connects to (resource-processing.ts). That starts here and is not waited
+// for: the answer says "saved" because the row exists, whatever comes of the
+// look. The scheduler's tick picks up any that did not finish.
 
 // POST /api/nova/learning-events
 // Request: LearningEventInput. Response: LearningEventResponse.
@@ -25,10 +32,14 @@ export async function POST(req: Request) {
   return withCors(req, req.headers.has("authorization") ? await handlePOST(req) : await handleWebSave(req))
 }
 
-const answer = (result: Awaited<ReturnType<typeof recordLearningEvent>>) =>
-  result.success
-    ? NextResponse.json(result, { status: result.duplicate || result.action === "already_saved" ? 200 : 201 })
-    : NextResponse.json(result, { status: result.error === "rate_limited" ? 429 : 400 })
+const answer = (result: Awaited<ReturnType<typeof recordLearningEvent>>) => {
+  if (!result.success) return NextResponse.json(result, { status: result.error === "rate_limited" ? 429 : 400 })
+  if (result.resource.processing.status === "pending") {
+    // Never throws; a failure is written on the row and can be retried.
+    void processSavedResource(result.eventId, "queue").catch(() => undefined)
+  }
+  return NextResponse.json(result, { status: result.duplicate || result.action === "already_saved" ? 200 : 201 })
+}
 
 // The web app saving a link the learner pasted, or one the bookmarklet
 // brought. It saves and nothing else: studying a page starts from Saved.
@@ -50,6 +61,8 @@ async function handleWebSave(req: Request): Promise<NextResponse> {
         ? eventFail(413, "too_large", "That's more than Nova keeps about a page.")
         : eventFail(400, "invalid", "That isn't something Nova can save.")
     }
+    // The web app saves pages. A passage comes from the extension, which is
+    // where the learner selected it.
     if ((read.body as { eventType?: unknown } | null)?.eventType !== "resource_saved") {
       return eventFail(400, "invalid", "Nova can only save a page from here.")
     }

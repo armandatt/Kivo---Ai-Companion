@@ -12,6 +12,11 @@
 //   the same two rules for a saved page (NovaLearningEvent)
 //
 // An item with no subject has no edge and is drawn alone.
+//
+// Beside the edges there are suggestions: places a saved page was suggested
+// for when it was looked at (product/resource-processing.ts) and is not filed
+// under. They are stored on the page's own row and passed through as they
+// are; this file works none out. They are not edges.
 
 import { prisma } from "@repo/db/client";
 import { learnerKey } from "./learner-key";
@@ -21,14 +26,18 @@ import { masteryLevel } from "../engines/knowledge-engine";
 import { normalizeTopicName } from "../engines/topic-mastery-engine";
 import {
   MAP_NOTES_MAX, MAP_RESOURCES_MAX,
-  type MapEdge, type MapNode, type MapNodeType, type NovaKnowledgeMapReady, type NovaKnowledgeMapView,
+  type MapEdge, type MapNode, type MapNodeType, type MapSuggestion, type NovaKnowledgeMapReady, type NovaKnowledgeMapView,
 } from "./knowledge-map.types";
 
 export interface MapInputs {
   subjects:  Array<{ id: string; name: string }>;
   topics:    Array<{ id: string; subjectId: string; name: string; masteryProbability: number; reviewCount: number }>;
   notes:     Array<{ id: string; title: string; subjectId: string | null; topicName: string | null; updatedAt: Date }>;
-  resources: Array<{ id: string; title: string; url: string; domain: string; eventType: string; subjectId: string | null; topicName: string | null; occurredAt: Date }>;
+  resources: Array<{
+    id: string; title: string; url: string; domain: string; eventType: string; subjectId: string | null; topicName: string | null; occurredAt: Date;
+    filedBy?: "learner" | "nova" | null;
+    suggestions?: Array<{ subjectId: string; topicName: string | null; confidence: "high" | "possible"; basis: MapSuggestion["basis"] }>;
+  }>;
   totals:    { notes: number; resources: number };
 }
 
@@ -69,15 +78,25 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
       topicName: n.topicName, topicLinked: at.topicLinked, updatedAt: n.updatedAt.toISOString(),
     };
   });
+  const suggestions: MapSuggestion[] = [];
   const resourceNodes: MapNode[] = input.resources.map(r => {
     const id = `resource:${r.id}`;
     const at = place(id, r.subjectId, r.topicName, "resources");
+    // A suggestion points at a topic or subject the learner still has.
+    for (const s of r.suggestions ?? []) {
+      if (!subjectName.has(s.subjectId)) continue;
+      const topicId = s.topicName ? topicAt.get(topicKey(s.subjectId, s.topicName)) : undefined;
+      if (s.topicName && !topicId) continue;
+      const from = topicId ? `topic:${topicId}` : `subject:${s.subjectId}`;
+      if (!suggestions.some(x => x.from === from && x.to === id)) suggestions.push({ id: `${from}~${id}`, from, to: id, confidence: s.confidence, basis: s.basis });
+    }
     return {
       id, type: "resource", label: r.title || r.domain, href: "/saved", subjectId: at.subjectId,
       subjectName: at.subjectId ? subjectName.get(at.subjectId)! : null,
       topicName: r.topicName, topicLinked: at.topicLinked,
       url: r.url, domain: r.domain, savedAt: r.occurredAt.toISOString(),
       kind: r.eventType === "study_requested" ? "study_requested" : "saved",
+      filedBy: r.filedBy ?? (at.subjectId ? "learner" : null),
     };
   });
 
@@ -110,7 +129,7 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
     subject: subjectNodes.length, topic: topicNodes.length, note: noteNodes.length, resource: resourceNodes.length,
   };
   return {
-    status: "ready", nodes, edges, counts,
+    status: "ready", nodes, edges, suggestions, counts,
     notShown: { notes: Math.max(0, input.totals.notes - noteNodes.length), resources: Math.max(0, input.totals.resources - resourceNodes.length) },
     unconnected: nodes.filter(n => !linked.has(n.id)).length,
   };

@@ -196,10 +196,17 @@ test("Save to Nova stores the address, the title and where it was filed, and not
     id: result.eventId, eventType: "resource_saved", url: "https://www.example.com/graphs/bfs?utm=1", domain: "example.com",
     title: "BFS explained", subjectId: subject.a!.DSA, subjectName: "DSA", topicName: "Graphs",
     savedAt: result.resource.savedAt, study: { available: true, blockedBy: null, minutes: 25 },
+    canonicalUrl: null, excerpt: null, filedBy: "learner",
+    // Saved, and waiting to be looked at: the save does not wait for that.
+    processing: { status: "pending", error: null, canRetry: false, concepts: [], suggestions: [] },
   });
 
   const [row] = await events("a");
-  assert.deepEqual(Object.keys(row!).sort(), ["clientEventId", "createdAt", "domain", "eventType", "id", "occurredAt", "profileId", "source", "subjectId", "title", "topicName", "url"]);
+  assert.deepEqual(Object.keys(row!).sort(), [
+    "canonicalUrl", "clientEventId", "connections", "createdAt", "domain", "eventType", "excerpt", "filedBy", "id", "occurredAt",
+    "processedAt", "processingAttempts", "processingError", "processingStartedAt", "processingStatus",
+    "profileId", "source", "subjectId", "title", "topicName", "url",
+  ]);
   assert.equal(row!.profileId, profile.a, "owned by the caller, not by the profileId in the request");
   assert.equal(row!.source, "browser_extension", "source is the server's, not the request's");
   assert.ok(!JSON.stringify(row).match(/SECRET|page text|xxxx|user:pw|queue/));

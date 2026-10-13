@@ -14,6 +14,8 @@ import { fireCustomReminders } from "@repo/api/services/customReminder.service";
 import { runNovaProactiveCron } from "@repo/api/nova/proactive/nova-proactive-cron";
 //@ts-ignore
 import { purgeProcessedTelegramUpdates } from "@repo/api/services/telegramTransport.service";
+//@ts-ignore
+import { processWaitingResources } from "@repo/api/nova/product/resource-processing";
 
 export type CheckinCronResult = {
   ok: boolean;
@@ -92,6 +94,16 @@ export async function runCheckinCron(now = new Date()): Promise<CheckinCronResul
   });
   sent += novaResult.sent;
   console.log(`[CHECKIN] Nova proactive: ${novaResult.sent}/${novaResult.checked} sent, ${novaResult.errors} errors`);
+
+  // ── Saved pages still waiting to be looked at ─────────────────────────────
+  // The save route starts this itself; the tick finishes what a restart or a
+  // failed model call left behind. It sends nothing.
+  try {
+    const pages = await processWaitingResources(new Date(), 5);
+    if (pages.checked > 0) console.log(`[CHECKIN] Nova saved pages: ${pages.done}/${pages.checked} looked at, ${pages.failed} failed`);
+  } catch (err) {
+    console.error("[CHECKIN] Nova saved pages failed:", err);
+  }
 
   return { ok: true, sent, nova: { checked: novaResult.checked, sent: novaResult.sent, errors: novaResult.errors, outcomes: novaResult.outcomes ?? {} } };
 }
