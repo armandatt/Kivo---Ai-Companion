@@ -5,9 +5,11 @@ import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
 import { CheckinSettings } from '@/components/nova/checkin-settings'
 import { TelegramSettings } from '@/components/nova/telegram-connect'
+import { DeleteAccountSection } from '@/components/settings/delete-account-section'
 import { ThemePicker } from '@/components/theme/kivo-theme'
 
-// Settings: appearance, study setup, the daily check-in and the Telegram connection.
+// Settings: appearance, study setup, the daily check-in, the Telegram connection
+// and deleting the account.
 export default function SettingsPage() {
   // Which companion this account talks to, so the page can name it.
   const [companion, setCompanion] = useState<'Nova' | 'Rex' | null>(null)
@@ -61,6 +63,10 @@ export default function SettingsPage() {
           ? <div aria-busy="true" aria-label="Loading settings" className="h-40 animate-pulse rounded-3xl border border-white/5 bg-white/3" />
           : <TelegramSettings companion={companion} />}
       </div>
+
+      {/* For every account, whichever companion it uses. */}
+      <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Account</p>
+      <div className="mt-3"><DeleteAccountSection /></div>
     </div>
   )
 }
