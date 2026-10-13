@@ -10,7 +10,7 @@
 // printed SHA-256 can be compared against a rebuild.
 //
 // It refuses to package anything that is not the audited shape: a release
-// must talk to an https address that is not this machine, ask for the two
+// must talk to an https address that is not this machine, ask for the three
 // permissions and no others, and carry no other address.
 
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -48,7 +48,7 @@ walk(stage)
 const entries = files.map(path => ({ name: relative(stage, path).split(sep).join('/'), data: readFileSync(path) })).sort((a, b) => (a.name < b.name ? -1 : 1))
 
 // ── Check what is about to be shipped ─────────────────────────────────────────
-const EXPECTED = ['config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/api.js', 'lib/page.js', 'lib/store.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js']
+const EXPECTED = ['config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/api.js', 'lib/browser.js', 'lib/page.js', 'lib/store.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js']
 const names = entries.map(e => e.name)
 if (JSON.stringify(names) !== JSON.stringify(EXPECTED)) fail(`unexpected files in the build: ${names.join(', ')}`)
 
@@ -57,7 +57,7 @@ const manifest = JSON.parse(text('manifest.json'))
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 if (manifest.manifest_version !== 3) fail('the manifest is not version 3')
 if (manifest.version !== pkg.version) fail(`manifest version ${manifest.version} is not package.json version ${pkg.version}`)
-if (JSON.stringify(manifest.permissions) !== JSON.stringify(['activeTab', 'storage'])) fail(`permissions are ${JSON.stringify(manifest.permissions)}`)
+if (JSON.stringify(manifest.permissions) !== JSON.stringify(['activeTab', 'scripting', 'storage'])) fail(`permissions are ${JSON.stringify(manifest.permissions)}`)
 for (const key of ['host_permissions', 'optional_permissions', 'optional_host_permissions', 'content_scripts', 'background', 'web_accessible_resources', 'externally_connectable']) {
   if (manifest[key] !== undefined) fail(`the manifest declares ${key}`)
 }

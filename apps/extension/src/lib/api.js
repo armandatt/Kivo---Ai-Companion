@@ -1,6 +1,6 @@
 // The extension's calls to Nova. Four of them, all to Nova's own address:
 // redeem a pairing code, read the learner's subjects, send one learning
-// event, disconnect. The credential travels as a bearer header and nowhere
+// event (a page saved, a passage saved, a page to study), disconnect. The credential travels as a bearer header and nowhere
 // else; cookies are never sent.
 //
 // Every failure comes back as { ok: false, kind, message } with words a
@@ -78,8 +78,8 @@ export function createClient({ baseUrl, fetch: doFetch, getToken }) {
  * The fields of a learning event, and only those. Nothing about who the
  * learner is goes in: the server knows that from the credential.
  */
-export function buildEvent({ eventType, clientEventId, page, title, subjectId, topicName, now = new Date() }) {
-  return {
+export function buildEvent({ eventType, clientEventId, page, title, subjectId, topicName, excerpt, now = new Date() }) {
+  const event = {
     eventType,
     clientEventId,
     url: page.url,
@@ -87,7 +87,12 @@ export function buildEvent({ eventType, clientEventId, page, title, subjectId, t
     capturedAt: now.toISOString(),
     subjectId: subjectId || null,
     topicName: subjectId && topicName && topicName.trim() ? topicName.trim() : null,
+    // What the page calls its own address, when it says.
+    canonicalUrl: page.canonicalUrl || null,
   }
+  // The selected passage travels only with the action that is about it.
+  if (eventType === 'selection_saved') event.excerpt = typeof excerpt === 'string' ? excerpt : ''
+  return event
 }
 
 export const newActionId = () => crypto.randomUUID()

@@ -77,7 +77,8 @@ Do not show a real person's data: use a test account.
 
 | Permission | Justification |
 |---|---|
-| `activeTab` | When the user clicks the extension's icon, the popup reads the address and title of that one tab so the user can save it. It is the only tab the extension asks about (`chrome.tabs.query({ active: true, currentWindow: true })`), and only after the click. No page content is read and no script is injected. |
+| `activeTab` | When the user clicks the extension's icon, the popup reads the address and title of that one tab so the user can save it. It is the only tab the extension asks about (`chrome.tabs.query({ active: true, currentWindow: true })`), and only after the click. |
+| `scripting` | On that one tab, after that click, the popup runs one small function that returns the text the user has selected and the page's canonical link, so the user can save a passage they highlighted. It reads no other page content, runs once, and is part of the package (no remote code). The selection is sent only if the user presses **Save selection**. |
 | `storage` | Stores the extension's own access credential in `chrome.storage.local` after the user pairs the browser with a one-time code, so they stay connected. Nothing else is stored: no page addresses, no history. |
 
 Host permissions: **none requested.** Remote code: **No, the extension does not use remote code.** All scripts are in the package; `popup.html` loads only `popup.js` and `popup.css`.

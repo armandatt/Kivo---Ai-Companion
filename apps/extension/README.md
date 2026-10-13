@@ -1,17 +1,18 @@
 # Nova browser extension
 
-Save the page you are reading to Nova, or start a study session on it. The extension is a bridge for what the learner explicitly asks for; it understands nothing and decides nothing.
+Save the page you are reading to Nova, save a passage you selected on it, or start a study session on it. The extension is a bridge for what the learner explicitly asks for; it understands nothing and decides nothing.
 
 ## What it can and cannot do
 
 | Permission | Why |
 |---|---|
 | `activeTab` | Read the address and title of the tab you are on, at the moment you click the Nova icon on it. No other tab, and not before you click. |
+| `scripting` | On that same tab, at that same moment, read two things: the text you have selected, and the page's canonical link. One function (`probePage` in `src/lib/browser.js`), run once. |
 | `storage` | Keep this browser connected (the extension's own credential, in `chrome.storage.local`). |
 
 That is the whole list. There are no host permissions, no content scripts and no background script, so the extension:
 
-- cannot read inside any page (text, forms, passwords, cookies);
+- reads nothing inside a page except your selection and its canonical link (no other text, no forms, passwords or cookies), and sends the selection only when you press **Save selection**;
 - cannot see your other tabs or your history;
 - does nothing while its popup is closed;
 - talks to one address only: the Nova web app it was built for.
@@ -74,15 +75,25 @@ The extension receives a credential of its own. It is not your web session: it c
 
 ```jsonc
 {
-  "eventType": "resource_saved",        // or "study_requested"
+  "eventType": "resource_saved",        // or "selection_saved", "study_requested"
   "clientEventId": "…",                 // made up per action; a retry repeats it
   "url": "https://…", "title": "…",
   "capturedAt": "2026-10-06T12:00:00.000Z",
-  "subjectId": "…", "topicName": "…"   // optional; the subject must be one of yours
+  "subjectId": "…", "topicName": "…",  // optional; the subject must be one of yours
+  "canonicalUrl": "https://…",          // the page's own canonical link, or null
+  "excerpt": "…"                        // "selection_saved" only: the passage you selected
 }
 ```
 
 Nothing about who you are is in it: Nova knows that from the credential. Saving a page tells Nova it matters to you. It does not tell Nova you know it; only a finished study session does.
+
+## Saving a passage
+
+Select text on a page, then click the Nova icon. The popup shows the selection and a **Save selection** button; it goes to Nova as a `selection_saved` event with the page's address and title, and appears on Saved as a quote under the page it came from. Nova keeps up to 2,000 characters; a longer selection is refused with a message, never cut. On a page the browser will not let an extension into, the popup says so and the page can still be saved.
+
+## One adapter for every browser
+
+`src/lib/browser.js` is the only file that calls the browser's extension API: storage, the active tab, opening a tab, and the one read of the page. Chrome, Edge, Brave, Arc and Safari all provide these under `chrome`, so there is no per-browser branch and both browsers run the same `dist/`. `chrome.scripting` needs Safari 16.4 or later; on an older Safari the popup offers no selection and everything else works.
 
 ## Adding a site later
 
