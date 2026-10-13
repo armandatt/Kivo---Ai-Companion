@@ -13,6 +13,20 @@ export const WORDS = {
   unauthenticated: 'Nova was disconnected from this browser. Connect it again.',
   rate_limited:    "That's a lot at once. Give it a minute.",
   failed:          "That didn't work. Try again in a moment.",
+  disconnected:    'Disconnected. This browser can no longer save to Nova.',
+  disconnect_unconfirmed: "This browser has forgotten its connection, but Nova couldn't be told. To be sure it is closed, disconnect this browser on Nova's Saved page.",
+}
+
+/**
+ * What to tell the learner after Disconnect. The browser forgets its
+ * credential whatever the answer was. Nova has closed the connection only
+ * when it said so, or when it no longer knows the credential (a 401); an
+ * unreachable Nova or a failed request has closed nothing, and says so.
+ * @param {{ ok: boolean, kind?: string }} result what client.disconnect() returned
+ */
+export function disconnectOutcome(result) {
+  const confirmed = result.ok || result.kind === 'unauthenticated'
+  return { confirmed, message: confirmed ? WORDS.disconnected : WORDS.disconnect_unconfirmed }
 }
 
 /**

@@ -11,7 +11,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 
 import { ADAPTERS, describePage } from '../src/lib/page.js'
-import { WORDS, buildEvent, createClient, newActionId } from '../src/lib/api.js'
+import { WORDS, buildEvent, createClient, disconnectOutcome, newActionId } from '../src/lib/api.js'
 import { createStore } from '../src/lib/store.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -258,6 +258,41 @@ test('disconnecting forgets the credential completely', async () => {
   await store.clear()
   assert.equal(await store.token(), null)
   assert.deepEqual(storage.data, {})
+})
+
+test('Disconnect says Nova closed the connection only when Nova did', async () => {
+  const answer = (status, body = {}) => createClient({ baseUrl: 'https://kivo.example', getToken: async () => 'nvx_abc', fetch: async () => new Response(JSON.stringify(body), { status }) }).disconnect()
+  const down   = createClient({ baseUrl: 'https://kivo.example', getToken: async () => 'nvx_abc', fetch: async () => { throw new TypeError('Load failed') } }).disconnect()
+
+  // Nova said so, or no longer knows the credential: closed either way.
+  assert.deepEqual(disconnectOutcome(await answer(200, { ok: true })), { confirmed: true, message: WORDS.disconnected })
+  assert.deepEqual(disconnectOutcome(await answer(401, { error: 'Unauthenticated' })), { confirmed: true, message: WORDS.disconnected })
+
+  // Nova was not reached, or failed: nothing was closed there, and the words say so.
+  for (const result of [await down, await answer(500, { error: 'Failed to disconnect' }), await answer(429), await answer(502)]) {
+    const outcome = disconnectOutcome(result)
+    assert.equal(outcome.confirmed, false)
+    assert.equal(outcome.message, WORDS.disconnect_unconfirmed)
+    assert.match(outcome.message, /Saved page/)
+    assert.doesNotMatch(outcome.message, /can no longer save/)
+  }
+})
+
+test('the browser forgets its credential on Disconnect whatever Nova answered', () => {
+  const body = code(src('popup.js')).match(/async function disconnect\(\) \{[\s\S]*?\n\}/)[0]
+  assert.match(body, /disconnectOutcome\(await client\.disconnect\(\)\)/)
+  assert.match(body, /await store\.clear\(\)/, 'cleared without a condition')
+  assert.doesNotMatch(body, /\bif\b|\?\s*await|return/, 'no path leaves the credential in place')
+  assert.match(body, /outcome\.confirmed \? null : /, 'an unconfirmed disconnect points at Saved')
+})
+
+test('the Safari project matches the extension: same version, and an app that opens on the macOS the extension supports', () => {
+  const project = readFileSync(join(root, 'safari/Nova/Nova.xcodeproj/project.pbxproj'), 'utf8')
+  const all = name => [...project.matchAll(new RegExp(`${name} = ([^;]+);`, 'g'))].map(m => m[1])
+  const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
+  assert.deepEqual([...new Set(all('MARKETING_VERSION'))], [version])
+  assert.deepEqual([...new Set(all('MACOSX_DEPLOYMENT_TARGET'))], ['12.0'])
+  assert.ok(all('MARKETING_VERSION').length === 4 && all('MACOSX_DEPLOYMENT_TARGET').length === 4)
 })
 
 test('a damaged stored value is treated as not connected', async () => {
