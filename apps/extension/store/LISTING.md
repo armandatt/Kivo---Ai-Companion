@@ -22,10 +22,12 @@ Used from the manifest's `description` (119 characters):
 >
 > • Save to Nova: keeps the page's address and title in your Saved list, filed under one of your subjects and a topic if you like.
 > • Study this: does the same, then opens Nova's Focus screen so you can start a timed study session on it.
+> • Save selection: select a passage first, and Nova keeps that passage with the page it came from.
+> • Ask Nova about this page: type a question and get an answer in the popup.
 >
 > What it does not do
 >
-> • It does not read the page. Only the address and the title are sent, and only when you press one of the two buttons.
+> • It does not read the page. It sees the address, the title and the text you have selected, and sends them only when you press a button. With no selection, Nova answers a question from the title alone and says so.
 > • It does not see your other tabs or your browsing history.
 > • It does nothing in the background. There is no background script and no content script; when the popup is closed, the extension is not running.
 > • Saving a page does not count as studying it. Your progress in Nova changes only when you finish a study session.
@@ -71,7 +73,9 @@ Do not show a real person's data: use a test account.
 
 ### Single purpose
 
-> Save the web page the user is currently viewing to their Nova study list, or start a study session on it, when the user clicks the extension's button.
+> Bring the web page the user is currently viewing into their Nova study list when they click the extension's button: save the page or a passage they selected on it, start a study session on it, or ask Nova a question about it.
+
+**CONFIRM** that asking a question still reads as the same single purpose to the store; it was added after this statement was first written.
 
 ### Permission justifications
 
@@ -92,10 +96,10 @@ Which boxes to tick is the developer's declaration to Google. This is a reading 
 | Web history | **Likely yes** | The address and title of a page are sent when the user saves or studies it. It is one page at a time, at the user's request, and not a browsing log, but this is the category that describes page addresses and titles. |
 | Authentication information | **Likely yes** | The extension holds a credential issued by Nova and sends it with its requests. It never sees the user's password. |
 | Personally identifiable information | Likely no | The extension receives the user's first name to show "Connected · Name"; it does not collect or send it. |
-| Website content | No | Nothing from inside a page is read. |
+| Website content | **Likely yes** | The text the user has selected on the page is read when the popup opens, and sent when the user presses **Save selection** or asks a question. Nothing else from inside a page is read. |
 | User activity, location, health, financial, personal communications | No | Not accessed. |
 
-The three certifications the form asks for match the code: data is not sold or transferred to third parties outside the approved use cases, not used for purposes unrelated to the single purpose, and not used for creditworthiness or lending.
+The three certifications the form asks for: data is not sold or transferred to third parties outside the approved use cases, not used for purposes unrelated to the single purpose, and not used for creditworthiness or lending. **CONFIRM the first one before submitting:** a saved passage, a page title and a question are sent by Kivo's server to its AI model provider to suggest topics and to answer the question. Whether that counts as an approved use (providing the extension's single purpose through a service provider) is the developer's judgement, and the privacy policy must say it.
 
 ### Privacy policy URL
 
