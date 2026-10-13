@@ -26,6 +26,7 @@ All requests go to one address, the Kivo web app the extension was built for, ov
 | You open the popup while connected | The extension's credential. Kivo returns your first name, your subjects and the names of topics under them, so the popup can offer them. The page you are on is **not** sent at this point. |
 | You press **Save to Nova** or **Study this** | The page's address (without any fragment or login in it), its title as shown or as you edited it, the subject and topic you chose, the time, and a random identifier for that click so a retry is not stored twice. |
 | You press **Save selection** | The same as above, and the text you selected (up to 2,000 characters). |
+| You ask a question under **Ask Nova about this page** | Your question, the page's address and title, and the text you selected, if any. Kivo sends the question, the title, the site name and the selection to its AI model provider to answer it. Nothing about the question is stored. |
 | You press **Disconnect** | The credential, so the server can cancel it. |
 
 After a page or passage is saved, Kivo looks at it once to suggest which of your subjects and topics it belongs under. For that, the page's title, its site name, the passage you selected (if you saved one) and the names of your subjects and topics are sent to the AI model provider Kivo uses. The page's address is not sent to the model, and Kivo never opens the page. A suggestion files a page; it is never treated as something you have learned.

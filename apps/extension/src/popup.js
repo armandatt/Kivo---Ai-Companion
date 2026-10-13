@@ -12,7 +12,7 @@
 // Every browser call goes through lib/browser.js.
 
 import { NOVA_URL } from './config.js'
-import { buildEvent, createClient, disconnectOutcome, newActionId } from './lib/api.js'
+import { buildEvent, buildQuestion, createClient, disconnectOutcome, newActionId } from './lib/api.js'
 import { NO_PROBE, browser } from './lib/browser.js'
 import { describePage } from './lib/page.js'
 import { createStore } from './lib/store.js'
@@ -51,7 +51,7 @@ const privacy = () => el('details', { dataset: { privacy: '' } },
     el('li', {}, 'The text you have selected on that page, shown here so you can save it. It is sent only if you press Save selection.'),
     el('li', {}, 'Nothing else inside the page: no other text, no forms, no passwords.'),
     el('li', {}, 'Not your other tabs, and not your history. Nova does nothing while this popup is closed.'),
-    el('li', {}, 'It sends a page to Nova only when you press Save or Study.'),
+    el('li', {}, 'It sends a page to Nova only when you press Save, Study or Ask. A question you ask is answered and not kept.'),
   ),
   el('p', { class: 'small' }, 'Permissions: "activeTab" lets Nova read this tab\'s address and title when you click its icon. "scripting" lets it read your selected text and the page\'s own address on that tab, at that moment. "storage" keeps this browser connected. It has no standing access to any website.'),
 )
@@ -205,6 +205,36 @@ function renderReady(page, context, probe = NO_PROBE) {
     if (result?.focusPath) openNova(result.focusPath)
   })
 
+  // Ask Nova about this page. Nova gets the title, the address and the
+  // selection, never the page; the answer is shown here and kept nowhere.
+  const question = el('input', { id: 'question', placeholder: 'What do you want to know?', maxLength: 500, autocomplete: 'off', ariaLabel: 'Your question about this page' })
+  const askButton = el('button', { type: 'submit' }, 'Ask')
+  const answer   = el('div', { dataset: { answer: '' } })
+  answer.setAttribute('aria-live', 'polite')
+  const ask = el('details', { class: 'ask', dataset: { ask: '' } },
+    el('summary', {}, 'Ask Nova about this page'),
+    el('form', {
+      onsubmit: async event => {
+        event.preventDefault()
+        if (!question.value.trim()) return
+        askButton.disabled = true; askButton.textContent = 'Asking…'
+        answer.replaceChildren()
+        const res = await client.ask(buildQuestion({ question: question.value, page, title: title.value, excerpt: probe.selection }))
+        askButton.disabled = false; askButton.textContent = 'Ask'
+        if (!res.ok && res.kind === 'unauthenticated') { await store.clear(); return renderConnect(res.message) }
+        if (!res.ok || typeof res.data.answer !== 'string') return answer.replaceChildren(alertBox(res.ok ? "That didn't work. Try again in a moment." : res.message))
+        answer.replaceChildren(
+          el('p', { class: 'answer', dataset: { basis: res.data.basis } }, res.data.answer),
+          el('p', { class: 'small' }, res.data.basis === 'selection'
+            ? 'Answered from your selection and what Nova knows of the subject. Nova has not read the rest of the page.'
+            : 'Nova has not read this page: it saw only the title. Select the part you mean and ask again for an answer about it.'))
+      },
+    }, el('div', { class: 'askrow' }, question, askButton)),
+    el('p', { class: 'small' }, probe.selection
+      ? 'Nova gets the page title, its address and your selection. Not the rest of the page.'
+      : 'Nova gets the page title and its address. Select text first if your question is about a particular part.'),
+    answer)
+
   show('ready',
     el('h1', {}, 'Nova is ready.'),
     el('div', { class: 'page', dataset: { page: page.url } },
@@ -215,7 +245,7 @@ function renderReady(page, context, probe = NO_PROBE) {
     running ? el('p', { class: 'small', dataset: { running: '' } }, `You have a session running${running.topicName ? ` on ${running.topicName}` : ''}. One at a time.`) : null,
     el('div', { class: 'row' }, save, study),
     selection,
-    errors, footer(), privacy(),
+    errors, ask, footer(), privacy(),
   )
 }
 

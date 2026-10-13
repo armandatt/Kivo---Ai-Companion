@@ -132,7 +132,7 @@ export type NovaSavedResourcesView =
   | NovaSavedResourcesReady
   | { status: "not_nova" } | { status: "not_connected" } | { status: "onboarding_incomplete" };
 
-// PATCH /api/nova/learning-events/[id]  { subjectId, topicName } | { keep: true } | { undo: true }
+// PATCH /api/nova/learning-events/[id]  { subjectId, topicName } | { keep: true } | { undo: true } | { dismiss: { subjectId, topicName } }
 // POST  /api/nova/learning-events/[id]/process
 export type ResourceUpdateResponse =
   | { ok: true; resource: LearningResource }

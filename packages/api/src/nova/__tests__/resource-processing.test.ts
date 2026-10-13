@@ -6,6 +6,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+// The real client reads its environment on import; no test here calls a model.
+jest.mock("../../services/openai.service", () => ({ generateOpenAIText: jest.fn(async () => { throw new Error("no model call is allowed here"); }) }));
+
 jest.mock("../product/learning-events", () => ({
   claimForProcessing: jest.fn(), completeProcessing: jest.fn(), failProcessing: jest.fn(),
   listWaitingForProcessing: jest.fn(), loadVocabulary: jest.fn(),

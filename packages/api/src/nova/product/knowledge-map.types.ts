@@ -42,6 +42,9 @@ export type MapNode =
   | (NodeBase & {
       type: "resource"; subjectName: string | null; topicName: string | null; topicLinked: boolean;
       url: string; domain: string; savedAt: string; kind: "saved" | "study_requested";
+      // "nova": Nova filed it where it is from a name match, and the learner
+      // has not kept or undone that yet. Absent on an older server.
+      filedBy?: "learner" | "nova" | null;
     });
 
 export type MapEdgeKind =
@@ -51,10 +54,24 @@ export type MapEdgeKind =
 
 export interface MapEdge { id: string; from: string; to: string; kind: MapEdgeKind }
 
+// A place a saved page was suggested for and is NOT filed under. It is not an
+// edge: it takes no part in the layout or in what counts as connected, and
+// the page draws it differently. It becomes an edge only when the learner
+// files the page there, on Saved.
+export interface MapSuggestion {
+  id: string; from: string; to: string;
+  // high: the learner's own name for the topic or subject appears in the
+  // page's title or selected passage. possible: a model's reading.
+  confidence: "high" | "possible";
+  basis: "name_in_title" | "name_in_selection" | "model";
+}
+
 export interface NovaKnowledgeMapReady {
   status: "ready";
   nodes:  MapNode[];
   edges:  MapEdge[];
+  // Absent on an older server.
+  suggestions?: MapSuggestion[];
   counts: Record<MapNodeType, number>;
   // Items on record that are not drawn because of the caps above.
   notShown: { notes: number; resources: number };

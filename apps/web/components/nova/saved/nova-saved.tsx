@@ -9,7 +9,7 @@ import { BookmarkletPanel } from './bookmarklet-panel'
 import { ExtensionPanel } from './extension-panel'
 import { takeCapture, type Capture } from './pending-capture'
 import { SaveLink } from './save-link'
-import { addTaskFromResource, fetchResource, fileResource, keepNovaLink, removeResource, retryProcessing, undoNovaLink } from './saved-api'
+import { addTaskFromResource, dismissSuggestion, fetchResource, fileResource, keepNovaLink, removeResource, retryProcessing, undoNovaLink } from './saved-api'
 
 // What Nova found when it looked at a saved page, and what the learner can
 // do about it. Every button here files a page or asks for another look;
@@ -51,6 +51,9 @@ function Connections({ resource, busy, act }: {
                 <span className="text-foreground/40">{why(c)}</span>
                 <button type="button" disabled={busy} onClick={() => act(() => fileResource(resource.id, c.subjectId, c.topicName))} className={CHIP} data-file-here>
                   File here
+                </button>
+                <button type="button" disabled={busy} onClick={() => act(() => dismissSuggestion(resource.id, c.subjectId, c.topicName))} className={CHIP} data-dismiss aria-label={`Not ${place(c)}`}>
+                  Not this
                 </button>
               </li>
             ))}

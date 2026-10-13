@@ -39,7 +39,31 @@ Save immediately, process in the background, record what was found. The popup sa
 
 Event types are `resource_saved`, `selection_saved` and `study_requested`. A page is one entry per address. A passage is one entry per address and text: the same passage sent again is the same entry, a different one is its own.
 
-**Deploying:** apply the schema first (`cd packages/db && npx prisma db push`), then the API. The API reads every column of the model, so new code on an old database fails.
+### Deploying, in this order
+
+This repository applies schema changes with `prisma db push`, never `prisma migrate dev` (the production database has drifted from `prisma/migrations/`), so there is no migration file. The change is additive: nine new columns, each nullable or with a default, and one index. Nothing is renamed, dropped or rewritten, and no existing row changes except to take the defaults.
+
+1. **Database first.** `(cd packages/db && npx prisma db push)` against the target database. The API that is already running ignores the new columns and keeps working.
+2. **Then the API** (Render, Manual Deploy). New code on a database without the columns fails on every read of a learning event, because Prisma reads every column of the model.
+3. **The web app** goes out on merge, before the API. Saved and the Knowledge Map are written to work against the older API: a row with no `processing` shows nothing under it, and a map with no `suggestions` draws none. The new buttons do nothing useful until the API is deployed.
+4. **The extension** last. An older API answers a passage save or a question with a plain error, which the popup shows.
+
+What `db push` will run, as printed by `prisma migrate diff` from the two schema files (no database was contacted):
+
+```sql
+ALTER TABLE "NovaLearningEvent" ADD COLUMN "canonicalUrl" TEXT,
+ADD COLUMN "connections" JSONB,
+ADD COLUMN "excerpt" TEXT,
+ADD COLUMN "filedBy" TEXT,
+ADD COLUMN "processedAt" TIMESTAMP(3),
+ADD COLUMN "processingAttempts" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN "processingError" TEXT,
+ADD COLUMN "processingStartedAt" TIMESTAMP(3),
+ADD COLUMN "processingStatus" TEXT NOT NULL DEFAULT 'none';
+CREATE INDEX "NovaLearningEvent_processingStatus_processingStartedAt_idx" ON "NovaLearningEvent"("processingStatus", "processingStartedAt");
+```
+
+Rolling back the API needs nothing undone in the database: the older code does not read the new columns.
 
 ## Processing (`product/resource-processing.ts`)
 
@@ -54,7 +78,7 @@ Every write is one conditional update keyed on the attempt, so one worker looks 
 
 A connection says a page is about a topic. It is never evidence that the learner knows it. Processing writes no mastery, session, Learning DNA, fact, pattern or note, stays out of the chat pipeline and consolidation, and reaches the table only through `learning-events.ts`. `resource-processing.test.ts` and `learning-events.test.ts` read the source to hold this.
 
-The Knowledge Map is unchanged: it still draws a saved page under the subject and topic it is filed under and infers nothing. A suggestion reaches the map when the learner files the page there, or when Nova files the single outright name match (marked, and undoable).
+On the Knowledge Map a saved page is still an edge only where it is filed. Suggestions are sent beside the edges (`suggestions`), passed through as stored, and drawn as dotted lines; they take no part in the layout or in what counts as connected. A suggestion becomes an edge when the learner files the page there on Saved, or when Nova files the single outright name match (marked, and undoable). On Saved a suggestion can also be dismissed (**Not this**).
 
 ## Both browsers
 
@@ -65,8 +89,18 @@ The Knowledge Map is unchanged: it still draws a saved page under the subject an
 - **Study this** (already there): opens Focus with the page; the learner's click starts the session.
 - **Add task**: creates a `NovaTask` through the existing task route with `clientKey: resource:<id>`, so pressing twice makes one task. A task is only a task.
 
+## Ask Nova about this page
+
+`POST /api/nova/extension/ask` with the extension's credential, eight questions a minute per connected browser. `product/page-question.ts` makes one `gpt-4o` call given the page's title, its site, the selected passage if there is one, and the question. The popup shows the answer and says what it rested on: the selection, or the title only.
+
+- Nova has not read the page. The extension does not send page text, and the server does not fetch the address.
+- Nothing is stored and the question does not enter the chat pipeline: no Understanding call, no consolidation, no conversation log. This is the pattern the notes rules prescribe for an AI action on the learner's own text.
+
+**Open decisions, deliberately not made here:**
+
+- Whether a page question should be a turn in Nova's conversation (logged, consolidated, answered with the learner's record in view). That would send a selected passage through the chat pipeline, which the notes rules forbid for note text, so it needs a product decision.
+- Whether the extension may ever send more of a page than the selection. Today it cannot read it.
+
 ## Not built
 
-- Asking Nova a question about the page. It needs a decision on how much page text may leave the browser.
 - Processing of page content beyond the title and a selected passage.
-- A dashed "suggested" edge on the Knowledge Map.

@@ -44,6 +44,7 @@ function Detail({ node, neighbours, onPick, onClose }: { node: MapNode; neighbou
     facts.push(['Site', node.domain])
     facts.push(['Subject', node.subjectName ?? 'Not filed under a subject'])
     if (node.topicName) facts.push(['Topic', node.topicLinked ? node.topicName : `${node.topicName} (not one of that subject's topics yet)`])
+    if (node.filedBy === 'nova') facts.push(['Filed by', 'Nova, from a name match. Keep or undo it on Saved.'])
     facts.push([node.kind === 'study_requested' ? 'Asked to study' : 'Saved', day(node.savedAt)])
   }
   const open = node.type === 'note' ? 'Open note' : node.type === 'resource' ? 'Open in Saved' : 'Open in Knowledge'
@@ -129,6 +130,8 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
     shown[n.type] && (subject === '' || n.subjectId === subject)), [view.nodes, shown, subject])
   const ids   = useMemo(() => new Set(nodes.map(n => n.id)), [nodes])
   const edges = useMemo(() => view.edges.filter(e => ids.has(e.from) && ids.has(e.to)), [view.edges, ids])
+  // Places a saved page was suggested for and is not filed under. Drawn, never laid out.
+  const suggestions = useMemo(() => (view.suggestions ?? []).filter(s => ids.has(s.from) && ids.has(s.to)), [view.suggestions, ids])
   const layout = useMemo(() => layoutMap(nodes, edges), [nodes, edges])
   const byId   = useMemo(() => new Map(view.nodes.map(n => [n.id, n])), [view.nodes])
 
@@ -286,6 +289,18 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
                       opacity={neighbourIds && !lit ? 0.25 : 1} />
                   )
                 })}
+                {suggestions.map(s => {
+                  const a = layout.at.get(s.from), b = layout.at.get(s.to)
+                  if (!a || !b) return null
+                  const focus = hover ?? selected
+                  const lit = focus !== null && (s.from === focus || s.to === focus)
+                  return (
+                    <line key={s.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y} data-suggestion={s.confidence}
+                      stroke={lit ? 'var(--color-keppel-400)' : 'var(--map-line)'}
+                      strokeWidth={1 / Math.sqrt(t.k)} strokeDasharray="1 5" strokeLinecap="round"
+                      opacity={focus !== null && !lit ? 0.15 : 0.7} />
+                  )
+                })}
                 {nodes.map(n => {
                   const p = layout.at.get(n.id)
                   if (!p) return null
@@ -329,7 +344,7 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
           </div>
 
           <p className="pointer-events-none absolute bottom-3 left-3 hidden max-w-[58%] rounded-lg sm:block bg-background/70 px-2 py-1 text-[11px] leading-relaxed text-foreground/45 backdrop-blur-sm">
-            Drag to move, scroll to zoom. A dashed ring is a topic with no session yet; a dashed line is filed under the subject only.
+            Drag to move, scroll to zoom. A dashed ring is a topic with no session yet; a dashed line is filed under the subject only.{suggestions.length > 0 && <> A dotted line is a suggestion Nova made, not a link: file the page on Saved to make it one.</>}
             {view.unconnected > 0 && <> {view.unconnected} {view.unconnected === 1 ? 'item is' : 'items are'} not connected to anything.</>}
             {(view.notShown.notes > 0 || view.notShown.resources > 0) && <> Older notes and pages beyond the newest 150 of each are not drawn.</>}
           </p>

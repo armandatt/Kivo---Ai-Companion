@@ -36,6 +36,8 @@ Safari runs the same extension. It does not load one from a folder: it loads one
 NOVA_URL=https://your-nova.example npm run build:safari --workspace nova-extension
 ```
 
+For a build you mean to use, `npm run build:safari:release --workspace nova-extension` is the same with one check added: it refuses to build without `NOVA_URL`, or with one that is not https or points at this machine. The plain `build:safari` allows a local address (development, or a dead port to see the popup's failure states) and should not be left installed.
+
 That builds `dist/` for the address and then the app. `dist/` must exist before Xcode can build, which is why the script does both; `NOVA_URL` works exactly as above. Xcode prints where it put `Nova.app` (its DerivedData folder). To run it from Xcode instead, build `dist/` first, open `safari/Nova/Nova.xcodeproj` and press Run.
 
 Then, in Safari:
@@ -90,6 +92,10 @@ Nothing about who you are is in it: Nova knows that from the credential. Saving 
 ## Saving a passage
 
 Select text on a page, then click the Nova icon. The popup shows the selection and a **Save selection** button; it goes to Nova as a `selection_saved` event with the page's address and title, and appears on Saved as a quote under the page it came from. Nova keeps up to 2,000 characters; a longer selection is refused with a message, never cut. On a page the browser will not let an extension into, the popup says so and the page can still be saved.
+
+## Asking about the page
+
+**Ask Nova about this page** in the popup sends your question with the page's title, its address and your selection, if you made one. Nova has not read the page: with no selection it answers from the title and says so. The answer is shown in the popup and not kept.
 
 ## One adapter for every browser
 

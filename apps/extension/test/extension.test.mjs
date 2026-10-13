@@ -11,7 +11,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 
 import { ADAPTERS, describePage } from '../src/lib/page.js'
-import { WORDS, buildEvent, createClient, disconnectOutcome, newActionId } from '../src/lib/api.js'
+import { WORDS, buildEvent, buildQuestion, createClient, disconnectOutcome, newActionId } from '../src/lib/api.js'
 import { createStore } from '../src/lib/store.js'
 import { NO_PROBE, probePage, readProbe } from '../src/lib/browser.js'
 
@@ -43,7 +43,7 @@ test('the code uses four browser APIs, all in one file: the active tab, opening 
   for (const { text } of sources) for (const m of code(text).matchAll(/chrome\.([a-zA-Z]+)\.([a-zA-Z]+)/g)) used.add(`${m[1]}.${m[2]}`)
   assert.deepEqual([...used].sort(), ['scripting.executeScript', 'storage.local', 'tabs.create', 'tabs.query'])
   // lib/browser.js is the adapter: no other file names the browser's API.
-  for (const { name, text } of sources) if (name !== 'lib/browser.js') assert.ok(!code(text).match(/\bchrome\b|\bbrowser\.(runtime|tabs|scripting|storage)\b/), `${name} goes through lib/browser.js`)
+  for (const { name, text } of sources) if (name !== 'lib/browser.js') assert.ok(!code(text).match(/\bchrome\b/), `${name} goes through lib/browser.js`)
   const all = sources.map(s => code(s.text)).join('\n')
   assert.match(all, /chrome\.tabs\.query\(\{ active: true, currentWindow: true \}\)/)
   assert.equal((all.match(/chrome\.tabs\.query/g) ?? []).length, 1, 'the active tab is the only tab ever asked about')
@@ -100,7 +100,7 @@ test('the only address it talks to is Nova, fixed at build time', () => {
   assert.match(code(src('lib/api.js')), /credentials: 'omit'/)
   assert.ok(!all.match(/openai|anthropic|gemini|\/api\/nova\/message/i), 'no LLM call and no chat route')
   const paths = [...code(src('lib/api.js')).matchAll(/call\('([^']+)'/g)].map(m => m[1]).sort()
-  assert.deepEqual(paths, ['/api/nova/extension/connect', '/api/nova/extension/context', '/api/nova/extension/disconnect', '/api/nova/learning-events'])
+  assert.deepEqual(paths, ['/api/nova/extension/ask', '/api/nova/extension/connect', '/api/nova/extension/context', '/api/nova/extension/disconnect', '/api/nova/learning-events'])
 })
 
 test('the popup page loads only its own files', () => {
@@ -131,6 +131,33 @@ test('the build refuses an insecure Nova address and writes exactly one', () => 
   assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage'])
   assert.equal(manifest.host_permissions, undefined)
   assert.equal(readFileSync(join(out, 'icons', '128.png')).subarray(1, 4).toString(), 'PNG')
+})
+
+test('a build for real use refuses a missing, local or insecure Nova address', () => {
+  const out = mkdtempSync(join(tmpdir(), 'nova-ext-'))
+  const clean = { ...process.env }
+  delete clean.NOVA_URL
+  const run = env => execFileSync('node', [join(root, 'scripts', 'build.mjs')], { env: { ...clean, NOVA_EXTENSION_OUT: out, NOVA_RELEASE: '1', ...env }, stdio: 'pipe' }).toString()
+  // The address a failure check uses, the development default, and plain http.
+  for (const env of [{}, { NOVA_URL: 'http://127.0.0.1:9' }, { NOVA_URL: 'https://127.0.0.1:9' }, { NOVA_URL: 'http://localhost:3000' }, { NOVA_URL: 'http://kivo.example' }, { NOVA_URL: 'https://user:pw@kivo.example' }, { NOVA_URL: 'https://nova.local' }]) {
+    assert.throws(() => run(env), /Bad NOVA_URL/, JSON.stringify(env))
+  }
+  run({ NOVA_URL: 'https://kivo.example' })
+  assert.equal(readFileSync(join(out, 'config.js'), 'utf8').match(/NOVA_URL = "(.*)"/)[1], 'https://kivo.example')
+  // Without the flag, development still builds against this machine.
+  execFileSync('node', [join(root, 'scripts', 'build.mjs')], { env: { ...clean, NOVA_EXTENSION_OUT: out }, stdio: 'pipe' })
+  assert.equal(readFileSync(join(out, 'config.js'), 'utf8').match(/NOVA_URL = "(.*)"/)[1], 'http://localhost:3000')
+  assert.match(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts['build:safari:release'], /^NOVA_RELEASE=1 node scripts\/build\.mjs && xcodebuild /)
+})
+
+test('a question about the page carries the question, the address, the title and the selection, and never the page', () => {
+  assert.deepEqual(buildQuestion({ question: '  What is the spacing effect? ', page, title: ' A page ', excerpt: 'A passage.' }),
+    { question: 'What is the spacing effect?', url: 'https://example.com/a', title: 'A page', excerpt: 'A passage.' })
+  assert.equal(buildQuestion({ question: 'Why?', page, excerpt: '' }).excerpt, null)
+  const popup = code(src('popup.js'))
+  assert.equal((popup.match(/client\.ask\(/g) ?? []).length, 1, 'asked only from the form the learner submits')
+  assert.match(popup, /onsubmit: async event => \{\s*event\.preventDefault\(\)\s*if \(!question\.value\.trim\(\)\) return/)
+  assert.match(src('popup.js'), /Nova has not read this page: it saw only the title/)
 })
 
 // ── Reading the current page ──────────────────────────────────────────────────

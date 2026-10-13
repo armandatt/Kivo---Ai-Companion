@@ -394,10 +394,26 @@ export async function recordLearningEvent(
 // undoing it. Guarded on the learner's profile; someone else's id is not found.
 export async function fileSavedResource(
   profileId: string, id: string,
-  change: { kind: "file"; subjectId: unknown; topicName: unknown } | { kind: "keep" } | { kind: "undo" },
+  change: { kind: "file"; subjectId: unknown; topicName: unknown } | { kind: "keep" } | { kind: "undo" } | { kind: "dismiss"; subjectId: unknown; topicName: unknown },
 ): Promise<ResourceUpdateResponse> {
   const missing = { ok: false as const, error: "not_found" as const, message: "Nova doesn't have that page." };
   if (typeof id !== "string" || id.length > 64) return missing;
+
+  // "Not this one": the suggestion is taken off the page's list. Nothing else
+  // about the page changes, and another look may suggest it again.
+  if (change.kind === "dismiss") {
+    if (typeof change.subjectId !== "string" || change.subjectId.length > 64) return { ok: false, error: "invalid", message: "That isn't one of the suggestions." };
+    const topic   = typeof change.topicName === "string" && change.topicName.length <= EVENT_TOPIC_MAX * 4 ? change.topicName : null;
+    const current = await prisma.novaLearningEvent.findFirst({ where: { id, profileId }, select: { connections: true } });
+    if (!current) return missing;
+    const found = readConnections(current.connections);
+    const kept  = found.suggestions.filter(c => !(c.subjectId === change.subjectId && sameName(c.topicName, topic)));
+    if (kept.length !== found.suggestions.length) {
+      await prisma.novaLearningEvent.updateMany({ where: { id, profileId }, data: { connections: { ...found, suggestions: kept } as unknown as object } });
+    }
+    const row = await prisma.novaLearningEvent.findFirst({ where: { id, profileId }, select: SELECT });
+    return row ? { ok: true, resource: toResource(row) } : missing;
+  }
 
   if (change.kind === "keep" || change.kind === "undo") {
     // Only a link Nova made can be kept or undone, and only once.
@@ -516,15 +532,24 @@ export async function getSavedResource(profileId: string, id: string): Promise<L
 // The newest `take` saved pages with what each was filed under, and how many
 // there are in all.
 export async function listResourceLinks(profileId: string, take: number): Promise<{
-  resources: Array<{ id: string; title: string; url: string; domain: string; eventType: string; subjectId: string | null; topicName: string | null; occurredAt: Date }>;
+  resources: Array<{
+    id: string; title: string; url: string; domain: string; eventType: string; subjectId: string | null; topicName: string | null; occurredAt: Date;
+    // Who filed it there, and the places it was suggested for and not filed under.
+    filedBy: "learner" | "nova" | null; suggestions: ResourceConnection[];
+  }>;
   total: number;
 }> {
-  const [resources, total] = await Promise.all([
+  const [rows, total] = await Promise.all([
     prisma.novaLearningEvent.findMany({
       where: { profileId }, orderBy: { occurredAt: "desc" }, take,
-      select: { id: true, title: true, url: true, domain: true, eventType: true, subjectId: true, topicName: true, occurredAt: true },
+      select: { id: true, title: true, url: true, domain: true, eventType: true, subjectId: true, topicName: true, occurredAt: true, filedBy: true, connections: true },
     }),
     prisma.novaLearningEvent.count({ where: { profileId } }),
   ]);
+  const resources = rows.map(({ connections, filedBy, ...row }) => ({
+    ...row,
+    filedBy: filedBy === "nova" ? "nova" as const : row.subjectId ? "learner" as const : null,
+    suggestions: readConnections(connections).suggestions.filter(c => !(c.subjectId === row.subjectId && sameName(c.topicName, row.topicName))),
+  }));
   return { resources, total };
 }

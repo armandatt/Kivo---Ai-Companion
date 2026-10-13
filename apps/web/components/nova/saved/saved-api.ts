@@ -49,6 +49,8 @@ export const fileResource = (id: string, subjectId: string, topicName: string | 
 // Keep, or undo, a link Nova made by itself.
 export const keepNovaLink = (id: string) => updateResource(resourcePath(id), 'PATCH', { keep: true })
 export const undoNovaLink = (id: string) => updateResource(resourcePath(id), 'PATCH', { undo: true })
+// Take one suggestion off a page's list.
+export const dismissSuggestion = (id: string, subjectId: string, topicName: string | null) => updateResource(resourcePath(id), 'PATCH', { dismiss: { subjectId, topicName } })
 // Ask Nova to look at a saved page again.
 export const retryProcessing = (id: string) => updateResource(`${resourcePath(id)}/process`, 'POST')
 

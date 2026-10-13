@@ -71,6 +71,8 @@ export function createClient({ baseUrl, fetch: doFetch, getToken }) {
     disconnect: () => call('/api/nova/extension/disconnect', { method: 'POST' }),
     // One explicit action. `event.clientEventId` is what makes a retry safe.
     sendEvent:  event => call('/api/nova/learning-events', { method: 'POST', body: event }),
+    // A question about the page. Answered and not kept.
+    ask:        question => call('/api/nova/extension/ask', { method: 'POST', body: question }),
   }
 }
 
@@ -93,6 +95,19 @@ export function buildEvent({ eventType, clientEventId, page, title, subjectId, t
   // The selected passage travels only with the action that is about it.
   if (eventType === 'selection_saved') event.excerpt = typeof excerpt === 'string' ? excerpt : ''
   return event
+}
+
+/**
+ * What a question about the page carries: the question, the page's address
+ * and title, and the selected passage if there is one. Never the page itself.
+ */
+export function buildQuestion({ question, page, title, excerpt }) {
+  return {
+    question: question.trim(),
+    url: page.url,
+    title: (title ?? page.title).trim(),
+    excerpt: typeof excerpt === 'string' && excerpt ? excerpt : null,
+  }
 }
 
 export const newActionId = () => crypto.randomUUID()
