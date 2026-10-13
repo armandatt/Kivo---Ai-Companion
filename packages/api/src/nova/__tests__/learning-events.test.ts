@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { normalizeResourceUrl, parseLearningEvent } from "../product/learning-events";
 import { normalizePairingCode } from "../product/extension-connection";
 import {
-  EVENTS_PER_MINUTE, EVENT_BODY_MAX_BYTES, EVENT_TITLE_MAX, EVENT_TOPIC_MAX, EVENT_URL_MAX,
+  EVENTS_PER_MINUTE, EVENT_BODY_MAX_BYTES, EVENT_EXCERPT_MAX, EVENT_TITLE_MAX, EVENT_TOPIC_MAX, EVENT_URL_MAX,
 } from "../product/learning-events.types";
 
 const NOW = new Date("2026-10-06T12:00:00Z");
@@ -69,9 +69,10 @@ describe("which addresses Nova keeps", () => {
 });
 
 describe("what a learning event may carry", () => {
-  it("reads the two actions Nova knows and no other", () => {
+  it("reads the three actions Nova knows and no other", () => {
     expect(ok().eventType).toBe("resource_saved");
     expect(ok({ eventType: "study_requested" }).eventType).toBe("study_requested");
+    expect(ok({ eventType: "selection_saved", excerpt: "A passage." }).eventType).toBe("selection_saved");
     for (const eventType of ["page_viewed", "page_opened", "session_completed", "topic_mastered", "visited", "", null, undefined, 1]) {
       expect([eventType, errorOf({ eventType })]).toEqual([eventType, "invalid"]);
     }
@@ -142,12 +143,38 @@ describe("what a learning event may carry", () => {
       mastery: 1, masteryProbability: 1, outcome: "crushed_it", durationMinutes: 600, status: "completed",
       body: "the whole page text", html: "<html>…</html>", cookies: "session=abc", metadata: { anything: "at all" }, formInputs: { password: "hunter2" },
     });
-    expect(Object.keys(parsed).sort()).toEqual(["clientEventId", "domain", "eventType", "occurredAt", "subjectId", "title", "topicName", "url"]);
+    expect(Object.keys(parsed).sort()).toEqual(["canonicalUrl", "clientEventId", "domain", "eventType", "excerpt", "occurredAt", "subjectId", "title", "topicName", "url"]);
+    expect(parsed.excerpt).toBeNull();
     expect(JSON.stringify(parsed)).not.toMatch(/someone-else|rex|trusted_internal|whole page|hunter2|session=abc|crushed_it/);
   });
 
+  it("keeps a selected passage only for the action that is about one, as text, within its length", () => {
+    // A page save or a study request that carries a passage keeps none of it.
+    expect(ok({ excerpt: "A passage." }).excerpt).toBeNull();
+    expect(ok({ eventType: "study_requested", excerpt: "A passage." }).excerpt).toBeNull();
+    // Its own line breaks stay; control characters and stray spacing go.
+    expect(ok({ eventType: "selection_saved", excerpt: "  First   line.\r\n\r\n\r\nSecond\tline.\u0000  \n" }).excerpt).toBe("First line.\n\nSecond line.");
+    expect(ok({ eventType: "selection_saved", excerpt: "<script>alert(1)</script>" }).excerpt).toBe("<script>alert(1)</script>");
+    expect(ok({ eventType: "selection_saved", excerpt: "x".repeat(EVENT_EXCERPT_MAX) }).excerpt).toHaveLength(EVENT_EXCERPT_MAX);
+    // Nothing selected, or too much: refused, never cut to fit.
+    for (const excerpt of [undefined, null, "", "   \n ", 42, ["a"], "x".repeat(EVENT_EXCERPT_MAX + 1), "x".repeat(EVENT_EXCERPT_MAX * 3)]) {
+      expect([typeof excerpt, errorOf({ eventType: "selection_saved", excerpt })]).toEqual([typeof excerpt, "invalid"]);
+    }
+  });
+
+  it("keeps the page's own address beside the one it was saved from, when it is one Nova keeps", () => {
+    expect(ok({ canonicalUrl: "https://user:pw@example.com/graphs/breadth-first#top" }).canonicalUrl).toBe("https://example.com/graphs/breadth-first");
+    // The same address tells nothing new; one Nova would not keep is dropped, and the save still stands.
+    for (const canonicalUrl of ["https://example.com/graphs/bfs", "javascript:alert(1)", "chrome://settings", "not an address", 42, null, undefined, {}]) {
+      expect(ok({ canonicalUrl }).canonicalUrl).toBeNull();
+    }
+  });
+
   it("has sensible limits", () => {
-    expect(EVENT_BODY_MAX_BYTES).toBe(8192);
+    expect(EVENT_BODY_MAX_BYTES).toBe(16384);
+    expect(EVENT_EXCERPT_MAX).toBe(2000);
+    // The largest passage, in the widest characters, with everything else, still fits one request.
+    expect(Buffer.byteLength("\u{1F600}".repeat(EVENT_EXCERPT_MAX), "utf8") + 4096).toBeLessThan(EVENT_BODY_MAX_BYTES);
     expect(EVENTS_PER_MINUTE).toBe(20);
   });
 });
@@ -213,7 +240,9 @@ describe("a learning event is a record of an action, and nothing else", () => {
     // It is a picture of what is on record, not an engine: it computes
     // nothing about the learner from an event, and it reads them only
     // through this module's own listResourceLinks.
-    expect(readers.sort()).toEqual(["product/knowledge-map.ts", "product/learning-events.ts"]);
+    // resource-processing looks at a saved page for which of the learner's
+    // topics it is about. It files a page; it computes nothing about the learner.
+    expect(readers.sort()).toEqual(["product/knowledge-map.ts", "product/learning-events.ts", "product/resource-processing.ts"]);
     const map = read("product/knowledge-map.ts");
     expect(map).not.toMatch(/prisma\.novaLearningEvent/);
     expect(map).not.toMatch(/updateTopicMastery|novaStudySession/);

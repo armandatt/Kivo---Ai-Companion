@@ -45,7 +45,7 @@ It prints the ZIP's path, size and SHA-256. Running it again with the same addre
 
 1. Unzip it, open `chrome://extensions`, turn on Developer mode, **Load unpacked**, choose the unzipped folder.
 2. Connect with a code from the production Saved page.
-3. Save a page and check it appears in Saved; use **Study this** and check Focus opens; disconnect and check the popup returns to "Connect Nova".
+3. Save a page and check it appears in Saved; select a passage, save it and check it appears as a quote; ask a question with and without a selection; use **Study this** and check Focus opens; disconnect and check the popup returns to "Connect Nova".
 
 This has **not** been done against production. In this repository the extension has only been exercised by its own tests and by server tests, not in a real browser on real sites.
 
@@ -57,13 +57,13 @@ This has **not** been done against production. In this repository the extension 
 ### 5. Fill in the forms
 
 - **Store listing:** description, category, language, screenshots, promo tile, icon (from `LISTING.md`).
-- **Privacy practices:** single purpose, the two permission justifications, "no remote code", the data-usage boxes, and the privacy policy URL.
+- **Privacy practices:** single purpose, the three permission justifications, "no remote code", the data-usage boxes, and the privacy policy URL.
 - **Distribution:** visibility and countries.
 - **Account tab:** a verified contact email is required before publishing.
 
 ### 6. Submit for review
 
-Press **Submit for review**. Review time is Google's and varies; an extension with two narrow permissions and no host access usually avoids the longer in-depth review, but that is not guaranteed. If it is rejected, the email names the policy; fix, bump the version and resubmit.
+Press **Submit for review**. Review time is Google's and varies; an extension with no host access usually avoids the longer in-depth review, though `scripting` reads the selected text of the active tab and a reviewer may look at it more closely; that is not guaranteed. If it is rejected, the email names the policy; fix, bump the version and resubmit.
 
 Choose whether it publishes automatically on approval or waits for you (the "Publish automatically" checkbox at submission).
 

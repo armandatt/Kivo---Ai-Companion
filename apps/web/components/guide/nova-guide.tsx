@@ -60,7 +60,8 @@ const EXTENSION_STEPS = [
 
 const EXTENSION_FACTS = [
   'It sees a page only when you click its icon on that page.',
-  'It reads the address and the title. Never the text, forms, passwords or cookies.',
+  'Select text before you click, and you can save that passage. It is sent only if you press Save selection.',
+  'It reads the address, the title and the text you have selected. Never the rest of the page, forms, passwords or cookies.',
   'It cannot see your other tabs or your history.',
   'It does nothing while the popup is closed.',
 ]
