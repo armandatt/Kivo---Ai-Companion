@@ -7,6 +7,9 @@ import { parseCheckinTime } from "@repo/api/nova/decision/proactive-decision"
 import { normalizeAccountability } from "@repo/api/personality/mentor-compatibility"
 //@ts-ignore
 import { currentZoneName, isValidTimezone } from "@repo/api/nova/engines/learner-calendar"
+import { normalizeLearningContexts } from "@repo/api/nova/product/learning-context"
+//@ts-ignore
+import { LEARNING_CONTEXTS_KEY } from "@repo/api/nova/adapters/account-preferences-adapter"
 
 const COMPANIONS = new Set(["nova", "rex", "zen"])
 
@@ -76,7 +79,7 @@ export async function PATCH(req: NextRequest) {
     if (!account) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 })
 
     const body = await req.json()
-    const { persona, checkInTime, accountabilityStyle, timezone, name } = body
+    const { persona, checkInTime, accountabilityStyle, timezone, name, learningContexts } = body
 
     const profileUpdates: Record<string, unknown> = {}
     // The companion is one of the ones that exist. It decides which learner
@@ -104,6 +107,18 @@ export async function PATCH(req: NextRequest) {
       if (timezone === null || timezone === "") profileUpdates.timezone = null
       else if (typeof timezone === "string" && timezone.length <= 64 && isValidTimezone(timezone)) profileUpdates.timezone = currentZoneName(timezone)
       else return NextResponse.json({ error: "Unknown timezone" }, { status: 400 })
+    }
+
+    // What they are learning for: a list of the known contexts, [] to say
+    // nothing. It is one of the onboarding answers and is kept with them, so
+    // the others are read first and written back unchanged.
+    if (learningContexts !== undefined) {
+      const contexts = normalizeLearningContexts(learningContexts)
+      if (contexts === null) return NextResponse.json({ error: "Unknown learning context" }, { status: 400 })
+      const current = await prisma.userProfile.findUnique({ where: { userId: session.userId }, select: { onboardingAnswers: true } })
+      const answers = current?.onboardingAnswers && typeof current.onboardingAnswers === "object" && !Array.isArray(current.onboardingAnswers)
+        ? current.onboardingAnswers as Record<string, unknown> : {}
+      profileUpdates.onboardingAnswers = { ...answers, [LEARNING_CONTEXTS_KEY]: contexts }
     }
 
     if (Object.keys(profileUpdates).length > 0) {

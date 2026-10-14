@@ -41,6 +41,7 @@ import type { ResponseBrainOutput } from "./types/response.types";
 import { getRelevantMemories } from "./adapters/memory-adapter";
 import { loadActiveRealityFacts } from "./adapters/reality-adapter";
 import { loadOperatingStyle } from "./adapters/operating-style-adapter";
+import { loadLearningContexts } from "./adapters/account-preferences-adapter";
 import { loadConversationHistory, loadSignalHistory, annotationTags } from "./adapters/conversation-adapter";
 import { loadPriorPatterns } from "./consolidation/stores/behavioral-pattern-store";
 import { persistTurn, persistTurnAsync } from "./persistence/nova-persistence";
@@ -249,10 +250,13 @@ export async function runNovaOrchestrator(
   }
 
   // ── 11. Memory + Reality (parallel) ──────────────────────────────────────
-  const [memoryResult, realityFacts, operatingStyle] = await Promise.all([
+  const [memoryResult, realityFacts, operatingStyle, learningContexts] = await Promise.all([
     getRelevantMemories(userId, understanding),
     loadActiveRealityFacts(userId, understanding),
     loadOperatingStyle(platformChatId),
+    // What they said they are learning for. A turn does not depend on it:
+    // unreadable, the learner is spoken to as one who has not said.
+    loadLearningContexts(platformChatId).catch(() => []),
   ]);
 
   // ── 12. Assemble NovaContext ───────────────────────────────────────────────
@@ -282,6 +286,7 @@ export async function runNovaOrchestrator(
       yearOfStudy:              snapshot.yearOfStudy,
       major:                    snapshot.major,
       institution:              snapshot.institution,
+      learningContexts,
       preferredStudyHoursPerDay: snapshot.preferredStudyHoursPerDay,
       subjects:                 snapshot.subjects.map(s => s.name),
       daysSinceJoined:          snapshot.daysSinceJoined,

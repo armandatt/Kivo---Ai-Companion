@@ -5,6 +5,7 @@ import { getSession } from "../lib/auth/session"
 import { parseCheckinTime } from "@repo/api/nova/decision/proactive-decision"
 //@ts-ignore
 import { currentZoneName, isValidTimezone } from "@repo/api/nova/engines/learner-calendar"
+import { normalizeLearningContexts, type LearningContext } from "@repo/api/nova/product/learning-context"
 //@ts-ignore
 import { buildOnboardingSchedulePayload } from "@repo/api/services/mentorIntake.service"
 import { matchMentor, type MentorMatch } from "@repo/api/personality/mentor-compatibility"
@@ -102,6 +103,10 @@ type QuizAnswers = {
 
 type OnboardingPayload = {
   quizAnswers: QuizAnswers
+  // What they said they are learning for. Kept with the other answers
+  // (onboardingAnswers.learningContexts); Nova reads it through its account
+  // preferences adapter. Absent when they skipped the question.
+  learningContexts?: LearningContext[]
   personaName?: string
   personaDescription?: string
   toneModifier?: string
@@ -130,8 +135,14 @@ function normalizePayload(body: unknown): OnboardingPayload | null {
   // they never ride along into UserProfile.onboardingAnswers.
   delete (quizAnswers as Record<string, unknown>).signalAnswers
 
+  // Asked in the quiz, kept beside it. Only a list of known contexts is
+  // kept; anything else is as if the question was skipped.
+  const learningContexts = normalizeLearningContexts((quizAnswers as Record<string, unknown>).learningContexts ?? (data as Record<string, unknown>).learningContexts)
+  delete (quizAnswers as Record<string, unknown>).learningContexts
+
   return {
     quizAnswers,
+    ...(learningContexts && learningContexts.length > 0 ? { learningContexts } : {}),
     personaName: readString(data.personaName),
     personaDescription: readString(data.personaDescription),
     toneModifier: readString(data.toneModifier),

@@ -11,7 +11,12 @@
 // Everything else about a learner (what is weak, what works, how long they
 // last) is learned from sessions, not asked.
 
+import { setupVocabulary, type LearningContext } from "../product/learning-context";
+
 export interface SetupFacts {
+  // What they said they are learning for. It words the question and nothing
+  // else: the same things are asked for, in the same order, of everyone.
+  learningContexts?: LearningContext[];
   subjects:      Array<{ name: string; topicCount: number }>;
   upcomingExams: number;
   studyTime:     string | null;   // when they usually study
@@ -45,18 +50,7 @@ export interface SetupQuestion {
 export function nextSetupQuestion(facts: SetupFacts): SetupQuestion | null {
   const gap = setupGaps(facts)[0];
   if (!gap) return null;
-  switch (gap) {
-    case "subjects":
-      return { gap, question: "Which subjects are you taking this term?" };
-    case "topics": {
-      const subject = facts.subjects.find(s => s.topicCount === 0)!.name;
-      return { gap, question: `What does ${subject} cover this term? List the topics or chapters, in any order.` };
-    }
-    case "exams":
-      return { gap, question: "Any exam or deadline dates yet? Tell me the subject and the day." };
-    case "daily_minutes":
-      return { gap, question: "How long do you usually have to study on a normal day?" };
-    case "study_time":
-      return { gap, question: "When do you usually study: morning, afternoon, evening or night?" };
-  }
+  const ask = setupVocabulary(facts.learningContexts ?? []).questions;
+  if (gap === "topics") return { gap, question: ask.topics(facts.subjects.find(s => s.topicCount === 0)!.name) };
+  return { gap, question: ask[gap] };
 }

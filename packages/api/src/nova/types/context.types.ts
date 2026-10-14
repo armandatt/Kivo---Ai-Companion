@@ -22,6 +22,9 @@ export interface NovaUserProfile {
   yearOfStudy:              number | null;
   major:                    string | null;
   institution:              string | null;
+  // What they said they are learning for ("school", "college", "working",
+  // "other"). Empty or absent: they have not said, and nothing is assumed.
+  learningContexts?:        string[];
   preferredStudyHoursPerDay: number;
   subjects:                 string[];   // subject names
   daysSinceJoined:          number;

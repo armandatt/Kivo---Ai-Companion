@@ -422,7 +422,7 @@ Held by `knowledge-map.test.ts` and `nova-workspace.itest.ts`. `/map`, `GET /api
 
 Held by `templates.test.ts` and `nova-workspace.itest.ts`.
 
-- `product/templates.ts` is three fixed starting points (Engineering semester, Exam preparation, Personal learning) as pure data. Choosing one fills the setup form; the learner edits, reviews and confirms; `saveSetup` saves it. Its tasks are then created through the task route under `template:<id>:<key>`, so applying one twice makes each task once.
+- `product/templates.ts` is eight fixed starting points as pure data, each naming who it was written for (`audiences`): Computer science semester, Exam preparation, Learn a skill, School subjects, Semester subjects, Project sprint, Interview preparation, Certification. The setup form shows the first three of `templatesFor(contexts)` and the rest behind "More templates". Choosing one fills the setup form; the learner edits, reviews and confirms; `saveSetup` saves it. Its tasks are then created through the task route under `template:<id>:<key>`, so applying one twice makes each task once.
 - A template states no progress: topics are declared unstudied and tasks start as to do.
 - `/settings/study` is the setup form for a learner who has finished onboarding. Saving merges; nothing is removed.
 - **Onboarding has no domain question.** Kivo is study and productivity, so the quiz sends `mentorDomain: "study"` and a new account is always a Nova learner. Rex accounts that already exist are unchanged.
@@ -439,6 +439,18 @@ Held by `templates.test.ts` and `nova-workspace.itest.ts`.
 - **Setup is complete when one subject has one topic.** That sets `onboardingComplete`; year, goals and the rest are not asked. The Planning Engine then has `new_material` blocks to offer at once.
 - **Before setup is complete** a message on either surface runs `interaction/setup-turn.ts`: one reading, the decision, and either a setup offer, a confirmation, or the one thing Nova still needs. No Response Brain, no canonical turn. The older conversation in `nova/onboarding/` is no longer called by any surface.
 - **The personality quiz is separate** and unchanged: it sets the companion and the tone, and nothing here reads it.
+
+## Learning context: school, college, work
+
+Held by `learning-context.test.ts`. One product for every learner; what they are learning for changes words and order, never a decision.
+
+- **The answer** is any of `school`, `college`, `working`, `other`, alone or together (`product/learning-context.ts`, pure). The quiz asks it after the goal ("What are you learning for?", skippable); the setup form shows it as chips and saves a change at once through `PATCH /api/settings { learningContexts }`.
+- **Where it is kept.** With the other onboarding answers, at `UserProfile.onboardingAnswers.learningContexts`. There is no column for it: this was chosen to avoid a schema change, and a `learningContexts String[]` column would be the clean home if one is ever approved. `adapters/account-preferences-adapter.ts` is the only reader in Nova (`loadLearningContexts`, `learningContextsIn`); onboarding and Settings are the only writers. A stored value that is not a list of known contexts reads as "not said".
+- **What it changes.** `setupVocabulary` picks one of four vocabularies (`general`, `school`, `college`, `outcome`; someone both studying and working gets `general`): the setup form's labels, and the one question setup asks next (`nextSetupQuestion` reads `SetupFacts.learningContexts`). `templatesFor` orders the starting points with the fitting ones first; nobody loses a template. A date saved without a name is called "… exam" or, for `outcome`, "… target date". `learningContextLine` adds one line to Nova's context, as the learner's own answer.
+- **The `outcome` vocabulary names no school, term, syllabus, exam, subject or chapter.** A test reads every word of it. Keep it that way when adding a label.
+- **What it does not change.** The gaps setup looks for and their order, the Planning Engine, every decision, and what is saved. A test reads the engines and decisions to hold that none of them imports it.
+- **A learner who has not said** keeps the chat questions setup always asked (the integration tests assert those strings) and gets the neutral form labels.
+- **Not adapted yet:** the static prompts still say "student", the Understanding Brain's setup reading is still worded around subjects, and Today's reasons still say "exam". None was run against a real model with a professional's messages.
 
 ## Goals: what the learner is working toward
 

@@ -19,9 +19,9 @@ export default function StudySetupPage() {
         <ArrowLeft className="size-3.5" /> Settings
       </Link>
       <header className="mt-4">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Subjects and study setup</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">What you&apos;re learning</h1>
         <p className="mt-1.5 max-w-prose text-sm leading-relaxed text-foreground/55">
-          What you are studying, what each subject covers, your exam dates and your usual day. Add to it here, or start from a template. An exam date can be moved or removed; what you have already studied is never changed by this page.
+          What you are learning, what each part covers, the dates that matter and your usual day. Add to it here, or start from a template. A date can be moved or removed; what you have already studied is never changed by this page.
         </p>
       </header>
 

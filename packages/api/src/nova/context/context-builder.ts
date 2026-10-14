@@ -9,6 +9,7 @@ import type { InterventionName } from "../types/intervention.types";
 import type { DecisionGraphOutput } from "../types/response.types";
 import { OPERATING_STYLE_HEADER } from "../../personality/signal-scoring";
 import type { ContextNeed } from "../interaction/semantics";
+import { learningContextLine, normalizeLearningContexts } from "../product/learning-context";
 
 // ── Token budget constants ────────────────────────────────────────────────────
 // Rough character-per-token estimate for English: ~4 chars/token.
@@ -43,6 +44,8 @@ function buildStudentSection(ctx: NovaContext): string {
   const lines: string[] = [`## Student`];
   const name = p.displayName ? singleLine(p.displayName).slice(0, MAX_NAME_CHARS).trim() : "";
   if (name) lines.push(`Name: ${name}`);
+  const learningFor = learningContextLine(normalizeLearningContexts(p.learningContexts ?? []) ?? []);
+  if (learningFor) lines.push(learningFor);
   if (academic.length > 0) lines.push(academic.join(" | "));
   lines.push(`Joined: ${state.daysSinceJoined}d ago | Subjects: ${p.subjects.join(", ") || "none yet"}`);
   if (ctx.operatingStyle && ctx.operatingStyle.length > 0) {

@@ -24,6 +24,9 @@ import { STUDY_TIMES, type SetupStatement, type StudyTime } from "../types/under
 import { addExam, EXAM_HORIZON_DAYS } from "./exams";
 import { seedGoalFromSignup } from "./goals";
 import { learnerKey } from "./learner-key";
+import { loadLearningContexts } from "../adapters/account-preferences-adapter";
+import { setupVocabulary, type LearningContext } from "./learning-context";
+import { templatesFor } from "./templates";
 import type { SetupChanges, SetupDraft, SetupIssue, SetupView } from "./setup.types";
 
 export type { SetupChanges, SetupDraft, SetupIssue, SetupView } from "./setup.types";
@@ -123,7 +126,7 @@ async function loadLearner(platformChatId: string) {
 }
 type Learner = NonNullable<Awaited<ReturnType<typeof loadLearner>>>;
 
-async function viewOf(learner: Learner, now: Date): Promise<SetupView> {
+async function viewOf(learner: Learner, now: Date, learningContexts: LearningContext[]): Promise<SetupView> {
   const profile = learner.novaAcademicProfile;
   const exams = profile
     ? await prisma.novaExam.findMany({
@@ -134,6 +137,7 @@ async function viewOf(learner: Learner, now: Date): Promise<SetupView> {
     : [];
   const subjects = (profile?.subjects ?? []).map(s => ({ name: s.name, topics: s.topics.map(t => t.name) }));
   const facts: SetupFacts = {
+    learningContexts,
     subjects:      subjects.map(s => ({ name: s.name, topicCount: s.topics.length })),
     upcomingExams: exams.length,
     studyTime:     profile?.preferredStudyTime ?? null,
@@ -147,19 +151,22 @@ async function viewOf(learner: Learner, now: Date): Promise<SetupView> {
     complete:     subjects.some(s => s.topics.length > 0),
     missing:      setupGaps(facts),
     nextQuestion: nextSetupQuestion(facts)?.question ?? null,
+    learningContexts,
+    templateIds:  templatesFor(learningContexts).map(t => t.id),
   };
 }
 
 // null: nobody behind this key.
 export async function loadSetup(platformChatId: string, now = new Date()): Promise<SetupView | null> {
   const learner = await loadLearner(platformChatId);
-  return learner ? viewOf(learner, now) : null;
+  return learner ? viewOf(learner, now, await loadLearningContexts(platformChatId)) : null;
 }
 
 export async function loadSetupFacts(platformChatId: string, now = new Date()): Promise<SetupFacts | null> {
   const view = await loadSetup(platformChatId, now);
   if (!view) return null;
   return {
+    learningContexts: view.learningContexts,
     subjects:      view.subjects.map(s => ({ name: s.name, topicCount: s.topics.length })),
     upcomingExams: view.exams.length,
     studyTime:     view.studyTime,
@@ -225,7 +232,7 @@ export async function previewSetup(platformChatId: string, raw: unknown, now = n
   if (!learner) return { status: "not_ready" };
   const today = dayKey(now, resolveTimezone(learner.novaAcademicProfile?.timezone ?? null));
   const { draft, issues } = normalizeSetupDraft(raw, today);
-  const { changes, issues: more } = changesOf(await viewOf(learner, now), draft, routine);
+  const { changes, issues: more } = changesOf(await viewOf(learner, now, await loadLearningContexts(platformChatId)), draft, routine);
   return { status: "ok", draft, changes, issues: [...issues, ...more] };
 }
 
@@ -287,12 +294,16 @@ export async function saveSetup(platformChatId: string, raw: unknown, now = new 
     await write();
   }
 
+  const learningContexts = await loadLearningContexts(platformChatId);
+  const dateSuffix = setupVocabulary(learningContexts).dateTitleSuffix;
   // Exams go through the one exam writer, which already refuses a duplicate.
   for (const e of draft.exams) {
-    await addExam(platformChatId, { title: e.title ?? `${e.subjectName} exam`, subjectName: e.subjectName, date: e.date }, now);
+    // A date with no name of its own is named for what it is: an exam, or
+    // for someone learning for work, the date they are working toward.
+    await addExam(platformChatId, { title: e.title ?? `${e.subjectName} ${dateSuffix}`, subjectName: e.subjectName, date: e.date }, now);
   }
 
-  const setup = await viewOf((await loadLearner(platformChatId))!, now);
+  const setup = await viewOf((await loadLearner(platformChatId))!, now, learningContexts);
   return { status: "saved", changes: preview.changes, setup };
 }
 

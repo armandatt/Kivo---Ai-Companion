@@ -12,6 +12,7 @@ interface QuizAnswers {
   corePain?: string;
   mentorDomain?: string | null;
   primaryGoal?: string;
+  learningContexts?: string[];
   accountabilityStyle?: string | null;
   aspirationWords?: string[];
   signalAnswers?: Record<string, number>;
