@@ -55,19 +55,6 @@ function computeExamMode(daysUntil: number, topics: TopicMasteryState[]): ExamMo
   return "normal";
 }
 
-// ── Recommended daily hours ────────────────────────────────────────────────────
-
-function computeRecommendedHours(
-  daysUntil:     number,
-  criticalTopics: number,
-): number {
-  const base = 3.0;
-  if (daysUntil < 2)   return 8.0;
-  if (daysUntil < 5)   return Math.min(6.0, base + criticalTopics * 0.5);
-  if (daysUntil < 14)  return Math.min(5.0, base + criticalTopics * 0.3);
-  return base;
-}
-
 // ── Primary focus (single topic this turn) ────────────────────────────────────
 
 function computePrimaryFocus(
@@ -103,9 +90,6 @@ export function buildExamContext(
   const topicWeights = buildTopicWeights(topics);
   const mode         = computeExamMode(daysUntil, topics);
   const primaryFocus = computePrimaryFocus(riskMatrix, topicWeights, topics);
-  const recommendedDailyHours = computeRecommendedHours(
-    daysUntil, riskMatrix.critical.length,
-  );
 
   return {
     examId:           exam.id,
@@ -117,7 +101,6 @@ export function buildExamContext(
     topicWeights,
     riskMatrix,
     primaryFocus,
-    recommendedDailyHours,
   };
 }
 

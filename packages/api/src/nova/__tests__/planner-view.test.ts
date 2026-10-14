@@ -251,17 +251,15 @@ describe("buildPlannerView: reasoning", () => {
     expect(view.reasoning.adjustments[0]).toEqual({ kind: "stated_time", text: "Fitted to the 30 min you said you have today." });
   });
 
-  it("explains a raised day by the exam that raised it", () => {
+  it("does not raise the day for an exam: the usual time stands", () => {
     const snap = snapshot({
       upcomingExams: [{ id: "e1", title: "OS midterm", examType: "midterm", scheduledAt: daysFromNow(6.5), subjectId: "s1", subjectName: "Operating Systems" }],
     });
     const view = buildPlannerView(inputs(snap, TOPICS));
-    expect(view.reasoning.budget.basis).toBe("exam_ramp");
-    expect(view.reasoning.budget.minutes).toBeGreaterThan(180);
-    expect(view.reasoning.adjustments[0]!.kind).toBe("exam_ramp");
-    expect(view.reasoning.adjustments[0]!.text).toBe(
-      `OS midterm is in 7 days: study time is raised from 180 to ${view.reasoning.budget.minutes} min.`,
-    );
+    expect(view.reasoning.budget).toMatchObject({ basis: "preferred", minutes: 180, usualMinutes: 180 });
+    expect(view.reasoning.adjustments.map(a => a.text).join(" ")).not.toMatch(/raised/);
+    // Two topics, three hours a day and a week: it fits, so nothing is said.
+    expect(view.reasoning.shortfall).toBeNull();
   });
 
   it("explains a recovery day by the missed days behind it", () => {

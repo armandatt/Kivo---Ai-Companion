@@ -508,7 +508,7 @@ function view(): NovaTodayReady {
     recommendation: block("Deadlocks"), emptyReason: null, alternatives: [block("Paging", { durationMinutes: 20 })],
     activeSession: null, nextDeadline: null, upcoming: [], weakArea: null, reviewDue: { count: 0, topics: [] }, constraints: [],
     progress: { sessionsThisWeek: 0, minutesThisWeek: 0, streakDays: 0, daysSinceLastSession: null, lastSession: null },
-    plan: { mode: "standard", blockCount: 2, totalMinutesToday: 45, budgetMinutes: 180, budgetBasis: "preferred", assumptions: [] },
+    plan: { mode: "standard", blockCount: 2, totalMinutesToday: 45, budgetMinutes: 180, budgetBasis: "preferred", assumptions: [], shortfall: null },
   };
 }
 
@@ -525,7 +525,7 @@ function fullContext(understanding: AcademicUnderstanding): NovaContext {
     signals: { detectedSignals: [], stateUpdates: [] },
     userProfile: { displayName: "Asha", goals: ["Clear the OS midterm with an A"], yearOfStudy: 2, major: "CS", institution: "Bennett", preferredStudyHoursPerDay: 3, subjects: ["Operating Systems"], daysSinceJoined: 40 },
     topicMastery: { topicName: "Deadlocks", subjectName: "Operating Systems", masteryProbability: 0.38, retentionEstimate: 0.5, confidenceReported: 0.6, calibrationGap: 0.22, masteryTrend: "rising", reviewCount: 2, lastStudied: null } as never,
-    examContext: { examTitle: "OS midterm", subjectName: "Operating Systems", daysUntil: 5, mode: "ramp", primaryFocus: "weak topics", riskMatrix: { critical: ["Deadlocks"] }, recommendedDailyHours: 3 } as never,
+    examContext: { examTitle: "OS midterm", subjectName: "Operating Systems", daysUntil: 5, mode: "ramp", primaryFocus: "weak topics", riskMatrix: { critical: ["Deadlocks"] } } as never,
     studyPlan: null, activeSession: null, sessionContext: null, sessionAction: null,
     patterns: { detectedPatterns: [], dominantPattern: { type: "excuse_loop", severity: "established", confidence: 0.8, occurrences: 4, recommendation: "name it", evidence: [] } as never, analysisRunAt: new Date(), messagesSinceLastRun: 1 },
     topRelevantMemories: [{ factType: "commitment", value: "said they would revise OS nightly", confidence: 0.8 } as never],

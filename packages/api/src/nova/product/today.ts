@@ -10,6 +10,7 @@ import type { StudySnapshotResult } from "../engines/study-snapshot";
 import { calendarDaysUntil } from "../engines/learner-calendar";
 import { daysOverdue, getOverdueTopics, isDueForReview } from "../engines/retention-engine";
 import { loadPlanningInputs, planEmptyReason, planMode } from "./planning-inputs";
+import { shortfallView } from "./shortfall";
 import type { AcademicState } from "../types/academic-state.types";
 import type { ExamContext, StudyBlock, StudyPlan, TopicMasteryState } from "../types/engine.types";
 import type {
@@ -190,6 +191,11 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
       budgetMinutes:     plan.budgetMinutes,
       budgetBasis:       plan.budgetBasis,
       assumptions:       plan.assumptions,
+      shortfall:         shortfallView(plan.shortfall, {
+        dailyMinutesStated: snapshot.dailyMinutesStated !== null,
+        availableMinutes:   input.availableMinutes,
+        calendarDaysUntil:  examContext ? calendarDaysUntil(examContext.scheduledAt, now, input.timezone ?? null) : undefined,
+      }),
     },
   };
 }

@@ -6,6 +6,7 @@
 import type {
   PlanBudgetBasisName,
   PlanEmptyReason,
+  PlanShortfallView,
   TodayAction,
   TodayActiveSession,
   TodayConstraint,
@@ -65,7 +66,7 @@ export interface PlannerPressure extends TodayDeadline {
 }
 
 export type PlannerAdjustmentKind =
-  | "stated_time" | "exam_ramp" | "exam_crisis" | "recovery" | "no_pressure" | "overdue_first";
+  | "stated_time" | "exam_crisis" | "recovery" | "no_pressure" | "overdue_first";
 
 export interface PlannerReasoning {
   mode: "exam_crisis" | "recovery" | "standard";
@@ -90,6 +91,8 @@ export interface PlannerReasoning {
   }>;
   constraints: TodayConstraint[];
   assumptions: string[];
+  // The same statement Today shows, or null when the work fits.
+  shortfall:   PlanShortfallView | null;
 }
 
 // What Nova does not know. The page says so instead of filling the gap.

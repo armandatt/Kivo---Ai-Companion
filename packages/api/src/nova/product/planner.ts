@@ -12,6 +12,7 @@ import { ABANDONED_STATUS } from "../engines/session-clock";
 import { buildExamContext } from "../engines/exam-engine";
 import { loadPlanningInputs, planEmptyReason, planMode, type PlanningInputs } from "./planning-inputs";
 import { sessionElapsedSeconds } from "./session-view";
+import { shortfallView } from "./shortfall";
 import { toAction } from "./today";
 import type {
   NovaPlannerReady,
@@ -59,7 +60,6 @@ function buildReasoning(input: PlanningInputs, blocks: PlannerBlock[]): PlannerR
   const mode = planMode(academicState);
 
   const adjustments: PlannerReasoning["adjustments"] = [];
-  const exam = examContext ? `${examContext.examTitle} is ${inDays(examContext.daysUntil)}` : null;
 
   switch (plan.budgetBasis) {
     case "stated_time":
@@ -73,25 +73,11 @@ function buildReasoning(input: PlanningInputs, blocks: PlannerBlock[]): PlannerR
           : `Kept to ${budget} min at most: Nova is taking the pressure off while you recover.`,
       });
       break;
-    case "exam_crisis":
-      adjustments.push({
-        kind: "exam_crisis",
-        text: `${exam ?? "An exam is within three days"}: study time is raised from ${usualMinutes} to ${budget} min.`,
-      });
-      break;
     case "recovery":
       adjustments.push({
         kind: "recovery",
         text: `Cut from ${usualMinutes} to ${budget} min: ${academicState.consecutiveMisses} planned days were missed in a row.`,
       });
-      break;
-    case "exam_ramp":
-      if (budget > usualMinutes) {
-        adjustments.push({
-          kind: "exam_ramp",
-          text: `${exam ?? `An exam is ${inDays(academicState.daysUntilNextExam ?? 0)}`}: study time is raised from ${usualMinutes} to ${budget} min.`,
-        });
-      }
       break;
     case "preferred":
       break;
@@ -99,7 +85,10 @@ function buildReasoning(input: PlanningInputs, blocks: PlannerBlock[]): PlannerR
 
   // The mode changes what goes in the plan, separately from how long it is.
   if (mode === "exam_crisis" && blocks.length > 0 && blocks.every(b => b.activityType === "exam_prep")) {
-    adjustments.push({ kind: "exam_crisis", text: "Every block today is exam prep. Nothing else is scheduled." });
+    adjustments.push({
+      kind: "exam_crisis",
+      text: `${examContext ? `${examContext.examTitle} is ${inDays(examContext.daysUntil)}` : "An exam is within three days"}: every block today is exam prep, inside your usual time.`,
+    });
   }
   if (mode === "recovery" && plan.budgetBasis !== "recovery") {
     adjustments.push({
@@ -142,6 +131,11 @@ function buildReasoning(input: PlanningInputs, blocks: PlannerBlock[]): PlannerR
     subjects,
     constraints: input.constraints,
     assumptions: plan.assumptions,
+    shortfall:   shortfallView(plan.shortfall, {
+      dailyMinutesStated: snapshot.dailyMinutesStated !== null,
+      availableMinutes:   input.availableMinutes,
+      calendarDaysUntil:  examContext ? calendarDaysUntil(examContext.scheduledAt, input.now, input.timezone) : undefined,
+    }),
   };
 }
 

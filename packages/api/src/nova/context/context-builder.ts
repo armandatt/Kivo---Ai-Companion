@@ -139,7 +139,6 @@ function buildKnowledgeSection(ctx: NovaContext): string {
       `## Exam: ${e.examTitle} (${e.subjectName})`,
       `In ${e.daysUntil} days | Mode: ${e.mode} | Focus: ${e.primaryFocus}`,
       `Critical topics: ${e.riskMatrix.critical.join(", ") || "none"}`,
-      `Recommended: ${e.recommendedDailyHours}h/day`,
     ].join("\n"));
   }
 

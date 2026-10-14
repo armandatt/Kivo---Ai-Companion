@@ -172,7 +172,7 @@ describe("messages the Response Brain words", () => {
     recommendation: block, emptyReason: null, alternatives: [],
     activeSession: null, nextDeadline: null, upcoming: [], weakArea: null, reviewDue: { count: 0, topics: [] }, constraints: [],
     progress: { sessionsThisWeek: 0, minutesThisWeek: 0, streakDays: 0, daysSinceLastSession: null, lastSession: null },
-    plan: { mode: "standard", blockCount: 1, totalMinutesToday: 30, budgetMinutes: 180, budgetBasis: "preferred", assumptions: [] },
+    plan: { mode: "standard", blockCount: 1, totalMinutesToday: 30, budgetMinutes: 180, budgetBasis: "preferred", assumptions: [], shortfall: null },
   };
   const promptOf = () => (generateOpenAIText.mock.calls[0]![0] as { prompt: string }).prompt;
 
