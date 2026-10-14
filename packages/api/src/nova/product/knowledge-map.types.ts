@@ -17,7 +17,9 @@ interface NodeBase {
   // Unique on the map: "<type>:<row id>".
   id:        string;
   label:     string;
-  // Where the item itself lives in the app. null: it has no page of its own.
+  // Where the item itself lives in the app: the note, that topic or subject
+  // on Knowledge, that page's own row on Saved. Never a list the learner has
+  // to search again. null: it has no page of its own.
   href:      string | null;
   // The subject it belongs to or was filed under. null: none.
   subjectId: string | null;

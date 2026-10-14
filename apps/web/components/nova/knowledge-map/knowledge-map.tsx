@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
+import { useStartSession } from '../use-start-session'
 import { ArrowUpRight, Maximize2, Minus, Plus, Search, X } from 'lucide-react'
 import type { MapNode, MapNodeType, NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
 import { layoutMap } from './layout'
@@ -27,7 +28,15 @@ const day   = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day
 type View = { x: number; y: number; k: number }
 const MIN_K = 0.25, MAX_K = 2.5
 
+// A session started from the map has no planned block behind it, so it is
+// the length of an ordinary one.
+const MAP_SESSION_MINUTES = 25
+
+// How far one arrow key moves the map, in screen pixels.
+const PAN_STEP = 60
+
 function Detail({ node, neighbours, onPick, onClose }: { node: MapNode; neighbours: MapNode[]; onPick: (id: string) => void; onClose: () => void }) {
+  const { start, starting, error: startError } = useStartSession()
   const facts: Array<[string, string]> = []
   if (node.type === 'subject') {
     facts.push(['Topics', String(node.topics)], ['Notes', String(node.notes)], ['Saved pages', String(node.resources)])
@@ -46,7 +55,11 @@ function Detail({ node, neighbours, onPick, onClose }: { node: MapNode; neighbou
     if (node.topicName) facts.push(['Topic', node.topicLinked ? node.topicName : `${node.topicName} (not one of that subject's topics yet)`])
     facts.push([node.kind === 'study_requested' ? 'Asked to study' : 'Saved', day(node.savedAt)])
   }
-  const open = node.type === 'note' ? 'Open note' : node.type === 'resource' ? 'Open in Saved' : 'Open in Knowledge'
+  const open = node.type === 'note' ? 'Open note' : node.type === 'resource' ? 'Open in Saved' : node.type === 'topic' ? 'Open this topic' : 'Open this subject'
+  // A new note filed where this node is. The note editor reads both from the address.
+  const noteHere = node.type === 'topic' ? `/notes/new?subjectId=${encodeURIComponent(node.subjectId ?? '')}&topic=${encodeURIComponent(node.label)}`
+    : node.type === 'subject' ? `/notes/new?subjectId=${encodeURIComponent(node.subjectId ?? '')}` : null
+  const secondary = 'inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/85 transition-colors hover:bg-white/5 disabled:opacity-50'
 
   return (
     <aside aria-label="Selected item" className="flex max-h-[46vh] flex-col overflow-y-auto border-t border-white/8 bg-card p-5 lg:max-h-none lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0">
@@ -77,11 +90,21 @@ function Detail({ node, neighbours, onPick, onClose }: { node: MapNode; neighbou
           <Link href={node.href} className="inline-flex h-10 items-center justify-center rounded-xl bg-keppel-400 px-4 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300">{open}</Link>
         )}
         {node.type === 'resource' && (
-          <a href={node.url} target="_blank" rel="noopener noreferrer" className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/85 transition-colors hover:bg-white/5">
+          <a href={node.url} target="_blank" rel="noopener noreferrer" className={secondary}>
             Visit page <ArrowUpRight className="size-3.5" />
           </a>
         )}
+        {/* The ordinary start, on this topic under its own subject. */}
+        {node.type === 'topic' && (
+          <button type="button" disabled={starting !== null} data-start-topic
+            onClick={() => void start({ topicName: node.label, subjectName: node.subjectName, durationMinutes: MAP_SESSION_MINUTES }, node.id)}
+            className={secondary}>
+            {starting === node.id ? 'Starting…' : `Start a ${MAP_SESSION_MINUTES} min session`}
+          </button>
+        )}
+        {noteHere && <Link href={noteHere} className={secondary} data-note-here>New note here</Link>}
       </div>
+      {startError && <p role="alert" className="mt-3 text-sm text-red-300">{startError}</p>}
 
       <div className="mt-6">
         <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-foreground/45">Connected to</h3>
@@ -252,8 +275,22 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
 
         <div
           ref={frame}
-          className="relative min-h-[22rem] flex-1 touch-none select-none overflow-hidden"
+          className="relative min-h-[22rem] flex-1 touch-none select-none overflow-hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-keppel-300"
           style={{ cursor: drag.current ? 'grabbing' : 'grab' }}
+          // The map can be moved without a pointer: arrow keys pan it, plus and
+          // minus zoom, 0 fits it. Only while the map itself has focus, so the
+          // keys keep their meaning on a node or in the search box.
+          tabIndex={0} role="group" aria-label="Knowledge map. Arrow keys move it, plus and minus zoom, zero fits it all. Tab reaches each item."
+          onKeyDown={e => {
+            if (e.target !== e.currentTarget) return
+            const step = e.shiftKey ? PAN_STEP * 3 : PAN_STEP
+            const move: Record<string, [number, number]> = { ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] }
+            const by = move[e.key]
+            if (by) { e.preventDefault(); setT(v => ({ ...v, x: v.x + by[0], y: v.y + by[1] })) }
+            else if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomAt(1.25) }
+            else if (e.key === '-') { e.preventDefault(); zoomAt(0.8) }
+            else if (e.key === '0') { e.preventDefault(); fit() }
+          }}
           onPointerDown={e => { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); drag.current = { x: e.clientX, y: e.clientY, moved: false } }}
           onPointerMove={e => {
             const d = drag.current
@@ -269,7 +306,8 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
           {nodes.length === 0 ? (
             <p className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm text-foreground/50">Nothing matches these filters. Turn one back on to see the map.</p>
           ) : (
-            <svg className="absolute inset-0 size-full" role="img" aria-label={`Knowledge map: ${nodes.length} items and ${edges.length} links`}>
+            // A group, not an image: it holds the items a keyboard reaches.
+            <svg className="absolute inset-0 size-full" role="group" aria-label={`${nodes.length} items and ${edges.length} links`}>
               <g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>
                 {layout.loose && (
                   <text x={layout.loose.x - 40} y={layout.loose.y - 44} className="fill-foreground/45" fontSize={12 * Math.min(textScale, 2.2)}>Not filed under a subject</text>

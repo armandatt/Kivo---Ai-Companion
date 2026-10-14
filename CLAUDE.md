@@ -418,6 +418,9 @@ Held by `knowledge-map.test.ts` and `nova-workspace.itest.ts`. `/map`, `GET /api
 - **A read model of links that are stored.** Nodes are subjects, topics, notes and saved pages. Edges are: a topic's subject; a note or saved page filed under a subject; and under a topic when it names one of that subject's topics (compared trimmed, single-spaced, any case). Nothing is inferred and no edge is added for looks. What is filed under nothing is drawn unconnected, and the view says how many such items there are.
 - It writes nothing, calls no model, and reads notes and saved pages only through `listNoteLinks` and `listResourceLinks` in their owning modules. A note's body is never read for the map.
 - A topic has a level only when a session stands behind it; one with none is drawn as a dashed ring.
+- **A node opens its own record**, never a list to search again: a note at `/notes/<id>`, a topic at `/knowledge?topic=<id>` (the row opens and scrolls into view), a subject at `/knowledge?subject=<id>`, a saved page at `/saved?page=<id>` (its row is marked). The pages read those ids from the address in an effect.
+- **From a topic node** the learner can start a 25-minute session (the ordinary `start`, through `useStartSession`) or write a note filed there; from a subject node, a note. Nothing can be linked, unlinked or scoped to a goal from the map: goals are free text with no id, and re-filing is done on the note or saved page itself.
+- **Keyboard.** Each node is a focusable button. With the map itself focused, arrow keys pan (Shift for bigger steps), `+`/`-` zoom and `0` fits. The drawing is `role="group"`, not an image.
 - The layout (`components/nova/knowledge-map/layout.ts`) is deterministic and has no dependency: the same data draws the same map. Do not add a physics library or generate edges with a model.
 
 ## Themes

@@ -14,6 +14,15 @@ import { removeResource } from './saved-api'
 function ResourceRow({ resource, onRemoved }: { resource: LearningResource; onRemoved: () => void }) {
   const [removing, setRemoving] = useState(false)
   const filed = [resource.subjectName, resource.topicName].filter(Boolean).join(' · ')
+  // A link from the Knowledge Map names this page (?page=<id>): its row is
+  // brought into view and marked.
+  const [linked, setLinked] = useState(false)
+  const row = useRef<HTMLLIElement>(null)
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('page') !== resource.id) return
+    setLinked(true)
+    row.current?.scrollIntoView({ block: 'center' })
+  }, [resource.id])
 
   async function remove() {
     if (!window.confirm('Remove this page from Nova?')) return
@@ -23,7 +32,8 @@ function ResourceRow({ resource, onRemoved }: { resource: LearningResource; onRe
   }
 
   return (
-    <li data-resource={resource.id} data-resource-title={resource.title} className="px-4 py-4 sm:px-5">
+    <li ref={row} data-resource={resource.id} data-resource-title={resource.title} data-linked={linked || undefined}
+      className={`px-4 py-4 sm:px-5 ${linked ? 'bg-keppel-400/5' : ''}`}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0">
           <a href={resource.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-full items-center gap-1.5 text-[15px] font-medium text-foreground/90 underline-offset-4 hover:text-keppel-200 hover:underline">

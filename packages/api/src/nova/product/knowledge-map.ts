@@ -73,7 +73,7 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
     const id = `resource:${r.id}`;
     const at = place(id, r.subjectId, r.topicName, "resources");
     return {
-      id, type: "resource", label: r.title || r.domain, href: "/saved", subjectId: at.subjectId,
+      id, type: "resource", label: r.title || r.domain, href: `/saved?page=${encodeURIComponent(r.id)}`, subjectId: at.subjectId,
       subjectName: at.subjectId ? subjectName.get(at.subjectId)! : null,
       topicName: r.topicName, topicLinked: at.topicLinked,
       url: r.url, domain: r.domain, savedAt: r.occurredAt.toISOString(),
@@ -88,7 +88,7 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
     const known   = masteryLevel(t);
     const studied = known !== "unverified";
     return {
-      id, type: "topic", label: t.name, href: "/knowledge", subjectId: t.subjectId, subjectName: subjectName.get(t.subjectId)!,
+      id, type: "topic", label: t.name, href: `/knowledge?topic=${encodeURIComponent(t.id)}`, subjectId: t.subjectId, subjectName: subjectName.get(t.subjectId)!,
       sessions: t.reviewCount,
       level: known === "unverified" ? null : known,
       masteryPercent: studied ? Math.round(t.masteryProbability * 100) : null,
@@ -98,7 +98,7 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
   const subjectNodes: MapNode[] = input.subjects.map(s => {
     const id = `subject:${s.id}`;
     return {
-      id, type: "subject", label: s.name, href: "/knowledge", subjectId: s.id,
+      id, type: "subject", label: s.name, href: `/knowledge?subject=${encodeURIComponent(s.id)}`, subjectId: s.id,
       topics: topics.filter(t => t.subjectId === s.id).length,
       notes: tally.get(id)?.notes ?? 0, resources: tally.get(id)?.resources ?? 0,
     };

@@ -32,8 +32,10 @@ describe("nodes", () => {
     const map = buildKnowledgeMap(input({ notes: [note("n1", "os", null)], resources: [page("r1", "os", null)] }));
     const href = Object.fromEntries(map.nodes.map(n => [n.id, n.href]));
     expect(href["note:n1"]).toBe("/notes/n1");
-    expect(href["resource:r1"]).toBe("/saved");
-    expect(href["topic:t1"]).toBe("/knowledge");
+    // Each node opens its own record, not a list to search again.
+    expect(href["resource:r1"]).toBe("/saved?page=r1");
+    expect(href["topic:t1"]).toBe("/knowledge?topic=t1");
+    for (const node of map.nodes) if (node.type === "subject") expect(node.href).toBe(`/knowledge?subject=${node.subjectId}`);
   });
 
   it("gives a topic a level only when a session stands behind it", () => {
@@ -129,5 +131,43 @@ describe("the map is a read model", () => {
     expect(source).not.toMatch(/prisma\.(novaNote|novaLearningEvent)\b/);
     // And nothing of what a note says is read for the map.
     expect(read("product/notes.ts").split("listNoteLinks")[1]).not.toMatch(/body: true/);
+  });
+});
+
+// ── The page: opening, acting and moving without a pointer ────────────────────
+// Read from the web source: nothing here renders the map, so these show what
+// the page is written to do, not that a browser does it.
+
+describe("the map page (read from source)", () => {
+  const { readFileSync } = jest.requireActual("node:fs") as typeof import("node:fs");
+  const { join } = jest.requireActual("node:path") as typeof import("node:path");
+  const web = (file: string) => readFileSync(join(__dirname, "../../../../../apps/web/components/nova", file), "utf8");
+  const page = web("knowledge-map/knowledge-map.tsx");
+
+  it("a topic or subject link opens that record on Knowledge, and a page link marks its row on Saved", () => {
+    const knowledge = web("knowledge/subject-topics.tsx");
+    expect(knowledge).toContain("if (linkedId('topic') !== topic.id) return");
+    expect(knowledge).toContain("if (linkedId('subject') !== subject.subjectId) return");
+    expect(knowledge).toContain("row.current?.scrollIntoView({ block: 'center' })");
+    expect(web("saved/nova-saved.tsx")).toContain("new URLSearchParams(window.location.search).get('page') !== resource.id");
+  });
+
+  it("a topic can be studied from the map with the ordinary start, and a note written where the node is", () => {
+    expect(page).toContain("start({ topicName: node.label, subjectName: node.subjectName, durationMinutes: MAP_SESSION_MINUTES }, node.id)");
+    expect(page).toContain("`/notes/new?subjectId=${encodeURIComponent(node.subjectId ?? '')}&topic=${encodeURIComponent(node.label)}`");
+    // The page starts a session only through the shared hook; it writes nothing itself.
+    expect(page).not.toContain("fetch(");
+  });
+
+  it("the drawing is a group that holds its items, not an image", () => {
+    expect(page).not.toContain('role="img"');
+    expect(page).toContain('<svg className="absolute inset-0 size-full" role="group"');
+    expect(page).toContain('role="button" tabIndex={0} aria-label={`${TYPE_LABEL[n.type]}: ${n.label}`} aria-pressed={on}');
+  });
+
+  it("the map moves, zooms and fits from the keyboard, only while the map itself has focus", () => {
+    expect(page).toContain("if (e.target !== e.currentTarget) return");
+    for (const key of ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]) expect(page).toContain(`${key}: [`);
+    expect(page).toContain("else if (e.key === '0') { e.preventDefault(); fit() }");
   });
 });
