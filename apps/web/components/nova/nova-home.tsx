@@ -8,12 +8,14 @@ import { RecommendationCard } from './recommendation-card'
 import { TalkToNova } from './talk-to-nova'
 import { ShortfallNote } from './shortfall-note'
 import { RecoveryCard } from './recovery-card'
-import { FocusContext, hasFocusContext, useFocusContext } from './focus-context'
+import { useFocusContext } from './focus-context'
+import { LinkedToTopic } from './linked-to-topic'
 import { TimeAvailable } from './time-available'
 import type { NovaNotesView } from '@repo/api/nova/product/notes.types'
 import type { NovaCreatureView } from '@repo/api/nova/product/creature.types'
+import type { NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
 import { AccountingFor, UpNext, WorkingToward } from './today-sections'
-import { CompanionCard, ContinueLearning, Deadlines, QuickActions, WeekSoFar } from './home-panels'
+import { CompanionCard, ContinueLearning, Deadlines, PageProperties, QuickActions, WeekSoFar } from './home-panels'
 import { TodayTasks } from './tasks/today-tasks'
 import { useTasks } from './tasks/use-tasks'
 import { useNovaView } from './use-nova-view'
@@ -73,6 +75,8 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
   const board    = useTasks()
   const notes    = useNovaView<NovaNotesView>('/api/nova/notes')
   const creature = useNovaView<NovaCreatureView>('/api/nova/creature')
+  // The links around the recommended topic. An extra: Today never waits for it.
+  const map      = useNovaView<NovaKnowledgeMapView>('/api/nova/knowledge-map')
 
   const name   = firstName(view.learnerName)
   const active = view.activeSession
@@ -94,13 +98,16 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
 
   return (
     <div className="mx-auto w-full max-w-6xl pb-20 pt-10 lg:pt-4">
-      <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
+      {/* The page's title, its properties and where to go from here */}
+      <header className="space-y-5 border-b border-white/8 pb-6">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-foreground/45">Today</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
             {greeting(new Date())}{name ? `, ${name}` : ''}
           </h1>
           <p className="mt-2 text-sm text-foreground/55">{contextLine(view)}</p>
         </div>
+        <PageProperties view={view} />
         <QuickActions />
       </header>
 
@@ -146,7 +153,9 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
             ) : null}
           </section>
 
-          {!active && hasFocusContext(recContext) && <FocusContext view={recContext} />}
+          {!active && rec && (
+            <LinkedToTopic topicName={rec.topicName} subjectName={rec.subjectName} context={recContext} map={map} />
+          )}
 
           {!active && view.plan.shortfall && <ShortfallNote shortfall={view.plan.shortfall} timeHref="/planner" />}
 

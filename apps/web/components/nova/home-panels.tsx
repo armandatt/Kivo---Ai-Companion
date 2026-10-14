@@ -146,15 +146,60 @@ const ACTIONS = [
   { href: '/saved', label: 'Saved pages', icon: Bookmark },
 ] as const
 
+// The page's own command bar: the places a learner goes from Today.
 export function QuickActions() {
   return (
-    <nav aria-label="Quick actions" className="flex flex-wrap gap-2">
+    <nav aria-label="Quick actions" className="flex flex-wrap items-center gap-1 rounded-xl border border-white/8 bg-card/40 p-1">
       {ACTIONS.map(({ href, label, icon: Icon }) => (
-        <Link key={href} href={href} className="inline-flex h-9 items-center gap-2 rounded-full border border-white/10 px-3.5 text-xs font-medium text-foreground/75 transition-colors hover:border-white/20 hover:bg-white/4 hover:text-foreground">
-          <Icon className="size-3.5" />{label}
+        <Link key={href} href={href} className="inline-flex h-8 items-center gap-2 rounded-lg px-3 text-xs font-medium text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground">
+          <Icon aria-hidden className="size-3.5" />{label}
         </Link>
       ))}
     </nav>
+  )
+}
+
+const MODE_LABEL: Record<NovaTodayReady['plan']['mode'], string> = {
+  standard:    'Standard day',
+  exam_crisis: 'Exam prep',
+  recovery:    'Recovery',
+}
+
+// What set the length of today's plan, in a few words. The Planner explains it
+// in full; these only name the rule the server reported.
+const BASIS_LABEL: Record<NovaTodayReady['plan']['budgetBasis'], string> = {
+  preferred:   'your usual time',
+  stated_time: 'the time you gave',
+  recovery:    'cut back after missed days',
+  reentry:     'first day back',
+  no_pressure: 'kept light',
+}
+
+// The day's properties, as Today reported them. A property with nothing on
+// record is left out, never shown as zero.
+export function PageProperties({ view }: { view: NovaTodayReady }) {
+  const { plan, progress, reviewDue, nextDeadline } = view
+  const rows: Array<{ label: string; value: string; tone?: 'warn' }> = [
+    { label: 'Plan', value: MODE_LABEL[plan.mode] },
+  ]
+  if (plan.blockCount > 0) {
+    rows.push({ label: 'Time', value: `${minutesLabel(plan.totalMinutesToday)} planned of ${minutesLabel(plan.budgetMinutes)}, ${BASIS_LABEL[plan.budgetBasis]}` })
+  }
+  if (nextDeadline) {
+    rows.push({ label: nextDeadline.kindLabel, value: `${nextDeadline.title}, ${inDays(nextDeadline.daysUntil)}`, tone: nextDeadline.daysUntil <= 7 ? 'warn' : undefined })
+  }
+  if (reviewDue.count > 0) rows.push({ label: 'Reviews due', value: String(reviewDue.count) })
+  if (progress.streakDays > 1) rows.push({ label: 'In a row', value: `${progress.streakDays} days` })
+
+  return (
+    <dl aria-label="Today at a glance" data-section="page-properties" className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+      {rows.map(row => (
+        <div key={row.label} className="flex min-w-0 items-baseline gap-2">
+          <dt className="shrink-0 text-xs text-foreground/45">{row.label}</dt>
+          <dd className={row.tone === 'warn' ? 'truncate font-medium text-amber-300' : 'truncate text-foreground/85'}>{row.value}</dd>
+        </div>
+      ))}
+    </dl>
   )
 }
 
