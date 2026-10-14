@@ -67,7 +67,7 @@ const EXTENSION_FACTS = [
 ]
 
 const PAGES = [
-  { href: '/home',         label: 'Today',         icon: Home,        body: 'The one thing to do next, your tasks, deadlines and where you left off.' },
+  { href: '/home',         label: 'Today',         icon: Home,        body: 'The one thing to do next, what you have linked to its topic, and the rest of today’s plan in order, then your tasks. Around it: your dates, this week beside the eight before, where you left off, your goals, every subject with its topics, and what you wrote or saved last.' },
   { href: '/planner',      label: 'Planner',       icon: Calendar,    body: 'The study plan for the days ahead, and a task board you drag cards across.' },
   { href: '/focus',        label: 'Focus',         icon: Timer,       body: 'The session timer. Ends by asking how it went.' },
   { href: '/knowledge',    label: 'Knowledge',     icon: BookOpen,    body: 'Every topic by subject, with where each one stands.' },
