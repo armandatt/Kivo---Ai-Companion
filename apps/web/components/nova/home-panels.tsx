@@ -210,7 +210,9 @@ const MODE_LABEL: Record<NovaTodayReady['plan']['mode'], string> = {
 // What set the length of today's plan, in a few words. The Planner explains it
 // in full; these only name the rule the server reported.
 const BASIS_LABEL: Record<NovaTodayReady['plan']['budgetBasis'], string> = {
-  preferred:   'your usual time',
+  // Not "your usual time": with none stated, the length is assumed (the plan's
+  // assumptions say so), so this names the setting, as setup does.
+  preferred:   'a normal day',
   stated_time: 'the time you gave',
   recovery:    'cut back after missed days',
   reentry:     'first day back',
