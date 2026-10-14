@@ -31,8 +31,8 @@ describe("Today keeps what it already did", () => {
   it("still starts a focus session from a task", () => {
     expect(home).toContain("onStart={active ? undefined : task => start({ topicName: task.topicName!, subjectName: task.subjectName!, durationMinutes: TASK_SESSION_MINUTES }, `task:${task.id}`)}");
   });
-  it("does not wait for the map: the recommendation renders whatever the map request does", () => {
-    expect(home.indexOf("<RecommendationCard")).toBeLessThan(home.indexOf("<LinkedToTopic"));
+  it("does not wait for the map: the plan, with the block to do now, renders whatever the map request does", () => {
+    expect(home.indexOf("<TodayPlan")).toBeLessThan(home.indexOf("<LinkedToTopic"));
     expect(home).not.toMatch(/map\.(loading|error)/);
   });
 });
@@ -113,5 +113,24 @@ describe("Today's side column", () => {
     for (const part of ["<WorkingToward goals={view.goals} />", "<AccountingFor constraints={view.constraints} />", "<CompanionCard", "<TelegramCard />"]) {
       expect(home).toContain(part);
     }
+  });
+});
+
+describe("acting from Today without leaving it", () => {
+  const tasks   = web("components/nova/tasks/today-tasks.tsx");
+  const palette = web("components/nova/workspace/command-palette.tsx");
+  const sidebar = web("components/sidebar.tsx");
+  it("puts a ticked task back the way it was when the learner undoes it", () => {
+    expect(tasks).toContain("setDone({ id: task.id, title: task.title, was: task.status })");
+    expect(tasks).toContain("onUpdate(done.id, { status: done.was })");
+  });
+  it("searches only what the server returned, and creates through the existing task route or the note editor", () => {
+    expect(palette).toContain("commandEntries({ pages: NOVA_ROUTES, nodes, tasks })");
+    expect(palette).toContain("await onCreateTask(typed)");
+    expect(palette).toContain("go(`/notes/new?title=${encodeURIComponent(typed)}`)");
+    expect(palette).not.toContain("fetch(");
+  });
+  it("groups the sidebar without dropping a page", () => {
+    expect(sidebar).toContain("const rest = items.filter(i => !NOVA_GROUPS.some(g => g.paths.includes(i.href)))");
   });
 });
