@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { groundDurations, groundTopics, statedDurations, UNGROUNDED_REPLY_FALLBACK } from "../brains/grounded-reply";
-import { buildDynamicLayer, buildFocusedLayer, NOTHING_RECOMMENDED } from "../context/context-builder";
+import { buildDynamicLayer, buildFocusedLayer, NOTHING_RECOMMENDED, REENTRY_LINE } from "../context/context-builder";
 import { contextNeeds } from "../interaction/semantics";
 import type { NovaContext } from "../types/context.types";
 import type { AcademicUnderstanding } from "../types/understanding.types";
@@ -87,6 +87,14 @@ describe("what the model is told when nothing recommends what to study", () => {
 
   it("facts a surface gave (an advice verdict) count as what is recommended", () => {
     expect(buildFocusedLayer(ctx(), ["session", "plan"], ["Recommended now: Light, 25 min"])).not.toContain(NOTHING_RECOMMENDED);
+  });
+
+  it("a first day back: states the calendar gap and that the shorter day and any task moves were not the model's doing", () => {
+    const layer = buildDynamicLayer({ ...ctx(), daysSinceStudy: 6, reentryDay: true });
+    expect(layer).toContain("Since last session: 6 calendar days");
+    expect(layer).toContain(REENTRY_LINE);
+    expect(REENTRY_LINE).toContain("you cannot accept it");
+    expect(buildDynamicLayer({ ...ctx(), daysSinceStudy: 1, reentryDay: false })).not.toContain(REENTRY_LINE);
   });
 });
 

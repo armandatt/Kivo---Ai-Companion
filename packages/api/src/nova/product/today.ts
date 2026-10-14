@@ -7,7 +7,7 @@
 
 import { examCoversSubject } from "../engines/exam-engine";
 import type { StudySnapshotResult } from "../engines/study-snapshot";
-import { calendarDaysUntil } from "../engines/learner-calendar";
+import { calendarDaysUntil, dayKey, dayNumber, resolveTimezone } from "../engines/learner-calendar";
 import { daysOverdue, getOverdueTopics, isDueForReview } from "../engines/retention-engine";
 import { loadPlanningInputs, planEmptyReason, planMode } from "./planning-inputs";
 import { shortfallView } from "./shortfall";
@@ -40,10 +40,6 @@ export interface TodayInputs {
   learnerName?:     string | null;
   goals?:           string[];
   now:              Date;
-}
-
-function daysBetween(later: Date, earlier: Date): number {
-  return Math.floor((later.getTime() - earlier.getTime()) / DAY_MS);
 }
 
 // The facts behind a block, stated the way a student would want to hear them.
@@ -183,7 +179,9 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
       sessionsThisWeek:     thisWeek.length,
       minutesThisWeek:      thisWeek.reduce((sum, s) => sum + s.durationMinutes, 0),
       streakDays:           academicState.studyStreakDays,
-      daysSinceLastSession: last ? Math.max(0, daysBetween(now, last.sessionDate)) : null,
+      // Calendar days in the learner's zone, the count the recovery card and
+      // the Planner give for the same session.
+      daysSinceLastSession: last ? Math.max(0, dayNumber(dayKey(now, resolveTimezone(input.timezone ?? null))) - dayNumber(dayKey(last.sessionDate, resolveTimezone(input.timezone ?? null)))) : null,
       lastSession:          last ? { topicName: last.topicName, date: last.sessionDate.toISOString(), minutes: last.durationMinutes } : null,
     },
 

@@ -14,6 +14,7 @@ import { getAllTopicMasteries } from "../engines/knowledge-engine";
 import { selectActiveExam } from "../engines/exam-engine";
 import { preparesTopics, takesOverTheDay } from "./deadline-types";
 import { generateStudyPlan, MIN_BLOCK_MINUTES } from "../engines/planning-engine";
+import { countedStudyDays, studyGap } from "../engines/recovery-engine";
 import { calendarDaysUntil, dayKey, resolveTimezone } from "../engines/learner-calendar";
 import { DNA_LEVEL_RANK, type DnaSignal } from "../engines/learning-dna-engine";
 import { loadLearningDna } from "../persistence/learning-dna-store";
@@ -79,6 +80,9 @@ export interface PlanningInputs {
   timezone:      string | null;
   preferredStudyTime: string | null;
   now:           Date;
+  // Calendar days since the last day with a counted session (0: today);
+  // null with none on record. Unset in older fixtures.
+  daysSinceStudy?: number | null;
 }
 
 export type PlanningInputsResult =
@@ -199,11 +203,14 @@ export async function loadPlanningInputs(
   // today (on any surface) still stands until their day ends.
   const availableMinutes = normalizeAvailableMinutes(options.availableMinutes)
     ?? statedMinutesFor(profile, now);
+  // Back after a gap: today is planned as a re-entry day (recovery-engine).
+  const gap = studyGap(dayKey(now, resolveTimezone(profile.timezone)), countedStudyDays(snapshot.studySessions, profile.timezone));
   const plan = generateStudyPlan(
     academicState, topics, snapshot.preferredStudyHoursPerDay, examContext,
     {
       availableMinutes, now, usualSessionMinutes: usualSessionMinutes(dna?.signals ?? []),
       examCalendarDays: examContext ? calendarDaysUntil(examContext.scheduledAt, now, profile.timezone) : null,
+      reentry: gap.situation === "returning",
     },
   );
 
@@ -221,6 +228,7 @@ export async function loadPlanningInputs(
       goals:              profile.goals,
       timezone:           profile.timezone,
       preferredStudyTime: profile.preferredStudyTime,
+      daysSinceStudy:     gap.daysSinceStudy,
     },
   };
 }

@@ -6,6 +6,8 @@
 
 import { examCoversSubject } from "./exam-engine";
 import type { PlanBudgetBasis, PlanShortfall, StudyBlock, StudyPlan } from "../types/engine.types";
+import { reentryMinutes } from "./recovery-engine";
+import { classifyChange } from "../decision/plan-change-policy";
 import type { AcademicState } from "../types/academic-state.types";
 import type { TopicMasteryState } from "../types/engine.types";
 import type { ExamContext } from "../types/engine.types";
@@ -56,6 +58,11 @@ export interface PlanOptions {
   // sessions run 15 minutes is not handed 30-minute blocks they do not do.
   // It only shortens, and only when they have not said how long they have.
   usualSessionMinutes?: number | null;
+  // A first day back after four or more days without study (isReentryDay in
+  // recovery-engine.ts). The usual day is planned shorter, where the plan
+  // change policy lets that happen by itself: not over a time they stated,
+  // not while an exam takes the day, not on top of another cut.
+  reentry?: boolean;
   // How far off the active date is in the learner's own calendar days (0 is
   // today). Given, the shortfall counts study days from it, so the time it
   // says is left agrees with the "in N days" the pages show. Unset: the
@@ -203,9 +210,19 @@ export function generateStudyPlan(
   options:              PlanOptions = {},
 ): StudyPlan {
   const now            = options.now ?? new Date();
-  const budget         = fitBudgetToAvailableTime(
+  const fitted         = fitBudgetToAvailableTime(
     computeDailyBudget(preferredHoursPerDay, state), options.availableMinutes,
   );
+  // Exam prep is for the topics the exam is about: its own subject's. A
+  // topic from another subject is never called exam prep for this exam.
+  const examTopics = examContext ? topics.filter(t => examCoversSubject(examContext, t.subjectName)) : [];
+  const examTakesDay = !!examContext && state.hardDirectives.examCrisisMode && examTopics.length > 0;
+  const budget         = options.reentry && fitted.basis === "preferred" && classifyChange({
+    kind: "shorten_today", usualMinutes: fitted.minutes, minutes: reentryMinutes(fitted.minutes, MIN_BLOCK_MINUTES),
+    statedToday: false, dayTakenByExam: examTakesDay,
+  }).class === "automatic"
+    ? { minutes: reentryMinutes(fitted.minutes, MIN_BLOCK_MINUTES), basis: "reentry" as const }
+    : fitted;
   const budgetMinutes  = budget.minutes;
   const blocks: StudyBlock[] = [];
   const assumptions: string[] = [];
@@ -216,15 +233,12 @@ export function generateStudyPlan(
   const size = (wanted: number) => (cap === null ? wanted : Math.min(wanted, cap));
   if (cap !== null && cap < REVIEW_BLOCK_MINUTES) assumptions.push(`Blocks are kept to about ${cap} minutes, the length your own sessions usually run.`);
 
-  // Exam prep is for the topics the exam is about: its own subject's. A
-  // topic from another subject is never called exam prep for this exam.
-  const examTopics = examContext ? topics.filter(t => examCoversSubject(examContext, t.subjectName)) : [];
   const shortfall  = examShortfall({ examContext, examTopics, budget, dailyMinutes: preferredHoursPerDay * 60, calendarDays: options.examCalendarDays });
 
   // ── Exam crisis: all blocks are exam prep ────────────────────────────────
   // With no topic on record for the exam's subject there is nothing to
   // prepare from, and the day is planned the ordinary way instead.
-  if (examContext && state.hardDirectives.examCrisisMode && examTopics.length > 0) {
+  if (examContext && examTakesDay) {
     const prioritized = getExamPriorityOrder(examTopics, examContext.topicWeights);
     for (const topic of prioritized) {
       if (usedMinutes >= budgetMinutes) break;

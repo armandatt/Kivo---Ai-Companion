@@ -110,6 +110,7 @@ export type PlanBudgetBasis =
   | "preferred"     // the student's usual daily hours
   | "stated_time"   // what the student said they have today
   | "recovery"      // cut: recovering from a run of missed days
+  | "reentry"       // cut: a first day back after four or more days without study
   | "no_pressure";  // capped at 30 min: burnout risk
 
 export interface PlanShortfall {

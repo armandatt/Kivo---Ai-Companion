@@ -27,7 +27,7 @@ export type PlanEmptyReason =
 
 // No rule raises a day above the learner's own time.
 export type PlanBudgetBasisName =
-  | "preferred" | "stated_time" | "recovery" | "no_pressure";
+  | "preferred" | "stated_time" | "recovery" | "reentry" | "no_pressure";
 
 // The work still to do for the nearest exam does not fit the time before it.
 // Nova states it and offers these choices; it never adds time by itself.

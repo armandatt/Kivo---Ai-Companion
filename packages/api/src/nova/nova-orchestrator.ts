@@ -44,7 +44,8 @@ import { loadActiveRealityFacts } from "./adapters/reality-adapter";
 import { loadOperatingStyle } from "./adapters/operating-style-adapter";
 import { loadLearningContexts } from "./adapters/account-preferences-adapter";
 import { preparesTopics, takesOverTheDay } from "./product/deadline-types";
-import { calendarDaysUntil } from "./engines/learner-calendar";
+import { calendarDaysUntil, dayKey, resolveTimezone } from "./engines/learner-calendar";
+import { countedStudyDays, studyGap } from "./engines/recovery-engine";
 import { loadConversationHistory, loadSignalHistory, annotationTags } from "./adapters/conversation-adapter";
 import { loadPriorPatterns } from "./consolidation/stores/behavioral-pattern-store";
 import { persistTurn, persistTurnAsync } from "./persistence/nova-persistence";
@@ -251,6 +252,8 @@ export async function runNovaOrchestrator(
     .filter(e => e.scheduledAt.getTime() >= now.getTime())
     .sort((x, y) => x.scheduledAt.getTime() - y.scheduledAt.getTime())[0];
   const nextExamCalendarDays = nextDayTaker ? calendarDaysUntil(nextDayTaker.scheduledAt, now, zone) : null;
+  // Where the learner is after missed days, on their calendar (recovery-engine).
+  const gap = studyGap(dayKey(now, resolveTimezone(zone)), countedStudyDays(snapshot.studySessions, zone));
 
   // ── 10. Planning Engine (when plan explicitly requested) ──────────────────
   let studyPlan = null;
@@ -261,7 +264,8 @@ export async function runNovaOrchestrator(
       allTopics,
       snapshot.preferredStudyHoursPerDay,
       examContext,
-      { now, examCalendarDays },
+      // A first day back is planned as Home and the Planner plan it.
+      { now, examCalendarDays, reentry: gap.situation === "returning" },
     );
   }
 
@@ -311,6 +315,8 @@ export async function runNovaOrchestrator(
     examContext,
     examCalendarDays,
     nextExamCalendarDays,
+    daysSinceStudy: gap.daysSinceStudy,
+    reentryDay:     gap.situation === "returning",
     studyPlan,
     activeSession:      snapshot.activeSession,
     sessionContext,

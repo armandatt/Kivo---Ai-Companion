@@ -87,7 +87,7 @@ export interface PlannerPressure extends TodayDeadline {
 }
 
 export type PlannerAdjustmentKind =
-  | "stated_time" | "exam_crisis" | "recovery" | "no_pressure" | "overdue_first";
+  | "stated_time" | "exam_crisis" | "recovery" | "reentry" | "no_pressure" | "overdue_first";
 
 export interface PlannerReasoning {
   mode: "exam_crisis" | "recovery" | "standard";

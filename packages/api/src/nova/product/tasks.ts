@@ -237,3 +237,58 @@ export async function updateTask(profileId: string, taskId: string, raw: unknown
 export async function deleteTask(profileId: string, taskId: string): Promise<boolean> {
   return (await prisma.novaTask.deleteMany({ where: { id: taskId, profileId } })).count === 1;
 }
+
+// ── Recovery (product/recovery.ts) ────────────────────────────────────────────
+
+// Moves due days, all or none. Each move is guarded on the day the task has
+// now and on its being open, so a task the learner changed, finished or
+// removed meanwhile stops the whole set and nothing is written. A repeat of
+// a set that already went through finds no task where it was and also
+// writes nothing. Used to apply an accepted recovery proposal and to undo it.
+export async function moveTaskDueDays(
+  profileId: string,
+  moves: ReadonlyArray<{ taskId: string; from: string | null; to: string | null }>,
+): Promise<{ ok: true; moved: number } | { ok: false; error: "conflict" }> {
+  if (moves.length === 0) return { ok: true, moved: 0 };
+  class Stale extends Error {}
+  try {
+    // Rows are locked in one order (by id) whatever the caller's order, so two
+    // overlapping sets wait for each other instead of deadlocking.
+    const ordered = [...moves].sort((a, b) => a.taskId.localeCompare(b.taskId));
+    await prisma.$transaction(async tx => {
+      for (const m of ordered) {
+        const r = await tx.novaTask.updateMany({
+          where: { id: m.taskId, profileId, dueDay: m.from, status: { not: "done" } },
+          data:  { dueDay: m.to },
+        });
+        if (r.count !== 1) throw new Stale();
+      }
+    });
+    return { ok: true, moved: moves.length };
+  } catch (err) {
+    if (err instanceof Stale) return { ok: false, error: "conflict" };
+    throw err;
+  }
+}
+
+// Where each of these tasks is due now, for the learner's own tasks only.
+export async function taskDueDays(profileId: string, taskIds: string[]): Promise<Map<string, { dueDay: string | null; open: boolean }>> {
+  const rows = taskIds.length === 0 ? [] : await prisma.novaTask.findMany({
+    where: { profileId, id: { in: taskIds } }, select: { id: true, dueDay: true, status: true },
+  });
+  return new Map(rows.map(r => [r.id, { dueDay: r.dueDay, open: r.status !== "done" }]));
+}
+
+// The most tasks the learner has finished on one of their calendar days in
+// the last 90: how many a day suits them, from their own record. 0: none.
+export async function mostTasksDoneInADay(profileId: string, timezone: string | null, now: Date): Promise<number> {
+  const rows = await prisma.novaTask.findMany({
+    where: { profileId, status: "done", completedAt: { gte: new Date(now.getTime() - 90 * 86_400_000) } },
+    select: { completedAt: true },
+    take: 2_000,
+  });
+  const zone = resolveTimezone(timezone);
+  const perDay = new Map<string, number>();
+  for (const r of rows) if (r.completedAt) { const d = dayKey(r.completedAt, zone); perDay.set(d, (perDay.get(d) ?? 0) + 1); }
+  return Math.max(0, ...perDay.values());
+}

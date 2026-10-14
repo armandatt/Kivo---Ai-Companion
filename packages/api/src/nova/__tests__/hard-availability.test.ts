@@ -46,6 +46,7 @@ type Setup = {
   dailyMinutes?:     number | null;      // null: the learner has not said
   availableMinutes?: number | null;      // what they said they have today
   state?:            (s: AcademicState) => AcademicState;
+  reentry?:          boolean;            // a first day back after a gap
 };
 
 function inputs(setup: Setup): PlanningInputs {
@@ -76,10 +77,11 @@ function inputs(setup: Setup): PlanningInputs {
     {}, NOW,
   );
   const availableMinutes = setup.availableMinutes ?? null;
-  const plan = generateStudyPlan(academicState, setup.topics, snapshot.preferredStudyHoursPerDay, examContext, { availableMinutes, now: NOW });
+  const plan = generateStudyPlan(academicState, setup.topics, snapshot.preferredStudyHoursPerDay, examContext, { availableMinutes, now: NOW, reentry: setup.reentry });
   return {
     snapshot, academicState, topics: setup.topics, examContext, plan, constraints: [], goals: [],
     timezone: "UTC", preferredStudyTime: null, now: NOW, availableMinutes,
+    daysSinceStudy: setup.reentry ? 5 : null,
   };
 }
 
@@ -334,5 +336,53 @@ describe("no rule raises the day", () => {
   it("the model is not told to recommend hours a day", () => {
     expect(read("context/context-builder.ts")).not.toContain("h/day");
     expect(read("engines/exam-engine.ts")).not.toContain("recommendedDailyHours");
+  });
+});
+
+// ── A first day back (recovery-engine.ts, plan-change-policy.ts) ──────────────
+
+describe("a first day back after a gap", () => {
+  it("is planned shorter by itself, and says why and that nothing was saved", () => {
+    const i = inputs({ topics: chapters(4), examInDays: null, dailyMinutes: 60, reentry: true });
+    expect(i.plan).toMatchObject({ budgetMinutes: 30, budgetBasis: "reentry" });
+    expect(planned(i)).toBeLessThanOrEqual(30);
+    expect(buildPlannerView(i).reasoning.adjustments).toContainEqual({
+      kind: "reentry",
+      text: "A shorter first day back: 30 of your usual 60 min. Your last session was 5 days ago. It changes back after your next session; nothing was saved.",
+    });
+    expect(buildTodayView(i).plan.budgetBasis).toBe("reentry");
+  });
+
+  it("a time they said they have today is the answer, not the re-entry rule", () => {
+    const i = inputs({ topics: chapters(4), examInDays: null, availableMinutes: 45, reentry: true });
+    expect(i.plan).toMatchObject({ budgetMinutes: 45, budgetBasis: "stated_time" });
+  });
+
+  it("an exam taking over the day is not cut", () => {
+    const i = inputs({ topics: chapters(4), examInDays: 1, reentry: true });
+    expect(i.plan.budgetBasis).not.toBe("reentry");
+    expect(i.plan.budgetMinutes).toBe(60);
+  });
+
+  it("a day already cut for recovery or wellbeing is not cut twice", () => {
+    const recovering = (s: AcademicState): AcademicState =>
+      ({ ...s, consecutiveMisses: 6, hardDirectives: { ...s.hardDirectives, recoveryMode: true } });
+    expect(inputs({ topics: [solid(1)], examInDays: null, dailyMinutes: 120, state: recovering, reentry: true }).plan)
+      .toMatchObject({ budgetMinutes: 60, budgetBasis: "recovery" });
+  });
+
+  it("an exam inside the window still shapes what the shorter day holds, and the shortfall counts the shorter today", () => {
+    const usual = inputs({ topics: chapters(6), examInDays: 5 });
+    const back  = inputs({ topics: chapters(6), examInDays: 5, reentry: true });
+    expect(back.plan.budgetBasis).toBe("reentry");
+    expect(back.plan.today.some(b => b.activityType === "exam_prep")).toBe(true);
+    if (usual.plan.shortfall && back.plan.shortfall) expect(back.plan.shortfall.minutesAvailable).toBeLessThan(usual.plan.shortfall.minutesAvailable);
+  });
+
+  it("no basis raises the day: re-entry only ever shortens", () => {
+    for (const daily of [10, 25, 60, 240]) {
+      const i = inputs({ topics: chapters(4), examInDays: null, dailyMinutes: daily, reentry: true });
+      expect(i.plan.budgetMinutes).toBeLessThanOrEqual(daily);
+    }
   });
 });

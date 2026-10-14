@@ -77,8 +77,9 @@ function buildStateSection(ctx: NovaContext): string {
     `## Academic State`,
     `Phase: ${s.semesterPhase} | Mode: ${s.activeMode} | Momentary: ${s.momentaryState}`,
     `Scores — Engagement:${s.scores.engagement} Confidence:${s.scores.confidence} Momentum:${s.scores.momentum} BurnoutRisk:${s.scores.burnoutRisk} Adherence:${s.scores.planAdherence}`,
-    `Streak: ${s.studyStreakDays}d | Since last session: ${s.daysSinceLastSession}d | Misses: ${s.consecutiveMisses}`,
+    `Streak: ${s.studyStreakDays}d | Since last session: ${typeof ctx.daysSinceStudy === "number" ? `${ctx.daysSinceStudy} calendar days` : `${s.daysSinceLastSession}d`} | Misses: ${s.consecutiveMisses}`,
   ];
+  if (ctx.reentryDay) lines.push(REENTRY_LINE);
 
   if (s.daysUntilNextExam !== null) {
     // The learner's calendar days when the turn has them: the number the
@@ -311,6 +312,10 @@ function buildMessageSection(ctx: NovaContext): string {
 
 // Said when what the model is given recommends nothing, so a reply does not
 // fill the gap with a topic or a length of its own (static rules 2 and 13).
+// A first day back, as the pages show it. Code shortened today's plan;
+// moving overdue tasks is a proposal on Today that only the learner accepts.
+export const REENTRY_LINE = "First day back after a gap: code made today's plan a shorter re-entry day (nothing was saved; it ends with their next session). Any overdue tasks are proposed for new days on Today, waiting for the learner's yes: you cannot accept it, and nothing has moved unless they did.";
+
 export const NOTHING_RECOMMENDED = [
   "## What to study next",
   "Nothing in what you were given recommends what they study next. Do not suggest a topic, chapter, technique or resource for them to study next, and give no number of minutes or hours to spend. Talking about a topic they raised themselves is fine. If they ask what to do next, say their plan for today is on Today.",

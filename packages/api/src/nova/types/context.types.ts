@@ -64,6 +64,11 @@ export interface NovaContext {
   // engines' elapsed-time counts are worded instead.
   examCalendarDays?:     number | null;
   nextExamCalendarDays?: number | null;
+  // Calendar days since the last day with a counted session (0: today), and
+  // whether today is a first day back (recovery-engine.ts). Unset: the
+  // engines' elapsed count is worded instead.
+  daysSinceStudy?:       number | null;
+  reentryDay?:           boolean;
 
   // Plan (if loaded)
   studyPlan: StudyPlan | null;

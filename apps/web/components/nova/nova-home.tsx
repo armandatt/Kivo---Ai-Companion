@@ -7,6 +7,7 @@ import { TelegramCard } from './telegram-connect'
 import { RecommendationCard } from './recommendation-card'
 import { TalkToNova } from './talk-to-nova'
 import { ShortfallNote } from './shortfall-note'
+import { RecoveryCard } from './recovery-card'
 import { FocusContext, hasFocusContext, useFocusContext } from './focus-context'
 import { TimeAvailable } from './time-available'
 import type { NovaNotesView } from '@repo/api/nova/product/notes.types'
@@ -32,6 +33,7 @@ function contextLine(view: NovaTodayReady): string {
     return `${view.nextDeadline.title} is ${inDays(view.nextDeadline.daysUntil)}. Today is exam prep.`
   }
   if (view.plan.mode === 'recovery') return 'Easing back in today. One light block is enough.'
+  if (view.plan.budgetBasis === 'reentry') return 'First day back. A shorter day today, and it changes back after your next session.'
   return new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
 }
 
@@ -147,6 +149,8 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
           {!active && hasFocusContext(recContext) && <FocusContext view={recContext} />}
 
           {!active && view.plan.shortfall && <ShortfallNote shortfall={view.plan.shortfall} timeHref="/planner" />}
+
+          {!active && <RecoveryCard onChanged={() => void board.refresh()} />}
 
           <TodayTasks
             tasks={tasks} failed={board.loadError} error={board.error}

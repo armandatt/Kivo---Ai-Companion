@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "jest --config jest.config.ts",
-    "test:integration": "tsx --test --test-concurrency=1 src/nova/__integration__/nova-persist-turn.itest.ts src/nova/__integration__/nova-session-start.itest.ts src/nova/__integration__/nova-knowledge.itest.ts src/nova/__integration__/nova-notes.itest.ts src/nova/__integration__/nova-progress.itest.ts src/nova/__integration__/nova-learning-dna.itest.ts src/nova/__integration__/nova-telegram.itest.ts src/nova/__integration__/nova-lifecycle.itest.ts src/nova/__integration__/nova-semantic.itest.ts src/nova/__integration__/nova-setup.itest.ts src/nova/__integration__/nova-first-use.itest.ts src/nova/__integration__/nova-hardening.itest.ts src/nova/__integration__/nova-language.itest.ts src/nova/__integration__/nova-learning-events.itest.ts src/nova/__integration__/nova-workspace.itest.ts src/nova/__integration__/nova-checkin.itest.ts src/nova/__integration__/nova-adaptation.itest.ts src/nova/__integration__/nova-abandoned.itest.ts src/nova/__integration__/nova-unlinked-chat.itest.ts src/nova/__integration__/nova-account-deletion.itest.ts src/nova/__integration__/nova-goals.itest.ts src/nova/__integration__/nova-exams.itest.ts src/auth/__integration__/auth.itest.ts"
+    "test:integration": "tsx --test --test-concurrency=1 src/nova/__integration__/nova-persist-turn.itest.ts src/nova/__integration__/nova-session-start.itest.ts src/nova/__integration__/nova-knowledge.itest.ts src/nova/__integration__/nova-notes.itest.ts src/nova/__integration__/nova-progress.itest.ts src/nova/__integration__/nova-learning-dna.itest.ts src/nova/__integration__/nova-telegram.itest.ts src/nova/__integration__/nova-lifecycle.itest.ts src/nova/__integration__/nova-semantic.itest.ts src/nova/__integration__/nova-setup.itest.ts src/nova/__integration__/nova-first-use.itest.ts src/nova/__integration__/nova-hardening.itest.ts src/nova/__integration__/nova-language.itest.ts src/nova/__integration__/nova-learning-events.itest.ts src/nova/__integration__/nova-workspace.itest.ts src/nova/__integration__/nova-checkin.itest.ts src/nova/__integration__/nova-adaptation.itest.ts src/nova/__integration__/nova-abandoned.itest.ts src/nova/__integration__/nova-unlinked-chat.itest.ts src/nova/__integration__/nova-account-deletion.itest.ts src/nova/__integration__/nova-goals.itest.ts src/nova/__integration__/nova-exams.itest.ts src/nova/__integration__/nova-recovery.itest.ts src/auth/__integration__/auth.itest.ts"
   },
   "exports": {
     "./processor/*": "./src/processor/*",
@@ -42,6 +42,8 @@
     "./nova/product/templates": "./src/nova/product/templates.ts",
     "./nova/product/note-links": "./src/nova/product/note-links.ts",
     "./nova/product/note-assist.types": "./src/nova/product/note-assist.types.ts",
+    "./nova/product/recovery": "./src/nova/product/recovery.ts",
+    "./nova/product/recovery.types": "./src/nova/product/recovery.types.ts",
     "./nova/product/resource-link": "./src/nova/product/resource-link.ts",
     "./nova/product/*": "./src/nova/product/*",
     "./nova/engines/*": "./src/nova/engines/*",

@@ -81,6 +81,14 @@ function buildReasoning(input: PlanningInputs, blocks: PlannerBlock[]): PlannerR
         text: `Cut from ${usualMinutes} to ${budget} min: ${academicState.consecutiveMisses} planned days were missed in a row.`,
       });
       break;
+    case "reentry":
+      adjustments.push({
+        kind: "reentry",
+        text: input.daysSinceStudy
+          ? `A shorter first day back: ${budget} of your usual ${usualMinutes} min. Your last session was ${input.daysSinceStudy} days ago. It changes back after your next session; nothing was saved.`
+          : `A shorter first day back: ${budget} of your usual ${usualMinutes} min. It changes back after your next session; nothing was saved.`,
+      });
+      break;
     case "preferred":
       break;
   }
