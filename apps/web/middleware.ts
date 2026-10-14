@@ -8,7 +8,7 @@ const PROTECTED_ROUTES = [
 ]
 
 export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl
+  const { pathname, search } = request.nextUrl
   const token = request.cookies.get("kevo_session")?.value
 
   const isProtected = PROTECTED_ROUTES.some((route) =>
@@ -16,7 +16,9 @@ export async function middleware(request: NextRequest) {
   )
   if (isProtected && !token) {
     const loginUrl = new URL("/signin", request.url)
-    loginUrl.searchParams.set("from", pathname)
+    // The query comes too: /focus?study=<id> from the extension must still
+    // name its page after sign-in. The sign-in page accepts only a path here.
+    loginUrl.searchParams.set("from", pathname + search)
     return NextResponse.redirect(loginUrl)
   }
 
