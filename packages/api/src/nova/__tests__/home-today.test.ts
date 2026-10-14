@@ -36,3 +36,27 @@ describe("Today keeps what it already did", () => {
     expect(home).not.toMatch(/map\.(loading|error)/);
   });
 });
+
+describe("today's plan", () => {
+  const sections = web("components/nova/today-sections.tsx");
+  const home = web("components/nova/nova-home.tsx");
+  it("is the planner's order, the recommendation first, with nothing reordered", () => {
+    expect(sections).toContain("const blocks = recommendation ? [recommendation, ...alternatives] : alternatives");
+    expect(sections).not.toContain(".sort(");
+  });
+  it("starts a block the way it always has, and starts nothing while a session runs", () => {
+    expect(sections).toContain("onClick={() => onStart(action)}");
+    expect(home).toContain("onStart={active ? undefined : start} disabled={starting !== null}");
+  });
+  it("says when the day has more blocks than Today carries", () => {
+    expect(sections).toContain("const more = blockCount > blocks.length");
+  });
+});
+
+describe("the task list on Today", () => {
+  it("keeps its one link to the board", () => {
+    const tasks = web("components/nova/tasks/today-tasks.tsx");
+    expect(tasks).toContain('<Link href="/planner?view=board"');
+    expect(web("components/nova/today-sections.tsx")).not.toContain("view=board");
+  });
+});

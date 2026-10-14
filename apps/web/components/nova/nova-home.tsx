@@ -14,7 +14,7 @@ import { TimeAvailable } from './time-available'
 import type { NovaNotesView } from '@repo/api/nova/product/notes.types'
 import type { NovaCreatureView } from '@repo/api/nova/product/creature.types'
 import type { NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
-import { AccountingFor, UpNext, WorkingToward } from './today-sections'
+import { AccountingFor, TodayPlan, WorkingToward } from './today-sections'
 import { CompanionCard, ContinueLearning, Deadlines, PageProperties, QuickActions, WeekSoFar } from './home-panels'
 import { TodayTasks } from './tasks/today-tasks'
 import { useTasks } from './tasks/use-tasks'
@@ -82,9 +82,6 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
   const active = view.activeSession
   const rec    = view.recommendation
   const empty  = !active && !rec && view.emptyReason ? EMPTY[view.emptyReason] : null
-
-  // With a session running, the recommendation waits its turn below it.
-  const later = active && rec ? [rec, ...view.alternatives] : view.alternatives
 
   const whyContext = [
     ...view.constraints.map(c => `Accounting for: ${c.description}`),
@@ -161,14 +158,20 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
 
           {!active && <RecoveryCard onChanged={() => void board.refresh()} />}
 
+          {/* The plan in the planner's order. With a session running, nothing
+              starts from here and the recommendation waits its turn. */}
+          <TodayPlan
+            recommendation={rec} alternatives={view.alternatives}
+            inFocusAbove={!active && rec !== null} blockCount={view.plan.blockCount}
+            onStart={active ? undefined : start} disabled={starting !== null}
+          />
+
           <TodayTasks
             tasks={tasks} failed={board.loadError} error={board.error}
             onCreate={board.create} onUpdate={board.update}
             onStart={active ? undefined : task => start({ topicName: task.topicName!, subjectName: task.subjectName!, durationMinutes: TASK_SESSION_MINUTES }, `task:${task.id}`)}
             starting={starting}
           />
-
-          <UpNext actions={later} onStart={active ? undefined : start} disabled={starting !== null} />
         </div>
 
         {/* ── Context ────────────────────────────────────────────────────── */}
