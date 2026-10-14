@@ -8,12 +8,16 @@ import { RecommendationCard } from './recommendation-card'
 import { TalkToNova } from './talk-to-nova'
 import { ShortfallNote } from './shortfall-note'
 import { RecoveryCard } from './recovery-card'
-import { FocusContext, hasFocusContext, useFocusContext } from './focus-context'
+import { useFocusContext } from './focus-context'
+import { LinkedToTopic } from './linked-to-topic'
+import { KnowledgeBoard, RecentlyCaptured } from './knowledge-board'
 import { TimeAvailable } from './time-available'
 import type { NovaNotesView } from '@repo/api/nova/product/notes.types'
 import type { NovaCreatureView } from '@repo/api/nova/product/creature.types'
-import { AccountingFor, UpNext, WorkingToward } from './today-sections'
-import { CompanionCard, ContinueLearning, Deadlines, QuickActions, WeekSoFar } from './home-panels'
+import type { NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
+import type { NovaProgressView } from '@repo/api/nova/product/progress.types'
+import { AccountingFor, TodayPlan, WorkingToward } from './today-sections'
+import { CompanionCard, ContinueLearning, Deadlines, PageProperties, QuickActions, WeekSoFar } from './home-panels'
 import { TodayTasks } from './tasks/today-tasks'
 import { useTasks } from './tasks/use-tasks'
 import { useNovaView } from './use-nova-view'
@@ -73,14 +77,15 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
   const board    = useTasks()
   const notes    = useNovaView<NovaNotesView>('/api/nova/notes')
   const creature = useNovaView<NovaCreatureView>('/api/nova/creature')
+  // The links around the recommended topic. An extra: Today never waits for it.
+  const map      = useNovaView<NovaKnowledgeMapView>('/api/nova/knowledge-map')
+  // The eight finished weeks beside this week's numbers. An extra, like the map.
+  const progressView = useNovaView<NovaProgressView>('/api/nova/progress')
 
   const name   = firstName(view.learnerName)
   const active = view.activeSession
   const rec    = view.recommendation
   const empty  = !active && !rec && view.emptyReason ? EMPTY[view.emptyReason] : null
-
-  // With a session running, the recommendation waits its turn below it.
-  const later = active && rec ? [rec, ...view.alternatives] : view.alternatives
 
   const whyContext = [
     ...view.constraints.map(c => `Accounting for: ${c.description}`),
@@ -90,17 +95,19 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
   // What the learner has filed under the recommended topic. Not asked for
   // while a session runs: the Focus screen shows that session's own.
   const recContext = useFocusContext(rec ? { subjectName: rec.subjectName, topicName: rec.topicName } : null, rec?.topicName ?? null, !active && rec !== null)
-  const recentNotes = notes.view?.status === 'ready' ? notes.view.notes : []
 
   return (
     <div className="mx-auto w-full max-w-6xl pb-20 pt-10 lg:pt-4">
-      <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
+      {/* The page's title, its properties and where to go from here */}
+      <header className="space-y-5 border-b border-white/8 pb-6">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-foreground/45">Today</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
             {greeting(new Date())}{name ? `, ${name}` : ''}
           </h1>
           <p className="mt-2 text-sm text-foreground/55">{contextLine(view)}</p>
         </div>
+        <PageProperties view={view} />
         <QuickActions />
       </header>
 
@@ -146,11 +153,21 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
             ) : null}
           </section>
 
-          {!active && hasFocusContext(recContext) && <FocusContext view={recContext} />}
+          {!active && rec && (
+            <LinkedToTopic topicName={rec.topicName} subjectName={rec.subjectName} context={recContext} map={map} />
+          )}
 
           {!active && view.plan.shortfall && <ShortfallNote shortfall={view.plan.shortfall} timeHref="/planner" />}
 
           {!active && <RecoveryCard onChanged={() => void board.refresh()} />}
+
+          {/* The plan in the planner's order. With a session running, nothing
+              starts from here and the recommendation waits its turn. */}
+          <TodayPlan
+            recommendation={rec} alternatives={view.alternatives}
+            inFocusAbove={!active && rec !== null} blockCount={view.plan.blockCount}
+            onStart={active ? undefined : start} disabled={starting !== null}
+          />
 
           <TodayTasks
             tasks={tasks} failed={board.loadError} error={board.error}
@@ -158,16 +175,14 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
             onStart={active ? undefined : task => start({ topicName: task.topicName!, subjectName: task.subjectName!, durationMinutes: TASK_SESSION_MINUTES }, `task:${task.id}`)}
             starting={starting}
           />
-
-          <UpNext actions={later} onStart={active ? undefined : start} disabled={starting !== null} />
         </div>
 
-        {/* ── Context ────────────────────────────────────────────────────── */}
-        <aside className="space-y-9">
+        {/* ── Context: dates, the week, where you left off, then the rest ── */}
+        <aside className="min-w-0 space-y-4">
           <Deadlines exams={view.upcoming} tasks={tasks ?? []} />
-          <WeekSoFar view={view} />
+          <WeekSoFar view={view} weeks={progressView} />
           <ContinueLearning
-            view={view} notes={recentNotes} busy={starting !== null}
+            view={view} busy={starting !== null}
             onResume={topicName => {
               // The plan's own block for that topic if it has one; else a
               // standard block. The subject comes from the plan, never guessed.
@@ -176,11 +191,21 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
               else window.location.assign('/focus')
             }}
           />
+          {/* What the learner said they are working toward, and what Nova is
+              allowing for: one card, each section as it was. */}
+          <div className="rounded-2xl border border-white/8 bg-card/40 p-4 [&>section:first-child]:border-t-0 [&>section:first-child]:pt-0 [&>section+section]:mt-5">
+            <WorkingToward goals={view.goals} />
+            <AccountingFor constraints={view.constraints} />
+          </div>
           <CompanionCard creature={creature.view} name={null} />
           <TelegramCard />
-          <WorkingToward goals={view.goals} />
-          <AccountingFor constraints={view.constraints} />
         </aside>
+      </div>
+
+      {/* ── Everything on record, subject by subject, and what came in last ── */}
+      <div className="mt-14 space-y-10 border-t border-white/8 pt-10">
+        <KnowledgeBoard map={map} reviewDue={view.reviewDue} />
+        <RecentlyCaptured notes={notes} map={map} />
       </div>
     </div>
   )

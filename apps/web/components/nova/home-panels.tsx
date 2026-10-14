@@ -5,15 +5,17 @@ import { ArrowRight, Bookmark, CalendarDays, NotebookPen, Sparkles, Timer, Waypo
 import type { NovaTodayReady } from '@repo/api/nova/product/today.types'
 import type { NovaTaskItem } from '@repo/api/nova/product/tasks.types'
 import { EXAMS_HREF } from '@repo/api/nova/product/exams.types'
-import type { NoteSummary } from '@repo/api/nova/product/notes.types'
+import type { NovaProgressView } from '@repo/api/nova/product/progress.types'
 import type { NovaCreatureView } from '@repo/api/nova/product/creature.types'
-import { daysAgo, inDays, minutesLabel, relativeDay } from './format'
+import { cn } from '@/lib/utils'
+import { daysAgo, inDays, minutesLabel } from './format'
 
 const HEADING = 'text-[11px] font-medium uppercase tracking-[0.18em] text-foreground/45'
 
+// The side column's one container: a quiet card with a small heading.
 function Panel({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
-    <section>
+    <section className="rounded-2xl border border-white/8 bg-card/40 p-4">
       <div className="flex items-baseline justify-between gap-4">
         <h2 className={HEADING}>{title}</h2>
         {action}
@@ -60,52 +62,91 @@ export function Deadlines({ exams, tasks }: { exams: NovaTodayReady['upcoming'];
   )
 }
 
-// Where you left off: the last session Nova timed, and the note you touched
-// last. Both are things that exist; neither is a suggestion.
-export function ContinueLearning({ view, notes, onResume, busy }: {
+// Where you left off: the last session Nova timed, and a way back into it.
+// The latest notes are under Recently captured, so they are not listed here
+// a second time. Nothing here is a suggestion.
+export function ContinueLearning({ view, onResume, busy }: {
   view: NovaTodayReady
-  notes: NoteSummary[]
   onResume: (topicName: string) => void
   busy: boolean
 }) {
   const last = view.progress.lastSession
   const days = view.progress.daysSinceLastSession
-  if (!last?.topicName && notes.length === 0) return null
+  if (!last?.topicName || days === null) return null
   return (
     <Panel title="Pick up where you left off">
-      <ul className="space-y-2">
-        {last?.topicName && days !== null && (
-          <li className="flex items-center justify-between gap-3 rounded-xl border border-white/8 px-3.5 py-3">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-foreground/90">{last.topicName}</p>
-              <p className="truncate text-xs text-foreground/45">Last session: {minutesLabel(last.minutes)}, {daysAgo(days)}</p>
-            </div>
-            {!view.activeSession && (
-              <button type="button" disabled={busy} onClick={() => onResume(last.topicName!)}
-                className="shrink-0 rounded-lg border border-white/10 px-3 py-1.5 text-xs font-medium text-foreground/75 transition-colors hover:border-keppel-400/50 hover:text-keppel-200 disabled:opacity-50">
-                Study again
-              </button>
-            )}
-          </li>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-foreground/90">{last.topicName}</p>
+          <p className="truncate text-xs text-foreground/45">Last session: {minutesLabel(last.minutes)}, {daysAgo(days)}</p>
+        </div>
+        {!view.activeSession && (
+          <button type="button" disabled={busy} onClick={() => onResume(last.topicName!)}
+            className="shrink-0 rounded-lg border border-white/10 px-3 py-1.5 text-xs font-medium text-foreground/75 transition-colors hover:border-keppel-400/50 hover:text-keppel-200 disabled:opacity-50">
+            Study again
+          </button>
         )}
-        {notes.slice(0, 2).map(note => (
-          <li key={note.id}>
-            <Link href={`/notes/${note.id}`} className="flex items-center justify-between gap-3 rounded-xl border border-white/8 px-3.5 py-3 transition-colors hover:border-white/16">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-foreground/90">{note.title}</p>
-                <p className="truncate text-xs text-foreground/45">Note{note.subjectName ? ` · ${note.subjectName}` : ''} · edited {relativeDay(note.updatedAt)}</p>
-              </div>
-              <ArrowRight className="size-3.5 shrink-0 text-foreground/40" />
-            </Link>
-          </li>
-        ))}
-      </ul>
+      </div>
     </Panel>
   )
 }
 
+type Loaded<T> = { view: T | null; loading: boolean; error: boolean; refresh: () => void }
+
+// "12 Sep" for a YYYY-MM-DD day key the server drew in the learner's zone.
+const weekOf = (dayKey: string) =>
+  new Date(`${dayKey}T12:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' })
+
+// The eight finished weeks before this one, from Progress: days with a
+// counted session, out of seven. This week is Today's numbers above, so it is
+// not drawn twice. A week before the first session is a dash, never a zero.
+function FinishedWeeks({ progress }: { progress: Loaded<NovaProgressView> }) {
+  const ready = progress.view?.status === 'ready' ? progress.view : null
+  if (!ready && progress.loading) {
+    return <div aria-busy="true" aria-label="Loading your last eight weeks" className="mt-4 h-16 animate-pulse rounded-lg bg-white/3" />
+  }
+  if (!ready && progress.error) {
+    return (
+      <p role="status" className="mt-4 text-xs text-foreground/50">
+        Your last eight weeks didn&apos;t load.{' '}
+        <button type="button" onClick={() => progress.refresh()} className="underline decoration-white/20 underline-offset-4 hover:text-foreground">Try again</button>
+      </p>
+    )
+  }
+  // No counted session yet: Progress has nothing to draw.
+  if (!ready || !ready.hasEvidence) return null
+  const weeks = ready.consistency.weeks.filter(w => !w.current)
+  if (weeks.length === 0) return null
+
+  return (
+    <div className="mt-4 border-t border-white/6 pt-3" data-section="finished-weeks">
+      <p className="text-xs text-foreground/50">Days studied, the {weeks.length} weeks before this one</p>
+      <ol aria-label="Days studied in each finished week" className="mt-2 grid items-end gap-1" style={{ gridTemplateColumns: `repeat(${weeks.length}, minmax(0, 1fr))` }}>
+        {weeks.map(week => (
+          <li key={week.weekStart} data-week={week.weekStart} data-before-start={week.beforeStart} className="min-w-0 text-center">
+            <div aria-hidden className="mx-auto flex h-10 w-full max-w-6 items-end overflow-hidden rounded bg-white/4">
+              {!week.beforeStart && <div className="w-full rounded bg-keppel-400" style={{ height: `${(week.activeDays / 7) * 100}%` }} />}
+            </div>
+            <p aria-hidden className={cn('mt-1 text-[10px] tabular-nums', week.beforeStart ? 'text-foreground/25' : 'text-foreground/55')}>
+              {week.beforeStart ? '–' : week.activeDays}
+            </p>
+            <p className="sr-only">
+              {week.beforeStart
+                ? `Week of ${weekOf(week.weekStart)}: before your first session`
+                : `Week of ${weekOf(week.weekStart)}: ${week.activeDays} of 7 days, ${week.sessions} sessions, ${minutesLabel(week.minutes)}`}
+            </p>
+          </li>
+        ))}
+      </ol>
+      <p className="mt-2 text-[11px] leading-relaxed text-foreground/40">
+        Days with a finished session of 10 minutes or more. A dash is a week before your first session.
+      </p>
+    </div>
+  )
+}
+
 // Only what was recorded. A learner with no sessions sees no numbers.
-export function WeekSoFar({ view }: { view: NovaTodayReady }) {
+export function WeekSoFar({ view, weeks }: { view: NovaTodayReady; weeks: Loaded<NovaProgressView> }) {
   const { progress, reviewDue, weakArea } = view
   const stats: Array<{ label: string; value: string }> = []
   if (progress.sessionsThisWeek > 0) {
@@ -134,6 +175,7 @@ export function WeekSoFar({ view }: { view: NovaTodayReady }) {
           Weakest by your own account: <span className="text-foreground/85">{weakArea.topicName}</span> ({weakArea.masteryPercent}%).
         </p>
       )}
+      <FinishedWeeks progress={weeks} />
     </Panel>
   )
 }
@@ -146,15 +188,62 @@ const ACTIONS = [
   { href: '/saved', label: 'Saved pages', icon: Bookmark },
 ] as const
 
+// The page's own command bar: the places a learner goes from Today.
 export function QuickActions() {
   return (
-    <nav aria-label="Quick actions" className="flex flex-wrap gap-2">
+    <nav aria-label="Quick actions" className="flex flex-wrap items-center gap-1 rounded-xl border border-white/8 bg-card/40 p-1">
       {ACTIONS.map(({ href, label, icon: Icon }) => (
-        <Link key={href} href={href} className="inline-flex h-9 items-center gap-2 rounded-full border border-white/10 px-3.5 text-xs font-medium text-foreground/75 transition-colors hover:border-white/20 hover:bg-white/4 hover:text-foreground">
-          <Icon className="size-3.5" />{label}
+        <Link key={href} href={href} className="inline-flex h-8 items-center gap-2 rounded-lg px-3 text-xs font-medium text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground">
+          <Icon aria-hidden className="size-3.5" />{label}
         </Link>
       ))}
     </nav>
+  )
+}
+
+const MODE_LABEL: Record<NovaTodayReady['plan']['mode'], string> = {
+  standard:    'Standard day',
+  exam_crisis: 'Exam prep',
+  recovery:    'Recovery',
+}
+
+// What set the length of today's plan, in a few words. The Planner explains it
+// in full; these only name the rule the server reported.
+const BASIS_LABEL: Record<NovaTodayReady['plan']['budgetBasis'], string> = {
+  // Not "your usual time": with none stated, the length is assumed (the plan's
+  // assumptions say so), so this names the setting, as setup does.
+  preferred:   'a normal day',
+  stated_time: 'the time you gave',
+  recovery:    'cut back after missed days',
+  reentry:     'first day back',
+  no_pressure: 'kept light',
+}
+
+// The day's properties, as Today reported them. A property with nothing on
+// record is left out, never shown as zero.
+export function PageProperties({ view }: { view: NovaTodayReady }) {
+  const { plan, progress, reviewDue, nextDeadline } = view
+  const rows: Array<{ label: string; value: string; tone?: 'warn' }> = [
+    { label: 'Plan', value: MODE_LABEL[plan.mode] },
+  ]
+  if (plan.blockCount > 0) {
+    rows.push({ label: 'Time', value: `${minutesLabel(plan.totalMinutesToday)} planned of ${minutesLabel(plan.budgetMinutes)}, ${BASIS_LABEL[plan.budgetBasis]}` })
+  }
+  if (nextDeadline) {
+    rows.push({ label: nextDeadline.kindLabel, value: `${nextDeadline.title}, ${inDays(nextDeadline.daysUntil)}`, tone: nextDeadline.daysUntil <= 7 ? 'warn' : undefined })
+  }
+  if (reviewDue.count > 0) rows.push({ label: 'Reviews due', value: String(reviewDue.count) })
+  if (progress.streakDays > 1) rows.push({ label: 'In a row', value: `${progress.streakDays} days` })
+
+  return (
+    <dl aria-label="Today at a glance" data-section="page-properties" className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+      {rows.map(row => (
+        <div key={row.label} className="flex min-w-0 items-baseline gap-2">
+          <dt className="shrink-0 text-xs text-foreground/45">{row.label}</dt>
+          <dd className={row.tone === 'warn' ? 'truncate font-medium text-amber-300' : 'truncate text-foreground/85'}>{row.value}</dd>
+        </div>
+      ))}
+    </dl>
   )
 }
 
