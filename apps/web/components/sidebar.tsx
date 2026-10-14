@@ -130,7 +130,12 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
       // the drawer. Controls hidden at this width are not stops.
       const inside = Array.from(drawer.querySelectorAll<HTMLElement>(TAB_STOPS))
       const stops  = [...(toggleRef.current ? [toggleRef.current] : []), ...inside].filter(el => el.getClientRects().length > 0)
+      // Between the ends the rule leaves the move to the browser, but a browser
+      // may skip links (Safari's Tab reaches only form fields by default) and
+      // land on the page behind. So every step is taken here.
+      const active = document.activeElement as HTMLElement | null
       const target = trappedTabTarget(stops, document.activeElement as HTMLElement | null, e.shiftKey, drawer)
+        ?? stops[stops.indexOf(active as HTMLElement) + (e.shiftKey ? -1 : 1)]
       if (target) { e.preventDefault(); target.focus() }
     }
     window.addEventListener('keydown', onKey)
@@ -166,11 +171,15 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
 
   // Off screen is also out of the tab order and hidden from screen readers:
   // inert from the moment it closes, invisible once it has slid out.
+  // Visibility is animated only on the way out. Opening, it must be visible
+  // at once: an element that is still invisible cannot take focus.
+  const hidden = 'invisible -translate-x-full transition-[transform,width,visibility]'
+  const shown  = 'translate-x-0 transition-[transform,width]'
   const position = overlay
-    ? (open ? 'translate-x-0' : 'invisible -translate-x-full')
-    : !open ? 'invisible -translate-x-full'
-    : isMobileOpen ? 'translate-x-0'
-    : 'invisible -translate-x-full lg:visible lg:translate-x-0'
+    ? (open ? shown : hidden)
+    : !open ? hidden
+    : isMobileOpen ? shown
+    : `${hidden} lg:visible lg:translate-x-0`
 
   const row = cn('flex items-center gap-3 rounded-lg px-4 py-3 text-sm transition-colors', rail && 'lg:justify-center lg:px-0')
   const label = cn('font-medium', rail && 'lg:sr-only')
@@ -209,7 +218,7 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
         aria-modal={mode.covering ? true : undefined}
         aria-label={mode.covering ? 'Navigation' : undefined}
         className={cn(
-          'left-0 top-0 z-40 flex h-screen w-70 shrink-0 flex-col border-r border-sidebar-border bg-sidebar outline-none transition-[transform,width,visibility] duration-300 ease-in-out',
+          'left-0 top-0 z-40 flex h-screen w-70 shrink-0 flex-col border-r border-sidebar-border bg-sidebar outline-none duration-300 ease-in-out',
           overlay ? 'fixed' : 'fixed lg:relative',
           rail && 'lg:w-[72px]',
           position,
