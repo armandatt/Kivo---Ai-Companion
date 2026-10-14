@@ -82,18 +82,21 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
   const recentNotes = notes.view?.status === 'ready' ? notes.view.notes : []
 
   return (
-    <div className="mx-auto w-full max-w-6xl pb-20 pt-10 lg:pt-4">
-      <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
+    <div className="mx-auto w-full max-w-7xl pb-20">
+      <header className="border-b border-white/8 pb-7 pt-1 lg:pb-8">
+        <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-5">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
             {greeting(new Date())}{name ? `, ${name}` : ''}
           </h1>
           <p className="mt-2 text-sm text-foreground/55">{contextLine(view)}</p>
         </div>
-        <QuickActions />
+          <QuickActions />
+        </div>
+        <p className="mt-6 text-xs font-medium uppercase tracking-[0.16em] text-keppel-300/75">Your learning command center</p>
       </header>
 
-      <div className="mt-8 grid grid-cols-1 gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      <div className="mt-8 grid grid-cols-1 gap-x-14 gap-y-12 lg:grid-cols-[minmax(0,1fr)_22rem]">
         {/* ── What to do ─────────────────────────────────────────────────── */}
         <div className="min-w-0 space-y-10">
           <section aria-label="Focus now">

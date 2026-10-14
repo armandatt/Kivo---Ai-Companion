@@ -134,8 +134,8 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
   return (
     <div className="kivo-app flex h-screen bg-background">
       <Sidebar open={access === 'render' ? sidebarOpen : true} onOpenChange={setSidebarOpen} companion={companion} />
-      <main className="flex-1 overflow-auto">
-        <div className="relative h-full p-6">
+      <main className="min-w-0 flex-1 overflow-auto">
+        <div className="relative min-h-full px-4 pb-8 pt-16 sm:px-6 lg:px-8 lg:pt-6">
           {access === 'render' ? <CompanionContext.Provider value={companion}>{children}</CompanionContext.Provider>
             : access === 'nova_unavailable' ? <NovaUnavailable pathname={pathname} />
             : null /* a Rex account on a Nova-only page: being sent to Home */}

@@ -155,7 +155,7 @@ export function QuickActions() {
 export function CompanionCard({ creature, name }: { creature: NovaCreatureView | null; name: string | null }) {
   const ready = creature?.status === 'ready' ? creature : null
   return (
-    <Link href="/creature" className="group block overflow-hidden rounded-2xl border border-white/8 bg-gradient-to-br from-keppel-400/12 via-transparent to-transparent p-4 transition-colors hover:border-keppel-400/30">
+    <Link href="/creature" className="group block overflow-hidden border-l-2 border-keppel-400/55 bg-keppel-400/5 py-4 pl-4 pr-3 transition-colors hover:bg-keppel-400/10">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className={HEADING}>Your world</p>

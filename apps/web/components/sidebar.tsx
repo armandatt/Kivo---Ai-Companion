@@ -40,6 +40,7 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
   const [collapsed, setCollapsed] = useState(false)
   const [signingOut, setSigningOut] = useState(false)
   const mobileMenuRef = useRef<HTMLButtonElement>(null)
+  const drawerRef = useRef<HTMLElement>(null)
   const lastPath = useRef(pathname)
 
   const closeMobile = () => setMobileOpen(false)
@@ -50,7 +51,18 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
     if (!mobileOpen) return
     const previous = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { closeMobile(); mobileMenuRef.current?.focus() } }
+    drawerRef.current?.focus()
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { closeMobile(); mobileMenuRef.current?.focus() }
+      if (event.key === 'Tab' && drawerRef.current) {
+        const focusable = drawerRef.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')
+        if (!focusable.length) return
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+      }
+    }
     document.addEventListener('keydown', onKey)
     return () => { document.body.style.overflow = previous; document.removeEventListener('keydown', onKey) }
   }, [mobileOpen])
@@ -68,7 +80,7 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
         <Menu className="size-4" /><span>Menu</span>
       </button>
       <div aria-hidden={!mobileOpen} onClick={close} className={cn('fixed inset-0 z-40 bg-black/55 transition-opacity lg:hidden', mobileOpen ? 'opacity-100' : 'pointer-events-none opacity-0')} />
-      <aside id="kivo-navigation-drawer" aria-label="Main navigation" className={cn(
+      <aside ref={drawerRef} id="kivo-navigation-drawer" tabIndex={-1} aria-label="Main navigation" aria-modal={mobileOpen ? 'true' : undefined} className={cn(
         'z-50 flex h-dvh shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width,transform] duration-200',
         collapsed ? 'w-[72px]' : 'w-[248px]',
         overlay ? 'fixed left-0 top-0' : 'fixed left-0 top-0 lg:sticky',
