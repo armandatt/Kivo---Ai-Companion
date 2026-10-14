@@ -87,3 +87,31 @@ describe("the knowledge board and what came in last", () => {
     expect(board).toContain("pages === null && map.error");
   });
 });
+
+describe("Today's side column", () => {
+  const panels = web("components/nova/home-panels.tsx");
+  const home = web("components/nova/nova-home.tsx");
+  it("draws only the finished weeks from Progress, and a week before the first session as a dash", () => {
+    expect(panels).toContain("const weeks = ready.consistency.weeks.filter(w => !w.current)");
+    expect(panels).toContain("{week.beforeStart ? '–' : week.activeDays}");
+    expect(panels).toContain("if (!ready || !ready.hasEvidence) return null");
+  });
+  it("keeps this week's numbers from Today, and says when the weeks did not load", () => {
+    expect(panels).toContain("if (progress.sessionsThisWeek > 0)");
+    expect(panels).toContain("Your last eight weeks didn&apos;t load.");
+  });
+  it("picks up the last session without listing the notes Recently captured already shows", () => {
+    expect(panels).toContain("onClick={() => onResume(last.topicName!)}");
+    expect(panels).not.toContain("notes.slice(0, 2)");
+    expect(home).not.toMatch(/<ContinueLearning[^>]*notes=/);
+  });
+  it("keeps each deadline's own kind and the way to change a date", () => {
+    expect(panels).toContain("kind: e.kindLabel");
+    expect(panels).toContain("href={EXAMS_HREF}");
+  });
+  it("keeps the goals, the constraints, the companion and Telegram", () => {
+    for (const part of ["<WorkingToward goals={view.goals} />", "<AccountingFor constraints={view.constraints} />", "<CompanionCard", "<TelegramCard />"]) {
+      expect(home).toContain(part);
+    }
+  });
+});

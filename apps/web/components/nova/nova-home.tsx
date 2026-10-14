@@ -15,6 +15,7 @@ import { TimeAvailable } from './time-available'
 import type { NovaNotesView } from '@repo/api/nova/product/notes.types'
 import type { NovaCreatureView } from '@repo/api/nova/product/creature.types'
 import type { NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
+import type { NovaProgressView } from '@repo/api/nova/product/progress.types'
 import { AccountingFor, TodayPlan, WorkingToward } from './today-sections'
 import { CompanionCard, ContinueLearning, Deadlines, PageProperties, QuickActions, WeekSoFar } from './home-panels'
 import { TodayTasks } from './tasks/today-tasks'
@@ -78,6 +79,8 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
   const creature = useNovaView<NovaCreatureView>('/api/nova/creature')
   // The links around the recommended topic. An extra: Today never waits for it.
   const map      = useNovaView<NovaKnowledgeMapView>('/api/nova/knowledge-map')
+  // The eight finished weeks beside this week's numbers. An extra, like the map.
+  const progressView = useNovaView<NovaProgressView>('/api/nova/progress')
 
   const name   = firstName(view.learnerName)
   const active = view.activeSession
@@ -92,7 +95,6 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
   // What the learner has filed under the recommended topic. Not asked for
   // while a session runs: the Focus screen shows that session's own.
   const recContext = useFocusContext(rec ? { subjectName: rec.subjectName, topicName: rec.topicName } : null, rec?.topicName ?? null, !active && rec !== null)
-  const recentNotes = notes.view?.status === 'ready' ? notes.view.notes : []
 
   return (
     <div className="mx-auto w-full max-w-6xl pb-20 pt-10 lg:pt-4">
@@ -175,12 +177,12 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
           />
         </div>
 
-        {/* ── Context ────────────────────────────────────────────────────── */}
-        <aside className="space-y-9">
+        {/* ── Context: dates, the week, where you left off, then the rest ── */}
+        <aside className="min-w-0 space-y-4">
           <Deadlines exams={view.upcoming} tasks={tasks ?? []} />
-          <WeekSoFar view={view} />
+          <WeekSoFar view={view} weeks={progressView} />
           <ContinueLearning
-            view={view} notes={recentNotes} busy={starting !== null}
+            view={view} busy={starting !== null}
             onResume={topicName => {
               // The plan's own block for that topic if it has one; else a
               // standard block. The subject comes from the plan, never guessed.
@@ -189,10 +191,14 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
               else window.location.assign('/focus')
             }}
           />
+          {/* What the learner said they are working toward, and what Nova is
+              allowing for: one card, each section as it was. */}
+          <div className="rounded-2xl border border-white/8 bg-card/40 p-4 [&>section:first-child]:border-t-0 [&>section:first-child]:pt-0 [&>section+section]:mt-5">
+            <WorkingToward goals={view.goals} />
+            <AccountingFor constraints={view.constraints} />
+          </div>
           <CompanionCard creature={creature.view} name={null} />
           <TelegramCard />
-          <WorkingToward goals={view.goals} />
-          <AccountingFor constraints={view.constraints} />
         </aside>
       </div>
 
