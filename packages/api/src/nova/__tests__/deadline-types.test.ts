@@ -20,7 +20,9 @@ import type { TopicMasteryState } from "../types/engine.types";
 import type { AcademicUnderstanding } from "../types/understanding.types";
 
 const read = (path: string) => readFileSync(join(__dirname, "..", path), "utf8");
-const NOW = new Date();
+// A fixed hour of today, so "in N days" (calendar days) does not depend on
+// the time of day the suite runs at.
+const NOW = (() => { const d = new Date(); d.setUTCHours(20, 0, 0, 0); return d; })();
 const daysFromNow = (d: number) => new Date(NOW.getTime() + d * 86_400_000);
 const NO_MESSAGE: AcademicUnderstanding = {
   intent: "general_chat", emotion: "neutral", topic: null, topicConfidence: 0,
