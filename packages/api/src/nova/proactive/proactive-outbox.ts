@@ -134,6 +134,16 @@ export async function dropUnworded(id: string): Promise<void> {
   });
 }
 
+// A message that was worded and not delivered, whose reason no longer holds
+// (the exam was moved or removed, the task was finished, the day it spoke of
+// has passed): what it says is no longer true, so it is closed and not sent.
+export async function dropStale(id: string): Promise<void> {
+  await prisma.novaProactiveMessage.updateMany({
+    where: { id, status: { in: ["ready", "failed"] } },
+    data:  { status: "abandoned", lastError: "reason no longer holds" },
+  });
+}
+
 // Work a restart or a failed send left behind, for one learner:
 //   stale "sending"  → unknown (never resent)
 //   stale "claimed"  → abandoned if too old to matter, else returned to be worded

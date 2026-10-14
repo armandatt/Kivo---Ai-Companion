@@ -40,6 +40,7 @@ const INSTRUCTIONS: Record<ProactiveType, string> = {
   exam_countdown:       "An exam is close. Name it and when it is. Say the one thing worth doing today. Calm and direct, no alarm.",
   review_due:           "Topics are due for review. Name the one recommended. Say a short retrieval pass is enough.",
   missed_plan_recovery: "They have not studied for a few days. Do not mention guilt or the gap as a failure. Make starting small and easy.",
+  task_due:             "A task they set for themselves is due today. Name it in their own words and say it is due today. It is their task, not Nova's plan: do not tell them how to do it, do not recommend a topic, and do not say anything about what they have or have not done.",
   daily_nudge:          "It is around the time they study and nothing is done yet today. Point at the one recommended thing.",
   daily_checkin:        "This is the daily check-in they asked for, at the time they chose. Open briefly, without a greeting ritual, and point at the one recommended thing for today. Do not say they have not studied: nothing recorded today is not a failure.",
 };
@@ -52,6 +53,7 @@ export function proactiveFallback(input: ProactiveWordingInput): string {
     exam_countdown:       "Exam check.",
     review_due:           "Review is due.",
     missed_plan_recovery: "Easy way back in.",
+    task_due:             "Due today.",
     daily_nudge:          "Good time for a session.",
     daily_checkin:        "Checking in.",
   };

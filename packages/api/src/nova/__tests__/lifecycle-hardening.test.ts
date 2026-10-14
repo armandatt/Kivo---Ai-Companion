@@ -207,7 +207,7 @@ describe("an exam being near does not override what is going on in the learner's
 
   it("an inform-only message carries no recommendation and no Start button, on a first send and on a retry", () => {
     const cron = read("proactive/nova-proactive-cron.ts");
-    expect(cron).toContain("const rec    = quiet ? null : view.recommendation;");
+    expect(cron).toContain('const rec    = quiet || type === "task_due" ? null : view.recommendation;');
     expect(cron).toContain("informOnly(waiting.type as ProactiveType, gates)");
     expect(cron).toContain("decision.informOnly");
   });

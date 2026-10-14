@@ -3,7 +3,7 @@
 // Owner: Phase 5 engines. No LLM types here.
 
 // ── What Nova may say first ───────────────────────────────────────────────────
-// Five reasons to message a learner who has not written. Each one names a
+// Six reasons to message a learner who has not written. Each one names a
 // fact on record; none of them is a mood or a score. Anything else Nova could
 // say first (a streak, a weekly reflection, a check-in in the middle of a
 // session) is deliberately not here.
@@ -13,6 +13,7 @@ export type ProactiveType =
   | "exam_countdown"        // an exam is within three days
   | "review_due"            // the retention schedule has topics due
   | "missed_plan_recovery"  // no session for a few days, said once per lapse
+  | "task_due"              // a task the learner set for themselves is due today
   | "daily_nudge"           // the usual study time, nothing done yet today
   | "daily_checkin";        // the time the learner chose in onboarding, nothing done yet today
 

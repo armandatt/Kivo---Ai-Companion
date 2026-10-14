@@ -28,13 +28,18 @@ export const RECENT_MESSAGE_MINUTES = 30;
 // the window; after that it has expired and is not sent late.
 export const CHECKIN_WINDOW_MINUTES = 180;
 
+// A task due today outranks a review: it is a date the learner set, and it
+// passes at midnight. It sits under a lapse, which is said once and matters more.
 const RANK: Record<ProactiveType, number> = {
-  exam_countdown: 4, missed_plan_recovery: 3, review_due: 2, daily_checkin: 1, daily_nudge: 1,
+  exam_countdown: 4, missed_plan_recovery: 3, task_due: 2.5, review_due: 2, daily_checkin: 1, daily_nudge: 1,
 };
 
 // Reasons that ask the learner to study now. An exam countdown informs; these
 // press, so they yield to more.
-const PRESSURE: ReadonlySet<ProactiveType> = new Set<ProactiveType>(["review_due", "missed_plan_recovery", "daily_nudge", "daily_checkin"]);
+const PRESSURE: ReadonlySet<ProactiveType> = new Set<ProactiveType>(["review_due", "missed_plan_recovery", "task_due", "daily_nudge", "daily_checkin"]);
+
+// How much of a task's title is said back in a message.
+export const TASK_TITLE_IN_MESSAGE = 80;
 
 export interface StudyWindow {
   from:  number;   // local hour, inclusive
@@ -61,6 +66,10 @@ export interface ProactiveFacts {
   exams:      Array<{ id: string; title: string; daysUntil: number }>;   // local calendar days
   reviewDueCount: number;
   hasPlan:    boolean;       // the Planning Engine has something to recommend
+  // The learner's own open tasks whose due day is today, soonest-made first.
+  // Absent or empty: none. A task that is overdue is not here: it was due,
+  // and said, on its day.
+  tasksDueToday?: Array<{ id: string; title: string }>;
 }
 
 export interface ProactiveGates {
@@ -141,6 +150,12 @@ const inPressureWindow = (f: ProactiveFacts): boolean => (hasCheckin(f) ? inChec
 // picked is theirs: a 6:30 check-in is sent at 6:30.
 export const isQuietFor = (f: ProactiveFacts): boolean => isQuietHour(f.localHour) && !inCheckinWindow(f);
 
+// A task's title as it is said back: one line, and not all of a long one.
+function taskTitle(title: string): string {
+  const line = title.split("\n").join(" ").split("\r").join(" ").split("\t").join(" ").split(" ").filter(Boolean).join(" ");
+  return line.length > TASK_TITLE_IN_MESSAGE ? `${line.slice(0, TASK_TITLE_IN_MESSAGE - 1)}…` : line;
+}
+
 export function generateCandidates(f: ProactiveFacts): ProactiveCandidate[] {
   const out: ProactiveCandidate[] = [];
 
@@ -159,6 +174,17 @@ export function generateCandidates(f: ProactiveFacts): ProactiveCandidate[] {
     out.push({
       type: "missed_plan_recovery", occurrenceKey: `recovery:${f.lastSessionDay}`,
       reason: `no session for ${f.daysSinceLastSession} days`,
+    });
+  }
+  const dueTasks = f.tasksDueToday ?? [];
+  if (dueTasks.length > 0) {
+    // Keyed by the first task and the day: said once, on the day it is due.
+    // Finished or moved, it is no longer in the list and the reason is gone.
+    const first = dueTasks[0]!;
+    const more  = dueTasks.length - 1;
+    out.push({
+      type: "task_due", occurrenceKey: `task:${first.id}:${f.localDay}`,
+      reason: `your task "${taskTitle(first.title)}" is due today${more > 0 ? `, and ${more} more of your tasks ${more === 1 ? "is" : "are"}` : ""}`,
     });
   }
   if (f.reviewDueCount > 0) {
