@@ -341,3 +341,17 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
     transform: translateY(0);
   }
 }
+
+/* A learner who has asked their device for less motion gets none that is
+   decoration: no pulsing placeholders, sliding panels or eased rings. The
+   state each of those shows is still shown, at once. */
+@media (prefers-reduced-motion: reduce) {
+  .kivo-app *,
+  .kivo-app *::before,
+  .kivo-app *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

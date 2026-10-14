@@ -32,7 +32,8 @@ import {
 export interface MapInputs {
   subjects:  Array<{ id: string; name: string }>;
   topics:    Array<{ id: string; subjectId: string; name: string; masteryProbability: number; reviewCount: number }>;
-  notes:     Array<{ id: string; title: string; subjectId: string | null; topicName: string | null; updatedAt: Date }>;
+  // linksTo: titles the note names in [[...]] (notes.ts). Absent: none.
+  notes:     Array<{ id: string; title: string; subjectId: string | null; topicName: string | null; updatedAt: Date; linksTo?: string[] }>;
   resources: Array<{
     id: string; title: string; url: string; domain: string; eventType: string; subjectId: string | null; topicName: string | null; occurredAt: Date;
     filedBy?: "learner" | "nova" | null;
@@ -91,7 +92,7 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
       if (!suggestions.some(x => x.from === from && x.to === id)) suggestions.push({ id: `${from}~${id}`, from, to: id, confidence: s.confidence, basis: s.basis });
     }
     return {
-      id, type: "resource", label: r.title || r.domain, href: "/saved", subjectId: at.subjectId,
+      id, type: "resource", label: r.title || r.domain, href: `/saved?page=${encodeURIComponent(r.id)}`, subjectId: at.subjectId,
       subjectName: at.subjectId ? subjectName.get(at.subjectId)! : null,
       topicName: r.topicName, topicLinked: at.topicLinked,
       url: r.url, domain: r.domain, savedAt: r.occurredAt.toISOString(),
@@ -107,7 +108,7 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
     const known   = masteryLevel(t);
     const studied = known !== "unverified";
     return {
-      id, type: "topic", label: t.name, href: "/knowledge", subjectId: t.subjectId, subjectName: subjectName.get(t.subjectId)!,
+      id, type: "topic", label: t.name, href: `/knowledge?topic=${encodeURIComponent(t.id)}`, subjectId: t.subjectId, subjectName: subjectName.get(t.subjectId)!,
       sessions: t.reviewCount,
       level: known === "unverified" ? null : known,
       masteryPercent: studied ? Math.round(t.masteryProbability * 100) : null,
@@ -117,11 +118,30 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
   const subjectNodes: MapNode[] = input.subjects.map(s => {
     const id = `subject:${s.id}`;
     return {
-      id, type: "subject", label: s.name, href: "/knowledge", subjectId: s.id,
+      id, type: "subject", label: s.name, href: `/knowledge?subject=${encodeURIComponent(s.id)}`, subjectId: s.id,
       topics: topics.filter(t => t.subjectId === s.id).length,
       notes: tally.get(id)?.notes ?? 0, resources: tally.get(id)?.resources ?? 0,
     };
   });
+
+  // [[Links]] the learner wrote: to the note with that title (the most
+  // recently edited, when two share one), else to a topic of theirs with that
+  // name. A link to nothing on record, or to the note itself, draws nothing.
+  const key = (s: string) => s.trim().split(" ").filter(Boolean).join(" ").toLowerCase();
+  const noteByTitle = new Map<string, string>();
+  for (const n of [...input.notes].sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())) {
+    if (!noteByTitle.has(key(n.title))) noteByTitle.set(key(n.title), `note:${n.id}`);
+  }
+  const topicByName = new Map<string, string>();
+  for (const t of topics) if (!topicByName.has(key(t.name))) topicByName.set(key(t.name), `topic:${t.id}`);
+  for (const n of input.notes) {
+    const from = `note:${n.id}`;
+    for (const title of n.linksTo ?? []) {
+      const to = noteByTitle.get(key(title)) ?? topicByName.get(key(title));
+      if (!to || to === from || edges.some(e => e.from === from && e.to === to)) continue;
+      link(from, to, "links_to");
+    }
+  }
 
   const nodes = [...subjectNodes, ...topicNodes, ...noteNodes, ...resourceNodes];
   const linked = new Set(edges.flatMap(e => [e.from, e.to]));

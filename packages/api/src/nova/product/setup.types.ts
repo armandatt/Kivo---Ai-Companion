@@ -1,14 +1,17 @@
 // ─── Study setup: the contract between Nova and the setup page ────────────────
 // What the page sends, what the server says saving it would do, and what is
-// on record. This file has no imports so the web app can import its types
-// directly. The rules live in setup.ts.
+// on record. This file imports types only, from another file with no imports,
+// so the web app can import it directly. The rules live in setup.ts.
+
+import type { LearningContext } from "./learning-context";
 
 export type SetupStudyTime = "morning" | "afternoon" | "evening" | "night";
 export type SetupGapName = "subjects" | "topics" | "exams" | "daily_minutes" | "study_time";
 
 export interface SetupDraft {
   subjects:     Array<{ name: string; topics: string[] }>;
-  exams:        Array<{ subjectName: string; date: string; title: string | null }>;   // date: YYYY-MM-DD
+  // date: YYYY-MM-DD. type: what kind of date (deadline-types.ts); left out, an exam.
+  exams:        Array<{ subjectName: string; date: string; title: string | null; type?: "exam" | "assignment" | "project" | "interview" | "certification" | "other" }>;
   dailyMinutes: number | null;      // null: not said
   studyTime:    SetupStudyTime | null;   // null: not said
 }
@@ -24,6 +27,11 @@ export interface SetupView {
   complete:     boolean;
   missing:      SetupGapName[];
   nextQuestion: string | null;
+  // What the learner said they are learning for (empty: not said). The page
+  // words itself from this; nothing about what is saved depends on it.
+  learningContexts: LearningContext[];
+  // The starting points to offer, most fitting first.
+  templateIds:  string[];
 }
 
 export interface SetupChanges {

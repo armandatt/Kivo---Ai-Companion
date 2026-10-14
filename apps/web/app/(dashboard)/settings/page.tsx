@@ -39,11 +39,11 @@ export default function SettingsPage() {
 
       {companion === 'Nova' && (
         <>
-          <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Study</p>
+          <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Learning</p>
           <Link href="/settings/study" className="mt-3 flex items-center justify-between gap-4 rounded-3xl border border-white/8 bg-card/70 p-6 transition-colors hover:border-white/16">
             <span>
-              <span className="block text-base font-semibold text-foreground">Subjects, topics and exam dates</span>
-              <span className="mt-1 block text-sm text-foreground/55">Add a subject, paste a syllabus, set an exam date, or start from a template.</span>
+              <span className="block text-base font-semibold text-foreground">What you&apos;re learning, your goals and dates</span>
+              <span className="mt-1 block text-sm text-foreground/55">Say what you are learning for, add to it, move or remove a date, or start from a template.</span>
             </span>
             <ArrowRight className="size-4 shrink-0 text-foreground/45" />
           </Link>

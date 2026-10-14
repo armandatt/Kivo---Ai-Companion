@@ -24,6 +24,10 @@ import { STUDY_TIMES, type SetupStatement, type StudyTime } from "../types/under
 import { addExam, EXAM_HORIZON_DAYS } from "./exams";
 import { seedGoalFromSignup } from "./goals";
 import { learnerKey } from "./learner-key";
+import { ensureLearnerTimezone, loadLearningContexts } from "../adapters/account-preferences-adapter";
+import { setupVocabulary, type LearningContext } from "./learning-context";
+import { templatesFor } from "./templates";
+import { DEADLINE_RULES, parseDeadlineType } from "./deadline-types";
 import type { SetupChanges, SetupDraft, SetupIssue, SetupView } from "./setup.types";
 
 export type { SetupChanges, SetupDraft, SetupIssue, SetupView } from "./setup.types";
@@ -81,7 +85,10 @@ export function normalizeSetupDraft(raw: unknown, today: string): { draft: Setup
       issues.push({ field: "exams", message: `The ${subjectName} exam is more than a year away.` }); continue;
     }
     if (exams.some(x => same(x.subjectName, subjectName) && x.date === date)) continue;
-    exams.push({ subjectName, date, title: tidy(e["title"], 80) || null });
+    // A kind that is not one of the known ones is refused, not guessed.
+    const kind = e["type"] === undefined || e["type"] === null ? undefined : parseDeadlineType(e["type"]);
+    if (kind === null) { issues.push({ field: "exams", message: `The ${subjectName} date has a kind Nova doesn't know.` }); continue; }
+    exams.push({ subjectName, date, title: tidy(e["title"], 80) || null, ...(kind ? { type: kind } : {}) });
   }
 
   let dailyMinutes: number | null = null;
@@ -123,7 +130,7 @@ async function loadLearner(platformChatId: string) {
 }
 type Learner = NonNullable<Awaited<ReturnType<typeof loadLearner>>>;
 
-async function viewOf(learner: Learner, now: Date): Promise<SetupView> {
+async function viewOf(learner: Learner, now: Date, learningContexts: LearningContext[]): Promise<SetupView> {
   const profile = learner.novaAcademicProfile;
   const exams = profile
     ? await prisma.novaExam.findMany({
@@ -134,6 +141,7 @@ async function viewOf(learner: Learner, now: Date): Promise<SetupView> {
     : [];
   const subjects = (profile?.subjects ?? []).map(s => ({ name: s.name, topics: s.topics.map(t => t.name) }));
   const facts: SetupFacts = {
+    learningContexts,
     subjects:      subjects.map(s => ({ name: s.name, topicCount: s.topics.length })),
     upcomingExams: exams.length,
     studyTime:     profile?.preferredStudyTime ?? null,
@@ -147,19 +155,22 @@ async function viewOf(learner: Learner, now: Date): Promise<SetupView> {
     complete:     subjects.some(s => s.topics.length > 0),
     missing:      setupGaps(facts),
     nextQuestion: nextSetupQuestion(facts)?.question ?? null,
+    learningContexts,
+    templateIds:  templatesFor(learningContexts).map(t => t.id),
   };
 }
 
 // null: nobody behind this key.
 export async function loadSetup(platformChatId: string, now = new Date()): Promise<SetupView | null> {
   const learner = await loadLearner(platformChatId);
-  return learner ? viewOf(learner, now) : null;
+  return learner ? viewOf(learner, now, await loadLearningContexts(platformChatId)) : null;
 }
 
 export async function loadSetupFacts(platformChatId: string, now = new Date()): Promise<SetupFacts | null> {
   const view = await loadSetup(platformChatId, now);
   if (!view) return null;
   return {
+    learningContexts: view.learningContexts,
     subjects:      view.subjects.map(s => ({ name: s.name, topicCount: s.topics.length })),
     upcomingExams: view.exams.length,
     studyTime:     view.studyTime,
@@ -225,7 +236,7 @@ export async function previewSetup(platformChatId: string, raw: unknown, now = n
   if (!learner) return { status: "not_ready" };
   const today = dayKey(now, resolveTimezone(learner.novaAcademicProfile?.timezone ?? null));
   const { draft, issues } = normalizeSetupDraft(raw, today);
-  const { changes, issues: more } = changesOf(await viewOf(learner, now), draft, routine);
+  const { changes, issues: more } = changesOf(await viewOf(learner, now, await loadLearningContexts(platformChatId)), draft, routine);
   return { status: "ok", draft, changes, issues: [...issues, ...more] };
 }
 
@@ -287,12 +298,24 @@ export async function saveSetup(platformChatId: string, raw: unknown, now = new 
     await write();
   }
 
+  // A study profile made by this save has no timezone yet: the learner's
+  // device reported one before there was a profile to keep it on. The zone on
+  // their account is adopted now, so the dates below and their first plan are
+  // counted on their own calendar and not in UTC.
+  const saved = (await loadLearner(platformChatId))?.novaAcademicProfile;
+  if (saved && !saved.timezone) await ensureLearnerTimezone({ id: saved.id, timezone: saved.timezone }, platformChatId);
+
+  const learningContexts = await loadLearningContexts(platformChatId);
+  const dateSuffix = setupVocabulary(learningContexts).dateTitleSuffix;
   // Exams go through the one exam writer, which already refuses a duplicate.
   for (const e of draft.exams) {
-    await addExam(platformChatId, { title: e.title ?? `${e.subjectName} exam`, subjectName: e.subjectName, date: e.date }, now);
+    // A date with no name of its own is named for what it is: an exam, or
+    // for someone learning for work, the date they are working toward.
+    const suffix = e.type ? DEADLINE_RULES[e.type].titleSuffix : dateSuffix;
+    await addExam(platformChatId, { title: e.title ?? `${e.subjectName} ${suffix}`, subjectName: e.subjectName, date: e.date, kind: e.type }, now);
   }
 
-  const setup = await viewOf((await loadLearner(platformChatId))!, now);
+  const setup = await viewOf((await loadLearner(platformChatId))!, now, learningContexts);
   return { status: "saved", changes: preview.changes, setup };
 }
 

@@ -26,6 +26,10 @@ export interface ResponseBrainOutput {
   reply:              string;
   reasoningMode:      ReasoningMode;
   confidence:         number;
+  // The topics, chapters, concepts or resources the reply suggests studying
+  // or doing next, by name. Checked against what Nova gave the model
+  // (groundTopics in brains/grounded-reply.ts).
+  recommends?:        string[];
   // Optional structured updates the LLM can emit
   stateUpdates?:      Partial<ResponseStateUpdates>;
   investigationUpdate?: {

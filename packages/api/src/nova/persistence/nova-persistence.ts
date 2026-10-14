@@ -612,3 +612,36 @@ async function consumeExecutionReport(
   // included. One session never sets a value by itself (learning-dna-engine.ts).
   await refreshLearningDna(report.profileId, now).catch(err => console.error("[nova:dna] refresh failed", err));
 }
+
+// ── The learner's own note on a finished session ──────────────────────────────
+// Three short answers they may give after ending a session (what got done,
+// what got in the way, the next step), kept on the session as they wrote
+// them. It is theirs to read back. It is not a rating: it feeds no mastery,
+// no review schedule, no Learning DNA and no consolidation, and nothing here
+// reads it into any of those.
+//
+// Written once. The write is guarded on the session being this learner's,
+// finished, and still without a note, so a repeated or concurrent save
+// changes nothing.
+export async function saveSessionNote(profileId: string, sessionId: string, text: string): Promise<"saved" | "exists" | "not_found"> {
+  const written = await prisma.novaStudySession.updateMany({
+    where: { id: sessionId, profileId, status: "completed", reflectionText: null },
+    data:  { reflectionText: text },
+  });
+  if (written.count > 0) return "saved";
+  const row = await prisma.novaStudySession.findFirst({
+    where:  { id: sessionId, profileId, status: "completed" },
+    select: { id: true },
+  });
+  return row ? "exists" : "not_found";
+}
+
+// The note from the learner's most recent finished session on a topic that has one.
+export async function latestSessionNote(profileId: string, subjectId: string, topicName: string): Promise<{ text: string | null; date: Date } | null> {
+  const row = await prisma.novaStudySession.findFirst({
+    where:   { profileId, subjectId, status: "completed", reflectionText: { not: null }, topicName: { equals: topicName, mode: "insensitive" } },
+    orderBy: { sessionDate: "desc" },
+    select:  { reflectionText: true, sessionDate: true },
+  });
+  return row ? { text: row.reflectionText, date: row.sessionDate } : null;
+}

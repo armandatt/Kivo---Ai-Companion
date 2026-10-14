@@ -12,6 +12,9 @@ import { ABANDONED_STATUS } from "../engines/session-clock";
 import { buildExamContext } from "../engines/exam-engine";
 import { loadPlanningInputs, planEmptyReason, planMode, type PlanningInputs } from "./planning-inputs";
 import { sessionElapsedSeconds } from "./session-view";
+import { shortfallView } from "./shortfall";
+import { paceProjection } from "./pace";
+import { DEADLINE_RULES, deadlineType, preparesTopics } from "./deadline-types";
 import { toAction } from "./today";
 import type {
   NovaPlannerReady,
@@ -23,7 +26,7 @@ import type {
   PlannerSessionEntry,
   PlannerUnknown,
 } from "./planner.types";
-import { calendarDaysUntil, dayKey, resolveTimezone } from "../engines/learner-calendar";
+import { calendarDaysUntil, dateDayKey, dayKey, resolveTimezone } from "../engines/learner-calendar";
 
 const DAY_MS = 86_400_000;
 const MAX_REVIEWS_PER_DAY = 4;
@@ -59,7 +62,6 @@ function buildReasoning(input: PlanningInputs, blocks: PlannerBlock[]): PlannerR
   const mode = planMode(academicState);
 
   const adjustments: PlannerReasoning["adjustments"] = [];
-  const exam = examContext ? `${examContext.examTitle} is ${inDays(examContext.daysUntil)}` : null;
 
   switch (plan.budgetBasis) {
     case "stated_time":
@@ -73,25 +75,19 @@ function buildReasoning(input: PlanningInputs, blocks: PlannerBlock[]): PlannerR
           : `Kept to ${budget} min at most: Nova is taking the pressure off while you recover.`,
       });
       break;
-    case "exam_crisis":
-      adjustments.push({
-        kind: "exam_crisis",
-        text: `${exam ?? "An exam is within three days"}: study time is raised from ${usualMinutes} to ${budget} min.`,
-      });
-      break;
     case "recovery":
       adjustments.push({
         kind: "recovery",
         text: `Cut from ${usualMinutes} to ${budget} min: ${academicState.consecutiveMisses} planned days were missed in a row.`,
       });
       break;
-    case "exam_ramp":
-      if (budget > usualMinutes) {
-        adjustments.push({
-          kind: "exam_ramp",
-          text: `${exam ?? `An exam is ${inDays(academicState.daysUntilNextExam ?? 0)}`}: study time is raised from ${usualMinutes} to ${budget} min.`,
-        });
-      }
+    case "reentry":
+      adjustments.push({
+        kind: "reentry",
+        text: input.daysSinceStudy
+          ? `A shorter first day back: ${budget} of your usual ${usualMinutes} min. Your last session was ${input.daysSinceStudy} days ago. It changes back after your next session; nothing was saved.`
+          : `A shorter first day back: ${budget} of your usual ${usualMinutes} min. It changes back after your next session; nothing was saved.`,
+      });
       break;
     case "preferred":
       break;
@@ -99,7 +95,10 @@ function buildReasoning(input: PlanningInputs, blocks: PlannerBlock[]): PlannerR
 
   // The mode changes what goes in the plan, separately from how long it is.
   if (mode === "exam_crisis" && blocks.length > 0 && blocks.every(b => b.activityType === "exam_prep")) {
-    adjustments.push({ kind: "exam_crisis", text: "Every block today is exam prep. Nothing else is scheduled." });
+    adjustments.push({
+      kind: "exam_crisis",
+      text: `${examContext ? `${examContext.examTitle} is ${inDays(examContext.daysUntil)}` : "An exam is within three days"}: every block today is exam prep, inside your usual time.`,
+    });
   }
   if (mode === "recovery" && plan.budgetBasis !== "recovery") {
     adjustments.push({
@@ -142,6 +141,11 @@ function buildReasoning(input: PlanningInputs, blocks: PlannerBlock[]): PlannerR
     subjects,
     constraints: input.constraints,
     assumptions: plan.assumptions,
+    shortfall:   shortfallView(plan.shortfall, {
+      dailyMinutesStated: snapshot.dailyMinutesStated !== null,
+      availableMinutes:   input.availableMinutes,
+      calendarDaysUntil:  examContext ? calendarDaysUntil(examContext.scheduledAt, input.now, input.timezone) : undefined,
+    }),
   };
 }
 
@@ -201,7 +205,7 @@ export function buildPlannerView(input: PlanningInputs): NovaPlannerReady {
       reviewsDue:      due.slice(0, MAX_REVIEWS_PER_DAY).map(t => ({ topicName: t.topicName, subjectName: t.subjectName })),
       reviewsDueCount: due.length,
       exams: snapshot.upcomingExams
-        .filter(e => dayKey(e.scheduledAt, timezone) === date)
+        .filter(e => dateDayKey(e.scheduledAt, timezone) === date)
         .map(e => ({ title: e.title, subjectName: e.subjectName })),
     };
   });
@@ -212,16 +216,27 @@ export function buildPlannerView(input: PlanningInputs): NovaPlannerReady {
     .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())
     .map(e => {
       const subjectTopics = e.subjectName === null ? [] : topics.filter(t => sameTopic(t.subjectName, e.subjectName));
-      const context = subjectTopics.length > 0
+      // Readiness is a reading of topics, so only a date the planner prepares
+      // topics for has one. An assignment or a project has none to give.
+      const context = subjectTopics.length > 0 && preparesTopics(e)
         ? buildExamContext({ id: e.id, title: e.title, subjectName: e.subjectName, scheduledAt: e.scheduledAt, examType: e.examType }, subjectTopics, now)
         : null;
       return {
         title:       e.title,
         subjectName: e.subjectName,
         examType:    e.examType,
+        kind:        deadlineType(e.examType),
+        kindLabel:   DEADLINE_RULES[deadlineType(e.examType)].label,
         scheduledAt: e.scheduledAt.toISOString(),
         daysUntil:   calendarDaysUntil(e.scheduledAt, now, input.timezone),
         drivesPlan:  examContext?.examId === e.id,
+        prepares:    preparesTopics(e),
+        pace:        preparesTopics(e)
+          ? paceProjection({
+              topics: subjectTopics, daysUntil: calendarDaysUntil(e.scheduledAt, now, input.timezone),
+              dailyMinutes: snapshot.preferredStudyHoursPerDay * 60, dailyMinutesStated: snapshot.dailyMinutesStated !== null,
+            })
+          : null,
         preparation: context ? {
           mode:       context.mode,
           weak:       context.riskMatrix.critical,

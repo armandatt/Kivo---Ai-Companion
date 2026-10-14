@@ -29,7 +29,7 @@ export const SETUP_LINK = { label: "Set it up on the web", path: "/home" };
 
 // What Nova says to someone it cannot plan for yet: the one thing it needs.
 export function setupAsk(view: SetupView | null, lead = ""): TelegramReply {
-  const question = view?.nextQuestion ?? "Which subjects are you taking this term?";
+  const question = view?.nextQuestion ?? "What are you learning? Name your subjects, or a skill or project.";
   return { text: `${lead}${question}`, link: SETUP_LINK };
 }
 

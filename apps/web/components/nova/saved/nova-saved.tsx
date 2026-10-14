@@ -93,6 +93,15 @@ function ResourceRow({ resource: initial, onRemoved, onChanged }: { resource: Le
   const [notice, setNotice]     = useState<string | null>(null)
   const filed = [resource.subjectName, resource.topicName].filter(Boolean).join(' · ')
   const passage = resource.eventType === 'selection_saved'
+  // A link from the Knowledge Map names this page (?page=<id>): its row is
+  // brought into view and marked.
+  const [linked, setLinked] = useState(false)
+  const row = useRef<HTMLLIElement>(null)
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('page') !== resource.id) return
+    setLinked(true)
+    row.current?.scrollIntoView({ block: 'center' })
+  }, [resource.id])
 
   async function remove() {
     if (!window.confirm(passage ? 'Remove this passage from Nova?' : 'Remove this page from Nova?')) return
@@ -131,7 +140,8 @@ function ResourceRow({ resource: initial, onRemoved, onChanged }: { resource: Le
   }, [waiting, resource])
 
   return (
-    <li data-resource={resource.id} data-resource-title={resource.title} data-resource-kind={passage ? 'passage' : 'page'} className="px-4 py-4 sm:px-5">
+    <li ref={row} data-resource={resource.id} data-resource-title={resource.title} data-resource-kind={passage ? 'passage' : 'page'} data-linked={linked || undefined}
+      className={`px-4 py-4 sm:px-5 ${linked ? 'bg-keppel-400/5' : ''}`}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0">
           <a href={resource.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-full items-center gap-1.5 text-[15px] font-medium text-foreground/90 underline-offset-4 hover:text-keppel-200 hover:underline">
@@ -156,6 +166,13 @@ function ResourceRow({ resource: initial, onRemoved, onChanged }: { resource: Le
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <Link href={`/focus?study=${encodeURIComponent(resource.id)}`} className="inline-flex h-9 items-center justify-center rounded-lg bg-keppel-400 px-3 text-xs font-semibold text-keppel-950 transition-colors hover:bg-keppel-300" data-study>
             Study this
+          </Link>
+          {/* A new note on this page, filed where the page is and naming it as its source. Nothing is saved until the note is. */}
+          <Link href={`/notes/new?${new URLSearchParams({
+            title: resource.title.slice(0, 200), source: resource.url, sourceTitle: resource.title,
+            ...(resource.subjectId ? { subjectId: resource.subjectId } : {}), ...(resource.subjectId && resource.topicName ? { topic: resource.topicName } : {}),
+          }).toString()}`} className="inline-flex h-9 items-center justify-center rounded-lg border border-white/12 px-3 text-xs text-foreground/65 transition-colors hover:bg-white/5" data-write-note>
+            Write a note
           </Link>
           <button type="button" onClick={() => void addTask()} disabled={busy} className="h-9 rounded-lg border border-white/12 px-3 text-xs text-foreground/65 transition-colors hover:bg-white/5 disabled:opacity-50" data-add-task>
             Add task

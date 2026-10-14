@@ -46,13 +46,28 @@ export function dayNumber(key: string): number {
   return Math.floor(Date.UTC(y, m - 1, d) / DAY_MS);
 }
 
-// Whole calendar days from now to an instant, in the learner's timezone:
-// 0 is today, 1 is tomorrow, whatever the hour. This is what "in N days"
-// means to a person; elapsed time rounded up calls tomorrow afternoon's exam
-// "in 2 days" all morning.
+// A stored date is a day, not a moment. Nova writes the day a learner gave
+// as noon UTC on that day (product/exams.ts, examInstant), and older rows were
+// written as midnight UTC. Either way its UTC day is the day they meant,
+// wherever they are: read in a zone twelve or more hours from UTC, noon UTC
+// is already the next day (or still the one before). Any other instant is a
+// real moment and is read in the learner's zone.
+export function isDateOnlyInstant(at: Date): boolean {
+  const minuteOfDay = at.getUTCHours() * 60 + at.getUTCMinutes();
+  return at.getUTCSeconds() === 0 && at.getUTCMilliseconds() === 0 && (minuteOfDay === 720 || minuteOfDay === 0);
+}
+
+// The learner's calendar day a stored date falls on.
+export function dateDayKey(at: Date, timezone: string | null): string {
+  return isDateOnlyInstant(at) ? at.toISOString().slice(0, 10) : dayKey(at, resolveTimezone(timezone));
+}
+
+// Whole calendar days from now to a stored date (an exam or another
+// deadline), in the learner's timezone: 0 is today, 1 is tomorrow, whatever
+// the hour. This is what "in N days" means to a person; elapsed time rounded
+// up calls tomorrow afternoon's exam "in 2 days" all morning.
 export function calendarDaysUntil(at: Date, now: Date, timezone: string | null): number {
-  const zone = resolveTimezone(timezone);
-  return Math.max(0, dayNumber(dayKey(at, zone)) - dayNumber(dayKey(now, zone)));
+  return Math.max(0, dayNumber(dateDayKey(at, timezone)) - dayNumber(dayKey(now, resolveTimezone(timezone))));
 }
 
 export const dayKeyOfNumber = (day: number): string => new Date(day * DAY_MS).toISOString().slice(0, 10);

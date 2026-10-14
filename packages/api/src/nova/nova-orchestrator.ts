@@ -33,14 +33,19 @@ import { selectActiveExam, buildExamContext } from "./engines/exam-engine";
 import { runPatternDetector } from "./engines/pattern-detector";
 import { buildSessionContext, computeSessionAction } from "./engines/study-session-engine";
 import { runDecisionGraph } from "./decision/decision-graph";
-import { buildDynamicLayer, buildExplainPrompt, buildFocusedLayer, buildMicroPrompt } from "./context/context-builder";
+import { buildDynamicLayer, buildExplainPrompt, buildFocusedLayer, buildMicroPrompt, NOTHING_RECOMMENDED } from "./context/context-builder";
 import { runResponseBrain, UNREADABLE_RESPONSE_REPLY } from "./brains/response-brain";
+import { groundDurations, groundTopics } from "./brains/grounded-reply";
 import { chooseRegister, registerLine } from "./decision/register";
 import { loadAccountabilityStyle } from "./adapters/operating-style-adapter";
 import type { ResponseBrainOutput } from "./types/response.types";
 import { getRelevantMemories } from "./adapters/memory-adapter";
 import { loadActiveRealityFacts } from "./adapters/reality-adapter";
 import { loadOperatingStyle } from "./adapters/operating-style-adapter";
+import { loadLearningContexts } from "./adapters/account-preferences-adapter";
+import { preparesTopics, takesOverTheDay } from "./product/deadline-types";
+import { calendarDaysUntil, dayKey, resolveTimezone } from "./engines/learner-calendar";
+import { countedStudyDays, studyGap } from "./engines/recovery-engine";
 import { loadConversationHistory, loadSignalHistory, annotationTags } from "./adapters/conversation-adapter";
 import { loadPriorPatterns } from "./consolidation/stores/behavioral-pattern-store";
 import { persistTurn, persistTurnAsync } from "./persistence/nova-persistence";
@@ -134,7 +139,7 @@ export async function runNovaOrchestrator(
     semesterEndDate:        snapshot.semesterEndDate,
     daysSinceJoined:        snapshot.daysSinceJoined,
     studySessions:          snapshot.studySessions,
-    upcomingExams:          snapshot.upcomingExams,
+    upcomingExams:          snapshot.upcomingExams.filter(takesOverTheDay),
     stateHistory:           snapshot.stateHistory,
     signals,
     mentionedTopicMastery:  null,  // loaded next
@@ -155,7 +160,7 @@ export async function runNovaOrchestrator(
         semesterEndDate:        snapshot.semesterEndDate,
         daysSinceJoined:        snapshot.daysSinceJoined,
         studySessions:          snapshot.studySessions,
-        upcomingExams:          snapshot.upcomingExams,
+        upcomingExams:          snapshot.upcomingExams.filter(takesOverTheDay),
         stateHistory:           snapshot.stateHistory,
         signals,
         mentionedTopicMastery:  topicMastery,
@@ -189,8 +194,11 @@ export async function runNovaOrchestrator(
 
   // Determine if we should run pattern detection this turn
   const shouldRunPatterns = true; // TODO: track per-user count and gate on interval
+  // The learner's topic names, for checking what the reply recommends (15).
+  let topicNames: string[] = [];
   if (shouldRunPatterns && snapshot.profileId) {
     const allTopics = await getAllTopicMasteries(snapshot.profileId);
+    topicNames = allTopics.map(t => t.topicName);
     patternAnalysis = runPatternDetector({
       studySessions:        snapshot.studySessions,
       // Prior turns from the conversation log, plus this turn.
@@ -225,7 +233,7 @@ export async function runNovaOrchestrator(
 
   // ── 9. Exam Engine ────────────────────────────────────────────────────────
   const examContext = selectActiveExam(
-    snapshot.upcomingExams.map(e => ({
+    snapshot.upcomingExams.filter(preparesTopics).map(e => ({
       id:          e.id,
       title:       e.title,
       subjectName: e.subjectName,
@@ -236,6 +244,17 @@ export async function runNovaOrchestrator(
     now,
   );
 
+  // The same dates in the learner's calendar days, which is how every page
+  // counts them: the reply must not give a different number from Today.
+  const zone = snapshot.timezone ?? null;
+  const examCalendarDays = examContext ? calendarDaysUntil(examContext.scheduledAt, now, zone) : null;
+  const nextDayTaker = snapshot.upcomingExams.filter(takesOverTheDay)
+    .filter(e => e.scheduledAt.getTime() >= now.getTime())
+    .sort((x, y) => x.scheduledAt.getTime() - y.scheduledAt.getTime())[0];
+  const nextExamCalendarDays = nextDayTaker ? calendarDaysUntil(nextDayTaker.scheduledAt, now, zone) : null;
+  // Where the learner is after missed days, on their calendar (recovery-engine).
+  const gap = studyGap(dayKey(now, resolveTimezone(zone)), countedStudyDays(snapshot.studySessions, zone));
+
   // ── 10. Planning Engine (when plan explicitly requested) ──────────────────
   let studyPlan = null;
   if (understanding.intent === "plan_request" && snapshot.profileId) {
@@ -245,14 +264,19 @@ export async function runNovaOrchestrator(
       allTopics,
       snapshot.preferredStudyHoursPerDay,
       examContext,
+      // A first day back is planned as Home and the Planner plan it.
+      { now, examCalendarDays, reentry: gap.situation === "returning" },
     );
   }
 
   // ── 11. Memory + Reality (parallel) ──────────────────────────────────────
-  const [memoryResult, realityFacts, operatingStyle] = await Promise.all([
+  const [memoryResult, realityFacts, operatingStyle, learningContexts] = await Promise.all([
     getRelevantMemories(userId, understanding),
     loadActiveRealityFacts(userId, understanding),
     loadOperatingStyle(platformChatId),
+    // What they said they are learning for. A turn does not depend on it:
+    // unreadable, the learner is spoken to as one who has not said.
+    loadLearningContexts(platformChatId).catch(() => []),
   ]);
 
   // ── 12. Assemble NovaContext ───────────────────────────────────────────────
@@ -282,12 +306,17 @@ export async function runNovaOrchestrator(
       yearOfStudy:              snapshot.yearOfStudy,
       major:                    snapshot.major,
       institution:              snapshot.institution,
+      learningContexts,
       preferredStudyHoursPerDay: snapshot.preferredStudyHoursPerDay,
       subjects:                 snapshot.subjects.map(s => s.name),
       daysSinceJoined:          snapshot.daysSinceJoined,
     },
     topicMastery,
     examContext,
+    examCalendarDays,
+    nextExamCalendarDays,
+    daysSinceStudy: gap.daysSinceStudy,
+    reentryDay:     gap.situation === "returning",
     studyPlan,
     activeSession:      snapshot.activeSession,
     sessionContext,
@@ -362,6 +391,28 @@ export async function runNovaOrchestrator(
       if (input.responseFallback && brainOutput.reply === UNREADABLE_RESPONSE_REPLY) {
         responseOk  = false;
         brainOutput = scripted(input.responseFallback);
+      }
+      // A length of time the reply states that Nova did not give it was made
+      // up by the model: that sentence is taken out (brains/grounded-reply.ts).
+      const told = `${dynamicLayer}\n${prompt}\n${text}`;
+      const grounded = groundDurations(brainOutput.reply, told);
+      if (grounded.removed.length > 0) {
+        console.log(JSON.stringify({ layer: "nova:response", event: "ungrounded_duration_removed", removed: grounded.removed.length }));
+        brainOutput = { ...brainOutput, reply: grounded.reply };
+      }
+      // So is a topic it recommends that Nova did not give it (rule 13): a
+      // name must be in the context or the learner's message. When the context
+      // says nothing is recommended, only the learner's own message grounds
+      // one, and the check does not rest on the model declaring it: any of
+      // their topics a sentence names is held to that, since nothing chose
+      // one of them now.
+      const nothingRecommended = dynamicLayer.includes(NOTHING_RECOMMENDED);
+      const topics = nothingRecommended
+        ? groundTopics(brainOutput.reply, [...(brainOutput.recommends ?? []), ...topicNames], text)
+        : groundTopics(brainOutput.reply, brainOutput.recommends, told);
+      if (topics.removed.length > 0) {
+        console.log(JSON.stringify({ layer: "nova:response", event: "ungrounded_topic_removed", removed: topics.removed.length }));
+        brainOutput = { ...brainOutput, reply: topics.reply };
       }
     } catch (err) {
       if (!input.responseFallback) throw err;

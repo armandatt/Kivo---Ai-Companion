@@ -34,7 +34,11 @@ async function send(url: string, method: string, body?: NoteInput): Promise<Note
   try {
     const res = await fetch(url, { method, headers: JSON_HEADERS, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' })
     if (res.status === 401) { window.location.href = '/signin'; return failed }
-    return await res.json() as NoteResponse
+    const out = await res.json() as NoteResponse
+    // An API deployed before note links answers without `links` (the web app
+    // deploys on its own and can be ahead of it): read that as no links.
+    if (out.ok && !out.note.links) out.note.links = { outgoing: [], backlinks: [] }
+    return out
   } catch {
     return failed
   }

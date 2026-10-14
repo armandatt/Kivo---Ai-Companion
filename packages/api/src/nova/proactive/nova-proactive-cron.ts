@@ -44,9 +44,10 @@ import { encodeCallback } from "../telegram/telegram-event";
 import { recommendationReply } from "../telegram/telegram-replies";
 import type { InlineButton, PromptSpec, TelegramClient } from "../telegram/telegram.types";
 import {
-  beginSend, claimOccurrence, dropUnworded, loadDelivered, markReady, markSendFailed, markSent, purgeLegacyDecisions, recoverPending,
+  beginSend, claimOccurrence, dropStale, dropUnworded, loadDelivered, markReady, markSendFailed, markSent, purgeLegacyDecisions, recoverPending,
   type OutboxRow,
 } from "./proactive-outbox";
+import { listTasks } from "../product/tasks";
 import { proactiveFallback, wordProactiveMessage, type ProactiveWordingInput } from "./nova-proactive-response";
 
 export interface NovaProactiveCronResult {
@@ -74,7 +75,7 @@ export interface ProactiveDeps {
   word?:   (input: ProactiveWordingInput) => Promise<{ text: string; generated: boolean }>;
 }
 
-const PRIORITY: Record<ProactiveType, number> = { exam_countdown: 9, missed_plan_recovery: 6, review_due: 4, daily_checkin: 3, daily_nudge: 3 };
+const PRIORITY: Record<ProactiveType, number> = { exam_countdown: 9, missed_plan_recovery: 6, task_due: 5, review_due: 4, daily_checkin: 3, daily_nudge: 3 };
 
 // Topics due for review, by the one definition (retention-engine.ts): the
 // same topics Home, the Planner and Knowledge show as due.
@@ -173,10 +174,13 @@ async function processLearner(
   if (view.status !== "ready") return "not_ready";
 
   // ── Decide ─────────────────────────────────────────────────────────────────
-  const [delivered, dna, dueTopics, messagedRecently] = await Promise.all([
+  const [delivered, dna, dueTopics, tasks, messagedRecently] = await Promise.all([
     loadDelivered(profile.id, day),
     loadLearningDna(profile.id, now),
     loadOverdueTopics(profile.id, now),
+    // The learner's own to-do list, read through its owner. A message is
+    // not owed to it: unreadable, there is simply no task reason this tick.
+    listTasks(profile.id, { now }).catch(() => null),
     userMessagedSince(profile.user.id, new Date(now.getTime() - RECENT_MESSAGE_MINUTES * 60_000)),
   ]);
 
@@ -204,6 +208,7 @@ async function processLearner(
     })),
     reviewDueCount: dueTopics.length,
     hasPlan:        view.recommendation !== null,
+    tasksDueToday:  (tasks?.tasks ?? []).filter(t => t.status !== "done" && t.dueInDays === 0).map(t => ({ id: t.id, title: t.title })),
   };
   // Someone who has just closed a session was with Nova a moment ago, on
   // whichever surface: that is recent contact, the same as a message.
@@ -235,19 +240,22 @@ async function processLearner(
       console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", profileId: profile.id, type: waiting.type, occurrence: waiting.occurrenceKey, outcome: "held", reason: held }));
       return "held";
     }
-    // Claimed, and the process ended before it was worded: it is worded now,
-    // from what is true now. If its reason has gone (the exam was removed,
-    // the review was done), nothing is said.
-    let fresh: Parameters<typeof deliver>[7] = null;
-    if (!waiting.text) {
-      const candidate = generateCandidates(facts).find(c => c.occurrenceKey === waiting.occurrenceKey);
-      if (!candidate) {
-        await dropUnworded(waiting.id);
-        console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", profileId: profile.id, type: waiting.type, occurrence: waiting.occurrenceKey, outcome: "dropped", reason: "reason_no_longer_holds" }));
-        return "nothing_due";
-      }
-      fresh = { candidate, facts, windowBasis: facts.window.basis, dueTopics: dueTopics.map(t => t.topicName) };
+    // Its reason is looked for again in what is true now. If it has gone
+    // (the exam was moved or removed, the task was finished, the review was
+    // done, the day it named is over), nothing is said: a claim that was
+    // never worded is closed, and so is one already worded, whose words are
+    // no longer true.
+    const candidate = generateCandidates(facts).find(c => c.occurrenceKey === waiting.occurrenceKey);
+    if (!candidate) {
+      if (waiting.text) await dropStale(waiting.id); else await dropUnworded(waiting.id);
+      console.log(JSON.stringify({ ts: now.toISOString(), layer: "nova_proactive", profileId: profile.id, type: waiting.type, occurrence: waiting.occurrenceKey, outcome: "dropped", reason: "reason_no_longer_holds" }));
+      return "nothing_due";
     }
+    // Claimed, and the process ended before it was worded: it is worded now,
+    // from what is true now.
+    const fresh: Parameters<typeof deliver>[7] = waiting.text
+      ? null
+      : { candidate, facts, windowBasis: facts.window.basis, dueTopics: dueTopics.map(t => t.topicName) };
     return await deliver(waiting, profile, zone, view, now, client, word, fresh, informOnly(waiting.type as ProactiveType, gates)) ? "sent" : "send_failed";
   }
 
@@ -296,7 +304,9 @@ async function deliver(
 ): Promise<boolean> {
   const chatId = profile.user.platformChatId;
   const type   = row.type as ProactiveType;
-  const rec    = quiet ? null : view.recommendation;
+  // A task is the learner's own, not a block Nova planned: its message names
+  // the task and carries no recommended topic and no Start button.
+  const rec    = quiet || type === "task_due" ? null : view.recommendation;
 
   let text = row.text;
   if (!text) {

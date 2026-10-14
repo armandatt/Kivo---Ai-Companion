@@ -36,6 +36,7 @@ const { loadNovaPlanner }           = await import("../product/planner.js");
 const { loadNovaKnowledge }         = await import("../product/knowledge.js");
 const { runNovaProactiveCron }      = await import("../proactive/nova-proactive-cron.js");
 const { abandonStaleSessions }      = await import("../persistence/nova-persistence.js");
+const { removeExam, listExams }     = await import("../product/exams.js");
 const { localHour, dayKey }         = await import("../engines/learner-calendar.js");
 
 import type { InlineButton, SendResult, TelegramClient, TurnTrace } from "../telegram/telegram.types.js";
@@ -1053,7 +1054,7 @@ test("before setup is finished, a command gets the one thing Nova needs and a bu
   const tg = fakeTelegram();
   const run = (event: ReturnType<typeof normalizeTelegramUpdate>) => handleNovaTelegramEvent(event as never, { client: tg.client, now: () => clock });
   await run(say(chat, "/today"));
-  assert.equal(tg.last().text, "I'm Nova. Before I can plan anything I need to know what you're studying. Which subjects are you taking this term?");
+  assert.equal(tg.last().text, "I'm Nova. Before I can plan anything I need to know what you're studying. What are you learning? Name your subjects, or a skill or project.");
   assert.equal((await run(tapUpdate(chat, "p:x:a"))).failure, "forged_callback");
   const profile = await prisma.novaAcademicProfile.findFirstOrThrow({ where: { user: { platformChatId: chat } }, select: { onboardingComplete: true, _count: { select: { subjects: true, studySessions: true } } } });
   assert.deepEqual([profile.onboardingComplete, profile._count.subjects, profile._count.studySessions], [false, 0, 0]);
@@ -1223,6 +1224,31 @@ test("a failed send is retried with the stored text, and a failure is never coun
   assert.deepEqual([row!.status, row!.attempts], ["sent", 2]);
   assert.equal(asked.filter(a => a.startsWith("Yas: ")).length, wordedOnce, "the retry sends what was already worded");
   assert.equal(mine(tg, l).filter(s => s.messageId !== null).length, 1);
+});
+
+test("a countdown that failed to send is dropped, not retried, once its exam is removed", async () => {
+  const l = await seedLearner("Kit", { timezone: zoneWhereHourIs(10), preferredStudyTime: "evening", exam: true });
+  const { tg, run } = proactive();
+  tg.failNext({ ok: false, kind: "server", detail: "Bad Gateway" });
+  await run();
+  let [row] = await outbox(l);
+  assert.deepEqual([row!.eventType, row!.status, row!.text !== null], ["exam_countdown", "failed", true]);
+
+  // The learner removes the exam before the retry.
+  const exams = await listExams(l.chat, clock);
+  assert.equal(exams?.length, 1);
+  assert.equal((await removeExam(l.chat, exams![0]!.id, clock)).status, "removed");
+
+  tick(5);
+  await run();
+  [row] = await outbox(l);
+  assert.deepEqual([row!.status, row!.lastError], ["abandoned", "reason no longer holds"]);
+  assert.equal(mine(tg, l).filter(s => s.messageId !== null).length, 0, "the countdown for an exam that is gone never arrives");
+  assert.ok(!mine(tg, l).slice(1).some(s => s.text === row!.text), "and its stored text is not sent again");
+  // Later ticks do not bring it back.
+  tick(5);
+  await run();
+  assert.equal((await outbox(l)).filter(r => r.eventType === "exam_countdown" && r.status !== "abandoned").length, 0);
 });
 
 test("an unanswered send is never repeated, and a blocked bot stops Nova from trying", async () => {

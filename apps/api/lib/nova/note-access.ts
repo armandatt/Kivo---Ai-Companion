@@ -13,7 +13,7 @@ export const noteFail = (status: number, error: string, message: string) =>
 // derived from the session cookie only: no id in the URL, query or body is
 // consulted.
 export async function requireNoteLearner(): Promise<
-  { profileId: string; status?: undefined; denied?: undefined } |
+  { profileId: string; platformChatId: string; status?: undefined; denied?: undefined } |
   { profileId?: undefined; status: "not_nova" | "not_connected" | "onboarding_incomplete" | "unauthenticated"; denied: NextResponse }
 > {
   const learner = await resolveNovaLearner()
@@ -25,5 +25,5 @@ export async function requireNoteLearner(): Promise<
   if (resolved.status !== "ready") {
     return { status: resolved.status, denied: noteFail(409, resolved.status, "Finish setting up with Nova first.") }
   }
-  return { profileId: resolved.profileId }
+  return { profileId: resolved.profileId, platformChatId: learner.platformChatId }
 }

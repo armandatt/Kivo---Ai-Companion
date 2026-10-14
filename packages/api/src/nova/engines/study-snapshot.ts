@@ -39,6 +39,9 @@ export interface StudySnapshotResult {
   // figure below, and dailyMinutesStated is null.
   preferredStudyHoursPerDay: number;
   dailyMinutesStated:       number | null;
+  // The learner's own timezone, when one is on record. It only decides which
+  // calendar day "in N days" is counted from.
+  timezone?:                string | null;
   daysSinceJoined:          number;
 
   // Active session (in_progress, if any)
@@ -59,6 +62,9 @@ export interface StudySnapshotResult {
     durationMinutes: number;
     topicId:         string | null;
     topicName:       string | null;
+    // "self_reported" for a session the learner only told Nova about. Absent
+    // in older fixtures; read through isCountedSession.
+    activityType?:   string;
   }>;
 
   // Upcoming exams
@@ -127,7 +133,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
     where: learnerKey(platformChatId),
     select: { id: true, createdAt: true, novaAcademicProfile: {
       select: {
-        id: true, yearOfStudy: true, major: true, institution: true,
+        id: true, timezone: true, yearOfStudy: true, major: true, institution: true,
         semesterStartDate: true, semesterEndDate: true,
         preferredStudyHoursPerDay: true,
         dailyStudyMinutes:         true,
@@ -136,7 +142,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
           where: { sessionDate: { gte: ninetyDaysAgo } },
           select: {
             id: true, sessionDate: true, status: true,
-            durationMinutes: true, topicId: true, topicName: true,
+            durationMinutes: true, topicId: true, topicName: true, activityType: true,
           },
           orderBy: { sessionDate: "desc" },
         },
@@ -253,6 +259,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
     semesterEndDate:          p.semesterEndDate,
     preferredStudyHoursPerDay: stated !== null ? stated / 60 : ASSUMED_DAILY_HOURS,
     dailyMinutesStated:        stated,
+    timezone:                  p.timezone,
     daysSinceJoined,
     activeSession,
     subjects:   p.subjects,
@@ -263,6 +270,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
       durationMinutes: s.durationMinutes,
       topicId:         s.topicId,
       topicName:       s.topicName,
+      activityType:    s.activityType,
     })),
     upcomingExams: p.exams.map(e => ({
       id:          e.id,

@@ -82,6 +82,20 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
     return () => window.removeEventListener('resize', checkScreen)
   }, [])
 
+  // On a small screen the menu covers the page: Escape closes it and puts
+  // the keyboard back on the button that opened it.
+  const toggleRef = React.useRef<HTMLButtonElement>(null)
+  React.useEffect(() => {
+    if (!isMobileOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      setIsMobileOpen(false)
+      toggleRef.current?.focus()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isMobileOpen])
+
   // A page and the pages under it (a note inside Notes) light the same entry.
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`)
 
@@ -89,13 +103,17 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
     <>
       {/* Mobile Toggle */}
       <button
+        type="button"
+        ref={toggleRef}
         onClick={() => setIsMobileOpen(!isMobileOpen)}
+        aria-label={isMobileOpen ? 'Close menu' : 'Open menu'}
+        aria-expanded={isMobileOpen}
         className="fixed top-4 left-4 z-50 lg:hidden p-2 hover:bg-sidebar-accent rounded-lg transition-colors"
       >
         {isMobileOpen ? (
-          <X className="w-6 h-6" />
+          <X aria-hidden className="w-6 h-6" />
         ) : (
-          <Menu className="w-6 h-6" />
+          <Menu aria-hidden className="w-6 h-6" />
         )}
       </button>
 
@@ -130,6 +148,9 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
 
         {/* Navigation */}
         <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
+          {/* tabIndex -1 on each animated wrapper: the link inside is the
+              control, and the animation library would otherwise make the
+              wrapper a second tab stop in front of every entry. */}
           {items.map((item) => {
             const Icon = item.icon
             const active = isActive(item.href)
@@ -138,7 +159,7 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
               <motion.div
                 key={item.href}
                 whileHover={{ x: 4 }}
-                whileTap={{ scale: 0.98 }}
+                whileTap={{ scale: 0.98 }} tabIndex={-1}
               >
                 <Link
                   href={item.href}
@@ -167,7 +188,7 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
 
         {/* Settings */}
         <div className="p-4 border-t border-sidebar-border">
-          <motion.div whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }}>
+          <motion.div whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }} tabIndex={-1}>
             <Link
               href="/settings"
               onClick={() => { setIsMobileOpen(false); if (overlay) onOpenChange(false) }}
@@ -177,7 +198,7 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
               <span className="font-medium text-sm">Settings</span>
             </Link>
           </motion.div>
-          <motion.div whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }}>
+          <motion.div whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }} tabIndex={-1}>
             <Link
               href="/"
               className="flex items-center gap-3 px-4 py-3 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition-all duration-200"
@@ -190,7 +211,7 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
             <span className="text-xs font-medium text-sidebar-foreground/55">Theme</span>
             <ThemePicker compact />
           </div>
-          <motion.div whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }}>
+          <motion.div whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }} tabIndex={-1}>
             <button
               type="button"
               onClick={() => void signOut()}

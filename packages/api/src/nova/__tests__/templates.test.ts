@@ -11,8 +11,11 @@ import { STUDY_TEMPLATES, templateById, templateTaskKey } from "../product/templ
 const web = (file: string) => readFileSync(join(__dirname, "../../../../../apps/web", file), "utf8");
 
 describe("the templates", () => {
-  it("are the three starting points, and none is about fitness", () => {
-    expect(STUDY_TEMPLATES.map(t => t.id)).toEqual(["engineering-semester", "exam-preparation", "skill-building"]);
+  it("are a fixed set of starting points for school, college and work, and none is about fitness", () => {
+    expect(STUDY_TEMPLATES.map(t => t.id)).toEqual([
+      "engineering-semester", "exam-preparation", "skill-building",
+      "school-subjects", "semester-subjects", "project-sprint", "interview-preparation", "certification",
+    ]);
     const text = JSON.stringify(STUDY_TEMPLATES).toLowerCase();
     for (const word of ["gym", "workout", "fitness", "bodybuilding", "calorie"]) expect(text).not.toContain(word);
   });

@@ -15,7 +15,7 @@ import { getAllTopicMasteries, masteryLevel } from "../engines/knowledge-engine"
 import { COUNTED_SESSION_MINUTES, SELF_REPORTED_ACTIVITY, SESSION_OUTCOMES, isCountedSession, isTimedSession } from "../engines/study-session-engine";
 import { normalizeTopicName } from "../engines/topic-mastery-engine";
 import type { TopicMasteryState } from "../types/engine.types";
-import { dayKey, dayKeyOfNumber, dayNumber, mondayOf, resolveTimezone } from "../engines/learner-calendar";
+import { dateDayKey, dayKey, dayKeyOfNumber, dayNumber, mondayOf, resolveTimezone } from "../engines/learner-calendar";
 import type {
   ConsistencyTrend,
   JourneyEvent,
@@ -411,7 +411,7 @@ export function buildProgressView(input: ProgressInputs): NovaProgressReady {
       title:       input.nextExam.title,
       subjectName: nameOf(input.nextExam.subjectId),
       date:        input.nextExam.scheduledAt.toISOString(),
-      daysUntil:   Math.max(0, dayOf(input.nextExam.scheduledAt) - today),
+      daysUntil:   Math.max(0, dayNumber(dateDayKey(input.nextExam.scheduledAt, timezone)) - today),
     } : null,
     // Learning DNA marks itself "low" until three sessions have fed it. One
     // session is not a pattern.

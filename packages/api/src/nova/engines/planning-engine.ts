@@ -5,7 +5,9 @@
 // Owner: Planning Engine.
 
 import { examCoversSubject } from "./exam-engine";
-import type { PlanBudgetBasis, StudyBlock, StudyPlan } from "../types/engine.types";
+import type { PlanBudgetBasis, PlanShortfall, StudyBlock, StudyPlan } from "../types/engine.types";
+import { reentryMinutes } from "./recovery-engine";
+import { classifyChange } from "../decision/plan-change-policy";
 import type { AcademicState } from "../types/academic-state.types";
 import type { TopicMasteryState } from "../types/engine.types";
 import type { ExamContext } from "../types/engine.types";
@@ -15,6 +17,11 @@ import { getOverdueTopics, getExamPriorityOrder } from "./retention-engine";
 
 // Returns the budget and which rule set it, so a reader of the plan can be
 // told why today is the length it is.
+//
+// The learner's daily time is a hard limit. Nothing here raises it: an exam
+// changes what the day holds, never how long it is. When the work for an
+// exam does not fit the time before it, the plan says so (examShortfall) and
+// the learner chooses; only they can give a day more time.
 function computeDailyBudget(
   preferredHoursPerDay: number,
   state:                AcademicState,
@@ -22,21 +29,14 @@ function computeDailyBudget(
   const base = preferredHoursPerDay * 60;
 
   if (state.hardDirectives.noStudyPressure)  return { minutes: Math.min(base, 30), basis: "no_pressure" };
-  if (state.hardDirectives.examCrisisMode)   return { minutes: Math.min(base * 1.5, 360), basis: "exam_crisis" };
   if (state.hardDirectives.recoveryMode)     return { minutes: Math.min(base * 0.6, 60), basis: "recovery" };
-
-  // Exam within 14 days: scale up linearly toward crisis
-  if (state.daysUntilNextExam !== null && state.daysUntilNextExam < 14) {
-    const scale = 1 + (14 - state.daysUntilNextExam) / 14 * 0.5;
-    return { minutes: Math.min(base * scale, 360), basis: "exam_ramp" };
-  }
 
   return { minutes: base, basis: "preferred" };
 }
 
-// The time the student says they have today replaces their usual hours and
-// is a ceiling on everything else: it cannot lift a wellbeing cap or stretch
-// an exam ramp, only shorten them.
+// The time the student says they have today replaces their usual hours. It
+// is theirs to state, so it may be more than their usual day as well as
+// less. It cannot lift a wellbeing cap, only shorten one.
 function fitBudgetToAvailableTime(
   budget:           { minutes: number; basis: PlanBudgetBasis },
   availableMinutes: number | null | undefined,
@@ -58,6 +58,16 @@ export interface PlanOptions {
   // sessions run 15 minutes is not handed 30-minute blocks they do not do.
   // It only shortens, and only when they have not said how long they have.
   usualSessionMinutes?: number | null;
+  // A first day back after four or more days without study (isReentryDay in
+  // recovery-engine.ts). The usual day is planned shorter, where the plan
+  // change policy lets that happen by itself: not over a time they stated,
+  // not while an exam takes the day, not on top of another cut.
+  reentry?: boolean;
+  // How far off the active date is in the learner's own calendar days (0 is
+  // today). Given, the shortfall counts study days from it, so the time it
+  // says is left agrees with the "in N days" the pages show. Unset: the
+  // exam engine's elapsed-time count.
+  examCalendarDays?: number | null;
 }
 
 // The longest a block may be for this learner, or null for no limit of
@@ -72,6 +82,65 @@ export function sessionCap(options: PlanOptions): number | null {
 
 // The shortest block worth planning. A budget below it yields no blocks.
 export const MIN_BLOCK_MINUTES = 10;
+
+// ── When the work for an exam does not fit ────────────────────────────────────
+
+// How close an exam must be before the plan works toward it (the exam
+// engine's own window), and so before a shortfall is worth stating.
+export const EXAM_WINDOW_DAYS = 14;
+
+// What one topic is counted as needing before an exam. An assumption, said
+// as one wherever the figure is shown: nothing on record says how big a
+// topic is, and no topic is known to weigh more than another.
+export const EXAM_TOPIC_MINUTES = 30;
+
+// A topic at or above this has been taken as far as the plan asks for an
+// exam. The Knowledge Engine's "solid" boundary (DEVELOPING_BELOW).
+const SOLID_FROM = 0.7;
+
+// Whether the topics still to be worked on for this exam fit in the time the
+// learner has before it, at the daily time they gave. null when they fit,
+// when no exam is inside the window, or when the day is held short for the
+// learner's wellbeing: a day cut for recovery is not the day to count what
+// is missing.
+export function examShortfall(input: {
+  examContext:  ExamContext | null;
+  examTopics:   TopicMasteryState[];
+  budget:       { minutes: number; basis: PlanBudgetBasis };
+  dailyMinutes: number;
+  // The exam's distance in the learner's calendar days, when known.
+  calendarDays?: number | null;
+}): PlanShortfall | null {
+  const { examContext, examTopics, budget } = input;
+  if (!examContext || examContext.daysUntil >= EXAM_WINDOW_DAYS) return null;
+  if (budget.basis === "no_pressure" || budget.basis === "recovery") return null;
+
+  const remaining = examTopics.filter(t => t.reviewCount === 0 || t.masteryProbability < SOLID_FROM);
+  if (remaining.length === 0) return null;
+
+  // Today, and each day after it before the day of the exam. Counted on the
+  // learner's calendar when it is known: elapsed time rounded up would count
+  // the day of the exam itself as a day to study for it.
+  const calendarDays     = typeof input.calendarDays === "number" && Number.isFinite(input.calendarDays) ? Math.max(0, Math.floor(input.calendarDays)) : null;
+  const studyDays        = Math.max(1, calendarDays ?? examContext.daysUntil);
+  const dailyMinutes     = Math.max(0, Math.round(input.dailyMinutes));
+  const minutesAvailable = Math.round(budget.minutes) + dailyMinutes * (studyDays - 1);
+  const minutesNeeded    = remaining.length * EXAM_TOPIC_MINUTES;
+  if (minutesNeeded <= minutesAvailable) return null;
+
+  return {
+    examId:           examContext.examId,
+    examTitle:        examContext.examTitle,
+    daysUntil:        calendarDays ?? examContext.daysUntil,
+    studyDays,
+    dailyMinutes,
+    topicsRemaining:  remaining.length,
+    topicsThatFit:    Math.min(remaining.length, Math.floor(minutesAvailable / EXAM_TOPIC_MINUTES)),
+    minutesPerTopic:  EXAM_TOPIC_MINUTES,
+    minutesNeeded,
+    minutesAvailable,
+  };
+}
 
 // How long a review of one topic is planned for.
 export const REVIEW_BLOCK_MINUTES = 25;
@@ -115,14 +184,18 @@ function newMaterialBlock(topic: TopicMasteryState, minutes: number): StudyBlock
   };
 }
 
-function examPrepBlock(topic: TopicMasteryState, minutes: number, daysUntil: number): StudyBlock {
+// The rationale names the date and nothing else: how far off it is is said
+// once, in the learner's calendar days, by whoever shows the block (the
+// engine counts elapsed time, and two numbers for one date read as a
+// mistake), and nothing on record says how much a topic weighs in an exam.
+function examPrepBlock(topic: TopicMasteryState, minutes: number, daysUntil: number, examTitle: string): StudyBlock {
   return {
     topicId:         topic.topicId,
     topicName:       topic.topicName,
     subjectName:     topic.subjectName,
     durationMinutes: minutes,
     activityType:    "exam_prep",
-    rationale:       `${daysUntil}d until exam — low mastery, high weight topic.`,
+    rationale:       `${examTitle} covers this topic, and it is close.`,
     urgency:         daysUntil < 3 ? "critical" : daysUntil < 7 ? "high" : "normal",
   };
 }
@@ -137,9 +210,19 @@ export function generateStudyPlan(
   options:              PlanOptions = {},
 ): StudyPlan {
   const now            = options.now ?? new Date();
-  const budget         = fitBudgetToAvailableTime(
+  const fitted         = fitBudgetToAvailableTime(
     computeDailyBudget(preferredHoursPerDay, state), options.availableMinutes,
   );
+  // Exam prep is for the topics the exam is about: its own subject's. A
+  // topic from another subject is never called exam prep for this exam.
+  const examTopics = examContext ? topics.filter(t => examCoversSubject(examContext, t.subjectName)) : [];
+  const examTakesDay = !!examContext && state.hardDirectives.examCrisisMode && examTopics.length > 0;
+  const budget         = options.reentry && fitted.basis === "preferred" && classifyChange({
+    kind: "shorten_today", usualMinutes: fitted.minutes, minutes: reentryMinutes(fitted.minutes, MIN_BLOCK_MINUTES),
+    statedToday: false, dayTakenByExam: examTakesDay,
+  }).class === "automatic"
+    ? { minutes: reentryMinutes(fitted.minutes, MIN_BLOCK_MINUTES), basis: "reentry" as const }
+    : fitted;
   const budgetMinutes  = budget.minutes;
   const blocks: StudyBlock[] = [];
   const assumptions: string[] = [];
@@ -150,24 +233,22 @@ export function generateStudyPlan(
   const size = (wanted: number) => (cap === null ? wanted : Math.min(wanted, cap));
   if (cap !== null && cap < REVIEW_BLOCK_MINUTES) assumptions.push(`Blocks are kept to about ${cap} minutes, the length your own sessions usually run.`);
 
-  // Exam prep is for the topics the exam is about: its own subject's. A
-  // topic from another subject is never called exam prep for this exam.
-  const examTopics = examContext ? topics.filter(t => examCoversSubject(examContext, t.subjectName)) : [];
+  const shortfall  = examShortfall({ examContext, examTopics, budget, dailyMinutes: preferredHoursPerDay * 60, calendarDays: options.examCalendarDays });
 
   // ── Exam crisis: all blocks are exam prep ────────────────────────────────
   // With no topic on record for the exam's subject there is nothing to
   // prepare from, and the day is planned the ordinary way instead.
-  if (examContext && state.hardDirectives.examCrisisMode && examTopics.length > 0) {
+  if (examContext && examTakesDay) {
     const prioritized = getExamPriorityOrder(examTopics, examContext.topicWeights);
     for (const topic of prioritized) {
       if (usedMinutes >= budgetMinutes) break;
       const remaining = budgetMinutes - usedMinutes;
       const mins      = Math.min(size(45), remaining);
-      blocks.push(examPrepBlock(topic, mins, examContext.daysUntil));
+      blocks.push(examPrepBlock(topic, mins, examContext.daysUntil, examContext.examTitle));
       usedMinutes += mins;
     }
     assumptions.push("Assumes full focus mode for exam prep.");
-    return buildPlan(blocks, budget, assumptions, now);
+    return buildPlan(blocks, budget, assumptions, now, shortfall);
   }
 
   // ── Recovery mode: very gentle, single topic ─────────────────────────────
@@ -180,7 +261,7 @@ export function generateStudyPlan(
       blocks.push(reviewBlock(easiestTopic, Math.min(size(20), budgetMinutes), "optional"));
       assumptions.push("Light session — recovery mode active. No new material.");
     }
-    return buildPlan(blocks, budget, assumptions, now);
+    return buildPlan(blocks, budget, assumptions, now, shortfall);
   }
 
   // ── Standard mode: overdue reviews first, then practice ──────────────────
@@ -196,13 +277,15 @@ export function generateStudyPlan(
   }
 
   // 2. Exam context: high-weight low-mastery topics
-  if (examContext && state.daysUntilNextExam !== null && state.daysUntilNextExam < 14) {
+  // The deadline's own distance, not the academic state's: that counts only
+  // the dates that can take over a day, and an interview is prepared for too.
+  if (examContext && examContext.daysUntil < EXAM_WINDOW_DAYS) {
     for (const topic of getExamPriorityOrder(examTopics, examContext.topicWeights).slice(0, 3)) {
       if (usedMinutes >= budgetMinutes * 0.8) break;
       if (overdue.some(o => o.topicId === topic.topicId)) continue; // already added
       const mins = Math.min(size(30), budgetMinutes - usedMinutes);
       if (mins < MIN_BLOCK_MINUTES) break;
-      blocks.push(examPrepBlock(topic, mins, state.daysUntilNextExam));
+      blocks.push(examPrepBlock(topic, mins, examContext.daysUntil, examContext.examTitle));
       usedMinutes += mins;
     }
   }
@@ -243,7 +326,7 @@ export function generateStudyPlan(
     assumptions.push("No specific topics loaded yet — plan is incomplete until subjects are added.");
   }
 
-  return buildPlan(blocks, budget, assumptions, now);
+  return buildPlan(blocks, budget, assumptions, now, shortfall);
 }
 
 function buildPlan(
@@ -251,6 +334,7 @@ function buildPlan(
   budget:        { minutes: number; basis: PlanBudgetBasis },
   assumptions:   string[],
   now:           Date,
+  shortfall:     PlanShortfall | null,
 ): StudyPlan {
   const budgetMinutes = budget.minutes;
   const totalMinutesToday = blocks.reduce((s, b) => s + b.durationMinutes, 0);
@@ -267,5 +351,6 @@ function buildPlan(
     totalMinutesToday,
     budgetMinutes: Math.round(budgetMinutes),
     budgetBasis:   budget.basis,
+    shortfall,
   };
 }

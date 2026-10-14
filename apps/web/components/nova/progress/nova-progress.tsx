@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import type { NovaProgressReady } from '@repo/api/nova/product/progress.types'
-import { calendarDate, inDays, minutesLabel } from '../format'
+import { calendarDate, deadlineDate, inDays, minutesLabel } from '../format'
 import { GOALS_HREF } from '@repo/api/nova/product/goals.types'
 import { Consistency } from './consistency'
 import { Growth } from './growth'
@@ -95,7 +95,7 @@ export function NovaProgress({ view }: { view: NovaProgressReady }) {
               <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Next milestone</h2>
               <p className="mt-3 text-base font-medium text-foreground">{view.nextExam.title}</p>
               <p className="mt-1 text-sm text-foreground/60">
-                {view.nextExam.subjectName ? `${view.nextExam.subjectName} · ` : ''}{calendarDate(view.nextExam.date, consistency.timezone)} · {inDays(view.nextExam.daysUntil)}
+                {view.nextExam.subjectName ? `${view.nextExam.subjectName} · ` : ''}{deadlineDate(view.nextExam.date, consistency.timezone)} · {inDays(view.nextExam.daysUntil)}
               </p>
             </section>
           )}

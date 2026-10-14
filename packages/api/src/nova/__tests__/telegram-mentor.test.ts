@@ -767,7 +767,7 @@ describe("proactive wording", () => {
   it("sends the facts as a plain line when the model is down", async () => {
     const out = await wordProactiveMessage(input, async () => { throw new Error("503"); });
     expect(out).toEqual({ text: proactiveFallback(input), generated: false });
-    expect(out.text).toBe("Exam check. OS final is tomorrow. Recommended now: Deadlocks (Operating Systems), 25 min.");
+    expect(out.text).toBe("Coming up. OS final is tomorrow. Recommended now: Deadlocks (Operating Systems), 25 min.");
   });
 
   it("gives the model only the facts, the register and the instruction", async () => {

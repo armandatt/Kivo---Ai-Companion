@@ -3,12 +3,15 @@
 import { useState, useRef, useEffect } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import { SIGNAL_ITEMS, SIGNAL_SCALE } from '@repo/api/personality/signal-items';
+import { LEARNING_CONTEXTS, LEARNING_CONTEXT_LABEL, type LearningContext } from '@repo/api/nova/product/learning-context';
 
 interface QuizAnswers {
   energyPattern: string;
   corePain: string;
   mentorDomain: string | null;
   primaryGoal: string;
+  // What they are learning for. More than one is fine; none means skipped.
+  learningContexts: LearningContext[];
   accountabilityStyle: string | null;
   aspirationWords: [string, string, string] | ['', '', ''];
   // Questions 7-10: statement id -> 1..5
@@ -22,6 +25,11 @@ interface PersonalityQuizProps {
 // Kivo is a study and productivity product, so there is one domain and it is
 // not asked for. The value is what the mentor match on the server expects.
 const KIVO_DOMAIN = 'study';
+
+// Where a half-finished quiz is kept so a refresh does not lose it: this
+// tab's session storage, which the browser clears when the tab closes. It is
+// removed as soon as the quiz is handed on.
+const QUIZ_DRAFT_KEY = 'kivo-quiz-draft-v1';
 
 interface Question {
   id: number;
@@ -40,6 +48,15 @@ const questions: Question[] = [
     question: 'What are you working toward right now?',
     type: 'text',
     hint: 'an exam, a course, a skill, a project. Skip it if you are not sure yet.',
+  },
+  // It only changes the words Kivo uses and what setup offers first. It can
+  // be changed later in Settings, and skipping it is fine.
+  {
+    id: 11,
+    title: 'What it is for',
+    question: 'What are you learning for?',
+    type: 'contexts',
+    hint: 'Pick any that fit. It sets the words Kivo uses, and you can change it later.',
   },
   {
     id: 5,
@@ -67,18 +84,42 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
     corePain: '',
     mentorDomain: KIVO_DOMAIN,
     primaryGoal: '',
+    learningContexts: [],
     accountabilityStyle: null,
     aspirationWords: ['', '', ''],
     signalAnswers: {},
   });
   const [isTransitioning, setIsTransitioning] = useState(false);
+  // False until the stored draft, if any, has been read: nothing is written
+  // back before then, so a fresh mount cannot overwrite it with blanks.
+  const [restored, setRestored] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const word1Ref = useRef<HTMLInputElement>(null);
   const word2Ref = useRef<HTMLInputElement>(null);
   const word3Ref = useRef<HTMLInputElement>(null);
 
+  // After a refresh: the answers given so far and the question they had reached.
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem(QUIZ_DRAFT_KEY);
+      const draft = raw ? JSON.parse(raw) as { answers?: Partial<QuizAnswers>; at?: unknown } : null;
+      if (draft?.answers && typeof draft.answers === 'object') {
+        setAnswers(prev => ({ ...prev, ...draft.answers, mentorDomain: KIVO_DOMAIN }));
+        if (typeof draft.at === 'number' && Number.isInteger(draft.at) && draft.at >= 0 && draft.at < questions.length) setCurrentQuestion(draft.at);
+      }
+    } catch { /* unreadable or storage unavailable: start from the beginning */ }
+    setRestored(true);
+  }, []);
+  useEffect(() => {
+    if (!restored) return;
+    try { window.sessionStorage.setItem(QUIZ_DRAFT_KEY, JSON.stringify({ answers, at: currentQuestion })); } catch { /* storage unavailable */ }
+  }, [answers, currentQuestion, restored]);
+  const finish = (final: QuizAnswers) => {
+    try { window.sessionStorage.removeItem(QUIZ_DRAFT_KEY); } catch { /* nothing to clear */ }
+    onComplete(final);
+  };
+
   const question = questions[currentQuestion];
-  const progress = ((currentQuestion + 1) / questions.length) * 100;
 
   // Auto-focus input on question change
   useEffect(() => {
@@ -97,6 +138,8 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
   const isAnswerFilled = (): boolean => {
     if (question.type === 'cards') {
       return answers.accountabilityStyle !== null;
+    } else if (question.type === 'contexts') {
+      return answers.learningContexts.length > 0;
     } else if (question.type === 'likert') {
       return question.signalId !== undefined && answers.signalAnswers[question.signalId] !== undefined;
     } else if (question.type === 'three-words') {
@@ -111,6 +154,14 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
 
   const handleTextInput = (value: string) => {
     if (currentQuestion === 0) setAnswers({ ...answers, primaryGoal: value });
+  };
+
+  const toggleContext = (context: LearningContext) => {
+    const on = answers.learningContexts.includes(context);
+    setAnswers({
+      ...answers,
+      learningContexts: LEARNING_CONTEXTS.filter(c => (c === context ? !on : answers.learningContexts.includes(c))),
+    });
   };
 
   const handleCardSelect = (option: string) => {
@@ -172,7 +223,7 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
 
   const handleSkip = () => {
     if (currentQuestion === questions.length - 1) {
-      onComplete(answers);
+      finish(answers);
       return;
     }
     goToNextQuestion();
@@ -180,7 +231,7 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
 
   const handleComplete = () => {
     if (!isAnswerFilled()) return;
-    onComplete(answers);
+    finish(answers);
   };
 
   return (
@@ -262,6 +313,35 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
                     <p className="text-white font-semibold text-center">{option}</p>
                   </button>
                 ))}
+              </div>
+            )}
+
+            {question.type === 'contexts' && (
+              <div>
+                <div role="group" aria-label={question.question} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {LEARNING_CONTEXTS.map((context) => {
+                    const selected = answers.learningContexts.includes(context);
+                    return (
+                      <button
+                        key={context}
+                        type="button"
+                        onClick={() => toggleContext(context)}
+                        aria-pressed={selected}
+                        className={`p-4 rounded-lg border-2 text-left transition-all duration-200 cursor-pointer ${
+                          selected
+                            ? 'border-[#00D9A3] bg-[#00D9A3]/10'
+                            : 'border-[#1a1a24] bg-[#1a1a24] hover:border-[#00D9A3]/50'
+                        }`}
+                      >
+                        <p className="text-white font-semibold">{LEARNING_CONTEXT_LABEL[context].label}</p>
+                        <p className="text-xs text-gray-500 mt-1">{LEARNING_CONTEXT_LABEL[context].hint}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+                {question.hint && (
+                  <p className="text-xs text-gray-600 mt-3">{question.hint}</p>
+                )}
               </div>
             )}
 

@@ -1,0 +1,62 @@
+// Launch-quality fixes in the web app, read from source: the web app has no
+// component test runner, so these show what the pages are written to do.
+// None of it has been seen in a browser or heard through a screen reader.
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const web = (file: string) => readFileSync(join(__dirname, "../../../../../apps/web", file), "utf8");
+
+describe("the mobile menu button", () => {
+  const sidebar = web("components/sidebar.tsx");
+  it("has a name that says what pressing it does, and says whether the menu is open", () => {
+    expect(sidebar).toContain("aria-label={isMobileOpen ? 'Close menu' : 'Open menu'}");
+    expect(sidebar).toContain("aria-expanded={isMobileOpen}");
+  });
+});
+
+describe("the task editor is a modal a keyboard cannot fall out of", () => {
+  const editor = web("components/nova/tasks/task-editor.tsx");
+  it("keeps Tab inside it with the same rule the delete-account dialog uses", () => {
+    expect(editor).toContain("import { trappedTabTarget } from '@/components/settings/dialog-focus'");
+    expect(editor).toContain("trappedTabTarget(stops, document.activeElement as HTMLElement | null, e.shiftKey, dialog)");
+    expect(editor).toContain("if (e.key === 'Escape') { onClose(); return }");
+  });
+  it("takes focus on opening and gives it back to what opened it", () => {
+    expect(editor).toContain("const opener = document.activeElement as HTMLElement | null");
+    expect(editor).toContain("return () => { opener?.focus?.() }");
+    expect(editor).toContain('role="dialog" aria-modal="true"');
+  });
+});
+
+describe("the sign-up quiz survives a refresh", () => {
+  const quiz = web("components/PersonalityQuiz.tsx");
+  it("keeps the answers and the question reached in this tab's session storage", () => {
+    expect(quiz).toContain("window.sessionStorage.setItem(QUIZ_DRAFT_KEY, JSON.stringify({ answers, at: currentQuestion }))");
+    expect(quiz).toContain("window.sessionStorage.getItem(QUIZ_DRAFT_KEY)");
+    expect(quiz).not.toContain("localStorage");
+  });
+  it("writes nothing back before the stored draft has been read", () => {
+    expect(quiz.indexOf("if (!restored) return;")).toBeLessThan(quiz.indexOf("window.sessionStorage.setItem("));
+  });
+  it("clears the draft the moment the quiz is handed on, by either way of finishing", () => {
+    const finish = quiz.slice(quiz.indexOf("const finish = "), quiz.indexOf("const question = questions[currentQuestion];"));
+    expect(finish.indexOf("removeItem(QUIZ_DRAFT_KEY)")).toBeLessThan(finish.indexOf("onComplete(final)"));
+    // onComplete is reached only through finish.
+    expect(quiz.split("onComplete(").length - 1).toBe(1);
+    expect(quiz.split("finish(answers)").length - 1).toBe(2);
+  });
+  it("a stored position outside the quiz is ignored", () => {
+    expect(quiz).toContain("Number.isInteger(draft.at) && draft.at >= 0 && draft.at < questions.length");
+  });
+});
+
+describe("reduced motion", () => {
+  it("is honoured across the app", () => {
+    const css = web("app/globals.css");
+    const rule = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"));
+    expect(rule).toContain(".kivo-app *,");
+    expect(rule).toContain("animation-duration: 0.01ms !important;");
+    expect(rule).toContain("transition-duration: 0.01ms !important;");
+  });
+});

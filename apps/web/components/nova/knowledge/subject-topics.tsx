@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -9,6 +9,10 @@ import { minutesLabel, relativeDay, sentenceCase } from '../format'
 import type { NoteSummary } from '@repo/api/nova/product/notes.types'
 import { fetchNotes } from '../notes/notes-api'
 import { LEVEL_LABEL, LEVEL_TONE, OUTCOME_LABEL, reviewLabel, sessionsLabel } from './labels'
+
+// The record a link into this page names (?topic=<id> or ?subject=<id>), read
+// from the address once the page is in the browser.
+const linkedId = (name: 'topic' | 'subject'): string | null => new URLSearchParams(window.location.search).get(name)
 
 function SessionLine({ session }: { session: KnowledgeSession }) {
   return (
@@ -60,12 +64,23 @@ function TopicNotes({ subjectId, topicName }: { subjectId: string; topicName: st
 }
 
 function TopicRow({ topic, subjectId }: { topic: KnowledgeTopic; subjectId: string }) {
+  // A link from the Knowledge Map names the topic it is about (?topic=<id>):
+  // that topic is opened and brought into view.
+  const [linked, setLinked] = useState(false)
   const [open, setOpen] = useState(false)
+  const row = useRef<HTMLLIElement>(null)
+  useEffect(() => {
+    if (linkedId('topic') !== topic.id) return
+    setLinked(true)
+    setOpen(true)
+    row.current?.scrollIntoView({ block: 'center' })
+  }, [topic.id])
   const verified = topic.level !== 'unverified'
   const panel = `topic-${topic.id}`
 
   return (
-    <li data-topic={topic.topicName} data-level={topic.level} data-review={topic.reviewState}>
+    <li ref={row} data-topic={topic.topicName} data-level={topic.level} data-review={topic.reviewState} data-linked={linked || undefined}
+      className={cn(linked && 'bg-keppel-400/5')}>
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
@@ -137,8 +152,16 @@ function Fact({ label, value }: { label: string; value: string }) {
 // made up from the subject's name: a subject with none says so.
 export function SubjectTopics({ subject }: { subject: KnowledgeSubject }) {
   const { topicCount, dueCount } = subject.summary
+  // ?subject=<id>, from the Knowledge Map: this subject is brought into view.
+  const [linked, setLinked] = useState(false)
+  const section = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (linkedId('subject') !== subject.subjectId) return
+    setLinked(true)
+    section.current?.scrollIntoView({ block: 'start' })
+  }, [subject.subjectId])
   return (
-    <section data-subject={subject.subjectName} aria-label={subject.subjectName}>
+    <section ref={section} data-subject={subject.subjectName} aria-label={subject.subjectName} data-linked={linked || undefined} className="scroll-mt-24">
       <div className="flex items-baseline justify-between gap-4">
         <h3 className="text-base font-semibold tracking-tight text-foreground">{subject.subjectName}</h3>
         <p className="text-xs text-foreground/45">

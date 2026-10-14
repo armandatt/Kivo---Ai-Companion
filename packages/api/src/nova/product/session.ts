@@ -14,7 +14,10 @@ import {
   persistSessionEnd,
   resumeStudySession,
   abandonIfStale,
+  saveSessionNote,
 } from "../persistence/nova-persistence";
+import { parseReflection } from "./focus-context";
+import type { ReflectionResponse } from "./focus-context.types";
 import { checkSessionCommand, sessionElapsedSeconds, toSessionView } from "./session-view";
 import { COUNTED_SESSION_MINUTES, SELF_REPORTED_ACTIVITY } from "../engines/study-session-engine";
 import { ABANDONED_STATUS } from "../engines/session-clock";
@@ -106,6 +109,7 @@ export async function runNovaSessionCommand(
     if (!closed && await lastSessionWasAbandoned(profileId)) return SESSION_ABANDONED;
     if (closed) {
       ended = {
+        sessionId: active.id,
         topicName: active.topicName,
         minutes:   Math.max(1, Math.floor(sessionElapsedSeconds(active, now) / 60)),
         outcome:   command.outcome,
@@ -126,4 +130,26 @@ export async function runNovaSessionCommand(
 
   if (!applied) return { ok: false, error: "failed", message: "That didn't save. Try again." };
   return { ok: true, session, ended };
+}
+
+// The optional note after a session: what got done, what got in the way, the
+// next step. Kept on that session, once, as the learner wrote it. It is not
+// part of ending a session and changes nothing the ending recorded.
+export async function saveReflection(platformChatId: string, sessionId: unknown, raw: unknown): Promise<ReflectionResponse> {
+  const parsed = parseReflection(raw);
+  if (!parsed.ok) {
+    return parsed.reason === "empty"
+      ? { ok: false, error: "empty", message: "There is nothing to save yet." }
+      : { ok: false, error: "invalid", message: "That isn't a note Nova can keep. Keep each answer short." };
+  }
+  if (typeof sessionId !== "string" || !sessionId) return { ok: false, error: "not_found", message: "That session isn't on your record." };
+  const user = await prisma.messengerUser.findUnique({
+    where:  learnerKey(platformChatId),
+    select: { novaAcademicProfile: { select: { id: true } } },
+  });
+  const profileId = user?.novaAcademicProfile?.id;
+  if (!profileId) return { ok: false, error: "not_connected", message: "Nova isn't set up for this account yet." };
+  const result = await saveSessionNote(profileId, sessionId, JSON.stringify(parsed.reflection));
+  if (result === "not_found") return { ok: false, error: "not_found", message: "That session isn't on your record." };
+  return { ok: true, saved: result === "saved" };
 }

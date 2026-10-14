@@ -9,6 +9,11 @@ import type { InterventionName } from "../types/intervention.types";
 import type { DecisionGraphOutput } from "../types/response.types";
 import { OPERATING_STYLE_HEADER } from "../../personality/signal-scoring";
 import type { ContextNeed } from "../interaction/semantics";
+import { learningContextLine, normalizeLearningContexts } from "../product/learning-context";
+import { DEADLINE_RULES, deadlineType } from "../product/deadline-types";
+
+// "today", "tomorrow", "in N days": a count of calendar days, as the pages say it.
+const whenIn = (days: number): string => (days <= 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`);
 
 // ── Token budget constants ────────────────────────────────────────────────────
 // Rough character-per-token estimate for English: ~4 chars/token.
@@ -43,6 +48,8 @@ function buildStudentSection(ctx: NovaContext): string {
   const lines: string[] = [`## Student`];
   const name = p.displayName ? singleLine(p.displayName).slice(0, MAX_NAME_CHARS).trim() : "";
   if (name) lines.push(`Name: ${name}`);
+  const learningFor = learningContextLine(normalizeLearningContexts(p.learningContexts ?? []) ?? []);
+  if (learningFor) lines.push(learningFor);
   if (academic.length > 0) lines.push(academic.join(" | "));
   lines.push(`Joined: ${state.daysSinceJoined}d ago | Subjects: ${p.subjects.join(", ") || "none yet"}`);
   if (ctx.operatingStyle && ctx.operatingStyle.length > 0) {
@@ -70,11 +77,16 @@ function buildStateSection(ctx: NovaContext): string {
     `## Academic State`,
     `Phase: ${s.semesterPhase} | Mode: ${s.activeMode} | Momentary: ${s.momentaryState}`,
     `Scores — Engagement:${s.scores.engagement} Confidence:${s.scores.confidence} Momentum:${s.scores.momentum} BurnoutRisk:${s.scores.burnoutRisk} Adherence:${s.scores.planAdherence}`,
-    `Streak: ${s.studyStreakDays}d | Since last session: ${s.daysSinceLastSession}d | Misses: ${s.consecutiveMisses}`,
+    `Streak: ${s.studyStreakDays}d | Since last session: ${typeof ctx.daysSinceStudy === "number" ? `${ctx.daysSinceStudy} calendar days` : `${s.daysSinceLastSession}d`} | Misses: ${s.consecutiveMisses}`,
   ];
+  if (ctx.reentryDay) lines.push(REENTRY_LINE);
 
   if (s.daysUntilNextExam !== null) {
-    lines.push(`Exam in: ${s.daysUntilNextExam} days`);
+    // The learner's calendar days when the turn has them: the number the
+    // pages show. The engine's own count is elapsed time.
+    lines.push(typeof ctx.nextExamCalendarDays === "number"
+      ? `Next exam: ${whenIn(ctx.nextExamCalendarDays)}`
+      : `Exam in: ${s.daysUntilNextExam} days`);
   }
 
   const activeDirectives = Object.entries(d)
@@ -135,11 +147,14 @@ function buildKnowledgeSection(ctx: NovaContext): string {
 
   if (ctx.examContext) {
     const e = ctx.examContext;
+    // Named for what it is (an interview is not an exam), and counted in the
+    // learner's calendar days when the turn has them.
+    const kind = DEADLINE_RULES[deadlineType(e.examType)].label;
+    const when = typeof ctx.examCalendarDays === "number" ? whenIn(ctx.examCalendarDays) : `in ${e.daysUntil} days`;
     parts.push([
-      `## Exam: ${e.examTitle} (${e.subjectName})`,
-      `In ${e.daysUntil} days | Mode: ${e.mode} | Focus: ${e.primaryFocus}`,
+      `## ${kind}: ${e.examTitle} (${e.subjectName})`,
+      `When: ${when} | Mode: ${e.mode} | Focus: ${e.primaryFocus}`,
       `Critical topics: ${e.riskMatrix.critical.join(", ") || "none"}`,
-      `Recommended: ${e.recommendedDailyHours}h/day`,
     ].join("\n"));
   }
 
@@ -264,6 +279,7 @@ export function buildDynamicLayer(ctx: NovaContext): string {
     buildKnowledgeSection(ctx),
     buildPatternSection(ctx),
     buildCognitiveStateSection(ctx),
+    planInContext(ctx) ? "" : NOTHING_RECOMMENDED,
     buildConversationHistorySection(ctx),
   ].filter(Boolean);
 
@@ -294,6 +310,19 @@ function buildMessageSection(ctx: NovaContext): string {
   return [`## This Message`, `Text: "${ctx.rawMessage.slice(0, 200)}"`, `Emotion: ${ctx.understanding.emotion}`].join("\n");
 }
 
+// Said when what the model is given recommends nothing, so a reply does not
+// fill the gap with a topic or a length of its own (static rules 2 and 13).
+// A first day back, as the pages show it. Code shortened today's plan;
+// moving overdue tasks is a proposal on Today that only the learner accepts.
+export const REENTRY_LINE = "First day back after a gap: code made today's plan a shorter re-entry day (nothing was saved; it ends with their next session). Any overdue tasks are proposed for new days on Today, waiting for the learner's yes: you cannot accept it, and nothing has moved unless they did.";
+
+export const NOTHING_RECOMMENDED = [
+  "## What to study next",
+  "Nothing in what you were given recommends what they study next. Do not suggest a topic, chapter, technique or resource for them to study next, and give no number of minutes or hours to spend. Talking about a topic they raised themselves is fine. If they ask what to do next, say their plan for today is on Today.",
+].join("\n");
+
+const planInContext = (ctx: NovaContext): boolean => ctx.studyPlan !== null && ctx.studyPlan.today.length > 0;
+
 export function buildFocusedLayer(ctx: NovaContext, needs: readonly ContextNeed[], facts: readonly string[] = []): string {
   const has = (n: ContextNeed) => needs.includes(n);
   const knowledge = buildKnowledgeSection({
@@ -315,6 +344,9 @@ export function buildFocusedLayer(ctx: NovaContext, needs: readonly ContextNeed[
     knowledge,
     has("patterns") ? buildPatternSection(ctx) : "",
     facts.length > 0 ? [`## What Nova has on record (the only figures you may state)`, ...facts.map(f => `- ${f}`)].join("\n") : "",
+    // Not for a question about the subject matter itself (only "recent" is
+    // needed): that is answered, and recommends nothing.
+    needs.some(n => n !== "recent") && !(has("plan") && planInContext(ctx)) && facts.length === 0 ? NOTHING_RECOMMENDED : "",
     has("recent") ? buildConversationHistorySection(ctx) : "",
   ].filter(Boolean);
   const assembled = sections.join("\n\n");

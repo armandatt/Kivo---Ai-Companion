@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "jest --config jest.config.ts",
-    "test:integration": "tsx --test --test-concurrency=1 src/nova/__integration__/nova-persist-turn.itest.ts src/nova/__integration__/nova-session-start.itest.ts src/nova/__integration__/nova-knowledge.itest.ts src/nova/__integration__/nova-notes.itest.ts src/nova/__integration__/nova-progress.itest.ts src/nova/__integration__/nova-learning-dna.itest.ts src/nova/__integration__/nova-telegram.itest.ts src/nova/__integration__/nova-lifecycle.itest.ts src/nova/__integration__/nova-semantic.itest.ts src/nova/__integration__/nova-setup.itest.ts src/nova/__integration__/nova-first-use.itest.ts src/nova/__integration__/nova-hardening.itest.ts src/nova/__integration__/nova-language.itest.ts src/nova/__integration__/nova-learning-events.itest.ts src/nova/__integration__/nova-workspace.itest.ts src/nova/__integration__/nova-checkin.itest.ts src/nova/__integration__/nova-adaptation.itest.ts src/nova/__integration__/nova-abandoned.itest.ts src/nova/__integration__/nova-unlinked-chat.itest.ts src/nova/__integration__/nova-account-deletion.itest.ts src/nova/__integration__/nova-goals.itest.ts src/auth/__integration__/auth.itest.ts"
+    "test:integration": "tsx --test --test-concurrency=1 src/nova/__integration__/nova-persist-turn.itest.ts src/nova/__integration__/nova-session-start.itest.ts src/nova/__integration__/nova-knowledge.itest.ts src/nova/__integration__/nova-notes.itest.ts src/nova/__integration__/nova-progress.itest.ts src/nova/__integration__/nova-learning-dna.itest.ts src/nova/__integration__/nova-telegram.itest.ts src/nova/__integration__/nova-lifecycle.itest.ts src/nova/__integration__/nova-semantic.itest.ts src/nova/__integration__/nova-setup.itest.ts src/nova/__integration__/nova-first-use.itest.ts src/nova/__integration__/nova-hardening.itest.ts src/nova/__integration__/nova-language.itest.ts src/nova/__integration__/nova-learning-events.itest.ts src/nova/__integration__/nova-workspace.itest.ts src/nova/__integration__/nova-checkin.itest.ts src/nova/__integration__/nova-adaptation.itest.ts src/nova/__integration__/nova-abandoned.itest.ts src/nova/__integration__/nova-unlinked-chat.itest.ts src/nova/__integration__/nova-account-deletion.itest.ts src/nova/__integration__/nova-goals.itest.ts src/nova/__integration__/nova-exams.itest.ts src/nova/__integration__/nova-recovery.itest.ts src/auth/__integration__/auth.itest.ts"
   },
   "exports": {
     "./processor/*": "./src/processor/*",
@@ -20,6 +20,7 @@
     "./nova/types": "./src/nova/types/index.ts",
     "./nova/commands": "./src/nova/commands.ts",
     "./nova/entry": "./src/nova/entry.ts",
+    "./nova/engines/learner-calendar": "./src/nova/engines/learner-calendar.ts",
     "./nova/product/today.types": "./src/nova/product/today.types.ts",
     "./nova/product/planner.types": "./src/nova/product/planner.types.ts",
     "./nova/product/setup.types": "./src/nova/product/setup.types.ts",
@@ -33,8 +34,16 @@
     "./nova/product/learning-events.types": "./src/nova/product/learning-events.types.ts",
     "./nova/product/tasks.types": "./src/nova/product/tasks.types.ts",
     "./nova/product/goals.types": "./src/nova/product/goals.types.ts",
+    "./nova/product/exams.types": "./src/nova/product/exams.types.ts",
+    "./nova/product/deadline-types": "./src/nova/product/deadline-types.ts",
+    "./nova/product/focus-context.types": "./src/nova/product/focus-context.types.ts",
+    "./nova/product/learning-context": "./src/nova/product/learning-context.ts",
     "./nova/product/knowledge-map.types": "./src/nova/product/knowledge-map.types.ts",
     "./nova/product/templates": "./src/nova/product/templates.ts",
+    "./nova/product/note-links": "./src/nova/product/note-links.ts",
+    "./nova/product/note-assist.types": "./src/nova/product/note-assist.types.ts",
+    "./nova/product/recovery": "./src/nova/product/recovery.ts",
+    "./nova/product/recovery.types": "./src/nova/product/recovery.types.ts",
     "./nova/product/resource-link": "./src/nova/product/resource-link.ts",
     "./nova/product/*": "./src/nova/product/*",
     "./nova/engines/*": "./src/nova/engines/*",

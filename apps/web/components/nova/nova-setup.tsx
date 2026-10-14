@@ -92,9 +92,9 @@ export function ConnectNova({ onCheck }: { onCheck: () => void }) {
 // from Settings. The personality quiz is separate and is not asked again.
 export function NovaOnboarding({ onProgress }: { onProgress: () => void }) {
   return (
-    <SetupFrame step="Getting started" title="Set up what you're studying">
+    <SetupFrame step="Getting started" title="Set up what you're learning">
       <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">
-        Nova plans from this and nothing else: your subjects, what each one covers, and any exam dates.
+        Nova plans from this and nothing else: what you are learning, what each part of it covers, and any dates that matter.
         Skip what you don&apos;t know yet. Everything else it learns from your sessions.
       </p>
       <SetupForm onSaved={onProgress} />

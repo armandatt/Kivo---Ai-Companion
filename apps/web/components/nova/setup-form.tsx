@@ -3,16 +3,22 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, ArrowRight, Loader2, Plus, X } from 'lucide-react'
 import type { SetupChanges, SetupDraft, SetupIssue, SetupView } from '@repo/api/nova/product/setup.types'
-import { STUDY_TEMPLATES, templateTaskKey, type StudyTemplate } from '@repo/api/nova/product/templates'
+import { templatesFor, templateTaskKey, type StudyTemplate } from '@repo/api/nova/product/templates'
+import { LEARNING_CONTEXTS, LEARNING_CONTEXT_LABEL, setupVocabulary, type LearningContext } from '@repo/api/nova/product/learning-context'
+import { DEADLINE_RULES, DEADLINE_TYPES, type DeadlineType } from '@repo/api/nova/product/deadline-types'
 import { cn } from '@/lib/utils'
 
 // The first-run study setup. The page collects and shows; the server
 // validates, previews and saves (POST /api/nova/setup). Nothing is saved
 // until the learner confirms the review, and a value they do not give is
 // sent as null and stays unknown.
+//
+// What the learner says they are learning for changes the words on this form
+// and which templates come first (product/learning-context.ts decides both).
+// It changes nothing about what is saved or how it is planned.
 
 type SubjectRow = { name: string; topics: string }
-type ExamRow    = { subjectName: string; date: string }
+type ExamRow    = { subjectName: string; date: string; type: DeadlineType }
 type StudyTime  = NonNullable<SetupDraft['studyTime']>
 
 const DAILY: Array<{ label: string; minutes: number | null }> = [
@@ -67,12 +73,18 @@ async function createTemplateTasks(template: StudyTemplate): Promise<void> {
   }
 }
 
-function TemplatePicker({ chosen, onChoose }: { chosen: StudyTemplate | null; onChoose: (t: StudyTemplate | null) => void }) {
+// How many templates are shown before "More templates". The first ones are
+// those written for what the learner said they are learning for.
+const TEMPLATES_SHOWN = 3
+
+function TemplatePicker({ templates, chosen, onChoose }: { templates: StudyTemplate[]; chosen: StudyTemplate | null; onChoose: (t: StudyTemplate | null) => void }) {
+  const [all, setAll] = useState(false)
+  const shown = all ? templates : templates.filter((t, i) => i < TEMPLATES_SHOWN || t.id === chosen?.id)
   return (
     <div className="mt-6">
       <p className={label}>Start from a template <span className="normal-case tracking-normal text-foreground/35">(optional)</span></p>
       <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-        {STUDY_TEMPLATES.map(t => {
+        {shown.map(t => {
           const on = chosen?.id === t.id
           return (
             <button
@@ -87,6 +99,12 @@ function TemplatePicker({ chosen, onChoose }: { chosen: StudyTemplate | null; on
           )
         })}
       </div>
+      {templates.length > TEMPLATES_SHOWN && (
+        <button type="button" aria-expanded={all} onClick={() => setAll(v => !v)}
+          className="mt-3 text-sm text-foreground/60 underline decoration-white/20 underline-offset-4 hover:text-foreground">
+          {all ? 'Fewer templates' : `More templates (${templates.length - TEMPLATES_SHOWN})`}
+        </button>
+      )}
       {chosen && (
         <p className="mt-3 text-xs leading-relaxed text-foreground/50">
           {chosen.name} is in the form below. Edit anything; nothing is saved until you review and confirm. It adds no progress: every topic starts unstudied and every task as to do.
@@ -96,14 +114,17 @@ function TemplatePicker({ chosen, onChoose }: { chosen: StudyTemplate | null; on
   )
 }
 
-function Review({ draft, changes }: { draft: SetupDraft; changes: SetupChanges }) {
+function Review({ draft, changes, dateSuffix }: { draft: SetupDraft; changes: SetupChanges; dateSuffix: string }) {
   const rows: Array<[string, string]> = []
   for (const s of draft.subjects) {
     const fresh = changes.newTopics.find(t => t.subject.toLowerCase() === s.name.toLowerCase())?.topics ?? []
     const isNew = changes.newSubjects.some(n => n.toLowerCase() === s.name.toLowerCase())
     rows.push([`${s.name}${isNew ? '' : ' (already saved)'}`, fresh.length > 0 ? fresh.join(', ') : s.topics.length > 0 ? 'No new topics' : 'No topics yet'])
   }
-  for (const e of changes.newExams) rows.push([`${e.subjectName} exam`, e.date])
+  for (const e of changes.newExams) {
+    const kind = draft.exams.find(x => x.subjectName.toLowerCase() === e.subjectName.toLowerCase() && x.date === e.date)?.type
+    rows.push([`${e.subjectName} ${kind ? DEADLINE_RULES[kind].titleSuffix : dateSuffix}`, e.date])
+  }
   rows.push(['Normal day', draft.dailyMinutes !== null ? `About ${draft.dailyMinutes} min` : 'Not sure yet. Nova will assume about 3 hours and say so.'])
   rows.push(['Usual time', draft.studyTime ?? 'It varies'])
   return (
@@ -128,6 +149,15 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
   const [issues, setIssues]     = useState<SetupIssue[]>([])
   const [busy, setBusy]         = useState(false)
   const [failed, setFailed]     = useState(false)
+  // What they said they are learning for, as the server has it. Changing it
+  // here saves at once (it is a setting, not part of the draft below).
+  const [contexts, setContexts] = useState<LearningContext[]>([])
+  const [contextNote, setContextNote] = useState<string | null>(null)
+  const words     = setupVocabulary(contexts)
+  // What a new date row starts as: an exam, or for someone learning for work,
+  // a plain date. The learner picks the kind on the row either way.
+  const defaultDateType: DeadlineType = words.kind === 'outcome' ? 'other' : 'exam'
+  const templates = templatesFor(contexts)
 
   // What is already on record (said on Telegram, or a setup left half done)
   // is shown, so nothing has to be typed twice.
@@ -137,6 +167,7 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
       .then(r => (r.ok ? r.json() : null))
       .then((s: (SetupView & { status?: string }) | null) => {
         if (!live || !s || s.status !== 'ready') return
+        setContexts(s.learningContexts ?? [])
         if (s.subjects.length > 0) setSubjects(s.subjects.map(x => ({ name: x.name, topics: x.topics.join('\n') })))
         setDaily(s.dailyMinutes)
         setTime((s.studyTime as StudyTime | null) ?? null)
@@ -146,6 +177,22 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
   }, [])
 
   const named = subjects.map(s => s.name.trim()).filter(Boolean)
+
+  // The page shows the change only once the server has it; a failed save
+  // puts the choice back and says so.
+  async function toggleContext(context: LearningContext) {
+    const before = contexts
+    const next   = LEARNING_CONTEXTS.filter(c => (c === context ? !before.includes(c) : before.includes(c)))
+    setContexts(next); setContextNote(null)
+    try {
+      const res = await fetch('/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ learningContexts: next }) })
+      if (res.status === 401) { window.location.href = '/signin'; return }
+      if (!res.ok) throw new Error(String(res.status))
+    } catch {
+      setContexts(before)
+      setContextNote("That didn't save. Your earlier answer still stands; try again.")
+    }
+  }
 
   // Choosing a template adds its subjects to the form. It never removes or
   // overwrites what is already there: a subject of the same name keeps its
@@ -168,11 +215,11 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
       }
       return out.length > 0 ? out : [{ name: '', topics: '' }]
     })
-    if (next.asksExamDate) setExams(rows => (rows.length > 0 ? rows : [{ subjectName: '', date: '' }]))
+    if (next.asksExamDate) setExams(rows => (rows.length > 0 ? rows : [{ subjectName: '', date: '', type: next.dateType ?? defaultDateType }]))
   }
   const draft = (): SetupDraft => ({
     subjects:     subjects.filter(s => s.name.trim()).map(s => ({ name: s.name.trim(), topics: splitTopics(s.topics) })),
-    exams:        exams.filter(e => e.subjectName && e.date).map(e => ({ subjectName: e.subjectName, date: e.date, title: null })),
+    exams:        exams.filter(e => e.subjectName && e.date).map(e => ({ subjectName: e.subjectName, date: e.date, title: null, type: e.type })),
     dailyMinutes: daily,
     studyTime:    time,
   })
@@ -214,7 +261,7 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
     return (
       <div className="mt-6">
         <p className="text-sm text-foreground/65">Check this is right. Nothing is saved until you confirm.</p>
-        <Review draft={review.draft} changes={review.changes} />
+        <Review draft={review.draft} changes={review.changes} dateSuffix={words.dateTitleSuffix} />
         {template && template.tasks.length > 0 && (
           <div className="mt-4 rounded-2xl border border-white/8 px-4 py-3">
             <p className="text-sm font-medium text-foreground">Tasks from {template.name}</p>
@@ -223,7 +270,7 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
           </div>
         )}
         {!review.changes.complete && (
-          <p role="alert" className="mt-4 text-sm text-amber-300/90">Add at least one topic to one subject, so there is something to plan.</p>
+          <p role="alert" className="mt-4 text-sm text-amber-300/90">Add at least one line under one of them, so there is something to plan.</p>
         )}
         {problems}
         <div className="mt-7 flex flex-col gap-3 sm:flex-row">
@@ -242,61 +289,82 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
 
   return (
     <form className="mt-6" onSubmit={e => { e.preventDefault(); void send(false) }}>
-      <TemplatePicker chosen={template} onChoose={choose} />
-      <p className={cn(label, 'mt-9')}>Your subjects, and what each covers</p>
+      <fieldset className="mt-6">
+        <legend className={label}>What are you learning for? <span className="normal-case tracking-normal text-foreground/35">(optional, pick any that fit)</span></legend>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {LEARNING_CONTEXTS.map(c => {
+            const on = contexts.includes(c)
+            return (
+              <button key={c} type="button" aria-pressed={on} title={LEARNING_CONTEXT_LABEL[c].hint} onClick={() => void toggleContext(c)} data-context={c}
+                className={cn('h-9 rounded-full border px-4 text-sm transition-colors', on ? 'border-keppel-400 bg-keppel-400/15 text-keppel-200' : 'border-white/10 text-foreground/70 hover:bg-white/5')}>
+                {LEARNING_CONTEXT_LABEL[c].label}
+              </button>
+            )
+          })}
+        </div>
+        <p className="mt-2 text-xs leading-relaxed text-foreground/45">It only changes the words on this page and which templates come first. Your plan is worked out the same way either way.</p>
+        {contextNote && <p role="alert" className="mt-2 text-sm text-red-300">{contextNote}</p>}
+      </fieldset>
+
+      <TemplatePicker templates={templates} chosen={template} onChoose={choose} />
+      <p className={cn(label, 'mt-9')}>{words.areasHeading}</p>
       <div className="mt-3 space-y-4">
         {subjects.map((s, i) => (
           <div key={i} className="rounded-2xl border border-white/8 bg-white/3 p-4">
             <div className="flex gap-2">
-              <label className="sr-only" htmlFor={`subject-${i}`}>Subject name</label>
+              <label className="sr-only" htmlFor={`subject-${i}`}>{words.areaLabel}</label>
               <input id={`subject-${i}`} value={s.name} maxLength={80} onChange={e => setSubject(i, { name: e.target.value })}
-                placeholder={template?.namePrompt && !s.name ? template.namePrompt : 'Subject, e.g. Operating Systems'} className={cn(field, 'h-11')} />
+                placeholder={template?.namePrompt && !s.name ? template.namePrompt : words.areaPlaceholder} className={cn(field, 'h-11')} />
               {subjects.length > 1 && (
-                <button type="button" aria-label="Remove subject" onClick={() => setSubjects(rows => rows.filter((_, k) => k !== i))}
+                <button type="button" aria-label={`Remove ${s.name.trim() || 'this row'}`} onClick={() => setSubjects(rows => rows.filter((_, k) => k !== i))}
                   className="inline-flex size-11 shrink-0 items-center justify-center rounded-xl border border-white/10 text-foreground/50 hover:bg-white/5">
                   <X className="size-4" />
                 </button>
               )}
             </div>
-            <label className="sr-only" htmlFor={`topics-${i}`}>Topics</label>
+            <label className="sr-only" htmlFor={`topics-${i}`}>{words.partsLabel}</label>
             <textarea id={`topics-${i}`} value={s.topics} rows={3} onChange={e => setSubject(i, { topics: e.target.value })}
-              placeholder="Topics or chapters, one per line or separated by commas. Paste your syllabus if you have it."
+              placeholder={words.partsPlaceholder}
               className={cn(field, 'mt-2 py-2.5 leading-relaxed')} />
           </div>
         ))}
       </div>
       <button type="button" onClick={() => setSubjects(rows => [...rows, { name: '', topics: '' }])}
         className="mt-3 inline-flex h-10 items-center gap-2 rounded-xl border border-white/10 px-4 text-sm text-foreground/75 hover:bg-white/5">
-        <Plus className="size-4" /> Add a subject
+        <Plus className="size-4" /> {words.addArea}
       </button>
 
-      <p className={cn(label, 'mt-9')}>Exams and deadlines <span className="normal-case tracking-normal text-foreground/35">(optional)</span></p>
+      <p className={cn(label, 'mt-9')}>{words.datesHeading} <span className="normal-case tracking-normal text-foreground/35">(optional)</span></p>
       <div className="mt-3 space-y-2">
         {exams.map((e, i) => (
           <div key={i} className="flex flex-col gap-2 sm:flex-row">
-            <label className="sr-only" htmlFor={`exam-subject-${i}`}>Exam subject</label>
+            <label className="sr-only" htmlFor={`exam-subject-${i}`}>{words.dateAreaLabel}</label>
             <select id={`exam-subject-${i}`} value={e.subjectName} onChange={ev => setExam(i, { subjectName: ev.target.value })} className={cn(field, 'h-11 sm:flex-1')}>
-              <option value="" className="bg-card">Subject…</option>
+              <option value="" className="bg-card">{words.dateAreaLabel}…</option>
               {named.map(n => <option key={n} value={n} className="bg-card text-foreground">{n}</option>)}
             </select>
-            <label className="sr-only" htmlFor={`exam-date-${i}`}>Exam date</label>
+            <label className="sr-only" htmlFor={`exam-kind-${i}`}>What kind of date it is</label>
+            <select id={`exam-kind-${i}`} value={e.type} onChange={ev => setExam(i, { type: ev.target.value as DeadlineType })} className={cn(field, 'h-11 sm:w-40')}>
+              {DEADLINE_TYPES.map(t => <option key={t} value={t} className="bg-card text-foreground">{DEADLINE_RULES[t].label}</option>)}
+            </select>
+            <label className="sr-only" htmlFor={`exam-date-${i}`}>{words.dateLabel}</label>
             <input id={`exam-date-${i}`} type="date" value={e.date} onChange={ev => setExam(i, { date: ev.target.value })} className={cn(field, 'h-11 sm:w-48')} />
-            <button type="button" aria-label="Remove exam" onClick={() => setExams(rows => rows.filter((_, k) => k !== i))}
+            <button type="button" aria-label="Remove this date" onClick={() => setExams(rows => rows.filter((_, k) => k !== i))}
               className="inline-flex size-11 shrink-0 items-center justify-center rounded-xl border border-white/10 text-foreground/50 hover:bg-white/5">
               <X className="size-4" />
             </button>
           </div>
         ))}
       </div>
-      <button type="button" onClick={() => setExams(rows => [...rows, { subjectName: named[0] ?? '', date: '' }])} disabled={named.length === 0}
+      <button type="button" onClick={() => setExams(rows => [...rows, { subjectName: named[0] ?? '', date: '', type: defaultDateType }])} disabled={named.length === 0}
         className="mt-3 inline-flex h-10 items-center gap-2 rounded-xl border border-white/10 px-4 text-sm text-foreground/75 hover:bg-white/5 disabled:opacity-40">
-        <Plus className="size-4" /> Add an exam date
+        <Plus className="size-4" /> {words.addDate}
       </button>
 
-      <p className={cn(label, 'mt-9')}>How long do you usually have on a normal day?</p>
+      <p className={cn(label, 'mt-9')}>{words.dailyQuestion}</p>
       <Chips name="Normal day" options={DAILY.map(d => ({ label: d.label, value: d.minutes }))} value={daily} onChange={setDaily} />
 
-      <p className={cn(label, 'mt-7')}>When do you usually study?</p>
+      <p className={cn(label, 'mt-7')}>{words.timeQuestion}</p>
       <Chips name="Usual time" options={TIMES} value={time} onChange={setTime} />
 
       {problems}

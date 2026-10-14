@@ -209,12 +209,12 @@ test("setup that is not finished is not papered over: the one missing thing is a
   const partial = await link(await webLearner("subjects_only"));
   asked.length = 0;
   await telegram(partial).linked();
-  assert.equal(lastTo(partial).text, "I'm Nova. Before I can plan anything I need to know what you're studying. What does Operating Systems cover this term? List the topics or chapters, in any order.");
+  assert.equal(lastTo(partial).text, "I'm Nova. Before I can plan anything I need to know what you're studying. What does Operating Systems cover? List the topics or parts, in any order.");
   assert.deepEqual(labels(partial), ["Set it up on the web"]);
 
   const nothing = await link(await webLearner("none"));
   await telegram(nothing).linked();
-  assert.equal(lastTo(nothing).text, "I'm Nova. Before I can plan anything I need to know what you're studying. Which subjects are you taking this term?");
+  assert.equal(lastTo(nothing).text, "I'm Nova. Before I can plan anything I need to know what you're studying. What are you learning? Name your subjects, or a skill or project.");
   assert.equal(asked.length, 0, "no model was asked to dress it up");
 });
 

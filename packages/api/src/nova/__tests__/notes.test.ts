@@ -128,7 +128,8 @@ describe("notes boundary: a note is content, not cognitive state", () => {
     const imports = [...notes.matchAll(/from\s+"([^"]+)"/g)].map(m => m[1]!);
     expect(imports.sort()).toEqual([
       // learner-key: a pure helper with no imports (how a learner's row is named).
-      "../engines/planning-engine", "../engines/topic-mastery-engine", "./learner-key", "./notes.types", "@repo/db/client",
+      // note-links: the pure [[link]] parser, no imports.
+      "../engines/planning-engine", "../engines/topic-mastery-engine", "./learner-key", "./note-links", "./notes.types", "@repo/db/client",
     ]);
     for (const banned of ["brains", "consolidation", "orchestrator", "entry", "conversation-adapter", "openai", "persistence", "knowledge-engine"]) {
       expect(imports.some(i => i.includes(banned))).toBe(false);
@@ -150,7 +151,13 @@ describe("notes boundary: a note is content, not cognitive state", () => {
 
   it("reads only the note table and what the pickers need", () => {
     const tables = new Set([...notes.matchAll(/prisma\.(\w+)\./g)].map(m => m[1]));
-    expect(tables).toEqual(new Set(["novaNote", "novaSubject", "novaStudySession", "messengerUser"]));
+    // novaTopicMastery: only to resolve a [[link]] to a topic by name. Read,
+    // never written: no mastery field is selected.
+    expect(tables).toEqual(new Set(["novaNote", "novaSubject", "novaStudySession", "messengerUser", "novaTopicMastery"]));
+    const topicReads = [...notes.matchAll(/prisma\.novaTopicMastery\.(\w+)\(/g)].map(m => m[1]);
+    expect(topicReads).toEqual(["findMany"]);
+    const at = notes.indexOf("prisma.novaTopicMastery.findMany");
+    expect(notes.slice(at, at + 260)).toMatch(/select:\s*\{ id: true, name: true \}/);
   });
 
   it("every note query carries the learner's profile", () => {

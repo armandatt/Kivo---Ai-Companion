@@ -1,9 +1,14 @@
 // ─── Account preferences adapter ──────────────────────────────────────────────
-// What the learner chose in web onboarding and Settings that Nova's proactive
-// side needs: the daily check-in time, and the timezone their browser reported.
-// Both live on the web account (UserProfile), which is where onboarding and
-// Settings write them; this is the one place Nova reads them. Read-only, apart
-// from adopting the account's timezone for a learner who has none.
+// What the learner chose in web onboarding and Settings that Nova needs: the
+// daily check-in time, the timezone their browser reported, and what they
+// said they are learning for. All live on the web account (UserProfile),
+// which is where onboarding and Settings write them; this is the one place
+// Nova reads them. Read-only, apart from adopting the account's timezone for
+// a learner who has none.
+//
+// What they are learning for is one of their onboarding answers and is kept
+// with them (UserProfile.onboardingAnswers.learningContexts). There is no
+// column for it; LEARNING_CONTEXTS_KEY is the one name for where it sits.
 //
 // The account is found the way every other reader finds it: by the chat the
 // learner linked, or by "web:<userId>" before they have linked one.
@@ -11,6 +16,15 @@
 import { prisma } from "@repo/db/client";
 import { currentZoneName, isValidTimezone } from "../engines/learner-calendar";
 import { parseCheckinTime } from "../decision/proactive-decision";
+import { normalizeLearningContexts, type LearningContext } from "../product/learning-context";
+
+export const LEARNING_CONTEXTS_KEY = "learningContexts";
+
+// The contexts in a stored onboarding answer. Anything unreadable is "not said".
+export function learningContextsIn(onboardingAnswers: unknown): LearningContext[] {
+  if (!onboardingAnswers || typeof onboardingAnswers !== "object" || Array.isArray(onboardingAnswers)) return [];
+  return normalizeLearningContexts((onboardingAnswers as Record<string, unknown>)[LEARNING_CONTEXTS_KEY]) ?? [];
+}
 
 const accountOf = (learnerId: string): { userId: string } | { telegramChatId: string } =>
   learnerId.startsWith("web:") ? { userId: learnerId.slice(4) } : { telegramChatId: learnerId };
@@ -22,16 +36,18 @@ export interface AccountPreferences {
   checkinTime:   string | null;
   // A real IANA zone, or null.
   timezone:      string | null;
+  // What they said they are learning for. Empty: they have not said.
+  learningContexts: LearningContext[];
 }
 
-const NONE: AccountPreferences = { checkinMinute: null, checkinTime: null, timezone: null };
+const NONE: AccountPreferences = { checkinMinute: null, checkinTime: null, timezone: null, learningContexts: [] };
 
 const two = (n: number) => String(n).padStart(2, "0");
 
 export async function loadAccountPreferences(platformChatId: string): Promise<AccountPreferences> {
   const account = await prisma.userProfile.findFirst({
     where:  accountOf(platformChatId),
-    select: { preferredCheckInTime: true, timezone: true },
+    select: { preferredCheckInTime: true, timezone: true, onboardingAnswers: true },
   }).catch(() => null);
   if (!account) return NONE;
   const minute = parseCheckinTime(account.preferredCheckInTime);
@@ -40,7 +56,17 @@ export async function loadAccountPreferences(platformChatId: string): Promise<Ac
     checkinMinute: minute,
     checkinTime:   minute === null ? null : `${two(Math.floor(minute / 60))}:${two(minute % 60)}`,
     timezone:      zone,
+    learningContexts: learningContextsIn(account.onboardingAnswers),
   };
+}
+
+// Only what they said they are learning for, for callers that need nothing else.
+export async function loadLearningContexts(platformChatId: string): Promise<LearningContext[]> {
+  const account = await prisma.userProfile.findFirst({
+    where:  accountOf(platformChatId),
+    select: { onboardingAnswers: true },
+  }).catch(() => null);
+  return account ? learningContextsIn(account.onboardingAnswers) : [];
 }
 
 // The learner's timezone. Nova's own record first; if it has none, the zone

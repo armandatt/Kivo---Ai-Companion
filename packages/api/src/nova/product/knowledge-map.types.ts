@@ -17,7 +17,9 @@ interface NodeBase {
   // Unique on the map: "<type>:<row id>".
   id:        string;
   label:     string;
-  // Where the item itself lives in the app. null: it has no page of its own.
+  // Where the item itself lives in the app: the note, that topic or subject
+  // on Knowledge, that page's own row on Saved. Never a list the learner has
+  // to search again. null: it has no page of its own.
   href:      string | null;
   // The subject it belongs to or was filed under. null: none.
   subjectId: string | null;
@@ -50,7 +52,8 @@ export type MapNode =
 export type MapEdgeKind =
   | "has_topic"     // subject → topic: the topic is one of the subject's
   | "about_topic"   // topic → note or saved page filed under that topic
-  | "filed_under";  // subject → note or saved page filed under the subject only
+  | "filed_under"   // subject → note or saved page filed under the subject only
+  | "links_to";     // note → note or topic: the learner wrote [[its name]] in the note
 
 export interface MapEdge { id: string; from: string; to: string; kind: MapEdgeKind }
 

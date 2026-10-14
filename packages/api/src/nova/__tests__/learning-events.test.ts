@@ -240,13 +240,22 @@ describe("a learning event is a record of an action, and nothing else", () => {
     // It is a picture of what is on record, not an engine: it computes
     // nothing about the learner from an event, and it reads them only
     // through this module's own listResourceLinks.
+    // Focus context lists the pages filed under the topic being studied, the
+    // same way: through listResourceLinks, computing nothing from them.
     // resource-processing looks at a saved page for which of the learner's
     // topics it is about. It files a page; it computes nothing about the learner.
-    expect(readers.sort()).toEqual(["product/knowledge-map.ts", "product/learning-events.ts", "product/resource-processing.ts"]);
+    // note-assist gives Nova a few saved pages (title, site, selected passage)
+    // as sources for a learner-asked action on a note; it stores and
+    // computes nothing about the learner (note-assist.test.ts).
+    expect(readers.sort()).toEqual(["product/focus-context.ts", "product/knowledge-map.ts", "product/learning-events.ts", "product/note-assist.ts", "product/resource-processing.ts"]);
     const map = read("product/knowledge-map.ts");
     expect(map).not.toMatch(/prisma\.novaLearningEvent/);
     expect(map).not.toMatch(/updateTopicMastery|novaStudySession/);
     expect(map).not.toMatch(/\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/);
+    const focus = read("product/focus-context.ts");
+    expect(focus).not.toMatch(/prisma\.novaLearningEvent|prisma\.novaTask|prisma\.novaExam/);
+    expect(focus).not.toMatch(/updateTopicMastery|masteryProbability|openStudySession/);
+    expect(focus).not.toMatch(/\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\(/);
     for (const engine of ["product/planner.ts", "product/planning-inputs.ts", "product/knowledge.ts", "product/progress.ts", "product/today.ts", "engines/planning-engine.ts", "engines/learning-dna-engine.ts"]) {
       expect([engine, readers.includes(engine)]).toEqual([engine, false]);
     }

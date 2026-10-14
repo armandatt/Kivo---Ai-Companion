@@ -100,15 +100,31 @@ export interface StudyPlan {
   totalMinutesToday: number;
   budgetMinutes:     number;           // the time the plan was fitted to
   budgetBasis:       PlanBudgetBasis;  // which rule set that time
+  // Set when the work still to do for the nearest exam does not fit the time
+  // before it. The plan is never lengthened to make it fit.
+  shortfall:         PlanShortfall | null;
 }
 
+// No rule raises a day above the learner's own time: an exam never does.
 export type PlanBudgetBasis =
   | "preferred"     // the student's usual daily hours
   | "stated_time"   // what the student said they have today
-  | "exam_ramp"     // raised: an exam is within 14 days
-  | "exam_crisis"   // raised: an exam is within 3 days
   | "recovery"      // cut: recovering from a run of missed days
+  | "reentry"       // cut: a first day back after four or more days without study
   | "no_pressure";  // capped at 30 min: burnout risk
+
+export interface PlanShortfall {
+  examId:           string;
+  examTitle:        string;
+  daysUntil:        number;
+  studyDays:        number;   // today and the days after it before the exam
+  dailyMinutes:     number;   // the daily time the count rests on
+  topicsRemaining:  number;   // topics for this exam not yet at a solid level
+  topicsThatFit:    number;   // how many of those the time allows
+  minutesPerTopic:  number;   // an assumption, not a measurement
+  minutesNeeded:    number;
+  minutesAvailable: number;
+}
 
 // ── Exam Intelligence Engine ──────────────────────────────────────────────────
 
@@ -117,6 +133,9 @@ export type ExamMode = "normal" | "triage" | "crisis";
 export interface ExamContext {
   examId:           string;
   examTitle:        string;
+  // What kind of dated thing it is, as stored (product/deadline-types.ts).
+  // Absent on a context built before types existed: an exam.
+  examType?:        string;
   subjectName:      string;
   daysUntil:        number;
   scheduledAt:      Date;
@@ -128,7 +147,6 @@ export interface ExamContext {
     safe:     string[];   // high mastery
   };
   primaryFocus:           string;   // single highest-priority topic this turn
-  recommendedDailyHours:  number;
 }
 
 // ── Pattern Detector ──────────────────────────────────────────────────────────

@@ -22,6 +22,9 @@ export interface NovaUserProfile {
   yearOfStudy:              number | null;
   major:                    string | null;
   institution:              string | null;
+  // What they said they are learning for ("school", "college", "working",
+  // "other"). Empty or absent: they have not said, and nothing is assumed.
+  learningContexts?:        string[];
   preferredStudyHoursPerDay: number;
   subjects:                 string[];   // subject names
   daysSinceJoined:          number;
@@ -56,6 +59,16 @@ export interface NovaContext {
 
   // Exam (if within 14 days)
   examContext: ExamContext | null;
+  // How far off that date is, and the next date that can take over a day, in
+  // the learner's own calendar days: the count every page shows. Unset: the
+  // engines' elapsed-time counts are worded instead.
+  examCalendarDays?:     number | null;
+  nextExamCalendarDays?: number | null;
+  // Calendar days since the last day with a counted session (0: today), and
+  // whether today is a first day back (recovery-engine.ts). Unset: the
+  // engines' elapsed count is worded instead.
+  daysSinceStudy?:       number | null;
+  reentryDay?:           boolean;
 
   // Plan (if loaded)
   studyPlan: StudyPlan | null;

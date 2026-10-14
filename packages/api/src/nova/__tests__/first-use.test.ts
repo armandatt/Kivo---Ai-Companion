@@ -19,10 +19,10 @@ const view = (over: Partial<NovaTodayReady> = {}): NovaTodayReady => ({
   recommendation: block("Processes"), emptyReason: null, alternatives: [],
   activeSession: null, nextDeadline: null, upcoming: [], weakArea: null, reviewDue: { count: 0, topics: [] }, constraints: [],
   progress: { sessionsThisWeek: 0, minutesThisWeek: 0, streakDays: 0, daysSinceLastSession: null, lastSession: null },
-  plan: { mode: "standard", blockCount: 1, totalMinutesToday: 30, budgetMinutes: 180, budgetBasis: "preferred", assumptions: [] },
+  plan: { mode: "standard", blockCount: 1, totalMinutesToday: 30, budgetMinutes: 180, budgetBasis: "preferred", assumptions: [], shortfall: null },
   ...over,
 });
-const exam = { title: "OS exam", subjectName: "Operating Systems", examType: "exam", scheduledAt: "", daysUntil: 8 };
+const exam = { title: "OS exam", subjectName: "Operating Systems", examType: "exam", kind: "exam" as const, kindLabel: "Exam", scheduledAt: "", daysUntil: 8 };
 const word = (decision: ReturnType<typeof decideFirstUse>, register: "serious" | "steady" | "playful" = "steady") =>
   wordFirstUse({ decision, studentName: "Asha", register, operatingStyle: [], hasButtons: decision.block !== null });
 

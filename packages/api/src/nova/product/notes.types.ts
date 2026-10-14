@@ -21,8 +21,24 @@ export interface NoteSummary {
   updatedAt:   string;
 }
 
+// A note this note links to with [[Title]], or a note that links here.
+export interface NoteLinkRef {
+  title:     string;          // as written in the link, or the linking note's title
+  // The note it opens. null: no note of the learner's has that title yet.
+  noteId:    string | null;
+  // A topic of the learner's with that name, when no note has it.
+  topicId:   string | null;
+  // For a backlink: the line the link sits on.
+  context?:  string;
+  subjectName?: string | null;
+}
+
 export interface NoteDetail extends NoteSummary {
   body: string;
+  // [[Links]] written in this note, resolved against the learner's own notes
+  // and topics; and the learner's notes that link here. Derived from what
+  // they wrote: nothing about a link is stored apart from the text.
+  links: { outgoing: NoteLinkRef[]; backlinks: NoteLinkRef[] };
   // "Study this" starts an ordinary study session on the note's subject and
   // topic. The note is context for it; the session is the evidence.
   study: {
@@ -50,6 +66,9 @@ export interface NovaNotesReady {
   total:    number;
   // A session is running: one at a time, so another cannot be started.
   activeSession: { topicName: string | null } | null;
+  // What the learner said they are learning for (product/learning-context.ts),
+  // so the page offers the note templates that fit first. Added by the route.
+  learningContexts?: string[];
 }
 
 export type NovaNotesView =
@@ -65,16 +84,21 @@ export interface NoteInput {
   body?:      string;
   subjectId?: string | null;
   topicName?: string | null;
+  // The note's updatedAt when the editor opened it. Given, the save is made
+  // only if the note has not changed since; otherwise it is refused as a
+  // conflict and the note as it now stands comes back. Left out: last write
+  // wins, as before.
+  baseUpdatedAt?: string;
 }
 
 export type NoteError =
   | "unauthenticated" | "not_nova" | "not_connected" | "onboarding_incomplete"
   | "invalid" | "title_required" | "title_too_long" | "body_too_long" | "topic_too_long"
-  | "unknown_subject" | "not_found" | "failed";
+  | "unknown_subject" | "not_found" | "conflict" | "failed";
 
 export type NoteResponse =
   | { ok: true; note: NoteDetail }
-  | { ok: false; error: NoteError; message: string };
+  | { ok: false; error: NoteError; message: string; current?: NoteDetail };
 
 export type NoteDeleteResponse =
   | { ok: true }

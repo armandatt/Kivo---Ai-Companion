@@ -25,8 +25,30 @@ export type PlanEmptyReason =
   | "recovery"         // recovery mode, and nothing comfortable to revisit
   | "nothing_due";     // nothing is due and no exam is close
 
+// No rule raises a day above the learner's own time.
 export type PlanBudgetBasisName =
-  | "preferred" | "stated_time" | "exam_ramp" | "exam_crisis" | "recovery" | "no_pressure";
+  | "preferred" | "stated_time" | "recovery" | "reentry" | "no_pressure";
+
+// The work still to do for the nearest exam does not fit the time before it.
+// Nova states it and offers these choices; it never adds time by itself.
+export type ShortfallChoiceKind =
+  | "keep_time"          // stay inside the time given; the weakest topics come first
+  | "add_time_today"     // the learner says they have longer today
+  | "change_usual_time"; // the learner changes their usual daily time
+
+export interface PlanShortfallView {
+  examTitle:        string;
+  daysUntil:        number;
+  topicsRemaining:  number;
+  topicsThatFit:    number;
+  minutesNeeded:    number;
+  minutesAvailable: number;
+  dailyMinutes:     number;
+  summary:          string;     // one sentence, every figure from the fields above
+  // What the count rests on that is not on record.
+  assumptions:      string[];
+  choices:          Array<{ kind: ShortfallChoiceKind; label: string; detail: string }>;
+}
 
 export interface TodayActiveSession {
   id:                     string;
@@ -41,7 +63,10 @@ export interface TodayActiveSession {
 export interface TodayDeadline {
   title:       string;
   subjectName: string | null;
-  examType:    string;
+  examType:    string;      // as stored
+  // What kind of date it is, and the word for it (product/deadline-types.ts).
+  kind:        "exam" | "assignment" | "project" | "interview" | "certification" | "other";
+  kindLabel:   string;
   scheduledAt: string;
   daysUntil:   number;
 }
@@ -100,6 +125,7 @@ export interface NovaTodayReady {
     budgetMinutes:     number;
     budgetBasis:       PlanBudgetBasisName;
     assumptions:       string[];
+    shortfall:         PlanShortfallView | null;
   };
 }
 
@@ -163,6 +189,9 @@ export type NovaSessionResponse =
       session: NovaSessionView | null;
       // Set by "end": what was recorded.
       ended:   {
+        // The session that was closed, so the learner's optional note can be
+        // attached to it.
+        sessionId: string;
         topicName: string | null;
         minutes:   number;
         outcome:   NovaSessionOutcome | null;

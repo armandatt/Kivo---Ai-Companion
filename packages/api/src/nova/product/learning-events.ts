@@ -553,3 +553,21 @@ export async function listResourceLinks(profileId: string, take: number): Promis
   }));
   return { resources, total };
 }
+
+// ── For Nova's help on a note (product/note-assist.ts) ────────────────────────
+// Saved pages filed under a subject (and, first, the ones under its topic):
+// title, site, address and the passage the learner selected, if any. Nova
+// has not read any page; the server never fetches one.
+export async function listResourceSources(profileId: string, subjectId: string, topicName: string | null, take: number): Promise<Array<{
+  id: string; title: string; domain: string; url: string; excerpt: string | null; onTopic: boolean;
+}>> {
+  const rows = await prisma.novaLearningEvent.findMany({
+    where:   { profileId, subjectId, eventType: { in: ["resource_saved", "selection_saved"] } },
+    orderBy: { occurredAt: "desc" }, take: take * 3,
+    select:  { id: true, title: true, domain: true, url: true, excerpt: true, topicName: true },
+  });
+  const onTopic = (t: string | null) => sameName(t, topicName) && topicName !== null;
+  return [...rows.filter(r => onTopic(r.topicName)), ...rows.filter(r => !onTopic(r.topicName))]
+    .slice(0, take)
+    .map(r => ({ id: r.id, title: r.title, domain: r.domain, url: r.url, excerpt: r.excerpt ? r.excerpt.slice(0, 1_200) : null, onTopic: onTopic(r.topicName) }));
+}

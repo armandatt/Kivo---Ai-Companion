@@ -185,8 +185,9 @@ describe("buildKnowledgeView: session evidence", () => {
     const view = buildKnowledgeView(inputs({ sessions }));
     const claimed = view.recentLearning.find(s => s.id === "c1")!;
     expect(claimed).toMatchObject({ measured: false, minutes: null, outcome: null, subjectName: null });
-    // The 90 stored for it appears nowhere in the response.
-    expect(JSON.stringify(view)).not.toContain("90");
+    // The 90 stored for it is the value of no field in the response. (Looked
+    // for as a value: the timestamps in the view can contain "90" by chance.)
+    expect(JSON.stringify(view)).not.toContain(":90");
     // …and it is not attached to a topic as session evidence.
     expect(view.subjects.flatMap(s => s.topics).flatMap(t => t.recentSessions).map(s => s.id)).not.toContain("c1");
     for (const s of view.recentLearning) expect(s.minutes === null).toBe(!s.measured);

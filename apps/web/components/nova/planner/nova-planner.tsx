@@ -10,6 +10,7 @@ import { UpcomingPressure } from './pressure'
 import { TodayPlan } from './today-plan'
 import { WeekPlan } from './week-plan'
 import { WhyPlan } from './why-plan'
+import { ShortfallNote } from '../shortfall-note'
 
 type Props = {
   view:       NovaPlannerReady
@@ -107,6 +108,7 @@ export function NovaPlanner({ view, minutes, onMinutes, refreshing }: Props) {
         </div>
 
         <aside className="space-y-6">
+          {view.reasoning.shortfall && <ShortfallNote shortfall={view.reasoning.shortfall} />}
           <WhyPlan reasoning={view.reasoning} />
           <UpcomingPressure pressure={view.pressure} timezone={view.timezone} goals={view.goals} />
         </aside>

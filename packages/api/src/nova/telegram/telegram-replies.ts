@@ -26,7 +26,7 @@ export const OUTCOME_LABEL: Record<NovaSessionOutcome, string> = {
 };
 
 const EMPTY_PLAN: Record<PlanEmptyReason, string> = {
-  no_topics:       "I don't have any topics for you yet, so there's nothing to plan from. Tell me what one of your subjects covers this term and I'll take it from there.",
+  no_topics:       "I don't have any topics for you yet, so there's nothing to plan from. Tell me what one of your subjects covers and I'll take it from there.",
   too_little_time: `That's shorter than anything worth starting. ${MIN_SESSION_MINUTES} minutes is the smallest block I plan.`,
   recovery:        "Recovery day. Nothing I'd push on you today.",
   nothing_due:     "Nothing is due and no exam is close. Your call today.",

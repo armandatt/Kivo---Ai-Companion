@@ -5,9 +5,11 @@ import Link from 'next/link'
 import { ArrowLeft, Check } from 'lucide-react'
 import { SetupForm } from '@/components/nova/setup-form'
 import { GoalsEditor } from '@/components/nova/goals-editor'
+import { ExamsEditor } from '@/components/nova/exams-editor'
 
 // Subjects, topics, exam dates and study routine, after the first setup: the
-// same form, showing what is on record. Saving merges; nothing is removed.
+// same form, showing what is on record. Saving the form merges and removes
+// nothing; an exam date is moved or removed in its own editor above it.
 export default function StudySetupPage() {
   const [saved, setSaved] = useState(0)
 
@@ -17,9 +19,9 @@ export default function StudySetupPage() {
         <ArrowLeft className="size-3.5" /> Settings
       </Link>
       <header className="mt-4">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Subjects and study setup</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">What you&apos;re learning</h1>
         <p className="mt-1.5 max-w-prose text-sm leading-relaxed text-foreground/55">
-          What you are studying, what each subject covers, your exam dates and your usual day. Add to it here, or start from a template. What you have already studied is never changed by this page.
+          What you are learning, what each part covers, the dates that matter and your usual day. Add to it here, or start from a template. A date can be moved or removed; what you have already studied is never changed by this page.
         </p>
       </header>
 
@@ -32,6 +34,9 @@ export default function StudySetupPage() {
 
       {/* Its own save: a goal is not part of the setup draft below. */}
       <div className="mt-6"><GoalsEditor /></div>
+
+      {/* Its own save too: moving or removing a date is not part of the draft. Remounted after a setup save, which may have added one. */}
+      <div className="mt-6"><ExamsEditor key={saved} /></div>
 
       <section className="mt-6 rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9">
         {/* Remounted after a save, so the form shows what is now on record. */}
