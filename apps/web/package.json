@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint --max-warnings 0",
-    "test": "tsx --test components/nova/saved/saved-api.test.ts lib/auth/dashboard-entry.test.ts components/settings/delete-account.test.ts",
+    "test": "tsx --test components/nova/saved/saved-api.test.ts lib/auth/dashboard-entry.test.ts components/settings/delete-account.test.ts components/sidebar-modes.test.ts",
     "check-types": "next typegen && tsc --noEmit"
   },
   "dependencies": {

@@ -60,3 +60,29 @@ describe("reduced motion", () => {
     expect(rule).toContain("transition-duration: 0.01ms !important;");
   });
 });
+
+describe("the navigation over the Creature world", () => {
+  const sidebar = web("components/sidebar.tsx");
+  const shell = web("components/dashboard-shell.tsx");
+  it("has one menu button, the shell's: the sidebar draws its own only when docked", () => {
+    expect(sidebar).toContain("{mode.ownToggle && (");
+    expect(web("components/sidebar-modes.ts")).toContain("ownToggle:   !overlay,");
+  });
+  it("closes on Escape, and the keyboard goes back to the shell's button", () => {
+    expect(sidebar).toContain("if (overlay) { onOpenChange(false); return }");
+    expect(shell).toContain("onOpenChange={setOverlayOpen}");
+    expect(shell).toContain("navButtonRef.current?.focus()");
+  });
+  it("keeps Tab inside while it covers the page, with the rule the dialogs use", () => {
+    expect(sidebar).toContain("import { trappedTabTarget } from '@/components/settings/dialog-focus'");
+    expect(sidebar).toContain("trappedTabTarget(stops, document.activeElement as HTMLElement | null, e.shiftKey, drawer)");
+  });
+  it("takes no focus while closing, and choosing a page puts the keyboard back on the menu button", () => {
+    expect(sidebar).toContain("inert={mode.inert}");
+    expect(sidebar).toContain("if (!overlay && (!active || active === document.body || drawer?.contains(active))) toggle?.focus()");
+  });
+  it("has a backdrop at every width, not only on a small screen", () => {
+    expect(sidebar).toContain("mode.backdrop === 'small_screens' && 'lg:hidden'");
+    expect(web("components/sidebar-modes.ts")).toContain("overlay ? 'every_width' : 'small_screens'");
+  });
+});

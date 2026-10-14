@@ -1,10 +1,10 @@
 'use client'
 
-import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { Menu } from 'lucide-react'
 import { routeAccess, type Companion } from '@repo/api/nova/product/companion'
-import { Sidebar } from '@/components/sidebar'
+import { Sidebar, SIDEBAR_ID } from '@/components/sidebar'
 import { NovaUnavailable } from '@/components/nova/nova-unavailable'
 import { hasParkedCapture } from '@/components/nova/saved/pending-capture'
 
@@ -75,10 +75,28 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
     if (companion === 'nova' && pathname !== '/saved' && hasParkedCapture()) router.replace('/saved')
   }, [companion, pathname, router])
 
+  // On Creature, closing the navigation (Escape, the backdrop, its close
+  // button or a link) puts the keyboard back on the button that opened it.
+  // That button is drawn only while the navigation is closed, so focus moves
+  // once it is there again.
+  const navButtonRef = useRef<HTMLButtonElement>(null)
+  const returnFocus  = useRef(false)
+  const setOverlayOpen = useCallback((next: boolean) => {
+    if (!next) returnFocus.current = true
+    setSidebarOpen(next)
+  }, [])
+
   // Auto-collapse when entering creature page, restore when leaving
   useEffect(() => {
     setSidebarOpen(!isCreature)
+    returnFocus.current = false
   }, [isCreature])
+
+  useEffect(() => {
+    if (sidebarOpen || !returnFocus.current) return
+    returnFocus.current = false
+    navButtonRef.current?.focus()
+  }, [sidebarOpen])
 
   useEffect(() => {
     if (access === 'not_for_rex') router.replace('/home')
@@ -110,7 +128,7 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
     return (
       <div className="kivo-app flex h-screen overflow-hidden bg-black">
         {/* Sidebar in overlay mode — always fixed, never pushes the world */}
-        <Sidebar open={sidebarOpen} onOpenChange={setSidebarOpen} companion={companion} overlay />
+        <Sidebar open={sidebarOpen} onOpenChange={setOverlayOpen} companion={companion} overlay />
 
         {/* Full-bleed world — no padding, no overflow */}
         <main className="kivo-dark w-full h-screen overflow-hidden">
@@ -120,9 +138,13 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
         {/* Floating three-line button — visible only when sidebar is closed */}
         {!sidebarOpen && (
           <button
-            onClick={() => setSidebarOpen(true)}
+            type="button"
+            ref={navButtonRef}
+            onClick={() => setOverlayOpen(true)}
             className="fixed top-4 left-4 z-50 p-2 rounded-lg bg-black/40 backdrop-blur-md border border-white/10 hover:bg-black/60 transition-all"
             aria-label="Open navigation"
+            aria-expanded={false}
+            aria-controls={SIDEBAR_ID}
           >
             <Menu className="w-5 h-5 text-white/70" />
           </button>
@@ -134,7 +156,7 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
   return (
     <div className="kivo-app flex h-screen bg-background">
       <Sidebar open={access === 'render' ? sidebarOpen : true} onOpenChange={setSidebarOpen} companion={companion} />
-      <main className="flex-1 overflow-auto">
+      <main className="min-w-0 flex-1 overflow-auto">
         <div className="relative h-full p-6">
           {access === 'render' ? <CompanionContext.Provider value={companion}>{children}</CompanionContext.Provider>
             : access === 'nova_unavailable' ? <NovaUnavailable pathname={pathname} />
