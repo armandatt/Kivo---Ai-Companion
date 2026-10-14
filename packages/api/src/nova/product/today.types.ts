@@ -186,6 +186,9 @@ export type NovaSessionResponse =
       session: NovaSessionView | null;
       // Set by "end": what was recorded.
       ended:   {
+        // The session that was closed, so the learner's optional note can be
+        // attached to it.
+        sessionId: string;
         topicName: string | null;
         minutes:   number;
         outcome:   NovaSessionOutcome | null;

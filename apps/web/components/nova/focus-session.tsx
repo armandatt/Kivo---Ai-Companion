@@ -9,6 +9,8 @@ import { cn } from '@/lib/utils'
 import { clock, minutesLabel } from './format'
 import { StudyRequest } from './saved/study-request'
 import { useNovaSession } from './use-nova-session'
+import { FocusContext, hasFocusContext, useFocusContext } from './focus-context'
+import { SessionNote } from './session-note'
 
 const RING = 2 * Math.PI * 54
 
@@ -59,6 +61,9 @@ export function FocusSession() {
   const studyId = useSearchParams().get('study')
   // Starting from the card moves to /focus with no query: read the session again at once.
   useEffect(() => { void retry() }, [studyId, retry])
+  // What the learner has filed under this session's topic. Asked for only
+  // while a session is running, and again when it is a different session.
+  const context = useFocusContext(null, session?.id ?? null, session !== null)
 
   if (blocked) return <Notice title="Nova isn't set up yet" body={blocked} />
 
@@ -88,6 +93,7 @@ export function FocusSession() {
               Open Knowledge
             </Link>
           </div>
+          <SessionNote sessionId={ended.sessionId} />
         </div>
       </Shell>
     )
@@ -214,6 +220,8 @@ export function FocusSession() {
       )}
 
       {error && <p role="alert" className="mt-4 text-center text-sm text-red-300">{error}</p>}
+
+      {hasFocusContext(context) && <FocusContext view={context} className="mt-10" />}
 
       <dl className="mt-12 grid grid-cols-3 gap-4 border-t border-white/8 pt-6 text-center">
         <div>

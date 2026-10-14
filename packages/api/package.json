@@ -34,6 +34,7 @@
     "./nova/product/tasks.types": "./src/nova/product/tasks.types.ts",
     "./nova/product/goals.types": "./src/nova/product/goals.types.ts",
     "./nova/product/exams.types": "./src/nova/product/exams.types.ts",
+    "./nova/product/focus-context.types": "./src/nova/product/focus-context.types.ts",
     "./nova/product/learning-context": "./src/nova/product/learning-context.ts",
     "./nova/product/knowledge-map.types": "./src/nova/product/knowledge-map.types.ts",
     "./nova/product/templates": "./src/nova/product/templates.ts",

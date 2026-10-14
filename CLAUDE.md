@@ -400,6 +400,17 @@ Held by `tasks.test.ts` and `nova-workspace.itest.ts`. The Planner has two tabs:
 - **`clientKey` makes a create idempotent** (`@@unique([profileId, clientKey])`): a double click, a retry or a template applied twice returns the task that exists, as it now is.
 - The board (`components/nova/tasks/`) moves a card by drag and drop or by the arrows on it; both are the same `PATCH { status }`. Home's "Your tasks" is the same rows.
 
+## Focus context and the session note
+
+Held by `focus-context.test.ts`. `product/focus-context.ts`, `GET /api/nova/focus-context`, `POST /api/nova/session/reflection`, UI in `components/nova/focus-context.tsx` and `session-note.tsx`.
+
+- **Focus context is a read model of what the learner filed under a topic**: their open tasks, their saved pages, the subject's next exam, and their note from the last session on it. It is shown under Today's recommendation and on the Focus screen. Something belongs when it is filed under the same subject and either that topic or no topic; with no subject nothing is shown. It reads tasks, saved pages and exams only through `listTasks`, `listResourceLinks` and `listExams`, writes nothing and calls no model.
+- **Showing a record is not evidence.** A task finished or a page opened moves no mastery. The page says so.
+- **A task can start a session** when it names both a subject and a topic (the Focus button on Today's task list). It sends the ordinary `start`; ticking the task is still only a task.
+- **The session note** is three optional short answers after ending a session (what got done, what got in the way, the next step), stored as JSON text in `NovaStudySession.reflectionText` by `saveSessionNote` in `persistence/nova-persistence.ts`. Written once, by a guarded write on the learner's own finished session without a note, so a retry or a double submit changes nothing. `ended.sessionId` on the session response is what the page attaches it to.
+- **The note is the learner's, for the learner.** No engine, brain, context builder, Learning DNA store or consolidation reads it, and a test holds that. Whether Nova's model may read it is an open owner decision; until then it does not.
+- **Not connected yet:** a task has no link to a goal or to a specific exam (both would need a column), and Telegram shows none of this.
+
 ## Knowledge Map
 
 Held by `knowledge-map.test.ts` and `nova-workspace.itest.ts`. `/map`, `GET /api/nova/knowledge-map`, `product/knowledge-map.ts`.

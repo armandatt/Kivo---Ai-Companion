@@ -7,6 +7,7 @@ import { TelegramCard } from './telegram-connect'
 import { RecommendationCard } from './recommendation-card'
 import { TalkToNova } from './talk-to-nova'
 import { ShortfallNote } from './shortfall-note'
+import { FocusContext, hasFocusContext, useFocusContext } from './focus-context'
 import { TimeAvailable } from './time-available'
 import type { NovaNotesView } from '@repo/api/nova/product/notes.types'
 import type { NovaCreatureView } from '@repo/api/nova/product/creature.types'
@@ -57,6 +58,10 @@ const EMPTY: Record<NonNullable<NovaTodayReady['emptyReason']>, { title: string;
   },
 }
 
+// A session started from a task has no planned block behind it, so it gets
+// the length of an ordinary one.
+const TASK_SESSION_MINUTES = 25
+
 // Home for a Nova learner. One question leads the page, "what should I do
 // right now?", answered with what Nova's engines already decided; the
 // learner's own tasks come next; everything else is context in the margin.
@@ -80,6 +85,9 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
     ...view.plan.assumptions,
   ]
   const tasks = board.view?.status === 'ready' ? board.tasks : null
+  // What the learner has filed under the recommended topic. Not asked for
+  // while a session runs: the Focus screen shows that session's own.
+  const recContext = useFocusContext(rec ? { subjectName: rec.subjectName, topicName: rec.topicName } : null, rec?.topicName ?? null, !active && rec !== null)
   const recentNotes = notes.view?.status === 'ready' ? notes.view.notes : []
 
   return (
@@ -136,11 +144,15 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
             ) : null}
           </section>
 
+          {!active && hasFocusContext(recContext) && <FocusContext view={recContext} />}
+
           {!active && view.plan.shortfall && <ShortfallNote shortfall={view.plan.shortfall} timeHref="/planner" />}
 
           <TodayTasks
             tasks={tasks} failed={board.loadError} error={board.error}
             onCreate={board.create} onUpdate={board.update}
+            onStart={active ? undefined : task => start({ topicName: task.topicName!, subjectName: task.subjectName!, durationMinutes: TASK_SESSION_MINUTES }, `task:${task.id}`)}
+            starting={starting}
           />
 
           <UpNext actions={later} onStart={active ? undefined : start} disabled={starting !== null} />

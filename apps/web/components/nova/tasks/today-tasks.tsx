@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { ArrowRight, Check, Plus } from 'lucide-react'
+import { ArrowRight, Check, Play, Plus } from 'lucide-react'
 import type { NovaTaskItem, TaskInput } from '@repo/api/nova/product/tasks.types'
 import { dueLabel, isOverdue } from './task-format'
 
@@ -13,6 +13,12 @@ type Props = {
   error:    string | null
   onCreate: (input: TaskInput) => Promise<boolean>
   onUpdate: (id: string, changes: TaskInput) => Promise<boolean>
+  // Starts a session on the task's own subject and topic. Offered only for a
+  // task that names both: Nova never guesses what a task is about. The
+  // session is the evidence; ticking the task still records nothing studied.
+  onStart?: (task: NovaTaskItem) => void
+  // The key of the start in flight (`task:<id>`), or null.
+  starting?: string | null
 }
 
 const SHOWN = 6
@@ -28,7 +34,7 @@ export function prioritiesOf(tasks: NovaTaskItem[]): NovaTaskItem[] {
 
 // Today's priorities: the learner's own tasks, from the same rows as the
 // Planner's board. Ticking one moves it to Done there too.
-export function TodayTasks({ tasks, failed, error, onCreate, onUpdate }: Props) {
+export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, starting = null }: Props) {
   const [title, setTitle]   = useState('')
   const [adding, setAdding] = useState(false)
 
@@ -82,6 +88,13 @@ export function TodayTasks({ tasks, failed, error, onCreate, onUpdate }: Props) 
                       {[task.status === 'in_progress' ? 'In progress' : null, task.subjectName, task.topicName].filter(Boolean).join(' · ') || 'To do'}
                     </p>
                   </div>
+                  {onStart && task.subjectName && task.topicName && (
+                    <button type="button" onClick={() => onStart(task)} disabled={starting !== null} data-start-task
+                      aria-label={`Start a session on ${task.topicName} for "${task.title}"`}
+                      className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-white/10 px-2.5 text-xs font-medium text-foreground/75 transition-colors hover:bg-white/5 hover:text-foreground disabled:opacity-40">
+                      <Play className="size-3" /> {starting === `task:${task.id}` ? 'Starting…' : 'Focus'}
+                    </button>
+                  )}
                   {due && <span className={`shrink-0 text-xs ${isOverdue(task) ? 'font-medium text-rose-300' : task.dueInDays === 0 ? 'font-medium text-amber-300' : 'text-foreground/50'}`}>{due}</span>}
                 </li>
               )
