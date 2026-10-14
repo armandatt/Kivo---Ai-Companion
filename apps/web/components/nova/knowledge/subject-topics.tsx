@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, History } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { KnowledgeSession, KnowledgeSubject, KnowledgeTopic } from '@repo/api/nova/product/knowledge.types'
 import type { ArchivedTopic, ArchivedTopicsView } from '@repo/api/nova/product/topic-archive.types'
@@ -10,6 +10,7 @@ import { minutesLabel, relativeDay, sentenceCase } from '../format'
 import type { NoteSummary } from '@repo/api/nova/product/notes.types'
 import { fetchNotes } from '../notes/notes-api'
 import { LEVEL_LABEL, LEVEL_TONE, OUTCOME_LABEL, reviewLabel, sessionsLabel } from './labels'
+import { SectionHeading } from '../workspace/ui'
 
 // The record a link into this page names (?topic=<id> or ?subject=<id>), read
 // from the address once the page is in the browser.
@@ -76,7 +77,7 @@ async function postArchive(topicId: string, archived: boolean): Promise<string |
   }
 }
 
-function TopicRow({ topic, subjectId, onChanged }: { topic: KnowledgeTopic; subjectId: string; onChanged?: () => void }) {
+function TopicRow({ topic, subjectId, focus = false, onChanged }: { topic: KnowledgeTopic; subjectId: string; focus?: boolean; onChanged?: () => void }) {
   const [archiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
   // A link from the Knowledge Map names the topic it is about (?topic=<id>):
@@ -90,6 +91,12 @@ function TopicRow({ topic, subjectId, onChanged }: { topic: KnowledgeTopic; subj
     setOpen(true)
     row.current?.scrollIntoView({ block: 'center' })
   }, [topic.id])
+  // Opened from the subject's board on this page: the same, without the address.
+  useEffect(() => {
+    if (!focus) return
+    setOpen(true)
+    row.current?.scrollIntoView({ block: 'center' })
+  }, [focus])
   const verified = topic.level !== 'unverified'
   const panel = `topic-${topic.id}`
 
@@ -181,7 +188,7 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 // A subject and the topics Nova has on record under it. Topics are never
 // made up from the subject's name: a subject with none says so.
-export function SubjectTopics({ subject, onChanged }: { subject: KnowledgeSubject; onChanged?: () => void }) {
+export function SubjectTopics({ subject, focusTopicId = null, showHeading = true, onChanged }: { subject: KnowledgeSubject; focusTopicId?: string | null; showHeading?: boolean; onChanged?: () => void }) {
   const { topicCount, dueCount } = subject.summary
   // ?subject=<id>, from the Knowledge Map: this subject is brought into view.
   const [linked, setLinked] = useState(false)
@@ -193,19 +200,21 @@ export function SubjectTopics({ subject, onChanged }: { subject: KnowledgeSubjec
   }, [subject.subjectId])
   return (
     <section ref={section} data-subject={subject.subjectName} aria-label={subject.subjectName} data-linked={linked || undefined} className="scroll-mt-24">
-      <div className="flex items-baseline justify-between gap-4">
-        <h3 className="text-base font-semibold tracking-tight text-foreground">{subject.subjectName}</h3>
-        <p className="text-xs text-foreground/45">
-          {topicCount === 0 ? 'No topics yet' : `${topicCount} topic${topicCount === 1 ? '' : 's'}${dueCount > 0 ? ` · ${dueCount} due` : ''}`}
-        </p>
-      </div>
+      {showHeading && (
+        <div className="flex items-baseline justify-between gap-4">
+          <h3 className="text-[15px] font-semibold tracking-tight text-foreground">{subject.subjectName}</h3>
+          <p className="text-xs text-foreground/55">
+            {topicCount === 0 ? 'No topics yet' : `${topicCount} topic${topicCount === 1 ? '' : 's'}${dueCount > 0 ? ` · ${dueCount} due` : ''}`}
+          </p>
+        </div>
+      )}
       {topicCount === 0 ? (
-        <p className="mt-3 rounded-2xl border border-dashed border-white/10 px-5 py-4 text-sm text-foreground/50" data-empty="topics">
+        <p className="mt-3 rounded-lg border border-dashed border-white/12 px-4 py-4 text-sm text-foreground/60" data-empty="topics">
           Nova hasn&apos;t built enough topic evidence here yet. Finish a focused session on something in {subject.subjectName} and it will appear.
         </p>
       ) : (
-        <ul className="mt-3 divide-y divide-white/6 overflow-hidden rounded-2xl border border-white/8 bg-card/40">
-          {subject.topics.map(topic => <TopicRow key={topic.id} topic={topic} subjectId={subject.subjectId} onChanged={onChanged} />)}
+        <ul className="mt-3 divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8">
+          {subject.topics.map(topic => <TopicRow key={topic.id} topic={topic} subjectId={subject.subjectId} focus={topic.id === focusTopicId} onChanged={onChanged} />)}
         </ul>
       )}
     </section>
@@ -215,17 +224,17 @@ export function SubjectTopics({ subject, onChanged }: { subject: KnowledgeSubjec
 export function RecentLearning({ sessions }: { sessions: KnowledgeSession[] }) {
   if (sessions.length === 0) return null
   return (
-    <section aria-labelledby="knowledge-recent" className="rounded-2xl border border-white/8 bg-card/50 p-5" data-section="recent-learning">
-      <h2 id="knowledge-recent" className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Recent learning</h2>
-      <ul className="mt-4 space-y-3.5">
+    <section aria-labelledby="knowledge-recent" data-section="recent-learning">
+      <SectionHeading id="knowledge-recent" icon={History}>Recent learning</SectionHeading>
+      <ul className="mt-3 space-y-3">
         {sessions.map(s => (
           <li key={s.id} data-session={s.id} data-measured={s.measured}>
-            <p className="truncate text-sm text-foreground/85">{s.topicName ?? 'Study session'}</p>
-            <p className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-foreground/45">
+            <p className="truncate text-sm text-foreground/90">{s.topicName ?? 'Study session'}</p>
+            <p className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-foreground/55">
               <span>{relativeDay(s.date)}</span>
-              <span aria-hidden className="text-foreground/20">·</span>
+              <span aria-hidden className="text-foreground/25">·</span>
               <span>{s.measured && s.minutes !== null ? minutesLabel(s.minutes) : 'reported in chat, not timed'}</span>
-              {s.outcome && <><span aria-hidden className="text-foreground/20">·</span><span className="text-foreground/65">{OUTCOME_LABEL[s.outcome]}</span></>}
+              {s.outcome && <><span aria-hidden className="text-foreground/25">·</span><span className="text-foreground/75">{OUTCOME_LABEL[s.outcome]}</span></>}
             </p>
           </li>
         ))}
