@@ -5,6 +5,12 @@
 // NOVA_URL is the address of the Nova web app. It is the only address the
 // extension ever talks to, and it is fixed at build time: the extension has
 // no setting that could point it somewhere else.
+//
+// NOVA_RELEASE=1 makes this a build for real use: NOVA_URL must then be given,
+// be https and not point at this machine. Without it, a missing NOVA_URL means
+// localhost:3000 (development), and a local address is allowed, which is also
+// how a build is pointed at a dead port to see the popup's failure states.
+// `npm run build:safari:release` sets it, as `npm run package` does its own check.
 
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -16,7 +22,11 @@ const out  = process.env.NOVA_EXTENSION_OUT ?? join(root, 'dist')
 
 let origin
 try {
+  const release = process.env.NOVA_RELEASE === '1'
+  if (release && !process.env.NOVA_URL) throw new Error('a release needs NOVA_URL: the https address of the Nova web app')
   const url = new URL(process.env.NOVA_URL ?? 'http://localhost:3000')
+  const local = ['localhost', '127.0.0.1', '0.0.0.0', '[::1]'].includes(url.hostname) || url.hostname.endsWith('.local') || url.hostname.endsWith('.localhost')
+  if (release && (url.protocol !== 'https:' || local || url.username || url.password)) throw new Error('a release must use an https address that is not this machine and carries no login')
   if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') throw new Error('NOVA_URL must be https (or localhost)')
   origin = url.origin
 } catch (err) {

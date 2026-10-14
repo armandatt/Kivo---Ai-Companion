@@ -1146,7 +1146,7 @@ model NovaTelegramPrompt {
 model NovaLearningEvent {
   id            String   @id @default(cuid())
   profileId     String
-  eventType     String   // "resource_saved" | "study_requested"
+  eventType     String   // "resource_saved" | "selection_saved" | "study_requested"
   source        String   // "browser_extension" | "web": set by the server from the credential used
   // The id the client gave this one action. A retry carries the same id and
   // creates nothing.
@@ -1158,12 +1158,33 @@ model NovaLearningEvent {
   topicName     String?
   occurredAt    DateTime
 
+  // What the page calls its own address (its canonical link), when the
+  // extension could read one. Kept beside `url`, never instead of it.
+  canonicalUrl  String?  @db.Text
+  // The passage the learner selected and sent ("selection_saved" only).
+  excerpt       String?  @db.Text
+  // Who filed it where it is: "learner", or "nova" for a link Nova made
+  // from a name match and the learner has not yet kept or undone.
+  filedBy       String?
+
+  // Looking for what this page connects to. The saved row never depends on
+  // it: a failure is recorded here and the page stays saved.
+  // "none" | "pending" | "processing" | "done" | "failed"
+  processingStatus    String    @default("none")
+  processingAttempts  Int       @default(0)
+  processingStartedAt DateTime?
+  processedAt         DateTime?
+  processingError     String?
+  // What processing found: ResourceConnections (learning-events.types.ts).
+  connections         Json?
+
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   subject NovaSubject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
 
   @@unique([profileId, clientEventId])
+  @@index([processingStatus, processingStartedAt])
   @@index([profileId, eventType, occurredAt])
   @@index([profileId, subjectId])
 }

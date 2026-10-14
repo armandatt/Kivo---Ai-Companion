@@ -1,6 +1,6 @@
 // The extension's calls to Nova. Four of them, all to Nova's own address:
 // redeem a pairing code, read the learner's subjects, send one learning
-// event, disconnect. The credential travels as a bearer header and nowhere
+// event (a page saved, a passage saved, a page to study), disconnect. The credential travels as a bearer header and nowhere
 // else; cookies are never sent.
 //
 // Every failure comes back as { ok: false, kind, message } with words a
@@ -13,6 +13,20 @@ export const WORDS = {
   unauthenticated: 'Nova was disconnected from this browser. Connect it again.',
   rate_limited:    "That's a lot at once. Give it a minute.",
   failed:          "That didn't work. Try again in a moment.",
+  disconnected:    'Disconnected. This browser can no longer save to Nova.',
+  disconnect_unconfirmed: "This browser has forgotten its connection, but Nova couldn't be told. To be sure it is closed, disconnect this browser on Nova's Saved page.",
+}
+
+/**
+ * What to tell the learner after Disconnect. The browser forgets its
+ * credential whatever the answer was. Nova has closed the connection only
+ * when it said so, or when it no longer knows the credential (a 401); an
+ * unreachable Nova or a failed request has closed nothing, and says so.
+ * @param {{ ok: boolean, kind?: string }} result what client.disconnect() returned
+ */
+export function disconnectOutcome(result) {
+  const confirmed = result.ok || result.kind === 'unauthenticated'
+  return { confirmed, message: confirmed ? WORDS.disconnected : WORDS.disconnect_unconfirmed }
 }
 
 /**
@@ -57,6 +71,8 @@ export function createClient({ baseUrl, fetch: doFetch, getToken }) {
     disconnect: () => call('/api/nova/extension/disconnect', { method: 'POST' }),
     // One explicit action. `event.clientEventId` is what makes a retry safe.
     sendEvent:  event => call('/api/nova/learning-events', { method: 'POST', body: event }),
+    // A question about the page. Answered and not kept.
+    ask:        question => call('/api/nova/extension/ask', { method: 'POST', body: question }),
   }
 }
 
@@ -64,8 +80,8 @@ export function createClient({ baseUrl, fetch: doFetch, getToken }) {
  * The fields of a learning event, and only those. Nothing about who the
  * learner is goes in: the server knows that from the credential.
  */
-export function buildEvent({ eventType, clientEventId, page, title, subjectId, topicName, now = new Date() }) {
-  return {
+export function buildEvent({ eventType, clientEventId, page, title, subjectId, topicName, excerpt, now = new Date() }) {
+  const event = {
     eventType,
     clientEventId,
     url: page.url,
@@ -73,6 +89,24 @@ export function buildEvent({ eventType, clientEventId, page, title, subjectId, t
     capturedAt: now.toISOString(),
     subjectId: subjectId || null,
     topicName: subjectId && topicName && topicName.trim() ? topicName.trim() : null,
+    // What the page calls its own address, when it says.
+    canonicalUrl: page.canonicalUrl || null,
+  }
+  // The selected passage travels only with the action that is about it.
+  if (eventType === 'selection_saved') event.excerpt = typeof excerpt === 'string' ? excerpt : ''
+  return event
+}
+
+/**
+ * What a question about the page carries: the question, the page's address
+ * and title, and the selected passage if there is one. Never the page itself.
+ */
+export function buildQuestion({ question, page, title, excerpt }) {
+  return {
+    question: question.trim(),
+    url: page.url,
+    title: (title ?? page.title).trim(),
+    excerpt: typeof excerpt === 'string' && excerpt ? excerpt : null,
   }
 }
 

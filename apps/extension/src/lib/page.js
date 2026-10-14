@@ -1,6 +1,8 @@
 // What Nova takes from a tab when the learner opens the popup on it: the
-// address, the title and the site. Nothing is read from inside the page:
-// no text, no form fields, no cookies. There is no content script.
+// address, the title and the site. This file reads nothing from inside the
+// page. The selected text and the canonical link are read by lib/browser.js,
+// and nothing else of the page is: no other text, no form fields, no cookies.
+// There is no content script.
 //
 // An adapter turns a tab into that small description. V1 has one, for any
 // ordinary web page. A site-specific adapter (a video, a coding problem)

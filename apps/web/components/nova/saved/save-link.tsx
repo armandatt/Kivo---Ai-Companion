@@ -47,7 +47,7 @@ export function SaveLink({ subjects, resources, capture, onSaved }: {
     const fromPage = (pageTitle ?? '').trim()
     // A page already saved opens with what is on record, so saving it again
     // changes only what the learner changes.
-    const kept = resources.find(r => samePage(r.url, checked.url)) ?? null
+    const kept = resources.find(r => r.eventType === 'resource_saved' && samePage(r.url, checked.url)) ?? null
     setProblem(null); setError(null); setDone(null)
     setDraft({
       eventId: newEventId(), url: checked.url, domain: checked.domain,
