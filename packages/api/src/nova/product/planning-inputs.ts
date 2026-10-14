@@ -12,6 +12,7 @@ import { ASSUMED_DAILY_HOURS, loadStudySnapshot, type StudySnapshotResult } from
 import { computeAcademicState } from "../engines/academic-state-engine";
 import { getAllTopicMasteries } from "../engines/knowledge-engine";
 import { selectActiveExam } from "../engines/exam-engine";
+import { preparesTopics, takesOverTheDay } from "./deadline-types";
 import { generateStudyPlan, MIN_BLOCK_MINUTES } from "../engines/planning-engine";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
 import { DNA_LEVEL_RANK, type DnaSignal } from "../engines/learning-dna-engine";
@@ -173,7 +174,8 @@ export async function loadPlanningInputs(
     semesterEndDate:         snapshot.semesterEndDate,
     daysSinceJoined:         snapshot.daysSinceJoined,
     studySessions:           snapshot.studySessions,
-    upcomingExams:           snapshot.upcomingExams,
+    // Only a date that may take over a day counts toward exam crisis.
+    upcomingExams:           snapshot.upcomingExams.filter(takesOverTheDay),
     stateHistory:            snapshot.stateHistory,
     signals:                 { detectedSignals: [], stateUpdates: [] },
     mentionedTopicMastery:   null,
@@ -183,8 +185,10 @@ export async function loadPlanningInputs(
     storedConsecutiveMisses: snapshot.storedConsecutiveMisses,
   }, now);
 
+  // The planner prepares for tests and interviews. An assignment or a project
+  // is a date and a set of tasks; it changes no study block.
   const examContext = selectActiveExam(
-    snapshot.upcomingExams.map(e => ({
+    snapshot.upcomingExams.filter(preparesTopics).map(e => ({
       id: e.id, title: e.title, subjectName: e.subjectName, scheduledAt: e.scheduledAt, examType: e.examType,
     })),
     {},

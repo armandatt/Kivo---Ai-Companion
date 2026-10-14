@@ -37,7 +37,7 @@ export interface ProactiveWordingInput {
 const INFORM_ONLY = "Something in their life is limiting their study right now. Give them the date, plainly and kindly, and nothing more: do not ask them to study, do not suggest a session, do not mention what is limiting them.";
 
 const INSTRUCTIONS: Record<ProactiveType, string> = {
-  exam_countdown:       "An exam is close. Name it and when it is. Say the one thing worth doing today. Calm and direct, no alarm.",
+  exam_countdown:       "A date they are working toward is close: an exam, an interview, something due. Name it exactly as the facts name it and say when it is; do not call it an exam unless the facts do. Say the one thing worth doing today, if one is recommended. Calm and direct, no alarm.",
   review_due:           "Topics are due for review. Name the one recommended. Say a short retrieval pass is enough.",
   missed_plan_recovery: "They have not studied for a few days. Do not mention guilt or the gap as a failure. Make starting small and easy.",
   task_due:             "A task they set for themselves is due today. Name it in their own words and say it is due today. It is their task, not Nova's plan: do not tell them how to do it, do not recommend a topic, and do not say anything about what they have or have not done.",
@@ -50,7 +50,7 @@ const ASK_WHAT_TODAY = "This is the daily check-in they asked for, at the time t
 
 export function proactiveFallback(input: ProactiveWordingInput): string {
   const lead: Record<ProactiveType, string> = {
-    exam_countdown:       "Exam check.",
+    exam_countdown:       "Coming up.",
     review_due:           "Review is due.",
     missed_plan_recovery: "Easy way back in.",
     task_due:             "Due today.",

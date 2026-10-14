@@ -24,6 +24,7 @@ import { isIsoDay } from "../brains/understanding-parser";
 import { calendarDaysUntil } from "../engines/learner-calendar";
 import { subjectsNamedIn } from "../engines/topic-mastery-engine";
 import { EXAM_TITLE_MAX, type ExamChangeError, type NovaExamItem } from "./exams.types";
+import { deadlineType, parseDeadlineType, type DeadlineType } from "./deadline-types";
 
 export const EXAM_HORIZON_DAYS = 366;
 const DAY_MS = 86_400_000;
@@ -39,7 +40,10 @@ export type AddExamResult =
 
 export async function addExam(
   platformChatId: string,
-  input: { title: string; subjectName: string | null; date: string },
+  // kind: what sort of date it is (product/deadline-types.ts). Left out, an
+  // exam. Not called "type": callers pass action objects whose `type` is the
+  // action's name, and that must never be stored as the date's kind.
+  input: { title: string; subjectName: string | null; date: string; kind?: DeadlineType },
   now = new Date(),
 ): Promise<AddExamResult> {
   const title = input.title.trim().slice(0, 80);
@@ -74,7 +78,7 @@ export async function addExam(
   if (duplicate) return { status: "exists", title, date: input.date };
 
   await prisma.novaExam.create({
-    data: { profileId: profile.id, subjectId: subject?.id ?? null, title, examType: "exam", scheduledAt: at },
+    data: { profileId: profile.id, subjectId: subject?.id ?? null, title, examType: parseDeadlineType(input.kind) ?? "exam", scheduledAt: at },
   });
   return { status: "added", title, date: input.date };
 }
@@ -128,10 +132,10 @@ async function examsOf(profile: { id: string; timezone: string | null }, now: Da
     // UTC of its day, and one dated today must not drop off the list at noon.
     where:   { profileId: profile.id, scheduledAt: { gte: new Date(now.getTime() - 2 * DAY_MS) } },
     orderBy: { scheduledAt: "asc" },
-    select:  { id: true, title: true, scheduledAt: true, subject: { select: { name: true } } },
+    select:  { id: true, title: true, examType: true, scheduledAt: true, subject: { select: { name: true } } },
   });
   return rows
-    .map(e => ({ id: e.id, title: e.title, subjectName: e.subject?.name ?? null, date: isoDayOf(e.scheduledAt),
+    .map(e => ({ id: e.id, title: e.title, type: deadlineType(e.examType), subjectName: e.subject?.name ?? null, date: isoDayOf(e.scheduledAt),
       daysUntil: calendarDaysUntil(e.scheduledAt, now, profile.timezone) }))
     .filter(e => e.date >= today);
 }
@@ -142,16 +146,16 @@ export async function listExams(platformChatId: string, now = new Date()): Promi
   return profile ? examsOf(profile, now) : null;
 }
 
-export type ExamChange = { title: string; date: string };
+export type ExamChange = { title: string; date: string; type: DeadlineType };
 export type ExamChangeCheck =
   | { ok: true; change: ExamChange; changed: boolean }
   | { ok: false; reason: Exclude<ExamChangeError, "not_found"> };
 
 // Whether a change to one exam can be made, and what it comes to. Pure.
-// `input` is the request body: only `title` and `date` are read, and one left
-// out keeps what is on record. `others` are the learner's other exams.
+// `input` is the request body: only `title`, `date` and `type` are read, and
+// one left out keeps what is on record. `others` are the learner's other exams.
 export function checkExamChange(
-  current: { title: string; date: string; subjectId: string | null },
+  current: { title: string; date: string; subjectId: string | null; type?: DeadlineType },
   others:  Array<{ title: string; date: string; subjectId: string | null }>,
   input:   unknown,
   today:   string,
@@ -161,13 +165,16 @@ export function checkExamChange(
   const body = input as Record<string, unknown>;
   if (body["title"] !== undefined && typeof body["title"] !== "string") return { ok: false, reason: "invalid" };
   if (body["date"]  !== undefined && typeof body["date"]  !== "string") return { ok: false, reason: "invalid" };
+  const was  = current.type ?? "exam";
+  const type = body["type"] === undefined ? was : parseDeadlineType(body["type"]);
+  if (type === null) return { ok: false, reason: "invalid" };
 
   const title = body["title"] === undefined ? current.title : (body["title"] as string).trim();
   const date  = body["date"]  === undefined ? current.date  : (body["date"] as string).trim();
   if (!title) return { ok: false, reason: "no_title" };
   if (title.length > EXAM_TITLE_MAX) return { ok: false, reason: "invalid" };
 
-  const changed = title !== current.title || date !== current.date;
+  const changed = title !== current.title || date !== current.date || type !== was;
   if (date !== current.date) {
     if (!isIsoDay(date)) return { ok: false, reason: "bad_date" };
     if (date < today) return { ok: false, reason: "in_the_past" };
@@ -181,7 +188,7 @@ export function checkExamChange(
     ));
     if (clash) return { ok: false, reason: "duplicate" };
   }
-  return { ok: true, change: { title, date }, changed };
+  return { ok: true, change: { title, date, type }, changed };
 }
 
 export type ExamWriteResult =
@@ -199,19 +206,19 @@ export async function updateExam(platformChatId: string, examId: string, input: 
 
   const all = await prisma.novaExam.findMany({
     where:  { profileId: profile.id },
-    select: { id: true, title: true, scheduledAt: true, subjectId: true },
+    select: { id: true, title: true, examType: true, scheduledAt: true, subjectId: true },
   });
   const row = all.find(e => e.id === examId);
   if (!row) return { status: "not_found" };
 
-  const flat  = (e: (typeof all)[number]) => ({ title: e.title, date: isoDayOf(e.scheduledAt), subjectId: e.subjectId });
+  const flat  = (e: (typeof all)[number]) => ({ title: e.title, date: isoDayOf(e.scheduledAt), subjectId: e.subjectId, type: deadlineType(e.examType) });
   const check = checkExamChange(flat(row), all.filter(e => e.id !== examId).map(flat), input, dayKey(now, resolveTimezone(profile.timezone)), now);
   if (!check.ok) return { status: "invalid", reason: check.reason };
 
   if (check.changed) {
     const written = await prisma.novaExam.updateMany({
       where: { id: examId, profileId: profile.id },
-      data:  { title: check.change.title, scheduledAt: examInstant(check.change.date) },
+      data:  { title: check.change.title, scheduledAt: examInstant(check.change.date), examType: check.change.type },
     });
     // Removed between the read and the write: there is nothing to change.
     if (written.count === 0) return { status: "not_found" };

@@ -12,6 +12,8 @@ export const EXAMS_HREF = "/settings/study#exams";
 export interface NovaExamItem {
   id:          string;
   title:       string;
+  // What kind of date it is (product/deadline-types.ts).
+  type:        "exam" | "assignment" | "project" | "interview" | "certification" | "other";
   subjectName: string | null;
   date:        string;   // YYYY-MM-DD, the day the learner gave
   daysUntil:   number;   // in the learner's own calendar days

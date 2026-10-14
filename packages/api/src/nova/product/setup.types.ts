@@ -10,7 +10,8 @@ export type SetupGapName = "subjects" | "topics" | "exams" | "daily_minutes" | "
 
 export interface SetupDraft {
   subjects:     Array<{ name: string; topics: string[] }>;
-  exams:        Array<{ subjectName: string; date: string; title: string | null }>;   // date: YYYY-MM-DD
+  // date: YYYY-MM-DD. type: what kind of date (deadline-types.ts); left out, an exam.
+  exams:        Array<{ subjectName: string; date: string; title: string | null; type?: "exam" | "assignment" | "project" | "interview" | "certification" | "other" }>;
   dailyMinutes: number | null;      // null: not said
   studyTime:    SetupStudyTime | null;   // null: not said
 }

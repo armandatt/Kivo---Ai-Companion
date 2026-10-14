@@ -249,13 +249,15 @@ export function generateStudyPlan(
   }
 
   // 2. Exam context: high-weight low-mastery topics
-  if (examContext && state.daysUntilNextExam !== null && state.daysUntilNextExam < 14) {
+  // The deadline's own distance, not the academic state's: that counts only
+  // the dates that can take over a day, and an interview is prepared for too.
+  if (examContext && examContext.daysUntil < EXAM_WINDOW_DAYS) {
     for (const topic of getExamPriorityOrder(examTopics, examContext.topicWeights).slice(0, 3)) {
       if (usedMinutes >= budgetMinutes * 0.8) break;
       if (overdue.some(o => o.topicId === topic.topicId)) continue; // already added
       const mins = Math.min(size(30), budgetMinutes - usedMinutes);
       if (mins < MIN_BLOCK_MINUTES) break;
-      blocks.push(examPrepBlock(topic, mins, state.daysUntilNextExam));
+      blocks.push(examPrepBlock(topic, mins, examContext.daysUntil));
       usedMinutes += mins;
     }
   }

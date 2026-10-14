@@ -22,7 +22,7 @@ const view = (over: Partial<NovaTodayReady> = {}): NovaTodayReady => ({
   plan: { mode: "standard", blockCount: 1, totalMinutesToday: 30, budgetMinutes: 180, budgetBasis: "preferred", assumptions: [], shortfall: null },
   ...over,
 });
-const exam = { title: "OS exam", subjectName: "Operating Systems", examType: "exam", scheduledAt: "", daysUntil: 8 };
+const exam = { title: "OS exam", subjectName: "Operating Systems", examType: "exam", kind: "exam" as const, kindLabel: "Exam", scheduledAt: "", daysUntil: 8 };
 const word = (decision: ReturnType<typeof decideFirstUse>, register: "serious" | "steady" | "playful" = "steady") =>
   wordFirstUse({ decision, studentName: "Asha", register, operatingStyle: [], hasButtons: decision.block !== null });
 

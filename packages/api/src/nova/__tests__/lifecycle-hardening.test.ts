@@ -258,7 +258,7 @@ describe("an inform-only exam message, when the model is unavailable", () => {
     expect(text).not.toMatch(/Recommended|study|session|limiting/i);
   });
   it("the ordinary message still carries the recommendation", () => {
-    expect(proactiveFallback(input)).toBe("Exam check. Operating Systems final in 2 days. Recommended now: Deadlocks (Operating Systems), 45 min.");
+    expect(proactiveFallback(input)).toBe("Coming up. Operating Systems final in 2 days. Recommended now: Deadlocks (Operating Systems), 45 min.");
   });
   it("nothing written for the model is ever put among the facts", () => {
     expect(read("proactive/nova-proactive-cron.ts")).not.toMatch(/lines\.push\("[^"]*(Do not|do not|nothing more)/);

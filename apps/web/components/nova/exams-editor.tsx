@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { CalendarDays, Check, Loader2 } from 'lucide-react'
 import { EXAM_TITLE_MAX, type ExamResponse, type NovaExamItem, type NovaExamsView } from '@repo/api/nova/product/exams.types'
+import { DEADLINE_RULES, DEADLINE_TYPES, type DeadlineType } from '@repo/api/nova/product/deadline-types'
 import { inDays } from './format'
 
 // The learner's exam dates, each one movable and removable. The page collects
@@ -13,7 +14,7 @@ import { inDays } from './format'
 
 const FIELD = 'h-11 rounded-xl border border-white/10 bg-transparent px-3.5 text-sm text-foreground placeholder:text-foreground/35 focus:border-keppel-400/60 focus:outline-none'
 
-type Draft = { title: string; date: string }
+type Draft = { title: string; date: string; type: DeadlineType }
 
 export function ExamsEditor() {
   // null: not loaded yet. What the server last confirmed.
@@ -26,7 +27,7 @@ export function ExamsEditor() {
 
   const take = (exams: NovaExamItem[]) => {
     setStored(exams)
-    setDrafts(Object.fromEntries(exams.map(e => [e.id, { title: e.title, date: e.date }])))
+    setDrafts(Object.fromEntries(exams.map(e => [e.id, { title: e.title, date: e.date, type: e.type }])))
   }
 
   useEffect(() => {
@@ -74,12 +75,12 @@ export function ExamsEditor() {
   if (state === 'failed') {
     return (
       <section role="alert" id="exams" className="rounded-3xl border border-white/8 bg-card/70 p-6">
-        <p className="text-sm text-foreground/65">Couldn&apos;t load your exam dates. Reload the page to try again.</p>
+        <p className="text-sm text-foreground/65">Couldn&apos;t load your dates. Reload the page to try again.</p>
       </section>
     )
   }
   if (state === 'loading' || stored === null) {
-    return <div id="exams" aria-busy="true" aria-label="Loading your exam dates" className="h-32 animate-pulse rounded-3xl border border-white/5 bg-white/3" />
+    return <div id="exams" aria-busy="true" aria-label="Loading your dates" className="h-32 animate-pulse rounded-3xl border border-white/5 bg-white/3" />
   }
 
   return (
@@ -89,30 +90,35 @@ export function ExamsEditor() {
           <CalendarDays className="size-5 text-keppel-300" />
         </div>
         <div className="min-w-0 flex-1">
-          <h2 id="exams-heading" className="text-lg font-semibold tracking-tight text-foreground">Your exam dates</h2>
+          <h2 id="exams-heading" className="text-lg font-semibold tracking-tight text-foreground">Your dates</h2>
           <p className="mt-2 max-w-prose text-sm leading-relaxed text-foreground/65">
-            Move a date or remove an exam and your plan, the countdown and Nova&apos;s reminders follow it from the next time they are worked out. Removing an exam removes only the date: nothing you studied changes.
+Exams, interviews and things due. Move or remove one and your plan, the countdown and Nova&apos;s reminders follow it from the next time they are worked out. What kind it is matters: Nova prepares your topics for an exam, a certification or an interview, and only an exam or a certification can take a whole day. An assignment or a project is a date and nothing more. Removing one removes only the date: nothing you studied changes.
           </p>
 
           {stored.length === 0 ? (
-            <p className="mt-5 text-sm leading-relaxed text-foreground/55">No exam date on record. Add one in the form below.</p>
+            <p className="mt-5 text-sm leading-relaxed text-foreground/55">No date on record. Add one in the form below.</p>
           ) : (
             <ul className="mt-5 space-y-4">
               {stored.map(exam => {
-                const draft   = drafts[exam.id] ?? { title: exam.title, date: exam.date }
+                const draft   = drafts[exam.id] ?? { title: exam.title, date: exam.date, type: exam.type }
                 const title   = draft.title.trim()
-                const changed = title !== exam.title || draft.date !== exam.date
+                const changed = title !== exam.title || draft.date !== exam.date || draft.type !== exam.type
                 const working = busy === exam.id
                 const setDraft = (patch: Partial<Draft>) => { setNote(null); setDrafts(d => ({ ...d, [exam.id]: { ...draft, ...patch } })) }
                 return (
                   <li key={exam.id} data-exam={exam.id} className="rounded-2xl border border-white/8 p-4">
                     <form
                       className="flex flex-col gap-2 sm:flex-row sm:items-center"
-                      onSubmit={e => { e.preventDefault(); if (changed && title && draft.date && busy === null) void send(exam, 'PATCH', { title, date: draft.date }, 'Saved. Your plan follows the new date.') }}
+                      onSubmit={e => { e.preventDefault(); if (changed && title && draft.date && busy === null) void send(exam, 'PATCH', { title, date: draft.date, type: draft.type }, 'Saved. Your plan follows it.') }}
                     >
                       <label htmlFor={`exam-title-${exam.id}`} className="sr-only">Exam name</label>
                       <input id={`exam-title-${exam.id}`} value={draft.title} maxLength={EXAM_TITLE_MAX} disabled={busy !== null}
                         onChange={e => setDraft({ title: e.target.value })} className={`${FIELD} min-w-0 sm:flex-1`} />
+                      <label htmlFor={`exam-kind-${exam.id}`} className="sr-only">What kind of date {exam.title} is</label>
+                      <select id={`exam-kind-${exam.id}`} value={draft.type} disabled={busy !== null}
+                        onChange={e => setDraft({ type: e.target.value as DeadlineType })} className={`${FIELD} sm:w-40`}>
+                        {DEADLINE_TYPES.map(t => <option key={t} value={t} className="bg-card text-foreground">{DEADLINE_RULES[t].label}</option>)}
+                      </select>
                       <label htmlFor={`exam-day-${exam.id}`} className="sr-only">Date of {exam.title}</label>
                       <input id={`exam-day-${exam.id}`} type="date" value={draft.date} disabled={busy !== null}
                         onChange={e => setDraft({ date: e.target.value })} className={`${FIELD} sm:w-44`} />
@@ -126,7 +132,7 @@ export function ExamsEditor() {
                       <p className="text-foreground/50">{exam.subjectName ?? 'No subject'} · {inDays(exam.daysUntil)}</p>
                       {removing === exam.id ? (
                         <span className="flex items-center gap-3 text-sm">
-                          <span className="text-foreground/65">Remove this exam?</span>
+                          <span className="text-foreground/65">Remove this date?</span>
                           <button type="button" disabled={busy !== null} onClick={() => void send(exam, 'DELETE', null, `Removed ${exam.title}. It no longer shapes your plan.`)}
                             className="font-medium text-red-300 hover:text-red-200 disabled:opacity-50" data-remove-exam>
                             {working ? 'Removing…' : 'Remove'}

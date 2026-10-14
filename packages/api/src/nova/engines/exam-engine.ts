@@ -94,6 +94,7 @@ export function buildExamContext(
   return {
     examId:           exam.id,
     examTitle:        exam.title,
+    examType:         exam.examType,
     subjectName:      exam.subjectName ?? NO_EXAM_SUBJECT,
     daysUntil,
     scheduledAt:      exam.scheduledAt,

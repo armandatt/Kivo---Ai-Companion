@@ -13,6 +13,8 @@ import { buildExamContext } from "../engines/exam-engine";
 import { loadPlanningInputs, planEmptyReason, planMode, type PlanningInputs } from "./planning-inputs";
 import { sessionElapsedSeconds } from "./session-view";
 import { shortfallView } from "./shortfall";
+import { paceProjection } from "./pace";
+import { DEADLINE_RULES, deadlineType, preparesTopics } from "./deadline-types";
 import { toAction } from "./today";
 import type {
   NovaPlannerReady,
@@ -206,16 +208,27 @@ export function buildPlannerView(input: PlanningInputs): NovaPlannerReady {
     .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())
     .map(e => {
       const subjectTopics = e.subjectName === null ? [] : topics.filter(t => sameTopic(t.subjectName, e.subjectName));
-      const context = subjectTopics.length > 0
+      // Readiness is a reading of topics, so only a date the planner prepares
+      // topics for has one. An assignment or a project has none to give.
+      const context = subjectTopics.length > 0 && preparesTopics(e)
         ? buildExamContext({ id: e.id, title: e.title, subjectName: e.subjectName, scheduledAt: e.scheduledAt, examType: e.examType }, subjectTopics, now)
         : null;
       return {
         title:       e.title,
         subjectName: e.subjectName,
         examType:    e.examType,
+        kind:        deadlineType(e.examType),
+        kindLabel:   DEADLINE_RULES[deadlineType(e.examType)].label,
         scheduledAt: e.scheduledAt.toISOString(),
         daysUntil:   calendarDaysUntil(e.scheduledAt, now, input.timezone),
         drivesPlan:  examContext?.examId === e.id,
+        prepares:    preparesTopics(e),
+        pace:        preparesTopics(e)
+          ? paceProjection({
+              topics: subjectTopics, daysUntil: calendarDaysUntil(e.scheduledAt, now, input.timezone),
+              dailyMinutes: snapshot.preferredStudyHoursPerDay * 60, dailyMinutesStated: snapshot.dailyMinutesStated !== null,
+            })
+          : null,
         preparation: context ? {
           mode:       context.mode,
           weak:       context.riskMatrix.critical,

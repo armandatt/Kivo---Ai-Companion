@@ -42,6 +42,7 @@ import { getRelevantMemories } from "./adapters/memory-adapter";
 import { loadActiveRealityFacts } from "./adapters/reality-adapter";
 import { loadOperatingStyle } from "./adapters/operating-style-adapter";
 import { loadLearningContexts } from "./adapters/account-preferences-adapter";
+import { preparesTopics, takesOverTheDay } from "./product/deadline-types";
 import { loadConversationHistory, loadSignalHistory, annotationTags } from "./adapters/conversation-adapter";
 import { loadPriorPatterns } from "./consolidation/stores/behavioral-pattern-store";
 import { persistTurn, persistTurnAsync } from "./persistence/nova-persistence";
@@ -135,7 +136,7 @@ export async function runNovaOrchestrator(
     semesterEndDate:        snapshot.semesterEndDate,
     daysSinceJoined:        snapshot.daysSinceJoined,
     studySessions:          snapshot.studySessions,
-    upcomingExams:          snapshot.upcomingExams,
+    upcomingExams:          snapshot.upcomingExams.filter(takesOverTheDay),
     stateHistory:           snapshot.stateHistory,
     signals,
     mentionedTopicMastery:  null,  // loaded next
@@ -156,7 +157,7 @@ export async function runNovaOrchestrator(
         semesterEndDate:        snapshot.semesterEndDate,
         daysSinceJoined:        snapshot.daysSinceJoined,
         studySessions:          snapshot.studySessions,
-        upcomingExams:          snapshot.upcomingExams,
+        upcomingExams:          snapshot.upcomingExams.filter(takesOverTheDay),
         stateHistory:           snapshot.stateHistory,
         signals,
         mentionedTopicMastery:  topicMastery,
@@ -226,7 +227,7 @@ export async function runNovaOrchestrator(
 
   // ── 9. Exam Engine ────────────────────────────────────────────────────────
   const examContext = selectActiveExam(
-    snapshot.upcomingExams.map(e => ({
+    snapshot.upcomingExams.filter(preparesTopics).map(e => ({
       id:          e.id,
       title:       e.title,
       subjectName: e.subjectName,

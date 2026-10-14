@@ -23,18 +23,19 @@ function Panel({ title, children, action }: { title: string; children: React.Rea
   )
 }
 
-// Exams Nova has on record and tasks with a due day, in one list by date.
+// The dates Nova has on record (exams, interviews, things due) and tasks with
+// a due day, in one list by date. Each is named for the kind of date it is.
 // Both are dates the learner gave; nothing is estimated.
 export function Deadlines({ exams, tasks }: { exams: NovaTodayReady['upcoming']; tasks: NovaTaskItem[] }) {
   const items = [
-    ...exams.map(e => ({ key: `exam:${e.title}:${e.scheduledAt}`, title: e.title, sub: e.subjectName ?? 'Exam', days: e.daysUntil, kind: 'Exam' })),
+    ...exams.map(e => ({ key: `exam:${e.title}:${e.scheduledAt}`, title: e.title, sub: e.subjectName ?? e.kindLabel, days: e.daysUntil, kind: e.kindLabel })),
     ...tasks.filter(t => t.status !== 'done' && t.dueInDays !== null).map(t => ({ key: `task:${t.id}`, title: t.title, sub: t.subjectName ?? 'Task', days: t.dueInDays!, kind: 'Task' })),
   ].sort((a, b) => a.days - b.days).slice(0, 6)
 
   return (
     <Panel title="Deadlines">
       {items.length === 0 ? (
-        <p className="text-sm leading-relaxed text-foreground/50">No exam or due date on record. Add an exam in setup or a due date on a task and it shows here.</p>
+        <p className="text-sm leading-relaxed text-foreground/50">No date on record. Add one in setup, or a due date on a task, and it shows here.</p>
       ) : (
         <ul className="space-y-3">
           {items.map(item => (
@@ -52,7 +53,7 @@ export function Deadlines({ exams, tasks }: { exams: NovaTodayReady['upcoming'];
       )}
       {exams.length > 0 && (
         <Link href={EXAMS_HREF} className="mt-4 inline-block text-xs text-foreground/50 underline decoration-white/20 underline-offset-4 hover:text-foreground">
-          Move or remove an exam date
+          Change or remove a date
         </Link>
       )}
     </Panel>

@@ -11,6 +11,7 @@ import { calendarDaysUntil } from "../engines/learner-calendar";
 import { daysOverdue, getOverdueTopics, isDueForReview } from "../engines/retention-engine";
 import { loadPlanningInputs, planEmptyReason, planMode } from "./planning-inputs";
 import { shortfallView } from "./shortfall";
+import { DEADLINE_RULES, deadlineType } from "./deadline-types";
 import type { AcademicState } from "../types/academic-state.types";
 import type { ExamContext, StudyBlock, StudyPlan, TopicMasteryState } from "../types/engine.types";
 import type {
@@ -62,7 +63,7 @@ export function reasonsFor(
     // The learner's calendar days, the same count the deadline list shows,
     // so one message never gives two numbers for the same exam.
     const days = calendarDaysUntil(examContext.scheduledAt, now, timezone);
-    reasons.push(days <= 0 ? "exam today" : days === 1 ? "exam tomorrow" : `exam in ${days} days`);
+    reasons.push(DEADLINE_RULES[deadlineType(examContext.examType)].reason(days));
   }
   if (topic) {
     const pct = Math.round(topic.masteryProbability * 100);
@@ -127,6 +128,8 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
       title:       e.title,
       subjectName: e.subjectName,
       examType:    e.examType,
+      kind:        deadlineType(e.examType),
+      kindLabel:   DEADLINE_RULES[deadlineType(e.examType)].label,
       scheduledAt: e.scheduledAt.toISOString(),
       daysUntil:   calendarDaysUntil(e.scheduledAt, now, input.timezone ?? null),
     }));

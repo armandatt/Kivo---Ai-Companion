@@ -454,6 +454,17 @@ Held by `templates.test.ts` and `nova-workspace.itest.ts`.
 - **Before setup is complete** a message on either surface runs `interaction/setup-turn.ts`: one reading, the decision, and either a setup offer, a confirmation, or the one thing Nova still needs. No Response Brain, no canonical turn. The older conversation in `nova/onboarding/` is no longer called by any surface.
 - **The personality quiz is separate** and unchanged: it sets the companion and the tone, and nothing here reads it.
 
+## Deadline types and the pace projection
+
+Held by `deadline-types.test.ts`. `product/deadline-types.ts` (pure), `product/pace.ts` (pure).
+
+- **One record, one planner, six kinds.** A dated thing is a `NovaExam` row; `examType` holds its kind: `exam`, `assignment`, `project`, `interview`, `certification`, `other`. No schema change and no second table. Any other stored value (older rows hold `midterm` and the like; the column still defaults to it) reads as `exam` through `deadlineType`, so every existing row behaves as it did.
+- **What a kind may do to a day** is `DEADLINE_RULES`: `exam` and `certification` prepare their subject's topics inside the planning window and take the whole day inside three days; `interview` is prepared for but never takes the day; `assignment`, `project` and `other` change no study block. They are dates, shown and counted down, and their steps are the learner's tasks.
+- **Where the rule is applied.** Twice, the same way, in `product/planning-inputs.ts` and `nova-orchestrator.ts`: `upcomingExams.filter(takesOverTheDay)` goes to the academic state (so only a test can cause exam crisis), and `upcomingExams.filter(preparesTopics)` goes to `selectActiveExam`. The Planning Engine's exam-prep step follows the active date's own distance (`examContext.daysUntil`), not the academic state's. Do not branch on a kind anywhere else: add a field to `DEADLINE_RULES`.
+- **Words.** A block's reason names the kind ("interview in 3 days"). `TodayDeadline` carries `kind` and `kindLabel`. The countdown message is told to use the name on record and not to call a date an exam unless the facts do; its plain line opens "Coming up."
+- **Giving a kind.** `addExam` takes `kind` (not `type`: Telegram passes its action object whole, and that object's `type` is `"add_exam"`). The setup draft's `exams[].type` and `PATCH /api/nova/exams/[id] { type }` are validated by `parseDeadlineType`; an unknown kind is refused. A date saved without a name is named for its kind. Telegram still adds exams only.
+- **The pace projection is read-only arithmetic** on the Planner's pressure cards (`PlannerPressure.pace`), for a date the planner prepares for whose subject has topics: topics not yet solid at `EXAM_TOPIC_MINUTES` each, against the days left at the usual daily time. It states its assumptions every time (equal topics, every day given to this one subject, a guessed daily figure when none was stated). No engine or decision reads it, and it changes no plan. It is not a forecast and the page says so.
+
 ## Learning context: school, college, work
 
 Held by `learning-context.test.ts`. One product for every learner; what they are learning for changes words and order, never a decision.

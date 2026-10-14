@@ -27,6 +27,7 @@ import { learnerKey } from "./learner-key";
 import { loadLearningContexts } from "../adapters/account-preferences-adapter";
 import { setupVocabulary, type LearningContext } from "./learning-context";
 import { templatesFor } from "./templates";
+import { DEADLINE_RULES, parseDeadlineType } from "./deadline-types";
 import type { SetupChanges, SetupDraft, SetupIssue, SetupView } from "./setup.types";
 
 export type { SetupChanges, SetupDraft, SetupIssue, SetupView } from "./setup.types";
@@ -84,7 +85,10 @@ export function normalizeSetupDraft(raw: unknown, today: string): { draft: Setup
       issues.push({ field: "exams", message: `The ${subjectName} exam is more than a year away.` }); continue;
     }
     if (exams.some(x => same(x.subjectName, subjectName) && x.date === date)) continue;
-    exams.push({ subjectName, date, title: tidy(e["title"], 80) || null });
+    // A kind that is not one of the known ones is refused, not guessed.
+    const kind = e["type"] === undefined || e["type"] === null ? undefined : parseDeadlineType(e["type"]);
+    if (kind === null) { issues.push({ field: "exams", message: `The ${subjectName} date has a kind Nova doesn't know.` }); continue; }
+    exams.push({ subjectName, date, title: tidy(e["title"], 80) || null, ...(kind ? { type: kind } : {}) });
   }
 
   let dailyMinutes: number | null = null;
@@ -300,7 +304,8 @@ export async function saveSetup(platformChatId: string, raw: unknown, now = new 
   for (const e of draft.exams) {
     // A date with no name of its own is named for what it is: an exam, or
     // for someone learning for work, the date they are working toward.
-    await addExam(platformChatId, { title: e.title ?? `${e.subjectName} ${dateSuffix}`, subjectName: e.subjectName, date: e.date }, now);
+    const suffix = e.type ? DEADLINE_RULES[e.type].titleSuffix : dateSuffix;
+    await addExam(platformChatId, { title: e.title ?? `${e.subjectName} ${suffix}`, subjectName: e.subjectName, date: e.date, kind: e.type }, now);
   }
 
   const setup = await viewOf((await loadLearner(platformChatId))!, now, learningContexts);

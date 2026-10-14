@@ -63,7 +63,10 @@ export interface TodayActiveSession {
 export interface TodayDeadline {
   title:       string;
   subjectName: string | null;
-  examType:    string;
+  examType:    string;      // as stored
+  // What kind of date it is, and the word for it (product/deadline-types.ts).
+  kind:        "exam" | "assignment" | "project" | "interview" | "certification" | "other";
+  kindLabel:   string;
   scheduledAt: string;
   daysUntil:   number;
 }

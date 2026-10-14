@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRight, Loader2, Plus, X } from 'lucide-react'
 import type { SetupChanges, SetupDraft, SetupIssue, SetupView } from '@repo/api/nova/product/setup.types'
 import { templatesFor, templateTaskKey, type StudyTemplate } from '@repo/api/nova/product/templates'
 import { LEARNING_CONTEXTS, LEARNING_CONTEXT_LABEL, setupVocabulary, type LearningContext } from '@repo/api/nova/product/learning-context'
+import { DEADLINE_RULES, DEADLINE_TYPES, type DeadlineType } from '@repo/api/nova/product/deadline-types'
 import { cn } from '@/lib/utils'
 
 // The first-run study setup. The page collects and shows; the server
@@ -17,7 +18,7 @@ import { cn } from '@/lib/utils'
 // It changes nothing about what is saved or how it is planned.
 
 type SubjectRow = { name: string; topics: string }
-type ExamRow    = { subjectName: string; date: string }
+type ExamRow    = { subjectName: string; date: string; type: DeadlineType }
 type StudyTime  = NonNullable<SetupDraft['studyTime']>
 
 const DAILY: Array<{ label: string; minutes: number | null }> = [
@@ -120,7 +121,10 @@ function Review({ draft, changes, dateSuffix }: { draft: SetupDraft; changes: Se
     const isNew = changes.newSubjects.some(n => n.toLowerCase() === s.name.toLowerCase())
     rows.push([`${s.name}${isNew ? '' : ' (already saved)'}`, fresh.length > 0 ? fresh.join(', ') : s.topics.length > 0 ? 'No new topics' : 'No topics yet'])
   }
-  for (const e of changes.newExams) rows.push([`${e.subjectName} ${dateSuffix}`, e.date])
+  for (const e of changes.newExams) {
+    const kind = draft.exams.find(x => x.subjectName.toLowerCase() === e.subjectName.toLowerCase() && x.date === e.date)?.type
+    rows.push([`${e.subjectName} ${kind ? DEADLINE_RULES[kind].titleSuffix : dateSuffix}`, e.date])
+  }
   rows.push(['Normal day', draft.dailyMinutes !== null ? `About ${draft.dailyMinutes} min` : 'Not sure yet. Nova will assume about 3 hours and say so.'])
   rows.push(['Usual time', draft.studyTime ?? 'It varies'])
   return (
@@ -150,6 +154,9 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
   const [contexts, setContexts] = useState<LearningContext[]>([])
   const [contextNote, setContextNote] = useState<string | null>(null)
   const words     = setupVocabulary(contexts)
+  // What a new date row starts as: an exam, or for someone learning for work,
+  // a plain date. The learner picks the kind on the row either way.
+  const defaultDateType: DeadlineType = words.kind === 'outcome' ? 'other' : 'exam'
   const templates = templatesFor(contexts)
 
   // What is already on record (said on Telegram, or a setup left half done)
@@ -208,11 +215,11 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
       }
       return out.length > 0 ? out : [{ name: '', topics: '' }]
     })
-    if (next.asksExamDate) setExams(rows => (rows.length > 0 ? rows : [{ subjectName: '', date: '' }]))
+    if (next.asksExamDate) setExams(rows => (rows.length > 0 ? rows : [{ subjectName: '', date: '', type: next.dateType ?? defaultDateType }]))
   }
   const draft = (): SetupDraft => ({
     subjects:     subjects.filter(s => s.name.trim()).map(s => ({ name: s.name.trim(), topics: splitTopics(s.topics) })),
-    exams:        exams.filter(e => e.subjectName && e.date).map(e => ({ subjectName: e.subjectName, date: e.date, title: null })),
+    exams:        exams.filter(e => e.subjectName && e.date).map(e => ({ subjectName: e.subjectName, date: e.date, title: null, type: e.type })),
     dailyMinutes: daily,
     studyTime:    time,
   })
@@ -336,6 +343,10 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
               <option value="" className="bg-card">{words.dateAreaLabel}…</option>
               {named.map(n => <option key={n} value={n} className="bg-card text-foreground">{n}</option>)}
             </select>
+            <label className="sr-only" htmlFor={`exam-kind-${i}`}>What kind of date it is</label>
+            <select id={`exam-kind-${i}`} value={e.type} onChange={ev => setExam(i, { type: ev.target.value as DeadlineType })} className={cn(field, 'h-11 sm:w-40')}>
+              {DEADLINE_TYPES.map(t => <option key={t} value={t} className="bg-card text-foreground">{DEADLINE_RULES[t].label}</option>)}
+            </select>
             <label className="sr-only" htmlFor={`exam-date-${i}`}>{words.dateLabel}</label>
             <input id={`exam-date-${i}`} type="date" value={e.date} onChange={ev => setExam(i, { date: ev.target.value })} className={cn(field, 'h-11 sm:w-48')} />
             <button type="button" aria-label="Remove this date" onClick={() => setExams(rows => rows.filter((_, k) => k !== i))}
@@ -345,7 +356,7 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
           </div>
         ))}
       </div>
-      <button type="button" onClick={() => setExams(rows => [...rows, { subjectName: named[0] ?? '', date: '' }])} disabled={named.length === 0}
+      <button type="button" onClick={() => setExams(rows => [...rows, { subjectName: named[0] ?? '', date: '', type: defaultDateType }])} disabled={named.length === 0}
         className="mt-3 inline-flex h-10 items-center gap-2 rounded-xl border border-white/10 px-4 text-sm text-foreground/75 hover:bg-white/5 disabled:opacity-40">
         <Plus className="size-4" /> {words.addDate}
       </button>

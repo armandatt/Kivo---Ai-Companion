@@ -34,8 +34,10 @@ export interface StudyTemplate {
   // name "": the learner names it (the form shows `namePrompt`).
   subjects:    Array<{ name: string; topics: string[] }>;
   namePrompt?: string;
-  // Whether the form opens an exam date row for the first subject.
+  // Whether the form opens a date row for the first subject, and what kind
+  // of date that row starts as (left out: the form's own default).
   asksExamDate: boolean;
+  dateType?:    "exam" | "assignment" | "project" | "interview" | "certification" | "other";
   tasks:       TemplateTask[];
 }
 
@@ -68,7 +70,7 @@ export const STUDY_TEMPLATES: StudyTemplate[] = [
     creates: ["1 subject you name, with the topics you paste", "An exam date", "5 revision tasks, in order"],
     subjects: [{ name: "", topics: [] }],
     namePrompt: "Which subject is the exam in?",
-    asksExamDate: true,
+    asksExamDate: true, dateType: "exam",
     tasks: [
       { key: "topics", title: "List every topic on the syllabus", priority: "high" },
       { key: "first-pass", title: "First pass through every topic", priority: "high" },
@@ -132,7 +134,7 @@ export const STUDY_TEMPLATES: StudyTemplate[] = [
     creates: ["1 project you name, with four stages as topics", "4 tasks, one to open each stage"],
     subjects: [{ name: "", topics: ["Scope and plan", "First working version", "Feedback and fixes", "Finish and hand in"] }],
     namePrompt: "What is the project?",
-    asksExamDate: true,
+    asksExamDate: true, dateType: "project",
     tasks: [
       { key: "scope", title: "Write down what done looks like", priority: "high" },
       { key: "first-version", title: "Build the smallest version that works", priority: "high" },
@@ -148,7 +150,7 @@ export const STUDY_TEMPLATES: StudyTemplate[] = [
     creates: ["1 goal you name, with four areas to prepare as topics", "4 tasks, from the role's requirements to a practice run"],
     subjects: [{ name: "", topics: ["What the role asks for", "Core knowledge", "Practice questions", "Talking through your work"] }],
     namePrompt: "Which role or interview?",
-    asksExamDate: true,
+    asksExamDate: true, dateType: "interview",
     tasks: [
       { key: "requirements", title: "List what the role asks for, from the job description", priority: "high" },
       { key: "gaps", title: "Mark which of those you are least ready for", priority: "high" },
@@ -164,7 +166,7 @@ export const STUDY_TEMPLATES: StudyTemplate[] = [
     creates: ["1 certification you name, with the sections you paste", "4 tasks, from the outline to a practice test"],
     subjects: [{ name: "", topics: [] }],
     namePrompt: "Which certification?",
-    asksExamDate: true,
+    asksExamDate: true, dateType: "certification",
     tasks: [
       { key: "outline", title: "Paste the official outline as topics", priority: "high" },
       { key: "book", title: "Book the test, or pick a target week" },

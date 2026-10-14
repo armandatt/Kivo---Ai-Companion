@@ -7,6 +7,11 @@ import { GOALS_HREF } from '@repo/api/nova/product/goals.types'
 
 function Preparation({ item }: { item: PlannerPressure }) {
   const prep = item.preparation
+  // An assignment, a project or a plain date: Nova keeps the date and counts
+  // it down. There are no topics to be ready on, so it claims no readiness.
+  if (!item.prepares) {
+    return <p className="mt-2 text-xs leading-relaxed text-foreground/45">Nova keeps this date and counts it down. Its steps are your tasks; it does not change your study plan.</p>
+  }
   if (!prep) {
     return (
       <p className="mt-2 text-xs leading-relaxed text-foreground/45">
@@ -43,7 +48,7 @@ export function UpcomingPressure({ pressure, timezone, goals }: {
 
       {pressure.length === 0 ? (
         <p className="mt-4 text-sm leading-relaxed text-foreground/55" data-unknown="no_exams">
-          Nova doesn&apos;t know about any upcoming exams yet. Tell it when one is scheduled and the plan will start building toward it.
+          Nova has no date on record yet: no exam, interview or deadline. Add one in setup and the plan will start building toward it.
         </p>
       ) : (
         <ul className="mt-4 divide-y divide-white/6">
@@ -56,7 +61,7 @@ export function UpcomingPressure({ pressure, timezone, goals }: {
                 </p>
               </div>
               <p className="mt-0.5 text-xs text-foreground/45">
-                {[item.subjectName, calendarDate(item.scheduledAt, timezone)].filter(Boolean).join(' · ')}
+                {[item.kindLabel, item.subjectName, calendarDate(item.scheduledAt, timezone)].filter(Boolean).join(' · ')}
               </p>
               {item.drivesPlan && (
                 <p className="mt-2 inline-block rounded-full border border-keppel-400/30 px-2 py-0.5 text-[11px] text-keppel-200">
@@ -64,6 +69,19 @@ export function UpcomingPressure({ pressure, timezone, goals }: {
                 </p>
               )}
               <Preparation item={item} />
+              {item.pace && (
+                <details className="mt-3 rounded-xl border border-white/8 px-3 py-2.5" data-pace={item.pace.fits ? 'fits' : 'short'}>
+                  <summary className="cursor-pointer text-xs font-medium text-foreground/70">
+                    Rough pace: {item.pace.topicsRemaining === 0 ? 'nothing left to pace' : item.pace.fits ? 'there is room' : 'it does not all fit'}
+                  </summary>
+                  <p className="mt-2 text-xs leading-relaxed text-foreground/70">{item.pace.summary}</p>
+                  <p className="mt-2 text-[11px] font-medium uppercase tracking-[0.14em] text-foreground/40">This counts on</p>
+                  <ul className="mt-1 space-y-1">
+                    {item.pace.assumptions.map(a => <li key={a} className="text-xs leading-relaxed text-foreground/50">{a}</li>)}
+                  </ul>
+                  <p className="mt-2 text-xs leading-relaxed text-foreground/45">A projection from what is on record, not a forecast of how it will go. It does not change your plan.</p>
+                </details>
+              )}
             </li>
           ))}
         </ul>

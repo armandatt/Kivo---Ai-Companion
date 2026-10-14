@@ -22,11 +22,11 @@ const change = (input: unknown, current: Exam = OS, others: Exam[] = [DBMS, NAME
 
 describe("what a change to an exam may be", () => {
   it("moves the date and keeps the name when only a date is given", () => {
-    expect(change({ date: "2026-10-27" })).toEqual({ ok: true, changed: true, change: { title: OS.title, date: "2026-10-27" } });
+    expect(change({ date: "2026-10-27" })).toEqual({ ok: true, changed: true, change: { title: OS.title, date: "2026-10-27", type: "exam" } });
   });
 
   it("renames and keeps the date when only a name is given", () => {
-    expect(change({ title: "  OS midterm  " })).toEqual({ ok: true, changed: true, change: { title: "OS midterm", date: OS.date } });
+    expect(change({ title: "  OS midterm  " })).toEqual({ ok: true, changed: true, change: { title: "OS midterm", date: OS.date, type: "exam" } });
   });
 
   it("a move of one day is not a duplicate of itself", () => {
@@ -35,7 +35,7 @@ describe("what a change to an exam may be", () => {
   });
 
   it("saying what is already on record changes nothing, and is not an error", () => {
-    expect(change({ title: OS.title, date: OS.date })).toEqual({ ok: true, changed: false, change: { title: OS.title, date: OS.date } });
+    expect(change({ title: OS.title, date: OS.date })).toEqual({ ok: true, changed: false, change: { title: OS.title, date: OS.date, type: "exam" } });
     expect(change({})).toMatchObject({ ok: true, changed: false });
   });
 
@@ -74,9 +74,9 @@ describe("what a change to an exam may be", () => {
     }
   });
 
-  it("reads nothing but the name and the date: an id or a subject in the body is ignored", () => {
+  it("reads nothing but the name, the date and the kind: an id or a subject in the body is ignored", () => {
     expect(change({ date: "2026-10-27", id: "someone-elses", profileId: "p2", subjectId: "s-db", examType: "final" }))
-      .toEqual({ ok: true, changed: true, change: { title: OS.title, date: "2026-10-27" } });
+      .toEqual({ ok: true, changed: true, change: { title: OS.title, date: "2026-10-27", type: "exam" } });
   });
 
   it("stores the day the learner gave", () => {

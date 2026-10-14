@@ -51,7 +51,28 @@ export interface PlannerDay {
   exams:    Array<{ title: string; subjectName: string | null }>;
 }
 
+// A rough projection for one date: what is left against the days and time
+// there are. Arithmetic on the record, with what it assumed. Never a
+// forecast of a result, and it changes no plan.
+export interface PaceView {
+  topicsTotal:         number;
+  topicsRemaining:     number;   // not yet at a solid level, by the learner's own ratings
+  studyDays:           number;   // today and each day before the date
+  minutesNeeded:       number;
+  minutesAvailable:    number;
+  minutesPerDayNeeded: number;
+  dailyMinutes:        number;
+  fits:                boolean;
+  summary:             string;
+  assumptions:         string[];
+}
+
 export interface PlannerPressure extends TodayDeadline {
+  // Whether the planner prepares topics for this kind of date. An assignment
+  // or a project is a date and a set of tasks: there is no readiness to state.
+  prepares:    boolean;
+  // Set for a date the planner prepares for whose subject has topics on record.
+  pace:        PaceView | null;
   // True for the exam the Planning Engine is currently planning around.
   drivesPlan:  boolean;
   // How prepared the student is, from tracked topic mastery. null when Nova

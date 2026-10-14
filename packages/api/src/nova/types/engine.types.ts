@@ -132,6 +132,9 @@ export type ExamMode = "normal" | "triage" | "crisis";
 export interface ExamContext {
   examId:           string;
   examTitle:        string;
+  // What kind of dated thing it is, as stored (product/deadline-types.ts).
+  // Absent on a context built before types existed: an exam.
+  examType?:        string;
   subjectName:      string;
   daysUntil:        number;
   scheduledAt:      Date;
