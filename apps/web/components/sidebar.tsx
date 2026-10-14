@@ -89,13 +89,16 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
     <>
       {/* Mobile Toggle */}
       <button
+        type="button"
         onClick={() => setIsMobileOpen(!isMobileOpen)}
+        aria-label={isMobileOpen ? 'Close menu' : 'Open menu'}
+        aria-expanded={isMobileOpen}
         className="fixed top-4 left-4 z-50 lg:hidden p-2 hover:bg-sidebar-accent rounded-lg transition-colors"
       >
         {isMobileOpen ? (
-          <X className="w-6 h-6" />
+          <X aria-hidden className="w-6 h-6" />
         ) : (
-          <Menu className="w-6 h-6" />
+          <Menu aria-hidden className="w-6 h-6" />
         )}
       </button>
 

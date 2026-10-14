@@ -26,6 +26,11 @@ interface PersonalityQuizProps {
 // not asked for. The value is what the mentor match on the server expects.
 const KIVO_DOMAIN = 'study';
 
+// Where a half-finished quiz is kept so a refresh does not lose it: this
+// tab's session storage, which the browser clears when the tab closes. It is
+// removed as soon as the quiz is handed on.
+const QUIZ_DRAFT_KEY = 'kivo-quiz-draft-v1';
+
 interface Question {
   id: number;
   title: string;
@@ -85,10 +90,34 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
     signalAnswers: {},
   });
   const [isTransitioning, setIsTransitioning] = useState(false);
+  // False until the stored draft, if any, has been read: nothing is written
+  // back before then, so a fresh mount cannot overwrite it with blanks.
+  const [restored, setRestored] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const word1Ref = useRef<HTMLInputElement>(null);
   const word2Ref = useRef<HTMLInputElement>(null);
   const word3Ref = useRef<HTMLInputElement>(null);
+
+  // After a refresh: the answers given so far and the question they had reached.
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem(QUIZ_DRAFT_KEY);
+      const draft = raw ? JSON.parse(raw) as { answers?: Partial<QuizAnswers>; at?: unknown } : null;
+      if (draft?.answers && typeof draft.answers === 'object') {
+        setAnswers(prev => ({ ...prev, ...draft.answers, mentorDomain: KIVO_DOMAIN }));
+        if (typeof draft.at === 'number' && Number.isInteger(draft.at) && draft.at >= 0 && draft.at < questions.length) setCurrentQuestion(draft.at);
+      }
+    } catch { /* unreadable or storage unavailable: start from the beginning */ }
+    setRestored(true);
+  }, []);
+  useEffect(() => {
+    if (!restored) return;
+    try { window.sessionStorage.setItem(QUIZ_DRAFT_KEY, JSON.stringify({ answers, at: currentQuestion })); } catch { /* storage unavailable */ }
+  }, [answers, currentQuestion, restored]);
+  const finish = (final: QuizAnswers) => {
+    try { window.sessionStorage.removeItem(QUIZ_DRAFT_KEY); } catch { /* nothing to clear */ }
+    onComplete(final);
+  };
 
   const question = questions[currentQuestion];
   const progress = ((currentQuestion + 1) / questions.length) * 100;
@@ -195,7 +224,7 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
 
   const handleSkip = () => {
     if (currentQuestion === questions.length - 1) {
-      onComplete(answers);
+      finish(answers);
       return;
     }
     goToNextQuestion();
@@ -203,7 +232,7 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
 
   const handleComplete = () => {
     if (!isAnswerFilled()) return;
-    onComplete(answers);
+    finish(answers);
   };
 
   return (

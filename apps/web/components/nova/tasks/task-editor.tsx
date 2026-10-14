@@ -7,6 +7,9 @@ import {
   type NovaTaskItem, type TaskInput, type TaskSubjectOption,
 } from '@repo/api/nova/product/tasks.types'
 import { PRIORITY_LABEL } from './task-format'
+import { trappedTabTarget } from '@/components/settings/dialog-focus'
+
+const TAB_STOPS = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 type Props = {
   // null: a new task.
@@ -36,9 +39,26 @@ export function TaskEditor({ task, subjects, initialStatus = 'todo', onSave, onD
   const [confirming, setConfirming] = useState(false)
   const titleRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => { titleRef.current?.focus() }, [])
+  const dialogRef = useRef<HTMLFormElement>(null)
+
+  // Focus goes to the title when the editor opens, and back to whatever
+  // opened it when it closes.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const opener = document.activeElement as HTMLElement | null
+    titleRef.current?.focus()
+    return () => { opener?.focus?.() }
+  }, [])
+  // Escape closes it; Tab and Shift+Tab stay inside it while it is open.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { onClose(); return }
+      if (e.key !== 'Tab') return
+      const dialog = dialogRef.current
+      if (!dialog) return
+      const stops  = Array.from(dialog.querySelectorAll<HTMLElement>(TAB_STOPS))
+      const target = trappedTabTarget(stops, document.activeElement as HTMLElement | null, e.shiftKey, dialog)
+      if (target) { e.preventDefault(); target.focus() }
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
@@ -61,9 +81,10 @@ export function TaskEditor({ task, subjects, initialStatus = 'todo', onSave, onD
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-6" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
       <form
+        ref={dialogRef} tabIndex={-1}
         onSubmit={submit}
         role="dialog" aria-modal="true" aria-label={task ? 'Edit task' : 'New task'}
-        className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-3xl border border-white/10 bg-card p-6 shadow-2xl sm:rounded-3xl sm:p-7"
+        className="focus:outline-none max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-3xl border border-white/10 bg-card p-6 shadow-2xl sm:rounded-3xl sm:p-7"
       >
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold tracking-tight text-foreground">{task ? 'Edit task' : 'New task'}</h2>
