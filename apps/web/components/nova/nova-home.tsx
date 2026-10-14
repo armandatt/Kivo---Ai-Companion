@@ -10,6 +10,7 @@ import { ShortfallNote } from './shortfall-note'
 import { RecoveryCard } from './recovery-card'
 import { useFocusContext } from './focus-context'
 import { LinkedToTopic } from './linked-to-topic'
+import { KnowledgeBoard, RecentlyCaptured } from './knowledge-board'
 import { TimeAvailable } from './time-available'
 import type { NovaNotesView } from '@repo/api/nova/product/notes.types'
 import type { NovaCreatureView } from '@repo/api/nova/product/creature.types'
@@ -193,6 +194,12 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
           <WorkingToward goals={view.goals} />
           <AccountingFor constraints={view.constraints} />
         </aside>
+      </div>
+
+      {/* ── Everything on record, subject by subject, and what came in last ── */}
+      <div className="mt-14 space-y-10 border-t border-white/8 pt-10">
+        <KnowledgeBoard map={map} reviewDue={view.reviewDue} />
+        <RecentlyCaptured notes={notes} map={map} />
       </div>
     </div>
   )

@@ -60,3 +60,30 @@ describe("the task list on Today", () => {
     expect(web("components/nova/today-sections.tsx")).not.toContain("view=board");
   });
 });
+
+describe("the knowledge board and what came in last", () => {
+  const board = web("components/nova/knowledge-board.tsx");
+  const data = web("components/nova/knowledge-board-data.ts");
+  it("show the map's levels as Knowledge words them, and no level without a session", () => {
+    expect(board).toContain("import { LEVEL_LABEL, LEVEL_TONE } from './knowledge/labels'");
+    expect(board).toContain("const level = topic.sessions > 0 && topic.level ? topic.level : null");
+    expect(board).not.toContain("masteryPercent");
+  });
+  it("mark a topic due only when Today listed every due topic", () => {
+    expect(data).toContain("const complete = reviewDue.count === reviewDue.topics.length");
+  });
+  it("order nothing except saved pages by the date they were saved", () => {
+    expect(data.match(/\.sort\(/g)).toHaveLength(1);
+    expect(data).toContain(".sort((a, b) => Date.parse(b.savedAt) - Date.parse(a.savedAt))");
+    expect(board).not.toContain(".sort(");
+  });
+  it("say what the map's limits left out, and how much is filed under nothing", () => {
+    expect(board).toContain("ready.notShown.notes > 0 || ready.notShown.resources > 0");
+    expect(board).toContain("ready.unconnected > 0");
+  });
+  it("load and fail on their own, apart from Today's plan", () => {
+    expect(board).toContain("!ready && map.error");
+    expect(board).toContain("noteList === null && notes.error");
+    expect(board).toContain("pages === null && map.error");
+  });
+});
