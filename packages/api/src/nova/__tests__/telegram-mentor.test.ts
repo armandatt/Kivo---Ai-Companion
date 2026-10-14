@@ -902,3 +902,35 @@ describe("Telegram is a surface, not a second Nova", () => {
     expect(cron).not.toMatch(/"UTC"|Asia\/Kolkata|getHours\(\)|getDay\(\)/);
   });
 });
+
+// Regression (14 October): free text after an offer to start sent the same
+// Start menu again ("acha chl bta requirements" read as "what now", stress
+// read as "something else").
+describe("an open offer to start is not sent again by conversation", () => {
+  const NUDGE: ActionContext = { session: "none", prompt: { kind: "nudge", options: START_PROMPT.prompt!.options } };
+
+  it("\"what now\" read from a message that is not a plan request is answered in words while an offer is open", () => {
+    for (const ctx of [START_PROMPT, NUDGE]) {
+      const d = decideAction(reading({ action: "what_now" }, { intent: "general_chat", emotion: "anxious_general" }), ctx);
+      expect([d.action.type, d.reason, d.generate]).toEqual(["converse", "offer_already_open", true]);
+    }
+  });
+
+  it("an outright request for the plan, a new length, or no offer open still shows the plan", () => {
+    expect(decideAction(reading({ action: "what_now", asks: "about_me" }, { intent: "plan_request" }), START_PROMPT).reason).toBe("asked_what_now");
+    expect(decideAction(reading({ action: "what_now", availableMinutes: 20 }), START_PROMPT).reason).toBe("offer_changed");
+    expect(decideAction(reading({ action: "what_now" }), NO_CONTEXT).reason).toBe("asked_what_now");
+  });
+
+  it("stress read as \"something else\" is answered as a feeling; a plain \"something else\" or one naming a topic is not", () => {
+    const stressed = decideAction(reading({ action: "something_else" }, { intent: "emotional_vent", emotion: "overwhelmed" }), START_PROMPT);
+    expect([stressed.action.type, stressed.reason]).toEqual(["converse", "feeling_not_alternative"]);
+    expect(decideAction(reading({ action: "something_else" }), START_PROMPT).reason).toBe("asked_for_alternative");
+    expect(decideAction(reading({ action: "something_else" }, { emotion: "frustrated", topic: "Paging" }), START_PROMPT).reason).toBe("asked_for_alternative");
+  });
+
+  it("a start request, or an answer to the offer, still acts", () => {
+    expect(decideAction(reading({ action: "start_session", promptAnswer: START_PROMPT.prompt!.options[1]!.id }), START_PROMPT).action.type).toBe("answer_prompt");
+    expect(decideAction(reading({ action: "start_session" }), START_PROMPT).action.type).toBe("offer_start");
+  });
+});

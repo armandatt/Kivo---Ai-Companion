@@ -257,8 +257,23 @@ export function decideAction(understanding: AcademicUnderstanding, ctx: ActionCo
   }
 
   // ── 7. Requests that change nothing, or only Nova's own nudging ────────────
+  // An offer to start that is still open already answers "what now": its
+  // buttons are on the chat. A message read that way in passing ("ok tell me
+  // the requirements") does not send it again; the reply is in words and the
+  // open offer stays as it is. Only a message the reading calls a request for
+  // the plan shows it again. A new length (rule 2), a start request (rule 4),
+  // /today and the buttons still work.
+  if (asked === "what_now" && plausible && startOffer && !says("plan_request")) {
+    return decided({ type: "converse" }, "offer_already_open", true);
+  }
   if (asked === "what_now" && plausible) return decided({ type: "show_today", minutes }, "asked_what_now");
   if (asked === "status" && plausible)   return decided({ type: "show_status" }, "asked_status");
+  // Stress or worry read as "give me something else", with no topic named,
+  // is answered as the feeling it is, not with another study suggestion.
+  // The "Something else" button is not a sentence and is unaffected.
+  if (asked === "something_else" && plausible && feeling && understanding.topic === null) {
+    return decided({ type: "converse" }, "feeling_not_alternative", true);
+  }
   if (asked === "something_else" && plausible) return decided({ type: "something_else" }, "asked_for_alternative");
   if (asked === "not_now" && plausible) {
     return decided({ type: "defer", until: req.deferUntil === "tomorrow" && !req.changeOfMind ? "tomorrow" : "later" }, "declined");

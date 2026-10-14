@@ -1432,3 +1432,78 @@ test("an exam within three days outranks the review, takes the serious register,
   await run();
   assert.equal(mine(tg, l).length, 2);
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Regression (14 October): the same Start menu sent again after free text
+// ══════════════════════════════════════════════════════════════════════════════
+
+test("an open study offer is not sent again because the learner keeps talking; it still works, and a new day's is sent", async () => {
+  const l = await eveningLearner("Ira");
+  const { tg: out, run } = proactive();
+  await run();
+  assert.equal(mine(out, l).length, 1, "the proactive offer");
+  const offer = await loadOpenPrompt(l.profileId, clock);
+  assert.equal(offer?.kind, "nudge");
+
+  const { tg, ai, send, tapData } = harness();
+  const words = [
+    // Read (as the real model read it on 14 October) as "what now".
+    ["bhai kuch smjh nhi aa rha kya pdu", { ...BASE, emotion: "confused", request: { ...REQ, action: "what_now", asks: "about_me", language: "hinglish" } }, "converse:offer_already_open"],
+    // Stress read as "something else".
+    ["pehle mujhe ye bta itna stress kyu ho rha hai", { ...BASE, intent: "emotional_vent", emotion: "overwhelmed", request: { ...REQ, action: "something_else", asks: "about_me", language: "hinglish" } }, "converse:feeling_not_alternative"],
+    // An ordinary reply.
+    ["chl relax toh kr lunga lekin interview sunke darr lag raha hai", { ...BASE, intent: "emotional_vent", emotion: "anxious_general", request: { ...REQ, language: "hinglish" } }, "converse:conversation"],
+    // Asking about the interview, read as "what now".
+    ["acha chl bta requirements", { ...BASE, emotion: "anxious_general", request: { ...REQ, action: "what_now", language: "hinglish" } }, "converse:offer_already_open"],
+  ] as const;
+  for (const [text, reading, decision] of words) {
+    ai.read(text, reading);
+    tick(1);
+    const trace = await send(l, text);
+    assert.equal(trace.decision, decision, text);
+    assert.deepEqual(tg.labels(), [], `no buttons after "${text}"`);
+    assert.equal(trace.promptId, null, `no new prompt after "${text}"`);
+  }
+  assert.equal(tg.sent.length, words.length, "one reply per message, nothing else");
+  // The offer is the same one, still open, and nothing was started or stored for it.
+  assert.equal((await loadOpenPrompt(l.profileId, clock))?.id, offer!.id);
+  assert.equal(await prisma.novaTelegramPrompt.count({ where: { profileId: l.profileId } }), 1);
+  assert.equal((await sessions(l)).length, 0);
+
+  // More ticks the same day send nothing: the occurrence is spent, and the learner just wrote.
+  tick(10); await run();
+  assert.equal(mine(out, l).length, 1);
+  assert.equal((await outbox(l)).length, 1);
+
+  // The proactive offer's own button still starts the session.
+  const start = mine(out, l)[0]!.buttons.flat().find(b => b.text === "Start 25 min")!.callback_data!;
+  await tapData(l, start);
+  assert.equal((await sessions(l))[0]?.status, "in_progress");
+  await runNovaSessionCommand(l.chat, { action: "end", outcome: "okay" }, tick(30));
+
+  // A new day: a reminder that is genuinely due again is sent, once.
+  tick(24 * 60 - 32);
+  await prisma.novaTopicMastery.update({ where: { id: l.deadlocksId }, data: { nextReviewAt: new Date(clock.getTime() - 60_000) } });
+  await run(); await run();
+  assert.equal(mine(out, l).length, 2, "the next day's review goes out once");
+});
+
+test("\"what should I study?\" still gets the plan and its buttons, open offer or not; a new length changes it; a typed \"something else\" gets an alternative", async () => {
+  const l = await seedLearner("Noor");
+  const { tg, ai, send } = harness();
+  ai.read("what should I study?", { ...BASE, intent: "plan_request", request: { ...REQ, action: "what_now", asks: "about_me" } });
+  const plan = await send(l, "what should I study?");
+  assert.equal(plan.decision, "show_today:asked_what_now");
+  assert.ok(tg.labels().some(b => b.startsWith("Start ")));
+  // Asked for the plan again, outright, with that offer open: shown again.
+  const again = await send(l, "what should I study?");
+  assert.equal(again.decision, "show_today:asked_what_now");
+  // Asked outright for a different length: the offer changes, with buttons.
+  ai.read("make it 15", { ...BASE, request: { ...REQ, availableMinutes: 15 } });
+  const changed = await send(l, "make it 15");
+  assert.equal(changed.decision, "show_today:offer_changed");
+  assert.ok(tg.labels().includes("Start 15 min"));
+  ai.read("something else", { ...BASE, request: { ...REQ, action: "something_else" } });
+  const other = await send(l, "something else");
+  assert.equal(other.decision, "something_else:asked_for_alternative");
+});
