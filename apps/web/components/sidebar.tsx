@@ -1,6 +1,6 @@
 'use client'
 
-import React from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
@@ -22,13 +22,15 @@ import {
   Zap,
   Menu,
   NotebookPen,
+  PanelLeftClose,
+  PanelLeftOpen,
   X,
 } from 'lucide-react'
-import { motion } from 'framer-motion'
 import { NOVA_ROUTES, type Companion } from '@repo/api/nova/product/companion'
 import { cn } from '@/lib/utils'
 import { ThemePicker } from '@/components/theme/kivo-theme'
-import { useState } from 'react'
+import { trappedTabTarget } from '@/components/settings/dialog-focus'
+import { sidebarModes } from './sidebar-modes'
 
 interface SidebarProps {
   open: boolean
@@ -54,13 +56,48 @@ const navItems = [
 const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/planner': Calendar, '/focus': Timer, '/knowledge': BookOpen, '/map': Waypoints, '/notes': NotebookPen, '/saved': Bookmark, '/progress': TrendingUp, '/learning-dna': Dna, '/creature': Map, '/guide': Compass }
 const novaNavItems = NOVA_ROUTES.map(r => ({ href: r.path, label: r.label, icon: NOVA_ICONS[r.path] ?? Home }))
 
+// The shell's Creature button points at the sidebar by this id too.
+export const SIDEBAR_ID = 'kivo-sidebar'
+const TAB_STOPS = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+// Tailwind's lg: from here up the docked sidebar sits beside the page.
+const DOCKED = '(min-width: 1024px)'
+const subscribeDocked = (onChange: () => void) => {
+  const query = window.matchMedia(DOCKED)
+  query.addEventListener('change', onChange)
+  return () => query.removeEventListener('change', onChange)
+}
+const isDocked = () => window.matchMedia(DOCKED).matches
+// The server cannot know the width, so it draws the desktop sidebar, where
+// nothing is inert. A closed small-screen drawer is already hidden by CSS.
+const dockedOnServer = () => true
+
+// The highlight on the current page is the companion's own colour. The text
+// stays the theme's foreground, so it reads in light and dark alike.
+const ACCENT = {
+  nova: { tint: 'bg-keppel-400/15', bar: 'bg-keppel-400' },
+  rex:  { tint: 'bg-green-400/15',  bar: 'bg-green-500' },
+}
+
 export function Sidebar({ open, onOpenChange, overlay = false, companion }: SidebarProps) {
   const pathname = usePathname()
   const isNova   = companion === 'nova'
   const items    = isNova ? novaNavItems : navItems
-  const [isMobileOpen, setIsMobileOpen] = useState(false)
-  const [isLargeScreen, setIsLargeScreen] = useState(false)
+  const accent   = ACCENT[isNova ? 'nova' : 'rex']
+  const docked   = useSyncExternalStore(subscribeDocked, isDocked, dockedOnServer)
+  // The drawer remembers the page it was opened on: going to any other page
+  // closes it, and so does widening the window until the sidebar sits beside
+  // the page (React's adjust-state-while-rendering, so no effect is needed).
+  const [openedOn, setOpenedOn] = useState<string | null>(null)
+  if (openedOn !== null && (openedOn !== pathname || docked)) setOpenedOn(null)
+  const isMobileOpen = openedOn !== null && openedOn === pathname && !docked
+  const setIsMobileOpen = (next: boolean) => setOpenedOn(next ? pathname : null)
+  const [collapsed, setCollapsed] = useState(false)
   const [signingOut, setSigningOut] = useState(false)
+  const toggleRef = useRef<HTMLButtonElement>(null)
+  const drawerRef = useRef<HTMLDivElement>(null)
+  const mode = sidebarModes({ overlay, open, isMobileOpen, docked })
+  // The icon rail is desktop only; a small-screen drawer always shows labels.
+  const rail = collapsed && mode.collapsible
 
   // A full page load, so nothing of the signed-in dashboard stays mounted.
   const signOut = async () => {
@@ -72,62 +109,129 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
     }
   }
 
-  // Check screen size on client
-  React.useEffect(() => {
-    const checkScreen = () => {
-      setIsLargeScreen(window.innerWidth >= 1024)
-    }
-    checkScreen()
-    window.addEventListener('resize', checkScreen)
-    return () => window.removeEventListener('resize', checkScreen)
-  }, [])
-
-  // On a small screen the menu covers the page: Escape closes it and puts
-  // the keyboard back on the button that opened it.
-  const toggleRef = React.useRef<HTMLButtonElement>(null)
-  React.useEffect(() => {
-    if (!isMobileOpen) return
+  // While the menu covers the page, focus moves into it and Tab and Shift+Tab
+  // stay inside. Escape closes it and puts the keyboard back on the button
+  // that opened it: the menu button here, or on Creature the shell's own.
+  useEffect(() => {
+    if (!mode.covering) return
+    const drawer = drawerRef.current
+    // The menu button stays the same element while the drawer is open.
+    const toggle = toggleRef.current
+    drawer?.focus()
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      setIsMobileOpen(false)
-      toggleRef.current?.focus()
+      if (e.key === 'Escape') {
+        if (overlay) { onOpenChange(false); return }
+        setOpenedOn(null)
+        toggleRef.current?.focus()
+        return
+      }
+      if (e.key !== 'Tab' || !drawer) return
+      // The menu button shows X while the drawer is open, so it is part of
+      // the drawer. Controls hidden at this width are not stops.
+      const inside = Array.from(drawer.querySelectorAll<HTMLElement>(TAB_STOPS))
+      const stops  = [...(toggleRef.current ? [toggleRef.current] : []), ...inside].filter(el => el.getClientRects().length > 0)
+      // Between the ends the rule leaves the move to the browser, but a browser
+      // may skip links (Safari's Tab reaches only form fields by default) and
+      // land on the page behind. So every step is taken here.
+      const active = document.activeElement as HTMLElement | null
+      const target = trappedTabTarget(stops, document.activeElement as HTMLElement | null, e.shiftKey, drawer)
+        ?? stops[stops.indexOf(active as HTMLElement) + (e.shiftKey ? -1 : 1)]
+      if (target) { e.preventDefault(); target.focus() }
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [isMobileOpen])
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      // Closed by choosing a page, or by the page changing under it: if the
+      // keyboard was in the drawer (or was dropped when it went inert), it
+      // goes back to the menu button. On Creature the shell does this.
+      const active = document.activeElement
+      if (!overlay && (!active || active === document.body || drawer?.contains(active))) toggle?.focus()
+    }
+  }, [mode.covering, overlay, onOpenChange])
+
+  // A drawer over the page keeps the page behind it still.
+  useEffect(() => {
+    if (!mode.lockScroll) return
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = previous }
+  }, [mode.lockScroll])
 
   // A page and the pages under it (a note inside Notes) light the same entry.
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`)
 
+  // Choosing a page closes whatever covered it.
+  const close = () => { setIsMobileOpen(false); if (overlay) onOpenChange(false) }
+  // Closing from the backdrop: the keyboard goes back where it came from.
+  const dismiss = () => {
+    if (overlay) { onOpenChange(false); return }
+    setIsMobileOpen(false)
+    toggleRef.current?.focus()
+  }
+
+  // Off screen is also out of the tab order and hidden from screen readers:
+  // inert from the moment it closes, invisible once it has slid out.
+  // Visibility is animated only on the way out. Opening, it must be visible
+  // at once: an element that is still invisible cannot take focus.
+  const hidden = 'invisible -translate-x-full transition-[transform,width,visibility]'
+  const shown  = 'translate-x-0 transition-[transform,width]'
+  const position = overlay
+    ? (open ? shown : hidden)
+    : !open ? hidden
+    : isMobileOpen ? shown
+    : `${hidden} lg:visible lg:translate-x-0`
+
+  const row = cn('flex items-center gap-3 rounded-lg px-4 py-3 text-sm transition-colors', rail && 'lg:justify-center lg:px-0')
+  const label = cn('font-medium', rail && 'lg:sr-only')
+
   return (
     <>
-      {/* Mobile Toggle */}
-      <button
-        type="button"
-        ref={toggleRef}
-        onClick={() => setIsMobileOpen(!isMobileOpen)}
-        aria-label={isMobileOpen ? 'Close menu' : 'Open menu'}
-        aria-expanded={isMobileOpen}
-        className="fixed top-4 left-4 z-50 lg:hidden p-2 hover:bg-sidebar-accent rounded-lg transition-colors"
-      >
-        {isMobileOpen ? (
-          <X aria-hidden className="w-6 h-6" />
-        ) : (
-          <Menu aria-hidden className="w-6 h-6" />
-        )}
-      </button>
+      {/* Mobile Toggle. Not on Creature, where the shell draws the only one */}
+      {mode.ownToggle && (
+        <button
+          type="button"
+          ref={toggleRef}
+          onClick={() => setIsMobileOpen(!isMobileOpen)}
+          aria-label={isMobileOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={isMobileOpen}
+          aria-controls={SIDEBAR_ID}
+          className="fixed top-4 left-4 z-50 lg:hidden p-2 hover:bg-sidebar-accent rounded-lg transition-colors"
+        >
+          {isMobileOpen ? (
+            <X aria-hidden className="w-6 h-6" />
+          ) : (
+            <Menu aria-hidden className="w-6 h-6" />
+          )}
+        </button>
+      )}
 
       {/* Sidebar */}
-      <motion.aside
-        initial={{ x: -280 }}
-        animate={{ x: (isMobileOpen || isLargeScreen) && open ? 0 : -280 }}
-        transition={{ duration: 0.3, ease: 'easeInOut' }}
-        className={`w-70 h-screen bg-sidebar border-r border-sidebar-border flex flex-col z-40 ${overlay ? 'fixed' : 'fixed lg:relative'}`}
+      {/* One element in both states, so the slide and focus survive opening
+          and closing. A div, because ARIA-in-HTML does not allow role="dialog"
+          on an aside; beside the page it keeps the aside's own role. */}
+      <div
+        ref={drawerRef}
+        id={SIDEBAR_ID}
+        tabIndex={-1}
+        inert={mode.inert}
+        role={mode.covering ? 'dialog' : 'complementary'}
+        aria-modal={mode.covering ? true : undefined}
+        aria-label={mode.covering ? 'Navigation' : undefined}
+        className={cn(
+          'left-0 top-0 z-40 flex h-screen w-70 shrink-0 flex-col border-r border-sidebar-border bg-sidebar outline-none duration-300 ease-in-out',
+          overlay ? 'fixed' : 'fixed lg:relative',
+          rail && 'lg:w-[72px]',
+          position,
+        )}
       >
-        {/* Logo Area */}
-        <div className="p-6 border-b border-sidebar-border">
-          <Link href="/home" className="flex items-center gap-3 group">
-            <div className="relative">
+        {/* Logo Area. Below 1024px the menu button sits over its left edge */}
+        <div className={cn(
+          'flex items-center justify-between gap-2 border-b border-sidebar-border p-6',
+          mode.ownToggle && 'pl-16 lg:pl-6',
+          rail && 'lg:flex-col lg:px-2 lg:py-4',
+        )}>
+          <Link href="/home" onClick={close} title={rail ? `${isNova ? 'Nova' : 'Rex'} home` : undefined} className="flex items-center gap-3 group">
+            <div className="relative shrink-0">
               <div className={cn(
                 'w-10 h-10 bg-linear-to-br rounded-lg flex items-center justify-center font-bold text-black text-lg',
                 isNova ? 'from-keppel-300 to-keppel-600' : 'from-green-400 to-green-600',
@@ -139,102 +243,112 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
                 isNova ? 'bg-keppel-400' : 'bg-green-400',
               )} />
             </div>
-            <div className="flex flex-col">
+            <div className={cn('flex flex-col', rail && 'lg:sr-only')}>
               <span className="font-semibold text-sm leading-tight">{isNova ? 'Nova' : 'Rex'}</span>
               <span className="text-xs text-sidebar-foreground/60">{isNova ? 'Learning mentor' : 'AI Coach'}</span>
             </div>
           </Link>
+          {mode.closeButton && (
+            <button
+              type="button"
+              onClick={() => onOpenChange(false)}
+              aria-label="Close navigation"
+              className="rounded-lg p-2 text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            >
+              <X aria-hidden className="w-5 h-5" />
+            </button>
+          )}
+          {mode.collapsible && (
+            <button
+              type="button"
+              onClick={() => setCollapsed(c => !c)}
+              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              className="hidden rounded-lg p-2 text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground lg:inline-flex"
+            >
+              {collapsed ? <PanelLeftOpen aria-hidden className="w-5 h-5" /> : <PanelLeftClose aria-hidden className="w-5 h-5" />}
+            </button>
+          )}
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
-          {/* tabIndex -1 on each animated wrapper: the link inside is the
-              control, and the animation library would otherwise make the
-              wrapper a second tab stop in front of every entry. */}
+        <nav aria-label="Main" className={cn('flex-1 space-y-2 overflow-y-auto overscroll-contain px-4 py-6', rail && 'lg:px-2')}>
           {items.map((item) => {
             const Icon = item.icon
             const active = isActive(item.href)
 
             return (
-              <motion.div
+              <Link
                 key={item.href}
-                whileHover={{ x: 4 }}
-                whileTap={{ scale: 0.98 }} tabIndex={-1}
+                href={item.href}
+                onClick={close}
+                title={rail ? item.label : undefined}
+                aria-current={active ? 'page' : undefined}
+                className={cn(
+                  row, 'relative',
+                  active ? cn(accent.tint, 'text-sidebar-foreground') : 'text-sidebar-foreground hover:bg-sidebar-accent',
+                )}
               >
-                <Link
-                  href={item.href}
-                  onClick={() => { setIsMobileOpen(false); if (overlay) onOpenChange(false) }}
-                  className={cn(
-                    'flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200',
-                    active
-                      ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-lg'
-                      : 'text-sidebar-foreground hover:bg-sidebar-accent'
-                  )}
-                >
-                  {active && (
-                    <motion.div
-                      layoutId="sidebar-indicator"
-                      className={cn('absolute left-0 w-1 h-8 rounded-r-lg', isNova ? 'bg-keppel-400' : 'bg-green-400')}
-                      transition={{ type: 'spring', stiffness: 380, damping: 40 }}
-                    />
-                  )}
-                  <Icon className="w-5 h-5 shrink-0" />
-                  <span className="font-medium text-sm">{item.label}</span>
-                </Link>
-              </motion.div>
+                {active && <span aria-hidden className={cn('absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full', accent.bar)} />}
+                <Icon aria-hidden className="w-5 h-5 shrink-0" />
+                <span className={label}>{item.label}</span>
+              </Link>
             )
           })}
         </nav>
 
         {/* Settings */}
-        <div className="p-4 border-t border-sidebar-border">
-          <motion.div whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }} tabIndex={-1}>
-            <Link
-              href="/settings"
-              onClick={() => { setIsMobileOpen(false); if (overlay) onOpenChange(false) }}
-              className="flex items-center gap-3 px-4 py-3 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition-all duration-200"
-            >
-              <Settings className="w-5 h-5 shrink-0" />
-              <span className="font-medium text-sm">Settings</span>
-            </Link>
-          </motion.div>
-          <motion.div whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }} tabIndex={-1}>
-            <Link
-              href="/"
-              className="flex items-center gap-3 px-4 py-3 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition-all duration-200"
-            >
-              <Globe className="w-5 h-5 shrink-0" />
-              <span className="font-medium text-sm">Kivo home page</span>
-            </Link>
-          </motion.div>
-          <div className="flex items-center justify-between gap-3 px-4 py-2">
-            <span className="text-xs font-medium text-sidebar-foreground/55">Theme</span>
+        <div className={cn('space-y-1 border-t border-sidebar-border p-4', rail && 'lg:px-2')}>
+          <Link
+            href="/settings"
+            onClick={close}
+            title={rail ? 'Settings' : undefined}
+            aria-current={isActive('/settings') ? 'page' : undefined}
+            className={cn(row, 'text-sidebar-foreground hover:bg-sidebar-accent')}
+          >
+            <Settings aria-hidden className="w-5 h-5 shrink-0" />
+            <span className={label}>Settings</span>
+          </Link>
+          <Link
+            href="/"
+            title={rail ? 'Kivo home page' : undefined}
+            className={cn(row, 'text-sidebar-foreground hover:bg-sidebar-accent')}
+          >
+            <Globe aria-hidden className="w-5 h-5 shrink-0" />
+            <span className={label}>Kivo home page</span>
+          </Link>
+          {/* In the rail the three theme choices stand in a column */}
+          <div className={cn(
+            'flex items-center justify-between gap-3 px-4 py-2',
+            rail && 'lg:flex-col lg:px-0 lg:[&_[role=radiogroup]]:flex-col',
+          )}>
+            <span className={cn('text-xs font-medium text-sidebar-foreground/55', rail && 'lg:sr-only')}>Theme</span>
             <ThemePicker compact />
           </div>
-          <motion.div whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }} tabIndex={-1}>
-            <button
-              type="button"
-              onClick={() => void signOut()}
-              disabled={signingOut}
-              className="flex w-full items-center gap-3 px-4 py-3 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent transition-all duration-200 disabled:opacity-60"
-            >
-              <LogOut className="w-5 h-5 shrink-0" />
-              <span className="font-medium text-sm">{signingOut ? 'Signing out…' : 'Sign out'}</span>
-            </button>
-          </motion.div>
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            disabled={signingOut}
+            title={rail ? 'Sign out' : undefined}
+            className={cn(row, 'w-full text-sidebar-foreground hover:bg-sidebar-accent disabled:opacity-60')}
+          >
+            <LogOut aria-hidden className="w-5 h-5 shrink-0" />
+            <span className={label}>{signingOut ? 'Signing out…' : 'Sign out'}</span>
+          </button>
         </div>
-      </motion.aside>
+      </div>
 
-      {/* Backdrop — mobile drawer, or desktop overlay mode (creature page) */}
-      {(isMobileOpen || (overlay && open)) && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          onClick={() => { setIsMobileOpen(false); if (overlay) onOpenChange(false) }}
-          className="fixed inset-0 bg-black/50 z-30"
-        />
-      )}
+      {/* Backdrop: under a small-screen drawer, or over the Creature world at
+          every width. Clicking it closes what it sits under. */}
+      <div
+        aria-hidden
+        onClick={dismiss}
+        className={cn(
+          'fixed inset-0 z-30 bg-black/50 transition-opacity duration-300',
+          mode.backdrop === 'none' ? 'pointer-events-none opacity-0' : 'opacity-100',
+          mode.backdrop === 'small_screens' && 'lg:hidden',
+        )}
+      />
     </>
   )
 }
