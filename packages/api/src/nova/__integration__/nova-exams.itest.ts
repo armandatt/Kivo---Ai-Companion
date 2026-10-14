@@ -156,3 +156,26 @@ test("one learner cannot move or remove another's exam, and never sees it", asyn
   assert.equal(row.scheduledAt.toISOString().slice(0, 10), target.date, "untouched");
   assert.equal(await prisma.novaExam.count({ where: { profileId: theirs.profileId } }), 2);
 });
+
+test("a learner twelve or more hours ahead of UTC sees a date on the day they gave, counted from their own today", async () => {
+  const l = await learner();
+  const zone = "Pacific/Kiritimati";   // UTC+14: noon UTC is already the next day there
+  await prisma.novaAcademicProfile.update({ where: { id: l.profileId }, data: { timezone: zone } });
+  const localToday = new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(now);
+  const inTwo = new Date(Date.parse(`${localToday}T12:00:00Z`) + 2 * 86_400_000).toISOString().slice(0, 10);
+  const saved = await saveSetup(l.chat, { subjects: [{ name: "Physics", topics: ["Optics"] }], exams: [{ subjectName: "Physics", date: inTwo, title: null }], dailyMinutes: 30, studyTime: null }, now);
+  assert.equal(saved.status, "saved");
+
+  const listed = (await listExams(l.chat, now))!.find(e => e.date === inTwo);
+  assert.ok(listed, "listed on the day given");
+  assert.equal(listed.daysUntil, 2);
+  const today = await loadNovaToday(l.chat, { now });
+  assert.ok(today.status === "ready");
+  assert.equal(today.nextDeadline?.daysUntil, 2);
+  const planner = await loadNovaPlanner(l.chat, { now });
+  assert.ok(planner.status === "ready");
+  // The week view runs Monday to Sunday: when the date falls in it, it is on its own day.
+  const placed = planner.week.filter(d => d.exams.some(e => e.title === listed.title)).map(d => d.date);
+  if (planner.week.some(d => d.date === inTwo)) assert.deepEqual(placed, [inTwo]);
+  else assert.deepEqual(placed, []);
+});

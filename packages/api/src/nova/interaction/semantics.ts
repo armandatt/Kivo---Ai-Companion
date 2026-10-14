@@ -116,6 +116,9 @@ export function contextNeeds(u: AcademicUnderstanding, kind: InteractionKind = k
     case "conversation":
       add("profile", "session", "memory", "patterns", "state", "goals");
       if (u.topic) add("topic");
+      // Talking about what to study ("what should I focus on this week?") is
+      // answered from the plan Nova worked out, or the model makes one up.
+      if (u.intent === "plan_request") add("plan", "exams", "time");
       break;
   }
   if (examInPlay && kind !== "general_question" && kind !== "unclear" && kind !== "unsupported") add("exams");

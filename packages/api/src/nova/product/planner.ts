@@ -26,7 +26,7 @@ import type {
   PlannerSessionEntry,
   PlannerUnknown,
 } from "./planner.types";
-import { calendarDaysUntil, dayKey, resolveTimezone } from "../engines/learner-calendar";
+import { calendarDaysUntil, dateDayKey, dayKey, resolveTimezone } from "../engines/learner-calendar";
 
 const DAY_MS = 86_400_000;
 const MAX_REVIEWS_PER_DAY = 4;
@@ -197,7 +197,7 @@ export function buildPlannerView(input: PlanningInputs): NovaPlannerReady {
       reviewsDue:      due.slice(0, MAX_REVIEWS_PER_DAY).map(t => ({ topicName: t.topicName, subjectName: t.subjectName })),
       reviewsDueCount: due.length,
       exams: snapshot.upcomingExams
-        .filter(e => dayKey(e.scheduledAt, timezone) === date)
+        .filter(e => dateDayKey(e.scheduledAt, timezone) === date)
         .map(e => ({ title: e.title, subjectName: e.subjectName })),
     };
   });

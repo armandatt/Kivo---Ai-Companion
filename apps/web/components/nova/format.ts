@@ -2,6 +2,7 @@
 // filters or decides.
 
 import type { TodayActivity, TodayUrgency } from '@repo/api/nova/product/today.types'
+import { isDateOnlyInstant } from '@repo/api/nova/engines/learner-calendar'
 
 export const URGENCY_LABEL: Record<TodayUrgency, string> = {
   critical: 'Critical today',
@@ -72,6 +73,14 @@ export function dayOfMonth(dayKey: string): string {
 
 export function calendarDate(iso: string, timeZone: string): string {
   return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone })
+}
+
+// A stored date (an exam, a deadline) is a day, not a moment: it is written
+// as noon or midnight UTC on that day, and drawn as that day wherever the
+// learner is (isDateOnlyInstant in nova/engines/learner-calendar.ts). Any
+// other instant is drawn in their timezone.
+export function deadlineDate(iso: string, timeZone: string): string {
+  return calendarDate(iso, isDateOnlyInstant(new Date(iso)) ? 'UTC' : timeZone)
 }
 
 // "today", "yesterday", "5 days ago" for a past instant; "tomorrow",

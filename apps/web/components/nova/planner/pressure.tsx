@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import type { NovaPlannerReady, PlannerPressure } from '@repo/api/nova/product/planner.types'
-import { calendarDate, inDays } from '../format'
+import { deadlineDate, inDays } from '../format'
 import { GOALS_HREF } from '@repo/api/nova/product/goals.types'
 
 function Preparation({ item }: { item: PlannerPressure }) {
@@ -61,7 +61,7 @@ export function UpcomingPressure({ pressure, timezone, goals }: {
                 </p>
               </div>
               <p className="mt-0.5 text-xs text-foreground/45">
-                {[item.kindLabel, item.subjectName, calendarDate(item.scheduledAt, timezone)].filter(Boolean).join(' · ')}
+                {[item.kindLabel, item.subjectName, deadlineDate(item.scheduledAt, timezone)].filter(Boolean).join(' · ')}
               </p>
               {item.drivesPlan && (
                 <p className="mt-2 inline-block rounded-full border border-keppel-400/30 px-2 py-0.5 text-[11px] text-keppel-200">

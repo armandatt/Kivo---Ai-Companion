@@ -278,6 +278,7 @@ export function buildDynamicLayer(ctx: NovaContext): string {
     buildKnowledgeSection(ctx),
     buildPatternSection(ctx),
     buildCognitiveStateSection(ctx),
+    planInContext(ctx) ? "" : NOTHING_RECOMMENDED,
     buildConversationHistorySection(ctx),
   ].filter(Boolean);
 
@@ -308,6 +309,15 @@ function buildMessageSection(ctx: NovaContext): string {
   return [`## This Message`, `Text: "${ctx.rawMessage.slice(0, 200)}"`, `Emotion: ${ctx.understanding.emotion}`].join("\n");
 }
 
+// Said when what the model is given recommends nothing, so a reply does not
+// fill the gap with a topic or a length of its own (static rules 2 and 13).
+export const NOTHING_RECOMMENDED = [
+  "## What to study next",
+  "Nothing in what you were given recommends what they study next. Do not suggest a topic, chapter, technique or resource for them to study next, and give no number of minutes or hours to spend. Talking about a topic they raised themselves is fine. If they ask what to do next, say their plan for today is on Today.",
+].join("\n");
+
+const planInContext = (ctx: NovaContext): boolean => ctx.studyPlan !== null && ctx.studyPlan.today.length > 0;
+
 export function buildFocusedLayer(ctx: NovaContext, needs: readonly ContextNeed[], facts: readonly string[] = []): string {
   const has = (n: ContextNeed) => needs.includes(n);
   const knowledge = buildKnowledgeSection({
@@ -329,6 +339,9 @@ export function buildFocusedLayer(ctx: NovaContext, needs: readonly ContextNeed[
     knowledge,
     has("patterns") ? buildPatternSection(ctx) : "",
     facts.length > 0 ? [`## What Nova has on record (the only figures you may state)`, ...facts.map(f => `- ${f}`)].join("\n") : "",
+    // Not for a question about the subject matter itself (only "recent" is
+    // needed): that is answered, and recommends nothing.
+    needs.some(n => n !== "recent") && !(has("plan") && planInContext(ctx)) && facts.length === 0 ? NOTHING_RECOMMENDED : "",
     has("recent") ? buildConversationHistorySection(ctx) : "",
   ].filter(Boolean);
   const assembled = sections.join("\n\n");

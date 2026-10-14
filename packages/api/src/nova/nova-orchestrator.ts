@@ -35,6 +35,7 @@ import { buildSessionContext, computeSessionAction } from "./engines/study-sessi
 import { runDecisionGraph } from "./decision/decision-graph";
 import { buildDynamicLayer, buildExplainPrompt, buildFocusedLayer, buildMicroPrompt } from "./context/context-builder";
 import { runResponseBrain, UNREADABLE_RESPONSE_REPLY } from "./brains/response-brain";
+import { groundDurations } from "./brains/grounded-reply";
 import { chooseRegister, registerLine } from "./decision/register";
 import { loadAccountabilityStyle } from "./adapters/operating-style-adapter";
 import type { ResponseBrainOutput } from "./types/response.types";
@@ -381,6 +382,13 @@ export async function runNovaOrchestrator(
       if (input.responseFallback && brainOutput.reply === UNREADABLE_RESPONSE_REPLY) {
         responseOk  = false;
         brainOutput = scripted(input.responseFallback);
+      }
+      // A length of time the reply states that Nova did not give it was made
+      // up by the model: that sentence is taken out (brains/grounded-reply.ts).
+      const grounded = groundDurations(brainOutput.reply, `${dynamicLayer}\n${prompt}\n${text}`);
+      if (grounded.removed.length > 0) {
+        console.log(JSON.stringify({ layer: "nova:response", event: "ungrounded_duration_removed", removed: grounded.removed.length }));
+        brainOutput = { ...brainOutput, reply: grounded.reply };
       }
     } catch (err) {
       if (!input.responseFallback) throw err;
