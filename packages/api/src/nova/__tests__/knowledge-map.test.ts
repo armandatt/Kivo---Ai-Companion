@@ -129,8 +129,11 @@ describe("the map is a read model", () => {
     expect(source).toContain("listNoteLinks(profileId, MAP_NOTES_MAX)");
     expect(source).toContain("listResourceLinks(profileId, MAP_RESOURCES_MAX)");
     expect(source).not.toMatch(/prisma\.(novaNote|novaLearningEvent)\b/);
-    // And nothing of what a note says is read for the map.
-    expect(read("product/notes.ts").split("listNoteLinks")[1]).not.toMatch(/body: true/);
+    // Of what a note says, only the titles it names in [[...]] reach the map:
+    // notes.ts reads the body to find them and the body itself never leaves it.
+    const lister = read("product/notes.ts").split("export async function listNoteLinks")[1]!;
+    expect(lister).toContain("rows.map(({ body, ...n }) => ({ ...n, linksTo: linkedTitles(body)");
+    expect(source).not.toMatch(/\bbody\b/);
   });
 });
 

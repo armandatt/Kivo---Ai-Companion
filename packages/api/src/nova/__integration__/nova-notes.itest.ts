@@ -422,3 +422,79 @@ test("a chat linked to two accounts is not wiped by deleting one of them", async
   assert.equal(two.novaProfileRemoved, true);
   assert.equal(await prisma.novaNote.count({ where: { profileId: profile.shared } }), 0);
 });
+
+// ── Stage 2: links, backlinks and saves from a stale tab ─────────────────────
+
+// Learners of their own: earlier tests delete some of the shared ones.
+const linkChats: string[] = [];
+async function linkLearner(tag: string) {
+  const chat = `nova_itest_notes_${tag}_${STAMP}`;
+  linkChats.push(chat);
+  const user = await prisma.messengerUser.create({
+    data: { platform: "telegram", platformChatId: chat, persona: "nova", novaAcademicProfile: { create: { onboardingComplete: true, subjects: { create: [{ name: "Operating Systems" }] } } } },
+    select: { novaAcademicProfile: { select: { id: true, subjects: { select: { id: true } } } } },
+  });
+  return { profileId: user.novaAcademicProfile!.id, subjectId: user.novaAcademicProfile!.subjects[0]!.id };
+}
+after(async () => { await prisma.messengerUser.deleteMany({ where: { platformChatId: { in: linkChats } } }); });
+
+test("[[links]] open the learner's own notes and topics, and backlinks list the notes that link here", async () => {
+  const me = await linkLearner("links_me"), other = await linkLearner("links_other");
+  await prisma.novaTopicMastery.create({ data: { subjectId: me.subjectId, name: "Paging" } });
+  const target = await made(me.profileId, { title: "Banker's algorithm", body: "Safe states." });
+  const linking = await made(me.profileId, { title: "OS revision", body: "Start with [[banker's ALGORITHM]], then [[Paging]] and [[Thrashing]].\n```\n[[Not a link]]\n```" });
+
+  assert.deepEqual(linking.links.outgoing.map(l => [l.title, l.noteId, l.topicId !== null]), [
+    ["banker's ALGORITHM", target.id, false],
+    ["Paging", null, true],          // a topic of theirs, not a note
+    ["Thrashing", null, false],      // not written yet
+  ]);
+  const opened = (await getNote(me.profileId, target.id))!;
+  assert.deepEqual(opened.links.backlinks.map(b => [b.title, b.noteId]), [["OS revision", linking.id]]);
+  assert.match(opened.links.backlinks[0]!.context!, /Start with \[\[banker's ALGORITHM\]\]/);
+
+  // Another learner's note with the same link and title is never seen.
+  await made(other.profileId, { title: "Banker's algorithm", body: "Theirs." });
+  await made(other.profileId, { title: "Their revision", body: "[[Banker's algorithm]]" });
+  assert.deepEqual((await getNote(me.profileId, target.id))!.links.backlinks.map(b => b.title), ["OS revision"]);
+  assert.deepEqual((await getNote(me.profileId, linking.id))!.links.outgoing[0]!.noteId, target.id);
+
+  // Removing the brackets removes the link; the target note is untouched.
+  const edited = await updateNote(me.profileId, linking.id, { body: "Start with Banker's algorithm." });
+  assert.ok(edited.ok);
+  assert.deepEqual(edited.note.links.outgoing, []);
+  assert.deepEqual((await getNote(me.profileId, target.id))!.links.backlinks, []);
+  assert.equal((await getNote(me.profileId, target.id))!.body, "Safe states.");
+});
+
+test("a save from a tab that opened an older version is refused, overwrites nothing, and returns the note as it stands", async () => {
+  const me = await linkLearner("tabs_me"), other = await linkLearner("tabs_other");
+  const note = await made(me.profileId, { title: "Two tabs", body: "first" });
+  const tabA = note.updatedAt, tabB = note.updatedAt;
+
+  const fromA = await updateNote(me.profileId, note.id, { body: "written in tab A", baseUpdatedAt: tabA });
+  assert.ok(fromA.ok);
+  const fromB = await updateNote(me.profileId, note.id, { body: "written in tab B", baseUpdatedAt: tabB });
+  assert.ok(!fromB.ok);
+  assert.equal(fromB.error, "conflict");
+  assert.equal(fromB.current?.body, "written in tab A");
+  assert.equal((await getNote(me.profileId, note.id))!.body, "written in tab A");
+
+  // Saving over it on purpose, from the version now on record, works.
+  const again = await updateNote(me.profileId, note.id, { body: "written in tab B", baseUpdatedAt: fromB.current!.updatedAt });
+  assert.ok(again.ok);
+  assert.equal(again.note.body, "written in tab B");
+
+  // A save that names no version behaves as before; another learner's note is not found either way.
+  assert.ok((await updateNote(me.profileId, note.id, { body: "no version given" })).ok);
+  const foreign = await updateNote(other.profileId, note.id, { body: "x", baseUpdatedAt: again.note.updatedAt });
+  assert.ok(!foreign.ok && foreign.error === "not_found");
+});
+
+test("a note written before links existed reads exactly as before", async () => {
+  const me = await linkLearner("old");
+  const row = await prisma.novaNote.create({ data: { profileId: me.profileId, title: "Old note", body: "Plain text\n[ not a link ]" } });
+  const opened = (await getNote(me.profileId, row.id))!;
+  assert.equal(opened.body, "Plain text\n[ not a link ]");
+  assert.deepEqual(opened.links, { outgoing: [], backlinks: [] });
+});

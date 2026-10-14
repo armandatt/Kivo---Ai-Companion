@@ -14,15 +14,19 @@ import { learnerKey } from "./learner-key";
 import { listTasks } from "./tasks";
 import { listResourceLinks } from "./learning-events";
 import { listExams } from "./exams";
+import { listNoteLinks } from "./notes";
 import { latestSessionNote } from "../persistence/nova-persistence";
 import {
   REFLECTION_FIELD_MAX,
-  type FocusContextResource, type FocusContextTask, type NovaFocusContextReady, type NovaFocusContextView, type SessionReflection,
+  type FocusContextNote, type FocusContextResource, type FocusContextTask, type NovaFocusContextReady, type NovaFocusContextView, type SessionReflection,
 } from "./focus-context.types";
 import type { NovaTaskItem } from "./tasks.types";
 
 export const FOCUS_TASKS_SHOWN     = 5;
 export const FOCUS_RESOURCES_SHOWN = 4;
+export const FOCUS_NOTES_SHOWN     = 4;
+// How many of the learner's newest notes are looked through for this topic.
+const NOTES_READ = 200;
 const RESOURCES_READ = 200;
 
 // Names are compared the way the Knowledge Map compares them: trimmed,
@@ -67,6 +71,7 @@ export function buildFocusContext(input: {
   topicName: string | null;
   tasks:     NovaTaskItem[];
   resources: Array<{ id: string; title: string; url: string; domain: string; subjectId: string | null; topicName: string | null }>;
+  notes?:    Array<{ id: string; title: string; subjectId: string | null; topicName: string | null; updatedAt: Date }>;
   exams:     Array<{ title: string; subjectName: string | null; daysUntil: number }>;
   lastNote:  { text: string | null; date: Date } | null;
 }): NovaFocusContextReady {
@@ -92,6 +97,12 @@ export function buildFocusContext(input: {
     .sort(topicFirst)
     .slice(0, FOCUS_RESOURCES_SHOWN);
 
+  const notes: FocusContextNote[] = (input.notes ?? [])
+    .filter(belongs)
+    .map(n => ({ id: n.id, title: n.title, updatedAt: n.updatedAt.toISOString(), onTopic: onTopic(n) }))
+    .sort(topicFirst)
+    .slice(0, FOCUS_NOTES_SHOWN);
+
   const exam = subject
     ? input.exams.filter(e => key(e.subjectName) === key(subject.name)).sort((a, b) => a.daysUntil - b.daysUntil)[0]
     : undefined;
@@ -104,6 +115,7 @@ export function buildFocusContext(input: {
     topicName:   input.topicName,
     tasks,
     resources,
+    notes,
     deadline:    exam ? { title: exam.title, daysUntil: exam.daysUntil } : null,
     lastNote:    note && input.lastNote ? { ...note, date: input.lastNote.date.toISOString() } : null,
   };
@@ -138,15 +150,16 @@ export async function loadFocusContext(
   }
   const subject = target.subjectName ? profile.subjects.find(s => key(s.name) === key(target!.subjectName)) ?? null : null;
 
-  const [tasks, links, exams, lastNote] = await Promise.all([
+  const [tasks, links, noted, exams, lastNote] = await Promise.all([
     listTasks(profile.id, { now }),
     listResourceLinks(profile.id, RESOURCES_READ),
+    listNoteLinks(profile.id, NOTES_READ),
     listExams(platformChatId, now),
     subject && target.topicName ? latestSessionNote(profile.id, subject.id, target.topicName) : Promise.resolve(null),
   ]);
 
   return buildFocusContext({
     subject, topicName: target.topicName,
-    tasks: tasks.tasks, resources: links.resources, exams: exams ?? [], lastNote,
+    tasks: tasks.tasks, resources: links.resources, notes: noted.notes, exams: exams ?? [], lastNote,
   });
 }

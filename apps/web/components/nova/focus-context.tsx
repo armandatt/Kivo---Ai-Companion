@@ -41,7 +41,7 @@ const dueText = (days: number | null) =>
   days === null ? null : days < 0 ? `${-days}d overdue` : days === 0 ? 'due today' : `due ${inDays(days)}`
 
 export function hasFocusContext(view: NovaFocusContextReady | null): view is NovaFocusContextReady {
-  return view !== null && (view.tasks.length > 0 || view.resources.length > 0 || view.deadline !== null || view.lastNote !== null)
+  return view !== null && (view.tasks.length > 0 || view.resources.length > 0 || (view.notes?.length ?? 0) > 0 || view.deadline !== null || view.lastNote !== null)
 }
 
 export function FocusContext({ view, className }: { view: NovaFocusContextReady; className?: string }) {
@@ -81,6 +81,20 @@ export function FocusContext({ view, className }: { view: NovaFocusContextReady;
             ))}
           </ul>
           <Link href="/planner?view=board" className="mt-2 inline-block text-xs text-foreground/50 underline decoration-white/20 underline-offset-4 hover:text-foreground">Open the board</Link>
+        </div>
+      )}
+
+      {(view.notes?.length ?? 0) > 0 && (
+        <div data-context="notes">
+          <p className={heading}><NotebookPen aria-hidden className="size-3.5" /> Your notes on this</p>
+          <ul className="mt-2 space-y-1.5">
+            {view.notes!.map(n => (
+              <li key={n.id} className="flex items-baseline justify-between gap-3 text-sm">
+                <Link href={`/notes/${encodeURIComponent(n.id)}`} className="min-w-0 truncate text-foreground/85 underline decoration-white/20 underline-offset-4 hover:decoration-white/60">{n.title}</Link>
+                <span className="shrink-0 text-xs text-foreground/40">{n.onTopic ? 'this topic' : 'this subject'} · {relativeDay(n.updatedAt)}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

@@ -32,7 +32,8 @@ import {
 export interface MapInputs {
   subjects:  Array<{ id: string; name: string }>;
   topics:    Array<{ id: string; subjectId: string; name: string; masteryProbability: number; reviewCount: number }>;
-  notes:     Array<{ id: string; title: string; subjectId: string | null; topicName: string | null; updatedAt: Date }>;
+  // linksTo: titles the note names in [[...]] (notes.ts). Absent: none.
+  notes:     Array<{ id: string; title: string; subjectId: string | null; topicName: string | null; updatedAt: Date; linksTo?: string[] }>;
   resources: Array<{
     id: string; title: string; url: string; domain: string; eventType: string; subjectId: string | null; topicName: string | null; occurredAt: Date;
     filedBy?: "learner" | "nova" | null;
@@ -122,6 +123,25 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
       notes: tally.get(id)?.notes ?? 0, resources: tally.get(id)?.resources ?? 0,
     };
   });
+
+  // [[Links]] the learner wrote: to the note with that title (the most
+  // recently edited, when two share one), else to a topic of theirs with that
+  // name. A link to nothing on record, or to the note itself, draws nothing.
+  const key = (s: string) => s.trim().split(" ").filter(Boolean).join(" ").toLowerCase();
+  const noteByTitle = new Map<string, string>();
+  for (const n of [...input.notes].sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())) {
+    if (!noteByTitle.has(key(n.title))) noteByTitle.set(key(n.title), `note:${n.id}`);
+  }
+  const topicByName = new Map<string, string>();
+  for (const t of topics) if (!topicByName.has(key(t.name))) topicByName.set(key(t.name), `topic:${t.id}`);
+  for (const n of input.notes) {
+    const from = `note:${n.id}`;
+    for (const title of n.linksTo ?? []) {
+      const to = noteByTitle.get(key(title)) ?? topicByName.get(key(title));
+      if (!to || to === from || edges.some(e => e.from === from && e.to === to)) continue;
+      link(from, to, "links_to");
+    }
+  }
 
   const nodes = [...subjectNodes, ...topicNodes, ...noteNodes, ...resourceNodes];
   const linked = new Set(edges.flatMap(e => [e.from, e.to]));

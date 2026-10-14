@@ -40,6 +40,8 @@
     "./nova/product/learning-context": "./src/nova/product/learning-context.ts",
     "./nova/product/knowledge-map.types": "./src/nova/product/knowledge-map.types.ts",
     "./nova/product/templates": "./src/nova/product/templates.ts",
+    "./nova/product/note-links": "./src/nova/product/note-links.ts",
+    "./nova/product/note-assist.types": "./src/nova/product/note-assist.types.ts",
     "./nova/product/resource-link": "./src/nova/product/resource-link.ts",
     "./nova/product/*": "./src/nova/product/*",
     "./nova/engines/*": "./src/nova/engines/*",

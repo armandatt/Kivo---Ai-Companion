@@ -4,7 +4,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { groundDurations, statedDurations, UNGROUNDED_REPLY_FALLBACK } from "../brains/grounded-reply";
+import { groundDurations, groundTopics, statedDurations, UNGROUNDED_REPLY_FALLBACK } from "../brains/grounded-reply";
 import { buildDynamicLayer, buildFocusedLayer, NOTHING_RECOMMENDED } from "../context/context-builder";
 import { contextNeeds } from "../interaction/semantics";
 import type { NovaContext } from "../types/context.types";
@@ -87,5 +87,60 @@ describe("what the model is told when nothing recommends what to study", () => {
 
   it("facts a surface gave (an advice verdict) count as what is recommended", () => {
     expect(buildFocusedLayer(ctx(), ["session", "plan"], ["Recommended now: Light, 25 min"])).not.toContain(NOTHING_RECOMMENDED);
+  });
+});
+
+describe("topics a reply recommends", () => {
+  const told = "## Today's plan\nRecommended now: Deadlocks (Operating Systems), Light, 25 min\nAfter that: Paging";
+
+  it("keeps a reply whose recommendations are in what Nova gave it, in any case", () => {
+    const reply = "Start with deadlocks. Then paging.";
+    expect(groundTopics(reply, ["Deadlocks", "paging"], told)).toEqual({ reply, removed: [], ungrounded: [] });
+  });
+
+  it("takes out each sentence naming a topic Nova was not given", () => {
+    const out = groundTopics("Start with Deadlocks. After that, hit the TLB. You've got this.", ["Deadlocks", "TLB"], told);
+    expect(out.ungrounded).toEqual(["tlb"]);
+    expect(out.removed).toEqual(["After that, hit the TLB."]);
+    expect(out.reply).toBe("Start with Deadlocks. You've got this.");
+  });
+
+  it("matches whole words only, and a name at the end of a sentence", () => {
+    // "page" is not "paging", and "TLB." is the TLB.
+    expect(groundTopics("Read the page.", ["page"], "paging").removed).toEqual(["Read the page."]);
+    expect(groundTopics("Next do TLB.", ["tlb"], told).reply).toBe(UNGROUNDED_REPLY_FALLBACK);
+  });
+
+  it("a plural or singular of a given name is the same name", () => {
+    expect(groundTopics("Do one deadlock problem.", ["deadlock"], told).removed).toEqual([]);
+  });
+
+  it("a name from the learner's own message is given", () => {
+    expect(groundTopics("Do Node.js streams first.", ["node.js streams"], "can I do node.js streams?").removed).toEqual([]);
+  });
+
+  it("nothing declared, or a declared name the reply never states, changes nothing", () => {
+    expect(groundTopics("Take a break.", undefined, told).reply).toBe("Take a break.");
+    expect(groundTopics("Take a break.", ["Graph theory"], told)).toEqual({ reply: "Take a break.", removed: [], ungrounded: ["graph theory"] });
+  });
+
+  it("when nothing is recommended, a topic of theirs on record is still not a recommendation", () => {
+    // The orchestrator grounds against the learner's message alone then.
+    expect(groundTopics("Open your regression notes for a bit.", ["Regression"], "honestly I just feel behind").reply).toBe(UNGROUNDED_REPLY_FALLBACK);
+    expect(groundTopics("Start with regression, as you said.", ["Regression"], "should I do regression?").removed).toEqual([]);
+  });
+
+  it("when nothing is recommended, a topic of theirs the model did not declare is still caught", () => {
+    // Seen with the real model: "recommends": [] and the reply named a topic.
+    const reply = "Carrying that weight is exhausting. Let's just look at deadlocks and leave the rest for later.";
+    const out = groundTopics(reply, [...[], "Deadlocks", "Paging"], "honestly I just feel behind on everything");
+    expect(out.reply).toBe("Carrying that weight is exhausting.");
+  });
+
+  it("the orchestrator runs it on every worded reply, after the length check", () => {
+    const src = readFileSync(join(__dirname, "..", "nova-orchestrator.ts"), "utf8");
+    expect(src).toContain("groundTopics(brainOutput.reply, [...(brainOutput.recommends ?? []), ...topicNames], text)");
+    expect(src).toContain("groundTopics(brainOutput.reply, brainOutput.recommends, told)");
+    expect(src.indexOf("groundDurations(")).toBeLessThan(src.indexOf("groundTopics("));
   });
 });

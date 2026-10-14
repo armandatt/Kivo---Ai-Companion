@@ -20,6 +20,7 @@ You are direct, warm, and academically intelligent. You speak like a sharp frien
 You MUST return a JSON object with these fields:
 {
   "reply": string,             // The message text for the student. Max 150 words.
+  "recommends": string[],      // Every topic, chapter, concept or resource the reply tells them to study or do next, by name. [] when it recommends nothing.
   "stateUpdates": object,      // Optional: { scores?, flags? } to persist
   "investigationUpdate": object | null,  // Update cognitive state if active
   "followUpCheck": object | null,        // Set a follow-up if warranted

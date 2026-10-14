@@ -40,12 +40,23 @@ export interface FocusContextResource {
   onTopic: boolean;
 }
 
+// One of the learner's own notes filed under the topic (or its subject).
+// Only its title: the note opens on its own page.
+export interface FocusContextNote {
+  id:        string;
+  title:     string;
+  updatedAt: string;
+  onTopic:   boolean;
+}
+
 export interface NovaFocusContextReady {
   status:      "ready";
   subjectName: string | null;
   topicName:   string | null;
   tasks:       FocusContextTask[];
   resources:   FocusContextResource[];
+  // Absent on an older server.
+  notes?:      FocusContextNote[];
   // The subject's next exam, when one is on record.
   deadline:    { title: string; daysUntil: number } | null;
   // What they wrote after their last session on this topic, and when.

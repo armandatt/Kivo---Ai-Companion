@@ -52,7 +52,8 @@ export type MapNode =
 export type MapEdgeKind =
   | "has_topic"     // subject → topic: the topic is one of the subject's
   | "about_topic"   // topic → note or saved page filed under that topic
-  | "filed_under";  // subject → note or saved page filed under the subject only
+  | "filed_under"   // subject → note or saved page filed under the subject only
+  | "links_to";     // note → note or topic: the learner wrote [[its name]] in the note
 
 export interface MapEdge { id: string; from: string; to: string; kind: MapEdgeKind }
 

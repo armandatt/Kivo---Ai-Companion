@@ -167,6 +167,13 @@ function ResourceRow({ resource: initial, onRemoved, onChanged }: { resource: Le
           <Link href={`/focus?study=${encodeURIComponent(resource.id)}`} className="inline-flex h-9 items-center justify-center rounded-lg bg-keppel-400 px-3 text-xs font-semibold text-keppel-950 transition-colors hover:bg-keppel-300" data-study>
             Study this
           </Link>
+          {/* A new note on this page, filed where the page is and naming it as its source. Nothing is saved until the note is. */}
+          <Link href={`/notes/new?${new URLSearchParams({
+            title: resource.title.slice(0, 200), source: resource.url, sourceTitle: resource.title,
+            ...(resource.subjectId ? { subjectId: resource.subjectId } : {}), ...(resource.subjectId && resource.topicName ? { topic: resource.topicName } : {}),
+          }).toString()}`} className="inline-flex h-9 items-center justify-center rounded-lg border border-white/12 px-3 text-xs text-foreground/65 transition-colors hover:bg-white/5" data-write-note>
+            Write a note
+          </Link>
           <button type="button" onClick={() => void addTask()} disabled={busy} className="h-9 rounded-lg border border-white/12 px-3 text-xs text-foreground/65 transition-colors hover:bg-white/5 disabled:opacity-50" data-add-task>
             Add task
           </button>

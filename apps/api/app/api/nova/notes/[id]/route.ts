@@ -25,15 +25,20 @@ export async function GET(_req: Request, { params }: Context) {
   }
 }
 
-// PATCH /api/nova/notes/:id  { title?, body?, subjectId?, topicName? }
-// Only those four fields can change. Response: NoteResponse.
+// PATCH /api/nova/notes/:id  { title?, body?, subjectId?, topicName?, baseUpdatedAt? }
+// Only those four fields can change; baseUpdatedAt guards against a stale
+// tab (409 conflict, with the current note). Response: NoteResponse.
 export async function PATCH(req: Request, { params }: Context) {
   try {
     const access = await requireNoteLearner()
     if (access.denied) return access.denied
     const result = await updateNote(access.profileId, (await params).id, await req.json().catch(() => null))
     if (result.ok) return NextResponse.json(result)
-    return result.error === "not_found" ? NOT_FOUND() : noteFail(400, result.error, result.message)
+    if (result.error === "not_found") return NOT_FOUND()
+    // A save from a tab that opened an older version: the note as it now
+    // stands comes back, so the page can show both and lose neither.
+    if (result.error === "conflict") return NextResponse.json(result, { status: 409 })
+    return noteFail(400, result.error, result.message)
   } catch (err) {
     console.error("[nova/notes/:id]", err)
     return noteFail(500, "failed", "The note didn't save. Try again.")

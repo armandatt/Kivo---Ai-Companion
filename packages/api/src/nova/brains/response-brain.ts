@@ -41,6 +41,10 @@ function parseResponseBrainOutput(raw: string, fallbackReply: string): ResponseB
     ? parsed["stateUpdates"] as ResponseBrainOutput["stateUpdates"]
     : undefined;
 
+  const recommends = Array.isArray(parsed["recommends"])
+    ? (parsed["recommends"] as unknown[]).filter((r): r is string => typeof r === "string" && r.trim().length > 0).slice(0, 10)
+    : [];
+
   const investigationUpdate = parsed["investigationUpdate"] ?? null;
   const followUpCheck       = parsed["followUpCheck"] ?? null;
 
@@ -48,6 +52,7 @@ function parseResponseBrainOutput(raw: string, fallbackReply: string): ResponseB
     reply,
     reasoningMode,
     confidence,
+    recommends,
     stateUpdates,
     investigationUpdate:   investigationUpdate as ResponseBrainOutput["investigationUpdate"],
     followUpCheck:         followUpCheck as ResponseBrainOutput["followUpCheck"],

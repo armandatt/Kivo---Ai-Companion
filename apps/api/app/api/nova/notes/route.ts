@@ -2,6 +2,8 @@ import { NextResponse } from "next/server"
 //@ts-ignore
 import { createNote, listNotes } from "@repo/api/nova/product/notes"
 import { noteFail, requireNoteLearner } from "../../../../lib/nova/note-access"
+//@ts-ignore
+import { loadLearningContexts } from "@repo/api/nova/adapters/account-preferences-adapter"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -22,11 +24,16 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Unauthenticated" }, { status: 401 })
     }
     const params = new URL(req.url).searchParams
-    return NextResponse.json(await listNotes(access.profileId, {
-      q:         params.get("q"),
-      subjectId: params.get("subjectId"),
-      topic:     params.get("topic"),
-    }))
+    const [view, learningContexts] = await Promise.all([
+      listNotes(access.profileId, {
+        q:         params.get("q"),
+        subjectId: params.get("subjectId"),
+        topic:     params.get("topic"),
+      }),
+      // Only orders the note templates; a failure to read it changes nothing else.
+      loadLearningContexts(access.platformChatId).catch(() => []),
+    ])
+    return NextResponse.json({ ...view, learningContexts })
   } catch (err) {
     console.error("[nova/notes]", err)
     return NextResponse.json({ error: "Failed to load notes" }, { status: 500 })

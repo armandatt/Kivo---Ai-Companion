@@ -244,7 +244,10 @@ describe("a learning event is a record of an action, and nothing else", () => {
     // same way: through listResourceLinks, computing nothing from them.
     // resource-processing looks at a saved page for which of the learner's
     // topics it is about. It files a page; it computes nothing about the learner.
-    expect(readers.sort()).toEqual(["product/focus-context.ts", "product/knowledge-map.ts", "product/learning-events.ts", "product/resource-processing.ts"]);
+    // note-assist gives Nova a few saved pages (title, site, selected passage)
+    // as sources for a learner-asked action on a note; it stores and
+    // computes nothing about the learner (note-assist.test.ts).
+    expect(readers.sort()).toEqual(["product/focus-context.ts", "product/knowledge-map.ts", "product/learning-events.ts", "product/note-assist.ts", "product/resource-processing.ts"]);
     const map = read("product/knowledge-map.ts");
     expect(map).not.toMatch(/prisma\.novaLearningEvent/);
     expect(map).not.toMatch(/updateTopicMastery|novaStudySession/);

@@ -118,3 +118,60 @@ export function groundDurations(reply: string, told: string): GroundedReply {
   const rest = kept.join("").trim();
   return { reply: rest.length > 0 ? rest : UNGROUNDED_REPLY_FALLBACK, removed };
 }
+
+// ─── Topics a worded reply recommends ─────────────────────────────────────────
+// What the learner studies next is decided by code and is in the context
+// (static layer rule 13). The Response Brain also returns, in `recommends`,
+// the name of every topic, chapter, concept or resource its reply suggests
+// they study or do next. A name there that Nova was not given (the context,
+// the prompt or the learner's own message) was chosen by the model: every
+// sentence that names it is taken out. This checks what the model declares;
+// a name it recommends without declaring is held back by rule 13 alone.
+
+// Lower case, single spaces, punctuation between words dropped. A full stop
+// stays only inside a word ("node.js"), so a sentence's own does not stick to
+// its last word.
+const isWordChar = (c: string) => isLetter(c) || isDigit(c) || c > "\u007f" || c === "+" || c === "#" || c === "'" || c === "-" || c === "/";
+function plain(text: string): string {
+  const lower = text.toLowerCase();
+  let out = "";
+  let space = false;
+  for (let i = 0; i < lower.length; i++) {
+    const ch = lower[i]!;
+    const word = isWordChar(ch) || (ch === "." && i > 0 && isWordChar(lower[i - 1]!) && i + 1 < lower.length && isWordChar(lower[i + 1]!));
+    if (word) { if (space && out) out += " "; out += ch; space = false; }
+    else space = true;
+  }
+  return out;
+}
+
+// The same, each word without a plural "s", so "deadlock" in a reply is the
+// "Deadlocks" Nova gave it. Spaces at both ends, for whole-word matching.
+function key(text: string): string {
+  const ws = plain(text).split(" ").filter(Boolean).map(w => (w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w));
+  return ` ${ws.join(" ")} `;
+}
+
+export interface GroundedTopics extends GroundedReply {
+  // The recommended names that were not given.
+  ungrounded: string[];
+}
+
+export function groundTopics(reply: string, recommends: readonly string[] | undefined, told: string): GroundedTopics {
+  const given = key(told);
+  const ungrounded = (recommends ?? [])
+    .map(name => key(name))
+    .filter((name, i, all) => name.trim().length > 0 && all.indexOf(name) === i)
+    .filter(name => !given.includes(name));
+  if (ungrounded.length === 0) return { reply, removed: [], ungrounded: [] };
+  const kept: string[] = [];
+  const removed: string[] = [];
+  for (const s of sentences(reply)) {
+    const words = key(s);
+    if (ungrounded.some(name => words.includes(name))) removed.push(s.trim()); else kept.push(s);
+  }
+  const names = ungrounded.map(n => n.trim());
+  if (removed.length === 0) return { reply, removed, ungrounded: names };
+  const rest = kept.join("").trim();
+  return { reply: rest.length > 0 ? rest : UNGROUNDED_REPLY_FALLBACK, removed, ungrounded: names };
+}

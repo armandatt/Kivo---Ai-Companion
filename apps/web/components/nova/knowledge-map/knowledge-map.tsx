@@ -35,7 +35,34 @@ const MAP_SESSION_MINUTES = 25
 // How far one arrow key moves the map, in screen pixels.
 const PAN_STEP = 60
 
-function Detail({ node, neighbours, onPick, onClose }: { node: MapNode; neighbours: MapNode[]; onPick: (id: string) => void; onClose: () => void }) {
+// How one item stands to another, in words, from the selected item's side.
+const RELATION: Record<string, [string, string]> = {
+  has_topic:   ['Topic of this subject', 'Its subject'],
+  about_topic: ['Filed under this topic', 'Its topic'],
+  filed_under: ['Filed under this subject', 'Its subject'],
+  links_to:    ['This note links to it', 'Links to this'],
+}
+
+// Everything within two links of an item: what a scoped view shows.
+function around(id: string, edges: Array<{ from: string; to: string }>, hops = 2): Set<string> {
+  let frontier = new Set([id])
+  const seen = new Set([id])
+  for (let i = 0; i < hops; i++) {
+    const next = new Set<string>()
+    for (const e of edges) {
+      if (frontier.has(e.from) && !seen.has(e.to)) next.add(e.to)
+      if (frontier.has(e.to) && !seen.has(e.from)) next.add(e.from)
+    }
+    next.forEach(n => seen.add(n))
+    frontier = next
+  }
+  return seen
+}
+
+function Detail({ node, neighbours, onPick, onClose, onScope, scoped }: {
+  node: MapNode; neighbours: Array<{ node: MapNode; relation: string }>; onPick: (id: string) => void; onClose: () => void
+  onScope: () => void; scoped: boolean
+}) {
   const { start, starting, error: startError } = useStartSession()
   const facts: Array<[string, string]> = []
   if (node.type === 'subject') {
@@ -104,6 +131,7 @@ function Detail({ node, neighbours, onPick, onClose }: { node: MapNode; neighbou
           </button>
         )}
         {noteHere && <Link href={noteHere} className={secondary} data-note-here>New note here</Link>}
+        {!scoped && <button type="button" onClick={onScope} className={secondary} data-scope-here>Show only what&apos;s around this</button>}
       </div>
       {startError && <p role="alert" className="mt-3 text-sm text-red-300">{startError}</p>}
 
@@ -117,11 +145,14 @@ function Detail({ node, neighbours, onPick, onClose }: { node: MapNode; neighbou
           </p>
         ) : (
           <ul className="mt-2 space-y-1">
-            {neighbours.map(n => (
-              <li key={n.id}>
+            {neighbours.map(({ node: n, relation }) => (
+              <li key={`${n.id}:${relation}`}>
                 <button type="button" onClick={() => onPick(n.id)} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-foreground/80 transition-colors hover:bg-white/5 hover:text-foreground">
                   <span className="inline-block size-2 shrink-0 rounded-full" style={{ background: FILL[n.type] }} />
-                  <span className="truncate">{n.label}</span>
+                  <span className="min-w-0">
+                    <span className="block truncate">{n.label}</span>
+                    <span className="block text-[11px] text-foreground/40">{relation}</span>
+                  </span>
                   <span className="ml-auto shrink-0 text-[11px] text-foreground/40">{TYPE_LABEL[n.type]}</span>
                 </button>
               </li>
@@ -139,6 +170,10 @@ function Detail({ node, neighbours, onPick, onClose }: { node: MapNode; neighbou
 export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
   const [shown, setShown]       = useState<Record<MapNodeType, boolean>>({ subject: true, topic: true, note: true, resource: true })
   const [subject, setSubject]   = useState('')
+  // Show [[links]] between notes (the learner's own links), or hide them.
+  const [showLinks, setShowLinks] = useState(true)
+  // A scoped view: one item and what is within two links of it.
+  const [scope, setScope]       = useState<string | null>(null)
   const [query, setQuery]       = useState('')
   const [selected, setSelected] = useState<string | null>(null)
   const [hover, setHover]       = useState<string | null>(null)
@@ -149,13 +184,25 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
   const subjects = useMemo(() => view.nodes.filter(n => n.type === 'subject'), [view.nodes])
 
   // What the filters leave. A filter hides items; it never changes a link.
+  const usable = useMemo(() => view.edges.filter(e => showLinks || e.kind !== 'links_to'), [view.edges, showLinks])
+  const inScope = useMemo(() => (scope && view.nodes.some(n => n.id === scope) ? around(scope, usable) : null), [scope, usable, view.nodes])
   const nodes = useMemo(() => view.nodes.filter(n =>
-    shown[n.type] && (subject === '' || n.subjectId === subject)), [view.nodes, shown, subject])
+    shown[n.type] && (subject === '' || n.subjectId === subject) && (!inScope || inScope.has(n.id))), [view.nodes, shown, subject, inScope])
   const ids   = useMemo(() => new Set(nodes.map(n => n.id)), [nodes])
-  const edges = useMemo(() => view.edges.filter(e => ids.has(e.from) && ids.has(e.to)), [view.edges, ids])
+  const edges = useMemo(() => usable.filter(e => ids.has(e.from) && ids.has(e.to)), [usable, ids])
+  const linkCount = useMemo(() => view.edges.filter(e => e.kind === 'links_to').length, [view.edges])
+
+  // A link from elsewhere names an item (?focus=note:<id>): open the map on
+  // it, scoped to what is around it. Read once, in an effect.
+  useEffect(() => {
+    const focus = new URLSearchParams(window.location.search).get('focus')
+    if (focus && view.nodes.some(n => n.id === focus)) { setScope(focus); setSelected(focus) }
+  }, [view.nodes])
   // Places a saved page was suggested for and is not filed under. Drawn, never laid out.
   const suggestions = useMemo(() => (view.suggestions ?? []).filter(s => ids.has(s.from) && ids.has(s.to)), [view.suggestions, ids])
-  const layout = useMemo(() => layoutMap(nodes, edges), [nodes, edges])
+  // A [[link]] is drawn but does not place anything: an item sits by what it
+  // is filed under, wherever notes link to it from.
+  const layout = useMemo(() => layoutMap(nodes, edges.filter(e => e.kind !== 'links_to')), [nodes, edges])
   const byId   = useMemo(() => new Map(view.nodes.map(n => [n.id, n])), [view.nodes])
 
   const neighbourIds = useMemo(() => {
@@ -213,18 +260,22 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
   const picked = selected ? byId.get(selected) ?? null : null
   const neighbours = useMemo(() => {
     if (!picked) return []
-    const out: MapNode[] = []
+    const out: Array<{ node: MapNode; relation: string }> = []
     for (const e of view.edges) {
-      const other = e.from === picked.id ? e.to : e.to === picked.id ? e.from : null
-      const node  = other ? byId.get(other) : null
-      if (node) out.push(node)
+      const outgoing = e.from === picked.id, incoming = e.to === picked.id
+      const node = outgoing ? byId.get(e.to) : incoming ? byId.get(e.from) : null
+      if (node) out.push({ node, relation: RELATION[e.kind]![outgoing ? 0 : 1] })
     }
     return out
   }, [picked, view.edges, byId])
 
+  // Found by its name, and by what it is filed under or comes from.
   const found = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return q ? nodes.filter(n => n.label.toLowerCase().includes(q)).slice(0, 8) : []
+    if (!q) return []
+    const about = (n: MapNode) => [n.label, 'subjectName' in n ? n.subjectName : null, 'topicName' in n ? n.topicName : null, n.type === 'resource' ? n.domain : null]
+      .filter(Boolean).join('\n').toLowerCase()
+    return nodes.filter(n => about(n).includes(q)).slice(0, 8)
   }, [query, nodes])
 
   // Subjects are always named; topics once there is room; notes and pages
@@ -249,6 +300,12 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
               {plural} <span className="text-foreground/40">{view.counts[type]}</span>
             </button>
           ))}
+          {linkCount > 0 && (
+            <button type="button" aria-pressed={showLinks} onClick={() => setShowLinks(v => !v)}
+              className={`inline-flex h-8 items-center gap-2 rounded-full border px-3 text-xs font-medium transition-colors ${showLinks ? 'border-white/14 bg-white/6 text-foreground' : 'border-white/8 text-foreground/40'}`}>
+              Links between notes <span className="text-foreground/40">{linkCount}</span>
+            </button>
+          )}
           {subjects.length > 1 && (
             <select value={subject} onChange={e => setSubject(e.target.value)} aria-label="Show one subject"
               className="h-8 rounded-full border border-white/10 bg-white/4 px-3 text-xs text-foreground outline-none">
@@ -260,6 +317,9 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-foreground/40" />
             <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Find on the map" aria-label="Find on the map"
               className="h-8 w-44 rounded-full border border-white/10 bg-white/4 pl-8 pr-3 text-xs text-foreground outline-none placeholder:text-foreground/35 focus:border-keppel-400/60" />
+            {query.trim() && found.length === 0 && (
+              <p role="status" className="absolute right-0 top-10 z-20 w-64 rounded-xl border border-white/10 bg-card px-3 py-2 text-xs text-foreground/60 shadow-xl">Nothing on the map matches. Hidden types and subjects are not searched.</p>
+            )}
             {found.length > 0 && (
               <ul className="absolute right-0 top-10 z-20 w-64 overflow-hidden rounded-xl border border-white/10 bg-card shadow-xl">
                 {found.map(n => (
@@ -275,6 +335,13 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
             )}
           </div>
         </div>
+
+        {inScope && scope && (
+          <div className="flex items-center justify-between gap-3 border-b border-white/8 px-3 py-2 text-xs text-foreground/65" role="status" data-map-scope>
+            <span>Showing what is within two links of <span className="text-foreground">{byId.get(scope)?.label}</span>.</span>
+            <button type="button" onClick={() => setScope(null)} className="rounded-full border border-white/12 px-3 py-1 text-foreground/80 hover:bg-white/5">Show everything</button>
+          </div>
+        )}
 
         <div
           ref={frame}
@@ -307,7 +374,7 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
           onPointerCancel={() => { drag.current = null }}
         >
           {nodes.length === 0 ? (
-            <p className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm text-foreground/50">Nothing matches these filters. Turn one back on to see the map.</p>
+            <p className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm text-foreground/50">Nothing matches these filters{inScope ? ' around this item' : ''}. Turn one back on{inScope ? ', or show everything,' : ''} to see the map.</p>
           ) : (
             // A group, not an image: it holds the items a keyboard reaches.
             <svg className="absolute inset-0 size-full" role="group" aria-label={`${nodes.length} items and ${edges.length} links`}>
@@ -321,9 +388,10 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
                   const lit = neighbourIds !== null && neighbourIds.has(e.from) && neighbourIds.has(e.to) && (e.from === (hover ?? selected) || e.to === (hover ?? selected))
                   return (
                     <line key={e.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                      stroke={lit ? 'var(--color-keppel-400)' : 'var(--map-line)'}
-                      strokeWidth={(e.kind === 'has_topic' ? 1.4 : 1) / Math.sqrt(t.k)}
+                      stroke={lit || e.kind === 'links_to' ? 'var(--color-keppel-400)' : 'var(--map-line)'}
+                      strokeWidth={(e.kind === 'has_topic' ? 1.4 : e.kind === 'links_to' ? 1.2 : 1) / Math.sqrt(t.k)}
                       strokeDasharray={e.kind === 'filed_under' ? '4 4' : undefined}
+                      data-edge={e.kind}
                       opacity={neighbourIds && !lit ? 0.25 : 1} />
                   )
                 })}
@@ -382,14 +450,14 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
           </div>
 
           <p className="pointer-events-none absolute bottom-3 left-3 hidden max-w-[58%] rounded-lg sm:block bg-background/70 px-2 py-1 text-[11px] leading-relaxed text-foreground/45 backdrop-blur-sm">
-            Drag to move, scroll to zoom. A dashed ring is a topic with no session yet; a dashed line is filed under the subject only.{suggestions.length > 0 && <> A dotted line is a suggestion Nova made, not a link: file the page on Saved to make it one.</>}
+            Drag to move, scroll to zoom. A dashed ring is a topic with no session yet; a dashed line is filed under the subject only; a green line is a [[link]] you wrote in a note.{suggestions.length > 0 && <> A dotted line is a suggestion Nova made, not a link: file the page on Saved to make it one.</>}
             {view.unconnected > 0 && <> {view.unconnected} {view.unconnected === 1 ? 'item is' : 'items are'} not connected to anything.</>}
             {(view.notShown.notes > 0 || view.notShown.resources > 0) && <> Older notes and pages beyond the newest 150 of each are not drawn.</>}
           </p>
         </div>
       </div>
 
-      {picked && <Detail node={picked} neighbours={neighbours} onPick={select} onClose={() => setSelected(null)} />}
+      {picked && <Detail node={picked} neighbours={neighbours} onPick={select} onClose={() => setSelected(null)} onScope={() => setScope(picked.id)} scoped={scope === picked.id} />}
     </div>
   )
 }

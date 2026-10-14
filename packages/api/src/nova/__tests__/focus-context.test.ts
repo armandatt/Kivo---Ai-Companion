@@ -161,3 +161,27 @@ describe("a note and a shown record are never evidence (read from source)", () =
     expect(repo("apps/web/components/nova/session-note.tsx")).toContain("It doesn&apos;t change what Nova has on record for this topic.");
   });
 });
+
+describe("the learner's notes beside a topic", () => {
+  const at = new Date("2026-10-14T10:00:00Z");
+  it("lists notes filed under the topic first, then the subject's, and never another subject's or topic's", () => {
+    const view = buildFocusContext({
+      subject: { id: "os", name: "Operating Systems" }, topicName: "Deadlocks",
+      tasks: [], resources: [], exams: [], lastNote: null,
+      notes: [
+        { id: "a", title: "Subject-wide", subjectId: "os", topicName: null, updatedAt: at },
+        { id: "b", title: "On topic", subjectId: "os", topicName: " deadlocks ", updatedAt: at },
+        { id: "c", title: "Other topic", subjectId: "os", topicName: "Paging", updatedAt: at },
+        { id: "d", title: "Other subject", subjectId: "db", topicName: "Deadlocks", updatedAt: at },
+        { id: "e", title: "Filed nowhere", subjectId: null, topicName: null, updatedAt: at },
+      ],
+    });
+    expect(view.notes!.map(n => [n.title, n.onTopic])).toEqual([["On topic", true], ["Subject-wide", false]]);
+  });
+
+  it("reads notes only through the notes module's own list, which carries no text", () => {
+    const focus = readFileSync(join(__dirname, "..", "product", "focus-context.ts"), "utf8");
+    expect(focus).toContain("listNoteLinks(profile.id, NOTES_READ)");
+    expect(focus).not.toContain("prisma.novaNote");
+  });
+});

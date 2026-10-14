@@ -189,3 +189,72 @@ export const templateById = (id: string): StudyTemplate | null => STUDY_TEMPLATE
 // The key a template's task is created under. The same template applied
 // again produces the same keys, so the task writer returns what exists.
 export const templateTaskKey = (templateId: string, taskKey: string): string => `template:${templateId}:${taskKey}`;
+
+// ─── Note templates ───────────────────────────────────────────────────────────
+// Starting text for a new note, in the same shape as the study templates:
+// pure data, who each was written for, and the same ordering rule. Choosing
+// one fills the editor; nothing is saved until the learner saves. A template
+// states nothing about what the learner knows: its headings are empty.
+//
+// Bodies use what the note reader draws: "# " headings, "- " lists and
+// [[links]] to other notes.
+
+export interface NoteTemplate {
+  id:          string;
+  name:        string;
+  description: string;
+  audiences:   LearningContext[];
+  body:        string;
+}
+
+export const NOTE_TEMPLATES: NoteTemplate[] = [
+  {
+    id: "concept", audiences: ["school", "college", "working", "other"],
+    name: "Concept",
+    description: "One idea in your own words, with an example and what it connects to.",
+    body: "# In my own words\n\n\n# An example\n\n\n# How it connects\n- Builds on [[ ]]\n- Used in [[ ]]\n\n# Still unclear\n- ",
+  },
+  {
+    id: "source", audiences: ["school", "college", "working", "other"],
+    name: "Source notes",
+    description: "Notes on one article, video, chapter or talk, kept apart from what you think of it.",
+    body: "Source: \n\n# What it says\n- \n\n# What I think\n- \n\n# Worth linking to\n- [[ ]]",
+  },
+  {
+    id: "class", audiences: ["school", "college"],
+    name: "Class notes",
+    description: "What was covered in one class or lecture, and what to do about it.",
+    body: "# Covered today\n- \n\n# Key points\n- \n\n# Questions to ask\n- \n\n# To do\n- ",
+  },
+  {
+    id: "chapter", audiences: ["school"],
+    name: "Chapter summary",
+    description: "One chapter in short: the main points, the words to know, and questions to test yourself.",
+    body: "# Main points\n- \n\n# Words to know\n- \n\n# Questions to test myself\n- ",
+  },
+  {
+    id: "doubts", audiences: ["school", "college"],
+    name: "Doubts and mistakes",
+    description: "What went wrong in practice, why, and what to remember next time.",
+    body: "# The question\n\n\n# What I did\n\n\n# What went wrong\n\n\n# Next time\n- ",
+  },
+  {
+    id: "decision", audiences: ["working", "other"],
+    name: "Decision",
+    description: "A choice you made while learning or building, and why, so you can come back to it.",
+    body: "# The decision\n\n\n# Options I looked at\n- \n\n# Why this one\n- \n\n# Revisit when\n- ",
+  },
+  {
+    id: "learning-log", audiences: ["working", "other", "college"],
+    name: "Learning log",
+    description: "A short entry after working on a skill or project: what you did and what comes next.",
+    body: "# What I worked on\n- \n\n# What I learned\n- \n\n# Stuck on\n- \n\n# Next step\n- ",
+  },
+];
+
+// The note templates in the order to offer them: the ones written for what
+// the learner said they are learning for first. Nobody loses one.
+export function noteTemplatesFor(contexts: readonly LearningContext[]): NoteTemplate[] {
+  const fits = (t: NoteTemplate) => t.audiences.some(a => contexts.includes(a));
+  return [...NOTE_TEMPLATES.filter(fits), ...NOTE_TEMPLATES.filter(t => !fits(t))];
+}

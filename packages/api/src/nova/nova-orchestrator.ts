@@ -33,9 +33,9 @@ import { selectActiveExam, buildExamContext } from "./engines/exam-engine";
 import { runPatternDetector } from "./engines/pattern-detector";
 import { buildSessionContext, computeSessionAction } from "./engines/study-session-engine";
 import { runDecisionGraph } from "./decision/decision-graph";
-import { buildDynamicLayer, buildExplainPrompt, buildFocusedLayer, buildMicroPrompt } from "./context/context-builder";
+import { buildDynamicLayer, buildExplainPrompt, buildFocusedLayer, buildMicroPrompt, NOTHING_RECOMMENDED } from "./context/context-builder";
 import { runResponseBrain, UNREADABLE_RESPONSE_REPLY } from "./brains/response-brain";
-import { groundDurations } from "./brains/grounded-reply";
+import { groundDurations, groundTopics } from "./brains/grounded-reply";
 import { chooseRegister, registerLine } from "./decision/register";
 import { loadAccountabilityStyle } from "./adapters/operating-style-adapter";
 import type { ResponseBrainOutput } from "./types/response.types";
@@ -193,8 +193,11 @@ export async function runNovaOrchestrator(
 
   // Determine if we should run pattern detection this turn
   const shouldRunPatterns = true; // TODO: track per-user count and gate on interval
+  // The learner's topic names, for checking what the reply recommends (15).
+  let topicNames: string[] = [];
   if (shouldRunPatterns && snapshot.profileId) {
     const allTopics = await getAllTopicMasteries(snapshot.profileId);
+    topicNames = allTopics.map(t => t.topicName);
     patternAnalysis = runPatternDetector({
       studySessions:        snapshot.studySessions,
       // Prior turns from the conversation log, plus this turn.
@@ -385,10 +388,25 @@ export async function runNovaOrchestrator(
       }
       // A length of time the reply states that Nova did not give it was made
       // up by the model: that sentence is taken out (brains/grounded-reply.ts).
-      const grounded = groundDurations(brainOutput.reply, `${dynamicLayer}\n${prompt}\n${text}`);
+      const told = `${dynamicLayer}\n${prompt}\n${text}`;
+      const grounded = groundDurations(brainOutput.reply, told);
       if (grounded.removed.length > 0) {
         console.log(JSON.stringify({ layer: "nova:response", event: "ungrounded_duration_removed", removed: grounded.removed.length }));
         brainOutput = { ...brainOutput, reply: grounded.reply };
+      }
+      // So is a topic it recommends that Nova did not give it (rule 13): a
+      // name must be in the context or the learner's message. When the context
+      // says nothing is recommended, only the learner's own message grounds
+      // one, and the check does not rest on the model declaring it: any of
+      // their topics a sentence names is held to that, since nothing chose
+      // one of them now.
+      const nothingRecommended = dynamicLayer.includes(NOTHING_RECOMMENDED);
+      const topics = nothingRecommended
+        ? groundTopics(brainOutput.reply, [...(brainOutput.recommends ?? []), ...topicNames], text)
+        : groundTopics(brainOutput.reply, brainOutput.recommends, told);
+      if (topics.removed.length > 0) {
+        console.log(JSON.stringify({ layer: "nova:response", event: "ungrounded_topic_removed", removed: topics.removed.length }));
+        brainOutput = { ...brainOutput, reply: topics.reply };
       }
     } catch (err) {
       if (!input.responseFallback) throw err;
