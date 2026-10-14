@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { ArrowRight, Bookmark, CalendarDays, NotebookPen, Sparkles, Timer, Waypoints } from 'lucide-react'
 import type { NovaTodayReady } from '@repo/api/nova/product/today.types'
 import type { NovaTaskItem } from '@repo/api/nova/product/tasks.types'
+import { EXAMS_HREF } from '@repo/api/nova/product/exams.types'
 import type { NoteSummary } from '@repo/api/nova/product/notes.types'
 import type { NovaCreatureView } from '@repo/api/nova/product/creature.types'
 import { daysAgo, inDays, minutesLabel, relativeDay } from './format'
@@ -48,6 +49,11 @@ export function Deadlines({ exams, tasks }: { exams: NovaTodayReady['upcoming'];
             </li>
           ))}
         </ul>
+      )}
+      {exams.length > 0 && (
+        <Link href={EXAMS_HREF} className="mt-4 inline-block text-xs text-foreground/50 underline decoration-white/20 underline-offset-4 hover:text-foreground">
+          Move or remove an exam date
+        </Link>
       )}
     </Panel>
   )
