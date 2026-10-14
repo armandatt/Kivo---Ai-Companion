@@ -115,7 +115,7 @@ after(async () => {
 test("a learner whose study profile has no timezone is no longer skipped: the account's is adopted, and the check-in arrives at the time they chose", async () => {
   const l = await learner();
   assert.equal(await studyTz(l.profileId), null, "as found in production");
-  assert.deepEqual(await loadAccountPreferences(l.chat), { checkinMinute: 660, checkinTime: "11:00", timezone: ZONE });
+  assert.deepEqual(await loadAccountPreferences(l.chat), { checkinMinute: 660, checkinTime: "11:00", timezone: ZONE, learningContexts: [] });
 
   // Ten minutes early: nothing is sent, but Nova now knows what time it is for them.
   await tick(ist("10:50"));

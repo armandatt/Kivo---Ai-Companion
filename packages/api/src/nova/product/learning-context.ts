@@ -80,6 +80,14 @@ const ACADEMIC_QUESTIONS: SetupVocabulary["questions"] = {
   study_time:    "When do you usually study: morning, afternoon, evening or night?",
 };
 
+// For a learner who has not said what they are learning for, or who is both
+// studying and working: nothing here assumes a term, a course or a school.
+const GENERAL_QUESTIONS: SetupVocabulary["questions"] = {
+  ...ACADEMIC_QUESTIONS,
+  subjects: "What are you learning? Name your subjects, or a skill or project.",
+  topics:   subject => `What does ${subject} cover? List the topics or parts, in any order.`,
+};
+
 const VOCABULARY: Record<VocabularyKind, SetupVocabulary> = {
   general: {
     kind: "general",
@@ -96,7 +104,7 @@ const VOCABULARY: Record<VocabularyKind, SetupVocabulary> = {
     dailyQuestion:    "How long do you usually have on a normal day?",
     timeQuestion:     "When do you usually study?",
     dateTitleSuffix:  "exam",
-    questions:        ACADEMIC_QUESTIONS,
+    questions:        GENERAL_QUESTIONS,
   },
   school: {
     kind: "school",

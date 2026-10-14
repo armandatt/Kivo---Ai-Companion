@@ -56,6 +56,11 @@ export interface PlanOptions {
   // sessions run 15 minutes is not handed 30-minute blocks they do not do.
   // It only shortens, and only when they have not said how long they have.
   usualSessionMinutes?: number | null;
+  // How far off the active date is in the learner's own calendar days (0 is
+  // today). Given, the shortfall counts study days from it, so the time it
+  // says is left agrees with the "in N days" the pages show. Unset: the
+  // exam engine's elapsed-time count.
+  examCalendarDays?: number | null;
 }
 
 // The longest a block may be for this learner, or null for no limit of
@@ -96,6 +101,8 @@ export function examShortfall(input: {
   examTopics:   TopicMasteryState[];
   budget:       { minutes: number; basis: PlanBudgetBasis };
   dailyMinutes: number;
+  // The exam's distance in the learner's calendar days, when known.
+  calendarDays?: number | null;
 }): PlanShortfall | null {
   const { examContext, examTopics, budget } = input;
   if (!examContext || examContext.daysUntil >= EXAM_WINDOW_DAYS) return null;
@@ -104,8 +111,11 @@ export function examShortfall(input: {
   const remaining = examTopics.filter(t => t.reviewCount === 0 || t.masteryProbability < SOLID_FROM);
   if (remaining.length === 0) return null;
 
-  // Today, and each day after it before the day of the exam.
-  const studyDays        = Math.max(1, examContext.daysUntil);
+  // Today, and each day after it before the day of the exam. Counted on the
+  // learner's calendar when it is known: elapsed time rounded up would count
+  // the day of the exam itself as a day to study for it.
+  const calendarDays     = typeof input.calendarDays === "number" && Number.isFinite(input.calendarDays) ? Math.max(0, Math.floor(input.calendarDays)) : null;
+  const studyDays        = Math.max(1, calendarDays ?? examContext.daysUntil);
   const dailyMinutes     = Math.max(0, Math.round(input.dailyMinutes));
   const minutesAvailable = Math.round(budget.minutes) + dailyMinutes * (studyDays - 1);
   const minutesNeeded    = remaining.length * EXAM_TOPIC_MINUTES;
@@ -114,7 +124,7 @@ export function examShortfall(input: {
   return {
     examId:           examContext.examId,
     examTitle:        examContext.examTitle,
-    daysUntil:        examContext.daysUntil,
+    daysUntil:        calendarDays ?? examContext.daysUntil,
     studyDays,
     dailyMinutes,
     topicsRemaining:  remaining.length,
@@ -167,14 +177,18 @@ function newMaterialBlock(topic: TopicMasteryState, minutes: number): StudyBlock
   };
 }
 
-function examPrepBlock(topic: TopicMasteryState, minutes: number, daysUntil: number): StudyBlock {
+// The rationale names the date and nothing else: how far off it is is said
+// once, in the learner's calendar days, by whoever shows the block (the
+// engine counts elapsed time, and two numbers for one date read as a
+// mistake), and nothing on record says how much a topic weighs in an exam.
+function examPrepBlock(topic: TopicMasteryState, minutes: number, daysUntil: number, examTitle: string): StudyBlock {
   return {
     topicId:         topic.topicId,
     topicName:       topic.topicName,
     subjectName:     topic.subjectName,
     durationMinutes: minutes,
     activityType:    "exam_prep",
-    rationale:       `${daysUntil}d until exam — low mastery, high weight topic.`,
+    rationale:       `${examTitle} covers this topic, and it is close.`,
     urgency:         daysUntil < 3 ? "critical" : daysUntil < 7 ? "high" : "normal",
   };
 }
@@ -205,7 +219,7 @@ export function generateStudyPlan(
   // Exam prep is for the topics the exam is about: its own subject's. A
   // topic from another subject is never called exam prep for this exam.
   const examTopics = examContext ? topics.filter(t => examCoversSubject(examContext, t.subjectName)) : [];
-  const shortfall  = examShortfall({ examContext, examTopics, budget, dailyMinutes: preferredHoursPerDay * 60 });
+  const shortfall  = examShortfall({ examContext, examTopics, budget, dailyMinutes: preferredHoursPerDay * 60, calendarDays: options.examCalendarDays });
 
   // ── Exam crisis: all blocks are exam prep ────────────────────────────────
   // With no topic on record for the exam's subject there is nothing to
@@ -216,7 +230,7 @@ export function generateStudyPlan(
       if (usedMinutes >= budgetMinutes) break;
       const remaining = budgetMinutes - usedMinutes;
       const mins      = Math.min(size(45), remaining);
-      blocks.push(examPrepBlock(topic, mins, examContext.daysUntil));
+      blocks.push(examPrepBlock(topic, mins, examContext.daysUntil, examContext.examTitle));
       usedMinutes += mins;
     }
     assumptions.push("Assumes full focus mode for exam prep.");
@@ -257,7 +271,7 @@ export function generateStudyPlan(
       if (overdue.some(o => o.topicId === topic.topicId)) continue; // already added
       const mins = Math.min(size(30), budgetMinutes - usedMinutes);
       if (mins < MIN_BLOCK_MINUTES) break;
-      blocks.push(examPrepBlock(topic, mins, examContext.daysUntil));
+      blocks.push(examPrepBlock(topic, mins, examContext.daysUntil, examContext.examTitle));
       usedMinutes += mins;
     }
   }

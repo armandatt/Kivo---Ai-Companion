@@ -94,7 +94,7 @@ describe("setup from a sentence", () => {
   });
   it("is asked for one thing at a time, with the page offered as the other way in", () => {
     const empty = setupAsk(null, SETUP_INTRO);
-    expect(empty.text).toBe("I'm Nova. Before I can plan anything I need to know what you're studying. Which subjects are you taking this term?");
+    expect(empty.text).toBe("I'm Nova. Before I can plan anything I need to know what you're studying. What are you learning? Name your subjects, or a skill or project.");
     expect(empty.link).toEqual({ label: "Set it up on the web", path: "/home" });
     expect(empty.text).not.toMatch(/year|goal|\/\w+/i);
   });

@@ -14,7 +14,7 @@ import { getAllTopicMasteries } from "../engines/knowledge-engine";
 import { selectActiveExam } from "../engines/exam-engine";
 import { preparesTopics, takesOverTheDay } from "./deadline-types";
 import { generateStudyPlan, MIN_BLOCK_MINUTES } from "../engines/planning-engine";
-import { dayKey, resolveTimezone } from "../engines/learner-calendar";
+import { calendarDaysUntil, dayKey, resolveTimezone } from "../engines/learner-calendar";
 import { DNA_LEVEL_RANK, type DnaSignal } from "../engines/learning-dna-engine";
 import { loadLearningDna } from "../persistence/learning-dna-store";
 import { normalizeStoredReality } from "../types/reality.types";
@@ -201,7 +201,10 @@ export async function loadPlanningInputs(
     ?? statedMinutesFor(profile, now);
   const plan = generateStudyPlan(
     academicState, topics, snapshot.preferredStudyHoursPerDay, examContext,
-    { availableMinutes, now, usualSessionMinutes: usualSessionMinutes(dna?.signals ?? []) },
+    {
+      availableMinutes, now, usualSessionMinutes: usualSessionMinutes(dna?.signals ?? []),
+      examCalendarDays: examContext ? calendarDaysUntil(examContext.scheduledAt, now, profile.timezone) : null,
+    },
   );
 
   // The learner has not said what a normal day allows and gave no time

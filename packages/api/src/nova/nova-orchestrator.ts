@@ -43,6 +43,7 @@ import { loadActiveRealityFacts } from "./adapters/reality-adapter";
 import { loadOperatingStyle } from "./adapters/operating-style-adapter";
 import { loadLearningContexts } from "./adapters/account-preferences-adapter";
 import { preparesTopics, takesOverTheDay } from "./product/deadline-types";
+import { calendarDaysUntil } from "./engines/learner-calendar";
 import { loadConversationHistory, loadSignalHistory, annotationTags } from "./adapters/conversation-adapter";
 import { loadPriorPatterns } from "./consolidation/stores/behavioral-pattern-store";
 import { persistTurn, persistTurnAsync } from "./persistence/nova-persistence";
@@ -238,6 +239,15 @@ export async function runNovaOrchestrator(
     now,
   );
 
+  // The same dates in the learner's calendar days, which is how every page
+  // counts them: the reply must not give a different number from Today.
+  const zone = snapshot.timezone ?? null;
+  const examCalendarDays = examContext ? calendarDaysUntil(examContext.scheduledAt, now, zone) : null;
+  const nextDayTaker = snapshot.upcomingExams.filter(takesOverTheDay)
+    .filter(e => e.scheduledAt.getTime() >= now.getTime())
+    .sort((x, y) => x.scheduledAt.getTime() - y.scheduledAt.getTime())[0];
+  const nextExamCalendarDays = nextDayTaker ? calendarDaysUntil(nextDayTaker.scheduledAt, now, zone) : null;
+
   // ── 10. Planning Engine (when plan explicitly requested) ──────────────────
   let studyPlan = null;
   if (understanding.intent === "plan_request" && snapshot.profileId) {
@@ -247,6 +257,7 @@ export async function runNovaOrchestrator(
       allTopics,
       snapshot.preferredStudyHoursPerDay,
       examContext,
+      { now, examCalendarDays },
     );
   }
 
@@ -294,6 +305,8 @@ export async function runNovaOrchestrator(
     },
     topicMastery,
     examContext,
+    examCalendarDays,
+    nextExamCalendarDays,
     studyPlan,
     activeSession:      snapshot.activeSession,
     sessionContext,

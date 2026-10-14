@@ -10,6 +10,10 @@ import type { DecisionGraphOutput } from "../types/response.types";
 import { OPERATING_STYLE_HEADER } from "../../personality/signal-scoring";
 import type { ContextNeed } from "../interaction/semantics";
 import { learningContextLine, normalizeLearningContexts } from "../product/learning-context";
+import { DEADLINE_RULES, deadlineType } from "../product/deadline-types";
+
+// "today", "tomorrow", "in N days": a count of calendar days, as the pages say it.
+const whenIn = (days: number): string => (days <= 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`);
 
 // ── Token budget constants ────────────────────────────────────────────────────
 // Rough character-per-token estimate for English: ~4 chars/token.
@@ -77,7 +81,11 @@ function buildStateSection(ctx: NovaContext): string {
   ];
 
   if (s.daysUntilNextExam !== null) {
-    lines.push(`Exam in: ${s.daysUntilNextExam} days`);
+    // The learner's calendar days when the turn has them: the number the
+    // pages show. The engine's own count is elapsed time.
+    lines.push(typeof ctx.nextExamCalendarDays === "number"
+      ? `Next exam: ${whenIn(ctx.nextExamCalendarDays)}`
+      : `Exam in: ${s.daysUntilNextExam} days`);
   }
 
   const activeDirectives = Object.entries(d)
@@ -138,9 +146,13 @@ function buildKnowledgeSection(ctx: NovaContext): string {
 
   if (ctx.examContext) {
     const e = ctx.examContext;
+    // Named for what it is (an interview is not an exam), and counted in the
+    // learner's calendar days when the turn has them.
+    const kind = DEADLINE_RULES[deadlineType(e.examType)].label;
+    const when = typeof ctx.examCalendarDays === "number" ? whenIn(ctx.examCalendarDays) : `in ${e.daysUntil} days`;
     parts.push([
-      `## Exam: ${e.examTitle} (${e.subjectName})`,
-      `In ${e.daysUntil} days | Mode: ${e.mode} | Focus: ${e.primaryFocus}`,
+      `## ${kind}: ${e.examTitle} (${e.subjectName})`,
+      `When: ${when} | Mode: ${e.mode} | Focus: ${e.primaryFocus}`,
       `Critical topics: ${e.riskMatrix.critical.join(", ") || "none"}`,
     ].join("\n"));
   }

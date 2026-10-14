@@ -39,6 +39,9 @@ export interface StudySnapshotResult {
   // figure below, and dailyMinutesStated is null.
   preferredStudyHoursPerDay: number;
   dailyMinutesStated:       number | null;
+  // The learner's own timezone, when one is on record. It only decides which
+  // calendar day "in N days" is counted from.
+  timezone?:                string | null;
   daysSinceJoined:          number;
 
   // Active session (in_progress, if any)
@@ -127,7 +130,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
     where: learnerKey(platformChatId),
     select: { id: true, createdAt: true, novaAcademicProfile: {
       select: {
-        id: true, yearOfStudy: true, major: true, institution: true,
+        id: true, timezone: true, yearOfStudy: true, major: true, institution: true,
         semesterStartDate: true, semesterEndDate: true,
         preferredStudyHoursPerDay: true,
         dailyStudyMinutes:         true,
@@ -253,6 +256,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
     semesterEndDate:          p.semesterEndDate,
     preferredStudyHoursPerDay: stated !== null ? stated / 60 : ASSUMED_DAILY_HOURS,
     dailyMinutesStated:        stated,
+    timezone:                  p.timezone,
     daysSinceJoined,
     activeSession,
     subjects:   p.subjects,

@@ -247,7 +247,7 @@ test("a learner still setting up is asked for what is missing in their language"
 
   await tg.say("bhai kya padhu aaj", reading({ action: "what_now", asks: "about_me", language: "hinglish" }, { intent: "plan_request" }));
   assert.ok(lastTo(l.chat).text.startsWith(HI));
-  assert.match(lastTo(l.chat).text, /Which subjects are you taking this term\?/);
+  assert.match(lastTo(l.chat).text, /What are you learning\? Name your subjects, or a skill or project\./);
   assert.equal(asked.length, 1);
   assert.equal(await loadReplyLanguage(l.messengerId), "hinglish");
 });

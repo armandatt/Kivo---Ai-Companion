@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Check, Loader2 } from 'lucide-react'
 import { REFLECTION_FIELD_MAX, type ReflectionResponse } from '@repo/api/nova/product/focus-context.types'
 
@@ -24,6 +24,8 @@ export function SessionNote({ sessionId }: { sessionId: string }) {
   const [answers, setAnswers] = useState<Answers>({ did: '', blocked: '', next: '' })
   const [state, setState]     = useState<'idle' | 'saving' | 'saved'>('idle')
   const [error, setError]     = useState<string | null>(null)
+  const savedRef = useRef<HTMLParagraphElement>(null)
+  useEffect(() => { if (state === 'saved') savedRef.current?.focus() }, [state])
 
   const empty = QUESTIONS.every(q => !answers[q.key].trim())
 
@@ -47,7 +49,9 @@ export function SessionNote({ sessionId }: { sessionId: string }) {
 
   if (state === 'saved') {
     return (
-      <p role="status" className="mx-auto mt-8 flex max-w-sm items-center justify-center gap-2 text-sm text-foreground/75" data-note-saved>
+      // The form it replaces held the keyboard: the confirmation takes it,
+      // so the next Tab goes on from here and not from the top of the page.
+      <p role="status" tabIndex={-1} ref={savedRef} className="mx-auto mt-8 flex max-w-sm items-center justify-center gap-2 text-sm text-foreground/75 outline-none" data-note-saved>
         <Check className="size-4 text-keppel-300" /> Note saved. You&apos;ll see it next time you study this.
       </p>
     )

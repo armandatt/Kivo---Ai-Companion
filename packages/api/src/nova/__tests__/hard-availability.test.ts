@@ -107,6 +107,34 @@ describe("a normal day", () => {
     })).toBeNull();
   });
 
+  it("counts study days on the learner's calendar when it is known, never the day of the exam itself", () => {
+    // An exam the day after tomorrow, read early in the day: elapsed time
+    // rounds up to 3 days, but the learner has today and tomorrow.
+    const context = { examId: "e1", examTitle: "Physics exam", subjectName: "Physics", daysUntil: 3, scheduledAt: daysFromNow(3), mode: "normal" as const, topicWeights: {}, riskMatrix: { critical: [], risky: [], safe: [] }, primaryFocus: "" };
+    const base = { examContext: context, examTopics: chapters(8), budget: { minutes: 30, basis: "preferred" as const }, dailyMinutes: 30 };
+    expect(examShortfall(base)).toMatchObject({ studyDays: 3, minutesAvailable: 90, topicsThatFit: 3 });
+    expect(examShortfall({ ...base, calendarDays: 2 })).toMatchObject({ daysUntil: 2, studyDays: 2, minutesAvailable: 60, topicsThatFit: 2 });
+    // Tomorrow, and today: there is only today.
+    expect(examShortfall({ ...base, calendarDays: 1 })).toMatchObject({ studyDays: 1, minutesAvailable: 30, topicsThatFit: 1 });
+    expect(examShortfall({ ...base, calendarDays: 0 })).toMatchObject({ studyDays: 1, minutesAvailable: 30 });
+    // What the pages say is left always matches the days they name.
+    const s = examShortfall({ ...base, calendarDays: 2 })!;
+    expect(s.minutesAvailable).toBe(base.budget.minutes + base.dailyMinutes * (s.daysUntil - 1));
+  });
+
+  it("an exam-prep block's own reason names the date and states no day count or weight of its own", () => {
+    const i = inputs({ topics: chapters(6), examInDays: 2 });
+    const prep = i.plan.today.filter(b => b.activityType === "exam_prep");
+    expect(prep.length).toBeGreaterThan(0);
+    for (const b of prep) {
+      // The count is said once, in calendar days, by the page; nothing on
+      // record says how much a topic weighs.
+      expect([..."0123456789"].some(d => b.rationale.includes(d))).toBe(false);
+      expect(b.rationale.toLowerCase()).not.toContain("weight");
+      expect(b.rationale.toLowerCase()).not.toContain("low mastery");
+    }
+  });
+
   it("does not count topics already at a solid level", () => {
     const i = inputs({ topics: [solid(1), solid(2), solid(3), unstarted(4)], examInDays: 2 });
     // One topic left: 30 min against 120.

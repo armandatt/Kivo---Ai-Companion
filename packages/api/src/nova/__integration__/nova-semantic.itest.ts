@@ -290,7 +290,7 @@ test("a learner with no topics is asked for the one missing thing, and what they
   const tg = telegram(l.id);
 
   await tg.say("what should I study?", model({ intent: "plan_request" }, { asks: "about_me", action: "what_now" }));
-  assert.equal(lastTo(l.id).text, "Nothing to plan from yet. What does Operating Systems cover this term? List the topics or chapters, in any order.");
+  assert.equal(lastTo(l.id).text, "Nothing to plan from yet. What does Operating Systems cover? List the topics or parts, in any order.");
   assert.doesNotMatch(lastTo(l.id).text, /\/\w+/, "no command is taught");
 
   const stated = model({}, { setup: { subject: null, topics: ["Deadlocks", "Paging", "Scheduling"], dailyMinutes: null, studyTime: null } });
@@ -339,7 +339,7 @@ test("with several subjects the learner picks which one the topics are for; \"No
   const databases = l.subjects.find(s => s.name === "Databases")!;
   assert.equal(await prisma.novaTopicMastery.count({ where: { subjectId: databases.id } }), 2, "filed under the subject they picked");
   // One subject still has nothing: that is what is asked next, and only that.
-  assert.match(lastTo(l.id).text, /What does Operating Systems cover this term\?/);
+  assert.match(lastTo(l.id).text, /What does Operating Systems cover\?/);
 });
 
 test("on the web the same statement is offered and saved by a typed yes: one setup, read by both surfaces", async () => {
@@ -397,5 +397,5 @@ test("a chat that has just been linked is told what to do now, not handed a list
 
   const empty = await learner({ topics: false });
   await telegram(empty.id).say("/start");
-  assert.match(lastTo(empty.id).text, /What does Operating Systems cover this term\?/);
+  assert.match(lastTo(empty.id).text, /What does Operating Systems cover\?/);
 });

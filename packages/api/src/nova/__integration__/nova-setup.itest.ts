@@ -131,7 +131,7 @@ test("a preview writes nothing; confirming saves it all and there is a plan at o
   const l = await newLearner();
   assert.equal((await loadNovaToday(l.id, { now: clock })).status, "onboarding_incomplete");
   const empty = await loadSetup(l.id, clock);
-  assert.deepEqual([empty!.complete, empty!.missing, empty!.nextQuestion], [false, ["subjects"], "Which subjects are you taking this term?"]);
+  assert.deepEqual([empty!.complete, empty!.missing, empty!.nextQuestion], [false, ["subjects"], "What are you learning? Name your subjects, or a skill or project."]);
 
   const preview = await previewSetup(l.id, DRAFT(), clock);
   assert.equal(preview.status, "ok");
@@ -218,7 +218,7 @@ test("a partial setup is kept, is not yet enough to plan from, and is completed 
   const setup = await loadSetup(l.id, clock);
   assert.deepEqual(setup!.subjects, [{ name: "Operating Systems", topics: [] }]);
   assert.equal(setup!.dailyMinutes, 60);
-  assert.equal(setup!.nextQuestion, "What does Operating Systems cover this term? List the topics or chapters, in any order.");
+  assert.equal(setup!.nextQuestion, "What does Operating Systems cover? List the topics or parts, in any order.");
 
   const done = await saveSetup(l.id, { subjects: [{ name: "Operating Systems", topics: ["Deadlocks"] }], exams: [], dailyMinutes: 60, studyTime: null }, clock);
   assert.ok(done.status === "saved" && done.setup.complete);
@@ -279,14 +279,14 @@ test("on Telegram a learner with nothing set up is asked for subjects, not year 
   const tg = telegram(l.id);
 
   await tg.say("/start");
-  assert.equal(lastTo(l.id).text, "I'm Nova. Before I can plan anything I need to know what you're studying. Which subjects are you taking this term?");
+  assert.equal(lastTo(l.id).text, "I'm Nova. Before I can plan anything I need to know what you're studying. What are you learning? Name your subjects, or a skill or project.");
   assert.deepEqual(labels(l.id), ["Set it up on the web"]);
   assert.doesNotMatch(lastTo(l.id).text, /year|goal|college|\/\w+/i);
 
   // Something that is not setup is not acted on: there is nothing to act with.
   const off = await tg.say("start deadlocks for 25 minutes", model({ topic: "deadlocks", topicConfidence: 0.9 }, { action: "start_session", availableMinutes: 25 }));
   assert.equal(off.decision, "setup:start_session");
-  assert.match(lastTo(l.id).text, /Which subjects are you taking this term\?$/);
+  assert.match(lastTo(l.id).text, /What are you learning\? Name your subjects, or a skill or project\.$/);
   assert.equal(await prisma.novaStudySession.count({ where: { profile: { userId: l.userId } } }), 0);
 
   await tg.say("this sem I have OS and DBMS", said({ subjects: ["OS", "DBMS"] }));
@@ -296,14 +296,14 @@ test("on Telegram a learner with nothing set up is asked for subjects, not year 
   await tg.callback(add);
   await tg.callback(add);
   assert.deepEqual((await rowsOf(l)).subjects, [["OS", []], ["DBMS", []]]);
-  assert.equal(lastTo(l.id).text, "Added subjects: OS, DBMS.\n\nWhat does OS cover this term? List the topics or chapters, in any order.");
+  assert.equal(lastTo(l.id).text, "Added subjects: OS, DBMS.\n\nWhat does OS cover? List the topics or parts, in any order.");
   assert.equal((await rowsOf(l)).profile!.onboardingComplete, false);
 
   await tg.say("for OS we have deadlocks, paging and scheduling", said({ subject: "OS", topics: ["Deadlocks", "Paging", "Scheduling"] }));
   assert.equal(lastTo(l.id).text, "Add to OS: Deadlocks, Paging, Scheduling?");
   await tg.tap("Add them");
   assert.match(lastTo(l.id).text, /^Added to OS: Deadlocks, Paging, Scheduling\./);
-  assert.match(lastTo(l.id).text, /What does DBMS cover this term\?/, "the next missing thing, and only that");
+  assert.match(lastTo(l.id).text, /What does DBMS cover\?/, "the next missing thing, and only that");
   assert.equal((await rowsOf(l)).profile!.onboardingComplete, true);
 
   // Now it is an ordinary learner: the plan is there.
@@ -328,7 +328,7 @@ test("on Telegram a learner with nothing set up is asked for subjects, not year 
 test("the web chat box adds to the same setup before it is finished, on a typed yes", async () => {
   const l = await newLearner();
   const ask = await web(l.id, "hi", model(), false);
-  assert.equal(ask.reply, "I'm Nova. Before I can plan anything I need to know what you're studying. Which subjects are you taking this term?");
+  assert.equal(ask.reply, "I'm Nova. Before I can plan anything I need to know what you're studying. What are you learning? Name your subjects, or a skill or project.");
 
   const offer = await web(l.id, "OS this term: deadlocks and paging", said({ subject: "OS", topics: ["Deadlocks", "Paging"] }), false);
   assert.equal(offer.reply, "Add OS as a subject, with: Deadlocks, Paging?\n(Add them / No)");

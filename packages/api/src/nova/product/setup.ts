@@ -24,7 +24,7 @@ import { STUDY_TIMES, type SetupStatement, type StudyTime } from "../types/under
 import { addExam, EXAM_HORIZON_DAYS } from "./exams";
 import { seedGoalFromSignup } from "./goals";
 import { learnerKey } from "./learner-key";
-import { loadLearningContexts } from "../adapters/account-preferences-adapter";
+import { ensureLearnerTimezone, loadLearningContexts } from "../adapters/account-preferences-adapter";
 import { setupVocabulary, type LearningContext } from "./learning-context";
 import { templatesFor } from "./templates";
 import { DEADLINE_RULES, parseDeadlineType } from "./deadline-types";
@@ -297,6 +297,13 @@ export async function saveSetup(platformChatId: string, raw: unknown, now = new 
     if ((err as { code?: string } | null)?.code !== "P2002") throw err;
     await write();
   }
+
+  // A study profile made by this save has no timezone yet: the learner's
+  // device reported one before there was a profile to keep it on. The zone on
+  // their account is adopted now, so the dates below and their first plan are
+  // counted on their own calendar and not in UTC.
+  const saved = (await loadLearner(platformChatId))?.novaAcademicProfile;
+  if (saved && !saved.timezone) await ensureLearnerTimezone({ id: saved.id, timezone: saved.timezone }, platformChatId);
 
   const learningContexts = await loadLearningContexts(platformChatId);
   const dateSuffix = setupVocabulary(learningContexts).dateTitleSuffix;

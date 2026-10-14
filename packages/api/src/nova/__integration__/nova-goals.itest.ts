@@ -361,3 +361,30 @@ test("a learner with no goal and no name is described to the model by neither", 
   assert.doesNotMatch(layer, /Name:|Working toward|Year:|Major:|Institution:/);
   assert.match(layer, /## Student\nJoined: /);
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// The learner's own calendar, from the first plan
+// ══════════════════════════════════════════════════════════════════════════════
+
+test("a study profile made by setup takes the account's timezone, so its first dates are counted on the learner's calendar", async () => {
+  const me = await signUp(null);
+  // A zone whose calendar day is not UTC's at this moment, when there is one
+  // (eleven hours either side; for two hours around noon UTC there is none).
+  const utcDay = clock.toISOString().slice(0, 10);
+  const zone = ["Etc/GMT-11", "Etc/GMT+11"].find(z => new Intl.DateTimeFormat("en-CA", { timeZone: z }).format(clock) !== utcDay) ?? "Etc/GMT+11";
+  await prisma.userProfile.update({ where: { userId: me.userId }, data: { timezone: zone } });
+  const localDay = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(d);
+  const examDay = localDay(new Date(clock.getTime() + 2 * 86_400_000));
+  await setUp(me.id, { ...SETUP, exams: [{ subjectName: "Operating Systems", date: examDay, title: null }] });
+
+  const profile = await prisma.messengerUser.findFirstOrThrow({ where: { platformChatId: me.id }, select: { novaAcademicProfile: { select: { timezone: true } } } });
+  assert.equal(profile.novaAcademicProfile?.timezone, zone);
+  const today = await loadNovaToday(me.id, { now: clock });
+  assert.ok(today.status === "ready");
+  assert.equal(today.nextDeadline?.daysUntil, 2, "two days on their calendar, whatever the day is in UTC");
+
+  // A zone the learner already has is never replaced by the account's.
+  await prisma.userProfile.update({ where: { userId: me.userId }, data: { timezone: "Asia/Kolkata" } });
+  await setUp(me.id);
+  assert.equal((await prisma.messengerUser.findFirstOrThrow({ where: { platformChatId: me.id }, select: { novaAcademicProfile: { select: { timezone: true } } } })).novaAcademicProfile?.timezone, zone);
+});

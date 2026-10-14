@@ -24,6 +24,16 @@ export function ExamsEditor() {
   const [busy, setBusy]     = useState<string | null>(null)        // the exam a request is out for
   const [removing, setRemoving] = useState<string | null>(null)    // the exam being confirmed for removal
   const [note, setNote]     = useState<{ id: string | null; ok: boolean; text: string } | null>(null)
+  // Where the keyboard goes once the control it was on has been replaced or
+  // disabled: an element id inside this section. Without it a Save, a Remove
+  // or a Keep would leave a keyboard user at the top of the page.
+  const [focusNext, setFocusNext] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!focusNext || busy !== null) return
+    document.getElementById(focusNext)?.focus()
+    setFocusNext(null)
+  }, [focusNext, busy])
 
   const take = (exams: NovaExamItem[]) => {
     setStored(exams)
@@ -60,11 +70,15 @@ export function ExamsEditor() {
       if (res.ok && data?.ok) {
         take(data.exams)
         setNote({ id: null, ok: true, text: done })
+        // Still there: back to its name. Gone: to the section's heading.
+        setFocusNext(data.exams.some(e => e.id === exam.id) ? `exam-title-${exam.id}` : 'exams-heading')
       } else {
         setNote({ id: exam.id, ok: false, text: data && !data.ok ? data.message : "That didn't go through. Nothing was changed; try again." })
+        setFocusNext(`exam-title-${exam.id}`)
       }
     } catch {
       setNote({ id: exam.id, ok: false, text: 'Network error. Nothing was changed; check your connection and try again.' })
+      setFocusNext(`exam-title-${exam.id}`)
     } finally {
       setBusy(null)
       setRemoving(null)
@@ -90,7 +104,7 @@ export function ExamsEditor() {
           <CalendarDays className="size-5 text-keppel-300" />
         </div>
         <div className="min-w-0 flex-1">
-          <h2 id="exams-heading" className="text-lg font-semibold tracking-tight text-foreground">Your dates</h2>
+          <h2 id="exams-heading" tabIndex={-1} className="outline-none text-lg font-semibold tracking-tight text-foreground">Your dates</h2>
           <p className="mt-2 max-w-prose text-sm leading-relaxed text-foreground/65">
 Exams, interviews and things due. Move or remove one and your plan, the countdown and Nova&apos;s reminders follow it from the next time they are worked out. What kind it is matters: Nova prepares your topics for an exam, a certification or an interview, and only an exam or a certification can take a whole day. An assignment or a project is a date and nothing more. Removing one removes only the date: nothing you studied changes.
           </p>
@@ -137,10 +151,10 @@ Exams, interviews and things due. Move or remove one and your plan, the countdow
                             className="font-medium text-red-300 hover:text-red-200 disabled:opacity-50" data-remove-exam>
                             {working ? 'Removing…' : 'Remove'}
                           </button>
-                          <button type="button" disabled={busy !== null} onClick={() => setRemoving(null)} className="text-foreground/55 hover:text-foreground">Keep</button>
+                          <button type="button" autoFocus disabled={busy !== null} onClick={() => { setRemoving(null); setFocusNext(`exam-remove-${exam.id}`) }} className="text-foreground/55 hover:text-foreground">Keep</button>
                         </span>
                       ) : (
-                        <button type="button" disabled={busy !== null} onClick={() => { setNote(null); setRemoving(exam.id) }}
+                        <button type="button" id={`exam-remove-${exam.id}`} disabled={busy !== null} onClick={() => { setNote(null); setRemoving(exam.id) }}
                           className="text-sm text-foreground/55 underline decoration-white/20 underline-offset-4 hover:text-foreground disabled:opacity-40">
                           Remove
                         </button>

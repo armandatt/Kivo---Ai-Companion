@@ -120,7 +120,6 @@ export default function PersonalityQuiz({ onComplete }: PersonalityQuizProps) {
   };
 
   const question = questions[currentQuestion];
-  const progress = ((currentQuestion + 1) / questions.length) * 100;
 
   // Auto-focus input on question change
   useEffect(() => {

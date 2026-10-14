@@ -402,7 +402,7 @@ describe("what Nova still needs to know", () => {
   it("an empty plan asks that one thing instead of teaching a command", () => {
     const empty = { ...view(), recommendation: null, alternatives: [], emptyReason: "no_topics" as const };
     const reply = todayReply(empty, null, nextSetupQuestion(facts({ subjects: [{ name: "OS", topicCount: 0 }] })));
-    expect(reply.text).toBe("Nothing to plan from yet. What does OS cover this term? List the topics or chapters, in any order.");
+    expect(reply.text).toBe("Nothing to plan from yet. What does OS cover? List the topics or parts, in any order.");
     expect(todayReply(empty, null).text).not.toMatch(/\/focus|\/today/);
   });
 });

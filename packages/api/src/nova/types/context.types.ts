@@ -59,6 +59,11 @@ export interface NovaContext {
 
   // Exam (if within 14 days)
   examContext: ExamContext | null;
+  // How far off that date is, and the next date that can take over a day, in
+  // the learner's own calendar days: the count every page shows. Unset: the
+  // engines' elapsed-time counts are worded instead.
+  examCalendarDays?:     number | null;
+  nextExamCalendarDays?: number | null;
 
   // Plan (if loaded)
   studyPlan: StudyPlan | null;

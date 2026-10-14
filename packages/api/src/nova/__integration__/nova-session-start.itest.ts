@@ -19,7 +19,8 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 
 const { prisma }                = await import("@repo/db/client");
-const { runNovaSessionCommand, loadNovaSession } = await import("../product/session.js");
+const { runNovaSessionCommand, loadNovaSession, saveReflection } = await import("../product/session.js");
+const { loadFocusContext }      = await import("../product/focus-context.js");
 const { openStudySession }      = await import("../persistence/nova-persistence.js");
 
 const STAMP  = Date.now();
@@ -132,13 +133,15 @@ test("a whole session through the web commands, against the real tables", async 
 
   const ended = await runNovaSessionCommand(CHAT_A, { action: "end", outcome: "good" }, at(1847));
   assert.ok(ended.ok);
-  assert.deepEqual(ended.ok && ended.ended, { topicName: "Deadlocks", minutes: 30, outcome: "good", topicRecorded: true, counted: true });
+  const { sessionId: endedId, ...endedFacts } = (ended.ok && ended.ended) || { sessionId: null };
+  assert.deepEqual(endedFacts, { topicName: "Deadlocks", minutes: 30, outcome: "good", topicRecorded: true, counted: true });
   assert.equal(ended.ok && ended.session, null);
 
   const row = await prisma.novaStudySession.findFirstOrThrow({
     where: { profileId: profiles[CHAT_A], topicName: "Deadlocks", executionReport: { not: undefined } },
     orderBy: { createdAt: "desc" },
   });
+  assert.equal(endedId, row.id, "the ended session is named, so a note can be attached to it");
   assert.equal(row.status, "completed");
   assert.equal(row.durationMinutes, 30);
   assert.equal(row.totalPausedSeconds, 47);
@@ -164,4 +167,47 @@ test("a whole session through the web commands, against the real tables", async 
   const again = await runNovaSessionCommand(CHAT_A, { action: "end", outcome: null }, at(1900));
   assert.equal(again.ok, false);
   assert.equal(await prisma.companionMessage.count({ where: { userId: users[CHAT_A], role: "user" } }), 1);
+});
+
+// ── The note after a session ──────────────────────────────────────────────────
+
+test("a session note is written once, on the learner's own finished session, and read back beside the topic", async () => {
+  const session = await prisma.novaStudySession.findFirstOrThrow({
+    where: { profileId: profiles[CHAT_A], topicName: "Deadlocks", status: "completed", executionReport: { not: undefined } },
+    orderBy: { createdAt: "desc" },
+  });
+  const note = { did: "Worked the banker's algorithm", blocked: "", next: "Two past questions" };
+  const masteryBefore = await prisma.novaTopicMastery.findMany({ where: { subjectId: session.subjectId! }, orderBy: { id: "asc" } });
+
+  // Another learner cannot attach a note to it, and nothing is written.
+  assert.deepEqual(await saveReflection(CHAT_B, session.id, note), { ok: false, error: "not_found", message: "That session isn't on your record." });
+  // Nor is an empty one kept.
+  assert.equal((await saveReflection(CHAT_A, session.id, { did: " ", blocked: "", next: "" })).ok, false);
+  assert.equal((await prisma.novaStudySession.findUniqueOrThrow({ where: { id: session.id } })).reflectionText, null);
+
+  assert.deepEqual(await saveReflection(CHAT_A, session.id, note), { ok: true, saved: true });
+  // A second save, and two at once, leave the first note as it was.
+  const again = await Promise.all([
+    saveReflection(CHAT_A, session.id, { ...note, did: "Something else" }),
+    saveReflection(CHAT_A, session.id, { ...note, did: "And another" }),
+  ]);
+  assert.deepEqual(again, [{ ok: true, saved: false }, { ok: true, saved: false }]);
+  assert.deepEqual(JSON.parse((await prisma.novaStudySession.findUniqueOrThrow({ where: { id: session.id } })).reflectionText!), note);
+
+  // A session still running takes no note.
+  const running = await runNovaSessionCommand(CHAT_A, START("Paging"));
+  assert.ok(running.ok && running.session);
+  assert.equal((await saveReflection(CHAT_A, running.session.id, note)).ok, false);
+  await closeAll();
+
+  // It is shown back beside the topic, to its owner only.
+  const own = await loadFocusContext(CHAT_A, { subjectName: "Operating Systems", topicName: "deadlocks" });
+  assert.ok(own.status === "ready" && own.lastNote);
+  assert.deepEqual([own.lastNote.did, own.lastNote.blocked, own.lastNote.next], [note.did, "", note.next]);
+  const other = await loadFocusContext(CHAT_B, { subjectName: "Operating Systems", topicName: "Deadlocks" });
+  assert.ok(other.status === "ready");
+  assert.equal(other.lastNote, null);
+
+  // A note is words, not evidence: mastery and the review schedule are untouched.
+  assert.deepEqual(await prisma.novaTopicMastery.findMany({ where: { subjectId: session.subjectId! }, orderBy: { id: "asc" } }), masteryBefore);
 });

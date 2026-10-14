@@ -103,11 +103,14 @@ describe("the words setup uses", () => {
     expect(v.areaPlaceholder).toContain("Placement prep");
   });
 
-  it("a learner who has not said keeps the questions setup always asked", () => {
+  it("a learner who has not said is asked questions that assume no term, course or school", () => {
     const v = setupVocabulary([]);
-    expect(v.questions.subjects).toBe("Which subjects are you taking this term?");
-    expect(v.questions.topics("Operating Systems")).toBe("What does Operating Systems cover this term? List the topics or chapters, in any order.");
+    expect(v.questions.subjects).toBe("What are you learning? Name your subjects, or a skill or project.");
+    expect(v.questions.topics("Operating Systems")).toBe("What does Operating Systems cover? List the topics or parts, in any order.");
     expect(v.questions.exams).toBe("Any exam or deadline dates yet? Tell me the subject and the day.");
+    for (const q of [v.questions.subjects, v.questions.topics("System design")]) {
+      for (const word of ["term", "semester", "course", "school", "class", "syllabus", "chapter"]) expect(q.toLowerCase()).not.toContain(word);
+    }
   });
 
   it("every vocabulary has every word, and none is empty", () => {
@@ -133,7 +136,7 @@ describe("what setup asks for is the same for everyone", () => {
   });
 
   it("only the wording of the question does", () => {
-    expect(nextSetupQuestion(facts())).toEqual({ gap: "subjects", question: "Which subjects are you taking this term?" });
+    expect(nextSetupQuestion(facts())).toEqual({ gap: "subjects", question: "What are you learning? Name your subjects, or a skill or project." });
     expect(nextSetupQuestion(facts({ learningContexts: ["working"] }))).toEqual({ gap: "subjects", question: "What do you want to learn or get done? Name the skill or the project." });
     expect(nextSetupQuestion(facts({ learningContexts: ["school"], subjects: [{ name: "Science", topicCount: 0 }] })))
       .toEqual({ gap: "topics", question: "Which chapters does Science cover? List them in any order." });
@@ -205,6 +208,24 @@ describe("Nova's context", () => {
     cognitiveState: { investigationTopic: null, investigationHypotheses: [], investigationMissingData: [], followUpChecks: null, reasoningHistory: null },
   } as unknown as NovaContext);
 
+  it("names a date by its kind and counts it in the learner's calendar days, the number the pages show", () => {
+    const date = (examType: string) => ({ examId: "e1", examTitle: "Backend engineer interview", subjectName: "System design", examType, daysUntil: 3, scheduledAt: new Date(), mode: "normal", topicWeights: {}, riskMatrix: { critical: [], risky: [], safe: [] }, primaryFocus: "its topics" });
+    const told = buildDynamicLayer({ ...ctx(["working"]), examContext: date("interview"), examCalendarDays: 2 } as unknown as NovaContext);
+    expect(told).toContain("## Interview: Backend engineer interview (System design)");
+    expect(told).toContain("When: in 2 days");
+    // Nothing in what the model is told about that date calls it an exam.
+    const about = told.slice(told.indexOf("## Interview:")).split("\n\n")[0]!;
+    expect(about.toLowerCase()).not.toContain("exam");
+    expect(told).not.toContain("## Exam:");
+    expect(told).not.toContain("Exam in:");
+    // Without the calendar count the engine's own is worded, as before.
+    expect(buildDynamicLayer({ ...ctx(["college"]), examContext: date("final") } as unknown as NovaContext)).toContain("## Exam: Backend engineer interview (System design)\nWhen: in 3 days");
+    // The state line follows the same calendar.
+    const state = { ...ctx(["college"]).academicState, daysUntilNextExam: 3 };
+    expect(buildDynamicLayer({ ...ctx(["college"]), academicState: state, nextExamCalendarDays: 1 } as unknown as NovaContext)).toContain("Next exam: tomorrow");
+    expect(buildDynamicLayer({ ...ctx(["college"]), academicState: state } as unknown as NovaContext)).toContain("Exam in: 3 days");
+  });
+
   it("says what they answered, as their answer, and tells the model not to assume school of a professional", () => {
     expect(learningContextLine(["working"])).toBe(
       "Learning for: work or their career (their own answer). They have not said they are at school or college: do not assume classes, a syllabus, a term or exams.",
@@ -264,5 +285,14 @@ describe("asked once, kept in one place, changed in Settings", () => {
     for (const fixed of ["Paste your syllabus if you have it", "Add an exam date", "Your subjects, and what each covers", "Subject, e.g. Operating Systems"]) {
       expect([fixed, form.includes(fixed)]).toEqual([fixed, false]);
     }
+  });
+});
+
+describe("the model is told a learner is not necessarily a student", () => {
+  const { NOVA_STATIC_LAYER } = jest.requireActual("../brains/prompts/nova-static-layer.prompt") as { NOVA_STATIC_LAYER: string };
+  it("the static layer says 'student' is only a label, and that a date is called what the context calls it", () => {
+    expect(NOVA_STATIC_LAYER).toContain('14. "Student" in these instructions only means the person you are talking to.');
+    expect(NOVA_STATIC_LAYER).toContain("Never call them a student");
+    expect(NOVA_STATIC_LAYER).toContain("is not an exam.");
   });
 });

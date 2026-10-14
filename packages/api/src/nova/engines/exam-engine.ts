@@ -75,7 +75,7 @@ function computePrimaryFocus(
   const lowestSafe = topics
     .filter(t => riskMatrix.safe.includes(t.topicName))
     .sort((a, b) => a.masteryProbability - b.masteryProbability)[0];
-  return lowestSafe?.topicName ?? "exam topics";
+  return lowestSafe?.topicName ?? "its topics";
 }
 
 // ── Main function ─────────────────────────────────────────────────────────────
