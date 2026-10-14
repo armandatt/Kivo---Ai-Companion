@@ -84,14 +84,23 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
         'z-50 flex h-dvh shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width,transform] duration-200',
         collapsed ? 'w-[72px]' : 'w-[248px]',
         overlay ? 'fixed left-0 top-0' : 'fixed left-0 top-0 lg:sticky',
-        mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0',
+        overlay ? (open ? 'translate-x-0' : '-translate-x-full') : (mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'),
       )}>
         <div className={cn('flex h-[76px] items-center border-b border-sidebar-border px-4', collapsed ? 'justify-center' : 'justify-between')}>
           <Link href="/home" onClick={close} className={cn('flex items-center gap-3', collapsed && 'justify-center')} aria-label={`${isNova ? 'Nova' : 'Rex'} home`}>
             <span className={cn('flex size-10 shrink-0 items-center justify-center rounded-xl text-lg font-semibold text-black', isNova ? 'bg-keppel-400' : 'bg-emerald-400')}>{isNova ? 'N' : 'R'}</span>
             {!collapsed && <span><strong className="block text-sm text-sidebar-foreground">{isNova ? 'Nova' : 'Rex'}</strong><span className="block text-xs text-sidebar-foreground/50">{isNova ? 'Learning mentor' : 'AI coach'}</span></span>}
           </Link>
-          {!collapsed && <button type="button" onClick={() => setCollapsed(true)} className="hidden rounded-lg p-2 text-sidebar-foreground/50 hover:bg-sidebar-accent hover:text-sidebar-foreground lg:block" aria-label="Collapse sidebar"><PanelLeftClose className="size-4" /></button>}
+          {!collapsed && (
+            <div className="flex items-center gap-1">
+              {overlay && open && (
+                <button type="button" onClick={() => onOpenChange(false)} className="rounded-lg p-2 text-sidebar-foreground/50 hover:bg-sidebar-accent hover:text-sidebar-foreground" aria-label="Close navigation">
+                  <X className="size-4" />
+                </button>
+              )}
+              <button type="button" onClick={() => setCollapsed(true)} className="hidden rounded-lg p-2 text-sidebar-foreground/50 hover:bg-sidebar-accent hover:text-sidebar-foreground lg:block" aria-label="Collapse sidebar"><PanelLeftClose className="size-4" /></button>
+            </div>
+          )}
         </div>
         {collapsed && <button type="button" onClick={() => setCollapsed(false)} className="mx-auto mt-3 rounded-lg p-2 text-sidebar-foreground/50 hover:bg-sidebar-accent hover:text-sidebar-foreground" aria-label="Expand sidebar"><PanelLeftOpen className="size-4" /></button>}
         <nav className={cn('flex-1 overflow-y-auto py-5', collapsed ? 'px-2' : 'px-3')}>
