@@ -123,3 +123,25 @@ test("another learner's topic, an unknown action and a bad order are refused; no
   assert.equal(await prisma.novaPlanOverride.count({ where: { profileId: { in: [owner.profileId, other.profileId] } } }), 0);
   assert.equal(await prisma.novaStudySession.count({ where: { profileId: other.profileId } }), sessions);
 });
+
+test("concurrent changes to today: two orders at once leave one whole order; skip and add on one topic at once leave one of them", async () => {
+  const l = await learner();
+  const ids = ["Deadlocks", "Paging", "Scheduling"].map(n => l.topic(n));
+  for (let round = 0; round < 5; round++) {
+    const rs = await Promise.all([
+      changeTodayPlan(l.profileId, { action: "order", topicIds: ids }, now),
+      changeTodayPlan(l.profileId, { action: "order", topicIds: [...ids].reverse() }, now),
+    ]);
+    assert.ok(rs.every(r => r.ok), JSON.stringify(rs));
+    const rows = await prisma.novaPlanOverride.findMany({ where: { profileId: l.profileId, kind: "order" }, orderBy: { position: "asc" } });
+    const got = rows.map(r => r.topicId);
+    assert.ok(JSON.stringify(got) === JSON.stringify(ids) || JSON.stringify(got) === JSON.stringify([...ids].reverse()), JSON.stringify(got));
+  }
+  const both = await Promise.all([
+    changeTodayPlan(l.profileId, { action: "skip", topicId: ids[0] }, now),
+    changeTodayPlan(l.profileId, { action: "pin", topicId: ids[0] }, now),
+  ]);
+  assert.ok(both.every(r => r.ok));
+  const kinds = (await prisma.novaPlanOverride.findMany({ where: { profileId: l.profileId, topicId: ids[0], kind: { in: ["skip", "pin"] } } })).map(r => r.kind);
+  assert.equal(kinds.length, 1, `skip and add exclude each other: ${kinds}`);
+});

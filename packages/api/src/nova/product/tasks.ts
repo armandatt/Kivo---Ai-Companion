@@ -326,8 +326,11 @@ export async function reorderTasks(profileId: string, raw: unknown, options: { n
   try {
     await prisma.$transaction(async tx => {
       // Each write is guarded on the task still being the learner's and in
-      // this column: one that is not stops the whole order.
-      for (const [position, id] of (ids as string[]).entries()) {
+      // this column: one that is not stops the whole order. Rows are written
+      // in one fixed order (by id), so two reorders at once wait for each
+      // other instead of deadlocking.
+      const placed = (ids as string[]).map((id, position) => [position, id] as const).sort((a, b) => a[1].localeCompare(b[1]));
+      for (const [position, id] of placed) {
         const r = await tx.novaTask.updateMany({ where: { id, profileId, status }, data: { position } });
         if (r.count !== 1) throw new Changed();
       }

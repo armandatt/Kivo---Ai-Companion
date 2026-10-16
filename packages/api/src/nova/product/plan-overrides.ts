@@ -91,15 +91,16 @@ export async function changeTodayPlan(profileId: string, raw: unknown, now = new
       if (!str(input.topicId)) return refuse("invalid", "Name a topic.");
       if (!await ownActiveTopic(profileId, input.topicId)) return refuse("not_found", "That topic isn't one of yours.");
       const topicId = input.topicId;
-      await prisma.$transaction([
+      await prisma.$transaction(async tx => {
+        await tx.$queryRaw`SELECT id FROM "NovaAcademicProfile" WHERE id = ${profileId} FOR UPDATE`;
         // The opposite change on the same topic is taken back.
-        prisma.novaPlanOverride.deleteMany({ where: { profileId, day, topicId, kind: kind === "skip" ? "pin" : "skip" } }),
-        prisma.novaPlanOverride.upsert({
+        await tx.novaPlanOverride.deleteMany({ where: { profileId, day, topicId, kind: kind === "skip" ? "pin" : "skip" } });
+        await tx.novaPlanOverride.upsert({
           where:  { profileId_day_kind_topicId: { profileId, day, kind, topicId } },
           create: { profileId, day, kind, topicId },
           update: {},
-        }),
-      ]);
+        });
+      });
       return { ok: true, day };
     }
     case "clear": {
@@ -114,10 +115,13 @@ export async function changeTodayPlan(profileId: string, raw: unknown, now = new
       }
       const owned = await prisma.novaTopicMastery.count({ where: { id: { in: ids }, archivedAt: null, subject: { profileId } } });
       if (owned !== ids.length) return refuse("not_found", "Some of those topics aren't yours.");
-      await prisma.$transaction([
-        prisma.novaPlanOverride.deleteMany({ where: { profileId, day, kind: "order" } }),
-        prisma.novaPlanOverride.createMany({ data: ids.map((topicId, position) => ({ profileId, day, kind: "order", topicId, position })) }),
-      ]);
+      await prisma.$transaction(async tx => {
+        // One order change at a time per learner (the lock a session start
+        // takes): two at once would both replace the rows and collide.
+        await tx.$queryRaw`SELECT id FROM "NovaAcademicProfile" WHERE id = ${profileId} FOR UPDATE`;
+        await tx.novaPlanOverride.deleteMany({ where: { profileId, day, kind: "order" } });
+        await tx.novaPlanOverride.createMany({ data: ids.map((topicId, position) => ({ profileId, day, kind: "order", topicId, position })) });
+      });
       return { ok: true, day };
     }
     case "clear_order":

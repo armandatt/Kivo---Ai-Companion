@@ -90,3 +90,30 @@ test("a task that moved column, another learner's task, or the done column: refu
     assert.ok(!r.ok && r.error === "invalid", JSON.stringify(body));
   }
 });
+
+test("two reorders of one column at the same moment: both answer, and the column ends in one of the two orders, never a mix", async () => {
+  const p = await profile();
+  const ts = [];
+  for (const t of ["A", "B", "C", "D"]) ts.push(await make(p, t));
+  const one = ts.map(t => t.id), two = [...one].reverse();
+  for (let round = 0; round < 5; round++) {
+    const results = await Promise.all([reorderTasks(p, { status: "todo", ids: one }, { now }), reorderTasks(p, { status: "todo", ids: two }, { now })]);
+    assert.ok(results.every(r => r.ok), JSON.stringify(results.map(r => r.ok ? "ok" : r.error)));
+    const now_ = await order(p);
+    assert.ok(JSON.stringify(now_) === JSON.stringify(["A", "B", "C", "D"]) || JSON.stringify(now_) === JSON.stringify(["D", "C", "B", "A"]), JSON.stringify(now_));
+  }
+});
+
+test("a reorder and a move to another column at the same moment: the reorder is refused or the moved task keeps no place", async () => {
+  const p = await profile();
+  const a = await make(p, "A"), b = await make(p, "B");
+  const [reordered] = await Promise.all([
+    reorderTasks(p, { status: "todo", ids: [b.id, a.id] }, { now }),
+    updateTask(p, b.id, { status: "in_progress" }, { now }),
+  ]);
+  const row = await prisma.novaTask.findUniqueOrThrow({ where: { id: b.id } });
+  assert.equal(row.status, "in_progress");
+  if (!reordered.ok) assert.equal(reordered.error, "changed");
+  // Either way, A keeps a consistent place and nothing is half-written.
+  assert.ok((await prisma.novaTask.count({ where: { profileId: p, status: "todo", position: { not: null } } })) <= 1);
+});

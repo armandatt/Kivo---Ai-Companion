@@ -126,3 +126,10 @@ test("another learner's topic is not found, and a bad request is refused", async
     assert.ok(!x.ok && x.error === "invalid");
   }
 });
+
+test("archiving one topic twice at the same moment changes it once", async () => {
+  const l = await learner();
+  const t = l.topic("Scheduling");
+  const rs = await Promise.all([archiveTopic(l.profileId, { topicId: t.id, archived: true }, now), archiveTopic(l.profileId, { topicId: t.id, archived: true }, now)]);
+  assert.deepEqual(rs.map(r => r.ok && r.changed).sort(), [false, true]);
+});
