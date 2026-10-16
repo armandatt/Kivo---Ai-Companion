@@ -46,6 +46,7 @@ import { loadLearningContexts } from "./adapters/account-preferences-adapter";
 import { preparesTopics, takesOverTheDay } from "./product/deadline-types";
 import { calendarDaysUntil, dayKey, resolveTimezone } from "./engines/learner-calendar";
 import { countedStudyDays, studyGap } from "./engines/recovery-engine";
+import { loadDayOverrides } from "./product/plan-overrides";
 import { loadConversationHistory, loadSignalHistory, annotationTags } from "./adapters/conversation-adapter";
 import { loadPriorPatterns } from "./consolidation/stores/behavioral-pattern-store";
 import { persistTurn, persistTurnAsync } from "./persistence/nova-persistence";
@@ -264,8 +265,10 @@ export async function runNovaOrchestrator(
       allTopics,
       snapshot.preferredStudyHoursPerDay,
       examContext,
-      // A first day back is planned as Home and the Planner plan it.
-      { now, examCalendarDays, reentry: gap.situation === "returning" },
+      // A first day back, and the learner's own changes to today, are
+      // planned as Home and the Planner plan them.
+      { now, examCalendarDays, reentry: gap.situation === "returning",
+        overrides: await loadDayOverrides(snapshot.profileId, dayKey(now, resolveTimezone(zone))) },
     );
   }
 

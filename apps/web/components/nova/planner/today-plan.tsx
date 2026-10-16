@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { ArrowRight, Check, Loader2 } from 'lucide-react'
+import { ArrowDown, ArrowRight, ArrowUp, Check, EyeOff, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { NovaPlannerReady, PlannerBlock } from '@repo/api/nova/product/planner.types'
 import { ACTIVITY_LABEL, URGENCY_LABEL, minutesLabel, sentenceCase } from '../format'
@@ -12,7 +12,13 @@ type Props = {
   onStart:   (block: PlannerBlock) => void
   starting:  string | null
   error:     string | null
+  // The learner's changes to today (plan-changes.tsx). Absent: read-only.
+  onSkip?:   (block: PlannerBlock) => void
+  onMove?:   (block: PlannerBlock, by: -1 | 1) => void
+  changing?: boolean
 }
+
+const BLOCK_ACTION = 'inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-foreground/55 transition-colors hover:bg-white/5 hover:text-foreground disabled:opacity-35'
 
 const URGENCY_TONE: Record<PlannerBlock['urgency'], string> = {
   critical: 'text-amber-300',
@@ -45,7 +51,7 @@ const focusLink =
 
 // Today's blocks, exactly as the Planning Engine ordered them. A running
 // session takes over the page's one primary action.
-export function TodayPlan({ today, budget, onStart, starting, error }: Props) {
+export function TodayPlan({ today, budget, onStart, starting, error, onSkip, onMove, changing = false }: Props) {
   const { blocks, activeSession: active, activeBlockId, done } = today
   const empty = blocks.length === 0 && today.emptyReason ? EMPTY[today.emptyReason] : null
   // The first planned block is the one to start; the rest wait behind it.
@@ -89,7 +95,7 @@ export function TodayPlan({ today, budget, onStart, starting, error }: Props) {
         </div>
       ) : (
         <ol className="mt-4 space-y-3">
-          {blocks.map(block => {
+          {blocks.map((block, index) => {
             const running = block.id === activeBlockId
             const isNext  = block.id === nextId
             return (
@@ -157,6 +163,13 @@ export function TodayPlan({ today, budget, onStart, starting, error }: Props) {
                     >
                       {starting === block.id ? <><Loader2 className="size-4 animate-spin" /> Starting…</> : <>Start <ArrowRight className="size-4" /></>}
                     </button>
+                  )}
+                  {!active && block.topicId && (onSkip || onMove) && (
+                    <div className="flex flex-wrap gap-1 sm:basis-full sm:justify-end" data-block-actions>
+                      {onMove && <button type="button" className={BLOCK_ACTION} disabled={changing || index === 0} onClick={() => onMove(block, -1)} aria-label={`Move ${block.topicName} up`}><ArrowUp className="size-3.5" /></button>}
+                      {onMove && <button type="button" className={BLOCK_ACTION} disabled={changing || index === blocks.length - 1} onClick={() => onMove(block, 1)} aria-label={`Move ${block.topicName} down`}><ArrowDown className="size-3.5" /></button>}
+                      {onSkip && <button type="button" className={BLOCK_ACTION} disabled={changing} onClick={() => onSkip(block)} data-skip-block aria-label={`Skip ${block.topicName} today`}><EyeOff className="size-3.5" /> Skip today</button>}
+                    </div>
                   )}
                 </div>
               </li>

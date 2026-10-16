@@ -7,6 +7,8 @@ export type TodayUrgency = "critical" | "high" | "normal" | "optional";
 export type TodayActivity = "review" | "practice" | "new_material" | "exam_prep";
 
 export interface TodayAction {
+  // The topic's own id, for changing today's plan (skip it, move it).
+  topicId?:        string;
   topicName:       string;
   subjectName:     string;
   activityType:    TodayActivity;
@@ -86,9 +88,17 @@ export interface TodayConstraint {
   expiresAt:   string | null;
 }
 
+// What the learner changed about today's plan (product/plan-overrides.ts).
+export interface TodayPlanChangesView {
+  skipped: Array<{ topicId: string; topicName: string }>;
+  added:   Array<{ topicId: string; topicName: string }>;
+  ordered: boolean;
+}
+
 export interface NovaTodayReady {
   status:      "ready";
   generatedAt: string;
+  planChanges?: TodayPlanChangesView;
   learnerName: string | null;       // from the signed-in account
   goals:       string[];            // what the student said they are working toward
   subjects:    string[];

@@ -47,6 +47,7 @@ type Setup = {
   availableMinutes?: number | null;      // what they said they have today
   state?:            (s: AcademicState) => AcademicState;
   reentry?:          boolean;            // a first day back after a gap
+  overrides?:        { skip: string[]; pin: string[]; order: Array<{ topicId: string; position: number }> };
 };
 
 function inputs(setup: Setup): PlanningInputs {
@@ -77,7 +78,7 @@ function inputs(setup: Setup): PlanningInputs {
     {}, NOW,
   );
   const availableMinutes = setup.availableMinutes ?? null;
-  const plan = generateStudyPlan(academicState, setup.topics, snapshot.preferredStudyHoursPerDay, examContext, { availableMinutes, now: NOW, reentry: setup.reentry });
+  const plan = generateStudyPlan(academicState, setup.topics, snapshot.preferredStudyHoursPerDay, examContext, { availableMinutes, now: NOW, reentry: setup.reentry, overrides: setup.overrides });
   return {
     snapshot, academicState, topics: setup.topics, examContext, plan, constraints: [], goals: [],
     timezone: "UTC", preferredStudyTime: null, now: NOW, availableMinutes,
@@ -383,6 +384,60 @@ describe("a first day back after a gap", () => {
     for (const daily of [10, 25, 60, 240]) {
       const i = inputs({ topics: chapters(4), examInDays: null, dailyMinutes: daily, reentry: true });
       expect(i.plan.budgetMinutes).toBeLessThanOrEqual(daily);
+    }
+  });
+});
+
+// ── The learner's changes to today (plan-overrides.ts) ────────────────────────
+
+describe("the learner's changes to today's plan", () => {
+  const none = { skip: [] as string[], pin: [] as string[], order: [] as Array<{ topicId: string; position: number }> };
+  const ids = (i: PlanningInputs) => i.plan.today.map(b => b.topicId);
+
+  it("a skipped topic is left out and the day is filled from the next ones", () => {
+    const usual = inputs({ topics: chapters(6), examInDays: null });
+    const first = ids(usual)[0]!;
+    const skipped = inputs({ topics: chapters(6), examInDays: null, overrides: { ...none, skip: [first] } });
+    expect(ids(skipped)).not.toContain(first);
+    expect(skipped.plan.today.length).toBe(usual.plan.today.length);
+    expect(planned(skipped)).toBeLessThanOrEqual(skipped.plan.budgetMinutes);
+  });
+
+  it("skipping an exam topic today does not shrink what is short before the exam", () => {
+    const usual = inputs({ topics: chapters(6), examInDays: 2 });
+    const skipped = inputs({ topics: chapters(6), examInDays: 2, overrides: { ...none, skip: ["t1", "t2"] } });
+    expect(skipped.plan.shortfall).toEqual(usual.plan.shortfall);
+    expect(ids(skipped)).not.toEqual(expect.arrayContaining(["t1"]));
+  });
+
+  it("an added topic comes first, inside the day's time, and is said to be the learner's choice", () => {
+    const i = inputs({ topics: [...chapters(4), solid(9)], examInDays: null, overrides: { ...none, pin: ["t9"] } });
+    expect(i.plan.today[0]).toMatchObject({ topicId: "t9", rationale: "You added this to today's plan." });
+    expect(i.plan.today.filter(b => b.topicId === "t9")).toHaveLength(1);
+    expect(planned(i)).toBeLessThanOrEqual(i.plan.budgetMinutes);
+  });
+
+  it("an added topic that does not fit is not squeezed in: the plan says so", () => {
+    const i = inputs({ topics: chapters(3), examInDays: null, availableMinutes: 5, overrides: { ...none, pin: ["t2"] } });
+    expect(ids(i)).not.toContain("t2");
+    expect(i.plan.assumptions).toContain("You added Chapter 2 to today, but it doesn't fit in the time you have.");
+  });
+
+  it("the learner's order is the order, so their first block is the recommendation; the rest keep the engine's", () => {
+    const usual = inputs({ topics: chapters(6), examInDays: null });
+    const last = ids(usual).at(-1)!;
+    const i = inputs({ topics: chapters(6), examInDays: null, overrides: { ...none, order: [{ topicId: last, position: 0 }] } });
+    expect(ids(i)[0]).toBe(last);
+    expect(ids(i).slice(1)).toEqual(ids(usual).filter(id => id !== last));
+    expect(buildTodayView(i).recommendation?.topicId).toBe(last);
+  });
+
+  it("skip wins over add for the same topic; nothing raises the day", () => {
+    const i = inputs({ topics: chapters(4), examInDays: null, overrides: { skip: ["t1"], pin: ["t1"], order: [] } });
+    expect(ids(i)).not.toContain("t1");
+    for (const pin of [["t1"], ["t1", "t2", "t3", "t4"]]) {
+      const j = inputs({ topics: chapters(4), examInDays: null, dailyMinutes: 30, overrides: { ...none, pin } });
+      expect(planned(j)).toBeLessThanOrEqual(30);
     }
   });
 });

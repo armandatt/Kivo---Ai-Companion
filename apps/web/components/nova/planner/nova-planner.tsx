@@ -8,6 +8,7 @@ import { TimeAvailable } from '../time-available'
 import { useStartSession } from '../use-start-session'
 import { UpcomingPressure } from './pressure'
 import { TodayPlan } from './today-plan'
+import { AddToToday, ChangedToday, usePlanChange } from './plan-changes'
 import { WeekPlan } from './week-plan'
 import { WhyPlan } from './why-plan'
 import { ShortfallNote } from '../shortfall-note'
@@ -17,6 +18,8 @@ type Props = {
   minutes:    number | null
   onMinutes:  (minutes: number | null) => void
   refreshing: boolean
+  // Reads the plan again after the learner changes today.
+  onChanged?: () => void
 }
 
 const TIME_CHOICES = [30, 60, 120]
@@ -26,7 +29,9 @@ const TABS: Array<{ id: Tab; label: string }> = [{ id: 'plan', label: 'Study pla
 
 // Nova's current plan and the reasons for it. The page lays out the server's
 // answer; changing the time available asks the server for a new one.
-export function NovaPlanner({ view, minutes, onMinutes, refreshing }: Props) {
+export function NovaPlanner({ view, minutes, onMinutes, refreshing, onChanged }: Props) {
+  const plan = usePlanChange(onChanged ?? (() => {}))
+  const blockIds = view.today.blocks.flatMap(b => (b.topicId ? [b.topicId] : []))
   const { start, starting, error } = useStartSession()
   const board = useTasks()
   // Which view is open is in the address, so it survives a refresh and a link
@@ -103,7 +108,25 @@ export function NovaPlanner({ view, minutes, onMinutes, refreshing }: Props) {
             onStart={block => void start(block, block.id)}
             starting={starting}
             error={error}
+            changing={plan.busy !== null || refreshing}
+            onSkip={onChanged ? block => void plan.change({ action: 'skip', topicId: block.topicId! }, `skip:${block.topicId}`) : undefined}
+            onMove={onChanged ? (block, by) => {
+              // The whole day's order, with this block moved one place.
+              const ids = [...blockIds]
+              const at = ids.indexOf(block.topicId!)
+              const to = at + by
+              if (at < 0 || to < 0 || to >= ids.length) return
+              ;[ids[at], ids[to]] = [ids[to]!, ids[at]!]
+              void plan.change({ action: 'order', topicIds: ids }, `move:${block.topicId}`)
+            } : undefined}
           />
+          {onChanged && (
+            <div className="space-y-3">
+              {plan.error && <p role="alert" className="text-sm text-amber-200/90">{plan.error}</p>}
+              <ChangedToday changes={view.planChanges} change={plan.change} busy={plan.busy} />
+              <AddToToday change={plan.change} busy={plan.busy} planned={blockIds} />
+            </div>
+          )}
           <WeekPlan week={view.week} />
         </div>
 

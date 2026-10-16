@@ -15,6 +15,8 @@ import { selectActiveExam } from "../engines/exam-engine";
 import { preparesTopics, takesOverTheDay } from "./deadline-types";
 import { generateStudyPlan, MIN_BLOCK_MINUTES } from "../engines/planning-engine";
 import { countedStudyDays, studyGap } from "../engines/recovery-engine";
+import { loadDayOverrides } from "./plan-overrides";
+import type { TodayPlanChanges } from "./plan-overrides.types";
 import { calendarDaysUntil, dayKey, resolveTimezone } from "../engines/learner-calendar";
 import { DNA_LEVEL_RANK, type DnaSignal } from "../engines/learning-dna-engine";
 import { loadLearningDna } from "../persistence/learning-dna-store";
@@ -83,6 +85,8 @@ export interface PlanningInputs {
   // Calendar days since the last day with a counted session (0: today);
   // null with none on record. Unset in older fixtures.
   daysSinceStudy?: number | null;
+  // What the learner changed about today's plan (plan-overrides.ts).
+  planChanges?: TodayPlanChanges;
 }
 
 export type PlanningInputsResult =
@@ -205,14 +209,21 @@ export async function loadPlanningInputs(
     ?? statedMinutesFor(profile, now);
   // Back after a gap: today is planned as a re-entry day (recovery-engine).
   const gap = studyGap(dayKey(now, resolveTimezone(profile.timezone)), countedStudyDays(snapshot.studySessions, profile.timezone));
+  // The learner's own changes to today: applied by the engine, inside the
+  // day's time.
+  const overrides = await loadDayOverrides(snapshot.profileId, dayKey(now, resolveTimezone(profile.timezone)));
   const plan = generateStudyPlan(
     academicState, topics, snapshot.preferredStudyHoursPerDay, examContext,
     {
       availableMinutes, now, usualSessionMinutes: usualSessionMinutes(dna?.signals ?? []),
       examCalendarDays: examContext ? calendarDaysUntil(examContext.scheduledAt, now, profile.timezone) : null,
       reentry: gap.situation === "returning",
+      overrides,
     },
   );
+  const nameOf = (id: string) => topics.find(t => t.topicId === id)?.topicName ?? null;
+  const named = (ids: string[]) => ids.flatMap(id => { const n = nameOf(id); return n ? [{ topicId: id, topicName: n }] : []; });
+  const planChanges: TodayPlanChanges = { skipped: named(overrides.skip), added: named(overrides.pin), ordered: overrides.order.length > 0 };
 
   // The learner has not said what a normal day allows and gave no time
   // today: the day was sized on an assumption, and the plan says so.
@@ -229,6 +240,7 @@ export async function loadPlanningInputs(
       timezone:           profile.timezone,
       preferredStudyTime: profile.preferredStudyTime,
       daysSinceStudy:     gap.daysSinceStudy,
+      planChanges,
     },
   };
 }

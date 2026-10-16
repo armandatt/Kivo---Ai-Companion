@@ -28,6 +28,8 @@ const DAY_MS = 86_400_000;
 // ── Pure builder ──────────────────────────────────────────────────────────────
 
 export interface TodayInputs {
+  // What the learner changed about today's plan (plan-overrides.ts).
+  planChanges?:     NovaTodayReady["planChanges"];
   snapshot:         StudySnapshotResult;
   academicState:    AcademicState;
   topics:           TopicMasteryState[];
@@ -89,6 +91,7 @@ export function toAction(
   const topic = topics.find(t => t.topicId === block.topicId)
     ?? topics.find(t => t.topicName === block.topicName && t.subjectName === block.subjectName);
   return {
+    topicId:         topic?.topicId ?? block.topicId,
     topicName:       block.topicName,
     subjectName:     block.subjectName,
     activityType:    block.activityType,
@@ -134,6 +137,7 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
   return {
     status:           "ready",
     generatedAt:      now.toISOString(),
+    planChanges:      input.planChanges,
     learnerName:      input.learnerName ?? null,
     goals:            input.goals ?? [],
     subjects:         snapshot.subjects.map(s => s.name),
