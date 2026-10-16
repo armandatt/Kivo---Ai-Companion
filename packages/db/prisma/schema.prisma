@@ -737,6 +737,7 @@ model NovaAcademicProfile {
   telegramPrompts   NovaTelegramPrompt[]
   learningEvents    NovaLearningEvent[]
   tasks             NovaTask[]
+  planOverrides     NovaPlanOverride[]
 
   user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -785,8 +786,13 @@ model NovaTopicMastery {
   lastStudiedAt      DateTime?
   nextReviewAt       DateTime?
 
-  subject   NovaSubject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  snapshots NovaTopicMasterySnapshot[]
+  // Set when the learner archives the topic: it leaves their lists and plan,
+  // and keeps its row, mastery and history. Null: active. Cleared on restore.
+  archivedAt DateTime?
+
+  subject       NovaSubject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  snapshots     NovaTopicMasterySnapshot[]
+  planOverrides NovaPlanOverride[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1233,6 +1239,11 @@ model NovaTask {
   dueDay      String?
   // Set when the task enters "done", cleared when it leaves.
   completedAt DateTime?
+  // How long the learner expects it to take, in minutes. Null: not said.
+  estimatedMinutes Int?
+  // The learner's own order on their list (ascending). Null: not placed;
+  // sorted after placed tasks by the board's usual order.
+  position         Int?
   // A key the creator gave this task, unique for the learner. A retried
   // request, a double click or a template applied twice carries the same key
   // and creates nothing.
@@ -1247,4 +1258,27 @@ model NovaTask {
   @@unique([profileId, clientKey])
   @@index([profileId, status])
   @@index([profileId, dueDay])
+}
+
+// The learner's changes to one day's computed plan: leave a topic out of
+// that day ("skip"), keep it in ("pin"), or put it at a place ("order", with
+// position). The Planning Engine still works the day out; these are applied
+// to its result for that calendar day only. Never written by a model.
+model NovaPlanOverride {
+  id        String   @id @default(cuid())
+  profileId String
+  // The learner's calendar day (YYYY-MM-DD) it applies to.
+  day       String
+  kind      String   // "skip" | "pin" | "order"
+  topicId   String
+  position  Int?     // "order" only
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  topic   NovaTopicMastery    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // One override of each kind per topic per day: a repeat is an upsert.
+  @@unique([profileId, day, kind, topicId])
+  @@index([profileId, day])
 }
