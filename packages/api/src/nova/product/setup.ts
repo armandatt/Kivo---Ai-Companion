@@ -120,7 +120,7 @@ async function loadLearner(platformChatId: string) {
           id: true, onboardingComplete: true, timezone: true,
           preferredStudyTime: true, preferredStudyHoursPerDay: true, dailyStudyMinutes: true,
           subjects: {
-            select:  { id: true, name: true, code: true, topics: { select: { name: true }, orderBy: { createdAt: "asc" } } },
+            select:  { id: true, name: true, code: true, topics: { where: { archivedAt: null }, select: { name: true }, orderBy: { createdAt: "asc" } } },
             orderBy: { createdAt: "asc" },
           },
         },
@@ -271,7 +271,7 @@ export async function saveSetup(platformChatId: string, raw: unknown, now = new 
         ?? await tx.novaSubject.create({ data: { profileId: profile.id, name: s.name }, select: { id: true, name: true } });
       if (s.topics.length > 0) { await declareTopics(tx, subject.id, s.topics); hasTopics = true; }
     }
-    const complete = hasTopics || await tx.novaTopicMastery.count({ where: { subject: { profileId: profile.id } } }) > 0;
+    const complete = hasTopics || await tx.novaTopicMastery.count({ where: { subject: { profileId: profile.id }, archivedAt: null } }) > 0;
     const setDaily = routine === "replace" || draft.dailyMinutes !== null;
     const setTime  = routine === "replace" || draft.studyTime !== null;
     await tx.novaAcademicProfile.update({

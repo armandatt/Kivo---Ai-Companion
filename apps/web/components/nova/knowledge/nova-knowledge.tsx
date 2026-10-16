@@ -7,7 +7,7 @@ import type { NovaKnowledgeReady } from '@repo/api/nova/product/knowledge.types'
 import { useStartSession } from '../use-start-session'
 import { DueReviews } from './due-reviews'
 import { searchSubjects } from './knowledge-search'
-import { RecentLearning, SubjectTopics } from './subject-topics'
+import { ArchivedTopics, RecentLearning, SubjectTopics } from './subject-topics'
 
 // The pages next to this one, with the sidebar's icons. None is this page, so
 // none is marked current.
@@ -19,7 +19,7 @@ const quickLinks = [
 
 // What Nova has on record about each topic, what is due, and the sessions
 // behind it. Read-only: a topic changes when a session on it ends.
-export function NovaKnowledge({ view }: { view: NovaKnowledgeReady }) {
+export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; onChanged?: () => void }) {
   const { start, starting, error } = useStartSession()
   const [query, setQuery] = useState('')
   const noSubjects = view.totals.subjectCount === 0
@@ -107,7 +107,7 @@ export function NovaKnowledge({ view }: { view: NovaKnowledgeReady }) {
                 </p>
               )}
               <div className="mt-5 space-y-8">
-                {subjects.length > 0 ? subjects.map(subject => <SubjectTopics key={subject.subjectName} subject={subject} />) : (
+                {subjects.length > 0 ? subjects.map(subject => <SubjectTopics key={subject.subjectName} subject={subject} onChanged={onChanged} />) : (
                   <p className="rounded-2xl border border-dashed border-white/10 px-5 py-6 text-sm text-foreground/55">No subjects or topics match that search.</p>
                 )}
               </div>
@@ -115,6 +115,8 @@ export function NovaKnowledge({ view }: { view: NovaKnowledgeReady }) {
           </div>
 
           <aside className="space-y-6">
+            {/* Re-read whenever the page's data is: an archive or a restore changes both. */}
+            {onChanged && <ArchivedTopics onChanged={onChanged} version={view.generatedAt} />}
             <RecentLearning sessions={view.recentLearning} />
             <section className="rounded-2xl border border-white/8 bg-card/50 p-5">
               <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">How to read this</h2>

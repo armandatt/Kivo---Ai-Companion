@@ -221,7 +221,7 @@ async function subjectsWithTopics(profileId: string) {
   const subjects = await prisma.novaSubject.findMany({
     where:   { profileId },
     orderBy: { name: "asc" },
-    select:  { id: true, name: true, topics: { select: { name: true }, orderBy: { name: "asc" } } },
+    select:  { id: true, name: true, topics: { where: { archivedAt: null }, select: { name: true }, orderBy: { name: "asc" } } },
   });
   return subjects.map(s => ({ id: s.id, name: s.name, topics: s.topics.map(t => t.name) }));
 }
@@ -332,7 +332,7 @@ export async function recordLearningEvent(
   let topicName = event.topicName;
   if (event.subjectId && topicName) {
     const known = await prisma.novaTopicMastery.findFirst({
-      where:  { subjectId: event.subjectId, name: { equals: likeLiteral(topicName), mode: "insensitive" } },
+      where:  { subjectId: event.subjectId, archivedAt: null, name: { equals: likeLiteral(topicName), mode: "insensitive" } },
       select: { name: true },
     });
     topicName = known?.name ?? topicName;
@@ -434,7 +434,7 @@ export async function fileSavedResource(
     const typed = normalizeTopicName(oneLine(change.topicName));
     if (typed.length > EVENT_TOPIC_MAX) return { ok: false, error: "invalid", message: `Keep the topic under ${EVENT_TOPIC_MAX} characters.` };
     const known = typed ? await prisma.novaTopicMastery.findFirst({
-      where:  { subjectId: subject.id, name: { equals: likeLiteral(typed), mode: "insensitive" } },
+      where:  { subjectId: subject.id, archivedAt: null, name: { equals: likeLiteral(typed), mode: "insensitive" } },
       select: { name: true },
     }) : null;
     topicName = known?.name ?? (typed || null);

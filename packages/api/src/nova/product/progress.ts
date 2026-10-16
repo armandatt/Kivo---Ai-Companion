@@ -456,7 +456,8 @@ export async function loadNovaProgress(
   const timedRow = { activityType: { not: SELF_REPORTED_ACTIVITY } };
 
   const [topics, sessions, masteryRecords, countedBefore, selfReportedBefore, shortBefore, abandoned] = await Promise.all([
-    getAllTopicMasteries(profile.id, now),
+    // History: a topic archived since is still what was studied.
+    getAllTopicMasteries(profile.id, now, { includeArchived: true }),
     prisma.novaStudySession.findMany({
       where:   { profileId: profile.id, status: "completed", sessionDate: { gte: since, lte: now } },
       orderBy: { sessionDate: "asc" },
