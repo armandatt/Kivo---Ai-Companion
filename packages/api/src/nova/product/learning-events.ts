@@ -571,3 +571,19 @@ export async function listResourceSources(profileId: string, subjectId: string, 
     .slice(0, take)
     .map(r => ({ id: r.id, title: r.title, domain: r.domain, url: r.url, excerpt: r.excerpt ? r.excerpt.slice(0, 1_200) : null, onTopic: onTopic(r.topicName) }));
 }
+
+// When the learner renames, moves or removes a topic in study setup
+// (product/setup-edit.ts), the saved pages filed under it follow, in the
+// caller's transaction. Only the filing changes; what was saved does not.
+export async function refileResourcesForTopic(
+  tx: Pick<typeof prisma, "novaLearningEvent">,
+  profileId: string,
+  from: { subjectId: string; topicName: string },
+  to: { subjectId: string; topicName: string | null },
+): Promise<number> {
+  const r = await tx.novaLearningEvent.updateMany({
+    where: { profileId, subjectId: from.subjectId, topicName: { equals: from.topicName, mode: "insensitive" } },
+    data:  { subjectId: to.subjectId, topicName: to.topicName },
+  });
+  return r.count;
+}

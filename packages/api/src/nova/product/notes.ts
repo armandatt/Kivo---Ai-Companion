@@ -389,3 +389,20 @@ export async function noteSources(profileId: string, noteId: string): Promise<No
     }),
   };
 }
+
+// ── Study setup edits (product/setup-edit.ts) ─────────────────────────────────
+// When the learner renames, moves or removes a topic, the notes filed under it
+// follow, in the caller's transaction. Only the filing changes: a note's title
+// and text are the learner's and are never touched here.
+export async function refileNotesForTopic(
+  tx: Pick<typeof prisma, "novaNote">,
+  profileId: string,
+  from: { subjectId: string; topicName: string },
+  to: { subjectId: string; topicName: string | null },
+): Promise<number> {
+  const r = await tx.novaNote.updateMany({
+    where: { profileId, subjectId: from.subjectId, topicName: { equals: from.topicName, mode: "insensitive" } },
+    data:  { subjectId: to.subjectId, topicName: to.topicName },
+  });
+  return r.count;
+}

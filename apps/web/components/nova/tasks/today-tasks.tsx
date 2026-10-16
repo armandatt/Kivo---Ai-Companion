@@ -2,9 +2,10 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { ArrowRight, Check, Play, Plus } from 'lucide-react'
-import type { NovaTaskItem, TaskInput } from '@repo/api/nova/product/tasks.types'
-import { dueLabel, isOverdue } from './task-format'
+import { ArrowRight, CalendarArrowUp, Check, Pencil, Play, Plus } from 'lucide-react'
+import type { NovaTaskItem, TaskInput, TaskSubjectOption } from '@repo/api/nova/product/tasks.types'
+import { dueLabel, isOverdue, nextDay } from './task-format'
+import { TaskEditor } from './task-editor'
 
 type Props = {
   // null: still loading.
@@ -19,10 +20,17 @@ type Props = {
   onStart?: (task: NovaTaskItem) => void
   // The key of the start in flight (`task:<id>`), or null.
   starting?: string | null
+  // For editing a task here: the learner's subjects, removal, and their
+  // calendar day (YYYY-MM-DD) that "tomorrow" is counted from.
+  subjects?: TaskSubjectOption[]
+  onRemove?: (id: string) => Promise<boolean>
+  today?:    string | null
   // Today's plan against the day's time, for saying when the tasks due today
   // (with a length the learner gave) do not fit beside it. Nothing is moved.
   dayMinutes?: { planned: number; budget: number }
 }
+
+const ROW_ACTION = 'inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-foreground/45 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-keppel-400/60 disabled:opacity-40'
 
 const SHOWN = 6
 
@@ -37,9 +45,24 @@ export function prioritiesOf(tasks: NovaTaskItem[]): NovaTaskItem[] {
 
 // Today's priorities: the learner's own tasks, from the same rows as the
 // Planner's board. Ticking one moves it to Done there too.
-export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, starting = null, dayMinutes }: Props) {
+export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, starting = null, subjects = [], onRemove, today = null, dayMinutes }: Props) {
   const [title, setTitle]   = useState('')
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<NovaTaskItem | null>(null)
+  // The last move to tomorrow, so it can be taken back.
+  const [moved, setMoved] = useState<{ id: string; title: string; from: string | null } | null>(null)
+
+  const deferToTomorrow = async (task: NovaTaskItem) => {
+    if (!today) return
+    // A task already due later than tomorrow is left where it is.
+    const to = nextDay(today)
+    if (task.dueDay && task.dueDay > to) return
+    if (await onUpdate(task.id, { dueDay: to })) setMoved({ id: task.id, title: task.title, from: task.dueDay })
+  }
+  const undoMove = async () => {
+    if (!moved) return
+    if (await onUpdate(moved.id, { dueDay: moved.from })) setMoved(null)
+  }
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -104,6 +127,16 @@ export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, 
                     </button>
                   )}
                   {due && <span className={`shrink-0 text-xs ${isOverdue(task) ? 'font-medium text-rose-300' : task.dueInDays === 0 ? 'font-medium text-amber-300' : 'text-foreground/50'}`}>{due}</span>}
+                  {today && (task.dueInDays === null || task.dueInDays <= 0) && (
+                    <button type="button" onClick={() => void deferToTomorrow(task)} className={ROW_ACTION} data-defer-task
+                      aria-label={`Move "${task.title}" to tomorrow`} title="Move to tomorrow">
+                      <CalendarArrowUp className="size-3.5" />
+                    </button>
+                  )}
+                  <button type="button" onClick={() => setEditing(task)} className={ROW_ACTION} data-edit-task
+                    aria-label={`Edit "${task.title}"`} title="Edit">
+                    <Pencil className="size-3.5" />
+                  </button>
                 </li>
               )
             })}
@@ -126,7 +159,22 @@ export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, 
           Your tasks due today add up to about {taskMinutes} min{unsized ? ` (and ${unsized} without a time)` : ''}. With today&apos;s study plan ({dayMinutes.planned} min), that is more than the {dayMinutes.budget} min you have. Nothing has been moved: you could change a task&apos;s due day, or choose less study time above.
         </p>
       )}
+      {moved && (
+        <p role="status" className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground/60" data-task-moved>
+          Moved &ldquo;{moved.title}&rdquo; to tomorrow.
+          <button type="button" onClick={() => void undoMove()} className="font-medium text-foreground underline decoration-white/25 underline-offset-4 hover:decoration-white/60">Undo</button>
+        </p>
+      )}
       {error && <p role="alert" className="mt-2 text-xs text-red-300">{error}</p>}
+      {editing && (
+        <TaskEditor
+          task={editing} subjects={subjects}
+          onSave={async input => { const ok = await onUpdate(editing.id, input); if (ok) setEditing(null); return ok }}
+          onDelete={onRemove ? async () => { const ok = await onRemove(editing.id); if (ok) setEditing(null); return ok } : undefined}
+          onClose={() => setEditing(null)}
+          error={error}
+        />
+      )}
       {list.length > SHOWN && <p className="mt-2 text-xs text-foreground/40">and {list.length - SHOWN} more on the board</p>}
     </section>
   )

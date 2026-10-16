@@ -340,3 +340,19 @@ export async function reorderTasks(profileId: string, raw: unknown, options: { n
   }
   return { ok: true, tasks: await listTasks(profileId, options) };
 }
+
+// When the learner renames, moves or removes a topic in study setup
+// (product/setup-edit.ts), the tasks filed under it follow, in the caller's
+// transaction. Only the filing changes.
+export async function refileTasksForTopic(
+  tx: Pick<typeof prisma, "novaTask">,
+  profileId: string,
+  from: { subjectId: string; topicName: string },
+  to: { subjectId: string; topicName: string | null },
+): Promise<number> {
+  const r = await tx.novaTask.updateMany({
+    where: { profileId, subjectId: from.subjectId, topicName: { equals: from.topicName, mode: "insensitive" } },
+    data:  { subjectId: to.subjectId, topicName: to.topicName },
+  });
+  return r.count;
+}

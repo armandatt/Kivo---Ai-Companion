@@ -417,6 +417,7 @@ Held by `tasks.test.ts` and `nova-workspace.itest.ts`. The Planner has two tabs:
 - **`clientKey` makes a create idempotent** (`@@unique([profileId, clientKey])`): a double click, a retry or a template applied twice returns the task that exists, as it now is.
 - **A task's expected time** (`estimatedMinutes`, 5–600) is only what the learner gives; nothing guesses it. **Their own order** (`position`) is set per open column by `reorderTasks` (`POST /api/nova/tasks/order`): one transaction, each write guarded on the task still being theirs and in that column, refused whole (409) otherwise. `compareTasks` puts placed tasks first. Today says when the tasks due today (with a stated time) and the study plan exceed the day's time, and moves nothing. Held by `tasks.test.ts` and `nova-task-order.itest.ts`.
 - The board (`components/nova/tasks/`) moves a card by drag and drop or by the arrows on it; both are the same `PATCH { status }`. Home's "Your tasks" is the same rows.
+- **From Today** a task can be edited (the board's `TaskEditor`), moved to tomorrow with Undo (`nextDay` in `task-format.ts`, an ordinary `PATCH { dueDay }`), or ticked done. **Choose another** (`components/nova/choose-another.tsx`) starts any of today's other blocks or any topic of the learner's with the ordinary `start`; the plan itself is unchanged.
 
 ## Getting back on track (recovery)
 
@@ -473,6 +474,16 @@ Held by `templates.test.ts` and `nova-workspace.itest.ts`.
 - A template states no progress: topics are declared unstudied and tasks start as to do.
 - `/settings/study` is the setup form for a learner who has finished onboarding. Saving merges; nothing is removed.
 - **Onboarding has no domain question.** Kivo is study and productivity, so the quiz sends `mentorDomain: "study"` and a new account is always a Nova learner. Rex accounts that already exist are unchanged.
+
+## Subject Studio: editing subjects and topics
+
+Held by `setup-edit.test.ts`, `study-proposal.test.ts` and `nova-setup-edit.itest.ts`. `product/setup-edit.ts` (+ `.types.ts`), `product/study-proposal.ts` (+ `.types.ts`), `GET`/`POST /api/nova/subjects`, `POST /api/nova/subjects/propose`, UI `components/nova/knowledge/subject-studio.tsx` ("Edit subjects" on Knowledge).
+
+- **The learner edits their own structure**: add a subject or topics, rename, move a topic, remove. A batch (`StudyEdit[]`) applies whole or not at all, in one transaction that first locks the learner's `NovaAcademicProfile` row, and only against the `version` (a hash of ids and names) it was made from; otherwise 409 `stale` with the structure as it stands. Ids are checked against the learner's own structure; nothing from the request names a learner.
+- **Writers stay single.** Adding goes through `declareSubjectsIn` in `setup.ts` (the one `novaSubject.create`, shared with `saveSetup`) and `declareTopics`; a topic's row is changed only by the topic engine (`renameTopicIn`, `moveTopicIn`, `removeTopicIn`); subjects by `renameSubjectIn` / `removeSubjectIn` in `setup.ts`. Notes, tasks and saved pages filed under a topic follow it through `refileNotesForTopic`, `refileTasksForTopic` and `refileResourcesForTopic`, each in its owner, in the same transaction. Mastery history is read only through Progress (`topicsWithMasteryHistory`).
+- **Renaming or moving keeps the topic's row**, so its mastery, review schedule and history stay. Past sessions keep the topic name they were recorded with. `[[links]]` in note bodies are text and are not rewritten.
+- **Nothing studied is removed.** A topic with recorded study (reviews, a study date, mastery history, a session with its id) can be renamed or moved, never removed; archiving needs a column (schema request in `audit/phase2-tracker.md`). A subject is removed only once it has no topics and no dates; its notes, tasks and saved pages stay, unfiled.
+- **Ask Nova to update** (`proposeStudyEdits`): one model call given the structure (ids, names, which topics are studied), goals, learning contexts and the request; the model proposes `StudyEdit`s with a reason. Each is played in order through `checkStudyEdits`; what fails is dropped and shown with why. Nothing is stored or applied: the page keeps the draft in `localStorage` (`kivo-study-proposal`), the learner edits names, deselects, and approves through the ordinary `POST /api/nova/subjects` with the proposal's version. Four proposals a minute per learner; 25 s deadline.
 
 ## Study setup: one setup, three ways in
 

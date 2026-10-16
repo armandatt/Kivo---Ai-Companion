@@ -8,6 +8,7 @@ import { RecommendationCard } from './recommendation-card'
 import { TalkToNova } from './talk-to-nova'
 import { ShortfallNote } from './shortfall-note'
 import { RecoveryCard } from './recovery-card'
+import { ChooseAnother } from './choose-another'
 import { useFocusContext } from './focus-context'
 import { LinkedToTopic } from './linked-to-topic'
 import { KnowledgeBoard, RecentlyCaptured } from './knowledge-board'
@@ -154,6 +155,10 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
           </section>
 
           {!active && rec && (
+            <ChooseAnother alternatives={view.alternatives} onStart={a => void start(a)} disabled={starting !== null} />
+          )}
+
+          {!active && rec && (
             <LinkedToTopic topicName={rec.topicName} subjectName={rec.subjectName} context={recContext} map={map} />
           )}
 
@@ -171,7 +176,9 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
 
           <TodayTasks
             tasks={tasks} failed={board.loadError} error={board.error}
-            onCreate={board.create} onUpdate={board.update}
+            onCreate={board.create} onUpdate={board.update} onRemove={board.remove}
+            subjects={board.view?.status === 'ready' ? board.view.subjects : []}
+            today={board.view?.status === 'ready' ? board.view.today : null}
             dayMinutes={{ planned: view.plan.totalMinutesToday, budget: view.plan.budgetMinutes }}
             onStart={active ? undefined : task => start({ topicName: task.topicName!, subjectName: task.subjectName!, durationMinutes: TASK_SESSION_MINUTES }, `task:${task.id}`)}
             starting={starting}

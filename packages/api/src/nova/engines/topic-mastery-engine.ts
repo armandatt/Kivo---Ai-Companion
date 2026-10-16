@@ -373,3 +373,23 @@ export async function setTopicArchived(profileId: string, topicId: string, archi
   });
   return r.count === 1;
 }
+
+// ── Editing topics (product/setup-edit.ts) ────────────────────────────────────
+// A topic's identity is its row: renaming or moving it keeps its mastery,
+// review schedule and history (snapshots and sessions point at its id).
+
+type TopicTx = Pick<typeof prisma, "novaTopicMastery">;
+
+export async function renameTopicIn(tx: TopicTx, topicId: string, name: string): Promise<void> {
+  await tx.novaTopicMastery.update({ where: { id: topicId }, data: { name: normalizeTopicName(name).slice(0, 120) } });
+}
+
+export async function moveTopicIn(tx: TopicTx, topicId: string, subjectId: string): Promise<void> {
+  await tx.novaTopicMastery.update({ where: { id: topicId }, data: { subjectId } });
+}
+
+// Only for a topic with no history (topicHasHistory), checked by the caller in
+// the same transaction.
+export async function removeTopicIn(tx: TopicTx, topicId: string): Promise<void> {
+  await tx.novaTopicMastery.delete({ where: { id: topicId } });
+}
