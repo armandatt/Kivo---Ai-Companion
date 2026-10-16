@@ -77,7 +77,7 @@ export default function KnowledgePage() {
           Showing what loaded last. Reconnecting…
         </p>
       )}
-      <NovaKnowledge view={view} />
+      <NovaKnowledge view={view} onChanged={() => void refresh()} />
     </>
   )
 }

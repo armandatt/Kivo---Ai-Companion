@@ -292,3 +292,19 @@ export async function mostTasksDoneInADay(profileId: string, timezone: string | 
   for (const r of rows) if (r.completedAt) { const d = dayKey(r.completedAt, zone); perDay.set(d, (perDay.get(d) ?? 0) + 1); }
   return Math.max(0, ...perDay.values());
 }
+
+// When the learner renames, moves or removes a topic in study setup
+// (product/setup-edit.ts), the tasks filed under it follow, in the caller's
+// transaction. Only the filing changes.
+export async function refileTasksForTopic(
+  tx: Pick<typeof prisma, "novaTask">,
+  profileId: string,
+  from: { subjectId: string; topicName: string },
+  to: { subjectId: string; topicName: string | null },
+): Promise<number> {
+  const r = await tx.novaTask.updateMany({
+    where: { profileId, subjectId: from.subjectId, topicName: { equals: from.topicName, mode: "insensitive" } },
+    data:  { subjectId: to.subjectId, topicName: to.topicName },
+  });
+  return r.count;
+}

@@ -112,6 +112,8 @@ describe("one setup, however it is reached", () => {
     const setup = read("product/setup.ts");
     expect(setup.match(/novaSubject\.create/g)).toHaveLength(1);
     expect(setup).toContain("declareTopics(tx, subject.id, s.topics)");
+    // saveSetup and Subject Studio (setup-edit.ts) both add through it.
+    expect(setup).toContain("await declareSubjectsIn(tx, profile.id, profile.subjects, draft.subjects)");
     expect(setup).toContain("await addExam(platformChatId");
     // No other file creates a subject or sets the stated daily minutes.
     for (const file of ["interaction/setup-turn.ts", "interaction/web-sentence.ts", "telegram/telegram-turn.ts", "telegram/telegram-actions.ts", "entry.ts"]) {
