@@ -94,3 +94,35 @@ describe("boundaries", () => {
     expect(src("product/setup.ts").match(/novaSubject\.create/g)).toHaveLength(1);
   });
 });
+
+describe("archived topics in Subject Studio (topic-archive.ts)", () => {
+  const withArchived = (): StudyStructure => {
+    const subjects = [{ id: "os", name: "OS", dates: 0, topics: [
+      { id: "a1", name: "Paging", hasHistory: true, archived: true },
+      { id: "t2", name: "Deadlocks", hasHistory: false },
+    ] }];
+    return { version: structureVersion(subjects), subjects };
+  };
+
+  it("adding an archived topic's name restores it, and says so", () => {
+    const r = checkStudyEdits(withArchived(), [{ op: "add_topics", subjectId: "os", names: ["paging", "Scheduling"] }]);
+    expect(r.issues).toEqual([]);
+    expect(r.sentences).toEqual(["Add to OS: Scheduling.", "Restore in OS: Paging (archived, with its history)."]);
+  });
+
+  it("renaming onto an archived topic's name points to Restore", () => {
+    const r = checkStudyEdits(withArchived(), [{ op: "rename_topic", topicId: "t2", name: "Paging" }]);
+    expect(r.issues[0]!.message).toBe('OS has an archived topic called "Paging". Restore it instead, or pick another name.');
+  });
+
+  it("a subject with only archived topics left is not removed, and says how many", () => {
+    const r = checkStudyEdits(withArchived(), [{ op: "remove_topic", topicId: "t2" }, { op: "remove_subject", subjectId: "os" }]);
+    expect(r.issues[0]!.message).toBe("OS still has topics (1 archived). Move or remove them first.");
+  });
+
+  it("archiving or restoring changes the version, so a batch made before it is stale", () => {
+    const s = withArchived();
+    const restored = s.subjects.map(x => ({ ...x, topics: x.topics.map(t => ({ ...t, archived: false })) }));
+    expect(structureVersion(restored)).not.toBe(s.version);
+  });
+});

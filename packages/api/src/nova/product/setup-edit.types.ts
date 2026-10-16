@@ -22,6 +22,9 @@ export interface StudyTopic {
   // Learning is recorded against it (a session, a review, mastery history).
   // It can be renamed or moved, never removed: that would delete the record.
   hasHistory: boolean;
+  // Archived (topic-archive.ts): out of the active lists, row and history kept.
+  // Its name is still taken in its subject; adding it again restores it.
+  archived?:  boolean;
 }
 
 export interface StudySubject {

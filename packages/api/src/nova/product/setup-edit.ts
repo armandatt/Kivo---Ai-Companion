@@ -45,9 +45,10 @@ const uniqueNames = (raw: string[], tidy: (s: string) => string): string[] => {
 
 // ── Reading ───────────────────────────────────────────────────────────────────
 
-export function structureVersion(subjects: Array<{ id: string; name: string; topics: Array<{ id: string; name: string }> }>): string {
+export function structureVersion(subjects: Array<{ id: string; name: string; topics: Array<{ id: string; name: string; archived?: boolean }> }>): string {
+  // Archiving or restoring is a change too: a batch made before it is stale.
   const text = [...subjects].sort((a, b) => a.id.localeCompare(b.id))
-    .map(s => `${s.id}=${s.name}:${[...s.topics].sort((a, b) => a.id.localeCompare(b.id)).map(t => `${t.id}=${t.name}`).join(",")}`)
+    .map(s => `${s.id}=${s.name}:${[...s.topics].sort((a, b) => a.id.localeCompare(b.id)).map(t => `${t.id}=${t.name}${t.archived ? "~archived" : ""}`).join(",")}`)
     .join("|");
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
@@ -55,7 +56,7 @@ export function structureVersion(subjects: Array<{ id: string; name: string; top
 export async function loadStudyStructure(profileId: string): Promise<StudyStructure> {
   const subjects = await prisma.novaSubject.findMany({
     where:   { profileId },
-    select:  { id: true, name: true, _count: { select: { exams: true } }, topics: { select: { id: true, name: true, reviewCount: true, lastStudiedAt: true }, orderBy: { createdAt: "asc" } } },
+    select:  { id: true, name: true, _count: { select: { exams: true } }, topics: { select: { id: true, name: true, reviewCount: true, lastStudiedAt: true, archivedAt: true }, orderBy: { createdAt: "asc" } } },
     orderBy: { createdAt: "asc" },
   });
   const topicIds = subjects.flatMap(s => s.topics.map(t => t.id));
@@ -66,7 +67,7 @@ export async function loadStudyStructure(profileId: string): Promise<StudyStruct
   const recorded = new Set([...withHistory, ...sessions.map(s => s.topicId).filter((id): id is string => id !== null)]);
   const shaped = subjects.map(s => ({
     id: s.id, name: s.name, dates: s._count.exams,
-    topics: s.topics.map(t => ({ id: t.id, name: t.name, hasHistory: recorded.has(t.id) || t.reviewCount > 0 || t.lastStudiedAt !== null })),
+    topics: s.topics.map(t => ({ id: t.id, name: t.name, hasHistory: recorded.has(t.id) || t.reviewCount > 0 || t.lastStudiedAt !== null, archived: t.archivedAt !== null })),
   }));
   return { version: structureVersion(shaped), subjects: shaped };
 }
@@ -103,7 +104,7 @@ export function parseStudyEdits(raw: unknown): { ok: true; version: string; edit
 // at its turn, every name must be free where it lands. Returns what each one
 // would do as a sentence, or the issues that stop the whole batch.
 export function checkStudyEdits(structure: StudyStructure, edits: StudyEdit[]): { issues: StudyEditIssue[]; sentences: string[] } {
-  type T = { id: string; name: string; hasHistory: boolean };
+  type T = { id: string; name: string; hasHistory: boolean; archived?: boolean };
   type S = { id: string; name: string; dates: number; topics: T[] };
   const subjects: S[] = structure.subjects.map(s => ({ ...s, topics: s.topics.map(t => ({ ...t })) }));
   const issues: StudyEditIssue[] = [];
@@ -128,10 +129,16 @@ export function checkStudyEdits(structure: StudyStructure, edits: StudyEdit[]): 
       case "add_topics": {
         const s = subjectById(e.subjectId);
         if (!s) return bad("That subject isn't one of yours.");
-        const names = uniqueNames(e.names, topicName).filter(n => !takenIn(s, n)).slice(0, MAX_TOPICS_PER_ADD);
-        if (names.length === 0) return bad(`Nothing new to add to ${s.name}.`);
+        // A name of an archived topic brings that topic back (declareTopics).
+        const wanted = uniqueNames(e.names, topicName).slice(0, MAX_TOPICS_PER_ADD);
+        const archivedOf = (n: string) => s.topics.find(t => t.archived && key(t.name) === key(n));
+        const restored = wanted.map(archivedOf).filter((t): t is T => t !== undefined);
+        const names = wanted.filter(n => !takenIn(s, n));
+        if (names.length === 0 && restored.length === 0) return bad(`Nothing new to add to ${s.name}.`);
         s.topics.push(...names.map((n, i) => ({ id: `new:${fresh++}:${i}`, name: n, hasHistory: false })));
-        sentences.push(`Add to ${s.name}: ${names.join(", ")}.`);
+        for (const t of restored) t.archived = false;
+        if (names.length) sentences.push(`Add to ${s.name}: ${names.join(", ")}.`);
+        if (restored.length) sentences.push(`Restore in ${s.name}: ${restored.map(t => t.name).join(", ")} (archived, with ${restored.length === 1 ? "its" : "their"} history).`);
         return;
       }
       case "rename_subject": {
@@ -150,7 +157,12 @@ export function checkStudyEdits(structure: StudyStructure, edits: StudyEdit[]): 
         if (!hit) return bad("That topic isn't one of yours.");
         const name = topicName(e.name);
         if (!name) return bad("A topic needs a name.");
-        if (takenIn(hit.s, name, hit.t.id)) return bad(`${hit.s.name} already has a topic called "${name}".`);
+        if (takenIn(hit.s, name, hit.t.id)) {
+          const other = hit.s.topics.find(t => t.id !== hit.t.id && key(t.name) === key(name));
+          return bad(other?.archived
+            ? `${hit.s.name} has an archived topic called "${name}". Restore it instead, or pick another name.`
+            : `${hit.s.name} already has a topic called "${name}".`);
+        }
         if (name === hit.t.name) return bad(`${hit.t.name} already has that name.`);
         sentences.push(`Rename ${hit.t.name} to ${name} (its notes, tasks, saved pages and history go with it).`);
         hit.t.name = name;
@@ -179,7 +191,12 @@ export function checkStudyEdits(structure: StudyStructure, edits: StudyEdit[]): 
       case "remove_subject": {
         const s = subjectById(e.subjectId);
         if (!s) return bad("That subject isn't one of yours.");
-        if (s.topics.length > 0) return bad(`${s.name} still has topics. Move or remove them first.`);
+        if (s.topics.length > 0) {
+          const archived = s.topics.filter(t => t.archived).length;
+          return bad(archived
+            ? `${s.name} still has topics (${archived} archived). Move or remove them first.`
+            : `${s.name} still has topics. Move or remove them first.`);
+        }
         if (s.dates > 0) return bad(`${s.name} has dates on record. Move or remove them in study settings first.`);
         subjects.splice(subjects.indexOf(s), 1);
         sentences.push(`Remove the subject ${s.name} (its notes, tasks and saved pages stay, unfiled).`);
@@ -230,8 +247,8 @@ export async function applyStudyEdits(profileId: string, raw: unknown): Promise<
       await tx.$queryRaw`SELECT id FROM "NovaAcademicProfile" WHERE id = ${profileId} FOR UPDATE`;
       // Checked again inside the transaction: the version as read here must be
       // the one the batch was made from.
-      const now = await tx.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true, topics: { select: { id: true, name: true } } } });
-      if (structureVersion(now) !== current.version) throw new Stale();
+      const now = await tx.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true, topics: { select: { id: true, name: true, archivedAt: true } } } });
+      if (structureVersion(now.map(s => ({ ...s, topics: s.topics.map(t => ({ id: t.id, name: t.name, archived: t.archivedAt !== null })) }))) !== current.version) throw new Stale();
       const subjectOf = (id: string) => now.find(s => s.id === id);
       for (const e of parsed.edits) {
         switch (e.op) {

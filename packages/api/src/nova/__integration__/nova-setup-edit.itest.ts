@@ -27,6 +27,7 @@ const { resolveNoteLearner, createNote } = await import("../product/notes.js");
 const { createTask }               = await import("../product/tasks.js");
 const { loadStudyStructure, applyStudyEdits } = await import("../product/setup-edit.js");
 const { loadNovaKnowledge }        = await import("../product/knowledge.js");
+const { archiveTopic }             = await import("../product/topic-archive.js");
 
 const STAMP = Date.now();
 const now = new Date();
@@ -152,4 +153,28 @@ test("adding a subject goes through setup's writer and merges by name", async ()
   const genai = r.ok ? r.structure.subjects.find(s => s.name === "GenAI") : undefined;
   assert.deepEqual(genai?.topics.map(t => t.name), ["RAG", "Agents"]);
   assert.ok(genai?.topics.every(t => !t.hasHistory), "a new topic records no study");
+});
+
+test("archived topics in Subject Studio: listed as archived, a batch from before is stale, adding the name restores the same row", async () => {
+  const l = await learner();
+  const core = l.topic("SDE / AI engineer", "Core knowledge");
+  assert.ok((await archiveTopic(l.profileId, { topicId: core.id, archived: true }, now)).ok);
+
+  const s = await loadStudyStructure(l.profileId);
+  assert.notEqual(s.version, l.structure.version, "archiving changed the version");
+  assert.equal(s.subjects.flatMap(x => x.topics).find(t => t.id === core.id)?.archived, true);
+  const stale = await applyStudyEdits(l.profileId, { version: l.structure.version, edits: [{ op: "add_topics", subjectId: l.subject("SDE / AI engineer").id, names: ["X"] }] });
+  assert.ok(!stale.ok && stale.error === "stale");
+
+  // Renaming another topic onto the archived name is refused with the reason.
+  const practice = l.topic("SDE / AI engineer", "Practice questions");
+  const clash = await applyStudyEdits(l.profileId, { version: s.version, edits: [{ op: "rename_topic", topicId: practice.id, name: "core knowledge" }] });
+  assert.ok(!clash.ok && clash.issues?.[0]?.message.includes("archived topic"));
+
+  // Adding the name restores the same row.
+  const back = await applyStudyEdits(l.profileId, { version: s.version, edits: [{ op: "add_topics", subjectId: l.subject("SDE / AI engineer").id, names: ["Core Knowledge"] }] });
+  assert.ok(back.ok, JSON.stringify(back));
+  assert.ok(back.ok && back.applied.some(x => x.startsWith("Restore in SDE / AI engineer: Core knowledge")));
+  const rows = await prisma.novaTopicMastery.findMany({ where: { subjectId: l.subject("SDE / AI engineer").id, name: { equals: "Core knowledge", mode: "insensitive" } } });
+  assert.deepEqual(rows.map(r => [r.id, r.archivedAt]), [[core.id, null]]);
 });
