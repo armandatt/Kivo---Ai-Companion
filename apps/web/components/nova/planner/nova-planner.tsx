@@ -80,7 +80,7 @@ export function NovaPlanner({ view, minutes, onMinutes, refreshing, onChanged }:
           ) : board.view?.status === 'ready' ? (
             <TaskBoard
               view={board.view} tasks={board.tasks} error={board.error} onClearError={board.clearError}
-              onCreate={board.create} onUpdate={board.update} onDelete={board.remove}
+              onCreate={board.create} onUpdate={board.update} onDelete={board.remove} onReorder={board.reorder}
             />
           ) : (
             <section role="alert" className="rounded-3xl border border-white/8 bg-card/70 p-6">

@@ -18,6 +18,11 @@ export const TASK_KEY_MAX   = 120;
 export const TASK_OPEN_MAX  = 300;
 // Finished tasks shown on the board: the most recently finished.
 export const TASK_DONE_SHOWN = 30;
+// How long a task may be said to take, in minutes. Only the learner says it.
+export const TASK_MINUTES_MIN = 5;
+export const TASK_MINUTES_MAX = 600;
+// Tasks one reorder may place.
+export const TASK_ORDER_MAX = 100;
 
 export interface NovaTaskItem {
   id:          string;
@@ -32,6 +37,11 @@ export interface NovaTaskItem {
   // null: no due day.
   dueInDays:   number | null;
   completedAt: string | null;
+  // How long the learner expects it to take. null: they have not said;
+  // nothing guesses it.
+  estimatedMinutes: number | null;
+  // Their own place for it within its column. null: not placed.
+  position:    number | null;
   createdAt:   string;
   updatedAt:   string;
 }
@@ -60,12 +70,13 @@ export interface TaskInput {
   subjectId?: string | null;
   topicName?: string | null;
   dueDay?:    string | null;
+  estimatedMinutes?: number | null;
   clientKey?: string;              // create only
 }
 
 export type TaskError =
   | "invalid" | "title_required" | "title_too_long" | "topic_too_long"
-  | "unknown_status" | "unknown_priority" | "bad_due_day" | "unknown_subject"
+  | "unknown_status" | "unknown_priority" | "bad_due_day" | "unknown_subject" | "bad_minutes" | "changed"
   | "too_many" | "not_found" | "failed";
 
 export type TaskResponse =

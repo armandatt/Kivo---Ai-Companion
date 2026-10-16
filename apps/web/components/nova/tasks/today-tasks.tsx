@@ -19,6 +19,9 @@ type Props = {
   onStart?: (task: NovaTaskItem) => void
   // The key of the start in flight (`task:<id>`), or null.
   starting?: string | null
+  // Today's plan against the day's time, for saying when the tasks due today
+  // (with a length the learner gave) do not fit beside it. Nothing is moved.
+  dayMinutes?: { planned: number; budget: number }
 }
 
 const SHOWN = 6
@@ -34,7 +37,7 @@ export function prioritiesOf(tasks: NovaTaskItem[]): NovaTaskItem[] {
 
 // Today's priorities: the learner's own tasks, from the same rows as the
 // Planner's board. Ticking one moves it to Done there too.
-export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, starting = null }: Props) {
+export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, starting = null, dayMinutes }: Props) {
   const [title, setTitle]   = useState('')
   const [adding, setAdding] = useState(false)
 
@@ -48,6 +51,11 @@ export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, 
 
   const list  = tasks ? prioritiesOf(tasks) : []
   const shown = list.slice(0, SHOWN)
+  // Only lengths the learner gave are counted; a task without one is not guessed.
+  const dueNow = list.filter(t => t.dueInDays !== null && t.dueInDays <= 0)
+  const taskMinutes = dueNow.reduce((sum, t) => sum + (t.estimatedMinutes ?? 0), 0)
+  const unsized = dueNow.filter(t => t.estimatedMinutes === null).length
+  const over = dayMinutes && taskMinutes > 0 && dayMinutes.planned + taskMinutes > dayMinutes.budget
 
   return (
     <section aria-label="Today's priorities">
@@ -85,7 +93,7 @@ export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, 
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-foreground/90">{task.title}</p>
                     <p className="truncate text-xs text-foreground/45">
-                      {[task.status === 'in_progress' ? 'In progress' : null, task.subjectName, task.topicName].filter(Boolean).join(' · ') || 'To do'}
+                      {[task.status === 'in_progress' ? 'In progress' : null, task.subjectName, task.topicName, task.estimatedMinutes ? `${task.estimatedMinutes} min` : null].filter(Boolean).join(' · ') || 'To do'}
                     </p>
                   </div>
                   {onStart && task.subjectName && task.topicName && (
@@ -113,6 +121,11 @@ export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, 
           </button>
         </form>
       </div>
+      {over && dayMinutes && (
+        <p role="status" className="mt-2 rounded-xl border border-amber-300/25 bg-amber-300/5 p-3 text-xs leading-relaxed text-foreground/75" data-tasks-over-time>
+          Your tasks due today add up to about {taskMinutes} min{unsized ? ` (and ${unsized} without a time)` : ''}. With today&apos;s study plan ({dayMinutes.planned} min), that is more than the {dayMinutes.budget} min you have. Nothing has been moved: you could change a task&apos;s due day, or choose less study time above.
+        </p>
+      )}
       {error && <p role="alert" className="mt-2 text-xs text-red-300">{error}</p>}
       {list.length > SHOWN && <p className="mt-2 text-xs text-foreground/40">and {list.length - SHOWN} more on the board</p>}
     </section>

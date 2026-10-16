@@ -65,5 +65,16 @@ export function useTasks() {
     return !failed
   }, [settle])
 
-  return { view, tasks, loading, refreshing, loadError, error, clearError: () => setError(null), create, update, remove, refresh }
+  // The learner's own order for one open column. The server refuses it whole
+  // if any of those tasks changed meanwhile; the board is read again either way.
+  const reorder = useCallback(async (status: 'todo' | 'in_progress', ids: string[]): Promise<boolean> => {
+    setError(null)
+    const result = await send('/api/nova/tasks/order', 'POST', { status, ids })
+    const failed = 'error' in result && !result.ok
+    if (failed) setError(result.message)
+    await settle(null)
+    return !failed
+  }, [settle])
+
+  return { view, tasks, loading, refreshing, loadError, error, clearError: () => setError(null), create, update, remove, refresh, reorder }
 }

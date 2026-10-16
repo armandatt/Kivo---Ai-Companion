@@ -12,7 +12,7 @@ const api  = (file: string) => readFileSync(join(__dirname, "../../../../../apps
 
 const task = (over: Partial<NovaTaskItem>): NovaTaskItem => ({
   id: "t", title: "T", status: "todo", priority: null, subjectId: null, subjectName: null, topicName: null,
-  dueDay: null, dueInDays: null, completedAt: null, createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z", ...over,
+  dueDay: null, dueInDays: null, completedAt: null, estimatedMinutes: null, position: null, createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z", ...over,
 });
 
 describe("what a task request may carry", () => {
@@ -113,5 +113,24 @@ describe("a task is only a task", () => {
       expect(code).toContain("requireTaskLearner()");
       expect(code).not.toMatch(/searchParams|profileId:\s*body|userId/);
     }
+  });
+});
+
+describe("a task's length and place are the learner's", () => {
+  it("a length is whole minutes, 5 to 600, or cleared; nothing else", () => {
+    expect(parseTaskInput({ estimatedMinutes: 45 }, false)).toEqual({ ok: true, changes: { estimatedMinutes: 45 } });
+    expect(parseTaskInput({ estimatedMinutes: null }, false)).toEqual({ ok: true, changes: { estimatedMinutes: null } });
+    for (const bad of [0, 4, 601, 12.5, "30", -10]) expect(parseTaskInput({ estimatedMinutes: bad }, false)).toMatchObject({ ok: false, error: "bad_minutes" });
+    expect(parseTaskInput({ title: "Lab" }, true)).toEqual({ ok: true, changes: { title: "Lab" } });
+  });
+
+  it("their order comes first in a column; unplaced tasks follow in the usual order", () => {
+    const list = [
+      task({ id: "due-soon", dueDay: "2026-10-02", dueInDays: 1 }),
+      task({ id: "placed-2", position: 2 }),
+      task({ id: "placed-0", position: 0, dueDay: "2026-12-01", dueInDays: 60 }),
+      task({ id: "no-date" }),
+    ].sort(compareTasks).map(t => t.id);
+    expect(list).toEqual(["placed-0", "placed-2", "due-soon", "no-date"]);
   });
 });

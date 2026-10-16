@@ -35,6 +35,8 @@ export function TaskEditor({ task, subjects, initialStatus = 'todo', onSave, onD
   const [subjectId, setSubjectId] = useState(task?.subjectId ?? '')
   const [topicName, setTopicName] = useState(task?.topicName ?? '')
   const [dueDay, setDueDay]       = useState(task?.dueDay ?? '')
+  // Only the learner says how long a task takes; empty means not said.
+  const [minutes, setMinutes]     = useState(task?.estimatedMinutes ? String(task.estimatedMinutes) : '')
   const [saving, setSaving]       = useState(false)
   const [confirming, setConfirming] = useState(false)
   const titleRef = useRef<HTMLInputElement>(null)
@@ -73,6 +75,7 @@ export function TaskEditor({ task, subjects, initialStatus = 'todo', onSave, onD
       subjectId: subjectId || null,
       topicName: topicName.trim() || null,
       dueDay:    dueDay || null,
+      estimatedMinutes: minutes.trim() ? Number(minutes) : null,
     })
     setSaving(false)
     if (ok) onClose()
@@ -126,9 +129,16 @@ export function TaskEditor({ task, subjects, initialStatus = 'todo', onSave, onD
             </div>
           </div>
 
-          <div>
-            <label htmlFor="task-topic" className={LABEL}>Topic <span className="text-foreground/35">(optional)</span></label>
-            <input id="task-topic" value={topicName} onChange={e => setTopicName(e.target.value)} placeholder="e.g. Deadlocks" className={FIELD} />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_9rem]">
+            <div>
+              <label htmlFor="task-topic" className={LABEL}>Topic <span className="text-foreground/35">(optional)</span></label>
+              <input id="task-topic" value={topicName} onChange={e => setTopicName(e.target.value)} placeholder="e.g. Deadlocks" className={FIELD} />
+            </div>
+            <div>
+              <label htmlFor="task-minutes" className={LABEL}>Expected time <span className="text-foreground/35">(min)</span></label>
+              <input id="task-minutes" type="number" inputMode="numeric" min={5} max={600} step={5} value={minutes}
+                onChange={e => setMinutes(e.target.value)} placeholder="Not set" className={FIELD} />
+            </div>
           </div>
         </div>
 
