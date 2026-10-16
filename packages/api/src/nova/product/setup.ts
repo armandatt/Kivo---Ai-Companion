@@ -247,6 +247,28 @@ export type SaveSetupResult =
 
 // Saves a confirmed setup. All of it or none of it: a draft with a problem
 // is returned with the problem and nothing is written.
+// Adds subjects and their topics, merging by name with what is there: the
+// one place a subject is created (setup saves and Subject Studio both come
+// here, in their own transaction). True when any topic was given.
+export async function declareSubjectsIn(
+  tx: Pick<typeof prisma, "novaSubject" | "novaTopicMastery">,
+  profileId: string,
+  existing: Array<{ id: string; name: string }>,
+  subjects: Array<{ name: string; topics: string[] }>,
+): Promise<boolean> {
+  const known = [...existing];
+  let hasTopics = false;
+  for (const s of subjects) {
+    let subject = known.find(x => same(x.name, s.name));
+    if (!subject) {
+      subject = await tx.novaSubject.create({ data: { profileId, name: s.name }, select: { id: true, name: true } });
+      known.push(subject);
+    }
+    if (s.topics.length > 0) { await declareTopics(tx, subject.id, s.topics); hasTopics = true; }
+  }
+  return hasTopics;
+}
+
 export async function saveSetup(platformChatId: string, raw: unknown, now = new Date(), routine: RoutineMode = "replace"): Promise<SaveSetupResult> {
   const preview = await previewSetup(platformChatId, raw, now, routine);
   if (preview.status !== "ok") return preview;
@@ -265,12 +287,7 @@ export async function saveSetup(platformChatId: string, raw: unknown, now = new 
       update: {},
       select: { id: true, subjects: { select: { id: true, name: true } } },
     });
-    let hasTopics = false;
-    for (const s of draft.subjects) {
-      const subject = profile.subjects.find(x => same(x.name, s.name))
-        ?? await tx.novaSubject.create({ data: { profileId: profile.id, name: s.name }, select: { id: true, name: true } });
-      if (s.topics.length > 0) { await declareTopics(tx, subject.id, s.topics); hasTopics = true; }
-    }
+    const hasTopics = await declareSubjectsIn(tx, profile.id, profile.subjects, draft.subjects);
     const complete = hasTopics || await tx.novaTopicMastery.count({ where: { subject: { profileId: profile.id } } }) > 0;
     const setDaily = routine === "replace" || draft.dailyMinutes !== null;
     const setTime  = routine === "replace" || draft.studyTime !== null;
@@ -424,4 +441,17 @@ export async function ensureSetupProfile(platformChatId: string): Promise<{ prof
       select: { id: true, timezone: true },
     });
   return { profileId: profile.id, timezone: profile.timezone, userId: learner.id };
+}
+
+// ── Editing subjects (product/setup-edit.ts) ──────────────────────────────────
+
+export async function renameSubjectIn(tx: Pick<typeof prisma, "novaSubject">, subjectId: string, name: string): Promise<void> {
+  await tx.novaSubject.update({ where: { id: subjectId }, data: { name } });
+}
+
+// Only for a subject with no topics and no dates left, checked by the caller
+// in the same transaction. Its notes, tasks and saved pages stay, unfiled
+// (their subject link is set to null by the database).
+export async function removeSubjectIn(tx: Pick<typeof prisma, "novaSubject">, subjectId: string): Promise<void> {
+  await tx.novaSubject.delete({ where: { id: subjectId } });
 }

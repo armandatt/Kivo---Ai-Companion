@@ -2,12 +2,13 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ArrowRight, Bookmark, NotebookPen, Search, Waypoints } from 'lucide-react'
+import { ArrowRight, Bookmark, NotebookPen, Search, Settings2, Waypoints } from 'lucide-react'
 import type { NovaKnowledgeReady } from '@repo/api/nova/product/knowledge.types'
 import { useStartSession } from '../use-start-session'
 import { DueReviews } from './due-reviews'
 import { searchSubjects } from './knowledge-search'
 import { RecentLearning, SubjectTopics } from './subject-topics'
+import { SubjectStudio } from './subject-studio'
 
 // The pages next to this one, with the sidebar's icons. None is this page, so
 // none is marked current.
@@ -18,9 +19,11 @@ const quickLinks = [
 ]
 
 // What Nova has on record about each topic, what is due, and the sessions
-// behind it. Read-only: a topic changes when a session on it ends.
-export function NovaKnowledge({ view }: { view: NovaKnowledgeReady }) {
+// behind it. Levels change only when a session ends; names and filing are
+// the learner's to edit (Subject Studio).
+export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; onChanged?: () => void }) {
   const { start, starting, error } = useStartSession()
+  const [editing, setEditing] = useState(false)
   const [query, setQuery] = useState('')
   const noSubjects = view.totals.subjectCount === 0
   const noTopics   = view.totals.topicCount === 0
@@ -37,9 +40,15 @@ export function NovaKnowledge({ view }: { view: NovaKnowledgeReady }) {
               Revisit what you&apos;ve studied, keep your notes close, and choose the next useful action.
             </p>
           </div>
-          <Link href="/home" className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/80 transition-colors hover:border-keppel-400/50 hover:text-foreground">
-            Back to Today <ArrowRight aria-hidden className="size-4" />
-          </Link>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <button type="button" onClick={() => setEditing(e => !e)} aria-expanded={editing} data-edit-subjects
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/80 transition-colors hover:border-keppel-400/50 hover:text-foreground">
+              <Settings2 aria-hidden className="size-4" /> Edit subjects
+            </button>
+            <Link href="/home" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/80 transition-colors hover:border-keppel-400/50 hover:text-foreground">
+              Back to Today <ArrowRight aria-hidden className="size-4" />
+            </Link>
+          </div>
         </div>
         <nav aria-label="Knowledge navigation" className="mt-6 flex flex-wrap gap-2">
           {quickLinks.map(({ href, label, icon: Icon }) => (
@@ -49,6 +58,8 @@ export function NovaKnowledge({ view }: { view: NovaKnowledgeReady }) {
           ))}
         </nav>
       </header>
+
+      {editing && <SubjectStudio onChanged={() => onChanged?.()} onClose={() => setEditing(false)} />}
 
       {!noSubjects && (
         <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

@@ -503,3 +503,15 @@ export async function loadNovaProgress(
     now,
   });
 }
+
+// The topics among these that have mastery history. For study setup edits
+// (product/setup-edit.ts): a topic with history is never removed, since that
+// would delete it. Progress stays the one reader of that history.
+export async function topicsWithMasteryHistory(
+  db: Pick<typeof prisma, "novaTopicMasterySnapshot">,
+  topicIds: string[],
+): Promise<Set<string>> {
+  if (topicIds.length === 0) return new Set();
+  const rows = await db.novaTopicMasterySnapshot.groupBy({ by: ["topicId"], where: { topicId: { in: topicIds } }, _count: { _all: true } });
+  return new Set(rows.map(r => r.topicId));
+}
