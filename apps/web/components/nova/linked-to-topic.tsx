@@ -1,12 +1,13 @@
 'use client'
 
 import Link from 'next/link'
-import { ArrowRight, Bookmark, FolderClosed, NotebookPen } from 'lucide-react'
+import { ArrowRight, Bookmark, FolderClosed, NotebookPen, Waypoints } from 'lucide-react'
 import type { MapNode, NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
 import type { NovaFocusContextReady } from '@repo/api/nova/product/focus-context.types'
 import { cn } from '@/lib/utils'
 import { FocusContext, hasFocusContext } from './focus-context'
 import { localGraph, type LocalGraph, type LocalNeighbour } from './local-graph'
+import { SectionHeading, Skeleton, TEXT_LINK } from './workspace/ui'
 
 // Everything on record that is linked to the topic Today recommends: the
 // learner's tasks, notes, saved pages and last note (Focus context, from the
@@ -15,8 +16,6 @@ import { localGraph, type LocalGraph, type LocalNeighbour } from './local-graph'
 // page work without it.
 
 type MapState = { view: NovaKnowledgeMapView | null; loading: boolean; error: boolean; refresh: () => void }
-
-const HEADING = 'text-[11px] font-medium uppercase tracking-[0.18em] text-foreground/45'
 
 const ICON: Record<MapNode['type'], typeof NotebookPen> = { subject: FolderClosed, topic: FolderClosed, note: NotebookPen, resource: Bookmark }
 const KIND_WORD = (n: LocalNeighbour) =>
@@ -41,19 +40,16 @@ export function LinkedToTopic({ topicName, subjectName, context, map }: {
   if (!hasContext && !drawable) return null
 
   return (
-    <section aria-labelledby="linked-to-topic" data-section="linked-to-topic" className="rounded-2xl border border-white/8 bg-card/40 p-5">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h2 id="linked-to-topic" className={HEADING}>Linked to {topicName}</h2>
-        <Link href="/map" className="inline-flex items-center gap-1 text-xs font-medium text-foreground/55 transition-colors hover:text-foreground">
-          Knowledge Map <ArrowRight aria-hidden className="size-3" />
-        </Link>
-      </div>
+    <section aria-labelledby="linked-to-topic" data-section="linked-to-topic">
+      <SectionHeading id="linked-to-topic" icon={Waypoints} aside={<Link href="/map" className={TEXT_LINK}>Knowledge Map <ArrowRight aria-hidden className="size-3" /></Link>}>
+        Linked to {topicName}
+      </SectionHeading>
 
       <div className={cn('mt-4 grid gap-6', hasContext && 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]')}>
         {drawable ? <TopicGraph graph={drawable} />
-          : !mapReady && map.loading ? <div aria-busy="true" aria-label="Loading linked items" className="h-44 animate-pulse rounded-xl bg-white/3" />
+          : !mapReady && map.loading ? <div aria-busy="true" aria-label="Loading linked items"><Skeleton className="h-44 rounded-xl" /></div>
           : !mapReady && map.error ? (
-            <p role="status" className="text-xs text-foreground/50">
+            <p role="status" className="text-xs text-foreground/60">
               The map of what is linked here didn&apos;t load.{' '}
               <button type="button" onClick={() => map.refresh()} className="underline decoration-white/20 underline-offset-4 hover:text-foreground">Try again</button>
             </p>
@@ -103,14 +99,14 @@ function TopicGraph({ graph }: { graph: LocalGraph }) {
               {n.node.href
                 ? <Link href={n.node.href} className="min-w-0 truncate text-foreground/85 underline decoration-white/20 underline-offset-4 hover:decoration-white/60">{n.node.label}</Link>
                 : <span className="min-w-0 truncate text-foreground/85">{n.node.label}</span>}
-              <span className="shrink-0 text-xs text-foreground/40">{KIND_WORD(n)}</span>
+              <span className="shrink-0 text-xs text-foreground/55">{KIND_WORD(n)}</span>
             </li>
           )
         })}
       </ul>
 
       {graph.hidden > 0 && (
-        <figcaption className="mt-2 text-xs text-foreground/45">
+        <figcaption className="mt-2 text-xs text-foreground/55">
           {graph.hidden} more linked {graph.hidden === 1 ? 'item is' : 'items are'} on the <Link href="/map" className="underline decoration-white/20 underline-offset-4 hover:text-foreground">Knowledge Map</Link>.
         </figcaption>
       )}
@@ -128,7 +124,7 @@ function GraphNode({ node, centre = false, title, style }: { node: MapNode; cent
   )
   const className = cn(
     'absolute flex max-w-[9.5rem] -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs',
-    centre ? 'border-keppel-400/40 bg-keppel-400/10 font-medium text-foreground' : 'border-white/10 bg-card text-foreground/80 transition-colors hover:border-white/25 hover:text-foreground',
+    centre ? 'border-keppel-400/40 bg-keppel-400/10 font-medium text-foreground' : 'border-white/12 bg-card text-foreground/85 transition-colors hover:border-white/30 hover:text-foreground',
   )
   const label = title ? `${title}: ${node.label}` : node.label
   return node.href

@@ -21,13 +21,21 @@ const same = (a: string, b: string) => {
   return norm(a) === norm(b)
 }
 
+// The map's node for a topic named by its subject and name, if it has one.
+export function topicNode(
+  map: Pick<NovaKnowledgeMapReady, 'nodes'>,
+  where: { subjectName: string; topicName: string },
+): Extract<MapNode, { type: 'topic' }> | null {
+  return map.nodes.find((n): n is Extract<MapNode, { type: 'topic' }> =>
+    n.type === 'topic' && same(n.subjectName, where.subjectName) && same(n.label, where.topicName)) ?? null
+}
+
 export function localGraph(
   map: Pick<NovaKnowledgeMapReady, 'nodes' | 'edges'>,
   where: { subjectName: string; topicName: string },
   limit = 8,
 ): LocalGraph | null {
-  const topic = map.nodes.find((n): n is Extract<MapNode, { type: 'topic' }> =>
-    n.type === 'topic' && same(n.subjectName, where.subjectName) && same(n.label, where.topicName))
+  const topic = topicNode(map, where)
   if (!topic) return null
 
   const byId = new Map(map.nodes.map(n => [n.id, n]))

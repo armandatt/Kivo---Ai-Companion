@@ -40,3 +40,17 @@ export function recentPages(map: Pick<NovaKnowledgeMapReady, 'nodes'>, shown: nu
     .sort((a, b) => Date.parse(b.savedAt) - Date.parse(a.savedAt))
     .slice(0, shown)
 }
+
+export type LevelCounts = { solid: number; developing: number; weak: number; unstudied: number }
+
+// How a subject's topics stand, counted from the map's own levels. A topic
+// with no session behind it has no level and is counted as not studied: it
+// is never put in a band.
+export function levelCounts(topics: readonly Topic[]): LevelCounts {
+  const counts: LevelCounts = { solid: 0, developing: 0, weak: 0, unstudied: 0 }
+  for (const topic of topics) {
+    if (topic.sessions > 0 && topic.level) counts[topic.level] += 1
+    else counts.unstudied += 1
+  }
+  return counts
+}

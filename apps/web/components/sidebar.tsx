@@ -56,6 +56,23 @@ const navItems = [
 const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/planner': Calendar, '/focus': Timer, '/knowledge': BookOpen, '/map': Waypoints, '/notes': NotebookPen, '/saved': Bookmark, '/progress': TrendingUp, '/learning-dna': Dna, '/creature': Map, '/guide': Compass }
 const novaNavItems = NOVA_ROUTES.map(r => ({ href: r.path, label: r.label, icon: NOVA_ICONS[r.path] ?? Home }))
 
+type NavItem = typeof navItems[number]
+
+// Nova's pages grouped by what they are for. A page not named here (a new one
+// in NOVA_ROUTES) is listed after the groups, so none is ever dropped.
+const NOVA_GROUPS: ReadonlyArray<{ label: string; paths: readonly string[] }> = [
+  { label: 'Plan',      paths: ['/home', '/planner', '/focus'] },
+  { label: 'Knowledge', paths: ['/knowledge', '/map', '/notes', '/saved'] },
+  { label: 'Growth',    paths: ['/progress', '/learning-dna', '/creature'] },
+]
+
+function groupsOf(items: NavItem[], isNova: boolean): Array<{ label: string | null; items: NavItem[] }> {
+  if (!isNova) return [{ label: null, items }]
+  const grouped = NOVA_GROUPS.map(g => ({ label: g.label, items: items.filter(i => g.paths.includes(i.href)) }))
+  const rest = items.filter(i => !NOVA_GROUPS.some(g => g.paths.includes(i.href)))
+  return [...grouped, { label: null, items: rest }].filter(g => g.items.length > 0)
+}
+
 // The shell's Creature button points at the sidebar by this id too.
 export const SIDEBAR_ID = 'kivo-sidebar'
 const TAB_STOPS = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
@@ -181,7 +198,7 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
     : isMobileOpen ? shown
     : `${hidden} lg:visible lg:translate-x-0`
 
-  const row = cn('flex items-center gap-3 rounded-lg px-4 py-3 text-sm transition-colors', rail && 'lg:justify-center lg:px-0')
+  const row = cn('flex items-center gap-3 rounded-lg px-4 py-2 text-sm transition-colors', rail && 'lg:justify-center lg:px-0 lg:py-2.5')
   const label = cn('font-medium', rail && 'lg:sr-only')
 
   return (
@@ -272,29 +289,37 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
         </div>
 
         {/* Navigation */}
-        <nav aria-label="Main" className={cn('flex-1 space-y-2 overflow-y-auto overscroll-contain px-4 py-6', rail && 'lg:px-2')}>
-          {items.map((item) => {
-            const Icon = item.icon
-            const active = isActive(item.href)
+        <nav aria-label="Main" className={cn('flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-5', rail && 'lg:space-y-2 lg:px-2')}>
+          {groupsOf(items, isNova).map((group, g) => (
+            <div key={group.label ?? 'more'} role="group" aria-label={group.label ?? 'More'}
+              className={cn('space-y-0.5', rail && g > 0 && 'lg:border-t lg:border-sidebar-border lg:pt-2')}>
+              {group.label && (
+                <p aria-hidden className={cn('px-4 pb-1 text-[11px] font-semibold text-sidebar-foreground/50', rail && 'lg:hidden')}>{group.label}</p>
+              )}
+              {group.items.map((item) => {
+                const Icon = item.icon
+                const active = isActive(item.href)
 
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={close}
-                title={rail ? item.label : undefined}
-                aria-current={active ? 'page' : undefined}
-                className={cn(
-                  row, 'relative',
-                  active ? cn(accent.tint, 'text-sidebar-foreground') : 'text-sidebar-foreground hover:bg-sidebar-accent',
-                )}
-              >
-                {active && <span aria-hidden className={cn('absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full', accent.bar)} />}
-                <Icon aria-hidden className="w-5 h-5 shrink-0" />
-                <span className={label}>{item.label}</span>
-              </Link>
-            )
-          })}
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={close}
+                    title={rail ? item.label : undefined}
+                    aria-current={active ? 'page' : undefined}
+                    className={cn(
+                      row, 'relative',
+                      active ? cn(accent.tint, 'text-sidebar-foreground') : 'text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-foreground',
+                    )}
+                  >
+                    {active && <span aria-hidden className={cn('absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full', accent.bar)} />}
+                    <Icon aria-hidden className="w-[18px] h-[18px] shrink-0" />
+                    <span className={label}>{item.label}</span>
+                  </Link>
+                )
+              })}
+            </div>
+          ))}
         </nav>
 
         {/* Settings */}

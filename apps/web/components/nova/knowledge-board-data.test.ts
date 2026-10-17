@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { MapNode } from '@repo/api/nova/product/knowledge-map.types'
-import { dueMarks, recentPages, subjectCards } from './knowledge-board-data'
+import { dueMarks, levelCounts, recentPages, subjectCards } from './knowledge-board-data'
 
 const subject = (id: string, label: string): MapNode => ({ id: `subject:${id}`, type: 'subject', label, href: `/knowledge?subject=${id}`, subjectId: id, topics: 0, notes: 0, resources: 0 })
 const topic = (id: string, label: string, subjectId: string, subjectName: string, sessions = 1): MapNode => ({
@@ -55,4 +55,10 @@ test('a topic of the same name under another subject is not marked', () => {
 test('saved pages newest first by the date they were saved, and only as many as asked', () => {
   assert.deepEqual(recentPages({ nodes }, 2).map(p => p.label), ['new', 'mid'])
   assert.deepEqual(recentPages({ nodes: [] }, 5), [])
+})
+
+test('level counts take the map\'s level only where a session stands behind it', () => {
+  const t = (sessions: number, level: 'weak' | 'developing' | 'solid' | null) => ({ ...topic('t', 'x', 's1', 'S', sessions), level }) as MapNode & { type: 'topic' }
+  assert.deepEqual(levelCounts([t(2, 'solid'), t(1, 'weak'), t(0, 'weak'), t(3, null), t(1, 'developing')]), { solid: 1, developing: 1, weak: 1, unstudied: 2 })
+  assert.deepEqual(levelCounts([]), { solid: 0, developing: 0, weak: 0, unstudied: 0 })
 })

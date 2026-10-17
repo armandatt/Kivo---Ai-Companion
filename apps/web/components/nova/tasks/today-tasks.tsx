@@ -1,11 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowRight, CalendarArrowUp, Check, Pencil, Play, Plus } from 'lucide-react'
-import type { NovaTaskItem, TaskInput, TaskSubjectOption } from '@repo/api/nova/product/tasks.types'
-import { dueLabel, isOverdue, nextDay } from './task-format'
+import { ArrowRight, CalendarArrowUp, Check, CheckSquare, Flag, Pencil, Play, Plus, Undo2 } from 'lucide-react'
+import type { NovaTaskItem, TaskInput, TaskStatus, TaskSubjectOption } from '@repo/api/nova/product/tasks.types'
+import { cn } from '@/lib/utils'
+import { BUTTON_QUIET, ROW, SectionHeading, Skeleton, TEXT_LINK } from '../workspace/ui'
+import { TASK_GROUP_LABEL, dueLabel, groupTasks, isOverdue, localDayKey, nextDay } from './task-format'
 import { TaskEditor } from './task-editor'
+import { subjectColor } from '../subject-color'
 
 type Props = {
   // null: still loading.
@@ -20,6 +23,8 @@ type Props = {
   onStart?: (task: NovaTaskItem) => void
   // The key of the start in flight (`task:<id>`), or null.
   starting?: string | null
+  // The composer's field, so the page's New menu can put the keyboard there.
+  composerRef?: React.Ref<HTMLInputElement>
   // For editing a task here: the learner's subjects, removal, and their
   // calendar day (YYYY-MM-DD) that "tomorrow" is counted from.
   subjects?: TaskSubjectOption[]
@@ -28,11 +33,15 @@ type Props = {
   // Today's plan against the day's time, for saying when the tasks due today
   // (with a length the learner gave) do not fit beside it. Nothing is moved.
   dayMinutes?: { planned: number; budget: number }
+  // Where the task's topic lives in the Knowledge Space, if it names one the
+  // map has.
+  topicHref?: (task: NovaTaskItem) => string | null
 }
 
 const ROW_ACTION = 'inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-foreground/45 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-keppel-400/60 disabled:opacity-40'
 
-const SHOWN = 6
+const SHOWN = 8
+const UNDO_MS = 8000
 
 // What "today" means for a to-do list: what is under way, what is late, what
 // is due today, then what comes due next. The order is the board's own.
@@ -43,11 +52,21 @@ export function prioritiesOf(tasks: NovaTaskItem[]): NovaTaskItem[] {
   return [...open].sort((a, b) => rank(a) - rank(b) || (a.dueInDays ?? 9999) - (b.dueInDays ?? 9999))
 }
 
+const DUE_CHOICES = [
+  { label: 'No date', offset: null },
+  { label: 'Today', offset: 0 },
+  { label: 'Tomorrow', offset: 1 },
+] as const
+
 // Today's priorities: the learner's own tasks, from the same rows as the
-// Planner's board. Ticking one moves it to Done there too.
-export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, starting = null, subjects = [], onRemove, today = null, dayMinutes }: Props) {
+// Planner's board. Ticking one moves it to Done there too, and can be undone.
+export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, starting = null, composerRef, subjects = [], onRemove, today = null, dayMinutes, topicHref }: Props) {
   const [title, setTitle]   = useState('')
+  const [due, setDue]       = useState<number | null>(null)
   const [adding, setAdding] = useState(false)
+  const [added, setAdded]   = useState<string | null>(null)
+  // The last task ticked off, and the status it had, so it can be put back.
+  const [done, setDone]     = useState<{ id: string; title: string; was: TaskStatus } | null>(null)
   const [editing, setEditing] = useState<NovaTaskItem | null>(null)
   // The last move to tomorrow, so it can be taken back.
   const [moved, setMoved] = useState<{ id: string; title: string; from: string | null } | null>(null)
@@ -64,16 +83,33 @@ export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, 
     if (await onUpdate(moved.id, { dueDay: moved.from })) setMoved(null)
   }
 
+  useEffect(() => {
+    if (!done) return
+    const timer = setTimeout(() => setDone(null), UNDO_MS)
+    return () => clearTimeout(timer)
+  }, [done])
+
   const add = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!title.trim() || adding) return
+    const text = title.trim()
+    if (!text || adding) return
     setAdding(true)
-    if (await onCreate({ title })) setTitle('')
+    if (await onCreate({ title: text, ...(due !== null ? { dueDay: localDayKey(due) } : {}) })) {
+      setTitle('')
+      setAdded(text)
+    }
     setAdding(false)
   }
 
-  const list  = tasks ? prioritiesOf(tasks) : []
-  const shown = list.slice(0, SHOWN)
+  const finish = async (task: NovaTaskItem) => {
+    setDone({ id: task.id, title: task.title, was: task.status })
+    if (!(await onUpdate(task.id, { status: 'done' }))) setDone(null)
+  }
+
+  const list   = tasks ? prioritiesOf(tasks) : []
+  const shown  = list.slice(0, SHOWN)
+  const groups = groupTasks(shown)
+  const late   = list.filter(isOverdue).length
   // Only lengths the learner gave are counted; a task without one is not guessed.
   const dueNow = list.filter(t => t.dueInDays !== null && t.dueInDays <= 0)
   const taskMinutes = dueNow.reduce((sum, t) => sum + (t.estimatedMinutes ?? 0), 0)
@@ -81,75 +117,122 @@ export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, 
   const over = dayMinutes && taskMinutes > 0 && dayMinutes.planned + taskMinutes > dayMinutes.budget
 
   return (
-    <section aria-label="Today's priorities">
-      <div className="flex items-baseline justify-between gap-4">
-        <h2 className="text-[11px] font-medium uppercase tracking-[0.18em] text-foreground/45">Your tasks</h2>
-        <Link href="/planner?view=board" className="inline-flex items-center gap-1 text-xs font-medium text-foreground/55 transition-colors hover:text-foreground">
-          Open the board <ArrowRight className="size-3" />
-        </Link>
-      </div>
+    <section aria-labelledby="today-tasks" data-section="today-tasks">
+      <SectionHeading id="today-tasks" icon={CheckSquare} aside={
+        <>
+          {tasks && list.length > 0 && (
+            <span>{list.length} open{late > 0 && <> · <span className="font-medium text-rose-300">{late} overdue</span></>}</span>
+          )}
+          <Link href="/planner?view=board" className={TEXT_LINK}>Board <ArrowRight aria-hidden className="size-3" /></Link>
+        </>
+      }>
+        Your tasks
+      </SectionHeading>
 
-      <div className="mt-3 overflow-hidden rounded-2xl border border-white/8 bg-card/60">
+      <div className="mt-3 border-y border-white/8">
         {tasks === null && !failed ? (
-          <div aria-busy="true" aria-label="Loading your tasks" className="space-y-2 p-4">
-            <div className="h-5 w-2/3 animate-pulse rounded bg-white/5" /><div className="h-5 w-1/2 animate-pulse rounded bg-white/4" />
+          <div aria-busy="true" aria-label="Loading your tasks" className="space-y-3 py-4">
+            <Skeleton className="h-4 w-2/3" /><Skeleton className="h-4 w-1/2" />
           </div>
         ) : failed && tasks === null ? (
-          <p className="p-4 text-sm text-foreground/55">Your tasks didn&apos;t load. They are safe; this will try again shortly.</p>
+          <p className="py-4 text-sm text-foreground/60">Your tasks didn&apos;t load. They are safe; this will try again shortly.</p>
         ) : shown.length === 0 ? (
-          <p className="p-4 text-sm leading-relaxed text-foreground/55">
-            Nothing on your list. Add the assignment, chapter or errand that is on your mind, and it will be here and on the board.
+          <p className="py-4 text-sm leading-relaxed text-foreground/60">
+            {done ? 'Nothing else open.' : 'Nothing on your list.'} Add the assignment, chapter or errand that is on your mind, and it will be here and on the board.
           </p>
         ) : (
-          <ul className="divide-y divide-white/6">
-            {shown.map(task => {
-              const due = dueLabel(task)
-              return (
-                <li key={task.id} className="flex items-center gap-3 px-4 py-3">
-                  <button
-                    type="button" onClick={() => void onUpdate(task.id, { status: 'done' })}
-                    aria-label={`Mark "${task.title}" done`}
-                    className="group flex size-5 shrink-0 items-center justify-center rounded-md border border-white/20 transition-colors hover:border-keppel-400 hover:bg-keppel-400/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-keppel-400/60"
-                  >
-                    <Check className="size-3.5 text-keppel-300 opacity-0 transition-opacity group-hover:opacity-100" />
-                  </button>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-foreground/90">{task.title}</p>
-                    <p className="truncate text-xs text-foreground/45">
-                      {[task.status === 'in_progress' ? 'In progress' : null, task.subjectName, task.topicName, task.estimatedMinutes ? `${task.estimatedMinutes} min` : null].filter(Boolean).join(' · ') || 'To do'}
-                    </p>
-                  </div>
-                  {onStart && task.subjectName && task.topicName && (
-                    <button type="button" onClick={() => onStart(task)} disabled={starting !== null} data-start-task
-                      aria-label={`Start a session on ${task.topicName} for "${task.title}"`}
-                      className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-white/10 px-2.5 text-xs font-medium text-foreground/75 transition-colors hover:bg-white/5 hover:text-foreground disabled:opacity-40">
-                      <Play className="size-3" /> {starting === `task:${task.id}` ? 'Starting…' : 'Focus'}
-                    </button>
-                  )}
-                  {due && <span className={`shrink-0 text-xs ${isOverdue(task) ? 'font-medium text-rose-300' : task.dueInDays === 0 ? 'font-medium text-amber-300' : 'text-foreground/50'}`}>{due}</span>}
-                  {today && (task.dueInDays === null || task.dueInDays <= 0) && (
-                    <button type="button" onClick={() => void deferToTomorrow(task)} className={ROW_ACTION} data-defer-task
-                      aria-label={`Move "${task.title}" to tomorrow`} title="Move to tomorrow">
-                      <CalendarArrowUp className="size-3.5" />
-                    </button>
-                  )}
-                  <button type="button" onClick={() => setEditing(task)} className={ROW_ACTION} data-edit-task
-                    aria-label={`Edit "${task.title}"`} title="Edit">
-                    <Pencil className="size-3.5" />
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
+          groups.map(group => (
+            <div key={group.key} data-group={group.key}>
+              <h3 className={cn('pt-3 text-[11px] font-semibold', group.key === 'overdue' ? 'text-rose-300' : 'text-foreground/50')}>
+                {TASK_GROUP_LABEL[group.key]}
+              </h3>
+              <ul className="divide-y divide-white/6">
+                {group.tasks.map(task => {
+                  const label = dueLabel(task)
+                  const topicLink = topicHref?.(task) ?? null
+                  return (
+                    <li key={task.id} className={cn('-mx-2 flex items-center gap-3 rounded-md px-2 py-2.5', ROW)}>
+                      <button
+                        type="button" onClick={() => void finish(task)}
+                        aria-label={`Mark "${task.title}" done`}
+                        className="group flex size-5 shrink-0 items-center justify-center rounded-md border border-white/25 transition-colors hover:border-keppel-400 hover:bg-keppel-400/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-keppel-400/60"
+                      >
+                        <Check aria-hidden className="size-3.5 text-keppel-300 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-foreground/90">{task.title}</p>
+                        <p className="flex min-w-0 items-center gap-1.5 truncate text-xs text-foreground/55">
+                          {task.priority === 'high' && <span className="inline-flex shrink-0 items-center gap-1 font-medium text-amber-300"><Flag aria-hidden className="size-3" />High</span>}
+                          {task.priority === 'low' && <span className="shrink-0">Low priority</span>}
+                          {task.status === 'in_progress' && <span className="shrink-0">In progress</span>}
+                          {task.subjectName && (
+                            <span className="inline-flex min-w-0 items-center gap-1">
+                              <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', subjectColor(task.subjectName).dot)} />
+                              <span className="truncate">{task.subjectName}</span>
+                            </span>
+                          )}
+                          {task.topicName && (topicLink
+                            ? <Link href={topicLink} className="truncate underline decoration-white/20 underline-offset-2 hover:text-foreground hover:decoration-white/50" title={`${task.topicName} in the Knowledge Space`}>{task.topicName}</Link>
+                            : <span className="truncate">{task.topicName}</span>)}
+                          {task.estimatedMinutes ? <span className="shrink-0">{task.estimatedMinutes} min</span> : null}
+                          {!task.subjectName && !task.topicName && task.status !== 'in_progress' && !task.priority && !task.estimatedMinutes && <span>To do</span>}
+                        </p>
+                      </div>
+                      {onStart && task.subjectName && task.topicName && (
+                        <button type="button" onClick={() => onStart(task)} disabled={starting !== null} data-start-task
+                          aria-label={`Start a session on ${task.topicName} for "${task.title}"`}
+                          className={cn(BUTTON_QUIET, 'h-8 px-2.5')}>
+                          <Play aria-hidden className="size-3" /> {starting === `task:${task.id}` ? 'Starting…' : 'Focus'}
+                        </button>
+                      )}
+                      {label && <span className={cn('shrink-0 text-xs', isOverdue(task) ? 'font-medium text-rose-300' : task.dueInDays === 0 ? 'font-medium text-amber-300' : 'text-foreground/55')}>{label}</span>}
+                      {today && (task.dueInDays === null || task.dueInDays <= 0) && (
+                        <button type="button" onClick={() => void deferToTomorrow(task)} className={ROW_ACTION} data-defer-task
+                          aria-label={`Move "${task.title}" to tomorrow`} title="Move to tomorrow">
+                          <CalendarArrowUp className="size-3.5" />
+                        </button>
+                      )}
+                      <button type="button" onClick={() => setEditing(task)} className={ROW_ACTION} data-edit-task
+                        aria-label={`Edit "${task.title}"`} title="Edit">
+                        <Pencil className="size-3.5" />
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          ))
         )}
 
-        <form onSubmit={add} className="flex items-center gap-2 border-t border-white/6 p-2.5">
-          <Plus className="ml-1.5 size-4 shrink-0 text-foreground/35" />
+        {/* The one thing just ticked off, and a way to take it back */}
+        {done && (
+          <p role="status" className="flex items-center gap-2 border-t border-white/6 py-2.5 text-sm text-foreground/70">
+            <Check aria-hidden className="size-4 shrink-0 text-keppel-300" />
+            <span className="min-w-0 flex-1 truncate">Done: <span className="text-foreground/85">{done.title}</span></span>
+            <button type="button" onClick={() => { void onUpdate(done.id, { status: done.was }); setDone(null) }}
+              className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-foreground/70 hover:bg-white/5 hover:text-foreground">
+              <Undo2 aria-hidden className="size-3.5" /> Undo
+            </button>
+          </p>
+        )}
+
+        <form onSubmit={add} className="flex flex-wrap items-center gap-2 border-t border-white/6 py-2.5">
+          <Plus aria-hidden className="size-4 shrink-0 text-foreground/40" />
           <input
-            value={title} onChange={e => setTitle(e.target.value)} placeholder="Add a task" aria-label="Add a task" maxLength={160}
-            className="h-9 min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-foreground/35"
+            ref={composerRef}
+            value={title} onChange={e => { setTitle(e.target.value); setAdded(null) }} placeholder="Add a task" aria-label="Add a task" maxLength={160}
+            className="h-9 min-w-0 flex-1 basis-40 bg-transparent text-sm text-foreground outline-none placeholder:text-foreground/40"
           />
-          <button type="submit" disabled={!title.trim() || adding} className="h-8 shrink-0 rounded-lg bg-white/8 px-3 text-xs font-medium text-foreground transition-colors hover:bg-white/12 disabled:opacity-40">
+          <div role="group" aria-label="Due" className="flex items-center gap-1">
+            {DUE_CHOICES.map(choice => (
+              <button key={choice.label} type="button" aria-pressed={due === choice.offset} onClick={() => setDue(choice.offset)}
+                className={cn('h-8 rounded-md px-2 text-xs transition-colors',
+                  due === choice.offset ? 'bg-white/10 font-medium text-foreground' : 'text-foreground/55 hover:bg-white/5 hover:text-foreground')}>
+                {choice.label}
+              </button>
+            ))}
+          </div>
+          <button type="submit" disabled={!title.trim() || adding} className={cn(BUTTON_QUIET, 'h-8')}>
             {adding ? 'Adding…' : 'Add'}
           </button>
         </form>
@@ -165,6 +248,7 @@ export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, 
           <button type="button" onClick={() => void undoMove()} className="font-medium text-foreground underline decoration-white/25 underline-offset-4 hover:decoration-white/60">Undo</button>
         </p>
       )}
+      {added && !error && <p role="status" className="mt-2 text-xs text-foreground/60">Added “{added}”.</p>}
       {error && <p role="alert" className="mt-2 text-xs text-red-300">{error}</p>}
       {editing && (
         <TaskEditor
@@ -175,7 +259,7 @@ export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, 
           error={error}
         />
       )}
-      {list.length > SHOWN && <p className="mt-2 text-xs text-foreground/40">and {list.length - SHOWN} more on the board</p>}
+      {list.length > SHOWN && <p className="mt-2 text-xs text-foreground/55">and {list.length - SHOWN} more on the board</p>}
     </section>
   )
 }

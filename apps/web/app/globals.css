@@ -120,10 +120,22 @@ html[data-kivo-theme="light"] .kivo-app {
   --color-red-300: oklch(51% 0.2 27);
   --color-sky-300: oklch(50% 0.13 235);
   --color-emerald-300: oklch(48% 0.12 160);
+  /* The subject colours (components/nova/subject-color.ts), darkened the same way. */
+  --color-violet-300: oklch(50% 0.17 293);
+  --color-orange-300: oklch(54% 0.15 50);
+  --color-indigo-300: oklch(48% 0.16 275);
+  --color-pink-300: oklch(53% 0.17 350);
   --map-topic: oklch(42% 0.03 292);
   --map-note: oklch(68% 0.15 75);
   --map-resource: oklch(58% 0.14 240);
   --map-line: oklch(24% 0.02 290 / 0.2);
+  /* Subject tones and raised surfaces, set for paper (see below). */
+  --tone-l: 66%;
+  --tone-ink: 46%;
+  --tone-c: 0.15;
+  --hero-a: 0.24;
+  --shadow-soft: 0 10px 28px -16px oklch(30% 0.05 290 / 0.28), 0 2px 6px -3px oklch(30% 0.05 290 / 0.1);
+  --shadow-float: 0 24px 48px -22px oklch(30% 0.06 290 / 0.34), 0 6px 14px -6px oklch(30% 0.05 290 / 0.14);
   background: var(--background);
   color: var(--foreground);
 }
@@ -341,6 +353,49 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
     transform: translateY(0);
   }
 }
+
+/* ── Subject tones ──────────────────────────────────────────────────────────────
+   One hue per subject (components/nova/subject-color.ts puts it in --sh on the
+   element). From it: the solid tone, an ink that reads as text, and the soft
+   fills and edges. Lightness and chroma follow the theme, so one class works on
+   ink and on paper. */
+.kivo-app {
+  --tone-l: 74%;
+  --tone-ink: 84%;
+  --tone-c: 0.14;
+  --hero-a: 0.2;
+  --shadow-soft: 0 12px 30px -16px oklch(0% 0 0 / 0.6), 0 2px 6px -3px oklch(0% 0 0 / 0.4);
+  --shadow-float: inset 0 1px 0 oklch(100% 0 0 / 0.05), 0 28px 56px -24px oklch(0% 0 0 / 0.75), 0 8px 18px -8px oklch(0% 0 0 / 0.5);
+}
+.subject-tone {
+  --sc: oklch(var(--tone-l) var(--tone-c) var(--sh, 180));
+  --sc-ink: oklch(var(--tone-ink) var(--tone-c) var(--sh, 180));
+  --sc-soft: oklch(var(--tone-l) var(--tone-c) var(--sh, 180) / 0.14);
+  --sc-faint: oklch(var(--tone-l) var(--tone-c) var(--sh, 180) / 0.06);
+  --sc-edge: oklch(var(--tone-l) var(--tone-c) var(--sh, 180) / 0.45);
+}
+.shadow-soft { box-shadow: var(--shadow-soft); }
+.shadow-float { box-shadow: var(--shadow-float); }
+
+/* A hero surface washed with up to three subjects' hues (--h1..--h3). */
+.nova-hero {
+  background:
+    radial-gradient(55% 85% at 0% 0%, oklch(var(--tone-l) var(--tone-c) var(--h1, 179) / var(--hero-a)), transparent 70%),
+    radial-gradient(45% 75% at 100% 0%, oklch(var(--tone-l) var(--tone-c) var(--h2, 293) / calc(var(--hero-a) * 0.85)), transparent 70%),
+    radial-gradient(60% 80% at 65% 115%, oklch(var(--tone-l) var(--tone-c) var(--h3, 237) / calc(var(--hero-a) * 0.7)), transparent 70%),
+    var(--card);
+}
+
+/* The board's canvas: a dot grid, so tiles read as placed on a surface. */
+.nova-canvas {
+  background-image: radial-gradient(circle at 1px 1px, color-mix(in oklch, var(--foreground) 13%, transparent) 1px, transparent 0);
+  background-size: 20px 20px;
+}
+
+@keyframes nova-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.nova-rise { animation: nova-rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+@keyframes nova-flow { to { stroke-dashoffset: -18; } }
+.nova-flow { animation: nova-flow 0.9s linear infinite; }
 
 /* A learner who has asked their device for less motion gets none that is
    decoration: no pulsing placeholders, sliding panels or eased rings. The

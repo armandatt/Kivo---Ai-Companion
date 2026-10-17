@@ -67,10 +67,10 @@ const EXTENSION_FACTS = [
 ]
 
 const PAGES = [
-  { href: '/home',         label: 'Today',         icon: Home,        body: 'The one thing to do next, what you have linked to its topic, and the rest of today’s plan in order, then your tasks. Around it: your dates, this week beside the eight before, where you left off, your goals, every subject with its topics, and what you wrote or saved last.' },
+  { href: '/home',         label: 'Today',         icon: Home,        body: 'Today’s plan in order, with the block to do now at its head, then your tasks by when they are due. Around it: your dates, this week beside the eight before, where you left off and your goals; below, every subject with how its topics stand, and what you wrote or saved last. Search (⌘K or Ctrl+K) finds any page, subject, topic, note, saved page or task; New adds a task, note, link or session.' },
   { href: '/planner',      label: 'Planner',       icon: Calendar,    body: 'The study plan for the days ahead, and a task board you drag cards across.' },
   { href: '/focus',        label: 'Focus',         icon: Timer,       body: 'The session timer. Ends by asking how it went.' },
-  { href: '/knowledge',    label: 'Knowledge',     icon: BookOpen,    body: 'Every topic by subject, with where each one stands, and a search by name.' },
+  { href: '/knowledge',    label: 'Knowledge',     icon: BookOpen,    body: 'Your subjects in an outline. Open one to see its topics as a list, with where each stands, or as a board of the notes and saved pages filed under each topic and the links you wrote.' },
   { href: '/map',          label: 'Knowledge Map', icon: Waypoints,   body: 'Subjects, topics, notes and saved pages as a graph you can pan, zoom and filter.' },
   { href: '/notes',        label: 'Notes',         icon: NotebookPen, body: 'Your own notes, filed under a subject and topic.' },
   { href: '/saved',        label: 'Saved',         icon: Bookmark,    body: 'Links you want to come back to: paste one, send it with the Save to Kivo bookmark, or use the extension.' },

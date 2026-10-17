@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
 import type { TodayActiveSession } from '@repo/api/nova/product/today.types'
 import { minutesLabel } from './format'
+import { BUTTON_PRIMARY, SURFACE_RAISED } from './workspace/ui'
+import { toneStyle } from './subject-color'
 
 // A session is already running: it takes the place of the recommendation.
 export function ActiveSessionCard({ session }: { session: TodayActiveSession }) {
@@ -12,32 +14,32 @@ export function ActiveSessionCard({ session }: { session: TodayActiveSession }) 
   const left    = planned > 0 ? planned - session.elapsedMinutes : null
 
   return (
-    <section aria-labelledby="nova-current-session" className="relative overflow-hidden rounded-3xl border border-keppel-400/25 bg-card/70 p-6 sm:p-9">
-      <div aria-hidden className="pointer-events-none absolute -top-32 -right-24 size-80 rounded-full bg-keppel-500/15 blur-3xl" />
-
-      <div className="relative">
-        <p className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.2em] text-keppel-300/90">
-          <span className={paused ? 'size-1.5 rounded-full bg-amber-300' : 'size-1.5 animate-pulse rounded-full bg-keppel-300'} />
+    <section aria-labelledby="nova-current-session" style={toneStyle(session.subjectName)}
+      className={`${SURFACE_RAISED} subject-tone relative overflow-hidden`}>
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-linear-to-b from-[var(--sc-soft)] to-transparent" />
+      <div className="relative p-5 sm:p-6">
+        <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--sc-ink)]">
+          <span className={paused ? 'size-2 rounded-full bg-amber-300' : 'size-2 animate-pulse rounded-full bg-[var(--sc)]'} />
           {paused ? 'Session paused' : 'Session in progress'}
         </p>
 
-        {session.subjectName && <p className="mt-6 text-sm text-foreground/55">{session.subjectName}</p>}
-        <h2 id="nova-current-session" className="mt-1 text-3xl font-semibold leading-tight tracking-tight text-foreground sm:text-[2.6rem]">
+        {session.subjectName && <p className="mt-3 text-sm text-foreground/60">{session.subjectName}</p>}
+        <h2 id="nova-current-session" className="mt-0.5 text-2xl font-semibold leading-tight tracking-[-0.02em] text-foreground sm:text-[1.75rem]">
           {session.topicName ?? 'Study session'}
         </h2>
 
-        <p className="mt-4 text-sm text-foreground/70">
+        <p className="mt-2 text-sm text-foreground/75">
           {minutesLabel(session.elapsedMinutes)} in
           {left !== null && (left > 0
-            ? <span className="text-foreground/45"> · {minutesLabel(left)} left of {minutesLabel(planned)}</span>
-            : <span className="text-foreground/45"> · past the {minutesLabel(planned)} you planned</span>)}
+            ? <span className="text-foreground/60"> · {minutesLabel(left)} left of {minutesLabel(planned)}</span>
+            : <span className="text-foreground/60"> · past the {minutesLabel(planned)} you planned</span>)}
         </p>
 
         <Link
           href="/focus"
-          className="mt-8 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-keppel-400 px-6 text-[15px] font-semibold text-keppel-950 transition-colors hover:bg-keppel-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-keppel-300 sm:w-auto"
+          className={`${BUTTON_PRIMARY} mt-4 w-full sm:w-auto`}
         >
-          Resume session <ArrowRight className="size-4" />
+          Resume session <ArrowRight aria-hidden className="size-4" />
         </Link>
       </div>
     </section>
