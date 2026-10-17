@@ -10,7 +10,18 @@
 // and the test reads it from the message the stand-in received. It is not a
 // way around verification, and it is left unset in every deployed environment.
 //
-// Codes, links and recipient addresses are never written to the log.
+// Codes, links and recipient addresses are never written to the log. When
+// the provider refuses a message, the log says the status and the kind of
+// error the provider named (an identifier such as validation_error), which is
+// what diagnosing an unverified domain or a bad key needs, and nothing else.
+
+import { errorLabel } from "./error-label";
+
+// A send that has not answered by then is treated as failed, so a request
+// never waits on the provider for longer than this.
+export const EMAIL_SEND_TIMEOUT_MS = 10_000;
+const SHARED_SENDER = "onboarding@resend.dev";
+const IDENTIFIER = /^[a-z][a-z0-9_]{0,63}$/;
 
 export interface AuthEmail {
   to: string;
@@ -33,7 +44,11 @@ export const sendAuthEmail: SendAuthEmail = async (email) => {
     return false;
   }
 
-  const from = process.env.RESEND_FROM_EMAIL ?? "onboarding@resend.dev";
+  const from = process.env.RESEND_FROM_EMAIL || SHARED_SENDER;
+  if (from === SHARED_SENDER && process.env.NODE_ENV === "production") {
+    // Resend's shared sender only reaches the Resend account's own address.
+    console.warn("[AUTH EMAIL] RESEND_FROM_EMAIL is not set; mail will only reach the Resend account owner.");
+  }
 
   try {
     const base = (process.env.RESEND_API_BASE ?? "https://api.resend.com").replace(/\/+$/, "");
@@ -50,17 +65,30 @@ export const sendAuthEmail: SendAuthEmail = async (email) => {
         html: email.html,
         text: email.text,
       }),
+      signal: AbortSignal.timeout(EMAIL_SEND_TIMEOUT_MS),
     });
     if (!res.ok) {
-      console.error(`[AUTH EMAIL] Provider refused the message (status ${res.status}).`);
+      console.error(`[AUTH EMAIL] Provider refused the message (status ${res.status}, ${await providerErrorKind(res)}).`);
       return false;
     }
     return true;
-  } catch {
-    console.error("[AUTH EMAIL] Provider could not be reached.");
+  } catch (error) {
+    console.error(`[AUTH EMAIL] Provider could not be reached (${errorLabel(error)}).`);
     return false;
   }
 };
+
+// The kind of error the provider named in its reply ({ name: "validation_error" }),
+// or "unknown". Only an identifier is kept: the reply's message can quote an
+// address.
+async function providerErrorKind(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { name?: unknown };
+    return typeof body?.name === "string" && IDENTIFIER.test(body.name) ? body.name : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 function escapeHtml(value: string) {
   return value

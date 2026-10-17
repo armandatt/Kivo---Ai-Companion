@@ -87,6 +87,32 @@ describe("asking for a reset", () => {
     expect(result).toEqual({ ok: true, message: RESET_REQUESTED_MESSAGE });
   });
 
+  it("logs a refused email without the address or the link, and still answers the same", async () => {
+    const { auth, at, t0 } = setup();
+    auth.mail.working = false;
+    const logged: string[] = [];
+    const spy = jest.spyOn(console, "error").mockImplementation((...args) => { logged.push(args.join(" ")); });
+    try {
+      const result = await requestPasswordReset({ email: "asha@gmail.com" }, at(t0));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(result).toEqual({ ok: true, message: RESET_REQUESTED_MESSAGE });
+      expect(logged).toEqual(["[PASSWORD RESET] The email was not accepted by the provider."]);
+      expect(logged.join("\n")).not.toContain("asha@gmail.com");
+      expect(logged.join("\n")).not.toMatch(/token=|reset-password/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("links to the reset page on the configured site, with the token as the only parameter", async () => {
+    const { auth, at, t0 } = setup();
+    await requestPasswordReset({ email: "asha@gmail.com" }, { ...at(t0), deps: { ...auth.deps, appUrl: () => "https://www.thekivo.in" } });
+
+    expect(auth.sent[0]!.text).toContain(`https://www.thekivo.in/reset-password?token=${auth.lastResetToken()}`);
+    expect(auth.lastResetToken()).toMatch(/^[0-9a-f]{64}$/);
+  });
+
   it("rejects something that is not an email address", async () => {
     const { at, t0 } = setup();
     expect(await requestPasswordReset({ email: "nope" }, at(t0))).toMatchObject({ ok: false, status: 400 });
