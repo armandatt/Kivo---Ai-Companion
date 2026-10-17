@@ -63,6 +63,11 @@ export interface PlanOptions {
   // change policy lets that happen by itself: not over a time they stated,
   // not while an exam takes the day, not on top of another cut.
   reentry?: boolean;
+  // The learner's own changes to today's plan (NovaPlanOverride, read by
+  // product/plan-overrides.ts): topics left out today, topics added first,
+  // and an order for the blocks. Applied to what the engine plans; they never
+  // lengthen the day.
+  overrides?: { skip: string[]; pin: string[]; order: Array<{ topicId: string; position: number }> };
   // How far off the active date is in the learner's own calendar days (0 is
   // today). Given, the shortfall counts study days from it, so the time it
   // says is left agrees with the "in N days" the pages show. Unset: the
@@ -204,7 +209,7 @@ function examPrepBlock(topic: TopicMasteryState, minutes: number, daysUntil: num
 
 export function generateStudyPlan(
   state:                AcademicState,
-  topics:               TopicMasteryState[],
+  allTopics:            TopicMasteryState[],
   preferredHoursPerDay: number,
   examContext:          ExamContext | null,
   options:              PlanOptions = {},
@@ -215,8 +220,18 @@ export function generateStudyPlan(
   );
   // Exam prep is for the topics the exam is about: its own subject's. A
   // topic from another subject is never called exam prep for this exam.
-  const examTopics = examContext ? topics.filter(t => examCoversSubject(examContext, t.subjectName)) : [];
-  const examTakesDay = !!examContext && state.hardDirectives.examCrisisMode && examTopics.length > 0;
+  // The learner's changes to today. A skipped topic and an added one are not
+  // picked by the rules below; an added one is planned first. Whether an exam
+  // takes the day, and what is short before it, count every topic: skipping
+  // one today does not remove its work.
+  const skip   = new Set(options.overrides?.skip ?? []);
+  const pinned = (options.overrides?.pin ?? []).filter(id => !skip.has(id))
+    .map(id => allTopics.find(t => t.topicId === id)).filter((t): t is TopicMasteryState => t !== undefined);
+  const taken  = new Set([...skip, ...pinned.map(t => t.topicId)]);
+  const topics = allTopics.filter(t => !taken.has(t.topicId));
+  const examTopicsAll = examContext ? allTopics.filter(t => examCoversSubject(examContext, t.subjectName)) : [];
+  const examTopics    = examContext ? topics.filter(t => examCoversSubject(examContext, t.subjectName)) : [];
+  const examTakesDay = !!examContext && state.hardDirectives.examCrisisMode && examTopicsAll.length > 0;
   const budget         = options.reentry && fitted.basis === "preferred" && classifyChange({
     kind: "shorten_today", usualMinutes: fitted.minutes, minutes: reentryMinutes(fitted.minutes, MIN_BLOCK_MINUTES),
     statedToday: false, dayTakenByExam: examTakesDay,
@@ -233,7 +248,23 @@ export function generateStudyPlan(
   const size = (wanted: number) => (cap === null ? wanted : Math.min(wanted, cap));
   if (cap !== null && cap < REVIEW_BLOCK_MINUTES) assumptions.push(`Blocks are kept to about ${cap} minutes, the length your own sessions usually run.`);
 
-  const shortfall  = examShortfall({ examContext, examTopics, budget, dailyMinutes: preferredHoursPerDay * 60, calendarDays: options.examCalendarDays });
+  // Topics the learner added to today come first, inside the day's time.
+  for (const topic of pinned) {
+    const mins = Math.min(size(REVIEW_BLOCK_MINUTES), budgetMinutes - usedMinutes);
+    if (mins < MIN_BLOCK_MINUTES) { assumptions.push(`You added ${topic.topicName} to today, but it doesn't fit in the time you have.`); continue; }
+    const block = topic.reviewCount === 0 && topic.lastStudied === null ? newMaterialBlock(topic, mins) : reviewBlock(topic, mins, "high");
+    blocks.push({ ...block, rationale: "You added this to today's plan." });
+    usedMinutes += mins;
+  }
+  // The learner's order, then the engine's for what they did not place.
+  const position = new Map((options.overrides?.order ?? []).map(o => [o.topicId, o.position] as const));
+  const ordered = (bs: StudyBlock[]): StudyBlock[] => position.size === 0 ? bs : [...bs].sort((a, b) => {
+    const pa = position.get(a.topicId), pb = position.get(b.topicId);
+    if (pa !== undefined && pb !== undefined) return pa - pb;
+    return pa !== undefined ? -1 : pb !== undefined ? 1 : 0;
+  });
+
+  const shortfall  = examShortfall({ examContext, examTopics: examTopicsAll, budget, dailyMinutes: preferredHoursPerDay * 60, calendarDays: options.examCalendarDays });
 
   // ── Exam crisis: all blocks are exam prep ────────────────────────────────
   // With no topic on record for the exam's subject there is nothing to
@@ -248,7 +279,7 @@ export function generateStudyPlan(
       usedMinutes += mins;
     }
     assumptions.push("Assumes full focus mode for exam prep.");
-    return buildPlan(blocks, budget, assumptions, now, shortfall);
+    return buildPlan(ordered(blocks), budget, assumptions, now, shortfall);
   }
 
   // ── Recovery mode: very gentle, single topic ─────────────────────────────
@@ -261,7 +292,7 @@ export function generateStudyPlan(
       blocks.push(reviewBlock(easiestTopic, Math.min(size(20), budgetMinutes), "optional"));
       assumptions.push("Light session — recovery mode active. No new material.");
     }
-    return buildPlan(blocks, budget, assumptions, now, shortfall);
+    return buildPlan(ordered(blocks), budget, assumptions, now, shortfall);
   }
 
   // ── Standard mode: overdue reviews first, then practice ──────────────────
@@ -326,7 +357,7 @@ export function generateStudyPlan(
     assumptions.push("No specific topics loaded yet — plan is incomplete until subjects are added.");
   }
 
-  return buildPlan(blocks, budget, assumptions, now, shortfall);
+  return buildPlan(ordered(blocks), budget, assumptions, now, shortfall);
 }
 
 function buildPlan(

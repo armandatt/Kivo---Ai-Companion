@@ -87,7 +87,7 @@ export default function PlannerPage() {
           Showing the plan that loaded last. Reconnecting…
         </p>
       )}
-      <NovaPlanner view={view} minutes={minutes} onMinutes={setMinutes} refreshing={refreshing} />
+      <NovaPlanner view={view} minutes={minutes} onMinutes={setMinutes} refreshing={refreshing} onChanged={() => void refresh()} />
     </>
   )
 }

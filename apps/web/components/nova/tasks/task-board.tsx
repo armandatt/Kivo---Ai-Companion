@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Plus } from 'lucide-react'
 import {
   TASK_STATUSES, TASK_STATUS_LABEL,
   type NovaTaskItem, type NovaTasksReady, type TaskInput, type TaskStatus,
@@ -17,6 +17,8 @@ type Props = {
   onCreate: (input: TaskInput) => Promise<boolean>
   onUpdate: (id: string, changes: TaskInput) => Promise<boolean>
   onDelete: (id: string) => Promise<boolean>
+  // The learner's own order for an open column (POST /api/nova/tasks/order).
+  onReorder?: (status: 'todo' | 'in_progress', ids: string[]) => Promise<boolean>
 }
 
 const EMPTY: Record<TaskStatus, string> = {
@@ -27,10 +29,12 @@ const EMPTY: Record<TaskStatus, string> = {
 
 const PRIORITY_TONE = { high: 'text-rose-300', medium: 'text-amber-300', low: 'text-foreground/45' } as const
 
-function Card({ task, onOpen, onMove, dragging, onDragStart, onDragEnd }: {
+function Card({ task, onOpen, onMove, onShift, dragging, onDragStart, onDragEnd }: {
   task: NovaTaskItem
   onOpen: () => void
   onMove: (status: TaskStatus) => void
+  // Up or down within its column; absent where it cannot move that way.
+  onShift?: { up?: () => void; down?: () => void }
   dragging: boolean
   onDragStart: () => void
   onDragEnd: () => void
@@ -53,9 +57,10 @@ function Card({ task, onOpen, onMove, dragging, onDragStart, onDragEnd }: {
       <button type="button" onClick={onOpen} className="block w-full cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-keppel-400/60 rounded-lg">
         <span className={`block text-sm font-medium leading-snug ${task.status === 'done' ? 'text-foreground/50 line-through decoration-foreground/25' : 'text-foreground'}`}>{task.title}</span>
         {where && <span className="mt-1 block truncate text-xs text-foreground/50">{where}</span>}
-        {(due || task.priority) && (
+        {(due || task.priority || task.estimatedMinutes) && (
           <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
             {due && task.status !== 'done' && <span className={late ? 'font-medium text-rose-300' : 'text-foreground/55'}>{due}</span>}
+            {task.estimatedMinutes && <span className="text-foreground/55">{task.estimatedMinutes} min</span>}
             {task.priority && <span className={PRIORITY_TONE[task.priority]}>{PRIORITY_LABEL[task.priority]} priority</span>}
           </span>
         )}
@@ -71,6 +76,14 @@ function Card({ task, onOpen, onMove, dragging, onDragStart, onDragEnd }: {
           {next ? TASK_STATUS_LABEL[next] : ''}<ChevronRight className="size-3.5" />
         </button>
       </div>
+      {onShift && (onShift.up || onShift.down) && (
+        <div className="mt-1 flex justify-center gap-1" data-task-order>
+          <button type="button" disabled={!onShift.up} onClick={onShift.up} aria-label={`Move "${task.title}" up`}
+            className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-foreground/45 transition-colors hover:bg-white/5 hover:text-foreground disabled:invisible"><ChevronUp className="size-3.5" /></button>
+          <button type="button" disabled={!onShift.down} onClick={onShift.down} aria-label={`Move "${task.title}" down`}
+            className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-foreground/45 transition-colors hover:bg-white/5 hover:text-foreground disabled:invisible"><ChevronDown className="size-3.5" /></button>
+        </div>
+      )}
     </li>
   )
 }
@@ -78,7 +91,7 @@ function Card({ task, onOpen, onMove, dragging, onDragStart, onDragEnd }: {
 // The learner's tasks as a board. A column is a status; moving a card sets
 // that status on the task and nothing else. The same rows are the list on
 // Today, so what moves here has moved there.
-export function TaskBoard({ view, tasks, error, onClearError, onCreate, onUpdate, onDelete }: Props) {
+export function TaskBoard({ view, tasks, error, onClearError, onCreate, onUpdate, onDelete, onReorder }: Props) {
   const [editing, setEditing]   = useState<NovaTaskItem | null>(null)
   const [adding, setAdding]     = useState<TaskStatus | null>(null)
   const [dragged, setDragged]   = useState<string | null>(null)
@@ -126,9 +139,14 @@ export function TaskBoard({ view, tasks, error, onClearError, onCreate, onUpdate
                 <p className="px-1.5 py-6 text-center text-xs leading-relaxed text-foreground/40">{EMPTY[status]}</p>
               ) : (
                 <ul className="space-y-2.5">
-                  {column.map(task => (
+                  {column.map((task, i) => (
                     <Card
                       key={task.id} task={task}
+                      onShift={onReorder && status !== 'done' ? {
+                        // The whole column's order, with this card moved one place.
+                        up:   i > 0 ? () => { const ids = column.map(t => t.id); [ids[i - 1], ids[i]] = [ids[i]!, ids[i - 1]!]; void onReorder(status, ids) } : undefined,
+                        down: i < column.length - 1 ? () => { const ids = column.map(t => t.id); [ids[i + 1], ids[i]] = [ids[i]!, ids[i + 1]!]; void onReorder(status, ids) } : undefined,
+                      } : undefined}
                       dragging={dragged === task.id}
                       onDragStart={() => setDragged(task.id)}
                       onDragEnd={() => { setDragged(null); setOver(null) }}

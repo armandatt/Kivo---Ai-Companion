@@ -16,7 +16,7 @@
 import { prisma } from "@repo/db/client";
 import { dayKey, dayNumber, resolveTimezone } from "../engines/learner-calendar";
 import {
-  TASK_DONE_SHOWN, TASK_KEY_MAX, TASK_OPEN_MAX, TASK_PRIORITIES, TASK_STATUSES, TASK_TITLE_MAX, TASK_TOPIC_MAX,
+  TASK_DONE_SHOWN, TASK_KEY_MAX, TASK_MINUTES_MAX, TASK_MINUTES_MIN, TASK_OPEN_MAX, TASK_ORDER_MAX, TASK_PRIORITIES, TASK_STATUSES, TASK_TITLE_MAX, TASK_TOPIC_MAX,
   type NovaTaskItem, type NovaTasksReady, type TaskError, type TaskInput, type TaskPriority, type TaskResponse, type TaskStatus,
 } from "./tasks.types";
 
@@ -86,6 +86,12 @@ export function parseTaskInput(raw: unknown, creating: boolean): Parsed {
     else if (isDay(input.dueDay)) changes.dueDay = input.dueDay;
     else return reject("bad_due_day", "That isn't a date.");
   }
+  if (input.estimatedMinutes !== undefined) {
+    if (input.estimatedMinutes === null || input.estimatedMinutes === "") changes.estimatedMinutes = null;
+    else if (typeof input.estimatedMinutes === "number" && Number.isInteger(input.estimatedMinutes)
+      && input.estimatedMinutes >= TASK_MINUTES_MIN && input.estimatedMinutes <= TASK_MINUTES_MAX) changes.estimatedMinutes = input.estimatedMinutes;
+    else return reject("bad_minutes", `A task's time is ${TASK_MINUTES_MIN} to ${TASK_MINUTES_MAX} minutes, in whole minutes.`);
+  }
   if (creating && input.clientKey !== undefined) {
     if (typeof input.clientKey !== "string" || !input.clientKey.trim() || input.clientKey.length > TASK_KEY_MAX) return reject("invalid", "That is not a task.");
     changes.clientKey = input.clientKey.trim();
@@ -98,6 +104,12 @@ export function parseTaskInput(raw: unknown, creating: boolean): Parsed {
 const PRIORITY_RANK: Record<TaskPriority, number> = { high: 0, medium: 1, low: 2 };
 export function compareTasks(a: NovaTaskItem, b: NovaTaskItem): number {
   if (a.status === "done" && b.status === "done") return (b.completedAt ?? "").localeCompare(a.completedAt ?? "");
+  // The learner's own order comes first; unplaced tasks follow in the usual order.
+  if (a.position !== null || b.position !== null) {
+    if (a.position === null) return 1;
+    if (b.position === null) return -1;
+    if (a.position !== b.position) return a.position - b.position;
+  }
   if ((a.dueDay === null) !== (b.dueDay === null)) return a.dueDay === null ? 1 : -1;
   if (a.dueDay !== b.dueDay) return (a.dueDay ?? "").localeCompare(b.dueDay ?? "");
   const pa = a.priority ? PRIORITY_RANK[a.priority] : 3;
@@ -111,10 +123,12 @@ export function compareTasks(a: NovaTaskItem, b: NovaTaskItem): number {
 const ROW = {
   id: true, title: true, status: true, priority: true, subjectId: true, topicName: true, dueDay: true,
   completedAt: true, createdAt: true, updatedAt: true, subject: { select: { name: true } },
+  estimatedMinutes: true, position: true,
 } as const;
 type Row = {
   id: string; title: string; status: string; priority: string | null; subjectId: string | null; topicName: string | null;
   dueDay: string | null; completedAt: Date | null; createdAt: Date; updatedAt: Date; subject: { name: string } | null;
+  estimatedMinutes: number | null; position: number | null;
 };
 
 function toItem(row: Row, today: string): NovaTaskItem {
@@ -126,6 +140,7 @@ function toItem(row: Row, today: string): NovaTaskItem {
     dueDay: row.dueDay,
     dueInDays: row.dueDay ? dayNumber(row.dueDay) - dayNumber(today) : null,
     completedAt: row.completedAt?.toISOString() ?? null,
+    estimatedMinutes: row.estimatedMinutes, position: row.position,
     createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
   };
 }
@@ -186,6 +201,7 @@ export async function createTask(profileId: string, raw: unknown, options: { now
         profileId, title: changes.title!, status,
         priority: changes.priority ?? null, subjectId: changes.subjectId ?? null, topicName: changes.topicName ?? null,
         dueDay: changes.dueDay ?? null, clientKey: changes.clientKey ?? null,
+        estimatedMinutes: changes.estimatedMinutes ?? null,
         completedAt: status === "done" ? now : null,
       },
       select: ROW,
@@ -218,6 +234,7 @@ export async function updateTask(profileId: string, taskId: string, raw: unknown
   if (changes.subjectId !== undefined) data.subjectId = changes.subjectId;
   if (changes.topicName !== undefined) data.topicName = changes.topicName;
   if (changes.dueDay !== undefined)    data.dueDay = changes.dueDay;
+  if (changes.estimatedMinutes !== undefined) data.estimatedMinutes = changes.estimatedMinutes;
   if (changes.status !== undefined && changes.status !== current.status) {
     data.status = changes.status;
     // Entering "done" stamps it once; leaving clears it.
@@ -291,6 +308,40 @@ export async function mostTasksDoneInADay(profileId: string, timezone: string | 
   const perDay = new Map<string, number>();
   for (const r of rows) if (r.completedAt) { const d = dayKey(r.completedAt, zone); perDay.set(d, (perDay.get(d) ?? 0) + 1); }
   return Math.max(0, ...perDay.values());
+}
+
+// The learner's own order for one column: these tasks, in this order. Every id
+// must be the learner's and still in that column, or nothing is written (a
+// task moved or finished in another tab makes the request stale). Tasks of
+// the column not named keep no place and sort after.
+export async function reorderTasks(profileId: string, raw: unknown, options: { now?: Date } = {}): Promise<{ ok: true; tasks: NovaTasksReady } | { ok: false; error: TaskError; message: string }> {
+  const input = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const status = TASK_STATUSES.find(s => s === input.status);
+  const ids = input.ids;
+  if (!status || status === "done") return { ok: false, error: "invalid", message: "Only open tasks can be put in order." };
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > TASK_ORDER_MAX || !ids.every(i => typeof i === "string" && i.length > 0 && i.length <= 64) || new Set(ids).size !== ids.length) {
+    return { ok: false, error: "invalid", message: "That isn't an order Nova can use." };
+  }
+  class Changed extends Error {}
+  try {
+    await prisma.$transaction(async tx => {
+      // Each write is guarded on the task still being the learner's and in
+      // this column: one that is not stops the whole order. Rows are written
+      // in one fixed order (by id), so two reorders at once wait for each
+      // other instead of deadlocking.
+      const placed = (ids as string[]).map((id, position) => [position, id] as const).sort((a, b) => a[1].localeCompare(b[1]));
+      for (const [position, id] of placed) {
+        const r = await tx.novaTask.updateMany({ where: { id, profileId, status }, data: { position } });
+        if (r.count !== 1) throw new Changed();
+      }
+      // Placed tasks of this column that were not named lose their place.
+      await tx.novaTask.updateMany({ where: { profileId, status, id: { notIn: ids as string[] }, position: { not: null } }, data: { position: null } });
+    });
+  } catch (err) {
+    if (err instanceof Changed) return { ok: false, error: "changed", message: "Some of these tasks changed since the page loaded. Here they are as they are now." };
+    throw err;
+  }
+  return { ok: true, tasks: await listTasks(profileId, options) };
 }
 
 // When the learner renames, moves or removes a topic in study setup

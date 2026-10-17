@@ -158,7 +158,7 @@ async function linksOf(profileId: string, note: { id: string; title: string; bod
       orderBy: { updatedAt: "desc" },
     }),
     titles.length === 0 ? Promise.resolve([]) : prisma.novaTopicMastery.findMany({
-      where:  { subject: { profileId }, OR: titles.map(t => ({ name: { equals: t, mode: "insensitive" as const } })) },
+      where:  { subject: { profileId }, archivedAt: null, OR: titles.map(t => ({ name: { equals: t, mode: "insensitive" as const } })) },
       select: { id: true, name: true },
     }),
     prisma.novaNote.findMany({
@@ -217,7 +217,7 @@ export async function listNotes(profileId: string, filters: NoteFilters = {}): P
     prisma.novaSubject.findMany({
       where:   { profileId },
       orderBy: { name: "asc" },
-      select:  { id: true, name: true, topics: { select: { name: true } } },
+      select:  { id: true, name: true, topics: { where: { archivedAt: null }, select: { name: true } } },
     }),
     prisma.novaNote.findMany({
       where:    { profileId, subjectId: { not: null }, topicName: { not: null } },

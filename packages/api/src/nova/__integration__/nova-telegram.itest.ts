@@ -67,12 +67,15 @@ function fakeTelegram() {
   const sent: Sent[] = [];
   const answered: Array<{ id: string; text?: string }> = [];
   const cleared: number[] = [];
-  let next: SendResult | null = null;
+  let next: { result: SendResult; chat: string | null } | null = null;
   let id = 1000;
   const client: TelegramClient = {
     async sendMessage(chatId, text, buttons) {
-      const result = next ?? { ok: true as const, messageId: ++id };
-      next = null;
+      // A failure armed for one chat applies to that chat only: a proactive
+      // tick visits every learner, and another test's learner may be due first.
+      const armed = next !== null && (next.chat === null || next.chat === chatId);
+      const result = armed ? next!.result : { ok: true as const, messageId: ++id };
+      if (armed) next = null;
       sent.push({ chatId, text, buttons: buttons ?? [], messageId: result.ok ? result.messageId : null });
       return result;
     },
@@ -82,7 +85,7 @@ function fakeTelegram() {
   };
   return {
     client, sent, answered, cleared,
-    failNext: (result: SendResult) => { next = result; },
+    failNext: (result: SendResult, chat: string | null = null) => { next = { result, chat }; },
     last: () => sent[sent.length - 1]!,
     labels: () => sent[sent.length - 1]!.buttons.flat().map(b => b.text),
     data: (label: string) => {
@@ -1209,7 +1212,7 @@ test("two instances ticking at once send one message", async () => {
 test("a failed send is retried with the stored text, and a failure is never counted as sent", async () => {
   const l = await eveningLearner("Yas");
   const { tg, asked, run } = proactive();
-  tg.failNext({ ok: false, kind: "server", detail: "Bad Gateway" });
+  tg.failNext({ ok: false, kind: "server", detail: "Bad Gateway" }, l.chat);
   await run();
   let [row] = await outbox(l);
   assert.deepEqual([row!.status, row!.attempts, row!.text !== null], ["failed", 1, true]);
@@ -1229,7 +1232,7 @@ test("a failed send is retried with the stored text, and a failure is never coun
 test("a countdown that failed to send is dropped, not retried, once its exam is removed", async () => {
   const l = await seedLearner("Kit", { timezone: zoneWhereHourIs(10), preferredStudyTime: "evening", exam: true });
   const { tg, run } = proactive();
-  tg.failNext({ ok: false, kind: "server", detail: "Bad Gateway" });
+  tg.failNext({ ok: false, kind: "server", detail: "Bad Gateway" }, l.chat);
   await run();
   let [row] = await outbox(l);
   assert.deepEqual([row!.eventType, row!.status, row!.text !== null], ["exam_countdown", "failed", true]);
@@ -1254,7 +1257,7 @@ test("a countdown that failed to send is dropped, not retried, once its exam is 
 test("an unanswered send is never repeated, and a blocked bot stops Nova from trying", async () => {
   const unknown = await eveningLearner("Zed");
   const first = proactive();
-  first.tg.failNext({ ok: false, kind: "unknown", detail: "no response" });
+  first.tg.failNext({ ok: false, kind: "unknown", detail: "no response" }, unknown.chat);
   await first.run();
   assert.equal((await outbox(unknown))[0]!.status, "unknown");
   tick(5);
@@ -1267,7 +1270,7 @@ test("an unanswered send is never repeated, and a blocked bot stops Nova from tr
   const second = proactive();
   // Deliver nothing to the earlier learners in this tick; fail this one.
   await prisma.novaTelegramChannel.updateMany({ where: { profileId: { not: blocked.profileId } }, data: { proactiveEnabled: false } });
-  second.tg.failNext({ ok: false, kind: "blocked", detail: "Forbidden: bot was blocked by the user" });
+  second.tg.failNext({ ok: false, kind: "blocked", detail: "Forbidden: bot was blocked by the user" }, blocked.chat);
   await second.run();
   assert.equal((await outbox(blocked))[0]!.status, "abandoned");
   assert.ok((await channel(blocked)).undeliverableSince);

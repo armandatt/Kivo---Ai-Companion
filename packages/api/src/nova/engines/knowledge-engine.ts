@@ -71,6 +71,7 @@ export async function getTopicMastery(
     where: {
       name:    { contains: topicName, mode: "insensitive" },
       subject: { profileId },
+      archivedAt: null,
     },
     include: { subject: { select: { name: true } } },
   });
@@ -83,9 +84,11 @@ export async function getTopicMastery(
 
 // `now` is the moment retention is estimated for: pass the same one the
 // caller judges "due" by.
-export async function getAllTopicMasteries(profileId: string, now: Date = new Date()): Promise<TopicMasteryState[]> {
+// An archived topic is left out of every active list; Progress passes
+// `includeArchived` because what was studied stays history.
+export async function getAllTopicMasteries(profileId: string, now: Date = new Date(), options: { includeArchived?: boolean } = {}): Promise<TopicMasteryState[]> {
   const topics = await prisma.novaTopicMastery.findMany({
-    where:   { subject: { profileId } },
+    where:   { subject: { profileId }, ...(options.includeArchived ? {} : { archivedAt: null }) },
     include: { subject: { select: { name: true } } },
     // Topics with no review date keep the order they were added in.
     orderBy: [{ nextReviewAt: "asc" }, { createdAt: "asc" }],

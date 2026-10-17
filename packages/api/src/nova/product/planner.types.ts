@@ -9,6 +9,7 @@ import type {
   PlanShortfallView,
   TodayAction,
   TodayActiveSession,
+  TodayPlanChangesView,
   TodayConstraint,
   TodayDeadline,
 } from "./today.types";
@@ -122,6 +123,8 @@ export type PlannerUnknown = "no_topics" | "no_exams" | "no_goals" | "no_session
 export interface NovaPlannerReady {
   status:      "ready";
   generatedAt: string;
+  // What the learner changed about today's plan.
+  planChanges?: TodayPlanChangesView;
   timezone:    string;            // the zone the day boundaries were drawn in
   availableMinutes:   number | null;
   preferredStudyTime: string | null;   // "morning" | "afternoon" | "evening", as the student said

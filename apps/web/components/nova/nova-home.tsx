@@ -179,6 +179,7 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
             onCreate={board.create} onUpdate={board.update} onRemove={board.remove}
             subjects={board.view?.status === 'ready' ? board.view.subjects : []}
             today={board.view?.status === 'ready' ? board.view.today : null}
+            dayMinutes={{ planned: view.plan.totalMinutesToday, budget: view.plan.budgetMinutes }}
             onStart={active ? undefined : task => start({ topicName: task.topicName!, subjectName: task.subjectName!, durationMinutes: TASK_SESSION_MINUTES }, `task:${task.id}`)}
             starting={starting}
           />

@@ -124,7 +124,8 @@ describe("the map is a read model", () => {
   it("reads only the learner's own rows", () => {
     expect(source).toContain("learnerKey(platformChatId)");
     expect(source).toContain("where: { profileId }");
-    expect(source).toContain("where: { subject: { profileId } }");
+    // Its own topics, and only the active ones (an archived topic is not drawn).
+    expect(source).toContain("where: { subject: { profileId }, archivedAt: null }");
     // Notes and saved pages come from their owners, by profile.
     expect(source).toContain("listNoteLinks(profileId, MAP_NOTES_MAX)");
     expect(source).toContain("listResourceLinks(profileId, MAP_RESOURCES_MAX)");

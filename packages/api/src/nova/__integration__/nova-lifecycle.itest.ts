@@ -64,12 +64,16 @@ function zoneWhereHourIs(hour: number, at = clock): string {
 interface Sent { chatId: string; text: string; buttons: InlineButton[][] }
 function fakeTelegram() {
   const sent: Sent[] = [];
-  let next: SendResult | null = null;
+  // A failure armed for one chat. The proactive tick visits every learner in
+  // the database, so a failure armed for "whatever is sent next" could be
+  // taken by another test's learner who happens to be due at that hour.
+  let next: { result: SendResult; chat: string } | null = null;
   let id = 5000;
   const client: TelegramClient = {
     async sendMessage(chatId, text, buttons) {
-      const result = next ?? { ok: true as const, messageId: ++id };
-      next = null;
+      const armed = next !== null && next.chat === chatId;
+      const result = armed ? next!.result : { ok: true as const, messageId: ++id };
+      if (armed) next = null;
       sent.push({ chatId, text, buttons: buttons ?? [] });
       return result;
     },
@@ -78,7 +82,7 @@ function fakeTelegram() {
   const to = (chat: string) => sent.filter(s => s.chatId === chat);
   return {
     client, sent, to,
-    failNext: (result: SendResult) => { next = result; },
+    failNext: (result: SendResult, chat: string) => { next = { result, chat }; },
     data: (chat: string, label: string) => {
       const last = to(chat).at(-1)!;
       const button = last.buttons.flat().find(b => b.text === label);
@@ -674,7 +678,7 @@ test("exam in two days, a review due, yesterday missed: what Nova sends, withhol
   assert.equal(localHour(clock, zone), 18);
   await prisma.novaTopicMastery.update({ where: { id: l.deadlocksId }, data: { nextReviewAt: new Date(clock.getTime() - 3_600_000) } });
   await prisma.novaExam.deleteMany({ where: { profileId: l.profileId } });
-  tg.failNext({ ok: false, kind: "server", detail: "502 bad gateway" });
+  tg.failNext({ ok: false, kind: "server", detail: "502 bad gateway" }, chat);
   await run();
   let rows = await outbox();
   const pending = rows.at(-1)!;
@@ -700,7 +704,7 @@ test("exam in two days, a review due, yesterday missed: what Nova sends, withhol
   // 8. A bot the learner has blocked is noticed, recorded, and left alone.
   tick(24 * 60 - 30);
   await prisma.novaTopicMastery.update({ where: { id: l.deadlocksId }, data: { nextReviewAt: new Date(clock.getTime() - 3_600_000) } });
-  tg.failNext({ ok: false, kind: "blocked", detail: "403 Forbidden: bot was blocked by the user" });
+  tg.failNext({ ok: false, kind: "blocked", detail: "403 Forbidden: bot was blocked by the user" }, chat);
   const before = tg.to(chat).length;
   await run();
   assert.deepEqual([(await outbox()).at(-1)!.status, (await outbox()).at(-1)!.lastError], ["abandoned", "403 Forbidden: bot was blocked by the user"]);

@@ -96,7 +96,14 @@ export function SubjectStudio({ onChanged, onClose }: { onChanged: () => void; o
       ) : (
         <>
           <AskNova structure={structure} onApply={save} busy={busy} />
-          <ManualEditor structure={structure} onSave={save} busy={busy} />
+          <ManualEditor structure={structure} onSave={save} busy={busy} onRestore={async topicId => {
+            // Restoring is the archive route's (topic-archive.ts), then the structure is read again.
+            setBusy(`restore:${topicId}`); setMessage(null)
+            const r = await call<{ ok: boolean; message?: string }>('/api/nova/topics/archive', { topicId, archived: false })
+            setBusy(null)
+            if (r.ok) { setMessage({ tone: 'ok', text: 'Restored.' }); onChanged(); await load() }
+            else setMessage({ tone: 'error', text: 'message' in r && r.message ? r.message : "That didn't work." })
+          }} />
         </>
       )}
     </section>
@@ -105,7 +112,7 @@ export function SubjectStudio({ onChanged, onClose }: { onChanged: () => void; o
 
 // ── By hand ───────────────────────────────────────────────────────────────────
 
-function ManualEditor({ structure, onSave, busy }: { structure: StudyStructure; onSave: (e: StudyEdit[], key: string) => Promise<boolean>; busy: string | null }) {
+function ManualEditor({ structure, onSave, busy, onRestore }: { structure: StudyStructure; onSave: (e: StudyEdit[], key: string) => Promise<boolean>; busy: string | null; onRestore: (topicId: string) => Promise<void> }) {
   const [renaming, setRenaming] = useState<{ id: string; kind: 'subject' | 'topic'; name: string } | null>(null)
   const [adding, setAdding]     = useState<Record<string, string>>({})
   const [newSubject, setNewSubject] = useState({ name: '', topics: '' })
@@ -149,8 +156,13 @@ function ManualEditor({ structure, onSave, busy }: { structure: StudyStructure; 
 
               <ul className="mt-2 divide-y divide-white/6">
                 {s.topics.map(t => (
-                  <li key={t.id} className="flex flex-wrap items-center gap-2 py-2" data-studio-topic={t.name}>
-                    {renaming?.id === t.id ? (
+                  <li key={t.id} className="flex flex-wrap items-center gap-2 py-2" data-studio-topic={t.name} data-archived={t.archived || undefined}>
+                    {t.archived ? (
+                      <>
+                        <span className="min-w-0 flex-1 truncate text-sm text-foreground/50">{t.name}<span className="ml-2 rounded-full border border-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-foreground/45">archived</span></span>
+                        <button type="button" className={SMALL} disabled={disabled} onClick={() => void onRestore(t.id)} aria-label={`Restore ${t.name}`} data-restore-topic>Restore</button>
+                      </>
+                    ) : renaming?.id === t.id ? (
                       <form className="flex flex-1 flex-wrap gap-2" onSubmit={e => { e.preventDefault(); void rename() }}>
                         <label className="sr-only" htmlFor={`rename-${t.id}`}>New name for {t.name}</label>
                         <input id={`rename-${t.id}`} autoFocus value={renaming.name} maxLength={120} onChange={e => setRenaming({ ...renaming, name: e.target.value })} className={`${FIELD} flex-1`} />

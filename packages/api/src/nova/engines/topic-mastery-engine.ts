@@ -186,6 +186,7 @@ export async function resolveTopicSubject(
     where: {
       subjectId: { in: subjects.map(s => s.id) },
       name:      { equals: likeLiteral(normalizeTopicName(topicName)), mode: "insensitive" },
+      archivedAt: null,
     },
     select: { subjectId: true, name: true },
   });
@@ -335,8 +336,12 @@ export async function declareTopics(
   subjectId: string,
   names:     string[],
 ): Promise<{ added: string[]; existing: string[] }> {
-  const have  = await tx.novaTopicMastery.findMany({ where: { subjectId }, select: { name: true } });
+  const have  = await tx.novaTopicMastery.findMany({ where: { subjectId }, select: { id: true, name: true, archivedAt: true } });
   const known = new Set(have.map(t => normalizeTopicName(t.name).toLowerCase()));
+  // Naming an archived topic again brings it back, with its history.
+  const wanted = new Set(names.map(n => normalizeTopicName(n).toLowerCase()));
+  const back = have.filter(t => t.archivedAt !== null && wanted.has(normalizeTopicName(t.name).toLowerCase()));
+  if (back.length > 0) await tx.novaTopicMastery.updateMany({ where: { id: { in: back.map(t => t.id) } }, data: { archivedAt: null } });
   const added: string[] = [];
   const existing: string[] = [];
   for (const raw of names) {
@@ -355,6 +360,18 @@ export async function declareTopics(
     });
   }
   return { added, existing };
+}
+
+// ── Archiving (product/topic-archive.ts) ──────────────────────────────────────
+// A mark on the row, never a delete: mastery, review schedule, history and
+// sessions stay. Guarded on the learner owning the topic and on its current
+// state, so a repeat or a second tab changes nothing. True when it changed.
+export async function setTopicArchived(profileId: string, topicId: string, archived: boolean, now: Date): Promise<boolean> {
+  const r = await prisma.novaTopicMastery.updateMany({
+    where: { id: topicId, subject: { profileId }, archivedAt: archived ? null : { not: null } },
+    data:  { archivedAt: archived ? now : null },
+  });
+  return r.count === 1;
 }
 
 // ── Editing topics (product/setup-edit.ts) ────────────────────────────────────

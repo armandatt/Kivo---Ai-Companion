@@ -171,7 +171,7 @@ export async function loadNovaKnowledgeMap(platformChatId: string): Promise<Nova
   const [subjects, topics, noted, saved] = await Promise.all([
     prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.novaTopicMastery.findMany({
-      where: { subject: { profileId } }, orderBy: { name: "asc" },
+      where: { subject: { profileId }, archivedAt: null }, orderBy: { name: "asc" },
       select: { id: true, subjectId: true, name: true, masteryProbability: true, reviewCount: true },
     }),
     listNoteLinks(profileId, MAP_NOTES_MAX),

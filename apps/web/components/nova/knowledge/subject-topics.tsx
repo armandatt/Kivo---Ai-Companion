@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { KnowledgeSession, KnowledgeSubject, KnowledgeTopic } from '@repo/api/nova/product/knowledge.types'
+import type { ArchivedTopic, ArchivedTopicsView } from '@repo/api/nova/product/topic-archive.types'
 import { minutesLabel, relativeDay, sentenceCase } from '../format'
 import type { NoteSummary } from '@repo/api/nova/product/notes.types'
 import { fetchNotes } from '../notes/notes-api'
@@ -63,7 +64,21 @@ function TopicNotes({ subjectId, topicName }: { subjectId: string; topicName: st
   )
 }
 
-function TopicRow({ topic, subjectId }: { topic: KnowledgeTopic; subjectId: string }) {
+// Archive: off the active lists, history kept (product/topic-archive.ts).
+async function postArchive(topicId: string, archived: boolean): Promise<string | null> {
+  try {
+    const res = await fetch('/api/nova/topics/archive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topicId, archived }), cache: 'no-store' })
+    if (res.status === 401) { window.location.href = '/signin'; return 'Sign in again.' }
+    const r = await res.json() as { ok: boolean; message?: string }
+    return r.ok ? null : r.message ?? "That didn't work."
+  } catch {
+    return "Couldn't reach the server. Nothing was changed."
+  }
+}
+
+function TopicRow({ topic, subjectId, onChanged }: { topic: KnowledgeTopic; subjectId: string; onChanged?: () => void }) {
+  const [archiving, setArchiving] = useState(false)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
   // A link from the Knowledge Map names the topic it is about (?topic=<id>):
   // that topic is opened and brought into view.
   const [linked, setLinked] = useState(false)
@@ -133,6 +148,22 @@ function TopicRow({ topic, subjectId }: { topic: KnowledgeTopic; subjectId: stri
               : <p className="mt-2 text-sm text-foreground/45">None in the last 90 days.</p>}
           </div>
           <TopicNotes subjectId={subjectId} topicName={topic.topicName} />
+          {onChanged && (
+            <div className="mt-4 border-t border-white/6 pt-3">
+              <button type="button" disabled={archiving} data-archive-topic
+                onClick={async () => {
+                  if (!window.confirm(`Archive ${topic.topicName}? It leaves your plan and lists. Its level, sessions, notes and history stay, and you can restore it.`)) return
+                  setArchiving(true); setArchiveError(null)
+                  const error = await postArchive(topic.id, true)
+                  setArchiving(false)
+                  if (error) setArchiveError(error); else onChanged()
+                }}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs text-foreground/60 transition-colors hover:bg-white/5 hover:text-foreground disabled:opacity-40">
+                {archiving ? 'Archiving…' : 'Archive this topic'}
+              </button>
+              {archiveError && <p role="alert" className="mt-2 text-xs text-amber-200/90">{archiveError}</p>}
+            </div>
+          )}
         </div>
       )}
     </li>
@@ -150,7 +181,7 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 // A subject and the topics Nova has on record under it. Topics are never
 // made up from the subject's name: a subject with none says so.
-export function SubjectTopics({ subject }: { subject: KnowledgeSubject }) {
+export function SubjectTopics({ subject, onChanged }: { subject: KnowledgeSubject; onChanged?: () => void }) {
   const { topicCount, dueCount } = subject.summary
   // ?subject=<id>, from the Knowledge Map: this subject is brought into view.
   const [linked, setLinked] = useState(false)
@@ -174,7 +205,7 @@ export function SubjectTopics({ subject }: { subject: KnowledgeSubject }) {
         </p>
       ) : (
         <ul className="mt-3 divide-y divide-white/6 overflow-hidden rounded-2xl border border-white/8 bg-card/40">
-          {subject.topics.map(topic => <TopicRow key={topic.id} topic={topic} subjectId={subject.subjectId} />)}
+          {subject.topics.map(topic => <TopicRow key={topic.id} topic={topic} subjectId={subject.subjectId} onChanged={onChanged} />)}
         </ul>
       )}
     </section>
@@ -199,6 +230,42 @@ export function RecentLearning({ sessions }: { sessions: KnowledgeSession[] }) {
           </li>
         ))}
       </ul>
+    </section>
+  )
+}
+
+// The learner's archived topics, each with Restore. Shown only when there are
+// any; read from GET /api/nova/topics/archive.
+export function ArchivedTopics({ onChanged, version }: { onChanged: () => void; version: string }) {
+  const [topics, setTopics] = useState<ArchivedTopic[] | null>(null)
+  const [busy, setBusy]     = useState<string | null>(null)
+  const [error, setError]   = useState<string | null>(null)
+  useEffect(() => {
+    let gone = false
+    fetch('/api/nova/topics/archive', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() as Promise<ArchivedTopicsView> : null))
+      .then(v => { if (!gone) setTopics(v?.status === 'ready' ? v.topics : []) })
+      .catch(() => { if (!gone) setTopics([]) })
+    return () => { gone = true }
+  }, [version])
+  if (!topics || topics.length === 0) return null
+  return (
+    <section aria-labelledby="archived-topics" className="rounded-2xl border border-white/8 bg-card/40 p-4" data-archived-topics>
+      <h3 id="archived-topics" className="text-[11px] font-medium uppercase tracking-[0.16em] text-foreground/45">Archived topics</h3>
+      <p className="mt-1 text-xs text-foreground/45">Out of your plan and lists. Their history stays.</p>
+      <ul className="mt-2 divide-y divide-white/6">
+        {topics.map(t => (
+          <li key={t.topicId} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm" data-archived={t.topicName}>
+            <span className="min-w-0 text-foreground/75">{t.topicName} <span className="text-xs text-foreground/40">{t.subjectName}{t.studied ? ' · studied' : ''}</span></span>
+            <button type="button" disabled={busy !== null}
+              onClick={async () => { setBusy(t.topicId); setError(null); const e = await postArchive(t.topicId, false); setBusy(null); if (e) setError(e); else onChanged() }}
+              className="inline-flex h-8 items-center rounded-lg border border-white/10 px-2.5 text-xs text-foreground/70 transition-colors hover:bg-white/5 hover:text-foreground disabled:opacity-40">
+              {busy === t.topicId ? 'Restoring…' : 'Restore'}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {error && <p role="alert" className="mt-2 text-xs text-amber-200/90">{error}</p>}
     </section>
   )
 }

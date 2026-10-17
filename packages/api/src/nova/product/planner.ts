@@ -257,6 +257,7 @@ export function buildPlannerView(input: PlanningInputs): NovaPlannerReady {
   return {
     status:      "ready",
     generatedAt: now.toISOString(),
+    planChanges: input.planChanges,
     timezone,
     availableMinutes:   input.availableMinutes,
     preferredStudyTime: input.preferredStudyTime,
