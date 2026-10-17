@@ -984,5 +984,7 @@ describe("a request of its own is not an answer to the open card", () => {
       expect(parseLearnerRequest({ clarity: "clear", action, confidence: 0.9 })?.action).toBe(action);
       expect(UNDERSTANDING_BRAIN_SYSTEM_PROMPT).toContain(`${action} = `);
     }
+    // Found by the eval (acceptance run): "skip krde aaj deadlocks" was read as not_now, which quiets Nova for the day.
+    expect(UNDERSTANDING_BRAIN_SYSTEM_PROMPT).toContain('is change_plan with that topic, not not_now');
   });
 });
