@@ -99,7 +99,7 @@ export interface AcademicUnderstanding {
 // (if anything) runs, against the session and prompt that actually exist.
 // Closed vocabulary; anything else the model returns is dropped by the parser.
 
-export const UNDERSTANDING_ENVELOPE_VERSION = 5;
+export const UNDERSTANDING_ENVELOPE_VERSION = 6;
 
 export const REQUESTED_ACTIONS = [
   "what_now", "start_session", "pause_session", "resume_session",
@@ -108,6 +108,16 @@ export const REQUESTED_ACTIONS = [
   // never mistaken for anything else; Nova has no reminder to create, so the
   // decision answers that plainly and nothing is scheduled.
   "set_reminder",
+  // Asks for the days ahead: this week, the next seven days. Not today's
+  // plan, which is what_now.
+  "week_plan",
+  // Asks to change today's plan: leave a topic out, add one, change what
+  // comes first, or change how much time today has. Shown back as choices;
+  // nothing is changed on the reading alone.
+  "change_plan",
+  // Asks how they are doing over time: progress, consistency, improvement.
+  // Not where they stand right now, which is status.
+  "progress",
   "none",
 ] as const;
 export type RequestedAction = typeof REQUESTED_ACTIONS[number];

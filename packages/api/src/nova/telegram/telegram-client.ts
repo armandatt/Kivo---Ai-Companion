@@ -76,6 +76,8 @@ export function createTelegramClient(options: { token?: string; baseUrl?: string
 
 export const NOVA_CHAT_COMMANDS = [
   { command: "today",    description: "What to do now" },
+  { command: "week",     description: "The next seven days" },
+  { command: "progress", description: "How you're doing over time" },
   { command: "focus",    description: "Start a study session" },
   { command: "done",     description: "End the session and say how it went" },
   { command: "status",   description: "Where you stand" },

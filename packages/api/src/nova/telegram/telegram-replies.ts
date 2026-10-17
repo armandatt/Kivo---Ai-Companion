@@ -7,10 +7,14 @@
 // These are also what the learner gets when the model is unavailable.
 
 import type { NovaSessionView, NovaTodayReady, TodayAction, NovaSessionOutcome, PlanEmptyReason } from "../product/today.types";
+import type { NovaPlannerReady } from "../product/planner.types";
+import type { NovaProgressReady } from "../product/progress.types";
+import type { NovaTaskItem } from "../product/tasks.types";
 import type { PromptOption, PromptSpec, TelegramReply, OptionAction } from "./telegram.types";
 import type { SetupProposal } from "../product/setup";
 import type { SetupQuestion } from "../interaction/initialization";
 import type { ReplyLanguage } from "../interaction/language";
+import { dayKey } from "../engines/learner-calendar";
 
 export const START_LENGTHS = [15, 25, 45];
 export const MIN_SESSION_MINUTES = 10;
@@ -109,7 +113,22 @@ export function todayReply(view: NovaTodayReady, session: NovaSessionView | null
     if (view.emptyReason === "no_topics" && ask) return { text: `Nothing to plan from yet. ${ask.question}` };
     return { text: EMPTY_PLAN[view.emptyReason ?? "nothing_due"], link: { label: "Open Nova", path: "/home" } };
   }
-  return recommendationReply(view, view.recommendation);
+  const reply = recommendationReply(view, view.recommendation);
+  const lines = dayLines(view);
+  return lines.length > 0 ? { ...reply, text: `${reply.text}\n\n${lines.join("\n")}` } : reply;
+}
+
+// The rest of today's plan under its first block: the other blocks with
+// their lengths, the day's total against its time, and what the learner
+// changed. All of it is the Today view's; nothing is worked out here.
+function dayLines(view: NovaTodayReady): string[] {
+  const lines: string[] = [];
+  const rest = view.alternatives.filter((a): a is TodayAction => a !== null);
+  if (rest.length > 0) lines.push(`After that: ${rest.map(a => `${a.topicName} ${a.durationMinutes} min`).join(", ")}.`);
+  if (view.plan.totalMinutesToday > 0) lines.push(`Today: ${view.plan.totalMinutesToday} of ${view.plan.budgetMinutes} min planned.`);
+  const skipped = view.planChanges?.skipped ?? [];
+  if (skipped.length > 0) lines.push(`Left out today: ${skipped.map(t => t.topicName).join(", ")}.`);
+  return lines;
 }
 
 export function alternativeReply(view: NovaTodayReady, skip: string[]): TelegramReply {
@@ -274,9 +293,229 @@ export function minutesChoiceReply(choices: [number, number]): TelegramReply {
   };
 }
 
+// ── The days ahead ────────────────────────────────────────────────────────────
+
+// "Fri 17 Oct", for a calendar day key. The key is already the learner's day.
+export function dayLabel(date: string): string {
+  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+  return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(Date.UTC(y, m - 1, d, 12)));
+}
+
+// The next seven days, from the Planner's read model and the learner's
+// tasks. Four kinds of thing, never mixed: what is planned (today only:
+// Nova plans each day on the day), what was done, tasks with that due day
+// (the learner's own dates), reviews the schedule has falling due (not
+// booked sessions) and the dates the learner gave. Days with none of them
+// are left out.
+export function weekReply(planner: NovaPlannerReady, tasks: NovaTaskItem[]): TelegramReply {
+  const days  = planner.week;
+  const first = days[0]?.date;
+  const last  = days[days.length - 1]?.date;
+  const lines: string[] = [first && last ? `Next 7 days, ${dayLabel(first)} to ${dayLabel(last)}:` : "Next 7 days:"];
+  let anything = false;
+  for (const day of days) {
+    const rows: string[] = [];
+    if (day.relation === "today") {
+      if (day.planned.length > 0) {
+        const total = day.planned.reduce((sum, b) => sum + b.minutes, 0);
+        rows.push(`Planned: ${day.planned.map(b => `${b.topicName} ${b.minutes} min`).join(", ")} (${total} min)`);
+      } else if (planner.today.emptyReason) {
+        rows.push(`Planned: nothing (${EMPTY_REASON_SHORT[planner.today.emptyReason]})`);
+      }
+    }
+    const done = day.sessions.filter(x => x.status === "completed");
+    if (done.length > 0) rows.push(`Done: ${plural(done.length, "session")}, ${done.reduce((sum, x) => sum + x.minutes, 0)} min`);
+    const due = tasks.filter(t => t.status !== "done" && t.dueDay === day.date);
+    if (due.length > 0) rows.push(`Tasks due: ${due.slice(0, 4).map(t => t.title).join(", ")}${due.length > 4 ? ` and ${due.length - 4} more` : ""}`);
+    if (day.reviewsDueCount > 0) {
+      const names = day.reviewsDue.map(r => r.topicName);
+      rows.push(`Reviews falling due: ${names.join(", ")}${day.reviewsDueCount > names.length ? ` and ${day.reviewsDueCount - names.length} more` : ""}`);
+    }
+    for (const exam of day.exams) rows.push(`${exam.title}${exam.subjectName ? ` (${exam.subjectName})` : ""}`);
+    if (rows.length === 0 && day.relation !== "today") continue;
+    anything ||= rows.length > 0;
+    lines.push("", `${day.relation === "today" ? "Today, " : ""}${dayLabel(day.date)}`, ...(rows.length > 0 ? rows.map(r => `- ${r}`) : ["- Nothing on record"]));
+  }
+  const overdue = tasks.filter(t => t.status !== "done" && t.dueInDays !== null && t.dueInDays < 0).length;
+  if (overdue > 0) lines.push("", `Overdue: ${plural(overdue, "task")}.`);
+  lines.push("", anything
+    ? "Only today has a plan: I plan each day on the day, from what is due then. Reviews are when the schedule says a topic is due, not booked sessions, and task dates are the ones you gave."
+    : "Nothing is on record for the next seven days yet. I plan each day on the day.");
+  return { text: lines.join("\n"), link: { label: "Open Planner", path: "/planner" } };
+}
+
+const EMPTY_REASON_SHORT: Record<PlanEmptyReason, string> = {
+  no_topics:       "no topics on record yet",
+  too_little_time: "less time than the smallest block",
+  recovery:        "a recovery day",
+  nothing_due:     "nothing is due",
+};
+
+// ── Progress ──────────────────────────────────────────────────────────────────
+
+// How they are doing, from the Progress read model: counted sessions only,
+// with the window each figure covers, and what was left out. Planned work is
+// today's, and is said apart from what was done.
+export function progressReply(progress: NovaProgressReady, today: { doneMinutes: number; plannedMinutes: number } | null): TelegramReply {
+  const link = { label: "Open Progress", path: "/progress" };
+  const left = progress.overview.notCounted;
+  const leftOut = [
+    left.selfReported > 0 ? `${left.selfReported} you told me about` : null,
+    left.underTenMinutes > 0 ? `${left.underTenMinutes} under ${MIN_SESSION_MINUTES} minutes` : null,
+    (left.abandoned ?? 0) > 0 ? `${left.abandoned} left open and closed` : null,
+  ].filter((x): x is string => x !== null);
+  const leftLine = leftOut.length > 0 ? `Not counted: ${leftOut.join(", ")}.` : null;
+  if (!progress.hasEvidence) {
+    return {
+      text: [
+        "No counted study sessions on record yet, so there's no progress to show. A session counts when Nova timed it and it ran 10 minutes or more.",
+        leftLine,
+        today && today.plannedMinutes > 0 ? `Planned today: ${today.plannedMinutes} min.` : null,
+      ].filter((x): x is string => x !== null).join("\n"),
+      link,
+    };
+  }
+  const weeks   = progress.consistency.weeks;
+  const current = weeks.find(w => w.current) ?? null;
+  const recent  = weeks.filter(w => !w.current && !w.beforeStart).slice(-4);
+  const sum = (ws: typeof weeks, key: "sessions" | "minutes" | "activeDays") => ws.reduce((n, w) => n + w[key], 0);
+  const lines = ["Your progress, from counted sessions (timed by Nova, 10 minutes or more):"];
+  if (current) lines.push(`This week so far: ${plural(current.sessions, "session")}, ${current.minutes} min, ${plural(current.activeDays, "active day")}.`);
+  if (today) lines.push(`Today, every finished session: ${today.doneMinutes} min done${today.plannedMinutes > 0 ? `; ${today.plannedMinutes} min planned` : ""}.`);
+  if (recent.length > 0) {
+    lines.push(`Last ${plural(recent.length, "finished week")}: ${plural(sum(recent, "sessions"), "session")}, ${sum(recent, "minutes")} min, ${(sum(recent, "activeDays") / recent.length).toFixed(1)} active days a week.`);
+  }
+  const since = progress.overview.since ? dayLabel(dayKey(new Date(progress.overview.since), progress.consistency.timezone)) : "your first session";
+  lines.push(`Since ${since}: ${plural(progress.overview.sessions, "session")}, ${progress.overview.learningMinutes} min, ${plural(progress.overview.activeDays, "active day")} in the last year.`);
+  const trend = progress.consistency.trend;
+  lines.push(trend === "not_enough_history"
+    ? "Consistency: not enough weeks on record yet to say whether it's changing."
+    : `Consistency: ${trend === "more_consistent" ? "more consistent" : trend === "less_consistent" ? "less consistent" : "steady"} (${progress.consistency.trendBasis!.recent} active days a week lately, ${progress.consistency.trendBasis!.earlier} before).`);
+  for (const change of progress.changes.slice(0, 3)) lines.push(`- ${change.text}`);
+  if (leftLine) lines.push(leftLine);
+  return { text: lines.join("\n"), link };
+}
+
+// ── Changing today's plan ─────────────────────────────────────────────────────
+
+const short = (text: string, max = 40) => text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+const blocksOf = (view: NovaTodayReady) => [view.recommendation, ...view.alternatives].filter((a): a is TodayAction => a !== null);
+
+// "What do you want to change about today?", with the changes there are:
+// leave out a block, put another first, or say how long today is. Adding a
+// topic or a full reorder is named and left to the Planner.
+export function changePlanReply(view: NovaTodayReady): TelegramReply {
+  const blocks = blocksOf(view).filter(b => b.topicId);
+  const lines = ["What do you want to change about today?"];
+  if (blocks.length > 0) {
+    lines.push(...blocks.map((b, i) => `${i + 1}. ${b.topicName} (${b.subjectName}) ${b.durationMinutes} min`));
+    lines.push(`Today: ${view.plan.totalMinutesToday} of ${view.plan.budgetMinutes} min.`);
+  } else {
+    lines.push("Nothing is planned for today right now.");
+  }
+  lines.push("", "Pick one below, tell me a topic to leave out or add, or reorder everything in the Planner.");
+  const choices: Array<{ label: string; action: OptionAction }> = [
+    ...blocks.slice(0, 3).map(b => ({ label: short(`Skip: ${b.topicName}`), action: { type: "plan_change" as const, change: "skip" as const, topicId: b.topicId!, topicName: b.topicName } })),
+    ...(blocks[1] ? [{ label: short(`First: ${blocks[1].topicName}`), action: { type: "plan_change" as const, change: "first" as const, topicId: blocks[1].topicId!, topicName: blocks[1].topicName } }] : []),
+    { label: "Change my time", action: { type: "pick_time" } },
+    { label: "Nothing", action: { type: "dismiss" } },
+  ];
+  return { text: lines.join("\n"), prompt: { kind: "change_plan", options: options(choices) }, link: { label: "Open Planner", path: "/planner" } };
+}
+
+// One change, named in words, shown back for a tap. Nothing changes here.
+export function confirmPlanChangeReply(change: "skip" | "add", topics: Array<{ topicId: string; topicName: string; subjectName: string }>): TelegramReply {
+  const one = topics.length === 1;
+  const text = change === "skip"
+    ? `Leave ${topics[0]!.topicName} out of today's plan? It stays on record and comes back tomorrow.`
+    : one ? `Add ${topics[0]!.topicName} (${topics[0]!.subjectName}) to today's plan? It goes first, inside today's time.`
+          : `Which one should go into today's plan?\n${topics.map(t => `- ${t.topicName} (${t.subjectName})`).join("\n")}`;
+  const verb = change === "skip" ? "Skip" : "Add";
+  return {
+    text,
+    prompt: {
+      kind: "change_plan",
+      options: options([
+        ...topics.slice(0, 4).map(t => ({
+          label: short(one ? `${verb} it today` : `${verb}: ${t.topicName}`),
+          action: { type: "plan_change" as const, change, topicId: t.topicId, topicName: t.topicName },
+        })),
+        { label: change === "skip" ? "Keep it" : "No", action: { type: "dismiss" as const } },
+      ]),
+    },
+  };
+}
+
+// "How long do you have today?" The tap records it and refits the day.
+export const TIME_CHOICES = [15, 30, 45, 60, 90, 120];
+export function timeChoiceReply(): TelegramReply {
+  return {
+    text: "How long do you have today? I'll fit the plan to it.",
+    prompt: { kind: "pick_minutes", options: options(TIME_CHOICES.map(minutes => ({ label: `${minutes} min`, action: { type: "today" as const, minutes } }))) },
+  };
+}
+
+// What a tapped change did, said from the plan as it now stands. `held`:
+// whether the plan read back shows the change.
+export function planChangedReply(
+  change: { change: "skip" | "add" | "first" | "unskip" | "unadd"; topicId: string; topicName: string },
+  view:   NovaTodayReady,
+  held:   boolean,
+): TelegramReply {
+  const name = change.topicName;
+  const lead = change.change === "skip"   ? `Done: ${name} is out of today's plan.`
+    : change.change === "unskip"          ? `Done: ${name} is back in the running for today.`
+    : change.change === "unadd"           ? `Done: ${name} is no longer added to today.`
+    : change.change === "first"           ? (held ? `Done: ${name} is first today.` : `Saved, but ${name} isn't on today's plan right now, so the order can't put it first.`)
+    : held                                ? `Done: ${name} is on today's plan.`
+    : `Saved, but ${name} doesn't fit in today's time, so it isn't on the plan. Say how long you have to make room.`;
+  const blocks = blocksOf(view);
+  const plan = blocks.length > 0
+    ? ["Today now:", ...blocks.map((b, i) => `${i + 1}. ${b.topicName} ${b.durationMinutes} min`)]
+    : ["Nothing is planned for today now."];
+  const undo: OptionAction | null = change.change === "skip" ? { type: "plan_change", change: "unskip", topicId: change.topicId, topicName: name }
+    : change.change === "add" ? { type: "plan_change", change: "unadd", topicId: change.topicId, topicName: name }
+    : null;
+  const first = blocks[0];
+  const choices: Array<{ label: string; action: OptionAction }> = [
+    ...(first ? [{ label: short(`Start: ${first.topicName}`), action: { type: "start" as const, topicName: first.topicName, subjectName: first.subjectName, minutes: first.durationMinutes } }] : []),
+    ...(undo ? [{ label: "Undo", action: undo }] : []),
+  ];
+  return {
+    text: [lead, "", ...plan].join("\n"),
+    ...(choices.length > 0 ? { prompt: { kind: "change_plan" as const, options: options(choices) } } : {}),
+    link: { label: "Open Planner", path: "/planner" },
+  };
+}
+
+// ── A different topic, named ──────────────────────────────────────────────────
+
+// Topics of theirs that the name refers to, none of them on today's plan:
+// offered to start, one button each.
+export function relatedTopicsReply(named: string, topics: Array<{ topicName: string; subjectName: string }>): TelegramReply {
+  const shown = topics.slice(0, 4);
+  return {
+    text: [
+      `From ${named}, on record:`,
+      ...shown.map(t => `- ${t.topicName} (${t.subjectName})`),
+      topics.length > shown.length ? `and ${topics.length - shown.length} more in Knowledge.` : null,
+      "None of these is on today's plan, so pick one to start.",
+    ].filter((x): x is string => x !== null).join("\n"),
+    prompt: {
+      kind: "start",
+      options: options([
+        ...shown.map(t => ({ label: short(`${t.topicName} · 25 min`), action: { type: "start" as const, topicName: t.topicName, subjectName: t.subjectName, minutes: 25 } })),
+        { label: "Later", action: { type: "later" as const } },
+      ]),
+    },
+  };
+}
+
 export const TEXT = {
   help: [
     "/today: what to do now",
+    "/week: the next seven days",
+    "/progress: how you're doing",
     "/focus: start a session",
     "/done: end it and say how it went",
     "/status: where you stand",
@@ -286,7 +525,7 @@ export const TEXT = {
   ].join("\n"),
   finishSetup:     "Finish setting up with Nova first. It takes a couple of minutes.",
   webOnly:         "That one needs room to work. It lives in Nova on the web.",
-  unknownCommand:  "I don't know that command. /today, /focus, /done, /status and /settings are the ones I do.",
+  unknownCommand:  "I don't know that command. /today, /week, /progress, /focus, /done, /status and /settings are the ones I do.",
   notText:         "I can only read text here. Type it out, or use /today.",
   stale:           "That one's closed.",
   nothingRunning:  "Nothing is running. Tell me what you want to study and I'll set it up.",
@@ -310,7 +549,7 @@ export const TEXT = {
   // Noise, or words with nothing to attach them to, while a question is
   // still open: the buttons already on screen are the options.
   clarifyOpen:     "I didn't catch that. Tell me what you need, or use the buttons above.",
-  unsupported:     "That's outside what I do here. I can tell you what to study, explain a topic, run a session, or take note of what's come up.",
+  unsupported:     "That's outside what I do here. I can show today's plan or the week, change today's plan, show your progress, explain a topic, run a session, or take note of what's come up.",
   // Asked for a reminder at a set time. There is no such thing to create, so
   // this says so and says what does exist. Never "I'll remind you".
   reminderUnavailable:    "I can't set a reminder for a set time yet, so nothing has been scheduled. What I do send on my own is a nudge when something is due, at most two a day. /settings shows whether those are on.",
@@ -325,6 +564,8 @@ export const TEXT = {
 export const TEXT_HINGLISH: typeof TEXT = {
   help: [
     "/today: abhi kya karna hai",
+    "/week: agle saat din",
+    "/progress: tumhara progress",
     "/focus: session start karo",
     "/done: session khatam karo aur batao kaisa gaya",
     "/status: tum kahan khade ho",
@@ -334,7 +575,7 @@ export const TEXT_HINGLISH: typeof TEXT = {
   ].join("\n"),
   finishSetup:     "Pehle Nova pe setup poora kar lo. Do minute lagenge.",
   webOnly:         "Iske liye thodi jagah chahiye. Ye Nova ke web app pe milega.",
-  unknownCommand:  "Ye command yahan nahi chalti. /today, /focus, /done, /status aur /settings chalti hain.",
+  unknownCommand:  "Ye command yahan nahi chalti. /today, /week, /progress, /focus, /done, /status aur /settings chalti hain.",
   notText:         "Yahan sirf text chalta hai. Likh ke bhejo, ya /today use karo.",
   stale:           "Ye wala band ho chuka hai.",
   nothingRunning:  "Abhi kuch chal nahi raha. Batao kya padhna hai, set ho jayega.",
@@ -354,7 +595,7 @@ export const TEXT_HINGLISH: typeof TEXT = {
   setupNoSubject:  "Samajh nahi aaya ye kis subject ka hai. Subject ke saath uske topics batao.",
   nothingOnRecord: "Ye mere record mein nahi hai.",
   clarifyOpen:     "Ye samajh nahi aaya. Batao kya chahiye, ya upar wale buttons use karo.",
-  unsupported:     "Ye yahan ke kaam ke bahar hai. Yahan ye milta hai: kya padhna hai, kisi topic ka explanation, study session, ya jo beech mein aa gaya uska note.",
+  unsupported:     "Ye yahan ke kaam ke bahar hai. Yahan ye milta hai: aaj ka ya hafte ka plan, aaj ke plan mein badlav, tumhara progress, kisi topic ka explanation, study session, ya jo beech mein aa gaya uska note.",
   reminderUnavailable:    "Abhi kisi fixed time ka reminder set nahi ho sakta, to kuch schedule nahi hua. Jo apne aap aata hai wo nudge hai jab kuch due ho, din mein zyada se zyada do. /settings mein dikhta hai wo on hain ya nahi.",
   reminderUnavailableWeb: "Abhi kisi fixed time ka reminder set nahi ho sakta, to kuch schedule nahi hua.",
   nudgesOn:        "Nudges on hain.",

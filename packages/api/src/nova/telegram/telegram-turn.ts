@@ -40,10 +40,12 @@ import {
 } from "./channel-store";
 import { closeOpenPrompt, loadOpenPrompt, openPrompt, recordPromptMessage, resolvePrompt, type OpenPrompt } from "./prompt-store";
 import {
-  advise, askMinutes, askOutcome, firstUse, offerSetup, offerStart, pauseOrResume, runOptionAction, showSettings, showStatus, showToday, startFromRequest,
+  advise, alternativeFor, askMinutes, askOutcome, changePlan, firstUse, offerSetup, offerStart, pauseOrResume, runOptionAction, showProgress,
+  showSettings, showStatus, showToday, showWeek, startFromRequest,
   type ActionContext, type ActionResult,
 } from "./telegram-actions";
 import { decodeCallback, encodeCallback } from "./telegram-event";
+import { NOVA_CHAT_COMMANDS } from "./telegram-client";
 import { alternativeReply, clarifyReply, isFixedText, textFor, withExamOffer } from "./telegram-replies";
 import { loadNovaToday } from "../product/today";
 import { interpret } from "../interaction/semantics";
@@ -82,6 +84,7 @@ const PROMPT_QUESTION: Record<PromptKind, string> = {
   pick_minutes:    "How many minutes do you have?",
   clarify:         "What do you need?",
   settings:        "Change a setting?",
+  change_plan:     "What to change about today's plan?",
 };
 
 function newTrace(event: Event): TurnTrace {
@@ -306,10 +309,22 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     }
 
     // ── A command ────────────────────────────────────────────────────────────
+    // The chat's command menu is set when it is linked. A chat linked before
+    // a command was added keeps the older menu, so /start and /help (the
+    // learner asking what there is) set it again, for this chat only: Rex
+    // chats on the same bot keep theirs. After the reply, and a courtesy:
+    // its failure changes nothing.
+    const refreshMenu = async () => {
+      if (event.kind !== "command" || (event.command !== "start" && event.command !== "help")) return;
+      await telegram(client.setChatCommands(event.chatId, NOVA_CHAT_COMMANDS))
+        .catch(err => console.error(`[nova:telegram] ${trace.correlationId} command menu not refreshed:`, (err as Error).message));
+    };
+
     if (event.kind === "command" && settingUp) {
       trace.decision = `command:${event.command}:setup`;
       const view = await loadSetup(event.chatId, now);
       await deliver(setupAsk(view, event.command === "start" || (view?.subjects.length ?? 0) === 0 ? SETUP_INTRO : "I can't plan for you yet. "));
+      await refreshMenu();
       return finish();
     }
     if (event.kind === "command") {
@@ -350,9 +365,12 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
         case "study":    await deliver(report(await offerStart(ctx, event.argument || null))); break;
         case "done":     await deliver(report(await askOutcome(ctx, null))); break;
         case "status":   await deliver(report(await showStatus(ctx))); break;
+        case "week":     await deliver(report(await showWeek(ctx))); break;
+        case "progress": await deliver(report(await showProgress(ctx))); break;
         case "settings": await deliver(report(await showSettings(ctx))); break;
         default:         await deliver({ text: say().webOnly, link: { label: "Open Nova", path: "/home" } });
       }
+      await refreshMenu();
       return finish();
     }
 
@@ -615,8 +633,14 @@ async function act(
     case "resume_session": return pauseOrResume(ctx, "resume");
     case "ask_outcome":    return askOutcome(ctx, action.stated);
     case "show_status":    return showStatus(ctx);
+    case "show_week":      return showWeek(ctx);
+    case "show_progress":  return showProgress(ctx);
+    case "change_plan":    return changePlan(ctx, action.topic, action.minutes);
     case "defer":          return runOptionAction({ type: action.until === "tomorrow" ? "not_today" : "later" }, ctx);
     case "something_else": {
+      // A topic they named is what they want instead: matched to their own
+      // subjects and topics, never answered with the next block of the plan.
+      if (understanding.topic !== null) return alternativeFor(ctx, understanding.topic);
       const view = await loadNovaToday(ctx.chatId, { now });
       const skip = [understanding.topic, view.status === "ready" ? view.recommendation?.topicName : null].filter((t): t is string => Boolean(t));
       return view.status === "ready"

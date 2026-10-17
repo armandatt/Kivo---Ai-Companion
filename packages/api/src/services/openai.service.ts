@@ -42,7 +42,9 @@ function loadPackageEnv() {
       const key = trimmed.slice(0, separator).trim();
       const rawValue = trimmed.slice(separator + 1).trim();
 
-      if (!key || process.env[key]) continue;
+      // A variable that is set, even to nothing, is not replaced (as dotenv
+      // does): a test that blanks a key must not get the file's key back.
+      if (!key || process.env[key] !== undefined) continue;
 
       process.env[key] = rawValue.replace(/^["']|["']$/g, "");
     }

@@ -38,3 +38,10 @@ if (configuredAppDatabaseUrls().some(u => u === TEST_URL || hostOf(u) === hostOf
 }
 process.env.DATABASE_URL = TEST_URL;
 process.env.DIRECT_URL   = TEST_URL;
+
+// No test reaches a model. The files blank GEMINI_API_KEY and OPENAI_API_KEY,
+// but the provider also reads the aliases GOOGLE_API_KEY and OPEN_API_KEY,
+// and @repo/db/client loads a .env that may hold one. dotenv never replaces
+// a variable that is already set, so these stay blank.
+process.env.GOOGLE_API_KEY = "";
+process.env.OPEN_API_KEY   = "";

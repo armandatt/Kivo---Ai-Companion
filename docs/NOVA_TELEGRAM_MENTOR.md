@@ -44,11 +44,13 @@ update ─ admit (secret, update_id) ─ normalise ─┬─ command  ─┐
   | Pause nudges for the day | an explicit "not today" (`deferUntil: tomorrow`) | "Later", which pauses nothing |
   | Record stated time | minutes in a clear message, no session open | not recorded |
   | Change an open offer | minutes stated while a Start offer is open | re-offered at that length; nothing starts |
+  | Change today's plan | never from a sentence; a tap on a change shown back (leave a topic out, add one, put one first, a length of time), applied by `changeTodayPlan` | the choices, or "Leave X out of today?" |
 
   Nothing that changes state runs when `clarity` is not `clear`, or when the message takes back what it asks for (`changeOfMind`).
 - **Noise does nothing.** A reading marked `unintelligible` is replaced by a neutral one before anything sees it, is answered with a question, and does not enter the canonical turn: no signal, evidence, consolidation job or state. Only the conversation log records it. `ambiguous` and `unsupported` readings keep the feeling and any stated circumstance and lose everything they could act or record on.
 - **The Response Brain cannot claim an action.** It is asked to word a result only when the operation succeeded, and is told exactly what was done. On a turn with no action it is told nothing was done. A failed operation is stated by its template.
 - **Ending a session needs an outcome.** `/done`, the End button and "I finished" all ask "How did it go?". The answer (a tap, or a typed reply read against that open prompt) is the confirmation, and it is what calls the canonical `end` command.
+- **An open prompt never owns the conversation.** The week, progress, a change to today and a different topic named outright are requests of their own (rule 0 of `decideAction`): whatever option of the open card the reading attached, they are not taken as its answer, and the week and progress leave the card open. Words that cannot be placed while a card is open get "use the buttons above" and leave it as it is; they are neither taken as its answer nor answered with the card again. Found on 17 October; held by `nova-telegram.itest.ts` ("Reported failures") and `telegram-mentor.test.ts`.
 - **One open prompt per learner.** `openKey` is unique while a prompt is open. Resolving is one conditional write, so a double tap, an old button, a replaced prompt, an expired prompt and another learner's prompt id all change nothing.
 - **Nothing in process memory.** The prompt, the turn lease, the action limiter and the model budget are rows in Postgres.
 - **"Started" and "Logged" are said after the write is read back**, never before.
