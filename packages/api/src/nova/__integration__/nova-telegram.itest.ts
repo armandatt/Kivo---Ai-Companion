@@ -38,6 +38,7 @@ const { runNovaProactiveCron }      = await import("../proactive/nova-proactive-
 const { abandonStaleSessions }      = await import("../persistence/nova-persistence.js");
 const { removeExam, listExams }     = await import("../product/exams.js");
 const { localHour, dayKey }         = await import("../engines/learner-calendar.js");
+const { dayLabel }                  = await import("../telegram/telegram-replies.js");
 
 import type { InlineButton, SendResult, TelegramClient, TurnTrace } from "../telegram/telegram.types.js";
 import type { UnderstandingContext } from "../types/understanding.types.js";
@@ -68,6 +69,8 @@ function fakeTelegram() {
   const answered: Array<{ id: string; text?: string }> = [];
   const cleared: number[] = [];
   let next: { result: SendResult; chat: string | null } | null = null;
+  const menus: Array<{ chatId: string; commands: string[] }> = [];
+  let menuFails = false;
   let id = 1000;
   const client: TelegramClient = {
     async sendMessage(chatId, text, buttons) {
@@ -81,10 +84,14 @@ function fakeTelegram() {
     },
     async answerCallback(callbackId, text) { answered.push({ id: callbackId, text }); },
     async clearButtons(_chat, messageId) { cleared.push(messageId); },
-    async setChatCommands() {},
+    async setChatCommands(chatId, commands) {
+      if (menuFails) throw new Error("Telegram refused setMyCommands");
+      menus.push({ chatId, commands: commands.map(c => c.command) });
+    },
   };
   return {
-    client, sent, answered, cleared,
+    client, sent, answered, cleared, menus,
+    failMenu: (fails: boolean) => { menuFails = fails; },
     failNext: (result: SendResult, chat: string | null = null) => { next = { result, chat }; },
     last: () => sent[sent.length - 1]!,
     labels: () => sent[sent.length - 1]!.buttons.flat().map(b => b.text),
@@ -1509,4 +1516,305 @@ test("\"what should I study?\" still gets the plan and its buttons, open offer o
   ai.read("something else", { ...BASE, request: { ...REQ, action: "something_else" } });
   const other = await send(l, "something else");
   assert.equal(other.decision, "something_else:asked_for_alternative");
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Reported failures (17 October): requests the open study card used to swallow
+// ══════════════════════════════════════════════════════════════════════════════
+// Each test is a message from the Telegram screenshots, with the reading the
+// model gave or would give it. Before the repair each of these got today's
+// study card (or the next block of it) again.
+
+const callbacks = (tg: ReturnType<typeof fakeTelegram>) => tg.last().buttons.flat().filter(b => b.callback_data).map(b => b.text);
+const overrides = (l: Learner) => prisma.novaPlanOverride.findMany({ where: { profileId: l.profileId }, orderBy: { createdAt: "asc" } });
+const recommended = async (l: Learner) => {
+  const v = await loadNovaToday(l.chat, { now: clock });
+  assert.equal(v.status, "ready");
+  return v.status === "ready" ? v : null!;
+};
+
+// A second subject the learner has studied, with nothing of it due today.
+async function addDeepLearning(l: Learner) {
+  const subject = await prisma.novaSubject.create({ data: { profileId: l.profileId, name: "Deep Learning" }, select: { id: true } });
+  const lately = new Date(clock.getTime() - 86_400_000);
+  for (const name of ["Backpropagation", "CNNs"]) {
+    await prisma.novaTopicMastery.create({ data: { subjectId: subject.id, name, masteryProbability: 0.9, confidenceReported: 0.9, reviewCount: 4, lastStudiedAt: lately, nextReviewAt: new Date(clock.getTime() + 9 * 86_400_000) } });
+  }
+  return subject.id;
+}
+
+test("A: \"kuch Deep Learning se related bata\" gets their Deep Learning topics, not the next block of today's plan; a name not on record is offered, not created", async () => {
+  const l = await seedLearner("Dev");
+  const dl = await addDeepLearning(l);
+  const { tg, ai, send, tap } = harness();
+  await send(l, "/today");
+  const today = await recommended(l);
+  const planned = [today.recommendation, ...today.alternatives].filter(Boolean).map(a => a!.topicName);
+  assert.ok(!planned.includes("Backpropagation") && !planned.includes("CNNs"), "the Deep Learning topics are not on today's plan");
+
+  // The model also pinned the card's "Something else" option (d) on it.
+  const text = "Ye hi padhna hai, kuch Deep Learning se related bata";
+  ai.read(text, { ...BASE, topic: "Deep Learning", topicConfidence: 0.9, request: { ...REQ, action: "something_else", promptAnswer: "d", language: "hinglish" } });
+  const trace = await send(l, text);
+  assert.equal(trace.decision, "something_else:asked_for_named_alternative");
+  assert.ok(tg.last().text.includes("Backpropagation") && tg.last().text.includes("CNNs"), tg.last().text);
+  for (const topic of planned) assert.ok(!tg.last().text.includes(topic), `"${topic}" from today's plan is not offered again`);
+  assert.deepEqual(callbacks(tg), ["Backpropagation · 25 min", "CNNs · 25 min", "Later"]);
+  assert.equal((await sessions(l)).length, 0, "nothing starts on the reading");
+
+  await tap(l, "Backpropagation · 25 min");
+  const [row] = await sessions(l);
+  assert.deepEqual([row!.status, row!.topicName, row!.subjectId], ["in_progress", "Backpropagation", dl]);
+  await runNovaSessionCommand(l.chat, { action: "end", outcome: "okay" }, tick(30));
+
+  // A name that is nowhere in their subjects: said so, and offered as an addition.
+  const before = await prisma.novaTopicMastery.count({ where: { subject: { profileId: l.profileId } } });
+  ai.read("kuch Quantum Computing se related bata", { ...BASE, topic: "Quantum Computing", topicConfidence: 0.9, request: { ...REQ, action: "something_else", language: "hinglish" } });
+  await send(l, "kuch Quantum Computing se related bata");
+  assert.ok(tg.last().text.startsWith("Quantum Computing isn't one of your subjects or topics yet"), tg.last().text);
+  assert.equal((await loadOpenPrompt(l.profileId, clock))?.kind, "confirm_setup");
+  assert.equal(await prisma.novaTopicMastery.count({ where: { subject: { profileId: l.profileId } } }), before, "nothing is created on the reading");
+});
+
+test("B: \"Aaj ke plans update karne hain\" opens the change flow; a tap changes today through the plan-overrides owner, once, and Undo takes it back", async () => {
+  const l = await seedLearner("Esha");
+  const { tg, ai, send, tap, tapData } = harness();
+  await send(l, "/today");
+  const first = (await recommended(l)).recommendation!;
+
+  ai.read("Aaj ke plans update karne hain", { ...BASE, intent: "plan_request", request: { ...REQ, action: "change_plan", language: "hinglish" } });
+  const trace = await send(l, "Aaj ke plans update karne hain");
+  assert.equal(trace.decision, "change_plan:asked_change_plan");
+  assert.ok(tg.last().text.startsWith("What do you want to change about today?"), tg.last().text);
+  assert.ok(tg.last().text.includes(`1. ${first.topicName}`));
+  assert.ok(callbacks(tg).includes(`Skip: ${first.topicName}`) && callbacks(tg).includes("Change my time"), callbacks(tg).join(", "));
+  assert.equal((await overrides(l)).length, 0, "asking changes nothing");
+
+  // Two taps of the same button at once: one change.
+  const skip = tg.data(`Skip: ${first.topicName}`);
+  const taps = await Promise.all([tapData(l, skip), tapData(l, skip)]);
+  assert.deepEqual(taps.map(t => t.failure).sort(), ["none", "stale_prompt"]);
+  const rows = await overrides(l);
+  assert.deepEqual(rows.map(r => [r.kind, r.topicId, r.day]), [["skip", first.topicId, dayKey(clock, "Asia/Kolkata")]]);
+  const done = tg.sent.find(m => m.text.startsWith("Done: "))!;
+  assert.ok(done.text.startsWith(`Done: ${first.topicName} is out of today's plan.`), done.text);
+  // Home, the Planner and Telegram all read the same change.
+  assert.notEqual((await recommended(l)).recommendation?.topicName, first.topicName);
+  const planner = await loadNovaPlanner(l.chat, { now: clock });
+  assert.ok(planner.status === "ready" && !planner.today.blocks.some(b => b.topicName === first.topicName));
+
+  // Undo, from the reply's own button.
+  await tap(l, "Undo");
+  assert.equal((await overrides(l)).length, 0);
+  assert.equal((await recommended(l)).recommendation?.topicName, first.topicName);
+
+  // Naming the topic: shown back for a tap, not changed on the words.
+  ai.read("Deadlocks aaj nahi karna, plan se hata do", { ...BASE, topic: "Deadlocks", topicConfidence: 0.9, request: { ...REQ, action: "change_plan", language: "hinglish" } });
+  await send(l, "Deadlocks aaj nahi karna, plan se hata do");
+  assert.ok(tg.last().text.startsWith("Leave Deadlocks out of today's plan?"), tg.last().text);
+  assert.deepEqual(callbacks(tg), ["Skip it today", "Keep it"]);
+  assert.equal((await overrides(l)).length, 0);
+  await tap(l, "Keep it");
+  assert.equal((await overrides(l)).length, 0);
+
+  // Time: the day is refitted to it, through the recorded stated time.
+  ai.read("aaj sirf 30 min hai, plan update karo", { ...BASE, request: { ...REQ, action: "change_plan", availableMinutes: 30, language: "hinglish" } });
+  await send(l, "aaj sirf 30 min hai, plan update karo");
+  assert.ok(tg.last().text.startsWith("Today is now fitted to 30 min."), tg.last().text);
+  assert.equal((await prisma.novaAcademicProfile.findUniqueOrThrow({ where: { id: l.profileId } })).statedMinutes, 30);
+  ai.read("change today's plan", { ...BASE, request: { ...REQ, action: "change_plan" } });
+  await send(l, "change today's plan");
+  await tap(l, "Change my time");
+  await tap(l, "60 min");
+  assert.equal((await prisma.novaAcademicProfile.findUniqueOrThrow({ where: { id: l.profileId } })).statedMinutes, 60);
+});
+
+test("C: \"What is my next one-week plan?\" gets the next seven days, never a single study card", async () => {
+  const l = await seedLearner("Farah", { exam: true });
+  const in3 = dayKey(new Date(clock.getTime() + 3 * 86_400_000), "Asia/Kolkata");
+  await prisma.novaTask.create({ data: { profileId: l.profileId, title: "Lab report", dueDay: in3 } });
+  const { tg, ai, send } = harness();
+  await send(l, "/today");
+  const card = await loadOpenPrompt(l.profileId, clock);
+
+  ai.read("What is my next one-week plan?", { ...BASE, intent: "schedule_query", request: { ...REQ, action: "week_plan", asks: "about_me" } });
+  const trace = await send(l, "What is my next one-week plan?");
+  assert.equal(trace.decision, "show_week:asked_week");
+  const week = tg.last().text;
+  assert.ok(week.startsWith("Next 7 days, "), week);
+  assert.ok(week.includes("Today, ") && week.includes("- Planned: Deadlocks"), week);
+  assert.ok(week.includes("Reviews falling due: Paging"), week);
+  assert.ok(week.includes("Operating Systems final"), week);
+  assert.ok(week.includes("Tasks due: Lab report"), week);
+  assert.deepEqual(callbacks(tg), [], "an overview, with no Start buttons");
+  assert.equal((await loadOpenPrompt(l.profileId, clock))?.id, card!.id, "the study card is left as it was");
+
+  // /week says the same, with no model.
+  const seen = ai.seen.length;
+  await send(l, "/week");
+  assert.equal(tg.last().text, week);
+  assert.equal(ai.seen.length, seen);
+});
+
+test("D/E: an open study card does not own the conversation: the week, progress and a change are not taken as its answers, and unclear words neither answer it nor resend it", async () => {
+  const l = await seedLearner("Gul");
+  const { tg, ai, send } = harness();
+  await send(l, "/today");
+  const card = await loadOpenPrompt(l.profileId, clock);
+  // The model attached the card's "Start 25 min" (b) to each of these.
+  const cases = [
+    ["Show me my weekly plan", "week_plan", "show_week:asked_week"],
+    ["how is my progress going?", "progress", "show_progress:asked_progress"],
+  ] as const;
+  for (const [text, action, decision] of cases) {
+    ai.read(text, { ...BASE, request: { ...REQ, action, promptAnswer: "b", asks: "about_me" } });
+    const trace = await send(l, text);
+    assert.equal(trace.decision, decision, text);
+    assert.equal((await sessions(l)).length, 0, `"${text}" starts nothing`);
+    assert.equal((await loadOpenPrompt(l.profileId, clock))?.id, card!.id, `"${text}" leaves the card open`);
+  }
+  ai.read("update today's plan", { ...BASE, request: { ...REQ, action: "change_plan", promptAnswer: "b" } });
+  assert.equal((await send(l, "update today's plan")).decision, "change_plan:asked_change_plan");
+  assert.equal((await sessions(l)).length, 0);
+
+  // Words that could not be placed, with the card open again: one question,
+  // no session, and the card is neither answered nor sent again.
+  await send(l, "/today");
+  const again = await loadOpenPrompt(l.profileId, clock);
+  ai.read("hmm what about the other thing", { ...BASE, ambiguityScore: 0.9, request: { ...REQ, clarity: "ambiguous", confidence: 0.3, promptAnswer: "b" } });
+  const unclear = await send(l, "hmm what about the other thing");
+  assert.equal(unclear.decision, "clarify:ambiguous");
+  assert.equal(tg.last().text, "I didn't catch that. Tell me what you need, or use the buttons above.");
+  assert.deepEqual(callbacks(tg), []);
+  assert.equal((await loadOpenPrompt(l.profileId, clock))?.id, again!.id);
+  assert.equal((await sessions(l)).length, 0);
+});
+
+test("G: \"How is my progress going?\" gets counted sessions with their window, said apart from what is planned, and no study card", async () => {
+  const l = await seedLearner("Hana");
+  const { tg, ai, send } = harness();
+  ai.read("How is my progress going?", { ...BASE, intent: "progress_check", request: { ...REQ, action: "progress", asks: "about_me" } });
+  await send(l, "How is my progress going?");
+  assert.ok(tg.last().text.startsWith("No counted study sessions on record yet"), tg.last().text);
+  assert.deepEqual(callbacks(tg), []);
+
+  await runNovaSessionCommand(l.chat, { action: "start", topicName: "Deadlocks", subjectName: "Operating Systems", plannedMinutes: 30 }, clock, "web");
+  await runNovaSessionCommand(l.chat, { action: "end", outcome: "good" }, tick(30), "web");
+  await runNovaSessionCommand(l.chat, { action: "start", topicName: "Paging", subjectName: "Operating Systems", plannedMinutes: 25 }, tick(5), "web");
+  await runNovaSessionCommand(l.chat, { action: "end", outcome: "okay" }, tick(5), "web");
+  const trace = await send(l, "How is my progress going?");
+  assert.equal(trace.decision, "show_progress:asked_progress");
+  const text = tg.last().text;
+  assert.ok(text.includes("This week so far: 1 session, 30 min, 1 active day."), text);
+  assert.ok(text.includes("Today, every finished session: 35 min done"), text);
+  assert.ok(text.includes(`Since ${dayLabel(dayKey(clock, "Asia/Kolkata"))}: 1 session, 30 min`), text);
+  assert.ok(text.includes("Not counted: 1 under 10 minutes."), text);
+  assert.deepEqual(callbacks(tg), []);
+
+  const seen = ai.seen.length;
+  await send(l, "/progress");
+  assert.equal(tg.last().text, text);
+  assert.equal(ai.seen.length, seen, "/progress reads no message");
+});
+
+test("F/7: a reminder and an unsupported request say so, change nothing, and send no study card", async () => {
+  const l = await seedLearner("Ilya");
+  const { tg, ai, send } = harness();
+  await send(l, "/today");
+  const card = await loadOpenPrompt(l.profileId, clock);
+  const idle = await stateOf(l);
+
+  ai.read("remind me to study at 8 pm", { ...BASE, intent: "schedule_query", request: { ...REQ, action: "set_reminder", promptAnswer: "e" } });
+  await send(l, "remind me to study at 8 pm");
+  assert.equal(tg.last().text, "I can't set a reminder for a set time yet, so nothing has been scheduled. What I do send on my own is a nudge when something is due, at most two a day. /settings shows whether those are on.");
+  assert.deepEqual(callbacks(tg), []);
+
+  ai.read("write my essay on the french revolution", { ...BASE, request: { ...REQ, clarity: "unsupported", action: "none" } });
+  await send(l, "write my essay on the french revolution");
+  assert.ok(tg.last().text.startsWith("That's outside what I do here."));
+  assert.deepEqual(callbacks(tg), []);
+
+  // Each message is still logged and its turn queued for consolidation, as
+  // every typed message is (jobRows); nothing else of the learner's moves.
+  const { jobRows: _jobs, ...after } = await stateOf(l);
+  const { jobRows: _idleJobs, ...before } = idle;
+  assert.deepEqual(after, before, "nothing moved");
+  assert.equal((await overrides(l)).length, 0);
+  assert.equal(await prisma.novaTask.count({ where: { profileId: l.profileId } }), 0);
+  assert.equal((await loadOpenPrompt(l.profileId, clock))?.id, card!.id, "the card is still the one that was open");
+});
+
+test("10: another learner's plan-change button changes nothing for either of them", async () => {
+  const a = await seedLearner("Jas");
+  const b = await seedLearner("Kai");
+  const { tg, ai, send, tapData } = harness();
+  ai.read("change today's plan", { ...BASE, request: { ...REQ, action: "change_plan" } });
+  await send(a, "change today's plan");
+  const first = (await recommended(a)).recommendation!;
+  const theirs = tg.data(`Skip: ${first.topicName}`);
+  const trace = await tapData(b, theirs);
+  assert.equal(trace.failure, "forged_callback");
+  assert.deepEqual([(await overrides(a)).length, (await overrides(b)).length], [0, 0]);
+  // Typed in b's chat with a's button data as the sender: refused too.
+  assert.equal((await tapData(a, theirs, b.chat)).failure, "forged_callback");
+  assert.equal((await overrides(a)).length, 0);
+});
+
+test("11: with the model down, /today, /week and /progress work, and words get no study card", async () => {
+  const l = await seedLearner("Lin");
+  const { tg, ai, send } = harness();
+  ai.breakUnderstanding("throw");
+  for (const command of ["/today", "/week", "/progress"]) {
+    const trace = await send(l, command);
+    assert.deepEqual([trace.failure, trace.send.status], ["none", "sent"], command);
+  }
+  assert.ok(tg.sent.at(-2)!.text.startsWith("Next 7 days"));
+  assert.equal(ai.seen.length, 0, "commands read nothing");
+  const trace = await send(l, "what is my week like");
+  assert.equal(trace.failure, "understanding_failed");
+  assert.ok(tg.last().text.startsWith("I can't read messages right now"));
+  assert.deepEqual(callbacks(tg), []);
+});
+
+test("an existing chat gets /week and /progress in its menu when it sends /start or /help, for that chat only; other commands leave it, and a refusal changes nothing", async () => {
+  const l = await seedLearner("Mira");
+  const { tg, ai, send } = harness();
+  await send(l, "/today");
+  await send(l, "/week");
+  assert.equal(tg.menus.length, 0, "an ordinary command does not touch the menu");
+
+  await send(l, "/help");
+  assert.deepEqual(tg.menus, [{ chatId: l.chat, commands: ["today", "week", "progress", "focus", "done", "status", "settings"] }]);
+  assert.ok(tg.last().text.includes("/week: the next seven days"));
+  await send(l, "/start");
+  assert.equal(tg.menus.length, 2);
+  assert.ok(tg.menus.every(m => m.chatId === l.chat), "only the chat that asked");
+
+  // Telegram refusing the menu: the reply still went out, and the turn did not fail.
+  tg.failMenu(true);
+  const trace = await send(l, "/help");
+  assert.deepEqual([trace.failure, trace.send.status], ["none", "sent"]);
+  assert.equal(ai.seen.length, 0, "no model");
+});
+
+test("B, confirmed: \"Skip it today\" applies the named change once; a second Undo is closed and changes nothing", async () => {
+  const l = await seedLearner("Nia");
+  const { tg, ai, send, tap, tapData } = harness();
+  ai.read("Deadlocks aaj nahi", { ...BASE, topic: "Deadlocks", topicConfidence: 0.9, request: { ...REQ, action: "change_plan" } });
+  await send(l, "Deadlocks aaj nahi");
+  assert.deepEqual(callbacks(tg), ["Skip it today", "Keep it"]);
+  const confirm = tg.data("Skip it today");
+  await tap(l, "Skip it today");
+  assert.deepEqual((await overrides(l)).map(r => [r.kind, r.topicId]), [["skip", l.deadlocksId]]);
+  assert.ok(tg.last().text.startsWith("Done: Deadlocks is out of today's plan."), tg.last().text);
+  assert.notEqual((await recommended(l)).recommendation?.topicName, "Deadlocks");
+  // The confirmation again: closed.
+  assert.equal((await tapData(l, confirm)).failure, "stale_prompt");
+  assert.equal((await overrides(l)).length, 1);
+
+  const undo = tg.data("Undo");
+  assert.equal((await tapData(l, undo)).failure, "none");
+  assert.equal((await tapData(l, undo)).failure, "stale_prompt");
+  assert.equal((await overrides(l)).length, 0);
+  assert.equal((await recommended(l)).recommendation?.topicName, "Deadlocks");
 });

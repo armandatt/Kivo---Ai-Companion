@@ -15,7 +15,7 @@ import type { StudyTime } from "../types/understanding.types";
 // ── Inbound ───────────────────────────────────────────────────────────────────
 
 export type TelegramCommandName =
-  | "start" | "today" | "focus" | "done" | "status" | "settings" | "help"
+  | "start" | "today" | "focus" | "done" | "status" | "settings" | "help" | "week" | "progress"
   // Older Nova commands. /study is /focus with a topic; the rest are deep
   // work and are handed to the web app.
   | "study" | "explain" | "quiz" | "revise";
@@ -54,6 +54,12 @@ export type OptionAction =
   | { type: "add_exam"; title: string; subjectName: string | null; date: string }   // date: YYYY-MM-DD
   | { type: "dismiss" }
   | { type: "set_proactive"; enabled: boolean }
+  // A change to today's plan, applied through product/plan-overrides.ts when
+  // tapped: leave a topic out, add one, put one first, or undo the first two.
+  // The topic is named by its id; the server checks it is the learner's own.
+  | { type: "plan_change"; change: PlanChangeKind; topicId: string; topicName: string }
+  // "How long do you have today?", asked as a choice of lengths.
+  | { type: "pick_time" }
   // What the learner said a subject covers, or how they usually study, as it
   // was shown back to them. Saved by product/setup.ts when they confirm.
   | { type: "save_setup"; subjects?: string[]; subjectName: string | null; topics: string[]; dailyMinutes: number | null; studyTime: StudyTime | null };
@@ -64,6 +70,8 @@ export interface PromptOption {
   action: OptionAction;
 }
 
+export type PlanChangeKind = "skip" | "add" | "first" | "unskip" | "unadd";
+
 export type PromptKind =
   | "start"            // a recommendation with Start buttons
   | "session"          // a running session: Pause / Resume / End
@@ -73,7 +81,8 @@ export type PromptKind =
   | "confirm_setup"    // "Add these topics to Operating Systems?"
   | "pick_minutes"     // a range of time, asked back as a choice
   | "clarify"
-  | "settings";
+  | "settings"
+  | "change_plan";     // what to change about today, or a change to confirm
 
 // How long a prompt can still be answered. After that a tap is told it is
 // closed and a typed "yes" is no longer read against it.
@@ -87,6 +96,7 @@ export const PROMPT_TTL_MINUTES: Record<PromptKind, number> = {
   pick_minutes:    15,
   clarify:         15,
   settings:        30,
+  change_plan:     30,
 };
 
 export interface PromptSpec {

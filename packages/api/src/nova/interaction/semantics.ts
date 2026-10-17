@@ -41,7 +41,7 @@ export interface Interaction {
 }
 
 const SESSION_ACTIONS: ReadonlySet<string> = new Set([
-  "start_session", "pause_session", "resume_session", "finish_session", "something_else",
+  "start_session", "pause_session", "resume_session", "finish_session", "something_else", "change_plan",
 ]);
 
 const HEAVY: ReadonlySet<AcademicEmotion> = new Set<AcademicEmotion>([
@@ -63,7 +63,7 @@ export function kindOf(u: AcademicUnderstanding): InteractionKind {
   if (!req.changeOfMind && (SESSION_ACTIONS.has(req.action) || req.promptAnswer !== null)) return "action_request";
   if (circumstance) return "reality_signal";
   if (HEAVY.has(u.emotion) && req.asks === "none") return "emotional_signal";
-  if (req.action === "status") return "status_request";
+  if (req.action === "status" || req.action === "week_plan" || req.action === "progress") return "status_request";
   if (req.asks === "about_me" || req.action === "what_now") return "learner_question";
   if (req.asks === "knowledge") return "general_question";
   if (req.setup !== null) return "onboarding_input";

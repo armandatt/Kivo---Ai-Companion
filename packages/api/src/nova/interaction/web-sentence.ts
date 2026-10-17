@@ -25,7 +25,7 @@ import { loadNovaSession } from "../product/session";
 import { loadNovaToday } from "../product/today";
 import { loadOpenPrompt, openPrompt, resolvePrompt, type OpenPrompt } from "../telegram/prompt-store";
 import {
-  advise, askMinutes, offerSetup, runOptionAction, showStatus, showToday,
+  advise, alternativeFor, askMinutes, offerSetup, runOptionAction, showProgress, showStatus, showToday, showWeek,
   type ActionContext, type ActionResult,
 } from "../telegram/telegram-actions";
 import { alternativeReply, TEXT, withExamOffer } from "../telegram/telegram-replies";
@@ -77,6 +77,8 @@ export interface WebSentenceResult {
 // Actions a sentence may not run on this page.
 const PAGE_BUTTONS_ONLY: ReadonlySet<TurnAction["type"]> = new Set<TurnAction["type"]>([
   "start_session", "offer_start", "pause_session", "resume_session", "ask_outcome", "defer",
+  // Today's plan is changed on the Planner page, with its own buttons.
+  "change_plan",
 ]);
 
 const weekdayIn = (now: Date, zone: string) =>
@@ -182,10 +184,13 @@ async function act(
     }
     case "show_today":  return showToday(ctx, action.minutes);
     case "show_status": return showStatus(ctx);
+    case "show_week":     return showWeek(ctx);
+    case "show_progress": return showProgress(ctx);
     case "advise":      return advise(ctx, action.topic);
     case "ask_minutes": return askMinutes(action.choices);
     case "offer_setup": return offerSetup(ctx, action.setup);
     case "something_else": {
+      if (topic !== null) return alternativeFor(ctx, topic);
       const view = await loadNovaToday(ctx.chatId, { now });
       const skip = [topic, view.status === "ready" ? view.recommendation?.topicName : null].filter((t): t is string => Boolean(t));
       return view.status === "ready"

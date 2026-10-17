@@ -15,14 +15,20 @@ import { recordStatedMinutes } from "../product/planning-inputs";
 import { addExam } from "../product/exams";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
 import { loadStudySnapshot } from "../engines/study-snapshot";
-import { subjectsNamedIn } from "../engines/topic-mastery-engine";
+import { subjectsNamedIn, topicsNamedBy } from "../engines/topic-mastery-engine";
+import { getAllTopicMasteries } from "../engines/knowledge-engine";
+import { loadNovaPlanner } from "../product/planner";
+import { loadNovaProgress } from "../product/progress";
+import { listTasks } from "../product/tasks";
+import { changeTodayPlan } from "../product/plan-overrides";
 import type { NovaTodayReady, TodayAction } from "../product/today.types";
 import { loadChannel, pauseProactiveUntil, setProactiveEnabled } from "./channel-store";
 import {
-  alternativeReply, endedReply, minutesChoiceReply, outcomeReply, recommendationReply, sessionReply, settingsReply,
-  setupOfferReply, setupSavedText, statusReply, todayReply, MIN_SESSION_MINUTES, textFor,
+  alternativeReply, changePlanReply, confirmPlanChangeReply, endedReply, minutesChoiceReply, outcomeReply, planChangedReply,
+  progressReply, recommendationReply, relatedTopicsReply, sessionReply, settingsReply, setupOfferReply, setupSavedText,
+  statusReply, timeChoiceReply, todayReply, weekReply, MIN_SESSION_MINUTES, textFor,
 } from "./telegram-replies";
-import type { OptionAction, TelegramReply } from "./telegram.types";
+import type { OptionAction, PlanChangeKind, TelegramReply } from "./telegram.types";
 import { adviseOnTopic, planBlockFor } from "../interaction/advice";
 import { decideFirstUse, type FirstUse } from "../interaction/first-use";
 import { nextSetupQuestion } from "../interaction/initialization";
@@ -276,6 +282,121 @@ export async function endSession(ctx: ActionContext, outcome: OptionActionOutcom
   return done("session_end", endedReply(result.ended));
 }
 
+// ── The week, progress, and changing today ────────────────────────────────────
+
+// The next seven days: the Planner's read model built from today, and the
+// learner's tasks. Read-only.
+export async function showWeek(ctx: ActionContext): Promise<ActionResult> {
+  const [planner, tasks] = await Promise.all([
+    loadNovaPlanner(ctx.chatId, { now: ctx.now, ahead: true }),
+    listTasks(ctx.profileId, { now: ctx.now }),
+  ]);
+  if (planner.status !== "ready") return done("show_week", { text: textFor(ctx.language).finishSetup }, false);
+  return done("show_week", weekReply(planner, tasks.status === "ready" ? tasks.tasks : []));
+}
+
+// How they are doing over time: the Progress read model, and today's planned
+// and done minutes from the Planner's. Read-only.
+export async function showProgress(ctx: ActionContext): Promise<ActionResult> {
+  const [progress, planner] = await Promise.all([
+    loadNovaProgress(ctx.chatId, { now: ctx.now }),
+    loadNovaPlanner(ctx.chatId, { now: ctx.now }),
+  ]);
+  if (progress.status !== "ready") return done("show_progress", { text: textFor(ctx.language).finishSetup }, false);
+  const today = planner.status === "ready"
+    ? { doneMinutes: planner.today.doneMinutes, plannedMinutes: planner.today.blocks.reduce((sum, b) => sum + b.durationMinutes, 0) }
+    : null;
+  return done("show_progress", progressReply(progress, today));
+}
+
+// "I want to change today's plan." Nothing changes here: what can change is
+// shown back, and the tap applies it (applyPlanChange).
+//   a time        the day is refitted to it, which is the recorded stated
+//                 time: the same write "I have 30 minutes" makes
+//   a topic       on today's plan: offered to leave out; one of theirs not
+//                 on it: offered to add; not theirs: offered to add to
+//                 their subjects (the setup offer, saved only on a tap)
+//   neither       the plan, with the changes there are
+export async function changePlan(ctx: ActionContext, topic: string | null, minutes: number | null): Promise<ActionResult> {
+  if (minutes !== null && topic === null) {
+    const today = await showToday(ctx, minutes);
+    if (!today.operation.ok) return { ...today, operation: { name: "change_plan:time", ok: false } };
+    return { ...today, reply: { ...today.reply, text: `Today is now fitted to ${minutes} min.\n\n${today.reply.text}` }, operation: { name: "change_plan:time", ok: true } };
+  }
+  const view = await todayView(ctx, null);
+  if (!view) return done("change_plan", { text: textFor(ctx.language).finishSetup }, false);
+  if (topic === null) return done("change_plan:ask", changePlanReply(view));
+
+  const planned = [view.recommendation, ...view.alternatives].filter((a): a is TodayAction => a !== null && Boolean(a.topicId));
+  const [topics, snapshot] = await Promise.all([getAllTopicMasteries(ctx.profileId, ctx.now), loadStudySnapshot(ctx.chatId)]);
+  const named = topicsNamedBy(topic, topics, snapshot.subjects);
+  const onPlan = planned.filter(b => named.some(t => t.topicId === b.topicId));
+  if (onPlan.length > 0) {
+    return done("change_plan:offer_skip", confirmPlanChangeReply("skip", onPlan.slice(0, 1).map(b => ({ topicId: b.topicId!, topicName: b.topicName, subjectName: b.subjectName }))));
+  }
+  if (named.length > 0) {
+    return done("change_plan:offer_add", confirmPlanChangeReply("add", named.map(t => ({ topicId: t.topicId, topicName: t.topicName, subjectName: t.subjectName }))));
+  }
+  return notOnRecord(ctx, topic, snapshot.subjects, "change_plan:not_on_record");
+}
+
+// A tapped change to today, through the one owner of plan changes. Then the
+// plan is read back, and what it now shows is what is said.
+export async function applyPlanChange(ctx: ActionContext, change: { change: PlanChangeKind; topicId: string; topicName: string }): Promise<ActionResult> {
+  const name = `plan_change:${change.change}`;
+  let body: Record<string, unknown>;
+  if (change.change === "first") {
+    const view = await todayView(ctx, null);
+    if (!view) return done(name, { text: textFor(ctx.language).finishSetup }, false);
+    const rest = [view.recommendation, ...view.alternatives]
+      .map(a => a?.topicId ?? null)
+      .filter((id): id is string => id !== null && id !== change.topicId);
+    body = { action: "order", topicIds: [change.topicId, ...rest] };
+  } else {
+    body = change.change === "skip" ? { action: "skip", topicId: change.topicId }
+      : change.change === "add"     ? { action: "pin", topicId: change.topicId }
+      : change.change === "unskip"  ? { action: "clear", kind: "skip", topicId: change.topicId }
+      :                               { action: "clear", kind: "pin", topicId: change.topicId };
+  }
+  const result = await changeTodayPlan(ctx.profileId, body, ctx.now);
+  if (!result.ok) return done(name, { text: `${result.message} Nothing was changed.` }, false);
+
+  const view = await todayView(ctx, null);
+  if (!view) return done(name, { text: textFor(ctx.language).finishSetup }, false);
+  const blocks = [view.recommendation, ...view.alternatives].filter((a): a is TodayAction => a !== null);
+  const onPlan = blocks.some(b => b.topicId === change.topicId);
+  const held = change.change === "skip" || change.change === "unadd" ? !onPlan
+    : change.change === "first" ? blocks[0]?.topicId === change.topicId
+    : change.change === "add" ? onPlan
+    : true;
+  return done(name, planChangedReply(change, view, held), held || change.change === "add" || change.change === "first");
+}
+
+// A topic the learner named that is nowhere in their subjects: said so, and
+// offered as an addition to one of them. Saved only on a tap.
+async function notOnRecord(ctx: ActionContext, topic: string, subjects: Array<{ name: string; code?: string | null }>, name: string): Promise<ActionResult> {
+  const lead = `${topic} isn't one of your subjects or topics yet, so there's nothing on record to pick from.`;
+  const proposal = subjects.length > 0 ? proposeSetup({ subjects: [], subject: null, topics: [topic.trim().slice(0, 120)], dailyMinutes: null, studyTime: null }, subjects) : null;
+  if (!proposal) return done(name, { text: `${lead} Add it in Knowledge on the web.`, link: { label: "Open Knowledge", path: "/knowledge" } });
+  const offer = setupOfferReply(proposal);
+  return done(name, { ...offer, text: `${lead}\n${offer.text}` });
+}
+
+// "Something else, about deep learning": what the learner named, matched to
+// their own subjects and topics. A block of today's plan among them is the
+// engine's own choice and is offered first; otherwise their matching topics;
+// otherwise the name is not on record, and adding it is offered.
+export async function alternativeFor(ctx: ActionContext, topic: string): Promise<ActionResult> {
+  const [view, topics, snapshot] = await Promise.all([todayView(ctx, null), getAllTopicMasteries(ctx.profileId, ctx.now), loadStudySnapshot(ctx.chatId)]);
+  if (!view) return done("show_alternative", { text: textFor(ctx.language).finishSetup }, false);
+  const named = topicsNamedBy(topic, topics, snapshot.subjects);
+  if (named.length === 0) return notOnRecord(ctx, topic, snapshot.subjects, "show_alternative:not_on_record");
+  const block = [view.recommendation, ...view.alternatives]
+    .find((a): a is TodayAction => a !== null && named.some(t => t.topicId === a.topicId || t.topicName.toLowerCase() === a.topicName.toLowerCase()));
+  if (block) return done("show_alternative:planned", recommendationReply(view, block));
+  return done("show_alternative:related", relatedTopicsReply(topic, named));
+}
+
 export async function showSettings(ctx: ActionContext): Promise<ActionResult> {
   const [state, account] = await Promise.all([loadChannel(ctx.profileId), loadAccountPreferences(ctx.chatId)]);
   return done("show_settings", settingsReply({
@@ -305,6 +426,8 @@ export async function runOptionAction(action: OptionAction, ctx: ActionContext):
     case "not_today":
       await pauseProactiveUntil(ctx.profileId, nextLocalMidnight(ctx.now, ctx.timezone));
       return done("pause_nudges", { text: textFor(ctx.language).notToday });
+    case "plan_change": return applyPlanChange(ctx, action);
+    case "pick_time":   return done("pick_time", timeChoiceReply());
     case "set_proactive":
       await setProactiveEnabled(ctx.profileId, action.enabled);
       return done("set_proactive", { text: action.enabled ? textFor(ctx.language).nudgesOn : textFor(ctx.language).nudgesOff });

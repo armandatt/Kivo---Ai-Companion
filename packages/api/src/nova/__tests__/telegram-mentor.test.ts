@@ -926,11 +926,63 @@ describe("an open offer to start is not sent again by conversation", () => {
     const stressed = decideAction(reading({ action: "something_else" }, { intent: "emotional_vent", emotion: "overwhelmed" }), START_PROMPT);
     expect([stressed.action.type, stressed.reason]).toEqual(["converse", "feeling_not_alternative"]);
     expect(decideAction(reading({ action: "something_else" }), START_PROMPT).reason).toBe("asked_for_alternative");
-    expect(decideAction(reading({ action: "something_else" }, { emotion: "frustrated", topic: "Paging" }), START_PROMPT).reason).toBe("asked_for_alternative");
+    // Naming what they want instead is its own request: matched to their topics (alternativeFor).
+    const named = decideAction(reading({ action: "something_else" }, { emotion: "frustrated", topic: "Paging" }), START_PROMPT);
+    expect([named.action.type, named.reason, named.generate]).toEqual(["something_else", "asked_for_named_alternative", true]);
   });
 
   it("a start request, or an answer to the offer, still acts", () => {
     expect(decideAction(reading({ action: "start_session", promptAnswer: START_PROMPT.prompt!.options[1]!.id }), START_PROMPT).action.type).toBe("answer_prompt");
     expect(decideAction(reading({ action: "start_session" }), START_PROMPT).action.type).toBe("offer_start");
+  });
+});
+
+// Regression (17 October): the week, progress and a change to today had no
+// request of their own, so they came back as today's study card, and an open
+// card took them as its answers.
+describe("a request of its own is not an answer to the open card", () => {
+  const NUDGE: ActionContext = { session: "none", prompt: { kind: "nudge", options: START_PROMPT.prompt!.options } };
+
+  it("the week, progress and a change to today act, whatever option the reading attached", () => {
+    for (const ctx of [NO_CONTEXT, START_PROMPT, NUDGE]) {
+      for (const promptAnswer of [null, "b", "c", "d"]) {
+        const at = ctx.prompt ? promptAnswer : null;
+        expect(decideAction(reading({ action: "week_plan", promptAnswer: at }), ctx).action).toEqual({ type: "show_week" });
+        expect(decideAction(reading({ action: "progress", promptAnswer: at }), ctx).action).toEqual({ type: "show_progress" });
+        expect(decideAction(reading({ action: "change_plan", promptAnswer: at }, { topic: "Paging" }), ctx).action).toEqual({ type: "change_plan", topic: "Paging", minutes: null });
+      }
+    }
+  });
+
+  it("they are stated by code, and a change asked for and taken back changes nothing", () => {
+    expect(decideAction(reading({ action: "week_plan" }), START_PROMPT).generate).toBe(false);
+    expect(decideAction(reading({ action: "progress" }), START_PROMPT).generate).toBe(false);
+    expect(decideAction(reading({ action: "change_plan", availableMinutes: 30 }), NO_CONTEXT).action).toEqual({ type: "change_plan", topic: null, minutes: 30 });
+    // "start OS for 30 but actually I only have 10", read as a change: the time, not "leave OS out".
+    expect(decideAction(reading({ action: "change_plan", availableMinutes: 10 }, { topic: "OS" }), NO_CONTEXT).action).toEqual({ type: "change_plan", topic: null, minutes: 10 });
+    expect(decideAction(reading({ action: "change_plan", changeOfMind: true }), START_PROMPT).action.type).not.toBe("change_plan");
+  });
+
+  it("an unclear or barely plausible reading does not reach them", () => {
+    expect(decideAction(reading({ action: "week_plan", clarity: "ambiguous" }), START_PROMPT).action.type).not.toBe("show_week");
+    expect(decideAction(reading({ action: "progress", confidence: 0.2 }), NO_CONTEXT).action.type).not.toBe("show_progress");
+  });
+
+  it("a different topic named outright is not the card's Something else, and a reminder is still only refused", () => {
+    const d = decideAction(reading({ action: "something_else", promptAnswer: "c" }, { topic: "Deep Learning" }), START_PROMPT);
+    expect([d.action.type, d.reason]).toEqual(["something_else", "asked_for_named_alternative"]);
+    expect(decideAction(reading({ action: "something_else", promptAnswer: "c" }), START_PROMPT).action).toEqual({ type: "answer_prompt", optionId: "c" });
+    expect(decideAction(reading({ action: "set_reminder", promptAnswer: "d" }), START_PROMPT).action.type).toBe("reminder_unavailable");
+  });
+
+  it("/week and /progress are commands, and the reader knows the three new requests", () => {
+    for (const name of ["week", "progress"]) {
+      const event = normalizeTelegramUpdate(message(`/${name}`));
+      expect(event.kind === "command" && event.command).toBe(name);
+    }
+    for (const action of ["week_plan", "change_plan", "progress"]) {
+      expect(parseLearnerRequest({ clarity: "clear", action, confidence: 0.9 })?.action).toBe(action);
+      expect(UNDERSTANDING_BRAIN_SYSTEM_PROMPT).toContain(`${action} = `);
+    }
   });
 });

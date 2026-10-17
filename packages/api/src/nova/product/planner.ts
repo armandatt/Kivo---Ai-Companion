@@ -37,6 +37,14 @@ const MAX_REASONS_PER_SUBJECT = 3;
 export { dayKey, resolveTimezone };
 
 // Monday to Sunday of the week containing `today` (a YYYY-MM-DD key).
+// Today and the six days after it: "the next seven days", for a learner who
+// asks about the days ahead rather than the calendar week.
+export function daysFrom(today: string, count = 7): string[] {
+  const [y, m, d] = today.split("-").map(Number) as [number, number, number];
+  const noon      = Date.UTC(y, m - 1, d, 12);
+  return Array.from({ length: count }, (_, i) => new Date(noon + i * DAY_MS).toISOString().slice(0, 10));
+}
+
 export function weekOf(today: string): string[] {
   const [y, m, d] = today.split("-").map(Number) as [number, number, number];
   const noon      = Date.UTC(y, m - 1, d, 12);
@@ -151,7 +159,9 @@ function buildReasoning(input: PlanningInputs, blocks: PlannerBlock[]): PlannerR
 
 // ── Pure builder ──────────────────────────────────────────────────────────────
 
-export function buildPlannerView(input: PlanningInputs): NovaPlannerReady {
+// `ahead`: the week is today and the six days after it instead of Monday to
+// Sunday. Each day is built the same way either way.
+export function buildPlannerView(input: PlanningInputs, options: { ahead?: boolean } = {}): NovaPlannerReady {
   const { snapshot, academicState, topics, examContext, plan, now } = input;
   const timezone = resolveTimezone(input.timezone);
   const today    = dayKey(now, timezone);
@@ -190,7 +200,7 @@ export function buildPlannerView(input: PlanningInputs): NovaPlannerReady {
   const done = (sessionsByDay.get(today) ?? []).filter(s => s.status === "completed");
 
   // This week.
-  const week: PlannerDay[] = weekOf(today).map(date => {
+  const week: PlannerDay[] = (options.ahead ? daysFrom(today) : weekOf(today)).map(date => {
     const relation: PlannerDay["relation"] = date < today ? "past" : date === today ? "today" : "future";
     const due = relation === "future"
       ? topics.filter(t => t.reviewDueAt !== null && dayKey(t.reviewDueAt, timezone) === date)
@@ -294,12 +304,12 @@ type StudySnapshotSession = PlanningInputs["snapshot"]["studySessions"][number];
 
 export async function loadNovaPlanner(
   platformChatId: string,
-  options: { availableMinutes?: number | null; now?: Date } = {},
+  options: { availableMinutes?: number | null; now?: Date; ahead?: boolean } = {},
 ): Promise<NovaPlannerView> {
   // The same call Home makes. The Planning Engine refits the whole day to
   // the time the student has.
   const loaded = await loadPlanningInputs(platformChatId, { availableMinutes: options.availableMinutes, now: options.now });
   if (loaded.status !== "ready") return { status: loaded.status };
 
-  return buildPlannerView(loaded.inputs);
+  return buildPlannerView(loaded.inputs, { ahead: options.ahead });
 }

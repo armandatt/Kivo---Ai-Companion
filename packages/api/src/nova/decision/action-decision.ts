@@ -27,6 +27,9 @@
 //                       subject covers is offered back; Save is what saves it.
 //   set a reminder      never. Nova has no reminder for a set time, so a
 //                       request for one is answered with that fact, by code.
+//   change today's plan never from a sentence. What can change is shown back
+//                       as choices (leave a topic out, add one, what comes
+//                       first, how long today is); the tap changes it.
 //
 // And the turns that change nothing but still need deciding:
 //
@@ -63,6 +66,13 @@ export type TurnAction =
   // "How did it go?" The four answers are the only way a session ends.
   | { type: "ask_outcome"; stated: StatedOutcome | null }
   | { type: "show_status" }
+  // The days ahead, from the record: read-only.
+  | { type: "show_week" }
+  // How they are doing over time, from the record: read-only.
+  | { type: "show_progress" }
+  // A change to today's plan, asked for in words. Shown back as choices; the
+  // learner's tap is what changes it.
+  | { type: "change_plan"; topic: string | null; minutes: number | null }
   | { type: "defer"; until: "later" | "tomorrow" }
   | { type: "something_else" }
   // The student reported studying with no timer running. Nothing to end;
@@ -164,6 +174,24 @@ export function decideAction(understanding: AcademicUnderstanding, ctx: ActionCo
   }
 
   if (req.clarity === "unsupported") return decided({ type: "unsupported" }, "unsupported_request", false);
+
+  // ── 0. A request of its own ────────────────────────────────────────────────
+  // The week, progress, a change to today, or a different topic named
+  // outright: each asks for something the open question is not about. An
+  // open question never owns the conversation, so whatever option the
+  // reading attached to such a message, it is not taken as an answer.
+  if (plausible) {
+    if (asked === "week_plan") return decided({ type: "show_week" }, "asked_week", false);
+    if (asked === "progress")  return decided({ type: "show_progress" }, "asked_progress", false);
+    // A time stated with it comes first: the day is refitted to it, and a
+    // topic in the same breath is not taken as one to leave out.
+    if (asked === "change_plan" && !req.changeOfMind) {
+      return decided({ type: "change_plan", topic: minutes !== null ? null : understanding.topic, minutes }, "asked_change_plan", false);
+    }
+    if (asked === "something_else" && understanding.topic !== null) {
+      return decided({ type: "something_else" }, "asked_for_named_alternative");
+    }
+  }
 
   const prompt     = ctx.prompt;
   const startOffer = prompt !== null && OFFERS_A_START.has(prompt.kind);

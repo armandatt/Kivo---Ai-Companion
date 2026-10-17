@@ -169,6 +169,29 @@ export function subjectsNamedIn<S extends { name: string; code?: string | null }
   });
 }
 
+// The learner's topics a name refers to ("something about deep learning"):
+// every topic of a subject the name names or that holds the name, and every
+// topic whose own name is the name, holds it, or is held in it. Whole words,
+// any case. A name that matches none of these matches nothing: nothing is
+// guessed from meaning, and the order of `topics` is kept.
+export function topicsNamedBy<T extends { topicName: string; subjectName: string }>(
+  named:    string,
+  topics:   T[],
+  subjects: Array<{ name: string; code?: string | null }>,
+): T[] {
+  const said = words(named ?? "").join(" ");
+  if (said.length < 2) return [];
+  const padded = ` ${said} `;
+  const subjectNames = new Set(subjectsNamedIn(named, subjects).map(s => s.name.toLowerCase()));
+  for (const s of subjects) if (` ${words(s.name).join(" ")} `.includes(padded)) subjectNames.add(s.name.toLowerCase());
+  return topics.filter(t => {
+    if (subjectNames.has(t.subjectName.toLowerCase())) return true;
+    const name = words(t.topicName).join(" ");
+    if (name.length === 0) return false;
+    return ` ${name} `.includes(padded) || (name.length >= 3 && padded.includes(` ${name} `));
+  });
+}
+
 // The subject for a topic that arrived without one. In order:
 //   1. the text names a subject (matchTopicToSubject)
 //   2. the student already has this topic under exactly one subject: a topic

@@ -27,7 +27,9 @@ const LOOP = [
 ]
 
 const COMMANDS = [
-  { cmd: '/today',    desc: 'What to do now, from your plan.' },
+  { cmd: '/today',    desc: 'Today’s plan: what to do now, then the rest of the day.' },
+  { cmd: '/week',     desc: 'The next seven days: today’s plan, reviews falling due, tasks and dates.' },
+  { cmd: '/progress', desc: 'How you’re doing: counted sessions this week and lately, and what changed.' },
   { cmd: '/focus',    desc: 'Start a session. Add a topic to choose it yourself: /focus deadlocks.' },
   { cmd: '/done',     desc: 'End the session and say how it went.' },
   { cmd: '/status',   desc: 'Where you stand: a running session, your next exam, what is due for review.' },
@@ -41,6 +43,8 @@ const SAY_IT = [
   'recursion isn’t clicking',
   'my OS exam is on the 24th',
   'aaj kya padhna hai?',
+  'aaj ke plans update karne hain',
+  'something on deep learning instead',
 ]
 
 const CHAT = [
