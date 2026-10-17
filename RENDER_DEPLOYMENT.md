@@ -41,7 +41,7 @@ Only one backend may run the scheduler at a time. `DISABLE_INTERNAL_CHECKIN_CRON
 
 `GET /api/health` says what this process is doing: `scheduler.state` is `running` or `disabled`, with `lastTickAt` and `lastTickOk`. A `running` scheduler whose `lastTickAt` is more than ten minutes old means the process was asleep (free plan) or the tick is failing.
 
-Do not create a Render Cron Job for `/api/checkin`. That endpoint runs the same jobs, so a cron job plus the in-process scheduler would double every message. The root `vercel.json` also declares a cron for `/api/checkin`; the web app has no such route, so it does nothing.
+Do not create a Render Cron Job for `/api/checkin`. That endpoint runs the same jobs, so a cron job plus the in-process scheduler would double every message. Do not add a Vercel cron for it either: the web app has no such route.
 
 ## Environment variables
 
