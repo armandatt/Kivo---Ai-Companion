@@ -12,8 +12,24 @@ import type { ReplyLanguage } from "../types/understanding.types";
 
 export type { ReplyLanguage };
 
-export function chooseLanguage(read: ReplyLanguage | null | undefined, last: ReplyLanguage): ReplyLanguage {
-  return read ?? last;
+// A reading that names a language always wins. One that names none keeps the
+// last language only for a message too short to tell ("ok", "30", a topic
+// name): it is a reply within that conversation. A message of a sentence or
+// more that came back with no language is answered in English, the default,
+// rather than in whatever the previous message was in: the reading failed to
+// label it, and carrying the last language over is how "How is my progress
+// going?" was answered in Hinglish after a Hinglish message.
+export const SENTENCE_WORDS = 4;
+export function chooseLanguage(read: ReplyLanguage | null | undefined, last: ReplyLanguage, text?: string): ReplyLanguage {
+  if (read) return read;
+  return text !== undefined && wordCount(text) >= SENTENCE_WORDS ? "english" : last;
+}
+
+// Words with at least one letter: "8 pm" is one word, "30" none.
+export function wordCount(text: string): number {
+  let words = 0;
+  for (const word of text.split(" ").join("\n").split("\n")) if ([...word].some(isLetter)) words++;
+  return words;
 }
 
 // ── What the script itself says ───────────────────────────────────────────────
