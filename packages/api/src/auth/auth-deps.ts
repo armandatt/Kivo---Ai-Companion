@@ -103,8 +103,24 @@ export const defaultAuthDeps: AuthDeps = {
   hashPassword: (password) => bcrypt.hash(password, BCRYPT_COST),
   verifyPassword: (password, hash) => bcrypt.compare(password, hash),
   sendEmail: sendAuthEmail,
-  appUrl: () => (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/+$/, ""),
+  appUrl: publicAppUrl,
 };
+
+let warnedNoAppUrl = false;
+
+/**
+ * Where the web app is, for links in emails: NEXT_PUBLIC_APP_URL without a
+ * trailing slash. In production a missing value is logged (once), because
+ * every link in a code, reset or account email would point at localhost.
+ */
+export function publicAppUrl(): string {
+  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (!configured && process.env.NODE_ENV === "production" && !warnedNoAppUrl) {
+    warnedNoAppUrl = true;
+    console.error("[AUTH] NEXT_PUBLIC_APP_URL is not set; links in auth emails will point at localhost.");
+  }
+  return (configured || "http://localhost:3000").replace(/\/+$/, "");
+}
 
 /** The session fields every sign-in path returns. Never includes the hash. */
 export interface SessionUser {

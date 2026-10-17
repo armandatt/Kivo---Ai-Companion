@@ -129,7 +129,7 @@ function SigninForm() {
                 id="signin-email"
                 type="email"
                 autoComplete="email"
-                placeholder="you@gmail.com"
+                placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className={authInputClass}

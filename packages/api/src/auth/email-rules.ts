@@ -22,6 +22,35 @@ export function normalizeEmail(input: unknown): string | null {
   return EMAIL_SHAPE.test(email) ? email : null;
 }
 
+// What a new account may be created with: any address a mail server could
+// deliver to, checked more strictly than normalizeEmail (which also has to
+// accept every address an existing account was made with, so login, reset
+// and Google keep working for them). Ownership is still what the emailed
+// code proves. No quoted local parts and no IP-literal domains.
+const MAX_LOCAL_LENGTH = 64;
+const MAX_DOMAIN_LENGTH = 253;
+const MAX_LABEL_LENGTH = 63;
+const LOCAL_CHARS = /^[a-z0-9!#$%&'*+/=?^_`{|}~.-]+$/;
+const LABEL_SHAPE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+const TLD_SHAPE = /^(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/;
+
+/** True for a normalized address a new account may use. Takes the output of normalizeEmail. */
+export function isValidSignupEmail(email: string): boolean {
+  const at = email.lastIndexOf("@");
+  if (at <= 0 || email.indexOf("@") !== at) return false;
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+
+  if (local.length > MAX_LOCAL_LENGTH || !LOCAL_CHARS.test(local)) return false;
+  if (local.startsWith(".") || local.endsWith(".") || local.includes("..")) return false;
+
+  if (domain.length === 0 || domain.length > MAX_DOMAIN_LENGTH) return false;
+  const labels = domain.split(".");
+  if (labels.length < 2) return false;
+  if (!labels.every((label) => label.length <= MAX_LABEL_LENGTH && LABEL_SHAPE.test(label))) return false;
+  return TLD_SHAPE.test(labels[labels.length - 1]!);
+}
+
 /** True for a normalized address at gmail.com. Takes the output of normalizeEmail. */
 export function isGmailAddress(email: string): boolean {
   return GMAIL_SHAPE.test(email) && !email.includes("..");

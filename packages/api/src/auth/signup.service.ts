@@ -30,7 +30,7 @@ import {
   type SessionUser,
 } from "./auth-deps";
 import { existingAccountEmail, signupCodeEmail } from "./auth-email";
-import { isGmailAddress, normalizeEmail, normalizeName, passwordProblem } from "./email-rules";
+import { isValidSignupEmail, normalizeEmail, normalizeName, passwordProblem } from "./email-rules";
 import type { RateLimitResult } from "./rate-limiter";
 import { generateOtp, generateToken, hashOtp, hashToken, isOtpShaped, isTokenShaped, safeEqual } from "./secrets";
 import { consumeThrottle, type ThrottleRule } from "./throttle";
@@ -59,8 +59,7 @@ const SEND_DAILY: ThrottleRule = {
   windowMs: 24 * 60 * MINUTE,
 };
 
-export const GMAIL_ONLY_MESSAGE =
-  "Sign up with a Gmail address (ending in @gmail.com), or continue with Google.";
+export const INVALID_EMAIL_MESSAGE = "Enter a valid email address";
 export const CODE_REJECTED_MESSAGE =
   "That code is invalid or has expired. Request a new one, or start again.";
 const SEND_FAILED_MESSAGE = "We couldn't send the verification email. Please try again shortly.";
@@ -85,9 +84,9 @@ export async function startSignup(
 ): Promise<SignupStartResult> {
   const { deps = defaultAuthDeps, now = new Date() } = options;
 
+  // Any address that mail can be delivered to; the code proves it is theirs.
   const email = normalizeEmail(input.email);
-  if (!email) return fail(400, "Enter a valid email address");
-  if (!isGmailAddress(email)) return fail(400, GMAIL_ONLY_MESSAGE);
+  if (!email || !isValidSignupEmail(email)) return fail(400, INVALID_EMAIL_MESSAGE);
 
   const problem = passwordProblem(input.password);
   if (problem) return fail(400, problem);
