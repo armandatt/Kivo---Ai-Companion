@@ -50,8 +50,9 @@ function SubjectLevels({ subject, className }: { subject: KnowledgeSubject; clas
 // The Knowledge Space: every subject on record in an outline, one subject at
 // a time beside it as a list of its topics or as a board of what is filed
 // under them, and what is due. Read from the Knowledge view; the board and
-// search also read the Knowledge Map. A topic changes when a session on it
-// ends, never from here.
+// search also read the Knowledge Map. Levels change only when a session
+// ends; names, filing and archiving are the learner's to edit (Subject
+// Studio, Archive this topic).
 export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; onChanged?: () => void }) {
   const { start, starting, error } = useStartSession()
   // Subject Studio: names, filing and archiving are the learner's to edit.
