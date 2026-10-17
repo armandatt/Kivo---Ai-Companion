@@ -254,6 +254,20 @@ const CASES: Case[] = [
   c("repair", "kitna progress hua mera ab tak",                         NONE,  ["show_progress"], [...WRITES, "show_today", "offer_start"]),
   c("repair", "remind me at 8 pm to study",                             OFFER, ["reminder_unavailable"], [...WRITES, "show_today", "defer"]),
   c("repair", "write my history essay for me",                          OFFER, ["unsupported", "explain", "converse"], [...WRITES, "show_today", "offer_start", "something_else"]),
+  // ── Variants: spelling, punctuation, shouting, Hinglish shorthand ──────────
+  c("variants", "wats my plan 4 dis week??",                       NONE,  ["show_week"], [...WRITES, "offer_start"]),
+  c("variants", "WEEK PLAN PLS",                                   OFFER, ["show_week"], [...WRITES, "offer_start"]),
+  c("variants", "agle 7 din ka schedule dikhao",                   NONE,  ["show_week"], [...WRITES, "offer_start"]),
+  c("variants", "aaj ka plan change krna h",                       OFFER, ["change_plan"], [...WRITES, "offer_start"]),
+  // Leaving one topic out is not declining the day: "defer" would quiet Nova until midnight.
+  c("variants", "skip krde aaj deadlocks...",                      OFFER, ["change_plan"], [...WRITES, "offer_start", "defer"]),
+  c("variants", "skip deadlocks today",                            NONE,  ["change_plan"], [...WRITES, "offer_start", "defer"]),
+  c("variants", "aaj paging hata do plan se",                      OFFER, ["change_plan"], [...WRITES, "offer_start", "defer"]),
+  c("variants", "can u move paging to first today",                NONE,  ["change_plan"], [...WRITES, "offer_start"]),
+  c("variants", "progres kaisa chal rha h mera???",                OFFER, ["show_progress"], [...WRITES, "offer_start"]),
+  c("variants", "am i improving or not...",                        NONE,  ["show_progress", "show_status"], [...WRITES, "offer_start"]),
+  c("variants", "deep learning ka kuch do na instead",             OFFER, ["something_else"], [...WRITES]),
+  c("variants", "remind me tmrw 7am",                              OFFER, ["reminder_unavailable"], [...WRITES, "defer"]),
 ];
 
 // What a decision writes through Nova's canonical functions.
