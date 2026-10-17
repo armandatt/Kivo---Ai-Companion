@@ -71,3 +71,22 @@ export function boardNeighbourhood(board: SubjectBoard, id: string): Set<string>
   }
   return near
 }
+
+// The stored links that touch one thing or anything in a set of things (a
+// topic tile and what is filed under it), each with the far end, and whether
+// it leads away from the thing (it wrote the link) or toward it. Board order.
+export function linksTouching(board: SubjectBoard, ids: ReadonlySet<string>): Array<{ link: BoardLink; other: MapNode; outward: boolean }> {
+  const found: Array<{ link: BoardLink; other: MapNode; outward: boolean }> = []
+  for (const link of board.links) {
+    const from = ids.has(link.from.id), to = ids.has(link.to.id)
+    if (from && to) continue   // within the set: nothing beyond it
+    if (from) found.push({ link, other: link.to, outward: true })
+    else if (to) found.push({ link, other: link.from, outward: false })
+  }
+  return found
+}
+
+// The subject a node belongs to, by name: a subject is its own.
+export function nodeSubject(node: MapNode): string | null {
+  return node.type === 'subject' ? node.label : node.subjectName
+}

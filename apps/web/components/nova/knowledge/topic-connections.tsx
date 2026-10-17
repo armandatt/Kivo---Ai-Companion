@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { ArrowUpRight, Bookmark, FileText, Waypoints } from 'lucide-react'
 import type { NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
 import { cn } from '@/lib/utils'
-import { subjectColor } from '../subject-color'
+import { subjectColor, toneStyle } from '../subject-color'
 import { TEXT_LINK } from '../workspace/ui'
 import { RELATION_WORDS, topicConnections } from './connections'
 
@@ -52,8 +52,8 @@ export function TopicConnections({ map, topicId, topicName, onOpenTopic }: {
                   return (
                     <li key={r.topic.id} className="max-w-full">
                       <button type="button" onClick={() => onOpenTopic(r.topic.id.slice('topic:'.length))}
-                        title={RELATION_WORDS[r.relation](r.via.label)}
-                        className={cn('flex max-w-full flex-col items-start rounded-lg border px-2.5 py-1.5 text-left transition-colors hover:bg-white/4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-keppel-400', color.border)}>
+                        title={RELATION_WORDS[r.relation](r.via.label)} style={toneStyle(r.topic.subjectName)}
+                        className={cn('subject-tone flex max-w-full flex-col items-start rounded-xl border bg-[var(--sc-faint)] px-3 py-2 text-left transition-[background-color,box-shadow,transform] hover:-translate-y-px hover:bg-[var(--sc-soft)] hover:shadow-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-keppel-400', color.border)}>
                         <span className="flex max-w-full items-center gap-1.5 text-sm font-medium text-foreground/90">
                           <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', color.dot)} />
                           <span className="truncate">{r.topic.label}</span>

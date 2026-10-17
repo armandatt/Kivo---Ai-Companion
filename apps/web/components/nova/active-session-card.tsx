@@ -4,7 +4,8 @@ import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
 import type { TodayActiveSession } from '@repo/api/nova/product/today.types'
 import { minutesLabel } from './format'
-import { BUTTON_PRIMARY, SURFACE } from './workspace/ui'
+import { BUTTON_PRIMARY, SURFACE_RAISED } from './workspace/ui'
+import { toneStyle } from './subject-color'
 
 // A session is already running: it takes the place of the recommendation.
 export function ActiveSessionCard({ session }: { session: TodayActiveSession }) {
@@ -13,15 +14,17 @@ export function ActiveSessionCard({ session }: { session: TodayActiveSession }) 
   const left    = planned > 0 ? planned - session.elapsedMinutes : null
 
   return (
-    <section aria-labelledby="nova-current-session" className={`${SURFACE} border-keppel-400/30 p-4 sm:p-5`}>
-      <div>
-        <p className="flex items-center gap-2 text-xs font-semibold text-keppel-300">
-          <span className={paused ? 'size-1.5 rounded-full bg-amber-300' : 'size-1.5 animate-pulse rounded-full bg-keppel-300'} />
+    <section aria-labelledby="nova-current-session" style={toneStyle(session.subjectName)}
+      className={`${SURFACE_RAISED} subject-tone relative overflow-hidden`}>
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-linear-to-b from-[var(--sc-soft)] to-transparent" />
+      <div className="relative p-5 sm:p-6">
+        <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--sc-ink)]">
+          <span className={paused ? 'size-2 rounded-full bg-amber-300' : 'size-2 animate-pulse rounded-full bg-[var(--sc)]'} />
           {paused ? 'Session paused' : 'Session in progress'}
         </p>
 
         {session.subjectName && <p className="mt-3 text-sm text-foreground/60">{session.subjectName}</p>}
-        <h2 id="nova-current-session" className="mt-0.5 text-xl font-semibold leading-snug tracking-tight text-foreground sm:text-2xl">
+        <h2 id="nova-current-session" className="mt-0.5 text-2xl font-semibold leading-tight tracking-[-0.02em] text-foreground sm:text-[1.75rem]">
           {session.topicName ?? 'Study session'}
         </h2>
 

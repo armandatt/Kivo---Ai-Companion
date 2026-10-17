@@ -10,7 +10,7 @@ import { dueMarks, levelCounts, recentPages, subjectCards, type LevelCounts } fr
 import { relativeDay } from './format'
 import { LEVEL_LABEL, LEVEL_TONE } from './knowledge/labels'
 import { LoadFailed, ROW, SectionHeading, Skeleton, TEXT_LINK } from './workspace/ui'
-import { subjectColor } from './subject-color'
+import { toneStyle } from './subject-color'
 
 // Today's view of everything the learner has on record, subject by subject,
 // and what they wrote or saved last. Read from the Knowledge Map and Notes as
@@ -70,8 +70,8 @@ export function KnowledgeBoard({ map, reviewDue }: { map: Loaded<NovaKnowledgeMa
 
       <div className="mt-3">
         {!ready && map.loading ? (
-          <div aria-busy="true" aria-label="Loading your knowledge" className="space-y-4 border-y border-white/8 py-4">
-            {[0, 1, 2].map(i => <Skeleton key={i} className="h-8" />)}
+          <div aria-busy="true" aria-label="Loading your knowledge" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {[0, 1, 2].map(i => <Skeleton key={i} className={cn('h-32 rounded-2xl', i === 0 && 'xl:col-span-2')} />)}
           </div>
         ) : !ready && map.error ? (
           <LoadFailed what="Your knowledge" onRetry={map.refresh} />
@@ -80,19 +80,24 @@ export function KnowledgeBoard({ map, reviewDue }: { map: Loaded<NovaKnowledgeMa
             No subjects on record yet. <Link href="/settings/study" className="underline decoration-white/25 underline-offset-4 hover:text-foreground">Add them in study setup</Link> and they show here with their topics.
           </p>
         ) : (
-          <ul className="divide-y divide-white/6 border-y border-white/8">
-            {cards.map(({ subject, topics }) => {
+          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {cards.map(({ subject, topics }, index) => {
               const counts = levelCounts(topics)
               return (
-                <li key={subject.id} className={cn('-mx-2 grid gap-x-6 gap-y-2 rounded-md px-2 py-3.5 md:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]', ROW)}>
-                  <div className="min-w-0">
+                <li key={subject.id} style={toneStyle(subject.label)}
+                  className={cn('subject-tone group relative flex flex-col gap-3 overflow-hidden rounded-2xl border border-white/8 bg-card p-4 transition-[box-shadow,border-color,transform] hover:-translate-y-0.5 hover:border-[var(--sc-edge)] hover:shadow-soft',
+                    // The first subject leads the mosaic on wide screens.
+                    index === 0 && cards.length > 2 && 'xl:col-span-2')}>
+                  <span aria-hidden className="pointer-events-none absolute inset-0 bg-linear-to-br from-[var(--sc-soft)] via-transparent to-transparent opacity-80" />
+                  <span aria-hidden className="pointer-events-none absolute -right-6 -top-8 size-28 rounded-full bg-[var(--sc-soft)] blur-2xl transition-opacity group-hover:opacity-100 sm:opacity-60" />
+                  <div className="relative min-w-0">
                     <p className="flex min-w-0 items-center gap-2">
-                      <span aria-hidden className={cn('size-2 shrink-0 rounded-full', subjectColor(subject.label).dot)} />
+                      <span aria-hidden className="size-2.5 shrink-0 rounded-full bg-[var(--sc)] ring-4 ring-[var(--sc-soft)]" />
                       {subject.href
-                        ? <Link href={subject.href} className="truncate text-sm font-semibold text-foreground hover:underline">{subject.label}</Link>
-                        : <span className="truncate text-sm font-semibold text-foreground">{subject.label}</span>}
+                        ? <Link href={subject.href} className="truncate text-base font-semibold tracking-tight text-foreground hover:text-[var(--sc-ink)]">{subject.label}</Link>
+                        : <span className="truncate text-base font-semibold tracking-tight text-foreground">{subject.label}</span>}
                     </p>
-                    <p className="mt-0.5 flex items-center gap-3 text-xs text-foreground/55">
+                    <p className="mt-1 flex items-center gap-3 text-xs text-foreground/55">
                       <span>{plural(topics.length, 'topic', 'topics')}</span>
                       <span className="inline-flex items-center gap-1" title={plural(subject.notes, 'note', 'notes')}><NotebookPen aria-hidden className="size-3" />{subject.notes}<span className="sr-only"> notes</span></span>
                       <span className="inline-flex items-center gap-1" title={plural(subject.resources, 'saved page', 'saved pages')}><Bookmark aria-hidden className="size-3" />{subject.resources}<span className="sr-only"> saved pages</span></span>
@@ -101,9 +106,9 @@ export function KnowledgeBoard({ map, reviewDue }: { map: Loaded<NovaKnowledgeMa
                   </div>
 
                   {topics.length === 0 ? (
-                    <p className="self-center text-xs text-foreground/55">No topics yet.</p>
+                    <p className="relative text-xs text-foreground/55">No topics yet.</p>
                   ) : (
-                    <ul aria-label={`Topics in ${subject.label}`} className="flex flex-wrap content-start gap-1.5">
+                    <ul aria-label={`Topics in ${subject.label}`} className="relative flex flex-wrap content-start gap-1.5">
                       {topics.slice(0, TOPICS_SHOWN).map(topic => {
                         // The map's level, worded and coloured as Knowledge does. A topic
                         // with no session behind it has none.
@@ -118,9 +123,9 @@ export function KnowledgeBoard({ map, reviewDue }: { map: Loaded<NovaKnowledgeMa
                           </>
                         )
                         const chip = cn(
-                          'inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs',
-                          level ? 'border-white/12 text-foreground/85' : 'border-dashed border-white/15 text-foreground/60',
-                          topic.href && 'transition-colors hover:border-white/35 hover:text-foreground',
+                          'inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs',
+                          level ? 'border-[var(--sc-edge)] bg-[var(--sc-faint)] text-foreground/85' : 'border-dashed border-white/15 bg-card/60 text-foreground/60',
+                          topic.href && 'transition-colors hover:border-[var(--sc)] hover:text-foreground',
                         )
                         const title = level ? `${topic.label}: ${LEVEL_LABEL[level]}, from ${plural(topic.sessions, 'session', 'sessions')}` : `${topic.label}: ${LEVEL_LABEL.unverified}`
                         return (
@@ -130,7 +135,7 @@ export function KnowledgeBoard({ map, reviewDue }: { map: Loaded<NovaKnowledgeMa
                         )
                       })}
                       {topics.length > TOPICS_SHOWN && subject.href && (
-                        <li><Link href={subject.href} className="inline-flex items-center rounded-md px-2 py-0.5 text-xs text-foreground/60 hover:text-foreground">+{topics.length - TOPICS_SHOWN} more</Link></li>
+                        <li><Link href={subject.href} className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium text-[var(--sc-ink)] hover:underline">+{topics.length - TOPICS_SHOWN} more</Link></li>
                       )}
                     </ul>
                   )}

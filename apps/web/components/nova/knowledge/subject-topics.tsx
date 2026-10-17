@@ -11,7 +11,8 @@ import type { NoteSummary } from '@repo/api/nova/product/notes.types'
 import { fetchNotes } from '../notes/notes-api'
 import { LEVEL_LABEL, LEVEL_TONE, OUTCOME_LABEL, reviewLabel, sessionsLabel } from './labels'
 import type { NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
-import { BUTTON_QUIET, SectionHeading } from '../workspace/ui'
+import { BUTTON_PRIMARY, SectionHeading } from '../workspace/ui'
+import { toneStyle } from '../subject-color'
 import { TopicConnections } from './topic-connections'
 
 // The record a link into this page names (?topic=<id> or ?subject=<id>), read
@@ -115,7 +116,10 @@ function TopicRow({ topic, subjectId, focus = 0, actions = {}, onChanged }: { to
 
   return (
     <li ref={row} data-topic={topic.topicName} data-level={topic.level} data-review={topic.reviewState} data-linked={linked || undefined}
-      className={cn(linked && 'bg-keppel-400/5')}>
+      style={toneStyle(topic.subjectName)}
+      className={cn('subject-tone relative transition-colors', (linked || open) && 'bg-[var(--sc-faint)]')}>
+      {/* An open topic is marked in its subject's colour */}
+      <span aria-hidden className={cn('absolute inset-y-0 left-0 w-1 bg-[var(--sc)] transition-opacity', open ? 'opacity-100' : 'opacity-0')} />
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
@@ -125,7 +129,7 @@ function TopicRow({ topic, subjectId, focus = 0, actions = {}, onChanged }: { to
       >
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline justify-between gap-3">
-            <p className="truncate text-[15px] font-medium text-foreground/90">{topic.topicName}</p>
+            <p className={cn('truncate text-[15px] text-foreground/90', open ? 'font-semibold text-foreground' : 'font-medium')}>{topic.topicName}</p>
             <p className={cn('shrink-0 text-xs', topic.reviewState === 'due' ? 'font-medium text-amber-300' : 'text-foreground/50')}>
               {reviewLabel(topic)}
             </p>
@@ -145,7 +149,7 @@ function TopicRow({ topic, subjectId, focus = 0, actions = {}, onChanged }: { to
       </button>
 
       {open && (
-        <div id={panel} className="border-t border-white/6 bg-white/2 px-4 py-4 sm:px-5" data-topic-detail={topic.topicName}>
+        <div id={panel} className="nova-rise border-t border-[var(--sc-edge)] px-4 py-4 sm:px-5" data-topic-detail={topic.topicName}>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-4">
             <Fact label="Current level" value={verified ? `${topic.masteryPercent}%` : 'None yet'} />
             <Fact label="Sessions" value={String(topic.reviewCount)} />
@@ -172,7 +176,7 @@ function TopicRow({ topic, subjectId, focus = 0, actions = {}, onChanged }: { to
             <TopicConnections map={actions.map ?? null} topicId={topic.id} topicName={topic.topicName} onOpenTopic={actions.onOpenTopic} />
           )}
           {actions.onStudy && (
-            <button type="button" onClick={() => actions.onStudy!(topic)} disabled={actions.studying != null} className={cn(BUTTON_QUIET, 'mt-4')}>
+            <button type="button" onClick={() => actions.onStudy!(topic)} disabled={actions.studying != null} className={cn(BUTTON_PRIMARY, 'mt-5 h-9 px-3.5')}>
               {actions.studying === topic.id
                 ? <><Loader2 aria-hidden className="size-3.5 animate-spin" /> Starting…</>
                 : <><Play aria-hidden className="size-3" /> Study this · 25 min</>}

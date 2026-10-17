@@ -10,14 +10,14 @@ import { useStartSession } from '../use-start-session'
 import { useNovaView } from '../use-nova-view'
 import { useTasks } from '../tasks/use-tasks'
 import { CommandButton, CommandPalette, useCommandShortcut } from '../workspace/command-palette'
-import { BUTTON_PRIMARY, BUTTON_QUIET, LoadFailed, SectionHeading, Skeleton, SURFACE, TEXT_LINK } from '../workspace/ui'
+import { BUTTON_PRIMARY, BUTTON_QUIET, LoadFailed, SectionHeading, Skeleton, SURFACE, SURFACE_RAISED, TEXT_LINK } from '../workspace/ui'
 import { DueReviews } from './due-reviews'
 import { searchSubjects } from './knowledge-search'
 import { LEVEL_TONE } from './labels'
 import { ArchivedTopics, RecentLearning, SubjectTopics } from './subject-topics'
 import { SubjectStudio } from './subject-studio'
 import { SubjectBoardView } from './subject-board-view'
-import { subjectColor } from '../subject-color'
+import { heroStyle, toneStyle } from '../subject-color'
 
 // The pages next to this one, with the sidebar's icons. None is this page, so
 // none is marked current.
@@ -70,6 +70,9 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
   const subjects   = useMemo(() => searchSubjects(view.subjects, query), [view.subjects, query])
   const current    = selected === ALL ? null : view.subjects.find(s => s.subjectId === selected) ?? null
   const mapReady   = map.view?.status === 'ready' ? map.view : null
+  // The board is wide: while it shows, it takes the margin's column too, and
+  // the margin moves under it.
+  const boardShown = current !== null && mode === 'board'
 
   // A link into this page names a subject (?subject=<id>) or a topic
   // (?topic=<id>): that subject is the one shown. Read once in the browser.
@@ -112,33 +115,51 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
 
   return (
     <div className="mx-auto w-full max-w-7xl pb-20 pt-12 lg:pt-2">
-      <header className="flex flex-col gap-4 border-b border-white/8 pb-5 md:flex-row md:items-end md:justify-between">
-        <div className="min-w-0">
-          <p className="text-xs font-medium text-keppel-300/90">Knowledge Space</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground sm:text-[1.75rem]">Your learning, connected</h1>
-          <p className="mt-1 max-w-prose text-sm leading-relaxed text-foreground/60">
-            Every subject and topic on record, what you filed under them, and what is due to revisit.
-          </p>
-          <nav aria-label="Knowledge navigation" className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
-            {quickLinks.map(({ href, label, icon: Icon }) => (
-              <Link key={href} href={href} className={TEXT_LINK}><Icon aria-hidden className="size-3.5" /> {label}</Link>
+      <header className="nova-hero relative overflow-hidden rounded-[1.75rem] border border-white/8 p-5 shadow-soft sm:p-8" style={heroStyle(view.subjects.map(sub => sub.subjectName))}>
+        <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-keppel-300">Knowledge Space</p>
+            <h1 className="mt-3 text-[2rem] font-semibold leading-[1.05] tracking-[-0.03em] text-foreground sm:text-[2.6rem]">Your learning, connected</h1>
+            <p className="mt-2 max-w-prose text-sm leading-relaxed text-foreground/65">
+              Every subject and topic on record, what you filed under them, and what is due to revisit.
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <div className="min-w-0 flex-1 md:flex-none"><CommandButton onOpen={() => setPaletteOpen(true)} /></div>
+            <button type="button" onClick={() => setEditing(e => !e)} aria-expanded={editing} data-edit-subjects className={cn(BUTTON_QUIET, 'h-9 bg-card/70')}>
+              <Settings2 aria-hidden className="size-4" /> Edit subjects
+            </button>
+            <Link href="/notes/new" className={cn(BUTTON_PRIMARY, 'h-9 px-3')}><NotebookPen aria-hidden className="size-4" /> New note</Link>
+          </div>
+        </div>
+        {!noSubjects && (
+          <dl aria-label="On record" className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:max-w-3xl">
+            {[
+              { label: 'Subjects', value: view.totals.subjectCount },
+              { label: 'Topics', value: view.totals.topicCount },
+              ...(mapReady ? [{ label: 'Notes', value: mapReady.counts.note }, { label: 'Saved pages', value: mapReady.counts.resource }] : []),
+              ...(view.totals.dueCount > 0 ? [{ label: 'Due to revisit', value: view.totals.dueCount, due: true }] : []),
+            ].map(stat => (
+              <div key={stat.label} className="rounded-2xl border border-white/8 bg-card/70 px-4 py-3 backdrop-blur-sm">
+                <dt className="text-[11px] font-medium text-foreground/55">{stat.label}</dt>
+                <dd className={cn('mt-0.5 text-2xl font-semibold tabular-nums tracking-tight', 'due' in stat && stat.due ? 'text-amber-300' : 'text-foreground')}>{stat.value}</dd>
+              </div>
             ))}
-            <Link href="/home" className={TEXT_LINK}>Back to Today <ArrowRight aria-hidden className="size-3" /></Link>
-          </nav>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <div className="min-w-0 flex-1 md:flex-none"><CommandButton onOpen={() => setPaletteOpen(true)} /></div>
-          <button type="button" onClick={() => setEditing(e => !e)} aria-expanded={editing} data-edit-subjects className={cn(BUTTON_QUIET, 'h-9')}>
-            <Settings2 aria-hidden className="size-4" /> Edit subjects
-          </button>
-          <Link href="/notes/new" className={cn(BUTTON_PRIMARY, 'h-9 px-3')}><NotebookPen aria-hidden className="size-4" /> New note</Link>
-        </div>
+          </dl>
+        )}
+        <nav aria-label="Knowledge navigation" className="mt-6 flex flex-wrap items-center gap-2">
+          {quickLinks.map(({ href, label, icon: Icon }) => (
+            <Link key={href} href={href} className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-card/60 px-3 text-xs font-medium text-foreground/70 transition-colors hover:border-white/25 hover:text-foreground"><Icon aria-hidden className="size-3.5" /> {label}</Link>
+          ))}
+          <Link href="/home" className={cn(TEXT_LINK, 'ml-1')}>Back to Today <ArrowRight aria-hidden className="size-3" /></Link>
+        </nav>
       </header>
 
       {editing && <SubjectStudio onChanged={() => onChanged?.()} onClose={() => setEditing(false)} />}
 
       {noSubjects ? (
-        <section className={cn(SURFACE, 'mt-8 p-5 sm:p-6')} data-empty="subjects">
+        <section className={cn(SURFACE_RAISED, 'relative isolate mt-8 overflow-hidden p-6 sm:p-8')} data-empty="subjects">
+          <div aria-hidden className="nova-canvas pointer-events-none absolute inset-0 -z-10 opacity-70 [mask-image:linear-gradient(to_left,black,transparent_70%)]" />
           <h2 className="text-lg font-semibold tracking-tight text-foreground">Nova doesn&apos;t have enough learning context yet</h2>
           <p className="mt-2 max-w-prose text-sm leading-relaxed text-foreground/65">
             It doesn&apos;t know which subjects you are taking. Tell it on Today and this page will start to fill in.
@@ -147,11 +168,6 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
         </section>
       ) : (
         <>
-          <p className="mt-4 text-xs text-foreground/60">
-            {plural(view.totals.subjectCount, 'subject', 'subjects')} · {plural(view.totals.topicCount, 'topic', 'topics')}
-            {view.totals.dueCount > 0 && <> · <span className="font-medium text-amber-300">{view.totals.dueCount} due</span></>}
-            {mapReady && <> · {plural(mapReady.counts.note, 'note', 'notes')} · {plural(mapReady.counts.resource, 'saved page', 'saved pages')}</>}
-          </p>
 
           {view.activeSession && (
             <div className={cn(SURFACE, 'mt-5 flex items-center justify-between gap-4 border-keppel-400/30 p-4')} data-active-session>
@@ -163,7 +179,7 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
             </div>
           )}
 
-          <div className="mt-6 grid grid-cols-1 gap-x-8 gap-y-6 lg:grid-cols-[15rem_minmax(0,1fr)] xl:grid-cols-[16rem_minmax(0,1fr)_17rem]">
+          <div className="mt-8 grid grid-cols-1 gap-x-8 gap-y-6 lg:grid-cols-[15rem_minmax(0,1fr)] xl:grid-cols-[16rem_minmax(0,1fr)_17rem]">
             {/* ── The outline: every subject, and a search over their names ── */}
             <nav aria-label="Subjects" className="min-w-0 lg:sticky lg:top-4 lg:self-start">
               <label className="relative block">
@@ -184,7 +200,7 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
                       detail={`${plural(subject.summary.topicCount, 'topic', 'topics')}${subject.summary.dueCount > 0 ? ` · ${subject.summary.dueCount} due` : ''}`}
                       due={subject.summary.dueCount > 0}
                       levels={<SubjectLevels subject={subject} className="mt-1.5 hidden lg:flex" />}
-                      dot={subjectColor(subject.subjectName).dot}
+                      subjectName={subject.subjectName}
                     />
                   </li>
                 ))}
@@ -193,7 +209,7 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
             </nav>
 
             {/* ── The subject: its topics as a list, or as a board ─────────── */}
-            <div className="min-w-0 space-y-8">
+            <div className={cn('min-w-0 space-y-8', boardShown && 'xl:col-span-2')}>
               {(selected === ALL || (current?.summary.dueCount ?? 0) > 0) && (
                 <DueReviews
                   reviews={current ? view.dueReviews.filter(r => r.subjectName === current.subjectName) : view.dueReviews}
@@ -207,32 +223,36 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
 
               {current ? (
                 <section aria-labelledby="knowledge-subject">
-                  <div className="flex flex-wrap items-end justify-between gap-3">
-                    <div className="min-w-0">
-                      <h2 id="knowledge-subject" className="flex items-center gap-2 text-lg font-semibold tracking-tight text-foreground">
-                        <span aria-hidden className={cn('size-2.5 shrink-0 rounded-full', subjectColor(current.subjectName).dot)} />{current.subjectName}
-                      </h2>
-                      <p className="mt-0.5 text-xs text-foreground/60">
-                        {current.summary.topicCount === 0 ? 'No topics yet' : plural(current.summary.topicCount, 'topic', 'topics')}
-                        {current.summary.dueCount > 0 && ` · ${current.summary.dueCount} due`}
-                      </p>
-                      <SubjectLevels subject={current} className="mt-2 w-48" />
-                      {/* Due reviews show a start's error; without them, it is said here. */}
-                      {error && current.summary.dueCount === 0 && <p role="alert" className="mt-2 text-sm text-red-300">{error}</p>}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div role="group" aria-label="Show as" className="flex rounded-lg border border-white/10 p-0.5">
-                        {([['list', 'List', List], ['board', 'Board', LayoutGrid]] as const).map(([key, label, Icon]) => (
-                          <button key={key} type="button" aria-pressed={mode === key} onClick={() => setMode(key)}
-                            className={cn('inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors',
-                              mode === key ? 'bg-white/10 text-foreground' : 'text-foreground/60 hover:text-foreground')}>
-                            <Icon aria-hidden className="size-3.5" /> {label}
-                          </button>
-                        ))}
+                  <div className="subject-tone relative overflow-hidden rounded-2xl border border-[var(--sc-edge)] bg-linear-to-br from-[var(--sc-soft)] via-[var(--sc-faint)] to-transparent p-4 sm:p-5" style={toneStyle(current.subjectName)}>
+                    <span aria-hidden className="pointer-events-none absolute -right-8 -top-10 size-36 rounded-full bg-[var(--sc-soft)] blur-2xl" />
+                    <div className="relative flex flex-wrap items-end justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--sc-ink)]">Subject</p>
+                        <h2 id="knowledge-subject" className="mt-1 flex items-center gap-2.5 text-2xl font-semibold tracking-[-0.02em] text-foreground">
+                          <span aria-hidden className="size-3 shrink-0 rounded-full bg-[var(--sc)] ring-4 ring-[var(--sc-soft)]" />{current.subjectName}
+                        </h2>
+                        <p className="mt-1 text-xs text-foreground/60">
+                          {current.summary.topicCount === 0 ? 'No topics yet' : plural(current.summary.topicCount, 'topic', 'topics')}
+                          {current.summary.dueCount > 0 && <> · <span className="font-medium text-amber-300">{current.summary.dueCount} due</span></>}
+                        </p>
+                        <SubjectLevels subject={current} className="mt-2.5 w-56" />
+                        {/* Due reviews show a start's error; without them, it is said here. */}
+                        {error && current.summary.dueCount === 0 && <p role="alert" className="mt-2 text-sm text-red-300">{error}</p>}
                       </div>
-                      <Link href={`/notes/new?subjectId=${encodeURIComponent(current.subjectId)}`} className={BUTTON_QUIET}>
-                        <NotebookPen aria-hidden className="size-3.5" /> Note
-                      </Link>
+                      <div className="flex items-center gap-2">
+                        <div role="group" aria-label="Show as" className="flex rounded-xl border border-white/10 bg-card/80 p-1 shadow-sm">
+                          {([['list', 'List', List], ['board', 'Board', LayoutGrid]] as const).map(([key, label, Icon]) => (
+                            <button key={key} type="button" aria-pressed={mode === key} onClick={() => setMode(key)}
+                              className={cn('inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-keppel-400',
+                                mode === key ? 'bg-[var(--sc)] text-[oklch(20%_0.03_var(--sh))] shadow-sm' : 'text-foreground/60 hover:text-foreground')}>
+                              <Icon aria-hidden className="size-3.5" /> {label}
+                            </button>
+                          ))}
+                        </div>
+                        <Link href={`/notes/new?subjectId=${encodeURIComponent(current.subjectId)}`} className={cn(BUTTON_QUIET, 'bg-card/80')}>
+                          <NotebookPen aria-hidden className="size-3.5" /> Note
+                        </Link>
+                      </div>
                     </div>
                   </div>
 
@@ -242,8 +262,8 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
                     ) : mapReady ? (
                       <SubjectBoardView map={mapReady} subject={current} onOpenTopic={openTopic} />
                     ) : map.loading ? (
-                      <div aria-busy="true" aria-label="Loading the board" className="grid gap-3 sm:grid-cols-2">
-                        {[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-28 rounded-xl" />)}
+                      <div aria-busy="true" aria-label="Loading the board" className="nova-canvas grid gap-4 rounded-2xl border border-white/8 p-4 sm:grid-cols-2">
+                        {[0, 1, 2, 3].map(i => <Skeleton key={i} className={cn('rounded-2xl', i % 2 ? 'h-40' : 'h-28')} />)}
                       </div>
                     ) : (
                       <LoadFailed what="The board" onRetry={map.refresh} />
@@ -268,7 +288,7 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
             </div>
 
             {/* ── What happened lately, and how to read the levels ─────────── */}
-            <aside aria-label="About your knowledge" className="min-w-0 space-y-6 lg:col-start-2 xl:col-start-auto">
+            <aside aria-label="About your knowledge" className={cn('min-w-0 space-y-6 lg:col-start-2', boardShown ? 'xl:col-start-2' : 'xl:col-start-auto')}>
               {/* Re-read whenever the page's data is: an archive or a restore changes both. */}
               {onChanged && <ArchivedTopics onChanged={onChanged} version={view.generatedAt} />}
               <RecentLearning sessions={view.recentLearning} />
@@ -293,16 +313,23 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
   )
 }
 
-function OutlineItem({ active, onClick, label, detail, due = false, levels, dot }: {
-  active: boolean; onClick: () => void; label: string; detail: string; due?: boolean; levels?: React.ReactNode; dot?: string
+function OutlineItem({ active, onClick, label, detail, due = false, levels, subjectName }: {
+  active: boolean; onClick: () => void; label: string; detail: string; due?: boolean; levels?: React.ReactNode
+  // Absent for "All subjects".
+  subjectName?: string
 }) {
+  const tone = subjectName !== undefined
   return (
-    <button type="button" onClick={onClick} aria-current={active ? 'true' : undefined}
-      className={cn('block w-full min-w-36 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-keppel-400 lg:min-w-0',
-        active ? 'bg-white/8 text-foreground' : 'text-foreground/80 hover:bg-white/4 hover:text-foreground')}>
+    <button type="button" onClick={onClick} aria-current={active ? 'true' : undefined} style={tone ? toneStyle(subjectName) : undefined}
+      className={cn('relative block w-full min-w-36 overflow-hidden rounded-xl px-3 py-2.5 text-left transition-[background-color,box-shadow,color] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-keppel-400 lg:min-w-0',
+        tone && 'subject-tone',
+        active
+          ? tone ? 'bg-[var(--sc-soft)] text-foreground shadow-sm ring-1 ring-[var(--sc-edge)]' : 'bg-white/8 text-foreground'
+          : 'text-foreground/80 hover:bg-white/4 hover:text-foreground')}>
+      {tone && <span aria-hidden className={cn('absolute inset-y-2 left-0 w-1 rounded-r-full bg-[var(--sc)] transition-opacity', active ? 'opacity-100' : 'opacity-0')} />}
       <span className="flex items-center gap-2 text-sm font-medium">
-        {dot && <span aria-hidden className={cn('size-2 shrink-0 rounded-full', dot)} />}
-        <span className="truncate">{label}</span>
+        {tone && <span aria-hidden className="size-2 shrink-0 rounded-full bg-[var(--sc)]" />}
+        <span className={cn('truncate', active && tone && 'font-semibold')}>{label}</span>
       </span>
       <span className={cn('block truncate text-[11px]', due ? 'text-amber-300/90' : 'text-foreground/55')}>{detail}</span>
       {levels}
