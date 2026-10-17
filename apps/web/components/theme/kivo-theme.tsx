@@ -16,18 +16,18 @@ const resolve = (choice: ThemeChoice): 'light' | 'dark' =>
 function stored(): ThemeChoice {
   try {
     const value = window.localStorage.getItem(THEME_KEY)
-    return value === 'light' || value === 'dark' || value === 'system' ? value : 'dark'
-  } catch { return 'dark' }
+    return value === 'light' || value === 'dark' || value === 'system' ? value : 'light'
+  } catch { return 'light' }
 }
 
 // Runs before the page paints, so a learner who chose light never sees a
 // flash of dark. Kept as a string because it must run before React does.
-// Dark is what the app has always been, so it is the default for a device
-// that has made no choice.
-export const THEME_SCRIPT = `(function(){try{var c=localStorage.getItem('${THEME_KEY}');var t=c==='light'||c==='dark'?c:c==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):'dark';document.documentElement.dataset.kivoTheme=t}catch(e){document.documentElement.dataset.kivoTheme='dark'}})()`
+// Light (warm paper) is the default for a device that has made no choice;
+// a choice already made, dark included, is kept.
+export const THEME_SCRIPT = `(function(){try{var c=localStorage.getItem('${THEME_KEY}');var t=c==='light'||c==='dark'?c:c==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):'light';document.documentElement.dataset.kivoTheme=t}catch(e){document.documentElement.dataset.kivoTheme='light'}})()`
 
 export function useKivoTheme() {
-  const [choice, setChoice] = useState<ThemeChoice>('dark')
+  const [choice, setChoice] = useState<ThemeChoice>('light')
 
   useEffect(() => { setChoice(stored()) }, [])
 

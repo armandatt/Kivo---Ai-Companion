@@ -10,6 +10,7 @@ import { dueMarks, levelCounts, recentPages, subjectCards, type LevelCounts } fr
 import { relativeDay } from './format'
 import { LEVEL_LABEL, LEVEL_TONE } from './knowledge/labels'
 import { LoadFailed, ROW, SectionHeading, Skeleton, TEXT_LINK } from './workspace/ui'
+import { subjectColor } from './subject-color'
 
 // Today's view of everything the learner has on record, subject by subject,
 // and what they wrote or saved last. Read from the Knowledge Map and Notes as
@@ -85,9 +86,12 @@ export function KnowledgeBoard({ map, reviewDue }: { map: Loaded<NovaKnowledgeMa
               return (
                 <li key={subject.id} className={cn('-mx-2 grid gap-x-6 gap-y-2 rounded-md px-2 py-3.5 md:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]', ROW)}>
                   <div className="min-w-0">
-                    {subject.href
-                      ? <Link href={subject.href} className="block truncate text-sm font-semibold text-foreground hover:underline">{subject.label}</Link>
-                      : <p className="truncate text-sm font-semibold text-foreground">{subject.label}</p>}
+                    <p className="flex min-w-0 items-center gap-2">
+                      <span aria-hidden className={cn('size-2 shrink-0 rounded-full', subjectColor(subject.label).dot)} />
+                      {subject.href
+                        ? <Link href={subject.href} className="truncate text-sm font-semibold text-foreground hover:underline">{subject.label}</Link>
+                        : <span className="truncate text-sm font-semibold text-foreground">{subject.label}</span>}
+                    </p>
                     <p className="mt-0.5 flex items-center gap-3 text-xs text-foreground/55">
                       <span>{plural(topics.length, 'topic', 'topics')}</span>
                       <span className="inline-flex items-center gap-1" title={plural(subject.notes, 'note', 'notes')}><NotebookPen aria-hidden className="size-3" />{subject.notes}<span className="sr-only"> notes</span></span>

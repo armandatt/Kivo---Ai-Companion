@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { ArrowRight, Bookmark, LayoutGrid, Library, List, NotebookPen, Search, Settings2, Waypoints } from 'lucide-react'
-import type { KnowledgeSubject, NovaKnowledgeReady } from '@repo/api/nova/product/knowledge.types'
+import type { KnowledgeSubject, KnowledgeTopic, NovaKnowledgeReady } from '@repo/api/nova/product/knowledge.types'
 import type { NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
 import { cn } from '@/lib/utils'
 import { useStartSession } from '../use-start-session'
@@ -17,6 +17,7 @@ import { LEVEL_TONE } from './labels'
 import { ArchivedTopics, RecentLearning, SubjectTopics } from './subject-topics'
 import { SubjectStudio } from './subject-studio'
 import { SubjectBoardView } from './subject-board-view'
+import { subjectColor } from '../subject-color'
 
 // The pages next to this one, with the sidebar's icons. None is this page, so
 // none is marked current.
@@ -27,6 +28,8 @@ const quickLinks = [
 ]
 
 const ALL = 'all'
+// The length of a session started from a topic: the Knowledge Map's.
+const TOPIC_SESSION_MINUTES = 25
 type View = 'list' | 'board'
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
@@ -58,7 +61,7 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
   const [query, setQuery]       = useState('')
   const [selected, setSelected] = useState<string>(ALL)
   const [mode, setMode]         = useState<View>('list')
-  const [focusTopic, setFocusTopic] = useState<string | null>(null)
+  const [focusTopic, setFocusTopic] = useState<{ id: string; n: number } | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
   useCommandShortcut(setPaletteOpen)
 
@@ -88,7 +91,24 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
     window.history.replaceState(null, '', url)
   }
 
-  const openTopic = (topicId: string) => { setMode('list'); setFocusTopic(topicId) }
+  // Opens a topic's own record in the list: its subject is chosen first, so a
+  // related topic in another subject opens there.
+  const openTopic = (topicId: string) => {
+    const owner = view.subjects.find(s => s.topics.some(t => t.id === topicId))
+    if (owner && owner.subjectId !== selected) choose(owner.subjectId)
+    setMode('list')
+    setFocusTopic(f => ({ id: topicId, n: (f?.n ?? 0) + 1 }))
+  }
+
+  // What a topic row can do here: show its connections, open a related
+  // topic, and start the same 25-minute session the Knowledge Map starts.
+  const actions = {
+    map: mapReady,
+    onOpenTopic: openTopic,
+    onStudy: view.activeSession ? undefined : (topic: KnowledgeTopic) =>
+      void start({ topicName: topic.topicName, subjectName: topic.subjectName, durationMinutes: TOPIC_SESSION_MINUTES }, topic.id),
+    studying: starting,
+  }
 
   return (
     <div className="mx-auto w-full max-w-7xl pb-20 pt-12 lg:pt-2">
@@ -164,6 +184,7 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
                       detail={`${plural(subject.summary.topicCount, 'topic', 'topics')}${subject.summary.dueCount > 0 ? ` · ${subject.summary.dueCount} due` : ''}`}
                       due={subject.summary.dueCount > 0}
                       levels={<SubjectLevels subject={subject} className="mt-1.5 hidden lg:flex" />}
+                      dot={subjectColor(subject.subjectName).dot}
                     />
                   </li>
                 ))}
@@ -188,12 +209,16 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
                 <section aria-labelledby="knowledge-subject">
                   <div className="flex flex-wrap items-end justify-between gap-3">
                     <div className="min-w-0">
-                      <h2 id="knowledge-subject" className="text-lg font-semibold tracking-tight text-foreground">{current.subjectName}</h2>
+                      <h2 id="knowledge-subject" className="flex items-center gap-2 text-lg font-semibold tracking-tight text-foreground">
+                        <span aria-hidden className={cn('size-2.5 shrink-0 rounded-full', subjectColor(current.subjectName).dot)} />{current.subjectName}
+                      </h2>
                       <p className="mt-0.5 text-xs text-foreground/60">
                         {current.summary.topicCount === 0 ? 'No topics yet' : plural(current.summary.topicCount, 'topic', 'topics')}
                         {current.summary.dueCount > 0 && ` · ${current.summary.dueCount} due`}
                       </p>
                       <SubjectLevels subject={current} className="mt-2 w-48" />
+                      {/* Due reviews show a start's error; without them, it is said here. */}
+                      {error && current.summary.dueCount === 0 && <p role="alert" className="mt-2 text-sm text-red-300">{error}</p>}
                     </div>
                     <div className="flex items-center gap-2">
                       <div role="group" aria-label="Show as" className="flex rounded-lg border border-white/10 p-0.5">
@@ -213,7 +238,7 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
 
                   <div className="mt-4">
                     {mode === 'list' ? (
-                      <SubjectTopics key={current.subjectId} subject={current} focusTopicId={focusTopic} showHeading={false} onChanged={onChanged} />
+                      <SubjectTopics key={current.subjectId} subject={current} focusTopic={focusTopic} showHeading={false} actions={actions} onChanged={onChanged} />
                     ) : mapReady ? (
                       <SubjectBoardView map={mapReady} subject={current} onOpenTopic={openTopic} />
                     ) : map.loading ? (
@@ -234,7 +259,7 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
                     </p>
                   )}
                   <div className="mt-4 space-y-8">
-                    {subjects.length > 0 ? subjects.map(subject => <SubjectTopics key={subject.subjectName} subject={subject} onChanged={onChanged} />) : (
+                    {subjects.length > 0 ? subjects.map(subject => <SubjectTopics key={subject.subjectName} subject={subject} actions={actions} onChanged={onChanged} />) : (
                       <p className="rounded-lg border border-dashed border-white/12 px-4 py-6 text-sm text-foreground/60">No subjects or topics match that search.</p>
                     )}
                   </div>
@@ -268,14 +293,17 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
   )
 }
 
-function OutlineItem({ active, onClick, label, detail, due = false, levels }: {
-  active: boolean; onClick: () => void; label: string; detail: string; due?: boolean; levels?: React.ReactNode
+function OutlineItem({ active, onClick, label, detail, due = false, levels, dot }: {
+  active: boolean; onClick: () => void; label: string; detail: string; due?: boolean; levels?: React.ReactNode; dot?: string
 }) {
   return (
     <button type="button" onClick={onClick} aria-current={active ? 'true' : undefined}
       className={cn('block w-full min-w-36 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-keppel-400 lg:min-w-0',
         active ? 'bg-white/8 text-foreground' : 'text-foreground/80 hover:bg-white/4 hover:text-foreground')}>
-      <span className="block truncate text-sm font-medium">{label}</span>
+      <span className="flex items-center gap-2 text-sm font-medium">
+        {dot && <span aria-hidden className={cn('size-2 shrink-0 rounded-full', dot)} />}
+        <span className="truncate">{label}</span>
+      </span>
       <span className={cn('block truncate text-[11px]', due ? 'text-amber-300/90' : 'text-foreground/55')}>{detail}</span>
       {levels}
     </button>

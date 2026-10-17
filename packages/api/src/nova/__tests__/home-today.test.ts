@@ -134,3 +134,23 @@ describe("acting from Today without leaving it", () => {
     expect(sidebar).toContain("const rest = items.filter(i => !NOVA_GROUPS.some(g => g.paths.includes(i.href)))");
   });
 });
+
+describe("connected knowledge on the page", () => {
+  const board  = web("components/nova/knowledge/subject-board-view.tsx");
+  const links  = web("components/nova/knowledge/topic-connections.tsx");
+  const record = web("components/nova/topic-record.tsx");
+  const focus  = web("components/nova/focus-session.tsx");
+  it("says the board is not saved, and saves nothing", () => {
+    expect(board).toContain("can&apos;t be moved");
+    expect(board).not.toContain("localStorage");
+    expect(board).not.toContain("fetch(");
+  });
+  it("names related topics only from the map's stored edges, each with the note that joins them", () => {
+    expect(links).toContain("topicConnections(map, nodeId)");
+    expect(links).toContain("RELATION_WORDS[r.relation](r.via.label)");
+  });
+  it("reads a session's topic record once, never on a timer", () => {
+    expect(focus).toContain("useTopicRecord(");
+    expect(record).not.toContain("setInterval");
+  });
+});

@@ -8,6 +8,9 @@ import { GOALS_HREF } from '@repo/api/nova/product/goals.types'
 import { cn } from '@/lib/utils'
 import { ACTIVITY_LABEL, URGENCY_LABEL, minutesLabel, sentenceCase } from './format'
 import { BUTTON_PRIMARY, BUTTON_QUIET, SectionHeading, SURFACE, TEXT_LINK } from './workspace/ui'
+import { subjectColor } from './subject-color'
+import type { TopicRecord } from './today-links'
+import { RecordLine } from './topic-record'
 
 const URGENCY_TONE: Record<TodayAction['urgency'], string> = {
   critical: 'text-amber-300',
@@ -34,7 +37,7 @@ const BASIS_LABEL: Record<NovaTodayReady['plan']['budgetBasis'], string> = {
 // reasons and its Start button; the rest are a line each. Today carries the
 // first few blocks of the day; when the day has more, the count says so and
 // the Planner has the rest.
-export function TodayPlan({ recommendation, alternatives, blockCount, plan, why, onStart, starting, error, disabled }: {
+export function TodayPlan({ recommendation, alternatives, blockCount, plan, why, onStart, starting, error, disabled, recordOf }: {
   recommendation: TodayAction | null
   alternatives:   TodayAction[]
   blockCount:     number
@@ -47,6 +50,8 @@ export function TodayPlan({ recommendation, alternatives, blockCount, plan, why,
   starting?:      string | null
   error?:         string | null
   disabled?:      boolean
+  // What is on record for a block's topic, when the Knowledge Map has it.
+  recordOf?:      (action: TodayAction) => TopicRecord | null
 }) {
   const blocks = recommendation ? [recommendation, ...alternatives] : alternatives
   if (blocks.length === 0) return null
@@ -82,7 +87,7 @@ export function TodayPlan({ recommendation, alternatives, blockCount, plan, why,
               </div>
               <div className={cn('min-w-0 flex-1', last ? 'pb-0' : 'pb-3')}>
                 {isNow ? (
-                  <NowBlock action={action} why={why} onStart={() => onStart!(action)} starting={starting === action.topicName} error={error ?? null} disabled={disabled} />
+                  <NowBlock action={action} why={why} record={recordOf?.(action) ?? null} onStart={() => onStart!(action)} starting={starting === action.topicName} error={error ?? null} disabled={disabled} />
                 ) : (
                   <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 rounded-lg px-1 py-3.5">
                     <div className="min-w-0">
@@ -90,6 +95,7 @@ export function TodayPlan({ recommendation, alternatives, blockCount, plan, why,
                         <span className="sr-only">Block {i + 1}: </span>{action.topicName}
                       </p>
                       <BlockMeta action={action} />
+                      <RecordLine record={recordOf?.(action) ?? null} />
                       {action.reasons.length > 0 && (
                         <p className="mt-1.5 text-xs leading-relaxed text-foreground/55">{action.reasons.map(sentenceCase).join(' · ')}</p>
                       )}
@@ -111,9 +117,10 @@ export function TodayPlan({ recommendation, alternatives, blockCount, plan, why,
 }
 
 function BlockMeta({ action }: { action: TodayAction }) {
+  const color = subjectColor(action.subjectName)
   return (
     <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-foreground/60">
-      <span>{action.subjectName}</span>
+      <span className="inline-flex items-center gap-1.5"><span aria-hidden className={cn('size-2 rounded-full', color.dot)} /><span className={cn('font-medium', color.text)}>{action.subjectName}</span></span>
       <span aria-hidden className="text-foreground/25">·</span>
       <span className="inline-flex items-center gap-1"><Clock aria-hidden className="size-3" />{minutesLabel(action.durationMinutes)}</span>
       <span aria-hidden className="text-foreground/25">·</span>
@@ -126,8 +133,8 @@ function BlockMeta({ action }: { action: TodayAction }) {
 }
 
 // The block to do now: what it is, why, and the one button that starts it.
-function NowBlock({ action, why, onStart, starting, error, disabled }: {
-  action: TodayAction; why: string[]; onStart: () => void; starting: boolean; error: string | null; disabled?: boolean
+function NowBlock({ action, why, record, onStart, starting, error, disabled }: {
+  action: TodayAction; why: string[]; record: TopicRecord | null; onStart: () => void; starting: boolean; error: string | null; disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const reasons = [...action.reasons.map(sentenceCase), ...why]
@@ -144,6 +151,7 @@ function NowBlock({ action, why, onStart, starting, error, disabled }: {
         <span className="sr-only">Block 1: </span>{action.topicName}
       </h3>
       <BlockMeta action={action} />
+      <RecordLine record={record} />
 
       {action.reasons.length > 0 && (
         <ul aria-label="Why Nova chose this" className="mt-3 flex flex-wrap gap-1.5">

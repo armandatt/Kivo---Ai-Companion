@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { BUTTON_QUIET, ROW, SectionHeading, Skeleton, TEXT_LINK } from '../workspace/ui'
 import { TASK_GROUP_LABEL, dueLabel, groupTasks, isOverdue, localDayKey, nextDay } from './task-format'
 import { TaskEditor } from './task-editor'
+import { subjectColor } from '../subject-color'
 
 type Props = {
   // null: still loading.
@@ -32,6 +33,9 @@ type Props = {
   // Today's plan against the day's time, for saying when the tasks due today
   // (with a length the learner gave) do not fit beside it. Nothing is moved.
   dayMinutes?: { planned: number; budget: number }
+  // Where the task's topic lives in the Knowledge Space, if it names one the
+  // map has.
+  topicHref?: (task: NovaTaskItem) => string | null
 }
 
 const ROW_ACTION = 'inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-foreground/45 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-keppel-400/60 disabled:opacity-40'
@@ -56,7 +60,7 @@ const DUE_CHOICES = [
 
 // Today's priorities: the learner's own tasks, from the same rows as the
 // Planner's board. Ticking one moves it to Done there too, and can be undone.
-export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, starting = null, composerRef, subjects = [], onRemove, today = null, dayMinutes }: Props) {
+export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, starting = null, composerRef, subjects = [], onRemove, today = null, dayMinutes, topicHref }: Props) {
   const [title, setTitle]   = useState('')
   const [due, setDue]       = useState<number | null>(null)
   const [adding, setAdding] = useState(false)
@@ -145,6 +149,7 @@ export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, 
               <ul className="divide-y divide-white/6">
                 {group.tasks.map(task => {
                   const label = dueLabel(task)
+                  const topicLink = topicHref?.(task) ?? null
                   return (
                     <li key={task.id} className={cn('-mx-2 flex items-center gap-3 rounded-md px-2 py-2.5', ROW)}>
                       <button
@@ -159,9 +164,18 @@ export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, 
                         <p className="flex min-w-0 items-center gap-1.5 truncate text-xs text-foreground/55">
                           {task.priority === 'high' && <span className="inline-flex shrink-0 items-center gap-1 font-medium text-amber-300"><Flag aria-hidden className="size-3" />High</span>}
                           {task.priority === 'low' && <span className="shrink-0">Low priority</span>}
-                          <span className="truncate">
-                            {[task.status === 'in_progress' ? 'In progress' : null, task.subjectName, task.topicName, task.estimatedMinutes ? `${task.estimatedMinutes} min` : null].filter(Boolean).join(' · ') || (task.priority ? '' : 'To do')}
-                          </span>
+                          {task.status === 'in_progress' && <span className="shrink-0">In progress</span>}
+                          {task.subjectName && (
+                            <span className="inline-flex min-w-0 items-center gap-1">
+                              <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', subjectColor(task.subjectName).dot)} />
+                              <span className="truncate">{task.subjectName}</span>
+                            </span>
+                          )}
+                          {task.topicName && (topicLink
+                            ? <Link href={topicLink} className="truncate underline decoration-white/20 underline-offset-2 hover:text-foreground hover:decoration-white/50" title={`${task.topicName} in the Knowledge Space`}>{task.topicName}</Link>
+                            : <span className="truncate">{task.topicName}</span>)}
+                          {task.estimatedMinutes ? <span className="shrink-0">{task.estimatedMinutes} min</span> : null}
+                          {!task.subjectName && !task.topicName && task.status !== 'in_progress' && !task.priority && !task.estimatedMinutes && <span>To do</span>}
                         </p>
                       </div>
                       {onStart && task.subjectName && task.topicName && (

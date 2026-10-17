@@ -27,6 +27,7 @@ import { useStartSession } from './use-start-session'
 import { CommandButton, CommandPalette, useCommandShortcut } from './workspace/command-palette'
 import { NewMenu } from './workspace/new-menu'
 import { SURFACE } from './workspace/ui'
+import { taskTopicHref, topicRecord } from './today-links'
 
 type Props = {
   view:        NovaTodayReady
@@ -104,6 +105,10 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
     ...view.plan.assumptions,
   ]
   const tasks = board.view?.status === 'ready' ? board.tasks : null
+  // Where today's work sits on the record. The map is an extra: without it
+  // the plan and the tasks show as they did.
+  const mapReady = map.view?.status === 'ready' ? map.view : null
+  const recordOf = (action: { subjectName: string; topicName: string }) => mapReady ? topicRecord(mapReady, tasks ?? [], action) : null
   // What the learner has filed under the recommended topic. Not asked for
   // while a session runs: the Focus screen shows that session's own.
   const recContext = useFocusContext(rec ? { subjectName: rec.subjectName, topicName: rec.topicName } : null, rec?.topicName ?? null, !active && rec !== null)
@@ -141,7 +146,7 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
               recommendation={rec} alternatives={view.alternatives}
               blockCount={view.plan.blockCount} plan={view.plan} why={whyContext}
               onStart={active ? undefined : start} disabled={starting !== null}
-              starting={starting} error={startError}
+              starting={starting} error={startError} recordOf={recordOf}
             />
 
             {empty && (
@@ -185,6 +190,7 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
             dayMinutes={{ planned: view.plan.totalMinutesToday, budget: view.plan.budgetMinutes }}
             onStart={active ? undefined : task => start({ topicName: task.topicName!, subjectName: task.subjectName!, durationMinutes: TASK_SESSION_MINUTES }, `task:${task.id}`)}
             starting={starting} composerRef={composer}
+            topicHref={task => taskTopicHref(mapReady, task)}
           />
         </div>
 

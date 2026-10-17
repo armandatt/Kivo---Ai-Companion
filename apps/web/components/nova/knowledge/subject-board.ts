@@ -52,3 +52,22 @@ export function subjectBoard(map: Pick<NovaKnowledgeMapReady, 'nodes' | 'edges'>
 
   return { topics, loose, links }
 }
+
+// What is joined to one thing on the board, for drawing attention to it: a
+// topic with what is filed under it, an item with the topic it is filed
+// under, and either with the far end of every stored link that touches it
+// or anything filed under it. The thing itself is included.
+export function boardNeighbourhood(board: SubjectBoard, id: string): Set<string> {
+  const near = new Set<string>([id])
+  const tile = board.topics.find(t => t.topic.id === id || t.items.some(i => i.id === id))
+  if (tile) {
+    near.add(tile.topic.id)
+    if (tile.topic.id === id) tile.items.forEach(i => near.add(i.id))
+  }
+  const ends = new Set(near)
+  for (const link of board.links) {
+    if (ends.has(link.from.id)) near.add(link.to.id)
+    if (ends.has(link.to.id)) near.add(link.from.id)
+  }
+  return near
+}

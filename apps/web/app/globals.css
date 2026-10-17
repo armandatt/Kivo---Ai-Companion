@@ -120,6 +120,11 @@ html[data-kivo-theme="light"] .kivo-app {
   --color-red-300: oklch(51% 0.2 27);
   --color-sky-300: oklch(50% 0.13 235);
   --color-emerald-300: oklch(48% 0.12 160);
+  /* The subject colours (components/nova/subject-color.ts), darkened the same way. */
+  --color-violet-300: oklch(50% 0.17 293);
+  --color-orange-300: oklch(54% 0.15 50);
+  --color-indigo-300: oklch(48% 0.16 275);
+  --color-pink-300: oklch(53% 0.17 350);
   --map-topic: oklch(42% 0.03 292);
   --map-note: oklch(68% 0.15 75);
   --map-resource: oklch(58% 0.14 240);

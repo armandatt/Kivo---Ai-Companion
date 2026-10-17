@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ChevronDown, History } from 'lucide-react'
+import { ChevronDown, History, Loader2, Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { KnowledgeSession, KnowledgeSubject, KnowledgeTopic } from '@repo/api/nova/product/knowledge.types'
 import type { ArchivedTopic, ArchivedTopicsView } from '@repo/api/nova/product/topic-archive.types'
@@ -10,7 +10,9 @@ import { minutesLabel, relativeDay, sentenceCase } from '../format'
 import type { NoteSummary } from '@repo/api/nova/product/notes.types'
 import { fetchNotes } from '../notes/notes-api'
 import { LEVEL_LABEL, LEVEL_TONE, OUTCOME_LABEL, reviewLabel, sessionsLabel } from './labels'
-import { SectionHeading } from '../workspace/ui'
+import type { NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
+import { BUTTON_QUIET, SectionHeading } from '../workspace/ui'
+import { TopicConnections } from './topic-connections'
 
 // The record a link into this page names (?topic=<id> or ?subject=<id>), read
 // from the address once the page is in the browser.
@@ -77,7 +79,18 @@ async function postArchive(topicId: string, archived: boolean): Promise<string |
   }
 }
 
-function TopicRow({ topic, subjectId, focus = false, onChanged }: { topic: KnowledgeTopic; subjectId: string; focus?: boolean; onChanged?: () => void }) {
+// What a topic row can reach beyond itself: the map's connections, other
+// topics, and a session. All optional: without them the row is as it was.
+export interface TopicActions {
+  map?:         NovaKnowledgeMapReady | null
+  onOpenTopic?: (topicId: string) => void
+  // Absent while a session runs: one session at a time.
+  onStudy?:     (topic: KnowledgeTopic) => void
+  // The topic id of the start in flight, if any.
+  studying?:    string | null
+}
+
+function TopicRow({ topic, subjectId, focus = 0, actions = {}, onChanged }: { topic: KnowledgeTopic; subjectId: string; focus?: number; actions?: TopicActions; onChanged?: () => void }) {
   const [archiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
   // A link from the Knowledge Map names the topic it is about (?topic=<id>):
@@ -155,6 +168,16 @@ function TopicRow({ topic, subjectId, focus = false, onChanged }: { topic: Knowl
               : <p className="mt-2 text-sm text-foreground/45">None in the last 90 days.</p>}
           </div>
           <TopicNotes subjectId={subjectId} topicName={topic.topicName} />
+          {actions.onOpenTopic && (
+            <TopicConnections map={actions.map ?? null} topicId={topic.id} topicName={topic.topicName} onOpenTopic={actions.onOpenTopic} />
+          )}
+          {actions.onStudy && (
+            <button type="button" onClick={() => actions.onStudy!(topic)} disabled={actions.studying != null} className={cn(BUTTON_QUIET, 'mt-4')}>
+              {actions.studying === topic.id
+                ? <><Loader2 aria-hidden className="size-3.5 animate-spin" /> Starting…</>
+                : <><Play aria-hidden className="size-3" /> Study this · 25 min</>}
+            </button>
+          )}
           {onChanged && (
             <div className="mt-4 border-t border-white/6 pt-3">
               <button type="button" disabled={archiving} data-archive-topic
@@ -188,7 +211,16 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 // A subject and the topics Nova has on record under it. Topics are never
 // made up from the subject's name: a subject with none says so.
-export function SubjectTopics({ subject, focusTopicId = null, showHeading = true, onChanged }: { subject: KnowledgeSubject; focusTopicId?: string | null; showHeading?: boolean; onChanged?: () => void }) {
+export function SubjectTopics({ subject, focusTopic = null, showHeading = true, actions, onChanged }: {
+  subject:      KnowledgeSubject
+  // A topic to open and bring into view, from elsewhere on the page. `n`
+  // changes each time it is asked for, so asking twice opens it twice.
+  focusTopic?:  { id: string; n: number } | null
+  showHeading?: boolean
+  actions?:     TopicActions
+  // Archive and restore refresh the page through this (Subject Studio's).
+  onChanged?:   () => void
+}) {
   const { topicCount, dueCount } = subject.summary
   // ?subject=<id>, from the Knowledge Map: this subject is brought into view.
   const [linked, setLinked] = useState(false)
@@ -214,7 +246,7 @@ export function SubjectTopics({ subject, focusTopicId = null, showHeading = true
         </p>
       ) : (
         <ul className="mt-3 divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8">
-          {subject.topics.map(topic => <TopicRow key={topic.id} topic={topic} subjectId={subject.subjectId} focus={topic.id === focusTopicId} onChanged={onChanged} />)}
+          {subject.topics.map(topic => <TopicRow key={topic.id} topic={topic} subjectId={subject.subjectId} focus={focusTopic?.id === topic.id ? focusTopic.n : 0} actions={actions} onChanged={onChanged} />)}
         </ul>
       )}
     </section>
