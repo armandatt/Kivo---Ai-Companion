@@ -14,6 +14,7 @@ import { useMapLayout } from './use-map-layout'
 import { filingChoices, placementLabel, placementOf, planLink, samePlacement, type Placement } from './map-edit'
 import { addNoteLink, fileItem, type EditOutcome } from './map-actions'
 import { revealDetail } from './reveal-detail'
+import { fitKey, focusToApply, keepValid } from './view-state'
 
 const TYPES: Array<{ type: MapNodeType; label: string; plural: string }> = [
   { type: 'subject',  label: 'Subject',    plural: 'Subjects' },
@@ -461,12 +462,25 @@ export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady;
   const edges = useMemo(() => usable.filter(e => ids.has(e.from) && ids.has(e.to)), [usable, ids])
   const linkCount = useMemo(() => view.edges.filter(e => e.kind === 'links_to').length, [view.edges])
 
+  // Every item on the map now, whatever the filters show.
+  const allIds = useMemo(() => new Set(view.nodes.map(n => n.id)), [view.nodes])
+
   // A link from elsewhere names an item (?focus=note:<id>): open the map on
-  // it, scoped to what is around it. Read once, in an effect.
+  // it, scoped to what is around it. On the first view only: a reload (every
+  // minute, and after an edit) keeps what the learner has done since.
+  const focusApplied = useRef(false)
   useEffect(() => {
-    const focus = new URLSearchParams(window.location.search).get('focus')
-    if (focus && view.nodes.some(n => n.id === focus)) { setScope(focus); setSelected(focus) }
-  }, [view.nodes])
+    const focus = focusToApply(new URLSearchParams(window.location.search).get('focus'), allIds, focusApplied.current)
+    focusApplied.current = true
+    if (focus) { setScope(focus); setSelected(focus) }
+  }, [allIds])
+  // After a reload, a selection, scope or hover on an item that has gone
+  // (deleted elsewhere, archived) is dropped; one still there is kept.
+  useEffect(() => {
+    setSelected(id => keepValid(id, allIds))
+    setScope(id => keepValid(id, allIds))
+    setHover(id => keepValid(id, allIds))
+  }, [allIds])
   // Places a saved page was suggested for and is not filed under. Drawn, never laid out.
   const suggestions = useMemo(() => (view.suggestions ?? []).filter(s => ids.has(s.from) && ids.has(s.to)), [view.suggestions, ids])
   // A [[link]] is drawn but does not place anything: an item sits by what it
@@ -505,11 +519,13 @@ export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady;
     setT({ k, x: el.clientWidth / 2 - ((minX + maxX) / 2) * k, y: el.clientHeight / 2 - ((minY + maxY) / 2) * k })
   }, [placed])
 
-  // Fitted when the data or the filters change and when saved positions
-  // arrive or are reset, not when a card is moved.
+  // Fitted when the learner asks for a different picture or the saved layout
+  // arrives or is reset (fitKey), not when the data reloads and not when a
+  // card is moved: a reload keeps the pan and zoom they had.
   const fitNow = useRef(fit)
   useEffect(() => { fitNow.current = fit }, [fit])
-  useEffect(() => { fitNow.current() }, [auto, layout.generation])
+  const fitWhen = fitKey({ shown, subject, scope, showLinks, portrait, generation: layout.generation })
+  useEffect(() => { fitNow.current() }, [fitWhen])
 
   const zoomAt = useCallback((factor: number, cx?: number, cy?: number) => {
     const el = frame.current
