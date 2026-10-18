@@ -29,6 +29,7 @@ import {
 import { NOVA_ROUTES, type Companion } from '@repo/api/nova/product/companion'
 import { cn } from '@/lib/utils'
 import { ThemePicker } from '@/components/theme/kivo-theme'
+import { KivoTile, KivoWordmark } from '@/components/brand/kivo-brand'
 import { trappedTabTarget } from '@/components/settings/dialog-focus'
 import { sidebarModes } from './sidebar-modes'
 
@@ -247,23 +248,16 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
           mode.ownToggle && 'pl-16 lg:pl-6',
           rail && 'lg:flex-col lg:px-2 lg:py-4',
         )}>
-          <Link href="/home" onClick={close} title={rail ? `${isNova ? 'Nova' : 'Rex'} home` : undefined} className="flex items-center gap-3 group">
-            <div className="relative shrink-0">
-              <div className={cn(
-                'w-10 h-10 bg-linear-to-br rounded-lg flex items-center justify-center font-bold text-black text-lg',
-                isNova ? 'from-keppel-300 to-keppel-600' : 'from-green-400 to-green-600',
-              )}>
-                {isNova ? 'N' : 'R'}
-              </div>
-              <div className={cn(
-                'absolute inset-0 rounded-lg blur opacity-50 group-hover:opacity-75 transition-opacity -z-10',
-                isNova ? 'bg-keppel-400' : 'bg-green-400',
-              )} />
-            </div>
-            <div className={cn('flex flex-col', rail && 'lg:sr-only')}>
-              <span className="font-semibold text-sm leading-tight">{isNova ? 'Nova' : 'Rex'}</span>
-              <span className="text-xs text-sidebar-foreground/60">{isNova ? 'Learning mentor' : 'AI Coach'}</span>
-            </div>
+          {/* Kivo's mark, and the companion this account works with under it */}
+          <Link href="/home" onClick={close} title={rail ? `${isNova ? 'Nova' : 'Rex'} home` : undefined} className="flex min-w-0 items-center gap-3">
+            <KivoTile size={36} className="shrink-0" />
+            <span className={cn('flex min-w-0 flex-col gap-1.5', rail && 'lg:sr-only')}>
+              <KivoWordmark height={17} className="text-sidebar-foreground" />
+              <span className="flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium leading-none text-sidebar-foreground/60">
+                <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', accent.bar)} />
+                {isNova ? 'Nova · Learning mentor' : 'Rex · AI coach'}
+              </span>
+            </span>
           </Link>
           {mode.closeButton && (
             <button

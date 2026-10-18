@@ -4,7 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card } from '@/components/ui/card'
+import { AuthError, AuthNotice, AuthShell, authInputClass, authLabelClass, authLinkClass, authPrimaryButtonClass } from '@/components/auth/auth-shell'
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
@@ -40,73 +40,50 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4 relative overflow-hidden">
-      <div className="absolute top-0 left-1/4 w-96 h-96 bg-[#00D9A3]/10 rounded-full blur-3xl animate-pulse" />
-      <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-[#FF8C42]/10 rounded-full blur-3xl animate-pulse" />
-
-      <Card className="w-full max-w-md relative z-10 bg-[#1a1a24] border-[#2a2a35] shadow-2xl">
-        <div className="p-8">
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-white mb-2">Forgot password?</h1>
-            <p className="text-gray-400">
-              Enter your email and we&apos;ll send you a reset link.
-            </p>
+    <AuthShell title="Forgot your password?" subtitle="Enter your email and we'll send you a reset link.">
+      {success ? (
+        <div className="space-y-6">
+          <AuthNotice>
+            Check your inbox: if an account with that email exists, we&apos;ve sent a reset link. It expires in 1 hour.
+          </AuthNotice>
+          <p className="text-sm text-ink-300">
+            Signed up with Google? Your account has no password to reset: go back and choose Continue with Google.
+          </p>
+          <Link href="/signin" className={`block text-center text-sm ${authLinkClass}`}>
+            ← Back to sign in
+          </Link>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label htmlFor="forgot-email" className={authLabelClass}>
+              Email
+            </label>
+            <Input
+              id="forgot-email"
+              type="email"
+              autoComplete="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className={authInputClass}
+              required
+            />
           </div>
 
-          {success ? (
-            <div className="space-y-6">
-              <div className="rounded-md border border-[#00D9A3]/30 bg-[#00D9A3]/10 px-4 py-3 text-sm text-[#00D9A3]">
-                Check your inbox — if an account with that email exists, we&apos;ve sent a reset link. It expires in 1 hour.
-              </div>
-              <p className="text-sm text-gray-400">
-                Signed up with Google? Your account has no password to reset: go back and choose Continue with Google.
-              </p>
-              <Link
-                href="/signin"
-                className="block text-center text-sm text-[#00D9A3] hover:text-[#00c896] font-medium"
-              >
-                ← Back to sign in
-              </Link>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Email
-                </label>
-                <Input
-                  type="email"
-                  placeholder="you@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="bg-[#0a0a0a] border-[#2a2a35] text-white placeholder:text-gray-600 focus:border-[#00D9A3] focus:ring-[#00D9A3]"
-                  required
-                />
-              </div>
+          {error && <AuthError>{error}</AuthError>}
 
-              {error && (
-                <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-                  {error}
-                </p>
-              )}
+          <Button type="submit" disabled={isLoading} className={`${authPrimaryButtonClass} mt-6`}>
+            {isLoading ? 'Sending...' : 'Send reset link'}
+          </Button>
 
-              <Button
-                type="submit"
-                disabled={isLoading}
-                className="w-full bg-[#00D9A3] text-black hover:bg-[#00c896] font-semibold py-2 rounded-full transition-all duration-200 mt-6"
-              >
-                {isLoading ? 'Sending...' : 'Send reset link'}
-              </Button>
-
-              <p className="text-center text-gray-400 mt-4">
-                <Link href="/signin" className="text-[#00D9A3] hover:text-[#00c896] font-medium text-sm">
-                  ← Back to sign in
-                </Link>
-              </p>
-            </form>
-          )}
-        </div>
-      </Card>
-    </div>
+          <p className="mt-4 text-center">
+            <Link href="/signin" className={`text-sm ${authLinkClass}`}>
+              ← Back to sign in
+            </Link>
+          </p>
+        </form>
+      )}
+    </AuthShell>
   )
 }

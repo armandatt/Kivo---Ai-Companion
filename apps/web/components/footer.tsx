@@ -1,5 +1,6 @@
 import { GithubLogo, TwitterLogo, InstagramLogo } from "@phosphor-icons/react/dist/ssr"
 import { KivoLogo } from "@/components/KivoLogo"
+import { KivoWordmark } from "@/components/brand/kivo-brand"
 
 export function Footer() {
   return (
@@ -14,7 +15,7 @@ export function Footer() {
           <div className="lg:max-w-xs">
             <div className="flex items-center gap-3">
               <KivoLogo size={38} />
-              <span className="text-xl font-semibold text-[var(--color-baltic-sea-300)]">Kivo</span>
+              <KivoWordmark height={22} className="text-[var(--color-baltic-sea-100)]" />
             </div>
             <p className="mt-4 text-sm text-[var(--color-baltic-sea-500)]">
               Your AI companion that grows with you. Built for people who actually want to show up — every day.

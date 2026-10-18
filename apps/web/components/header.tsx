@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Lightning, SignOut, SquaresFour } from "@phosphor-icons/react/dist/ssr"
 import { KivoLogo } from "@/components/KivoLogo"
+import { KivoWordmark } from "@/components/brand/kivo-brand"
 
 export function Header() {
   const router = useRouter()
@@ -55,7 +56,7 @@ export function Header() {
                 ${scrolled ? "max-w-0 opacity-0" : "max-w-[100px] opacity-100"}
               `}
             >
-              Kivo
+              <KivoWordmark height={22} className="block" />
             </span>
           </div>
 

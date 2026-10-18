@@ -164,6 +164,8 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* Headings only. next/font sets the variable on <body>, so it is inlined here. */
+  --font-display: var(--font-instrument-serif), "Iowan Old Style", Georgia, serif;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -224,6 +226,52 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   --color-keppel-800: var(--color-keppel-800);
   --color-keppel-900: var(--color-keppel-900);
   --color-keppel-950: var(--color-keppel-950);
+}
+
+/* ── Kivo brand palette ─────────────────────────────────────────────────────────
+   The identity's colours, the same in both themes (bg-ink-950, text-iris-400…):
+   ink and paper are the surfaces, iris is Kivo's own colour (the node in the
+   mark), keppel stays Nova's and growth's, and ember and coral are kept for
+   what is urgent. The theme tokens above still decide each page's surfaces. */
+@theme {
+  --color-ink-50: #EEF1F6;
+  --color-ink-100: #D9DFE9;
+  --color-ink-200: #B4BECF;
+  --color-ink-300: #8A97AE;
+  --color-ink-400: #63718C;
+  --color-ink-500: #46536D;
+  --color-ink-600: #323E55;
+  --color-ink-700: #232E42;
+  --color-ink-800: #172033;
+  --color-ink-900: #0E1626;
+  --color-ink-950: #0B1220;
+
+  --color-paper-50: #FBF9F4;
+  --color-paper-100: #F4F1E9;
+  --color-paper-200: #EAE5D9;
+  --color-paper-300: #DCD5C4;
+  --color-paper-400: #C6BCA6;
+
+  --color-iris-50: #F1EFFF;
+  --color-iris-100: #E3DEFF;
+  --color-iris-200: #C9C0FF;
+  --color-iris-300: #A99CFF;
+  --color-iris-400: #8B7BFF;
+  --color-iris-500: #6E5CFF;
+  --color-iris-600: #5A45F0;
+  --color-iris-700: #4A36CF;
+  --color-iris-800: #3B2CA6;
+  --color-iris-900: #2E2480;
+
+  --color-ember-300: #F4C77A;
+  --color-ember-400: #EDB257;
+  --color-ember-500: #E9A23B;
+  --color-ember-600: #C9831F;
+
+  --color-coral-300: #F4A08B;
+  --color-coral-400: #EE8064;
+  --color-coral-500: #E8684A;
+  --color-coral-600: #C9512F;
 }
 
 @layer base {
@@ -390,6 +438,14 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 .nova-canvas {
   background-image: radial-gradient(circle at 1px 1px, color-mix(in oklch, var(--foreground) 13%, transparent) 1px, transparent 0);
   background-size: 20px 20px;
+}
+
+/* The sign-in pages' backdrop: the canvas's dot grid on ink, fading at the
+   edges. Static, so there is nothing to turn off for reduced motion. */
+.kivo-dot-grid {
+  background-image: radial-gradient(circle at 1px 1px, rgb(244 241 233 / 0.085) 1px, transparent 0);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(ellipse 70% 65% at 50% 45%, #000 35%, transparent 100%);
 }
 
 @keyframes nova-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }

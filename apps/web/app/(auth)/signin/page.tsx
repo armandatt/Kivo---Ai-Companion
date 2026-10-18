@@ -122,7 +122,7 @@ function SigninForm() {
         <>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="signin-email" className="block text-sm font-medium text-gray-300 mb-2">
+              <label htmlFor="signin-email" className="block text-sm font-medium text-ink-200 mb-2">
                 Email
               </label>
               <Input
@@ -139,7 +139,7 @@ function SigninForm() {
             </div>
 
             <div>
-              <label htmlFor="signin-password" className="block text-sm font-medium text-gray-300 mb-2">
+              <label htmlFor="signin-password" className="block text-sm font-medium text-ink-200 mb-2">
                 Password
               </label>
               <Input
@@ -157,7 +157,7 @@ function SigninForm() {
             <div className="flex justify-end">
               <Link
                 href="/forgot-password"
-                className="text-sm text-[#00D9A3] hover:text-[#00c896] font-medium"
+                className="text-sm text-iris-300 hover:text-iris-200 font-medium"
               >
                 Forgot password?
               </Link>
@@ -180,11 +180,11 @@ function SigninForm() {
         </>
       )}
 
-      <p className="text-center text-gray-400 mt-6">
+      <p className="text-center text-ink-300 mt-6">
         Don&apos;t have an account?{' '}
         <Link
           href="/signup"
-          className="text-[#00D9A3] hover:text-[#00c896] font-semibold"
+          className="text-iris-300 hover:text-iris-200 font-semibold"
         >
           Sign up
         </Link>
