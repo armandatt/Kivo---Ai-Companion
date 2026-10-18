@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { metered } from "../../../../../../lib/billing/metered"
 //@ts-ignore
 import { assistWithNote, NOTE_ASSISTS_PER_MINUTE } from "@repo/api/nova/product/note-assist"
 import { noteFail, requireNoteLearner } from "../../../../../../lib/nova/note-access"
@@ -25,7 +26,10 @@ export async function POST(req: Request, { params }: Context) {
     }
     const read = await readSmallJson(req, 4 * 1024)
     if (!read.ok) return noteFail(400, "invalid", "That isn't something Nova can do with a note.")
-    const result = await assistWithNote(access.profileId, (await params).id, read.body)
+    const noteId = (await params).id
+    const run = await metered(access.platformChatId, () => assistWithNote(access.profileId, noteId, read.body))
+    if (!run.ok) return run.response
+    const result = run.value as Awaited<ReturnType<typeof assistWithNote>>
     if (result.ok) return NextResponse.json(result, { headers: { "cache-control": "no-store" } })
     const status = result.error === "not_found" ? 404 : result.error === "unavailable" ? 503 : 400
     return NextResponse.json(result, { status })

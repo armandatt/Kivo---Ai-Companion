@@ -19,6 +19,7 @@ import {
   type GeminiResponse,
   type LlmRequest,
 } from "./llmProviders";
+import { reportLlmUsage } from "./llm-usage";
 
 const DEFAULT_OPENAI_MODEL = "gpt-5";
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -93,7 +94,9 @@ async function callGemini(input: LlmRequest, model: string, apiKey: string, time
 
   if (res.ok) {
     try {
-      return { ok: true, text: parseGeminiResponse(data, model) };
+      const text = parseGeminiResponse(data, model);
+      reportLlmUsage({ provider: "gemini", model, inputTokens: data.usageMetadata?.promptTokenCount ?? null, outputTokens: data.usageMetadata?.candidatesTokenCount ?? null });
+      return { ok: true, text };
     } catch (err) {
       return { ok: false, retryable: false, error: (err as Error).message };
     }
@@ -168,7 +171,9 @@ async function generateWithOpenAI(input: LlmRequest, apiKey: string): Promise<st
   const data = await res.json() as {
     choices?: Array<{ message?: { content?: string | null; refusal?: string | null }; finish_reason?: string }>;
     error?: { message?: string };
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
   };
+  if (res.ok) reportLlmUsage({ provider: "openai", model, inputTokens: data.usage?.prompt_tokens ?? null, outputTokens: data.usage?.completion_tokens ?? null });
 
   if (!res.ok) {
     throw new Error(

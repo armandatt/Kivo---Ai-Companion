@@ -14,6 +14,6 @@
       "@repo/db/*": ["../../packages/db/src/*"]
     }
   },
-  "include": ["src/nova/**/*.ts"],
-  "exclude": ["node_modules", "src/nova/**/__tests__/**"]
+  "include": ["src/nova/**/*.ts", "src/billing/**/*.ts"],
+  "exclude": ["node_modules", "src/nova/**/__tests__/**", "src/billing/**/__tests__/**"]
 }

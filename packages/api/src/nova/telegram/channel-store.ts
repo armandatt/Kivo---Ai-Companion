@@ -124,9 +124,11 @@ export async function spendModelCall(
   profileId: string,
   kind:      "understanding" | "response",
   day:       string,              // the learner's local day
+  // The plan's multiplier on these caps (billing/limits.ts): 1 on Free.
+  factor     = 1,
 ): Promise<boolean> {
   const column = kind === "understanding" ? "understandingCalls" : "responseCalls";
-  const limit  = kind === "understanding" ? DAILY_UNDERSTANDING : DAILY_RESPONSES;
+  const limit  = (kind === "understanding" ? DAILY_UNDERSTANDING : DAILY_RESPONSES) * Math.max(1, Math.floor(factor));
 
   // A new day resets both counters, then the call below takes its slot.
   await prisma.novaTelegramChannel.updateMany({

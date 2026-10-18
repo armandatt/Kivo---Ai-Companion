@@ -137,6 +137,16 @@ const nextConfig = {
         source: "/api/nova/:path*",
         destination: `${apiUrl}/api/nova/:path*`,
       },
+      // Billing: the account's plan, trial, checkout and portal. The
+      // provider's webhook goes to the API's own address, not through here.
+      {
+        source: "/api/billing",
+        destination: `${apiUrl}/api/billing`,
+      },
+      {
+        source: "/api/billing/:path(trial|checkout|portal)",
+        destination: `${apiUrl}/api/billing/:path`,
+      },
       {
         source: "/api/personality",
         destination: `${apiUrl}/api/personality`,
