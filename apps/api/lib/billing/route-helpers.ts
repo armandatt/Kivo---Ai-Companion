@@ -2,6 +2,7 @@
 // cookie, never from the request), a JSON-only rule for changes, and one
 // shape for refusals.
 
+import { isIP } from "node:net"
 import { NextResponse } from "next/server"
 import { getSession } from "../auth/session"
 
@@ -21,8 +22,12 @@ export function jsonOnly(req: Request): NextResponse | null {
   return type.toLowerCase().startsWith("application/json") ? null : billingFail(415, "unsupported", "Send this as JSON.")
 }
 
-export const clientIp = (req: Request) =>
-  req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip")?.trim() || null
+// Passed to the provider for its tax and fraud checks only. A header that is
+// not an IP address sends none, so it can't make the checkout fail.
+export const clientIp = (req: Request) => {
+  const raw = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip")?.trim() || ""
+  return isIP(raw) ? raw : null
+}
 
 export const statusFor = (error: string) =>
   error === "invalid_plan" ? 400

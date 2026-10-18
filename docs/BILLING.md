@@ -16,7 +16,7 @@ Kivo sells one paid plan, Pro, through Polar (merchant of record). This page is 
 
 | State | Access |
 |---|---|
-| `active` or `trialing` subscription | Pro until the period ends |
+| `active` or `trialing` subscription | Pro until the period ends; a period that ended with no renewal event keeps Pro for the grace, unless it was set to cancel |
 | Cancelled at period end | Pro until the period ends, then Free |
 | `past_due` or `unpaid` | Pro for `BILLING_GRACE_DAYS` (3) after the period end, then Free |
 | `revoked`, `incomplete`, `paused`, unknown, or ended | Free |
@@ -65,10 +65,10 @@ Polar knows the account as the **external customer id** (set at checkout), plus 
 1. **Verified** by Polar's SDK (`webhooks.validateEvent`) against the raw body, using Standard Webhooks headers. A forged, tampered or replayed delivery gets 403.
 2. **Recorded** by `webhook-id` in `BillingWebhookEvent`:
    - an id already processed or ignored gets 200 and isn't applied again;
-   - a delivery being handled right now gets 409, and Polar retries it;
-   - a failed one is retried on Polar's next attempt (up to 10, with backoff).
+   - a delivery being handled right now (received in the last two minutes) gets 409, and Polar retries it;
+   - a failed one, or one whose handler stopped without finishing, is applied on Polar's next attempt (up to 10, with backoff).
 3. **Applied** under a row lock per account. Polar's `modified_at` decides between versions of the same subscription, so late deliveries can't undo newer state. A late event about an old, ended subscription never replaces one that is paying for Pro now.
-4. **Orders and refunds** (`order.*`, `refund.*`): the subscription is read from Polar (`subscriptions.get`) instead of guessed.
+4. **Orders and refunds** (`order.*`, `refund.*`): the subscription is read from Polar (`subscriptions.get`) instead of guessed. A refund changes access only through what it does to the subscription: refunding with the subscription revoked ends Pro at once; a refund that leaves the subscription running leaves Pro until the subscription ends.
 
 A visit to `/settings/billing?checkout=success` grants nothing. The page waits for the webhook.
 
@@ -99,7 +99,7 @@ A visit to `/settings/billing?checkout=success` grants nothing. The page waits f
    - the billing page shows "Confirming…" and then Pro;
    - Manage subscription opens the portal;
    - cancelling shows "ending";
-   - a refund ends Pro.
+   - a refund that revokes the subscription ends Pro.
 6. **Production:** repeat steps 1–3 in Polar production, with separate token, secret and product ids, and `POLAR_SERVER=production`.
 
 ## Checks

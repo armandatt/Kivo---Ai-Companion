@@ -165,6 +165,33 @@ test("a verified event gives Pro; the same delivery again is applied once", asyn
   assert.equal(ent.plan, "pro"); assert.equal(ent.source, "subscription"); assert.equal(ent.planKey, "pro_monthly");
 });
 
+test("a delivery being handled is not applied twice at once; a failed one is applied on the retry", async () => {
+  const u = await account();
+  const e = signed("subscription.active", subscriptionRecord(u.id));
+  const all = await Promise.all(Array.from({ length: 4 }, () => handleWebhook({ rawBody: e.rawBody, headers: e.headers, provider })));
+  assert.equal(all.filter(r => r.body.outcome === "applied").length, 1, "applied once");
+  assert.ok(all.every(r => r.status === 200 || r.status === 409));
+
+  // The provider retries after its timeout while the first is still running.
+  const busy = signed("subscription.updated", subscriptionRecord(u.id, { modified_at: "2026-11-06T00:00:00Z" }));
+  await prisma.billingWebhookEvent.create({ data: { id: busy.id, provider: "polar", type: "subscription.updated", status: "received" } });
+  assert.equal((await handleWebhook({ rawBody: busy.rawBody, headers: busy.headers, provider })).status, 409);
+  // A handler that stopped without finishing: the next retry takes it.
+  await prisma.billingWebhookEvent.update({ where: { id: busy.id }, data: { receivedAt: new Date(Date.now() - 10 * 60_000) } });
+  assert.equal((await handleWebhook({ rawBody: busy.rawBody, headers: busy.headers, provider })).body.outcome, "applied");
+
+  // Fails (the provider's record can't be read), then succeeds on the retry.
+  const subId = `sub_retry_${u.id}`;
+  const order = signed("order.paid", { id: `ord_${u.id}`, subscription_id: subId });
+  assert.equal((await handleWebhook({ rawBody: order.rawBody, headers: order.headers, provider })).status, 500);
+  assert.equal((await prisma.billingWebhookEvent.findUniqueOrThrow({ where: { id: order.id } })).status, "failed");
+  remote.set(subId, subscriptionRecord(u.id, { id: subId, modified_at: "2026-11-07T00:00:00Z" }));
+  const retry = await handleWebhook({ rawBody: order.rawBody, headers: order.headers, provider });
+  assert.deepEqual([retry.status, retry.body.outcome], [200, "applied"]);
+  const row = await prisma.billingWebhookEvent.findUniqueOrThrow({ where: { id: order.id } });
+  assert.deepEqual([row.status, row.attempts], ["processed", 2]);
+});
+
 test("out of order: an older 'created' after a newer 'active' leaves Pro in place", async () => {
   const u = await account();
   await deliver("subscription.active", subscriptionRecord(u.id, { modified_at: "2026-11-05T00:00:10Z" }));

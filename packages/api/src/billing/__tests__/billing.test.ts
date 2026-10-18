@@ -28,6 +28,11 @@ describe("who has Pro", () => {
     expect(access(sub({ currentPeriodEnd: at(-4) })).plan).toBe("free");
   });
 
+  it("set to cancel at the period end: no grace after it, since no renewal is coming", () => {
+    expect(access(sub({ cancelAtPeriodEnd: true, currentPeriodEnd: at(2) }))).toMatchObject({ plan: "pro", until: at(2) });
+    expect(access(sub({ cancelAtPeriodEnd: true, currentPeriodEnd: at(-1) })).plan).toBe("free");
+  });
+
   it("cancelled at period end: Pro until then, then Free", () => {
     expect(access(sub({ status: "canceled", cancelAtPeriodEnd: true, currentPeriodEnd: at(5) }))).toMatchObject({ plan: "pro", until: at(5) });
     expect(access(sub({ status: "canceled", cancelAtPeriodEnd: true, currentPeriodEnd: at(-1) })).plan).toBe("free");

@@ -15,6 +15,8 @@ import { InvalidSignatureError, type BillingProvider } from "./provider";
 import { polarProvider } from "./polar";
 
 const DAY = 86_400_000;
+// How long a received webhook delivery counts as still being handled.
+const IN_PROGRESS_MS = 2 * 60_000;
 const isUniqueViolation = (err: unknown) => (err as { code?: string } | null)?.code === "P2002";
 
 export type BillingError =
@@ -169,7 +171,14 @@ export async function handleWebhook(input: {
       return { status: 409, body: { error: "in_progress" } };
     }
   } else {
-    await prisma.billingWebhookEvent.update({ where: { id: event.id }, data: { attempts: { increment: 1 }, status: "received", error: null } });
+    // A failed delivery, or one whose handler stopped without finishing, is
+    // tried again. One received moments ago is still being handled (the
+    // provider retries after its timeout): it is not applied twice at once.
+    const claimed = await prisma.billingWebhookEvent.updateMany({
+      where: { id: event.id, OR: [{ status: "failed" }, { status: "received", receivedAt: { lt: new Date(Date.now() - IN_PROGRESS_MS) } }] },
+      data:  { attempts: { increment: 1 }, status: "received", error: null, receivedAt: new Date() },
+    });
+    if (claimed.count === 0) return { status: 409, body: { error: "in_progress" } };
   }
 
   try {

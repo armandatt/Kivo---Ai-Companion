@@ -62,7 +62,8 @@ export function deriveAccess(input: {
       // A period that has ended without the provider saying it renewed is
       // not trusted for long: the grace covers a late renewal event.
       if (end === null || t < end) return { plan: "pro", source: "subscription", planKey, until: sub.currentPeriodEnd };
-      if (t < end + graceDays * DAY) return { plan: "pro", source: "grace", planKey, until: new Date(end + graceDays * DAY) };
+      // Set to cancel at the period end: there is no renewal to wait for.
+      if (!sub.cancelAtPeriodEnd && t < end + graceDays * DAY) return { plan: "pro", source: "grace", planKey, until: new Date(end + graceDays * DAY) };
     }
     if (sub.status === "canceled" && end !== null && t < end) {
       return { plan: "pro", source: "subscription", planKey, until: sub.currentPeriodEnd };
