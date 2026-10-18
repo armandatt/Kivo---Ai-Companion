@@ -182,25 +182,28 @@ const MODE_LABEL: Record<NovaTodayReady['plan']['mode'], string> = {
   recovery:    'Recovery',
 }
 
-// The day's properties, as Today reported them. A property with nothing on
-// record is left out, never shown as zero. The day's minutes are on the plan.
-export function PageProperties({ view }: { view: NovaTodayReady }) {
+// The day's brief: the facts Today reported, label over value, like a
+// ledger. A property with nothing on record is left out, never shown as zero.
+export function PageProperties({ view, tasksDueToday = null }: { view: NovaTodayReady; tasksDueToday?: number | null }) {
   const { plan, progress, reviewDue, nextDeadline } = view
-  const rows: Array<{ label: string; value: string; tone?: 'warn' }> = [
-    { label: 'Plan', value: MODE_LABEL[plan.mode] },
-  ]
+  const rows: Array<{ label: string; value: string; tone?: 'warn' }> = []
+  if (plan.blockCount > 0) {
+    rows.push({ label: 'Planned', value: `${minutesLabel(plan.totalMinutesToday)} · ${plan.blockCount} ${plan.blockCount === 1 ? 'block' : 'blocks'}` })
+  }
+  rows.push({ label: 'Day', value: MODE_LABEL[plan.mode] })
   if (nextDeadline) {
     rows.push({ label: nextDeadline.kindLabel, value: `${nextDeadline.title}, ${inDays(nextDeadline.daysUntil)}`, tone: nextDeadline.daysUntil <= 7 ? 'warn' : undefined })
   }
+  if (tasksDueToday) rows.push({ label: 'Due today', value: `${tasksDueToday} ${tasksDueToday === 1 ? 'task' : 'tasks'}` })
   if (reviewDue.count > 0) rows.push({ label: 'Reviews due', value: String(reviewDue.count) })
   if (progress.streakDays > 1) rows.push({ label: 'In a row', value: `${progress.streakDays} days` })
 
   return (
-    <dl aria-label="Today at a glance" data-section="page-properties" className="flex flex-wrap gap-x-5 gap-y-1.5 text-sm">
+    <dl aria-label="Today at a glance" data-section="page-properties" className="flex flex-wrap gap-x-8 gap-y-3">
       {rows.map(row => (
-        <div key={row.label} className="flex min-w-0 items-baseline gap-2">
-          <dt className="shrink-0 text-xs text-foreground/55">{row.label}</dt>
-          <dd className={row.tone === 'warn' ? 'truncate font-medium text-amber-300' : 'truncate text-foreground/85'}>{row.value}</dd>
+        <div key={row.label} className="flex min-w-0 flex-col gap-0.5">
+          <dt className="text-xs text-subtle">{row.label}</dt>
+          <dd className={cn('truncate text-[15px] font-medium tabular-nums', row.tone === 'warn' ? 'text-amber-300' : 'text-foreground')}>{row.value}</dd>
         </div>
       ))}
     </dl>

@@ -107,6 +107,8 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
     ...view.plan.assumptions,
   ]
   const tasks = board.view?.status === 'ready' ? board.tasks : null
+  // Open tasks due today, for the day's brief. Unknown until the tasks load.
+  const dueToday = tasks ? tasks.filter(t => t.status !== 'done' && t.dueInDays === 0).length : null
   // Where today's work sits on the record. The map is an extra: without it
   // the plan and the tasks show as they did.
   const mapReady = map.view?.status === 'ready' ? map.view : null
@@ -117,40 +119,42 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
 
   return (
     <div className="mx-auto w-full max-w-7xl pb-20 pt-12 lg:pt-2">
-      {/* The day, at a glance: the greeting on the day's colours, its flow,
-          the two ways to act on anything, and the one thing to do next */}
+      {/* The day, at a glance: the greeting and the day's brief, the two
+          ways to act on anything, then the one thing to do next beside the
+          day's flow */}
       <TodayHero
-        greeting={<>{greeting(new Date())}{name ? <span className="text-foreground/45">, {name}</span> : ''}</>}
+        greeting={<>{greeting(new Date())}{name ? <>, <span className="italic text-foreground/70">{name}</span></> : ''}</>}
         context={context}
-        subjects={dayBlocks.map(b => b.subjectName)}
-        properties={<PageProperties view={view} />}
+        properties={<PageProperties view={view} tasksDueToday={dueToday} />}
         actions={<>
-          <div className="min-w-0 flex-1 sm:flex-none"><CommandButton onOpen={() => setPaletteOpen(true)} /></div>
+          <div className="min-w-0 flex-1 sm:w-64 sm:flex-none"><CommandButton onOpen={() => setPaletteOpen(true)} /></div>
           <NewMenu onNewTask={() => { composer.current?.scrollIntoView({ block: 'center' }); composer.current?.focus() }} />
         </>}
         focal={active ? <ActiveSessionCard session={active} /> : rec ? (
-          <NowBlock action={rec} why={whyContext} record={recordOf(rec)} onStart={() => void start(rec)}
-            starting={starting === rec.topicName} error={startError} disabled={starting !== null} />
+          <div className="space-y-6">
+            <NowBlock action={rec} why={whyContext} record={recordOf(rec)} onStart={() => void start(rec)}
+              starting={starting === rec.topicName} error={startError} disabled={starting !== null} />
+            {/* How long there is: it refits the plan, starting with this block */}
+            <TimeAvailable minutes={minutes} onChange={onMinutes} busy={refreshing} />
+          </div>
         ) : null}
       >
         <DayFlow blocks={dayBlocks} plan={view.plan} nowFirst={!active && rec !== null} />
-        {!active && <TimeAvailable minutes={minutes} onChange={onMinutes} busy={refreshing} />}
+        {/* The plan in the planner's order, after the block to do now (the
+            card beside it). With a session running, nothing starts from here. */}
+        <TodayPlan
+          recommendation={rec} alternatives={view.alternatives}
+          blockCount={view.plan.blockCount} plan={view.plan} why={whyContext}
+          onStart={active ? undefined : start} disabled={starting !== null}
+          starting={starting} error={startError} recordOf={recordOf} leadShown
+        />
+        {!active && !rec && <TimeAvailable minutes={minutes} onChange={onMinutes} busy={refreshing} />}
       </TodayHero>
 
-      <div className="mt-10 grid grid-cols-1 gap-x-10 gap-y-10 lg:grid-cols-[minmax(0,1fr)_17rem] xl:grid-cols-[minmax(0,1fr)_19rem]">
+      <div className="mt-12 grid grid-cols-1 gap-x-10 gap-y-10 lg:grid-cols-[minmax(0,1fr)_19rem] xl:grid-cols-[minmax(0,1fr)_21rem]">
         {/* ── The day's work ─────────────────────────────────────────────── */}
         <div className="min-w-0 space-y-10">
           <div className="space-y-5">
-            {/* The plan in the planner's order, after the block to do now
-                (open in the hero). With a session running, nothing starts
-                from here. */}
-            <TodayPlan
-              recommendation={rec} alternatives={view.alternatives}
-              blockCount={view.plan.blockCount} plan={view.plan} why={whyContext}
-              onStart={active ? undefined : start} disabled={starting !== null}
-              starting={starting} error={startError} recordOf={recordOf} leadShown
-            />
-
             {empty && (
               <section className={`${SURFACE_RAISED} relative isolate overflow-hidden p-5 sm:p-7`} data-empty={view.emptyReason ?? undefined}>
                 <div aria-hidden className="nova-canvas pointer-events-none absolute inset-0 -z-10 opacity-60 [mask-image:linear-gradient(to_left,black,transparent_60%)]" />
@@ -198,7 +202,7 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
         </div>
 
         {/* ── The margin: dates, the week, where you left off, intent ─────── */}
-        <aside aria-label="Today's context" className={`min-w-0 space-y-6 ${!active && !rec ? '' : 'lg:pt-28'}`}>
+        <aside aria-label="Today's context" className="min-w-0 space-y-6 lg:border-l lg:border-white/8 lg:pl-8">
           <Deadlines exams={view.upcoming} tasks={tasks ?? []} />
           <WeekSoFar view={view} weeks={progressView} />
           <ContinueLearning
