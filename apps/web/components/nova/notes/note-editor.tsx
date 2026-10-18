@@ -1,18 +1,26 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, ArrowRight, Check, Link2, Loader2, Pencil, Trash2 } from 'lucide-react'
-import type { NoteDetail, NoteSubjectOption } from '@repo/api/nova/product/notes.types'
+import {
+  ArrowLeft, ArrowRight, Bold, Check, ChevronLeft, ChevronRight, Code, Columns2, ExternalLink, Hash, Heading1, Heading2,
+  HelpCircle, Highlighter, Italic, Lightbulb, Link2, List, ListOrdered, ListTree, Loader2, Minus, PanelLeft, Pencil,
+  Quote, Trash2, Type, X,
+} from 'lucide-react'
+import type { NoteDetail, NoteSubjectOption, NoteSummary } from '@repo/api/nova/product/notes.types'
 import { NOTE_BODY_MAX, NOTE_TITLE_MAX, NOTE_TOPIC_MAX } from '@repo/api/nova/product/notes.types'
 import { TASK_TITLE_MAX } from '@repo/api/nova/product/tasks.types'
 import { noteTemplatesFor, type NoteTemplate } from '@repo/api/nova/product/templates'
 import { normalizeLearningContexts } from '@repo/api/nova/product/learning-context'
 import { minutesLabel, relativeDay } from '../format'
+import { subjectColor } from '../subject-color'
 import { useStartSession } from '../use-start-session'
 import { NoteBody, linkHref } from './note-body'
 import { NoteAssistPanel } from './note-assist-panel'
+import { outline, parseBlocks, sourceOf, tagsOf, wordCount } from './note-blocks'
+import { callout, divider, noteLink, prefixLines, tag, wrap, type Edited } from './note-format'
+import { NotesTree } from './notes-tree'
 import { createNote, deleteNote, fetchNote, fetchNotes, updateNote } from './notes-api'
 
 // Unsaved text is kept in this browser while it is typed, so a crash, a
@@ -28,6 +36,17 @@ function writeDraft(id: string | null, value: StoredDraft | null) {
   try { if (value) window.localStorage.setItem(draftKey(id), JSON.stringify(value)); else window.localStorage.removeItem(draftKey(id)) } catch { /* storage off: nothing to keep */ }
 }
 
+// How this browser likes the notebook laid out. A convenience only: without
+// storage the defaults below are used.
+type Layout = 'write' | 'split' | 'preview'
+type Prefs = { tree: boolean; outline: boolean; serif: boolean; layout: Layout }
+const PREFS_KEY = 'kivo-notes-layout'
+const DEFAULT_PREFS: Prefs = { tree: true, outline: true, serif: true, layout: 'split' }
+function readPrefs(): Prefs {
+  try { const raw = window.localStorage.getItem(PREFS_KEY); return raw ? { ...DEFAULT_PREFS, ...JSON.parse(raw) as Partial<Prefs> } : DEFAULT_PREFS } catch { return DEFAULT_PREFS }
+}
+function writePrefs(p: Prefs) { try { window.localStorage.setItem(PREFS_KEY, JSON.stringify(p)) } catch { /* storage off */ } }
+
 type Draft = { title: string; body: string; subjectId: string; topicName: string }
 
 const EMPTY: Draft = { title: '', body: '', subjectId: '', topicName: '' }
@@ -40,11 +59,14 @@ const LEAVE = 'You have changes that are not saved. Leave without saving?'
 const field =
   'w-full rounded-xl border border-white/10 bg-transparent px-3.5 text-foreground placeholder:text-foreground/30 focus:border-keppel-400/60 focus:outline-none'
 const primary =
-  'inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-keppel-400 px-5 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300 disabled:opacity-60'
+  'inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-keppel-400 px-5 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300 disabled:opacity-60'
 const quiet =
-  'inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/80 transition-colors hover:bg-white/5 disabled:opacity-60'
+  'inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/80 transition-colors hover:bg-white/5 disabled:opacity-60'
+const iconButton = (on = false) =>
+  `inline-flex size-8 shrink-0 items-center justify-center rounded-lg transition-colors disabled:opacity-40 ${on ? 'bg-white/8 text-foreground' : 'text-foreground/50 hover:bg-white/6 hover:text-foreground'}`
 
-// One note: read it, edit it, delete it, study from it.
+// One note: read it, edit it, delete it, study from it — in a workspace with
+// the notebook beside it, the note's outline, and the source it came from.
 // The text is the learner's. This page only ever saves what they typed, when
 // they press Save; nothing rewrites it and nothing is sent anywhere else.
 export function NoteEditor({ noteId }: { noteId: string | null }) {
@@ -52,6 +74,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const { start, starting, error: startError } = useStartSession()
 
   const [note, setNote]         = useState<NoteDetail | null>(null)
+  const [notes, setNotes]       = useState<NoteSummary[]>([])
   const [subjects, setSubjects] = useState<NoteSubjectOption[]>([])
   const [running, setRunning]   = useState<{ topicName: string | null } | null>(null)
   const [loading, setLoading]   = useState(true)
@@ -64,13 +87,20 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const [error, setError]       = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [preview, setPreview]   = useState(false)
   const [contexts, setContexts] = useState<string[]>([])
   // Unsaved text found in this browser from an earlier visit.
   const [recovered, setRecovered] = useState<StoredDraft | null>(null)
   // The note as it now stands, when a save was refused because it changed elsewhere.
   const [conflict, setConflict] = useState<NoteDetail | null>(null)
   const [justSaved, setJustSaved] = useState(false)
+
+  const [prefs, setPrefsState]  = useState<Prefs>(DEFAULT_PREFS)
+  const [sourceOpen, setSourceOpen] = useState(false)
+  const [treeOnPhone, setTreeOnPhone] = useState(false)
+  const bodyRef = useRef<HTMLTextAreaElement>(null)
+
+  const setPrefs = useCallback((change: Partial<Prefs>) => setPrefsState(p => { const n = { ...p, ...change }; writePrefs(n); return n }), [])
+  useEffect(() => { setPrefsState(readPrefs()) }, [])
 
   const dirty = editing && !same(draft, saved)
 
@@ -79,7 +109,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     void (async () => {
       const [list, loaded] = await Promise.all([fetchNotes(), noteId ? fetchNote(noteId) : Promise.resolve(null)])
       if (cancelled) return
-      if (list?.status === 'ready') { setSubjects(list.subjects); setRunning(list.activeSession); setContexts(list.learningContexts ?? []) }
+      if (list?.status === 'ready') { setSubjects(list.subjects); setRunning(list.activeSession); setContexts(list.learningContexts ?? []); setNotes(list.notes) }
       else if (list) setMissing('Notes are part of Nova, and this account is not set up with it yet.')
 
       if (noteId) {
@@ -157,7 +187,8 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     }
     writeDraft(note?.id ?? null, null)
     setConflict(null); setRecovered(null)
-    setNote(res.note); setDraft(draftOf(res.note)); setSaved(draftOf(res.note)); setEditing(false); setPreview(false)
+    setNote(res.note); setDraft(draftOf(res.note)); setSaved(draftOf(res.note)); setEditing(false)
+    setNotes(list => [res.note, ...list.filter(n => n.id !== res.note.id)])
     setJustSaved(true)
     // A new note moves to its own address; it says it was saved there too.
     if (!note) router.replace(`/notes/${res.note.id}?saved=1`)
@@ -167,7 +198,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     if (dirty && !window.confirm('Discard your changes?')) return
     writeDraft(note?.id ?? null, null)
     if (!note) { router.push('/notes'); return }
-    setDraft(saved); setEditing(false); setError(null); setPreview(false)
+    setDraft(saved); setEditing(false); setError(null)
   }
 
   // A save was refused because the note changed elsewhere: take the saved
@@ -183,6 +214,24 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   function applyTemplate(t: NoteTemplate) {
     if (draft.body.trim() && !window.confirm('Replace the text of this note with the template?')) return
     setDraft(d => ({ ...d, body: t.body, title: d.title || t.name }))
+  }
+
+  // The toolbar: one change to the text at the selection, which stays where
+  // the change puts it.
+  function format(change: (text: string, start: number, end: number) => Edited) {
+    const el = bodyRef.current
+    if (!el) return
+    const next = change(draft.body, el.selectionStart, el.selectionEnd)
+    if (next.text.length > NOTE_BODY_MAX) return
+    setDraft(d => ({ ...d, body: next.text }))
+    window.requestAnimationFrame(() => { el.focus(); el.setSelectionRange(next.start, next.end) })
+  }
+  function onBodyKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (!(e.metaKey || e.ctrlKey)) return
+    const key = e.key.toLowerCase()
+    if (key === 'b') { e.preventDefault(); format((t, s, x) => wrap(t, s, x, '**', 'bold')) }
+    else if (key === 'i') { e.preventDefault(); format((t, s, x) => wrap(t, s, x, '*', 'italic')) }
+    else if (key === 'e' && e.shiftKey) { e.preventDefault(); format((t, s, x) => wrap(t, s, x, '==', 'highlight')) }
   }
 
   // A task on the learner's own board to come back to this note: filed where
@@ -202,11 +251,14 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     } catch { setTaskState('failed') }
   }
 
-  // Ctrl or Cmd + S saves while editing.
+  // Ctrl or Cmd + S saves while editing; E opens a note to edit, Escape
+  // closes the source beside it.
   useEffect(() => {
-    if (!editing) return
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); void save() }
+      if (editing && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); void save() }
+      const typing = e.target instanceof HTMLElement && (e.target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName))
+      if (!editing && !typing && note && e.key === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); setEditing(true) }
+      if (e.key === 'Escape' && sourceOpen && !typing) setSourceOpen(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -228,10 +280,19 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     setDeleting(false); setConfirmDelete(false); setError(res.message)
   }
 
+  // What the open note is made of, for its outline, its status line and the
+  // source beside it. While editing, the text being typed.
+  const body = editing ? draft.body : note?.body ?? ''
+  const sections = useMemo(() => outline(parseBlocks(body)), [body])
+  const source   = useMemo(() => sourceOf(body), [body])
+  const tags     = useMemo(() => tagsOf(body), [body])
+  const words    = useMemo(() => wordCount(body), [body])
+  useEffect(() => { if (!source) setSourceOpen(false) }, [source])
+
   const banners = (
     <>
       {recovered && (
-        <div role="status" className="mt-5 flex flex-col gap-3 rounded-2xl border border-amber-300/25 bg-amber-300/5 p-4 text-sm sm:flex-row sm:items-center sm:justify-between" data-note-recovered>
+        <div role="status" className="mb-5 flex flex-col gap-3 rounded-2xl border border-amber-300/25 bg-amber-300/5 p-4 text-sm sm:flex-row sm:items-center sm:justify-between" data-note-recovered>
           <p className="text-foreground/75">Unsaved changes to this note were kept in this browser {relativeDay(new Date(recovered.at).toISOString())}. They are not saved yet.</p>
           <div className="flex shrink-0 gap-2">
             <button type="button" className={quiet} onClick={() => { setDraft(recovered.draft); setEditing(true); setRecovered(null) }}>Restore</button>
@@ -240,7 +301,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
         </div>
       )}
       {conflict && (
-        <div role="alert" className="mt-5 rounded-2xl border border-red-400/30 bg-red-400/5 p-4 text-sm" data-note-conflict>
+        <div role="alert" className="mb-5 rounded-2xl border border-red-400/30 bg-red-400/5 p-4 text-sm" data-note-conflict>
           <p className="text-foreground/80">This note was changed somewhere else ({relativeDay(conflict.updatedAt)}) after you opened it. Nothing was overwritten, and what you typed is still here.</p>
           <div className="mt-3 flex flex-wrap gap-2">
             <button type="button" className={quiet} disabled={saving} onClick={() => void save(conflict.updatedAt)}>Save mine over it</button>
@@ -255,18 +316,18 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     </>
   )
 
-  const shell = (children: React.ReactNode) => (
+  // The plain page, while loading or when there is nothing to open.
+  const simple = (children: React.ReactNode) => (
     <div className="mx-auto w-full max-w-3xl pb-20 pt-10 lg:pt-4">
       <Link href="/notes" onClick={leave} className="inline-flex items-center gap-1.5 text-sm text-foreground/50 transition-colors hover:text-foreground">
         <ArrowLeft className="size-4" /> Notes
       </Link>
-      {banners}
       {children}
     </div>
   )
 
   if (loading) {
-    return shell(
+    return simple(
       <div aria-busy="true" aria-label="Loading note" className="mt-8 space-y-5">
         <div className="h-9 w-2/3 animate-pulse rounded-lg bg-white/5" />
         <div className="h-4 w-48 animate-pulse rounded bg-white/4" />
@@ -276,7 +337,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   }
 
   if (missing) {
-    return shell(
+    return simple(
       <section className="mt-8 rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9" data-note-missing>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Nothing to open</h1>
         <p className="mt-3 text-sm leading-relaxed text-foreground/65">{missing}</p>
@@ -285,96 +346,296 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     )
   }
 
+  // ── The workspace ──────────────────────────────────────────────────────────
+  const subjectName = editing ? subjects.find(s => s.id === draft.subjectId)?.name ?? null : note?.subjectName ?? null
+  const topicName   = editing ? (draft.subjectId ? draft.topicName.trim() || null : null) : note?.topicName ?? null
+  const title       = (editing ? draft.title : note?.title)?.trim() || 'Untitled'
+  const color       = subjectColor(subjectName)
+  const showSource  = sourceOpen && source !== null
+  const showOutline = prefs.outline && !showSource
+
+  const crumbs = (
+    <nav aria-label="Where this note is" className="flex min-w-0 items-center gap-1.5 text-[13px]" data-note-breadcrumb>
+      <Link href="/notes" onClick={leave} className="shrink-0 text-keppel-300/80 hover:text-keppel-200">Notes</Link>
+      {subjectName && (<>
+        <span className="hidden text-foreground/25 sm:inline">/</span>
+        <Link href={`/notes?subjectId=${encodeURIComponent((editing ? draft.subjectId : note?.subjectId) ?? '')}`} onClick={leave} className={`hidden shrink-0 hover:underline sm:inline ${color.text}`}>{subjectName}</Link>
+      </>)}
+      {topicName && (<><span className="hidden text-foreground/25 md:inline">/</span><span className="hidden shrink-0 text-foreground/50 md:inline">{topicName}</span></>)}
+      <span className="text-foreground/25">/</span>
+      <span className="min-w-0 truncate text-foreground/75">{editing && !note ? (draft.title.trim() || 'New note') : title}</span>
+    </nav>
+  )
+
+  const topBar = (
+    <header className="flex h-12 shrink-0 items-center gap-1 border-b border-white/6 pl-14 pr-3 lg:pl-3">
+      <button type="button" onClick={() => setPrefs({ tree: !prefs.tree })} className={`${iconButton(prefs.tree)} max-lg:hidden`} title={prefs.tree ? 'Hide the notebook' : 'Show the notebook'} aria-pressed={prefs.tree}>
+        <PanelLeft className="size-4" />
+      </button>
+      <button type="button" onClick={() => setTreeOnPhone(true)} className={`${iconButton()} lg:hidden`} title="Show the notebook">
+        <PanelLeft className="size-4" />
+      </button>
+      <button type="button" onClick={e => { leave(e); if (!e.defaultPrevented) router.back() }} className={`${iconButton()} max-sm:hidden`} title="Back"><ChevronLeft className="size-4" /></button>
+      <button type="button" onClick={e => { leave(e); if (!e.defaultPrevented) window.history.forward() }} className={`${iconButton()} max-sm:hidden`} title="Forward"><ChevronRight className="size-4" /></button>
+      <div className="ml-1.5 min-w-0 flex-1">{crumbs}</div>
+      {source && (
+        <button type="button" onClick={() => setSourceOpen(o => !o)} aria-pressed={showSource}
+          className={`hidden h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors md:inline-flex ${showSource ? 'bg-sky-400/15 text-sky-200' : 'text-foreground/60 hover:bg-white/6 hover:text-foreground'}`}
+          title="Open the source beside this note" data-note-source-toggle>
+          <Columns2 className="size-3.5" /> Source
+        </button>
+      )}
+      {!editing && (
+        <button type="button" onClick={() => setPrefs({ serif: !prefs.serif })} className={iconButton(prefs.serif)} title={prefs.serif ? 'Read in sans-serif' : 'Read in serif'} aria-pressed={prefs.serif}>
+          <Type className="size-4" />
+        </button>
+      )}
+      <button type="button" onClick={() => setPrefs({ outline: !prefs.outline })} className={`${iconButton(prefs.outline)} max-xl:hidden`} title={prefs.outline ? 'Hide the outline' : 'Show the outline'} aria-pressed={prefs.outline}>
+        <ListTree className="size-4" />
+      </button>
+      {!editing && note && (
+        <button type="button" onClick={() => setEditing(true)} className="ml-1 inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/12 px-3 text-xs font-medium text-foreground/80 transition-colors hover:bg-white/5" title="Edit (E)">
+          <Pencil className="size-3.5" /> Edit
+        </button>
+      )}
+    </header>
+  )
+
+  const statusBar = (
+    <footer className="flex h-8 shrink-0 items-center gap-3 overflow-x-auto border-t border-white/6 px-4 text-[11px] text-foreground/45" data-note-status>
+      {note && <a href="#note-connections" className="shrink-0 hover:text-keppel-300" data-note-backlinks={note.links.backlinks.length}>{note.links.backlinks.length} backlink{note.links.backlinks.length === 1 ? '' : 's'}</a>}
+      {note && <span className="shrink-0">{note.links.outgoing.length} link{note.links.outgoing.length === 1 ? '' : 's'}</span>}
+      <span className="shrink-0">{words.toLocaleString()} word{words === 1 ? '' : 's'}</span>
+      {tags.length > 0 && <span className="hidden shrink-0 sm:inline">{tags.length} tag{tags.length === 1 ? '' : 's'}</span>}
+      <span className="ml-auto shrink-0">
+        {editing ? (saving ? 'Saving…' : dirty ? 'Not saved · kept in this browser' : 'No changes') : note ? `Updated ${relativeDay(note.updatedAt)}` : ''}
+      </span>
+    </footer>
+  )
+
+  const tree = (
+    <NotesTree notes={notes} currentId={note?.id ?? null} onNavigate={e => { leave(e); if (!e.defaultPrevented) setTreeOnPhone(false) }} />
+  )
+
+  const outlinePanel = (
+    <aside className="hidden w-60 shrink-0 overflow-y-auto border-l border-white/6 px-4 py-5 xl:block" aria-label="Outline" data-note-outline>
+      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-foreground/40">On this note</p>
+      {sections.length === 0 ? (
+        <p className="mt-2 text-xs leading-relaxed text-foreground/45">Headings you write with # appear here.</p>
+      ) : (
+        <ul className="mt-2 space-y-0.5 text-[13px]">
+          {sections.map(s => (
+            <li key={s.id} style={{ paddingLeft: `${(s.level - 1) * 0.75}rem` }}>
+              <button type="button" onClick={() => document.getElementById(s.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                className="w-full truncate rounded px-1.5 py-1 text-left text-foreground/60 transition-colors hover:bg-white/4 hover:text-foreground" disabled={editing && prefs.layout === 'write'}>
+                {s.text}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {tags.length > 0 && (
+        <>
+          <p className="mt-6 text-[11px] font-medium uppercase tracking-[0.14em] text-foreground/40">Tags</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {tags.map(t => <span key={t} className="rounded-full bg-orange-400/12 px-2 py-0.5 text-[11px] font-medium text-orange-300">#{t}</span>)}
+          </div>
+        </>
+      )}
+      {note && (
+        <>
+          <p className="mt-6 text-[11px] font-medium uppercase tracking-[0.14em] text-foreground/40">Linked from</p>
+          {note.links.backlinks.length === 0 ? <p className="mt-2 text-xs text-foreground/45">No other note yet.</p> : (
+            <ul className="mt-2 space-y-1 text-[13px]">
+              {note.links.backlinks.slice(0, 8).map(b => (
+                <li key={b.noteId}><Link href={`/notes/${encodeURIComponent(b.noteId!)}`} onClick={leave} className="block truncate text-keppel-300 hover:underline">{b.title}</Link></li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </aside>
+  )
+
+  const sourcePane = source && (
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col border-r border-white/6 bg-white/[0.015]" aria-label="Source" data-note-source>
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-white/6 px-3 text-xs">
+        <Quote className="size-3.5 text-sky-300" />
+        <span className="min-w-0 flex-1 truncate text-foreground/70">{source.label}</span>
+        <a href={source.url} target="_blank" rel="noopener noreferrer" className={iconButton()} title="Open in a new tab"><ExternalLink className="size-3.5" /></a>
+        <button type="button" onClick={() => setSourceOpen(false)} className={iconButton()} title="Close the source (Esc)"><X className="size-3.5" /></button>
+      </div>
+      {/* A web page is sandboxed: it can't navigate this tab or open
+          dialogs. A PDF can't be: the browser's PDF viewer does not run in a
+          sandboxed frame. Either way it is another site's page, which
+          cannot read this one. */}
+      <iframe key={source.view} src={source.view} title={`Source: ${source.label}`} className="min-h-0 w-full flex-1 bg-white"
+        sandbox={source.pdf ? undefined : 'allow-scripts allow-same-origin allow-popups allow-forms'} referrerPolicy="no-referrer" />
+      <p className="shrink-0 border-t border-white/6 px-3 py-1.5 text-[11px] text-foreground/45">
+        Some sites don&apos;t allow being shown inside another page. If this stays blank, <a href={source.url} target="_blank" rel="noopener noreferrer" className="text-keppel-300 underline">open it in a new tab</a>.
+      </p>
+    </section>
+  )
+
+  const workspace = (main: React.ReactNode) => (
+    <div className="-m-6 flex h-[calc(100%+3rem)] min-h-0" data-note-workspace>
+      {prefs.tree && !showSource && <div className="hidden w-64 shrink-0 border-r border-white/6 py-3 lg:block">{tree}</div>}
+      {treeOnPhone && (
+        <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-label="Your notebook">
+          <button type="button" className="absolute inset-0 bg-black/50" aria-label="Close the notebook" onClick={() => setTreeOnPhone(false)} />
+          <div className="absolute inset-y-0 left-0 w-72 max-w-[85vw] border-r border-white/8 bg-background py-3 shadow-float">{tree}</div>
+        </div>
+      )}
+      <div className="flex min-w-0 flex-1 flex-col">
+        {topBar}
+        <div className="flex min-h-0 flex-1">
+          {showSource && sourcePane}
+          {main}
+          {showOutline && outlinePanel}
+        </div>
+        {statusBar}
+      </div>
+    </div>
+  )
+
   // ── Editing ────────────────────────────────────────────────────────────────
   if (editing) {
-    return shell(
-      <form className="mt-6 space-y-4" onSubmit={e => { e.preventDefault(); void save() }} data-note-form>
-        <div>
-          <label htmlFor="note-title" className="sr-only">Title</label>
-          <input
-            id="note-title" value={draft.title} maxLength={NOTE_TITLE_MAX} autoFocus={!note}
-            onChange={e => setDraft(d => ({ ...d, title: e.target.value }))}
-            placeholder="Title"
-            className={`${field} h-12 text-lg font-semibold`}
-          />
-        </div>
+    const layout: Layout = prefs.layout
+    const tools: Array<{ label: string; icon: typeof Bold; run: () => void; keys?: string } | 'gap'> = [
+      { label: 'Heading', icon: Heading1, run: () => format((t, s, x) => prefixLines(t, s, x, '# ')) },
+      { label: 'Subheading', icon: Heading2, run: () => format((t, s, x) => prefixLines(t, s, x, '## ')) },
+      'gap',
+      { label: 'Bold', icon: Bold, keys: 'Cmd/Ctrl B', run: () => format((t, s, x) => wrap(t, s, x, '**', 'bold')) },
+      { label: 'Italic', icon: Italic, keys: 'Cmd/Ctrl I', run: () => format((t, s, x) => wrap(t, s, x, '*', 'italic')) },
+      { label: 'Highlight', icon: Highlighter, keys: 'Cmd/Ctrl Shift E', run: () => format((t, s, x) => wrap(t, s, x, '==', 'highlight')) },
+      { label: 'Code', icon: Code, run: () => format((t, s, x) => wrap(t, s, x, '`', 'code')) },
+      'gap',
+      { label: 'Quote from the source', icon: Quote, run: () => format((t, s, x) => callout(t, s, x, 'quote')) },
+      { label: 'Idea callout', icon: Lightbulb, run: () => format((t, s, x) => callout(t, s, x, 'idea')) },
+      { label: 'Question callout', icon: HelpCircle, run: () => format((t, s, x) => callout(t, s, x, 'question')) },
+      'gap',
+      { label: 'Bulleted list', icon: List, run: () => format((t, s, x) => prefixLines(t, s, x, '- ')) },
+      { label: 'Numbered list', icon: ListOrdered, run: () => format((t, s, x) => prefixLines(t, s, x, '1. ')) },
+      { label: 'Link a note', icon: Link2, run: () => format(noteLink) },
+      { label: 'Tag', icon: Hash, run: () => format(tag) },
+      { label: 'Divider', icon: Minus, run: () => format((t, s) => divider(t, s)) },
+    ]
+    const editor = (
+      <textarea
+        id="note-body" ref={bodyRef} value={draft.body} maxLength={NOTE_BODY_MAX}
+        onChange={e => setDraft(d => ({ ...d, body: e.target.value }))}
+        onKeyDown={onBodyKey}
+        placeholder={'Write what you\'re learning, in your own words.\n\nPaste a passage from what you\'re reading, select it and press the quote button: it becomes a callout, and your own thoughts go under it.'}
+        className="min-h-[24rem] w-full flex-1 resize-none bg-transparent px-1 py-2 font-mono text-[14px] leading-[1.7] text-foreground/90 placeholder:font-sans placeholder:text-foreground/30 focus:outline-none"
+        spellCheck
+      />
+    )
+    const preview = (
+      <div className="min-h-[24rem] px-1 py-2" data-note-preview>
+        {draft.body.trim() ? <NoteBody body={draft.body} links={note?.links.outgoing ?? []} serif={prefs.serif} /> : <p className="py-3 text-sm text-foreground/35">Nothing to preview yet.</p>}
+      </div>
+    )
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div>
-            <label htmlFor="note-subject" className="mb-1.5 block text-xs text-foreground/50">Subject</label>
-            <select
-              id="note-subject" value={draft.subjectId}
-              onChange={e => setDraft(d => ({ ...d, subjectId: e.target.value, topicName: e.target.value ? d.topicName : '' }))}
-              className={`${field} h-11 text-sm`}
-            >
-              <option value="">No subject</option>
-              {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="note-topic" className="mb-1.5 block text-xs text-foreground/50">Topic</label>
+    return workspace(
+      <form className="flex min-h-0 min-w-0 flex-1 flex-col" onSubmit={e => { e.preventDefault(); void save() }} data-note-form>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className={`mx-auto w-full px-5 pb-10 pt-6 sm:px-8 ${layout === 'split' ? 'max-w-6xl' : 'max-w-3xl'}`}>
+            {banners}
+            <label htmlFor="note-title" className="sr-only">Title</label>
             <input
-              id="note-topic" value={draft.topicName} maxLength={NOTE_TOPIC_MAX} list="note-topics"
-              disabled={!draft.subjectId}
-              onChange={e => setDraft(d => ({ ...d, topicName: e.target.value }))}
-              placeholder={draft.subjectId ? 'e.g. Deadlocks' : 'Choose a subject first'}
-              className={`${field} h-11 text-sm disabled:opacity-50`}
+              id="note-title" value={draft.title} maxLength={NOTE_TITLE_MAX} autoFocus={!note}
+              onChange={e => setDraft(d => ({ ...d, title: e.target.value }))}
+              placeholder="Title"
+              className="w-full bg-transparent font-serif text-2xl font-semibold leading-tight tracking-tight text-keppel-200 placeholder:text-foreground/25 focus:outline-none sm:text-4xl"
             />
-            <datalist id="note-topics">{topicOptions.map(t => <option key={t} value={t} />)}</datalist>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="note-subject" className="mb-1.5 block text-xs text-foreground/50">Subject</label>
+                <select
+                  id="note-subject" value={draft.subjectId}
+                  onChange={e => setDraft(d => ({ ...d, subjectId: e.target.value, topicName: e.target.value ? d.topicName : '' }))}
+                  className={`${field} h-10 text-sm`}
+                >
+                  <option value="">No subject</option>
+                  {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="note-topic" className="mb-1.5 block text-xs text-foreground/50">Topic</label>
+                <input
+                  id="note-topic" value={draft.topicName} maxLength={NOTE_TOPIC_MAX} list="note-topics"
+                  disabled={!draft.subjectId}
+                  onChange={e => setDraft(d => ({ ...d, topicName: e.target.value }))}
+                  placeholder={draft.subjectId ? 'e.g. Deadlocks' : 'Choose a subject first'}
+                  className={`${field} h-10 text-sm disabled:opacity-50`}
+                />
+                <datalist id="note-topics">{topicOptions.map(t => <option key={t} value={t} />)}</datalist>
+              </div>
+            </div>
+            {subjects.length === 0 && (
+              <p className="mt-2 text-xs text-foreground/45">Nova doesn&apos;t know your subjects yet, so this note can&apos;t be filed under one. You can still write it.</p>
+            )}
+
+            {!note && !draft.body.trim() && templates.length > 0 && (
+              <div className="mt-4" data-note-templates>
+                <p className="mb-2 text-xs text-foreground/50">Start from a template (optional)</p>
+                <div className="flex flex-wrap gap-2">
+                  {templates.map(t => (
+                    <button key={t.id} type="button" onClick={() => applyTemplate(t)} title={t.description}
+                      className="rounded-full border border-white/12 px-3 py-1.5 text-xs text-foreground/75 transition-colors hover:border-keppel-400/50 hover:text-foreground">
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="sticky top-0 z-10 -mx-2 mt-5 flex flex-wrap items-center gap-0.5 rounded-xl border border-white/8 bg-background/90 px-1.5 py-1 backdrop-blur" role="toolbar" aria-label="Formatting" data-note-toolbar>
+              {tools.map((tool, n) => tool === 'gap'
+                ? <span key={`g${n}`} className="mx-1 h-5 w-px bg-white/10" aria-hidden />
+                : (
+                  <button key={tool.label} type="button" onClick={tool.run} disabled={layout === 'preview'} className={iconButton()}
+                    title={tool.keys ? `${tool.label} (${tool.keys})` : tool.label} aria-label={tool.label}>
+                    <tool.icon className="size-4" />
+                  </button>
+                ))}
+              <div role="tablist" aria-label="Write or preview" className="ml-auto inline-flex rounded-lg border border-white/10 p-0.5 text-xs">
+                {(['write', 'split', 'preview'] as const).map(l => (
+                  <button key={l} type="button" role="tab" aria-selected={layout === l} onClick={() => setPrefs({ layout: l })}
+                    className={`rounded-md px-2.5 py-1 ${l === 'split' ? 'max-lg:hidden' : ''} ${layout === l || (l === 'write' && layout === 'split') ? `${layout === l ? '' : 'lg:bg-transparent lg:text-foreground/55'} bg-white/10 text-foreground` : 'text-foreground/55 hover:text-foreground'}`}>
+                    {l === 'write' ? 'Write' : l === 'split' ? 'Split' : 'Preview'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <label htmlFor="note-body" className="sr-only">Note</label>
+            {layout === 'preview' ? <div className="mt-3">{preview}</div>
+              : layout === 'split' ? (
+                // Below lg there is no room for two panes: the editor alone.
+                <div className="mt-3 grid gap-6 lg:grid-cols-2">
+                  <div className="flex flex-col lg:border-r lg:border-white/6 lg:pr-6">{editor}</div>
+                  <div className="hidden lg:block">{preview}</div>
+                </div>
+              )
+              : <div className="mt-3 flex flex-col">{editor}</div>}
+            {draft.body.length > NOTE_BODY_MAX * 0.9 && (
+              <p className="mt-1 text-xs text-amber-300/80">{(NOTE_BODY_MAX - draft.body.length).toLocaleString()} characters left</p>
+            )}
+            <p className="mt-3 text-[11px] leading-relaxed text-foreground/40">
+              # heading · **bold** · ==highlight== · [[Title]] links a note · #tag · &gt; [!quote] starts a callout ([!idea], [!question], [!warning], [!summary], [!definition])
+            </p>
           </div>
         </div>
-        {subjects.length === 0 && (
-          <p className="text-xs text-foreground/45">Nova doesn&apos;t know your subjects yet, so this note can&apos;t be filed under one. You can still write it.</p>
-        )}
 
-        {!note && !draft.body.trim() && templates.length > 0 && (
-          <div data-note-templates>
-            <p className="mb-2 text-xs text-foreground/50">Start from a template (optional)</p>
-            <div className="flex flex-wrap gap-2">
-              {templates.map(t => (
-                <button key={t.id} type="button" onClick={() => applyTemplate(t)} title={t.description}
-                  className="rounded-full border border-white/12 px-3 py-1.5 text-xs text-foreground/75 transition-colors hover:border-keppel-400/50 hover:text-foreground">
-                  {t.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div>
-          <div className="mb-1.5 flex items-center justify-between gap-3">
-            <div role="tablist" aria-label="Write or preview" className="inline-flex rounded-lg border border-white/10 p-0.5 text-xs">
-              <button type="button" role="tab" aria-selected={!preview} onClick={() => setPreview(false)} className={`rounded-md px-2.5 py-1 ${!preview ? 'bg-white/10 text-foreground' : 'text-foreground/55'}`}>Write</button>
-              <button type="button" role="tab" aria-selected={preview} onClick={() => setPreview(true)} className={`rounded-md px-2.5 py-1 ${preview ? 'bg-white/10 text-foreground' : 'text-foreground/55'}`}>Preview</button>
-            </div>
-            <p className="text-[11px] text-foreground/40">[[Title]] links a note · # heading · - list</p>
-          </div>
-          <label htmlFor="note-body" className="sr-only">Note</label>
-          {preview ? (
-            <div className={`${field} min-h-[22rem] py-1`} data-note-preview>
-              {draft.body.trim() ? <NoteBody body={draft.body} links={note?.links.outgoing ?? []} /> : <p className="py-3 text-sm text-foreground/35">Nothing to preview yet.</p>}
-            </div>
-          ) : (
-          <textarea
-            id="note-body" value={draft.body} maxLength={NOTE_BODY_MAX}
-            onChange={e => setDraft(d => ({ ...d, body: e.target.value }))}
-            placeholder="Write what you're learning, in your own words."
-            className={`${field} min-h-[22rem] resize-y py-3 text-[15px] leading-relaxed`}
-          />
-          )}
-          {draft.body.length > NOTE_BODY_MAX * 0.9 && (
-            <p className="mt-1 text-xs text-amber-300/80">{(NOTE_BODY_MAX - draft.body.length).toLocaleString()} characters left</p>
-          )}
-        </div>
-
-        {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
-
-        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <button type="button" onClick={cancel} disabled={saving} className={quiet}>Cancel</button>
+        <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-white/6 px-5 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+          {error ? <p role="alert" className="text-sm text-red-300 sm:order-none">{error}</p> : <span className="hidden sm:block" />}
           <div className="flex items-center gap-3">
-            <span className="text-xs text-foreground/45" role="status" data-save-state={saving ? 'saving' : dirty ? 'unsaved' : 'clean'}>
+            <span className="sr-only" role="status" data-save-state={saving ? 'saving' : dirty ? 'unsaved' : 'clean'}>
               {saving ? 'Saving…' : dirty ? 'Not saved · kept in this browser' : ''}
             </span>
+            <button type="button" onClick={cancel} disabled={saving} className={quiet}>Cancel</button>
             <button type="submit" disabled={saving || !draft.title.trim()} className={`${primary} flex-1 sm:flex-none`} title="Save (Ctrl or Cmd + S)">
               {saving ? <><Loader2 className="size-4 animate-spin" /> Saving…</> : 'Save'}
             </button>
@@ -385,131 +646,143 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   }
 
   // ── Reading ────────────────────────────────────────────────────────────────
-  if (!note) return shell(null)
+  if (!note) return simple(null)
   const context = [note.subjectName, note.topicName].filter(Boolean).join(' · ')
 
-  return shell(
-    <article className="mt-6" data-note-view={note.id}>
-      <p className="text-xs text-keppel-300/75" data-note-context>{context || <span className="text-foreground/40">No subject</span>}</p>
-      <h1 className="mt-1.5 text-2xl font-semibold leading-tight tracking-tight text-foreground sm:text-3xl">{note.title}</h1>
-      <p className="mt-2 text-xs text-foreground/40">Last updated {relativeDay(note.updatedAt)}</p>
+  return workspace(
+    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto" data-note-scroll>
+      <article className="mx-auto w-full max-w-3xl px-5 pb-20 pt-8 sm:px-10" data-note-view={note.id}>
+        {banners}
+        <p className={`flex items-center gap-1.5 text-xs ${note.subjectName ? color.text : ''}`} data-note-context>
+          {note.subjectName && <span className={`size-1.5 rounded-full ${color.dot}`} aria-hidden />}
+          {context || <span className="text-foreground/40">No subject</span>}
+        </p>
+        <h1 className="mt-2 font-serif text-3xl font-semibold leading-tight tracking-tight text-keppel-200 sm:text-[2.6rem]">{note.title}</h1>
+        <p className="mt-2 text-xs text-foreground/40">
+          Last updated {relativeDay(note.updatedAt)}{source && <> · from <a href={source.url} target="_blank" rel="noopener noreferrer" className="text-sky-300/80 hover:underline">{source.label}</a></>}
+        </p>
 
-      <section className="mt-6 rounded-2xl border border-white/8 bg-card/50 p-4 sm:p-5" data-study>
-        {running ? (
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-foreground/65">
-              A session is already running{running.topicName ? <> on <span className="text-foreground/90">{running.topicName}</span></> : null}. Finish it to study from this note.
-            </p>
-            <Link href="/focus" className={quiet}>Resume session</Link>
-          </div>
-        ) : note.study.available ? (
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm leading-relaxed text-foreground/65">
-              Study <span className="text-foreground/90">{note.topicName}</span> from this note. The session, and how you say it went, is what updates your Knowledge. The note itself does not.
-            </p>
-            <button
-              type="button"
-              disabled={starting !== null}
-              onClick={() => void start({ topicName: note.topicName!, subjectName: note.subjectName!, durationMinutes: note.study.minutes }, note.id)}
-              className={`${primary} shrink-0`}
-            >
-              {starting ? <><Loader2 className="size-4 animate-spin" /> Starting…</> : <>Study this · {minutesLabel(note.study.minutes)} <ArrowRight className="size-4" /></>}
+        {justSaved && <p role="status" className="mt-4 flex items-center gap-1.5 text-sm text-foreground/70" data-note-saved><Check className="size-4 text-keppel-300" /> Saved</p>}
+
+        <div className="mt-8">
+          {note.body ? <NoteBody body={note.body} links={note.links.outgoing} serif={prefs.serif} /> : (
+            <button type="button" onClick={() => setEditing(true)} className="w-full rounded-2xl border border-dashed border-white/10 px-6 py-10 text-center text-sm text-foreground/45 transition-colors hover:border-keppel-400/40 hover:text-foreground/70">
+              This note is empty. Press E or click here to write it.
             </button>
+          )}
+        </div>
+
+        <section className="mt-12 rounded-2xl border border-white/8 bg-card/50 p-4 sm:p-5" data-study>
+          {running ? (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-foreground/65">
+                A session is already running{running.topicName ? <> on <span className="text-foreground/90">{running.topicName}</span></> : null}. Finish it to study from this note.
+              </p>
+              <Link href="/focus" className={quiet}>Resume session</Link>
+            </div>
+          ) : note.study.available ? (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm leading-relaxed text-foreground/65">
+                Study <span className="text-foreground/90">{note.topicName}</span> from this note. The session, and how you say it went, is what updates your Knowledge. The note itself does not.
+              </p>
+              <button
+                type="button"
+                disabled={starting !== null}
+                onClick={() => void start({ topicName: note.topicName!, subjectName: note.subjectName!, durationMinutes: note.study.minutes }, note.id)}
+                className={`${primary} shrink-0`}
+              >
+                {starting ? <><Loader2 className="size-4 animate-spin" /> Starting…</> : <>Study this · {minutesLabel(note.study.minutes)} <ArrowRight className="size-4" /></>}
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm leading-relaxed text-foreground/60" data-study-blocked={note.study.blockedBy ?? ''}>
+                {note.study.blockedBy === 'no_subject'
+                  ? 'Study this is unavailable: the note has no subject, and Nova won’t guess one. Add a subject and topic to study from it.'
+                  : 'Study this is unavailable: the note has no topic. Add one to study from it.'}
+              </p>
+              <button type="button" onClick={() => setEditing(true)} className={`${quiet} shrink-0`}>Add {note.study.blockedBy === 'no_subject' ? 'subject' : 'topic'}</button>
+            </div>
+          )}
+          {startError && <p role="alert" className="mt-3 text-sm text-red-300">{startError}</p>}
+          <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-white/6 pt-3">
+            <button type="button" onClick={() => void reviewTask()} disabled={taskState === 'adding'} className="text-sm text-keppel-300 hover:underline disabled:opacity-50" data-review-task>
+              {taskState === 'adding' ? 'Adding…' : 'Make a review task'}
+            </button>
+            {taskState === 'added' && <span role="status" className="text-xs text-foreground/60">On your task board. <Link href="/planner?view=board" className="underline">Open it</Link></span>}
+            {taskState === 'failed' && <span role="alert" className="text-xs text-red-300">That task didn&apos;t save. Try again.</span>}
           </div>
-        ) : (
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm leading-relaxed text-foreground/60" data-study-blocked={note.study.blockedBy ?? ''}>
-              {note.study.blockedBy === 'no_subject'
-                ? 'Study this is unavailable: the note has no subject, and Nova won’t guess one. Add a subject and topic to study from it.'
-                : 'Study this is unavailable: the note has no topic. Add one to study from it.'}
-            </p>
-            <button type="button" onClick={() => setEditing(true)} className={`${quiet} shrink-0`}>Add {note.study.blockedBy === 'no_subject' ? 'subject' : 'topic'}</button>
-          </div>
+        </section>
+
+        {note.body.trim() && (
+          <NoteAssistPanel
+            note={note}
+            onNoteSaved={n => { setNote(n); setDraft(draftOf(n)); setSaved(draftOf(n)) }}
+            onUseDraft={body => { setDraft(d => ({ ...d, body })); setEditing(true); setPrefsState(p => p.layout === 'write' ? { ...p, layout: 'split' } : p) }}
+          />
         )}
-        {startError && <p role="alert" className="mt-3 text-sm text-red-300">{startError}</p>}
-        <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-white/6 pt-3">
-          <button type="button" onClick={() => void reviewTask()} disabled={taskState === 'adding'} className="text-sm text-keppel-300 hover:underline disabled:opacity-50" data-review-task>
-            {taskState === 'adding' ? 'Adding…' : 'Make a review task'}
-          </button>
-          {taskState === 'added' && <span role="status" className="text-xs text-foreground/60">On your task board. <Link href="/planner?view=board" className="underline">Open it</Link></span>}
-          {taskState === 'failed' && <span role="alert" className="text-xs text-red-300">That task didn&apos;t save. Try again.</span>}
-        </div>
-      </section>
 
-      {justSaved && <p role="status" className="mt-4 flex items-center gap-1.5 text-sm text-foreground/70" data-note-saved><Check className="size-4 text-keppel-300" /> Saved</p>}
-
-      <div className="mt-6">
-        {note.body ? <NoteBody body={note.body} links={note.links.outgoing} /> : <p className="text-[15px] text-foreground/35">This note is empty.</p>}
-      </div>
-
-      {note.body.trim() && (
-        <NoteAssistPanel
-          note={note}
-          onNoteSaved={n => { setNote(n); setDraft(draftOf(n)); setSaved(draftOf(n)) }}
-          onUseDraft={body => { setDraft(d => ({ ...d, body })); setEditing(true); setPreview(true) }}
-        />
-      )}
-
-      <section aria-labelledby="note-links-heading" className="mt-10 rounded-2xl border border-white/8 bg-card/40 p-4 sm:p-5" data-note-links>
-        <div className="flex items-center justify-between gap-3">
-          <h2 id="note-links-heading" className="flex items-center gap-2 text-sm font-semibold text-foreground"><Link2 className="size-4 text-keppel-300" /> Connections</h2>
-          <Link href={`/map?focus=${encodeURIComponent(`note:${note.id}`)}`} className="text-xs text-keppel-300 hover:underline" data-see-on-map>See on the map</Link>
-        </div>
-        <div className="mt-3 grid gap-5 sm:grid-cols-2">
-          <div>
-            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-foreground/40">Links from this note</p>
-            {note.links.outgoing.length === 0 ? (
-              <p className="mt-2 text-xs leading-relaxed text-foreground/50">None yet. Write a title in double brackets, like [[Deadlocks]], to link another note.</p>
-            ) : (
-              <ul className="mt-2 space-y-1.5 text-sm">
-                {note.links.outgoing.map(l => {
-                  const { href, missing } = linkHref(l, l.title)
-                  return (
-                    <li key={l.title}>
-                      <Link href={href} className={missing ? 'text-foreground/60 underline decoration-dashed underline-offset-2 hover:text-foreground' : 'text-keppel-300 hover:underline'}>{l.title}</Link>
-                      <span className="ml-2 text-xs text-foreground/40">{missing ? 'not written yet' : l.noteId ? 'note' : 'topic'}</span>
+        <section id="note-connections" aria-labelledby="note-links-heading" className="mt-10 scroll-mt-6 rounded-2xl border border-white/8 bg-card/40 p-4 sm:p-5" data-note-links>
+          <div className="flex items-center justify-between gap-3">
+            <h2 id="note-links-heading" className="flex items-center gap-2 text-sm font-semibold text-foreground"><Link2 className="size-4 text-keppel-300" /> Connections</h2>
+            <Link href={`/map?focus=${encodeURIComponent(`note:${note.id}`)}`} className="text-xs text-keppel-300 hover:underline" data-see-on-map>See on the map</Link>
+          </div>
+          <div className="mt-3 grid gap-5 sm:grid-cols-2">
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-foreground/40">Links from this note</p>
+              {note.links.outgoing.length === 0 ? (
+                <p className="mt-2 text-xs leading-relaxed text-foreground/50">None yet. Write a title in double brackets, like [[Deadlocks]], to link another note.</p>
+              ) : (
+                <ul className="mt-2 space-y-1.5 text-sm">
+                  {note.links.outgoing.map(l => {
+                    const { href, missing } = linkHref(l, l.title)
+                    return (
+                      <li key={l.title}>
+                        <Link href={href} className={missing ? 'text-foreground/60 underline decoration-dashed underline-offset-2 hover:text-foreground' : 'text-keppel-300 hover:underline'}>{l.title}</Link>
+                        <span className="ml-2 text-xs text-foreground/40">{missing ? 'not written yet' : l.noteId ? 'note' : 'topic'}</span>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-foreground/40">Linked from</p>
+              {note.links.backlinks.length === 0 ? (
+                <p className="mt-2 text-xs leading-relaxed text-foreground/50">No other note links here yet. Notes that write [[{note.title}]] appear here.</p>
+              ) : (
+                <ul className="mt-2 space-y-2.5 text-sm">
+                  {note.links.backlinks.map(b => (
+                    <li key={b.noteId}>
+                      <Link href={`/notes/${encodeURIComponent(b.noteId!)}`} className="text-keppel-300 hover:underline">{b.title}</Link>
+                      {b.subjectName && <span className="ml-2 text-xs text-foreground/40">{b.subjectName}</span>}
+                      {b.context && <p className="mt-0.5 text-xs leading-relaxed text-foreground/50">{b.context}</p>}
                     </li>
-                  )
-                })}
-              </ul>
-            )}
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
-          <div>
-            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-foreground/40">Linked from</p>
-            {note.links.backlinks.length === 0 ? (
-              <p className="mt-2 text-xs leading-relaxed text-foreground/50">No other note links here yet. Notes that write [[{note.title}]] appear here.</p>
-            ) : (
-              <ul className="mt-2 space-y-2.5 text-sm">
-                {note.links.backlinks.map(b => (
-                  <li key={b.noteId}>
-                    <Link href={`/notes/${encodeURIComponent(b.noteId!)}`} className="text-keppel-300 hover:underline">{b.title}</Link>
-                    {b.subjectName && <span className="ml-2 text-xs text-foreground/40">{b.subjectName}</span>}
-                    {b.context && <p className="mt-0.5 text-xs leading-relaxed text-foreground/50">{b.context}</p>}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
-      </section>
+        </section>
 
-      {error && <p role="alert" className="mt-4 text-sm text-red-300">{error}</p>}
+        {error && <p role="alert" className="mt-4 text-sm text-red-300">{error}</p>}
 
-      <div className="mt-10 flex flex-wrap items-center gap-3 border-t border-white/8 pt-5">
-        <button type="button" onClick={() => setEditing(true)} className={quiet}><Pencil className="size-4" /> Edit</button>
-        {confirmDelete ? (
-          <>
-            <button type="button" onClick={() => void remove()} disabled={deleting} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-red-400/40 px-4 text-sm font-medium text-red-300 transition-colors hover:bg-red-400/10 disabled:opacity-60">
-              {deleting ? <Loader2 className="size-4 animate-spin" /> : 'Delete for good'}
+        <div className="mt-10 flex flex-wrap items-center gap-3 border-t border-white/8 pt-5">
+          <button type="button" onClick={() => setEditing(true)} className={quiet}><Pencil className="size-4" /> Edit</button>
+          {confirmDelete ? (
+            <>
+              <button type="button" onClick={() => void remove()} disabled={deleting} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-red-400/40 px-4 text-sm font-medium text-red-300 transition-colors hover:bg-red-400/10 disabled:opacity-60">
+                {deleting ? <Loader2 className="size-4 animate-spin" /> : 'Delete for good'}
+              </button>
+              <button type="button" onClick={() => setConfirmDelete(false)} disabled={deleting} className="text-sm text-foreground/55 hover:text-foreground">Keep it</button>
+            </>
+          ) : (
+            <button type="button" onClick={() => setConfirmDelete(true)} className="inline-flex h-10 items-center gap-2 px-2 text-sm text-foreground/50 transition-colors hover:text-red-300">
+              <Trash2 className="size-4" /> Delete
             </button>
-            <button type="button" onClick={() => setConfirmDelete(false)} disabled={deleting} className="text-sm text-foreground/55 hover:text-foreground">Keep it</button>
-          </>
-        ) : (
-          <button type="button" onClick={() => setConfirmDelete(true)} className="inline-flex h-11 items-center gap-2 px-2 text-sm text-foreground/50 transition-colors hover:text-red-300">
-            <Trash2 className="size-4" /> Delete
-          </button>
-        )}
-      </div>
-    </article>,
+          )}
+        </div>
+      </article>
+    </div>,
   )
 }
