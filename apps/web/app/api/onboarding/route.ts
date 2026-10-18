@@ -11,6 +11,9 @@ function unavailable(reason: string) {
   return NextResponse.json({ error: AUTH_UNAVAILABLE }, { status: 502 })
 }
 
+// Room for the API to wake from idle; see UPSTREAM_TIMEOUT_MS in auth-proxy.ts.
+export const maxDuration = 60
+
 export async function POST(req: Request) {
   const cookieStore = await cookies()
   const token = cookieStore.get("kevo_session")?.value

@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test } from 'node:test'
 import { PROXY_CLIENT_IP_HEADER, PROXY_PROOF_HEADER } from '@repo/api/auth/proxy-headers'
-import { AUTH_UNAVAILABLE, UPSTREAM_TIMEOUT_MS, apiBase, proxyAuth } from './auth-proxy'
+import { AUTH_ROUTE_MAX_DURATION_SECONDS, AUTH_UNAVAILABLE, UPSTREAM_TIMEOUT_MS, apiBase, proxyAuth } from './auth-proxy'
 
 const SITE = 'https://www.thekivo.in'
 const API = 'https://kivo-api.example'
@@ -216,6 +216,33 @@ test('the bare domain and www are both this site, so either can send auth reques
     })
     const response = await proxyAuth(req, '/api/forgot-password', { grantSession: false, fetch: api.fetch, env: env() })
     assert.equal(response.status, 200, host)
+  }
+})
+
+test('every route that waits on the API may run longer than the wait, so a slow API is answered, not cut off', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const apiDir = fileURLToPath(new URL('.', import.meta.url))
+  const routes = (readdirSync(apiDir, { recursive: true }) as string[])
+    .filter((path) => path.endsWith('route.ts'))
+    .map((path) => ({ path, source: readFileSync(join(apiDir, path), 'utf8') }))
+    .filter(({ source }) => source.includes('proxyAuth(') || source.includes('UPSTREAM_TIMEOUT_MS'))
+
+  assert.deepEqual(routes.map(({ path }) => path.split('\\').join('/')).sort(), [
+    'forgot-password/route.ts',
+    'login/route.ts',
+    'onboarding/route.ts',
+    'reset-password/route.ts',
+    'signup/resend/route.ts',
+    'signup/route.ts',
+    'signup/verify/route.ts',
+  ])
+  assert.ok(AUTH_ROUTE_MAX_DURATION_SECONDS * 1000 > UPSTREAM_TIMEOUT_MS, 'the wait must end before the function does')
+  for (const { path, source } of routes) {
+    const declared = source.match(/^export const maxDuration = (\d+)$/m)
+    assert.ok(declared, `${path} declares no maxDuration`)
+    assert.equal(Number(declared[1]), AUTH_ROUTE_MAX_DURATION_SECONDS, path)
   }
 })
 
