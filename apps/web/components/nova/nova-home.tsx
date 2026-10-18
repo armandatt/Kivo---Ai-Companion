@@ -17,7 +17,7 @@ import type { NovaNotesView } from '@repo/api/nova/product/notes.types'
 import type { NovaCreatureView } from '@repo/api/nova/product/creature.types'
 import type { NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
 import type { NovaProgressView } from '@repo/api/nova/product/progress.types'
-import { AccountingFor, DayFlow, NowBlock, TodayPlan, WorkingToward } from './today-sections'
+import { AccountingFor, TodayPlan, WorkingToward } from './today-sections'
 import { TodayHero } from './today-hero'
 import { CompanionCard, ContinueLearning, Deadlines, PageProperties, WeekSoFar } from './home-panels'
 import { TodayTasks } from './tasks/today-tasks'
@@ -25,7 +25,7 @@ import { useTasks } from './tasks/use-tasks'
 import { useNovaView } from './use-nova-view'
 import { firstName, greeting, inDays } from './format'
 import { useStartSession } from './use-start-session'
-import { CommandButton, CommandPalette, useCommandShortcut } from './workspace/command-palette'
+import { CommandPalette, useCommandShortcut } from './workspace/command-palette'
 import { NewMenu } from './workspace/new-menu'
 import { SURFACE_RAISED } from './workspace/ui'
 import { taskTopicHref, topicRecord } from './today-links'
@@ -115,45 +115,43 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
   // while a session runs: the Focus screen shows that session's own.
   const recContext = useFocusContext(rec ? { subjectName: rec.subjectName, topicName: rec.topicName } : null, rec?.topicName ?? null, !active && rec !== null)
 
+  const timeControl = !active ? <TimeAvailable compact minutes={minutes} onChange={onMinutes} busy={refreshing} /> : undefined
+
   return (
-    <div className="mx-auto w-full max-w-7xl pb-20 pt-12 lg:pt-2">
-      {/* The day, at a glance: the greeting on the day's colours, its flow,
-          the two ways to act on anything, and the one thing to do next */}
+    <div className="mx-auto w-full max-w-6xl pb-20 pt-12 lg:pt-2">
+      {/* The page title: the day, the greeting, what kind of day it is.
+          Search is one keystroke away (Cmd or Ctrl + K), not a box here. */}
       <TodayHero
         greeting={<>{greeting(new Date())}{name ? <span className="text-foreground/45">, {name}</span> : ''}</>}
         context={context}
         subjects={dayBlocks.map(b => b.subjectName)}
         properties={<PageProperties view={view} />}
-        actions={<>
-          <div className="min-w-0 flex-1 sm:flex-none"><CommandButton onOpen={() => setPaletteOpen(true)} /></div>
-          <NewMenu onNewTask={() => { composer.current?.scrollIntoView({ block: 'center' }); composer.current?.focus() }} />
-        </>}
-        focal={active ? <ActiveSessionCard session={active} /> : rec ? (
-          <NowBlock action={rec} why={whyContext} record={recordOf(rec)} onStart={() => void start(rec)}
-            starting={starting === rec.topicName} error={startError} disabled={starting !== null} />
-        ) : null}
-      >
-        <DayFlow blocks={dayBlocks} plan={view.plan} nowFirst={!active && rec !== null} />
-        {!active && <TimeAvailable minutes={minutes} onChange={onMinutes} busy={refreshing} />}
-      </TodayHero>
+        actions={<NewMenu onNewTask={() => { composer.current?.scrollIntoView({ block: 'center' }); composer.current?.focus() }} />}
+      />
 
-      <div className="mt-10 grid grid-cols-1 gap-x-10 gap-y-10 lg:grid-cols-[minmax(0,1fr)_17rem] xl:grid-cols-[minmax(0,1fr)_19rem]">
+      <div className="mt-10 grid grid-cols-1 gap-x-12 gap-y-12 lg:grid-cols-[minmax(0,1fr)_17.5rem]">
         {/* ── The day's work ─────────────────────────────────────────────── */}
         <div className="min-w-0 space-y-10">
           <div className="space-y-5">
-            {/* The plan in the planner's order, after the block to do now
-                (open in the hero). With a session running, nothing starts
-                from here. */}
+            {active && <ActiveSessionCard session={active} />}
+            {/* The plan in the planner's order: the day's bar and how long
+                there is, the block to do now opened out, then the rest.
+                With a session running, nothing starts from here. */}
             <TodayPlan
               recommendation={rec} alternatives={view.alternatives}
               blockCount={view.plan.blockCount} plan={view.plan} why={whyContext}
               onStart={active ? undefined : start} disabled={starting !== null}
-              starting={starting} error={startError} recordOf={recordOf} leadShown
+              starting={starting} error={startError} recordOf={recordOf}
+              controls={timeControl}
             />
+
+            {/* With no block on the plan, the time can still be changed:
+                too little of it is one reason there is none. */}
+            {dayBlocks.length === 0 && timeControl}
 
             {empty && (
               <section className={`${SURFACE_RAISED} relative isolate overflow-hidden p-5 sm:p-7`} data-empty={view.emptyReason ?? undefined}>
-                <div aria-hidden className="nova-canvas pointer-events-none absolute inset-0 -z-10 opacity-60 [mask-image:linear-gradient(to_left,black,transparent_60%)]" />
+                <div aria-hidden className="nova-canvas pointer-events-none absolute inset-0 -z-10 opacity-60 mask-[linear-gradient(to_left,black,transparent_60%)]" />
                 <p className="text-xs font-semibold text-foreground/60">No recommendation yet</p>
                 <h2 className="mt-2 text-xl font-semibold leading-snug tracking-tight text-foreground">{empty.title}</h2>
                 <p className="mt-2 max-w-prose text-sm leading-relaxed text-foreground/70">{empty.body}</p>
@@ -173,11 +171,11 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
             )}
 
             {!active && view.plan.shortfall && <ShortfallNote shortfall={view.plan.shortfall} timeHref="/planner" />}
-          </div>
 
-          {!active && rec && (
-            <ChooseAnother alternatives={view.alternatives} onStart={a => void start(a)} disabled={starting !== null} />
-          )}
+            {!active && rec && (
+              <ChooseAnother alternatives={view.alternatives} onStart={a => void start(a)} disabled={starting !== null} />
+            )}
+          </div>
 
           {!active && rec && (
             <LinkedToTopic topicName={rec.topicName} subjectName={rec.subjectName} context={recContext} map={map} />
@@ -198,7 +196,7 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
         </div>
 
         {/* ── The margin: dates, the week, where you left off, intent ─────── */}
-        <aside aria-label="Today's context" className={`min-w-0 space-y-6 ${!active && !rec ? '' : 'lg:pt-28'}`}>
+        <aside aria-label="Today's context" className="min-w-0 divide-y divide-white/8 [&>*]:py-6 [&>*:first-child]:pt-0">
           <Deadlines exams={view.upcoming} tasks={tasks ?? []} />
           <WeekSoFar view={view} weeks={progressView} />
           <ContinueLearning
@@ -213,11 +211,11 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
           />
           {/* What the learner said they are working toward, and what Nova is
               allowing for. */}
-          <div className="border-t border-white/8 pt-5">
+          <div>
             <WorkingToward goals={view.goals} />
             <AccountingFor constraints={view.constraints} />
           </div>
-          <div className="space-y-3 border-t border-white/8 pt-5">
+          <div className="space-y-3">
             <CompanionCard creature={creature.view} name={null} />
             <TelegramCard />
           </div>

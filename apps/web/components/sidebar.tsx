@@ -27,6 +27,7 @@ import {
   X,
 } from 'lucide-react'
 import { NOVA_ROUTES, type Companion } from '@repo/api/nova/product/companion'
+import { KivoLogo } from './KivoLogo'
 import { cn } from '@/lib/utils'
 import { ThemePicker } from '@/components/theme/kivo-theme'
 import { trappedTabTarget } from '@/components/settings/dialog-focus'
@@ -247,22 +248,22 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
           mode.ownToggle && 'pl-16 lg:pl-6',
           rail && 'lg:flex-col lg:px-2 lg:py-4',
         )}>
-          <Link href="/home" onClick={close} title={rail ? `${isNova ? 'Nova' : 'Rex'} home` : undefined} className="flex items-center gap-3 group">
-            <div className="relative shrink-0">
-              <div className={cn(
-                'w-10 h-10 bg-linear-to-br rounded-lg flex items-center justify-center font-bold text-black text-lg',
-                isNova ? 'from-keppel-300 to-keppel-600' : 'from-green-400 to-green-600',
-              )}>
-                {isNova ? 'N' : 'R'}
+          <Link href="/home" onClick={close} title={rail ? `${isNova ? 'Kivo' : 'Rex'} home` : undefined} className="flex items-center gap-3 group">
+            {isNova ? (
+              // Kivo's own mark, as on the landing page: Nova is Kivo's
+              // learning environment, not a separate brand.
+              <span className="shrink-0 overflow-hidden rounded-[10px] shadow-[0_0_0_1px_rgb(0_0_0/0.08),0_6px_16px_-8px_rgb(0_0_0/0.5)] transition-transform group-hover:scale-[1.04]">
+                <KivoLogo size={36} />
+              </span>
+            ) : (
+              <div className="relative shrink-0">
+                <div className="w-10 h-10 bg-linear-to-br rounded-lg flex items-center justify-center font-bold text-black text-lg from-green-400 to-green-600">R</div>
+                <div className="absolute inset-0 rounded-lg blur opacity-50 group-hover:opacity-75 transition-opacity -z-10 bg-green-400" />
               </div>
-              <div className={cn(
-                'absolute inset-0 rounded-lg blur opacity-50 group-hover:opacity-75 transition-opacity -z-10',
-                isNova ? 'bg-keppel-400' : 'bg-green-400',
-              )} />
-            </div>
+            )}
             <div className={cn('flex flex-col', rail && 'lg:sr-only')}>
-              <span className="font-semibold text-sm leading-tight">{isNova ? 'Nova' : 'Rex'}</span>
-              <span className="text-xs text-sidebar-foreground/60">{isNova ? 'Learning mentor' : 'AI Coach'}</span>
+              <span className={cn('leading-tight', isNova ? 'text-[17px] font-semibold tracking-[-0.02em]' : 'font-semibold text-sm')}>{isNova ? 'Kivo' : 'Rex'}</span>
+              <span className="text-xs text-sidebar-foreground/60">{isNova ? 'Learning environment' : 'AI Coach'}</span>
             </div>
           </Link>
           {mode.closeButton && (

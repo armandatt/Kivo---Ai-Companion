@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
 import { useStartSession } from '../use-start-session'
 import { useNovaView } from '../use-nova-view'
 import { useTasks } from '../tasks/use-tasks'
-import { CommandButton, CommandPalette, useCommandShortcut } from '../workspace/command-palette'
+import { CommandPalette, useCommandShortcut } from '../workspace/command-palette'
 import { BUTTON_PRIMARY, BUTTON_QUIET, LoadFailed, SectionHeading, Skeleton, SURFACE, SURFACE_RAISED, TEXT_LINK } from '../workspace/ui'
 import { DueReviews } from './due-reviews'
 import { searchSubjects } from './knowledge-search'
@@ -116,43 +116,53 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
 
   return (
     <div className="mx-auto w-full max-w-7xl pb-20 pt-12 lg:pt-2">
-      <header className="nova-hero relative overflow-hidden rounded-[1.75rem] border border-white/8 p-5 shadow-soft sm:p-8" style={heroStyle(view.subjects.map(sub => sub.subjectName))}>
-        <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
+      {/* The page title, as on Today: no banner. Search is Cmd or Ctrl + K. */}
+      <header className="relative isolate" data-section="knowledge-header">
+        <div aria-hidden className="nova-hero pointer-events-none absolute -inset-x-16 -top-10 -z-10 h-72 opacity-60 mask-[radial-gradient(ellipse_70%_100%_at_30%_0%,black,transparent_75%)]" style={heroStyle(view.subjects.map(sub => sub.subjectName))} />
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-keppel-300">Knowledge Space</p>
-            <h1 className="mt-3 text-[2rem] font-semibold leading-[1.05] tracking-[-0.03em] text-foreground sm:text-[2.6rem]">Your learning, connected</h1>
-            <p className="mt-2 max-w-prose text-sm leading-relaxed text-foreground/65">
+            <h1 className="mt-2 text-[1.9rem] font-semibold leading-[1.08] tracking-[-0.03em] text-foreground sm:text-[2.4rem]">Your learning, connected</h1>
+            <p className="mt-2 max-w-prose text-sm leading-relaxed text-foreground/60">
               Every subject and topic on record, what you filed under them, and what is due to revisit.
             </p>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <div className="min-w-0 flex-1 md:flex-none"><CommandButton onOpen={() => setPaletteOpen(true)} /></div>
-            <button type="button" onClick={() => setEditing(e => !e)} aria-expanded={editing} data-edit-subjects className={cn(BUTTON_QUIET, 'h-9 bg-card/70')}>
+          <div className="flex shrink-0 flex-wrap items-center gap-2 md:pt-1">
+            <button type="button" onClick={() => setEditing(e => !e)} aria-expanded={editing} data-edit-subjects className={cn(BUTTON_QUIET, 'h-9')}>
               <Settings2 aria-hidden className="size-4" /> Edit subjects
             </button>
             <Link href="/notes/new" className={cn(BUTTON_PRIMARY, 'h-9 px-3')}><NotebookPen aria-hidden className="size-4" /> New note</Link>
           </div>
         </div>
-        {!noSubjects && (
-          <dl aria-label="On record" className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:max-w-3xl">
-            {[
-              { label: 'Subjects', value: view.totals.subjectCount },
-              { label: 'Topics', value: view.totals.topicCount },
-              ...(mapReady ? [{ label: 'Notes', value: mapReady.counts.note }, { label: 'Saved pages', value: mapReady.counts.resource }] : []),
-              ...(view.totals.dueCount > 0 ? [{ label: 'Due to revisit', value: view.totals.dueCount, due: true }] : []),
-            ].map(stat => (
-              <div key={stat.label} className="rounded-2xl border border-white/8 bg-card/70 px-4 py-3 backdrop-blur-sm">
-                <dt className="text-[11px] font-medium text-foreground/55">{stat.label}</dt>
-                <dd className={cn('mt-0.5 text-2xl font-semibold tabular-nums tracking-tight', 'due' in stat && stat.due ? 'text-amber-300' : 'text-foreground')}>{stat.value}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
-        <nav aria-label="Knowledge navigation" className="mt-6 flex flex-wrap items-center gap-2">
+        {!noSubjects && (() => {
+          const stats = [
+            { label: 'Subjects', value: view.totals.subjectCount },
+            { label: 'Topics', value: view.totals.topicCount },
+            ...(mapReady ? [{ label: 'Notes', value: mapReady.counts.note, href: '/notes' }, { label: 'Saved pages', value: mapReady.counts.resource, href: '/saved' }] : []),
+            ...(view.totals.dueCount > 0 ? [{ label: 'Due to revisit', value: view.totals.dueCount, due: true }] : []),
+          ]
+          // One strip across the page, every figure the same width.
+          return (
+            <dl aria-label="On record" className="mt-7 grid grid-cols-2 divide-white/8 overflow-hidden rounded-2xl border border-white/8 bg-card/50 sm:flex sm:divide-x">
+              {stats.map(stat => {
+                const body = (
+                  <>
+                    <dt className="text-[11px] font-medium text-foreground/50">{stat.label}</dt>
+                    <dd className={cn('mt-0.5 text-[1.6rem] font-semibold tabular-nums leading-tight tracking-tight', 'due' in stat && stat.due ? 'text-amber-300' : 'text-foreground')}>{stat.value}</dd>
+                  </>
+                )
+                return 'href' in stat && stat.href
+                  ? <Link key={stat.label} href={stat.href} className="block px-5 py-3.5 transition-colors hover:bg-white/[0.03] sm:flex-1">{body}</Link>
+                  : <div key={stat.label} className="px-5 py-3.5 sm:flex-1">{body}</div>
+              })}
+            </dl>
+          )
+        })()}
+        <nav aria-label="Knowledge navigation" className="mt-4 flex flex-wrap items-center gap-1">
           {quickLinks.map(({ href, label, icon: Icon }) => (
-            <Link key={href} href={href} className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-card/60 px-3 text-xs font-medium text-foreground/70 transition-colors hover:border-white/25 hover:text-foreground"><Icon aria-hidden className="size-3.5" /> {label}</Link>
+            <Link key={href} href={href} className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-foreground/60 transition-colors hover:bg-white/5 hover:text-foreground"><Icon aria-hidden className="size-3.5" /> {label}</Link>
           ))}
-          <Link href="/home" className={cn(TEXT_LINK, 'ml-1')}>Back to Today <ArrowRight aria-hidden className="size-3" /></Link>
+          <Link href="/home" className={cn(TEXT_LINK, 'ml-auto')}>Back to Today <ArrowRight aria-hidden className="size-3" /></Link>
         </nav>
       </header>
 
@@ -160,7 +170,7 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
 
       {noSubjects ? (
         <section className={cn(SURFACE_RAISED, 'relative isolate mt-8 overflow-hidden p-6 sm:p-8')} data-empty="subjects">
-          <div aria-hidden className="nova-canvas pointer-events-none absolute inset-0 -z-10 opacity-70 [mask-image:linear-gradient(to_left,black,transparent_70%)]" />
+          <div aria-hidden className="nova-canvas pointer-events-none absolute inset-0 -z-10 opacity-70 mask-[linear-gradient(to_left,black,transparent_70%)]" />
           <h2 className="text-lg font-semibold tracking-tight text-foreground">Nova doesn&apos;t have enough learning context yet</h2>
           <p className="mt-2 max-w-prose text-sm leading-relaxed text-foreground/65">
             It doesn&apos;t know which subjects you are taking. Tell it on Today and this page will start to fill in.
@@ -180,7 +190,7 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
             </div>
           )}
 
-          <div className="mt-8 grid grid-cols-1 gap-x-8 gap-y-6 lg:grid-cols-[15rem_minmax(0,1fr)] xl:grid-cols-[16rem_minmax(0,1fr)_17rem]">
+          <div className="mt-10 grid grid-cols-1 gap-x-10 gap-y-6 lg:grid-cols-[15rem_minmax(0,1fr)] xl:grid-cols-[15rem_minmax(0,1fr)_15rem]">
             {/* ── The outline: every subject, and a search over their names ── */}
             <nav aria-label="Subjects" className="min-w-0 lg:sticky lg:top-4 lg:self-start">
               <label className="relative block">

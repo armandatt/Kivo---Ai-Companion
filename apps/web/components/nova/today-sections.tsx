@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { ArrowRight, ChevronDown, Clock, ListOrdered, Loader2, Target } from 'lucide-react'
 import type { NovaTodayReady, TodayAction } from '@repo/api/nova/product/today.types'
@@ -39,7 +39,7 @@ const BASIS_LABEL: Record<NovaTodayReady['plan']['budgetBasis'], string> = {
 // colour and when it starts, counted from the blocks before it. Today
 // carries the first few blocks of the day; when the day has more, the count
 // says so and the Planner has the rest.
-export function TodayPlan({ recommendation, alternatives, blockCount, plan, why, onStart, starting, error, disabled, recordOf, leadShown = false }: {
+export function TodayPlan({ recommendation, alternatives, blockCount, plan, why, onStart, starting, error, disabled, recordOf, leadShown = false, controls }: {
   recommendation: TodayAction | null
   alternatives:   TodayAction[]
   blockCount:     number
@@ -56,6 +56,8 @@ export function TodayPlan({ recommendation, alternatives, blockCount, plan, why,
   recordOf?:      (action: TodayAction) => TopicRecord | null
   // The block to do now is already open in the hero above.
   leadShown?:     boolean
+  // Beside the day's bar: how long the learner has.
+  controls?:      ReactNode
 }) {
   const blocks = recommendation ? [recommendation, ...alternatives] : alternatives
   if (blocks.length === 0) return null
@@ -77,59 +79,44 @@ export function TodayPlan({ recommendation, alternatives, blockCount, plan, why,
         {skipLead ? 'Then' : 'Today’s plan'}
       </SectionHeading>
 
-      {!leadShown && <DayFlow blocks={blocks} plan={plan} nowFirst={now} className="mt-3" />}
+      {!leadShown && (
+        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
+          <DayFlow blocks={blocks} plan={plan} nowFirst={now} className="min-w-0 flex-1" />
+          {controls && <div className="shrink-0">{controls}</div>}
+        </div>
+      )}
 
-      <ol className="mt-4">
+      {skipLead ? null : blocks[0] && now && (
+        <div className="mt-4">
+          <NowBlock action={blocks[0]} why={why} record={recordOf?.(blocks[0]) ?? null} onStart={() => onStart!(blocks[0]!)} starting={starting === blocks[0].topicName} error={error ?? null} disabled={disabled} />
+        </div>
+      )}
+      {blocks.length > (now ? 1 : 0) && <ol className="mt-3 divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8 bg-card/40">
         {blocks.map((action, i) => {
-          if (i === 0 && skipLead) return null
-          const isNow = i === 0 && now
-          const last  = i === blocks.length - 1
-          const next  = blocks[i + 1]
+          if (i === 0 && now) return null
           return (
-            <li key={`${action.subjectName}:${action.topicName}`} className="subject-tone relative flex gap-3 sm:gap-4" style={toneStyle(action.subjectName)}>
-              {/* The day's thread: a stop in the block's colour, and a line
-                  that turns into the next block's colour */}
-              <div aria-hidden className="relative flex w-8 shrink-0 flex-col items-center">
-                <span className={cn(
-                  'z-10 mt-4 flex size-8 items-center justify-center rounded-full text-xs font-bold tabular-nums transition-transform',
-                  isNow ? 'bg-[var(--sc)] text-[oklch(20%_0.03_var(--sh))] shadow-soft' : 'border-2 border-[var(--sc)] bg-card text-[var(--sc-ink)]',
-                )}>{i + 1}</span>
-                {!last && (
-                  <span className="absolute bottom-0 top-12 w-0.5 rounded-full opacity-60"
-                    style={{ background: `linear-gradient(var(--sc), oklch(var(--tone-l) var(--tone-c) ${subjectColor(next?.subjectName).hue}))` }} />
+            <li key={`${action.subjectName}:${action.topicName}`} className="subject-tone group relative flex items-start gap-3 px-4 py-3 transition-colors hover:bg-white/[0.025]" style={toneStyle(action.subjectName)}>
+              <span aria-hidden className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-[var(--sc-soft)] text-[11px] font-semibold tabular-nums text-[var(--sc-ink)]">{i + 1}</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-baseline gap-x-2">
+                  <p className="text-[14px] font-medium tracking-tight text-foreground/95"><span className="sr-only">Block {i + 1}: </span>{action.topicName}</p>
+                  <p className="text-[11px] tabular-nums text-foreground/45">{startsAt[i] === 0 ? 'First' : `after ${minutesLabel(startsAt[i])}`}</p>
+                </div>
+                <BlockMeta action={action} />
+                <RecordLine record={recordOf?.(action) ?? null} />
+                {action.reasons.length > 0 && (
+                  <p className="mt-1 text-xs leading-relaxed text-foreground/50">{action.reasons.map(sentenceCase).join(' · ')}</p>
                 )}
               </div>
-              <div className={cn('min-w-0 flex-1', last ? 'pb-0' : 'pb-3')}>
-                {isNow ? (
-                  <NowBlock action={action} why={why} record={recordOf?.(action) ?? null} onStart={() => onStart!(action)} starting={starting === action.topicName} error={error ?? null} disabled={disabled} />
-                ) : (
-                  <div className="group relative mt-1 flex flex-wrap items-start justify-between gap-x-4 gap-y-2 overflow-hidden rounded-xl border border-white/6 bg-card/60 py-3 pl-4 pr-3 transition-[border-color,box-shadow,transform] hover:-translate-y-px hover:border-[var(--sc-edge)] hover:shadow-soft focus-within:border-[var(--sc-edge)]">
-                    <span aria-hidden className="absolute inset-y-0 left-0 w-1 bg-[var(--sc)] opacity-70" />
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-medium tabular-nums text-foreground/50">
-                        {startsAt[i] === 0 ? 'First' : `After ${minutesLabel(startsAt[i])}`}
-                      </p>
-                      <p className="mt-0.5 text-[15px] font-semibold tracking-tight text-foreground/95">
-                        <span className="sr-only">Block {i + 1}: </span>{action.topicName}
-                      </p>
-                      <BlockMeta action={action} />
-                      <RecordLine record={recordOf?.(action) ?? null} />
-                      {action.reasons.length > 0 && (
-                        <p className="mt-1.5 text-xs leading-relaxed text-foreground/55">{action.reasons.map(sentenceCase).join(' · ')}</p>
-                      )}
-                    </div>
-                    {onStart && (
-                      <button type="button" disabled={disabled} onClick={() => onStart(action)} className={cn(BUTTON_QUIET, 'group-hover:border-[var(--sc-edge)]')}>
-                        {starting === action.topicName ? <><Loader2 aria-hidden className="size-3.5 animate-spin" /> Starting…</> : now ? 'Start instead' : 'Start'}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
+              {onStart && (
+                <button type="button" disabled={disabled} onClick={() => onStart(action)} className={cn(BUTTON_QUIET, 'shrink-0 opacity-80 group-hover:border-[var(--sc-edge)] group-hover:opacity-100')}>
+                  {starting === action.topicName ? <><Loader2 aria-hidden className="size-3.5 animate-spin" /> Starting…</> : now ? 'Start instead' : 'Start'}
+                </button>
+              )}
             </li>
           )
         })}
-      </ol>
+      </ol>}
     </section>
   )
 }
@@ -220,9 +207,10 @@ export function NowBlock({ action, why, record, onStart, starting, error, disabl
   )
 }
 
-// The day as a strip: each block in order, as wide as its minutes and in its
-// subject's colour, against the day's budget as the server reported it, with
-// what is left of the budget drawn empty. Nothing is estimated.
+// The day as one slim bar: each block in order, as long as its minutes and
+// in its subject's colour, against the day's budget as the server reported
+// it, with what is left of the budget drawn empty. Nothing is estimated. The
+// names are in the plan's list; the bar only shows the shape of the day.
 export function DayFlow({ blocks, plan, nowFirst, className }: {
   blocks:    TodayAction[]
   plan:      Pick<NovaTodayReady['plan'], 'totalMinutesToday' | 'budgetMinutes' | 'budgetBasis'>
@@ -235,29 +223,23 @@ export function DayFlow({ blocks, plan, nowFirst, className }: {
   const spare   = Math.max(0, plan.budgetMinutes - planned)
   return (
     <div className={className} data-section="plan-budget">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-xs">
-        <span className="font-semibold text-foreground/75">Today&apos;s flow</span>
-        <span className="text-foreground/55">{minutesLabel(plan.totalMinutesToday)} planned of {minutesLabel(plan.budgetMinutes)}, {BASIS_LABEL[plan.budgetBasis]}</span>
-      </div>
-      <ol aria-label="Today's blocks in order" className="mt-2 flex h-12 gap-1">
-        {blocks.map((b, i) => {
-          const lead = i === 0 && nowFirst
-          return (
-            <li key={`${b.subjectName}:${b.topicName}`} title={`${b.topicName} · ${b.subjectName} · ${minutesLabel(b.durationMinutes)}`}
-              className={cn('subject-tone relative min-w-6 overflow-hidden rounded-lg transition-[flex-grow] duration-500',
-                lead ? 'bg-[var(--sc)] text-[oklch(20%_0.03_var(--sh))] shadow-soft' : 'border border-[var(--sc-edge)] bg-[var(--sc-soft)] text-[var(--sc-ink)]')}
-              style={{ ...toneStyle(b.subjectName), flexGrow: b.durationMinutes, flexBasis: 0 }}>
-              <span className="block truncate px-2 pt-1.5 text-[11px] font-semibold leading-tight">{b.topicName}</span>
-              <span className="block truncate px-2 text-[10px] font-medium leading-tight opacity-75">{lead ? 'Now · ' : ''}{minutesLabel(b.durationMinutes)}</span>
-            </li>
-          )
-        })}
+      <ol aria-label="Today's blocks in order" className="flex h-1.5 gap-0.5 overflow-hidden rounded-full">
+        {blocks.map((b, i) => (
+          <li key={`${b.subjectName}:${b.topicName}`} title={`${b.topicName} · ${b.subjectName} · ${minutesLabel(b.durationMinutes)}`}
+            className={cn('subject-tone min-w-1.5 bg-[var(--sc)] transition-[flex-grow] duration-500', !(i === 0 && nowFirst) && 'opacity-55')}
+            style={{ ...toneStyle(b.subjectName), flexGrow: b.durationMinutes, flexBasis: 0 }}>
+            <span className="sr-only">{b.topicName}, {minutesLabel(b.durationMinutes)}{i === 0 && nowFirst ? ', now' : ''}</span>
+          </li>
+        ))}
         {spare > 0 && (
-          <li className="min-w-6 rounded-lg border border-dashed border-white/15" style={{ flexGrow: spare, flexBasis: 0 }}>
+          <li className="min-w-1.5 bg-white/8" style={{ flexGrow: spare, flexBasis: 0 }}>
             <span className="sr-only">{minutesLabel(spare)} of the day not planned</span>
           </li>
         )}
       </ol>
+      <p className="mt-2 text-xs text-foreground/50">
+        <span className="font-medium text-foreground/75">{minutesLabel(plan.totalMinutesToday)}</span> planned of {minutesLabel(plan.budgetMinutes)} · {BASIS_LABEL[plan.budgetBasis]}
+      </p>
     </div>
   )
 }

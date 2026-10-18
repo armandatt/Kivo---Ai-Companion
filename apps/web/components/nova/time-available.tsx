@@ -14,15 +14,35 @@ type Props = {
   busy?:        boolean
   choices?:     number[]
   allowCustom?: boolean
+  // One segmented control, for a page where it sits beside other things.
+  compact?:     boolean
 }
 
 // The student says how long they have; Nova's plan is fitted to it by the
 // server. Unset means "no limit", which is also what the page starts with:
 // nothing about availability is assumed.
-export function TimeAvailable({ minutes, onChange, busy, choices = DEFAULT_CHOICES, allowCustom = false }: Props) {
+export function TimeAvailable({ minutes, onChange, busy, choices = DEFAULT_CHOICES, allowCustom = false, compact = false }: Props) {
   const [customOpen, setCustomOpen] = useState(false)
   const [draft, setDraft]           = useState('')
   const isCustom = minutes !== null && !choices.includes(minutes)
+
+  if (compact) {
+    const options: Array<{ value: number | null; label: string }> = [{ value: null, label: 'Any' }, ...choices.map(c => ({ value: c, label: minutesLabel(c) }))]
+    return (
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-foreground/50">Time</span>
+        <div role="group" aria-label="Time available" className={cn('inline-flex rounded-lg border border-white/10 bg-white/[0.02] p-0.5 transition-opacity', busy && 'opacity-60')}>
+          {options.map(o => (
+            <button key={o.label} type="button" aria-pressed={minutes === o.value} onClick={() => onChange(o.value)}
+              className={cn('h-7 rounded-md px-2.5 text-xs font-medium tabular-nums transition-colors',
+                minutes === o.value ? 'bg-white/10 text-foreground shadow-sm' : 'text-foreground/55 hover:text-foreground')}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+  }
 
   function submitCustom(e: React.FormEvent) {
     e.preventDefault()
