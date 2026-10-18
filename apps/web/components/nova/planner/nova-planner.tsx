@@ -12,6 +12,7 @@ import { AddToToday, ChangedToday, usePlanChange } from './plan-changes'
 import { WeekPlan } from './week-plan'
 import { WhyPlan } from './why-plan'
 import { ShortfallNote } from '../shortfall-note'
+import { PageHeader } from '@/components/dashboard/page-states'
 
 type Props = {
   view:       NovaPlannerReady
@@ -50,14 +51,12 @@ export function NovaPlanner({ view, minutes, onMinutes, refreshing, onChanged }:
 
   return (
     <div className="mx-auto w-full max-w-6xl pb-20 pt-10 lg:pt-4">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Planner</h1>
-        <p className="mt-1.5 max-w-prose text-sm leading-relaxed text-foreground/55">
-          {tab === 'plan'
-            ? <>What Nova thinks you should study, and why. It is worked out again from everything Nova knows each time you open it.{view.preferredStudyTime && <> You told Nova you study in the {view.preferredStudyTime}.</>}</>
-            : <>Your own to-do list: assignments, chapters, anything with a deadline. Drag a card to move it, or use the arrows on it.</>}
-        </p>
-      </header>
+      <PageHeader
+        title="Planner"
+        description={tab === 'plan'
+          ? <>What Nova thinks you should study, and why. It is worked out again from everything Nova knows each time you open it.{view.preferredStudyTime && <> You told Nova you study in the {view.preferredStudyTime}.</>}</>
+          : <>Your own to-do list: assignments, chapters, anything with a deadline. Drag a card to move it, or use the arrows on it.</>}
+      />
 
       <div role="tablist" aria-label="Planner views" className="mt-6 inline-flex rounded-xl border border-white/8 bg-white/3 p-1">
         {TABS.map(t => (

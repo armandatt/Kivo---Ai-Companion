@@ -10,6 +10,7 @@ import { ExtensionPanel } from './extension-panel'
 import { takeCapture, type Capture } from './pending-capture'
 import { SaveLink } from './save-link'
 import { addTaskFromResource, dismissSuggestion, fetchResource, fileResource, keepNovaLink, removeResource, retryProcessing, undoNovaLink } from './saved-api'
+import { PageHeader } from '@/components/dashboard/page-states'
 
 // What Nova found when it looked at a saved page, and what the learner can
 // do about it. Every button here files a page or asks for another look;
@@ -203,12 +204,10 @@ export function NovaSaved({ view, connect, onChanged }: { view: NovaSavedResourc
 
   return (
     <div className="mx-auto w-full max-w-6xl pb-20 pt-10 lg:pt-4" data-saved={view.resources.length > 0 ? 'ready' : 'empty'}>
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Saved</h1>
-        <p className="mt-1.5 max-w-prose text-sm leading-relaxed text-foreground/55">
-          Pages and passages you want to come back to. Nova looks at each for which of your topics it belongs under. Saving one tells Nova it matters to you, not that you know it.
-        </p>
-      </header>
+      <PageHeader
+        title="Saved"
+        description="Pages and passages you want to come back to. Nova looks at each for which of your topics it belongs under. Saving one tells Nova it matters to you, not that you know it."
+      />
 
       <div className="mt-8 grid grid-cols-1 gap-x-10 gap-y-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="min-w-0 space-y-6">

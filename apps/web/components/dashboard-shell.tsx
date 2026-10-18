@@ -7,6 +7,7 @@ import { routeAccess, type Companion } from '@repo/api/nova/product/companion'
 import { Sidebar, SIDEBAR_ID } from '@/components/sidebar'
 import { NovaUnavailable } from '@/components/nova/nova-unavailable'
 import { hasParkedCapture } from '@/components/nova/saved/pending-capture'
+import { LoadingMark, PageNotice, RetryButton } from '@/components/dashboard/page-states'
 
 // A page both companions have (the Guide) reads which one it is showing for
 // from here. Pages mount only once the companion is known.
@@ -106,19 +107,11 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
     return (
       <div className="kivo-app flex h-screen items-center justify-center bg-background p-6" aria-busy={!failed}>
         {failed ? (
-          <div role="alert" className="max-w-sm text-center">
-            <p className="text-base font-medium text-foreground">Couldn&apos;t load your account</p>
-            <p className="mt-2 text-sm text-foreground/60">The server didn&apos;t answer. Nothing is lost.</p>
-            <button
-              type="button"
-              onClick={() => void retry()}
-              className="mt-5 inline-flex h-10 items-center justify-center rounded-xl border border-white/12 px-5 text-sm font-medium text-foreground transition-colors hover:bg-white/5"
-            >
-              Try again
-            </button>
-          </div>
+          <PageNotice tone="error" title="Couldn't load your account" action={<RetryButton onRetry={() => void retry()} />} className="w-full max-w-md">
+            The server didn&apos;t answer. Nothing is lost.
+          </PageNotice>
         ) : (
-          <div className="h-8 w-40 animate-pulse rounded-lg bg-white/5" aria-label="Loading" />
+          <LoadingMark label="Opening Kivo" />
         )}
       </div>
     )

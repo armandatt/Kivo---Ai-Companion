@@ -7,24 +7,19 @@ import type { NovaNotesReady, NovaNotesView, NoteSummary } from '@repo/api/nova/
 import { relativeDay } from '../format'
 import { useNovaView } from '../use-nova-view'
 import { notesUrl } from './notes-api'
+import { PageAction, PageFrame, PageHeader, PageLoading, PageNotice, RetryButton } from '@/components/dashboard/page-states'
 
 const selectClass =
   'h-10 min-w-0 rounded-xl border border-white/10 bg-transparent px-3 text-sm text-foreground/85 focus:border-keppel-400/60 focus:outline-none'
 
 function Frame({ children }: { children: React.ReactNode }) {
-  return <div className="mx-auto w-full max-w-3xl pb-20 pt-10 lg:pt-4">{children}</div>
+  return <PageFrame width="narrow">{children}</PageFrame>
 }
 
 function Notice({ title, body }: { title: string; body: string }) {
   return (
     <Frame>
-      <section className="rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
-        <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">{body}</p>
-        <Link href="/home" className="mt-6 inline-flex h-11 items-center justify-center rounded-xl bg-keppel-400 px-6 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300">
-          Go to Today
-        </Link>
-      </section>
+      <PageNotice title={title} action={<PageAction href="/home">Go to Today</PageAction>}>{body}</PageNotice>
     </Frame>
   )
 }
@@ -64,26 +59,22 @@ export function NotesList() {
 
   if (loading) {
     return (
-      <Frame>
-        <div aria-busy="true" aria-label="Loading your notes" className="space-y-5">
+      <PageLoading label="Loading your notes" width="narrow">
+        <div className="space-y-5">
           <div className="h-8 w-32 animate-pulse rounded-lg bg-white/5" />
           <div className="h-10 animate-pulse rounded-xl bg-white/4" />
           <div className="h-64 animate-pulse rounded-2xl bg-white/3" />
         </div>
-      </Frame>
+      </PageLoading>
     )
   }
 
   if (!view) {
     return (
       <Frame>
-        <section role="alert" className="rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Couldn&apos;t load your notes</h1>
-          <p className="mt-3 text-sm leading-relaxed text-foreground/65">The server didn&apos;t answer. Your notes are saved.</p>
-          <button type="button" onClick={() => void refresh()} disabled={refreshing} className="mt-6 inline-flex h-11 items-center justify-center rounded-xl border border-white/12 px-6 text-sm font-medium text-foreground transition-colors hover:bg-white/5 disabled:opacity-60">
-            {refreshing ? 'Trying…' : 'Try again'}
-          </button>
-        </section>
+        <PageNotice tone="error" title="Couldn't load your notes" action={<RetryButton onRetry={() => void refresh()} busy={refreshing} />}>
+          The server didn&apos;t answer. Your notes are saved.
+        </PageNotice>
       </Frame>
     )
   }
@@ -108,15 +99,11 @@ function Ready({ view, search, onSearch, subjectId, onSubject, topic, onTopic, f
 
   return (
     <Frame>
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Notes</h1>
-          <p className="mt-1.5 text-sm text-foreground/55">Your learning notebook</p>
-        </div>
-        <Link href="/notes/new" className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-keppel-400 px-4 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300">
-          <Plus className="size-4" /> New note
-        </Link>
-      </header>
+      <PageHeader
+        title="Notes"
+        description="Your learning notebook"
+        actions={<PageAction href="/notes/new"><Plus aria-hidden className="size-4" /> New note</PageAction>}
+      />
 
       {view.total > 0 && (
         <div className="mt-6 space-y-3">

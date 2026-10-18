@@ -65,7 +65,7 @@ export function ThemePicker({ compact = false }: { compact?: boolean }) {
         <button
           key={id} type="button" role="radio" aria-checked={choice === id} aria-label={compact ? label : undefined} title={compact ? label : undefined}
           onClick={() => choose(id)}
-          className={`inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-keppel-400/60 ${compact ? 'size-8' : 'h-9 px-3.5'} ${choice === id ? 'bg-white/10 text-foreground' : 'text-foreground/55 hover:text-foreground'}`}
+          className={`inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${compact ? 'size-8' : 'h-9 px-3.5'} ${choice === id ? 'bg-white/10 text-foreground' : 'text-foreground/55 hover:text-foreground'}`}
         >
           <Icon className="size-4" />{!compact && label}
         </button>

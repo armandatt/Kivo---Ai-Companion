@@ -18,13 +18,13 @@ export const KIVO_IRIS = '#6E5CFF'
 const NODE = 'var(--kivo-node, #6E5CFF)'
 
 /** The monogram's shapes on a 32-unit grid, centred in it. */
-export function KivoMarkShapes({ ink = 'currentColor', node = NODE }: { ink?: string; node?: string }) {
+export function KivoMarkShapes({ ink = 'currentColor', node = NODE, nodeClassName }: { ink?: string; node?: string; nodeClassName?: string }) {
   return (
     <g transform="translate(-0.9 0.8)">
       <rect x="7.6" y="6.4" width="4.2" height="19.2" fill={ink} />
       <polygon points="7.644,18.644 17.244,9.044 20.356,12.156 10.756,21.756" fill={ink} />
       <polygon points="11.444,17.156 14.556,14.044 26.112,25.6 19.888,25.6" fill={ink} />
-      <circle cx="21.8" cy="7.6" r="3.05" fill={node} />
+      <circle cx="21.8" cy="7.6" r="3.05" fill={node} className={nodeClassName} />
     </g>
   )
 }
@@ -38,7 +38,7 @@ type MarkProps = {
 }
 
 /** The bare monogram, in the surrounding text colour. */
-export function KivoMark({ size = 24, className, style, title }: MarkProps) {
+export function KivoMark({ size = 24, className, style, title, nodeClassName }: MarkProps & { nodeClassName?: string }) {
   return (
     <svg
       width={size}
@@ -51,7 +51,7 @@ export function KivoMark({ size = 24, className, style, title }: MarkProps) {
       aria-hidden={title ? undefined : true}
       focusable="false"
     >
-      <KivoMarkShapes />
+      <KivoMarkShapes nodeClassName={nodeClassName} />
     </svg>
   )
 }

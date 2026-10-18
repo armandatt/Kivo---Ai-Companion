@@ -23,11 +23,12 @@ export function SectionHeading({ id, icon: Icon, children, aside, className }: {
 }
 
 // A quiet text link beside a heading or under a list.
-export const TEXT_LINK = 'inline-flex items-center gap-1 rounded text-xs font-medium text-foreground/60 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-keppel-400'
+export const TEXT_LINK = 'inline-flex items-center gap-1 rounded text-xs font-medium text-foreground/60 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring'
 
-// Buttons: one primary action per region, the rest quiet.
-export const BUTTON_PRIMARY = 'inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-linear-to-b from-keppel-400 to-keppel-500 px-4 text-sm font-semibold text-keppel-950 shadow-[inset_0_1px_0_rgb(255_255_255/0.3),0_6px_16px_-8px_var(--color-keppel-600)] transition-[transform,filter,box-shadow] hover:brightness-105 active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-keppel-400 disabled:opacity-60'
-export const BUTTON_QUIET = 'inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-white/10 px-3 text-xs font-medium text-foreground/75 transition-colors hover:border-white/25 hover:bg-white/4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-keppel-400 disabled:opacity-50'
+// Buttons: one primary action per region, the rest quiet. The primary is
+// Kivo's action colour (iris); teal is kept for Nova and for progress.
+export const BUTTON_PRIMARY = 'inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-action px-4 text-sm font-semibold text-action-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.16)] transition-[background-color,transform] hover:bg-action-hover active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60'
+export const BUTTON_QUIET = 'inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-white/10 px-3 text-xs font-medium text-foreground/75 transition-colors hover:border-white/25 hover:bg-white/4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50'
 
 // A raised surface, for the one thing a region is about (the block to do
 // now, a popover). Not for every group of content.

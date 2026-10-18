@@ -1,25 +1,15 @@
 'use client'
 
-import Link from 'next/link'
+import { PageAction, PageFrame, PageLoading, PageNotice, RetryButton } from '@/components/dashboard/page-states'
 import { RexProgress } from '@/components/progress/rex-progress'
 import { NovaProgress } from '@/components/nova/progress/nova-progress'
 import { useNovaProgress } from '@/components/nova/use-nova-progress'
 
-function Frame({ children }: { children: React.ReactNode }) {
-  return <div className="mx-auto w-full max-w-6xl pb-20 pt-10 lg:pt-4">{children}</div>
-}
-
 function Notice({ title, body }: { title: string; body: string }) {
   return (
-    <Frame>
-      <section className="rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
-        <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">{body}</p>
-        <Link href="/home" className="mt-6 inline-flex h-11 items-center justify-center rounded-xl bg-keppel-400 px-6 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300">
-          Go to Today
-        </Link>
-      </section>
-    </Frame>
+    <PageFrame>
+      <PageNotice title={title} action={<PageAction href="/home">Go to Today</PageAction>}>{body}</PageNotice>
+    </PageFrame>
   )
 }
 
@@ -31,8 +21,8 @@ export default function ProgressPage() {
 
   if (loading) {
     return (
-      <Frame>
-        <div aria-busy="true" aria-label="Loading your progress" className="space-y-6">
+      <PageLoading label="Loading your progress">
+        <div className="space-y-6">
           <div className="h-8 w-64 animate-pulse rounded-lg bg-white/5" />
           <div className="h-4 w-96 max-w-full animate-pulse rounded bg-white/4" />
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -43,28 +33,17 @@ export default function ProgressPage() {
             <div className="h-72 animate-pulse rounded-2xl bg-white/3" />
           </div>
         </div>
-      </Frame>
+      </PageLoading>
     )
   }
 
   if (!view) {
     return (
-      <Frame>
-        <section role="alert" className="rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Couldn&apos;t load your progress</h1>
-          <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">
-            The server didn&apos;t answer. Nothing is lost; your sessions and what Nova knows are saved.
-          </p>
-          <button
-            type="button"
-            onClick={() => void refresh()}
-            disabled={refreshing}
-            className="mt-6 inline-flex h-11 items-center justify-center rounded-xl border border-white/12 px-6 text-sm font-medium text-foreground transition-colors hover:bg-white/5 disabled:opacity-60"
-          >
-            {refreshing ? 'Trying…' : 'Try again'}
-          </button>
-        </section>
-      </Frame>
+      <PageFrame>
+        <PageNotice tone="error" title="Couldn't load your progress" action={<RetryButton onRetry={() => void refresh()} busy={refreshing} />}>
+          The server didn&apos;t answer. Nothing is lost; your sessions and what Nova knows are saved.
+        </PageNotice>
+      </PageFrame>
     )
   }
 

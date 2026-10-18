@@ -7,6 +7,7 @@ import { CheckinSettings } from '@/components/nova/checkin-settings'
 import { TelegramSettings } from '@/components/nova/telegram-connect'
 import { DeleteAccountSection } from '@/components/settings/delete-account-section'
 import { ThemePicker } from '@/components/theme/kivo-theme'
+import { PageHeader } from '@/components/dashboard/page-states'
 
 // Settings: appearance, study setup, the daily check-in, the Telegram connection
 // and deleting the account.
@@ -25,10 +26,7 @@ export default function SettingsPage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl pb-20 pt-10 lg:pt-4">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Settings</h1>
-        <p className="mt-1.5 text-sm text-foreground/55">Where you reach {companion ?? 'your companion'}, and how.</p>
-      </header>
+      <PageHeader title="Settings" description={<>Where you reach {companion ?? 'your companion'}, and how.</>} />
 
       <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Appearance</p>
       <section className="mt-3 rounded-3xl border border-white/8 bg-card/70 p-6">
