@@ -283,7 +283,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
             <span className="inline-block size-2 rounded-full" style={{ background: FILL[node.type] }} />{TYPE_LABEL[node.type]}
             {tone && <><span aria-hidden>·</span><span className="truncate normal-case tracking-normal text-[var(--sc-ink)]">{tone}</span></>}
           </p>
-          <h2 className="mt-2 break-words font-display text-[1.6rem] leading-[1.1] text-foreground">{node.label}</h2>
+          <h2 className="mt-2 break-words text-xl font-semibold leading-tight tracking-[-0.01em] text-foreground">{node.label}</h2>
         </div>
         <button type="button" onClick={onClose} aria-label="Close details" className="rounded-lg p-1.5 text-subtle transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"><X className="size-4" /></button>
       </div>
@@ -376,7 +376,7 @@ function CardFace({ n, detail }: { n: MapNode; detail: CardDetail }) {
         <rect x={x0} y={y0} width={w} height={h} rx={16} fill="var(--sc-soft)" />
         <circle cx={x0 + 20} cy={0} r={6} fill="var(--sc)" />
         {detail >= 1 && (
-          <text x={x0 + 34} y={detail === 2 ? -3 : 6} className={text} style={{ fontFamily: 'var(--font-display)' }} fontSize={19}>{short(n.label, 19)}</text>
+          <text x={x0 + 34} y={detail === 2 ? -3 : 6} className={text} style={{ fontFamily: 'var(--font-display)', fontWeight: 600 }} fontSize={16}>{short(n.label, 19)}</text>
         )}
         {detail === 2 && (
           <text x={x0 + 34} y={17} {...meta}>{[plural(n.topics, 'topic'), plural(n.notes, 'note'), plural(n.resources, 'page')].join(' · ')}</text>

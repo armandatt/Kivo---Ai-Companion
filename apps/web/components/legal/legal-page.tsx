@@ -21,7 +21,7 @@ export function Confirm({ id }: { id: ToConfirm }) {
 export function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
     <section id={id} aria-labelledby={`${id}-title`} className="scroll-mt-24 border-t border-white/8 pt-8">
-      <h2 id={`${id}-title`} className="font-display text-[1.75rem] leading-tight text-foreground">{title}</h2>
+      <h2 id={`${id}-title`} className="text-xl font-semibold leading-tight tracking-[-0.01em] text-foreground">{title}</h2>
       <div className="mt-4 space-y-4 text-[15px] leading-relaxed text-foreground/80 [&_li]:pl-1 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-5 [&_a]:text-action-ink [&_a]:underline [&_a]:underline-offset-4">
         {children}
       </div>
@@ -48,7 +48,7 @@ export function LegalPage({ title, summary, sections, children }: {
       </header>
 
       <main className="mx-auto max-w-3xl px-4 pb-24 pt-10 sm:px-6 sm:pt-14">
-        <h1 className="font-display text-[2.6rem] leading-[1.02] tracking-[-0.01em] sm:text-[3.4rem]">{title}</h1>
+        <h1 className="text-[2.1rem] font-semibold leading-[1.05] tracking-[-0.03em] sm:text-[2.8rem]">{title}</h1>
         <p className="mt-3 text-sm text-subtle">Takes effect: <Confirm id="effectiveDate" /></p>
 
         <div role="note" className="mt-6 rounded-xl border border-amber-500/40 bg-amber-400/8 p-4 text-sm leading-relaxed text-foreground/85">

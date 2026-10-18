@@ -123,7 +123,7 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
           ways to act on anything, then the one thing to do next beside the
           day's flow */}
       <TodayHero
-        greeting={<>{greeting(new Date())}{name ? <>, <span className="italic text-foreground/70">{name}</span></> : ''}</>}
+        greeting={<>{greeting(new Date())}{name ? <span className="text-foreground/45">, {name}</span> : ''}</>}
         context={context}
         properties={<PageProperties view={view} tasksDueToday={dueToday} />}
         actions={<>

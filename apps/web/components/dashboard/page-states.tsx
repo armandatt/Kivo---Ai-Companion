@@ -30,7 +30,7 @@ export function PageHeader({ eyebrow, title, description, actions, className }: 
     <header className={cn('flex flex-wrap items-end justify-between gap-x-6 gap-y-4', className)}>
       <div className="min-w-0 max-w-2xl">
         {eyebrow && <p className="mb-2 text-xs font-medium text-subtle">{eyebrow}</p>}
-        <h1 className="font-display text-[2.25rem] leading-[1.05] tracking-[-0.01em] text-foreground sm:text-[2.6rem]">{title}</h1>
+        <h1 className="text-[1.9rem] font-semibold leading-[1.08] tracking-[-0.03em] text-foreground sm:text-[2.4rem]">{title}</h1>
         {description && <p className="mt-2.5 text-[15px] leading-relaxed text-foreground/65">{description}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
@@ -75,7 +75,7 @@ export function PageNotice({ eyebrow, title, children, action, tone = 'info', cl
     <section role={tone === 'error' ? 'alert' : undefined} className={cn('max-w-2xl rounded-2xl border border-white/8 bg-card p-6 shadow-soft sm:p-8', className)}>
       <KivoMark size={22} className="text-foreground/80" />
       {eyebrow && <p className="mt-5 text-xs font-medium text-subtle">{eyebrow}</p>}
-      <h1 className={cn(eyebrow ? 'mt-2' : 'mt-5', 'font-display text-[1.85rem] leading-[1.1] text-foreground')}>{title}</h1>
+      <h1 className={cn(eyebrow ? 'mt-2' : 'mt-5', 'text-2xl font-semibold leading-tight tracking-[-0.02em] text-foreground')}>{title}</h1>
       <div className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">{children}</div>
       {action && <div className="mt-6 flex flex-wrap items-center gap-3">{action}</div>}
     </section>

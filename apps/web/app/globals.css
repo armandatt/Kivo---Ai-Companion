@@ -252,7 +252,7 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   /* Headings only. next/font sets the variable on <body>, so it is inlined here. */
-  --font-display: var(--font-instrument-serif), "Iowan Old Style", Georgia, serif;
+  --font-display: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);

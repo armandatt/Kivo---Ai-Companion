@@ -24,7 +24,7 @@ export function ActiveSessionCard({ session }: { session: TodayActiveSession }) 
         </p>
 
         {session.subjectName && <p className="mt-3 text-sm text-foreground/60">{session.subjectName}</p>}
-        <h2 id="nova-current-session" className="mt-1 font-display text-[2.1rem] leading-[1.02] tracking-[-0.01em] text-foreground sm:text-[2.5rem]">
+        <h2 id="nova-current-session" className="mt-1 text-2xl font-semibold leading-tight tracking-[-0.02em] text-foreground sm:text-[1.75rem]">
           {session.topicName ?? 'Study session'}
         </h2>
 

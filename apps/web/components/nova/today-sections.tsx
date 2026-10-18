@@ -171,7 +171,7 @@ export function NowBlock({ action, why, record, onStart, starting, error, disabl
           <span aria-hidden className="text-foreground/25">·</span>
           <span className={cn(URGENCY_TONE[action.urgency])}>{URGENCY_LABEL[action.urgency]}</span>
         </p>
-        <h3 id="nova-next-action" className="mt-3 font-display text-[2.1rem] leading-[1.02] tracking-[-0.01em] text-foreground sm:text-[2.5rem]">
+        <h3 id="nova-next-action" className="mt-3 text-2xl font-semibold leading-tight tracking-[-0.02em] text-foreground sm:text-[1.75rem]">
           <span className="sr-only">Block 1: </span>{action.topicName}
         </h3>
         <BlockMeta action={action} />

@@ -229,7 +229,7 @@ export default function SignupPage() {
 
   return (
     <AuthShell
-      title={<>Join <span className="italic text-keppel-300">Kivo</span></>}
+      title={<>Join <span className="text-keppel-300">Kivo</span></>}
       subtitle="Create your AI companion today"
     >
       {step === 'choose' ? (

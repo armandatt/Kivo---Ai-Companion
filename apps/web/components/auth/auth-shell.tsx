@@ -42,7 +42,7 @@ export function AuthShell({
         <Card className="border-ink-700 bg-ink-900/95 text-paper-50 shadow-[0_30px_60px_-30px_rgba(0,0,0,0.8)]">
           <div className="p-8 sm:p-9">
             <div className="mb-8">
-              <h1 className="font-display text-[2.6rem] leading-[1.02] tracking-[-0.01em] text-paper-50">{title}</h1>
+              <h1 className="text-3xl font-bold tracking-[-0.02em] text-paper-50">{title}</h1>
               {subtitle && <p className="mt-3 text-ink-300">{subtitle}</p>}
             </div>
             {children}

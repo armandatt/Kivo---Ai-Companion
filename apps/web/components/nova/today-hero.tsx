@@ -31,7 +31,7 @@ export function TodayHero({ greeting, context, properties, actions, focal, child
         <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">{actions}</div>
       </div>
 
-      <h1 className="mt-5 font-display text-[2.75rem] leading-[0.98] tracking-[-0.015em] text-foreground sm:text-[3.6rem] lg:text-[4.25rem]">
+      <h1 className="mt-4 text-[2.1rem] font-semibold leading-[1.02] tracking-[-0.035em] text-foreground sm:text-5xl lg:text-[3.4rem]">
         {greeting}
       </h1>
       {context && (
