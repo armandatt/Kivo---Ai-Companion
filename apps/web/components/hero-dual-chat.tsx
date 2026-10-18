@@ -252,7 +252,7 @@ export function HeroDualChat() {
                 className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-semibold"
                 style={{ border: '1px solid rgba(0,229,160,0.2)', background: 'rgba(0,229,160,0.06)', color: '#00E5A0' }}
               >
-                <span>🔥</span> 2,400 people on streak today
+                Your study companion, on the web and Telegram
               </div>
 
               <h1 className="text-5xl md:text-6xl lg:text-7xl font-black tracking-tight leading-[1.05]">
@@ -291,21 +291,12 @@ export function HeroDualChat() {
                   className="font-bold text-slate-950 hover:scale-[1.02] transition-transform"
                   style={{ background: '#00E5A0', boxShadow: '0 0 24px rgba(0,229,160,0.25)' }}
                 >
-                  <AuthAwareLink>Start on Telegram →</AuthAwareLink>
-                </Button>
-                <Button
-                  asChild
-                  size="lg"
-                  variant="outline"
-                  className="font-semibold"
-                  style={{ borderColor: 'rgba(255,255,255,0.12)', color: '#e8eaf0', background: 'rgba(255,255,255,0.03)' }}
-                >
-                  <AuthAwareLink>Start on WhatsApp</AuthAwareLink>
+                  <AuthAwareLink>Start with Kivo →</AuthAwareLink>
                 </Button>
               </div>
 
-              <div className="flex gap-6 pt-1 text-sm text-slate-500">
-                {['No app to download', 'Free to start'].map((t) => (
+              <div className="flex flex-wrap gap-x-6 gap-y-2 pt-1 text-sm text-slate-500">
+                {['Works in your browser', 'Nova on Telegram too', 'Free to use'].map((t) => (
                   <div key={t} className="flex items-center gap-2">
                     <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#00E5A0' }} />
                     {t}

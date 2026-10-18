@@ -7,32 +7,32 @@ const FAQS = [
   {
     question: "Do I need to download an app?",
     answer:
-      "No. Your companion lives entirely inside WhatsApp and Telegram. You just scan a QR code or click a link and you're in. No app store, no installs, no friction. It works on any phone you already have.",
+      "No. Kivo runs in your browser: sign up, answer a few questions, and you are on your Today page. If you use Telegram, you can connect it from the dashboard and Nova will message you there as well. Your plan and sessions are the same in both places.",
   },
   {
-    question: "How does the creature actually work?",
+    question: "Who is Nova?",
     answer:
-      "When you sign up, you receive an egg on day 1. Check in for 3 consecutive days and it hatches — you get to name it. From there, every daily check-in feeds your creature XP. Hit streaks and it evolves into new forms. Miss too many days and it visually dims. It's not just a progress bar — it's something you'll actually feel attached to.",
+      "Nova is Kivo's learning mentor, and every new account works with Nova. It plans your day, runs your focus sessions, keeps track of what is due for review and talks things through with you, in English or Hinglish.",
   },
   {
-    question: "What are the 3 companions and how do I get assigned one?",
+    question: "How does Nova decide what I should study?",
     answer:
-      "You take a 5-question personality quiz in chat when you first sign up — it feels like a BuzzFeed test, not a form. Based on your answers you're assigned Coach Rex (gym and fitness), Study Nova (studying and focus), or Grind Vera (startup and work productivity). You can switch personas on the Pro plan.",
+      "From what is on record: your subjects and topics, your exam and deadline dates, which topics are due for review, and the time you say you have. It never stretches your day past that time, and when exam work will not fit, it tells you so instead of pretending it does.",
   },
   {
-    question: "What does the companion actually remember?",
+    question: "What does Nova know about me?",
     answer:
-      "Everything you tell it. Your PRs, your exam dates, your bad weeks, your goals. It stores your conversation history and references it unprompted — weeks later it might say 'last month you said this was your hardest goal, look at you now.' Free users get basic memory. Pro users get full long-term memory across all sessions.",
+      "What you have done in Kivo: your sessions and how you said they went, your topics, tasks and dates. Your notes are yours; Nova reads one only when you ask it to help with that note. What it concludes about how you study is on your Learning DNA page, with how much evidence stands behind it.",
   },
   {
-    question: "What's the difference between Free and Pro?",
+    question: "How does the creature work?",
     answer:
-      "Free gives you one persona, daily check-ins on Telegram, one active goal, and your creature up to Level 3. Pro unlocks all personas, WhatsApp + Telegram, unlimited goals, full creature evolution beyond Level 3, weekly aura cards, buddy challenges, and the Sunday intelligence report. Most people hit the free limit within 2 weeks and upgrade to see their creature evolve.",
+      "Your creature goes up a level for every five days you study, and its world stays clear: a week away, or a week ill, never brings fog. It is a picture of your study days, not a score to keep up.",
   },
   {
-    question: "Can I cancel anytime?",
+    question: "Does Kivo cost anything?",
     answer:
-      "Yes. No contracts, no cancellation fees. Cancel from the dashboard or just message your companion 'cancel my plan' and it'll handle it. Your creature and streak history are saved for 30 days after cancellation in case you come back.",
+      "Kivo is free to use. There are no paid plans today, so there is nothing to upgrade and no card to enter.",
   },
 ]
 
@@ -109,7 +109,7 @@ export function FAQ() {
         >
           <span className="text-sm font-medium text-[var(--color-keppel-400)] uppercase tracking-wider">FAQ</span>
           <h2 className="mt-3 text-3xl font-bold text-[var(--color-baltic-sea-100)] md:text-4xl">
-            Things people actually ask
+            Common questions
           </h2>
         </div>
 

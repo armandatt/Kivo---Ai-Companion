@@ -34,21 +34,11 @@ export function Footer() {
           </div>
 
           {/* Link columns */}
-          <div className="grid grid-cols-2 gap-8 sm:grid-cols-4 lg:gap-16">
+          <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 lg:gap-16">
             <div>
               <h4 className="text-sm font-medium text-[var(--color-baltic-sea-200)]">Product</h4>
               <ul className="mt-4 space-y-3">
                 {["Features", "Pricing", "Changelog"].map((item) => (
-                  <li key={item}>
-                    <a href="#" className="text-sm text-[var(--color-baltic-sea-500)] hover:text-[var(--color-keppel-400)] transition-colors">{item}</a>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-sm font-medium text-[var(--color-baltic-sea-200)]">Companions</h4>
-              <ul className="mt-4 space-y-3">
-                {["Coach Rex", "Study Nova", "Grind Vera"].map((item) => (
                   <li key={item}>
                     <a href="#" className="text-sm text-[var(--color-baltic-sea-500)] hover:text-[var(--color-keppel-400)] transition-colors">{item}</a>
                   </li>
@@ -80,10 +70,6 @@ export function Footer() {
 
         <div className="mt-12 pt-8 border-t border-[var(--color-baltic-sea-900)] flex flex-col sm:flex-row items-center justify-between gap-4">
           <span className="text-xs text-[var(--color-baltic-sea-600)]">© 2025 Kivo. All rights reserved.</span>
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-[var(--color-keppel-400)] animate-pulse" />
-            <span className="text-xs text-[var(--color-baltic-sea-500)]">🔥 2,847 active streaks right now</span>
-          </div>
         </div>
       </div>
     </footer>

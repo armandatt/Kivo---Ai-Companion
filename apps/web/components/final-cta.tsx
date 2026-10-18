@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { AuthAwareLink } from "@/components/auth-aware-link"
-import { ArrowRight, Egg } from "@phosphor-icons/react/dist/ssr"
+import { ArrowRight, Sparkle } from "@phosphor-icons/react/dist/ssr"
 
 export function FinalCTA() {
   const [isVisible, setIsVisible] = useState(false)
@@ -74,8 +74,8 @@ export function FinalCTA() {
               }`}
               style={{ transitionDelay: "300ms" }}
             >
-              <Egg weight="duotone" className="h-4 w-4 text-[var(--color-keppel-400)]" />
-              <span className="text-sm font-medium text-[var(--color-keppel-300)]">Your egg is already waiting</span>
+              <Sparkle weight="duotone" className="h-4 w-4 text-[var(--color-keppel-400)]" />
+              <span className="text-sm font-medium text-[var(--color-keppel-300)]">Nova is ready when you are</span>
             </div>
 
             {/* Headline */}
@@ -95,7 +95,7 @@ export function FinalCTA() {
               }`}
               style={{ transitionDelay: "500ms" }}
             >
-              Join thousands of people building real streaks with a companion that actually remembers, nudges, and grows with them.
+              Plan your day around the time you really have, keep your notes connected, and see how you are actually progressing.
             </p>
 
             {/* CTAs */}
@@ -114,20 +114,9 @@ export function FinalCTA() {
                 style={{ transitionDelay: "700ms" }}
               >
                 <AuthAwareLink>
-                  Start on Telegram
+                  Start with Kivo
                   <ArrowRight weight="bold" className="ml-2 h-4 w-4" />
                 </AuthAwareLink>
-              </Button>
-              <Button
-                asChild
-                size="lg"
-                variant="ghost"
-                className={`text-[var(--color-baltic-sea-300)] hover:text-[var(--color-baltic-sea-100)] hover:bg-[var(--color-baltic-sea-800)] rounded-full h-12 px-8 transition-all duration-500 ${
-                  isVisible ? "translate-x-0" : "translate-x-8"
-                }`}
-                style={{ transitionDelay: "700ms" }}
-              >
-                <AuthAwareLink>Start on WhatsApp</AuthAwareLink>
               </Button>
             </div>
 
@@ -138,7 +127,7 @@ export function FinalCTA() {
               }`}
               style={{ transitionDelay: "800ms" }}
             >
-              No app to download · Free to start · Your creature hatches in 3 days
+              Works in your browser · Telegram if you want it · Free to use
             </p>
           </div>
         </div>

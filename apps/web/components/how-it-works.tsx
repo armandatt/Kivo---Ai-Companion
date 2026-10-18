@@ -7,20 +7,20 @@ const STEPS = [
   {
     icon: ChatCircleText,
     number: "01",
-    title: "Take the quiz",
-    description: "Answer 5 personality questions in chat. We assign you a companion — Coach Rex, Study Nova, or Grind Vera — built around how you actually work.",
+    title: "Answer a few questions",
+    description: "Seven short questions on the web: what you are working toward, what you are learning for, and how you like to be pushed. Then you meet Nova, Kivo's learning mentor.",
   },
   {
     icon: Sparkle,
     number: "02",
-    title: "Meet your companion",
-    description: "Your egg arrives on day 1. By day 3 it hatches — and your companion starts checking in every morning, tracking your goals, and remembering everything.",
+    title: "Set up what you are learning",
+    description: "Add your subjects, topics and dates, or start from a template. Nova plans each day around the time you actually have, and never makes it longer.",
   },
   {
     icon: Rocket,
     number: "03",
-    title: "Show up every day",
-    description: "Your creature evolves as you stay consistent. Miss days and it dims. Hit streaks and it transforms. No app needed — it all happens in WhatsApp and Telegram.",
+    title: "Study, and see it add up",
+    description: "Start focus sessions from Today, keep linked notes, and let Progress show what has really changed. Connect Telegram if you want Nova to check in there too.",
   },
 ]
 
@@ -52,7 +52,7 @@ export function HowItWorks() {
   }, [isVisible])
 
   return (
-    <section ref={ref} className="py-24 border-t border-[var(--color-baltic-sea-900)] overflow-hidden" style={{ background: '#060810' }}>
+    <section id="how-it-works" ref={ref} className="py-24 border-t border-[var(--color-baltic-sea-900)] overflow-hidden" style={{ background: '#060810' }}>
       <div className="mx-auto max-w-[1400px] px-2.5 sm:px-6 lg:px-12">
         <div
           className={`text-center max-w-2xl mx-auto mb-16 transition-all duration-700 ${isVisible ? "opacity-100 translate-y-0 blur-0" : "opacity-0 translate-y-12 blur-sm"}`}
@@ -61,7 +61,7 @@ export function HowItWorks() {
             How it works
           </span>
           <h2 className="mt-3 text-3xl font-bold text-[var(--color-baltic-sea-100)] md:text-4xl text-balance">
-            From quiz to companion in 3 minutes
+            From sign-up to your first plan
           </h2>
         </div>
 

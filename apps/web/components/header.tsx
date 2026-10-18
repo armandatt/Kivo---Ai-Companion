@@ -76,11 +76,8 @@ export function Header() {
             <a href="#pricing" className="px-4 py-1.5 text-sm text-[var(--color-baltic-sea-400)] hover:text-[var(--color-baltic-sea-100)] transition-colors">
               Pricing
             </a>
-            <a href="#" className="px-4 py-1.5 text-sm text-[var(--color-baltic-sea-400)] hover:text-[var(--color-baltic-sea-100)] transition-colors">
+            <a href="#how-it-works" className="px-4 py-1.5 text-sm text-[var(--color-baltic-sea-400)] hover:text-[var(--color-baltic-sea-100)] transition-colors">
               How it works
-            </a>
-            <a href="#" className="px-4 py-1.5 text-sm text-[var(--color-baltic-sea-400)] hover:text-[var(--color-baltic-sea-100)] transition-colors">
-              Blog
             </a>
           </nav>
 
@@ -165,7 +162,7 @@ export function Header() {
                 >
                   <Link href="/signup">
                     <Lightning weight="fill" className="mr-1.5 h-4 w-4" />
-                    Start free
+                    Start with Kivo
                   </Link>
                 </Button>
               </>
@@ -205,7 +202,7 @@ export function Header() {
           >
             <Link href="/signup">
               <Lightning weight="fill" className="mr-1.5 h-4 w-4" />
-              Start free
+              Start with Kivo
             </Link>
           </Button>
         )}
