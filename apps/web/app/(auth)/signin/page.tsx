@@ -157,7 +157,7 @@ function SigninForm() {
             <div className="flex justify-end">
               <Link
                 href="/forgot-password"
-                className="text-sm text-iris-300 hover:text-iris-200 font-medium"
+                className="text-sm text-keppel-300 hover:text-keppel-200 font-medium"
               >
                 Forgot password?
               </Link>
@@ -184,7 +184,7 @@ function SigninForm() {
         Don&apos;t have an account?{' '}
         <Link
           href="/signup"
-          className="text-iris-300 hover:text-iris-200 font-semibold"
+          className="text-keppel-300 hover:text-keppel-200 font-semibold"
         >
           Sign up
         </Link>

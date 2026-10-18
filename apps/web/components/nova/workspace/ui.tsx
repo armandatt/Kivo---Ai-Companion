@@ -26,7 +26,7 @@ export function SectionHeading({ id, icon: Icon, children, aside, className }: {
 export const TEXT_LINK = 'inline-flex items-center gap-1 rounded text-xs font-medium text-foreground/60 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring'
 
 // Buttons: one primary action per region, the rest quiet. The primary is
-// Kivo's action colour (iris); teal is kept for Nova and for progress.
+// Kivo's action colour: the landing page's teal (globals.css --action).
 export const BUTTON_PRIMARY = 'inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-action px-4 text-sm font-semibold text-action-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.16)] transition-[background-color,transform] hover:bg-action-hover active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60'
 export const BUTTON_QUIET = 'inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-white/10 px-3 text-xs font-medium text-foreground/75 transition-colors hover:border-white/25 hover:bg-white/4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50'
 

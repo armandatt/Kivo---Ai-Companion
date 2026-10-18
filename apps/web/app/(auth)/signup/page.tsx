@@ -209,7 +209,7 @@ export default function SignupPage() {
             type="button"
             onClick={handleResend}
             disabled={isLoading || resendIn > 0}
-            className="text-iris-300 hover:text-iris-200 font-medium disabled:text-ink-400 disabled:cursor-not-allowed"
+            className="text-keppel-300 hover:text-keppel-200 font-medium disabled:text-ink-400 disabled:cursor-not-allowed"
           >
             {resendIn > 0 ? `resend in ${resendIn}s` : 'send a new code'}
           </button>
@@ -229,7 +229,7 @@ export default function SignupPage() {
 
   return (
     <AuthShell
-      title={<>Join <span className="italic text-iris-300">Kivo</span></>}
+      title={<>Join <span className="italic text-keppel-300">Kivo</span></>}
       subtitle="Create your AI companion today"
     >
       {step === 'choose' ? (
@@ -307,7 +307,7 @@ export default function SignupPage() {
         Already have an account?{' '}
         <Link
           href="/signin"
-          className="text-iris-300 hover:text-iris-200 font-semibold"
+          className="text-keppel-300 hover:text-keppel-200 font-semibold"
         >
           Sign in
         </Link>

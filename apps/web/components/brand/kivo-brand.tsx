@@ -1,30 +1,33 @@
 // ─── Kivo's identity ──────────────────────────────────────────────────────────
-// The K monogram and the "kivo" wordmark, drawn from one set of strokes: a
-// stem, 45° diagonals with angled ends, and a node (the violet dot) that sits
-// on the arm's own line, the way a note sits at the end of a link. The i of
-// the wordmark carries the same node.
+// The orbit mark and the "Kivo" wordmark, the same on the landing page, the
+// sign-in pages and the app. The mark is a centre (the learner), two arcs of
+// an orbit (what they are working through) and a small body on it (the next
+// step): a white tile with dark ink, or the bare mark in the surrounding text
+// colour.
 //
-// Every shape is a plain polygon, rect or circle (no clip paths, no ids), so
-// any number of copies can share a page and the files in app/ (icon.svg) are
-// the same geometry. The ink follows currentColor; the node is --kivo-node,
-// iris by default.
+// Every shape is a plain path, rect or circle (no clip paths, no ids), so any
+// number of copies can share a page and the files in app/ (icon.svg) are the
+// same geometry. The bare mark's ink follows currentColor.
 
 import type { CSSProperties } from 'react'
 
-export const KIVO_INK = '#0E1626'
+export const KIVO_INK = '#0D1117'
+export const KIVO_TILE = '#FFFFFF'
 export const KIVO_IVORY = '#F4F1E9'
-export const KIVO_IRIS = '#6E5CFF'
+// The teal of the landing page's actions (keppel-400), for places that need a
+// literal colour (the share image).
+export const KIVO_TEAL = '#3FB6A8'
+// Kept for callers that still name it; the identity no longer uses violet.
+export const KIVO_IRIS = KIVO_TEAL
 
-const NODE = 'var(--kivo-node, #6E5CFF)'
-
-/** The monogram's shapes on a 32-unit grid, centred in it. */
-export function KivoMarkShapes({ ink = 'currentColor', node = NODE, nodeClassName }: { ink?: string; node?: string; nodeClassName?: string }) {
+/** The mark's shapes on a 32-unit grid, centred in it. `node` colours the small body on the orbit. */
+export function KivoMarkShapes({ ink = 'currentColor', node, nodeClassName }: { ink?: string; node?: string; nodeClassName?: string }) {
   return (
-    <g transform="translate(-0.9 0.8)">
-      <rect x="7.6" y="6.4" width="4.2" height="19.2" fill={ink} />
-      <polygon points="7.644,18.644 17.244,9.044 20.356,12.156 10.756,21.756" fill={ink} />
-      <polygon points="11.444,17.156 14.556,14.044 26.112,25.6 19.888,25.6" fill={ink} />
-      <circle cx="21.8" cy="7.6" r="3.05" fill={node} className={nodeClassName} />
+    <g>
+      <circle cx="16" cy="16" r="4" fill={ink} />
+      <path d="M16 7 A9 9 0 0 1 25 16" stroke={ink} strokeWidth="1.25" strokeLinecap="round" fill="none" opacity="0.5" />
+      <path d="M16 25 A9 9 0 0 1 7 16" stroke={ink} strokeWidth="1.25" strokeLinecap="round" fill="none" opacity="0.25" />
+      <circle cx="25" cy="16" r="1.5" fill={node ?? ink} opacity={node ? 1 : 0.7} className={nodeClassName} />
     </g>
   )
 }
@@ -37,7 +40,7 @@ type MarkProps = {
   title?: string
 }
 
-/** The bare monogram, in the surrounding text colour. */
+/** The bare mark, in the surrounding text colour. */
 export function KivoMark({ size = 24, className, style, title, nodeClassName }: MarkProps & { nodeClassName?: string }) {
   return (
     <svg
@@ -56,7 +59,7 @@ export function KivoMark({ size = 24, className, style, title, nodeClassName }: 
   )
 }
 
-/** The app icon: the monogram in ivory on an ink tile. Reads on any background. */
+/** The app icon: the mark in ink on a white tile. A faint edge keeps it apart from a light page. */
 export function KivoTile({ size = 32, className, style, title }: MarkProps) {
   return (
     <svg
@@ -70,41 +73,23 @@ export function KivoTile({ size = 32, className, style, title }: MarkProps) {
       aria-hidden={title ? undefined : true}
       focusable="false"
     >
-      <rect width="32" height="32" rx="7.5" fill={KIVO_INK} />
-      <rect x="0.5" y="0.5" width="31" height="31" rx="7" fill="none" stroke="#FFFFFF" strokeOpacity="0.08" />
-      <KivoMarkShapes ink={KIVO_IVORY} />
+      <rect width="32" height="32" rx="8" fill={KIVO_TILE} />
+      <rect x="0.5" y="0.5" width="31" height="31" rx="7.5" fill="none" stroke="#000000" strokeOpacity="0.08" />
+      <KivoMarkShapes ink={KIVO_INK} />
     </svg>
   )
 }
 
-/** "kivo", lower case, in the monogram's strokes. Height sets the size; width follows. */
-export function KivoWordmark({ height = 20, className, style, title = 'Kivo', node = NODE }: { height?: number; node?: string } & Omit<MarkProps, 'size'>) {
+/** "Kivo" in the app's face. Height is the size of the type; the width follows the word. */
+export function KivoWordmark({ height = 20, className, style, title = 'Kivo' }: { height?: number; node?: string } & Omit<MarkProps, 'size'>) {
   return (
-    <svg
-      height={height}
-      width={(height * 47.5) / 22}
-      viewBox="0 0 47.5 22"
+    <span
       className={className}
-      style={style}
-      role="img"
-      aria-label={title}
-      focusable="false"
+      style={{ fontSize: height, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1, ...style }}
+      aria-label={title === 'Kivo' ? undefined : title}
     >
-      <g fill="currentColor">
-        {/* k */}
-        <rect x="0.5" y="1.5" width="3.3" height="19.5" />
-        <polygon points="1.033,16.233 9.267,8 11.6,10.333 3.367,18.567" />
-        <polygon points="3.633,16.967 5.967,14.633 12.334,21 7.666,21" />
-        {/* i */}
-        <rect x="15.2" y="8" width="3.3" height="13" />
-        {/* v */}
-        <polygon points="20.4,8 23.92,8 27.4,17.355 30.88,8 34.4,8 29.564,21 25.236,21" />
-      </g>
-      {/* o */}
-      <circle cx="40.6" cy="14.5" r="4.85" fill="none" stroke="currentColor" strokeWidth="3.3" />
-      {/* the node, as the i's dot */}
-      <circle cx="16.85" cy="3.6" r="2.15" fill={node} />
-    </svg>
+      Kivo
+    </span>
   )
 }
 

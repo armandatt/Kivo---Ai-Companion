@@ -90,7 +90,7 @@ const isDocked = () => window.matchMedia(DOCKED).matches
 const dockedOnServer = () => true
 
 // The companion's own colour marks whose dashboard this is (the dot under the
-// wordmark). The current page is Kivo's selected state, iris, for both: a soft
+// wordmark). The current page is Kivo's selected state, teal, for both: a soft
 // wash, a bar and the icon, with the text left in the theme's foreground so it
 // reads in light and dark alike.
 const ACCENT = {

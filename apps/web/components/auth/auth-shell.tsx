@@ -6,18 +6,18 @@ import { Card } from '@/components/ui/card'
 import { KivoTile, KivoWordmark } from '@/components/brand/kivo-brand'
 
 // Sign-in, sign-up and password recovery share one look: Kivo ink, the dot
-// grid the knowledge canvas uses, the lockup above the card, and iris for the
-// one action that moves the person forward.
+// grid the knowledge canvas uses, the lockup above the card, and the landing page's
+// teal for the one action that moves the person forward.
 
 export const authInputClass =
-  'h-11 rounded-lg border-ink-700 bg-ink-950 text-paper-50 placeholder:text-ink-300 focus-visible:border-iris-400 focus-visible:ring-iris-400/30'
+  'h-11 rounded-lg border-ink-700 bg-ink-950 text-paper-50 placeholder:text-ink-300 focus-visible:border-keppel-400 focus-visible:ring-keppel-400/30'
 
 export const authPrimaryButtonClass =
-  'h-11 w-full rounded-lg bg-iris-500 font-semibold text-white transition-colors duration-200 hover:bg-iris-600 disabled:opacity-60'
+  'h-11 w-full rounded-lg bg-keppel-400 font-semibold text-keppel-950 transition-colors duration-200 hover:bg-keppel-300 disabled:opacity-60'
 
 export const authLabelClass = 'mb-2 block text-sm font-medium text-ink-200'
 
-export const authLinkClass = 'font-medium text-iris-300 transition-colors hover:text-iris-200'
+export const authLinkClass = 'font-medium text-keppel-300 transition-colors hover:text-keppel-200'
 
 /** The page and card every sign-in, sign-up and recovery step is shown in. */
 export function AuthShell({

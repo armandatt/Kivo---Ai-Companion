@@ -77,51 +77,53 @@
 }
 
 /* ── The app's dark theme (the default) ─────────────────────────────────────────
-   Kivo ink: navy surfaces a step apart (sidebar, page, card, popover), ivory
-   text. Scoped to the signed-in app, like the light theme below, so the landing
-   and sign-in pages keep :root. Iris is the action colour (buttons, the current
-   page, focus); teal stays Nova's and learning's. */
+   The landing page's own colours, so the site reads as one place: its
+   near-black page and baltic-sea surfaces a step apart (sidebar, page, card,
+   popover), its pale text, and its teal (keppel) as the action colour
+   (buttons, the current page, focus). Scoped to the signed-in app, like the
+   light theme below, so the landing and sign-in pages keep :root. */
 .kivo-app {
   color-scheme: dark;
-  --background: #0B1220;
-  --foreground: #ECEEF2;
-  --card: #111A2B;
-  --card-foreground: #ECEEF2;
-  --popover: #141F31;
-  --popover-foreground: #ECEEF2;
+  --background: hsl(255, 11.11%, 7.06%);
+  --foreground: var(--color-baltic-sea-100);
+  --card: oklch(19.5% 0.018 294);
+  --card-foreground: var(--color-baltic-sea-100);
+  --popover: oklch(22% 0.02 294);
+  --popover-foreground: var(--color-baltic-sea-100);
   --primary: var(--action);
   --primary-foreground: var(--action-foreground);
-  --secondary: #18233A;
-  --secondary-foreground: #D5DBE6;
-  --muted: #18233A;
-  --muted-foreground: #93A0B6;
-  --border: #243049;
-  --input: #18233A;
-  --ring: #8B7BFF;
-  --sidebar: #080D18;
-  --sidebar-foreground: #ECEEF2;
+  --secondary: oklch(23% 0.022 294);
+  --secondary-foreground: var(--color-baltic-sea-200);
+  --muted: oklch(23% 0.022 294);
+  --muted-foreground: oklch(70% 0.015 295);
+  --border: oklch(28% 0.025 294);
+  --input: oklch(23% 0.022 294);
+  --ring: var(--color-keppel-400);
+  --sidebar: oklch(13.5% 0.012 296);
+  --sidebar-foreground: var(--color-baltic-sea-100);
   --sidebar-primary: var(--action);
   --sidebar-primary-foreground: var(--action-foreground);
-  --sidebar-accent: #172033;
-  --sidebar-accent-foreground: #ECEEF2;
-  --sidebar-border: #1B2538;
-  --sidebar-ring: #8B7BFF;
-  /* Iris: the fill of the one primary action, its hover, the text on it, iris
-     that reads as text on a surface, and the wash behind a selected item. */
-  --action: #6E5CFF;
-  --action-hover: #5A45F0;
-  --action-foreground: #FFFFFF;
-  --action-ink: #A99CFF;
-  --action-soft: rgb(110 92 255 / 0.16);
+  --sidebar-accent: oklch(21% 0.02 294);
+  --sidebar-accent-foreground: var(--color-baltic-sea-100);
+  --sidebar-border: oklch(22% 0.02 294);
+  --sidebar-ring: var(--color-keppel-400);
+  /* Teal, as on the landing page's buttons: the fill of the one primary
+     action, its hover, the text on it, teal that reads as text on a surface,
+     and the wash behind a selected item. */
+  --action: var(--color-keppel-400);
+  --action-hover: var(--color-keppel-300);
+  --action-foreground: var(--color-keppel-950);
+  --action-ink: var(--color-keppel-300);
+  --action-soft: oklch(70.64% 0.1 179.4 / 0.16);
   /* Teal: Nova, and learning and progress. */
   --nova: oklch(70.64% 0.1 179.4);
   --nova-ink: oklch(79.68% 0.09 178.36);
   /* The legibility floor (below): muted text never lighter than this. */
-  --subtle: #8E99AD;
+  --subtle: oklch(68% 0.015 295);
   background: var(--background);
   color: var(--foreground);
 }
-.kivo-app ::selection { background: rgb(110 92 255 / 0.35); }
+.kivo-app ::selection { background: oklch(70.64% 0.1 179.4 / 0.35); }
 
 /* ── The app's light theme ─────────────────────────────────────────────────────
    Scoped to the signed-in app (.kivo-app), so the landing page keeps its own
@@ -149,17 +151,18 @@ html[data-kivo-theme="light"] .kivo-app {
   --accent-foreground: var(--color-keppel-950);
   --border: #DCD5C4;
   --input: #F0ECE2;
-  --ring: #5A45F0;
+  --ring: oklch(52% 0.1 180);
   --sidebar: #EEEAE0;
   --sidebar-foreground: #0A0F1A;
   --sidebar-accent: #E4DED0;
   --sidebar-accent-foreground: #0A0F1A;
   --sidebar-border: #DCD5C4;
-  --sidebar-ring: #5A45F0;
-  --action: #5A45F0;
-  --action-hover: #4A36CF;
-  --action-ink: #4A36CF;
-  --action-soft: rgb(90 69 240 / 0.12);
+  --sidebar-ring: oklch(52% 0.1 180);
+  --action: oklch(52% 0.1 180);
+  --action-hover: oklch(46% 0.09 181);
+  --action-foreground: #FFFFFF;
+  --action-ink: oklch(44% 0.08 181);
+  --action-soft: oklch(52% 0.1 180 / 0.12);
   --nova: oklch(52% 0.1 180);
   --nova-ink: oklch(46% 0.08 181);
   --subtle: #535C6E;
@@ -192,35 +195,36 @@ html[data-kivo-theme="light"] .kivo-app {
   background: var(--background);
   color: var(--foreground);
 }
-html[data-kivo-theme="light"] .kivo-app ::selection { background: rgb(90 69 240 / 0.2); }
+html[data-kivo-theme="light"] .kivo-app ::selection { background: oklch(52% 0.1 180 / 0.2); }
 
 /* A part of the app that is always dark (the Creature world), whatever the
    theme: the tokens above are put back to what :root gives everything else. */
 html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   color-scheme: dark;
   --color-white: #fff;
-  --background: #0B1220;
-  --foreground: #ECEEF2;
-  --card: #111A2B;
-  --card-foreground: #ECEEF2;
-  --border: #243049;
-  --sidebar: #080D18;
-  --sidebar-foreground: #ECEEF2;
-  --sidebar-accent: #172033;
-  --sidebar-accent-foreground: #ECEEF2;
-  --sidebar-border: #1B2538;
+  --background: hsl(255, 11.11%, 7.06%);
+  --foreground: var(--color-baltic-sea-100);
+  --card: oklch(19.5% 0.018 294);
+  --card-foreground: var(--color-baltic-sea-100);
+  --border: oklch(28% 0.025 294);
+  --sidebar: oklch(13.5% 0.012 296);
+  --sidebar-foreground: var(--color-baltic-sea-100);
+  --sidebar-accent: oklch(21% 0.02 294);
+  --sidebar-accent-foreground: var(--color-baltic-sea-100);
+  --sidebar-border: oklch(22% 0.02 294);
   --color-keppel-200: oklch(87.75% 0.06 177.32);
   --color-keppel-300: oklch(79.68% 0.09 178.36);
-  --action: #6E5CFF;
-  --action-hover: #5A45F0;
-  --action-ink: #A99CFF;
-  --action-soft: rgb(110 92 255 / 0.16);
+  --action: var(--color-keppel-400);
+  --action-hover: var(--color-keppel-300);
+  --action-foreground: var(--color-keppel-950);
+  --action-ink: var(--color-keppel-300);
+  --action-soft: oklch(70.64% 0.1 179.4 / 0.16);
   --nova: oklch(70.64% 0.1 179.4);
   --nova-ink: oklch(79.68% 0.09 178.36);
-  --ring: #8B7BFF;
+  --ring: var(--color-keppel-400);
   --primary: var(--action);
   --primary-foreground: var(--action-foreground);
-  --subtle: #8E99AD;
+  --subtle: oklch(68% 0.015 295);
   color: var(--foreground);
 }
 
@@ -325,17 +329,18 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
    mark), keppel stays Nova's and growth's, and ember and coral are kept for
    what is urgent. The theme tokens above still decide each page's surfaces. */
 @theme {
-  --color-ink-50: #EEF1F6;
-  --color-ink-100: #D9DFE9;
-  --color-ink-200: #B4BECF;
-  --color-ink-300: #8A97AE;
-  --color-ink-400: #63718C;
-  --color-ink-500: #46536D;
-  --color-ink-600: #323E55;
-  --color-ink-700: #232E42;
-  --color-ink-800: #172033;
-  --color-ink-900: #0E1626;
-  --color-ink-950: #0B1220;
+  /* The landing page's neutrals (baltic-sea): near-black with a trace of violet. */
+  --color-ink-50: oklch(96% 0.004 295);
+  --color-ink-100: oklch(91% 0.008 295);
+  --color-ink-200: oklch(82% 0.012 295);
+  --color-ink-300: oklch(68% 0.015 295);
+  --color-ink-400: oklch(54% 0.02 294);
+  --color-ink-500: oklch(41% 0.03 293);
+  --color-ink-600: oklch(34% 0.03 293);
+  --color-ink-700: oklch(28% 0.025 294);
+  --color-ink-800: oklch(22% 0.02 294);
+  --color-ink-900: oklch(17.16% 0.02 294.89);
+  --color-ink-950: hsl(255, 11.11%, 7.06%);
 
   --color-paper-50: #FBF9F4;
   --color-paper-100: #F4F1E9;

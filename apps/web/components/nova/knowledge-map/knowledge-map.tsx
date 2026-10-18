@@ -25,7 +25,7 @@ const TYPES: Array<{ type: MapNodeType; label: string; plural: string }> = [
 const TYPE_LABEL = Object.fromEntries(TYPES.map(t => [t.type, t.label])) as Record<MapNodeType, string>
 
 // One colour per kind of thing, taken from the theme so both themes work.
-// Teal (Nova's) marks subjects and learning; iris is kept for selection.
+// Teal (Nova's) marks subjects and learning; selection uses the action colour.
 const FILL: Record<MapNodeType, string> = {
   subject: 'var(--nova)', topic: 'var(--map-topic)', note: 'var(--map-note)', resource: 'var(--map-resource)',
 }
