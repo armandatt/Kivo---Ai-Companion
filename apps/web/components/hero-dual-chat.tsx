@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { AuthAwareLink } from "@/components/auth-aware-link"
 import { SparklesCore } from "@/components/ui/sparkles"
 import { SplineBot } from "@/components/spline-bot"
-import { getCurrentQuote, type Quote } from "@/lib/quotes"
+import { QUOTES, getCurrentQuote, type Quote } from "@/lib/quotes"
 
 interface Message {
   id: string
@@ -200,11 +200,14 @@ function ChatPane({
 }
 
 export function HeroDualChat() {
-  const [quote, setQuote] = useState<Quote>(() => getCurrentQuote())
+  // The first quote is the same on the server and in the browser, so the page
+  // hydrates cleanly; a random one replaces it once it is on screen.
+  const [quote, setQuote] = useState<Quote>(QUOTES[0]!)
   const [quoteVisible, setQuoteVisible] = useState(true)
 
   // Rotate quote every 8 seconds with a fade transition
   useEffect(() => {
+    setQuote(getCurrentQuote())
     const id = setInterval(() => {
       setQuoteVisible(false)
       setTimeout(() => {
