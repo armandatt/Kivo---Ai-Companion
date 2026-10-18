@@ -103,13 +103,14 @@ export async function startSignup(
   });
 
   const signupToken = generateToken();
+  const tokenHash = hashToken(signupToken);
   const code = generateOtp();
   await deps.db.pendingSignup.create({
     data: {
       email,
       name: normalizeName(input.name),
       passwordHash,
-      tokenHash: hashToken(signupToken),
+      tokenHash,
       codeHash: hashOtp(email, code),
       codeExpiresAt: new Date(now.getTime() + OTP_TTL_MS),
       createdAt: now,
@@ -122,7 +123,11 @@ export async function startSignup(
       ? existingAccountEmail(email, deps.appUrl())
       : signupCodeEmail(email, code, OTP_TTL_MS / MINUTE),
   );
-  return sent ? { ok: true, email, signupToken } : fail(503, SEND_FAILED_MESSAGE);
+  if (sent) return { ok: true, email, signupToken };
+
+  // The browser is not given the token, so nobody could ever use this row.
+  await deps.db.pendingSignup.deleteMany({ where: { tokenHash } }).catch(() => undefined);
+  return fail(503, SEND_FAILED_MESSAGE);
 }
 
 /** The caller's own attempt, or null: wrong token, another address, or past its life. */
@@ -159,9 +164,10 @@ export async function resendSignupCode(
   const existing = await deps.db.user.findUnique({ where: { email }, select: { id: true } });
 
   const code = generateOtp();
+  const codeHash = hashOtp(email, code);
   await deps.db.pendingSignup.updateMany({
     where: { id: attempt.id },
-    data: { codeHash: hashOtp(email, code), codeExpiresAt: new Date(now.getTime() + OTP_TTL_MS) },
+    data: { codeHash, codeExpiresAt: new Date(now.getTime() + OTP_TTL_MS) },
   });
 
   const sent = await deps.sendEmail(
@@ -169,7 +175,18 @@ export async function resendSignupCode(
       ? existingAccountEmail(email, deps.appUrl())
       : signupCodeEmail(email, code, OTP_TTL_MS / MINUTE),
   );
-  return sent ? { ok: true } : fail(503, SEND_FAILED_MESSAGE);
+  if (sent) return { ok: true };
+
+  // The new code never reached anyone: put the one already sent back, so a
+  // failed resend does not break a code that may still be on its way. Guarded
+  // on the new code, so a resend that succeeded meanwhile is not undone.
+  await deps.db.pendingSignup
+    .updateMany({
+      where: { id: attempt.id, codeHash },
+      data: { codeHash: attempt.codeHash, codeExpiresAt: attempt.codeExpiresAt },
+    })
+    .catch(() => undefined);
+  return fail(503, SEND_FAILED_MESSAGE);
 }
 
 export type SignupVerifyResult = { ok: true; user: SessionUser } | AuthFailure;

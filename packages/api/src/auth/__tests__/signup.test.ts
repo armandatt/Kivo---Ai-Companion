@@ -220,6 +220,22 @@ describe("starting a signup", () => {
     expect(auth.users).toHaveLength(0);
   });
 
+  it("leaves no attempt behind when the code cannot be sent, and a later try works normally", async () => {
+    const ctx = setup();
+    ctx.auth.mail.working = false;
+    const failed = await startSignup({ email: "asha.rao@outlook.com", password: PASSWORD }, ctx.at(ctx.t0));
+
+    expect(failed).toMatchObject({ ok: false, status: 503 });
+    expect(failed).not.toHaveProperty("signupToken");
+    expect(ctx.auth.pending).toHaveLength(0);
+
+    ctx.auth.mail.working = true;
+    const { signupToken, code } = await begin(ctx, minutesAfter(ctx.t0, 2), PASSWORD, "asha.rao@outlook.com");
+    expect(ctx.auth.pending).toHaveLength(1);
+    const verified = await verifySignup({ email: "asha.rao@outlook.com", code, signupToken }, ctx.at(minutesAfter(ctx.t0, 3)));
+    expect(verified).toMatchObject({ ok: true, user: { email: "asha.rao@outlook.com" } });
+  });
+
   it("drops attempts that are past their life when another signup starts", async () => {
     const ctx = await started();
     await begin(ctx, minutesAfter(ctx.t0, 61), PASSWORD, "someone.else@gmail.com");
@@ -584,6 +600,33 @@ describe("resending the code", () => {
     await resendSignupCode({ email: EMAIL, signupToken: attacker.signupToken }, ctx.at(minutesAfter(ctx.t0, 4)));
 
     expect(pendingFor(ctx.auth, ctx.signupToken)).toEqual(victimBefore);
+  });
+
+  it("keeps the code already sent working when the new one cannot be sent", async () => {
+    const { auth, at, t0, code: first, signupToken } = await started();
+    const before = structuredClone(pendingFor(auth, signupToken));
+
+    auth.mail.working = false;
+    const resent = await resendSignupCode({ email: EMAIL, signupToken }, at(minutesAfter(t0, 2)));
+
+    expect(resent).toMatchObject({ ok: false, status: 503 });
+    const after = pendingFor(auth, signupToken);
+    expect(after.codeHash).toBe(before.codeHash);
+    expect(after.codeExpiresAt).toEqual(before.codeExpiresAt);
+    expect(after.attempts).toBe(before.attempts);
+
+    // The first email may still arrive: its code is the one that works.
+    const verified = await verifySignup({ email: EMAIL, code: first, signupToken }, at(minutesAfter(t0, 3)));
+    expect(verified.ok).toBe(true);
+  });
+
+  it("a failed resend does not stretch the first code's life", async () => {
+    const { auth, at, t0, code: first, signupToken } = await started();
+    auth.mail.working = false;
+    await resendSignupCode({ email: EMAIL, signupToken }, at(minutesAfter(t0, 2)));
+
+    const late = await verifySignup({ email: EMAIL, code: first, signupToken }, at(minutesAfter(t0, 11)));
+    expect(late).toMatchObject({ ok: false, status: 400, error: CODE_REJECTED_MESSAGE });
   });
 
   it("is refused inside the cooldown, with the wait", async () => {

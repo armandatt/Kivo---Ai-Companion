@@ -9,9 +9,15 @@ import { sessionSecret } from "../../lib/auth/session-secret"
 const COOKIE = "kevo_session"
 const MAX_AGE = 60 * 60 * 24 * 30
 
-// Long enough for the API to wake from idle on its host, short enough to
-// answer before the platform gives up on this function.
-export const UPSTREAM_TIMEOUT_MS = 25_000
+// Long enough for the API to wake from idle on its host (Render's free plan
+// takes up to about a minute), short enough to answer before the platform
+// gives up on this function. Every route that calls proxyAuth declares
+// `export const maxDuration = 60` (a literal: Next.js reads it without running
+// the file), which must stay above it; auth-proxy.test.ts holds both.
+// A request given up on too early may still have finished on the API (a code
+// sent, an account made) while the browser was told it failed.
+export const UPSTREAM_TIMEOUT_MS = 55_000
+export const AUTH_ROUTE_MAX_DURATION_SECONDS = 60
 
 // What the browser is told whenever the API cannot be used, whatever the
 // reason. The reason goes to the log; nothing internal goes to the page.
