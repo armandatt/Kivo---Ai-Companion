@@ -10,34 +10,26 @@
  */
 
 import * as THREE from 'three'
+import { VILLAGE, type PlaceId } from './places'
 import { createNoise2D } from 'simplex-noise'
 import type { BiomeType } from './game-state'
 
 export type { BiomeType }
 export interface VoxelBlock { position: THREE.Vector3; blockType: string; biome: BiomeType }
 
-// ─── Village landmark positions ────────────────────────────────────────────────
-const V = {
-  center  : { x:  0, z:  0  },  // Campfire / village heart
-  home    : { x: -9, z: -8  },  // Creature Home (cottage)
-  training: { x:-14, z:  5  },  // Training Hall
-  grove   : { x: 12, z:  8  },  // Memory Grove
-  plaza   : { x: 10, z: -6  },  // Achievement Plaza
-  rex     : { x: -4, z: 15  },  // Rex Sanctuary
-  shrine  : { x:  6, z: 13  },  // Commitment Shrine
-  tower   : { x:  0, z: 20  },  // Journey Tower (visible landmark)
-}
+// ─── Village landmark positions (lib/creature/places.ts) ──────────────────────
+const V = VILLAGE
 
-// Routine waypoints Kivo cycles through
-const WAYPOINTS = [
-  { ...V.home,     label: 'sleep'   },
-  { ...V.center,   label: 'sit'     },
-  { ...V.training, label: 'train'   },
-  { ...V.grove,    label: 'wander'  },
-  { ...V.plaza,    label: 'inspect' },
-  { ...V.rex,      label: 'rest'    },
-  { ...V.shrine,   label: 'reflect' },
-  { ...V.tower,    label: 'watch'   },
+// Routine waypoints Kivo cycles through, one per place
+const WAYPOINTS: Array<{ x: number; z: number; label: string; id: PlaceId }> = [
+  { ...V.home,     id: 'home', label: 'sleep'   },
+  { ...V.center,   id: 'center', label: 'sit'     },
+  { ...V.training, id: 'training', label: 'train'   },
+  { ...V.grove,    id: 'grove', label: 'wander'  },
+  { ...V.plaza,    id: 'plaza', label: 'inspect' },
+  { ...V.rex,      id: 'rex', label: 'rest'    },
+  { ...V.shrine,   id: 'shrine', label: 'reflect' },
+  { ...V.tower,    id: 'tower', label: 'watch'   },
 ]
 
 // Dwell time at each waypoint (seconds): min, max  (~2 min per stop)
@@ -850,6 +842,9 @@ export class BabylonVoxelEngine {
   private wpDwellSec = 0       // how long to stay at current waypoint (seconds)
   private kivoActivity = 'Kivo is resting.'
   public  onActivityChange: ((text: string) => void) | null = null
+  // Where the creature has arrived: a place id, once it stops there.
+  public  onPlaceChange: ((place: PlaceId) => void) | null = null
+  private allowedPlaces = new Set<PlaceId>(Object.keys(VILLAGE) as PlaceId[])
   private realTime   = 14
   private clock      = new THREE.Clock()
   private frame:     number | null = null
@@ -1001,6 +996,7 @@ export class BabylonVoxelEngine {
         this.wpDwellSec = min + Math.random() * (max - min)
         this.wpTimer    = 0
         this.currentBehavior = wp.label
+        this.onPlaceChange?.(wp.id)
         const text = pickActivity(wp.label)
         this.kivoActivity = text
         this.onActivityChange?.(text)
@@ -1010,9 +1006,10 @@ export class BabylonVoxelEngine {
 
       if (this.wpTimer >= this.wpDwellSec) {
         // Dwell done — pick a random different waypoint
-        let nextIdx: number
-        do { nextIdx = Math.floor(Math.random() * WAYPOINTS.length) }
-        while (nextIdx === this.wpIndex && WAYPOINTS.length > 1)
+        // Only the places the learner has opened.
+        const open = WAYPOINTS.map((w, i) => ({ w, i })).filter(({ w }) => this.allowedPlaces.has(w.id))
+        const choices = open.length > 1 ? open.filter(({ i }) => i !== this.wpIndex) : open
+        const nextIdx = choices.length > 0 ? choices[Math.floor(Math.random() * choices.length)].i : this.wpIndex
         this.wpIndex = nextIdx
         this.targetX = WAYPOINTS[nextIdx].x + (Math.random()-0.5)*1.5
         this.targetZ = WAYPOINTS[nextIdx].z + (Math.random()-0.5)*1.5
@@ -1314,6 +1311,27 @@ export class BabylonVoxelEngine {
   public setTime(t: number) { this.realTime = t }
   public updateWorldHealth(h: number) { this.worldHealth = h }
   public getActivity(): string { return this.kivoActivity }
+  public getPosition(): { x: number; z: number } { return { x: this.kivoX, z: this.kivoZ } }
+  public getCameraYaw(): number { return this.cameraYaw }
+  // The places the creature may wander to on its own.
+  public setAllowedPlaces(ids: PlaceId[]) { this.allowedPlaces = new Set(ids) }
+  // The learner sends the creature somewhere: it walks there, stays as it
+  // would have, and then goes back to its own routine.
+  public goTo(id: PlaceId, walkText?: string) {
+    const index = WAYPOINTS.findIndex(w => w.id === id)
+    if (index === -1) return
+    this.wpIndex = index
+    this.targetX = WAYPOINTS[index].x + (Math.random() - 0.5) * 1.2
+    this.targetZ = WAYPOINTS[index].z + (Math.random() - 0.5) * 1.2
+    this.wpTimer = 0
+    // Already there: arriving again starts its stay over.
+    this.isWalkingToWaypoint = true
+    this.cinemaMode = 'following'
+    this.cinemaTimer = 0
+    const text = walkText ?? pickActivity('walking')
+    this.kivoActivity = text
+    this.onActivityChange?.(text)
+  }
 
   public startIntroReveal() {
     // Place camera high above Kivo, then let updateCamera() descend it

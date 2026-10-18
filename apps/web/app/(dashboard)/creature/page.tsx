@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { BabylonTilemap } from '@/components/creature/babylon-tilemap'
 import type { EngineApi } from '@/components/creature/babylon-tilemap'
 import { GameHUD } from '@/components/creature/game-hud'
@@ -8,7 +8,8 @@ import { GameOverlay } from '@/components/creature/game-overlay'
 import { CreatureIntro } from '@/components/creature/creature-intro'
 import { AmbientOverlay } from '@/components/creature/ambient-overlay'
 import { BIOME_UNLOCKS, STRUCTURE_UNLOCKS, type BiomeType } from '@/lib/creature/game-state'
-import { Sun, Moon } from 'lucide-react'
+import { Sun, Moon, Lock, MapPin } from 'lucide-react'
+import { PLACES, placeToward, unlockedPlaces, type Direction, type PlaceId } from '@/lib/creature/places'
 import type { NovaCreatureView } from '@repo/api/nova/product/creature.types'
 
 const MOCK_STREAK       = 47
@@ -98,6 +99,22 @@ function CreatureWorld({ world }: { world: World }) {
 
   const engineApiRef = useRef<EngineApi | null>(null)
 
+  // The places the creature may go: opened by days of study in a row.
+  const openPlaces = useMemo(() => unlockedPlaces(world.streak), [world.streak])
+  const openIds    = useMemo(() => openPlaces.map(pl => pl.id), [openPlaces])
+  const [place, setPlace]   = useState<PlaceId | null>('center')
+  const [heading, setHeading] = useState<PlaceId | null>(null)
+  const [nudge, setNudge]   = useState<string | null>(null)
+
+  const sendTo = useCallback((id: PlaceId) => {
+    const target = PLACES.find(pl => pl.id === id)
+    if (!target || !openIds.includes(id)) return
+    setHeading(id); setPlace(null)
+    engineApiRef.current?.goTo(id, `Kivo heads to the ${target.name}.`)
+  }, [openIds])
+
+  const onArrive = useCallback((id: PlaceId) => { setPlace(id); setHeading(null) }, [])
+
   // Effective time: user override takes priority over real clock
   const displayTime = timeOverride ?? currentTime
   const isNight     = displayTime > 20 || displayTime < 6
@@ -125,15 +142,37 @@ function CreatureWorld({ world }: { world: World }) {
     tick(); const t = setInterval(tick, 60_000); return () => clearInterval(t)
   }, [])
 
-  // Arrow keys rotate camera
+  // Arrow keys send the creature to the nearest open place that way, as the
+  // world is seen on screen. Shift + left/right, or Q and E, turn the camera.
   useEffect(() => {
+    const ARROWS: Record<string, Direction> = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowLeft')  { setCameraYaw(y => y - 0.18); e.preventDefault() }
-      if (e.key === 'ArrowRight') { setCameraYaw(y => y + 0.18); e.preventDefault() }
+      const typing = e.target instanceof HTMLElement && (e.target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName))
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return
+      const key = e.key.toLowerCase()
+      if ((e.shiftKey && e.key === 'ArrowLeft') || key === 'q') { setCameraYaw(y => y - 0.18); e.preventDefault(); return }
+      if ((e.shiftKey && e.key === 'ArrowRight') || key === 'e') { setCameraYaw(y => y + 0.18); e.preventDefault(); return }
+      const direction = ARROWS[e.key]
+      const api = engineApiRef.current
+      if (!direction || !api) return
+      e.preventDefault()
+      const next = placeToward(api.getPosition(), direction, api.getCameraYaw(), openPlaces, place ?? heading)
+      if (next) { sendTo(next.id); setNudge(null) }
+      else {
+        // Nothing open that way: say what would open there, if anything.
+        const locked = placeToward(api.getPosition(), direction, api.getCameraYaw(), PLACES.filter(pl => !openIds.includes(pl.id)), null)
+        setNudge(locked ? `${locked.name} opens after ${locked.unlockDays} days in a row.` : 'Nothing that way yet.')
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [openPlaces, openIds, place, heading, sendTo])
+
+  useEffect(() => {
+    if (!nudge) return
+    const t = setTimeout(() => setNudge(null), 2600)
+    return () => clearTimeout(t)
+  }, [nudge])
 
   // Check intro on mount
   useEffect(() => {
@@ -172,6 +211,8 @@ function CreatureWorld({ world }: { world: World }) {
         cameraYaw={cameraYaw}
         onEngineReady={handleEngineReady}
         onActivityChange={setActivity}
+        allowedPlaces={openIds}
+        onPlaceChange={onArrive}
       />
 
       {/* Ambient life — birds, butterflies, fireflies, leaves */}
@@ -202,9 +243,38 @@ function CreatureWorld({ world }: { world: World }) {
       {hudVisible && (
         <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-20">
           <div className="bg-black/45 backdrop-blur-md border border-white/10 rounded-2xl px-5 py-2.5 shadow-xl">
-            <p className="text-xs text-white/65 tracking-wide font-light text-center">{displayActivity}</p>
+            <p className="text-xs text-white/65 tracking-wide font-light text-center">{nudge ?? displayActivity}</p>
           </div>
         </div>
+      )}
+
+      {/* Places: where the creature can go, and what opens next */}
+      {hudVisible && (
+        <nav aria-label="Places" className="fixed left-5 top-1/2 z-20 hidden -translate-y-1/2 sm:block">
+          <div className="w-52 rounded-2xl border border-white/10 bg-black/40 p-2 shadow-xl backdrop-blur-md">
+            <p className="px-2 pb-1.5 pt-1 text-[10px] uppercase tracking-widest text-white/50">Places</p>
+            <ul className="space-y-0.5">
+              {PLACES.map(pl => {
+                const open = openIds.includes(pl.id)
+                const here = place === pl.id, going = heading === pl.id
+                return (
+                  <li key={pl.id}>
+                    <button type="button" disabled={!open} onClick={() => sendTo(pl.id)}
+                      aria-current={here ? 'location' : undefined}
+                      title={open ? `Send ${creatureName || 'Kivo'} to the ${pl.name}` : `Opens after ${pl.unlockDays} days in a row`}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${here ? 'bg-white/12 text-white' : open ? 'text-white/70 hover:bg-white/8 hover:text-white' : 'cursor-not-allowed text-white/30'}`}>
+                      {open
+                        ? <MapPin className={`size-3.5 shrink-0 ${here ? 'text-emerald-300' : going ? 'animate-pulse text-amber-200' : 'text-white/40'}`} />
+                        : <Lock className="size-3.5 shrink-0" />}
+                      <span className="min-w-0 flex-1 truncate">{pl.name}</span>
+                      {!open && <span className="shrink-0 tabular-nums text-[10px]">{pl.unlockDays}d</span>}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        </nav>
       )}
 
       {/* Bottom-right controls */}
@@ -221,9 +291,10 @@ function CreatureWorld({ world }: { world: World }) {
               : <><Moon className="w-3.5 h-3.5 text-indigo-300" /><span>Night</span></>
             }
           </button>
-          {/* Camera hint */}
-          <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-xl px-4 py-2 text-xs text-white/50">
-            <span className="text-white/70 font-medium">← →</span> rotate
+          {/* Controls */}
+          <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-xl px-4 py-2 text-xs text-white/50 space-y-0.5 text-right">
+            <p><span className="text-white/75 font-medium">Arrow keys</span> move {creatureName || 'Kivo'}</p>
+            <p><span className="text-white/75 font-medium">Shift ← →</span> or <span className="text-white/75 font-medium">Q E</span> turn</p>
           </div>
         </div>
       )}

@@ -31,6 +31,18 @@ export function googleConfig() {
   return { clientId, clientSecret, redirectUri }
 }
 
+// Where to start instead, or null to start here. The browser's host is the
+// one the web app's rewrite forwards; without it nothing is moved.
+export function movedTo(req: Request, redirectUri: string): string | null {
+  const url = new URL(req.url)
+  if (url.searchParams.has("moved")) return null
+  const browserHost = req.headers.get("x-forwarded-host")?.split(",")[0]?.trim().toLowerCase()
+  let callback: URL
+  try { callback = new URL(redirectUri) } catch { return null }
+  if (!browserHost || browserHost === callback.host.toLowerCase()) return null
+  return `${callback.origin}/api/auth/google?moved=1`
+}
+
 export function googleAuthorizationUrl(clientId: string, redirectUri: string, state: string, nonce: string) {
   const url = new URL(AUTHORIZATION_ENDPOINT)
   url.searchParams.set("client_id", clientId)
