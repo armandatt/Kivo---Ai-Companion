@@ -415,7 +415,8 @@ describe("the language of the message being answered", () => {
 
   it("the turn knows a Devanagari message before any model is asked, and keeps a name or profile out of it", () => {
     const turn = read("telegram/telegram-turn.ts");
-    expect(turn).toContain('(event.kind === "text" ? scriptLanguage(event.text) : null) ??');
+    // The script first; only then the language of the conversation (chooseLanguage).
+    expect(turn).toContain('event.kind === "text" ? (scriptLanguage(event.text) ?? chooseLanguage(null, lastLanguage, event.text)) : lastLanguage');
     expect(read("interaction/language.ts")).not.toMatch(/displayName|studentName|profile\./);
   });
 });

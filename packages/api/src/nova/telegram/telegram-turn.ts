@@ -254,11 +254,14 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     if (!profile.timezone) profile.timezone = await ensureLearnerTimezone(profile, event.chatId).catch(() => null);
 
     trace.profileId = profile.id;
+    // Until this message is read: the language they last wrote in, by the
+    // same rule as after it (chooseLanguage), so a reading that never comes
+    // does not answer a sentence in the previous message's language. A
+    // message in Devanagari says so itself, model or no model.
+    const lastLanguage = user ? await loadReplyLanguage(user.id) : "english";
     ctx = {
       chatId: event.chatId, profileId: profile.id, timezone: profile.timezone, name: user?.displayName ?? null, now,
-      // Until this message is read: the language they last wrote in. A
-      // message in Devanagari says so itself, model or no model.
-      language: (event.kind === "text" ? scriptLanguage(event.text) : null) ?? (user ? await loadReplyLanguage(user.id) : "english"),
+      language: event.kind === "text" ? (scriptLanguage(event.text) ?? chooseLanguage(null, lastLanguage, event.text)) : lastLanguage,
     };
     budgetDay = dayKey(now, resolveTimezone(profile.timezone));
     // The row is made once, and "reachable again" is written only when the
@@ -461,9 +464,12 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       }
       // What of that reading may be used at all. Everything below, the
       // decision and the evidence alike, sees only this.
-      const understanding = safeReading(read, { today: day });
+      const safe = safeReading(read, { today: day });
       // This reply is in the language the message was written in.
-      ctx.language = chooseLanguage(understanding.request?.language, ctx.language);
+      ctx.language = chooseLanguage(safe.request?.language, ctx.language, event.text);
+      // The log records the language this reply was given in, so the next
+      // short message follows the conversation as it now is.
+      const understanding = safe.request ? { ...safe, request: { ...safe.request, language: ctx.language } } : safe;
       trace.understanding.ok           = true;
       trace.understanding.intent       = understanding.intent;
       trace.understanding.request      = understanding.request?.action ?? null;

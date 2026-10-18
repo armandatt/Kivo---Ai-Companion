@@ -1,19 +1,19 @@
 'use client'
 
 // A note, drawn for reading. The text is the learner's and is shown as they
-// wrote it, with a few marks given their usual meaning:
-//   # / ## / ###   headings            - or *   list items
-//   1.             numbered items      >        a quoted line
-//   ```            a block of code     **bold** and `code` inside a line
-//   [[Title]]      a link to another of their notes (note-links.ts)
-//   http(s)://…    a link that opens in a new tab
+// wrote it; note-blocks.ts says which marks mean what (headings, lists,
+// quotes, callouts, ==highlights==, #tags, [[links]], web addresses).
 // Everything is built as React elements: nothing in a note is ever treated as
 // HTML, so a note cannot run code or change the page.
 
 import Link from 'next/link'
 import type { ReactNode } from 'react'
+import {
+  AlertTriangle, BookOpen, ChevronRight, FlaskConical, HelpCircle, Lightbulb, ListChecks, NotebookPen, Quote,
+} from 'lucide-react'
 import { linkKey, tokenizeLine } from '@repo/api/nova/product/note-links'
 import type { NoteLinkRef } from '@repo/api/nova/product/notes.types'
+import { inlineTokens, parseBlocks, type Block, type CalloutType } from './note-blocks'
 
 type Resolve = (title: string) => NoteLinkRef | undefined
 
@@ -25,47 +25,36 @@ export function linkHref(ref: NoteLinkRef | undefined, title: string): { href: s
   return { href: `/notes/new?title=${encodeURIComponent(title)}`, missing: true }
 }
 
-function safeUrl(raw: string): string | null {
-  try {
-    const u = new URL(raw)
-    return u.protocol === 'http:' || u.protocol === 'https:' ? u.toString() : null
-  } catch {
-    return null
-  }
+// Each kind of callout: its mark, its edge and fill, and the colour of its
+// title. Text colours are only the tones globals.css darkens for the light
+// theme (the -300s and keppel-200), so a callout reads on paper as well.
+// The class names are written out in full so Tailwind keeps them.
+const CALLOUT: Record<CalloutType, { icon: typeof Quote; edge: string; fill: string; title: string; text: string }> = {
+  note:       { icon: NotebookPen,   edge: 'border-foreground/30',  fill: 'bg-white/[0.04]',       title: 'text-foreground/80', text: '' },
+  // A passage from the source is set apart in the accent, the way a
+  // highlighted quote is in a reading app; the learner's own words follow it.
+  quote:      { icon: Quote,         edge: 'border-keppel-400/80',  fill: 'bg-keppel-400/[0.07]',  title: 'text-keppel-300',  text: 'text-keppel-200' },
+  idea:       { icon: Lightbulb,     edge: 'border-sky-400/70',     fill: 'bg-sky-400/[0.06]',     title: 'text-sky-300',     text: '' },
+  question:   { icon: HelpCircle,    edge: 'border-violet-400/70',  fill: 'bg-violet-400/[0.06]',  title: 'text-violet-300',  text: '' },
+  warning:    { icon: AlertTriangle, edge: 'border-amber-400/70',   fill: 'bg-amber-400/[0.06]',   title: 'text-amber-300',   text: '' },
+  summary:    { icon: ListChecks,    edge: 'border-indigo-400/70',  fill: 'bg-indigo-400/[0.06]',  title: 'text-indigo-300',  text: '' },
+  example:    { icon: FlaskConical,  edge: 'border-orange-400/70',  fill: 'bg-orange-400/[0.06]',  title: 'text-orange-300',  text: '' },
+  definition: { icon: BookOpen,      edge: 'border-pink-400/70',    fill: 'bg-pink-400/[0.06]',    title: 'text-pink-300',    text: '' },
 }
 
-// **bold**, `code` and bare web addresses inside a run of plain text.
 function inline(text: string, key: string): ReactNode[] {
-  const out: ReactNode[] = []
-  let i = 0, plain = '', n = 0
-  const flush = () => { if (plain) { out.push(plain); plain = '' } }
-  while (i < text.length) {
-    if (text.startsWith('**', i)) {
-      const end = text.indexOf('**', i + 2)
-      if (end > i + 2) { flush(); out.push(<strong key={`${key}b${n++}`} className="font-semibold text-foreground">{text.slice(i + 2, end)}</strong>); i = end + 2; continue }
+  return inlineTokens(text).map((t, n) => {
+    const k = `${key}i${n}`
+    switch (t.kind) {
+      case 'text':      return t.text
+      case 'bold':      return <strong key={k} className="font-semibold text-foreground">{t.text}</strong>
+      case 'italic':    return <em key={k} className="italic">{t.text}</em>
+      case 'highlight': return <mark key={k} className="rounded-[3px] bg-yellow-300/25 px-0.5 text-inherit [box-decoration-break:clone]" data-note-highlight>{t.text}</mark>
+      case 'code':      return <code key={k} className="rounded bg-white/8 px-1 py-0.5 font-mono text-[0.86em]">{t.text}</code>
+      case 'tag':       return <span key={k} className="mx-0.5 inline-block rounded-full bg-orange-400/15 px-2 py-px align-[0.08em] font-sans text-[0.8em] font-medium text-orange-300" data-note-tag={t.text}>#{t.text}</span>
+      case 'url':       return <a key={k} href={t.href} target="_blank" rel="noopener noreferrer" className="break-all text-keppel-300 underline decoration-keppel-300/40 underline-offset-2 hover:decoration-keppel-300">{t.text}</a>
     }
-    if (text[i] === '`') {
-      const end = text.indexOf('`', i + 1)
-      if (end > i + 1) { flush(); out.push(<code key={`${key}c${n++}`} className="rounded bg-white/8 px-1 py-0.5 font-mono text-[0.9em]">{text.slice(i + 1, end)}</code>); i = end + 1; continue }
-    }
-    if (text.startsWith('http://', i) || text.startsWith('https://', i)) {
-      let end = i
-      while (end < text.length && text[end] !== ' ' && text[end] !== ')' && text[end] !== '>') end++
-      // A sentence's full stop or comma is not part of the address.
-      while (end > i && '.,;:!?'.includes(text[end - 1]!)) end--
-      const url = safeUrl(text.slice(i, end))
-      if (url) {
-        flush()
-        out.push(<a key={`${key}u${n++}`} href={url} target="_blank" rel="noopener noreferrer" className="text-keppel-300 underline decoration-keppel-300/40 underline-offset-2 hover:decoration-keppel-300 break-all">{text.slice(i, end)}</a>)
-        i = end
-        continue
-      }
-    }
-    plain += text[i]
-    i++
-  }
-  flush()
-  return out
+  })
 }
 
 function line(text: string, key: string, resolve: Resolve): ReactNode[] {
@@ -85,75 +74,68 @@ function line(text: string, key: string, resolve: Resolve): ReactNode[] {
   })
 }
 
-export function NoteBody({ body, links }: { body: string; links: NoteLinkRef[] }) {
+const lines = (ls: string[], key: string, resolve: Resolve) =>
+  ls.flatMap((l, j) => [...(j ? [<br key={`${key}br${j}`} />] : []), ...line(l, `${key}-${j}`, resolve)])
+
+function Callout({ block, k, resolve }: { block: Extract<Block, { kind: 'callout' }>; k: string; resolve: Resolve }) {
+  const style = CALLOUT[block.type]
+  const Icon = style.icon
+  const head = (
+    <span className={`flex items-center gap-2 font-sans text-[13px] font-semibold tracking-wide ${style.title}`}>
+      <Icon className="size-4 shrink-0" aria-hidden />
+      <span className="min-w-0">{line(block.title, `${k}t`, resolve)}</span>
+      {block.fold && <ChevronRight className="ml-auto size-4 shrink-0 transition-transform group-open:rotate-90" aria-hidden />}
+    </span>
+  )
+  const body = block.body.length > 0 && <div className={`mt-1.5 ${style.text}`}>{render(block.body, `${k}b`, resolve, true)}</div>
+  const frame = `my-4 rounded-r-xl border-l-[3px] px-4 py-3 ${style.edge} ${style.fill}`
+  if (block.fold) {
+    return (
+      <details className={`group ${frame}`} open={block.fold === 'open'} data-callout={block.type}>
+        <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">{head}</summary>
+        {body}
+      </details>
+    )
+  }
+  return <aside className={frame} data-callout={block.type}>{head}{body}</aside>
+}
+
+function render(blocks: Block[], key: string, resolve: Resolve, nested = false): ReactNode[] {
+  return blocks.map((b, n) => {
+    const k = `${key}${n}`
+    // Inside a callout the first and last blocks sit flush with its edges.
+    const edge = nested ? 'first:mt-0 last:mb-0' : ''
+    switch (b.kind) {
+      case 'para': return <p key={k} className={`my-3 ${edge}`}>{lines(b.lines, k, resolve)}</p>
+      case 'list': {
+        const items = b.items.map((it, j) => <li key={`${k}-${j}`} className="my-1 pl-1">{line(it, `${k}-${j}`, resolve)}</li>)
+        return b.ordered
+          ? <ol key={k} className={`my-3 list-decimal space-y-0.5 pl-6 marker:text-foreground/40 ${edge}`}>{items}</ol>
+          : <ul key={k} className={`my-3 list-disc space-y-0.5 pl-6 marker:text-keppel-400/60 ${edge}`}>{items}</ul>
+      }
+      case 'code': return <pre key={k} className={`my-4 overflow-x-auto rounded-xl border border-white/8 bg-white/4 p-3.5 font-mono text-[13px] leading-relaxed ${edge}`}><code>{b.text}</code></pre>
+      case 'quote': return <blockquote key={k} className={`my-4 border-l-2 border-foreground/20 pl-4 italic text-foreground/70 ${edge}`}>{lines(b.lines, k, resolve)}</blockquote>
+      case 'rule': return <hr key={k} className="my-8 border-white/10" />
+      case 'callout': return <Callout key={k} block={b} k={k} resolve={resolve} />
+      case 'heading': {
+        const content = line(b.text, k, resolve)
+        if (b.level === 1) return <h2 key={k} id={b.id} className={`mb-3 mt-10 scroll-mt-24 font-serif text-[1.75em] font-semibold leading-tight tracking-tight text-keppel-200 ${edge}`}>{content}</h2>
+        if (b.level === 2) return <h3 key={k} id={b.id} className={`mb-2 mt-8 scroll-mt-24 font-serif text-[1.35em] font-semibold leading-snug text-foreground ${edge}`}>{content}</h3>
+        return <h4 key={k} id={b.id} className={`mb-1.5 mt-6 scroll-mt-24 text-[1.08em] font-semibold text-foreground/90 ${edge}`}>{content}</h4>
+      }
+    }
+  })
+}
+
+export function NoteBody({ body, links, serif = false }: { body: string; links: NoteLinkRef[]; serif?: boolean }) {
   const byKey = new Map(links.map(l => [linkKey(l.title), l] as const))
   const resolve: Resolve = title => byKey.get(linkKey(title))
-
-  const blocks: ReactNode[] = []
-  const lines = body.split('\n')
-  let para: string[] = []
-  let list: { ordered: boolean; items: string[] } | null = null
-  let k = 0
-
-  const flushPara = () => {
-    if (para.length === 0) return
-    const id = `p${k++}`
-    blocks.push(<p key={id} className="my-3">{para.flatMap((l, j) => [...(j ? [<br key={`${id}br${j}`} />] : []), ...line(l, `${id}-${j}`, resolve)])}</p>)
-    para = []
-  }
-  const flushList = () => {
-    if (!list) return
-    const id = `l${k++}`
-    const items = list.items.map((it, j) => <li key={`${id}-${j}`} className="my-1">{line(it, `${id}-${j}`, resolve)}</li>)
-    blocks.push(list.ordered
-      ? <ol key={id} className="my-3 list-decimal space-y-0.5 pl-6">{items}</ol>
-      : <ul key={id} className="my-3 list-disc space-y-0.5 pl-6">{items}</ul>)
-    list = null
-  }
-
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i]!
-    const trimmed = raw.trimStart()
-
-    if (trimmed.startsWith('```')) {
-      flushPara(); flushList()
-      const code: string[] = []
-      i++
-      while (i < lines.length && !lines[i]!.trimStart().startsWith('```')) code.push(lines[i++]!)
-      blocks.push(<pre key={`c${k++}`} className="my-4 overflow-x-auto rounded-xl border border-white/8 bg-white/4 p-3.5 font-mono text-[13px] leading-relaxed"><code>{code.join('\n')}</code></pre>)
-      continue
-    }
-    if (!trimmed) { flushPara(); flushList(); continue }
-
-    const heading = trimmed.startsWith('### ') ? 3 : trimmed.startsWith('## ') ? 2 : trimmed.startsWith('# ') ? 1 : 0
-    if (heading) {
-      flushPara(); flushList()
-      const content = line(trimmed.slice(heading + 1), `h${k}`, resolve)
-      const cls = heading === 1 ? 'mt-7 mb-2 text-xl font-semibold text-foreground' : heading === 2 ? 'mt-6 mb-2 text-lg font-semibold text-foreground' : 'mt-5 mb-1.5 text-base font-semibold text-foreground'
-      const id = `h${k++}`
-      blocks.push(heading === 1 ? <h2 key={id} className={cls}>{content}</h2> : heading === 2 ? <h3 key={id} className={cls}>{content}</h3> : <h4 key={id} className={cls}>{content}</h4>)
-      continue
-    }
-    if (trimmed.startsWith('> ')) {
-      flushPara(); flushList()
-      blocks.push(<blockquote key={`q${k++}`} className="my-3 border-l-2 border-keppel-400/40 pl-4 text-foreground/70">{line(trimmed.slice(2), `q${k}`, resolve)}</blockquote>)
-      continue
-    }
-    const bullet = trimmed.startsWith('- ') || trimmed.startsWith('* ')
-    let numbered = 0
-    while (numbered < trimmed.length && trimmed[numbered]! >= '0' && trimmed[numbered]! <= '9') numbered++
-    const ordered = numbered > 0 && trimmed.startsWith('. ', numbered)
-    if (bullet || ordered) {
-      flushPara()
-      if (list && list.ordered !== ordered) flushList()
-      if (!list) list = { ordered, items: [] }
-      list.items.push(bullet ? trimmed.slice(2) : trimmed.slice(numbered + 2))
-      continue
-    }
-    flushList()
-    para.push(raw)
-  }
-  flushPara(); flushList()
-
-  return <div className="break-words text-[15px] leading-relaxed text-foreground/85" data-note-body>{blocks}</div>
+  return (
+    <div
+      className={`break-words text-foreground/85 [&>*:first-child]:mt-0 ${serif ? 'font-serif text-[17px] leading-[1.8]' : 'text-[15px] leading-relaxed'}`}
+      data-note-body
+    >
+      {render(parseBlocks(body), 'n', resolve)}
+    </div>
+  )
 }

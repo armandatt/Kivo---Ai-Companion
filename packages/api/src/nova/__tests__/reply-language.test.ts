@@ -12,7 +12,7 @@ import { parseLearnerRequest } from "../brains/understanding-parser";
 import { UNDERSTANDING_BRAIN_SYSTEM_PROMPT } from "../brains/prompts/understanding-brain.prompt";
 import { safeReading } from "../decision/interpretation-safety";
 import { decideFirstUse } from "../interaction/first-use";
-import { chooseLanguage, languageLine } from "../interaction/language";
+import { chooseLanguage, languageLine, SENTENCE_WORDS, wordCount } from "../interaction/language";
 import { wordProactiveMessage } from "../proactive/nova-proactive-response";
 import { isFixedText, TEXT, TEXT_HINGLISH, textFor } from "../telegram/telegram-replies";
 import type { NovaTodayReady, TodayAction } from "../product/today.types";
@@ -58,6 +58,50 @@ describe("choosing the reply language", () => {
   it("keeps the last language when the message does not say", () => {
     expect(chooseLanguage(null, "hinglish")).toBe("hinglish");
     expect(chooseLanguage(undefined, "english")).toBe("english");
+  });
+
+  // Regression (staging, 18 October): "How is my progress going?" and "remind
+  // me at 8 pm to study" came back with no language after a Hinglish message,
+  // and were answered in Hinglish because the last language carried over.
+  it("a sentence the reading gave no language is answered in English, whatever came before", () => {
+    for (const text of ["How is my progress going?", "remind me at 8 pm to study", "What is my next one-week plan?"]) {
+      for (const read of [null, undefined]) {
+        expect(chooseLanguage(read, "hinglish", text)).toBe("english");
+        expect(chooseLanguage(read, "hindi", text)).toBe("english");
+      }
+    }
+  });
+
+  it("a message too short to tell keeps the conversation's language", () => {
+    for (const text of ["ok", "haan", "30", "8 pm", "deadlocks", "ok bhai", "yes do it", "", "???"]) {
+      expect(chooseLanguage(null, "hinglish", text)).toBe("hinglish");
+      expect(chooseLanguage(null, "english", text)).toBe("english");
+    }
+  });
+
+  it("a reading that names a language always wins, in both directions", () => {
+    expect(chooseLanguage("english", "hinglish", "How is my progress going?")).toBe("english");
+    expect(chooseLanguage("hinglish", "english", "Aaj ke plans update karne hain")).toBe("hinglish");
+    expect(chooseLanguage("hinglish", "english", "ok bhai")).toBe("hinglish");
+    expect(chooseLanguage("hindi", "english", "आज क्या पढ़ना है")).toBe("hindi");
+  });
+
+  it("is the same every time for the same message and conversation", () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 50; i++) seen.add(chooseLanguage(null, i % 2 ? "hinglish" : "english", "How is my progress going?"));
+    expect([...seen]).toEqual(["english"]);
+  });
+
+  it("counts words that have letters: four make a sentence", () => {
+    expect([wordCount("remind me at 8 pm to study"), wordCount("8 pm"), wordCount("30"), wordCount("ok   bhai\nthik hai")]).toEqual([6, 1, 0, 4]);
+    expect(SENTENCE_WORDS).toBe(4);
+  });
+
+  it("is applied before the reading too, and stored with the message, in the Telegram and setup turns", () => {
+    const turn = read("telegram/telegram-turn.ts");
+    expect(turn).toContain("chooseLanguage(safe.request?.language, ctx.language, event.text)");
+    expect(turn).toContain("request: { ...safe.request, language: ctx.language }");
+    expect(read("interaction/setup-turn.ts")).toContain("chooseLanguage(understanding.request?.language, ctx.language, text)");
   });
 
   it("adds nothing to a prompt for English, and one line for Hinglish", () => {

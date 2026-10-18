@@ -2,18 +2,21 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Plus, Search } from 'lucide-react'
+import { FileText, LayoutGrid, Plus, Rows3, Search } from 'lucide-react'
 import type { NovaNotesReady, NovaNotesView, NoteSummary } from '@repo/api/nova/product/notes.types'
 import { relativeDay } from '../format'
+import { subjectColor } from '../subject-color'
 import { useNovaView } from '../use-nova-view'
 import { notesUrl } from './notes-api'
+import { groupNotes } from './notes-tree-data'
 import { PageAction, PageFrame, PageHeader, PageLoading, PageNotice, RetryButton } from '@/components/dashboard/page-states'
 
 const selectClass =
   'h-10 min-w-0 rounded-xl border border-white/10 bg-transparent px-3 text-sm text-foreground/85 focus:border-keppel-400/60 focus:outline-none'
 
-function Frame({ children }: { children: React.ReactNode }) {
-  return <PageFrame width="narrow">{children}</PageFrame>
+// The shared narrow frame; cards by subject get more room.
+function Frame({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
+  return <PageFrame width="narrow" className={wide ? 'max-w-5xl' : undefined}>{children}</PageFrame>
 }
 
 function Notice({ title, body }: { title: string; body: string }) {
@@ -21,6 +24,27 @@ function Notice({ title, body }: { title: string; body: string }) {
     <Frame>
       <PageNotice title={title} action={<PageAction href="/home">Go to Today</PageAction>}>{body}</PageNotice>
     </Frame>
+  )
+}
+
+// A note as a card: its subject's colour along the edge, its opening lines.
+function NoteCard({ note }: { note: NoteSummary }) {
+  const color = subjectColor(note.subjectName)
+  return (
+    <li data-note={note.id} data-note-title={note.title}>
+      <Link href={`/notes/${note.id}`}
+        className={`group flex h-full flex-col rounded-2xl border border-white/8 border-l-[3px] bg-card/40 px-4 py-3.5 transition-colors hover:bg-white/[0.04] ${note.subjectId ? color.border : 'border-l-white/15'}`}>
+        <div className="flex items-start gap-2">
+          <FileText className="mt-0.5 size-4 shrink-0 text-foreground/30 group-hover:text-keppel-300" aria-hidden />
+          <h3 className="line-clamp-2 min-w-0 flex-1 font-serif text-[16px] font-semibold leading-snug text-foreground/90">{note.title}</h3>
+        </div>
+        {note.preview && <p className="mt-2 line-clamp-3 text-[13px] leading-relaxed text-foreground/50">{note.preview}</p>}
+        <div className="mt-auto flex items-center justify-between gap-3 pt-3 text-[11px]">
+          <span className="min-w-0 truncate text-foreground/45">{note.topicName ?? ''}</span>
+          <span className="shrink-0 text-foreground/35">{relativeDay(note.updatedAt)}</span>
+        </div>
+      </Link>
+    </li>
   )
 }
 
@@ -47,6 +71,12 @@ export function NotesList() {
   const [q, setQ]                 = useState('')
   const [subjectId, setSubjectId] = useState('')
   const [topic, setTopic]         = useState('')
+
+  // A subject named in the address (from a note's breadcrumb) is the filter.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('subjectId')
+    if (id) setSubjectId(id)
+  }, [])
 
   // Search as the learner types, without a request per keystroke.
   useEffect(() => {
@@ -96,9 +126,15 @@ function Ready({ view, search, onSearch, subjectId, onSubject, topic, onTopic, f
     const names = (subjectId ? view.subjects.filter(s => s.id === subjectId) : view.subjects).flatMap(s => s.topics)
     return [...new Map(names.map(n => [n.toLowerCase(), n])).values()].sort((a, b) => a.localeCompare(b))
   }, [view.subjects, subjectId])
+  const groups = useMemo(() => groupNotes(view.notes), [view.notes])
+
+  // Cards by subject, or one list: this browser's choice, kept if it can be.
+  const [layout, setLayout] = useState<'cards' | 'list'>('cards')
+  useEffect(() => { try { if (window.localStorage.getItem('kivo-notes-list') === 'list') setLayout('list') } catch { /* storage off */ } }, [])
+  const choose = (l: 'cards' | 'list') => { setLayout(l); try { window.localStorage.setItem('kivo-notes-list', l) } catch { /* storage off */ } }
 
   return (
-    <Frame>
+    <Frame wide={layout === 'cards'}>
       <PageHeader
         title="Notes"
         description="Your learning notebook"
@@ -118,7 +154,7 @@ function Ready({ view, search, onSearch, subjectId, onSubject, topic, onTopic, f
               className="h-11 w-full rounded-xl border border-white/10 bg-transparent pl-10 pr-3 text-sm text-foreground placeholder:text-foreground/35 focus:border-keppel-400/60 focus:outline-none"
             />
           </label>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <select aria-label="Subject" value={subjectId} onChange={e => onSubject(e.target.value)} className={selectClass}>
               <option value="">All subjects</option>
               {view.subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -127,6 +163,14 @@ function Ready({ view, search, onSearch, subjectId, onSubject, topic, onTopic, f
               <option value="">All topics</option>
               {topics.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
+            <div role="radiogroup" aria-label="Show notes as" className="ml-auto inline-flex rounded-xl border border-white/10 p-0.5">
+              {([['cards', LayoutGrid, 'Cards by subject'], ['list', Rows3, 'One list']] as const).map(([l, Icon, label]) => (
+                <button key={l} type="button" role="radio" aria-checked={layout === l} onClick={() => choose(l)} title={label} aria-label={label}
+                  className={`inline-flex size-9 items-center justify-center rounded-lg transition-colors ${layout === l ? 'bg-white/10 text-foreground' : 'text-foreground/45 hover:text-foreground'}`}>
+                  <Icon className="size-4" />
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -153,9 +197,29 @@ function Ready({ view, search, onSearch, subjectId, onSubject, topic, onTopic, f
             <p className="mb-2 text-xs text-foreground/40" data-count>
               {filtered ? `${view.notes.length} of ${view.total} notes` : `${view.total} note${view.total === 1 ? '' : 's'}`}
             </p>
-            <ul className={`divide-y divide-white/6 overflow-hidden rounded-2xl border border-white/8 bg-card/40 transition-opacity ${busy ? 'opacity-70' : ''}`}>
-              {view.notes.map(note => <NoteItem key={note.id} note={note} />)}
-            </ul>
+            {layout === 'cards' ? (
+              <div className={`space-y-8 transition-opacity ${busy ? 'opacity-70' : ''}`} data-notes-cards>
+                {groups.map(g => {
+                  const color = subjectColor(g.subjectName)
+                  return (
+                    <section key={g.subjectId ?? 'none'} aria-label={g.subjectName ?? 'No subject'}>
+                      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground/80">
+                        <span className={`size-2 rounded-full ${g.subjectId ? color.dot : 'bg-foreground/25'}`} aria-hidden />
+                        {g.subjectName ?? 'No subject'}
+                        <span className="text-xs font-normal text-foreground/35">{g.count}</span>
+                      </h2>
+                      <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {g.topics.flatMap(t => t.notes).map(note => <NoteCard key={note.id} note={note} />)}
+                      </ul>
+                    </section>
+                  )
+                })}
+              </div>
+            ) : (
+              <ul className={`divide-y divide-white/6 overflow-hidden rounded-2xl border border-white/8 bg-card/40 transition-opacity ${busy ? 'opacity-70' : ''}`}>
+                {view.notes.map(note => <NoteItem key={note.id} note={note} />)}
+              </ul>
+            )}
           </>
         )}
       </div>

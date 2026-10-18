@@ -97,8 +97,12 @@ function models() {
   const worded: string[] = [];
   let fail: "throw" | "garbage" | "timeout" | null = null;
   let respondFails = false;
+  // Every request to say code-written text in Hinglish (brains/language-wording.ts),
+  // answered with the text unchanged: a test can see which language a turn chose.
+  const rendered: string[] = [];
   return {
-    seen, worded,
+    seen, worded, rendered,
+    generate: async (request: { prompt: string }) => { rendered.push(request.prompt); return request.prompt; },
     read: (text: string, model: Record<string, unknown>) => script.set(text, model),
     breakUnderstanding: (how: typeof fail) => { fail = how; },
     breakResponse: (broken: boolean) => { respondFails = broken; },
@@ -171,7 +175,7 @@ function harness() {
   const ai = models();
   const run = (event: ReturnType<typeof normalizeTelegramUpdate>): Promise<TurnTrace> => {
     assert.notEqual(event.kind, "ignored");
-    return handleNovaTelegramEvent(event as never, { client: tg.client, now: () => clock, webUrl: "https://nova.test", understand: ai.understand as never, respond: ai.respond });
+    return handleNovaTelegramEvent(event as never, { client: tg.client, now: () => clock, webUrl: "https://nova.test", understand: ai.understand as never, respond: ai.respond, generate: ai.generate as never });
   };
   return {
     tg, ai,
@@ -302,7 +306,8 @@ test("S05 the week read from the Planner covers seven consecutive days starting 
 });
 
 test("S06 the week names an overdue task and a session done today, and says that only today is planned", async () => {
-  const l = await seed("Fay");
+  // Midday in their zone, so the session cannot cross their midnight.
+  const l = await seed("Fay", { zone: zoneWhereHourIs(12) });
   await prisma.novaTask.create({ data: { profileId: l.profileId, title: "Old reading", dueDay: dayKey(new Date(clock.getTime() - 2 * DAY), l.zone) } });
   await runNovaSessionCommand(l.chat, { action: "start", topicName: "Deadlocks", subjectName: "Operating Systems", plannedMinutes: 25 }, clock, "web");
   await runNovaSessionCommand(l.chat, { action: "end", outcome: "okay" }, tick(25), "web");
@@ -595,7 +600,8 @@ test("S27 /progress with nothing counted: says so plainly, with the rule for wha
 });
 
 test("S28 progress after one counted and one short session: this week, today, since when, and the short one listed as not counted", async () => {
-  const l = await seed("Bea");
+  // Midday in their zone, so the sessions cannot cross their midnight or week.
+  const l = await seed("Bea", { zone: zoneWhereHourIs(12) });
   await runNovaSessionCommand(l.chat, { action: "start", topicName: "Deadlocks", subjectName: "Operating Systems", plannedMinutes: 30 }, clock, "web");
   await runNovaSessionCommand(l.chat, { action: "end", outcome: "good" }, tick(30), "web");
   await runNovaSessionCommand(l.chat, { action: "start", topicName: "Paging", subjectName: "Operating Systems", plannedMinutes: 25 }, tick(5), "web");
@@ -1068,4 +1074,112 @@ test("S64 regression: an exam named with a date is offered, added only on the ta
   assert.equal(await prisma.novaExam.count({ where: { profileId: l.profileId } }), 1);
   assert.equal((await tapData(l, add)).failure, "stale_prompt");
   assert.equal(await prisma.novaExam.count({ where: { profileId: l.profileId } }), 1);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 21. Reply language across a conversation (staging, 18 October)
+// ══════════════════════════════════════════════════════════════════════════════
+// On staging, "How is my progress going?" and "remind me at 8 pm to study"
+// came back from the reading with no language after a Hinglish message, and
+// were answered in Hinglish. The readings below reproduce that: language null.
+
+const lastLogged = async (l: Learner) =>
+  (await prisma.companionMessage.findFirst({ where: { userId: l.userId, role: "user" }, orderBy: { createdAt: "desc" }, select: { metadata: true } }))?.metadata as { language?: string } | null;
+// A minute apart, as real messages are: the log is read newest first.
+const sendLater = (h: ReturnType<typeof harness>, l: Learner, text: string) => { tick(1); return h.send(l, text); };
+const hinglishFirst = async (h: ReturnType<typeof harness>, l: Learner) => {
+  h.ai.read("Aaj ke plans update karne hain", { ...BASE, request: { ...REQ, action: "change_plan", language: "hinglish" } });
+  await sendLater(h, l, "Aaj ke plans update karne hain");
+  assert.equal((await lastLogged(l))?.language, "hinglish");
+};
+
+test(`S65 Hinglish, then "How is my progress going?" read with no language: answered in English, no Hinglish rendering asked for, logged as English`, async () => {
+  const l = await seed("Ama");
+  const h = harness();
+  await hinglishFirst(h, l);
+  const before = h.ai.rendered.length;
+  h.ai.read("How is my progress going?", { ...BASE, intent: "progress_check", request: { ...REQ, action: "progress", asks: "about_me", language: null } });
+  const trace = await sendLater(h, l, "How is my progress going?");
+  assert.equal(trace.decision, "show_progress:asked_progress");
+  assert.ok(h.tg.last(l.chat).text.startsWith("No counted study sessions on record yet"), h.tg.last(l.chat).text);
+  assert.equal(h.ai.rendered.length, before, "nothing was sent to be said in Hinglish");
+  assert.equal(trace.language, undefined);
+  assert.equal((await lastLogged(l))?.language, "english");
+});
+
+test(`S66 Hinglish, then "remind me at 8 pm to study" read with no language: the English refusal, nothing scheduled, nudges not paused`, async () => {
+  const l = await seed("Bao");
+  const h = harness();
+  await hinglishFirst(h, l);
+  h.ai.read("remind me at 8 pm to study", { ...BASE, intent: "schedule_query", request: { ...REQ, action: "set_reminder", language: null } });
+  assert.equal((await sendLater(h, l, "remind me at 8 pm to study")).decision, "reminder_unavailable:reminder_not_supported");
+  assert.equal(h.tg.last(l.chat).text, TEXT.reminderUnavailable);
+  const s = await state(l);
+  assert.deepEqual([s.outbox, s.channel?.proactivePausedUntil ?? null], [0, null]);
+});
+
+test(`S67 English, then a clear Hinglish reminder request: the Hinglish refusal`, async () => {
+  const l = await seed("Cas");
+  const h = harness();
+  h.ai.read("How is my progress going?", { ...BASE, request: { ...REQ, action: "progress", language: "english" } });
+  await sendLater(h, l, "How is my progress going?");
+  h.ai.read("mujhe raat 8 baje padhai ke liye yaad dila dena", { ...BASE, intent: "schedule_query", request: { ...REQ, action: "set_reminder", language: "hinglish" } });
+  await sendLater(h, l, "mujhe raat 8 baje padhai ke liye yaad dila dena");
+  assert.equal(h.tg.last(l.chat).text, TEXT_HINGLISH.reminderUnavailable);
+  assert.equal((await lastLogged(l))?.language, "hinglish");
+});
+
+test(`S68 a message too short to tell keeps the conversation's language: "remind me" after Hinglish gets the Hinglish refusal`, async () => {
+  const l = await seed("Dia");
+  const h = harness();
+  await hinglishFirst(h, l);
+  h.ai.read("remind me", { ...BASE, request: { ...REQ, action: "set_reminder", language: null } });
+  await sendLater(h, l, "remind me");
+  assert.equal(h.tg.last(l.chat).text, TEXT_HINGLISH.reminderUnavailable);
+});
+
+test(`S69 the same English sentence after a Hinglish message, five times over: English every time`, async () => {
+  const l = await seed("Edo");
+  const h = harness();
+  h.ai.read("remind me at 8 pm to study", { ...BASE, request: { ...REQ, action: "set_reminder", language: null } });
+  for (let i = 0; i < 5; i++) {
+    await hinglishFirst(h, l);
+    await sendLater(h, l, "remind me at 8 pm to study");
+    assert.equal(h.tg.last(l.chat).text, TEXT.reminderUnavailable, `round ${i + 1}`);
+  }
+});
+
+test(`S70 after an English sentence answered in English, a short reply stays English: the log follows the conversation`, async () => {
+  const l = await seed("Fen");
+  const h = harness();
+  await hinglishFirst(h, l);
+  h.ai.read("remind me at 8 pm to study", { ...BASE, request: { ...REQ, action: "set_reminder", language: null } });
+  await sendLater(h, l, "remind me at 8 pm to study");
+  h.ai.read("remind me", { ...BASE, request: { ...REQ, action: "set_reminder", language: null } });
+  await sendLater(h, l, "remind me");
+  assert.equal(h.tg.last(l.chat).text, TEXT.reminderUnavailable);
+});
+
+test(`S71 no reading at all (model down, or unreadable output) after Hinglish: a sentence gets the English line, a short message the Hinglish one`, async () => {
+  const l = await seed("Gao");
+  const h = harness();
+  await hinglishFirst(h, l);
+  h.ai.breakUnderstanding("throw");
+  await sendLater(h, l, "How is my progress going?");
+  assert.equal(h.tg.last(l.chat).text, TEXT.notUnderstood);
+  await sendLater(h, l, "ok bhai");
+  assert.equal(h.tg.last(l.chat).text, TEXT_HINGLISH.notUnderstood);
+  h.ai.breakUnderstanding("garbage");
+  await sendLater(h, l, "remind me at 8 pm to study");
+  assert.equal(h.tg.last(l.chat).text, TEXT.notUnderstood);
+});
+
+test(`S72 a clear Hinglish message is still answered in Hinglish: the change-plan list is sent to be said in Hinglish`, async () => {
+  const l = await seed("Hiro");
+  const h = harness();
+  const before = h.ai.rendered.length;
+  h.ai.read("Aaj ke plans update karne hain", { ...BASE, request: { ...REQ, action: "change_plan", language: "hinglish" } });
+  await sendLater(h, l, "Aaj ke plans update karne hain");
+  assert.equal(h.ai.rendered.length, before + 1, "one Hinglish rendering");
+  assert.ok(h.ai.rendered.at(-1)!.startsWith("What do you want to change about today?"));
 });

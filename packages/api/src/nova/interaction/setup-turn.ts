@@ -21,6 +21,7 @@ import { setupOfferReply, textFor, withExamOffer } from "../telegram/telegram-re
 import type { PromptKind, TelegramReply } from "../telegram/telegram.types";
 import type { ReplyLanguage, UnderstandingContext } from "../types/understanding.types";
 import { interpret } from "./semantics";
+import { chooseLanguage } from "./language";
 
 const SETUP_PROMPTS: ReadonlySet<PromptKind> = new Set<PromptKind>(["confirm_setup", "confirm_exam"]);
 const QUESTION: Partial<Record<PromptKind, string>> = { confirm_setup: "Save what you told me about your term?", confirm_exam: "Add this exam?" };
@@ -66,9 +67,10 @@ export async function runSetupTurn(input: {
     session: "none",
     prompt:  prompt ? { kind: prompt.kind, options: prompt.options.map(o => ({ id: o.id, type: o.action.type, minutes: null })) } : null,
   });
-  const language = understanding.request?.language ?? null;
-  // The rest of this turn answers in the language it was written in.
-  if (language) ctx.language = language;
+  // The rest of this turn answers in the language it was written in, by the
+  // same rule as every other turn (chooseLanguage).
+  ctx.language = chooseLanguage(understanding.request?.language, ctx.language, text);
+  const language = ctx.language;
   const done = (reply: TelegramReply, ok = true): SetupTurnResult => ({ reply, decision: `setup:${decision.action.type}`, kind, ok, language });
 
   // Yes or no to what Nova showed back.
