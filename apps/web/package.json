@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint --max-warnings 0",
-    "test": "tsx --test components/nova/saved/saved-api.test.ts lib/auth/dashboard-entry.test.ts components/settings/delete-account.test.ts components/sidebar-modes.test.ts components/nova/local-graph.test.ts components/nova/knowledge-board-data.test.ts components/nova/knowledge/knowledge-search.test.ts components/nova/knowledge/subject-board.test.ts components/nova/workspace/command-search.test.ts components/nova/tasks/task-format.test.ts components/nova/knowledge/connections.test.ts components/nova/subject-color.test.ts components/nova/today-links.test.ts",
+    "test": "tsx --test components/nova/saved/saved-api.test.ts lib/auth/dashboard-entry.test.ts components/settings/delete-account.test.ts components/sidebar-modes.test.ts components/nova/local-graph.test.ts components/nova/knowledge-board-data.test.ts components/nova/knowledge/knowledge-search.test.ts components/nova/knowledge/subject-board.test.ts components/nova/workspace/command-search.test.ts components/nova/tasks/task-format.test.ts components/nova/knowledge/connections.test.ts components/nova/subject-color.test.ts components/nova/today-links.test.ts app/api/auth-proxy.test.ts",
     "check-types": "next typegen && tsc --noEmit"
   },
   "dependencies": {

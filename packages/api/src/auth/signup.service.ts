@@ -30,7 +30,7 @@ import {
   type SessionUser,
 } from "./auth-deps";
 import { existingAccountEmail, signupCodeEmail } from "./auth-email";
-import { isGmailAddress, normalizeEmail, normalizeName, passwordProblem } from "./email-rules";
+import { isValidSignupEmail, normalizeEmail, normalizeName, passwordProblem } from "./email-rules";
 import type { RateLimitResult } from "./rate-limiter";
 import { generateOtp, generateToken, hashOtp, hashToken, isOtpShaped, isTokenShaped, safeEqual } from "./secrets";
 import { consumeThrottle, type ThrottleRule } from "./throttle";
@@ -59,8 +59,7 @@ const SEND_DAILY: ThrottleRule = {
   windowMs: 24 * 60 * MINUTE,
 };
 
-export const GMAIL_ONLY_MESSAGE =
-  "Sign up with a Gmail address (ending in @gmail.com), or continue with Google.";
+export const INVALID_EMAIL_MESSAGE = "Enter a valid email address";
 export const CODE_REJECTED_MESSAGE =
   "That code is invalid or has expired. Request a new one, or start again.";
 const SEND_FAILED_MESSAGE = "We couldn't send the verification email. Please try again shortly.";
@@ -85,9 +84,9 @@ export async function startSignup(
 ): Promise<SignupStartResult> {
   const { deps = defaultAuthDeps, now = new Date() } = options;
 
+  // Any address that mail can be delivered to; the code proves it is theirs.
   const email = normalizeEmail(input.email);
-  if (!email) return fail(400, "Enter a valid email address");
-  if (!isGmailAddress(email)) return fail(400, GMAIL_ONLY_MESSAGE);
+  if (!email || !isValidSignupEmail(email)) return fail(400, INVALID_EMAIL_MESSAGE);
 
   const problem = passwordProblem(input.password);
   if (problem) return fail(400, problem);
@@ -104,13 +103,14 @@ export async function startSignup(
   });
 
   const signupToken = generateToken();
+  const tokenHash = hashToken(signupToken);
   const code = generateOtp();
   await deps.db.pendingSignup.create({
     data: {
       email,
       name: normalizeName(input.name),
       passwordHash,
-      tokenHash: hashToken(signupToken),
+      tokenHash,
       codeHash: hashOtp(email, code),
       codeExpiresAt: new Date(now.getTime() + OTP_TTL_MS),
       createdAt: now,
@@ -123,7 +123,11 @@ export async function startSignup(
       ? existingAccountEmail(email, deps.appUrl())
       : signupCodeEmail(email, code, OTP_TTL_MS / MINUTE),
   );
-  return sent ? { ok: true, email, signupToken } : fail(503, SEND_FAILED_MESSAGE);
+  if (sent) return { ok: true, email, signupToken };
+
+  // The browser is not given the token, so nobody could ever use this row.
+  await deps.db.pendingSignup.deleteMany({ where: { tokenHash } }).catch(() => undefined);
+  return fail(503, SEND_FAILED_MESSAGE);
 }
 
 /** The caller's own attempt, or null: wrong token, another address, or past its life. */
@@ -160,9 +164,10 @@ export async function resendSignupCode(
   const existing = await deps.db.user.findUnique({ where: { email }, select: { id: true } });
 
   const code = generateOtp();
+  const codeHash = hashOtp(email, code);
   await deps.db.pendingSignup.updateMany({
     where: { id: attempt.id },
-    data: { codeHash: hashOtp(email, code), codeExpiresAt: new Date(now.getTime() + OTP_TTL_MS) },
+    data: { codeHash, codeExpiresAt: new Date(now.getTime() + OTP_TTL_MS) },
   });
 
   const sent = await deps.sendEmail(
@@ -170,7 +175,18 @@ export async function resendSignupCode(
       ? existingAccountEmail(email, deps.appUrl())
       : signupCodeEmail(email, code, OTP_TTL_MS / MINUTE),
   );
-  return sent ? { ok: true } : fail(503, SEND_FAILED_MESSAGE);
+  if (sent) return { ok: true };
+
+  // The new code never reached anyone: put the one already sent back, so a
+  // failed resend does not break a code that may still be on its way. Guarded
+  // on the new code, so a resend that succeeded meanwhile is not undone.
+  await deps.db.pendingSignup
+    .updateMany({
+      where: { id: attempt.id, codeHash },
+      data: { codeHash: attempt.codeHash, codeExpiresAt: attempt.codeExpiresAt },
+    })
+    .catch(() => undefined);
+  return fail(503, SEND_FAILED_MESSAGE);
 }
 
 export type SignupVerifyResult = { ok: true; user: SessionUser } | AuthFailure;

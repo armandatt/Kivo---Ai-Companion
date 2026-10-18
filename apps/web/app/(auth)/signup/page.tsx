@@ -3,7 +3,7 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { isGmailAddress, normalizeEmail, passwordProblem } from '@repo/api/auth/email-rules'
+import { isValidSignupEmail, normalizeEmail, passwordProblem } from '@repo/api/auth/email-rules'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp'
@@ -59,12 +59,8 @@ export default function SignupPage() {
 
     // The same checks the server makes, so a typo is caught before a round trip.
     const normalized = normalizeEmail(email)
-    if (!normalized) {
+    if (!normalized || !isValidSignupEmail(normalized)) {
       setError('Enter a valid email address')
-      return
-    }
-    if (!isGmailAddress(normalized)) {
-      setError('Sign up with a Gmail address (ending in @gmail.com), or continue with Google.')
       return
     }
     const problem = passwordProblem(password)
@@ -243,13 +239,13 @@ export default function SignupPage() {
           <form onSubmit={handleStart} className="space-y-4" noValidate>
             <div>
               <label htmlFor="signup-email" className="block text-sm font-medium text-gray-300 mb-2">
-                Gmail address
+                Email address
               </label>
               <Input
                 id="signup-email"
                 type="email"
                 autoComplete="email"
-                placeholder="you@gmail.com"
+                placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className={authInputClass}

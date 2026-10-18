@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,14 @@ import { Card } from '@/components/ui/card'
 function ResetPasswordForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const token = searchParams.get('token')
+  // Read once, then taken out of the address bar, so the link's token is not
+  // left in the history or shown to anyone looking at the screen.
+  const [token] = useState(() => searchParams.get('token'))
+  useEffect(() => {
+    if (token && new URLSearchParams(window.location.search).has('token')) {
+      window.history.replaceState(null, '', window.location.pathname)
+    }
+  }, [token])
 
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')

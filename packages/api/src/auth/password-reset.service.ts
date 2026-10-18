@@ -94,10 +94,14 @@ export async function requestPasswordReset(
   return accepted;
 }
 
+// The reply never waits for the email, and never says whether it went: that
+// would tell a caller the address has an account. A failure is logged here
+// (without the address or the link) so it can be found.
 function sendInBackground(deps: AuthDeps, email: Parameters<AuthDeps["sendEmail"]>[0]) {
-  void deps.sendEmail(email).catch(() => {
-    console.error("[PASSWORD RESET] The email could not be sent.");
-  });
+  void deps.sendEmail(email).then(
+    (accepted) => { if (!accepted) console.error("[PASSWORD RESET] The email was not accepted by the provider."); },
+    () => { console.error("[PASSWORD RESET] The email could not be sent."); },
+  );
 }
 
 export type ResetCompleteResult = { ok: true } | AuthFailure;

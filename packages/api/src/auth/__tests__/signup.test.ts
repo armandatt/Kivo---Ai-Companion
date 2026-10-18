@@ -1,6 +1,6 @@
 import {
   CODE_REJECTED_MESSAGE,
-  GMAIL_ONLY_MESSAGE,
+  INVALID_EMAIL_MESSAGE,
   OTP_MAX_ATTEMPTS,
   SIGNUP_SENDS_PER_DAY,
   SIGNUP_SENDS_PER_HOUR,
@@ -9,7 +9,7 @@ import {
   verifySignup,
 } from "../signup.service";
 import { loginWithPassword } from "../login.service";
-import { isGmailAddress, normalizeEmail, passwordProblem } from "../email-rules";
+import { isGmailAddress, isValidSignupEmail, normalizeEmail, passwordProblem } from "../email-rules";
 import { OTP_LENGTH, generateOtp, generateToken, hashOtp, hashToken } from "../secrets";
 import { fakeAuth, minutesAfter, type FakeAuth } from "./fake-auth";
 
@@ -68,6 +68,37 @@ describe("email rules", () => {
     "asha.@gmail.com",
     "as..ha@gmail.com",
   ])("does not accept %s as a Gmail address", (email) => expect(isGmailAddress(email)).toBe(false));
+
+  it.each([
+    "asha@gmail.com",
+    "asha@yahoo.com",
+    "asha.rao@outlook.com",
+    "asha+kivo@school.edu.in",
+    "a1@thekivo.in",
+    "o'brien@example.co.uk",
+    "asha_rao-2@sub.mail-host.example",
+    "asha@xn--mnchen-3ya.de",
+  ])("lets %s sign up", (email) => expect(isValidSignupEmail(email)).toBe(true));
+
+  it.each([
+    "asha@localhost",
+    "asha@gmail",
+    "asha@gmail.c",
+    "asha@gmail.123",
+    "asha@-gmail.com",
+    "asha@gmail-.com",
+    "asha@gmail..com",
+    ".asha@gmail.com",
+    "asha.@gmail.com",
+    "as..ha@gmail.com",
+    "asha@@gmail.com",
+    "as@ha@gmail.com",
+    "asha@[127.0.0.1]",
+    "\"asha\"@gmail.com",
+    "asha<b>@gmail.com",
+    `${"a".repeat(65)}@gmail.com`,
+    `asha@${"a".repeat(64)}.com`,
+  ])("does not let %s sign up", (email) => expect(isValidSignupEmail(email)).toBe(false));
 
   it("requires 8 to 72 bytes of password", () => {
     expect(passwordProblem("short")).toMatch(/at least 8/);
@@ -143,15 +174,32 @@ describe("starting a signup", () => {
     expect(auth.sent).toHaveLength(0);
   });
 
-  it.each(["asha@yahoo.com", "asha@outlook.com", "asha@gmail.com.evil.com"])(
-    "refuses the non-Gmail address %s",
+  it.each(["asha@localhost", "asha@gmail..com", "asha@[127.0.0.1]"])(
+    "refuses the undeliverable address %s without sending anything",
     async (email) => {
       const { auth, at, t0 } = setup();
       const result = await startSignup({ email, password: PASSWORD }, at(t0));
 
-      expect(result).toMatchObject({ ok: false, status: 400, error: GMAIL_ONLY_MESSAGE });
+      expect(result).toMatchObject({ ok: false, status: 400, error: INVALID_EMAIL_MESSAGE });
       expect(auth.pending).toHaveLength(0);
       expect(auth.sent).toHaveLength(0);
+    },
+  );
+
+  it.each(["asha@yahoo.com", "Asha.Rao@Outlook.com", "asha+kivo@school.edu.in"])(
+    "signs up %s, which is not Gmail, the same way: a code, then a verified account",
+    async (typed) => {
+      const ctx = setup();
+      const email = typed.toLowerCase();
+      const { signupToken, code } = await begin(ctx, ctx.t0, PASSWORD, typed);
+
+      expect(ctx.auth.sent[0]).toMatchObject({ to: email, subject: "Your Kivo verification code" });
+      expect(ctx.auth.users).toHaveLength(0);
+
+      const verified = await verifySignup({ email, code, signupToken }, ctx.at(ctx.t0));
+      expect(verified).toMatchObject({ ok: true, user: { email } });
+      expect(ctx.auth.users[0]).toMatchObject({ email, emailVerified: ctx.t0 });
+      expect(await loginWithPassword({ email, password: PASSWORD }, ctx.at(ctx.t0))).toMatchObject({ ok: true });
     },
   );
 
@@ -170,6 +218,22 @@ describe("starting a signup", () => {
 
     expect(result).toMatchObject({ ok: false, status: 503 });
     expect(auth.users).toHaveLength(0);
+  });
+
+  it("leaves no attempt behind when the code cannot be sent, and a later try works normally", async () => {
+    const ctx = setup();
+    ctx.auth.mail.working = false;
+    const failed = await startSignup({ email: "asha.rao@outlook.com", password: PASSWORD }, ctx.at(ctx.t0));
+
+    expect(failed).toMatchObject({ ok: false, status: 503 });
+    expect(failed).not.toHaveProperty("signupToken");
+    expect(ctx.auth.pending).toHaveLength(0);
+
+    ctx.auth.mail.working = true;
+    const { signupToken, code } = await begin(ctx, minutesAfter(ctx.t0, 2), PASSWORD, "asha.rao@outlook.com");
+    expect(ctx.auth.pending).toHaveLength(1);
+    const verified = await verifySignup({ email: "asha.rao@outlook.com", code, signupToken }, ctx.at(minutesAfter(ctx.t0, 3)));
+    expect(verified).toMatchObject({ ok: true, user: { email: "asha.rao@outlook.com" } });
   });
 
   it("drops attempts that are past their life when another signup starts", async () => {
@@ -536,6 +600,33 @@ describe("resending the code", () => {
     await resendSignupCode({ email: EMAIL, signupToken: attacker.signupToken }, ctx.at(minutesAfter(ctx.t0, 4)));
 
     expect(pendingFor(ctx.auth, ctx.signupToken)).toEqual(victimBefore);
+  });
+
+  it("keeps the code already sent working when the new one cannot be sent", async () => {
+    const { auth, at, t0, code: first, signupToken } = await started();
+    const before = structuredClone(pendingFor(auth, signupToken));
+
+    auth.mail.working = false;
+    const resent = await resendSignupCode({ email: EMAIL, signupToken }, at(minutesAfter(t0, 2)));
+
+    expect(resent).toMatchObject({ ok: false, status: 503 });
+    const after = pendingFor(auth, signupToken);
+    expect(after.codeHash).toBe(before.codeHash);
+    expect(after.codeExpiresAt).toEqual(before.codeExpiresAt);
+    expect(after.attempts).toBe(before.attempts);
+
+    // The first email may still arrive: its code is the one that works.
+    const verified = await verifySignup({ email: EMAIL, code: first, signupToken }, at(minutesAfter(t0, 3)));
+    expect(verified.ok).toBe(true);
+  });
+
+  it("a failed resend does not stretch the first code's life", async () => {
+    const { auth, at, t0, code: first, signupToken } = await started();
+    auth.mail.working = false;
+    await resendSignupCode({ email: EMAIL, signupToken }, at(minutesAfter(t0, 2)));
+
+    const late = await verifySignup({ email: EMAIL, code: first, signupToken }, at(minutesAfter(t0, 11)));
+    expect(late).toMatchObject({ ok: false, status: 400, error: CODE_REJECTED_MESSAGE });
   });
 
   it("is refused inside the cooldown, with the wait", async () => {
