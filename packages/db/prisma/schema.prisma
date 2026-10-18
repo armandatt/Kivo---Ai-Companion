@@ -738,6 +738,7 @@ model NovaAcademicProfile {
   learningEvents    NovaLearningEvent[]
   tasks             NovaTask[]
   planOverrides     NovaPlanOverride[]
+  mapLayout         NovaMapLayout[]
 
   user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -1281,4 +1282,26 @@ model NovaPlanOverride {
   // One override of each kind per topic per day: a repeat is an upsert.
   @@unique([profileId, day, kind, topicId])
   @@index([profileId, day])
+}
+
+// Where the learner put an item on their Knowledge Map. Only the position:
+// what the item is, and how it is connected, stays with the item's own row
+// and is read by the map's read model. A node with no row here is placed by
+// the map's own layout. Written only by product/map-layout.ts.
+model NovaMapLayout {
+  id        String   @id @default(cuid())
+  profileId String
+  // The map's kind of item and that item's row id: "subject" | "topic" |
+  // "note" | "resource". Ids of different kinds never meet: the pair is the key.
+  nodeType  String
+  nodeId    String
+  x         Float
+  y         Float
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([profileId, nodeType, nodeId])
 }

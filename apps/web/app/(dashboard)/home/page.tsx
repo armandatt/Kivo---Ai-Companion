@@ -1,19 +1,16 @@
 'use client'
 
 import { useState } from 'react'
+import { PageFrame, PageLoading, PageNotice, RetryButton } from '@/components/dashboard/page-states'
 import { RexHome } from '@/components/home/rex-home'
 import { NovaHome } from '@/components/nova/nova-home'
 import { ConnectNova, NovaOnboarding } from '@/components/nova/nova-setup'
 import { useNovaToday } from '@/components/nova/use-nova-today'
 
-function Frame({ children }: { children: React.ReactNode }) {
-  return <div className="mx-auto w-full max-w-3xl pb-20 pt-10 lg:pt-4">{children}</div>
-}
-
 // The shape of Today while it loads: the header, the plan beside the margin.
 function Loading() {
   return (
-    <div aria-busy="true" aria-label="Loading your day" className="mx-auto w-full max-w-7xl pb-20 pt-12 lg:pt-2">
+    <PageLoading label="Loading your day" width="wide">
       <div className="space-y-3 border-b border-white/8 pb-5">
         <div className="h-3 w-32 animate-pulse rounded bg-white/5" />
         <div className="h-7 w-64 animate-pulse rounded-md bg-white/6" />
@@ -31,7 +28,7 @@ function Loading() {
           {[0, 1, 2].map(i => <div key={i} className="h-24 animate-pulse rounded-lg bg-white/3" />)}
         </div>
       </div>
-    </div>
+    </PageLoading>
   )
 }
 
@@ -45,28 +42,17 @@ export default function HomePage() {
 
   if (!view) {
     return (
-      <Frame>
-        <section role="alert" className="rounded-xl border border-white/8 bg-card/70 p-5 sm:p-6">
-          <h1 className="text-xl font-semibold tracking-tight text-foreground">Couldn&apos;t load your day</h1>
-          <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">
-            The server didn&apos;t answer. Nothing is lost; your sessions and plan are saved.
-          </p>
-          <button
-            type="button"
-            onClick={() => void refresh()}
-            disabled={refreshing}
-            className="mt-5 inline-flex h-10 items-center justify-center rounded-lg border border-white/12 px-4 text-sm font-medium text-foreground transition-colors hover:bg-white/5 disabled:opacity-60"
-          >
-            {refreshing ? 'Trying…' : 'Try again'}
-          </button>
-        </section>
-      </Frame>
+      <PageFrame width="narrow">
+        <PageNotice tone="error" title="Couldn't load your day" action={<RetryButton onRetry={() => void refresh()} busy={refreshing} />}>
+          The server didn&apos;t answer. Nothing is lost; your sessions and plan are saved.
+        </PageNotice>
+      </PageFrame>
     )
   }
 
   if (view.status === 'not_nova') return <RexHome />
-  if (view.status === 'not_connected') return <Frame><ConnectNova onCheck={refresh} /></Frame>
-  if (view.status === 'onboarding_incomplete') return <Frame><NovaOnboarding onProgress={refresh} /></Frame>
+  if (view.status === 'not_connected') return <PageFrame width="narrow"><ConnectNova onCheck={refresh} /></PageFrame>
+  if (view.status === 'onboarding_incomplete') return <PageFrame width="narrow"><NovaOnboarding onProgress={refresh} /></PageFrame>
 
   return (
     <>

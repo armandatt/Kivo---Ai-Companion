@@ -5,7 +5,6 @@ import { BentoGrid } from "@/components/bento-grid"
 import { HowItWorks } from "@/components/how-it-works"
 import { CreatureReveal } from "@/components/creature-reveal"
 import { Pricing } from "@/components/pricing"
-import { Testimonials } from "@/components/testimonials"
 import { FAQ } from "@/components/faq"
 import { FinalCTA } from "@/components/final-cta"
 import { Footer } from "@/components/footer"
@@ -20,7 +19,6 @@ export default function Home() {
         <BentoGrid />
         <HowItWorks />
         <CreatureReveal />
-        <Testimonials />
         <Pricing />
         <FAQ />
         <FinalCTA />

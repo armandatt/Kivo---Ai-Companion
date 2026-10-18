@@ -1,45 +1,61 @@
 import type { ReactNode } from 'react'
+import Link from 'next/link'
 import { Mail } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { KivoTile, KivoWordmark } from '@/components/brand/kivo-brand'
+
+// Sign-in, sign-up and password recovery share one look: Kivo ink, the dot
+// grid the knowledge canvas uses, the lockup above the card, and iris for the
+// one action that moves the person forward.
 
 export const authInputClass =
-  'bg-[#0a0a0a] border-[#2a2a35] text-white placeholder:text-gray-600 focus:border-[#00D9A3] focus:ring-[#00D9A3]'
+  'h-11 rounded-lg border-ink-700 bg-ink-950 text-paper-50 placeholder:text-ink-300 focus-visible:border-iris-400 focus-visible:ring-iris-400/30'
 
 export const authPrimaryButtonClass =
-  'w-full bg-[#00D9A3] text-black hover:bg-[#00c896] font-semibold py-2 rounded-full transition-all duration-200'
+  'h-11 w-full rounded-lg bg-iris-500 font-semibold text-white transition-colors duration-200 hover:bg-iris-600 disabled:opacity-60'
 
-/** The card every sign-in and sign-up step is shown in. */
+export const authLabelClass = 'mb-2 block text-sm font-medium text-ink-200'
+
+export const authLinkClass = 'font-medium text-iris-300 transition-colors hover:text-iris-200'
+
+/** The page and card every sign-in, sign-up and recovery step is shown in. */
 export function AuthShell({
   title,
   subtitle,
   children,
 }: {
   title: ReactNode
-  subtitle: ReactNode
+  subtitle?: ReactNode
   children: ReactNode
 }) {
   return (
-    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4 relative overflow-hidden">
-      <div className="absolute top-0 left-1/4 w-96 h-96 bg-[#00D9A3]/10 rounded-full blur-3xl animate-pulse" />
-      <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-[#FF8C42]/10 rounded-full blur-3xl animate-pulse" />
+    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-ink-950 px-4 py-12 text-paper-50">
+      <div aria-hidden className="kivo-dot-grid pointer-events-none absolute inset-0" />
 
-      <Card className="w-full max-w-md relative z-10 bg-[#1a1a24] border-[#2a2a35] shadow-2xl">
-        <div className="p-8">
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-white mb-2">{title}</h1>
-            <p className="text-gray-400">{subtitle}</p>
+      <div className="relative z-10 w-full max-w-md">
+        <Link href="/" aria-label="Kivo home page" className="mb-8 inline-flex items-center gap-2.5 text-paper-100">
+          <KivoTile size={32} />
+          <KivoWordmark height={18} />
+        </Link>
+
+        <Card className="border-ink-700 bg-ink-900/95 text-paper-50 shadow-[0_30px_60px_-30px_rgba(0,0,0,0.8)]">
+          <div className="p-8 sm:p-9">
+            <div className="mb-8">
+              <h1 className="font-display text-[2.6rem] leading-[1.02] tracking-[-0.01em] text-paper-50">{title}</h1>
+              {subtitle && <p className="mt-3 text-ink-300">{subtitle}</p>}
+            </div>
+            {children}
           </div>
-          {children}
-        </div>
-      </Card>
+        </Card>
+      </div>
     </div>
   )
 }
 
 export function AuthError({ children }: { children: ReactNode }) {
   return (
-    <p role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+    <p role="alert" className="rounded-lg border border-coral-500/35 bg-coral-500/10 px-3 py-2 text-sm text-coral-300">
       {children}
     </p>
   )
@@ -47,7 +63,7 @@ export function AuthError({ children }: { children: ReactNode }) {
 
 export function AuthNotice({ children }: { children: ReactNode }) {
   return (
-    <p className="rounded-md border border-[#00D9A3]/30 bg-[#00D9A3]/10 px-3 py-2 text-sm text-[#00D9A3]">
+    <p role="status" className="rounded-lg border border-keppel-400/30 bg-keppel-400/10 px-3 py-2 text-sm text-keppel-200">
       {children}
     </p>
   )
@@ -71,7 +87,7 @@ export function GoogleButton() {
     <Button
       asChild
       variant="outline"
-      className="w-full bg-[#1a1a24] border-[#2a2a35] text-white hover:bg-[#2a2a35] py-2 rounded-full transition-all duration-200"
+      className="h-11 w-full rounded-lg border-ink-700 bg-ink-900 text-paper-50 transition-colors duration-200 hover:bg-ink-800 hover:text-paper-50"
     >
       <a href="/api/auth/google">
         <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
@@ -103,7 +119,7 @@ export function BackButton({ onClick, children }: { onClick: () => void; childre
     <button
       type="button"
       onClick={onClick}
-      className="block w-full text-center text-sm text-gray-400 hover:text-white mt-4"
+      className="mt-4 block w-full text-center text-sm text-ink-300 transition-colors hover:text-paper-50"
     >
       {children}
     </button>

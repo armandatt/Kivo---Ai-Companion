@@ -1,5 +1,6 @@
 import { GithubLogo, TwitterLogo, InstagramLogo } from "@phosphor-icons/react/dist/ssr"
 import { KivoLogo } from "@/components/KivoLogo"
+import { KivoWordmark } from "@/components/brand/kivo-brand"
 
 export function Footer() {
   return (
@@ -14,7 +15,7 @@ export function Footer() {
           <div className="lg:max-w-xs">
             <div className="flex items-center gap-3">
               <KivoLogo size={38} />
-              <span className="text-xl font-semibold text-[var(--color-baltic-sea-300)]">Kivo</span>
+              <KivoWordmark height={22} className="text-[var(--color-baltic-sea-100)]" />
             </div>
             <p className="mt-4 text-sm text-[var(--color-baltic-sea-500)]">
               Your AI companion that grows with you. Built for people who actually want to show up — every day.
@@ -33,21 +34,11 @@ export function Footer() {
           </div>
 
           {/* Link columns */}
-          <div className="grid grid-cols-2 gap-8 sm:grid-cols-4 lg:gap-16">
+          <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 lg:gap-16">
             <div>
               <h4 className="text-sm font-medium text-[var(--color-baltic-sea-200)]">Product</h4>
               <ul className="mt-4 space-y-3">
                 {["Features", "Pricing", "Changelog"].map((item) => (
-                  <li key={item}>
-                    <a href="#" className="text-sm text-[var(--color-baltic-sea-500)] hover:text-[var(--color-keppel-400)] transition-colors">{item}</a>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <h4 className="text-sm font-medium text-[var(--color-baltic-sea-200)]">Companions</h4>
-              <ul className="mt-4 space-y-3">
-                {["Coach Rex", "Study Nova", "Grind Vera"].map((item) => (
                   <li key={item}>
                     <a href="#" className="text-sm text-[var(--color-baltic-sea-500)] hover:text-[var(--color-keppel-400)] transition-colors">{item}</a>
                   </li>
@@ -67,9 +58,11 @@ export function Footer() {
             <div>
               <h4 className="text-sm font-medium text-[var(--color-baltic-sea-200)]">Legal</h4>
               <ul className="mt-4 space-y-3">
-                {["Privacy", "Terms", "Security"].map((item) => (
-                  <li key={item}>
-                    <a href="#" className="text-sm text-[var(--color-baltic-sea-500)] hover:text-[var(--color-keppel-400)] transition-colors">{item}</a>
+                {/* Full page loads, not client navigation: the legal pages set
+                    the reader's theme before they paint. */}
+                {[{ label: "Privacy", href: "/privacy" }, { label: "Terms", href: "/terms" }].map((item) => (
+                  <li key={item.href}>
+                    <a href={item.href} className="text-sm text-[var(--color-baltic-sea-500)] hover:text-[var(--color-keppel-400)] transition-colors">{item.label}</a>
                   </li>
                 ))}
               </ul>
@@ -79,10 +72,6 @@ export function Footer() {
 
         <div className="mt-12 pt-8 border-t border-[var(--color-baltic-sea-900)] flex flex-col sm:flex-row items-center justify-between gap-4">
           <span className="text-xs text-[var(--color-baltic-sea-600)]">© 2025 Kivo. All rights reserved.</span>
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-[var(--color-keppel-400)] animate-pulse" />
-            <span className="text-xs text-[var(--color-baltic-sea-500)]">🔥 2,847 active streaks right now</span>
-          </div>
         </div>
       </div>
     </footer>

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
+import { AuthAwareLink } from '@/components/auth-aware-link'
 
 const STAGES = [
   { day: 'Day 1',  label: 'Egg',      emoji: '🥚', desc: 'Your journey begins',          color: '#8B8FA8' },
@@ -238,48 +239,22 @@ export function CreatureReveal() {
               <span style={{ color: '#00E5A0' }}>as you do.</span>
             </h2>
             <p className="mt-4 text-base" style={{ color: '#8B8FA8' }}>
-              Every check-in feeds your creature. Every streak unlocks a new form.
+              Every five days you study, your creature goes up a level.
               <br />
-              Miss too many days — and it dims. That's the deal.
+              A week away, or a week ill, never brings fog.
             </p>
-          </div>
-
-          {/* Stat pills */}
-          <div className="flex flex-wrap justify-center gap-3 mb-10">
-            {[
-              { icon: '🔥', label: 'avg streak',        value: '12 days' },
-              { icon: '🐉', label: 'creatures evolved', value: '2,847'   },
-              { icon: '🌍', label: 'active in',         value: '40 countries' },
-            ].map((stat, i) => (
-              <div
-                key={i}
-                className="px-4 py-2.5 rounded-xl"
-                style={{
-                  background: 'rgba(255,255,255,0.03)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  backdropFilter: 'blur(8px)',
-                }}
-              >
-                <p className="text-sm">
-                  <span style={{ color: '#8B8FA8' }}>{stat.icon} {stat.label} </span>
-                  <span className="font-bold" style={{ color: '#00E5A0' }}>{stat.value}</span>
-                </p>
-              </div>
-            ))}
           </div>
 
           {/* CTA */}
           <div className="flex flex-col items-center gap-3">
             <Button
+              asChild
               size="lg"
-              className="font-bold px-8"
+              className="mt-8 font-bold px-8"
               style={{ background: '#00E5A0', color: '#060810', boxShadow: '0 0 32px rgba(0,229,160,0.3)' }}
             >
-              Meet your companion →
+              <AuthAwareLink>Start with Kivo →</AuthAwareLink>
             </Button>
-            <p className="text-xs" style={{ color: '#8B8FA840' }}>
-              Your egg hatches on day 3. Don't miss it.
-            </p>
           </div>
 
         </div>

@@ -29,6 +29,7 @@ import {
 import { NOVA_ROUTES, type Companion } from '@repo/api/nova/product/companion'
 import { cn } from '@/lib/utils'
 import { ThemePicker } from '@/components/theme/kivo-theme'
+import { KivoTile, KivoWordmark } from '@/components/brand/kivo-brand'
 import { trappedTabTarget } from '@/components/settings/dialog-focus'
 import { sidebarModes } from './sidebar-modes'
 
@@ -88,12 +89,15 @@ const isDocked = () => window.matchMedia(DOCKED).matches
 // nothing is inert. A closed small-screen drawer is already hidden by CSS.
 const dockedOnServer = () => true
 
-// The highlight on the current page is the companion's own colour. The text
-// stays the theme's foreground, so it reads in light and dark alike.
+// The companion's own colour marks whose dashboard this is (the dot under the
+// wordmark). The current page is Kivo's selected state, iris, for both: a soft
+// wash, a bar and the icon, with the text left in the theme's foreground so it
+// reads in light and dark alike.
 const ACCENT = {
-  nova: { tint: 'bg-keppel-400/15', bar: 'bg-keppel-400' },
-  rex:  { tint: 'bg-green-400/15',  bar: 'bg-green-500' },
+  nova: { dot: 'bg-nova' },
+  rex:  { dot: 'bg-green-500' },
 }
+const CURRENT = 'bg-action-soft text-sidebar-foreground [&_svg]:text-action-ink'
 
 export function Sidebar({ open, onOpenChange, overlay = false, companion }: SidebarProps) {
   const pathname = usePathname()
@@ -198,7 +202,7 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
     : isMobileOpen ? shown
     : `${hidden} lg:visible lg:translate-x-0`
 
-  const row = cn('flex items-center gap-3 rounded-lg px-4 py-2 text-sm transition-colors', rail && 'lg:justify-center lg:px-0 lg:py-2.5')
+  const row = cn('flex items-center gap-3 rounded-lg px-4 py-2 text-sm transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring', rail && 'lg:justify-center lg:px-0 lg:py-2.5')
   const label = cn('font-medium', rail && 'lg:sr-only')
 
   return (
@@ -247,23 +251,16 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
           mode.ownToggle && 'pl-16 lg:pl-6',
           rail && 'lg:flex-col lg:px-2 lg:py-4',
         )}>
-          <Link href="/home" onClick={close} title={rail ? `${isNova ? 'Nova' : 'Rex'} home` : undefined} className="flex items-center gap-3 group">
-            <div className="relative shrink-0">
-              <div className={cn(
-                'w-10 h-10 bg-linear-to-br rounded-lg flex items-center justify-center font-bold text-black text-lg',
-                isNova ? 'from-keppel-300 to-keppel-600' : 'from-green-400 to-green-600',
-              )}>
-                {isNova ? 'N' : 'R'}
-              </div>
-              <div className={cn(
-                'absolute inset-0 rounded-lg blur opacity-50 group-hover:opacity-75 transition-opacity -z-10',
-                isNova ? 'bg-keppel-400' : 'bg-green-400',
-              )} />
-            </div>
-            <div className={cn('flex flex-col', rail && 'lg:sr-only')}>
-              <span className="font-semibold text-sm leading-tight">{isNova ? 'Nova' : 'Rex'}</span>
-              <span className="text-xs text-sidebar-foreground/60">{isNova ? 'Learning mentor' : 'AI Coach'}</span>
-            </div>
+          {/* Kivo's mark, and the companion this account works with under it */}
+          <Link href="/home" onClick={close} title={rail ? `${isNova ? 'Nova' : 'Rex'} home` : undefined} className="flex min-w-0 items-center gap-3">
+            <KivoTile size={36} className="shrink-0" />
+            <span className={cn('flex min-w-0 flex-col gap-1.5', rail && 'lg:sr-only')}>
+              <KivoWordmark height={17} className="text-sidebar-foreground" />
+              <span className="flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium leading-none text-sidebar-foreground/60">
+                <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', accent.dot)} />
+                {isNova ? 'Nova · Learning mentor' : 'Rex · AI coach'}
+              </span>
+            </span>
           </Link>
           {mode.closeButton && (
             <button
@@ -309,10 +306,10 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
                     aria-current={active ? 'page' : undefined}
                     className={cn(
                       row, 'relative',
-                      active ? cn(accent.tint, 'text-sidebar-foreground') : 'text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-foreground',
+                      active ? CURRENT : 'text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-foreground',
                     )}
                   >
-                    {active && <span aria-hidden className={cn('absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full', accent.bar)} />}
+                    {active && <span aria-hidden className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-action" />}
                     <Icon aria-hidden className="w-[18px] h-[18px] shrink-0" />
                     <span className={label}>{item.label}</span>
                   </Link>
@@ -329,7 +326,7 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
             onClick={close}
             title={rail ? 'Settings' : undefined}
             aria-current={isActive('/settings') ? 'page' : undefined}
-            className={cn(row, 'text-sidebar-foreground hover:bg-sidebar-accent')}
+            className={cn(row, isActive('/settings') ? CURRENT : 'text-sidebar-foreground hover:bg-sidebar-accent')}
           >
             <Settings aria-hidden className="w-5 h-5 shrink-0" />
             <span className={label}>Settings</span>

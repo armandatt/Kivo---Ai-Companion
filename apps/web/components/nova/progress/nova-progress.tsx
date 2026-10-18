@@ -7,6 +7,7 @@ import { GOALS_HREF } from '@repo/api/nova/product/goals.types'
 import { Consistency } from './consistency'
 import { Growth } from './growth'
 import { Journey } from './journey'
+import { PageHeader } from '@/components/dashboard/page-states'
 
 function Stat({ id, label, value, hint }: { id: string; label: string; value: string; hint: string }) {
   return (
@@ -34,14 +35,12 @@ export function NovaProgress({ view }: { view: NovaProgressReady }) {
 
   return (
     <div className="mx-auto w-full max-w-6xl pb-20 pt-10 lg:pt-4" data-progress={view.hasEvidence ? 'ready' : 'empty'}>
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Your Learning Journey</h1>
-        <p className="mt-1.5 max-w-prose text-sm leading-relaxed text-foreground/55">
-          {view.hasEvidence && overview.since
-            ? `What has changed since your first session on ${calendarDate(overview.since, consistency.timezone)}, from the sessions you finished and how you said they went.`
-            : 'What changes as you study, from the sessions you finish and how you say they went.'}
-        </p>
-      </header>
+      <PageHeader
+        title="Your Learning Journey"
+        description={view.hasEvidence && overview.since
+          ? `What has changed since your first session on ${calendarDate(overview.since, consistency.timezone)}, from the sessions you finished and how you said they went.`
+          : 'What changes as you study, from the sessions you finish and how you say they went.'}
+      />
 
       <div className="mt-8 grid grid-cols-1 gap-x-10 gap-y-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="min-w-0 space-y-10">

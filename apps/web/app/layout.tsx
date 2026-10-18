@@ -1,6 +1,7 @@
 import type React from "react"
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import localFont from "next/font/local"
+import { Instrument_Serif } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import "./globals.css"
 
@@ -12,43 +13,48 @@ const geistMono = localFont({
   src: "./fonts/GeistMonoVF.woff",
   variable: "--font-geist-mono",
 })
+// Headings only (Tailwind's font-display). Self-hosted by next/font at build.
+const instrumentSerif = Instrument_Serif({
+  weight: "400",
+  style: ["normal", "italic"],
+  subsets: ["latin"],
+  variable: "--font-instrument-serif",
+})
 
+const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || "https://www.thekivo.in"
+const DESCRIPTION =
+  "Kivo plans your study day with you, keeps your notes, topics and saved pages connected, and shows how you are actually progressing. Nova, your learning mentor, works on the web and on Telegram."
+
+// The icons are files in this folder (icon.svg, apple-icon.png, favicon.ico)
+// and the share picture is opengraph-image.tsx: Next.js links them itself.
 export const metadata: Metadata = {
-  title: "Kivo | Your AI companion that grows with you",
-  description:
-    "Meet Kivo — the AI companion that checks in every day, tracks your goals, and evolves as you stay consistent. No app needed. Lives in WhatsApp and Telegram.",
-  generator: "v0.app",
-  keywords: ["AI companion", "productivity", "habit tracker", "WhatsApp bot", "Telegram bot", "streak tracker"],
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: "Kivo: plan, learn and grow with Nova",
+    template: "%s · Kivo",
+  },
+  description: DESCRIPTION,
+  applicationName: "Kivo",
+  keywords: ["study planner", "learning mentor", "connected notes", "knowledge map", "focus sessions", "exam preparation", "Kivo", "Nova"],
   openGraph: {
-    title: "Kivo | Your AI companion that grows with you",
-    description:
-      "Meet Kivo — the AI companion that checks in every day, tracks your goals, and evolves as you stay consistent.",
     type: "website",
     siteName: "Kivo",
+    url: "/",
+    title: "Kivo: plan, learn and grow with Nova",
+    description: DESCRIPTION,
   },
   twitter: {
     card: "summary_large_image",
-    title: "Kivo | Your AI companion that grows with you",
-    description:
-      "Meet Kivo — the AI companion that checks in every day, tracks your goals, and evolves as you stay consistent.",
+    title: "Kivo: plan, learn and grow with Nova",
+    description: DESCRIPTION,
   },
-  icons: {
-    icon: [
-      {
-        url: "/icon-light-32x32.png",
-        media: "(prefers-color-scheme: light)",
-      },
-      {
-        url: "/icon-dark-32x32.png",
-        media: "(prefers-color-scheme: dark)",
-      },
-      {
-        url: "/icon.svg",
-        type: "image/svg+xml",
-      },
-    ],
-    apple: "/apple-icon.png",
-  },
+}
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#F4F1E9" },
+    { media: "(prefers-color-scheme: dark)", color: "#0B1220" },
+  ],
 }
 
 export default function RootLayout({
@@ -62,7 +68,7 @@ export default function RootLayout({
         <link rel="preconnect" href="https://prod.spline.design" />
         <link rel="dns-prefetch" href="https://prod.spline.design" />
       </head>
-      <body className={`${geistSans.className} ${geistSans.variable} ${geistMono.variable} font-sans antialiased`}>
+      <body className={`${geistSans.className} ${geistSans.variable} ${geistMono.variable} ${instrumentSerif.variable} font-sans antialiased`}>
         {children}
         <Analytics />
       </body>

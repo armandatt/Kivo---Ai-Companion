@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import type { DnaSection, DnaSignalView, NovaLearningDnaReady } from '@repo/api/nova/product/learning-dna.types'
 import { Confidence, LEVEL_LABEL, PendingSignal, SignalCard, TrendChip } from './signal-card'
+import { PageHeader } from '@/components/dashboard/page-states'
 
 const SECTIONS: Array<{ id: DnaSection; title: string; empty: string }> = [
   { id: 'rhythm',    title: 'Your rhythm',         empty: 'Nova has no rhythm to describe yet.' },
@@ -39,14 +40,12 @@ export function NovaLearningDna({ view }: { view: NovaLearningDnaReady }) {
 
   return (
     <div className="mx-auto w-full max-w-6xl pb-20 pt-10 lg:pt-4" data-learning-dna={state}>
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Your Learning DNA</h1>
-        <p className="mt-1.5 max-w-prose text-sm leading-relaxed text-foreground/55">
-          {state === 'ready'
-            ? 'Nova has learned a few things about how you work. Each one says how sure it is and what it rests on, and each can change.'
-            : 'How Nova comes to understand the way you study: from sessions you finish, not from a quiz.'}
-        </p>
-      </header>
+      <PageHeader
+        title="Your Learning DNA"
+        description={state === 'ready'
+          ? 'Nova has learned a few things about how you work. Each one says how sure it is and what it rests on, and each can change.'
+          : 'How Nova comes to understand the way you study: from sessions you finish, not from a quiz.'}
+      />
 
       <div className="mt-8 grid grid-cols-1 gap-x-10 gap-y-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="min-w-0 space-y-10">

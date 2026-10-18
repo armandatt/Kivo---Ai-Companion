@@ -152,7 +152,8 @@ function BlockMeta({ action }: { action: TodayAction }) {
 }
 
 // The block to do now: what it is, why, and the one button that starts it.
-// A raised card washed in its subject's colour; on Today it floats in the hero.
+// A raised card with its subject's colour down its edge; on Today it sits on
+// the canvas in the hero.
 export function NowBlock({ action, why, record, onStart, starting, error, disabled }: {
   action: TodayAction; why: string[]; record: TopicRecord | null; onStart: () => void; starting: boolean; error: string | null; disabled?: boolean
 }) {
@@ -162,28 +163,26 @@ export function NowBlock({ action, why, record, onStart, starting, error, disabl
 
   return (
     <div className={cn(SURFACE_RAISED, 'subject-tone relative overflow-hidden')} style={toneStyle(action.subjectName)} data-block="now">
-      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-linear-to-b from-[var(--sc-soft)] to-transparent" />
-      <div aria-hidden className="pointer-events-none absolute -right-10 -top-12 size-40 rounded-full bg-[var(--sc-soft)] blur-2xl" />
-      <div className="relative p-5 sm:p-6">
+      <span aria-hidden className="absolute inset-y-0 left-0 w-1.5 bg-[var(--sc)]" />
+      <div className="relative p-5 pl-6 sm:p-6 sm:pl-7">
         <p className="flex flex-wrap items-center gap-x-2 text-[11px] font-semibold uppercase tracking-[0.14em]">
-          <span aria-hidden className="relative flex size-2">
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-[var(--sc)] opacity-50" />
-            <span className="relative inline-flex size-2 rounded-full bg-[var(--sc)]" />
-          </span>
+          <span aria-hidden className="size-2 rounded-full bg-[var(--sc)]" />
           <span className="text-[var(--sc-ink)]">Next up</span>
           <span aria-hidden className="text-foreground/25">·</span>
           <span className={cn(URGENCY_TONE[action.urgency])}>{URGENCY_LABEL[action.urgency]}</span>
         </p>
-        <h3 id="nova-next-action" className="mt-3 text-2xl font-semibold leading-tight tracking-[-0.02em] text-foreground sm:text-[1.75rem]">
+        <h3 id="nova-next-action" className="mt-3 font-display text-[2.1rem] leading-[1.02] tracking-[-0.01em] text-foreground sm:text-[2.5rem]">
           <span className="sr-only">Block 1: </span>{action.topicName}
         </h3>
         <BlockMeta action={action} />
         <RecordLine record={record} className="mt-2" />
 
         {action.reasons.length > 0 && (
-          <ul aria-label="Why Nova chose this" className="mt-4 flex flex-wrap gap-1.5">
+          <ul aria-label="Why Nova chose this" className="mt-4 space-y-1">
             {action.reasons.map(reason => (
-              <li key={reason} className="rounded-full border border-[var(--sc-edge)] bg-[var(--sc-faint)] px-2.5 py-0.5 text-xs text-foreground/80">{sentenceCase(reason)}</li>
+              <li key={reason} className="flex gap-2.5 text-sm leading-relaxed text-foreground/80">
+                <span aria-hidden className="mt-[0.55rem] size-1 shrink-0 rounded-full bg-[var(--sc)]" />{sentenceCase(reason)}
+              </li>
             ))}
           </ul>
         )}

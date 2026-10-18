@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Lightning, SignOut, SquaresFour } from "@phosphor-icons/react/dist/ssr"
 import { KivoLogo } from "@/components/KivoLogo"
+import { KivoWordmark } from "@/components/brand/kivo-brand"
 
 export function Header() {
   const router = useRouter()
@@ -55,7 +56,7 @@ export function Header() {
                 ${scrolled ? "max-w-0 opacity-0" : "max-w-[100px] opacity-100"}
               `}
             >
-              Kivo
+              <KivoWordmark height={22} className="block" />
             </span>
           </div>
 
@@ -75,11 +76,8 @@ export function Header() {
             <a href="#pricing" className="px-4 py-1.5 text-sm text-[var(--color-baltic-sea-400)] hover:text-[var(--color-baltic-sea-100)] transition-colors">
               Pricing
             </a>
-            <a href="#" className="px-4 py-1.5 text-sm text-[var(--color-baltic-sea-400)] hover:text-[var(--color-baltic-sea-100)] transition-colors">
+            <a href="#how-it-works" className="px-4 py-1.5 text-sm text-[var(--color-baltic-sea-400)] hover:text-[var(--color-baltic-sea-100)] transition-colors">
               How it works
-            </a>
-            <a href="#" className="px-4 py-1.5 text-sm text-[var(--color-baltic-sea-400)] hover:text-[var(--color-baltic-sea-100)] transition-colors">
-              Blog
             </a>
           </nav>
 
@@ -164,7 +162,7 @@ export function Header() {
                 >
                   <Link href="/signup">
                     <Lightning weight="fill" className="mr-1.5 h-4 w-4" />
-                    Start free
+                    Start with Kivo
                   </Link>
                 </Button>
               </>
@@ -204,7 +202,7 @@ export function Header() {
           >
             <Link href="/signup">
               <Lightning weight="fill" className="mr-1.5 h-4 w-4" />
-              Start free
+              Start with Kivo
             </Link>
           </Button>
         )}

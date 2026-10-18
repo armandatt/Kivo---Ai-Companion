@@ -164,7 +164,7 @@ export default function SignupPage() {
         title="Check your email"
         subtitle={
           <>
-            Enter the 8-digit code we sent to <span className="text-white">{email}</span>. It expires in 10 minutes.
+            Enter the 8-digit code we sent to <span className="text-paper-50">{email}</span>. It expires in 10 minutes.
           </>
         }
       >
@@ -184,7 +184,7 @@ export default function SignupPage() {
                   <InputOTPSlot
                     key={index}
                     index={index}
-                    className="h-11 w-7 text-base sm:w-10 sm:text-lg text-white border-[#2a2a35] bg-[#0a0a0a]"
+                    className="h-11 w-7 text-base sm:w-10 sm:text-lg text-paper-50 border-ink-700 bg-ink-950"
                   />
                 ))}
               </InputOTPGroup>
@@ -203,20 +203,20 @@ export default function SignupPage() {
           </Button>
         </form>
 
-        <p className="text-center text-sm text-gray-400 mt-6">
+        <p className="text-center text-sm text-ink-300 mt-6">
           Didn&apos;t get it? Check spam, or{' '}
           <button
             type="button"
             onClick={handleResend}
             disabled={isLoading || resendIn > 0}
-            className="text-[#00D9A3] hover:text-[#00c896] font-medium disabled:text-gray-500 disabled:cursor-not-allowed"
+            className="text-iris-300 hover:text-iris-200 font-medium disabled:text-ink-400 disabled:cursor-not-allowed"
           >
             {resendIn > 0 ? `resend in ${resendIn}s` : 'send a new code'}
           </button>
           .
         </p>
 
-        <p className="text-center text-xs text-gray-500 mt-3">
+        <p className="text-center text-xs text-ink-300 mt-3">
           If this email already has an account, we sent a reminder to sign in instead of a code.
         </p>
 
@@ -229,7 +229,7 @@ export default function SignupPage() {
 
   return (
     <AuthShell
-      title={<>Join <span className="text-[#00D9A3]">Kivo</span></>}
+      title={<>Join <span className="italic text-iris-300">Kivo</span></>}
       subtitle="Create your AI companion today"
     >
       {step === 'choose' ? (
@@ -238,7 +238,7 @@ export default function SignupPage() {
         <>
           <form onSubmit={handleStart} className="space-y-4" noValidate>
             <div>
-              <label htmlFor="signup-email" className="block text-sm font-medium text-gray-300 mb-2">
+              <label htmlFor="signup-email" className="block text-sm font-medium text-ink-200 mb-2">
                 Email address
               </label>
               <Input
@@ -255,7 +255,7 @@ export default function SignupPage() {
             </div>
 
             <div>
-              <label htmlFor="signup-password" className="block text-sm font-medium text-gray-300 mb-2">
+              <label htmlFor="signup-password" className="block text-sm font-medium text-ink-200 mb-2">
                 Password
               </label>
               <Input
@@ -271,7 +271,7 @@ export default function SignupPage() {
             </div>
 
             <div>
-              <label htmlFor="signup-confirm" className="block text-sm font-medium text-gray-300 mb-2">
+              <label htmlFor="signup-confirm" className="block text-sm font-medium text-ink-200 mb-2">
                 Confirm Password
               </label>
               <Input
@@ -303,11 +303,11 @@ export default function SignupPage() {
         </>
       )}
 
-      <p className="text-center text-gray-400 mt-6">
+      <p className="text-center text-ink-300 mt-6">
         Already have an account?{' '}
         <Link
           href="/signin"
-          className="text-[#00D9A3] hover:text-[#00c896] font-semibold"
+          className="text-iris-300 hover:text-iris-200 font-semibold"
         >
           Sign in
         </Link>

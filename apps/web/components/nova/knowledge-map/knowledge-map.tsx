@@ -1,11 +1,20 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useStartSession } from '../use-start-session'
-import { ArrowUpRight, Maximize2, Minus, Plus, Search, X } from 'lucide-react'
+import { ArrowUpRight, Link2, Maximize2, Minus, Plus, RotateCcw, Search, Waypoints, X } from 'lucide-react'
 import type { MapNode, MapNodeType, NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
-import { layoutMap } from './layout'
+import { MAP_LAYOUT_COORD_MAX } from '@repo/api/nova/product/map-layout.types'
+import { cn } from '@/lib/utils'
+import { BUTTON_PRIMARY, BUTTON_QUIET } from '../workspace/ui'
+import { toneStyle } from '../subject-color'
+import { CARD, layoutMap, withPositions, type MapLayout } from './layout'
+import { useMapLayout } from './use-map-layout'
+import { filingChoices, placementLabel, placementOf, planLink, samePlacement, type Placement } from './map-edit'
+import { addNoteLink, fileItem, type EditOutcome } from './map-actions'
+import { revealDetail } from './reveal-detail'
+import { fitKey, focusToApply, keepValid } from './view-state'
 
 const TYPES: Array<{ type: MapNodeType; label: string; plural: string }> = [
   { type: 'subject',  label: 'Subject',    plural: 'Subjects' },
@@ -16,17 +25,19 @@ const TYPES: Array<{ type: MapNodeType; label: string; plural: string }> = [
 const TYPE_LABEL = Object.fromEntries(TYPES.map(t => [t.type, t.label])) as Record<MapNodeType, string>
 
 // One colour per kind of thing, taken from the theme so both themes work.
+// Teal (Nova's) marks subjects and learning; iris is kept for selection.
 const FILL: Record<MapNodeType, string> = {
-  subject: 'var(--color-keppel-400)', topic: 'var(--map-topic)', note: 'var(--map-note)', resource: 'var(--map-resource)',
+  subject: 'var(--nova)', topic: 'var(--map-topic)', note: 'var(--map-note)', resource: 'var(--map-resource)',
 }
-const RADIUS: Record<MapNodeType, number> = { subject: 26, topic: 15, note: 9, resource: 9 }
 const LEVEL_TEXT = { weak: 'Weak', developing: 'Developing', solid: 'Solid' } as const
 
 const short = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text)
 const day   = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+const shortDay = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
 type View = { x: number; y: number; k: number }
-const MIN_K = 0.25, MAX_K = 2.5
+const MIN_K = 0.2, MAX_K = 2.5
 
 // A session started from the map has no planned block behind it, so it is
 // the length of an ordinary one.
@@ -34,6 +45,13 @@ const MAP_SESSION_MINUTES = 25
 
 // How far one arrow key moves the map, in screen pixels.
 const PAN_STEP = 60
+// How far Alt and an arrow key move a card, in map units (Shift for more).
+const NUDGE = 20
+// How far the pointer must travel before a press on a card becomes a drag.
+// Under it, the press is a click and selects the card.
+const DRAG_THRESHOLD = 5
+
+const clampCoord = (v: number) => Math.max(-MAP_LAYOUT_COORD_MAX, Math.min(MAP_LAYOUT_COORD_MAX, v))
 
 // How one item stands to another, in words, from the selected item's side.
 const RELATION: Record<string, [string, string]> = {
@@ -59,9 +77,177 @@ function around(id: string, edges: Array<{ from: string; to: string }>, hops = 2
   return seen
 }
 
-function Detail({ node, neighbours, onPick, onClose, onScope, scoped }: {
+const rowId = (id: string) => id.slice(id.indexOf(':') + 1)
+
+// ── Editing, from the detail panel ───────────────────────────────────────────
+// Each is an explicit action with its own confirmation. Moving a card never
+// files or links anything.
+
+function Outcome({ outcome }: { outcome: EditOutcome | null }) {
+  if (!outcome) return null
+  const bad = outcome.kind === 'failed' || outcome.kind === 'conflict'
+  return <p role={bad ? 'alert' : 'status'} className={cn('mt-2 text-xs leading-relaxed', bad ? 'text-red-400' : 'text-foreground/75')}>{outcome.message}</p>
+}
+
+function LinkEditor({ node, view, onChanged }: { node: MapNode; view: NovaKnowledgeMapReady; onChanged: () => void }) {
+  const [open, setOpen]       = useState(false)
+  const [query, setQuery]     = useState('')
+  const [target, setTarget]   = useState<MapNode | null>(null)
+  const [busy, setBusy]       = useState(false)
+  const [outcome, setOutcome] = useState<EditOutcome | null>(null)
+
+  const linked = useMemo(() => new Set(view.edges.filter(e => e.kind === 'links_to' && e.from === node.id).map(e => e.to)), [view.edges, node.id])
+  const candidates = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return view.nodes
+      .filter(n => (n.type === 'note' || n.type === 'topic') && n.id !== node.id)
+      .filter(n => !q || n.label.toLowerCase().includes(q) || ('subjectName' in n && n.subjectName?.toLowerCase().includes(q)))
+      .slice(0, 8)
+  }, [view.nodes, node.id, query])
+  const plan = target ? planLink(node, target, view.nodes, view.edges) : null
+
+  const confirm = async () => {
+    if (!plan?.ok) return
+    setBusy(true)
+    const result = await addNoteLink(rowId(node.id), plan)
+    setBusy(false)
+    setOutcome(result)
+    if (result.kind === 'done' || result.kind === 'conflict') { setTarget(null); setOpen(false); onChanged() }
+  }
+
+  if (!open) {
+    return (
+      <div>
+        <button type="button" onClick={() => { setOpen(true); setOutcome(null) }} className={BUTTON_QUIET} data-link-open>
+          <Link2 aria-hidden className="size-3.5" /> Link to a note or topic
+        </button>
+        <Outcome outcome={outcome} />
+      </div>
+    )
+  }
+  return (
+    <section aria-label="Link this note" className="rounded-xl border border-white/10 bg-white/3 p-3">
+      {!target ? (
+        <>
+          <label className="block text-xs font-medium text-foreground/75" htmlFor={`link-q-${node.id}`}>Link “{short(node.label, 40)}” to</label>
+          <input id={`link-q-${node.id}`} value={query} onChange={e => setQuery(e.target.value)} placeholder="Find a note or topic" autoFocus
+            className="mt-2 h-9 w-full rounded-lg border border-white/12 bg-background px-3 text-sm text-foreground outline-none placeholder:text-subtle focus-visible:border-ring" />
+          <ul className="mt-2 max-h-56 space-y-0.5 overflow-y-auto">
+            {candidates.length === 0 && <li className="px-2 py-1.5 text-xs text-subtle">No note or topic on the map matches.</li>}
+            {candidates.map(c => (
+              <li key={c.id}>
+                <button type="button" onClick={() => setTarget(c)} disabled={linked.has(c.id)}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-foreground/85 transition-colors hover:bg-white/5 disabled:opacity-60">
+                  <span aria-hidden className="inline-block size-2 shrink-0 rounded-full" style={{ background: FILL[c.type] }} />
+                  <span className="min-w-0 flex-1 truncate">{c.label}</span>
+                  <span className="shrink-0 text-[11px] text-subtle">{linked.has(c.id) ? 'Linked' : TYPE_LABEL[c.type]}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-2 flex justify-end"><button type="button" onClick={() => setOpen(false)} className={BUTTON_QUIET}>Cancel</button></div>
+        </>
+      ) : plan && plan.ok ? (
+        <>
+          <p className="text-sm leading-relaxed text-foreground/85">
+            Add <code className="rounded bg-white/6 px-1 py-0.5 text-[13px]">[[{plan.title}]]</code> on a new line at the end of “{node.label}”, linking it to the {TYPE_LABEL[target.type].toLowerCase()} “{target.label}”.
+          </p>
+          <p className="mt-1.5 text-xs text-subtle">Nothing else in the note changes. Remove the brackets in the note to remove the link.</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" onClick={() => void confirm()} disabled={busy} className={BUTTON_PRIMARY} data-link-confirm>{busy ? 'Adding…' : 'Add link'}</button>
+            <button type="button" onClick={() => setTarget(null)} disabled={busy} className={BUTTON_QUIET}>Choose another</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p role="alert" className="text-sm leading-relaxed text-foreground/85">{plan && !plan.ok ? plan.reason : ''}</p>
+          <div className="mt-3 flex gap-2"><button type="button" onClick={() => setTarget(null)} className={BUTTON_QUIET}>Choose another</button></div>
+        </>
+      )}
+      <Outcome outcome={outcome} />
+    </section>
+  )
+}
+
+function FileEditor({ node, view, onChanged }: { node: MapNode; view: NovaKnowledgeMapReady; onChanged: () => void }) {
+  const choices = useMemo(() => filingChoices(view.nodes), [view.nodes])
+  const current = placementOf(node)
+  const [open, setOpen]       = useState(false)
+  const [subjectId, setSubjectId] = useState(current?.subjectId ?? choices[0]?.subjectId ?? '')
+  const [topic, setTopic]     = useState<string>(current?.topicName ?? '')
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy]       = useState(false)
+  const [outcome, setOutcome] = useState<EditOutcome | null>(null)
+  if (node.type !== 'note' && node.type !== 'resource') return null
+
+  const topics = choices.find(c => c.subjectId === subjectId)?.topics ?? []
+  const to: Placement | null = subjectId ? { subjectId, topicName: topic && topics.includes(topic) ? topic : null } : null
+  const unchanged = samePlacement(current, to)
+  const what = node.type === 'note' ? 'note' : 'saved page'
+
+  const confirm = async () => {
+    if (!to) return
+    setBusy(true)
+    const result = await fileItem(node.type === 'note' ? 'note' : 'resource', rowId(node.id), to, node.type === 'note' ? node.updatedAt : null, placementLabel(to, view.nodes))
+    setBusy(false)
+    setOutcome(result)
+    setConfirming(false)
+    if (result.kind === 'done' || result.kind === 'conflict') { setOpen(false); onChanged() }
+  }
+
+  if (choices.length === 0) return null
+  if (!open) {
+    return (
+      <div>
+        <button type="button" onClick={() => { setOpen(true); setOutcome(null) }} className={BUTTON_QUIET} data-file-open>
+          <Waypoints aria-hidden className="size-3.5" /> File under…
+        </button>
+        <Outcome outcome={outcome} />
+      </div>
+    )
+  }
+  const select = 'h-9 w-full rounded-lg border border-white/12 bg-background px-2.5 text-sm text-foreground outline-none focus-visible:border-ring'
+  return (
+    <section aria-label={`File this ${what}`} className="rounded-xl border border-white/10 bg-white/3 p-3">
+      <p className="text-xs text-subtle">Now: <span className="text-foreground/85">{placementLabel(current, view.nodes)}</span></p>
+      <div className="mt-2 grid gap-2">
+        <div>
+          <label htmlFor={`file-subject-${node.id}`} className="text-xs font-medium text-foreground/75">Subject</label>
+          <select id={`file-subject-${node.id}`} value={subjectId} onChange={e => { setSubjectId(e.target.value); setTopic(''); setConfirming(false) }} className={cn(select, 'mt-1')}>
+            {choices.map(c => <option key={c.subjectId} value={c.subjectId}>{c.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label htmlFor={`file-topic-${node.id}`} className="text-xs font-medium text-foreground/75">Topic</label>
+          <select id={`file-topic-${node.id}`} value={to?.topicName ?? ''} onChange={e => { setTopic(e.target.value); setConfirming(false) }} className={cn(select, 'mt-1')}>
+            <option value="">The subject only</option>
+            {topics.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+      </div>
+      {confirming && to ? (
+        <div className="mt-3">
+          <p className="text-sm leading-relaxed text-foreground/85">Move this {what} from {placementLabel(current, view.nodes)} to {placementLabel(to, view.nodes)}?</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button type="button" onClick={() => void confirm()} disabled={busy} className={BUTTON_PRIMARY} data-file-confirm>{busy ? 'Moving…' : 'Move it'}</button>
+            <button type="button" onClick={() => setConfirming(false)} disabled={busy} className={BUTTON_QUIET}>Not yet</button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" onClick={() => setConfirming(true)} disabled={!to || unchanged} className={BUTTON_PRIMARY}>{unchanged ? 'Already filed here' : 'Review move'}</button>
+          <button type="button" onClick={() => setOpen(false)} className={BUTTON_QUIET}>Cancel</button>
+        </div>
+      )}
+      <Outcome outcome={outcome} />
+    </section>
+  )
+}
+
+function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onChanged, panelRef }: {
   node: MapNode; neighbours: Array<{ node: MapNode; relation: string }>; onPick: (id: string) => void; onClose: () => void
-  onScope: () => void; scoped: boolean
+  onScope: () => void; scoped: boolean; view: NovaKnowledgeMapReady; onChanged: () => void
+  panelRef?: React.Ref<HTMLElement>
 }) {
   const { start, starting, error: startError } = useStartSession()
   const facts: Array<[string, string]> = []
@@ -87,38 +273,37 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped }: {
   // A new note filed where this node is. The note editor reads both from the address.
   const noteHere = node.type === 'topic' ? `/notes/new?subjectId=${encodeURIComponent(node.subjectId ?? '')}&topic=${encodeURIComponent(node.label)}`
     : node.type === 'subject' ? `/notes/new?subjectId=${encodeURIComponent(node.subjectId ?? '')}` : null
-  const secondary = 'inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/85 transition-colors hover:bg-white/5 disabled:opacity-50'
+  const tone = node.type === 'subject' ? node.label : node.subjectName
 
   return (
-    <aside aria-label="Selected item" className="flex max-h-[46vh] flex-col overflow-y-auto border-t border-white/8 bg-card p-5 lg:max-h-none lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0">
+    <aside ref={panelRef} aria-label="Selected item" className="subject-tone flex max-h-[52vh] flex-col overflow-y-auto border-t border-white/8 bg-card p-5 lg:max-h-none lg:w-[22rem] lg:shrink-0 lg:border-l lg:border-t-0" style={toneStyle(tone)}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em] text-foreground/45">
+          <p className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em] text-subtle">
             <span className="inline-block size-2 rounded-full" style={{ background: FILL[node.type] }} />{TYPE_LABEL[node.type]}
+            {tone && <><span aria-hidden>·</span><span className="truncate normal-case tracking-normal text-[var(--sc-ink)]">{tone}</span></>}
           </p>
-          <h2 className="mt-2 break-words text-lg font-semibold leading-snug tracking-tight text-foreground">{node.label}</h2>
+          <h2 className="mt-2 break-words font-display text-[1.6rem] leading-[1.1] text-foreground">{node.label}</h2>
         </div>
-        <button type="button" onClick={onClose} aria-label="Close details" className="rounded-lg p-1.5 text-foreground/50 transition-colors hover:bg-white/5 hover:text-foreground"><X className="size-4" /></button>
+        <button type="button" onClick={onClose} aria-label="Close details" className="rounded-lg p-1.5 text-subtle transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"><X className="size-4" /></button>
       </div>
 
-      <dl className="mt-4 space-y-2.5 text-sm">
+      <dl className="mt-4 divide-y divide-white/6 border-y border-white/6 text-sm">
         {facts.map(([k, v]) => (
-          <div key={k} className="flex justify-between gap-4">
-            <dt className="shrink-0 text-foreground/50">{k}</dt>
-            <dd className="text-right text-foreground/90">{v}</dd>
+          <div key={k} className="flex justify-between gap-4 py-2">
+            <dt className="shrink-0 text-subtle">{k}</dt>
+            <dd className="text-right text-foreground/90 tabular-nums">{v}</dd>
           </div>
         ))}
       </dl>
       {node.type === 'topic' && node.level && (
-        <p className="mt-3 text-xs leading-relaxed text-foreground/45">The estimate comes from how you said your sessions went. It is not a test result.</p>
+        <p className="mt-3 text-xs leading-relaxed text-subtle">The estimate comes from how you said your sessions went. It is not a test result.</p>
       )}
 
       <div className="mt-5 flex flex-wrap gap-2">
-        {node.href && (
-          <Link href={node.href} className="inline-flex h-10 items-center justify-center rounded-xl bg-keppel-400 px-4 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300">{open}</Link>
-        )}
+        {node.href && <Link href={node.href} className={BUTTON_PRIMARY}>{open}</Link>}
         {node.type === 'resource' && (
-          <a href={node.url} target="_blank" rel="noopener noreferrer" className={secondary}>
+          <a href={node.url} target="_blank" rel="noopener noreferrer" className={cn(BUTTON_QUIET, 'h-10')}>
             Visit page <ArrowUpRight className="size-3.5" />
           </a>
         )}
@@ -126,34 +311,42 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped }: {
         {node.type === 'topic' && (
           <button type="button" disabled={starting !== null} data-start-topic
             onClick={() => void start({ topicName: node.label, subjectName: node.subjectName, durationMinutes: MAP_SESSION_MINUTES }, node.id)}
-            className={secondary}>
+            className={cn(BUTTON_QUIET, 'h-10')}>
             {starting === node.id ? 'Starting…' : `Start a ${MAP_SESSION_MINUTES} min session`}
           </button>
         )}
-        {noteHere && <Link href={noteHere} className={secondary} data-note-here>New note here</Link>}
-        {!scoped && <button type="button" onClick={onScope} className={secondary} data-scope-here>Show only what&apos;s around this</button>}
+        {noteHere && <Link href={noteHere} className={cn(BUTTON_QUIET, 'h-10')} data-note-here>New note here</Link>}
+        {!scoped && <button type="button" onClick={onScope} className={cn(BUTTON_QUIET, 'h-10')} data-scope-here>Show only what&apos;s around this</button>}
       </div>
-      {startError && <p role="alert" className="mt-3 text-sm text-red-300">{startError}</p>}
+      {startError && <p role="alert" className="mt-3 text-sm text-red-400">{startError}</p>}
+
+      {(node.type === 'note' || node.type === 'resource') && (
+        <div className="mt-6 space-y-2">
+          <h3 className="text-[11px] font-medium uppercase tracking-[0.14em] text-subtle">Connect</h3>
+          {node.type === 'note' && <LinkEditor key={`link-${node.id}`} node={node} view={view} onChanged={onChanged} />}
+          <FileEditor key={`file-${node.id}`} node={node} view={view} onChanged={onChanged} />
+        </div>
+      )}
 
       <div className="mt-6">
-        <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-foreground/45">Connected to</h3>
+        <h3 className="text-[11px] font-medium uppercase tracking-[0.14em] text-subtle">Connected to</h3>
         {neighbours.length === 0 ? (
-          <p className="mt-2 text-sm leading-relaxed text-foreground/55">
+          <p className="mt-2 text-sm leading-relaxed text-foreground/65">
             Nothing. {node.type === 'note' || node.type === 'resource'
-              ? 'It is not filed under a subject. Give it one where you edit it and it joins that subject here.'
+              ? 'It is not filed under a subject. File it under one and it joins that subject here.'
               : node.type === 'topic' ? 'No note or saved page names this topic yet.' : 'This subject has no topics, notes or saved pages yet.'}
           </p>
         ) : (
-          <ul className="mt-2 space-y-1">
+          <ul className="mt-2 space-y-0.5">
             {neighbours.map(({ node: n, relation }) => (
               <li key={`${n.id}:${relation}`}>
-                <button type="button" onClick={() => onPick(n.id)} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-foreground/80 transition-colors hover:bg-white/5 hover:text-foreground">
+                <button type="button" onClick={() => onPick(n.id)} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-foreground/85 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
                   <span className="inline-block size-2 shrink-0 rounded-full" style={{ background: FILL[n.type] }} />
                   <span className="min-w-0">
                     <span className="block truncate">{n.label}</span>
-                    <span className="block text-[11px] text-foreground/40">{relation}</span>
+                    <span className="block text-[11px] text-subtle">{relation}</span>
                   </span>
-                  <span className="ml-auto shrink-0 text-[11px] text-foreground/40">{TYPE_LABEL[n.type]}</span>
+                  <span className="ml-auto shrink-0 text-[11px] text-subtle">{TYPE_LABEL[n.type]}</span>
                 </button>
               </li>
             ))}
@@ -164,10 +357,77 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped }: {
   )
 }
 
-// The learner's knowledge as a map they can move around in. Every node is a
-// real item and every line a link that is stored; the server decides both.
-// This component only places, filters and shows them.
-export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
+// ── The cards ────────────────────────────────────────────────────────────────
+// What a card shows is what the map reported, nothing more: its title, its
+// subject's colour, a topic's own estimate or that no session stands behind
+// it, a subject's counts, when a note was edited, a saved page's site.
+
+type CardDetail = 0 | 1 | 2   // shapes only; titles; titles and facts
+
+function CardFace({ n, detail }: { n: MapNode; detail: CardDetail }) {
+  const { w, h } = CARD[n.type]
+  const x0 = -w / 2, y0 = -h / 2
+  const text = 'fill-foreground'
+  const meta = { fontSize: 10.5, className: 'fill-[var(--subtle)]' }
+  if (n.type === 'subject') {
+    return (
+      <>
+        <rect x={x0} y={y0} width={w} height={h} rx={16} fill="var(--card)" stroke="var(--sc-edge)" strokeWidth={1.25} vectorEffect="non-scaling-stroke" />
+        <rect x={x0} y={y0} width={w} height={h} rx={16} fill="var(--sc-soft)" />
+        <circle cx={x0 + 20} cy={0} r={6} fill="var(--sc)" />
+        {detail >= 1 && (
+          <text x={x0 + 34} y={detail === 2 ? -3 : 6} className={text} style={{ fontFamily: 'var(--font-display)' }} fontSize={19}>{short(n.label, 19)}</text>
+        )}
+        {detail === 2 && (
+          <text x={x0 + 34} y={17} {...meta}>{[plural(n.topics, 'topic'), plural(n.notes, 'note'), plural(n.resources, 'page')].join(' · ')}</text>
+        )}
+      </>
+    )
+  }
+  if (n.type === 'topic') {
+    const unstudied = n.sessions === 0
+    const barW = w - 36
+    return (
+      <>
+        <rect x={x0} y={y0} width={w} height={h} rx={14} fill="var(--card)" stroke={unstudied ? 'var(--map-topic)' : 'var(--border)'}
+          strokeWidth={unstudied ? 1.4 : 1} strokeDasharray={unstudied ? '4 3' : undefined} vectorEffect="non-scaling-stroke" />
+        {n.subjectName && <rect x={x0 + 7} y={y0 + 11} width={3} height={h - 22} rx={1.5} fill="var(--sc)" />}
+        {detail >= 1 && <text x={x0 + 18} y={detail === 2 ? -7 : 5} className={text} fontSize={13} fontWeight={600}>{short(n.label, 20)}</text>}
+        {detail === 2 && (
+          <>
+            <text x={x0 + 18} y={9} {...meta}>{n.level && n.masteryPercent !== null ? `${LEVEL_TEXT[n.level]} · ${n.masteryPercent}%` : 'No session yet'}</text>
+            {(n.notes > 0 || n.resources > 0) && (
+              <text x={-x0 - 12} y={9} textAnchor="end" {...meta}>{[n.notes > 0 && `${n.notes} ✎`, n.resources > 0 && `${n.resources} ↗`].filter(Boolean).join('  ')}</text>
+            )}
+            {n.masteryPercent !== null && (
+              <>
+                <rect x={x0 + 18} y={16} width={barW} height={3} rx={1.5} fill="var(--map-line)" />
+                <rect x={x0 + 18} y={16} width={(barW * n.masteryPercent) / 100} height={3} rx={1.5} fill="var(--nova)" />
+              </>
+            )}
+          </>
+        )}
+      </>
+    )
+  }
+  const resource = n.type === 'resource'
+  return (
+    <>
+      <rect x={x0} y={y0} width={w} height={h} rx={resource ? 6 : 11} fill="var(--card)" stroke="var(--border)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+      {n.subjectName && <rect x={x0 + 6} y={y0 + 10} width={3} height={h - 20} rx={1.5} fill="var(--sc)" />}
+      {resource
+        ? <rect x={x0 + 16} y={detail === 2 ? 5 : -3} width={7} height={7} rx={1.5} fill={FILL.resource} />
+        : <circle cx={x0 + 19.5} cy={detail === 2 ? 8.5 : 0.5} r={3.5} fill={FILL.note} />}
+      {detail >= 1 && <text x={x0 + (detail === 2 ? 16 : 29)} y={detail === 2 ? -5 : 4.5} className={text} fontSize={12.5} fontWeight={500}>{short(n.label, detail === 2 ? 22 : 20)}</text>}
+      {detail === 2 && <text x={x0 + 29} y={12.5} {...meta}>{resource ? short(n.domain, 22) : `Edited ${shortDay(n.updatedAt)}`}</text>}
+    </>
+  )
+}
+
+// The learner's knowledge as a canvas they can move around in and arrange.
+// Every card is a real item and every line a link that is stored; the server
+// decides both. Moving a card changes only where it is drawn.
+export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady; onChanged: () => void }) {
   const [shown, setShown]       = useState<Record<MapNodeType, boolean>>({ subject: true, topic: true, note: true, resource: true })
   const [subject, setSubject]   = useState('')
   // Show [[links]] between notes (the learner's own links), or hide them.
@@ -178,8 +438,18 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
   const [selected, setSelected] = useState<string | null>(null)
   const [hover, setHover]       = useState<string | null>(null)
   const [t, setT]               = useState<View>({ x: 0, y: 0, k: 1 })
+  const [dragAt, setDragAt]     = useState<{ id: string; x: number; y: number } | null>(null)
+  const [confirmReset, setConfirmReset] = useState(false)
+  const [said, setSaid]         = useState('')
   const frame = useRef<HTMLDivElement>(null)
   const drag  = useRef<{ x: number; y: number; moved: boolean } | null>(null)
+  const cardDrag = useRef<{ id: string; sx: number; sy: number; ox: number; oy: number; moved: boolean; at: { x: number; y: number } | null } | null>(null)
+  const swallowClick = useRef(false)
+  // Set by an explicit selection (a click, Enter or Space on a card, a search
+  // result): the details are then brought into view on a narrow screen.
+  const revealNext = useRef(false)
+  const panel = useRef<HTMLElement>(null)
+  const layout = useMapLayout()
 
   const subjects = useMemo(() => view.nodes.filter(n => n.type === 'subject'), [view.nodes])
 
@@ -192,17 +462,44 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
   const edges = useMemo(() => usable.filter(e => ids.has(e.from) && ids.has(e.to)), [usable, ids])
   const linkCount = useMemo(() => view.edges.filter(e => e.kind === 'links_to').length, [view.edges])
 
+  // Every item on the map now, whatever the filters show.
+  const allIds = useMemo(() => new Set(view.nodes.map(n => n.id)), [view.nodes])
+
   // A link from elsewhere names an item (?focus=note:<id>): open the map on
-  // it, scoped to what is around it. Read once, in an effect.
+  // it, scoped to what is around it. On the first view only: a reload (every
+  // minute, and after an edit) keeps what the learner has done since.
+  const focusApplied = useRef(false)
   useEffect(() => {
-    const focus = new URLSearchParams(window.location.search).get('focus')
-    if (focus && view.nodes.some(n => n.id === focus)) { setScope(focus); setSelected(focus) }
-  }, [view.nodes])
+    const focus = focusToApply(new URLSearchParams(window.location.search).get('focus'), allIds, focusApplied.current)
+    focusApplied.current = true
+    if (focus) { setScope(focus); setSelected(focus) }
+  }, [allIds])
+  // After a reload, a selection, scope or hover on an item that has gone
+  // (deleted elsewhere, archived) is dropped; one still there is kept.
+  useEffect(() => {
+    setSelected(id => keepValid(id, allIds))
+    setScope(id => keepValid(id, allIds))
+    setHover(id => keepValid(id, allIds))
+  }, [allIds])
   // Places a saved page was suggested for and is not filed under. Drawn, never laid out.
   const suggestions = useMemo(() => (view.suggestions ?? []).filter(s => ids.has(s.from) && ids.has(s.to)), [view.suggestions, ids])
   // A [[link]] is drawn but does not place anything: an item sits by what it
   // is filed under, wherever notes link to it from.
-  const layout = useMemo(() => layoutMap(nodes, edges.filter(e => e.kind !== 'links_to')), [nodes, edges])
+  // Drawn for the frame's shape: a phone's tall frame stacks the subjects.
+  const [portrait, setPortrait] = useState(false)
+  useEffect(() => {
+    const el = frame.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const watch = new ResizeObserver(() => setPortrait(el.clientWidth < el.clientHeight * 0.9))
+    watch.observe(el)
+    return () => watch.disconnect()
+  }, [])
+  const auto = useMemo(() => layoutMap(nodes, edges.filter(e => e.kind !== 'links_to'), { portrait }), [nodes, edges, portrait])
+  // The learner's own positions over the computed ones, and the card being dragged.
+  const placed: MapLayout = useMemo(() => {
+    const positions = dragAt ? new Map(layout.positions).set(dragAt.id, { x: dragAt.x, y: dragAt.y }) : layout.positions
+    return withPositions(auto, nodes, positions)
+  }, [auto, nodes, layout.positions, dragAt])
   const byId   = useMemo(() => new Map(view.nodes.map(n => [n.id, n])), [view.nodes])
 
   const neighbourIds = useMemo(() => {
@@ -216,14 +513,19 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
   const fit = useCallback(() => {
     const el = frame.current
     if (!el) return
-    const { minX, minY, maxX, maxY } = layout.bounds
+    const { minX, minY, maxX, maxY } = placed.bounds
     const w = Math.max(1, maxX - minX), h = Math.max(1, maxY - minY)
-    const k = Math.max(MIN_K, Math.min(1.15, Math.min(el.clientWidth / w, el.clientHeight / h)))
+    const k = Math.max(MIN_K, Math.min(1.1, Math.min(el.clientWidth / w, el.clientHeight / h)))
     setT({ k, x: el.clientWidth / 2 - ((minX + maxX) / 2) * k, y: el.clientHeight / 2 - ((minY + maxY) / 2) * k })
-  }, [layout])
+  }, [placed])
 
-  // Fitted when the data or the filters change, not on every render.
-  useEffect(() => { fit() }, [fit])
+  // Fitted when the learner asks for a different picture or the saved layout
+  // arrives or is reset (fitKey), not when the data reloads and not when a
+  // card is moved: a reload keeps the pan and zoom they had.
+  const fitNow = useRef(fit)
+  useEffect(() => { fitNow.current = fit }, [fit])
+  const fitWhen = fitKey({ shown, subject, scope, showLinks, portrait, generation: layout.generation })
+  useEffect(() => { fitNow.current() }, [fitWhen])
 
   const zoomAt = useCallback((factor: number, cx?: number, cy?: number) => {
     const el = frame.current
@@ -251,13 +553,59 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
 
   const select = useCallback((id: string | null) => {
     setSelected(id)
-    const p = id ? layout.at.get(id) : null
+    const p = id ? placed.at.get(id) : null
     const el = frame.current
     // Bring a node picked from a list into view.
     if (p && el) setT(v => ({ ...v, x: el.clientWidth / 2 - p.x * v.k, y: el.clientHeight / 2 - p.y * v.k }))
-  }, [layout])
+  }, [placed])
+
+  // Moving a card: the pointer past the threshold, or Alt and an arrow key.
+  // The scale is read when the drag starts and kept for it.
+  const scale = useRef(1)
+  useEffect(() => { scale.current = t.k }, [t.k])
+  const placedNow = useRef(placed)
+  useEffect(() => { placedNow.current = placed }, [placed])
+  const moveCard = layout.move
+
+  const onCardPointerDown = useCallback((e: React.PointerEvent<SVGGElement>, id: string) => {
+    e.stopPropagation()
+    if (e.button !== 0) return
+    const p = placedNow.current.at.get(id)
+    if (!p) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    cardDrag.current = { id, sx: e.clientX, sy: e.clientY, ox: p.x, oy: p.y, moved: false, at: null }
+  }, [])
+  const onCardPointerMove = useCallback((e: React.PointerEvent<SVGGElement>) => {
+    const d = cardDrag.current
+    if (!d) return
+    const dx = e.clientX - d.sx, dy = e.clientY - d.sy
+    if (!d.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return
+    d.moved = true
+    d.at = { x: clampCoord(d.ox + dx / scale.current), y: clampCoord(d.oy + dy / scale.current) }
+    setDragAt({ id: d.id, ...d.at })
+  }, [])
+  const onCardPointerUp = useCallback((e: React.PointerEvent<SVGGElement>) => {
+    e.stopPropagation()
+    const d = cardDrag.current
+    cardDrag.current = null
+    if (d?.moved && d.at) {
+      swallowClick.current = true
+      moveCard(d.id, d.at.x, d.at.y)
+    }
+    setDragAt(null)
+  }, [moveCard])
+  const onCardPointerCancel = useCallback(() => { cardDrag.current = null; setDragAt(null) }, [])
 
   const picked = selected ? byId.get(selected) ?? null : null
+
+  // After an explicit selection has rendered its details: on a narrow screen,
+  // where they sit under the canvas, scroll them into view.
+  useEffect(() => {
+    const explicit = revealNext.current
+    revealNext.current = false
+    if (!explicit || !selected) return
+    revealDetail(panel.current, window)
+  }, [selected])
   const neighbours = useMemo(() => {
     if (!picked) return []
     const out: Array<{ node: MapNode; relation: string }> = []
@@ -278,56 +626,180 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
     return nodes.filter(n => about(n).includes(q)).slice(0, 8)
   }, [query, nodes])
 
-  // Subjects are always named; topics once there is room; notes and pages
-  // when zoomed in or when they belong to what is selected.
-  const labelled = (n: MapNode) => n.type === 'subject' || (n.type === 'topic' && t.k >= 0.45) || t.k >= 0.9 || neighbourIds?.has(n.id)
-  // Labels keep a readable size on screen whatever the zoom: the map can be
-  // far out and its names still legible.
+  // How much a card says at this zoom: far out, only the shapes and the
+  // subjects' names (drawn at a readable size); then titles; then facts.
+  const detail: CardDetail = t.k >= 0.62 ? 2 : t.k >= 0.36 ? 1 : 0
   const textScale = 1 / Math.max(t.k, 0.0001)
+  const focusId = hover ?? selected
+
+  // Lines between cards. Memoised apart from the pan, which only moves the
+  // group they sit in.
+  const edgeLayer = useMemo(() => edges.map(e => {
+    const a = placed.at.get(e.from), b = placed.at.get(e.to)
+    if (!a || !b) return null
+    const lit = focusId !== null && (e.from === focusId || e.to === focusId)
+    const dim = focusId !== null && !lit
+    if (e.kind === 'links_to') {
+      // A [[link]] curves, so it reads apart from where things are filed.
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y
+      return (
+        <path key={e.id} d={`M ${a.x} ${a.y} Q ${mx - dy * 0.18} ${my + dx * 0.18} ${b.x} ${b.y}`} fill="none" data-edge={e.kind}
+          stroke={lit ? 'var(--action)' : 'var(--nova)'} strokeWidth={lit ? 2 : 1.5} vectorEffect="non-scaling-stroke" opacity={dim ? 0.2 : 0.9} />
+      )
+    }
+    return (
+      <line key={e.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+        stroke={lit ? 'var(--action)' : 'var(--map-line)'}
+        strokeWidth={lit ? 2 : e.kind === 'has_topic' ? 1.6 : 1.1}
+        strokeDasharray={e.kind === 'filed_under' ? '5 4' : undefined}
+        vectorEffect="non-scaling-stroke" data-edge={e.kind}
+        opacity={dim ? 0.25 : 1} />
+    )
+  }), [edges, placed, focusId])
+
+  const suggestionLayer = useMemo(() => suggestions.map(s => {
+    const a = placed.at.get(s.from), b = placed.at.get(s.to)
+    if (!a || !b) return null
+    const lit = focusId !== null && (s.from === focusId || s.to === focusId)
+    return (
+      <line key={s.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y} data-suggestion={s.confidence}
+        stroke={lit ? 'var(--action)' : 'var(--map-line)'}
+        strokeWidth={1.2} strokeDasharray="1 6" strokeLinecap="round" vectorEffect="non-scaling-stroke"
+        opacity={focusId !== null && !lit ? 0.15 : 0.8} />
+    )
+  }), [suggestions, placed, focusId])
+
+  // The cards. Memoised apart from the pan; the zoom only changes them when
+  // it crosses into another level of detail.
+  const nodeLayer = useMemo(() => nodes.map(n => {
+    const p = placed.at.get(n.id)
+    if (!p) return null
+    const { w, h } = CARD[n.type]
+    const dim = neighbourIds !== null && !neighbourIds.has(n.id)
+    const on  = selected === n.id
+    const dragging = dragAt?.id === n.id
+    const tone = n.type === 'subject' ? n.label : n.subjectName
+    return (
+      <g
+        key={n.id} transform={`translate(${p.x} ${p.y})`} opacity={dim ? 0.38 : 1}
+        role="button" tabIndex={0} aria-label={`${TYPE_LABEL[n.type]}: ${n.label}`} aria-pressed={on}
+        aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+        className={cn('subject-tone outline-none [&:focus-visible_.map-focus]:opacity-100', dragging ? 'cursor-grabbing' : 'cursor-pointer')}
+        style={toneStyle(tone)} data-node={n.type}
+        onPointerDown={e => onCardPointerDown(e, n.id)} onPointerMove={onCardPointerMove}
+        onPointerUp={onCardPointerUp} onPointerCancel={onCardPointerCancel}
+        onClick={() => {
+          if (swallowClick.current) { swallowClick.current = false; return }
+          revealNext.current = !on
+          setSelected(on ? null : n.id)
+        }}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); revealNext.current = !on; setSelected(on ? null : n.id); return }
+          const by = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<string, [number, number]>)[e.key]
+          if (e.altKey && by) {
+            e.preventDefault()
+            const step = e.shiftKey ? NUDGE * 4 : NUDGE
+            moveCard(n.id, clampCoord(p.x + by[0] * step), clampCoord(p.y + by[1] * step))
+            setSaid(`Moved ${n.label}.`)
+          }
+        }}
+        onPointerEnter={() => setHover(n.id)} onPointerLeave={() => setHover(null)}
+      >
+        {(on || dragging) && <rect x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
+        <rect className="map-focus opacity-0" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--ring)" strokeWidth={2.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" />
+        <g style={dragging ? { filter: 'drop-shadow(0 10px 18px rgb(0 0 0 / 0.25))' } : undefined}><CardFace n={n} detail={detail} /></g>
+      </g>
+    )
+  }), [nodes, placed, neighbourIds, selected, dragAt, detail, onCardPointerDown, onCardPointerMove, onCardPointerUp, onCardPointerCancel, moveCard])
+
+  // Far out, the subjects' names over their cards, at a size that can be read.
+  const farLabels = detail === 0 ? nodes.filter(n => n.type === 'subject').map(n => {
+    const p = placed.at.get(n.id)
+    if (!p) return null
+    const size = 13 * Math.min(textScale, 4)
+    return (
+      <text key={`far-${n.id}`} x={p.x} y={p.y - CARD.subject.h / 2 - size * 0.6} textAnchor="middle" fontSize={size}
+        className="pointer-events-none fill-foreground" style={{ fontFamily: 'var(--font-display)', paintOrder: 'stroke', stroke: 'var(--background)', strokeWidth: 4 * Math.min(textScale, 4), strokeLinejoin: 'round' }}>
+        {short(n.label, 26)}
+      </text>
+    )
+  }) : null
+
+  const saver = layout.saver
+  const hasLayout = layout.positions.size > 0 || saver.unsaved > 0
+  const chip = (on: boolean) => cn(
+    'inline-flex h-8 items-center gap-2 rounded-full border px-3 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring',
+    on ? 'border-white/16 bg-white/6 text-foreground' : 'border-white/8 text-subtle hover:text-foreground',
+  )
+
+  let layoutNote: ReactNode = null
+  if (layout.load === 'failed') {
+    layoutNote = (
+      <div role="status" className="flex flex-wrap items-center justify-between gap-2 border-b border-white/8 bg-amber-400/8 px-3 py-2 text-xs text-foreground/80" data-layout-notice>
+        <span>Your saved layout didn&apos;t load, so the map shows its own. Cards you move are still saved.</span>
+        <button type="button" onClick={() => void layout.retryLoad()} className={cn(BUTTON_QUIET, 'h-7')}>Try again</button>
+      </div>
+    )
+  } else if (saver.status === 'failed') {
+    layoutNote = (
+      <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-b border-white/8 bg-red-400/8 px-3 py-2 text-xs text-foreground/85" data-layout-error>
+        <span>{saver.message ?? "Your layout didn't save."} {plural(saver.unsaved, 'card')} not saved yet; they stay where you put them.</span>
+        <button type="button" onClick={layout.retrySave} className={cn(BUTTON_QUIET, 'h-7')}>Retry</button>
+      </div>
+    )
+  } else if (layout.reset.error) {
+    layoutNote = (
+      <div role="alert" className="border-b border-white/8 bg-red-400/8 px-3 py-2 text-xs text-foreground/85">{layout.reset.error} Nothing was changed.</div>
+    )
+  }
+  const saveText = saver.status === 'saving' ? 'Saving layout…' : saver.status === 'pending' ? 'Unsaved changes' : saver.status === 'failed' ? 'Layout not saved' : layout.positions.size > 0 ? 'Layout saved' : ''
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-white/8 bg-card/50 lg:flex-row">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] border border-white/8 bg-card/60 lg:flex-row">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Filters. Each does what it says, and none changes what is stored. */}
         <div className="flex flex-wrap items-center gap-2 border-b border-white/8 p-3">
-          {TYPES.map(({ type, plural }) => (
-            <button
-              key={type} type="button" aria-pressed={shown[type]}
-              onClick={() => setShown(s => ({ ...s, [type]: !s[type] }))}
-              className={`inline-flex h-8 items-center gap-2 rounded-full border px-3 text-xs font-medium transition-colors ${shown[type] ? 'border-white/14 bg-white/6 text-foreground' : 'border-white/8 text-foreground/40'}`}
-            >
+          {TYPES.map(({ type, plural: label }) => (
+            <button key={type} type="button" aria-pressed={shown[type]} onClick={() => setShown(s => ({ ...s, [type]: !s[type] }))} className={chip(shown[type])}>
               <span className="inline-block size-2 rounded-full" style={{ background: FILL[type], opacity: shown[type] ? 1 : 0.35 }} />
-              {plural} <span className="text-foreground/40">{view.counts[type]}</span>
+              {label} <span className="tabular-nums text-subtle">{view.counts[type]}</span>
             </button>
           ))}
           {linkCount > 0 && (
-            <button type="button" aria-pressed={showLinks} onClick={() => setShowLinks(v => !v)}
-              className={`inline-flex h-8 items-center gap-2 rounded-full border px-3 text-xs font-medium transition-colors ${showLinks ? 'border-white/14 bg-white/6 text-foreground' : 'border-white/8 text-foreground/40'}`}>
-              Links between notes <span className="text-foreground/40">{linkCount}</span>
+            <button type="button" aria-pressed={showLinks} onClick={() => setShowLinks(v => !v)} className={chip(showLinks)}>
+              Links between notes <span className="tabular-nums text-subtle">{linkCount}</span>
             </button>
           )}
           {subjects.length > 1 && (
             <select value={subject} onChange={e => setSubject(e.target.value)} aria-label="Show one subject"
-              className="h-8 rounded-full border border-white/10 bg-white/4 px-3 text-xs text-foreground outline-none">
+              className="h-8 rounded-full border border-white/10 bg-background px-3 text-xs text-foreground outline-none focus-visible:border-ring">
               <option value="">All subjects</option>
               {subjects.map(s => <option key={s.id} value={s.subjectId ?? ''}>{s.label}</option>)}
             </select>
           )}
-          <div className="relative ml-auto">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-foreground/40" />
+          <div className="ml-auto flex items-center gap-2">
+            <span role="status" className={cn('text-xs tabular-nums', saver.status === 'failed' ? 'text-red-400' : 'text-subtle')} data-layout-status={saver.status}>
+              {layout.load === 'loading' ? 'Loading layout…' : saveText}
+            </span>
+            <button type="button" onClick={() => setConfirmReset(true)} disabled={!hasLayout || confirmReset} className={cn(BUTTON_QUIET, 'h-8 rounded-full')} data-reset-layout>
+              <RotateCcw aria-hidden className="size-3" /> Reset layout
+            </button>
+          </div>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-subtle" />
             <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Find on the map" aria-label="Find on the map"
-              className="h-8 w-44 rounded-full border border-white/10 bg-white/4 pl-8 pr-3 text-xs text-foreground outline-none placeholder:text-foreground/35 focus:border-keppel-400/60" />
+              className="h-8 w-44 rounded-full border border-white/10 bg-background pl-8 pr-3 text-xs text-foreground outline-none placeholder:text-subtle focus-visible:border-ring" />
             {query.trim() && found.length === 0 && (
-              <p role="status" className="absolute right-0 top-10 z-20 w-64 rounded-xl border border-white/10 bg-card px-3 py-2 text-xs text-foreground/60 shadow-xl">Nothing on the map matches. Hidden types and subjects are not searched.</p>
+              <p role="status" className="absolute right-0 top-10 z-20 w-64 rounded-xl border border-white/10 bg-popover px-3 py-2 text-xs text-foreground/70 shadow-float">Nothing on the map matches. Hidden types and subjects are not searched.</p>
             )}
             {found.length > 0 && (
-              <ul className="absolute right-0 top-10 z-20 w-64 overflow-hidden rounded-xl border border-white/10 bg-card shadow-xl">
+              <ul className="absolute right-0 top-10 z-20 w-64 overflow-hidden rounded-xl border border-white/10 bg-popover shadow-float">
                 {found.map(n => (
                   <li key={n.id}>
-                    <button type="button" onClick={() => { select(n.id); setQuery('') }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground/85 hover:bg-white/6">
+                    <button type="button" onClick={() => { revealNext.current = true; select(n.id); setQuery('') }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground/85 hover:bg-white/6">
                       <span className="inline-block size-2 shrink-0 rounded-full" style={{ background: FILL[n.type] }} />
                       <span className="truncate">{n.label}</span>
-                      <span className="ml-auto shrink-0 text-foreground/40">{TYPE_LABEL[n.type]}</span>
+                      <span className="ml-auto shrink-0 text-subtle">{TYPE_LABEL[n.type]}</span>
                     </button>
                   </li>
                 ))}
@@ -336,21 +808,34 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
           </div>
         </div>
 
+        {confirmReset && (
+          <div role="group" aria-label="Reset layout" className="flex flex-wrap items-center justify-between gap-2 border-b border-white/8 bg-action-soft px-3 py-2 text-xs text-foreground/85">
+            <span>Put every card back where Kivo places it? Your notes, pages and links stay as they are.</span>
+            <span className="flex gap-2">
+              <button type="button" disabled={layout.reset.busy} data-reset-confirm
+                onClick={() => void layout.resetPositions().then(ok => { if (ok) { setConfirmReset(false); setSaid('Layout reset.') } })}
+                className={cn(BUTTON_PRIMARY, 'h-7 px-3 text-xs')}>{layout.reset.busy ? 'Resetting…' : 'Reset layout'}</button>
+              <button type="button" onClick={() => setConfirmReset(false)} disabled={layout.reset.busy} className={cn(BUTTON_QUIET, 'h-7')}>Cancel</button>
+            </span>
+          </div>
+        )}
+        {layoutNote}
+
         {inScope && scope && (
-          <div className="flex items-center justify-between gap-3 border-b border-white/8 px-3 py-2 text-xs text-foreground/65" role="status" data-map-scope>
+          <div className="flex items-center justify-between gap-3 border-b border-white/8 px-3 py-2 text-xs text-foreground/70" role="status" data-map-scope>
             <span>Showing what is within two links of <span className="text-foreground">{byId.get(scope)?.label}</span>.</span>
-            <button type="button" onClick={() => setScope(null)} className="rounded-full border border-white/12 px-3 py-1 text-foreground/80 hover:bg-white/5">Show everything</button>
+            <button type="button" onClick={() => setScope(null)} className={cn(BUTTON_QUIET, 'h-7 rounded-full')}>Show everything</button>
           </div>
         )}
 
         <div
           ref={frame}
-          className="relative min-h-[22rem] flex-1 touch-none select-none overflow-hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-keppel-300"
+          className="nova-canvas relative min-h-[24rem] flex-1 touch-none select-none overflow-hidden bg-background/40 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
           style={{ cursor: drag.current ? 'grabbing' : 'grab' }}
           // The map can be moved without a pointer: arrow keys pan it, plus and
           // minus zoom, 0 fits it. Only while the map itself has focus, so the
           // keys keep their meaning on a node or in the search box.
-          tabIndex={0} role="group" aria-label="Knowledge map. Arrow keys move it, plus and minus zoom, zero fits it all. Tab reaches each item."
+          tabIndex={0} role="group" aria-label="Knowledge map. Arrow keys move the view, plus and minus zoom, zero fits it all. Tab reaches each item; on an item, Alt and the arrow keys move it."
           onKeyDown={e => {
             if (e.target !== e.currentTarget) return
             const step = e.shiftKey ? PAN_STEP * 3 : PAN_STEP
@@ -370,94 +855,46 @@ export function KnowledgeMap({ view }: { view: NovaKnowledgeMapReady }) {
             d.x = e.clientX; d.y = e.clientY
             setT(v => ({ ...v, x: v.x + dx, y: v.y + dy }))
           }}
-          onPointerUp={() => { const moved = drag.current?.moved; drag.current = null; if (!moved) setSelected(null) }}
+          // A press on the background that did not pan clears the selection.
+          onPointerUp={() => { const d = drag.current; drag.current = null; if (d && !d.moved) setSelected(null) }}
           onPointerCancel={() => { drag.current = null }}
         >
           {nodes.length === 0 ? (
-            <p className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm text-foreground/50">Nothing matches these filters{inScope ? ' around this item' : ''}. Turn one back on{inScope ? ', or show everything,' : ''} to see the map.</p>
+            <p className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm text-foreground/65">Nothing matches these filters{inScope ? ' around this item' : ''}. Turn one back on{inScope ? ', or show everything,' : ''} to see the map.</p>
           ) : (
             // A group, not an image: it holds the items a keyboard reaches.
             <svg className="absolute inset-0 size-full" role="group" aria-label={`${nodes.length} items and ${edges.length} links`}>
               <g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>
-                {layout.loose && (
-                  <text x={layout.loose.x - 40} y={layout.loose.y - 44} className="fill-foreground/45" fontSize={12 * Math.min(textScale, 2.2)}>Not filed under a subject</text>
+                {placed.loose && (
+                  <text x={placed.loose.x - CARD.note.w / 2} y={placed.loose.y - 44} className="fill-[var(--subtle)]" fontSize={12 * Math.min(textScale, 2.5)}>Not filed under a subject</text>
                 )}
-                {edges.map(e => {
-                  const a = layout.at.get(e.from), b = layout.at.get(e.to)
-                  if (!a || !b) return null
-                  const lit = neighbourIds !== null && neighbourIds.has(e.from) && neighbourIds.has(e.to) && (e.from === (hover ?? selected) || e.to === (hover ?? selected))
-                  return (
-                    <line key={e.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                      stroke={lit || e.kind === 'links_to' ? 'var(--color-keppel-400)' : 'var(--map-line)'}
-                      strokeWidth={(e.kind === 'has_topic' ? 1.4 : e.kind === 'links_to' ? 1.2 : 1) / Math.sqrt(t.k)}
-                      strokeDasharray={e.kind === 'filed_under' ? '4 4' : undefined}
-                      data-edge={e.kind}
-                      opacity={neighbourIds && !lit ? 0.25 : 1} />
-                  )
-                })}
-                {suggestions.map(s => {
-                  const a = layout.at.get(s.from), b = layout.at.get(s.to)
-                  if (!a || !b) return null
-                  const focus = hover ?? selected
-                  const lit = focus !== null && (s.from === focus || s.to === focus)
-                  return (
-                    <line key={s.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y} data-suggestion={s.confidence}
-                      stroke={lit ? 'var(--color-keppel-400)' : 'var(--map-line)'}
-                      strokeWidth={1 / Math.sqrt(t.k)} strokeDasharray="1 5" strokeLinecap="round"
-                      opacity={focus !== null && !lit ? 0.15 : 0.7} />
-                  )
-                })}
-                {nodes.map(n => {
-                  const p = layout.at.get(n.id)
-                  if (!p) return null
-                  const r   = RADIUS[n.type]
-                  const dim = neighbourIds !== null && !neighbourIds.has(n.id)
-                  const on  = selected === n.id
-                  const unstudied = n.type === 'topic' && n.sessions === 0
-                  return (
-                    <g
-                      key={n.id} transform={`translate(${p.x} ${p.y})`} opacity={dim ? 0.4 : 1}
-                      role="button" tabIndex={0} aria-label={`${TYPE_LABEL[n.type]}: ${n.label}`} aria-pressed={on}
-                      className="cursor-pointer outline-none [&:focus-visible>circle]:stroke-[var(--color-keppel-300)]"
-                      onPointerDown={e => e.stopPropagation()}
-                      onClick={() => setSelected(on ? null : n.id)}
-                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(on ? null : n.id) } }}
-                      onPointerEnter={() => setHover(n.id)} onPointerLeave={() => setHover(null)}
-                    >
-                      {on && <circle r={r + 7} fill="none" stroke="var(--color-keppel-400)" strokeWidth={2} />}
-                      {n.type === 'resource'
-                        ? <rect x={-r} y={-r} width={r * 2} height={r * 2} rx={3} fill={FILL.resource} />
-                        : <circle r={r} fill={unstudied ? 'var(--background)' : FILL[n.type]} stroke={unstudied ? FILL.topic : 'none'} strokeWidth={unstudied ? 1.6 : 0} strokeDasharray={unstudied ? '3 3' : undefined} />}
-                      {labelled(n) && (
-                        <text y={r + 6} dy={(n.type === 'subject' ? 13 : 11) * Math.min(textScale, 2.2)} textAnchor="middle"
-                          fontSize={(n.type === 'subject' ? 13 : n.type === 'topic' ? 11.5 : 10.5) * Math.min(textScale, 2.2)}
-                          fontWeight={n.type === 'subject' ? 600 : 400} className={n.type === 'subject' ? 'fill-foreground' : 'fill-foreground/75'}
-                          style={{ paintOrder: 'stroke', stroke: 'var(--background)', strokeWidth: 3 * Math.min(textScale, 2.2), strokeLinejoin: 'round' }}>
-                          {short(n.label, n.type === 'subject' ? 26 : 22)}
-                        </text>
-                      )}
-                    </g>
-                  )
-                })}
+                {edgeLayer}
+                {suggestionLayer}
+                {nodeLayer}
+                {farLabels}
               </g>
             </svg>
           )}
 
-          <div className="absolute bottom-3 right-3 flex flex-col overflow-hidden rounded-xl border border-white/10 bg-card/90 backdrop-blur" onPointerDown={e => e.stopPropagation()}>
-            <button type="button" onClick={() => zoomAt(1.25)} aria-label="Zoom in" className="p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground"><Plus className="size-4" /></button>
-            <button type="button" onClick={() => zoomAt(0.8)} aria-label="Zoom out" className="border-t border-white/8 p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground"><Minus className="size-4" /></button>
-            <button type="button" onClick={fit} aria-label="Fit the whole map" className="border-t border-white/8 p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground"><Maximize2 className="size-4" /></button>
+          <div className="absolute bottom-3 right-3 flex flex-col overflow-hidden rounded-xl border border-white/10 bg-card/90 shadow-soft backdrop-blur" onPointerDown={e => e.stopPropagation()}>
+            <button type="button" onClick={() => zoomAt(1.25)} aria-label="Zoom in" className="p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"><Plus className="size-4" /></button>
+            <button type="button" onClick={() => zoomAt(0.8)} aria-label="Zoom out" className="border-t border-white/8 p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"><Minus className="size-4" /></button>
+            <button type="button" onClick={fit} aria-label="Fit the whole map" className="border-t border-white/8 p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"><Maximize2 className="size-4" /></button>
           </div>
 
-          <p className="pointer-events-none absolute bottom-3 left-3 hidden max-w-[58%] rounded-lg sm:block bg-background/70 px-2 py-1 text-[11px] leading-relaxed text-foreground/45 backdrop-blur-sm">
-            Drag to move, scroll to zoom. A dashed ring is a topic with no session yet; a dashed line is filed under the subject only; a green line is a [[link]] you wrote in a note.{suggestions.length > 0 && <> A dotted line is a suggestion Nova made, not a link: file the page on Saved to make it one.</>}
+          <p className="pointer-events-none absolute bottom-3 left-3 hidden max-w-[60%] rounded-lg bg-background/80 px-2.5 py-1.5 text-[11px] leading-relaxed text-foreground/70 backdrop-blur-sm sm:block">
+            Drag a card to arrange it (Alt and the arrow keys move a focused card); drag the background to move around; scroll to zoom. A dashed card is a topic with no session yet; a dashed line is filed under the subject only; a teal curve is a [[link]] you wrote in a note.{suggestions.length > 0 && <> A dotted line is a suggestion Nova made, not a link: file the page to make it one.</>}
             {view.unconnected > 0 && <> {view.unconnected} {view.unconnected === 1 ? 'item is' : 'items are'} not connected to anything.</>}
             {(view.notShown.notes > 0 || view.notShown.resources > 0) && <> Older notes and pages beyond the newest 150 of each are not drawn.</>}
           </p>
+          <p className="sr-only" role="status" aria-live="polite">{said}</p>
         </div>
       </div>
 
-      {picked && <Detail node={picked} neighbours={neighbours} onPick={select} onClose={() => setSelected(null)} onScope={() => setScope(picked.id)} scoped={scope === picked.id} />}
+      {picked && (
+        <Detail node={picked} neighbours={neighbours} onPick={select} onClose={() => setSelected(null)} onScope={() => setScope(picked.id)}
+          scoped={scope === picked.id} view={view} onChanged={onChanged} panelRef={panel} />
+      )}
     </div>
   )
 }

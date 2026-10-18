@@ -467,11 +467,14 @@ Held by `knowledge-map.test.ts` and `nova-workspace.itest.ts`. `/map`, `GET /api
 
 ## Themes
 
-`components/theme/kivo-theme.tsx` and the light block in `app/globals.css`.
+`components/theme/kivo-theme.tsx` and the theme blocks in `app/globals.css`.
 
 - Light, Dark and Match device, chosen in Settings or the sidebar, kept in `localStorage` (`kivo-theme`) and written to `<html data-kivo-theme>` by an inline script in the dashboard layout before first paint.
-- **The light theme is one block of tokens** scoped to `.kivo-app`. The app is written against a dark surface with translucent white (`border-white/8`, `bg-white/5`); in light, `--color-white` becomes ink and the surface tokens become paper, so components need no light-specific classes. Write new UI with the same tokens (`text-foreground/60`, `bg-card`, `border-white/8`) and it works in both. Avoid hard-coded hex colours and `text-white` on a coloured fill.
-- `.kivo-dark` puts the dark tokens back for a region that is always dark (the Creature world). The landing page is outside `.kivo-app` and stays dark.
+- **Each theme is one block of tokens scoped to `.kivo-app`**: dark (Kivo ink, the default) on `.kivo-app`, light (paper) on `html[data-kivo-theme="light"] .kivo-app`. The landing and sign-in pages are outside `.kivo-app` and keep `:root`. The app is written against a dark surface with translucent white (`border-white/8`, `bg-white/5`); in light, `--color-white` becomes ink and the surface tokens become paper, so components need no light-specific classes. Write new UI with the same tokens (`text-foreground/60`, `bg-card`, `border-white/8`) and it works in both. Avoid hard-coded hex colours and `text-white` on a coloured fill.
+- **Colour roles**: `action` (iris: `bg-action`, `hover:bg-action-hover`, `text-action-foreground`, `text-action-ink`, `bg-action-soft`) is for the primary action, the current page and focus (`--ring`); `nova` / `nova-ink` (teal) is for Nova and for learning and progress. `BUTTON_PRIMARY` in `components/nova/workspace/ui.tsx` uses `action`.
+- **The legibility floor**: inside `.kivo-app`, `text-foreground/40` to `/55` (and the sidebar's `/50`, `/55`) resolve to `--subtle`, a solid colour that passes 4.5:1 in each theme; on paper, `text-keppel-300`/`400` resolve to `--nova-ink`. The rules sit in the utilities layer with `:where()` scope, so `hover:` and other variants still win. For new secondary text prefer `text-subtle` or `/60` and above.
+- Page frames, serif page titles and the loading, error, notice and empty states are `components/dashboard/page-states.tsx`; use them rather than a page-local copy.
+- `.kivo-dark` puts the dark tokens back for a region that is always dark (the Creature world).
 - A custom property that points at another (`--x: var(--background)`) is resolved where it is declared, so it does not follow the theme: use `var(--background)` directly.
 
 ## Templates and editing setup

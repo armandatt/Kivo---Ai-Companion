@@ -6,6 +6,7 @@ import { ArrowLeft, Check } from 'lucide-react'
 import { SetupForm } from '@/components/nova/setup-form'
 import { GoalsEditor } from '@/components/nova/goals-editor'
 import { ExamsEditor } from '@/components/nova/exams-editor'
+import { PageHeader } from '@/components/dashboard/page-states'
 
 // Subjects, topics, exam dates and study routine, after the first setup: the
 // same form, showing what is on record. Saving the form merges and removes
@@ -18,12 +19,11 @@ export default function StudySetupPage() {
       <Link href="/settings" className="inline-flex items-center gap-1.5 text-sm text-foreground/55 transition-colors hover:text-foreground">
         <ArrowLeft className="size-3.5" /> Settings
       </Link>
-      <header className="mt-4">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">What you&apos;re learning</h1>
-        <p className="mt-1.5 max-w-prose text-sm leading-relaxed text-foreground/55">
-          What you are learning, what each part covers, the dates that matter and your usual day. Add to it here, or start from a template. A date can be moved or removed; what you have already studied is never changed by this page.
-        </p>
-      </header>
+      <PageHeader
+        className="mt-4"
+        title={<>What you&apos;re learning</>}
+        description="What you are learning, what each part covers, the dates that matter and your usual day. Add to it here, or start from a template. A date can be moved or removed; what you have already studied is never changed by this page."
+      />
 
       {saved > 0 && (
         <p role="status" className="mt-6 flex items-center gap-2 rounded-xl border border-keppel-400/25 bg-keppel-400/8 px-4 py-3 text-sm text-foreground/85">
