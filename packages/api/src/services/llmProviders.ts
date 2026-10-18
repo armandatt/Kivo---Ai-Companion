@@ -136,6 +136,8 @@ export interface GeminiResponse {
   }>;
   promptFeedback?: { blockReason?: string };
   error?:          { code?: number; message?: string; status?: string };
+  // Token counts, when Gemini reports them (llm-usage.ts meters them).
+  usageMetadata?:  { promptTokenCount?: number; candidatesTokenCount?: number };
 }
 
 // Gemini likes to wrap JSON in a markdown fence. When the WHOLE reply is one

@@ -374,7 +374,7 @@ test("S10 \"First: <second block>\": one order for today, the recommendation bec
   await tap(l, `First: ${names[1]}`);
   const rows = await overrides(l);
   assert.ok(rows.every(r => r.kind === "order" && r.day === dayKey(clock, l.zone)));
-  assert.equal(rows.find(r => r.position === 0)?.topicName ?? (await prisma.novaTopicMastery.findUnique({ where: { id: rows.find(r => r.position === 0)!.topicId } }))!.name, names[1]);
+  assert.equal((await prisma.novaTopicMastery.findUnique({ where: { id: rows.find(r => r.position === 0)!.topicId } }))!.name, names[1]);
   assert.equal((await today(l)).recommendation?.topicName, names[1]);
   const p = await loadNovaPlanner(l.chat, { now: clock });
   assert.ok(p.status === "ready" && p.today.blocks[0]!.topicName === names[1]);

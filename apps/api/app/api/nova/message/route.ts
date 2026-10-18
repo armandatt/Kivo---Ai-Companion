@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { metered } from "../../../../lib/billing/metered"
 //@ts-ignore
 import { handleNovaTurn } from "@repo/api/nova/entry"
 //@ts-ignore
@@ -43,13 +44,16 @@ export async function POST(req: Request) {
   inFlight.set(learner.platformChatId, Date.now())
 
   try {
-    const turn = await handleNovaTurn({
+    // One request on the plan's daily allowance; its tokens are metered.
+    const run = await metered(learner.platformChatId, () => handleNovaTurn({
       platformChatId:   learner.platformChatId,
       text,
       onboardingDone:   learner.onboardingDone,
       surface:          "web",
       awaitPersistence: true,   // the page re-reads state right after the reply
-    })
+    }))
+    if (!run.ok) return run.response
+    const turn = run.value as Awaited<ReturnType<typeof handleNovaTurn>>
     if (!turn.ok) return fail(502, "failed", turn.reply)
     return NextResponse.json({ ok: true, reply: turn.reply, intervention: turn.intervention })
   } catch (err) {

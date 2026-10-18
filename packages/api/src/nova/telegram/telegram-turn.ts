@@ -53,6 +53,9 @@ import type {
   FailureCategory, InlineButton, PromptKind, TelegramClient, TelegramEvent, TelegramReply, TurnTrace,
 } from "./telegram.types";
 import { slowestStage } from "./telegram.types";
+import { entitlementForLearner, type Entitlement } from "../../billing/entitlements";
+import { allowanceFor } from "../../billing/limits";
+import { spendAiRequest } from "../../billing/usage";
 
 export interface TelegramDeps {
   client:       TelegramClient;
@@ -69,6 +72,8 @@ export interface TelegramDeps {
   onReplied?:   () => void;
   generate?:    Parameters<typeof wordFirstUse>[1];
   understand?:  typeof runUnderstandingBrain;
+  // What this chat's account is entitled to (billing/entitlements.ts).
+  entitlement?: (chatId: string) => Promise<Pick<Entitlement, "allowance" | "usageKey" | "plan">>;
   respond?:     NovaOrchestratorInput["respond"];
 }
 
@@ -174,10 +179,21 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
   // plan, the status and the session line go out as code wrote them.
   // `budgetDay` is the learner's local day, for the model budget.
   let budgetDay: string | null = null;
+  // The account's plan, read once per turn and only when a model is about to
+  // be used. If billing cannot be read, the chat gets Free's allowance: a
+  // learner is never refused because of a fault on Kivo's side.
+  let plan: Promise<Pick<Entitlement, "allowance" | "usageKey" | "plan">> | null = null;
+  const entitled = () => (plan ??= (deps.entitlement ?? entitlementForLearner)(event.chatId)
+    .catch(() => ({ plan: "free" as const, allowance: allowanceFor("free"), usageKey: `learner:${event.chatId}` })));
+  const factor = async () => (await entitled()).allowance.telegramFactor;
+  // One request on the account's daily meter. A fault in the meter allows it.
+  const accountAllows = async () => {
+    try { return (await spendAiRequest(await entitled())).ok } catch { return true }
+  };
   const inLanguage = async (text: string): Promise<string> => {
     if (event.kind !== "text") return text;
     if (!ctx || ctx.language === "english" || !text.trim() || isFixedText(text, ctx.language)) return text;
-    if (!budgetDay || !await spendModelCall(ctx.profileId, "response", budgetDay)) return text;
+    if (!budgetDay || !await spendModelCall(ctx.profileId, "response", budgetDay, await factor())) return text;
     trace.modelCalls++;
     const wording = Date.now();
     const said = await sayInLanguage({ text, language: ctx.language }, deps.generate);
@@ -343,7 +359,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
           const zone = resolveTimezone(profile.timezone);
           const reply = report(await firstUse(ctx, async (decision, hasButtons, activeReality, daysUntilNextExam) => {
             // Wording is optional: within today's budget, and never required.
-            if (!await spendModelCall(profile!.id, "response", dayKey(now, zone))) return decision.fallback;
+            if (!await spendModelCall(profile!.id, "response", dayKey(now, zone), await factor())) return decision.fallback;
             if (actingSince !== null) { spent("actionMs", actingSince); actingSince = null; }
             trace.modelCalls++;
             const wording = Date.now();
@@ -391,7 +407,9 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     try {
       const zone = resolveTimezone(profile.timezone);
       const day  = dayKey(now, zone);
-      if (!await spendModelCall(profile.id, "understanding", day)) {
+      // Reading the message is the request the account's daily allowance
+      // counts; the chat's own cap is inside it.
+      if (!await spendModelCall(profile.id, "understanding", day, await factor()) || !await accountAllows()) {
         await deliver({ text: say().budget });
         return finish("budget_exhausted");
       }
@@ -520,7 +538,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       // actually happened, and today's budget allows it.
       const plain    = reply?.text.trim() ?? "";
       const happened = acted === null || acted.operation.ok;
-      const generate = decision.generate && happened && await spendModelCall(profile.id, "response", day);
+      const generate = decision.generate && happened && await spendModelCall(profile.id, "response", day, await factor());
       const explaining = decision.action.type === "explain";
       const english  = plain || (explaining ? say().explainFallback : say().converseFallback);
       // The reply, whoever words it: these buttons, this link.

@@ -112,6 +112,8 @@ import { normalizeTelegramUpdate } from "@repo/api/nova/telegram/telegram-event"
 //@ts-ignore
 import { handleNovaTelegramEvent } from "@repo/api/nova/telegram/telegram-turn";
 //@ts-ignore
+import { meterTokensForLearner } from "@repo/api/billing/usage";
+//@ts-ignore
 import { createTelegramClient, NOVA_CHAT_COMMANDS } from "@repo/api/nova/telegram/telegram-client";
 //@ts-ignore
 import { linkTelegramChat, isLinkedTelegramChat, notConnectedMessage, LINK_MESSAGES, NOVA_LINKED_PLAIN } from "@repo/api/nova/telegram/telegram-link";
@@ -265,7 +267,8 @@ export async function POST(req: Request) {
         if (event.kind !== "ignored" && novaMayProcess(req)) {
           // "Typing" stops when the reply is sent, not when the turn has
           // been recorded: Nova answers first and records after.
-          await handleNovaTelegramEvent(event, novaDeps({ receivedAt, onReplied: stopTyping }));
+          // The tokens its model calls used go on the account's meter.
+          await meterTokensForLearner(chatId.toString(), () => handleNovaTelegramEvent(event, novaDeps({ receivedAt, onReplied: stopTyping })));
         }
         return Response.json({ ok: true });
       }

@@ -269,6 +269,6 @@ describe("where the language is kept", () => {
     // A command or a button tap is never reworded by a model.
     expect(turn).toContain('if (event.kind !== "text") return text;');
     // The language step spends from the same daily wording budget.
-    expect(turn).toContain('!await spendModelCall(ctx.profileId, "response", budgetDay)');
+    expect(turn).toContain('!await spendModelCall(ctx.profileId, "response", budgetDay, await factor())');
   });
 });

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { metered } from "../../../../../lib/billing/metered"
 //@ts-ignore
 import { answerPageQuestion, PAGE_QUESTIONS_PER_MINUTE } from "@repo/api/nova/product/page-question"
 //@ts-ignore
@@ -38,7 +39,9 @@ async function handlePOST(req: Request): Promise<NextResponse> {
         ? eventFail(413, "too_large", "That's more than Nova reads at once. Select a shorter passage.")
         : eventFail(400, "invalid", "That isn't a question Nova can answer.")
     }
-    const result = await answerPageQuestion(read.body)
+    const run = await metered(caller.platformChatId, () => answerPageQuestion(read.body))
+    if (!run.ok) return run.response
+    const result = run.value as Awaited<ReturnType<typeof answerPageQuestion>>
     if (result.ok) return NextResponse.json(result, { headers: { "cache-control": "no-store" } })
     return NextResponse.json({ success: false, ...result }, { status: result.error === "unavailable" ? 503 : 400 })
   } catch (err) {

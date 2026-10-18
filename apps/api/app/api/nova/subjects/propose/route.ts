@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { metered } from "../../../../../lib/billing/metered"
 //@ts-ignore
 import { proposeStudyEdits } from "@repo/api/nova/product/study-proposal"
 //@ts-ignore
@@ -27,7 +28,9 @@ export async function POST(req: Request) {
     const read = await readSmallJson(req, 4 * 1024)
     if (!read.ok) return noteFail(400, "invalid", "Say what you want to change.")
     const contexts = await loadLearningContexts(access.platformChatId).catch(() => [])
-    const result = await proposeStudyEdits(access.profileId, read.body, contexts)
+    const run = await metered(access.platformChatId, () => proposeStudyEdits(access.profileId, read.body, contexts))
+    if (!run.ok) return run.response
+    const result = run.value as Awaited<ReturnType<typeof proposeStudyEdits>>
     if (result.ok) return NextResponse.json(result, { headers: { "cache-control": "no-store" } })
     return NextResponse.json(result, { status: result.error === "unavailable" ? 503 : 400 })
   } catch (err) {

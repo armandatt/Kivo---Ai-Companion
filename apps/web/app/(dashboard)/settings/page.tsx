@@ -28,6 +28,15 @@ export default function SettingsPage() {
     <div className="mx-auto w-full max-w-3xl pb-20 pt-10 lg:pt-4">
       <PageHeader title="Settings" description={<>Where you reach {companion ?? 'your companion'}, and how.</>} />
 
+      <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Plan</p>
+      <Link href="/settings/billing" className="group mt-3 flex items-center justify-between gap-4 rounded-3xl border border-white/8 bg-card/70 p-6 transition-colors hover:border-keppel-400/40" data-billing-link>
+        <span>
+          <span className="block text-base font-semibold text-foreground">Plan and billing</span>
+          <span className="mt-1 block text-sm text-foreground/55">Your plan, today&apos;s use of Nova, the free trial and upgrading.</span>
+        </span>
+        <ArrowRight className="size-4 shrink-0 text-foreground/40 transition-transform group-hover:translate-x-0.5" />
+      </Link>
+
       <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Appearance</p>
       <section className="mt-3 rounded-3xl border border-white/8 bg-card/70 p-6">
         <h2 className="text-base font-semibold text-foreground">Theme</h2>

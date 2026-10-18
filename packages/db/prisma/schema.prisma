@@ -42,6 +42,11 @@ model User {
   weeklyReviews     WeeklyReview[]
   creatureEvolutions CreatureEvolution[]
   personalityAssessments PersonalityAssessment[]
+
+  // Billing (packages/api/src/billing). The account pays; every surface
+  // (web, Telegram, the extension) is entitled through it.
+  billingSubscription BillingSubscription?
+  billingTrial        BillingTrial?
 }
 
 //////////////////////////////////////////////////
@@ -1304,4 +1309,89 @@ model NovaMapLayout {
   updatedAt DateTime @updatedAt
 
   @@unique([profileId, nodeType, nodeId])
+}
+
+//////////////////////////////////////////////////
+// BILLING
+//////////////////////////////////////////////////
+// What an account has paid for, its free trial, the payment provider's
+// webhook deliveries and AI usage. The provider is the authority on a paid
+// subscription: rows here are written only from verified webhook events (or
+// a fetch of the provider's own record), never from a browser. No card or
+// payment details are stored. Written only by packages/api/src/billing.
+
+// The account's subscription with the payment provider, as the provider last
+// reported it. One per account: a new purchase replaces the row's provider ids.
+model BillingSubscription {
+  id                     String    @id @default(cuid())
+  userId                 String    @unique
+  provider               String // "polar"
+  providerCustomerId     String?
+  providerSubscriptionId String    @unique
+  planKey                String // "pro_monthly" | "pro_annual" (billing/plans.ts)
+  // The provider's status: trialing | active | past_due | unpaid | canceled |
+  // incomplete | incomplete_expired | paused, or "revoked" once access ended.
+  status                 String
+  currency               String?
+  billingInterval        String? // "month" | "year"
+  currentPeriodStart     DateTime?
+  currentPeriodEnd       DateTime?
+  cancelAtPeriodEnd      Boolean   @default(false)
+  canceledAt             DateTime?
+  endedAt                DateTime?
+  pastDueAt              DateTime?
+  // The provider's own last-modified time of the record applied here. An
+  // event about an older version is ignored, so late deliveries cannot undo
+  // newer state.
+  providerModifiedAt     DateTime
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+}
+
+// Kivo's own free trial: Pro for a few days, no card, no automatic charge.
+// One per account, ever: the row is the eligibility record, so logging out,
+// a new session or a changed clock cannot start a second one.
+model BillingTrial {
+  userId    String   @id
+  planKey   String // the plan the trial gives the access of
+  startedAt DateTime
+  endsAt    DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Every webhook delivery, by the provider's event id: a repeat of an id
+// already processed is acknowledged and not applied again.
+model BillingWebhookEvent {
+  id          String    @id // the provider's webhook-id
+  provider    String
+  type        String
+  status      String // received | processed | ignored | failed
+  error       String?
+  attempts    Int       @default(1)
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+
+  @@index([status, receivedAt])
+}
+
+// AI use per account (or per learner with no web account) per UTC day: the
+// meter the daily allowances are checked against, and the record behind cost
+// per active user. Requests are counted when allowed; tokens are added when
+// the model reports them.
+model AiUsageDay {
+  subjectKey   String // "user:<id>" or "learner:<platformChatId>"
+  day          String // YYYY-MM-DD, UTC
+  requests     Int      @default(0)
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  updatedAt    DateTime @updatedAt
+
+  @@id([subjectKey, day])
+  @@index([day])
 }
