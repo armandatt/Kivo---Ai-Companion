@@ -10,7 +10,10 @@ import { normalizeLearningContexts, type LearningContext } from "@repo/api/nova/
 import { buildOnboardingSchedulePayload } from "@repo/api/services/mentorIntake.service"
 import { matchMentor, type MentorMatch } from "@repo/api/personality/mentor-compatibility"
 import { scoreSignal, validateSignalAnswers, type PersonalitySignal, type SignalAnswers } from "@repo/api/personality/signal-scoring"
-import { recordOnboardingMatch, type MatchResolution } from "@repo/api/personality/personality.service"
+import { recordOnboardingMatch, saveStyleAssessment, type MatchResolution } from "@repo/api/personality/personality.service"
+import { checkOnboardingV2, isOnboardingV2 } from "@repo/api/nova/product/onboarding-answers"
+//@ts-ignore
+import { completeOnboardingOnce, profileFromAnswers } from "@repo/api/nova/product/onboarding-completion"
 
 export async function POST(req: Request) {
   try {
@@ -29,49 +32,75 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Not authenticated" }, { status: 401 })
     }
 
-    const body = await req.json()
-    const payload = normalizePayload(body)
+    const body = await req.json().catch(() => null)
 
-    if (!payload) {
-      return NextResponse.json(
-        { success: false, error: "Missing onboarding data" },
-        { status: 400 }
-      )
-    }
+    // The current quiz (v2) and, for a page loaded before it shipped, the
+    // older payload. Both end in the same one-time write below.
+    let profileData: Record<string, unknown>
+    let afterWrite: () => Promise<void>
+    if (isOnboardingV2(body)) {
+      const checked = checkOnboardingV2(body)
+      if (!checked.ok) {
+        return NextResponse.json({ success: false, error: checked.message, field: checked.field }, { status: 400 })
+      }
+      const v2 = profileFromAnswers(checked.answers, readTimezone((body as { timezone?: unknown }).timezone))
+      profileData = v2.profileData
+      afterWrite = async () => {
+        // The stated preferences are kept apart from the profile, as the
+        // signal was: one assessment row, never inside onboardingAnswers.
+        await saveStyleAssessment(session.userId, checked.answers.style)
+        await recordOnboardingMatch({
+          userId: session.userId, answers: null, signal: null,
+          resolution: "engine", match: v2.match, assignedMentorId: v2.profileData.primaryPersona,
+        })
+      }
+    } else {
+      const payload = normalizePayload(body)
+      if (!payload) {
+        return NextResponse.json(
+          { success: false, error: "Missing onboarding data" },
+          { status: 400 }
+        )
+      }
 
-    // Personality signal (questions 7-10). Optional: older clients do not send
-    // it, and an incomplete or invalid set is ignored rather than failing signup.
-    const validation = validateSignalAnswers(body?.signalAnswers)
-    const signalAnswers: SignalAnswers | null = validation.ok ? validation.answers : null
-    const signal: PersonalitySignal | null = signalAnswers ? scoreSignal(signalAnswers) : null
+      // Personality signal (questions 7-10). Optional: older clients do not send
+      // it, and an incomplete or invalid set is ignored rather than failing signup.
+      const validation = validateSignalAnswers((body as { signalAnswers?: unknown })?.signalAnswers)
+      const signalAnswers: SignalAnswers | null = validation.ok ? validation.answers : null
+      const signal: PersonalitySignal | null = signalAnswers ? scoreSignal(signalAnswers) : null
 
-    const { profileData, match, resolution } = mapToDB(payload, signal)
-    const savedProfile = await prisma.userProfile.upsert({
-      where: { userId: session.userId },
-      update: profileData,
-      create: {
-        userId: session.userId,
-        secondaryDomains: [],
-        ...profileData,
-      },
-    })
-
-    // Best effort: once the profile is stored, a failure writing the signal or
-    // the match is logged and does not fail the request. This does NOT cover a
-    // database that lacks the new schema. The upsert above already reads every
-    // UserProfile column, mentorMatch included, so the PersonalityAssessment
-    // table and UserProfile.mentorMatch must exist before this code is deployed.
-    try {
-      await recordOnboardingMatch({
+      const legacy = mapToDB(payload, signal)
+      profileData = legacy.profileData
+      afterWrite = () => recordOnboardingMatch({
         userId: session.userId,
         answers: signalAnswers,
         signal,
-        resolution,
-        match,
-        assignedMentorId: profileData.primaryPersona,
+        resolution: legacy.resolution,
+        match: legacy.match,
+        assignedMentorId: legacy.profileData.primaryPersona,
       })
-    } catch (error) {
-      console.error("[ONBOARDING] personality signal not stored:", error)
+    }
+
+    // Onboarding completes once. A refresh, a retry or a second tab finds it
+    // done and is answered with the profile as it stands; nothing is written
+    // again, so no second assessment row and no changed answers.
+    const outcome = await completeOnboardingOnce(session.userId, profileData)
+    const savedProfile = await prisma.userProfile.findUnique({ where: { userId: session.userId } })
+    if (!savedProfile) {
+      return NextResponse.json({ success: false, error: "Internal Server Error" }, { status: 500 })
+    }
+
+    if (outcome === "completed") {
+      // Best effort: once the profile is stored, a failure writing the
+      // preferences, the signal or the match is logged and does not fail the
+      // request. This does NOT cover a database that lacks the schema: the
+      // write above already reads every UserProfile column, mentorMatch
+      // included.
+      try {
+        await afterWrite()
+      } catch (error) {
+        console.error("[ONBOARDING] preferences or match not stored:", error)
+      }
     }
 
     // mentorMatch holds the engine's working (need vector, signal-derived tags).
@@ -80,6 +109,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
+      alreadyComplete: outcome === "already_complete",
       profile,
     })
   } catch (error) {

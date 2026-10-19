@@ -179,9 +179,13 @@ export const STUDY_TEMPLATES: StudyTemplate[] = [
 // The templates in the order to offer them to this learner: the ones written
 // for what they said they are learning for come first, the rest follow in
 // their own order. Nobody loses a template by what they answered.
-export function templatesFor(contexts: readonly LearningContext[]): StudyTemplate[] {
+// preferred: template ids that fit what they asked Nova to help with first
+// (first-focus.ts, focusTemplateIds); those lead, in that order.
+export function templatesFor(contexts: readonly LearningContext[], preferred: readonly string[] = []): StudyTemplate[] {
   const fits = (t: StudyTemplate) => t.audiences.some(a => contexts.includes(a));
-  return [...STUDY_TEMPLATES.filter(fits), ...STUDY_TEMPLATES.filter(t => !fits(t))];
+  const lead = preferred.map(id => STUDY_TEMPLATES.find(t => t.id === id)).filter((t): t is StudyTemplate => t !== undefined);
+  const rest = STUDY_TEMPLATES.filter(t => !lead.includes(t));
+  return [...lead, ...rest.filter(fits), ...rest.filter(t => !fits(t))];
 }
 
 export const templateById = (id: string): StudyTemplate | null => STUDY_TEMPLATES.find(t => t.id === id) ?? null;

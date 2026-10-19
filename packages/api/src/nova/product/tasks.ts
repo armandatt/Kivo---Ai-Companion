@@ -175,6 +175,25 @@ async function ownsSubject(profileId: string, subjectId: string): Promise<boolea
   return (await prisma.novaSubject.count({ where: { id: subjectId, profileId } })) === 1;
 }
 
+// Every task of the learner's due from..to (YYYY-MM-DD, inclusive), finished
+// ones too: the calendar shows a day's tasks whatever their column.
+export async function listTasksDueBetween(profileId: string, range: { from: string; to: string }, options: { now?: Date } = {}): Promise<NovaTaskItem[]> {
+  const now = options.now ?? new Date();
+  const [today, rows] = await Promise.all([
+    todayOf(profileId, now),
+    prisma.novaTask.findMany({ where: { profileId, dueDay: { gte: range.from, lte: range.to } }, select: ROW, take: TASK_OPEN_MAX }),
+  ]);
+  return rows.map(row => toItem(row, today)).sort(compareTasks);
+}
+
+// Of these ids, the ones that are this learner's tasks: id → title and status.
+// How the calendar checks a task an event is for, and names it.
+export async function tasksOwnedBy(profileId: string, ids: string[]): Promise<Map<string, { title: string; status: string }>> {
+  if (ids.length === 0) return new Map();
+  const rows = await prisma.novaTask.findMany({ where: { profileId, id: { in: ids } }, select: { id: true, title: true, status: true } });
+  return new Map(rows.map(r => [r.id, { title: r.title, status: r.status }]));
+}
+
 export async function createTask(profileId: string, raw: unknown, options: { now?: Date } = {}): Promise<TaskResponse> {
   const now = options.now ?? new Date();
   const parsed = parseTaskInput(raw, true);

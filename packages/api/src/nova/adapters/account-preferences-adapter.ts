@@ -1,10 +1,10 @@
 // ─── Account preferences adapter ──────────────────────────────────────────────
 // What the learner chose in web onboarding and Settings that Nova needs: the
-// daily check-in time, the timezone their browser reported, and what they
-// said they are learning for. All live on the web account (UserProfile),
-// which is where onboarding and Settings write them; this is the one place
-// Nova reads them. Read-only, apart from adopting the account's timezone for
-// a learner who has none.
+// daily check-in time, the timezone their browser reported, what they said
+// they are learning for, and what they asked Nova to help with first. All
+// live on the web account (UserProfile), which is where onboarding and
+// Settings write them; this is the one place Nova reads them. Read-only,
+// apart from adopting the account's timezone for a learner who has none.
 //
 // What they are learning for is one of their onboarding answers and is kept
 // with them (UserProfile.onboardingAnswers.learningContexts). There is no
@@ -17,13 +17,23 @@ import { prisma } from "@repo/db/client";
 import { currentZoneName, isValidTimezone } from "../engines/learner-calendar";
 import { parseCheckinTime } from "../decision/proactive-decision";
 import { normalizeLearningContexts, type LearningContext } from "../product/learning-context";
+import { normalizeFirstFocus, type FirstFocus } from "../product/first-focus";
 
 export const LEARNING_CONTEXTS_KEY = "learningContexts";
+// What they asked Nova to help with first (product/first-focus.ts), kept
+// beside the contexts in the same onboarding answers.
+export const FIRST_FOCUS_KEY = "firstFocus";
 
 // The contexts in a stored onboarding answer. Anything unreadable is "not said".
 export function learningContextsIn(onboardingAnswers: unknown): LearningContext[] {
   if (!onboardingAnswers || typeof onboardingAnswers !== "object" || Array.isArray(onboardingAnswers)) return [];
   return normalizeLearningContexts((onboardingAnswers as Record<string, unknown>)[LEARNING_CONTEXTS_KEY]) ?? [];
+}
+
+// Their first-focus answer, or null when it is missing or unreadable.
+export function firstFocusIn(onboardingAnswers: unknown): FirstFocus | null {
+  if (!onboardingAnswers || typeof onboardingAnswers !== "object" || Array.isArray(onboardingAnswers)) return null;
+  return normalizeFirstFocus((onboardingAnswers as Record<string, unknown>)[FIRST_FOCUS_KEY]);
 }
 
 const accountOf = (learnerId: string): { userId: string } | { telegramChatId: string } =>
@@ -67,6 +77,15 @@ export async function loadLearningContexts(platformChatId: string): Promise<Lear
     select: { onboardingAnswers: true },
   }).catch(() => null);
   return account ? learningContextsIn(account.onboardingAnswers) : [];
+}
+
+// Only what they asked Nova to help with first. null: not said.
+export async function loadFirstFocus(platformChatId: string): Promise<FirstFocus | null> {
+  const account = await prisma.userProfile.findFirst({
+    where:  accountOf(platformChatId),
+    select: { onboardingAnswers: true },
+  }).catch(() => null);
+  return account ? firstFocusIn(account.onboardingAnswers) : null;
 }
 
 // The learner's timezone. Nova's own record first; if it has none, the zone

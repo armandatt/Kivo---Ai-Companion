@@ -19,6 +19,7 @@ import {
   type SignalAnswers,
 } from "./signal-scoring";
 import { matchMentor, normalizeAccountability, type MentorMatch } from "./mentor-compatibility";
+import { describeStatedStyle, parseStatedStyle, STYLE_VERSION, statedStyle, validateStyleAnswers, type StatedStyle, type StyleAnswers } from "./style-items";
 
 // The slice of Prisma this module uses. Declared here so tests can pass a fake.
 export interface PersonalityDb {
@@ -93,7 +94,8 @@ export async function getLatestSignal(
 ): Promise<PersonalitySignal | null> {
   const row = await db.personalityAssessment.findFirst({
     where:   { userId, status: "complete" },
-    orderBy: { createdAt: "desc" },
+    // createdAt is kept to the millisecond; the id breaks a tie (cuids rise).
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select:  { scores: true },
   });
   return parseStoredSignal(row?.scores);
@@ -132,6 +134,80 @@ export async function getOperatingStyleForChat(
   } catch (error) {
     console.error("[personality] operating style lookup failed:", error);
     return [];
+  }
+}
+
+// ── Coaching preferences (kivo-style-v2) ──────────────────────────────────────
+// Stored in the same table as the v1 signal, one row per answer set, told
+// apart by instrumentVersion. The newest complete row of either kind is the
+// current one, so answering the v2 questions supersedes a v1 signal.
+
+export async function saveStyleAssessment(
+  userId:  string,
+  answers: StyleAnswers,
+  now:     Date = new Date(),
+  db:      PersonalityDb = defaultDb,
+): Promise<StatedStyle> {
+  const style = statedStyle(answers);
+  await db.personalityAssessment.create({
+    data: {
+      userId,
+      instrumentVersion: STYLE_VERSION,
+      status:            "complete",
+      responses:         answers,
+      scores:            style,
+      completedAt:       now,
+    },
+  });
+  return style;
+}
+
+// The learner's stated preferences, or null when their newest answers are not v2.
+export async function getStatedStyle(
+  userId: string,
+  db:     PersonalityDb = defaultDb,
+): Promise<StatedStyle | null> {
+  const row = await db.personalityAssessment.findFirst({
+    where:   { userId, status: "complete" },
+    // createdAt is kept to the millisecond; the id breaks a tie (cuids rise).
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select:  { scores: true },
+  });
+  return parseStatedStyle(row?.scores);
+}
+
+// Settings: replace the stated preferences with a new complete set.
+export async function restateStyle(
+  userId:     string,
+  rawAnswers: unknown,
+  now:        Date = new Date(),
+  db:         PersonalityDb = defaultDb,
+): Promise<{ ok: true; style: StatedStyle } | { ok: false; errors: string[] }> {
+  const checked = validateStyleAnswers(rawAnswers);
+  if (!checked.ok) return checked;
+  return { ok: true, style: await saveStyleAssessment(userId, checked.answers, now, db) };
+}
+
+// What a Nova prompt may carry about how to help this learner. Their stated
+// preferences when they have answered the v2 questions: those are their own
+// request, like the accountability answer, so no flag holds them back.
+// Otherwise the v1 signal's lines, only while PERSONALITY_SIGNAL_ENABLED=true.
+// Never throws.
+export async function getCoachingStyleForChat(
+  platformChatId: string,
+  db:             PersonalityDb = defaultDb,
+): Promise<{ lines: string[]; stated: boolean }> {
+  try {
+    const profile = await db.userProfile.findFirst({ where: accountOfLearner(platformChatId), select: { userId: true } });
+    const userId = profile?.userId;
+    if (typeof userId !== "string") return { lines: [], stated: false };
+    const stated = await getStatedStyle(userId, db);
+    if (stated) return { lines: describeStatedStyle(stated), stated: true };
+    if (!isPersonalitySignalEnabled()) return { lines: [], stated: false };
+    return { lines: describeOperatingStyle(await getLatestSignal(userId, db)), stated: false };
+  } catch (error) {
+    console.error("[personality] coaching style lookup failed:", error);
+    return { lines: [], stated: false };
   }
 }
 

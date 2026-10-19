@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
-  ArrowUpRight, BookOpen, Bookmark, Calendar, Check, CircleHelp, Copy, CreditCard, Gamepad2, Home, Keyboard,
+  ArrowUpRight, BookOpen, Bookmark, Calendar, CalendarDays, Check, CircleHelp, Copy, CreditCard, Gamepad2, Home, Keyboard,
   NotebookPen, Puzzle, Rocket, Search, Send, Settings, ShieldCheck, Sparkles, Timer, TrendingUp, Waypoints, X,
 } from 'lucide-react'
 import { PLANS, formatPrice } from '@repo/api/billing/plans'
@@ -167,6 +167,7 @@ const TOPICS: Topic[] = [
   { id: 'loop',      label: 'The daily loop',   icon: Sparkles,    group: 'Basics',       keywords: 'how it works plan focus outcome progress' },
   { id: 'today',     label: 'Today',            icon: Home,        group: 'Plan',         keywords: 'home next up plan time available choose another tasks deadlines week goals search new' },
   { id: 'planner',   label: 'Planner & tasks',  icon: Calendar,    group: 'Plan',         keywords: 'days ahead board kanban tasks skip plan change recovery missed days' },
+  { id: 'calendar',  label: 'Calendar',         icon: CalendarDays, group: 'Plan',        keywords: 'events classes meetings month week agenda reminders deadlines dates schedule' },
   { id: 'focus',     label: 'Focus room',       icon: Timer,       group: 'Plan',         keywords: 'session timer pomodoro pause end scenes sound music rain lofi spotify youtube fullscreen' },
   { id: 'knowledge', label: 'Knowledge',        icon: BookOpen,    group: 'Knowledge',    keywords: 'subjects topics level review due board subject studio archive' },
   { id: 'map',       label: 'Knowledge Map',    icon: Waypoints,   group: 'Knowledge',    keywords: 'graph links pan zoom filter layout drag' },
@@ -358,7 +359,7 @@ export function NovaGuide() {
           <Section topic={topic('start')} hidden={hide('start')} lead="Five minutes to set up, and Nova has what it needs to plan your days.">
             <Steps steps={[
               { title: 'Make your account', body: 'Sign up with email (Kivo sends an eight-digit code to confirm it) or continue with Google.' },
-              { title: 'Answer the short quiz', body: 'Seven questions about what you are learning and how you like to study. It decides nothing for you; it sets Nova’s tone and what it offers first.' },
+              { title: 'Answer a few questions', body: 'Who you are (school, college or work), what you want help with first, four quick ones about how you like to be helped, and a name for your companion. They set Nova’s words, tone and where setup starts; they decide nothing else, and you can change every answer in Settings.' },
               { title: 'Tell Nova your subjects', body: 'Name your subjects and their topics, your exam dates and how long you usually have. Or start from a template, like a computer science semester, and edit it.' },
               { title: 'Connect Telegram', body: 'Optional, and worth it: from Today or Settings. Nova can then plan, start sessions and log them from a chat.' },
             ]} />
@@ -420,6 +421,23 @@ export function NovaGuide() {
               </Feature>
               <Feature title="Back on track after missed days">
                 After a few days away, Today offers to spread what slipped over the coming days. Nothing moves unless you say yes.
+              </Feature>
+            </Grid>
+          </Section>
+
+          <Section topic={topic('calendar')} hidden={hide('calendar')} lead="Your events, the tasks due each day and your dates, in one place.">
+            <Grid>
+              <Feature title="Month, week and agenda">
+                Move by month, week or four weeks at a time, and Today brings you back. Events show a thin bar in the colour of their kind; a circle is a task due that day; a flag is an exam or deadline.
+              </Feature>
+              <Feature title="One record for each thing">
+                A task on the calendar is the same task as on the board, and a deadline the same date Nova plans around. Add either from a day on the calendar and it appears everywhere; nothing is copied.
+              </Feature>
+              <Feature title="Events and time for a task">
+                Add a class, meeting, study block or something personal, at a time or all day. From a task, Set aside time puts a block on the calendar for it; the task itself stays where it is.
+              </Feature>
+              <Feature title="Reminders">
+                Choose a reminder on an event and Nova sends it on Telegram at that time, once. Moving or deleting the event moves or cancels it. Without Telegram connected a reminder is saved but not sent, and the calendar says so.
               </Feature>
             </Grid>
           </Section>

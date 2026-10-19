@@ -15,3 +15,14 @@ export function dashboardEntry(account: { exists: boolean; onboardingComplete: b
   if (!account.exists) return "/signin"
   return account.onboardingComplete === true ? "enter" : "/onboarding"
 }
+
+// Where a signed-in request for the onboarding page goes: an account that has
+// finished onboarding is sent to Today instead of being asked again; anyone
+// else answers it. It reads the same field as dashboardEntry, which sends
+// only an unfinished account here, so the two can never send a request round
+// in a circle.
+export type OnboardingEntry = "answer" | "/home"
+
+export function onboardingEntry(account: { onboardingComplete: boolean | null | undefined }): OnboardingEntry {
+  return account.onboardingComplete === true ? "/home" : "answer"
+}

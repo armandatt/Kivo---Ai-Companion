@@ -30,24 +30,22 @@ describe("the task editor is a modal a keyboard cannot fall out of", () => {
 });
 
 describe("the sign-up quiz survives a refresh", () => {
-  const quiz = web("components/PersonalityQuiz.tsx");
+  const quiz = web("components/onboarding-flow.tsx");
   it("keeps the answers and the question reached in this tab's session storage", () => {
-    expect(quiz).toContain("window.sessionStorage.setItem(QUIZ_DRAFT_KEY, JSON.stringify({ answers, at: currentQuestion }))");
-    expect(quiz).toContain("window.sessionStorage.getItem(QUIZ_DRAFT_KEY)");
+    expect(quiz).toContain("window.sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ draft, at }))");
+    expect(quiz).toContain("window.sessionStorage.getItem(DRAFT_KEY)");
     expect(quiz).not.toContain("localStorage");
   });
   it("writes nothing back before the stored draft has been read", () => {
-    expect(quiz.indexOf("if (!restored) return;")).toBeLessThan(quiz.indexOf("window.sessionStorage.setItem("));
+    expect(quiz.indexOf("if (!restored || done) return;")).toBeLessThan(quiz.indexOf("window.sessionStorage.setItem("));
   });
-  it("clears the draft the moment the quiz is handed on, by either way of finishing", () => {
-    const finish = quiz.slice(quiz.indexOf("const finish = "), quiz.indexOf("const question = questions[currentQuestion];"));
-    expect(finish.indexOf("removeItem(QUIZ_DRAFT_KEY)")).toBeLessThan(finish.indexOf("onComplete(final)"));
-    // onComplete is reached only through finish.
-    expect(quiz.split("onComplete(").length - 1).toBe(1);
-    expect(quiz.split("finish(answers)").length - 1).toBe(2);
+  it("clears the draft only once the server has saved the answers", () => {
+    const finish = quiz.slice(quiz.indexOf("async function finish()"), quiz.indexOf("function next("));
+    expect(finish.indexOf("if (!res.ok || !result?.success)")).toBeLessThan(finish.indexOf("clearDraft()"));
+    expect(finish.indexOf("clearDraft()")).toBeLessThan(finish.indexOf("setDone(true)"));
   });
   it("a stored position outside the quiz is ignored", () => {
-    expect(quiz).toContain("Number.isInteger(draft.at) && draft.at >= 0 && draft.at < questions.length");
+    expect(quiz).toContain("Number.isInteger(parsed.at) && parsed.at >= 0 && parsed.at < STEPS.length");
   });
 });
 

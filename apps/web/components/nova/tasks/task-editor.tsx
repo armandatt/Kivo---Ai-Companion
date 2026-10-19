@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import {
   TASK_PRIORITIES, TASK_STATUSES, TASK_STATUS_LABEL, TASK_TITLE_MAX,
@@ -17,6 +17,11 @@ type Props = {
   subjects: TaskSubjectOption[]
   // The column a new task starts in.
   initialStatus?: NovaTaskItem['status']
+  // The day a new task is due (the calendar's chosen day).
+  initialDueDay?: string
+  // Something the opening page offers beside the task (the calendar's
+  // "set aside time"), shown above the buttons.
+  extra?:   ReactNode
   onSave:   (input: TaskInput) => Promise<boolean>
   onDelete?: () => Promise<boolean>
   onClose:  () => void
@@ -28,13 +33,13 @@ const LABEL = 'mb-1.5 block text-xs font-medium text-foreground/55'
 
 // Create or edit one task. Nothing is saved until Save, and the dialog stays
 // open with the reason when the server refuses.
-export function TaskEditor({ task, subjects, initialStatus = 'todo', onSave, onDelete, onClose, error }: Props) {
+export function TaskEditor({ task, subjects, initialStatus = 'todo', initialDueDay, extra, onSave, onDelete, onClose, error }: Props) {
   const [title, setTitle]         = useState(task?.title ?? '')
   const [status, setStatus]       = useState(task?.status ?? initialStatus)
   const [priority, setPriority]   = useState(task?.priority ?? '')
   const [subjectId, setSubjectId] = useState(task?.subjectId ?? '')
   const [topicName, setTopicName] = useState(task?.topicName ?? '')
-  const [dueDay, setDueDay]       = useState(task?.dueDay ?? '')
+  const [dueDay, setDueDay]       = useState(task?.dueDay ?? initialDueDay ?? '')
   // Only the learner says how long a task takes; empty means not said.
   const [minutes, setMinutes]     = useState(task?.estimatedMinutes ? String(task.estimatedMinutes) : '')
   const [saving, setSaving]       = useState(false)
@@ -142,6 +147,7 @@ export function TaskEditor({ task, subjects, initialStatus = 'todo', onSave, onD
           </div>
         </div>
 
+        {extra && <div className="mt-5">{extra}</div>}
         {error && <p role="alert" className="mt-4 text-sm text-red-300">{error}</p>}
 
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3">

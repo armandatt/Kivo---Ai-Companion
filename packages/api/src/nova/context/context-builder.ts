@@ -8,8 +8,10 @@ import type { NovaContext } from "../types/context.types";
 import type { InterventionName } from "../types/intervention.types";
 import type { DecisionGraphOutput } from "../types/response.types";
 import { OPERATING_STYLE_HEADER } from "../../personality/signal-scoring";
+import { STATED_STYLE_HEADER } from "../../personality/style-items";
 import type { ContextNeed } from "../interaction/semantics";
 import { learningContextLine, normalizeLearningContexts } from "../product/learning-context";
+import { firstFocusLine, normalizeFirstFocus } from "../product/first-focus";
 import { DEADLINE_RULES, deadlineType } from "../product/deadline-types";
 
 // "today", "tomorrow", "in N days": a count of calendar days, as the pages say it.
@@ -50,10 +52,12 @@ function buildStudentSection(ctx: NovaContext): string {
   if (name) lines.push(`Name: ${name}`);
   const learningFor = learningContextLine(normalizeLearningContexts(p.learningContexts ?? []) ?? []);
   if (learningFor) lines.push(learningFor);
+  const askedFirst = firstFocusLine(normalizeFirstFocus(p.firstFocus ?? null));
+  if (askedFirst) lines.push(askedFirst);
   if (academic.length > 0) lines.push(academic.join(" | "));
   lines.push(`Joined: ${state.daysSinceJoined}d ago | Subjects: ${p.subjects.join(", ") || "none yet"}`);
   if (ctx.operatingStyle && ctx.operatingStyle.length > 0) {
-    lines.push(OPERATING_STYLE_HEADER, ...ctx.operatingStyle.map(l => `- ${l}`));
+    lines.push(ctx.operatingStyleStated ? STATED_STYLE_HEADER : OPERATING_STYLE_HEADER, ...ctx.operatingStyle.map(l => `- ${l}`));
   }
   return lines.join("\n");
 }

@@ -41,8 +41,8 @@ import { loadAccountabilityStyle } from "./adapters/operating-style-adapter";
 import type { ResponseBrainOutput } from "./types/response.types";
 import { getRelevantMemories } from "./adapters/memory-adapter";
 import { loadActiveRealityFacts } from "./adapters/reality-adapter";
-import { loadOperatingStyle } from "./adapters/operating-style-adapter";
-import { loadLearningContexts } from "./adapters/account-preferences-adapter";
+import { loadCoachingStyle } from "./adapters/operating-style-adapter";
+import { loadFirstFocus, loadLearningContexts } from "./adapters/account-preferences-adapter";
 import { preparesTopics, takesOverTheDay } from "./product/deadline-types";
 import { calendarDaysUntil, dayKey, resolveTimezone } from "./engines/learner-calendar";
 import { countedStudyDays, studyGap } from "./engines/recovery-engine";
@@ -273,13 +273,15 @@ export async function runNovaOrchestrator(
   }
 
   // ── 11. Memory + Reality (parallel) ──────────────────────────────────────
-  const [memoryResult, realityFacts, operatingStyle, learningContexts] = await Promise.all([
+  const [memoryResult, realityFacts, coachingStyle, learningContexts, firstFocus] = await Promise.all([
     getRelevantMemories(userId, understanding),
     loadActiveRealityFacts(userId, understanding),
-    loadOperatingStyle(platformChatId),
-    // What they said they are learning for. A turn does not depend on it:
-    // unreadable, the learner is spoken to as one who has not said.
+    loadCoachingStyle(platformChatId),
+    // What they said they are learning for, and what they asked for first.
+    // A turn does not depend on either: unreadable, the learner is spoken to
+    // as one who has not said.
     loadLearningContexts(platformChatId).catch(() => []),
+    loadFirstFocus(platformChatId).catch(() => null),
   ]);
 
   // ── 12. Assemble NovaContext ───────────────────────────────────────────────
@@ -310,6 +312,7 @@ export async function runNovaOrchestrator(
       major:                    snapshot.major,
       institution:              snapshot.institution,
       learningContexts,
+      firstFocus,
       preferredStudyHoursPerDay: snapshot.preferredStudyHoursPerDay,
       subjects:                 snapshot.subjects.map(s => s.name),
       daysSinceJoined:          snapshot.daysSinceJoined,
@@ -329,7 +332,8 @@ export async function runNovaOrchestrator(
     contrastiveMemories: memoryResult.contrastive,
     cognitiveState,
     activeRealityFacts: realityFacts,
-    operatingStyle,
+    operatingStyle:       coachingStyle.lines,
+    operatingStyleStated: coachingStyle.stated,
     conversationHistory,
     decision:           null,  // filled after graph runs
   };

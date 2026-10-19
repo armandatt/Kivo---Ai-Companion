@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { dashboardEntry } from './dashboard-entry'
+import { dashboardEntry, onboardingEntry } from './dashboard-entry'
 
 const web = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const read = (path: string) => readFileSync(resolve(web, path), 'utf8')
@@ -40,12 +40,36 @@ test('the layout redirects outside its try block, so the redirect cannot be swal
   assert.ok(layout.slice(tryEnd).includes('redirect(entry)'), 'the decision is acted on after it')
 })
 
-// Neither destination may ask the question again, or a request could loop.
+// Neither destination may ask the dashboard's question again, or a request could loop.
 test('the quiz and the sign-in page sit outside the dashboard layout and send nobody back', () => {
   for (const page of ['app/onboarding/page.tsx', 'app/(auth)/signin/page.tsx']) {
     assert.ok(!read(page).includes('dashboardEntry'), `${page} does not decide dashboard entry`)
   }
-  assert.ok(!read('app/onboarding/page.tsx').includes('redirect('), 'the quiz page redirects nobody')
   // Finishing the quiz is what flips the answer, so the quiz leads out, not round.
   assert.ok(read('components/onboarding-flow.tsx').includes("router.push('/home')"))
+})
+
+// A finished account is not asked again; an unfinished one answers the quiz.
+test('onboarding is asked once', () => {
+  assert.equal(onboardingEntry({ onboardingComplete: true }), '/home')
+  assert.equal(onboardingEntry({ onboardingComplete: false }), 'answer')
+  assert.equal(onboardingEntry({ onboardingComplete: null }), 'answer')
+  assert.equal(onboardingEntry({ onboardingComplete: undefined }), 'answer')
+})
+
+// The dashboard sends only an unfinished account to the quiz, and the quiz
+// sends only a finished one to the dashboard: for no account do both send it
+// to the other.
+test('the dashboard and the quiz never send a request round in a circle', () => {
+  for (const onboardingComplete of [true, false, null, undefined]) {
+    const toQuiz = dashboardEntry({ exists: true, onboardingComplete }) === '/onboarding'
+    const toDashboard = onboardingEntry({ onboardingComplete }) === '/home'
+    assert.ok(!(toQuiz && toDashboard), `onboardingComplete=${onboardingComplete}`)
+  }
+  // The quiz page redirects only on that rule, outside its guarded lookup.
+  const page = read('app/onboarding/page.tsx')
+  const tryStart = page.indexOf('try {')
+  const tryEnd = page.indexOf('} catch', tryStart)
+  assert.ok(tryStart > 0 && !page.slice(tryStart, tryEnd).includes('redirect('), 'no redirect inside the guarded lookup')
+  assert.ok(page.includes('redirect(entry)'))
 })

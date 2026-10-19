@@ -744,6 +744,7 @@ model NovaAcademicProfile {
   tasks             NovaTask[]
   planOverrides     NovaPlanOverride[]
   mapLayout         NovaMapLayout[]
+  calendarEvents    NovaCalendarEvent[]
 
   user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -768,6 +769,7 @@ model NovaSubject {
   notes  NovaNote[]
   learningEvents NovaLearningEvent[]
   tasks  NovaTask[]
+  calendarEvents NovaCalendarEvent[]
 
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
@@ -1258,12 +1260,67 @@ model NovaTask {
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   subject NovaSubject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
 
+  // Times the learner set aside on the calendar to work on this task. The
+  // task stays the one record of the work; an event only schedules it.
+  calendarEvents NovaCalendarEvent[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([profileId, clientKey])
   @@index([profileId, status])
   @@index([profileId, dueDay])
+}
+
+// ─── Calendar events (product/calendar.ts is the only reader and writer) ─────
+// Something at a time or on a day that is not already a task or a dated
+// deadline: a class, a meeting, a study block, something personal. Tasks
+// (NovaTask.dueDay) and deadlines (NovaExam) are shown on the calendar from
+// their own tables and are never copied here.
+model NovaCalendarEvent {
+  id              String    @id @default(cuid())
+  profileId       String
+  title           String
+  description     String?   @db.Text
+  // "class" | "meeting" | "study" | "personal" | "other"
+  category        String    @default("other")
+  allDay          Boolean   @default(false)
+  // The learner's own calendar days (YYYY-MM-DD), first and last, inclusive.
+  // Always set: an all-day event is only days; a timed one's are the days
+  // its start and end fall on in its timezone. Ranges are read by these.
+  startDay        String
+  endDay          String
+  // A timed event's moments. Null for an all-day event, so a day never
+  // shifts when a timezone does.
+  startAt         DateTime?
+  endAt           DateTime?
+  // The IANA zone the times were given in (and an all-day reminder's clock).
+  timezone        String
+  // Minutes before the start to remind (an all-day event: before 09:00 on
+  // its first day). Null: no reminder.
+  reminderMinutes Int?
+  // When that reminder is due, worked out by the server on every write.
+  // The tick sends what is due by this; a moved or removed event leaves no
+  // stale time behind, because the occurrence key names this instant.
+  remindAt        DateTime?
+  // A task this time is set aside for (optional).
+  taskId          String?
+  subjectId       String?
+  // A key the creator gave this event, unique for the learner: a retried
+  // create returns the event it made.
+  clientKey       String?
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  task    NovaTask?           @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  subject NovaSubject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([profileId, clientKey])
+  @@index([profileId, startDay])
+  @@index([profileId, endDay])
+  @@index([remindAt])
 }
 
 // The learner's changes to one day's computed plan: leave a topic out of

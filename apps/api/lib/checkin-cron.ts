@@ -13,6 +13,8 @@ import { fireCustomReminders } from "@repo/api/services/customReminder.service";
 //@ts-ignore
 import { runNovaProactiveCron } from "@repo/api/nova/proactive/nova-proactive-cron";
 //@ts-ignore
+import { runEventReminders } from "@repo/api/nova/proactive/event-reminders";
+//@ts-ignore
 import { purgeProcessedTelegramUpdates } from "@repo/api/services/telegramTransport.service";
 //@ts-ignore
 import { processWaitingResources } from "@repo/api/nova/product/resource-processing";
@@ -98,6 +100,17 @@ export async function runCheckinCron(now = new Date()): Promise<CheckinCronResul
   // ── Saved pages still waiting to be looked at ─────────────────────────────
   // The save route starts this itself; the tick finishes what a restart or a
   // failed model call left behind. It sends nothing.
+  // ── Calendar reminders the learner set (same outbox, own type) ────────────
+  try {
+    const reminders = await runEventReminders(now);
+    sent += reminders.sent;
+    if (reminders.checked > 0 || reminders.errors > 0) {
+      console.log(`[CHECKIN] Calendar reminders: ${reminders.sent}/${reminders.checked} sent, ${reminders.errors} errors`);
+    }
+  } catch (err) {
+    console.error("[CHECKIN] calendar reminders failed:", err);
+  }
+
   try {
     const pages = await processWaitingResources(new Date(), 5);
     if (pages.checked > 0) console.log(`[CHECKIN] Nova saved pages: ${pages.done}/${pages.checked} looked at, ${pages.failed} failed`);

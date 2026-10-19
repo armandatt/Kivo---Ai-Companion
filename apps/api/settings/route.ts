@@ -9,7 +9,9 @@ import { normalizeAccountability } from "@repo/api/personality/mentor-compatibil
 import { currentZoneName, isValidTimezone } from "@repo/api/nova/engines/learner-calendar"
 import { normalizeLearningContexts } from "@repo/api/nova/product/learning-context"
 //@ts-ignore
-import { LEARNING_CONTEXTS_KEY } from "@repo/api/nova/adapters/account-preferences-adapter"
+import { FIRST_FOCUS_KEY, LEARNING_CONTEXTS_KEY, firstFocusIn, learningContextsIn } from "@repo/api/nova/adapters/account-preferences-adapter"
+import { checkFirstFocus } from "@repo/api/nova/product/first-focus"
+import { checkCompanionName, DEFAULT_COMPANION_NAME } from "@repo/api/nova/product/onboarding-answers"
 
 const COMPANIONS = new Set(["nova", "rex", "zen"])
 
@@ -34,6 +36,8 @@ export async function GET() {
           telegramChatId: true,
           browserNotifications: true,
           emailDigest: true,
+          creatureName: true,
+          onboardingAnswers: true,
         },
       }),
       prisma.account.findFirst({
@@ -53,6 +57,10 @@ export async function GET() {
       tier: "free",
       browserNotifications: profile?.browserNotifications ?? true,
       emailDigest: profile?.emailDigest ?? true,
+      // The onboarding answers a learner can correct here.
+      companionName: profile?.creatureName ?? DEFAULT_COMPANION_NAME,
+      learningContexts: learningContextsIn(profile?.onboardingAnswers),
+      firstFocus: firstFocusIn(profile?.onboardingAnswers),
       platforms: {
         telegram: {
           connected: profile?.telegramConnected ?? false,
@@ -79,7 +87,7 @@ export async function PATCH(req: NextRequest) {
     if (!account) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 })
 
     const body = await req.json()
-    const { persona, checkInTime, accountabilityStyle, timezone, name, learningContexts } = body
+    const { persona, checkInTime, accountabilityStyle, timezone, name, learningContexts, firstFocus, companionName } = body
 
     const profileUpdates: Record<string, unknown> = {}
     // The companion is one of the ones that exist. It decides which learner
@@ -109,16 +117,37 @@ export async function PATCH(req: NextRequest) {
       else return NextResponse.json({ error: "Unknown timezone" }, { status: 400 })
     }
 
-    // What they are learning for: a list of the known contexts, [] to say
-    // nothing. It is one of the onboarding answers and is kept with them, so
-    // the others are read first and written back unchanged.
+    // The companion's display name. Empty puts the default back. It names
+    // nothing else: the companion and the learner stay who they are.
+    if (companionName !== undefined) {
+      const checked = checkCompanionName(companionName)
+      if (!checked.ok) return NextResponse.json({ error: checked.message }, { status: 400 })
+      profileUpdates.creatureName = checked.name
+    }
+
+    // Two of the onboarding answers, kept with the others in onboardingAnswers:
+    // what they are learning for (a list of known contexts, [] to say nothing)
+    // and what they want help with first (null to say nothing). The others
+    // are read first and written back unchanged.
+    const answerUpdates: Record<string, unknown> = {}
     if (learningContexts !== undefined) {
       const contexts = normalizeLearningContexts(learningContexts)
       if (contexts === null) return NextResponse.json({ error: "Unknown learning context" }, { status: 400 })
+      answerUpdates[LEARNING_CONTEXTS_KEY] = contexts
+    }
+    if (firstFocus !== undefined) {
+      if (firstFocus === null) answerUpdates[FIRST_FOCUS_KEY] = null
+      else {
+        const checked = checkFirstFocus(firstFocus)
+        if (!checked.ok) return NextResponse.json({ error: checked.reason === "detail_too_long" ? "Keep that to a sentence." : "Unknown first focus" }, { status: 400 })
+        answerUpdates[FIRST_FOCUS_KEY] = checked.value
+      }
+    }
+    if (Object.keys(answerUpdates).length > 0) {
       const current = await prisma.userProfile.findUnique({ where: { userId: session.userId }, select: { onboardingAnswers: true } })
       const answers = current?.onboardingAnswers && typeof current.onboardingAnswers === "object" && !Array.isArray(current.onboardingAnswers)
         ? current.onboardingAnswers as Record<string, unknown> : {}
-      profileUpdates.onboardingAnswers = { ...answers, [LEARNING_CONTEXTS_KEY]: contexts }
+      profileUpdates.onboardingAnswers = { ...answers, ...answerUpdates }
     }
 
     if (Object.keys(profileUpdates).length > 0) {

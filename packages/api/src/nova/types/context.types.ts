@@ -25,6 +25,8 @@ export interface NovaUserProfile {
   // What they said they are learning for ("school", "college", "working",
   // "other"). Empty or absent: they have not said, and nothing is assumed.
   learningContexts?:        string[];
+  // What they asked Nova to help with first at sign-up (product/first-focus.ts).
+  firstFocus?:              { id: string; detail: string | null } | null;
   preferredStudyHoursPerDay: number;
   subjects:                 string[];   // subject names
   daysSinceJoined:          number;
@@ -94,6 +96,9 @@ export interface NovaContext {
   // Onboarding personality signal, already phrased as behavioural lines.
   // Context only: it is evidence about the student, never durable Nova state.
   operatingStyle?: string[];
+  // true: those lines are the learner's stated preferences (kivo-style-v2),
+  // not the v1 signal's hypothesis. Changes only the header they sit under.
+  operatingStyleStated?: boolean;
 
   // Conversation history
   conversationHistory: ConversationTurn[];

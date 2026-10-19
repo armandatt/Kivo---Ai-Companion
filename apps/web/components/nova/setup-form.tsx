@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRight, Loader2, Plus, X } from 'lucide-react'
 import type { SetupChanges, SetupDraft, SetupIssue, SetupView } from '@repo/api/nova/product/setup.types'
 import { templatesFor, templateTaskKey, type StudyTemplate } from '@repo/api/nova/product/templates'
 import { LEARNING_CONTEXTS, LEARNING_CONTEXT_LABEL, setupVocabulary, type LearningContext } from '@repo/api/nova/product/learning-context'
+import { audienceOf, firstStepFor, focusTemplateIds, type FirstFocus } from '@repo/api/nova/product/first-focus'
 import { DEADLINE_RULES, DEADLINE_TYPES, type DeadlineType } from '@repo/api/nova/product/deadline-types'
 import { cn } from '@/lib/utils'
 
@@ -157,7 +158,11 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
   // What a new date row starts as: an exam, or for someone learning for work,
   // a plain date. The learner picks the kind on the row either way.
   const defaultDateType: DeadlineType = words.kind === 'outcome' ? 'other' : 'exam'
-  const templates = templatesFor(contexts)
+  // What they asked Nova to help with first: its templates lead, and it
+  // names one place to start. Read with the rest of the setup below.
+  const [firstFocus, setFirstFocus] = useState<FirstFocus | null>(null)
+  const templates = templatesFor(contexts, focusTemplateIds(firstFocus, audienceOf(contexts)))
+  const firstStep = firstStepFor(firstFocus)
 
   // What is already on record (said on Telegram, or a setup left half done)
   // is shown, so nothing has to be typed twice.
@@ -168,6 +173,7 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
       .then((s: (SetupView & { status?: string }) | null) => {
         if (!live || !s || s.status !== 'ready') return
         setContexts(s.learningContexts ?? [])
+        setFirstFocus(s.firstFocus ?? null)
         if (s.subjects.length > 0) setSubjects(s.subjects.map(x => ({ name: x.name, topics: x.topics.join('\n') })))
         setDaily(s.dailyMinutes)
         setTime((s.studyTime as StudyTime | null) ?? null)
@@ -306,8 +312,15 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
         {contextNote && <p role="alert" className="mt-2 text-sm text-red-300">{contextNote}</p>}
       </fieldset>
 
+      {firstStep && subjects.every(x => !x.name.trim()) && (
+        <aside className="mt-6 rounded-2xl border border-action/30 bg-action-soft px-4 py-3.5" aria-label="Where to start">
+          <p className="text-sm font-semibold text-foreground">{firstStep.title}</p>
+          <p className="mt-1 text-sm leading-relaxed text-foreground/70">{firstStep.body}</p>
+          <a href={firstStep.href} className="mt-2 inline-block text-sm font-medium text-action-ink underline decoration-current/30 underline-offset-4 hover:decoration-current">{firstStep.action}</a>
+        </aside>
+      )}
       <TemplatePicker templates={templates} chosen={template} onChoose={choose} />
-      <p className={cn(label, 'mt-9')}>{words.areasHeading}</p>
+      <p id="setup-subjects" className={cn(label, 'mt-9 scroll-mt-24')}>{words.areasHeading}</p>
       <div className="mt-3 space-y-4">
         {subjects.map((s, i) => (
           <div key={i} className="rounded-2xl border border-white/8 bg-white/3 p-4">
@@ -334,7 +347,7 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
         <Plus className="size-4" /> {words.addArea}
       </button>
 
-      <p className={cn(label, 'mt-9')}>{words.datesHeading} <span className="normal-case tracking-normal text-foreground/35">(optional)</span></p>
+      <p id="setup-dates" className={cn(label, 'mt-9 scroll-mt-24')}>{words.datesHeading} <span className="normal-case tracking-normal text-foreground/35">(optional)</span></p>
       <div className="mt-3 space-y-2">
         {exams.map((e, i) => (
           <div key={i} className="flex flex-col gap-2 sm:flex-row">
@@ -361,7 +374,7 @@ export function SetupForm({ onSaved, confirmLabel = 'Confirm and build my plan' 
         <Plus className="size-4" /> {words.addDate}
       </button>
 
-      <p className={cn(label, 'mt-9')}>{words.dailyQuestion}</p>
+      <p id="setup-routine" className={cn(label, 'mt-9 scroll-mt-24')}>{words.dailyQuestion}</p>
       <Chips name="Normal day" options={DAILY.map(d => ({ label: d.label, value: d.minutes }))} value={daily} onChange={setDaily} />
 
       <p className={cn(label, 'mt-7')}>{words.timeQuestion}</p>

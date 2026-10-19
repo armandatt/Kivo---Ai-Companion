@@ -19,6 +19,12 @@
 //
 // Only sent and unknown rows count toward the daily cap and the gap between
 // messages. A decision not to send is not stored at all.
+//
+// Calendar reminders (EVENT_REMINDER, proactive/event-reminders.ts) go
+// through the same states under their own type. They are the learner's own
+// request for a set time, so they are not Nova speaking first: they neither
+// count toward the cap and spacing of proactive messages nor wait behind
+// them, and the proactive tick's recovery leaves them alone.
 
 import { prisma } from "@repo/db/client";
 import type { ProactiveCandidate } from "../decision/proactive-decision";
@@ -28,6 +34,9 @@ export const SENDING_STALE_MS   = 2 * 60_000;
 export const RETRY_WINDOW_HOURS = 3;
 
 const COUNTS_AS_DELIVERED = ["sent", "unknown", "sending"];
+
+export const EVENT_REMINDER = "event_reminder";
+const NOT_A_REMINDER = { not: EVENT_REMINDER };
 const isUniqueViolation = (err: unknown) => (err as { code?: string } | null)?.code === "P2002";
 
 export interface OutboxRow {
@@ -49,11 +58,11 @@ const toRow = (r: { id: string; profileId: string; eventType: string; occurrence
 export async function loadDelivered(profileId: string, localDay: string): Promise<{ today: Array<{ type: string; at: Date }>; lastSentAt: Date | null }> {
   const [today, last] = await Promise.all([
     prisma.novaProactiveMessage.findMany({
-      where:  { profileId, localDay, status: { in: COUNTS_AS_DELIVERED } },
+      where:  { profileId, localDay, status: { in: COUNTS_AS_DELIVERED }, eventType: NOT_A_REMINDER },
       select: { eventType: true, sentAt: true, firedAt: true },
     }),
     prisma.novaProactiveMessage.findFirst({
-      where:   { profileId, status: { in: COUNTS_AS_DELIVERED } },
+      where:   { profileId, status: { in: COUNTS_AS_DELIVERED }, eventType: NOT_A_REMINDER },
       orderBy: { firedAt: "desc" },
       select:  { sentAt: true, firedAt: true },
     }),
@@ -68,7 +77,7 @@ export async function loadDelivered(profileId: string, localDay: string): Promis
 // this tick has nothing to do with it.
 export async function claimOccurrence(
   profileId: string,
-  candidate: ProactiveCandidate,
+  candidate: Pick<ProactiveCandidate, "occurrenceKey"> & { type: ProactiveCandidate["type"] | typeof EVENT_REMINDER },
   localDay:  string,
   priority:  number,
   now:       Date,
@@ -153,22 +162,62 @@ export async function recoverPending(profileId: string, now: Date): Promise<Outb
   const oldest = new Date(now.getTime() - RETRY_WINDOW_HOURS * 3_600_000);
 
   await prisma.novaProactiveMessage.updateMany({
-    where: { profileId, status: "sending", sentAt: { lt: stale } },
+    where: { profileId, status: "sending", sentAt: { lt: stale }, eventType: NOT_A_REMINDER },
     data:  { status: "unknown", lastError: "process ended during send" },
   });
   await prisma.novaProactiveMessage.updateMany({
-    where: { profileId, status: { in: ["claimed", "ready", "failed"] }, firedAt: { lt: oldest } },
+    where: { profileId, status: { in: ["claimed", "ready", "failed"] }, firedAt: { lt: oldest }, eventType: NOT_A_REMINDER },
     data:  { status: "abandoned", lastError: "retry window passed" },
   });
   const rows = await prisma.novaProactiveMessage.findMany({
     where: {
-      profileId, firedAt: { gte: oldest },
+      profileId, firedAt: { gte: oldest }, eventType: NOT_A_REMINDER,
       OR: [{ status: { in: ["ready", "failed"] } }, { status: "claimed", firedAt: { lt: stale } }],
     },
     orderBy: { firedAt: "asc" },
     select:  SELECT,
   });
   return rows.map(toRow);
+}
+
+// ── Calendar reminders ────────────────────────────────────────────────────────
+
+// Reminder work a restart or a failed send left behind, for every learner:
+//   stale "sending"  → unknown (never resent)
+//   older than the window → abandoned (a late reminder is a wrong one)
+//   "ready"/"failed", or "claimed" and stale → returned to be sent again
+export async function recoverReminders(now: Date, windowMinutes: number): Promise<OutboxRow[]> {
+  const stale  = new Date(now.getTime() - SENDING_STALE_MS);
+  const oldest = new Date(now.getTime() - windowMinutes * 60_000);
+  await prisma.novaProactiveMessage.updateMany({
+    where: { eventType: EVENT_REMINDER, status: "sending", sentAt: { lt: stale } },
+    data:  { status: "unknown", lastError: "process ended during send" },
+  });
+  await prisma.novaProactiveMessage.updateMany({
+    where: { eventType: EVENT_REMINDER, status: { in: ["claimed", "ready", "failed"] }, firedAt: { lt: oldest } },
+    data:  { status: "abandoned", lastError: "retry window passed" },
+  });
+  const rows = await prisma.novaProactiveMessage.findMany({
+    where: {
+      eventType: EVENT_REMINDER, firedAt: { gte: oldest },
+      OR: [{ status: { in: ["ready", "failed"] } }, { status: "claimed", firedAt: { lt: stale } }],
+    },
+    orderBy: { firedAt: "asc" },
+    take:    200,
+    select:  SELECT,
+  });
+  return rows.map(toRow);
+}
+
+// Where each of these reminder occurrences stands, for the calendar page.
+// Keys with no row have not been claimed.
+export async function reminderStatuses(profileId: string, keys: string[]): Promise<Map<string, string>> {
+  if (keys.length === 0) return new Map();
+  const rows = await prisma.novaProactiveMessage.findMany({
+    where:  { profileId, eventType: EVENT_REMINDER, occurrenceKey: { in: keys } },
+    select: { occurrenceKey: true, status: true },
+  });
+  return new Map(rows.map(r => [r.occurrenceKey ?? "", r.status ?? ""]));
 }
 
 // Rows from before the outbox recorded every tick's decision, sent or not.

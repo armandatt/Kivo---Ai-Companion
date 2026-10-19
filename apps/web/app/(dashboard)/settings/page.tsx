@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
 import { CheckinSettings } from '@/components/nova/checkin-settings'
+import { HelpPreferences } from '@/components/nova/help-preferences'
 import { TelegramSettings } from '@/components/nova/telegram-connect'
 import { DeleteAccountSection } from '@/components/settings/delete-account-section'
 import { ThemePicker } from '@/components/theme/kivo-theme'
@@ -54,6 +55,13 @@ export default function SettingsPage() {
             </span>
             <ArrowRight className="size-4 shrink-0 text-foreground/45" />
           </Link>
+        </>
+      )}
+
+      {companion === 'Nova' && (
+        <>
+          <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">How Nova helps you</p>
+          <div className="mt-3"><HelpPreferences /></div>
         </>
       )}
 

@@ -87,3 +87,38 @@ export function localMinute(date: Date, timezone: string): number {
   const minute = new Intl.DateTimeFormat("en-GB", { timeZone: timezone, minute: "2-digit" }).format(date);
   return Number(minute) % 60;
 }
+
+// How far a zone's clock is from UTC at an instant, in milliseconds.
+function zoneOffsetMs(at: number, timezone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone, hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+  }).formatToParts(new Date(at));
+  const part = (type: string) => Number(parts.find(p => p.type === type)?.value ?? 0);
+  const asUtc = Date.UTC(part("year"), part("month") - 1, part("day"), part("hour") % 24, part("minute"), part("second"));
+  return asUtc - (at - (((at % 1000) + 1000) % 1000));
+}
+
+// The instant a wall-clock time on a calendar day names in a zone: "14:30 on
+// 2026-11-03 in Asia/Kolkata". The zone's offset is asked on both sides of
+// the answer, so a day on which the clocks change still gets its own. A time
+// that happens twice (the hour repeated in autumn) is the first; a time the
+// clocks skip (the hour lost in spring) is read with the offset from before
+// the change, which lands it after the gap, as a wall clock would show it.
+export function zonedInstant(day: string, minuteOfDay: number, timezone: string): Date {
+  const [y, m, d] = day.split("-").map(Number) as [number, number, number];
+  const wall = Date.UTC(y, m - 1, d, Math.floor(minuteOfDay / 60), minuteOfDay % 60);
+  const before = wall - zoneOffsetMs(wall - 86_400_000, timezone);
+  const after  = wall - zoneOffsetMs(wall + 86_400_000, timezone);
+  const shows = (at: number) => at + zoneOffsetMs(at, timezone) === wall;
+  if (shows(before) && shows(after)) return new Date(Math.min(before, after));
+  if (shows(before)) return new Date(before);
+  if (shows(after)) return new Date(after);
+  return new Date(Math.max(before, after));
+}
+
+// "HH:MM" of an instant, in a timezone.
+export function clockTime(date: Date, timezone: string): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(localHour(date, timezone))}:${pad(localMinute(date, timezone))}`;
+}

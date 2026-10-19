@@ -1,9 +1,10 @@
 // ─── Study setup: the contract between Nova and the setup page ────────────────
 // What the page sends, what the server says saving it would do, and what is
-// on record. This file imports types only, from another file with no imports,
+// on record. This file imports types only, from files with no imports,
 // so the web app can import it directly. The rules live in setup.ts.
 
 import type { LearningContext } from "./learning-context";
+import type { FirstFocus } from "./first-focus";
 
 export type SetupStudyTime = "morning" | "afternoon" | "evening" | "night";
 export type SetupGapName = "subjects" | "topics" | "exams" | "daily_minutes" | "study_time";
@@ -32,6 +33,9 @@ export interface SetupView {
   learningContexts: LearningContext[];
   // The starting points to offer, most fitting first.
   templateIds:  string[];
+  // What they asked Nova to help with first (onboarding), when said. Only the
+  // page's own view carries it; it orders templateIds and picks one first step.
+  firstFocus?:  FirstFocus | null;
 }
 
 export interface SetupChanges {

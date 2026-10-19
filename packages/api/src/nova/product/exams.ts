@@ -21,7 +21,7 @@ import { prisma } from "@repo/db/client";
 import { learnerKey } from "./learner-key";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
 import { isIsoDay } from "../brains/understanding-parser";
-import { calendarDaysUntil } from "../engines/learner-calendar";
+import { calendarDaysUntil, dateDayKey } from "../engines/learner-calendar";
 import { subjectsNamedIn } from "../engines/topic-mastery-engine";
 import { EXAM_TITLE_MAX, type ExamChangeError, type NovaExamItem } from "./exams.types";
 import { deadlineType, parseDeadlineType, type DeadlineType } from "./deadline-types";
@@ -138,6 +138,27 @@ async function examsOf(profile: { id: string; timezone: string | null }, now: Da
     .map(e => ({ id: e.id, title: e.title, type: deadlineType(e.examType), subjectName: e.subject?.name ?? null, date: isoDayOf(e.scheduledAt),
       daysUntil: calendarDaysUntil(e.scheduledAt, now, profile.timezone) }))
     .filter(e => e.date >= today);
+}
+
+// The learner's dated deadlines whose day falls from..to (YYYY-MM-DD,
+// inclusive), past ones too, for the calendar. By profile: the caller has
+// already resolved the learner. A stored date is a day (dateDayKey).
+export async function listDeadlinesBetween(
+  profile: { id: string; timezone: string | null },
+  range:   { from: string; to: string },
+): Promise<Array<{ id: string; title: string; type: DeadlineType; subjectName: string | null; date: string }>> {
+  // A day of slack on either side: a stored instant is read in the learner's
+  // zone, which can put it on the neighbouring UTC day.
+  const first = Date.parse(`${range.from}T00:00:00.000Z`) - DAY_MS;
+  const last  = Date.parse(`${range.to}T23:59:59.999Z`) + DAY_MS;
+  const rows = await prisma.novaExam.findMany({
+    where:   { profileId: profile.id, scheduledAt: { gte: new Date(first), lte: new Date(last) } },
+    orderBy: { scheduledAt: "asc" },
+    select:  { id: true, title: true, examType: true, scheduledAt: true, subject: { select: { name: true } } },
+  });
+  return rows
+    .map(e => ({ id: e.id, title: e.title, type: deadlineType(e.examType), subjectName: e.subject?.name ?? null, date: dateDayKey(e.scheduledAt, profile.timezone) }))
+    .filter(e => e.date >= range.from && e.date <= range.to);
 }
 
 // The learner's exams from today on, soonest first. null: no Nova profile yet.

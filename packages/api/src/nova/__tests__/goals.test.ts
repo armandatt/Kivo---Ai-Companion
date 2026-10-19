@@ -443,7 +443,12 @@ describe("goals have one owner", () => {
   });
 
   it("the sign-up answer is read by goals.ts and nothing else in Nova", () => {
-    expect(sources(NOVA).filter(f => f.src.includes("primaryGoal30d")).map(f => f.file)).toEqual(["product/goals.ts"]);
+    // onboarding-completion.ts is web onboarding's writer of the answer, the
+    // only other file that names it; it reads nothing back.
+    expect(sources(NOVA).filter(f => f.src.includes("primaryGoal30d")).map(f => f.file)).toEqual(["product/goals.ts", "product/onboarding-completion.ts"]);
+    const writer = sources(NOVA).find(f => f.file === "product/onboarding-completion.ts")!.src;
+    expect(writer).toContain("primaryGoal30d:      goal,");
+    expect(writer.split("primaryGoal30d").length - 1).toBe(1);
   });
 
   it("the orchestrator and the context builder hold no stand-in identity", () => {

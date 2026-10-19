@@ -24,7 +24,8 @@ import { STUDY_TIMES, type SetupStatement, type StudyTime } from "../types/under
 import { addExam, EXAM_HORIZON_DAYS } from "./exams";
 import { seedGoalFromSignup } from "./goals";
 import { learnerKey } from "./learner-key";
-import { ensureLearnerTimezone, loadLearningContexts } from "../adapters/account-preferences-adapter";
+import { ensureLearnerTimezone, loadFirstFocus, loadLearningContexts } from "../adapters/account-preferences-adapter";
+import { audienceOf, focusTemplateIds } from "./first-focus";
 import { setupVocabulary, type LearningContext } from "./learning-context";
 import { templatesFor } from "./templates";
 import { DEADLINE_RULES, parseDeadlineType } from "./deadline-types";
@@ -163,7 +164,12 @@ async function viewOf(learner: Learner, now: Date, learningContexts: LearningCon
 // null: nobody behind this key.
 export async function loadSetup(platformChatId: string, now = new Date()): Promise<SetupView | null> {
   const learner = await loadLearner(platformChatId);
-  return learner ? viewOf(learner, now, await loadLearningContexts(platformChatId)) : null;
+  if (!learner) return null;
+  const [learningContexts, firstFocus] = await Promise.all([loadLearningContexts(platformChatId), loadFirstFocus(platformChatId)]);
+  const view = await viewOf(learner, now, learningContexts);
+  // What they asked for first leads the templates; the rest keep their order.
+  const preferred = focusTemplateIds(firstFocus, audienceOf(learningContexts));
+  return { ...view, firstFocus, templateIds: templatesFor(learningContexts, preferred).map(t => t.id) };
 }
 
 export async function loadSetupFacts(platformChatId: string, now = new Date()): Promise<SetupFacts | null> {

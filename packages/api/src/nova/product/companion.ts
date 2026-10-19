@@ -29,6 +29,7 @@ export function companionOf(account: {
 export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
   { path: "/home",    label: "Today" },
   { path: "/planner", label: "Planner" },
+  { path: "/calendar", label: "Calendar" },
   { path: "/focus",   label: "Focus" },
   { path: "/knowledge", label: "Knowledge" },
   { path: "/map",     label: "Knowledge Map" },

@@ -10,6 +10,7 @@ import {
 } from "../product/learning-context";
 import { nextSetupQuestion, setupGaps, type SetupFacts } from "../interaction/initialization";
 import { STUDY_TEMPLATES, templatesFor } from "../product/templates";
+import { AUDIENCES } from "../product/first-focus";
 import { learningContextsIn, LEARNING_CONTEXTS_KEY } from "../adapters/account-preferences-adapter";
 import { buildDynamicLayer } from "../context/context-builder";
 import type { NovaContext } from "../types/context.types";
@@ -244,14 +245,13 @@ describe("Nova's context", () => {
 // ── Where it is kept, asked and changed (read from source) ────────────────────
 
 describe("asked once, kept in one place, changed in Settings", () => {
-  it("the quiz asks it after the goal, lets more than one be picked, and it can be skipped", () => {
-    const quiz = repo("apps/web/components/PersonalityQuiz.tsx");
-    expect(quiz.indexOf("'What are you working toward right now?'")).toBeLessThan(quiz.indexOf("'What are you learning for?'"));
-    expect(quiz).toContain("type: 'contexts',");
-    expect(quiz).toContain("LEARNING_CONTEXTS.map((context) =>");
-    expect(quiz).toContain("aria-pressed={selected}");
-    // Only the two answer-by-tapping kinds hide "skip this one".
-    expect(quiz).toContain("{question.type !== 'cards' && question.type !== 'likert' && (");
+  it("the quiz asks who they are first, as one answer, and keeps it as their learning context", () => {
+    const quiz = repo("apps/web/components/onboarding-flow.tsx");
+    expect(quiz.indexOf("{ id: 'audience',")).toBeLessThan(quiz.indexOf("{ id: 'focus',"));
+    expect(quiz).toContain('legend="What best describes you right now?"');
+    // Each audience is a learning context, so every reader of contexts reads it.
+    for (const a of AUDIENCES) expect([a, (LEARNING_CONTEXTS as readonly string[]).includes(a)]).toEqual([a, true]);
+    expect(repo("packages/api/src/nova/product/onboarding-completion.ts")).toContain("learningContexts: [answers.audience],");
   });
 
   it("onboarding keeps only a list of known contexts, beside the other answers", () => {
@@ -264,7 +264,8 @@ describe("asked once, kept in one place, changed in Settings", () => {
   it("Settings changes it without touching the other answers, and refuses anything else", () => {
     const route = repo("apps/api/settings/route.ts");
     expect(route).toContain('if (contexts === null) return NextResponse.json({ error: "Unknown learning context" }, { status: 400 })');
-    expect(route).toContain("profileUpdates.onboardingAnswers = { ...answers, [LEARNING_CONTEXTS_KEY]: contexts }");
+    expect(route).toContain("answerUpdates[LEARNING_CONTEXTS_KEY] = contexts");
+    expect(route).toContain("profileUpdates.onboardingAnswers = { ...answers, ...answerUpdates }");
   });
 
   it("Nova reads it only through the account preferences adapter", () => {
@@ -280,7 +281,7 @@ describe("asked once, kept in one place, changed in Settings", () => {
   it("the setup page takes its words and its template order from the same module, and saves a change at once", () => {
     const form = repo("apps/web/components/nova/setup-form.tsx");
     expect(form).toContain("const words     = setupVocabulary(contexts)");
-    expect(form).toContain("const templates = templatesFor(contexts)");
+    expect(form).toContain("const templates = templatesFor(contexts, focusTemplateIds(firstFocus, audienceOf(contexts)))");
     expect(form).toContain("body: JSON.stringify({ learningContexts: next })");
     for (const fixed of ["Paste your syllabus if you have it", "Add an exam date", "Your subjects, and what each covers", "Subject, e.g. Operating Systems"]) {
       expect([fixed, form.includes(fixed)]).toEqual([fixed, false]);

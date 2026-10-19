@@ -299,9 +299,9 @@ describe("what Nova tells the learner about their check-in", () => {
     expect(settingsReply({ ...state, timezone: null, checkinTime: "11:00" }, now).text).toContain("Timezone: not set, so I won't message first.");
   });
   it("the onboarding screen no longer promises a message it cannot be sure of", () => {
-    const screen = repo("apps/web/components/PostQuizSequence.tsx");
-    expect(screen).not.toMatch(/Meet \{data\.creatureName\} tomorrow at/);
-    expect(screen).toContain("once you connect Telegram");
+    const screen = repo("apps/web/components/onboarding-flow.tsx");
+    expect(screen).not.toMatch(/tomorrow at/);
+    expect(screen).toContain("Connect Telegram from Today when you want reminders and check-ins there.");
   });
 });
 
