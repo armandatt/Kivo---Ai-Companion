@@ -226,6 +226,17 @@ describe("the onboarding page and route (read from source)", () => {
     expect(flow).toContain("What would you like to call your companion?");
   });
 
+  it("reveals Nova before the naming step, and shows the chosen name while the answers save", () => {
+    expect(flow).toContain("if (STEPS[at + 1]?.id === 'name') { setScene('reveal'); return; }");
+    expect(flow).toContain('>NOVA</h1>');
+    const finish = flow.slice(flow.indexOf("async function finish()"), flow.indexOf("function next("));
+    expect(finish.indexOf("setScene('naming')")).toBeLessThan(finish.indexOf("await fetch('/api/onboarding'"));
+    expect(finish.indexOf("await moment;")).toBeLessThan(finish.indexOf("setDone(true)"));
+    // A failed save leaves the moment and shows why, with the answers kept.
+    expect(finish).toContain("setScene(null);");
+    expect(flow).toContain("prefers-reduced-motion: reduce");
+  });
+
   it("asks nothing cosmetic: no creature, colour, egg or aspiration words", () => {
     for (const gone of ["creatureColor", "creatureType", "COLORS", "Phoenix", "egg", "aspirationWords", "energyPattern", "corePain"]) {
       expect([gone, flow.includes(gone)]).toEqual([gone, false]);

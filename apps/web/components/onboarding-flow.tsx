@@ -38,6 +38,24 @@ const EMPTY: Draft = { audience: null, focus: null, detail: '', accountabilitySt
 // cleared when the tab closes and as soon as the answers are saved.
 const DRAFT_KEY = 'kivo-onboarding-draft-v2';
 
+// The reveal and the naming moment, as they were before onboarding v2:
+// the name fades in large and spaced, the line under it a beat later, the
+// button once both have landed; a chosen name holds the screen for a moment.
+const NOVA_TAGLINE = 'Steady. Structured. Always here.';
+const REVEAL_BUTTON_MS = 2000;
+const NAMING_MS = 1500;
+const SCENE_CSS = `
+@keyframes kivo-scene-fade { from { opacity: 0; } to { opacity: 1; } }
+.kivo-reveal-name { animation: kivo-scene-fade 0.8s ease-out; font-size: clamp(4rem, 12vw, 8rem); line-height: 1; }
+.kivo-reveal-desc { animation: kivo-scene-fade 1.2s ease-out 0.3s both; }
+.kivo-reveal-button { animation: kivo-scene-fade 0.6s ease-out both; }
+.kivo-naming { animation: kivo-scene-fade 0.6s ease-out; font-size: clamp(3rem, 10vw, 7rem); line-height: 1.05; }
+`;
+
+function prefersLessMotion(): boolean {
+  try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
+}
+
 type StepId = 'audience' | 'focus' | 'accountability' | StyleDimension | 'name';
 const STEPS: ReadonlyArray<{ id: StepId; part: string }> = [
   { id: 'audience',       part: 'About you' },
@@ -115,7 +133,12 @@ function OnboardingFlowContent() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  // The two moments between questions: Nova is revealed before the naming
+  // step, and the chosen name is shown while the answers are saved.
+  const [scene, setScene] = useState<'reveal' | 'naming' | null>(null);
+  const [revealReady, setRevealReady] = useState(false);
   const headingRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const stored = readDraft();
@@ -128,8 +151,16 @@ function OnboardingFlowContent() {
   }, [draft, at, restored, done]);
   // Each new question is announced: focus moves to it.
   useEffect(() => {
-    if (restored) headingRef.current?.focus();
-  }, [at, restored, done]);
+    if (restored) (scene ? sceneRef : headingRef).current?.focus();
+  }, [at, restored, done, scene]);
+  // The reveal's button arrives after the name has landed, as it always did;
+  // at once for someone who asked their device for less motion.
+  useEffect(() => {
+    if (scene !== 'reveal') return;
+    setRevealReady(false);
+    const timer = setTimeout(() => setRevealReady(true), prefersLessMotion() ? 0 : REVEAL_BUTTON_MS);
+    return () => clearTimeout(timer);
+  }, [scene]);
 
   const step = STEPS[at]!;
   const set = (patch: Partial<Draft>) => { setDraft(d => ({ ...d, ...patch })); setError(null); };
@@ -178,6 +209,10 @@ function OnboardingFlowContent() {
     }
     setSaving(true);
     setError(null);
+    // The name is shown while the answers save: the moment lasts as long as
+    // the save, and at least as long as it always did.
+    setScene('naming');
+    const moment = new Promise(resolve => setTimeout(resolve, prefersLessMotion() ? 400 : NAMING_MS));
     try {
       const res = await fetch('/api/onboarding', {
         method: 'POST',
@@ -191,10 +226,12 @@ function OnboardingFlowContent() {
         return;
       }
       clearDraft();
+      await moment;
       setDone(true);
     } catch {
       setError("Couldn't reach Kivo. Check your connection; your answers are still here.");
     } finally {
+      setScene(null);
       setSaving(false);
     }
   }
@@ -203,7 +240,14 @@ function OnboardingFlowContent() {
     e.preventDefault();
     if (!answered || saving) return;
     if (at === STEPS.length - 1) { void finish(); return; }
+    // Nova is revealed between the last question about help and the naming.
+    if (STEPS[at + 1]?.id === 'name') { setScene('reveal'); return; }
     setAt(at + 1);
+  }
+
+  function leaveReveal() {
+    setScene(null);
+    setAt(STEPS.findIndex(s => s.id === 'name'));
   }
 
   const options = firstFocusOptions(draft.audience);
@@ -212,6 +256,33 @@ function OnboardingFlowContent() {
   return (
     <div className="kivo-app min-h-screen bg-background text-foreground">
       <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      <style>{SCENE_CSS}</style>
+
+      {scene === 'reveal' && (
+        <section className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background px-6 text-center" aria-labelledby="nova-reveal">
+          <div ref={sceneRef} tabIndex={-1} className="focus:outline-none">
+            <h1 id="nova-reveal" className="kivo-reveal-name font-black text-foreground" style={{ letterSpacing: '0.1em' }}>NOVA</h1>
+            <p className="kivo-reveal-desc mx-auto mt-6 max-w-md text-lg text-foreground/70">{NOVA_TAGLINE}</p>
+          </div>
+          <div className="mt-12 h-12">
+            {revealReady && (
+              <button type="button" onClick={leaveReveal}
+                className="kivo-reveal-button group inline-flex h-12 items-center gap-2 rounded-full bg-action px-8 font-semibold text-action-foreground transition-[background-color,transform] duration-300 hover:scale-105 hover:bg-action-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+                Name your companion <ArrowRight aria-hidden className="size-5 transition-transform group-hover:translate-x-1" />
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+
+      {scene === 'naming' && (
+        <section className="fixed inset-0 z-50 flex items-center justify-center bg-background px-6 text-center" role="status" aria-live="polite">
+          <div ref={sceneRef} tabIndex={-1} className="focus:outline-none">
+            <h1 className="kivo-naming font-black text-foreground break-words" style={{ letterSpacing: '0.1em' }}>{companion}</h1>
+            <span className="sr-only">Saving your answers…</span>
+          </div>
+        </section>
+      )}
       <div className="mx-auto flex min-h-screen w-full max-w-xl flex-col px-4 pb-10 pt-6 sm:px-6 sm:pt-10">
         <header className="flex items-center justify-between">
           <KivoMark size={24} className="text-foreground/85" />
