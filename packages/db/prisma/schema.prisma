@@ -1309,6 +1309,17 @@ model NovaCalendarEvent {
   // A key the creator gave this event, unique for the learner: a retried
   // create returns the event it made.
   clientKey       String?
+  // Repeats: null (once), "daily", "weekly" or "monthly". The days and times
+  // above are the first occurrence; the others are worked out from them
+  // (product/calendar-rules.ts), never stored one by one. For a repeating
+  // event remindAt is the next occurrence's reminder, moved on by the tick.
+  repeat          String?
+  // Weekly: the weekdays it repeats on, 0 = Sunday … 6 = Saturday.
+  repeatDays      Int[]     @default([])
+  // The last day an occurrence may start on, inclusive. Null: no end.
+  repeatUntil     String?
+  // Occurrences the learner removed, by the day each starts on.
+  skipDays        String[]  @default([])
 
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   task    NovaTask?           @relation(fields: [taskId], references: [id], onDelete: SetNull)

@@ -2,18 +2,18 @@
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import Link from 'next/link'
-import { Bell, BellOff, X } from 'lucide-react'
+import { Bell, BellOff, Repeat, X } from 'lucide-react'
 import {
-  ALL_DAY_REMINDERS, EVENT_CATEGORIES, EVENT_CATEGORY_LABEL, EVENT_DESCRIPTION_MAX, EVENT_TITLE_MAX, TIMED_REMINDERS,
+  ALL_DAY_REMINDERS, EVENT_CATEGORIES, EVENT_CATEGORY_LABEL, EVENT_DESCRIPTION_MAX, EVENT_TITLE_MAX, REPEAT_LABEL, TIMED_REMINDERS,
   type CalendarDeadlineItem, type CalendarEventInput, type CalendarEventItem, type CalendarReminderChannel, type EventCategory,
-  type NovaCalendarReady, type ReminderStatus,
+  type NovaCalendarReady, type ReminderStatus, type RepeatFreq, type RepeatRule,
 } from '@repo/api/nova/product/calendar.types'
 import { DEADLINE_RULES, DEADLINE_TYPES, type DeadlineType } from '@repo/api/nova/product/deadline-types'
 import { EXAMS_HREF } from '@repo/api/nova/product/exams.types'
 import { trappedTabTarget } from '@/components/settings/dialog-focus'
 import { BUTTON_PRIMARY } from '@/components/nova/workspace/ui'
 import { cn } from '@/lib/utils'
-import { dayTitle, timeLabel } from './calendar-grid'
+import { addDays, dayTitle, daysBetween, timeLabel } from './calendar-grid'
 
 const TAB_STOPS = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 export const FIELD = 'h-10 w-full rounded-xl border border-white/10 bg-white/4 px-3 text-sm text-foreground outline-none transition-colors placeholder:text-foreground/35 focus:border-action'
@@ -101,24 +101,52 @@ export function channelNote(channel: CalendarReminderChannel): string {
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
+// Weekdays as the server numbers them (0 = Sunday), shown Monday first.
+const WEEKDAY_CHOICES: ReadonlyArray<{ day: number; short: string; long: string }> = [
+  { day: 1, short: 'M', long: 'Monday' }, { day: 2, short: 'T', long: 'Tuesday' }, { day: 3, short: 'W', long: 'Wednesday' },
+  { day: 4, short: 'T', long: 'Thursday' }, { day: 5, short: 'F', long: 'Friday' }, { day: 6, short: 'S', long: 'Saturday' },
+  { day: 0, short: 'S', long: 'Sunday' },
+]
+const weekdayOfDay = (day: string) => new Date(`${day}T12:00:00Z`).getUTCDay()
+const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}`
+
+// "Every Wednesday", "Every day until 30 November", in words.
+export function repeatSummary(rule: RepeatRule, startDay: string): string {
+  const base = rule.freq === 'daily' ? 'Every day'
+    : rule.freq === 'monthly' ? `Every month on the ${ordinal(Number(startDay.slice(8)))}`
+    : `Every ${(rule.days.length > 0 ? rule.days : [weekdayOfDay(startDay)])
+        .map(d => WEEKDAY_CHOICES.find(c => c.day === d)!).sort((a, b) => WEEKDAY_CHOICES.indexOf(a) - WEEKDAY_CHOICES.indexOf(b))
+        .map(c => c.long).join(', ')}`
+  return rule.until ? `${base} until ${dayTitle(rule.until)}` : base
+}
+
 // Create or edit one event. Nothing is saved until Save; the server checks
 // the whole event and works out the moments and the reminder time.
-export function EventEditor({ event, initial, view, onSave, onDelete, onClose, error }: {
+export function EventEditor({ event, initial, view, onSave, onDelete, onDeleteOccurrence, onClose, error }: {
   event:     CalendarEventItem | null
   initial?:  Partial<CalendarEventInput>
   view:      NovaCalendarReady
   onSave:    (input: CalendarEventInput) => Promise<boolean>
+  // Deletes the event: every occurrence of a repeating one.
   onDelete?: () => Promise<boolean>
+  // Removes only the occurrence that was opened.
+  onDeleteOccurrence?: () => Promise<boolean>
   onClose:   () => void
   error:     string | null
 }) {
+  // A repeating event is edited as its series: from its first day.
+  const seriesStart = event?.repeat ? event.seriesStartDay ?? event.startDay : event?.startDay
+  const seriesEnd = event && seriesStart ? addDays(seriesStart, daysBetween(event.startDay, event.endDay)) : null
   // The next whole hour in the learner's zone, which is the zone the times are given in.
   const nowHour = Number(timeLabel(new Date().toISOString(), event?.timezone ?? view.timezone).slice(0, 2))
   const [title, setTitle] = useState(event?.title ?? initial?.title ?? '')
   const [category, setCategory] = useState<EventCategory>(event?.category ?? initial?.category ?? 'other')
   const [allDay, setAllDay] = useState(event?.allDay ?? initial?.allDay ?? false)
-  const [startDay, setStartDay] = useState(event?.startDay ?? initial?.startDay ?? view.today)
-  const [endDay, setEndDay] = useState(event && event.endDay !== event.startDay ? event.endDay : '')
+  const [startDay, setStartDay] = useState(seriesStart ?? initial?.startDay ?? view.today)
+  const [endDay, setEndDay] = useState(event && seriesEnd && seriesEnd !== seriesStart ? seriesEnd : '')
+  const [repeat, setRepeat] = useState<RepeatFreq | ''>(event?.repeat?.freq ?? '')
+  const [repeatDays, setRepeatDays] = useState<number[]>(event?.repeat?.freq === 'weekly' ? event.repeat.days : [])
+  const [repeatUntil, setRepeatUntil] = useState(event?.repeat?.until ?? '')
   const [startTime, setStartTime] = useState(event?.startTime ?? initial?.startTime ?? `${pad(Math.min(22, nowHour + 1))}:00`)
   const [endTime, setEndTime] = useState(event?.endTime ?? initial?.endTime ?? `${pad(Math.min(23, nowHour + 2))}:00`)
   const [reminder, setReminder] = useState<string>(event?.reminderMinutes != null ? String(event.reminderMinutes) : initial?.reminderMinutes != null ? String(initial.reminderMinutes) : '')
@@ -142,6 +170,11 @@ export function EventEditor({ event, initial, view, onSave, onDelete, onClose, e
       startTime: allDay ? null : startTime, endTime: allDay ? null : (endTime || null),
       timezone, reminderMinutes: reminder === '' ? null : Number(reminder),
       taskId: taskId || null, subjectId: subjectId || null, description: description.trim() || null,
+      repeat: repeat === '' ? null : {
+        freq: repeat,
+        days: repeat === 'weekly' ? (repeatDays.length > 0 ? repeatDays : [weekdayOfDay(startDay)]) : undefined,
+        until: repeatUntil || null,
+      },
     })
     setBusy(false)
     if (ok) onClose()
@@ -154,7 +187,7 @@ export function EventEditor({ event, initial, view, onSave, onDelete, onClose, e
           <label htmlFor="ev-title" className={LABEL}>Title</label>
           <input id="ev-title" data-autofocus value={title} onChange={e => setTitle(e.target.value)} maxLength={EVENT_TITLE_MAX} placeholder="e.g. Physics lab" className={FIELD} required />
         </div>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.45fr)]">
           <div>
             <label htmlFor="ev-kind" className={LABEL}>Kind</label>
             <select id="ev-kind" value={category} onChange={e => setCategory(e.target.value as EventCategory)} className={FIELD}>
@@ -178,11 +211,11 @@ export function EventEditor({ event, initial, view, onSave, onDelete, onClose, e
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label htmlFor="ev-start" className={LABEL}>Starts</label>
-                <input id="ev-start" type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className={FIELD} required />
+                <input id="ev-start" type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className={cn(FIELD, 'px-2.5')} required />
               </div>
               <div>
                 <label htmlFor="ev-end" className={LABEL}>Ends</label>
-                <input id="ev-end" type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className={FIELD} />
+                <input id="ev-end" type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className={cn(FIELD, 'px-2.5')} />
               </div>
             </div>
           )}
@@ -190,12 +223,52 @@ export function EventEditor({ event, initial, view, onSave, onDelete, onClose, e
         {!allDay && <p className="-mt-2 text-xs text-subtle">Times are in {timezone.replace('_', ' ')}.</p>}
 
         <div>
+          <label htmlFor="ev-repeat" className={LABEL}>Repeat</label>
+          <select id="ev-repeat" value={repeat} onChange={e => {
+            const next = e.target.value as RepeatFreq | ''
+            setRepeat(next)
+            if (next === 'weekly' && repeatDays.length === 0) setRepeatDays([weekdayOfDay(startDay)])
+          }} className={FIELD}>
+            <option value="">Does not repeat</option>
+            {(Object.keys(REPEAT_LABEL) as RepeatFreq[]).map(f => <option key={f} value={f}>{REPEAT_LABEL[f]}</option>)}
+          </select>
+          {repeat === 'weekly' && (
+            <div role="group" aria-label="Repeats on" className="mt-2 flex flex-wrap gap-1.5">
+              {WEEKDAY_CHOICES.map(c => {
+                const on = repeatDays.includes(c.day)
+                return (
+                  <button key={c.day} type="button" aria-pressed={on} aria-label={c.long} title={c.long}
+                    onClick={() => setRepeatDays(days => on ? (days.length > 1 ? days.filter(d => d !== c.day) : days) : [...days, c.day])}
+                    className={cn('size-9 rounded-full border text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-ring',
+                      on ? 'border-action bg-action text-action-foreground' : 'border-white/12 text-foreground/70 hover:border-white/30')}>
+                    {c.short}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          {repeat !== '' && (
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div>
+                <label htmlFor="ev-until" className={LABEL}>Until <span className="text-subtle">(optional)</span></label>
+                <input id="ev-until" type="date" value={repeatUntil} min={startDay} onChange={e => setRepeatUntil(e.target.value)} className={FIELD} />
+              </div>
+              <p className="self-end pb-2 text-xs text-foreground/60">
+                <Repeat aria-hidden className="mr-1 inline size-3.5 align-[-2px]" />
+                {repeatSummary({ freq: repeat, days: repeat === 'weekly' ? (repeatDays.length > 0 ? repeatDays : [weekdayOfDay(startDay)]) : [], until: repeatUntil || null }, startDay)}
+              </p>
+            </div>
+          )}
+          {event?.repeat && <p className="mt-1.5 text-xs text-subtle">Changes here apply to every date of this event.</p>}
+        </div>
+
+        <div>
           <label htmlFor="ev-reminder" className={LABEL}>Reminder</label>
           <select id="ev-reminder" value={reminder} onChange={e => setReminder(e.target.value)} className={FIELD}>
             <option value="">No reminder</option>
             {choices.map(c => <option key={c.minutes} value={String(c.minutes)}>{c.label}</option>)}
           </select>
-          {reminder !== '' && <p className={cn('mt-1.5 text-xs', view.reminders.channel === 'telegram' ? 'text-subtle' : 'text-amber-600 dark:text-amber-300')}>{channelNote(view.reminders)}</p>}
+          {reminder !== '' && <p className={cn('mt-1.5 text-xs', view.reminders.channel === 'telegram' ? 'text-subtle' : 'text-amber-600 dark:text-amber-300')}>{channelNote(view.reminders)}{repeat !== '' && view.reminders.channel === 'telegram' ? ' One before each date.' : ''}</p>}
           {event?.reminder && <p className="mt-1.5"><ReminderBadge status={event.reminder.status} /></p>}
         </div>
 
@@ -228,11 +301,20 @@ export function EventEditor({ event, initial, view, onSave, onDelete, onClose, e
 
       <DialogButtons busy={busy} saveLabel={event ? 'Save' : 'Add event'} onClose={onClose} left={event && onDelete ? (
         confirming ? (
-          <span className="flex items-center gap-2 text-sm">
-            <span className="text-foreground/65">Delete this event?</span>
-            <button type="button" onClick={async () => { if (await onDelete()) onClose() }} className="font-medium text-red-500 hover:text-red-400">Delete</button>
-            <button type="button" onClick={() => setConfirming(false)} className="text-foreground/60 hover:text-foreground">Keep</button>
-          </span>
+          event.repeat && onDeleteOccurrence ? (
+            <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <span className="text-foreground/65">Delete:</span>
+              <button type="button" onClick={async () => { if (await onDeleteOccurrence()) onClose() }} className="font-medium text-red-500 hover:text-red-400">Only {dayTitle(event.startDay)}</button>
+              <button type="button" onClick={async () => { if (await onDelete()) onClose() }} className="font-medium text-red-500 hover:text-red-400">Every date</button>
+              <button type="button" onClick={() => setConfirming(false)} className="text-foreground/60 hover:text-foreground">Keep</button>
+            </span>
+          ) : (
+            <span className="flex items-center gap-2 text-sm">
+              <span className="text-foreground/65">Delete this event?</span>
+              <button type="button" onClick={async () => { if (await onDelete()) onClose() }} className="font-medium text-red-500 hover:text-red-400">Delete</button>
+              <button type="button" onClick={() => setConfirming(false)} className="text-foreground/60 hover:text-foreground">Keep</button>
+            </span>
+          )
         ) : (
           <button type="button" onClick={() => setConfirming(true)} className="text-sm text-foreground/55 transition-colors hover:text-red-500">Delete</button>
         )

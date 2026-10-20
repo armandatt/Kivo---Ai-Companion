@@ -268,6 +268,7 @@ export function buildPlannerView(input: PlanningInputs, options: { ahead?: boole
     status:      "ready",
     generatedAt: now.toISOString(),
     planChanges: input.planChanges,
+    focusSubject: input.focusSubject ?? null,
     timezone,
     availableMinutes:   input.availableMinutes,
     preferredStudyTime: input.preferredStudyTime,
@@ -304,11 +305,11 @@ type StudySnapshotSession = PlanningInputs["snapshot"]["studySessions"][number];
 
 export async function loadNovaPlanner(
   platformChatId: string,
-  options: { availableMinutes?: number | null; now?: Date; ahead?: boolean } = {},
+  options: { availableMinutes?: number | null; now?: Date; ahead?: boolean; focusSubject?: string | null } = {},
 ): Promise<NovaPlannerView> {
   // The same call Home makes. The Planning Engine refits the whole day to
-  // the time the student has.
-  const loaded = await loadPlanningInputs(platformChatId, { availableMinutes: options.availableMinutes, now: options.now });
+  // the time the student has, and to the subject chosen for today.
+  const loaded = await loadPlanningInputs(platformChatId, { availableMinutes: options.availableMinutes, now: options.now, focusSubject: options.focusSubject });
   if (loaded.status !== "ready") return { status: loaded.status };
 
   return buildPlannerView(loaded.inputs, { ahead: options.ahead });

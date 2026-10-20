@@ -25,6 +25,8 @@ export type PlanEmptyReason =
   | "no_topics"        // Nova has no topics on record to plan from
   | "too_little_time"  // the time the student has is shorter than any block
   | "recovery"         // recovery mode, and nothing comfortable to revisit
+  | "done_today"       // studied today, and the rest of the day is used or nothing is left
+  | "subject_done"     // the subject chosen for today has nothing left to plan today
   | "nothing_due";     // nothing is due and no exam is close
 
 // No rule raises a day above the learner's own time.
@@ -95,6 +97,19 @@ export interface TodayPlanChangesView {
   ordered: boolean;
 }
 
+// One of the learner's subjects as Today's subject switcher shows it: how far
+// through it they are and where they left off. Counts from the record only.
+export interface TodaySubjectProgress {
+  subjectName:   string;
+  topicsTotal:   number;
+  topicsStarted: number;            // topics with at least one finished session behind them
+  // The topic they studied last in it, and when; null with none.
+  lastTopic:     string | null;
+  lastStudiedAt: string | null;
+  // The first topic not started yet, in the order they were given.
+  nextTopic:     string | null;
+}
+
 export interface NovaTodayReady {
   status:      "ready";
   generatedAt: string;
@@ -105,6 +120,15 @@ export interface NovaTodayReady {
   // What the student said they have today. The whole plan below was fitted
   // to it by the Planning Engine, the same way the Planner's is.
   availableMinutes: number | null;
+
+  // The subject the learner chose to work on today; null: every subject.
+  // Every block below is then that subject's. These three are optional
+  // because the web app ships before the API: an older API sends none.
+  focusSubject?:    string | null;
+  subjectProgress?: TodaySubjectProgress[];
+  // What their counted sessions today covered. The plan below is the rest
+  // of the day: those topics are not planned again today.
+  doneToday?: { minutes: number; topics: Array<{ topicName: string; subjectName: string }> };
 
   recommendation: TodayAction | null;
   // Why there is no recommendation, when there is none.

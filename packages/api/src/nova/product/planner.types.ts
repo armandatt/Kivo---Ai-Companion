@@ -125,6 +125,8 @@ export interface NovaPlannerReady {
   generatedAt: string;
   // What the learner changed about today's plan.
   planChanges?: TodayPlanChangesView;
+  // The subject chosen for today (Today's subject switcher); null: every subject.
+  focusSubject?: string | null;
   timezone:    string;            // the zone the day boundaries were drawn in
   availableMinutes:   number | null;
   preferredStudyTime: string | null;   // "morning" | "afternoon" | "evening", as the student said

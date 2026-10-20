@@ -44,8 +44,11 @@ export function useCalendar(range: { from: string; to: string }) {
     run(send(`/api/nova/calendar/${encodeURIComponent(id)}`, 'PATCH', changes)), [run])
   const remove = useCallback((id: string) =>
     run(send(`/api/nova/calendar/${encodeURIComponent(id)}`, 'DELETE')), [run])
+  // One date of a repeating event, by the day it starts.
+  const removeOccurrence = useCallback((id: string, day: string) =>
+    run(send(`/api/nova/calendar/${encodeURIComponent(id)}?occurrence=${encodeURIComponent(day)}`, 'DELETE')), [run])
 
-  return { view, loading, refreshing, loadError, error, clearError: () => setError(null), create, update, remove, refresh }
+  return { view, loading, refreshing, loadError, error, clearError: () => setError(null), create, update, remove, removeOccurrence, refresh }
 }
 
 // A dated deadline, added through the one writer of deadlines.

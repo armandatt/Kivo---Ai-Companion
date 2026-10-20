@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Circle, Flag, Plus } from 'lucide-react'
+import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Circle, Flag, Plus, Repeat } from 'lucide-react'
 import type {
   CalendarDeadlineItem, CalendarEventInput, CalendarEventItem, CalendarTaskItem, EventCategory, NovaCalendarReady,
 } from '@repo/api/nova/product/calendar.types'
@@ -16,7 +16,7 @@ import {
   CALENDAR_MODES, WEEKDAYS, countOf, dayTitle, daysOf, emptyDay, itemsByDay, periodTitle, placeTimed, rangeFor, shift, shortDay,
   timeLabel, type CalendarMode, type DayItems,
 } from './calendar-grid'
-import { DeadlineDetail, DeadlineEditor, EventEditor, Modal, ReminderBadge, channelNote } from './calendar-dialogs'
+import { DeadlineDetail, DeadlineEditor, EventEditor, Modal, ReminderBadge, channelNote, repeatSummary } from './calendar-dialogs'
 import { addDeadline, useCalendar } from './use-calendar'
 
 // The learner's calendar: their events, their tasks on the day they are due,
@@ -169,7 +169,8 @@ export function NovaCalendar({ initialToday }: { initialToday: string }) {
         <EventEditor event={dialog.event} initial={dialog.initial} view={view} error={cal.error}
           onClose={() => { cal.clearError(); setDialog(null) }}
           onSave={input => dialog.event ? cal.update(dialog.event.id, input) : cal.create(input)}
-          onDelete={dialog.event ? () => cal.remove(dialog.event!.id) : undefined} />
+          onDelete={dialog.event ? () => cal.remove(dialog.event!.id) : undefined}
+          onDeleteOccurrence={dialog.event?.repeat ? () => cal.removeOccurrence(dialog.event!.id, dialog.event!.startDay) : undefined} />
       )}
       {dialog?.kind === 'task' && (
         <TaskEditor task={dialog.task} subjects={tasks.view?.status === 'ready' ? tasks.view.subjects : []} initialDueDay={dialog.day} error={tasks.error}
@@ -233,10 +234,11 @@ function EventChip({ event, timezone, onEvent, compact }: { event: CalendarEvent
   return (
     <button type="button" onClick={e => { e.stopPropagation(); onEvent(event) }}
       className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left text-xs text-foreground/85 transition-colors hover:bg-white/6 focus-visible:outline-2 focus-visible:outline-ring"
-      aria-label={`${EVENT_CATEGORY_LABEL[event.category]}: ${event.title}${time ? ` at ${time}` : ', all day'}`}>
+      aria-label={`${EVENT_CATEGORY_LABEL[event.category]}: ${event.title}${time ? ` at ${time}` : ', all day'}${event.repeat ? ', repeats' : ''}`}>
       <span aria-hidden className={cn('h-3 w-1 shrink-0 rounded-full', CATEGORY_TONE[event.category])} />
       {time && !compact && <span className="shrink-0 tabular-nums text-foreground/55">{time}</span>}
       <span className="truncate">{event.title}</span>
+      {event.repeat && <Repeat aria-hidden className="size-3 shrink-0 text-foreground/45" />}
     </button>
   )
 }
@@ -268,8 +270,8 @@ function DayList({ items, timezone, handlers }: { items: DayItems; timezone: str
   return (
     <div className="space-y-0.5">
       {items.deadlines.map(d => <DeadlineChip key={`d${d.id}`} deadline={d} onDeadline={handlers.onDeadline} />)}
-      {items.allDay.map(e => <EventChip key={`a${e.id}`} event={e} timezone={timezone} onEvent={handlers.onEvent} />)}
-      {items.timed.map(e => <EventChip key={`t${e.id}`} event={e} timezone={timezone} onEvent={handlers.onEvent} />)}
+      {items.allDay.map(e => <EventChip key={`a${e.key ?? e.id}`} event={e} timezone={timezone} onEvent={handlers.onEvent} />)}
+      {items.timed.map(e => <EventChip key={`t${e.key ?? e.id}`} event={e} timezone={timezone} onEvent={handlers.onEvent} />)}
       {items.tasks.map(t => <TaskChip key={`k${t.id}`} task={t} onTask={handlers.onTask} />)}
     </div>
   )
@@ -300,8 +302,8 @@ function MonthView({ view, anchor, byDay, selected, onSelect, onAdd, ...handlers
             const isToday = day === view.today
             const flat = items ? [
               ...items.deadlines.map(d => ({ key: `d${d.id}`, node: <DeadlineChip deadline={d} onDeadline={handlers.onDeadline} /> })),
-              ...items.allDay.map(e => ({ key: `a${e.id}`, node: <EventChip event={e} timezone={view.timezone} onEvent={handlers.onEvent} compact /> })),
-              ...items.timed.map(e => ({ key: `t${e.id}`, node: <EventChip event={e} timezone={view.timezone} onEvent={handlers.onEvent} /> })),
+              ...items.allDay.map(e => ({ key: `a${e.key ?? e.id}`, node: <EventChip event={e} timezone={view.timezone} onEvent={handlers.onEvent} compact /> })),
+              ...items.timed.map(e => ({ key: `t${e.key ?? e.id}`, node: <EventChip event={e} timezone={view.timezone} onEvent={handlers.onEvent} /> })),
               ...items.tasks.map(t => ({ key: `k${t.id}`, node: <TaskChip task={t} onTask={handlers.onTask} /> })),
             ] : []
             return (
@@ -330,7 +332,7 @@ function MonthView({ view, anchor, byDay, selected, onSelect, onAdd, ...handlers
                 {n > 0 && (
                   <div aria-hidden className="mt-1 flex flex-wrap gap-0.5 px-1 sm:hidden">
                     {items!.deadlines.length > 0 && <span className="size-1.5 rounded-full bg-red-500" />}
-                    {[...items!.allDay, ...items!.timed].slice(0, 3).map(e => <span key={e.id} className={cn('size-1.5 rounded-full', CATEGORY_TONE[e.category])} />)}
+                    {[...items!.allDay, ...items!.timed].slice(0, 3).map(e => <span key={e.key ?? e.id} className={cn('size-1.5 rounded-full', CATEGORY_TONE[e.category])} />)}
                     {items!.tasks.length > 0 && <span className="size-1.5 rounded-full bg-foreground/40" />}
                   </div>
                 )}
@@ -367,10 +369,10 @@ function DayDetail({ items, timezone, handlers }: { items: DayItems; timezone: s
         </button></li>
       ))}
       {[...items.allDay, ...items.timed].map(e => (
-        <li key={`e${e.id}`}><button type="button" onClick={() => handlers.onEvent(e)} className={row}>
+        <li key={`e${e.key ?? e.id}`}><button type="button" onClick={() => handlers.onEvent(e)} className={row}>
           <span aria-hidden className={cn('mt-1 h-4 w-1 shrink-0 rounded-full', CATEGORY_TONE[e.category])} />
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-medium text-foreground">{e.title}</span>
+            <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">{e.title}{e.repeat && <span className="inline-flex items-center gap-1 text-xs font-normal text-foreground/55"><Repeat aria-hidden className="size-3" />{repeatSummary(e.repeat, e.seriesStartDay ?? e.startDay)}</span>}</span>
             <span className="block text-xs text-foreground/60">
               {e.allDay || !e.startAt ? 'All day' : `${timeLabel(e.startAt, timezone)}${e.endAt ? `–${timeLabel(e.endAt, timezone)}` : ''}`}
               {' · '}{EVENT_CATEGORY_LABEL[e.category]}{e.task ? ` · for “${e.task.title}”` : ''}{e.subject ? ` · ${e.subject.name}` : ''}
@@ -443,10 +445,10 @@ function WeekView({ view, from, byDay, onAdd, ...handlers }: ItemHandlers & {
                     style={{ top: h * HOUR_PX, height: HOUR_PX }} />
                 ))}
                 {placeTimed((byDay.get(day) ?? emptyDay()).timed, day, view.timezone).map(p => (
-                  <button key={p.event.id} type="button" onClick={() => handlers.onEvent(p.event)}
+                  <button key={p.event.key ?? p.event.id} type="button" onClick={() => handlers.onEvent(p.event)}
                     className="absolute z-10 overflow-hidden rounded-lg border border-white/10 bg-card px-1.5 py-1 text-left text-xs shadow-soft transition-colors hover:border-white/25 focus-visible:outline-2 focus-visible:outline-ring"
                     style={{ top: (p.top / 60) * HOUR_PX, height: Math.max(22, (p.height / 60) * HOUR_PX - 2), left: `calc(${(p.column / p.columns) * 100}% + 2px)`, width: `calc(${100 / p.columns}% - 4px)` }}
-                    aria-label={`${EVENT_CATEGORY_LABEL[p.event.category]}: ${p.event.title} at ${timeLabel(p.event.startAt!, view.timezone)}`}>
+                    aria-label={`${EVENT_CATEGORY_LABEL[p.event.category]}: ${p.event.title} at ${timeLabel(p.event.startAt!, view.timezone)}${p.event.repeat ? ', repeats' : ''}`}>
                     <span aria-hidden className={cn('absolute inset-y-1 left-0.5 w-1 rounded-full', CATEGORY_TONE[p.event.category])} />
                     <span className="block truncate pl-1.5 font-medium text-foreground">{p.event.title}</span>
                     <span className="block truncate pl-1.5 tabular-nums text-foreground/60">{timeLabel(p.event.startAt!, view.timezone)}{p.event.endAt ? `–${timeLabel(p.event.endAt, view.timezone)}` : ''}</span>

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { ArrowRight, ChevronDown, Clock, ListOrdered, Loader2, Target } from 'lucide-react'
+import { ArrowRight, CheckCircle2, ChevronDown, Clock, ListOrdered, Loader2, Target } from 'lucide-react'
 import type { NovaTodayReady, TodayAction } from '@repo/api/nova/product/today.types'
 import { GOALS_HREF } from '@repo/api/nova/product/goals.types'
 import { cn } from '@/lib/utils'
@@ -222,23 +222,40 @@ export function NowBlock({ action, why, record, onStart, starting, error, disabl
 // The day as a strip: each block in order, as wide as its minutes and in its
 // subject's colour, against the day's budget as the server reported it, with
 // what is left of the budget drawn empty. Nothing is estimated.
-export function DayFlow({ blocks, plan, nowFirst, className }: {
+export function DayFlow({ blocks, plan, nowFirst, done, className }: {
   blocks:    TodayAction[]
   plan:      Pick<NovaTodayReady['plan'], 'totalMinutesToday' | 'budgetMinutes' | 'budgetBasis'>
   // The first block is the one to do now.
   nowFirst:  boolean
+  // What today's sessions already covered: drawn first, as done.
+  done?:     NovaTodayReady['doneToday']
   className?: string
 }) {
-  if (plan.budgetMinutes <= 0 || blocks.length === 0) return null
+  const doneMinutes = done?.minutes ?? 0
+  if (plan.budgetMinutes <= 0 || (blocks.length === 0 && doneMinutes === 0)) return null
   const planned = blocks.reduce((sum, b) => sum + b.durationMinutes, 0)
-  const spare   = Math.max(0, plan.budgetMinutes - planned)
+  // A stated time is for what is left, so the done part sits outside it.
+  const counted = plan.budgetBasis === 'stated_time' ? 0 : doneMinutes
+  const spare   = Math.max(0, plan.budgetMinutes - planned - counted)
+  const doneNames = (done?.topics ?? []).map(t => t.topicName).join(', ')
   return (
     <div className={className} data-section="plan-budget">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-xs">
         <span className="font-semibold text-foreground/75">Today&apos;s flow</span>
-        <span className="text-foreground/55">{minutesLabel(plan.totalMinutesToday)} planned of {minutesLabel(plan.budgetMinutes)}, {BASIS_LABEL[plan.budgetBasis]}</span>
+        <span className="text-foreground/55">
+          {doneMinutes > 0 && <>{minutesLabel(doneMinutes)} done · </>}
+          {minutesLabel(plan.totalMinutesToday)} {doneMinutes > 0 ? 'left' : 'planned'} of {minutesLabel(plan.budgetMinutes)}, {BASIS_LABEL[plan.budgetBasis]}
+        </span>
       </div>
       <ol aria-label="Today's blocks in order" className="mt-2 flex h-12 gap-1">
+        {doneMinutes > 0 && (
+          <li title={`Done today: ${doneNames || 'study'} · ${minutesLabel(doneMinutes)}`} data-done
+            className="relative min-w-10 overflow-hidden rounded-lg border border-action/40 bg-action-soft text-action-ink"
+            style={{ flexGrow: doneMinutes, flexBasis: 0 }}>
+            <span className="flex items-center gap-1 truncate px-2 pt-1.5 text-[11px] font-semibold leading-tight"><CheckCircle2 aria-hidden className="size-3 shrink-0" />{doneNames || 'Done'}</span>
+            <span className="block truncate px-2 text-[10px] font-medium leading-tight opacity-75">Done · {minutesLabel(doneMinutes)}</span>
+          </li>
+        )}
         {blocks.map((b, i) => {
           const lead = i === 0 && nowFirst
           return (

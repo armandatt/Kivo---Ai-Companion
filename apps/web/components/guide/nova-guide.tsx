@@ -165,9 +165,9 @@ type Topic = { id: string; label: string; icon: typeof Home; group: string; keyw
 const TOPICS: Topic[] = [
   { id: 'start',     label: 'Getting started',  icon: Rocket,      group: 'Basics',       keywords: 'setup quiz onboarding subjects exams first day account' },
   { id: 'loop',      label: 'The daily loop',   icon: Sparkles,    group: 'Basics',       keywords: 'how it works plan focus outcome progress' },
-  { id: 'today',     label: 'Today',            icon: Home,        group: 'Plan',         keywords: 'home next up plan time available choose another tasks deadlines week goals search new' },
+  { id: 'today',     label: 'Today',            icon: Home,        group: 'Plan',         keywords: 'home next up plan time available choose another subject focus done today tasks deadlines week goals search new' },
   { id: 'planner',   label: 'Planner & tasks',  icon: Calendar,    group: 'Plan',         keywords: 'days ahead board kanban tasks skip plan change recovery missed days' },
-  { id: 'calendar',  label: 'Calendar',         icon: CalendarDays, group: 'Plan',        keywords: 'events classes meetings month week agenda reminders deadlines dates schedule' },
+  { id: 'calendar',  label: 'Calendar',         icon: CalendarDays, group: 'Plan',        keywords: 'events classes meetings month week agenda reminders deadlines dates schedule repeat recurring weekly daily monthly' },
   { id: 'focus',     label: 'Focus room',       icon: Timer,       group: 'Plan',         keywords: 'session timer pomodoro pause end scenes sound music rain lofi spotify youtube fullscreen' },
   { id: 'knowledge', label: 'Knowledge',        icon: BookOpen,    group: 'Knowledge',    keywords: 'subjects topics level review due board subject studio archive' },
   { id: 'map',       label: 'Knowledge Map',    icon: Waypoints,   group: 'Knowledge',    keywords: 'graph links pan zoom filter layout drag' },
@@ -388,7 +388,10 @@ export function NovaGuide() {
                 The one block to do now, with its subject, length and why Nova chose it (open Why this?). Start runs a session of that length on that topic. While a session runs, the card shows it instead, with a way back to Focus.
               </Feature>
               <Feature title="Today's flow and your time">
-                The day as a strip of blocks, each as long as its minutes, against your daily budget. Tell Nova how long you have (20 minutes to an hour and a half) and the plan is refitted on the server to that time.
+                The day as a strip of blocks, each as long as its minutes, against your daily budget. What you finished today comes first, marked done: the plan is the rest of the day, so a topic you just studied is not handed back and the next block moves up. Tell Nova how long you have (20 minutes to an hour and a half) and the plan is refitted on the server to that time.
+              </Feature>
+              <Feature title="Which subject today">
+                Pick a subject under the greeting and the whole day is planned for it alone, carrying on from where you left off in it: each card shows how many of its topics you have started and the last one you studied. All subjects goes back to Nova&apos;s pick across everything. The choice holds for the rest of the day, here and on the Planner.
               </Feature>
               <Feature title="Then, and Choose another">
                 The rest of the plan in order, each with Start instead. Choose another offers other topics that fit right now, without changing the plan.
@@ -438,6 +441,9 @@ export function NovaGuide() {
               </Feature>
               <Feature title="Reminders">
                 Choose a reminder on an event and Nova sends it on Telegram at that time, once. Moving or deleting the event moves or cancels it. Without Telegram connected a reminder is saved but not sent, and the calendar says so.
+              </Feature>
+              <Feature title="Repeating events">
+                Set an event to repeat every day, every week on the days you pick (a contest every Wednesday at 8 pm), or every month, with an optional last date. Its reminder goes out before each date. Changing it changes every date; deleting asks whether to remove only that date or every date.
               </Feature>
             </Grid>
           </Section>

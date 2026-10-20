@@ -11,8 +11,8 @@
 import { clockTime, currentZoneName, dayKey, dayNumber, dayKeyOfNumber, isValidTimezone, zonedInstant } from "../engines/learner-calendar";
 import {
   ALL_DAY_REMINDERS, ALL_DAY_REMINDER_HOUR, EVENT_CATEGORIES, EVENT_DESCRIPTION_MAX, EVENT_KEY_MAX, EVENT_SPAN_MAX_DAYS,
-  EVENT_TITLE_MAX, EVENT_CATEGORY_LABEL, TIMED_REMINDERS,
-  type CalendarError, type CalendarEventInput, type EventCategory,
+  EVENT_TITLE_MAX, EVENT_CATEGORY_LABEL, REPEAT_FREQS, TIMED_REMINDERS,
+  type CalendarError, type CalendarEventInput, type EventCategory, type RepeatFreq, type RepeatRule,
 } from "./calendar.types";
 
 const DIGITS = "0123456789";
@@ -55,6 +55,9 @@ export interface EventFields {
   reminderMinutes: number | null;
   taskId:          string | null;
   subjectId:       string | null;
+  // How it repeats (null: once), and the occurrences the learner removed.
+  repeat:          RepeatRule | null;
+  skipDays:        string[];
 }
 
 // The same event as the page edits it: wall-clock times in its own zone.
@@ -71,6 +74,9 @@ export interface EventDraft {
   reminderMinutes: number | null;
   taskId:          string | null;
   subjectId:       string | null;
+  repeat:          RepeatRule | null;
+  // Not edited as such: kept through a change, cleared when it stops repeating.
+  skipDays:        string[];
 }
 
 export function draftOf(fields: EventFields): EventDraft {
@@ -80,6 +86,7 @@ export function draftOf(fields: EventFields): EventDraft {
     startTime: fields.startAt ? clockTime(fields.startAt, fields.timezone) : null,
     endTime:   fields.endAt ? clockTime(fields.endAt, fields.timezone) : null,
     timezone: fields.timezone, reminderMinutes: fields.reminderMinutes, taskId: fields.taskId, subjectId: fields.subjectId,
+    repeat: fields.repeat, skipDays: fields.skipDays,
   };
 }
 
@@ -164,6 +171,38 @@ export function checkEvent(raw: unknown, base: EventDraft | null, defaultZone: s
   const subjectId = pick("subjectId", null);
   if (subjectId !== null && (typeof subjectId !== "string" || !subjectId || subjectId.length > 64)) return fail("bad_subject", "That subject isn't one of yours.");
 
+  // The days it really starts and ends on: a timed event's are where its
+  // moments fall in its zone.
+  const firstDay = startAt ? dayKey(startAt, timezone) : startDay;
+  const lastDay  = startAt ? dayKey(endAt ?? startAt, timezone) : endDay;
+
+  // Repeating: a rule the series can keep without one occurrence running
+  // into the next.
+  const rawRepeat = pick("repeat", null);
+  let repeat: RepeatRule | null = null;
+  if (rawRepeat !== null) {
+    if (typeof rawRepeat !== "object" || Array.isArray(rawRepeat)) return fail("bad_repeat", "Choose how often it repeats.");
+    const rule = rawRepeat as { freq?: unknown; days?: unknown; until?: unknown };
+    if (typeof rule.freq !== "string" || !(REPEAT_FREQS as readonly string[]).includes(rule.freq)) return fail("bad_repeat", "Choose how often it repeats.");
+    const freq = rule.freq as RepeatFreq;
+    let days: number[] = [];
+    if (freq === "weekly") {
+      const given = rule.days === undefined || rule.days === null ? [weekdayOf(firstDay)] : rule.days;
+      if (!Array.isArray(given) || given.length === 0 || given.length > 7 || !given.every(d => Number.isInteger(d) && d >= 0 && d <= 6)) {
+        return fail("bad_repeat", "Choose the days of the week it repeats on.");
+      }
+      days = [...new Set(given as number[])].sort((a, b) => a - b);
+    }
+    const until = rule.until ?? null;
+    if (until !== null && !isCalendarDay(until)) return fail("bad_repeat", "Choose a real day for it to stop repeating.");
+    if (until !== null && until < firstDay) return fail("bad_repeat", "It can't stop repeating before it starts.");
+    const span = dayNumber(lastDay) - dayNumber(firstDay);
+    const gap  = freq === "daily" ? 1 : freq === "monthly" ? 28 : days.length > 1 ? 1 : 7;
+    if (span >= gap) return fail("bad_repeat", freq === "monthly" ? "A monthly event has to be shorter than a month." : "A repeating event has to end before the next one starts.");
+    repeat = { freq, days, until: until as string | null };
+  }
+  const skipDays = repeat ? (base?.skipDays ?? []) : [];
+
   let clientKey: string | null = null;
   if (!base && has("clientKey")) {
     if (typeof input.clientKey !== "string" || !input.clientKey.trim() || input.clientKey.length > EVENT_KEY_MAX) return fail("invalid", "That request can't be told apart from another.");
@@ -174,11 +213,10 @@ export function checkEvent(raw: unknown, base: EventDraft | null, defaultZone: s
     ok: true,
     clientKey,
     fields: {
-      title, description, category: category as EventCategory, allDay, startDay, endDay,
-      // A timed event's days are the ones its moments fall on in its zone.
-      ...(startAt ? { startDay: dayKey(startAt, timezone), endDay: dayKey(endAt ?? startAt, timezone) } : {}),
+      title, description, category: category as EventCategory, allDay, startDay: firstDay, endDay: lastDay,
       startAt, endAt, timezone, reminderMinutes,
       taskId: taskId as string | null, subjectId: subjectId as string | null,
+      repeat, skipDays,
     },
   };
 }
@@ -191,6 +229,112 @@ export function reminderAt(event: Pick<EventFields, "allDay" | "startDay" | "sta
     ? zonedInstant(event.startDay, ALL_DAY_REMINDER_HOUR * 60, event.timezone)
     : event.startAt;
   return new Date(anchor.getTime() - event.reminderMinutes * 60_000);
+}
+
+// ── Repeating events ─────────────────────────────────────────────────────────
+// A repeating event is one row: its first occurrence and a rule. Every other
+// occurrence is worked out here from those, on the learner's calendar in the
+// event's zone, so a weekly 20:00 stays 20:00 across a clock change.
+
+const weekdayOf = (day: string): number => new Date(`${day}T12:00:00Z`).getUTCDay();
+
+export interface Occurrence { startDay: string; endDay: string; startAt: Date | null; endAt: Date | null }
+
+export type Series = Pick<EventFields, "allDay" | "startDay" | "endDay" | "startAt" | "endAt" | "timezone" | "repeat" | "skipDays">;
+
+// Whether the series has an occurrence starting on this day, removed ones included.
+export function startsOn(series: Pick<Series, "startDay" | "repeat">, day: string): boolean {
+  const rule = series.repeat;
+  if (!rule) return day === series.startDay;
+  if (day < series.startDay || (rule.until !== null && day > rule.until)) return false;
+  switch (rule.freq) {
+    case "daily":   return true;
+    case "weekly":  return (rule.days.length > 0 ? rule.days : [weekdayOf(series.startDay)]).includes(weekdayOf(day));
+    case "monthly": return day.slice(8) === series.startDay.slice(8);
+  }
+}
+
+// The occurrence that starts on a day: the first one's days and wall-clock
+// times, moved to that day.
+export function occurrenceOn(series: Series, day: string): Occurrence {
+  if (!series.repeat || day === series.startDay) {
+    return { startDay: series.startDay, endDay: series.endDay, startAt: series.startAt, endAt: series.endAt };
+  }
+  const span = dayNumber(series.endDay) - dayNumber(series.startDay);
+  if (series.allDay || !series.startAt) return { startDay: day, endDay: dayKeyOfNumber(dayNumber(day) + span), startAt: null, endAt: null };
+  const startAt = zonedInstant(day, clockMinute(clockTime(series.startAt, series.timezone)) ?? 0, series.timezone);
+  const endAt = series.endAt
+    ? zonedInstant(dayKeyOfNumber(dayNumber(day) + span), clockMinute(clockTime(series.endAt, series.timezone)) ?? 0, series.timezone)
+    : null;
+  return { startDay: dayKey(startAt, series.timezone), endDay: dayKey(endAt ?? startAt, series.timezone), startAt, endAt };
+}
+
+// Every occurrence that touches the days from..to, in order.
+export function occurrencesBetween(series: Series, from: string, to: string): Occurrence[] {
+  if (!series.repeat) return series.startDay <= to && series.endDay >= from ? [occurrenceOn(series, series.startDay)] : [];
+  const span = dayNumber(series.endDay) - dayNumber(series.startDay);
+  const skipped = new Set(series.skipDays);
+  const first = Math.max(dayNumber(series.startDay), dayNumber(from) - span);
+  const last  = Math.min(dayNumber(to), series.repeat.until !== null ? dayNumber(series.repeat.until) : Number.POSITIVE_INFINITY);
+  const out: Occurrence[] = [];
+  for (let n = first; n <= last; n++) {
+    const day = dayKeyOfNumber(n);
+    if (startsOn(series, day) && !skipped.has(day)) out.push(occurrenceOn(series, day));
+  }
+  return out;
+}
+
+// How far ahead the next reminder is looked for. A monthly series on the
+// 31st has gaps of two months; a year covers any rule with removed dates.
+const LOOKAHEAD_DAYS = 400;
+
+// The first reminder of the series later than `after`, and its occurrence.
+export function nextReminder(
+  series: Series & Pick<EventFields, "reminderMinutes">,
+  after:  Date,
+): { at: Date; occurrence: Occurrence } | null {
+  if (series.reminderMinutes === null) return null;
+  if (!series.repeat) {
+    const at = reminderAt(series);
+    return at && at.getTime() > after.getTime() ? { at, occurrence: occurrenceOn(series, series.startDay) } : null;
+  }
+  const skipped = new Set(series.skipDays);
+  // An occurrence's reminder comes before it starts, so one later than
+  // `after` belongs to an occurrence starting on or after that day.
+  const from = Math.max(dayNumber(series.startDay), dayNumber(dayKey(after, series.timezone)));
+  for (let n = from; n <= from + LOOKAHEAD_DAYS; n++) {
+    const day = dayKeyOfNumber(n);
+    if (series.repeat.until !== null && day > series.repeat.until) return null;
+    if (!startsOn(series, day) || skipped.has(day)) continue;
+    const occurrence = occurrenceOn(series, day);
+    const at = reminderAt({ ...series, ...occurrence });
+    if (at && at.getTime() > after.getTime()) return { at, occurrence };
+  }
+  return null;
+}
+
+// What remindAt is stored as on a write. A one-off event: its reminder. A
+// repeating one: the next occurrence's that is not yet past the grace
+// period, so a reminder due a moment ago still goes out.
+export function remindAtFor(series: Series & Pick<EventFields, "reminderMinutes">, now: Date): Date | null {
+  if (!series.repeat) return reminderAt(series);
+  return nextReminder(series, new Date(now.getTime() - REMINDER_GRACE_MINUTES * 60_000))?.at ?? null;
+}
+
+// The occurrence a reminder moment belongs to, or null when the event (as it
+// is now) has no reminder at that moment: it was moved, its rule changed,
+// the occurrence was removed, or the reminder was turned off.
+export function occurrenceOfReminder(series: Series & Pick<EventFields, "reminderMinutes">, at: Date): Occurrence | null {
+  const found = nextReminder(series, new Date(at.getTime() - 1));
+  return found && found.at.getTime() === at.getTime() ? found.occurrence : null;
+}
+
+// The moment named in a reminder's key ("event:<id>:<ISO>"), or null.
+export function reminderKeyMoment(key: string, eventId: string): Date | null {
+  const prefix = `event:${eventId}:`;
+  if (!key.startsWith(prefix)) return null;
+  const at = new Date(key.slice(prefix.length));
+  return Number.isFinite(at.getTime()) ? at : null;
 }
 
 // The one key an occurrence of a reminder is claimed under. It names the

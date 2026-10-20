@@ -139,6 +139,42 @@ export function countedStudyDays(
     .map(s => dayKey(s.sessionDate, zone));
 }
 
+// What the learner has already done today: the topics of today's counted
+// sessions (in their zone) and those sessions' minutes. The plan for the
+// rest of the day starts from this (PlanOptions.doneToday): a topic done
+// today is not handed back as the next block.
+//
+// A session names its topic as it was recorded: its subject and topic name
+// (a topic's identity), or a topic id when it has one. With no subject on
+// record, a name only one of the learner's topics has is that topic.
+export interface DoneToday { topicIds: string[]; minutes: number }
+
+const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+export function studiedToday(
+  sessions: Array<{ sessionDate: Date; status: string; durationMinutes: number; activityType?: string; topicId: string | null; topicName: string | null; subjectName?: string | null }>,
+  timezone: string | null,
+  now:      Date,
+  topics:   Array<{ topicId: string; topicName: string; subjectName: string }>,
+): DoneToday {
+  const zone  = resolveTimezone(timezone);
+  const today = dayKey(now, zone);
+  const done  = sessions.filter(s => s.status === "completed"
+    && isCountedSession({ activityType: s.activityType ?? "", durationMinutes: s.durationMinutes })
+    && dayKey(s.sessionDate, zone) === today);
+  const topicOf = (s: (typeof done)[number]): string | null => {
+    if (s.topicId) return s.topicId;
+    if (!s.topicName) return null;
+    const named = topics.filter(t => sameName(t.topicName, s.topicName!));
+    const match = s.subjectName ? named.filter(t => sameName(t.subjectName, s.subjectName!)) : named;
+    return match.length === 1 ? match[0]!.topicId : null;
+  };
+  return {
+    topicIds: [...new Set(done.flatMap(s => { const id = topicOf(s); return id ? [id] : []; }))],
+    minutes:  done.reduce((sum, s) => sum + s.durationMinutes, 0),
+  };
+}
+
 // A first day back after a gap: no counted session today and the last one
 // four or more calendar days ago.
 export const isReentryDay = (today: string, studyDays: string[]): boolean => studyGap(today, studyDays).situation === "returning";

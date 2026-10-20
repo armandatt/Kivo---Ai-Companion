@@ -91,7 +91,9 @@ export function decideFirstUse(view: NovaTodayReady, ask: SetupQuestion | null):
     };
   }
 
-  const state = view.emptyReason === "recovery" ? "Today is a recovery day: nothing I'd push on you." : "Nothing is due today and no exam is close.";
+  const state = view.emptyReason === "recovery" ? "Today is a recovery day: nothing I'd push on you."
+    : view.emptyReason === "done_today" ? "You have already studied today, and nothing more is planned."
+    : "Nothing is due today and no exam is close.";
   return {
     kind: "open", block: null,
     facts: [state, ...(examFact ? [examFact] : [])],

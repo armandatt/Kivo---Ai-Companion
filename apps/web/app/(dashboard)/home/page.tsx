@@ -6,6 +6,7 @@ import { RexHome } from '@/components/home/rex-home'
 import { NovaHome } from '@/components/nova/nova-home'
 import { ConnectNova, NovaOnboarding } from '@/components/nova/nova-setup'
 import { useNovaToday } from '@/components/nova/use-nova-today'
+import { useTodayFocus } from '@/components/nova/today-focus'
 
 // The shape of Today while it loads: the header, the plan beside the margin.
 function Loading() {
@@ -36,7 +37,9 @@ function Loading() {
 // (GET /api/nova/today); the page renders that answer.
 export default function HomePage() {
   const [minutes, setMinutes] = useState<number | null>(null)
-  const { view, loading, refreshing, error, refresh } = useNovaToday(minutes)
+  // The subject the learner chose for today, if any: the plan is that subject's.
+  const [subject, setSubject] = useTodayFocus()
+  const { view, loading, refreshing, error, refresh } = useNovaToday(minutes, subject)
 
   if (loading) return <Loading />
 
@@ -61,7 +64,7 @@ export default function HomePage() {
           Showing what loaded last. Reconnecting…
         </p>
       )}
-      <NovaHome view={view} minutes={minutes} onMinutes={setMinutes} refreshing={refreshing} onRefresh={refresh} />
+      <NovaHome view={view} minutes={minutes} onMinutes={setMinutes} subject={subject} onSubject={setSubject} refreshing={refreshing} onRefresh={refresh} />
     </>
   )
 }

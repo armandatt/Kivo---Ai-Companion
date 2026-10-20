@@ -14,6 +14,13 @@
 //     but unsent one is dropped before a retry because the event no longer
 //     carries that moment. A deleted event has nothing left to send.
 //   • A reminder later than REMINDER_GRACE_MINUTES is not sent: it is missed.
+//   • A repeating event's remindAt is its next occurrence's reminder. Once a
+//     tick has dealt with one occurrence (sent, claimed elsewhere, or held
+//     because there is nowhere to send it), remindAt moves on to the next,
+//     guarded on the moment it held, so two ticks move it once. One the
+//     server slept through is moved on as missed. A claimed occurrence stays
+//     sendable on retry while the event, as it now is, still has a reminder
+//     at that moment.
 //
 // Where it goes: the learner's own Telegram chat, the one Nova already talks
 // to them in (MessengerUser.platformChatId, set only by linking an account to
@@ -29,8 +36,11 @@ import { dayKey } from "../engines/learner-calendar";
 import { createTelegramClient } from "../telegram/telegram-client";
 import { markUndeliverable } from "../telegram/channel-store";
 import type { TelegramClient } from "../telegram/telegram.types";
-import { REMINDER_GRACE_MINUTES, reminderBlock, reminderKey, reminderText } from "../product/calendar-rules";
-import type { EventCategory } from "../product/calendar.types";
+import {
+  nextReminder, occurrenceOfReminder, REMINDER_GRACE_MINUTES, reminderBlock, reminderKey, reminderKeyMoment, reminderText,
+  type Occurrence, type Series,
+} from "../product/calendar-rules";
+import { REPEAT_FREQS, type EventCategory, type RepeatFreq } from "../product/calendar.types";
 import {
   beginSend, claimOccurrence, dropStale, dropUnworded, EVENT_REMINDER, markReady, markSendFailed, markSent, recoverReminders, type OutboxRow,
 } from "./proactive-outbox";
@@ -47,6 +57,7 @@ const PRIORITY = 10;
 const EVENT_SELECT = {
   id: true, profileId: true, title: true, category: true, allDay: true, startDay: true, endDay: true,
   startAt: true, endAt: true, timezone: true, remindAt: true,
+  reminderMinutes: true, repeat: true, repeatDays: true, repeatUntil: true, skipDays: true,
   profile: {
     select: {
       user:            { select: { platform: true, platformChatId: true, persona: true } },
@@ -58,11 +69,33 @@ const EVENT_SELECT = {
 type DueEvent = {
   id: string; profileId: string; title: string; category: string; allDay: boolean; startDay: string; endDay: string;
   startAt: Date | null; endAt: Date | null; timezone: string; remindAt: Date | null;
+  reminderMinutes: number | null; repeat: string | null; repeatDays: number[]; repeatUntil: string | null; skipDays: string[];
   profile: {
     user: { platform: string; platformChatId: string; persona: string | null };
     telegramChannel: { undeliverableSince: Date | null } | null;
   };
 };
+
+// The event as the rules read it.
+function seriesOf(event: DueEvent): Series & { reminderMinutes: number | null } {
+  const freq = event.repeat && (REPEAT_FREQS as readonly string[]).includes(event.repeat) ? event.repeat as RepeatFreq : null;
+  return {
+    allDay: event.allDay, startDay: event.startDay, endDay: event.endDay, startAt: event.startAt, endAt: event.endAt,
+    timezone: event.timezone, reminderMinutes: event.reminderMinutes, skipDays: event.skipDays,
+    repeat: freq ? { freq, days: freq === "weekly" ? event.repeatDays : [], until: event.repeatUntil } : null,
+  };
+}
+
+// The reminder text for one occurrence.
+const textFor = (event: DueEvent, occurrence: Occurrence, now: Date) =>
+  reminderText({ ...event, ...occurrence, category: event.category as EventCategory }, now);
+
+// A repeating event's remindAt moves from `from` to the next occurrence's
+// reminder after `after`. Guarded on `from`, so of two ticks one moves it.
+async function moveOn(event: DueEvent, from: Date, after: Date): Promise<void> {
+  const next = nextReminder(seriesOf(event), after);
+  await prisma.novaCalendarEvent.updateMany({ where: { id: event.id, remindAt: from }, data: { remindAt: next?.at ?? null } });
+}
 
 export async function runEventReminders(now = new Date(), deps: { client?: TelegramClient } = {}): Promise<EventRemindersResult> {
   const outcomes: Record<string, number> = {};
@@ -85,6 +118,23 @@ export async function runEventReminders(now = new Date(), deps: { client?: Teleg
     } catch (err) {
       errors++;
       console.error(`[nova:reminders] retry ${row.id} failed:`, err);
+    }
+  }
+
+  // ── Repeating events whose reminder passed unsent (the server slept) ─────
+  const graceStart = new Date(now.getTime() - REMINDER_GRACE_MINUTES * 60_000);
+  const behind = await prisma.novaCalendarEvent.findMany({
+    where:  { repeat: { not: null }, remindAt: { lte: graceStart } },
+    take:   500,
+    select: EVENT_SELECT,
+  }) as DueEvent[];
+  for (const event of behind) {
+    try {
+      await moveOn(event, event.remindAt!, graceStart);
+      count("missed_moved_on");
+    } catch (err) {
+      errors++;
+      console.error(`[nova:reminders] moving on ${event.id} failed:`, err);
     }
   }
 
@@ -115,14 +165,21 @@ export async function runEventReminders(now = new Date(), deps: { client?: Teleg
 }
 
 async function deliverDue(event: DueEvent, now: Date, client: TelegramClient): Promise<string> {
-  const block = reminderBlock(event.profile.user, event.profile.telegramChannel);
-  if (block) return block;
   const at = event.remindAt!;
-  const row = await claimOccurrence(event.profileId, { type: EVENT_REMINDER, occurrenceKey: reminderKey(event.id, at) }, dayKey(now, event.timezone), PRIORITY, now);
-  if (!row) return "already_claimed";
-  const text = reminderText({ ...event, category: event.category as EventCategory }, now);
-  await markReady(row.id, text);
-  return send({ ...row, status: "ready", text }, event.profile.user.platformChatId, now, client);
+  try {
+    const block = reminderBlock(event.profile.user, event.profile.telegramChannel);
+    if (block) return block;
+    const occurrence = occurrenceOfReminder(seriesOf(event), at);
+    if (!occurrence) return "stale";
+    const row = await claimOccurrence(event.profileId, { type: EVENT_REMINDER, occurrenceKey: reminderKey(event.id, at) }, dayKey(now, event.timezone), PRIORITY, now);
+    if (!row) return "already_claimed";
+    const text = textFor(event, occurrence, now);
+    await markReady(row.id, text);
+    return await send({ ...row, status: "ready", text }, event.profile.user.platformChatId, now, client);
+  } finally {
+    // This occurrence is dealt with: a repeating event waits for its next.
+    if (event.repeat) await moveOn(event, at, at);
+  }
 }
 
 // A row a previous tick claimed or failed to send. It goes out only if the
@@ -131,14 +188,17 @@ async function deliverDue(event: DueEvent, now: Date, client: TelegramClient): P
 async function retry(row: OutboxRow, now: Date, client: TelegramClient): Promise<string> {
   const eventId = row.occurrenceKey.split(":")[1] ?? "";
   const event = await prisma.novaCalendarEvent.findFirst({ where: { id: eventId, profileId: row.profileId }, select: EVENT_SELECT }) as DueEvent | null;
-  if (!event || !event.remindAt || reminderKey(event.id, event.remindAt) !== row.occurrenceKey) {
+  const at = reminderKeyMoment(row.occurrenceKey, eventId);
+  // Still true only if the event, as it is now, has a reminder at that moment.
+  const occurrence = event && at ? occurrenceOfReminder(seriesOf(event), at) : null;
+  if (!event || !occurrence) {
     if (row.text) await dropStale(row.id); else await dropUnworded(row.id);
     return "dropped";
   }
   if (reminderBlock(event.profile.user, event.profile.telegramChannel)) return "held";
   let text = row.text;
   if (!text) {
-    text = reminderText({ ...event, category: event.category as EventCategory }, now);
+    text = textFor(event, occurrence, now);
     await markReady(row.id, text);
   }
   return send({ ...row, text }, event.profile.user.platformChatId, now, client);

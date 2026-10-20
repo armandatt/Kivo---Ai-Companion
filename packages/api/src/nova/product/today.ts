@@ -20,7 +20,9 @@ import type {
   TodayAction,
   TodayConstraint,
   TodayDeadline,
+  TodaySubjectProgress,
 } from "./today.types";
+import type { DoneToday } from "../engines/recovery-engine";
 import { sessionElapsedSeconds } from "./session-view";
 
 const DAY_MS = 86_400_000;
@@ -41,7 +43,33 @@ export interface TodayInputs {
   timezone?:        string | null;
   learnerName?:     string | null;
   goals?:           string[];
+  // What today's counted sessions covered, and the subject chosen for today
+  // (planning-inputs.ts). Unset in older fixtures.
+  doneToday?:       DoneToday;
+  focusSubject?:    string | null;
   now:              Date;
+}
+
+const sameName = (a: string | null, b: string | null) => a !== null && b !== null && a.trim().toLowerCase() === b.trim().toLowerCase();
+
+// Each subject, in the order on record, with how far through it the learner
+// is and where they left off. Topics come in the Knowledge Engine's order,
+// which keeps not-started topics in the order they were given.
+export function subjectProgress(subjects: Array<{ name: string }>, topics: TopicMasteryState[]): TodaySubjectProgress[] {
+  return subjects.map(subject => {
+    const own     = topics.filter(t => sameName(t.subjectName, subject.name));
+    const studied = own.filter(t => t.lastStudied !== null)
+      .sort((a, b) => b.lastStudied!.getTime() - a.lastStudied!.getTime());
+    const next    = own.find(t => t.reviewCount === 0 && t.lastStudied === null);
+    return {
+      subjectName:   subject.name,
+      topicsTotal:   own.length,
+      topicsStarted: own.filter(t => t.reviewCount > 0).length,
+      lastTopic:     studied[0]?.topicName ?? null,
+      lastStudiedAt: studied[0]?.lastStudied?.toISOString() ?? null,
+      nextTopic:     next?.topicName ?? null,
+    };
+  });
 }
 
 // The facts behind a block, stated the way a student would want to hear them.
@@ -143,6 +171,16 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
     subjects:         snapshot.subjects.map(s => s.name),
     availableMinutes: input.availableMinutes,
 
+    focusSubject:    input.focusSubject ?? null,
+    subjectProgress: subjectProgress(snapshot.subjects, topics),
+    doneToday: {
+      minutes: input.doneToday?.minutes ?? 0,
+      topics:  (input.doneToday?.topicIds ?? []).flatMap(id => {
+        const t = topics.find(x => x.topicId === id);
+        return t ? [{ topicName: t.topicName, subjectName: t.subjectName }] : [];
+      }),
+    },
+
     recommendation,
     emptyReason,
     alternatives: actions.slice(1, 3),
@@ -209,13 +247,13 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
 
 export async function loadNovaToday(
   platformChatId: string,
-  options: { availableMinutes?: number | null; learnerName?: string | null; now?: Date } = {},
+  options: { availableMinutes?: number | null; learnerName?: string | null; now?: Date; focusSubject?: string | null } = {},
 ): Promise<NovaTodayView> {
   const now = options.now ?? new Date();
 
   // The time the student has goes to the Planning Engine, exactly as it does
   // for the Planner. Home then shows the first blocks of that plan.
-  const loaded = await loadPlanningInputs(platformChatId, { availableMinutes: options.availableMinutes, now });
+  const loaded = await loadPlanningInputs(platformChatId, { availableMinutes: options.availableMinutes, now, focusSubject: options.focusSubject });
   if (loaded.status !== "ready") return { status: loaded.status };
 
   return buildTodayView({

@@ -14,7 +14,7 @@ import { getAllTopicMasteries } from "../engines/knowledge-engine";
 import { selectActiveExam } from "../engines/exam-engine";
 import { preparesTopics, takesOverTheDay } from "./deadline-types";
 import { generateStudyPlan, MIN_BLOCK_MINUTES } from "../engines/planning-engine";
-import { countedStudyDays, studyGap } from "../engines/recovery-engine";
+import { countedStudyDays, studiedToday, studyGap, type DoneToday } from "../engines/recovery-engine";
 import { loadDayOverrides } from "./plan-overrides";
 import type { TodayPlanChanges } from "./plan-overrides.types";
 import { calendarDaysUntil, dayKey, resolveTimezone } from "../engines/learner-calendar";
@@ -60,11 +60,17 @@ export function planMode(state: AcademicState): PlanMode {
 
 // Why a plan has no blocks. One answer for every page.
 export function planEmptyReason(
-  input: Pick<PlanningInputs, "plan" | "topics" | "academicState">,
+  input: Pick<PlanningInputs, "plan" | "topics" | "academicState"> & Partial<Pick<PlanningInputs, "doneToday" | "focusSubject">>,
 ): PlanEmptyReason | null {
   if (input.plan.today.length > 0) return null;
   if (input.topics.length === 0) return "no_topics";
   if (input.plan.budgetBasis === "stated_time" && input.plan.budgetMinutes < MIN_BLOCK_MINUTES) return "too_little_time";
+  // Studied today and nothing more fits; else, on a day given to one
+  // subject, nothing of it is left; else studied today and nothing is left.
+  const done = input.doneToday?.minutes ?? 0;
+  if (done > 0 && input.plan.budgetBasis !== "stated_time" && done + MIN_BLOCK_MINUTES > input.plan.budgetMinutes) return "done_today";
+  if (input.focusSubject) return "subject_done";
+  if (done > 0) return "done_today";
   if (planMode(input.academicState) === "recovery") return "recovery";
   return "nothing_due";
 }
@@ -87,6 +93,20 @@ export interface PlanningInputs {
   daysSinceStudy?: number | null;
   // What the learner changed about today's plan (plan-overrides.ts).
   planChanges?: TodayPlanChanges;
+  // What their counted sessions today covered (recovery-engine studiedToday).
+  // The plan is the rest of the day. Unset in older fixtures.
+  doneToday?: DoneToday;
+  // The subject they chose to work on today, as it is named on record; null
+  // for every subject. Unset in older fixtures.
+  focusSubject?: string | null;
+}
+
+// The subject a request names, as the learner's own subject is named. Anything
+// that is not one of theirs is no focus: the whole plan.
+export function focusSubjectOf(requested: string | null | undefined, subjects: Array<{ name: string }>): string | null {
+  const wanted = typeof requested === "string" ? requested.trim().toLowerCase() : "";
+  if (!wanted || wanted.length > 120) return null;
+  return subjects.find(s => s.name.trim().toLowerCase() === wanted)?.name ?? null;
 }
 
 export type PlanningInputsResult =
@@ -146,6 +166,9 @@ export async function loadPlanningInputs(
     // so every page that passes the same number gets the same plan.
     availableMinutes?: number | null;
     now?:              Date;
+    // The subject the learner chose to work on today (a name; checked here
+    // against their own subjects). Unset or unknown: every subject.
+    focusSubject?:     string | null;
   } = {},
 ): Promise<PlanningInputsResult> {
   const now = options.now ?? new Date();
@@ -212,13 +235,16 @@ export async function loadPlanningInputs(
   // The learner's own changes to today: applied by the engine, inside the
   // day's time.
   const overrides = await loadDayOverrides(snapshot.profileId, dayKey(now, resolveTimezone(profile.timezone)));
+  // What is already done today: the plan is for the rest of it.
+  const doneToday    = studiedToday(snapshot.studySessions, profile.timezone, now, topics);
+  const focusSubject = focusSubjectOf(options.focusSubject, snapshot.subjects);
   const plan = generateStudyPlan(
     academicState, topics, snapshot.preferredStudyHoursPerDay, examContext,
     {
       availableMinutes, now, usualSessionMinutes: usualSessionMinutes(dna?.signals ?? []),
       examCalendarDays: examContext ? calendarDaysUntil(examContext.scheduledAt, now, profile.timezone) : null,
       reentry: gap.situation === "returning",
-      overrides,
+      overrides, doneToday, focusSubject,
     },
   );
   const nameOf = (id: string) => topics.find(t => t.topicId === id)?.topicName ?? null;
@@ -240,7 +266,7 @@ export async function loadPlanningInputs(
       timezone:           profile.timezone,
       preferredStudyTime: profile.preferredStudyTime,
       daysSinceStudy:     gap.daysSinceStudy,
-      planChanges,
+      planChanges, doneToday, focusSubject,
     },
   };
 }

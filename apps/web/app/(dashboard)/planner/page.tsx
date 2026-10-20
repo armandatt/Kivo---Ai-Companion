@@ -5,6 +5,7 @@ import { PageAction, PageFrame, PageLoading, PageNotice, RetryButton } from '@/c
 import { RexPlanner } from '@/components/planner/rex-planner'
 import { NovaPlanner } from '@/components/nova/planner/nova-planner'
 import { useNovaPlanner } from '@/components/nova/use-nova-planner'
+import { useTodayFocus } from '@/components/nova/today-focus'
 
 function Loading() {
   return (
@@ -37,7 +38,9 @@ function Notice({ title, body }: { title: string; body: string }) {
 // account is (GET /api/nova/planner); the page renders that answer.
 export default function PlannerPage() {
   const [minutes, setMinutes] = useState<number | null>(null)
-  const { view, loading, refreshing, error, refresh } = useNovaPlanner(minutes)
+  // The subject chosen on Today, so the two pages show the same plan.
+  const [subject, setSubject] = useTodayFocus()
+  const { view, loading, refreshing, error, refresh } = useNovaPlanner(minutes, subject)
 
   if (loading) return <Loading />
 
@@ -66,7 +69,7 @@ export default function PlannerPage() {
           Showing the plan that loaded last. Reconnecting…
         </p>
       )}
-      <NovaPlanner view={view} minutes={minutes} onMinutes={setMinutes} refreshing={refreshing} onChanged={() => void refresh()} />
+      <NovaPlanner view={view} minutes={minutes} onMinutes={setMinutes} refreshing={refreshing} onChanged={() => void refresh()} onClearFocus={() => setSubject(null)} />
     </>
   )
 }

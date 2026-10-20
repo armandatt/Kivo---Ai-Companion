@@ -13,6 +13,7 @@ import { useFocusContext } from './focus-context'
 import { LinkedToTopic } from './linked-to-topic'
 import { KnowledgeBoard, RecentlyCaptured } from './knowledge-board'
 import { TimeAvailable } from './time-available'
+import { FocusNote, SubjectSwitcher } from './subject-switcher'
 import type { NovaNotesView } from '@repo/api/nova/product/notes.types'
 import type { NovaCreatureView } from '@repo/api/nova/product/creature.types'
 import type { NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
@@ -34,6 +35,9 @@ type Props = {
   view:        NovaTodayReady
   minutes:     number | null
   onMinutes:   (minutes: number | null) => void
+  // The subject chosen for today (null: every subject), and choosing one.
+  subject:     string | null
+  onSubject:   (subject: string | null) => void
   refreshing:  boolean
   onRefresh:   () => void
 }
@@ -64,6 +68,16 @@ const EMPTY: Record<NonNullable<NovaTodayReady['emptyReason']>, { title: string;
     body:  'Nova is keeping today light after a rough stretch, and there is no comfortable topic on file to revisit yet. Rest counts. If you do study, tell Nova what you covered.',
     ask:   'Tell Nova how today went',
   },
+  done_today: {
+    title: 'Today’s study is done',
+    body:  'Your sessions today used the time you usually have, or covered everything due. Nothing more is planned. If you have more time, say how long and Nova plans it.',
+    ask:   null,
+  },
+  subject_done: {
+    title: 'Nothing left in this subject today',
+    body:  'Everything in it was studied today, is solid, or is not due yet. Pick another subject, or go back to all subjects.',
+    ask:   null,
+  },
   nothing_due: {
     title: "You're caught up",
     body:  'Nothing is due for review and no exam is pressing. If you want to start something new, tell Nova what it is.',
@@ -80,7 +94,7 @@ const TASK_SESSION_MINUTES = 25
 // next; the margin holds dates, the week and what they are working toward;
 // everything on record follows. The page lays out what the server returned
 // and decides nothing itself.
-export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Props) {
+export function NovaHome({ view, minutes, onMinutes, subject, onSubject, refreshing, onRefresh }: Props) {
   const { start, starting, error: startError } = useStartSession()
   const board    = useTasks()
   const notes    = useNovaView<NovaNotesView>('/api/nova/notes')
@@ -125,7 +139,15 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
       <TodayHero
         greeting={<>{greeting(new Date())}{name ? <span className="text-foreground/45">, {name}</span> : ''}</>}
         context={context}
-        properties={<PageProperties view={view} tasksDueToday={dueToday} />}
+        properties={<>
+          <PageProperties view={view} tasksDueToday={dueToday} />
+          {/* Which subject today is for. The server plans it; an older API
+              that sends no progress shows no switcher. */}
+          {view.subjectProgress && (
+            <SubjectSwitcher progress={view.subjectProgress} focus={view.focusSubject ?? null} onChoose={onSubject} busy={refreshing && subject !== (view.focusSubject ?? null)} />
+          )}
+          <FocusNote progress={view.subjectProgress?.find(p => p.subjectName === view.focusSubject) ?? null} onClear={() => onSubject(null)} />
+        </>}
         actions={<>
           <div className="min-w-0 flex-1 sm:w-64 sm:flex-none"><CommandButton onOpen={() => setPaletteOpen(true)} /></div>
           <NewMenu onNewTask={() => { composer.current?.scrollIntoView({ block: 'center' }); composer.current?.focus() }} />
@@ -139,7 +161,7 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
           </div>
         ) : null}
       >
-        <DayFlow blocks={dayBlocks} plan={view.plan} nowFirst={!active && rec !== null} />
+        <DayFlow blocks={dayBlocks} plan={view.plan} nowFirst={!active && rec !== null} done={view.doneToday} />
         {/* The plan in the planner's order, after the block to do now (the
             card beside it). With a session running, nothing starts from here. */}
         <TodayPlan
@@ -173,6 +195,12 @@ export function NovaHome({ view, minutes, onMinutes, refreshing, onRefresh }: Pr
                   />
                 )}
                 {empty.ask && <TalkToNova className="mt-5" placeholder={empty.ask} onReplied={onRefresh} />}
+                {view.emptyReason === 'subject_done' && (
+                  <button type="button" onClick={() => onSubject(null)} className="mt-5 inline-flex h-10 items-center rounded-lg bg-action px-4 text-sm font-semibold text-action-foreground hover:bg-action-hover">Back to all subjects</button>
+                )}
+                {view.emptyReason === 'done_today' && (
+                  <div className="mt-5 max-w-sm"><TimeAvailable minutes={minutes} onChange={onMinutes} busy={refreshing} /></div>
+                )}
               </section>
             )}
 

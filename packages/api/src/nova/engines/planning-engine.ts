@@ -73,7 +73,22 @@ export interface PlanOptions {
   // says is left agrees with the "in N days" the pages show. Unset: the
   // exam engine's elapsed-time count.
   examCalendarDays?: number | null;
+  // What the learner has already done today (studiedToday in
+  // recovery-engine.ts). The plan is for the rest of the day: a topic done
+  // today is not planned again, and the minutes done count against the
+  // day's time. Not against a time they stated: "I have 40 minutes" is
+  // said about now.
+  doneToday?: { topicIds: string[]; minutes: number } | null;
+  // The one subject the learner chose to work on today. Only its topics are
+  // planned, continuing from where they left off. An exam in another
+  // subject does not take this day over: the learner asked for this one.
+  focusSubject?: string | null;
 }
+
+const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+// How many not-started topics a focused day may take, in syllabus order.
+export const FOCUS_NEW_TOPICS = 3;
 
 // The longest a block may be for this learner, or null for no limit of
 // their own. Rounded to five minutes, and never under the shortest block.
@@ -224,14 +239,20 @@ export function generateStudyPlan(
   // picked by the rules below; an added one is planned first. Whether an exam
   // takes the day, and what is short before it, count every topic: skipping
   // one today does not remove its work.
-  const skip   = new Set(options.overrides?.skip ?? []);
+  // A topic already done today is not planned again today, and on a focused
+  // day only the chosen subject's topics are.
+  const focus  = options.focusSubject?.trim() ? options.focusSubject.trim() : null;
+  const inFocus = (t: TopicMasteryState) => focus === null || sameName(t.subjectName, focus);
+  const done   = new Set(options.doneToday?.topicIds ?? []);
+  const skip   = new Set([...(options.overrides?.skip ?? []), ...done]);
   const pinned = (options.overrides?.pin ?? []).filter(id => !skip.has(id))
-    .map(id => allTopics.find(t => t.topicId === id)).filter((t): t is TopicMasteryState => t !== undefined);
+    .map(id => allTopics.find(t => t.topicId === id)).filter((t): t is TopicMasteryState => t !== undefined && inFocus(t));
   const taken  = new Set([...skip, ...pinned.map(t => t.topicId)]);
-  const topics = allTopics.filter(t => !taken.has(t.topicId));
+  const topics = allTopics.filter(t => !taken.has(t.topicId) && inFocus(t));
   const examTopicsAll = examContext ? allTopics.filter(t => examCoversSubject(examContext, t.subjectName)) : [];
   const examTopics    = examContext ? topics.filter(t => examCoversSubject(examContext, t.subjectName)) : [];
-  const examTakesDay = !!examContext && state.hardDirectives.examCrisisMode && examTopicsAll.length > 0;
+  const examTakesDay = !!examContext && state.hardDirectives.examCrisisMode && examTopicsAll.length > 0
+    && (focus === null || examCoversSubject(examContext, focus));
   const budget         = options.reentry && fitted.basis === "preferred" && classifyChange({
     kind: "shorten_today", usualMinutes: fitted.minutes, minutes: reentryMinutes(fitted.minutes, MIN_BLOCK_MINUTES),
     statedToday: false, dayTakenByExam: examTakesDay,
@@ -241,7 +262,10 @@ export function generateStudyPlan(
   const budgetMinutes  = budget.minutes;
   const blocks: StudyBlock[] = [];
   const assumptions: string[] = [];
-  let usedMinutes = 0;
+  // Time already studied today is part of the day, unless the learner gave
+  // the time they have now.
+  const doneMinutes = budget.basis === "stated_time" ? 0 : Math.max(0, Math.round(options.doneToday?.minutes ?? 0));
+  let usedMinutes = doneMinutes;
   // Every block length below goes through this: the engine's size for the
   // kind of block, or the learner's own usual session if that is shorter.
   const cap  = sessionCap(options);
@@ -288,8 +312,8 @@ export function generateStudyPlan(
       .filter(t => t.masteryProbability > 0.5)
       .sort((a, b) => b.masteryProbability - a.masteryProbability)[0];
 
-    if (easiestTopic && budgetMinutes >= MIN_BLOCK_MINUTES) {
-      blocks.push(reviewBlock(easiestTopic, Math.min(size(20), budgetMinutes), "optional"));
+    if (easiestTopic && budgetMinutes - usedMinutes >= MIN_BLOCK_MINUTES && doneMinutes === 0) {
+      blocks.push(reviewBlock(easiestTopic, Math.min(size(20), budgetMinutes - usedMinutes), "optional"));
       assumptions.push("Light session — recovery mode active. No new material.");
     }
     return buildPlan(ordered(blocks), budget, assumptions, now, shortfall);
@@ -340,10 +364,12 @@ export function generateStudyPlan(
   //    there is other work, two when there is nothing else: a learner who has
   //    just said what a subject covers gets somewhere to start. In the order
   //    they were given.
+  //    A day given to one subject carries on through its syllabus: up to
+  //    FOCUS_NEW_TOPICS, while there is time.
   const notStarted = topics
     .filter(t => t.reviewCount === 0 && t.lastStudied === null)
     .filter(t => !blocks.some(b => b.topicId === t.topicId))
-    .slice(0, blocks.length === 0 ? 2 : 1);
+    .slice(0, focus !== null ? FOCUS_NEW_TOPICS : blocks.length === 0 ? 2 : 1);
 
   for (const topic of notStarted) {
     if (usedMinutes >= budgetMinutes) break;
@@ -353,7 +379,7 @@ export function generateStudyPlan(
     usedMinutes += mins;
   }
 
-  if (blocks.length === 0) {
+  if (blocks.length === 0 && allTopics.length === 0) {
     assumptions.push("No specific topics loaded yet — plan is incomplete until subjects are added.");
   }
 

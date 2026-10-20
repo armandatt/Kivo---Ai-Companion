@@ -21,6 +21,8 @@ type Props = {
   refreshing: boolean
   // Reads the plan again after the learner changes today.
   onChanged?: () => void
+  // Clears the subject chosen on Today, so the plan covers every subject.
+  onClearFocus?: () => void
 }
 
 const TIME_CHOICES = [30, 60, 120]
@@ -30,7 +32,7 @@ const TABS: Array<{ id: Tab; label: string }> = [{ id: 'plan', label: 'Study pla
 
 // Nova's current plan and the reasons for it. The page lays out the server's
 // answer; changing the time available asks the server for a new one.
-export function NovaPlanner({ view, minutes, onMinutes, refreshing, onChanged }: Props) {
+export function NovaPlanner({ view, minutes, onMinutes, refreshing, onChanged, onClearFocus }: Props) {
   const plan = usePlanChange(onChanged ?? (() => {}))
   const blockIds = view.today.blocks.flatMap(b => (b.topicId ? [b.topicId] : []))
   const { start, starting, error } = useStartSession()
@@ -69,6 +71,13 @@ export function NovaPlanner({ view, minutes, onMinutes, refreshing, onChanged }:
           </button>
         ))}
       </div>
+
+      {tab === 'plan' && view.focusSubject && (
+        <p className="mt-4 flex flex-wrap items-baseline gap-x-2 text-sm text-foreground/70" data-section="planner-focus">
+          <span>Planned for <strong className="font-semibold text-foreground">{view.focusSubject}</strong> only, as you chose on Today.</span>
+          {onClearFocus && <button type="button" onClick={onClearFocus} className="text-xs font-medium text-foreground/60 underline decoration-white/25 underline-offset-4 hover:text-foreground">Plan all subjects</button>}
+        </p>
+      )}
 
       {tab === 'board' && (
         <div className="mt-6">

@@ -45,7 +45,7 @@ import { loadCoachingStyle } from "./adapters/operating-style-adapter";
 import { loadFirstFocus, loadLearningContexts } from "./adapters/account-preferences-adapter";
 import { preparesTopics, takesOverTheDay } from "./product/deadline-types";
 import { calendarDaysUntil, dayKey, resolveTimezone } from "./engines/learner-calendar";
-import { countedStudyDays, studyGap } from "./engines/recovery-engine";
+import { countedStudyDays, studiedToday, studyGap } from "./engines/recovery-engine";
 import { loadDayOverrides } from "./product/plan-overrides";
 import { loadConversationHistory, loadSignalHistory, annotationTags } from "./adapters/conversation-adapter";
 import { loadPriorPatterns } from "./consolidation/stores/behavioral-pattern-store";
@@ -267,8 +267,10 @@ export async function runNovaOrchestrator(
       examContext,
       // A first day back, and the learner's own changes to today, are
       // planned as Home and the Planner plan them.
+      // What was already studied today, as Home and the Planner count it.
       { now, examCalendarDays, reentry: gap.situation === "returning",
-        overrides: await loadDayOverrides(snapshot.profileId, dayKey(now, resolveTimezone(zone))) },
+        overrides: await loadDayOverrides(snapshot.profileId, dayKey(now, resolveTimezone(zone))),
+        doneToday: studiedToday(snapshot.studySessions, zone, now, allTopics) },
     );
   }
 

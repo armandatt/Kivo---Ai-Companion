@@ -62,6 +62,9 @@ export interface StudySnapshotResult {
     durationMinutes: number;
     topicId:         string | null;
     topicName:       string | null;
+    // The subject it was recorded under, by name; null when it had none.
+    // Absent in older fixtures.
+    subjectName?:    string | null;
     // "self_reported" for a session the learner only told Nova about. Absent
     // in older fixtures; read through isCountedSession.
     activityType?:   string;
@@ -142,7 +145,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
           where: { sessionDate: { gte: ninetyDaysAgo } },
           select: {
             id: true, sessionDate: true, status: true,
-            durationMinutes: true, topicId: true, topicName: true, activityType: true,
+            durationMinutes: true, topicId: true, topicName: true, activityType: true, subjectId: true,
           },
           orderBy: { sessionDate: "desc" },
         },
@@ -270,6 +273,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
       durationMinutes: s.durationMinutes,
       topicId:         s.topicId,
       topicName:       s.topicName,
+      subjectName:     p.subjects.find(x => x.id === s.subjectId)?.name ?? null,
       activityType:    s.activityType,
     })),
     upcomingExams: p.exams.map(e => ({

@@ -6,7 +6,7 @@ import { resolveNovaLearner } from "../../../../lib/nova/resolve-learner"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-// GET /api/nova/today?minutes=40
+// GET /api/nova/today?minutes=40&subject=Data%20Structures
 // The Home page's answer to "what should I do right now?".
 // Response: NovaTodayView (packages/api/src/nova/product/today.types.ts).
 export async function GET(req: Request) {
@@ -17,12 +17,15 @@ export async function GET(req: Request) {
     }
     if (learner.kind !== "learner") return NextResponse.json({ status: learner.kind })
 
-    const raw     = new URL(req.url).searchParams.get("minutes")
+    const params  = new URL(req.url).searchParams
+    const raw     = params.get("minutes")
     const minutes = raw === null ? null : Number(raw)
 
     const view = await loadNovaToday(learner.platformChatId, {
       availableMinutes: minutes !== null && Number.isFinite(minutes) ? minutes : null,
       learnerName:      learner.name,
+      // The subject chosen for today, checked against the learner's own.
+      focusSubject:     params.get("subject"),
     })
     return NextResponse.json(view)
   } catch (err) {

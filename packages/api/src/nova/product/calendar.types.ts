@@ -48,6 +48,20 @@ export const ALL_DAY_REMINDERS: ReadonlyArray<{ minutes: number; label: string }
   { minutes: 1440, label: "The day before, at 9:00" },
 ];
 
+// How an event repeats. Daily, weekly on chosen weekdays (0 = Sunday …
+// 6 = Saturday), or monthly on the first occurrence's day of the month (a
+// month without that day has none). An optional last day ends it.
+export const REPEAT_FREQS = ["daily", "weekly", "monthly"] as const;
+export type RepeatFreq = (typeof REPEAT_FREQS)[number];
+export interface RepeatRule {
+  freq:  RepeatFreq;
+  days:  number[];          // weekly only; empty for the others
+  until: string | null;     // YYYY-MM-DD, the last day an occurrence may start
+}
+export const REPEAT_LABEL: Record<RepeatFreq, string> = { daily: "Every day", weekly: "Every week", monthly: "Every month" };
+// Occurrences a learner may remove from one series.
+export const SKIP_DAYS_MAX = 366;
+
 // What the page sends to create an event, or (any subset) to change one.
 // Times are wall-clock times in `timezone`; the server works out the moments.
 export interface CalendarEventInput {
@@ -63,6 +77,9 @@ export interface CalendarEventInput {
   reminderMinutes?: number | null;   // one of the lists above; null: none
   taskId?:          string | null;   // a task of theirs this time is for
   subjectId?:       string | null;
+  // How it repeats; null: it happens once. Changing it changes every
+  // occurrence (the series is one record).
+  repeat?:          { freq: RepeatFreq; days?: number[]; until?: string | null } | null;
   clientKey?:       string;          // makes a create idempotent
 }
 
@@ -77,6 +94,10 @@ export type ReminderStatus = "scheduled" | "sent" | "failed" | "missed" | "unava
 
 export interface CalendarEventItem {
   id:              string;
+  // Unique on the page: the id, or for one occurrence of a repeating event
+  // the id and the day it starts. This and the repeat fields are optional
+  // because the web app ships before the API: an older API sends none.
+  key?:            string;
   title:           string;
   description:     string | null;
   category:        EventCategory;
@@ -90,7 +111,12 @@ export interface CalendarEventItem {
   endTime:         string | null;
   timezone:        string;
   reminderMinutes: number | null;
+  // This occurrence's reminder, when it has one.
   reminder:        { at: string; status: ReminderStatus } | null;
+  // A repeating event: its rule, and the day the series starts (startDay
+  // and the times above are this occurrence's). null: it happens once.
+  repeat?:         RepeatRule | null;
+  seriesStartDay?: string;
   task:            { id: string; title: string; status: string } | null;
   subject:         { id: string; name: string } | null;
 }
@@ -147,7 +173,7 @@ export type NovaCalendarView =
 export type CalendarError =
   | "invalid" | "no_title" | "title_too_long" | "description_too_long" | "bad_category"
   | "bad_day" | "bad_time" | "end_before_start" | "too_long" | "bad_timezone"
-  | "bad_reminder" | "bad_task" | "bad_subject" | "bad_range" | "not_found" | "too_large" | "failed";
+  | "bad_reminder" | "bad_task" | "bad_subject" | "bad_range" | "bad_repeat" | "not_found" | "too_large" | "failed";
 
 export type CalendarEventResponse =
   | { ok: true; event: CalendarEventItem; created?: boolean }

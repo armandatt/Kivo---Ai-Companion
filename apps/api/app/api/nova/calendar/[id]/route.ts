@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 //@ts-ignore
-import { deleteEvent, updateEvent } from "@repo/api/nova/product/calendar"
+import { deleteEvent, skipOccurrence, updateEvent } from "@repo/api/nova/product/calendar"
 import { EVENT_BODY_MAX_BYTES } from "@repo/api/nova/product/calendar.types"
 import { readSmallJson } from "../../../../../lib/nova/extension-access"
 import { requireTaskLearner, taskFail } from "../../../../../lib/nova/task-access"
@@ -34,11 +34,19 @@ export async function PATCH(req: Request, { params }: Context) {
 }
 
 // DELETE /api/nova/calendar/:id
-export async function DELETE(_req: Request, { params }: Context) {
+// DELETE /api/nova/calendar/:id                       the event (every occurrence)
+// DELETE /api/nova/calendar/:id?occurrence=YYYY-MM-DD  one occurrence of a repeating event
+export async function DELETE(req: Request, { params }: Context) {
   try {
     const access = await requireTaskLearner(WHO)
     if (access.denied) return access.denied
-    return (await deleteEvent(access.profileId, (await params).id)) ? NextResponse.json({ ok: true }) : NOT_FOUND()
+    const id = (await params).id
+    const occurrence = new URL(req.url).searchParams.get("occurrence")
+    if (occurrence !== null) {
+      const result = await skipOccurrence(access.profileId, id, occurrence)
+      return NextResponse.json(result, { status: result.ok ? 200 : result.error === "not_found" ? 404 : result.error === "failed" ? 409 : 400 })
+    }
+    return (await deleteEvent(access.profileId, id)) ? NextResponse.json({ ok: true }) : NOT_FOUND()
   } catch (err) {
     console.error("[nova/calendar/:id]", err instanceof Error ? err.name : "error")
     return taskFail(500, "failed", "The event wasn't deleted. Try again.")

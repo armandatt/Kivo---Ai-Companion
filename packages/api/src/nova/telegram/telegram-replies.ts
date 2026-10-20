@@ -33,6 +33,8 @@ const EMPTY_PLAN: Record<PlanEmptyReason, string> = {
   no_topics:       "I don't have any topics for you yet, so there's nothing to plan from. Tell me what one of your subjects covers and I'll take it from there.",
   too_little_time: `That's shorter than anything worth starting. ${MIN_SESSION_MINUTES} minutes is the smallest block I plan.`,
   recovery:        "Recovery day. Nothing I'd push on you today.",
+  done_today:      "You've done today's study. Nothing more is planned for today.",
+  subject_done:    "Nothing is left to plan in that subject today.",
   nothing_due:     "Nothing is due and no exam is close. Your call today.",
 };
 
@@ -348,6 +350,8 @@ const EMPTY_REASON_SHORT: Record<PlanEmptyReason, string> = {
   no_topics:       "no topics on record yet",
   too_little_time: "less time than the smallest block",
   recovery:        "a recovery day",
+  done_today:      "today's study is done",
+  subject_done:    "nothing left in that subject today",
   nothing_due:     "nothing is due",
 };
 

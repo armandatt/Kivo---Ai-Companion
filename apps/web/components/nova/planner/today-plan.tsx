@@ -40,6 +40,14 @@ const EMPTY: Record<NonNullable<NovaPlannerReady['today']['emptyReason']>, { tit
     title: 'Nothing is planned today',
     body:  'Nova is keeping today light after a run of missed days, and there is no comfortable topic on record to revisit. Rest counts.',
   },
+  done_today: {
+    title: 'Today’s study is done',
+    body:  'Your sessions today used the day’s time, or covered everything due. Nothing more is planned for today. Give a time above if you have more.',
+  },
+  subject_done: {
+    title: 'Nothing left in this subject today',
+    body:  'The subject chosen on Today has nothing more to plan today: it was studied, is solid, or is not due. Choose another subject on Today.',
+  },
   nothing_due: {
     title: 'Nothing is due today',
     body:  'No review has come due and no exam is close enough to pull work forward. The plan will fill again as reviews fall due.',

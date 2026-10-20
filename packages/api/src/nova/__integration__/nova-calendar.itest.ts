@@ -15,7 +15,12 @@
  *     reminder; a failed send is retried and then stops; a refused chat and
  *     a learner with no Telegram are not sent anything, and the page says so;
  *     a reminder past its window is not sent late;
- *   • reminders do not use up the proactive messages' daily allowance.
+ *   • reminders do not use up the proactive messages' daily allowance;
+ *   • a repeating event ("every Wednesday at 8 pm") is on every date it
+ *     repeats on, one date of it can be removed, each date's reminder goes
+ *     out once at its local time and the next one is then scheduled, a date
+ *     the server slept through is skipped rather than sent late, and a
+ *     failed send for one date is still retried after the series moved on.
  *
  *   NOVA_TEST_DATABASE_URL=postgresql://... npm run test:integration
  */
@@ -30,7 +35,7 @@ process.env.OPENAI_API_KEY = "";
 delete process.env.NOVA_PROACTIVE_DISABLED;
 
 const { prisma } = await import("@repo/db/client");
-const { createEvent, updateEvent, deleteEvent, loadCalendar } = await import("../product/calendar.js");
+const { createEvent, updateEvent, deleteEvent, loadCalendar, skipOccurrence } = await import("../product/calendar.js");
 const { runEventReminders } = await import("../proactive/event-reminders.js");
 const { createTask, deleteTask } = await import("../product/tasks.js");
 const { addExam } = await import("../product/exams.js");
@@ -334,4 +339,100 @@ test("reminders do not use up the proactive messages' daily allowance", async ()
   const delivered = await loadDelivered(profileId, dayKey(ist("09:01", 1), ZONE));
   assert.deepEqual(delivered.today, []);
   assert.equal(delivered.lastSentAt, null);
+});
+
+// ── Repeating events ──────────────────────────────────────────────────────────
+
+const remindAtOf = async (id: string) => (await prisma.novaCalendarEvent.findUniqueOrThrow({ where: { id }, select: { remindAt: true } })).remindAt?.toISOString() ?? null;
+
+test("a weekly event is on each week, and the page lists each date apart", async () => {
+  const { profileId } = await learner();
+  const contest = await make(profileId, { title: "Contest", startDay: day(0), startTime: "20:00", endTime: "21:30", reminderMinutes: 30, repeat: { freq: "weekly" } });
+  assert.deepEqual(contest.repeat, { freq: "weekly", days: [new Date(`${day(0)}T12:00:00Z`).getUTCDay()], until: null });
+  const v = await view(profileId, day(-3), day(20));
+  const mine = v.events.filter(e => e.id === contest.id);
+  assert.deepEqual(mine.map(e => e.startDay), [day(0), day(7), day(14)]);
+  assert.equal(new Set(mine.map(e => e.key)).size, 3, "each date has its own key");
+  assert.deepEqual(mine.map(e => e.startAt), [ist("20:00", 0), ist("20:00", 7), ist("20:00", 14)].map(d => d.toISOString()));
+  assert.ok(mine.every(e => e.seriesStartDay === day(0) && e.reminder?.status === "scheduled"));
+});
+
+test("each date's reminder goes out once at its local time, then the next is scheduled", async () => {
+  const { profileId, chatId } = await learner();
+  const e = await make(profileId, { title: "Contest", startDay: day(0), startTime: "20:00", endTime: "21:30", reminderMinutes: 30, repeat: { freq: "weekly" } });
+  assert.equal(await remindAtOf(e.id), ist("19:30", 0).toISOString());
+
+  await tick(ist("19:25", 0));
+  assert.equal(sentTo(chatId).length, 0, "not before its time");
+  await Promise.all([tick(ist("19:31", 0)), tick(ist("19:31", 0))]);
+  await tick(ist("19:36", 0));
+  assert.deepEqual(sentTo(chatId).map(s => s.text), ["Reminder: Contest at 20:00–21:30 today. Other."]);
+  assert.equal(await remindAtOf(e.id), ist("19:30", 7).toISOString(), "moved on to next week");
+
+  await tick(ist("19:31", 7));
+  assert.equal(sentTo(chatId).length, 2, "next week's goes out too");
+
+  const v = await view(profileId, day(0), day(14), ist("19:40", 7));
+  const statuses = v.events.filter(x => x.id === e.id).map(x => [x.startDay, x.reminder?.status]);
+  assert.deepEqual(statuses, [[day(0), "sent"], [day(7), "sent"], [day(14), "scheduled"]]);
+});
+
+test("one date can be removed, and nothing is sent for it", async () => {
+  const { profileId, chatId } = await learner();
+  const e = await make(profileId, { title: "Weekly class", category: "class", startDay: day(0), startTime: "09:00", reminderMinutes: 10, repeat: { freq: "weekly" } });
+  const other = await learner();
+  assert.equal((await skipOccurrence(other.profileId, e.id, day(0), before0)).ok, false, "not another learner's");
+  assert.equal((await skipOccurrence(profileId, e.id, day(1), before0)).ok, false, "not a day it happens on");
+
+  const r = await skipOccurrence(profileId, e.id, day(0), before0);
+  assert.ok(r.ok);
+  assert.ok((await skipOccurrence(profileId, e.id, day(0), before0)).ok, "removing it again changes nothing");
+  assert.equal(await remindAtOf(e.id), ist("08:50", 7).toISOString(), "the reminder skips to the next date");
+  const v = await view(profileId, day(-3), day(10));
+  assert.deepEqual(v.events.filter(x => x.id === e.id).map(x => x.startDay), [day(7)]);
+
+  await tick(ist("08:51", 0));
+  assert.equal(sentTo(chatId).length, 0);
+  await tick(ist("08:51", 7));
+  assert.equal(sentTo(chatId).length, 1);
+});
+
+test("a date the server slept through is skipped, not sent late, and the series carries on", async () => {
+  const { profileId, chatId } = await learner();
+  const e = await make(profileId, { title: "Standup", category: "meeting", startDay: day(0), startTime: "10:00", reminderMinutes: 0, repeat: { freq: "daily" } });
+  // Nothing ran on day 0 or day 1; the first tick is on day 2 at 11:00.
+  const r = await tick(ist("11:00", 2));
+  assert.equal(sentTo(chatId).length, 0, "nothing sent late");
+  assert.ok((r.outcomes.missed_moved_on ?? 0) >= 1);
+  assert.equal(await remindAtOf(e.id), ist("10:00", 3).toISOString());
+  await tick(ist("10:01", 3));
+  assert.deepEqual(sentTo(chatId).map(s => s.text), ["Reminder: Standup started at 10:00 today. Meeting."]);
+});
+
+test("a failed send for one date is retried even after the series has moved on", async () => {
+  const { profileId, chatId } = await learner();
+  const e = await make(profileId, { title: "Mock test", startDay: day(0), startTime: "18:00", reminderMinutes: 60, repeat: { freq: "weekly", until: day(7) } });
+  refuse.set(chatId, { ok: false, kind: "server", detail: "502" });
+  await tick(ist("17:01", 0));
+  refuse.delete(chatId);
+  assert.equal(await remindAtOf(e.id), ist("17:00", 7).toISOString(), "moved on even though the send failed");
+  await tick(ist("17:06", 0));
+  assert.deepEqual(sentTo(chatId).map(s => s.text), ["Reminder: Mock test at 18:00 today. Other."]);
+  await tick(ist("17:01", 7));
+  assert.equal(sentTo(chatId).length, 2);
+  assert.equal(await remindAtOf(e.id), null, "the series ended");
+});
+
+test("a changed rule drops a date that is no longer in it", async () => {
+  const { profileId, chatId } = await learner();
+  const e = await make(profileId, { title: "Gym", category: "personal", startDay: day(0), startTime: "07:00", reminderMinutes: 0, repeat: { freq: "daily" } });
+  refuse.set(chatId, { ok: false, kind: "server", detail: "502" });
+  await tick(ist("07:01", 1));
+  refuse.delete(chatId);
+  // Day 1 is no longer in it: the series now runs only on day 0's weekday.
+  const r = await updateEvent(profileId, e.id, { repeat: { freq: "weekly" } }, ist("07:02", 1));
+  assert.ok(r.ok);
+  await tick(ist("07:06", 1));
+  assert.equal(sentTo(chatId).length, 0, "the claimed date was dropped");
+  assert.equal(await remindAtOf(e.id), ist("07:00", 7).toISOString());
 });
