@@ -27,8 +27,8 @@ function writeMix(m: Mix) { try { localStorage.setItem(STORE, JSON.stringify(m))
 const PLAYLISTS: MusicSource[] = [
   { id: 'lofi-girl',  name: 'lofi hip hop radio', by: 'Lofi Girl · YouTube live', kind: 'youtube', src: 'https://www.youtube-nocookie.com/embed/rFZHOHl-L8A?autoplay=1&rel=0', href: 'https://www.youtube.com/@LofiGirl/streams' },
   { id: 'synthwave',  name: 'synthwave radio',    by: 'Lofi Girl · YouTube live', kind: 'youtube', src: 'https://www.youtube-nocookie.com/embed/4xDzrJKXOOY?autoplay=1&rel=0', href: 'https://www.youtube.com/@LofiGirl/streams' },
-  // The same channel's own playlists. On 21 October a learner's Safari showed
-  // every YouTube player, Kivo's or not, as an empty box while these played.
+  // The same channel's own playlists, for a network that blocks YouTube
+  // (found on 21 October: a learner's Wi-Fi did; these played).
   { id: 'lofi-girl-spotify', name: 'Lofi Girl · beats to relax/study to', by: 'Spotify',     kind: 'spotify', src: 'https://open.spotify.com/embed/playlist/0vvXsWCC9xrXsKd4FyS8kM?theme=0', href: 'https://open.spotify.com/playlist/0vvXsWCC9xrXsKd4FyS8kM' },
   { id: 'lofi-girl-apple',   name: 'Lofi Girl · beats to relax/study to', by: 'Apple Music', kind: 'apple',   src: 'https://embed.music.apple.com/us/playlist/lofi-girl-beats-to-relax-study-to/pl.bf7a3cbca49644d8a33f09c1285aef5c', href: 'https://music.apple.com/us/playlist/lofi-girl-beats-to-relax-study-to/pl.bf7a3cbca49644d8a33f09c1285aef5c' },
   { id: 'deep-focus', name: 'Deep Focus',         by: 'Spotify',                  kind: 'spotify', src: 'https://open.spotify.com/embed/playlist/37i9dQZF1DWZeKCadgRdKQ?theme=0', href: 'https://open.spotify.com/playlist/37i9dQZF1DWZeKCadgRdKQ' },
@@ -188,14 +188,10 @@ export function SoundPanel({ sound, open, onClose }: { sound: ReturnType<typeof 
 // isn't playing here.
 const YOUTUBE_READY_MS = 10_000
 
-// The provider's player. A YouTube player that never answers (a content
-// blocker stopped it, and the box stays blank) gets a note with the other
-// YouTube host and the link out, instead of an empty box.
-// Safari, and every browser on an iPhone or iPad (all WebKit): where the
-// empty YouTube box was seen. Read from the engine's vendor, not the
-// user-agent string.
-const isWebKitOnApple = () => typeof navigator !== 'undefined' && navigator.vendor === 'Apple Computer, Inc.'
-
+// The provider's player. A YouTube player that never answers (the network
+// or a content blocker stopped it, and the box stays blank) gets a note with
+// Lofi Girl on Spotify and Apple Music and the other YouTube host, instead of
+// an empty box.
 function StreamPlayer({ source, onPlay }: { source: MusicSource; onPlay: (id: string) => void }) {
   const frame = useRef<HTMLIFrameElement>(null)
   const [host, setHost] = useState<'nocookie' | 'youtube'>('nocookie')
@@ -227,16 +223,11 @@ function StreamPlayer({ source, onPlay }: { source: MusicSource; onPlay: (id: st
         allow={source.kind === 'apple' ? 'autoplay *; encrypted-media *; clipboard-write' : 'autoplay; encrypted-media; picture-in-picture'}
         sandbox={source.kind === 'apple' ? 'allow-forms allow-popups allow-same-origin allow-scripts allow-storage-access-by-user-activation allow-top-navigation-by-user-activation' : undefined}
         referrerPolicy="strict-origin-when-cross-origin" />
-      {youtube && isWebKitOnApple() && (
-        <div className="border-t border-white/10 px-2.5 py-2 text-[11px] leading-relaxed text-white/75" data-safari-note>
-          Blank in Safari? Safari sometimes doesn&apos;t show YouTube&apos;s player. Lofi Girl also plays here on
+      {youtube && status === 'stuck' && (
+        <div role="status" className="border-t border-white/10 px-2.5 py-2 text-[11px] leading-relaxed text-white/75" data-stream-stuck>
+          YouTube&apos;s player didn&apos;t load. The network may be blocking YouTube (many college and office Wi-Fi networks do), or an ad or content blocker. Lofi Girl also plays here on
           <button type="button" onClick={() => onPlay('lofi-girl-spotify')} className="mx-1 font-medium text-keppel-300 underline underline-offset-2 hover:text-keppel-200">Spotify</button>or
           <button type="button" onClick={() => onPlay('lofi-girl-apple')} className="ml-1 font-medium text-keppel-300 underline underline-offset-2 hover:text-keppel-200">Apple Music</button>.
-        </div>
-      )}
-      {youtube && status === 'stuck' && !isWebKitOnApple() && (
-        <div role="status" className="border-t border-white/10 px-2.5 py-2 text-[11px] leading-relaxed text-white/75">
-          YouTube&apos;s player didn&apos;t load here. An ad or tracker blocker (or Safari&apos;s content blockers, Brave Shields) often stops it; allowing YouTube on this site fixes it.
           {host === 'nocookie' && (
             <button type="button" onClick={() => setHost('youtube')} className="ml-1 font-medium text-keppel-300 underline underline-offset-2 hover:text-keppel-200">Try YouTube&apos;s standard player</button>
           )}
