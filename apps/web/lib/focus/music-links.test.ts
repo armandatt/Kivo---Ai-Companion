@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { parseMusicLink, sourcesFromStorage, MUSIC_MAX } from './music-links'
+import { parseMusicLink, sourcesFromStorage, youtubePlayerSrc, youtubeSignal, MUSIC_MAX } from './music-links'
 
 const src = (link: string) => { const r = parseMusicLink(link); assert.ok(r.ok, r.ok ? '' : r.message); return r.source }
 const refused = (link: string) => { const r = parseMusicLink(link); assert.equal(r.ok, false, `accepted ${link}`) }
@@ -61,4 +61,18 @@ test('the saved list keeps only links that still read, once each, with the learn
   assert.deepEqual(sourcesFromStorage(null), [])
   const many = JSON.stringify(Array.from({ length: 20 }, (_, i) => ({ href: `https://www.youtube.com/watch?v=abcdefghi${String(i).padStart(2, '0')}` })))
   assert.equal(sourcesFromStorage(many).length, MUSIC_MAX)
+})
+
+test('a YouTube player can move to the ordinary host and reports when it is ready', () => {
+  const src = 'https://www.youtube-nocookie.com/embed/rFZHOHl-L8A?autoplay=1&rel=0'
+  const own = 'https://www.thekivo.in'
+  assert.equal(youtubePlayerSrc(src, 'nocookie', own), 'https://www.youtube-nocookie.com/embed/rFZHOHl-L8A?autoplay=1&rel=0&enablejsapi=1&origin=https%3A%2F%2Fwww.thekivo.in')
+  assert.equal(youtubePlayerSrc(src, 'youtube', own), 'https://www.youtube.com/embed/rFZHOHl-L8A?autoplay=1&rel=0&enablejsapi=1&origin=https%3A%2F%2Fwww.thekivo.in')
+  const spotify = 'https://open.spotify.com/embed/playlist/37i9dQZF1DWZeKCadgRdKQ?theme=0'
+  assert.equal(youtubePlayerSrc(spotify, 'youtube', own), spotify)
+  assert.equal(youtubeSignal('https://www.youtube-nocookie.com', '{"event":"onReady","id":1}'), 'ready')
+  assert.equal(youtubeSignal('https://www.youtube.com', JSON.stringify({ event: 'infoDelivery', info: {} })), 'ready')
+  assert.equal(youtubeSignal('https://www.youtube.com', '{"event":"onError","info":150}'), 'error')
+  assert.equal(youtubeSignal('https://evil.example', '{"event":"onReady"}'), null)
+  assert.equal(youtubeSignal('https://www.youtube.com', 'not json'), null)
 })

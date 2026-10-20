@@ -141,3 +141,28 @@ export function sourcesFromStorage(raw: string | null): MusicSource[] {
     return []
   }
 }
+
+// A YouTube player's address on either of YouTube's hosts, set up to tell
+// this page when it is ready. Privacy mode (youtube-nocookie.com) is the
+// default; some content blockers stop it, and then the page offers the
+// ordinary host. Other providers' addresses are returned as they are.
+const NOCOOKIE = 'https://www.youtube-nocookie.com/'
+const YOUTUBE = 'https://www.youtube.com/'
+
+export function youtubePlayerSrc(src: string, host: 'nocookie' | 'youtube', origin: string): string {
+  if (!src.startsWith(NOCOOKIE)) return src
+  const url = new URL(host === 'youtube' ? YOUTUBE + src.slice(NOCOOKIE.length) : src)
+  url.searchParams.set('enablejsapi', '1')
+  url.searchParams.set('origin', origin)
+  return url.toString()
+}
+
+// What a YouTube player's message says, from its own origin only.
+export function youtubeSignal(origin: string, data: unknown): 'ready' | 'error' | null {
+  if (origin !== 'https://www.youtube-nocookie.com' && origin !== 'https://www.youtube.com') return null
+  let message: unknown = data
+  if (typeof data === 'string') { try { message = JSON.parse(data) } catch { return null } }
+  const event = message && typeof message === 'object' ? (message as { event?: unknown }).event : null
+  if (event === 'onError') return 'error'
+  return event === 'onReady' || event === 'initialDelivery' || event === 'infoDelivery' ? 'ready' : null
+}
