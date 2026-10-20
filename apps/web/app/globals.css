@@ -558,6 +558,8 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   -webkit-backdrop-filter: blur(18px) saturate(140%);
   box-shadow: 0 20px 50px -25px rgb(0 0 0 / 0.7), inset 0 1px 0 rgb(255 255 255 / 0.06);
 }
+/* On a phone the sound panel covers the room's own text; glass alone lets it read through. */
+@media (max-width: 639px) { .focus-glass[data-focus-sound] { background: rgb(10 12 18 / 0.97); } }
 .focus-range { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 999px; background: rgb(255 255 255 / 0.18); outline: none; }
 .focus-range::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px rgb(63 182 168 / 0.45); cursor: pointer; }
 .focus-range::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px rgb(63 182 168 / 0.45); cursor: pointer; }

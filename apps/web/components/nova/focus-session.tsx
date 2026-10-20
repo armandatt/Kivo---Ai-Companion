@@ -133,10 +133,14 @@ export function FocusSession() {
       </div>
 
       <div className="absolute bottom-4 left-4 z-20 flex flex-col items-start gap-2 sm:bottom-5 sm:left-5">
-        {panel === 'sound' && <SoundPanel sound={sound} onClose={() => setPanel(null)} />}
-        <button type="button" onClick={() => setPanel(p => p === 'sound' ? null : 'sound')} aria-expanded={panel === 'sound'} className={glassButton} title="Sound (S)">
-          {sound.mix.on.length > 0 && !sound.mix.muted && sound.armed ? <span className="focus-eq" aria-hidden><i /><i /><i /></span> : <Headphones className="size-4" />}
-          <span>{sound.mix.on.length > 0 ? `${sound.mix.on.length} sound${sound.mix.on.length === 1 ? '' : 's'}` : 'Sound'}</span>
+        {/* Kept mounted while music plays, so closing the panel never stops it. */}
+        {(panel === 'sound' || sound.music.stream) && <SoundPanel sound={sound} open={panel === 'sound'} onClose={() => setPanel(null)} />}
+        <button type="button" onClick={() => setPanel(p => p === 'sound' ? null : 'sound')} aria-expanded={panel === 'sound'} className={cn(glassButton, 'max-w-[min(18rem,calc(100vw-2rem))]')} title="Sound (S)">
+          {(sound.mix.on.length > 0 && !sound.mix.muted && sound.armed) || sound.music.stream ? <span className="focus-eq" aria-hidden><i /><i /><i /></span> : <Headphones className="size-4" />}
+          <span className="truncate">{[
+            sound.music.stream?.name,
+            sound.mix.on.length > 0 ? `${sound.mix.on.length} sound${sound.mix.on.length === 1 ? '' : 's'}` : null,
+          ].filter(Boolean).join(' + ') || 'Sound'}</span>
         </button>
       </div>
 

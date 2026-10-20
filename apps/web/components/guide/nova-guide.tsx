@@ -168,7 +168,7 @@ const TOPICS: Topic[] = [
   { id: 'today',     label: 'Today',            icon: Home,        group: 'Plan',         keywords: 'home next up plan time available choose another subject focus done today tasks deadlines week goals search new' },
   { id: 'planner',   label: 'Planner & tasks',  icon: Calendar,    group: 'Plan',         keywords: 'days ahead board kanban tasks skip plan change recovery missed days' },
   { id: 'calendar',  label: 'Calendar',         icon: CalendarDays, group: 'Plan',        keywords: 'events classes meetings month week agenda reminders deadlines dates schedule repeat recurring weekly daily monthly' },
-  { id: 'focus',     label: 'Focus room',       icon: Timer,       group: 'Plan',         keywords: 'session timer pomodoro pause end scenes sound music rain lofi spotify youtube fullscreen' },
+  { id: 'focus',     label: 'Focus room',       icon: Timer,       group: 'Plan',         keywords: 'session timer pomodoro pause end scenes sound music rain lofi spotify apple music youtube playlist fullscreen' },
   { id: 'knowledge', label: 'Knowledge',        icon: BookOpen,    group: 'Knowledge',    keywords: 'subjects topics level review due board subject studio archive' },
   { id: 'map',       label: 'Knowledge Map',    icon: Waypoints,   group: 'Knowledge',    keywords: 'graph links pan zoom filter layout drag' },
   { id: 'notes',     label: 'Notes',            icon: NotebookPen, group: 'Knowledge',    keywords: 'editor callout highlight tag link source pdf template ask nova summarise' },
@@ -460,7 +460,7 @@ export function NovaGuide() {
                 Rain, forest, ocean, fireplace, café, brown noise and white noise, made in your browser, so nothing downloads. Turn on several and set each one&apos;s volume; Kivo remembers your mix on this device.
               </Feature>
               <Feature title="Playlists">
-                Lo-fi streams in YouTube&apos;s or Spotify&apos;s own player: lofi hip hop radio, synthwave radio, Deep Focus, lofi beats and Peaceful Piano. Spotify plays whole tracks when you are signed in to it in that browser.
+                Lo-fi streams in YouTube&apos;s or Spotify&apos;s own player: lofi hip hop radio, synthwave radio, Deep Focus, lofi beats and Peaceful Piano. Or paste a link to your own Spotify, Apple Music or YouTube playlist, album or song: it is kept in that browser under Your music. Music keeps playing when you close the sound panel, alongside any soundscapes. Spotify and Apple Music play whole songs when you are signed in to them in that browser, otherwise short previews.
               </Feature>
               <Feature title="On this topic">
                 A panel with where the topic stands on the record and the notes and pages you filed under it, without leaving the room.
