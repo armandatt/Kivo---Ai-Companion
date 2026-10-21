@@ -186,7 +186,12 @@ export interface WorkspaceDetail {
   // The workspace, or null for subjects that belong to none.
   workspace: WorkspaceSummary | null;
   title:     string;
-  subjects:  Array<{ id: string; name: string; topics: Array<{ id: string; name: string }> }>;
+  // A topic's unit and what it covers come from the plan the workspace was
+  // built from, when it names that topic (topics have no columns for them).
+  subjects:  Array<{ id: string; name: string; topics: Array<{ id: string; name: string; unit?: string | null; subtopics?: string[] }> }>;
+  // The workspace's milestones, in order, from the plan it was built from:
+  // each is one of its topics, and its tasks are those filed under it.
+  phases?:   Array<{ name: string; weeks: number | null; goals: string[]; completion: string | null }>;
   tasks:     Array<{ id: string; title: string; status: "todo" | "in_progress" | "done"; priority: "low" | "medium" | "high" | null; dueDay: string | null; subjectId: string | null; topicName: string | null; estimatedMinutes: number | null }>;
   notes:     Array<{ id: string; title: string; subjectId: string | null; updatedAt: string }>;
   dates:     Array<{ id: string; title: string; day: string; kind: string; subjectId: string | null }>;

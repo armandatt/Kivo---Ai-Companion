@@ -200,8 +200,12 @@ export async function workspaceDetail(platformChatId: string, profileId: string,
 // those filed under them). Read through each record's owner, every time, so
 // the page shows what is stored and nothing else. null: not theirs.
 export async function resourceDetail(platformChatId: string, profileId: string, ref: Pick<ResourceRef, "workspaceId" | "subjectIds">, now = new Date()): Promise<WorkspaceDetail | null> {
-  const row = ref.workspaceId ? await prisma.novaWorkspace.findFirst({ where: { id: ref.workspaceId, profileId }, select: { ...SUMMARY_SELECT, clientKey: true } }) : null;
+  const row = ref.workspaceId ? await prisma.novaWorkspace.findFirst({ where: { id: ref.workspaceId, profileId }, select: { ...SUMMARY_SELECT, clientKey: true, plan: true } }) : null;
   if (ref.workspaceId && !row) return null;
+  // What the plan it was built from says about its topics and milestones;
+  // the records themselves are read live below. A subject asked for alone
+  // takes the outline of a workspace that holds it.
+  const built = (row?.plan ?? (ref.subjectIds.length ? (await prisma.novaWorkspace.findFirst({ where: { profileId, subjectIds: { hasSome: ref.subjectIds } }, select: { plan: true }, orderBy: { createdAt: "desc" } }))?.plan : null)) as Partial<WorkspacePlan> | null;
   const subjectIds = row ? row.subjectIds : ref.subjectIds;
   const [summary, subjects, keyed, filed, notes, exams] = await Promise.all([
     row ? summaries(profileId, [row]) : Promise.resolve([]),
@@ -214,10 +218,22 @@ export async function resourceDetail(platformChatId: string, profileId: string, 
   if (!row && subjects.length === 0) return null;
   const tasks = [...keyed, ...filed.filter(t => !keyed.some(k => k.id === t.id))];
   const names = new Set(subjects.map(s => s.name.toLowerCase()));
+  const planned = new Map<string, { unit: string | null; subtopics: string[] }>();
+  for (const s of Array.isArray(built?.subjects) ? built!.subjects : []) {
+    for (const t of Array.isArray(s?.topics) ? s.topics : []) if (t && typeof t.name === "string") planned.set(`${s.name.toLowerCase()}\n${t.name.toLowerCase()}`, { unit: t.unit ?? null, subtopics: Array.isArray(t.subtopics) ? t.subtopics : [] });
+  }
+  const live = new Set(subjects.flatMap(s => s.topics.map(t => t.name.toLowerCase())));
+  const phases = (Array.isArray(built?.phases) ? built!.phases : [])
+    .filter(p => p && typeof p.name === "string" && (live.has(p.name.toLowerCase()) || tasks.some(t => t.topicName?.toLowerCase() === p.name.toLowerCase())))
+    .map(p => ({ name: p.name, weeks: p.weeks ?? null, goals: Array.isArray(p.goals) ? p.goals : [], completion: p.completion ?? null }));
   return {
     workspace: summary[0] ?? null,
     title: row?.title ?? subjects.map(s => s.name).join(", "),
-    subjects,
+    subjects: subjects.map(s => ({ ...s, topics: s.topics.map(t => {
+      const p = planned.get(`${s.name.toLowerCase()}\n${t.name.toLowerCase()}`);
+      return p ? { ...t, unit: p.unit, ...(p.subtopics.length ? { subtopics: p.subtopics } : {}) } : t;
+    }) })),
+    ...(phases.length ? { phases } : {}),
     tasks: tasks.map(t => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, dueDay: t.dueDay, subjectId: t.subjectId, topicName: t.topicName, estimatedMinutes: t.estimatedMinutes })),
     notes: notes.map(n => ({ id: n.id, title: n.title, subjectId: n.subjectId, updatedAt: n.updatedAt.toISOString() })),
     dates: (exams ?? []).filter(e => e.subjectName && names.has(e.subjectName.toLowerCase()))

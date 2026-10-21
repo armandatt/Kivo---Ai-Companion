@@ -31,34 +31,6 @@ function Proposed({ children }: { children: React.ReactNode }) {
   return <span className="ml-1.5 rounded bg-nova/12 px-1.5 py-0.5 text-[10px] font-medium text-nova-ink">{children}</span>
 }
 
-function LiveTask({ t, marks, onChange }: { t: Task; marks: ChangeMarks; onChange: (patch: Partial<Task>) => Promise<void> }) {
-  const [title, setTitle] = useState(t.title)
-  useEffect(() => setTitle(t.title), [t.title])
-  const i = COLUMNS.findIndex(c => c.status === t.status)
-  const removed = marks.removedTasks.has(t.id)
-  const changed = marks.changedTasks.get(t.id)
-  const first = marks.firstTasks.indexOf(t.id)
-  return (
-    <li className={cn(CARD, 'p-2', removed && 'opacity-60', (changed || first >= 0) && 'border-nova/40')} data-live-task={t.id}>
-      <textarea aria-label="Task title" value={title} maxLength={160} rows={2} onChange={e => setTitle(e.target.value.split('\n').join(' '))}
-        onBlur={() => { if (title.trim() && title !== t.title) void onChange({ title: title.trim() }) }} className={cn(FIELD, TITLE_AREA, removed && 'line-through')} />
-      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 pt-1 text-[11px] text-subtle">
-        {t.topicName && <span className="min-w-0 break-words">{t.topicName}</span>}
-        {t.dueDay && <span className="whitespace-nowrap">due {t.dueDay}</span>}
-        {changed && <Proposed>→ {changed}</Proposed>}
-        {first >= 0 && <Proposed>first #{first + 1}</Proposed>}
-        {removed && <Proposed>to be removed</Proposed>}
-        <span className="ml-auto flex gap-0.5">
-          <button type="button" disabled={i === 0} onClick={() => void onChange({ status: COLUMNS[i - 1]!.status })} aria-label={`Move ${t.title} to ${COLUMNS[i - 1]?.label ?? ''}`}
-            className="grid size-6 place-items-center rounded text-foreground/55 hover:bg-white/6 hover:text-foreground disabled:opacity-25"><ArrowLeft aria-hidden className="size-3" /></button>
-          <button type="button" disabled={i === COLUMNS.length - 1} onClick={() => void onChange({ status: COLUMNS[i + 1]!.status })} aria-label={`Move ${t.title} to ${COLUMNS[i + 1]?.label ?? ''}`}
-            className="grid size-6 place-items-center rounded text-foreground/55 hover:bg-white/6 hover:text-foreground disabled:opacity-25"><ArrowRight aria-hidden className="size-3" /></button>
-        </span>
-      </div>
-    </li>
-  )
-}
-
 // The proposed changes, to keep or leave out one by one. Leaving one out is
 // saved at once (a new version); approving applies what is listed.
 function ChangeList({ state }: { state: DraftState }) {
@@ -94,6 +66,40 @@ function ChangeList({ state }: { state: DraftState }) {
   )
 }
 
+const STATUS_LABEL: Record<Task['status'], string> = { todo: 'To do', in_progress: 'In progress', done: 'Done' }
+const same = (a: string | null | undefined, b: string | null | undefined) => a != null && b != null && a.toLocaleLowerCase() === b.toLocaleLowerCase()
+
+// A task with its progress, moved through To do → In progress → Done here.
+function LiveTaskRow({ t, marks, onChange }: { t: Task; marks: ChangeMarks; onChange: (patch: Partial<Task>) => Promise<void> }) {
+  const [title, setTitle] = useState(t.title)
+  useEffect(() => setTitle(t.title), [t.title])
+  const i = COLUMNS.findIndex(c => c.status === t.status)
+  const removed = marks.removedTasks.has(t.id)
+  const changed = marks.changedTasks.get(t.id)
+  const first = marks.firstTasks.indexOf(t.id)
+  return (
+    <li className={cn(CARD, 'p-2', removed && 'opacity-60', (changed || first >= 0) && 'border-nova/40', t.status === 'done' && 'opacity-75')} data-live-task={t.id}>
+      <textarea aria-label="Task title" value={title} maxLength={160} rows={1} onChange={e => setTitle(e.target.value.split('\n').join(' '))}
+        onBlur={() => { if (title.trim() && title !== t.title) void onChange({ title: title.trim() }) }} className={cn(FIELD, TITLE_AREA, (removed || t.status === 'done') && 'line-through')} />
+      <div className="flex flex-wrap items-center gap-1.5 px-1.5 pt-1 text-[11px] text-subtle">
+        <span className={cn('rounded px-1.5 py-0.5 font-medium', t.status === 'done' ? 'bg-action-soft text-action-ink' : t.status === 'in_progress' ? 'bg-amber-400/12 text-amber-300' : 'bg-white/5')}>{STATUS_LABEL[t.status]}</span>
+        {t.priority && <span className={cn('rounded px-1.5 py-0.5 font-medium', t.priority === 'high' ? 'bg-amber-400/12 text-amber-300' : 'bg-white/5')}>{t.priority}</span>}
+        {t.dueDay && <span className="rounded bg-white/5 px-1.5 py-0.5 tabular-nums">due {t.dueDay}</span>}
+        {t.estimatedMinutes && <span>~{t.estimatedMinutes} min</span>}
+        {changed && <Proposed>→ {changed}</Proposed>}
+        {first >= 0 && <Proposed>first #{first + 1}</Proposed>}
+        {removed && <Proposed>to be removed</Proposed>}
+        <span className="ml-auto flex gap-0.5">
+          <button type="button" disabled={i === 0} onClick={() => void onChange({ status: COLUMNS[i - 1]!.status })} aria-label={`Move ${t.title} to ${COLUMNS[i - 1]?.label ?? ''}`}
+            className="grid size-6 place-items-center rounded text-foreground/55 hover:bg-white/6 hover:text-foreground disabled:opacity-25"><ArrowLeft aria-hidden className="size-3" /></button>
+          <button type="button" disabled={i === COLUMNS.length - 1} onClick={() => void onChange({ status: COLUMNS[i + 1]!.status })} aria-label={`Move ${t.title} to ${COLUMNS[i + 1]?.label ?? ''}`}
+            className="grid size-6 place-items-center rounded text-foreground/55 hover:bg-white/6 hover:text-foreground disabled:opacity-25"><ArrowRight aria-hidden className="size-3" /></button>
+        </span>
+      </div>
+    </li>
+  )
+}
+
 export function LiveWorkspace({ view, onView, state, onAsk }: {
   view: PlaygroundView; onView: (v: PlaygroundView) => void; state: DraftState; onAsk: (text: string) => void
 }) {
@@ -109,18 +115,27 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
     await state.reload()
   }
 
-  const views: PlaygroundView[] = ['overview', 'board', 'topics', 'timeline', 'notes']
+  // The same views as the proposal it was built from, on the live records.
+  const phases = detail.phases ?? []
+  const views: PlaygroundView[] = ['overview', ...(phases.length ? ['roadmap' as const] : []), 'board', 'topics', 'timeline', 'notes']
   const shown = views.includes(view) ? view : 'overview'
+  // Tasks under each milestone, in the plan's order, then the rest.
+  const groups = [
+    ...phases.map((p, i) => ({ name: p.name as string | null, index: i as number | null, phase: p, tasks: detail.tasks.filter(t => same(t.topicName, p.name)) })),
+    { name: null, index: null, phase: null, tasks: detail.tasks.filter(t => !phases.some(p => same(t.topicName, p.name))) },
+  ].filter(g => g.name !== null || g.tasks.length > 0 || marks.addedTasks.some(a => !phases.some(p => same(a.topicName, p.name))))
+  const proposedIn = (name: string | null) => marks.addedTasks.filter(a => (name === null ? !phases.some(p => same(a.topicName, p.name)) : same(a.topicName, name)))
   const days = [
     ...detail.dates.map(d => ({ day: marks.movedDates.get(d.id) ?? d.day, was: marks.movedDates.has(d.id) ? d.day : null, label: d.title, kind: 'date' as const, proposed: false })),
-    ...detail.tasks.filter(t => t.dueDay).map(t => ({ day: t.dueDay!, was: null, label: t.title, kind: 'task' as const, proposed: false })),
+    ...detail.tasks.filter(t => t.dueDay && t.status !== 'done').map(t => ({ day: t.dueDay!, was: null, label: t.title, kind: 'task' as const, proposed: false })),
     ...marks.addedDates.map(d => ({ day: d.day, was: null, label: d.title, kind: 'date' as const, proposed: true })),
   ].sort((a, b) => a.day.localeCompare(b.day))
   const done = detail.tasks.filter(t => t.status === 'done').length
   const words = wordsFor(state.draft?.brief.kind)
   const topics = detail.subjects.reduce((n, s) => n + s.topics.length, 0)
-  const stats = [`${done} of ${detail.tasks.length} task${detail.tasks.length === 1 ? '' : 's'} done`, topics ? `${topics} ${topics === 1 ? words.topic : `${words.topic}s`}` : null, detail.notes.length ? `${detail.notes.length} note${detail.notes.length === 1 ? '' : 's'}` : null, detail.dates.length ? `${detail.dates.length} date${detail.dates.length === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ')
+  const stats = [phases.length ? `${phases.length} ${phases.length === 1 ? words.phase : words.phases.toLowerCase()}` : null, `${done} of ${detail.tasks.length} task${detail.tasks.length === 1 ? '' : 's'} done`, topics ? `${topics} ${topics === 1 ? words.topic : `${words.topic}s`}` : null, detail.dates.length ? `${detail.dates.length} date${detail.dates.length === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ')
   const talking = state.draft && ['discovery', 'awaiting_approval', 'failed', 'ready'].includes(state.draft.status)
+  const progress = (tasks: Task[]) => `${tasks.filter(t => t.status === 'done').length}/${tasks.length} done`
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-live-workspace>
@@ -130,49 +145,128 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
         <ChangeList state={state} />
         {talking && <div className="-mx-2 mb-3"><NovaHint hint={hintFor(state.draft?.brief.kind, shown)} onAsk={onAsk} /></div>}
         {shown === 'overview' && (
-          <div className="space-y-5">
-            {detail.workspace?.summary && <p className="text-sm leading-relaxed text-foreground/80">{detail.workspace.summary}</p>}
-            <ul className="grid gap-1.5 sm:grid-cols-2">
-              {detail.subjects.map(s => <li key={s.id} className={cn(CARD, 'flex items-center justify-between gap-2 px-3 py-2', marks.removedSubjects.has(s.id) && 'border-red-400/40 opacity-60')}><span className={cn('min-w-0 truncate text-sm font-medium text-foreground', marks.removedSubjects.has(s.id) && 'line-through')}>{s.name}{marks.removedSubjects.has(s.id) && <Proposed>to be removed</Proposed>}</span><span className="shrink-0 text-xs text-subtle">{s.topics.length}{marks.addedTopics.get(s.id) ? ` + ${marks.addedTopics.get(s.id)!.length}` : ''} {words.topic}s</span></li>)}
-              {marks.addedSubjects.map(s => <li key={s.name} className={cn(CARD, PROPOSED, 'px-3 py-2 text-sm text-foreground/85')}>+ {s.name}<Proposed>proposed</Proposed></li>)}
-            </ul>
-            <p className="text-xs text-subtle">These are your real records. Changing a task here changes it on your Planner board too.</p>
+          <div className="space-y-6">
+            {detail.workspace?.summary && (
+              <div><p className={H}>What it&apos;s for</p><p className="mt-1.5 text-sm leading-relaxed text-foreground/85">{detail.workspace.summary}</p></div>
+            )}
+            {phases.length > 0 ? (
+              <section aria-labelledby="live-outline">
+                <div className="flex items-baseline justify-between"><h3 id="live-outline" className={H}>{words.phases}</h3><button type="button" onClick={() => onView('roadmap')} className="text-xs font-medium text-foreground/60 hover:text-foreground">Open</button></div>
+                <ol className="mt-2 space-y-1.5">
+                  {groups.filter(g => g.index !== null).map(g => (
+                    <li key={g.name} className={cn(CARD, 'flex items-center gap-3 px-3 py-2')}>
+                      <span className="grid size-6 shrink-0 place-items-center rounded-full bg-nova/12 text-[11px] font-semibold text-nova-ink">{g.index! + 1}</span>
+                      <span className="min-w-0 flex-1 text-sm font-medium text-foreground">{g.name}</span>
+                      <span className="shrink-0 text-xs text-subtle">{g.tasks.length ? progress(g.tasks) : 'no tasks'}{proposedIn(g.name).length ? ` · +${proposedIn(g.name).length}` : ''}</span>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            ) : (
+              <section aria-labelledby="live-outline">
+                <div className="flex items-baseline justify-between"><h3 id="live-outline" className={H}>{words.areas}</h3><button type="button" onClick={() => onView('topics')} className="text-xs font-medium text-foreground/60 hover:text-foreground">Open</button></div>
+                <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                  {detail.subjects.map(s => <li key={s.id} className={cn(CARD, 'flex items-center justify-between gap-2 px-3 py-2', marks.removedSubjects.has(s.id) && 'border-red-400/40 opacity-60')}><span className={cn('min-w-0 truncate text-sm font-medium text-foreground', marks.removedSubjects.has(s.id) && 'line-through')}>{s.name}{marks.removedSubjects.has(s.id) && <Proposed>to be removed</Proposed>}</span><span className="shrink-0 text-xs text-subtle">{s.topics.length}{marks.addedTopics.get(s.id) ? ` + ${marks.addedTopics.get(s.id)!.length}` : ''} {words.topic}s</span></li>)}
+                  {marks.addedSubjects.map(s => <li key={s.name} className={cn(CARD, PROPOSED, 'px-3 py-2 text-sm text-foreground/85')}>+ {s.name}<Proposed>proposed</Proposed></li>)}
+                </ul>
+              </section>
+            )}
+            {days.length > 0 && (
+              <section aria-labelledby="live-soon">
+                <div className="flex items-baseline justify-between"><h3 id="live-soon" className={H}>Coming up</h3><button type="button" onClick={() => onView('timeline')} className="text-xs font-medium text-foreground/60 hover:text-foreground">Calendar</button></div>
+                <ul className="mt-2 space-y-1">{days.slice(0, 3).map((d, i) => (
+                  <li key={i} className="flex items-center gap-3 text-sm"><span className="w-24 shrink-0 text-xs tabular-nums text-subtle">{d.day}</span><span aria-hidden className={cn('size-2 shrink-0 rounded-full', d.kind === 'date' ? 'bg-amber-400' : 'bg-action')} /><span className="min-w-0 truncate text-foreground/85">{d.label}</span></li>
+                ))}</ul>
+              </section>
+            )}
+            <p className="text-xs text-subtle">These are your real records: changing a task here changes it on your Planner board too.</p>
           </div>
         )}
+        {shown === 'roadmap' && (
+          <ol className="space-y-3">
+            {groups.filter(g => g.index !== null).map(g => (
+              <li key={g.name} className={cn(CARD, 'p-3')} data-milestone={g.index}>
+                <div className="flex items-center gap-2">
+                  <span className="grid size-6 shrink-0 place-items-center rounded-full bg-nova/12 text-[11px] font-semibold text-nova-ink">{g.index! + 1}</span>
+                  <p className="min-w-0 flex-1 text-sm font-medium text-foreground">{g.name}</p>
+                  <span className="shrink-0 text-xs text-subtle">{g.tasks.length ? progress(g.tasks) : ''}</span>
+                </div>
+                {(g.phase!.weeks || g.phase!.goals.length > 0) && <p className="mt-1 pl-8 text-xs leading-relaxed text-foreground/65">{g.phase!.weeks ? `≈ ${g.phase!.weeks} week${g.phase!.weeks === 1 ? '' : 's'}` : ''}{g.phase!.weeks && g.phase!.goals.length ? ' — ' : ''}{g.phase!.goals.join(' · ')}</p>}
+                {g.phase!.completion && <p className="mt-1 pl-8 text-[11px] text-subtle">Done when {g.phase!.completion}</p>}
+                {(g.tasks.length > 0 || proposedIn(g.name).length > 0) && (
+                  <ul className="ml-3 mt-2 space-y-1 border-l border-white/8 pl-4">
+                    {g.tasks.map(t => <li key={t.id} className={cn('flex items-center gap-2 text-sm text-foreground/80', t.status === 'done' && 'text-subtle line-through', marks.removedTasks.has(t.id) && 'opacity-60 line-through')}><span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', t.status === 'done' ? 'bg-action' : t.status === 'in_progress' ? 'bg-amber-400' : 'bg-foreground/30')} />{t.title}{marks.changedTasks.get(t.id) && <Proposed>→ {marks.changedTasks.get(t.id)}</Proposed>}</li>)}
+                    {proposedIn(g.name).map(a => <li key={a.key} className="text-sm text-foreground/85">+ {a.title}<Proposed>proposed</Proposed></li>)}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ol>
+        )}
         {shown === 'board' && (
-          <div className="grid gap-3 md:grid-cols-3">
-            {COLUMNS.map(c => (
-              <section key={c.status} aria-label={c.label} className="rounded-xl bg-white/[0.025] p-2.5">
-                <h3 className="mb-2 flex justify-between px-1 text-xs font-semibold text-foreground/80">{c.label}<span className="font-normal text-subtle">{detail.tasks.filter(t => t.status === c.status).length}</span></h3>
+          <div className="space-y-4">
+            {groups.filter(g => g.tasks.length > 0 || proposedIn(g.name).length > 0).map(g => (
+              <section key={g.name ?? '—'} aria-label={g.name ?? 'Other tasks'}>
+                <h3 className="mb-2 flex items-center gap-2 px-1 text-xs font-semibold text-foreground/85">
+                  {g.index !== null && <span className="grid size-5 place-items-center rounded-full bg-nova/12 text-[10px] text-nova-ink">{g.index + 1}</span>}
+                  <span className="min-w-0 flex-1">{g.name ?? (phases.length ? 'Other tasks' : 'Tasks')}</span>
+                  <span className="font-normal text-subtle">{g.tasks.length ? progress(g.tasks) : ''}</span>
+                </h3>
                 <ul className="space-y-2">
-                  {detail.tasks.filter(t => t.status === c.status).map(t => <LiveTask key={t.id} t={t} marks={marks} onChange={patch => change(t.id, patch)} />)}
-                  {c.status === 'todo' && marks.addedTasks.map(t => (
-                    <li key={t.key} className={cn(CARD, PROPOSED, 'p-2 text-sm text-foreground/85')} data-proposed-task>+ {t.title}<span className="mt-0.5 block text-[11px] text-subtle">{t.dueDay ? `due ${t.dueDay}` : 'no due day'}{t.priority ? ` · ${t.priority}` : ''}</span><Proposed>proposed</Proposed></li>
+                  {g.tasks.map(t => <LiveTaskRow key={t.id} t={t} marks={marks} onChange={patch => change(t.id, patch)} />)}
+                  {proposedIn(g.name).map(a => (
+                    <li key={a.key} className={cn(CARD, PROPOSED, 'p-2 text-sm text-foreground/85')} data-proposed-task>+ {a.title}<span className="mt-0.5 block text-[11px] text-subtle">{a.dueDay ? `due ${a.dueDay}` : 'no due day'}{a.priority ? ` · ${a.priority}` : ''}</span><Proposed>proposed</Proposed></li>
                   ))}
                 </ul>
               </section>
             ))}
-            {detail.tasks.length === 0 && marks.addedTasks.length === 0 && <p className="text-sm text-foreground/65 md:col-span-3">No tasks here. <Link href="/planner?view=board" className="underline underline-offset-4">Open the board</Link></p>}
+            {detail.tasks.length === 0 && marks.addedTasks.length === 0 && <p className="text-sm text-foreground/65">No tasks here. <Link href="/planner?view=board" className="underline underline-offset-4">Open the board</Link></p>}
           </div>
         )}
         {shown === 'topics' && (
           <div className="space-y-3">
-            {detail.subjects.map(s => (
-              <section key={s.id} className={cn(CARD, 'p-3', marks.removedSubjects.has(s.id) && 'border-red-400/40 opacity-60')}>
-                <div className="flex items-center justify-between gap-2"><h3 className={cn('text-sm font-medium text-foreground', marks.removedSubjects.has(s.id) && 'line-through')}>{s.name}{marks.removedSubjects.has(s.id) && <Proposed>to be removed</Proposed>}</h3><Link href={`/map?focus=${encodeURIComponent(`subject:${s.id}`)}`} className="text-xs font-medium text-foreground/60 hover:text-foreground">On the map</Link></div>
-                <ul className="mt-2 flex flex-wrap gap-1.5">
-                  {s.topics.map(t => {
-                    const renamed = marks.renamedTopics.get(t.id)
-                    const removed = marks.removedTopics.has(t.id)
-                    return (
-                      <li key={t.id}><Link href={`/knowledge?topic=${t.id}`} className={cn('block rounded-full border px-2.5 py-0.5 text-xs text-foreground/80 hover:border-white/25', renamed || removed ? 'border-nova/40' : 'border-white/10', removed && 'line-through opacity-60')}>
-                        {t.name}{renamed && <span className="text-nova-ink"> → {renamed}</span>}</Link></li>
-                    )
-                  })}
-                  {(marks.addedTopics.get(s.id) ?? []).map(name => <li key={name} className={cn('rounded-full border px-2.5 py-0.5 text-xs text-foreground/85', PROPOSED)} data-proposed-topic>+ {name}</li>)}
-                </ul>
-              </section>
-            ))}
+            {detail.subjects.map(s => {
+              const outlined = s.topics.some(t => t.unit || t.subtopics?.length)
+              return (
+                <section key={s.id} className={cn(CARD, 'p-3', marks.removedSubjects.has(s.id) && 'border-red-400/40 opacity-60')}>
+                  <div className="flex items-center justify-between gap-2"><h3 className={cn('text-sm font-medium text-foreground', marks.removedSubjects.has(s.id) && 'line-through')}>{s.name}{marks.removedSubjects.has(s.id) && <Proposed>to be removed</Proposed>}</h3><Link href={`/map?focus=${encodeURIComponent(`subject:${s.id}`)}`} className="text-xs font-medium text-foreground/60 hover:text-foreground">On the map</Link></div>
+                  {outlined ? (
+                    <ol className="mt-2 space-y-1">
+                      {s.topics.map((t, k) => {
+                        const renamed = marks.renamedTopics.get(t.id)
+                        const removed = marks.removedTopics.has(t.id)
+                        const unit = t.unit && t.unit !== s.topics[k - 1]?.unit ? t.unit : null
+                        return (
+                          <li key={t.id} className="px-1.5 py-1">
+                            {unit && <p className="mb-1 mt-1.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-subtle">{unit}</p>}
+                            <div className="flex items-start gap-1.5">
+                              <span className="w-5 shrink-0 pt-0.5 text-right text-[11px] tabular-nums text-subtle">{k + 1}.</span>
+                              <div className="min-w-0 flex-1">
+                                <Link href={`/knowledge?topic=${t.id}`} className={cn('text-sm font-medium text-foreground/90 hover:underline', removed && 'line-through opacity-60')}>{t.name}</Link>{renamed && <span className="text-sm text-nova-ink"> → {renamed}</span>}{removed && <Proposed>to be removed</Proposed>}
+                                {t.subtopics && t.subtopics.length > 0 && <p className="text-xs leading-relaxed text-foreground/65">{t.subtopics.join(' · ')}</p>}
+                              </div>
+                            </div>
+                          </li>
+                        )
+                      })}
+                      {(marks.addedTopics.get(s.id) ?? []).map(name => <li key={name} className={cn('rounded-lg border px-2.5 py-1 text-sm text-foreground/85', PROPOSED)} data-proposed-topic>+ {name}</li>)}
+                    </ol>
+                  ) : (
+                    <ul className="mt-2 flex flex-wrap gap-1.5">
+                      {s.topics.map(t => {
+                        const renamed = marks.renamedTopics.get(t.id)
+                        const removed = marks.removedTopics.has(t.id)
+                        return (
+                          <li key={t.id}><Link href={`/knowledge?topic=${t.id}`} className={cn('block rounded-full border px-2.5 py-0.5 text-xs text-foreground/80 hover:border-white/25', renamed || removed ? 'border-nova/40' : 'border-white/10', removed && 'line-through opacity-60')}>
+                            {t.name}{renamed && <span className="text-nova-ink"> → {renamed}</span>}</Link></li>
+                        )
+                      })}
+                      {(marks.addedTopics.get(s.id) ?? []).map(name => <li key={name} className={cn('rounded-full border px-2.5 py-0.5 text-xs text-foreground/85', PROPOSED)} data-proposed-topic>+ {name}</li>)}
+                    </ul>
+                  )}
+                </section>
+              )
+            })}
             {marks.addedSubjects.map(s => (
               <section key={s.name} className={cn(CARD, PROPOSED, 'p-3')}><h3 className="text-sm font-medium text-foreground">+ {s.name}<Proposed>proposed</Proposed></h3>
                 <ul className="mt-2 flex flex-wrap gap-1.5">{s.topics.map(t => <li key={t} className="rounded-full border border-dashed border-nova/40 px-2.5 py-0.5 text-xs text-foreground/80">{t}</li>)}</ul></section>

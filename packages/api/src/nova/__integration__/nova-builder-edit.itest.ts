@@ -207,6 +207,10 @@ test("an old conversation goes on: it changes what it built, in place, and keeps
   const built = await builder.approveDraft(me.id, first.id, { version: first.version });
   assert.ok(built.ok && built.draft.status === "ready");
   const profileId = await me.profileId();
+  // Reopened, it shows the plan's own shape on the live records: its milestones, in order, with their tasks.
+  const reopened = (await builder.getDraft(me.id, first.id))!;
+  assert.deepEqual(reopened.current!.phases!.map(p => p.name), ["Tasks API", "Notifications"]);
+  assert.equal(reopened.current!.tasks.find(t => t.title === "Build the tasks API")!.topicName, "Tasks API");
   const api = (await listTasks(profileId)).tasks.find(t => t.title === "Build the tasks API")!;
   await prisma.novaTask.update({ where: { id: api.id }, data: { status: "in_progress" } });
   const before = await records(profileId);
@@ -320,7 +324,7 @@ test("a subject inside a bigger workspace opens as that subject alone, and chang
   const first = await begin(me.id, "Plan my semester 5 exams: DSA and OS, exams in early December.", {
     read: reader({ next: "draft", facts: [{ label: "Subjects", value: "DSA and OS", quote: "DSA and OS" }, { label: "Exams", value: "early December", quote: "early December" }] }),
     write: async req => checkWorkspacePlan({ kind: "custom", title: "B.Tech CSE Semester 5 Exam Preparation",
-      subjects: [{ name: "DSA", topics: ["Hashing", "Trees"] }, { name: "OS", topics: ["Scheduling", "Deadlocks"] }],
+      subjects: [{ name: "DSA", topics: [{ name: "Hashing", unit: "Unit 1", subtopics: ["Open addressing", "Chaining"] }, "Trees"] }, { name: "OS", topics: ["Scheduling", "Deadlocks"] }],
       tasks: [{ key: "os", title: "OS past paper", subject: "OS" }, { key: "dsa", title: "DSA tree problems", subject: "DSA" }] }, { today: req.today, userText: req.learnerText }),
   });
   assert.equal(first.status, "awaiting_approval", JSON.stringify(first.messages.map(m => m.text)));
@@ -333,6 +337,8 @@ test("a subject inside a bigger workspace opens as that subject alone, and chang
   assert.deepEqual(draft.current!.subjects.map(s => s.name), ["DSA"]);
   assert.deepEqual(draft.current!.tasks.map(t => t.title), ["DSA tree problems"]);
   assert.equal(draft.current!.title, "DSA");
+  // The subject keeps the outline its plan gave it.
+  assert.deepEqual(draft.current!.subjects[0]!.topics[0], { ...draft.current!.subjects[0]!.topics[0]!, unit: "Unit 1", subtopics: ["Open addressing", "Chaining"] });
 
   const changed = await say(me.id, draft.id, "Add graphs to it", {
     read: reader({ next: "draft", change: "Add graphs" }), write: noWrite,
