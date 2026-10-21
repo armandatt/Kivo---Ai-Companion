@@ -233,6 +233,7 @@ export async function writeWorkspacePlan(p: PlanRequest, generate: Generate = ge
 const BUILDER_RULES = [
   "This plan comes from a conversation with the learner. FACTS are theirs: build on them as given. ASSUMPTIONS are Nova's: rely on them only where needed and keep them in assumptions.",
   "Choose the structure the work needs, not a fixed template: a project gets milestones (phases, in order) with tasks under each and any real dependencies; an exam gets subjects and topics, revision cycles and practice sessions; a skill gets ordered stages with exercises, a project and what done looks like; work gets deliverables, deadlines and reviews.",
+  "Use the kind's own words in every title, task and note. A project or work plan has one subject named after the project, whose topics are its parts or components (never a syllabus), and no revision, exam or study-session tasks; its tasks are concrete steps (build, test, ship, review), building on what the learner said is already done. An academic plan uses subjects, topics, revision and practice.",
   "When CURRENT PROPOSAL is given, return the whole proposal with only the CHANGE ASKED applied. Keep everything else as it is, including keys, names the learner edited and items they removed (do not bring them back).",
   "When EXISTING WORKSPACE is given, propose only what to add to it. Do not repeat what it already has; never remove or rename what is there.",
 ].join("\n");

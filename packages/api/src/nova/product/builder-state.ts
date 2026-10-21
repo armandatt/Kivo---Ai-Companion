@@ -7,7 +7,9 @@
 //     Anything else the model calls a fact is shown as an assumption.
 //   - Nova asks one question at a time, at most MAX_QUESTIONS before it
 //     proposes something, and never drafts from nothing: it needs at least
-//     one thing the learner said they are working on.
+//     one thing the learner said they are working on. A first message that
+//     says one thing ("I'm building TrackerX") gets a question before any
+//     proposal, whatever the model wanted.
 //   - Talk is talk. A reading of "chat" changes nothing.
 //   - A proposal is changed only by a new version. Approval names a version
 //     (builder.ts checks it); every change, Nova's or the learner's, makes a
@@ -30,6 +32,11 @@ export const PENDING_STALE_MS = 180_000;
 const FACTS_MAX = 12, KNOWN_MAX = 8, ASSUMPTIONS_MAX = 8, SUGGESTIONS_MAX = 6, LINE_MAX = 200;
 
 export const OPENING_QUESTION = "What are you working on, and what would you like to end up with?";
+// Asked when code holds back a proposal the model wanted to write from one
+// fact: where they are and where it is going, which every kind of plan needs.
+export const STARTING_QUESTION = "Before I propose anything: where are you with it right now, and is there a date you're working towards?";
+// What a first proposal needs, unless a question has already been asked.
+export const MIN_FACTS_TO_DRAFT = 2;
 
 export function emptyBrief(): BuilderBrief {
   return { kind: null, title: null, facts: [], known: [], assumptions: [], suggestions: [], question: null, questionsAsked: 0, dropped: [] };
@@ -144,12 +151,16 @@ export function readTurn(raw: unknown, learnerText: string, fileNames: readonly 
 // ── Deciding the step ─────────────────────────────────────────────────────────
 
 export type Step =
-  | { type: "ask"; question: string }
+  // overruled: the model wanted to propose and code asked instead, so its
+  // reply (which says it will propose) is not used.
+  | { type: "ask"; question: string; overruled?: true }
   | { type: "chat" }
   | { type: "draft"; reason: "ready" | "enough_questions" }
   | { type: "revise"; change: string };
 
-export function decideStep(state: { plan: WorkspacePlan | null; brief: BuilderBrief }, reading: TurnReading): Step {
+// improving: the conversation is about a workspace they already have, which
+// is context enough for a specific addition ("add a beta programme").
+export function decideStep(state: { plan: WorkspacePlan | null; brief: BuilderBrief; improving?: boolean }, reading: TurnReading): Step {
   const facts = reading.facts.length > 0 ? reading.facts : state.brief.facts;
   if (reading.next === "chat") return { type: "chat" };
 
@@ -161,7 +172,12 @@ export function decideStep(state: { plan: WorkspacePlan | null; brief: BuilderBr
 
   // Nothing to draft from: ask what it is for, whatever the model wanted.
   if (facts.length === 0) return { type: "ask", question: reading.question ?? OPENING_QUESTION };
-  if (reading.next === "draft" || reading.next === "revise") return { type: "draft", reason: "ready" };
+  const wantsDraft = reading.next === "draft" || reading.next === "revise";
+  // One thing said and nothing asked yet: a proposal now would be generic.
+  if (facts.length < MIN_FACTS_TO_DRAFT && state.brief.questionsAsked === 0 && !state.improving) {
+    return wantsDraft ? { type: "ask", question: STARTING_QUESTION, overruled: true } : { type: "ask", question: reading.question ?? STARTING_QUESTION };
+  }
+  if (wantsDraft) return { type: "draft", reason: "ready" };
   // Enough questions: propose something and let the learner correct it.
   if (state.brief.questionsAsked >= MAX_QUESTIONS) return { type: "draft", reason: "enough_questions" };
   return { type: "ask", question: reading.question ?? OPENING_QUESTION };
@@ -190,6 +206,22 @@ export function nextBrief(before: BuilderBrief, reading: TurnReading, step: Step
     question: step.type === "ask" ? step.question : null,
     questionsAsked: before.questionsAsked + (step.type === "ask" ? 1 : 0),
   };
+}
+
+// What a plan holds, in the words of its kind of work (the page uses the
+// same words, components/nova/builder/builder-view.ts). A project or work
+// plan's one subject is the project itself, so it is not counted as one.
+export interface HeldCounts { subjects: number; topics: number; phases: number; tasks: number; notes: number; dates: number }
+export function holdsLine(kind: WorkKind | null, c: HeldCounts): string {
+  const n = (count: number, one: string, many = `${one}s`) => (count ? `${count} ${count === 1 ? one : many}` : null);
+  const academic = kind === "exam" || kind === "semester";
+  const project = kind === "project", work = kind === "work" || kind === "career", skill = kind === "skill";
+  return [
+    project || work ? null : n(c.subjects, academic ? "subject" : "area"),
+    n(c.topics, project ? "part" : work ? "area" : skill ? "concept" : "topic"),
+    n(c.phases, academic ? "phase" : skill ? "stage" : "milestone"),
+    n(c.tasks, "task"), n(c.notes, "note"), n(c.dates, "date"),
+  ].filter(Boolean).join(", ");
 }
 
 // ── What is stored ────────────────────────────────────────────────────────────

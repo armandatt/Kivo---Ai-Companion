@@ -2,18 +2,23 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, ArrowRight } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Sparkles } from 'lucide-react'
 import type { WorkspaceDetail } from '@repo/api/nova/product/builder.types'
 import { LoadFailed, Skeleton } from '@/components/nova/workspace/ui'
 import { cn } from '@/lib/utils'
 import { loadWorkspaceDetail, patchTask } from './builder-api'
+import { wordsFor } from './builder-view'
 import type { PlaygroundView } from './plan-edit'
 import { PlaygroundHeader, TITLE_AREA, ViewTabs } from './playground'
+import { ProposalActions } from './proposal-actions'
+import type { DraftState } from './use-draft'
 
 // After approval the playground shows the workspace as it now is in Kivo:
 // the real tasks, topics, notes and dates, read back from their owners.
 // A task is changed here through the Planner's own route, so the board,
-// Today and the calendar see the same change.
+// Today and the calendar see the same change. Nova can add to it (Improve
+// with Nova starts a conversation about it); it does not change or remove
+// what is here, so the page does not offer that.
 
 type Task = WorkspaceDetail['tasks'][number]
 const COLUMNS: Array<{ status: Task['status']; label: string }> = [{ status: 'todo', label: 'To do' }, { status: 'in_progress', label: 'In progress' }, { status: 'done', label: 'Done' }]
@@ -42,7 +47,9 @@ function LiveTask({ t, onChange }: { t: Task; onChange: (patch: Partial<Task>) =
   )
 }
 
-export function LiveWorkspace({ workspaceId, view, onView }: { workspaceId: string; view: PlaygroundView; onView: (v: PlaygroundView) => void }) {
+export function LiveWorkspace({ workspaceId, view, onView, state, onAsk, onImprove }: {
+  workspaceId: string; view: PlaygroundView; onView: (v: PlaygroundView) => void; state: DraftState; onAsk: (text: string) => void; onImprove: () => void
+}) {
   const [detail, setDetail] = useState<WorkspaceDetail | null>(null)
   const [failed, setFailed] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -69,20 +76,23 @@ export function LiveWorkspace({ workspaceId, view, onView }: { workspaceId: stri
   const shown = views.includes(view) ? view : 'overview'
   const days = [...detail.dates.map(d => ({ day: d.day, label: d.title, kind: 'date' as const })), ...detail.tasks.filter(t => t.dueDay).map(t => ({ day: t.dueDay!, label: t.title, kind: 'task' as const }))].sort((a, b) => a.day.localeCompare(b.day))
   const done = detail.tasks.filter(t => t.status === 'done').length
+  const words = wordsFor(state.draft?.brief.kind)
+  const topics = detail.subjects.reduce((n, s) => n + s.topics.length, 0)
+  const stats = [`${done} of ${detail.tasks.length} task${detail.tasks.length === 1 ? '' : 's'} done`, topics ? `${topics} ${topics === 1 ? words.topic : `${words.topic}s`}` : null, detail.notes.length ? `${detail.notes.length} note${detail.notes.length === 1 ? '' : 's'}` : null, detail.dates.length ? `${detail.dates.length} date${detail.dates.length === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ')
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-live-workspace>
-      <PlaygroundHeader title={detail.workspace.title} badge="live" tabs={<ViewTabs views={views} view={shown} onView={onView} label="Workspace views" />} />
-      <div id="pg-panel" role="tabpanel" aria-labelledby={`pg-tab-${shown}`} className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+      <PlaygroundHeader title={detail.workspace.title} badge="live" stats={stats} tabs={<ViewTabs views={views} view={shown} onView={onView} label="Workspace views" names={words.views} />} />
+      <div id="pg-panel" role="tabpanel" aria-labelledby={`pg-tab-${shown}`} className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-3 sm:px-5">
         {error && <p role="alert" className="mb-3 text-sm text-red-400">{error}</p>}
+        <button type="button" onClick={onImprove} data-hint
+          className="group -mx-2 mb-3 flex w-[calc(100%+1rem)] items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-subtle transition-colors hover:bg-nova/6 hover:text-foreground/85">
+          <Sparkles aria-hidden className="size-3.5 shrink-0 text-nova-ink" />
+          <span className="min-w-0 flex-1">Ask Nova to add to this workspace. To change or remove what&apos;s here, edit it here or where it lives.</span>
+        </button>
         {shown === 'overview' && (
           <div className="space-y-5">
             {detail.workspace.summary && <p className="text-sm leading-relaxed text-foreground/80">{detail.workspace.summary}</p>}
-            <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {([['Tasks done', `${done} of ${detail.tasks.length}`], ['Subjects', detail.subjects.length], ['Notes', detail.notes.length], ['Dates', detail.dates.length]] as const).map(([k, v]) => (
-                <div key={k} className={cn(CARD, 'px-3 py-2.5')}><dt className="text-[11px] text-subtle">{k}</dt><dd className="mt-0.5 text-lg font-semibold tabular-nums text-foreground">{v}</dd></div>
-              ))}
-            </dl>
             <p className="text-xs text-subtle">These are your real records. Changing a task here changes it on your Planner board too.</p>
           </div>
         )}
@@ -122,6 +132,7 @@ export function LiveWorkspace({ workspaceId, view, onView }: { workspaceId: stri
           </ul>
         )}
       </div>
+      <ProposalActions state={state} words={words} onEdit={() => onView('board')} onAsk={onAsk} onImprove={onImprove} />
     </div>
   )
 }

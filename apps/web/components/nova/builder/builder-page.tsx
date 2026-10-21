@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { LayoutTemplate, MessageSquare, PanelsTopLeft, Plus } from 'lucide-react'
+import { MessageSquare, PanelsTopLeft, Plus } from 'lucide-react'
 import type { DraftListItem } from '@repo/api/nova/product/builder.types'
 import type { WorkspaceSummary } from '@repo/api/nova/product/workspaces.types'
 import { PageNotice, RetryButton } from '@/components/dashboard/page-states'
@@ -11,102 +11,73 @@ import { BUTTON_QUIET } from '@/components/nova/workspace/ui'
 import { cn } from '@/lib/utils'
 import { loadWorkspaces } from '@/components/nova/templates/templates-api'
 import * as api from './builder-api'
-import { Composer, Conversation, NovaAvatar, STATUS_LABEL, type Upload } from './conversation'
+import { wordsFor } from './builder-view'
+import { BUILD_EXAMPLES, Composer, Conversation, NewConversation, NovaAvatar, STATUS_LABEL, type Seed, type Upload } from './conversation'
 import { LiveWorkspace } from './live-workspace'
-import { DraftPlayground } from './playground'
+import { DraftPlayground, PlaygroundHeader, PlaygroundWaiting } from './playground'
 import type { PlaygroundView } from './plan-edit'
 import { useDraft } from './use-draft'
 
 // Build with Nova: a conversation on the left, the workspace it shapes on
-// the right. On a phone the two are tabs. The address names the draft
-// (?draft=<id>), so a refresh, the back button or a link from Telegram opens
-// the same conversation.
+// the right, from the first screen on. On a phone the two are tabs. The
+// address names the draft (?draft=<id>), so a refresh, the back button or a
+// link from Telegram opens the same conversation; /build alone is a new one.
 
 const SPLIT_KEY = 'kivo-build-split'
 const SPLIT_MIN = 32, SPLIT_MAX = 64, SPLIT_DEFAULT = 42
-
-export const BUILD_EXAMPLES = [
-  "I'm building a project and need a plan to finish it",
-  'I need to prepare for an exam',
-  'Help me organise my semester',
-  'I want a roadmap to learn a new skill',
-  'I have a work deadline in three weeks',
-  "I already have a plan, but it isn't working",
-]
 
 function readSplit(): number {
   try { const v = Number(localStorage.getItem(SPLIT_KEY)); return v >= SPLIT_MIN && v <= SPLIT_MAX ? v : SPLIT_DEFAULT } catch { return SPLIT_DEFAULT }
 }
 
-// The first screen: say anything, or improve something already built.
-export function BuildStart({ onStart, workspaces, drafts, busy, error, compact = false }: {
+// A first step toward Build with Nova from elsewhere (Today's first run):
+// say anything, and the conversation opens on /build.
+export function BuildStart({ onStart, busy, error, compact = false }: {
   onStart: (text: string, targetWorkspaceId?: string, files?: Upload[]) => Promise<boolean>; workspaces: WorkspaceSummary[]; drafts: DraftListItem[]
   busy: boolean; error: string | null; compact?: boolean
 }) {
-  const [seed, setSeed] = useState('')
-  const [key, setKey] = useState(0)
-  const open = drafts.filter(d => d.status !== 'ready').slice(0, 4)
+  const [seed, setSeed] = useState<Seed | null>(null)
   return (
-    <div className={cn('space-y-6', compact ? '' : 'mx-auto max-w-xl')} data-build-start>
+    <div className={cn('space-y-5', compact ? '' : 'mx-auto max-w-xl')} data-build-start>
       <div className="flex items-start gap-3">
         <NovaAvatar />
         <div>
-          <h1 className={cn('font-semibold tracking-tight text-foreground', compact ? 'text-xl' : 'text-2xl')}>What would you like to organise?</h1>
-          <p className="mt-1.5 text-[15px] leading-relaxed text-foreground/70">Start with a rough idea: a project, an exam, a skill, your semester or something at work. Nova asks what it needs, proposes a structure you can edit, and builds nothing until you approve it.</p>
+          <h1 className={cn('font-semibold tracking-tight text-foreground', compact ? 'text-xl' : 'text-2xl')}>What would you like to build?</h1>
+          <p className="mt-1.5 text-[15px] leading-relaxed text-foreground/70">Start with a rough idea: an exam, a project, a skill or something at work. Nova asks what it needs, proposes a workspace you can edit, and builds nothing until you approve it.</p>
         </div>
       </div>
-      <Composer key={key} initial={seed} onSend={(text, files) => onStart(text, undefined, files)} disabled={busy} placeholder="e.g. I'm building TrackerX, a project tracker for small teams" />
-      <p className="-mt-3 text-xs text-subtle">You can attach a syllabus, notes or a photo of a plan (PDF, PNG, JPEG or WebP, up to 3 MB at a time). Nova reads it and you can ask about it.</p>
+      <Composer seed={seed} onSend={(text, files) => onStart(text, undefined, files)} disabled={busy} placeholder="e.g. I'm building TrackerX, a project tracker for small teams" />
       {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
-      <div>
-        <p className="mb-2 text-xs text-subtle">Or begin from</p>
-        <ul className="flex flex-wrap gap-1.5">
-          {BUILD_EXAMPLES.map(e => (
-            <li key={e}><button type="button" onClick={() => { setSeed(e); setKey(k => k + 1) }} className="rounded-full border border-white/10 px-3 py-1 text-xs text-foreground/75 transition-colors hover:border-white/25 hover:text-foreground">{e}</button></li>
-          ))}
-        </ul>
-      </div>
-      {!compact && workspaces.length > 0 && (
-        <div>
-          <p className="mb-2 text-xs text-subtle">Improve a workspace you have</p>
-          <ul className="flex flex-wrap gap-1.5">{workspaces.slice(0, 6).map(w => (
-            <li key={w.id}><button type="button" disabled={busy} onClick={() => void onStart('', w.id)} className={BUTTON_QUIET}>{w.title}</button></li>
-          ))}</ul>
-        </div>
-      )}
-      {!compact && open.length > 0 && (
-        <div>
-          <p className="mb-2 text-xs text-subtle">Continue a conversation</p>
-          <ul className="space-y-1">{open.map(d => (
-            <li key={d.id}><Link href={`/build?draft=${encodeURIComponent(d.id)}`} className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-sm text-foreground/80 hover:bg-white/4">
-              <span className="truncate">{d.title ?? 'Untitled conversation'}</span><span className="shrink-0 text-xs text-subtle">{STATUS_LABEL[d.status]}</span></Link></li>
-          ))}</ul>
-        </div>
-      )}
-      {!compact && <p className="text-xs text-subtle"><Link href="/templates" className="inline-flex items-center gap-1 underline-offset-4 hover:text-foreground hover:underline"><LayoutTemplate aria-hidden className="size-3.5" /> Prefer a ready-made start? Browse templates</Link> (they can read a syllabus PDF too).</p>}
+      <ul className="flex flex-wrap gap-1.5">
+        {BUILD_EXAMPLES.slice(0, 3).map(e => (
+          <li key={e}><button type="button" onClick={() => setSeed(s => ({ text: e, n: (s?.n ?? 0) + 1 }))} className="rounded-full border border-white/10 px-3 py-1 text-xs text-foreground/75 transition-colors hover:border-white/25 hover:text-foreground">{e}</button></li>
+        ))}
+      </ul>
     </div>
   )
 }
 
-function ConversationHeader({ title, status, drafts, current, onNew }: { title: string; status: string | null; drafts: DraftListItem[]; current: string | null; onNew: () => void }) {
+function ConversationHeader({ title, status, drafts, current, onNew }: { title: string; status: string | null; drafts: DraftListItem[]; current: string | null; onNew: (() => void) | null }) {
   const router = useRouter()
+  const others = drafts.filter(d => d.status !== 'cancelled')
   return (
-    <div className="flex items-center gap-3 border-b border-white/8 px-4 py-3 sm:px-5">
-      <NovaAvatar />
+    <div className="flex shrink-0 items-center gap-3 border-b border-white/8 px-4 py-2.5 sm:px-5">
+      <NovaAvatar size="sm" />
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-foreground">Nova</p>
-        <p className="truncate text-xs text-subtle">{title}{status ? ` · ${status}` : ''}</p>
+        <p className="truncate text-sm font-semibold text-foreground">{title}</p>
+        {status && <p className="truncate text-xs text-subtle">{status}</p>}
       </div>
-      {drafts.length > 1 && (
+      {others.length > 0 && (
         <label className="hidden sm:block">
           <span className="sr-only">Switch conversation</span>
-          <select value={current ?? ''} onChange={e => e.target.value && router.push(`/build?draft=${encodeURIComponent(e.target.value)}`)}
-            className="h-8 max-w-[11rem] rounded-lg border border-white/10 bg-background px-2 text-xs text-foreground/80">
-            {drafts.map(d => <option key={d.id} value={d.id}>{d.title ?? 'Untitled'} — {STATUS_LABEL[d.status]}</option>)}
+          <select value={current ?? ''} onChange={e => router.push(e.target.value ? `/build?draft=${encodeURIComponent(e.target.value)}` : '/build')}
+            className="h-8 max-w-44 rounded-lg border border-white/10 bg-background px-2 text-xs text-foreground/80">
+            {!current && <option value="">New conversation</option>}
+            {others.map(d => <option key={d.id} value={d.id}>{d.title ?? 'Untitled'} — {STATUS_LABEL[d.status]}</option>)}
           </select>
         </label>
       )}
-      <button type="button" onClick={onNew} className={BUTTON_QUIET} aria-label="New conversation"><Plus aria-hidden className="size-3.5" /> New</button>
+      {onNew && <button type="button" onClick={onNew} className={BUTTON_QUIET} aria-label="New conversation"><Plus aria-hidden className="size-3.5" /> New</button>}
     </div>
   )
 }
@@ -126,6 +97,7 @@ export function BuilderPage() {
   const [tab, setTab] = useState<'chat' | 'playground'>('chat')
   const [view, setView] = useState<PlaygroundView>('overview')
   const [split, setSplit] = useState(SPLIT_DEFAULT)
+  const [seed, setSeed] = useState<Seed | null>(null)
   const grid = useRef<HTMLDivElement>(null)
 
   useEffect(() => { setSplit(readSplit()) }, [])
@@ -133,6 +105,11 @@ export function BuilderPage() {
     void api.listDrafts().then(r => { if ('status' in r) setDrafts(r.drafts) })
     void loadWorkspaces().then(r => { if ('status' in r) setWorkspaces(r.workspaces) })
   }, [draftId, draft?.status, draft?.title])
+  // A new conversation starts on the conversation, at the overview.
+  useEffect(() => { setTab('chat'); setView('overview'); setStartError(null) }, [draftId])
+
+  // Something to say to Nova, put in the message box (never sent from here).
+  const ask = useCallback((text: string) => { setTab('chat'); setSeed(s => ({ text, n: (s?.n ?? 0) + 1 })) }, [])
 
   // A new proposal or version: the playground tab says so on a phone.
   const seen = useRef(0)
@@ -170,15 +147,7 @@ export function BuilderPage() {
     window.addEventListener('pointerup', up)
   }
 
-  if (!draftId) {
-    return (
-      <div className="mx-auto w-full max-w-6xl pb-16 pt-12 lg:pt-8">
-        <BuildStart onStart={start} workspaces={workspaces} drafts={drafts} busy={starting} error={startError} />
-      </div>
-    )
-  }
-
-  if (state.loadError && !draft) {
+  if (draftId && state.loadError && !draft) {
     return (
       <div className="mx-auto max-w-xl pt-12">
         <PageNotice tone="error" title="This conversation didn't open" action={<RetryButton onRetry={() => void state.reload()} />}>
@@ -188,19 +157,32 @@ export function BuilderPage() {
     )
   }
 
-  const title = draft?.title ?? draft?.target?.title ?? 'New workspace'
-  const header = <ConversationHeader title={title} status={draft ? STATUS_LABEL[draft.status] : null} drafts={drafts} current={draftId} onNew={() => router.push('/build')} />
-  const conversation = draft
-    ? <Conversation state={state} header={header} onNew={() => router.push('/build')}
-        onEdit={() => { setTab('playground'); setView(v => (v === 'overview' ? 'board' : v)) }}
-        onImprove={() => draft.workspace && void start('', draft.workspace.id)} />
-    : <div aria-busy="true" aria-label="Opening the conversation" className="p-5"><div className="h-24 animate-pulse rounded-2xl bg-white/4" /></div>
-  const playground = draft?.status === 'ready' && draft.workspace
-    ? <LiveWorkspace workspaceId={draft.workspace.id} view={view} onView={setView} />
-    : <DraftPlayground state={state} view={view} onView={setView} />
+  const onNew = () => router.push('/build')
+  const onImprove = () => { if (draft?.workspace) void start('', draft.workspace.id) }
+  let conversation: React.ReactNode
+  let playground: React.ReactNode
+  if (!draftId) {
+    const header = <ConversationHeader title="New conversation" status={null} drafts={drafts} current={null} onNew={null} />
+    conversation = <NewConversation header={header} onStart={start} busy={starting} error={startError} seed={seed} onExample={ask} drafts={drafts} workspaces={workspaces} />
+    playground = (
+      <div className="flex h-full min-h-0 flex-col">
+        <PlaygroundHeader title="Your workspace" badge="draft" />
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5"><PlaygroundWaiting draft={null} words={wordsFor(null)} /></div>
+      </div>
+    )
+  } else {
+    const title = draft?.title ?? draft?.target?.title ?? 'New conversation'
+    const header = <ConversationHeader title={title} status={draft ? STATUS_LABEL[draft.status] : null} drafts={drafts} current={draftId} onNew={onNew} />
+    conversation = draft
+      ? <Conversation key={draftId} state={state} header={header} seed={seed} onReview={() => setTab('playground')} />
+      : <div aria-busy="true" aria-label="Opening the conversation" className="space-y-3 p-5"><div className="h-10 animate-pulse rounded-xl bg-white/4 motion-reduce:animate-none" /><div className="h-24 animate-pulse rounded-2xl bg-white/4 motion-reduce:animate-none" /></div>
+    playground = draft?.status === 'ready' && draft.workspace
+      ? <LiveWorkspace workspaceId={draft.workspace.id} view={view} onView={setView} state={state} onAsk={ask} onImprove={onImprove} />
+      : <DraftPlayground state={state} view={view} onView={setView} onAsk={ask} onImprove={onImprove} />
+  }
 
   return (
-    <div className="flex h-[calc(100dvh-3rem)] min-h-[32rem] flex-col pt-10 lg:pt-0" data-builder={draft?.status ?? 'loading'}>
+    <div className="flex h-[calc(100dvh-3rem)] min-h-[32rem] flex-col pt-10 lg:pt-0" data-builder={draftId ? draft?.status ?? 'loading' : 'new'}>
       {/* Phones: one panel at a time. */}
       <div role="tablist" aria-label="Build with Nova" className="mb-3 grid grid-cols-2 gap-1 rounded-xl border border-white/8 bg-card/50 p-1 lg:hidden">
         {(['chat', 'playground'] as const).map(t => (

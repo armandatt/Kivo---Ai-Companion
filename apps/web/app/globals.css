@@ -533,6 +533,22 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 @keyframes nova-flow { to { stroke-dashoffset: -18; } }
 .nova-flow { animation: nova-flow 0.9s linear infinite; }
 
+/* Build with Nova's playground: a proposal's items come in one after another
+   (--i is the item's place, capped by the page), and what a new version
+   changed is lit briefly. Only items that arrived while the page was open
+   get these classes. */
+@keyframes nova-reveal { from { opacity: 0; transform: translateY(6px) scale(0.99); } to { opacity: 1; transform: none; } }
+.nova-reveal { animation: nova-reveal 0.38s cubic-bezier(0.2, 0.7, 0.2, 1) both; animation-delay: calc(var(--i, 0) * 45ms); }
+@keyframes nova-changed {
+  0%, 35% { background-color: color-mix(in oklch, var(--nova) 16%, transparent); box-shadow: 0 0 0 1px color-mix(in oklch, var(--nova) 45%, transparent); }
+  100% { background-color: transparent; box-shadow: 0 0 0 1px transparent; }
+}
+.nova-changed { animation: nova-changed 2.6s ease-out both; animation-delay: calc(var(--i, 0) * 45ms); }
+.nova-reveal.nova-changed { animation: nova-reveal 0.38s cubic-bezier(0.2, 0.7, 0.2, 1) both, nova-changed 2.6s ease-out both; animation-delay: calc(var(--i, 0) * 45ms); }
+/* An indeterminate bar while Nova writes. */
+@keyframes nova-progress { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+.nova-progress { animation: nova-progress 1.4s ease-in-out infinite; }
+
 /* A learner who has asked their device for less motion gets none that is
    decoration: no pulsing placeholders, sliding panels or eased rings. The
    state each of those shows is still shown, at once. */
@@ -545,6 +561,11 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+  /* Shown at once, not after their place in the queue; a change is still
+     marked, without the fade. */
+  .kivo-app .nova-reveal { animation: none !important; }
+  .kivo-app .nova-changed { animation: none !important; box-shadow: 0 0 0 1px color-mix(in oklch, var(--nova) 45%, transparent); }
+  .kivo-app .nova-progress { animation: none !important; transform: none; width: 100% !important; opacity: 0.5; }
 }
 
 /* ── The focus room (components/nova/focus-session.tsx) ──────────────────────

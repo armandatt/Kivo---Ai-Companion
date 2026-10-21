@@ -1,0 +1,138 @@
+'use client'
+
+import { useState } from 'react'
+import Link from 'next/link'
+import { AlertTriangle, Check, Loader2, MessageSquare, PencilLine, RotateCcw, Sparkles, Trash2 } from 'lucide-react'
+import type { DraftView } from '@repo/api/nova/product/builder.types'
+import { planCounts } from '@repo/api/nova/product/workspace-plan'
+import { BUTTON_PRIMARY, BUTTON_QUIET } from '@/components/nova/workspace/ui'
+import type { Words } from './builder-view'
+import type { DraftState } from './use-draft'
+
+// The bottom of the playground: the decisions that are the learner's, kept
+// apart from the workspace above and from the conversation. Shown only when
+// there is something to decide or to report (a proposal to approve, a build
+// under way, failed or done); before a proposal the playground has none.
+//
+// Approval names the version on screen. While Nova writes a new version the
+// approve button waits, and once it lands it is that version (and only
+// that one) the learner approves: an approval never carries over.
+
+const BAR = 'shrink-0 border-t border-white/8 bg-card/85 px-4 py-3 backdrop-blur-sm sm:px-5'
+
+function counted(n: number, one: string, many = `${one}s`) { return n ? `${n} ${n === 1 ? one : many}` : null }
+
+export function ProposalActions({ state, words, onEdit, onAsk, onImprove }: {
+  state: DraftState; words: Words; onEdit: () => void; onAsk: (text: string) => void; onImprove: () => void
+}) {
+  const { draft, plan, busy, save } = state
+  const [confirmCancel, setConfirmCancel] = useState(false)
+  if (!draft) return null
+  const error = state.actionError && (state.errorOf === 'approve' || state.errorOf === 'cancel')
+    ? <p role="alert" className="mb-2 text-xs text-red-400">{state.actionError}</p> : null
+
+  if (draft.status === 'building' || busy === 'approve') {
+    return (
+      <div className={BAR} role="status" data-actions="building">
+        <p className="flex items-center gap-2 text-sm font-medium text-foreground"><Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none" /> Creating version {draft.version} in Kivo…</p>
+        <p className="mt-1 text-xs text-subtle">Its tasks, {words.areas.toLowerCase()}, notes and dates are written together, or not at all.</p>
+      </div>
+    )
+  }
+
+  if (draft.status === 'ready' && draft.workspace) {
+    const first = draft.workspace.subjects[0]
+    return (
+      <div className={BAR} role="status" data-actions="ready" data-built>
+        <p className="flex items-center gap-2 text-sm font-semibold text-foreground"><Check aria-hidden className="size-4 text-action-ink" /> {draft.workspace.title} is in Kivo</p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Link href="/planner?view=board" className={BUTTON_QUIET}>Planner board</Link>
+          {first && <Link href={`/knowledge?subject=${first.id}`} className={BUTTON_QUIET}>Knowledge</Link>}
+          <Link href="/calendar" className={BUTTON_QUIET}>Calendar</Link>
+          <Link href="/home" className={BUTTON_QUIET}>Today</Link>
+          <button type="button" onClick={onImprove} className={`${BUTTON_QUIET} sm:ml-auto`}><Sparkles aria-hidden className="size-3.5" /> Add to it with Nova</button>
+        </div>
+      </div>
+    )
+  }
+
+  if (draft.status === 'failed' && draft.failure?.stage === 'building') {
+    return (
+      <div className={BAR} role="alert" data-actions="build-failed">
+        {error}
+        <p className="flex items-start gap-2 text-sm text-foreground/85"><AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0 text-red-400" /> {draft.failure.message} Nothing was created.</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button type="button" onClick={() => void state.approve()} disabled={Boolean(busy)} className={BUTTON_PRIMARY}><RotateCcw aria-hidden className="size-3.5" /> Approve version {draft.version} again</button>
+          <button type="button" onClick={() => onAsk('')} className={BUTTON_QUIET}><MessageSquare aria-hidden className="size-3.5" /> Discuss with Nova</button>
+        </div>
+      </div>
+    )
+  }
+
+  const writing = state.working
+  // A proposal on screen to approve, or one Nova is rewriting (approval waits for it).
+  if (!plan || !(draft.status === 'awaiting_approval' || (draft.status === 'drafting' && writing))) return null
+
+  const counts = planCounts(plan)
+  const blocked = Boolean(busy) || save === 'saving' || writing
+  const similar = draft.similar.length > 0 && !draft.target
+  const holds = [counted(plan.phases.length, words.phase), counted(counts.tasks, 'task'), counted(counts.topics, words.topic), counted(counts.notes, 'note'), counted(counts.dates, 'date')].filter(Boolean).join(' · ')
+  const suggestions = draft.brief.suggestions.slice(0, 3)
+
+  return (
+    <div className={BAR} data-actions="approve" data-approval={draft.version}>
+      {error}
+      {suggestions.length > 0 && !writing && (
+        <div className="-mx-1 mb-2.5 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5" aria-label="Nova's suggestions">
+          <span className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-nova-ink"><Sparkles aria-hidden className="size-3" /> Refine</span>
+          {suggestions.map(s => (
+            <button key={s} type="button" onClick={() => onAsk(s)} title="Put this in the message box to send or change"
+              className="max-w-[16rem] shrink-0 truncate rounded-full border border-white/10 px-2.5 py-1 text-[11px] text-foreground/75 transition-colors hover:border-nova/40 hover:text-foreground">{s}</button>
+          ))}
+        </div>
+      )}
+      {similar && (
+        <div role="alert" className="mb-2.5 rounded-xl border border-amber-300/25 bg-amber-300/5 p-2.5 text-xs" data-similar>
+          <p className="font-medium text-foreground">You already have {draft.similar.length === 1 ? 'a workspace like this' : 'workspaces like this'}: {draft.similar.map(w => w.title).join(', ')}.</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {draft.similar.slice(0, 2).map(w => <button key={w.id} type="button" disabled={blocked} onClick={() => void state.approve({ addTo: w.id })} className={BUTTON_QUIET}>Add to {w.title}</button>)}
+            <button type="button" disabled={blocked} onClick={() => void state.approve({ confirmAnother: true })} className={BUTTON_QUIET}>Create a new one</button>
+          </div>
+          <p className="mt-1.5 text-subtle">Adding merges: nothing you have is changed or removed.</p>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="mr-auto min-w-0">
+          <p className="text-sm font-semibold text-foreground">{writing ? 'Nova is writing a new version…' : `Ready to review · version ${draft.version}`}</p>
+          <p className="truncate text-xs text-subtle">{writing ? 'Approve once it lands, so you approve what you see.' : `${draft.target ? `Adds to ${draft.target.title}: ` : ''}${holds || 'An empty proposal'}. Nothing exists until you approve.`}</p>
+        </div>
+        {!similar && (
+          <button type="button" onClick={() => void state.approve()} disabled={blocked} className={`${BUTTON_PRIMARY} order-last w-full justify-center sm:order-0 sm:w-auto`} data-approve>
+            {save === 'saving' ? 'Saving your edits…' : writing ? <><Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none" /> Waiting for Nova</> : <><Check aria-hidden className="size-4" /> Approve and build</>}
+          </button>
+        )}
+        <button type="button" onClick={onEdit} disabled={writing} className={BUTTON_QUIET}><PencilLine aria-hidden className="size-3.5" /> Edit</button>
+        <button type="button" onClick={() => onAsk('')} className={BUTTON_QUIET}><MessageSquare aria-hidden className="size-3.5" /> Discuss</button>
+        {confirmCancel ? (
+          <span className="flex basis-full flex-wrap items-center gap-2 text-xs text-foreground/75 sm:basis-auto">Discard this proposal? Nothing has been created.
+            <button type="button" onClick={() => { setConfirmCancel(false); void state.cancel() }} className={BUTTON_QUIET} data-confirm-cancel>Discard</button>
+            <button type="button" onClick={() => setConfirmCancel(false)} className={BUTTON_QUIET}>Keep</button>
+          </span>
+        ) : (
+          <button type="button" onClick={() => setConfirmCancel(true)} disabled={blocked} aria-label="Discard this proposal" title="Discard this proposal"
+            className="grid size-9 place-items-center rounded-lg text-subtle transition-colors hover:bg-white/6 hover:text-foreground disabled:opacity-40"><Trash2 aria-hidden className="size-4" /></button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// The status line a draft's playground shows above the plan while Nova
+// works on it: the job's real stage, never a step the server has not reached.
+export function workingLabel(draft: DraftView, words: Words): string | null {
+  if (draft.status === 'building') return 'Creating your workspace in Kivo'
+  const p = draft.pending
+  if (!p) return null
+  if (p.stage === 'reading') return draft.files.length ? 'Reading your message and files' : 'Reading your message'
+  return p.kind === 'revise' ? words.revising : words.writing
+}

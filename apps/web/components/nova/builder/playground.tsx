@@ -1,12 +1,14 @@
 'use client'
 
-import { useState } from 'react'
-import { ArrowDown, ArrowUp, CalendarDays, FileText, Flag, LayoutGrid, ListTree, Loader2, Map as MapIcon, Plus, X } from 'lucide-react'
+import { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { ArrowDown, ArrowUp, CalendarDays, ChevronRight, FileText, Flag, LayoutGrid, ListTree, Map as MapIcon, Plus, Sparkles, X } from 'lucide-react'
 import type { BriefFact, DraftView } from '@repo/api/nova/product/builder.types'
 import { planCounts, type PlanTask, type WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
 import { cn } from '@/lib/utils'
+import { diffSummary, hintFor, ids, planDiff, wordsFor, type Hint, type PlanDiff, type Words } from './builder-view'
 import * as edit from './plan-edit'
 import type { PlaygroundView } from './plan-edit'
+import { ProposalActions, workingLabel } from './proposal-actions'
 import type { DraftState } from './use-draft'
 
 // The right half of Build with Nova: the proposal itself, the structured
@@ -14,16 +16,46 @@ import type { DraftState } from './use-draft'
 // part can be edited here; edits show at once and are saved as a new
 // version (use-draft.ts). Before there is a proposal, what Nova has
 // understood so far fills in as the conversation goes.
+//
+// A version that arrives while the page is open comes in item by item, and
+// what it changed is lit for a moment (builder-view.ts planDiff). That is
+// the page drawing a finished, checked proposal in order: the server writes
+// a version whole, and the page never shows an item before it exists.
 
-export const VIEW_LABEL: Record<PlaygroundView, string> = { overview: 'Overview', roadmap: 'Roadmap', board: 'Board', topics: 'Topics', timeline: 'Timeline', notes: 'Notes' }
 export const VIEW_ICON: Record<PlaygroundView, typeof LayoutGrid> = { overview: MapIcon, roadmap: Flag, board: LayoutGrid, topics: ListTree, timeline: CalendarDays, notes: FileText }
 
 const FIELD = 'w-full rounded-md border border-transparent bg-transparent px-1.5 py-1 text-sm text-foreground outline-none transition-colors hover:border-white/10 focus:border-action/70 focus:bg-background/60 disabled:hover:border-transparent'
 const H = 'text-[11px] font-semibold uppercase tracking-[0.12em] text-subtle'
-const CARD = 'rounded-xl border border-white/8 bg-card/60'
+const CARD = 'rounded-xl border border-white/8 bg-card/70'
 // A title that wraps instead of being cut off; it grows with its text where
 // the browser can size a field to its content.
 export const TITLE_AREA = 'resize-none overflow-hidden leading-snug [field-sizing:content]'
+// How many items a reveal staggers before the rest come in together.
+const STAGGER_MAX = 14
+const MARKS_FOR_MS = 4000
+
+// ── Marking what a new version brought ────────────────────────────────────────
+
+type Marked = { className?: string; style?: React.CSSProperties }
+type Marker = (id: string) => Marked
+const MarkContext = createContext<() => Marker>(() => () => ({}))
+
+// One marker per view render: each marked item takes the next place in the queue.
+function markerFor(diff: PlanDiff | null, first: boolean): () => Marker {
+  return () => {
+    let n = 0
+    return (id: string) => {
+      if (!diff) return {}
+      const fresh = diff.fresh.has(id), changed = diff.changed.has(id)
+      if (!fresh && !changed) return {}
+      const style = { ['--i' as string]: Math.min(n++, STAGGER_MAX) } as React.CSSProperties
+      return { className: first ? 'nova-reveal' : fresh ? 'nova-reveal nova-changed' : 'nova-changed', style }
+    }
+  }
+}
+const useMarker = () => useContext(MarkContext)()
+
+// ── Small parts ───────────────────────────────────────────────────────────────
 
 function IconButton({ label, onClick, children, disabled }: { label: string; onClick: () => void; children: React.ReactNode; disabled?: boolean }) {
   return (
@@ -46,6 +78,19 @@ function AddRow({ label, placeholder, onAdd, disabled }: { label: string; placeh
   )
 }
 
+// "Change this with Nova": puts the start of a sentence in the message box,
+// focused, and sends nothing.
+export function NovaHint({ hint, onAsk }: { hint: Hint; onAsk: (text: string) => void }) {
+  return (
+    <button type="button" onClick={() => onAsk(hint.prefill)} data-hint
+      className="group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-subtle transition-colors hover:bg-nova/6 hover:text-foreground/85">
+      <Sparkles aria-hidden className="size-3.5 shrink-0 text-nova-ink" />
+      <span className="min-w-0 flex-1">{hint.text}</span>
+      <span className="shrink-0 font-medium text-nova-ink opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">Ask</span>
+    </button>
+  )
+}
+
 function Facts({ title, facts, tone }: { title: string; facts: BriefFact[] | string[]; tone: 'yours' | 'known' | 'assumed' | 'suggested' }) {
   if (facts.length === 0) return null
   return (
@@ -63,8 +108,6 @@ function Facts({ title, facts, tone }: { title: string; facts: BriefFact[] | str
   )
 }
 
-// What Nova has understood: the learner's words, their record, Nova's
-// assumptions and suggestions, each said for what it is.
 // The files shared in the conversation, and, once a proposal exists, whether
 // Nova reported reading each one.
 function SharedFiles({ draft, plan }: { draft: DraftView; plan: WorkspacePlan | null }) {
@@ -85,11 +128,13 @@ function SharedFiles({ draft, plan }: { draft: DraftView; plan: WorkspacePlan | 
           )
         })}
       </ul>
-      <p className="mt-2 text-xs text-subtle">Kept with this conversation so you can ask about them; deleted once it&apos;s built or cancelled.</p>
+      <p className="mt-1.5 text-xs text-subtle">Kept with this conversation; deleted once it&apos;s built or cancelled.</p>
     </div>
   )
 }
 
+// What Nova has understood: the learner's words, their record, Nova's
+// assumptions and suggestions, each said for what it is.
 export function Understanding({ draft }: { draft: DraftView }) {
   const b = draft.brief
   const said = b.facts.filter(f => !f.file)
@@ -107,80 +152,135 @@ export function Understanding({ draft }: { draft: DraftView }) {
   )
 }
 
-function Overview({ plan, draft, editable, set }: { plan: WorkspacePlan; draft: DraftView; editable: boolean; set: (p: WorkspacePlan) => void }) {
-  const counts = planCounts(plan)
+// ── Views ─────────────────────────────────────────────────────────────────────
+
+type ViewProps = { plan: WorkspacePlan; editable: boolean; set: (p: WorkspacePlan) => void; words: Words }
+
+function Overview({ plan, draft, editable, set, words, onView }: ViewProps & { draft: DraftView; onView: (v: PlaygroundView) => void }) {
+  const mark = useMarker()
+  const groups = edit.tasksByMilestone(plan)
+  const soon = edit.timeline(plan).slice(0, 3)
+  const basis = draft.brief.facts.length + draft.brief.known.length + draft.brief.assumptions.length + plan.assumptions.length
   return (
     <div className="space-y-6">
       <div>
         <label htmlFor="pg-summary" className={H}>What it&apos;s for</label>
-        <textarea id="pg-summary" value={plan.summary} disabled={!editable} maxLength={400} rows={3} onChange={e => set({ ...plan, summary: e.target.value })}
-          className={cn(FIELD, 'mt-1.5 resize-none leading-relaxed text-foreground/85')} placeholder="A line about what this workspace is for" />
+        <textarea id="pg-summary" value={plan.summary} disabled={!editable} maxLength={400} rows={2} onChange={e => set({ ...plan, summary: e.target.value })} data-editable
+          className={cn(FIELD, TITLE_AREA, 'mt-1 leading-relaxed text-foreground/85')} placeholder="A line about what this workspace is for" />
       </div>
-      <dl className="grid grid-cols-3 gap-2 sm:grid-cols-5">
-        {([['Milestones', plan.phases.length], ['Tasks', counts.tasks], ['Topics', counts.topics], ['Notes', counts.notes], ['Dates', counts.dates]] as const).map(([k, v]) => (
-          <div key={k} className={cn(CARD, 'px-3 py-2.5')}><dt className="text-[11px] text-subtle">{k}</dt><dd className="mt-0.5 text-lg font-semibold tabular-nums text-foreground">{v}</dd></div>
-        ))}
-      </dl>
+      {plan.phases.length > 0 ? (
+        <section aria-labelledby="pg-outline">
+          <div className="flex items-baseline justify-between"><h3 id="pg-outline" className={H}>{words.phases}</h3><button type="button" onClick={() => onView('roadmap')} className="text-xs font-medium text-foreground/60 hover:text-foreground">Open</button></div>
+          <ol className="mt-2 space-y-1.5">
+            {plan.phases.map((p, i) => {
+              const m = mark(ids.phase(p.name))
+              const n = groups.find(g => g.index === i)?.tasks.length ?? 0
+              return (
+                <li key={p.name} className={cn(CARD, 'flex items-center gap-3 px-3 py-2', m.className)} style={m.style}>
+                  <span className="grid size-6 shrink-0 place-items-center rounded-full bg-nova/12 text-[11px] font-semibold text-nova-ink">{i + 1}</span>
+                  <span className="min-w-0 flex-1 text-sm font-medium text-foreground">{p.name}</span>
+                  <span className="shrink-0 text-xs text-subtle">{n} task{n === 1 ? '' : 's'}</span>
+                </li>
+              )
+            })}
+          </ol>
+        </section>
+      ) : plan.subjects.length > 0 && (
+        <section aria-labelledby="pg-outline">
+          <div className="flex items-baseline justify-between"><h3 id="pg-outline" className={H}>{words.areas}</h3><button type="button" onClick={() => onView('topics')} className="text-xs font-medium text-foreground/60 hover:text-foreground">Open</button></div>
+          <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
+            {plan.subjects.map(s => {
+              const m = mark(ids.subject(s.name))
+              return <li key={s.name} className={cn(CARD, 'flex items-center justify-between gap-2 px-3 py-2', m.className)} style={m.style}><span className="min-w-0 truncate text-sm font-medium text-foreground">{s.name}</span><span className="shrink-0 text-xs text-subtle">{s.topics.length} {s.topics.length === 1 ? words.topic : `${words.topic}s`}</span></li>
+            })}
+          </ul>
+        </section>
+      )}
+      {soon.length > 0 && (
+        <section aria-labelledby="pg-soon">
+          <div className="flex items-baseline justify-between"><h3 id="pg-soon" className={H}>Coming up</h3><button type="button" onClick={() => onView('timeline')} className="text-xs font-medium text-foreground/60 hover:text-foreground">Calendar</button></div>
+          <ul className="mt-2 space-y-1">
+            {soon.map(item => (
+              <li key={`${item.kind}-${item.ref}`} className="flex items-center gap-3 text-sm">
+                <span className="w-24 shrink-0 text-xs tabular-nums text-subtle">{item.day}</span>
+                <span aria-hidden className={cn('size-2 shrink-0 rounded-full', item.kind === 'date' ? 'bg-amber-400' : 'bg-action')} />
+                <span className="min-w-0 truncate text-foreground/85">{item.label}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <SharedFiles draft={draft} plan={plan} />
-      <Understanding draft={draft} />
-      {plan.assumptions.length > 0 && (
-        <div>
-          <p className={H}>The proposal assumes</p>
-          <ul className="mt-2 space-y-1 text-xs leading-relaxed text-foreground/70">{plan.assumptions.map(a => <li key={a}>{a}</li>)}</ul>
-        </div>
+      {basis > 0 && (
+        <details className="group rounded-xl border border-white/8 px-3 py-2.5">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-foreground/70 hover:text-foreground">
+            <ChevronRight aria-hidden className="size-3.5 transition-transform group-open:rotate-90" /> What this proposal is based on
+          </summary>
+          <div className="mt-3 space-y-5">
+            <Understanding draft={draft} />
+            {plan.assumptions.length > 0 && <Facts title="The proposal assumes" facts={plan.assumptions} tone="assumed" />}
+          </div>
+        </details>
       )}
       {draft.brief.dropped.length > 0 && <p className="text-xs text-subtle" data-dropped>Left out to fit Kivo&apos;s limits: {draft.brief.dropped.slice(0, 4).join('; ')}{draft.brief.dropped.length > 4 ? ` and ${draft.brief.dropped.length - 4} more` : ''}.</p>}
     </div>
   )
 }
 
-function Roadmap({ plan, editable, set }: { plan: WorkspacePlan; editable: boolean; set: (p: WorkspacePlan) => void }) {
+function Roadmap({ plan, editable, set, words }: ViewProps) {
+  const mark = useMarker()
   const groups = edit.tasksByMilestone(plan)
   return (
     <div className="space-y-3">
       <ol className="space-y-3">
         {plan.phases.map((p, i) => {
           const tasks = groups.find(g => g.index === i)?.tasks ?? []
+          const m = mark(ids.phase(p.name))
           return (
-            <li key={i} className={cn(CARD, 'p-3')} data-milestone={i}>
+            <li key={i} className={cn(CARD, 'p-3', m.className)} style={m.style} data-milestone={i}>
               <div className="flex items-center gap-2">
                 <span className="grid size-6 shrink-0 place-items-center rounded-full bg-nova/12 text-[11px] font-semibold text-nova-ink">{i + 1}</span>
-                <input aria-label={`Milestone ${i + 1} name`} value={p.name} disabled={!editable} maxLength={80} onChange={e => set(edit.updatePhase(plan, i, { name: e.target.value }))} className={cn(FIELD, 'font-medium')} />
+                <input aria-label={`${words.phase} ${i + 1} name`} value={p.name} disabled={!editable} maxLength={80} onChange={e => set(edit.updatePhase(plan, i, { name: e.target.value }))} className={cn(FIELD, 'font-medium')} data-editable />
                 {editable && <>
                   <IconButton label={`Move ${p.name} up`} disabled={i === 0} onClick={() => set(edit.reorderPhase(plan, i, -1))}><ArrowUp aria-hidden className="size-3.5" /></IconButton>
                   <IconButton label={`Move ${p.name} down`} disabled={i === plan.phases.length - 1} onClick={() => set(edit.reorderPhase(plan, i, 1))}><ArrowDown aria-hidden className="size-3.5" /></IconButton>
                   <IconButton label={`Remove ${p.name}`} onClick={() => set(edit.removePhase(plan, i))}><X aria-hidden className="size-3.5" /></IconButton>
                 </>}
               </div>
-              {(p.weeks || p.hoursPerWeek) && <p className="mt-1 pl-8 text-xs text-subtle">{[p.weeks ? `${p.weeks} week${p.weeks === 1 ? '' : 's'}` : null, p.hoursPerWeek ? `about ${p.hoursPerWeek} h a week` : null].filter(Boolean).join(' · ')} (an estimate)</p>}
-              {p.goals.length > 0 && <p className="mt-1.5 pl-8 text-xs leading-relaxed text-foreground/70">{p.goals.join(' · ')}</p>}
-              <div className="mt-2 space-y-1 pl-8">
-                <label className="block text-[11px] text-subtle">Done when
-                  <input value={p.completion ?? ''} disabled={!editable} maxLength={240} placeholder="What finishing this looks like" onChange={e => set(edit.updatePhase(plan, i, { completion: e.target.value || null }))} className={cn(FIELD, 'text-xs')} />
-                </label>
-              </div>
+              {(p.weeks || p.hoursPerWeek || p.goals.length > 0) && (
+                <p className="mt-1 pl-8 text-xs leading-relaxed text-foreground/65">
+                  {[p.weeks ? `≈ ${p.weeks} week${p.weeks === 1 ? '' : 's'}` : null, p.hoursPerWeek ? `${p.hoursPerWeek} h a week` : null].filter(Boolean).join(' · ')}
+                  {(p.weeks || p.hoursPerWeek) && p.goals.length > 0 ? ' — ' : ''}{p.goals.join(' · ')}
+                </p>
+              )}
+              <label className="mt-1.5 flex items-center gap-1 pl-8 text-[11px] text-subtle"><span className="shrink-0">Done when</span>
+                <input value={p.completion ?? ''} disabled={!editable} maxLength={240} placeholder="what finishing this looks like" onChange={e => set(edit.updatePhase(plan, i, { completion: e.target.value || null }))} className={cn(FIELD, 'text-xs')} />
+              </label>
               {tasks.length > 0 && (
-                <ul className="mt-2 space-y-1 border-l border-white/8 pl-4 ml-3">
-                  {tasks.map(t => <li key={t.key} className="text-sm text-foreground/80">{t.title}{t.after && <span className="ml-1.5 text-[11px] text-subtle">after {plan.tasks.find(x => x.key === t.after)?.title}</span>}</li>)}
+                <ul className="ml-3 mt-2 space-y-1 border-l border-white/8 pl-4">
+                  {tasks.map(t => {
+                    const tm = mark(ids.task(t.key))
+                    return <li key={t.key} className={cn('rounded px-1 text-sm text-foreground/80', tm.className)} style={tm.style}>{t.title}{t.after && <span className="ml-1.5 text-[11px] text-subtle">after {plan.tasks.find(x => x.key === t.after)?.title}</span>}</li>
+                  })}
                 </ul>
               )}
-              {editable && <div className="mt-2 pl-8"><AddRow label={`Add a task to ${p.name}`} placeholder="Add a task to this milestone" onAdd={title => set(edit.addTask(plan, title, p.name))} /></div>}
+              {editable && <div className="mt-2 pl-8"><AddRow label={`Add a task to ${p.name}`} placeholder="Add a task" onAdd={title => set(edit.addTask(plan, title, p.name))} /></div>}
             </li>
           )
         })}
       </ol>
-      <AddRow label="Add a milestone" placeholder="Add a milestone" disabled={!editable} onAdd={name => set(edit.addPhase(plan, name))} />
+      <AddRow label={`Add a ${words.phase}`} placeholder={`Add a ${words.phase}`} disabled={!editable} onAdd={name => set(edit.addPhase(plan, name))} />
     </div>
   )
 }
 
-function TaskRow({ t, plan, editable, set }: { t: PlanTask; plan: WorkspacePlan; editable: boolean; set: (p: WorkspacePlan) => void }) {
+function TaskRow({ t, plan, editable, set, words, m }: { t: PlanTask; m: Marked } & ViewProps) {
   const [open, setOpen] = useState(false)
   const index = plan.tasks.findIndex(x => x.key === t.key)
   return (
-    <li className={cn(CARD, 'p-2')} data-task={t.key}>
+    <li className={cn(CARD, 'p-2', m.className)} style={m.style} data-task={t.key}>
       <div className="flex items-center gap-1">
-        <textarea aria-label="Task title" value={t.title} disabled={!editable} maxLength={160} rows={1} onChange={e => set(edit.updateTask(plan, t.key, { title: e.target.value.split('\n').join(' ') }))} className={cn(FIELD, TITLE_AREA)} />
+        <textarea aria-label="Task title" value={t.title} disabled={!editable} maxLength={160} rows={1} onChange={e => set(edit.updateTask(plan, t.key, { title: e.target.value.split('\n').join(' ') }))} className={cn(FIELD, TITLE_AREA)} data-editable />
         {editable && <>
           <IconButton label={`Move ${t.title} up`} disabled={index === 0} onClick={() => set(edit.reorderTask(plan, t.key, -1))}><ArrowUp aria-hidden className="size-3.5" /></IconButton>
           <IconButton label={`Move ${t.title} down`} disabled={index === plan.tasks.length - 1} onClick={() => set(edit.reorderTask(plan, t.key, 1))}><ArrowDown aria-hidden className="size-3.5" /></IconButton>
@@ -188,15 +288,15 @@ function TaskRow({ t, plan, editable, set }: { t: PlanTask; plan: WorkspacePlan;
         </>}
       </div>
       <div className="flex flex-wrap items-center gap-1.5 px-1.5 pt-1 text-[11px] text-subtle">
-        {t.priority && <span className={cn('rounded px-1.5 py-0.5', t.priority === 'high' ? 'bg-amber-400/12 text-amber-300' : 'bg-white/5')}>{t.priority}</span>}
-        {t.dueDay && <span>due {t.dueDay}</span>}
+        {t.priority && <span className={cn('rounded px-1.5 py-0.5 font-medium', t.priority === 'high' ? 'bg-amber-400/12 text-amber-300' : 'bg-white/5')}>{t.priority}</span>}
+        {t.dueDay && <span className="rounded bg-white/5 px-1.5 py-0.5 tabular-nums">due {t.dueDay}</span>}
         {t.estimatedMinutes && <span>~{t.estimatedMinutes} min</span>}
         {t.after && <span>after {plan.tasks.find(x => x.key === t.after)?.title}</span>}
         <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} className="ml-auto rounded px-1 font-medium text-foreground/60 hover:text-foreground">{open ? 'Done' : editable ? 'Details' : 'More'}</button>
       </div>
       {open && (
         <div className="mt-2 grid gap-2 px-1.5 pb-1 sm:grid-cols-2">
-          <label className="text-[11px] text-subtle">Milestone
+          <label className="text-[11px] text-subtle">{words.phase[0]!.toUpperCase() + words.phase.slice(1)}
             <select value={t.topic ?? ''} disabled={!editable} onChange={e => set(edit.updateTask(plan, t.key, { topic: e.target.value || null }))} className="mt-0.5 h-8 w-full rounded-md border border-white/10 bg-background px-1.5 text-xs text-foreground">
               <option value="">None</option>
               {plan.phases.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
@@ -224,71 +324,85 @@ function TaskRow({ t, plan, editable, set }: { t: PlanTask; plan: WorkspacePlan;
 }
 
 // Tasks by milestone. In the Planner they start in To do.
-function Board({ plan, editable, set }: { plan: WorkspacePlan; editable: boolean; set: (p: WorkspacePlan) => void }) {
+function Board(props: ViewProps) {
+  const { plan, editable, set } = props
+  const mark = useMarker()
   const groups = edit.tasksByMilestone(plan)
   return (
-    <div className="space-y-3">
-      <p className="text-xs text-subtle">On your Planner board these start in To do. Order them, give them dates and say what waits for what.</p>
-      <div className="space-y-3">
-        {groups.map(g => (
-          <section key={g.milestone ?? '—'} aria-label={g.milestone ?? 'Other tasks'} className="rounded-xl bg-white/[0.025] p-2.5">
-            <h3 className="mb-2 flex items-center justify-between px-1 text-xs font-semibold text-foreground/80">{g.milestone ?? (plan.phases.length ? 'Other tasks' : 'Tasks')}<span className="font-normal text-subtle">{g.tasks.length}</span></h3>
-            <ul className="space-y-2">{g.tasks.map(t => <TaskRow key={t.key} t={t} plan={plan} editable={editable} set={set} />)}</ul>
-            {editable && <div className="mt-2"><AddRow label={`Add a task${g.milestone ? ` to ${g.milestone}` : ''}`} placeholder="Add a task" onAdd={title => set(edit.addTask(plan, title, g.milestone))} /></div>}
-          </section>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function Topics({ plan, editable, set }: { plan: WorkspacePlan; editable: boolean; set: (p: WorkspacePlan) => void }) {
-  return (
-    <div className="space-y-3">
-      {plan.subjects.map((s, i) => (
-        <section key={i} className={cn(CARD, 'p-3')} data-subject={i}>
-          <div className="flex items-center gap-2">
-            <input aria-label={`Subject ${i + 1} name`} value={s.name} disabled={!editable} maxLength={80} onChange={e => set(edit.renameSubject(plan, i, e.target.value))} className={cn(FIELD, 'font-medium')} />
-            {editable && <IconButton label={`Remove ${s.name}`} onClick={() => set(edit.removeSubject(plan, i))}><X aria-hidden className="size-3.5" /></IconButton>}
-          </div>
-          <ul className="mt-2 flex flex-wrap gap-1.5">
-            {s.topics.map((t, k) => (
-              <li key={k} className="flex items-center gap-0.5 rounded-full border border-white/10 py-0.5 pl-2.5 pr-0.5 text-xs text-foreground/85" title={t.explanation ?? undefined}>
-                {t.name}
-                {editable && <IconButton label={`Remove ${t.name}`} onClick={() => set(edit.removeTopic(plan, i, k))}><X aria-hidden className="size-3" /></IconButton>}
-              </li>
-            ))}
-          </ul>
-          {editable && <div className="mt-2"><AddRow label={`Add a topic to ${s.name}`} placeholder="Add a topic" onAdd={name => set(edit.addTopic(plan, i, name))} /></div>}
+    <div className="space-y-4">
+      {groups.map(g => (
+        <section key={g.milestone ?? '—'} aria-label={g.milestone ?? 'Other tasks'}>
+          <h3 className="mb-2 flex items-center gap-2 px-1 text-xs font-semibold text-foreground/85">
+            {g.index !== null && <span className="grid size-5 place-items-center rounded-full bg-nova/12 text-[10px] text-nova-ink">{g.index + 1}</span>}
+            <span className="min-w-0 flex-1">{g.milestone ?? (plan.phases.length ? 'Other tasks' : 'Tasks')}</span>
+            <span className="font-normal text-subtle">{g.tasks.length}</span>
+          </h3>
+          <ul className="space-y-2">{g.tasks.map(t => <TaskRow key={t.key} t={t} m={mark(ids.task(t.key))} {...props} />)}</ul>
+          {editable && <div className="mt-2"><AddRow label={`Add a task${g.milestone ? ` to ${g.milestone}` : ''}`} placeholder="Add a task" onAdd={title => set(edit.addTask(plan, title, g.milestone))} /></div>}
         </section>
       ))}
-      <AddRow label="Add a subject" placeholder="Add a subject or area" disabled={!editable} onAdd={name => set(edit.addSubject(plan, name))} />
-      {plan.phases.length > 0 && <p className="text-xs text-subtle">Each milestone also becomes a topic, in order, so the Planner offers them one after another.</p>}
     </div>
   )
 }
 
-function Timeline({ plan, editable, set }: { plan: WorkspacePlan; editable: boolean; set: (p: WorkspacePlan) => void }) {
+function Topics({ plan, editable, set, words }: ViewProps) {
+  const mark = useMarker()
+  return (
+    <div className="space-y-3">
+      {plan.subjects.map((s, i) => {
+        const m = mark(ids.subject(s.name))
+        return (
+          <section key={i} className={cn(CARD, 'p-3', m.className)} style={m.style} data-subject={i}>
+            <div className="flex items-center gap-2">
+              <input aria-label={`${words.area} ${i + 1} name`} value={s.name} disabled={!editable} maxLength={80} onChange={e => set(edit.renameSubject(plan, i, e.target.value))} className={cn(FIELD, 'font-medium')} data-editable />
+              <span className="shrink-0 text-xs text-subtle">{s.topics.length}</span>
+              {editable && <IconButton label={`Remove ${s.name}`} onClick={() => set(edit.removeSubject(plan, i))}><X aria-hidden className="size-3.5" /></IconButton>}
+            </div>
+            <ul className="mt-2 flex flex-wrap gap-1.5">
+              {s.topics.map((t, k) => {
+                const tm = mark(ids.topic(s.name, t.name))
+                return (
+                  <li key={k} className={cn('flex items-center gap-0.5 rounded-full border border-white/10 py-0.5 pl-2.5 pr-0.5 text-xs text-foreground/85', !editable && 'pr-2.5', tm.className)} style={tm.style} title={t.explanation ?? undefined}>
+                    {t.name}
+                    {editable && <IconButton label={`Remove ${t.name}`} onClick={() => set(edit.removeTopic(plan, i, k))}><X aria-hidden className="size-3" /></IconButton>}
+                  </li>
+                )
+              })}
+            </ul>
+            {editable && <div className="mt-2"><AddRow label={`Add a ${words.topic} to ${s.name}`} placeholder={`Add a ${words.topic}`} onAdd={name => set(edit.addTopic(plan, i, name))} /></div>}
+          </section>
+        )
+      })}
+      <AddRow label={`Add ${words.area === 'area' ? 'an area' : `a ${words.area}`}`} placeholder={`Add ${words.area === 'area' ? 'an area' : `a ${words.area}`}`} disabled={!editable} onAdd={name => set(edit.addSubject(plan, name))} />
+    </div>
+  )
+}
+
+function Timeline({ plan, editable, set }: ViewProps) {
+  const mark = useMarker()
   const items = edit.timeline(plan)
   const [title, setTitle] = useState('')
   const [day, setDay] = useState('')
   return (
     <div className="space-y-4">
-      {items.length === 0 && <p className="text-sm text-foreground/65">No dates yet. Add a deadline below, or give tasks due days on the Board.</p>}
-      <ol className="space-y-2">
-        {items.map(item => (
-          <li key={`${item.kind}-${item.ref}`} className="flex items-center gap-3 text-sm">
-            <span className="w-24 shrink-0 text-xs tabular-nums text-subtle">{item.day}</span>
-            <span aria-hidden className={cn('size-2 shrink-0 rounded-full', item.kind === 'date' ? 'bg-amber-400' : 'bg-action')} />
-            {item.kind === 'date' && typeof item.ref === 'number' ? (
-              <>
-                <input aria-label="Date title" value={plan.dates[item.ref]!.title} disabled={!editable} maxLength={80} onChange={e => set(edit.updateDate(plan, item.ref as number, { title: e.target.value }))} className={cn(FIELD, 'font-medium')} />
-                <input aria-label="Day" type="date" value={plan.dates[item.ref]!.day} disabled={!editable} onChange={e => e.target.value && set(edit.updateDate(plan, item.ref as number, { day: e.target.value }))} className="h-8 rounded-md border border-white/10 bg-background px-1.5 text-xs text-foreground" />
-                {editable && <IconButton label={`Remove ${plan.dates[item.ref]!.title}`} onClick={() => set(edit.removeDate(plan, item.ref as number))}><X aria-hidden className="size-3.5" /></IconButton>}
-              </>
-            ) : <span className="text-foreground/80">{item.label} <span className="text-xs text-subtle">task due</span></span>}
-          </li>
-        ))}
+      {items.length === 0 && <p className="text-sm text-foreground/65">No dates yet. Add a deadline below, or give tasks a due day.</p>}
+      <ol className="space-y-1.5">
+        {items.map(item => {
+          const m = mark(item.kind === 'date' && typeof item.ref === 'number' ? ids.date(plan.dates[item.ref]!.title) : ids.task(String(item.ref)))
+          return (
+            <li key={`${item.kind}-${item.ref}`} className={cn('flex items-center gap-3 rounded-lg px-1 text-sm', m.className)} style={m.style}>
+              <span className="w-24 shrink-0 text-xs tabular-nums text-subtle">{item.day}</span>
+              <span aria-hidden className={cn('size-2 shrink-0 rounded-full', item.kind === 'date' ? 'bg-amber-400' : 'bg-action')} />
+              {item.kind === 'date' && typeof item.ref === 'number' ? (
+                <>
+                  <input aria-label="Date title" value={plan.dates[item.ref]!.title} disabled={!editable} maxLength={80} onChange={e => set(edit.updateDate(plan, item.ref as number, { title: e.target.value }))} className={cn(FIELD, 'font-medium')} data-editable />
+                  <input aria-label="Day" type="date" value={plan.dates[item.ref]!.day} disabled={!editable} onChange={e => e.target.value && set(edit.updateDate(plan, item.ref as number, { day: e.target.value }))} className="h-8 rounded-md border border-white/10 bg-background px-1.5 text-xs text-foreground" />
+                  {editable && <IconButton label={`Remove ${plan.dates[item.ref]!.title}`} onClick={() => set(edit.removeDate(plan, item.ref as number))}><X aria-hidden className="size-3.5" /></IconButton>}
+                </>
+              ) : <span className="min-w-0 py-1 text-foreground/80">{item.label} <span className="text-xs text-subtle">task due</span></span>}
+            </li>
+          )
+        })}
       </ol>
       {editable && (
         <form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); if (title.trim() && day) { set(edit.addDate(plan, title.trim(), day)); setTitle(''); setDay('') } }}>
@@ -301,31 +415,34 @@ function Timeline({ plan, editable, set }: { plan: WorkspacePlan; editable: bool
   )
 }
 
-function Notes({ plan, editable, set }: { plan: WorkspacePlan; editable: boolean; set: (p: WorkspacePlan) => void }) {
+function Notes({ plan, editable, set }: ViewProps) {
+  const mark = useMarker()
   const [open, setOpen] = useState<string | null>(null)
   return (
     <div className="space-y-2">
-      {plan.phases.length > 0 && <p className="text-xs text-subtle">Each milestone&apos;s goals, exercises and resources are written as a note too{plan.tasks.some(t => t.after) ? ', and the order of work as one more' : ''}.</p>}
-      {plan.notes.length === 0 && <p className="text-sm text-foreground/65">No other notes in this proposal.</p>}
-      {plan.notes.map(n => (
-        <section key={n.key} className={cn(CARD, 'p-2.5')} data-note={n.key}>
-          <div className="flex items-center gap-1">
-            <input aria-label="Note title" value={n.title} disabled={!editable} maxLength={120} onChange={e => set(edit.updateNote(plan, n.key, { title: e.target.value }))} className={cn(FIELD, 'font-medium')} />
-            <span className="shrink-0 text-[11px] text-subtle">{n.origin === 'source' ? 'from your files' : n.origin === 'nova' ? 'by Nova' : 'template'}</span>
-            <button type="button" onClick={() => setOpen(o => (o === n.key ? null : n.key))} aria-expanded={open === n.key} className="shrink-0 rounded px-1.5 text-xs font-medium text-foreground/60 hover:text-foreground">{open === n.key ? 'Close' : 'Open'}</button>
-            {editable && <IconButton label={`Remove ${n.title}`} onClick={() => set(edit.removeNote(plan, n.key))}><X aria-hidden className="size-3.5" /></IconButton>}
-          </div>
-          {open === n.key && (
-            <textarea aria-label={`${n.title} text`} value={n.body} disabled={!editable} rows={8} maxLength={8000} onChange={e => set(edit.updateNote(plan, n.key, { body: e.target.value }))}
-              className="mt-2 w-full resize-y rounded-md border border-white/10 bg-background/60 p-2 font-mono text-xs leading-relaxed text-foreground/85 outline-none focus:border-action/70" />
-          )}
-        </section>
-      ))}
+      {plan.notes.length === 0 && <p className="text-sm text-foreground/65">No notes in this proposal{plan.phases.length > 0 ? ' besides the ones each step writes for itself' : ''}.</p>}
+      {plan.notes.map(n => {
+        const m = mark(ids.note(n.key))
+        return (
+          <section key={n.key} className={cn(CARD, 'p-2.5', m.className)} style={m.style} data-note={n.key}>
+            <div className="flex items-center gap-1">
+              <input aria-label="Note title" value={n.title} disabled={!editable} maxLength={120} onChange={e => set(edit.updateNote(plan, n.key, { title: e.target.value }))} className={cn(FIELD, 'font-medium')} data-editable />
+              <span className="shrink-0 text-[11px] text-subtle">{n.origin === 'source' ? 'from your files' : n.origin === 'nova' ? 'by Nova' : 'template'}</span>
+              <button type="button" onClick={() => setOpen(o => (o === n.key ? null : n.key))} aria-expanded={open === n.key} className="shrink-0 rounded px-1.5 text-xs font-medium text-foreground/60 hover:text-foreground">{open === n.key ? 'Close' : 'Open'}</button>
+              {editable && <IconButton label={`Remove ${n.title}`} onClick={() => set(edit.removeNote(plan, n.key))}><X aria-hidden className="size-3.5" /></IconButton>}
+            </div>
+            {open === n.key && (
+              <textarea aria-label={`${n.title} text`} value={n.body} disabled={!editable} rows={8} maxLength={8000} onChange={e => set(edit.updateNote(plan, n.key, { body: e.target.value }))}
+                className="mt-2 w-full resize-y rounded-md border border-white/10 bg-background/60 p-2 font-mono text-xs leading-relaxed text-foreground/85 outline-none focus:border-action/70" />
+            )}
+          </section>
+        )
+      })}
     </div>
   )
 }
 
-export function ViewTabs({ views, view, onView, label }: { views: PlaygroundView[]; view: PlaygroundView; onView: (v: PlaygroundView) => void; label: string }) {
+export function ViewTabs({ views, view, onView, label, names }: { views: PlaygroundView[]; view: PlaygroundView; onView: (v: PlaygroundView) => void; label: string; names: Record<PlaygroundView, string> }) {
   // Arrow keys move between tabs, as a tab list should.
   const onKey = (e: React.KeyboardEvent) => {
     const i = views.indexOf(view)
@@ -333,14 +450,14 @@ export function ViewTabs({ views, view, onView, label }: { views: PlaygroundView
     if (next) { e.preventDefault(); onView(next); document.getElementById(`pg-tab-${next}`)?.focus() }
   }
   return (
-    <div role="tablist" aria-label={label} onKeyDown={onKey} className="flex gap-1 overflow-x-auto">
+    <div role="tablist" aria-label={label} onKeyDown={onKey} className="-mb-px flex gap-0.5 overflow-x-auto">
       {views.map(v => {
         const Icon = VIEW_ICON[v]
         return (
           <button key={v} id={`pg-tab-${v}`} type="button" role="tab" aria-selected={view === v} aria-controls="pg-panel" tabIndex={view === v ? 0 : -1} onClick={() => onView(v)}
-            className={cn('flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring',
-              view === v ? 'bg-white/8 text-foreground' : 'text-foreground/60 hover:text-foreground')}>
-            <Icon aria-hidden className="size-3.5" /> {VIEW_LABEL[v]}
+            className={cn('flex shrink-0 items-center gap-1.5 border-b-2 px-2.5 pb-2 pt-1 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring',
+              view === v ? 'border-action text-foreground' : 'border-transparent text-foreground/60 hover:text-foreground')}>
+            <Icon aria-hidden className="size-3.5" /> {names[v]}
           </button>
         )
       })}
@@ -348,42 +465,100 @@ export function ViewTabs({ views, view, onView, label }: { views: PlaygroundView
   )
 }
 
-// The draft: an editable copy of the proposal, or what is understood so far.
-export function DraftPlayground({ state, view, onView }: { state: DraftState; view: PlaygroundView; onView: (v: PlaygroundView) => void }) {
-  const { draft, plan } = state
+// What a playground shows before there is a proposal: where it will appear,
+// and while Nova writes, its real stage.
+export function PlaygroundWaiting({ draft, words }: { draft: DraftView | null; words: Words }) {
+  const label = draft ? workingLabel(draft, words) : null
+  const writing = draft?.pending?.stage === 'writing'
+  return (
+    <div className="space-y-5">
+      {writing ? (
+        <div role="status" aria-label={label ?? 'Writing the proposal'} className="space-y-2.5">
+          <p className="flex items-center gap-2 text-sm font-medium text-foreground/85"><Sparkles aria-hidden className="size-4 text-nova-ink" /> {label}…</p>
+          <p className="text-xs text-subtle">It appears here as soon as Kivo has checked it, usually within a minute.</p>
+          {[0, 1, 2].map(i => (
+            <div key={i} aria-hidden className={cn(CARD, 'space-y-2 p-3')}>
+              <div className="h-3 w-1/3 animate-pulse rounded bg-white/8 motion-reduce:animate-none" />
+              <div className="h-2.5 w-2/3 animate-pulse rounded bg-white/5 motion-reduce:animate-none" />
+              <div className="h-2.5 w-1/2 animate-pulse rounded bg-white/5 motion-reduce:animate-none" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-white/12 p-5" data-playground-empty>
+          <p className="text-sm font-medium text-foreground">Your workspace takes shape here</p>
+          <p className="mt-1 text-sm leading-relaxed text-foreground/65">Once Nova understands what you&apos;re working on, it proposes a structure on this side: {words.phases.toLowerCase()}, tasks and dates you can edit. Nothing is created until you approve it.</p>
+          <div aria-hidden className="mt-4 grid gap-2 opacity-60 sm:grid-cols-3">
+            {[words.phases, 'Tasks', 'Calendar'].map(t => (
+              <div key={t} className="rounded-xl border border-white/8 p-2.5">
+                <p className="text-[11px] font-medium text-subtle">{t}</p>
+                <div className="mt-2 space-y-1.5"><div className="h-2 w-4/5 rounded bg-white/6" /><div className="h-2 w-3/5 rounded bg-white/6" /></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {draft && <SharedFiles draft={draft} plan={null} />}
+      {draft && <Understanding draft={draft} />}
+    </div>
+  )
+}
+
+// ── The draft's playground ────────────────────────────────────────────────────
+
+export function DraftPlayground({ state, view, onView, onAsk, onImprove }: {
+  state: DraftState; view: PlaygroundView; onView: (v: PlaygroundView) => void; onAsk: (text: string) => void; onImprove: () => void
+}) {
+  const { draft, plan, arrival } = state
+  const words = wordsFor(draft?.brief.kind)
+  // What the newest version brought, lit for a few seconds after it lands.
+  const diff = useMemo(() => (arrival ? planDiff(arrival.previous, arrival.next) : null), [arrival])
+  const [marking, setMarking] = useState(false)
+  useEffect(() => {
+    if (!arrival) return
+    setMarking(true)
+    const t = setTimeout(() => setMarking(false), MARKS_FOR_MS)
+    return () => clearTimeout(t)
+  }, [arrival])
+  const marker = useMemo(() => markerFor(marking ? diff : null, !arrival?.previous), [marking, diff, arrival])
+
   if (!draft) return null
-  const editable = Boolean(plan) && ['awaiting_approval', 'failed', 'drafting'].includes(draft.status) && draft.status !== 'building'
+  const editable = Boolean(plan) && ['awaiting_approval', 'failed', 'drafting'].includes(draft.status)
   const views = edit.viewsFor(plan)
   const shown = views.includes(view) ? view : 'overview'
+  const label = workingLabel(draft, words)
+  const changes = marking && diff && arrival?.previous ? diffSummary(diff) : null
+
+  const onEdit = () => {
+    onView(views.includes('board') ? 'board' : 'overview')
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('#pg-panel [data-editable]:not(:disabled)')?.focus())
+  }
 
   if (!plan) {
     return (
       <div className="flex h-full min-h-0 flex-col">
         <PlaygroundHeader title={draft.title ?? draft.brief.title ?? 'Your workspace'} badge="draft" state={state} />
-        <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-5">
-          {draft.pending?.stage === 'writing' ? (
-            <div role="status" className="space-y-3" aria-label="Writing the proposal">
-              <p className="flex items-center gap-2 text-sm text-foreground/75"><Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none" /> Nova is writing the proposal. It appears here when it&apos;s ready.</p>
-              {[0, 1, 2].map(i => <div key={i} aria-hidden className="h-16 animate-pulse rounded-xl bg-white/4 motion-reduce:animate-none" />)}
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-dashed border-white/12 p-5 text-sm leading-relaxed text-foreground/70">
-              <p className="font-medium text-foreground">The proposal will appear here.</p>
-              <p className="mt-1">As you talk, what Nova understands fills in below. When there&apos;s enough, Nova proposes a structure you can edit right here before anything is created.</p>
-            </div>
-          )}
-          <SharedFiles draft={draft} plan={null} />
-          <Understanding draft={draft} />
-        </div>
+        {label && <WorkingStrip label={label} />}
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5"><PlaygroundWaiting draft={draft} words={words} /></div>
+        <ProposalActions state={state} words={words} onEdit={onEdit} onAsk={onAsk} onImprove={onImprove} />
       </div>
     )
   }
 
+  const counts = planCounts(plan)
+  const stats = [
+    plan.phases.length ? `${plan.phases.length} ${words.phases.toLowerCase()}` : null,
+    `${counts.tasks} task${counts.tasks === 1 ? '' : 's'}`,
+    counts.topics ? `${counts.topics} ${counts.topics === 1 ? words.topic : `${words.topic}s`}` : null,
+    counts.dates ? `${counts.dates} date${counts.dates === 1 ? '' : 's'}` : null,
+  ].filter(Boolean).join(' · ')
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PlaygroundHeader title={plan.title} badge={draft.status === 'building' ? 'building' : 'draft'} state={state}
+      <PlaygroundHeader title={plan.title} badge={draft.status === 'building' ? 'building' : 'draft'} state={state} stats={stats}
         onTitle={editable ? title => state.setPlan({ ...plan, title }) : undefined}
-        tabs={<ViewTabs views={views} view={shown} onView={onView} label="Proposal views" />} />
+        tabs={<ViewTabs views={views} view={shown} onView={onView} label="Proposal views" names={words.views} />} />
+      {label && <WorkingStrip label={label} />}
       {state.conflict && (
         <div role="alert" className="mx-4 mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-300/25 bg-amber-300/5 p-3 text-xs text-foreground/85" data-conflict>
           <span className="min-w-0 flex-1">Nova made version {state.conflict.version} while you were editing. Your edits are still on screen and not saved.</span>
@@ -391,44 +566,63 @@ export function DraftPlayground({ state, view, onView }: { state: DraftState; vi
           <button type="button" onClick={state.takeTheirs} className="rounded-md border border-white/12 px-2.5 py-1 font-medium hover:bg-white/5">Use Nova&apos;s version</button>
         </div>
       )}
-      <div id="pg-panel" role="tabpanel" aria-labelledby={`pg-tab-${shown}`} className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
-        {shown === 'overview' && <Overview plan={plan} draft={draft} editable={editable} set={state.setPlan} />}
-        {shown === 'roadmap' && <Roadmap plan={plan} editable={editable} set={state.setPlan} />}
-        {shown === 'board' && <Board plan={plan} editable={editable} set={state.setPlan} />}
-        {shown === 'topics' && <Topics plan={plan} editable={editable} set={state.setPlan} />}
-        {shown === 'timeline' && <Timeline plan={plan} editable={editable} set={state.setPlan} />}
-        {shown === 'notes' && <Notes plan={plan} editable={editable} set={state.setPlan} />}
+      <div id="pg-panel" role="tabpanel" aria-labelledby={`pg-tab-${shown}`} className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-3 sm:px-5">
+        {changes && (
+          <p role="status" className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-nova/10 px-2.5 py-1 text-[11px] font-medium text-nova-ink" data-changes>
+            <Sparkles aria-hidden className="size-3" /> Version {arrival?.version}: {changes}{diff && diff.removed.length > 0 ? ` (${diff.removed.slice(0, 3).join(', ')}${diff.removed.length > 3 ? '…' : ''})` : ''}
+          </p>
+        )}
+        {editable && <div className="-mx-2 mb-3"><NovaHint hint={hintFor(draft.brief.kind, shown)} onAsk={onAsk} /></div>}
+        <MarkContext.Provider value={marker}>
+          <div key={arrival?.version ?? 0}>
+            {shown === 'overview' && <Overview plan={plan} draft={draft} editable={editable} set={state.setPlan} words={words} onView={onView} />}
+            {shown === 'roadmap' && <Roadmap plan={plan} editable={editable} set={state.setPlan} words={words} />}
+            {shown === 'board' && <Board plan={plan} editable={editable} set={state.setPlan} words={words} />}
+            {shown === 'topics' && <Topics plan={plan} editable={editable} set={state.setPlan} words={words} />}
+            {shown === 'timeline' && <Timeline plan={plan} editable={editable} set={state.setPlan} words={words} />}
+            {shown === 'notes' && <Notes plan={plan} editable={editable} set={state.setPlan} words={words} />}
+          </div>
+        </MarkContext.Provider>
       </div>
+      <ProposalActions state={state} words={words} onEdit={onEdit} onAsk={onAsk} onImprove={onImprove} />
     </div>
   )
 }
 
-export function PlaygroundHeader({ title, badge, state, onTitle, tabs }: {
-  title: string; badge: 'draft' | 'building' | 'live'; state?: DraftState; onTitle?: (t: string) => void; tabs?: React.ReactNode
+// What Nova is doing to this proposal right now: the job's stage, said once.
+function WorkingStrip({ label }: { label: string }) {
+  return (
+    <div role="status" className="relative shrink-0 overflow-hidden border-b border-white/8 bg-nova/5 px-4 py-1.5 text-xs font-medium text-nova-ink sm:px-5" data-working>
+      <span aria-hidden className="nova-progress absolute inset-x-0 bottom-0 h-0.5 w-2/5 bg-nova/60" />
+      {label}…
+    </div>
+  )
+}
+
+export function PlaygroundHeader({ title, badge, state, onTitle, tabs, stats }: {
+  title: string; badge: 'draft' | 'building' | 'live'; state?: DraftState; onTitle?: (t: string) => void; tabs?: React.ReactNode; stats?: string
 }) {
   return (
-    <div className="space-y-3 border-b border-white/8 px-4 pb-3 pt-4 sm:px-5">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <p className={cn('mb-1 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium',
-            badge === 'live' ? 'bg-action-soft text-action-ink' : 'bg-white/6 text-foreground/70')} data-badge={badge}>
-            <span aria-hidden className={cn('size-1.5 rounded-full', badge === 'live' ? 'bg-action' : 'bg-amber-400')} />
-            {badge === 'live' ? 'Live workspace' : badge === 'building' ? 'Building…' : `Draft · not created yet${state?.draft ? ` · version ${state.draft.version}` : ''}`}
-          </p>
-          {onTitle
-            ? <input aria-label="Workspace name" value={title} maxLength={80} onChange={e => onTitle(e.target.value)} className={cn(FIELD, '-ml-1.5 text-lg font-semibold tracking-tight')} />
-            : <h2 className="truncate text-lg font-semibold tracking-tight text-foreground">{title}</h2>}
-        </div>
-        {state && <SaveIndicator state={state} />}
+    <div className="shrink-0 border-b border-white/8 px-4 pt-3.5 sm:px-5">
+      <div className="flex items-center gap-2 text-[11px]">
+        <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-medium', badge === 'live' ? 'bg-action-soft text-action-ink' : 'bg-white/6 text-foreground/70')} data-badge={badge}>
+          <span aria-hidden className={cn('size-1.5 rounded-full', badge === 'live' ? 'bg-action' : badge === 'building' ? 'bg-nova' : 'bg-amber-400')} />
+          {badge === 'live' ? 'Live workspace' : badge === 'building' ? 'Building…' : `Draft${state?.draft?.plan ? ` · v${state.draft.version}` : ''} · not created yet`}
+        </span>
+        <span className="ml-auto">{state && <SaveIndicator state={state} />}</span>
       </div>
-      {tabs}
+      {onTitle
+        ? <input aria-label="Workspace name" value={title} maxLength={80} onChange={e => onTitle(e.target.value)} className={cn(FIELD, '-ml-1.5 mt-1 text-lg font-semibold tracking-tight')} />
+        : <h2 className="mt-1.5 truncate text-lg font-semibold tracking-tight text-foreground">{title}</h2>}
+      {stats && <p className="mt-0.5 text-xs text-subtle" data-stats>{stats}</p>}
+      <div className={tabs ? 'mt-2.5' : 'pb-3'}>{tabs}</div>
     </div>
   )
 }
 
 function SaveIndicator({ state }: { state: DraftState }) {
-  if (state.save === 'saving') return <span role="status" className="mt-1 shrink-0 text-xs text-subtle">Saving…</span>
-  if (state.save === 'saved') return <span role="status" className="mt-1 shrink-0 text-xs text-subtle">Saved as version {state.draft?.version}</span>
-  if (state.save === 'error') return <span role="alert" className="mt-1 max-w-[12rem] shrink-0 text-right text-xs text-red-400">{state.saveError ?? "Not saved."}</span>
+  if (state.save === 'saving') return <span role="status" className="text-subtle">Saving…</span>
+  if (state.save === 'saved') return <span role="status" className="text-subtle">Saved as v{state.draft?.version}</span>
+  if (state.save === 'error') return <span role="alert" className="text-red-400">{state.saveError ?? 'Not saved.'}</span>
   return null
 }

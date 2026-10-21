@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   MAX_QUESTIONS, OPENING_QUESTION, PENDING_STALE_MS, TRANSITIONS, canMove, decideStep, describeChanges, emptyBrief,
-  isPendingLive, needsReply, nextBrief, normalized, planChanges, readTurn, withMessages, message, MESSAGES_KEPT, replyWithQuestion,
+  isPendingLive, needsReply, nextBrief, normalized, planChanges, readTurn, withMessages, message, MESSAGES_KEPT, replyWithQuestion, MIN_FACTS_TO_DRAFT, STARTING_QUESTION, holdsLine,
 } from "../product/builder-state";
 import { languageRule, readBuilderTurn, turnPrompt, type TurnInput } from "../product/builder-conversation";
 import { builderPlanPrompt, writeBuilderPlan, NO_RESEARCH, type BuilderPlanRequest } from "../product/workspace-generation";
@@ -75,8 +75,22 @@ describe("what a turn may do (code decides, not the model)", () => {
   });
 
   it("a clear request moves to a proposal without more questions", () => {
-    const step = decideStep({ plan: null, brief: brief() }, r({ next: "draft", facts: [{ label: "Goal", value: "learn FastAPI", quote: "learn FastAPI" }] }, "I need a roadmap to learn FastAPI"));
+    const facts = [{ label: "Goal", value: "learn FastAPI", quote: "learn FastAPI" }, { label: "Time available", value: "5 hours a week", quote: "5 hours a week" }];
+    const step = decideStep({ plan: null, brief: brief() }, r({ next: "draft", facts }, "I need a roadmap to learn FastAPI, 5 hours a week"));
     expect(step).toEqual({ type: "draft", reason: "ready" });
+  });
+
+  it("a first message that only names the thing gets a question, not a generic proposal", () => {
+    // "I'm building TrackerX": the model wants to draft; code asks where they are first, in its own words.
+    const named = r({ next: "draft", reply: "Great, I'll put together a plan for TrackerX.", facts: [{ label: "Project", value: "TrackerX", quote: "building TrackerX" }] });
+    expect(decideStep({ plan: null, brief: brief() }, named)).toEqual({ type: "ask", question: STARTING_QUESTION, overruled: true });
+    // Once a question has been asked, the model's "draft" is trusted (they may just want to see one).
+    const later = brief({ facts: [{ label: "Project", value: "TrackerX" }], questionsAsked: 1 });
+    expect(decideStep({ plan: null, brief: later }, r({ next: "draft" }))).toEqual({ type: "draft", reason: "ready" });
+    expect(MIN_FACTS_TO_DRAFT).toBe(2);
+    // Adding to a workspace they have: the workspace is the context, so one specific ask is enough.
+    const add = r({ next: "draft", facts: [{ label: "Add", value: "a beta programme", quote: "beta programme" }] }, "Add a beta programme");
+    expect(decideStep({ plan: null, brief: brief(), improving: true }, add)).toEqual({ type: "draft", reason: "ready" });
   });
 
   it(`proposes after ${MAX_QUESTIONS} questions rather than asking forever`, () => {
@@ -96,6 +110,13 @@ describe("what a turn may do (code decides, not the model)", () => {
     expect(decideStep({ plan: plan(), brief: brief() }, r({ next: "draft" })).type).toBe("revise");
   });
 
+  it("what a proposal holds is said in its kind's words: a project has parts and milestones, not subjects (seen 22 Oct)", () => {
+    const c = { subjects: 1, topics: 3, phases: 3, tasks: 8, notes: 9, dates: 1 };
+    expect(holdsLine("project", c)).toBe("3 parts, 3 milestones, 8 tasks, 9 notes, 1 date");
+    expect(holdsLine("semester", { ...c, subjects: 4, phases: 0 })).toBe("4 subjects, 3 topics, 8 tasks, 9 notes, 1 date");
+    expect(holdsLine("skill", c)).toBe("1 area, 3 concepts, 3 stages, 8 tasks, 9 notes, 1 date");
+    expect(holdsLine(null, { subjects: 0, topics: 0, phases: 0, tasks: 0, notes: 0, dates: 0 })).toBe("");
+  });
   it("a question is asked once: the model's own wording, or code's when the reply asks nothing", () => {
     // Seen with the real model (21 Oct): the reply asked it, and code asked it again in other words.
     const reply = "Building TrackerX sounds exciting. Is this for a course or an independent venture?";
@@ -207,6 +228,14 @@ describe("what the model is given", () => {
     expect(ok?.facts).toEqual([{ label: "Project", value: "TrackerX" }]);
     expect(await readBuilderTurn(input(), (async () => { throw new Error("quota"); }) as never)).toBeNull();
     expect(await readBuilderTurn(input(), (async () => "not json") as never)).toBeNull();
+  });
+  it("is told each kind of work's own words, and that a project is not a syllabus", async () => {
+    let system = "";
+    await readBuilderTurn(input(), (async (req: { systemInstruction: string }) => { system = req.systemInstruction; return "{}"; }) as never);
+    expect(system).toContain("- project (software or otherwise): milestones, tasks, subtasks, dependencies");
+    expect(system).toContain("Never speak of subjects, syllabus, revision or exams for a project.");
+    expect(system).toContain("- exam or semester (academic): subjects, units, topics, revision");
+    expect(system).toContain("is not enough: ask first");
   });
   it("a revision gets the proposal as it stands and the change asked for", () => {
     const req: BuilderPlanRequest = {

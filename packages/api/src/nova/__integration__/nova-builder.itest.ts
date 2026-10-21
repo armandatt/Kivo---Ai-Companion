@@ -156,7 +156,7 @@ test("a clear request becomes a proposal without more questions, and still write
   const me = await learner();
   const asked: BuilderPlanRequest[] = [];
   const draft = await begin(me.id, "Authentication is done, the dashboard is half done, API integration is next. Plan TrackerX for me.", {
-    read: reader({ next: "draft", facts: [{ label: "Done so far", value: "authentication", quote: "Authentication is done" }] }),
+    read: reader({ next: "draft", facts: [{ label: "Done so far", value: "authentication", quote: "Authentication is done" }, { label: "Next step", value: "API integration", quote: "API integration is next" }] }),
     write: writer(trackerPlan, asked),
   });
   assert.equal(draft.status, "awaiting_approval");
@@ -164,15 +164,15 @@ test("a clear request becomes a proposal without more questions, and still write
   assert.equal(draft.plan!.title, "TrackerX");
   assert.equal(draft.messages.at(-1)!.kind, "proposal");
   assert.ok(draft.messages.at(-1)!.text.includes("Nothing is created until you approve it"));
-  assert.deepEqual(asked[0]!.facts, [{ label: "Done so far", value: "authentication" }]);
+  assert.deepEqual(asked[0]!.facts, [{ label: "Done so far", value: "authentication" }, { label: "Next step", value: "API integration" }]);
   assert.equal(asked[0]!.current, null);
   assert.deepEqual(await records(await me.profileId()), NOTHING);
 });
 
 test("a correction is a new version; only the current version is approved; approving twice builds once", async () => {
   const me = await learner();
-  let draft = await begin(me.id, "Plan TrackerX: dashboard, then APIs, then testing.", {
-    read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }] }), write: writer(trackerPlan),
+  let draft = await begin(me.id, "Plan TrackerX: dashboard, then APIs, then testing, launching on 30 November.", {
+    read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan),
   });
   assert.equal(draft.version, 1);
 
@@ -225,7 +225,7 @@ test("a correction is a new version; only the current version is approved; appro
 
 test("the learner's edits are saved against their version, and win over a slower Nova", async () => {
   const me = await learner();
-  let draft = await begin(me.id, "Plan TrackerX.", { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }] }), write: writer(trackerPlan) });
+  let draft = await begin(me.id, "Plan TrackerX, launching on 30 November.", { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan) });
 
   // An edit: renamed and a task removed. Saved as version 2.
   const mine = { ...draft.plan!, title: "TrackerX v1 launch", tasks: draft.plan!.tasks.filter(t => t.key !== "e2e") };
@@ -255,7 +255,7 @@ test("the learner's edits are saved against their version, and win over a slower
 
 test("an existing workspace is improved by adding to it: nothing there is lost", async () => {
   const me = await learner();
-  const first = await begin(me.id, "Plan TrackerX.", { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }] }), write: writer(trackerPlan) });
+  const first = await begin(me.id, "Plan TrackerX, launching on 30 November.", { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan) });
   const built = await builder.approveDraft(me.id, first.id, { version: 1 });
   assert.ok(built.ok && built.draft.workspace);
   const workspaceId = built.ok ? built.draft.workspace!.id : "";
@@ -289,8 +289,8 @@ test("an existing workspace is improved by adding to it: nothing there is lost",
 
 test("failures are said and can be retried; a failed build leaves nothing", async () => {
   const me = await learner();
-  const down: BuilderDeps = { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }] }), write: async () => ({ ok: false, unavailable: true, message: "Nova couldn't write the proposal just now. Nothing was lost; try again." }) };
-  let draft = await begin(me.id, "Plan TrackerX.", down);
+  const down: BuilderDeps = { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: async () => ({ ok: false, unavailable: true, message: "Nova couldn't write the proposal just now. Nothing was lost; try again." }) };
+  let draft = await begin(me.id, "Plan TrackerX, launching on 30 November.", down);
   assert.equal(draft.status, "failed");
   assert.equal(draft.failure!.stage, "drafting");
   assert.equal(draft.messages.at(-1)!.kind, "error");
@@ -325,11 +325,11 @@ test("failures are said and can be retried; a failed build leaves nothing", asyn
 
 test("cancelling stops a running job: it writes nothing", async () => {
   const me = await learner();
-  const started = await builder.startDraft(me.id, { clientKey: key(), text: "Plan TrackerX." });
+  const started = await builder.startDraft(me.id, { clientKey: key(), text: "Plan TrackerX, launching on 30 November." });
   assert.ok(started.ok && started.job);
   const cancelled = await builder.cancelDraft(me.id, started.draft.id);
   assert.ok(cancelled.ok && cancelled.draft.status === "cancelled");
-  await builder.runJob(me.id, started.job!, { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }] }), write: writer(trackerPlan) });
+  await builder.runJob(me.id, started.job!, { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan) });
   const draft = (await builder.getDraft(me.id, started.draft.id))!;
   assert.equal(draft.status, "cancelled");
   assert.equal(draft.plan, null);
@@ -340,12 +340,12 @@ test("cancelling stops a running job: it writes nothing", async () => {
 test("one message at a time: a second while Nova works is refused", async () => {
   const me = await learner();
   const k = key();
-  const started = await builder.startDraft(me.id, { clientKey: k, text: "Plan TrackerX." });
+  const started = await builder.startDraft(me.id, { clientKey: k, text: "Plan TrackerX, launching on 30 November." });
   assert.ok(started.ok);
   const second = await builder.postMessage(me.id, started.draft.id, { text: "and another thing" });
   assert.equal(!second.ok && second.error, "busy");
   // The same start sent again is the same draft, with no second job.
-  const repeat = await builder.startDraft(me.id, { clientKey: k, text: "Plan TrackerX." });
+  const repeat = await builder.startDraft(me.id, { clientKey: k, text: "Plan TrackerX, launching on 30 November." });
   assert.ok(repeat.ok && repeat.draft.id === started.draft.id && repeat.job === null);
 });
 
@@ -371,7 +371,7 @@ test("a chat message opens one draft, answered when it is opened on the web", as
 test("one learner can neither see nor touch another's draft or workspace", async () => {
   const owner = await learner();
   const other = await learner();
-  const draft = await begin(owner.id, "Plan TrackerX.", { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }] }), write: writer(trackerPlan) });
+  const draft = await begin(owner.id, "Plan TrackerX, launching on 30 November.", { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan) });
   await builder.startDraft(other.id, { clientKey: key() });
   assert.equal(await builder.getDraft(other.id, draft.id), null);
   const job: BuilderJob = { draftId: draft.id, jobId: "x", kind: "reply", change: null };

@@ -45,7 +45,7 @@ import { readBuilderTurn } from "./builder-conversation";
 import { createWorkspace, recentWorkspaceTitles, similarWorkspaces, workspaceDetail, workspaceSummaries } from "./workspaces";
 import {
   MESSAGE_MAX, TALKING, canMove, decideStep, describeChanges, emptyBrief, isPendingLive, learnerWords, message,
-  needsReply, nextBrief, planChanges, readBrief, readMessages, readPending, replyWithQuestion, spoken, withMessages,
+  needsReply, nextBrief, planChanges, readBrief, readMessages, readPending, replyWithQuestion, spoken, withMessages, holdsLine,
 } from "./builder-state";
 import type { BriefFact, BuilderBrief, BuilderMessage, BuilderResponse, DraftFailure, DraftFile, DraftListView, DraftStatus, DraftView, PendingJob } from "./builder.types";
 import type { WorkspaceCounts } from "./workspaces.types";
@@ -460,13 +460,13 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
     await settle(row.id, job.jobId, { failure: { stage: "reply", message: REPLY_FAILED }, add: [message("nova", REPLY_FAILED, new Date(), { kind: "error" })] });
     return;
   }
-  const step = decideStep({ plan, brief: before }, reading);
+  const step = decideStep({ plan, brief: before, improving: Boolean(row.targetWorkspaceId) }, reading);
   const brief = { ...nextBrief(before, reading, step), known };
   const title = row.title ?? reading.title ?? brief.title;
 
   if (step.type === "ask" || step.type === "chat") {
     // Asked once: in the model's words, or as code settled on it when the reply asks nothing.
-    const text = step.type === "ask" ? replyWithQuestion(reading.reply, step.question) : reading.reply;
+    const text = step.type === "ask" ? (step.overruled ? step.question : replyWithQuestion(reading.reply, step.question)) : reading.reply;
     await settle(row.id, job.jobId, { brief, title, failure: null, add: [message("nova", text, new Date(), { kind: step.type === "ask" ? "question" : "chat" })] });
     return;
   }
@@ -522,7 +522,7 @@ async function runDraft(platformChatId: string, profile: { id: string; timezone:
   const target = existing ? ` It adds to ${existing.title}: nothing there is changed or removed.` : "";
   const text = before
     ? `Version ${version} is ready. ${describeChanges(planChanges(before, plan))}${target} Approve this version to build it, or keep refining.`
-    : `Here's a first proposal: ${plan.title}. ${[counts.subjects && `${counts.subjects} subject${counts.subjects === 1 ? "" : "s"}`, counts.topics && `${counts.topics} topics`, plan.phases.length && `${plan.phases.length} milestones`, counts.tasks && `${counts.tasks} tasks`, counts.notes && `${counts.notes} notes`, counts.dates && `${counts.dates} date${counts.dates === 1 ? "" : "s"}`].filter(Boolean).join(", ")}.${target} Nothing is created until you approve it. Edit anything on the right, or tell me what's off.`;
+    : `Here's a first proposal: ${plan.title}. ${holdsLine(brief.kind, { ...counts, phases: plan.phases.length })}.${target} Nothing is created until you approve it. Edit anything on the right, or tell me what's off.`;
   const result = await settle(row.id, job.jobId, {
     status: "awaiting_approval", failure: null, title: plan.title,
     brief: { ...brief, dropped: written.dropped, title: plan.title },
@@ -636,7 +636,7 @@ export async function approveDraft(platformChatId: string, id: unknown, input: A
 
   const counts = result.status === "exists" ? null : result.counts;
   const said = counts
-    ? `${result.status === "updated" ? `Added to ${result.workspace.title}` : `${result.workspace.title} is built`}: ${[counts.subjectsAdded && `${counts.subjectsAdded} subject${counts.subjectsAdded === 1 ? "" : "s"}`, counts.topicsAdded && `${counts.topicsAdded} topics`, counts.tasksAdded && `${counts.tasksAdded} tasks`, counts.notesAdded && `${counts.notesAdded} notes`, counts.datesAdded && `${counts.datesAdded} date${counts.datesAdded === 1 ? "" : "s"}`].filter(Boolean).join(", ") || "nothing new (you had all of it)"}. It's in your Planner, Knowledge and Notes now.`
+    ? `${result.status === "updated" ? `Added to ${result.workspace.title}` : `${result.workspace.title} is built`}: ${holdsLine(readBrief(row.brief).kind, { subjects: counts.subjectsAdded, topics: counts.topicsAdded, phases: 0, tasks: counts.tasksAdded, notes: counts.notesAdded, dates: counts.datesAdded }) || "nothing new (you had all of it)"}. It's in your Planner, Knowledge and Notes now.`
     : `${result.workspace.title} was already built from this version.`;
   const fresh = await back(
     { status: "ready", workspaceId: result.workspace.id, builtVersion: row.version, failure: NONE },

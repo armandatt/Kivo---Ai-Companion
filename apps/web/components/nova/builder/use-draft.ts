@@ -30,7 +30,12 @@ export function useDraft(draftId: string | null) {
   // A newer version arrived while the learner had unsaved edits.
   const [conflict, setConflict] = useState<DraftView | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  // Which action the error is about, so it shows beside that action only.
+  const [errorOf, setErrorOf] = useState<null | 'send' | 'approve' | 'cancel' | 'retry'>(null)
   const [busy, setBusy] = useState<null | 'send' | 'approve' | 'cancel' | 'retry'>(null)
+  // The newest version that arrived from the server while the page was
+  // open, and the plan it replaced (null for a first proposal).
+  const [arrival, setArrival] = useState<{ version: number; previous: WorkspacePlan | null; next: WorkspacePlan } | null>(null)
 
   const dirty = useRef(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -43,6 +48,9 @@ export function useDraft(draftId: string | null) {
   const adopt = useCallback((next: DraftView) => {
     const before = latest.current.draft
     setDraft(next)
+    // A version that arrived while the page was open: the playground shows
+    // what it changed. (Opening the page shows the plan as it is.)
+    if (before && before.id === next.id && next.plan && next.version > before.version) setArrival({ version: next.version, previous: latest.current.plan, next: next.plan })
     if (!dirty.current) { setPlanState(next.plan); return }
     if (before && next.version > before.version) setConflict(next)
   }, [])
@@ -55,7 +63,7 @@ export function useDraft(draftId: string | null) {
   }, [draftId, adopt])
 
   useEffect(() => {
-    setDraft(null); setPlanState(null); setLoadError(null); setConflict(null); dirty.current = false
+    setDraft(null); setPlanState(null); setLoadError(null); setConflict(null); setArrival(null); dirty.current = false
     if (draftId) void reload()
   }, [draftId, reload])
 
@@ -80,7 +88,7 @@ export function useDraft(draftId: string | null) {
     resumed.current = draft.id
     void api.resumeDraft(draft.id).then(res => {
       if (res.ok) adopt(res.draft)
-      else { setActionError(res.message); if (res.draft) adopt(res.draft) }
+      else { setErrorOf('send'); setActionError(res.message); if (res.draft) adopt(res.draft) }
     })
   }, [draft, adopt])
 
@@ -136,7 +144,7 @@ export function useDraft(draftId: string | null) {
   }, [conflict])
 
   const run = useCallback(async (kind: 'send' | 'approve' | 'cancel' | 'retry', call: () => Promise<api.Failure | { ok: true; draft: DraftView }>) => {
-    setBusy(kind); setActionError(null)
+    setBusy(kind); setActionError(null); setErrorOf(kind)
     const res = await call()
     setBusy(null)
     if (res.ok) { adopt(res.draft); return true }
@@ -155,7 +163,7 @@ export function useDraft(draftId: string | null) {
     if (!draftId) return false
     await flush()
     const d = latest.current.draft
-    if (!d || dirty.current) { setActionError('Your edits are still saving. Try again in a moment.'); return false }
+    if (!d || dirty.current) { setErrorOf('approve'); setActionError('Your edits are still saving. Try again in a moment.'); return false }
     return run('approve', () => api.approveDraft(draftId, { version: d.version, ...opts }))
   }, [draftId, flush, run])
 
@@ -163,8 +171,8 @@ export function useDraft(draftId: string | null) {
   const retry = useCallback(() => (draftId ? run('retry', () => api.retryDraft(draftId)) : Promise.resolve(false)), [draftId, run])
 
   return {
-    draft, plan, setPlan, save, saveError, conflict, keepMine, takeTheirs,
-    loadError, actionError, clearActionError: () => setActionError(null), busy, working,
+    draft, plan, setPlan, save, saveError, conflict, keepMine, takeTheirs, arrival,
+    loadError, actionError, errorOf, clearActionError: () => setActionError(null), busy, working,
     reload, send, approve, cancel, retry, unsaved: () => dirty.current,
   }
 }
