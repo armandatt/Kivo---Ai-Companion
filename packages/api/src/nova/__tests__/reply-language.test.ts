@@ -99,9 +99,9 @@ describe("choosing the reply language", () => {
 
   it("is applied before the reading too, and stored with the message, in the Telegram and setup turns", () => {
     const turn = read("telegram/telegram-turn.ts");
-    expect(turn).toContain("chooseLanguage(safe.request?.language, ctx.language, event.text)");
+    expect(turn).toContain("chooseLanguage(safe.request?.language, ctx.language, event.text, ctx.preferredLanguage)");
     expect(turn).toContain("request: { ...safe.request, language: ctx.language }");
-    expect(read("interaction/setup-turn.ts")).toContain("chooseLanguage(understanding.request?.language, ctx.language, text)");
+    expect(read("interaction/setup-turn.ts")).toContain("chooseLanguage(understanding.request?.language, ctx.language, text, ctx.preferredLanguage)");
   });
 
   it("adds nothing to a prompt for English, and one line for Hinglish", () => {

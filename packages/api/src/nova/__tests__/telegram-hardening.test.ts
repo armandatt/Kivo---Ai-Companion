@@ -127,7 +127,7 @@ describe("what the Response Brain may claim", () => {
     expect(chooseRegister({ emotion: "neutral", daysUntilNextExam: 1, activeReality: [], accountability: "hard" })).toBe("serious");
     expect(registerLine("serious")).toContain("No jokes and no teasing");
     // Teasing is about a habit the evidence shows, never a guess.
-    expect(registerLine("playful")).toContain("If the evidence above shows an avoidable delay, name it plainly; light teasing about that habit is welcome");
+    expect(registerLine("playful")).toContain("If the evidence above shows an avoidable delay, name it plainly and challenge them on it; light teasing about that habit is welcome");
     expect(registerLine("playful")).toContain("never about them, their ability or their worth");
   });
 });

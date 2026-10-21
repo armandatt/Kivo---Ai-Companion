@@ -301,7 +301,8 @@ describe("what Nova tells the learner about their check-in", () => {
   it("the onboarding screen no longer promises a message it cannot be sure of", () => {
     const screen = repo("apps/web/components/onboarding-flow.tsx");
     expect(screen).not.toMatch(/tomorrow at/);
-    expect(screen).toContain("Connect Telegram from Today when you want reminders and check-ins there.");
+    // Telegram is offered once the answers are saved, and connected only when the server says so.
+    expect(screen).toContain("It isn&apos;t connected until this says so.");
   });
 });
 
@@ -316,9 +317,9 @@ describe("Gentle Nudges and No Mercy", () => {
 
   it("No Mercy is firm and brief, and still may not shame, threaten or guess at motives", () => {
     const line = registerLine("playful");
-    expect(line).toContain("direct, firm and brief");
+    expect(line).toContain("blunt, intense and brief");
     expect(line).toContain("lead with the next action");
-    expect(line).toContain("No shaming, no threats, no guessing at their motives");
+    expect(line).toContain("No insults, no humiliation, no shaming, no threats, no guessing at their motives");
     expect(line).toContain("respect the time, energy and limits they have stated");
     // Challenging a delay needs evidence of one.
     expect(line).toContain("If the evidence above shows an avoidable delay");
@@ -416,7 +417,7 @@ describe("the language of the message being answered", () => {
   it("the turn knows a Devanagari message before any model is asked, and keeps a name or profile out of it", () => {
     const turn = read("telegram/telegram-turn.ts");
     // The script first; only then the language of the conversation (chooseLanguage).
-    expect(turn).toContain('event.kind === "text" ? (scriptLanguage(event.text) ?? chooseLanguage(null, lastLanguage, event.text)) : lastLanguage');
+    expect(turn).toContain('event.kind === "text" ? (scriptLanguage(event.text) ?? chooseLanguage(null, lastLanguage, event.text, preferredLanguage)) : lastLanguage');
     expect(read("interaction/language.ts")).not.toMatch(/displayName|studentName|profile\./);
   });
 });

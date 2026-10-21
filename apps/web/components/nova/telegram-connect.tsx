@@ -11,7 +11,7 @@ const primary = 'inline-flex h-11 items-center justify-center gap-2 rounded-xl b
 
 // The button that connects Telegram, in its three states: ask for a link,
 // open it, wait for the chat to appear. Shared by Settings and Home.
-function ConnectAction({ link, className }: { link: Link; className?: string }) {
+export function ConnectAction({ link, className }: { link: Link; className?: string }) {
   return (
     <div className={className}>
       {link.deeplink ? (

@@ -11,6 +11,7 @@ import type { NovaRealityFact } from "./reality.types";
 import type { DecisionGraphOutput } from "./response.types";
 import type { ActiveSessionInfo } from "../engines/study-snapshot";
 import type { SessionContext, SessionAction } from "./session.types";
+import type { MultiAnswer, ObstacleId, WeeklyHours, WorkingOnId } from "../product/onboarding-options";
 
 export interface NovaUserProfile {
   // The name on the learner's account or chat. null: none on record.
@@ -27,6 +28,11 @@ export interface NovaUserProfile {
   learningContexts?:        string[];
   // What they asked Nova to help with first at sign-up (product/first-focus.ts).
   firstFocus?:              { id: string; detail: string | null } | null;
+  // The v3 sign-up answers (product/onboarding-options.ts). Each absent or
+  // null: not said. Context for wording, never a task, goal or decision.
+  workingOn?:               MultiAnswer<WorkingOnId> | null;
+  weeklyHours?:             WeeklyHours | null;
+  obstacles?:               MultiAnswer<ObstacleId> | null;
   preferredStudyHoursPerDay: number;
   subjects:                 string[];   // subject names
   daysSinceJoined:          number;

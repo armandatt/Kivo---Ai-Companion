@@ -9,9 +9,12 @@ import { normalizeAccountability } from "@repo/api/personality/mentor-compatibil
 import { currentZoneName, isValidTimezone } from "@repo/api/nova/engines/learner-calendar"
 import { normalizeLearningContexts } from "@repo/api/nova/product/learning-context"
 //@ts-ignore
-import { FIRST_FOCUS_KEY, LEARNING_CONTEXTS_KEY, firstFocusIn, learningContextsIn } from "@repo/api/nova/adapters/account-preferences-adapter"
+import { ANSWER_KEYS, FIRST_FOCUS_KEY, LEARNING_CONTEXTS_KEY, firstFocusIn, learningContextsIn, signupAnswersIn } from "@repo/api/nova/adapters/account-preferences-adapter"
 import { checkFirstFocus } from "@repo/api/nova/product/first-focus"
-import { checkCompanionName, DEFAULT_COMPANION_NAME } from "@repo/api/nova/product/onboarding-answers"
+import { checkCreatureName, DEFAULT_CREATURE_NAME } from "@repo/api/nova/product/onboarding-answers"
+import { OBSTACLES, OBSTACLE_LABELS, WORKING_ON, WORKING_ON_LABELS, checkMultiAnswer, checkWeeklyHours, withoutNotSure } from "@repo/api/nova/product/onboarding-options"
+import { accountabilityOfTone, isTone } from "@repo/api/nova/product/tone"
+import { REPLY_LANGUAGES } from "@repo/api/nova/types/understanding.types"
 
 const COMPANIONS = new Set(["nova", "rex", "zen"])
 
@@ -57,10 +60,15 @@ export async function GET() {
       tier: "free",
       browserNotifications: profile?.browserNotifications ?? true,
       emailDigest: profile?.emailDigest ?? true,
-      // The onboarding answers a learner can correct here.
-      companionName: profile?.creatureName ?? DEFAULT_COMPANION_NAME,
+      // The onboarding answers a learner can correct here. The creature's
+      // name is its own: Nova is called Nova whatever it is.
+      creatureName: profile?.creatureName ?? DEFAULT_CREATURE_NAME,
       learningContexts: learningContextsIn(profile?.onboardingAnswers),
       firstFocus: firstFocusIn(profile?.onboardingAnswers),
+      ...(() => {
+        const a = signupAnswersIn(profile?.onboardingAnswers, profile?.accountabilityStyle ?? null)
+        return { workingOn: a.workingOn, weeklyHours: a.weeklyHours, obstacles: a.obstacles, language: a.language, tone: a.tone }
+      })(),
       platforms: {
         telegram: {
           connected: profile?.telegramConnected ?? false,
@@ -87,7 +95,12 @@ export async function PATCH(req: NextRequest) {
     if (!account) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 })
 
     const body = await req.json()
-    const { persona, checkInTime, accountabilityStyle, timezone, name, learningContexts, firstFocus, companionName } = body
+    const { persona, checkInTime, accountabilityStyle, timezone, name, learningContexts, firstFocus, workingOn, weeklyHours, obstacles, language, tone } = body
+    // companionName is the older name of the same field, from a page loaded
+    // before the creature was named apart from Nova.
+    const creatureName = body.creatureName !== undefined ? body.creatureName : body.companionName
+    // What this request changed, so the page says "saved" only for that.
+    const saved: string[] = []
 
     const profileUpdates: Record<string, unknown> = {}
     // The companion is one of the ones that exist. It decides which learner
@@ -109,6 +122,12 @@ export async function PATCH(req: NextRequest) {
     }
     // Stored the way onboarding stores it: "soft" (Gentle Nudges) or "hard" (No Mercy).
     if (accountabilityStyle !== undefined) profileUpdates.accountabilityStyle = normalizeAccountability(String(accountabilityStyle)) ?? String(accountabilityStyle)
+    // A tone (product/tone.ts) also sets the older soft/hard answer it stands
+    // for, so every reader agrees; a tone with neither meaning clears it.
+    if (tone !== undefined) {
+      if (!isTone(tone)) return NextResponse.json({ error: "Unknown tone" }, { status: 400 })
+      profileUpdates.accountabilityStyle = accountabilityOfTone(tone)
+    }
     // A real timezone, or nothing. Anything else is refused: the scheduler
     // would read it as "no timezone" and lose the one already on record.
     if (timezone !== undefined) {
@@ -117,12 +136,13 @@ export async function PATCH(req: NextRequest) {
       else return NextResponse.json({ error: "Unknown timezone" }, { status: 400 })
     }
 
-    // The companion's display name. Empty puts the default back. It names
-    // nothing else: the companion and the learner stay who they are.
-    if (companionName !== undefined) {
-      const checked = checkCompanionName(companionName)
+    // The creature's display name. Empty puts the default back. It names
+    // nothing else: Nova and the learner stay who they are.
+    if (creatureName !== undefined) {
+      const checked = checkCreatureName(creatureName)
       if (!checked.ok) return NextResponse.json({ error: checked.message }, { status: 400 })
       profileUpdates.creatureName = checked.name
+      saved.push("creatureName")
     }
 
     // Two of the onboarding answers, kept with the others in onboardingAnswers:
@@ -143,11 +163,39 @@ export async function PATCH(req: NextRequest) {
         answerUpdates[FIRST_FOCUS_KEY] = checked.value
       }
     }
+    // The v3 answers, each checked as onboarding checks it.
+    if (workingOn !== undefined) {
+      const checked = checkMultiAnswer(workingOn, WORKING_ON, WORKING_ON_LABELS, { required: false })
+      if (!checked.ok) return NextResponse.json({ error: "Check what you're working on: choose from the list or add short entries of your own." }, { status: 400 })
+      answerUpdates[ANSWER_KEYS.workingOn] = checked.value.selected.length + checked.value.custom.length > 0 ? checked.value : null
+      // It replaces the older single "help with first" answer: the setup
+      // page's templates then follow what they are working on now.
+      if (firstFocus === undefined) answerUpdates[FIRST_FOCUS_KEY] = null
+    }
+    if (obstacles !== undefined) {
+      const checked = checkMultiAnswer(obstacles, OBSTACLES, OBSTACLE_LABELS, { required: false })
+      if (!checked.ok) return NextResponse.json({ error: "Check what gets in your way: choose from the list or add short entries of your own." }, { status: 400 })
+      answerUpdates[ANSWER_KEYS.obstacles] = checked.value.selected.length + checked.value.custom.length > 0 ? withoutNotSure(checked.value) : null
+    }
+    if (weeklyHours !== undefined) {
+      if (weeklyHours === null) answerUpdates[ANSWER_KEYS.weeklyHours] = null
+      else {
+        const checked = checkWeeklyHours(weeklyHours)
+        if (!checked.ok) return NextResponse.json({ error: checked.message }, { status: 400 })
+        answerUpdates[ANSWER_KEYS.weeklyHours] = checked.value
+      }
+    }
+    if (language !== undefined) {
+      if (language !== null && !REPLY_LANGUAGES.some(l => l === language)) return NextResponse.json({ error: "Unknown language" }, { status: 400 })
+      answerUpdates[ANSWER_KEYS.language] = language
+    }
+    if (tone !== undefined) answerUpdates[ANSWER_KEYS.tone] = tone
     if (Object.keys(answerUpdates).length > 0) {
       const current = await prisma.userProfile.findUnique({ where: { userId: session.userId }, select: { onboardingAnswers: true } })
       const answers = current?.onboardingAnswers && typeof current.onboardingAnswers === "object" && !Array.isArray(current.onboardingAnswers)
         ? current.onboardingAnswers as Record<string, unknown> : {}
       profileUpdates.onboardingAnswers = { ...answers, ...answerUpdates }
+      saved.push(...Object.keys(answerUpdates))
     }
 
     if (Object.keys(profileUpdates).length > 0) {
@@ -165,7 +213,7 @@ export async function PATCH(req: NextRequest) {
       })
     }
 
-    return NextResponse.json({ ok: true })
+    return NextResponse.json({ ok: true, saved })
   } catch (e) {
     console.error("[SETTINGS PATCH ERROR]", e)
     return NextResponse.json({ error: "Internal error" }, { status: 500 })

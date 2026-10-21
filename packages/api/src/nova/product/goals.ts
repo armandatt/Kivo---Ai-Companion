@@ -25,6 +25,7 @@
 import { prisma } from "@repo/db/client";
 import { learnerKey, webAccountOf } from "./learner-key";
 import { GOALS_MAX, GOAL_TEXT_MAX, type GoalsError } from "./goals.types";
+import { dailyColumns, seedDailyMinutesFromSignup } from "../adapters/account-preferences-adapter";
 
 export { GOALS_MAX, GOAL_TEXT_MAX } from "./goals.types";
 export type { GoalsError, GoalsResponse, NovaGoalsView } from "./goals.types";
@@ -135,7 +136,7 @@ export async function saveGoals(platformChatId: string, raw: unknown): Promise<S
   if (!user) return { status: "not_ready" };
   const saved = await prisma.novaAcademicProfile.upsert({
     where:  { userId: user.id },
-    create: { userId: user.id, goals: parsed.goals },
+    create: { userId: user.id, goals: parsed.goals, ...dailyColumns(await seedDailyMinutesFromSignup(platformChatId)) },
     update: { goals: { set: parsed.goals } },
     select: { goals: true },
   });

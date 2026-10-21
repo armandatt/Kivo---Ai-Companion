@@ -43,6 +43,9 @@ export interface ActionContext {
   now:       Date;
   // The language replies are worded in (interaction/language.ts).
   language:  ReplyLanguage;
+  // The language they chose for Nova, if they did: what a sentence the
+  // reading cannot place is answered in, instead of English.
+  preferredLanguage?: ReplyLanguage | null;
 }
 
 export interface ActionResult {

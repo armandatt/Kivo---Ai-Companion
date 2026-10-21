@@ -31,7 +31,11 @@ export type ContextNeed =
   | "profile" | "state" | "session" | "plan" | "topic" | "exams" | "reviews"
   | "time" | "reality" | "memory" | "patterns" | "recent"
   // What they said they are working toward (product/goals.ts).
-  | "goals";
+  | "goals"
+  // What they said at sign-up usually gets in the way, as suggestions for
+  // how to help (product/onboarding-options.ts). Only where it can shape the
+  // reply: a feeling, a question about themselves or what to do, a conversation.
+  | "support";
 
 export interface Interaction {
   kind:                InteractionKind;
@@ -94,6 +98,7 @@ export function contextNeeds(u: AcademicUnderstanding, kind: InteractionKind = k
       // action ("what am I working toward?", "am I on track?") may be about
       // their goal. One about a topic, or "what now", is answered from the plan.
       if (u.request?.asks === "about_me" && u.request.action === "none" && !u.topic) add("goals");
+      add("support");
       break;
     case "status_request":
       add("session", "state", "exams", "reviews");
@@ -107,14 +112,16 @@ export function contextNeeds(u: AcademicUnderstanding, kind: InteractionKind = k
       if (u.request?.struggleTopic || u.topic) add("topic");
       break;
     case "reality_signal":
-    case "emotional_signal":
       add("session", "reality", "state", "memory", "patterns");
+      break;
+    case "emotional_signal":
+      add("session", "reality", "state", "memory", "patterns", "support");
       break;
     case "onboarding_input":
       add("profile");
       break;
     case "conversation":
-      add("profile", "session", "memory", "patterns", "state", "goals");
+      add("profile", "session", "memory", "patterns", "state", "goals", "support");
       if (u.topic) add("topic");
       // Talking about what to study ("what should I focus on this week?") is
       // answered from the plan Nova worked out, or the model makes one up.

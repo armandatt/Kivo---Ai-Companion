@@ -24,8 +24,8 @@ import { getOverdueTopics } from "../engines/retention-engine";
 import { dayKey, dayNumber, localHour, localMinute } from "../engines/learner-calendar";
 import { STUDY_WINDOWS } from "../engines/learning-dna-engine";
 import { loadReplyLanguage, saveAssistantMessage, userMessagedSince } from "../adapters/conversation-adapter";
-import { loadOperatingStyle, loadAccountabilityStyle } from "../adapters/operating-style-adapter";
-import { ensureLearnerTimezone, loadAccountPreferences } from "../adapters/account-preferences-adapter";
+import { loadOperatingStyle, loadAccountabilityStyle, loadTone } from "../adapters/operating-style-adapter";
+import { ensureLearnerTimezone, loadAccountPreferences, loadVoicePreferences } from "../adapters/account-preferences-adapter";
 import { retryPendingConsolidations } from "../consolidation/run-consolidation";
 import { abandonStaleSessions } from "../persistence/nova-persistence";
 import { chooseRegister } from "../decision/register";
@@ -323,13 +323,16 @@ async function deliver(
         emotion: "neutral", daysUntilNextExam: view.nextDeadline?.daysUntil ?? null,
         activeReality: passingConstraints(view, now),
         accountability: await loadAccountabilityStyle(chatId),
+        tone:           await loadTone(chatId),
       }),
       operatingStyle: await loadOperatingStyle(chatId),
       hasStartButton: rec !== null,
       // The one message that may ask: there is no plan to point at.
       asksWhatToday:  type === "daily_checkin" && !rec,
       informOnly:     quiet,
-      language:       await loadReplyLanguage(profile.user.id),
+      // Nova speaks first here, answering no message: in the language they
+      // chose, else the one they last wrote in.
+      language:       (await loadVoicePreferences(chatId).catch(() => ({ language: null }))).language ?? await loadReplyLanguage(profile.user.id),
     };
     // Past today's budget for generated wording, the plain line goes out.
     const worded = await spendModelCall(profile.id, "response", dayKey(now, zone))

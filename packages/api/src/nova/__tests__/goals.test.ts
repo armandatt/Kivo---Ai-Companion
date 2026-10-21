@@ -447,8 +447,11 @@ describe("goals have one owner", () => {
     // only other file that names it; it reads nothing back.
     expect(sources(NOVA).filter(f => f.src.includes("primaryGoal30d")).map(f => f.file)).toEqual(["product/goals.ts", "product/onboarding-completion.ts"]);
     const writer = sources(NOVA).find(f => f.file === "product/onboarding-completion.ts")!.src;
+    // v2 seeds the goal from its single answer; v3 seeds none: what they are
+    // working on is context, not a goal.
     expect(writer).toContain("primaryGoal30d:      goal,");
-    expect(writer.split("primaryGoal30d").length - 1).toBe(1);
+    expect(writer).toContain("primaryGoal30d:      null,");
+    expect(writer.split("primaryGoal30d").length - 1).toBe(2);
   });
 
   it("the orchestrator and the context builder hold no stand-in identity", () => {

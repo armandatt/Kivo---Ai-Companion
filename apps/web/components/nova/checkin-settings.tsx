@@ -1,25 +1,17 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { BellRing, Check } from 'lucide-react'
+import { BellRing } from 'lucide-react'
 
-type Style = 'soft' | 'hard'
-type Loaded = { checkInTime: string | null; accountabilityStyle: string | null; telegram: boolean }
+type Loaded = { checkInTime: string | null; telegram: boolean }
 
-const STYLES: Array<{ value: Style; label: string; body: string }> = [
-  { value: 'soft', label: 'Gentle Nudges', body: 'Calm and supportive. Smaller steps, no pressure after a missed day.' },
-  { value: 'hard', label: 'No Mercy',      body: 'Direct and brief. Points at the next thing to do and expects it done.' },
-]
-
-// The two things onboarding asked that shape how Nova messages first on
-// Telegram: when the daily check-in comes, and how firmly Nova speaks. Both
-// are stored on the account; Nova reads them from there. Neither changes what
-// Nova recommends, only when it speaks first and in what manner.
+// When the daily check-in comes on Telegram. Stored on the account; Nova
+// reads it from there. It changes when Nova speaks first, never what it
+// recommends. How Nova talks (its tone) is set under "How Nova helps you".
 export function CheckinSettings() {
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [failed, setFailed] = useState(false)
   const [time, setTime]     = useState('')
-  const [style, setStyle]   = useState<Style | null>(null)
   const [saving, setSaving] = useState(false)
   const [note, setNote]     = useState<{ ok: boolean; text: string } | null>(null)
   // The timezone Nova keeps the learner's days in, and the one this device is on.
@@ -29,12 +21,11 @@ export function CheckinSettings() {
     let live = true
     fetch('/api/settings', { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((d: { checkInTime?: string | null; accountabilityStyle?: string | null; platforms?: { telegram?: { connected?: boolean } } }) => {
+      .then((d: { checkInTime?: string | null; platforms?: { telegram?: { connected?: boolean } } }) => {
         if (!live) return
-        const now: Loaded = { checkInTime: d.checkInTime ?? null, accountabilityStyle: d.accountabilityStyle ?? null, telegram: d.platforms?.telegram?.connected === true }
+        const now: Loaded = { checkInTime: d.checkInTime ?? null, telegram: d.platforms?.telegram?.connected === true }
         setLoaded(now)
         setTime(now.checkInTime ?? '')
-        setStyle(now.accountabilityStyle === 'hard' ? 'hard' : now.accountabilityStyle === 'soft' ? 'soft' : null)
       })
       .catch(() => { if (live) setFailed(true) })
     return () => { live = false }
@@ -72,15 +63,14 @@ export function CheckinSettings() {
     }
   }
 
-  async function save(next: { checkInTime?: string | null; accountabilityStyle?: Style }) {
+  async function save(next: { checkInTime: string | null }) {
     setSaving(true); setNote(null)
     try {
       const res = await fetch('/api/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(next) })
       if (!res.ok) throw new Error(String(res.status))
       setLoaded(prev => prev ? {
         ...prev,
-        checkInTime: next.checkInTime !== undefined ? next.checkInTime : prev.checkInTime,
-        accountabilityStyle: next.accountabilityStyle ?? prev.accountabilityStyle,
+        checkInTime: next.checkInTime,
       } : prev)
       setNote({ ok: true, text: 'Saved.' })
     } catch {
@@ -156,31 +146,6 @@ export function CheckinSettings() {
             </p>
           )}
 
-          <fieldset className="mt-7">
-            <legend className="text-xs font-medium text-foreground/60">How Nova talks to you</legend>
-            <div className="mt-2 grid gap-3 sm:grid-cols-2">
-              {STYLES.map(option => {
-                const active = style === option.value
-                return (
-                  <button
-                    key={option.value} type="button" disabled={saving} aria-pressed={active}
-                    onClick={() => { setStyle(option.value); void save({ accountabilityStyle: option.value }) }}
-                    className={`rounded-2xl border p-4 text-left transition-colors disabled:opacity-60 ${active ? 'border-keppel-400/60 bg-keppel-400/8' : 'border-white/10 hover:border-white/20'}`}
-                    data-style={option.value}
-                  >
-                    <span className="flex items-center justify-between gap-2 text-sm font-semibold text-foreground">
-                      {option.label}
-                      {active && <Check className="size-4 text-keppel-300" aria-hidden />}
-                    </span>
-                    <span className="mt-1 block text-xs leading-relaxed text-foreground/60">{option.body}</span>
-                  </button>
-                )
-              })}
-            </div>
-            <p className="mt-3 text-xs leading-relaxed text-foreground/45">
-              This changes Nova&apos;s manner, not its advice: the same plan, the same dates. Either way it turns serious when an exam is close or something is weighing on you.
-            </p>
-          </fieldset>
 
           {note && <p role={note.ok ? 'status' : 'alert'} className={`mt-4 text-sm ${note.ok ? 'text-keppel-300' : 'text-amber-300/90'}`} data-checkin-note>{note.text}</p>}
         </div>

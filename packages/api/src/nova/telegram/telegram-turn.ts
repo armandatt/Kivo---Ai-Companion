@@ -20,9 +20,9 @@ import { runUnderstandingBrain } from "../brains/understanding-brain";
 import { wordFirstUse } from "../brains/first-use-wording";
 import { sayInLanguage } from "../brains/language-wording";
 import { chooseLanguage, languageLine, scriptLanguage } from "../interaction/language";
-import { ensureLearnerTimezone } from "../adapters/account-preferences-adapter";
+import { ensureLearnerTimezone, loadVoicePreferences } from "../adapters/account-preferences-adapter";
 import { chooseRegister } from "../decision/register";
-import { loadAccountabilityStyle, loadOperatingStyle } from "../adapters/operating-style-adapter";
+import { loadAccountabilityStyle, loadOperatingStyle, loadTone } from "../adapters/operating-style-adapter";
 import { decideAction, type ActionContext as DecisionContext, type TurnAction } from "../decision/action-decision";
 import { safeReading } from "../decision/interpretation-safety";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
@@ -274,10 +274,14 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     // same rule as after it (chooseLanguage), so a reading that never comes
     // does not answer a sentence in the previous message's language. A
     // message in Devanagari says so itself, model or no model.
-    const lastLanguage = user ? await loadReplyLanguage(user.id) : "english";
+    // The language they chose for Nova starts the conversation and answers a
+    // sentence the reading cannot place; what they write in still wins.
+    const preferredLanguage = (await loadVoicePreferences(event.chatId).catch(() => ({ language: null }))).language;
+    const lastLanguage = user ? await loadReplyLanguage(user.id, preferredLanguage ?? "english") : (preferredLanguage ?? "english");
     ctx = {
       chatId: event.chatId, profileId: profile.id, timezone: profile.timezone, name: user?.displayName ?? null, now,
-      language: event.kind === "text" ? (scriptLanguage(event.text) ?? chooseLanguage(null, lastLanguage, event.text)) : lastLanguage,
+      language: event.kind === "text" ? (scriptLanguage(event.text) ?? chooseLanguage(null, lastLanguage, event.text, preferredLanguage)) : lastLanguage,
+      preferredLanguage,
     };
     budgetDay = dayKey(now, resolveTimezone(profile.timezone));
     // The row is made once, and "reachable again" is written only when the
@@ -365,7 +369,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
             const wording = Date.now();
             const worded = await wordFirstUse({
               decision, hasButtons, studentName: ctx!.name, language: ctx!.language,
-              register:       chooseRegister({ emotion: "neutral", daysUntilNextExam, activeReality, accountability: await loadAccountabilityStyle(event.chatId) }),
+              register:       chooseRegister({ emotion: "neutral", daysUntilNextExam, activeReality, accountability: await loadAccountabilityStyle(event.chatId), tone: await loadTone(event.chatId) }),
               operatingStyle: await loadOperatingStyle(event.chatId),
             }, deps.generate);
             spent("responseMs", wording);
@@ -484,7 +488,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       // decision and the evidence alike, sees only this.
       const safe = safeReading(read, { today: day });
       // This reply is in the language the message was written in.
-      ctx.language = chooseLanguage(safe.request?.language, ctx.language, event.text);
+      ctx.language = chooseLanguage(safe.request?.language, ctx.language, event.text, ctx.preferredLanguage);
       // The log records the language this reply was given in, so the next
       // short message follows the conversation as it now is.
       const understanding = safe.request ? { ...safe, request: { ...safe.request, language: ctx.language } } : safe;

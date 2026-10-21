@@ -12,17 +12,25 @@ import type { ReplyLanguage } from "../types/understanding.types";
 
 export type { ReplyLanguage };
 
-// A reading that names a language always wins. One that names none keeps the
+// A reading that names a language always wins: writing in a language is the
+// learner asking for it, in this conversation. One that names none keeps the
 // last language only for a message too short to tell ("ok", "30", a topic
 // name): it is a reply within that conversation. A message of a sentence or
-// more that came back with no language is answered in English, the default,
+// more that came back with no language is answered in the language the
+// learner chose for Nova, or English, the default, when they chose none,
 // rather than in whatever the previous message was in: the reading failed to
 // label it, and carrying the last language over is how "How is my progress
 // going?" was answered in Hinglish after a Hinglish message.
+//
+// The chosen language is also where a conversation starts: callers pass it
+// as `last` when the log holds no language yet (loadReplyLanguage), and Nova
+// uses it when it speaks first.
 export const SENTENCE_WORDS = 4;
-export function chooseLanguage(read: ReplyLanguage | null | undefined, last: ReplyLanguage, text?: string): ReplyLanguage {
+export function chooseLanguage(
+  read: ReplyLanguage | null | undefined, last: ReplyLanguage, text?: string, preferred: ReplyLanguage | null = null,
+): ReplyLanguage {
   if (read) return read;
-  return text !== undefined && wordCount(text) >= SENTENCE_WORDS ? "english" : last;
+  return text !== undefined && wordCount(text) >= SENTENCE_WORDS ? (preferred ?? "english") : last;
 }
 
 // Words with at least one letter: "8 pm" is one word, "30" none.

@@ -37,12 +37,12 @@ import { buildDynamicLayer, buildExplainPrompt, buildFocusedLayer, buildMicroPro
 import { runResponseBrain, UNREADABLE_RESPONSE_REPLY } from "./brains/response-brain";
 import { groundDurations, groundTopics } from "./brains/grounded-reply";
 import { chooseRegister, registerLine } from "./decision/register";
-import { loadAccountabilityStyle } from "./adapters/operating-style-adapter";
+import { loadAccountabilityStyle, loadTone } from "./adapters/operating-style-adapter";
 import type { ResponseBrainOutput } from "./types/response.types";
 import { getRelevantMemories } from "./adapters/memory-adapter";
 import { loadActiveRealityFacts } from "./adapters/reality-adapter";
 import { loadCoachingStyle } from "./adapters/operating-style-adapter";
-import { loadFirstFocus, loadLearningContexts } from "./adapters/account-preferences-adapter";
+import { loadFirstFocus, loadLearningContexts, loadSignupAnswers } from "./adapters/account-preferences-adapter";
 import { preparesTopics, takesOverTheDay } from "./product/deadline-types";
 import { calendarDaysUntil, dayKey, resolveTimezone } from "./engines/learner-calendar";
 import { countedStudyDays, studiedToday, studyGap } from "./engines/recovery-engine";
@@ -275,15 +275,16 @@ export async function runNovaOrchestrator(
   }
 
   // ── 11. Memory + Reality (parallel) ──────────────────────────────────────
-  const [memoryResult, realityFacts, coachingStyle, learningContexts, firstFocus] = await Promise.all([
+  const [memoryResult, realityFacts, coachingStyle, learningContexts, firstFocus, signup] = await Promise.all([
     getRelevantMemories(userId, understanding),
     loadActiveRealityFacts(userId, understanding),
     loadCoachingStyle(platformChatId),
-    // What they said they are learning for, and what they asked for first.
-    // A turn does not depend on either: unreadable, the learner is spoken to
-    // as one who has not said.
+    // What they said they are learning for, what they asked for first, and
+    // the rest of their sign-up answers. A turn depends on none of them:
+    // unreadable, the learner is spoken to as one who has not said.
     loadLearningContexts(platformChatId).catch(() => []),
     loadFirstFocus(platformChatId).catch(() => null),
+    loadSignupAnswers(platformChatId),
   ]);
 
   // ── 12. Assemble NovaContext ───────────────────────────────────────────────
@@ -315,6 +316,9 @@ export async function runNovaOrchestrator(
       institution:              snapshot.institution,
       learningContexts,
       firstFocus,
+      workingOn:                signup.workingOn,
+      weeklyHours:              signup.weeklyHours,
+      obstacles:                signup.obstacles,
       preferredStudyHoursPerDay: snapshot.preferredStudyHoursPerDay,
       subjects:                 snapshot.subjects.map(s => s.name),
       daysSinceJoined:          snapshot.daysSinceJoined,
@@ -387,6 +391,7 @@ export async function runNovaOrchestrator(
         ...(understanding.realityObservations ?? []).filter(o => o.status === "active").map(o => o.category),
       ],
       accountability:    await loadAccountabilityStyle(platformChatId),
+      tone:              await loadTone(platformChatId),
     });
     register = chosen;
     // An explanation has no register to play with: it is plain either way.

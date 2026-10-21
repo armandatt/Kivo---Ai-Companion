@@ -69,7 +69,7 @@ export async function runSetupTurn(input: {
   });
   // The rest of this turn answers in the language it was written in, by the
   // same rule as every other turn (chooseLanguage).
-  ctx.language = chooseLanguage(understanding.request?.language, ctx.language, text);
+  ctx.language = chooseLanguage(understanding.request?.language, ctx.language, text, ctx.preferredLanguage);
   const language = ctx.language;
   const done = (reply: TelegramReply, ok = true): SetupTurnResult => ({ reply, decision: `setup:${decision.action.type}`, kind, ok, language });
 
