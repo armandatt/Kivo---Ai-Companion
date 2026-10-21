@@ -133,7 +133,7 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
           <div className="space-y-5">
             {detail.workspace?.summary && <p className="text-sm leading-relaxed text-foreground/80">{detail.workspace.summary}</p>}
             <ul className="grid gap-1.5 sm:grid-cols-2">
-              {detail.subjects.map(s => <li key={s.id} className={cn(CARD, 'flex items-center justify-between gap-2 px-3 py-2')}><span className="min-w-0 truncate text-sm font-medium text-foreground">{s.name}</span><span className="shrink-0 text-xs text-subtle">{s.topics.length}{marks.addedTopics.get(s.id) ? ` + ${marks.addedTopics.get(s.id)!.length}` : ''} {words.topic}s</span></li>)}
+              {detail.subjects.map(s => <li key={s.id} className={cn(CARD, 'flex items-center justify-between gap-2 px-3 py-2', marks.removedSubjects.has(s.id) && 'border-red-400/40 opacity-60')}><span className={cn('min-w-0 truncate text-sm font-medium text-foreground', marks.removedSubjects.has(s.id) && 'line-through')}>{s.name}{marks.removedSubjects.has(s.id) && <Proposed>to be removed</Proposed>}</span><span className="shrink-0 text-xs text-subtle">{s.topics.length}{marks.addedTopics.get(s.id) ? ` + ${marks.addedTopics.get(s.id)!.length}` : ''} {words.topic}s</span></li>)}
               {marks.addedSubjects.map(s => <li key={s.name} className={cn(CARD, PROPOSED, 'px-3 py-2 text-sm text-foreground/85')}>+ {s.name}<Proposed>proposed</Proposed></li>)}
             </ul>
             <p className="text-xs text-subtle">These are your real records. Changing a task here changes it on your Planner board too.</p>
@@ -158,8 +158,8 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
         {shown === 'topics' && (
           <div className="space-y-3">
             {detail.subjects.map(s => (
-              <section key={s.id} className={cn(CARD, 'p-3')}>
-                <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-medium text-foreground">{s.name}</h3><Link href={`/map?focus=${encodeURIComponent(`subject:${s.id}`)}`} className="text-xs font-medium text-foreground/60 hover:text-foreground">On the map</Link></div>
+              <section key={s.id} className={cn(CARD, 'p-3', marks.removedSubjects.has(s.id) && 'border-red-400/40 opacity-60')}>
+                <div className="flex items-center justify-between gap-2"><h3 className={cn('text-sm font-medium text-foreground', marks.removedSubjects.has(s.id) && 'line-through')}>{s.name}{marks.removedSubjects.has(s.id) && <Proposed>to be removed</Proposed>}</h3><Link href={`/map?focus=${encodeURIComponent(`subject:${s.id}`)}`} className="text-xs font-medium text-foreground/60 hover:text-foreground">On the map</Link></div>
                 <ul className="mt-2 flex flex-wrap gap-1.5">
                   {s.topics.map(t => {
                     const renamed = marks.renamedTopics.get(t.id)

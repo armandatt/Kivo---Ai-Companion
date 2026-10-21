@@ -257,7 +257,8 @@ export type ChangeResult =
 const target = (o: ChangeOp): string | null =>
   o.op === "rename_topic" || o.op === "remove_topic" ? `topic:${o.topicId}`
   : o.op === "update_task" || o.op === "remove_task" ? `task:${o.taskId}`
-  : o.op === "update_date" ? `date:${o.dateId}` : o.op === "order_tasks" ? `order:${o.taskIds.join(",")}` : null;
+  : o.op === "update_date" ? `date:${o.dateId}` : o.op === "order_tasks" ? `order:${o.taskIds.join(",")}`
+  : o.op === "remove_subject" ? `subject:${o.subjectId}` : null;
 
 export async function changeResource(
   platformChatId: string,
@@ -285,7 +286,9 @@ export async function changeResource(
     o.op === "add_topics" ? [{ op: "add_topics", subjectId: o.subjectId, names: o.names }]
     : o.op === "add_subject" ? [{ op: "add_subject", name: o.name, topics: o.topics }]
     : o.op === "rename_topic" ? [{ op: "rename_topic", topicId: o.topicId, name: o.name }]
-    : o.op === "remove_topic" ? [{ op: "remove_topic", topicId: o.topicId }] : []));
+    : o.op === "remove_topic" ? [{ op: "remove_topic", topicId: o.topicId }] : []))
+    // A subject is removed once its topics are gone.
+    .concat(ops.flatMap((o): StudyEdit[] => (o.op === "remove_subject" ? [{ op: "remove_subject", subjectId: o.subjectId }] : [])));
   if (checkStudyEdits(structure, edits).issues.length > 0) {
     return { ok: false, error: "changed", message: "Your subjects changed since Nova proposed this. Nothing was changed; ask Nova again." };
   }
@@ -298,7 +301,8 @@ export async function changeResource(
       const added = pick("add_subject").length
         ? await tx.novaSubject.findMany({ where: { profileId, name: { in: pick("add_subject").map(o => o.name), mode: "insensitive" } }, select: { id: true } })
         : [];
-      const ids = [...new Set([...(row?.subjectIds ?? input.ref.subjectIds), ...added.map(a => a.id)])];
+      const gone = new Set(pick("remove_subject").map(o => o.subjectId));
+      const ids = [...new Set([...(row?.subjectIds ?? input.ref.subjectIds), ...added.map(a => a.id)])].filter(id => !gone.has(id));
       const made = await createTasksIn(tx, profileId, pick("add_task").map(o => ({
         title: o.title, priority: o.priority, subjectId: o.subjectId, topicName: o.topicName, dueDay: o.dueDay, clientKey: `${prefix}${o.key}`.slice(0, 120),
       })));
@@ -310,7 +314,7 @@ export async function changeResource(
       await updateDatesIn(tx, profileId, pick("update_date").map(({ dateId, title, day }) => ({ dateId, title, day })), today, now);
       const notes = await createNotesIn(tx, profileId, pick("add_note").map(o => ({ title: o.title, body: o.body, subjectId: o.subjectId, topicName: o.topicName })));
       if (!notes.ok) throw new RefusedError("invalid", notes.message);
-      if (row && ids.length !== row.subjectIds.length) await tx.novaWorkspace.update({ where: { id: row.id }, data: { subjectIds: ids } });
+      if (row && (ids.length !== row.subjectIds.length || gone.size > 0)) await tx.novaWorkspace.update({ where: { id: row.id }, data: { subjectIds: ids } });
       return ids;
     }, { timeout: 30_000, maxWait: 10_000 });
     const detail = await resourceDetail(platformChatId, profileId, row ? { workspaceId: row.id, subjectIds: [] } : { workspaceId: null, subjectIds }, now);

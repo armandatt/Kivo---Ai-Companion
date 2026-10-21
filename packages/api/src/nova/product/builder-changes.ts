@@ -145,7 +145,11 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
   };
   const subjectOrNull = (v: unknown): string | null | undefined => (v === null || v === undefined || v === "" ? null : subjectById(v) ? (v as string) : undefined);
 
-  for (const item of list.slice(0, CHANGE_OPS_MAX * 2)) {
+  // A subject's removal is checked after everything else in the set, so the
+  // topic removals it brings are not said twice.
+  const ordered = [...list.slice(0, CHANGE_OPS_MAX * 2)].sort((a, b) =>
+    Number((a as { op?: unknown })?.op === "remove_subject") - Number((b as { op?: unknown })?.op === "remove_subject"));
+  for (const item of ordered) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const x = item as Record<string, unknown>;
     switch (x.op) {
@@ -192,6 +196,23 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         if (touched.has(hit.t.id)) break;
         touched.add(hit.t.id);
         keep({ op: "remove_topic", topicId: hit.t.id }, `Remove topic ${quoted(hit.t.name)} from ${hit.s.name}`, "remove", x);
+        break;
+      }
+      case "remove_subject": {
+        const s = subjectById(x.subjectId);
+        if (!s) { dropped.push("removing a subject that isn't part of this"); break; }
+        if (touched.has(s.id)) break;
+        const studied = s.topics.filter(t => ctx.studied.has(t.id));
+        if (studied.length) { dropped.push(`removing ${quoted(s.name)} (you've studied ${studied.slice(0, 2).map(t => quoted(t.name)).join(", ")}; topics with study are kept)`); break; }
+        if (current.dates.some(d => d.subjectId === s.id)) { dropped.push(`removing ${quoted(s.name)} (it has dates; move or remove them on the calendar first)`); break; }
+        touched.add(s.id);
+        // Its topics go with it: each said, so the learner sees exactly what goes.
+        for (const t of s.topics) {
+          if (touched.has(t.id)) continue;
+          touched.add(t.id);
+          keep({ op: "remove_topic", topicId: t.id }, `Remove topic ${quoted(t.name)} from ${s.name}`, "remove", {});
+        }
+        keep({ op: "remove_subject", subjectId: s.id }, `Remove subject ${quoted(s.name)} (its notes and tasks stay, unfiled)`, "remove", x);
         break;
       }
       case "add_task": {

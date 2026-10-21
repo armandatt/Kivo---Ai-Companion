@@ -113,6 +113,24 @@ describe("proposed changes, checked against the records by id", () => {
     }
   });
 
+  it("removing a subject takes its topics with it, each said; never with studied topics or dates (seen 22 Oct)", () => {
+    const two = (): WorkspaceDetail => ({ ...current(), subjects: [...current().subjects, { id: "s2", name: "Prompt Engineering", topics: [{ id: "p1", name: "Few-shot prompting" }, { id: "p2", name: "Guardrails" }] }] });
+    const set = checkChanges([{ op: "remove_subject", subjectId: "s2" }, { op: "remove_topic", topicId: "p1" }], two(), ctx);
+    expect(set.ops.map(o => o.says)).toEqual([
+      'Remove topic "Few-shot prompting" from Prompt Engineering', 'Remove topic "Guardrails" from Prompt Engineering',
+      'Remove subject "Prompt Engineering" (its notes and tasks stay, unfiled)',
+    ]);
+    // An empty subject alone (the topics went in an earlier change).
+    const empty: WorkspaceDetail = { ...current(), subjects: [...current().subjects, { id: "s2", name: "Prompt Engineering", topics: [] }] };
+    expect(checkChanges([{ op: "remove_subject", subjectId: "s2" }], empty, ctx).ops.map(o => o.op)).toEqual(["remove_subject"]);
+    // DSA has a studied topic (t2) and a date: kept, and said why.
+    const kept = checkChanges([{ op: "remove_subject", subjectId: "s1" }], current(), ctx);
+    expect(kept.ops).toEqual([]);
+    expect(kept.dropped[0]).toContain("topics with study are kept");
+    const dated = checkChanges([{ op: "remove_subject", subjectId: "s1" }], current(), { ...ctx, studied: new Set() });
+    expect(dated.dropped[0]).toContain("it has dates");
+  });
+
   it("a stored change set reads back; nothing stored is nothing proposed", () => {
     const set = checkChanges([{ op: "add_topics", subjectId: "s1", names: ["Heaps"] }], current(), ctx);
     expect(readChangeSet(JSON.parse(JSON.stringify(set)))).toEqual(set);

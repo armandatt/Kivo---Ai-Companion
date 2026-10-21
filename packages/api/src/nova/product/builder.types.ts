@@ -89,6 +89,9 @@ export type ChangeOp =
   | { op: "add_subject";  name: string; topics: string[] }
   | { op: "rename_topic"; topicId: string; name: string }
   | { op: "remove_topic"; topicId: string }
+  // The subject itself, with its topics (each removed by its own remove_topic);
+  // its notes and tasks stay, unfiled. Never with studied topics or dates.
+  | { op: "remove_subject"; subjectId: string }
   | { op: "add_task";     key: string; title: string; subjectId: string | null; topicName: string | null; dueDay: string | null; priority: "low" | "medium" | "high" | null }
   | { op: "update_task";  taskId: string; title?: string; dueDay?: string | null; priority?: "low" | "medium" | "high" | null }
   | { op: "remove_task";  taskId: string }

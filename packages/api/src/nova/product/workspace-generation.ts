@@ -315,7 +315,7 @@ const CHANGES_SYSTEM = [
   "You propose changes to a learner's existing workspace in Kivo, a learning and work app. Kivo applies them only after the learner approves.",
   "Reply with JSON only: {\"ops\": [operation], \"summary\": string}. Each operation has \"why\" (one short line) and is one of:",
   `{"op":"add_topics","subjectId":ID,"names":[string]}  {"op":"add_subject","name":string,"topics":[string]}
-{"op":"rename_topic","topicId":ID,"name":string}  {"op":"remove_topic","topicId":ID}
+{"op":"rename_topic","topicId":ID,"name":string}  {"op":"remove_topic","topicId":ID}  {"op":"remove_subject","subjectId":ID}  (the subject and all its topics; its notes and tasks stay, unfiled)
 {"op":"add_task","key":string,"title":string,"subjectId":ID|null,"topicName":string|null,"dueDay":"YYYY-MM-DD"|null,"priority":"low"|"medium"|"high"|null}
 {"op":"update_task","taskId":ID,"title"?:string,"dueDay"?:"YYYY-MM-DD"|null,"priority"?:"low"|"medium"|"high"|null}  {"op":"remove_task","taskId":ID}
 {"op":"order_tasks","taskIds":[ID]}  (these open tasks first, in this order)
@@ -324,6 +324,7 @@ const CHANGES_SYSTEM = [
   "Rules:",
   "- Use only ids shown in CURRENT RECORDS, exactly. Change only what CHANGE ASKED asks for; everything else stays as it is. Never remove or rename something unless asked. Additions must not repeat what is already there.",
   "- Topics have no order in Kivo and cannot be reordered (a milestone is a topic). To put a milestone or a piece of work first, order its tasks with order_tasks, and say so in summary.",
+  "- When the learner wants a subject gone (\"delete Prompt Engineering\", \"it belongs to another semester\"), use remove_subject: it takes the subject and its topics together. Use remove_topic only for single topics.",
   "- A new deadline: update_date for the date, then update_task for each open task whose due day no longer fits before it; nothing else.",
   "- New topics for a subject or exam are specific, in learning order after what is there, never a placeholder (\"Introduction\", \"Advanced concepts\", \"Practice questions\"); practice and revision are tasks. Note bodies use \"# \" headings and \"- \" lists.",
   "- When CHANGES PROPOSED SO FAR is given, return the whole new set: the earlier changes that still apply, with CHANGE ASKED applied to them.",

@@ -238,6 +238,7 @@ export function touchedSubjects(draft: Pick<DraftView, 'changes' | 'current'> | 
   for (const o of draft.changes.ops) {
     const id = o.op === 'add_topics' ? o.subjectId
       : o.op === 'rename_topic' || o.op === 'remove_topic' ? topicSubject(o.topicId)
+      : o.op === 'remove_subject' ? o.subjectId
       : o.op === 'add_task' || o.op === 'add_note' || o.op === 'add_date' ? o.subjectId
       : o.op === 'update_task' || o.op === 'remove_task' ? c.tasks.find(t => t.id === o.taskId)?.subjectId
       : o.op === 'update_date' ? c.dates.find(d => d.id === o.dateId)?.subjectId : null
@@ -252,6 +253,7 @@ export interface ChangeMarks {
   addedTopics: Map<string, string[]>          // subject id → names
   renamedTopics: Map<string, string>          // topic id → new name
   removedTopics: Set<string>
+  removedSubjects: Set<string>
   addedTasks: Array<Extract<ProposedChange, { op: 'add_task' }>>
   changedTasks: Map<string, string>           // task id → what changes, in words
   removedTasks: Set<string>
@@ -264,7 +266,7 @@ export interface ChangeMarks {
 
 export function changeMarks(set: ChangeSet | null): ChangeMarks {
   const m: ChangeMarks = {
-    addedTopics: new Map(), renamedTopics: new Map(), removedTopics: new Set(), addedTasks: [], changedTasks: new Map(), removedTasks: new Set(),
+    addedTopics: new Map(), renamedTopics: new Map(), removedTopics: new Set(), removedSubjects: new Set(), addedTasks: [], changedTasks: new Map(), removedTasks: new Set(),
     firstTasks: [], movedDates: new Map(), addedDates: [], addedNotes: [], addedSubjects: [],
   }
   for (const o of set?.ops ?? []) {
@@ -272,6 +274,7 @@ export function changeMarks(set: ChangeSet | null): ChangeMarks {
       case 'add_topics': m.addedTopics.set(o.subjectId, [...(m.addedTopics.get(o.subjectId) ?? []), ...o.names]); break
       case 'rename_topic': m.renamedTopics.set(o.topicId, o.name); break
       case 'remove_topic': m.removedTopics.add(o.topicId); break
+      case 'remove_subject': m.removedSubjects.add(o.subjectId); break
       case 'add_task': m.addedTasks.push(o); break
       case 'update_task': m.changedTasks.set(o.taskId, [o.title !== undefined ? `"${o.title}"` : null, o.dueDay !== undefined ? (o.dueDay ? `due ${o.dueDay}` : 'no due day') : null, o.priority !== undefined ? (o.priority ? `${o.priority} priority` : 'no priority') : null].filter(Boolean).join(', ')); break
       case 'remove_task': m.removedTasks.add(o.taskId); break

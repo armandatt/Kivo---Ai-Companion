@@ -350,3 +350,40 @@ test("a subject inside a bigger workspace opens as that subject alone, and chang
   // Still part of the semester workspace, which shows the new topic too.
   assert.equal((await builder.getDraft(me.id, first.id))!.current!.subjects.find(x => x.name === "DSA")!.topics.length, 3);
 });
+
+test("a subject that belongs elsewhere is removed from the workspace with its topics; its tasks stay, unfiled (seen 22 Oct)", async () => {
+  const me = await learner();
+  const profileId = await me.profileId();
+  const first = await begin(me.id, "Plan my semester 5 exams: DSA and Prompt Engineering, exams in early December.", {
+    read: reader({ next: "draft", facts: [{ label: "Subjects", value: "DSA and Prompt Engineering", quote: "DSA and Prompt Engineering" }, { label: "Exams", value: "early December", quote: "early December" }] }),
+    write: async req => checkWorkspacePlan({ kind: "custom", title: "Semester 5",
+      subjects: [{ name: "DSA", topics: ["Hashing"] }, { name: "Prompt Engineering", topics: ["Few-shot prompting", "Guardrails"] }],
+      tasks: [{ key: "pe", title: "Write 10 prompts", subject: "Prompt Engineering" }] }, { today: req.today, userText: req.learnerText }),
+  });
+  const built = await builder.approveDraft(me.id, first.id, { version: first.version });
+  assert.ok(built.ok);
+
+  // As in the report: first the topics, then "remove prompt engineering from subject too".
+  let draft = await say(me.id, first.id, "delete prompt engineering topics, it is in sem 6", {
+    read: reader({ next: "draft", change: "Remove Prompt Engineering topics" }), write: noWrite,
+    writeChanges: changer(req => req.current.subjects.find(x => x.name === "Prompt Engineering")!.topics.map(t => ({ op: "remove_topic", topicId: t.id }))),
+  });
+  assert.ok((await builder.approveDraft(me.id, draft.id, { version: draft.version })).ok);
+  draft = await say(me.id, first.id, "remove prompt engineering from subject too", {
+    read: reader({ next: "draft", change: "Remove the Prompt Engineering subject" }), write: noWrite,
+    writeChanges: changer(req => [{ op: "remove_subject", subjectId: req.current.subjects.find(x => x.name === "Prompt Engineering")!.id }]),
+  });
+  assert.deepEqual(draft.changes!.ops.map(o => o.op), ["remove_subject"]);
+  const done = await builder.approveDraft(me.id, draft.id, { version: draft.version });
+  assert.ok(done.ok && done.draft.status === "ready", done.ok ? "" : done.message);
+  assert.deepEqual(done.ok && done.draft.current!.subjects.map(x => x.name), ["DSA"]);
+  assert.deepEqual((await loadStudyStructure(profileId)).subjects.map(x => x.name), ["DSA"]);
+  // Its task is still theirs, filed under nothing now.
+  const task = (await listTasks(profileId)).tasks.find(t => t.title === "Write 10 prompts")!;
+  assert.equal(task.subjectId, null);
+
+  // In one step: a subject asked away goes with its topics.
+  const again = await begin(me.id, "Add a subject Compilers to my DSA plan", { read: reader({ next: "draft", resource: { name: "DSA", intent: "change" } }), write: noWrite,
+    writeChanges: changer(() => [{ op: "add_subject", name: "Compilers", topics: ["Lexing"] }]) });
+  assert.ok((await builder.approveDraft(me.id, again.id, { version: again.version })).ok);
+});
