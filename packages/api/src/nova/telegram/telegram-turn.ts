@@ -685,6 +685,12 @@ async function act(
     case "unsupported":        return { reply: { text: textFor(ctx.language).unsupported }, operation: { name: "unsupported", ok: true } };
     // Nothing is created: there is no reminder to create.
     case "reminder_unavailable": return { reply: { text: textFor(ctx.language).reminderUnavailable }, operation: { name: "reminder_unavailable", ok: true } };
+    // Nothing is created: the page shows the plan first, with their words in it.
+    case "offer_workspace":
+      return {
+        reply: { text: textFor(ctx.language).workspaceOffer, link: { label: "Open Create with Nova", path: `/templates?create=${encodeURIComponent(understanding.rawText.slice(0, 500))}` } },
+        operation: { name: "offer_workspace", ok: true },
+      };
     // With a question still open, its buttons are the options: the prompt
     // stays as it is. Otherwise, the fixed choices.
     case "clarify":

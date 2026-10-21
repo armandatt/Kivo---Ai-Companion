@@ -18,6 +18,7 @@ import {
   shouldDisableThinking,
   type GeminiResponse,
   type LlmRequest,
+  openAIUserContent,
 } from "./llmProviders";
 import { reportLlmUsage } from "./llm-usage";
 
@@ -124,7 +125,7 @@ async function generateWithGemini(input: LlmRequest, apiKey: string): Promise<st
   const started = Date.now();
   for (let i = 0; i < plan.length; i++) {
     // A caller with a deadline gets its answer, or its failure, inside it.
-    const timeoutMs = attemptTimeoutMs(input.deadlineMs, Date.now() - started, GEMINI_TIMEOUT_MS);
+    const timeoutMs = attemptTimeoutMs(input.deadlineMs, Date.now() - started, input.attemptMs ?? GEMINI_TIMEOUT_MS);
     if (timeoutMs === null) { lastError = `${lastError}; out of time after ${Date.now() - started}ms`; break; }
     const attempt = await callGemini(input, plan[i]!, apiKey, timeoutMs);
     if (attempt.ok) return attempt.text;
@@ -157,7 +158,7 @@ async function generateWithOpenAI(input: LlmRequest, apiKey: string): Promise<st
         ...(input.systemInstruction
           ? [{ role: "system", content: input.systemInstruction }]
           : []),
-        { role: "user", content: input.prompt },
+        { role: "user", content: openAIUserContent(input) },
       ],
       // Only send max_completion_tokens when the caller explicitly requests a cap.
       // Omitting it for main LLM calls lets gpt-5 (reasoning model) allocate tokens
@@ -205,6 +206,8 @@ export async function generateOpenAIText(input: {
   maxOutputTokens?: number;
   model?: string;             // an OpenAI model name, used as a tier on other providers
   deadlineMs?: number;        // the longest the caller will wait, retries included
+  attemptMs?: number;         // one attempt's limit, for long work (see LlmRequest)
+  attachments?: LlmRequest["attachments"];
 }) {
   loadPackageEnv();
   const provider = selectProvider(process.env);

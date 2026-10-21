@@ -166,7 +166,7 @@ const TOPICS: Topic[] = [
   { id: 'start',     label: 'Getting started',  icon: Rocket,      group: 'Basics',       keywords: 'setup quiz onboarding subjects exams first day account' },
   { id: 'loop',      label: 'The daily loop',   icon: Sparkles,    group: 'Basics',       keywords: 'how it works plan focus outcome progress' },
   { id: 'today',     label: 'Today',            icon: Home,        group: 'Plan',         keywords: 'home next up plan time available choose another subject focus done today tasks deadlines week goals search new' },
-  { id: 'planner',   label: 'Planner & tasks',  icon: Calendar,    group: 'Plan',         keywords: 'days ahead board kanban tasks skip plan change recovery missed days' },
+  { id: 'planner',   label: 'Planner & tasks',  icon: Calendar,    group: 'Plan',         keywords: 'days ahead board kanban tasks skip plan change recovery missed days templates workspace create with nova syllabus pdf' },
   { id: 'calendar',  label: 'Calendar',         icon: CalendarDays, group: 'Plan',        keywords: 'events classes meetings month week agenda reminders deadlines dates schedule repeat recurring weekly daily monthly' },
   { id: 'focus',     label: 'Focus room',       icon: Timer,       group: 'Plan',         keywords: 'session timer pomodoro pause end scenes sound music rain lofi spotify apple music youtube playlist fullscreen' },
   { id: 'knowledge', label: 'Knowledge',        icon: BookOpen,    group: 'Knowledge',    keywords: 'subjects topics level review due board subject studio archive' },
@@ -415,6 +415,9 @@ export function NovaGuide() {
             <Grid>
               <Feature title="The plan for the coming days">
                 What Nova plans for each day ahead, block by block, against the time you have each day. Change the time for today and the plan follows; the Planner explains what set the length of a day.
+              </Feature>
+              <Feature title="Templates and Create with Nova">
+                Templates (in the sidebar) sets up a workspace in one go: subjects and topics, dates, tasks and notes, for college, work or a competitive exam. Or describe what you need, add a syllabus PDF or a photo, and Nova builds it, using a template when one fits. You see and trim everything before it is created, and creating the same thing twice offers to add to the one you have instead. Nova doesn&apos;t search the web, so the resources it names are suggestions.
               </Feature>
               <Feature title="Plan changes you can undo">
                 Skip a topic for today from the plan or on Telegram (“skip deadlocks today”): Nova asks first, writes one change, and Undo takes it back. Skipped topics come back tomorrow.

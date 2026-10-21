@@ -83,6 +83,34 @@ export async function addExam(
   return { status: "added", title, date: input.date };
 }
 
+// A workspace's dates (product/workspaces.ts), inside its transaction, by
+// the same rules as addExam: from today, within the horizon, never a second
+// date for a subject on (about) a day it already has one. Returns how many
+// were added and the ones that were not, with why.
+export async function addDatesIn(
+  tx: Pick<typeof prisma, "novaExam">,
+  profileId: string,
+  dates: Array<{ title: string; subjectId: string | null; kind: DeadlineType; day: string }>,
+  today: string,
+  now = new Date(),
+): Promise<{ added: number; skipped: Array<{ title: string; reason: "exists" | "invalid" }> }> {
+  let added = 0;
+  const skipped: Array<{ title: string; reason: "exists" | "invalid" }> = [];
+  for (const d of dates) {
+    const title = d.title.trim().slice(0, EXAM_TITLE_MAX);
+    const at = isIsoDay(d.day) ? examInstant(d.day) : null;
+    if (!title || !at || d.day < today || at.getTime() - now.getTime() > EXAM_HORIZON_DAYS * DAY_MS) { skipped.push({ title: title || "a date", reason: "invalid" }); continue; }
+    const near = await tx.novaExam.findMany({
+      where:  { profileId, scheduledAt: { gte: new Date(at.getTime() - DAY_MS), lte: new Date(at.getTime() + DAY_MS) } },
+      select: { subjectId: true },
+    });
+    if (d.subjectId ? near.some(e => e.subjectId === d.subjectId) : near.length > 0) { skipped.push({ title, reason: "exists" }); continue; }
+    await tx.novaExam.create({ data: { profileId, subjectId: d.subjectId, title, examType: parseDeadlineType(d.kind) ?? "exam", scheduledAt: at } });
+    added++;
+  }
+  return { added, skipped };
+}
+
 // What Nova may offer to add when a message names an exam and its day, and
 // under which of the learner's subjects. Nova never picks the subject itself.
 //

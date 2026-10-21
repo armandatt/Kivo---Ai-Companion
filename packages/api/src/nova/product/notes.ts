@@ -284,6 +284,30 @@ export async function createNote(profileId: string, raw: unknown): Promise<Write
   return { ok: true, note: toDetail(row, await linksOf(profileId, row)) };
 }
 
+// A workspace's notes (product/workspaces.ts), inside its transaction, with
+// the learner's approval of the plan they were in. Each is checked as
+// createNote checks one. A note never replaces another: one whose title the
+// learner already has (under any subject: [[links]] find notes by title) is
+// left out and counted.
+export async function createNotesIn(
+  tx: Pick<typeof prisma, "novaNote">,
+  profileId: string,
+  notes: Array<{ title: string; body: string; subjectId: string | null; topicName: string | null }>,
+): Promise<{ ok: true; added: number; skipped: string[] } | { ok: false; message: string }> {
+  let added = 0;
+  const skipped: string[] = [];
+  for (const raw of notes) {
+    const parsed = parseNoteInput(raw, true);
+    if (!parsed.ok) return { ok: false, message: parsed.message };
+    const { title, body, subjectId, topicName } = parsed.changes;
+    const clash = await tx.novaNote.count({ where: { profileId, title: { equals: title!, mode: "insensitive" } } });
+    if (clash > 0) { skipped.push(title!); continue; }
+    await tx.novaNote.create({ data: { profileId, title: title!, body: body ?? "", subjectId: subjectId ?? null, topicName: topicName ?? null } });
+    added++;
+  }
+  return { ok: true, added, skipped };
+}
+
 export async function updateNote(profileId: string, noteId: string, raw: unknown): Promise<WriteResult> {
   const parsed = parseNoteInput(raw, false);
   if (!parsed.ok) return parsed;
