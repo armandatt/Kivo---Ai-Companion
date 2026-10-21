@@ -34,6 +34,7 @@ import { prisma } from "@repo/db/client";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
 import { learnerKey } from "./learner-key";
 import { loadLearningContexts, loadSignupAnswers } from "../adapters/account-preferences-adapter";
+import type { ReplyLanguage } from "../types/understanding.types";
 import { WORKING_ON_LABEL, weeklyHoursLabel } from "./onboarding-options";
 import type { LearningContext } from "./learning-context";
 import { ensureSetupProfile, subjectNames } from "./setup";
@@ -44,7 +45,7 @@ import { readBuilderTurn } from "./builder-conversation";
 import { createWorkspace, recentWorkspaceTitles, similarWorkspaces, workspaceDetail, workspaceSummaries } from "./workspaces";
 import {
   MESSAGE_MAX, TALKING, canMove, decideStep, describeChanges, emptyBrief, isPendingLive, learnerWords, message,
-  needsReply, nextBrief, planChanges, readBrief, readMessages, readPending, spoken, withMessages,
+  needsReply, nextBrief, planChanges, readBrief, readMessages, readPending, replyWithQuestion, spoken, withMessages,
 } from "./builder-state";
 import type { BriefFact, BuilderBrief, BuilderMessage, BuilderResponse, DraftFailure, DraftFile, DraftListView, DraftStatus, DraftView, PendingJob } from "./builder.types";
 import type { WorkspaceCounts } from "./workspaces.types";
@@ -155,6 +156,12 @@ const dropFiles = (draftId: string) => prisma.novaWorkspaceDraftFile.deleteMany(
 const CONTEXT_WORDS: Record<LearningContext, string> = { school: "school student", college: "university student", working: "working professional", other: "something else" };
 
 async function knownFacts(platformChatId: string, profile: { id: string; goals: string[] }): Promise<BriefFact[]> {
+  return (await signupContext(platformChatId, profile)).known;
+}
+
+// What they said at sign-up, read once: the facts Nova is told, and the
+// language they chose for it.
+async function signupContext(platformChatId: string, profile: { id: string; goals: string[] }): Promise<{ known: BriefFact[]; language: ReplyLanguage | null }> {
   const [contexts, signup, subjects, workspaces] = await Promise.all([
     loadLearningContexts(platformChatId).catch(() => [] as LearningContext[]),
     loadSignupAnswers(platformChatId).catch(() => null),
@@ -169,7 +176,7 @@ async function knownFacts(platformChatId: string, profile: { id: string; goals: 
   if (profile.goals.length) out.push({ label: "Goals", value: profile.goals.join("; ") });
   if (subjects.length) out.push({ label: "Subjects already in Kivo", value: subjects.join(", ") });
   if (workspaces.length) out.push({ label: "Workspaces already in Kivo", value: workspaces.map(w => w.title).join(", ") });
-  return out.slice(0, 8);
+  return { known: out.slice(0, 8), language: signup?.language ?? null };
 }
 
 // The workspace a draft improves, in short, for the model.
@@ -440,12 +447,12 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
   const plan = planOf(row.plan);
   const before = readBrief(row.brief);
   const messages = readMessages(row.messages);
-  const known = await knownFacts(platformChatId, profile);
+  const { known, language } = await signupContext(platformChatId, profile);
   const today = dayKey(now, resolveTimezone(profile.timezone));
   const existing = await outlineOf(platformChatId, profile.id, row.targetWorkspaceId);
   const shared = await filesForModel(row.id);
   const reading = await (deps.read ?? readBuilderTurn)({
-    today, messages: spoken(messages), brief: before, known, files: shared.files, pages: shared.pages,
+    today, messages: spoken(messages), brief: before, known, files: shared.files, pages: shared.pages, language,
     proposal: plan ? { version: row.version, title: plan.title, ...proposalSummary(plan) } : null,
     existing: existing ? { title: existing.title, subjects: existing.subjects, tasks: existing.tasks } : null,
   });
@@ -458,8 +465,8 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
   const title = row.title ?? reading.title ?? brief.title;
 
   if (step.type === "ask" || step.type === "chat") {
-    // The question code settled on is the one asked, whatever the reply said.
-    const text = step.type === "ask" && !reading.reply.includes(step.question) ? `${reading.reply}\n\n${step.question}` : reading.reply;
+    // Asked once: in the model's words, or as code settled on it when the reply asks nothing.
+    const text = step.type === "ask" ? replyWithQuestion(reading.reply, step.question) : reading.reply;
     await settle(row.id, job.jobId, { brief, title, failure: null, add: [message("nova", text, new Date(), { kind: step.type === "ask" ? "question" : "chat" })] });
     return;
   }

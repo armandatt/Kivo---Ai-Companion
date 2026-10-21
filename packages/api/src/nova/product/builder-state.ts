@@ -167,6 +167,13 @@ export function decideStep(state: { plan: WorkspacePlan | null; brief: BuilderBr
   return { type: "ask", question: reading.question ?? OPENING_QUESTION };
 }
 
+// Nova's words for an "ask" step. The model usually ends its reply with the
+// question in its own words; the question is added only when the reply asks
+// none, so it is never asked twice.
+export function replyWithQuestion(reply: string, question: string): string {
+  return reply.includes("?") ? reply : `${reply}\n\n${question}`;
+}
+
 // The understanding after a turn: the model's newest view, with the
 // learner's facts never lost (a fact once said stays until they correct it
 // with another under the same label).

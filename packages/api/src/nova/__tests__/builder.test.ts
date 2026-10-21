@@ -8,9 +8,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   MAX_QUESTIONS, OPENING_QUESTION, PENDING_STALE_MS, TRANSITIONS, canMove, decideStep, describeChanges, emptyBrief,
-  isPendingLive, needsReply, nextBrief, normalized, planChanges, readTurn, withMessages, message, MESSAGES_KEPT,
+  isPendingLive, needsReply, nextBrief, normalized, planChanges, readTurn, withMessages, message, MESSAGES_KEPT, replyWithQuestion,
 } from "../product/builder-state";
-import { readBuilderTurn, turnPrompt, type TurnInput } from "../product/builder-conversation";
+import { languageRule, readBuilderTurn, turnPrompt, type TurnInput } from "../product/builder-conversation";
 import { builderPlanPrompt, writeBuilderPlan, NO_RESEARCH, type BuilderPlanRequest } from "../product/workspace-generation";
 import { checkWorkspacePlan, planWrites, type WorkspacePlan } from "../product/workspace-plan";
 import type { BuilderBrief, BuilderMessage } from "../product/builder.types";
@@ -94,6 +94,13 @@ describe("what a turn may do (code decides, not the model)", () => {
     expect(decideStep({ plan: plan(), brief: brief() }, r({ next: "revise", change: "Make it four weeks, not three" }))).toEqual({ type: "revise", change: "Make it four weeks, not three" });
     // A model that says "draft" again is a revision too: there is one proposal.
     expect(decideStep({ plan: plan(), brief: brief() }, r({ next: "draft" })).type).toBe("revise");
+  });
+
+  it("a question is asked once: the model's own wording, or code's when the reply asks nothing", () => {
+    // Seen with the real model (21 Oct): the reply asked it, and code asked it again in other words.
+    const reply = "Building TrackerX sounds exciting. Is this for a course or an independent venture?";
+    expect(replyWithQuestion(reply, "Is this project for a specific course or an independent venture?")).toBe(reply);
+    expect(replyWithQuestion("Got it.", "Who is it for?")).toBe("Got it.\n\nWho is it for?");
   });
 
   it("the understanding keeps what the learner said and counts questions asked", () => {
@@ -184,6 +191,10 @@ describe("what the model is given", () => {
     const p = turnPrompt(input());
     expect(p).toContain("KNOWN FROM KIVO (do not ask again):\n- Working on (said at sign-up): a side project\n- Time a week (their sign-up estimate): 5–10 hours");
     expect(p).toContain("LEARNER: I'm building TrackerX");
+  });
+  it("is told the language: English by default, Hinglish only when written or chosen (seen 21 Oct: English about GATE got Hinglish)", () => {
+    expect(turnPrompt(input())).toContain("LANGUAGE: English, unless their latest message is clearly written in Hinglish");
+    expect(languageRule("hinglish")).toContain("LANGUAGE: Hinglish in Roman letters (their choice at sign-up)");
   });
   it("shows the proposal and the workspace being improved, in short", () => {
     const p = turnPrompt(input({ proposal: { version: 3, title: "TrackerX", milestones: ["Finish the dashboard"], tasks: ["Wire the API"], topics: [], dates: [] }, existing: { title: "TrackerX", subjects: ["TrackerX"], tasks: ["Auth"] } }));
