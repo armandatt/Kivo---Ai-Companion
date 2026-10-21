@@ -91,6 +91,8 @@ describe("what a turn may do (code decides, not the model)", () => {
     // Adding to a workspace they have: the workspace is the context, so one specific ask is enough.
     const add = r({ next: "draft", facts: [{ label: "Add", value: "a beta programme", quote: "beta programme" }] }, "Add a beta programme");
     expect(decideStep({ plan: null, brief: brief(), improving: true }, add)).toEqual({ type: "draft", reason: "ready" });
+    // Opened something of theirs, then "Add graphs to it": no fact needed (seen 22 Oct: asked what they were working on).
+    expect(decideStep({ plan: null, brief: brief(), improving: true }, r({ next: "draft", facts: [] }))).toEqual({ type: "draft", reason: "ready" });
   });
 
   it(`proposes after ${MAX_QUESTIONS} questions rather than asking forever`, () => {

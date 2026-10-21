@@ -6,7 +6,8 @@
 //      looks for that name among their own workspaces and subjects (whole
 //      words, a course code or an acronym: "DSA" is Data Structures and
 //      Algorithms), and decideResource says what happens: one match is
-//      opened, several are offered to choose from, none is said to be none.
+//      opened (a subject as itself, never the workspace around it), several
+//      are offered to choose from, none is said to be none.
 //      Nothing is opened from a guess.
 //   2. Changing it. The model proposes operations on its records by id;
 //      checkChanges keeps only those that name a record of this resource,
@@ -99,9 +100,8 @@ export function decideResource(said: { name: string; intent: "open" | "change" |
   }
   const h = hits[0]!;
   if (h.kind === "workspace") return { type: "found", intent: said.intent, ref: { kind: "workspace", workspaceId: h.id, subjectIds: h.subjectIds, title: h.name } };
-  // A subject that belongs to one workspace is worked on as that workspace.
-  const holders = c.workspaces.filter(w => w.subjectIds.includes(h.id));
-  if (holders.length === 1) return { type: "found", intent: said.intent, ref: { kind: "workspace", workspaceId: holders[0]!.id, subjectIds: holders[0]!.subjectIds, title: holders[0]!.title } };
+  // A subject is opened as that subject alone, even when a workspace holds
+  // it with others: "my DSA plan" is DSA, not the whole semester (seen 22 Oct).
   return { type: "found", intent: said.intent, ref: { kind: "subjects", workspaceId: null, subjectIds: [h.id], title: h.name } };
 }
 

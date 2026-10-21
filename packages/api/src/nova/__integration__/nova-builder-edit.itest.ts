@@ -313,3 +313,40 @@ test("one learner can neither find nor change another's records", async () => {
   assert.deepEqual(await records(ownerProfile), before);
   assert.notEqual(mine.dsa.id, dsa.id);
 });
+
+test("a subject inside a bigger workspace opens as that subject alone, and changes reach only it (seen 22 Oct)", async () => {
+  const me = await learner();
+  const profileId = await me.profileId();
+  const first = await begin(me.id, "Plan my semester 5 exams: DSA and OS, exams in early December.", {
+    read: reader({ next: "draft", facts: [{ label: "Subjects", value: "DSA and OS", quote: "DSA and OS" }, { label: "Exams", value: "early December", quote: "early December" }] }),
+    write: async req => checkWorkspacePlan({ kind: "custom", title: "B.Tech CSE Semester 5 Exam Preparation",
+      subjects: [{ name: "DSA", topics: ["Hashing", "Trees"] }, { name: "OS", topics: ["Scheduling", "Deadlocks"] }],
+      tasks: [{ key: "os", title: "OS past paper", subject: "OS" }, { key: "dsa", title: "DSA tree problems", subject: "DSA" }] }, { today: req.today, userText: req.learnerText }),
+  });
+  assert.equal(first.status, "awaiting_approval", JSON.stringify(first.messages.map(m => m.text)));
+  assert.ok((await builder.approveDraft(me.id, first.id, { version: first.version })).ok);
+  const before = await records(profileId);
+
+  const draft = await begin(me.id, "open my dsa workspace here", { read: reader({ next: "chat", resource: { name: "dsa workspace", intent: "open" } }), write: noWrite });
+  assert.equal(draft.resource?.kind, "subjects");
+  assert.equal(draft.resource?.title, "DSA");
+  assert.deepEqual(draft.current!.subjects.map(s => s.name), ["DSA"]);
+  assert.deepEqual(draft.current!.tasks.map(t => t.title), ["DSA tree problems"]);
+  assert.equal(draft.current!.title, "DSA");
+
+  const changed = await say(me.id, draft.id, "Add graphs to it", {
+    read: reader({ next: "draft", change: "Add graphs" }), write: noWrite,
+    writeChanges: changer(req => {
+      assert.deepEqual(req.current.subjects.map(s => s.name), ["DSA"]);
+      return [{ op: "add_topics", subjectId: req.current.subjects[0]!.id, names: ["Graph traversal (BFS and DFS)"] }];
+    }),
+  });
+  assert.equal(changed.status, "awaiting_approval", JSON.stringify(changed.messages.map(m => m.text)));
+  const done = await builder.approveDraft(me.id, changed.id, { version: changed.version });
+  assert.ok(done.ok && done.draft.status === "ready", done.ok ? "" : done.message);
+  assert.deepEqual(await records(profileId), { ...before, topics: before.topics + 1 });
+  const s = await loadStudyStructure(profileId);
+  assert.deepEqual(s.subjects.find(x => x.name === "OS")!.topics.map(t => t.name), ["Scheduling", "Deadlocks"]);
+  // Still part of the semester workspace, which shows the new topic too.
+  assert.equal((await builder.getDraft(me.id, first.id))!.current!.subjects.find(x => x.name === "DSA")!.topics.length, 3);
+});

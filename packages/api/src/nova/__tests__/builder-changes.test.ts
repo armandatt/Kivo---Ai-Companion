@@ -37,11 +37,14 @@ describe("finding what they mean, among their own records", () => {
     expect(matchResources("TrackerX", candidates())).toEqual([{ kind: "workspace", id: "w1", name: "TrackerX", subjectIds: ["s-tx"] }]);
   });
 
-  it("one match is opened (a subject of one workspace as that workspace); several ask which; none says so", () => {
+  it("one match is opened (a subject as itself, never the workspace around it); several ask which; none says so", () => {
     const found = decideResource({ name: "DSA", intent: "change" }, candidates());
     expect(found).toEqual({ type: "found", intent: "change", ref: { kind: "subjects", workspaceId: null, subjectIds: ["s-dsa"], title: "Data Structures and Algorithms" } });
-    const held = decideResource({ name: "Operating Systems", intent: "open" }, candidates({ workspaces: [{ id: "w2", title: "Semester 3", subjectIds: ["s-os", "s-x"] }] }));
-    expect(held).toEqual({ type: "found", intent: "open", ref: { kind: "workspace", workspaceId: "w2", subjectIds: ["s-os", "s-x"], title: "Semester 3" } });
+    // Seen 22 Oct: "open my dsa workspace" opened the whole semester that holds DSA.
+    const semester = candidates({ workspaces: [{ id: "w2", title: "B.Tech CSE Semester 5 Exam Preparation", subjectIds: ["s-dsa", "s-os"] }] });
+    expect(decideResource({ name: "dsa workspace", intent: "open" }, semester)).toEqual({ type: "found", intent: "open", ref: { kind: "subjects", workspaceId: null, subjectIds: ["s-dsa"], title: "Data Structures and Algorithms" } });
+    // The workspace itself, when that is what they named.
+    expect(decideResource({ name: "semester 5 exam preparation", intent: "open" }, semester)).toEqual({ type: "found", intent: "open", ref: { kind: "workspace", workspaceId: "w2", subjectIds: ["s-dsa", "s-os"], title: "B.Tech CSE Semester 5 Exam Preparation" } });
     const two = decideResource({ name: "DSA", intent: "change" }, { workspaces: [], subjects: [{ id: "a", name: "DSA Lab", code: null }, { id: "b", name: "DSA Theory", code: null }] });
     expect(two.type === "choose" && two.names).toEqual(["DSA Lab", "DSA Theory"]);
     expect(decideResource({ name: "Physics", intent: "change" }, candidates()).type).toBe("missing");

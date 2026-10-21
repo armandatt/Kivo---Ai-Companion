@@ -189,7 +189,8 @@ export function decideStep(state: { plan: WorkspacePlan | null; brief: BuilderBr
   }
 
   // Nothing to draft from: ask what it is for, whatever the model wanted.
-  if (facts.length === 0) return { type: "ask", question: reading.question ?? OPENING_QUESTION };
+  // Working on something of theirs, it is the context: "add graphs to it" needs no facts.
+  if (facts.length === 0 && !state.improving) return { type: "ask", question: reading.question ?? OPENING_QUESTION };
   const wantsDraft = reading.next === "draft" || reading.next === "revise";
   // One thing said and nothing asked yet: a proposal now would be generic.
   if (facts.length < MIN_FACTS_TO_DRAFT && state.brief.questionsAsked === 0 && !state.improving) {
