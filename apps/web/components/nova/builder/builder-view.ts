@@ -13,7 +13,7 @@
 //     elements (nothing is ever treated as HTML).
 // Run the tests with `npm test`.
 
-import type { WorkKind } from '@repo/api/nova/product/builder.types'
+import type { ChangeSet, DraftView, ProposedChange, WorkKind } from '@repo/api/nova/product/builder.types'
 import type { WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
 import type { PlaygroundView } from './plan-edit'
 
@@ -213,4 +213,74 @@ export function messageBlocks(text: string): Block[] {
     else blocks.push({ type: 'p', lines: [inlines(line.trim())] })
   }
   return blocks.filter(b => (b.type === 'p' ? b.lines.length > 0 : b.items.length > 0))
+}
+
+// ── After approval: the Knowledge Map ─────────────────────────────────────────
+
+// Where the learner sees what was built or changed: each subject of it on the
+// Knowledge Map, focused there (the map shows it and what is around it). Only
+// once it is stored (status ready, read back from the records): never before.
+// One subject is the obvious place to go; several are offered to choose from.
+// `touched`: the subjects an approved change set changed (touchedSubjects,
+// taken before approval), which is where those changes are to be seen.
+export function mapDestinations(draft: Pick<DraftView, 'status' | 'current'> | null, touched: string[] = []): Array<{ label: string; href: string }> {
+  if (!draft || draft.status !== 'ready' || !draft.current) return []
+  const changed = draft.current.subjects.filter(s => touched.includes(s.id))
+  return (changed.length ? changed : draft.current.subjects).map(s => ({ label: s.name, href: `/map?focus=${encodeURIComponent(`subject:${s.id}`)}` }))
+}
+
+// The subjects a proposed change set changes, by id, found from its records.
+export function touchedSubjects(draft: Pick<DraftView, 'changes' | 'current'> | null): string[] {
+  if (!draft?.changes || !draft.current) return []
+  const c = draft.current
+  const out = new Set<string>()
+  const topicSubject = (topicId: string) => c.subjects.find(s => s.topics.some(t => t.id === topicId))?.id
+  for (const o of draft.changes.ops) {
+    const id = o.op === 'add_topics' ? o.subjectId
+      : o.op === 'rename_topic' || o.op === 'remove_topic' ? topicSubject(o.topicId)
+      : o.op === 'add_task' || o.op === 'add_note' || o.op === 'add_date' ? o.subjectId
+      : o.op === 'update_task' || o.op === 'remove_task' ? c.tasks.find(t => t.id === o.taskId)?.subjectId
+      : o.op === 'update_date' ? c.dates.find(d => d.id === o.dateId)?.subjectId : null
+    if (id) out.add(id)
+  }
+  return [...out]
+}
+
+// ── Proposed changes, drawn on the records they change ────────────────────────
+
+export interface ChangeMarks {
+  addedTopics: Map<string, string[]>          // subject id → names
+  renamedTopics: Map<string, string>          // topic id → new name
+  removedTopics: Set<string>
+  addedTasks: Array<Extract<ProposedChange, { op: 'add_task' }>>
+  changedTasks: Map<string, string>           // task id → what changes, in words
+  removedTasks: Set<string>
+  firstTasks: string[]                        // task ids put first, in order
+  movedDates: Map<string, string>             // date id → new day
+  addedDates: Array<Extract<ProposedChange, { op: 'add_date' }>>
+  addedNotes: Array<Extract<ProposedChange, { op: 'add_note' }>>
+  addedSubjects: Array<Extract<ProposedChange, { op: 'add_subject' }>>
+}
+
+export function changeMarks(set: ChangeSet | null): ChangeMarks {
+  const m: ChangeMarks = {
+    addedTopics: new Map(), renamedTopics: new Map(), removedTopics: new Set(), addedTasks: [], changedTasks: new Map(), removedTasks: new Set(),
+    firstTasks: [], movedDates: new Map(), addedDates: [], addedNotes: [], addedSubjects: [],
+  }
+  for (const o of set?.ops ?? []) {
+    switch (o.op) {
+      case 'add_topics': m.addedTopics.set(o.subjectId, [...(m.addedTopics.get(o.subjectId) ?? []), ...o.names]); break
+      case 'rename_topic': m.renamedTopics.set(o.topicId, o.name); break
+      case 'remove_topic': m.removedTopics.add(o.topicId); break
+      case 'add_task': m.addedTasks.push(o); break
+      case 'update_task': m.changedTasks.set(o.taskId, [o.title !== undefined ? `"${o.title}"` : null, o.dueDay !== undefined ? (o.dueDay ? `due ${o.dueDay}` : 'no due day') : null, o.priority !== undefined ? (o.priority ? `${o.priority} priority` : 'no priority') : null].filter(Boolean).join(', ')); break
+      case 'remove_task': m.removedTasks.add(o.taskId); break
+      case 'order_tasks': m.firstTasks = o.taskIds; break
+      case 'add_date': m.addedDates.push(o); break
+      case 'update_date': if (o.day) m.movedDates.set(o.dateId, o.day); break
+      case 'add_note': m.addedNotes.push(o); break
+      case 'add_subject': m.addedSubjects.push(o); break
+    }
+  }
+  return m
 }

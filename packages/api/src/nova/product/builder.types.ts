@@ -64,6 +64,47 @@ export interface BuilderBrief {
   questionsAsked: number;
   // What the check left out of the last proposal, in words.
   dropped:     string[];
+  // Names to choose from when the learner referred to something of theirs
+  // that more than one of their workspaces or subjects could be.
+  choices?:    string[];
+}
+
+// ── Changing something they already have ──────────────────────────────────────
+
+// What of theirs a conversation works on: a workspace, or subjects that
+// belong to no workspace. Resolved by code among their own records.
+export interface ResourceRef {
+  kind:        "workspace" | "subjects";
+  workspaceId: string | null;
+  subjectIds:  string[];
+  title:       string;
+}
+
+// One proposed change to an existing record, by its id. Checked against the
+// records as they are (builder-changes.ts) when proposed and again when
+// applied; applied only on approval, each through its record's own writer.
+// Topics have no order in Kivo, so nothing reorders them; tasks have one.
+export type ChangeOp =
+  | { op: "add_topics";   subjectId: string; names: string[] }
+  | { op: "add_subject";  name: string; topics: string[] }
+  | { op: "rename_topic"; topicId: string; name: string }
+  | { op: "remove_topic"; topicId: string }
+  | { op: "add_task";     key: string; title: string; subjectId: string | null; topicName: string | null; dueDay: string | null; priority: "low" | "medium" | "high" | null }
+  | { op: "update_task";  taskId: string; title?: string; dueDay?: string | null; priority?: "low" | "medium" | "high" | null }
+  | { op: "remove_task";  taskId: string }
+  | { op: "order_tasks";  taskIds: string[] }
+  | { op: "add_date";     title: string; day: string; subjectId: string | null; kind: "exam" | "assignment" | "project" | "interview" | "certification" | "other" }
+  | { op: "update_date";  dateId: string; title?: string; day?: string }
+  | { op: "add_note";     title: string; body: string; subjectId: string | null; topicName: string | null };
+
+// An operation as proposed: its id (for the learner to leave one out), what
+// it does in words, which side of the change it is, and Nova's reason.
+export type ProposedChange = ChangeOp & { id: string; says: string; effect: "add" | "change" | "remove"; why: string | null };
+
+export interface ChangeSet {
+  ops:     ProposedChange[];
+  // What was asked for but left out, and why ("that topic isn't in DSA").
+  dropped: string[];
 }
 
 // A model job in progress, with the stage it has actually reached.
@@ -107,6 +148,13 @@ export interface DraftView {
   files:       DraftFile[];
   // The workspace of theirs this proposal adds to, if any.
   target:      WorkspaceSummary | null;
+  // What of theirs this conversation works on (a workspace or subjects), and
+  // those records as they are now, read back from their owners on every
+  // view, so the page always shows what is stored.
+  resource:    ResourceRef | null;
+  current:     WorkspaceDetail | null;
+  // The proposed changes to it, when Nova has proposed some.
+  changes:     ChangeSet | null;
   // What approval made or added to.
   workspace:   WorkspaceSummary | null;
   builtVersion: number | null;
@@ -132,7 +180,9 @@ export type BuilderResponse =
 
 // The live workspace: the real records approval made, as they now are.
 export interface WorkspaceDetail {
-  workspace: WorkspaceSummary;
+  // The workspace, or null for subjects that belong to none.
+  workspace: WorkspaceSummary | null;
+  title:     string;
   subjects:  Array<{ id: string; name: string; topics: Array<{ id: string; name: string }> }>;
   tasks:     Array<{ id: string; title: string; status: "todo" | "in_progress" | "done"; priority: "low" | "medium" | "high" | null; dueDay: string | null; subjectId: string | null; topicName: string | null; estimatedMinutes: number | null }>;
   notes:     Array<{ id: string; title: string; subjectId: string | null; updatedAt: string }>;

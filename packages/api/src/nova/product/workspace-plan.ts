@@ -30,7 +30,7 @@ import type { DeadlineType } from "./deadline-types";
 export const PLAN_VERSION = 1;
 
 export const PLAN_LIMITS = {
-  title: 80, summary: 400, subjects: 12, topicsPerSubject: 40, name: 80, explanation: 600,
+  title: 80, summary: 400, subjects: 12, topicsPerSubject: 40, name: 80, explanation: 600, subtopics: 12,
   tasks: 40, taskTitle: 160, notes: 20, noteTitle: 120, noteBody: 8000, dates: 10,
   phases: 12, listItems: 10, item: 240, resources: 12, prerequisites: 10, assumptions: 6, sources: 5,
 } as const;
@@ -40,7 +40,11 @@ const RESOURCE_KINDS = ["book", "course", "docs", "video", "practice", "article"
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
 
 export interface SourceRef { file: string; page: number | null }
-export interface PlanTopic { name: string; explanation: string | null; sources: SourceRef[] }
+// A topic, in the order it is learnt (prerequisites first). unit: the part
+// of the course or syllabus it belongs to; subtopics: what it covers, named
+// specifically. Both live in the subject's topic guide note: Kivo's topics
+// have no columns for them.
+export interface PlanTopic { name: string; explanation: string | null; sources: SourceRef[]; unit?: string | null; subtopics?: string[] }
 export interface PlanSubject { name: string; topics: PlanTopic[] }
 export interface PlanTask {
   key: string; title: string; priority: "low" | "medium" | "high" | null;
@@ -94,6 +98,35 @@ export type PlanCheck =
   | { ok: false; message: string };
 
 // ── Small readers ─────────────────────────────────────────────────────────────
+
+// A topic name that says nothing about what to study: "Introduction",
+// "Advanced concepts", "Practice questions", or the subject's own name with
+// such a word ("Basics of DSA"). Practice and revision belong in tasks; a
+// topic names its content. Compared by words, any case.
+const PLACEHOLDER_NAMES = new Set([
+  "introduction", "intro", "basics", "basic concepts", "fundamentals", "overview", "getting started", "advanced", "advanced concepts",
+  "advanced topics", "miscellaneous", "misc", "other topics", "others", "practice", "practice questions", "practice problems",
+  "exercises", "revision", "review", "summary", "conclusion", "exam preparation", "exam prep", "mock tests", "mock test", "important topics",
+  "core concepts", "key concepts", "theory", "concepts", "topics",
+]);
+const PLACEHOLDER_AROUND = ["introduction to", "intro to", "basics of", "fundamentals of", "overview of", "advanced", "basic"];
+const wordsOf = (text: string): string => {
+  let out = "", space = true;
+  for (const c of text.toLowerCase()) {
+    const keep = (c >= "a" && c <= "z") || (c >= "0" && c <= "9") || c > "\u007f";
+    if (keep) { out += c; space = false; } else if (!space) { out += " "; space = true; }
+  }
+  return out.trim();
+};
+export function isPlaceholderTopic(name: string, within: string): boolean {
+  const n = wordsOf(name), w = wordsOf(within);
+  if (!n) return true;
+  if (PLACEHOLDER_NAMES.has(n) || (w && n === w)) return true;
+  // The general word wrapped around the subject's own name: "Basics of DSA", "DSA fundamentals".
+  for (const p of PLACEHOLDER_AROUND) if (w && (n === `${p} ${w}`)) return true;
+  for (const p of ["basics", "fundamentals", "overview", "introduction", "concepts", "advanced concepts"]) if (w && n === `${w} ${p}`) return true;
+  return false;
+}
 
 export function oneLine(text: unknown, max: number): string {
   if (typeof text !== "string") return "";
@@ -227,8 +260,16 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
       const tname = oneLine((topicRaw as { name?: unknown }).name, PLAN_LIMITS.name);
       if (!tname || into.topics.some(x => same(x.name, tname))) continue;
       if (into.topics.length >= PLAN_LIMITS.topicsPerSubject) { dropped.push(`topic "${tname}" (more than ${PLAN_LIMITS.topicsPerSubject} in ${name})`); continue; }
+      if (isPlaceholderTopic(tname, name)) { dropped.push(`topic "${tname}" in ${name} (too general to study from: name what it covers)`); continue; }
       const explanation = block((topicRaw as { explanation?: unknown }).explanation, PLAN_LIMITS.explanation) || null;
-      into.topics.push({ name: tname, explanation, sources: sourcesOf((topicRaw as { sources?: unknown }).sources, files) });
+      const unit = oneLine((topicRaw as { unit?: unknown }).unit, PLAN_LIMITS.name) || null;
+      const subtopics: string[] = [];
+      for (const st of Array.isArray((topicRaw as { subtopics?: unknown }).subtopics) ? (topicRaw as { subtopics: unknown[] }).subtopics : []) {
+        const sn = oneLine(st, PLAN_LIMITS.name);
+        if (!sn || same(sn, tname) || subtopics.some(x => same(x, sn)) || isPlaceholderTopic(sn, tname) || subtopics.length >= PLAN_LIMITS.subtopics) continue;
+        subtopics.push(sn);
+      }
+      into.topics.push({ name: tname, explanation, sources: sourcesOf((topicRaw as { sources?: unknown }).sources, files), ...(unit ? { unit } : {}), ...(subtopics.length ? { subtopics } : {}) });
     }
   }
   const subjectName = (v: unknown): string | null => {
@@ -450,14 +491,22 @@ export function planWrites(plan: WorkspacePlan): PlanWrites {
   const notes: PlanWrites["notes"] = [];
   // Topic explanations and sources, one note per subject that has any.
   for (const s of plan.subjects) {
-    const explained = s.topics.filter(t => t.explanation || t.sources.length > 0);
+    const explained = s.topics.filter(t => t.explanation || t.sources.length > 0 || (t.subtopics?.length ?? 0) > 0);
     if (explained.length === 0) continue;
     const fromFiles = explained.some(t => t.sources.length > 0);
-    const body = explained.map(t => [
-      `# ${t.name}`,
-      ...(t.sources.length > 0 ? [`From your files: ${cite(t.sources)}`] : []),
-      ...(t.explanation ? [t.sources.length > 0 ? `Nova's explanation: ${t.explanation}` : `Nova's explanation (not from your files): ${t.explanation}`] : []),
-    ].join("\n")).join("\n\n");
+    // In learning order, under their units: a unit's heading once, where it starts.
+    let unit: string | null = null;
+    const body = explained.map(t => {
+      const heading = t.unit && t.unit !== unit ? [`# ${t.unit}`] : [];
+      if (t.unit) unit = t.unit;
+      return [
+        ...heading,
+        `${t.unit ? "##" : "#"} ${t.name}`,
+        ...((t.subtopics?.length ?? 0) > 0 ? t.subtopics!.map(x => `- ${x}`) : []),
+        ...(t.sources.length > 0 ? [`From your files: ${cite(t.sources)}`] : []),
+        ...(t.explanation ? [t.sources.length > 0 ? `Nova's explanation: ${t.explanation}` : `Nova's explanation (not from your files): ${t.explanation}`] : []),
+      ].join("\n");
+    }).join("\n\n");
     notes.push({ key: `topics:${s.name.toLowerCase()}`, title: `${s.name}: topic guide${fromFiles ? "" : " (Nova)"}`, subject: s.name, topic: null, body });
   }
   for (const [i, p] of plan.phases.entries()) {

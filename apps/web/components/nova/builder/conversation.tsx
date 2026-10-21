@@ -2,13 +2,14 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, Check, CircleSlash, FileText, ImageIcon, LayoutTemplate, Loader2, Paperclip, RotateCcw, X } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, Check, CircleSlash, FileText, ImageIcon, LayoutTemplate, Loader2, MoreHorizontal, Paperclip, RotateCcw, Trash2, X } from 'lucide-react'
 import { FILE_TYPES, FILES_MAX, FILES_TOTAL_BYTES, encodeFile } from '@/components/nova/templates/templates-api'
 import type { BuilderMessage, DraftListItem, DraftView } from '@repo/api/nova/product/builder.types'
 import type { WorkspaceSummary } from '@repo/api/nova/product/workspaces.types'
 import { KivoMark } from '@/components/brand/kivo-brand'
 import { BUTTON_QUIET } from '@/components/nova/workspace/ui'
 import { cn } from '@/lib/utils'
+import * as api from './builder-api'
 import { messageBlocks, wordsFor, type Inline } from './builder-view'
 import type { DraftState } from './use-draft'
 
@@ -321,8 +322,9 @@ export function Conversation({ state, header, seed, onReview }: {
   if (draft && !seen.current) seen.current = new Set(draft.messages.map(m => m.id))
   const [outgoing, setOutgoing] = useState<{ text: string; files: Upload[] } | null>(null)
 
-  const talking = draft && ['discovery', 'awaiting_approval', 'failed', 'drafting'].includes(draft.status)
-  const placeholder = !draft ? '' : state.working ? 'Nova is working…' : draft.plan ? 'Ask for a change, or ask Nova anything…' : 'Tell Nova about it…'
+  // A built conversation goes on: what it built is what it changes next.
+  const talking = draft && ['discovery', 'awaiting_approval', 'failed', 'drafting', 'ready'].includes(draft.status)
+  const placeholder = !draft ? '' : state.working ? 'Nova is working…' : draft.status === 'ready' ? `Ask for a change to ${draft.current?.title ?? 'it'}…` : draft.plan || draft.changes ? 'Ask for a change, or ask Nova anything…' : 'Tell Nova about it…'
   const lastNova = draft ? [...draft.messages].reverse().find(m => m.role === 'nova') : undefined
   const reviewable = draft && draft.plan && (draft.status === 'awaiting_approval' || draft.status === 'ready' || draft.status === 'building')
 
@@ -343,6 +345,12 @@ export function Conversation({ state, header, seed, onReview }: {
         )}
         {draft?.messages.map(m => <Message key={m.id} m={m} fresh={m.role === 'nova' && !seen.current?.has(m.id)} />)}
         {outgoing && <UserMessage text={outgoing.text} files={outgoing.files.map(f => ({ name: f.name, pages: null }))} sending />}
+        {/* More than one of theirs fits what they said: each is a reply away. */}
+        {draft?.brief.choices && draft.brief.choices.length > 0 && !state.working && !outgoing && draft.messages.at(-1)?.role === 'nova' && (
+          <ul className="flex flex-wrap gap-1.5 pl-10" aria-label="Which one" data-choices>
+            {draft.brief.choices.map(c => <li key={c}><button type="button" onClick={() => void send(c, [])} className="rounded-full border border-nova/35 px-3 py-1 text-xs text-foreground/85 transition-colors hover:bg-nova/8">{c}</button></li>)}
+          </ul>
+        )}
         {draft && <Working draft={draft} />}
       </div>
       {/* The whole reply, said once to a screen reader. */}
@@ -373,11 +381,11 @@ export function Conversation({ state, header, seed, onReview }: {
 
 // ── Before there is a conversation ────────────────────────────────────────────
 
-export function NewConversation({ header, onStart, busy, error, seed, onExample, drafts, workspaces }: {
+export function NewConversation({ header, onStart, busy, error, seed, onExample, drafts, workspaces, onDeleted }: {
   header: React.ReactNode; onStart: (text: string, targetWorkspaceId?: string, files?: Upload[]) => Promise<boolean>; busy: boolean; error: string | null
-  seed: Seed | null; onExample: (text: string) => void; drafts: DraftListItem[]; workspaces: WorkspaceSummary[]
+  seed: Seed | null; onExample: (text: string) => void; drafts: DraftListItem[]; workspaces: WorkspaceSummary[]; onDeleted: () => void
 }) {
-  const open = drafts.filter(d => d.status !== 'ready' && d.status !== 'cancelled').slice(0, 3)
+  const open = drafts.filter(d => d.status !== 'cancelled').slice(0, 8)
   const [outgoing, setOutgoing] = useState<string | null>(null)
   const start = async (text: string, files: Upload[]) => {
     setOutgoing(text || files.map(f => f.name).join(', '))
@@ -409,11 +417,8 @@ export function NewConversation({ header, onStart, busy, error, seed, onExample,
         )}
         {open.length > 0 && outgoing === null && (
           <div>
-            <p className="mb-1.5 text-xs font-medium text-subtle">Continue a conversation</p>
-            <ul className="space-y-0.5">{open.map(d => (
-              <li key={d.id}><Link href={`/build?draft=${encodeURIComponent(d.id)}`} className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-sm text-foreground/80 hover:bg-white/4">
-                <span className="truncate">{d.title ?? 'Untitled conversation'}</span><span className="shrink-0 text-xs text-subtle">{STATUS_LABEL[d.status]}</span></Link></li>
-            ))}</ul>
+            <p className="mb-1.5 text-xs font-medium text-subtle">Your conversations</p>
+            <ul className="space-y-0.5">{open.map(d => <ConversationItem key={d.id} d={d} onDeleted={onDeleted} />)}</ul>
           </div>
         )}
         {workspaces.length > 0 && outgoing === null && (
@@ -431,5 +436,51 @@ export function NewConversation({ header, onStart, busy, error, seed, onExample,
         <p className="text-center text-[11px] text-subtle"><Link href="/templates" className="inline-flex items-center gap-1 underline-offset-4 hover:text-foreground hover:underline"><LayoutTemplate aria-hidden className="size-3" /> Prefer a ready-made start? Browse templates</Link></p>
       </div>
     </div>
+  )
+}
+
+// One past conversation: open it to go on, or delete it. Deleting removes
+// the conversation only; what it built stays in Knowledge, the Map and the
+// Planner (the server holds that rule; the page says it).
+function ConversationItem({ d, onDeleted }: { d: DraftListItem; onDeleted: () => void }) {
+  const [menu, setMenu] = useState(false)
+  const [confirm, setConfirm] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const remove = async () => {
+    setBusy(true); setError(null)
+    const res = await api.deleteDraft(d.id)
+    setBusy(false)
+    if (res.ok) { setConfirm(false); onDeleted() } else setError(res.message)
+  }
+  return (
+    <li className="rounded-lg hover:bg-white/4" data-conversation={d.id}>
+      <div className="flex items-center gap-1">
+        <Link href={`/build?draft=${encodeURIComponent(d.id)}`} className="flex min-w-0 flex-1 items-center justify-between gap-3 px-2 py-1.5 text-sm text-foreground/80">
+          <span className="truncate">{d.title ?? 'Untitled conversation'}</span><span className="shrink-0 text-xs text-subtle">{STATUS_LABEL[d.status]}</span>
+        </Link>
+        <div className="relative">
+          <button type="button" onClick={() => setMenu(m => !m)} aria-label={`More for ${d.title ?? 'this conversation'}`} aria-expanded={menu} aria-haspopup="menu"
+            className="grid size-7 place-items-center rounded-md text-subtle hover:bg-white/6 hover:text-foreground"><MoreHorizontal aria-hidden className="size-4" /></button>
+          {menu && (
+            <div role="menu" className="absolute right-0 top-8 z-20 min-w-40 rounded-lg border border-white/10 bg-card p-1 shadow-soft">
+              <button type="button" role="menuitem" onClick={() => { setMenu(false); setConfirm(true) }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-red-400 hover:bg-red-400/8">
+                <Trash2 aria-hidden className="size-3.5" /> Delete conversation
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      {confirm && (
+        <div role="alertdialog" aria-label="Delete this conversation?" className="mx-2 mb-2 rounded-lg border border-red-400/25 bg-red-400/5 p-2.5 text-xs" data-confirm-delete>
+          <p className="text-foreground/85">Delete this conversation? What it built stays in Knowledge, the Map and your Planner; only the conversation goes.</p>
+          <div className="mt-2 flex gap-2">
+            <button type="button" onClick={() => void remove()} disabled={busy} className="rounded-md bg-red-500/85 px-2.5 py-1 font-medium text-white hover:bg-red-500 disabled:opacity-50">{busy ? 'Deleting…' : 'Delete'}</button>
+            <button type="button" onClick={() => setConfirm(false)} className={BUTTON_QUIET}>Keep</button>
+          </div>
+          {error && <p role="alert" className="mt-1.5 text-red-400">{error}</p>}
+        </div>
+      )}
+    </li>
   )
 }

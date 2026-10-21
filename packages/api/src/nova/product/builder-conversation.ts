@@ -26,14 +26,16 @@ type Generate = typeof generateOpenAIText;
 
 const SYSTEM = [
   "You are Nova inside Kivo, a learning and work app. You are helping one person shape a workspace (a plan with milestones, tasks, topics, notes and dates) through conversation. Kivo builds it only after they approve a proposal; you never create, save or change anything yourself.",
-  "Reply with JSON only: {\"reply\": string, \"next\": \"ask\"|\"draft\"|\"revise\"|\"chat\", \"kind\": \"project\"|\"exam\"|\"skill\"|\"semester\"|\"work\"|\"career\"|\"other\"|null, \"title\": string|null, \"facts\": [{\"label\": string, \"value\": string, \"quote\": string|null, \"file\": string|null}], \"assumptions\": [string], \"suggestions\": [string], \"question\": string|null, \"change\": string|null}.",
+  "Reply with JSON only: {\"reply\": string, \"next\": \"ask\"|\"draft\"|\"revise\"|\"chat\", \"kind\": \"project\"|\"exam\"|\"skill\"|\"semester\"|\"work\"|\"career\"|\"other\"|null, \"title\": string|null, \"facts\": [{\"label\": string, \"value\": string, \"quote\": string|null, \"file\": string|null}], \"assumptions\": [string], \"suggestions\": [string], \"question\": string|null, \"change\": string|null, \"resource\": {\"name\": string, \"intent\": \"open\"|\"change\"|\"new\"}|null}.",
+  "resource: when WORKING ON is \"nothing yet\" and the learner refers to something they already have in Kivo (a workspace or subject in THEIR WORKSPACES AND SUBJECTS, by its name, a short name or an acronym such as DSA), give the name as they said it and intent: open = see or continue it as it is; change = add to, change, reorganise or remove from it; new = they want a new, separate one. null when they mean nothing they already have, and whenever WORKING ON names something. Kivo finds it; never claim you have opened or found it.",
+  "WORKING ON, when it names something, is what this conversation changes: a workspace or subjects of theirs that exist, with their records. Then draft or revise means a change to those records, never a new plan, and change says the change in words. Topics in Kivo have no order, so never offer to reorder topics or milestones; tasks can be put in order.",
   "next:",
   "- ask: a missing detail would materially change the plan (see KIND OF WORK for what matters). Ask about one thing.",
   "- draft: you know what it is AND something about where they are or when it is due, or they ask to see a plan. A message that only names the thing (\"I'm building TrackerX\", \"I have exams\") is not enough: ask first. Do not keep asking once you know the goal, where they stand and roughly when.",
   "- revise: a CURRENT PROPOSAL exists and they ask to change it (add, remove, reorder, change dates or scope), or they disagree with part of it. Put the change, in words, in change.",
   "- chat: they are talking, thinking aloud or asking you something (including about a file they shared), not shaping the workspace. Answer helpfully.",
   "KIND OF WORK: work out which this is and use its words and its questions. These are patterns to adapt, not forms to fill; call the thing by the learner's own name for it.",
-  "- exam or semester (academic): subjects, units, topics, revision, practice, mock tests, exams, study sessions. Worth knowing: the subjects or syllabus, exam dates, how prepared they are, the time they have, what matters most.",
+  "- exam or semester (academic): subjects, units, topics, revision, practice, mock tests, exams, study sessions. Worth knowing: the subjects or syllabus, which university, board, exam or level it follows when that changes what is covered (ask once, or use a shared syllabus), exam dates, how prepared they are, the time they have, what matters most.",
   "- project (software or otherwise): milestones, tasks, subtasks, dependencies, deliverables, testing, release. Worth knowing: what it does and who it is for, the current stage, what is done, what is left, a deadline, the next priority. Never speak of subjects, syllabus, revision or exams for a project.",
   "- skill: learning stages, concepts, exercises, a practice project, prerequisites, what done looks like. Worth knowing: their level now, why they want it, the time they have, what they want to be able to do.",
   "- work or career: deliverables, priorities, action items, deadlines, dependencies, progress. Worth knowing: the outcome expected, who it is for, the deadline, what is in the way.",
@@ -54,8 +56,13 @@ export interface TurnInput {
   known:    BriefFact[];
   // The proposal as it now stands, in short, when there is one.
   proposal: { version: number; title: string; milestones: string[]; tasks: string[]; topics: string[]; dates: string[] } | null;
-  // The workspace this improves, in short.
+  // What this conversation changes, when it is something of theirs that
+  // exists (a workspace or subjects), in short.
   existing: { title: string; subjects: string[]; tasks: string[] } | null;
+  // The changes to it proposed so far, in words.
+  changes?: string[] | null;
+  // Their workspaces and subjects, by name, for recognising one they mean.
+  resources?: string[];
   // Files shared in the conversation, sent to the model to read.
   files?:   LlmAttachment[];
   pages?:   Record<string, number | null>;
@@ -81,7 +88,9 @@ export function turnPrompt(t: TurnInput): string {
     `KNOWN FROM KIVO (do not ask again):\n${facts(t.known)}`,
     `UNDERSTOOD SO FAR:\n${facts(t.brief.facts)}${t.brief.assumptions.length ? `\nAssumed: ${t.brief.assumptions.join("; ")}` : ""}`,
     `QUESTIONS ASKED SO FAR: ${t.brief.questionsAsked}`,
-    t.existing ? `EXISTING WORKSPACE THEY WANT TO IMPROVE: ${t.existing.title}. Subjects: ${t.existing.subjects.join(", ") || "none"}. Tasks: ${t.existing.tasks.slice(0, 25).join(" | ") || "none"}.` : "EXISTING WORKSPACE: none",
+    t.existing ? `WORKING ON: ${t.existing.title} (it exists in Kivo). Subjects: ${t.existing.subjects.join(", ") || "none"}. Tasks: ${t.existing.tasks.slice(0, 25).join(" | ") || "none"}.` : "WORKING ON: nothing yet",
+    t.changes?.length ? `CHANGES PROPOSED SO FAR (not applied):\n${t.changes.map(c => `- ${c}`).join("\n")}` : "CHANGES PROPOSED SO FAR: none",
+    `THEIR WORKSPACES AND SUBJECTS: ${t.resources?.length ? t.resources.slice(0, 40).join("; ") : "none"}`,
     t.proposal
       ? `CURRENT PROPOSAL (version ${t.proposal.version}): ${t.proposal.title}. Milestones: ${t.proposal.milestones.join(" | ") || "none"}. Topics: ${t.proposal.topics.slice(0, 30).join(", ") || "none"}. Tasks: ${t.proposal.tasks.slice(0, 30).join(" | ") || "none"}. Dates: ${t.proposal.dates.join(", ") || "none"}.`
       : "CURRENT PROPOSAL: none yet",

@@ -4,7 +4,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
-import { diffSummary, familyOf, hintFor, ids, messageBlocks, planDiff, wordsFor } from './builder-view'
+import { changeMarks, diffSummary, familyOf, hintFor, ids, mapDestinations, messageBlocks, planDiff, touchedSubjects, wordsFor } from './builder-view'
+import type { ChangeSet, DraftView, WorkspaceDetail } from '@repo/api/nova/product/builder.types'
 import { viewsFor } from './plan-edit'
 
 const plan = (): WorkspacePlan => ({
@@ -71,4 +72,48 @@ test("Nova's reply becomes paragraphs and lists, with bold kept as a span", () =
   assert.deepEqual(messageBlocks('2 ** 3'), [{ type: 'p', lines: [[{ text: '2 ** 3', strong: false }]] }])
   // A year at the start of a line is not a list.
   assert.equal(messageBlocks('2027. GATE')[0]!.type, 'p')
+})
+
+test('after approval the map opens on what was stored: one subject is the place to go, several are a choice, nothing before it is saved', () => {
+  const current = (subjects: Array<{ id: string; name: string }>): WorkspaceDetail => ({ workspace: null, title: 'x', subjects: subjects.map(x => ({ ...x, topics: [] })), tasks: [], notes: [], dates: [] })
+  const view = (status: DraftView['status'], subjects: Array<{ id: string; name: string }>) => ({ status, current: current(subjects) })
+  assert.deepEqual(mapDestinations(view('ready', [{ id: 's1', name: 'DSA' }])), [{ label: 'DSA', href: '/map?focus=subject%3As1' }])
+  assert.equal(mapDestinations(view('ready', [{ id: 's1', name: 'DSA' }, { id: 's2', name: 'OS' }])).length, 2)
+  for (const status of ['awaiting_approval', 'building', 'failed'] as const) assert.deepEqual(mapDestinations(view(status, [{ id: 's1', name: 'DSA' }])), [])
+  assert.deepEqual(mapDestinations({ status: 'ready', current: null }), [])
+})
+
+test('proposed changes are marked on the records they change', () => {
+  const set: ChangeSet = { dropped: [], ops: [
+    { op: 'add_topics', subjectId: 's1', names: ['Heaps'], id: 'c1', says: '', effect: 'add', why: null },
+    { op: 'add_topics', subjectId: 's1', names: ['Tries'], id: 'c2', says: '', effect: 'add', why: null },
+    { op: 'remove_topic', topicId: 't3', id: 'c3', says: '', effect: 'remove', why: null },
+    { op: 'update_task', taskId: 'k1', dueDay: '2026-11-08', priority: 'high', id: 'c4', says: '', effect: 'change', why: null },
+    { op: 'order_tasks', taskIds: ['k3', 'k1'], id: 'c5', says: '', effect: 'change', why: null },
+    { op: 'update_date', dateId: 'd1', day: '2026-11-27', id: 'c6', says: '', effect: 'change', why: null },
+  ] }
+  const m = changeMarks(set)
+  assert.deepEqual(m.addedTopics.get('s1'), ['Heaps', 'Tries'])
+  assert.ok(m.removedTopics.has('t3'))
+  assert.equal(m.changedTasks.get('k1'), 'due 2026-11-08, high priority')
+  assert.deepEqual(m.firstTasks, ['k3', 'k1'])
+  assert.equal(m.movedDates.get('d1'), '2026-11-27')
+  assert.equal(changeMarks(null).addedTasks.length, 0)
+})
+
+test('changes go to the map where they were made: the subjects they touch', () => {
+  const current: WorkspaceDetail = {
+    workspace: null, title: 'DSA',
+    subjects: [{ id: 's1', name: 'Linear', topics: [{ id: 't1', name: 'Arrays' }] }, { id: 's2', name: 'Non-linear', topics: [{ id: 't2', name: 'Trees' }] }],
+    tasks: [{ id: 'k1', title: 'x', status: 'todo', priority: null, dueDay: null, subjectId: 's2', topicName: null, estimatedMinutes: null }], notes: [], dates: [],
+  }
+  const changes: ChangeSet = { dropped: [], ops: [
+    { op: 'add_topics', subjectId: 's2', names: ['Dynamic programming'], id: 'c1', says: '', effect: 'add', why: null },
+    { op: 'update_task', taskId: 'k1', priority: 'high', id: 'c2', says: '', effect: 'change', why: null },
+  ] }
+  const touched = touchedSubjects({ changes, current })
+  assert.deepEqual(touched, ['s2'])
+  assert.deepEqual(mapDestinations({ status: 'ready', current }, touched), [{ label: 'Non-linear', href: '/map?focus=subject%3As2' }])
+  // A new workspace of several subjects: each is offered.
+  assert.equal(mapDestinations({ status: 'ready', current }).length, 2)
 })

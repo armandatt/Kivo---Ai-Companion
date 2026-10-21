@@ -1,41 +1,53 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, ArrowRight, Sparkles } from 'lucide-react'
-import type { WorkspaceDetail } from '@repo/api/nova/product/builder.types'
-import { LoadFailed, Skeleton } from '@/components/nova/workspace/ui'
+import type { ProposedChange, WorkspaceDetail } from '@repo/api/nova/product/builder.types'
 import { cn } from '@/lib/utils'
-import { loadWorkspaceDetail, patchTask } from './builder-api'
-import { wordsFor } from './builder-view'
+import { patchTask } from './builder-api'
+import { changeMarks, hintFor, wordsFor, type ChangeMarks } from './builder-view'
 import type { PlaygroundView } from './plan-edit'
-import { PlaygroundHeader, TITLE_AREA, ViewTabs } from './playground'
+import { NovaHint, PlaygroundHeader, TITLE_AREA, ViewTabs } from './playground'
 import { ProposalActions } from './proposal-actions'
 import type { DraftState } from './use-draft'
 
-// After approval the playground shows the workspace as it now is in Kivo:
-// the real tasks, topics, notes and dates, read back from their owners.
-// A task is changed here through the Planner's own route, so the board,
-// Today and the calendar see the same change. Nova can add to it (Improve
-// with Nova starts a conversation about it); it does not change or remove
-// what is here, so the page does not offer that.
+// What a conversation works on when it is something the learner already
+// has: the real tasks, topics, notes and dates, read back from their owners
+// on every view of the draft (DraftView.current), so this is what is stored.
+// Nova's proposed changes (DraftView.changes) are drawn on those records,
+// marked as proposals, and listed above them to keep or leave out; nothing
+// changes until the learner approves. A task is changed here through the
+// Planner's own route, so the board, Today and the calendar see the same.
 
 type Task = WorkspaceDetail['tasks'][number]
 const COLUMNS: Array<{ status: Task['status']; label: string }> = [{ status: 'todo', label: 'To do' }, { status: 'in_progress', label: 'In progress' }, { status: 'done', label: 'Done' }]
-const CARD = 'rounded-xl border border-white/8 bg-card/60'
+const CARD = 'rounded-xl border border-white/8 bg-card/70'
 const FIELD = 'w-full rounded-md border border-transparent bg-transparent px-1.5 py-1 text-sm text-foreground outline-none transition-colors hover:border-white/10 focus:border-action/70 focus:bg-background/60'
+const PROPOSED = 'border-dashed border-nova/50 bg-nova/6'
+const H = 'text-[11px] font-semibold uppercase tracking-[0.12em] text-subtle'
 
-function LiveTask({ t, onChange }: { t: Task; onChange: (patch: Partial<Task>) => Promise<void> }) {
+function Proposed({ children }: { children: React.ReactNode }) {
+  return <span className="ml-1.5 rounded bg-nova/12 px-1.5 py-0.5 text-[10px] font-medium text-nova-ink">{children}</span>
+}
+
+function LiveTask({ t, marks, onChange }: { t: Task; marks: ChangeMarks; onChange: (patch: Partial<Task>) => Promise<void> }) {
   const [title, setTitle] = useState(t.title)
   useEffect(() => setTitle(t.title), [t.title])
   const i = COLUMNS.findIndex(c => c.status === t.status)
+  const removed = marks.removedTasks.has(t.id)
+  const changed = marks.changedTasks.get(t.id)
+  const first = marks.firstTasks.indexOf(t.id)
   return (
-    <li className={cn(CARD, 'p-2')} data-live-task={t.id}>
+    <li className={cn(CARD, 'p-2', removed && 'opacity-60', (changed || first >= 0) && 'border-nova/40')} data-live-task={t.id}>
       <textarea aria-label="Task title" value={title} maxLength={160} rows={2} onChange={e => setTitle(e.target.value.split('\n').join(' '))}
-        onBlur={() => { if (title.trim() && title !== t.title) void onChange({ title: title.trim() }) }} className={cn(FIELD, TITLE_AREA)} />
+        onBlur={() => { if (title.trim() && title !== t.title) void onChange({ title: title.trim() }) }} className={cn(FIELD, TITLE_AREA, removed && 'line-through')} />
       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 pt-1 text-[11px] text-subtle">
         {t.topicName && <span className="min-w-0 break-words">{t.topicName}</span>}
         {t.dueDay && <span className="whitespace-nowrap">due {t.dueDay}</span>}
+        {changed && <Proposed>→ {changed}</Proposed>}
+        {first >= 0 && <Proposed>first #{first + 1}</Proposed>}
+        {removed && <Proposed>to be removed</Proposed>}
         <span className="ml-auto flex gap-0.5">
           <button type="button" disabled={i === 0} onClick={() => void onChange({ status: COLUMNS[i - 1]!.status })} aria-label={`Move ${t.title} to ${COLUMNS[i - 1]?.label ?? ''}`}
             className="grid size-6 place-items-center rounded text-foreground/55 hover:bg-white/6 hover:text-foreground disabled:opacity-25"><ArrowLeft aria-hidden className="size-3" /></button>
@@ -47,52 +59,83 @@ function LiveTask({ t, onChange }: { t: Task; onChange: (patch: Partial<Task>) =
   )
 }
 
-export function LiveWorkspace({ workspaceId, view, onView, state, onAsk, onImprove }: {
-  workspaceId: string; view: PlaygroundView; onView: (v: PlaygroundView) => void; state: DraftState; onAsk: (text: string) => void; onImprove: () => void
+// The proposed changes, to keep or leave out one by one. Leaving one out is
+// saved at once (a new version); approving applies what is listed.
+function ChangeList({ state }: { state: DraftState }) {
+  const set = state.draft?.changes
+  if (!set) return null
+  const editable = state.draft?.status === 'awaiting_approval' && !state.working
+  const groups: Array<{ effect: ProposedChange['effect']; label: string }> = [{ effect: 'add', label: 'Adds' }, { effect: 'change', label: 'Changes' }, { effect: 'remove', label: 'Removes' }]
+  const drop = (id: string) => void state.keepChanges(set.ops.filter(o => o.id !== id).map(o => o.id))
+  return (
+    <section aria-labelledby="pg-changes" className="mb-4 rounded-xl border border-nova/30 bg-nova/5 p-3" data-changes-list>
+      <h3 id="pg-changes" className="flex items-center gap-1.5 text-xs font-semibold text-foreground"><Sparkles aria-hidden className="size-3.5 text-nova-ink" /> Proposed changes · v{state.draft!.version}</h3>
+      <p className="mt-0.5 text-[11px] text-subtle">Marked below on your records. Everything else stays as it is; nothing changes until you approve.</p>
+      {groups.map(g => {
+        const ops = set.ops.filter(o => o.effect === g.effect)
+        if (ops.length === 0) return null
+        return (
+          <div key={g.effect} className="mt-2.5">
+            <p className={H}>{g.label}</p>
+            <ul className="mt-1 space-y-1">
+              {ops.map(o => (
+                <li key={o.id} className="flex items-start gap-2 text-sm" data-change={o.op}>
+                  <span aria-hidden className={cn('mt-1.5 size-1.5 shrink-0 rounded-full', g.effect === 'add' ? 'bg-action' : g.effect === 'change' ? 'bg-amber-400' : 'bg-red-400')} />
+                  <span className="min-w-0 flex-1 text-foreground/85">{o.says}{o.why && <span className="block text-[11px] text-subtle">{o.why}</span>}</span>
+                  {editable && <button type="button" onClick={() => drop(o.id)} className="shrink-0 rounded px-1.5 text-[11px] font-medium text-subtle hover:bg-white/6 hover:text-foreground" aria-label={`Leave out: ${o.says}`}>Leave out</button>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      })}
+      {set.dropped.length > 0 && <p className="mt-2.5 text-[11px] text-subtle" data-dropped>Left out by Kivo: {set.dropped.slice(0, 4).join('; ')}.</p>}
+    </section>
+  )
+}
+
+export function LiveWorkspace({ view, onView, state, onAsk }: {
+  view: PlaygroundView; onView: (v: PlaygroundView) => void; state: DraftState; onAsk: (text: string) => void
 }) {
-  const [detail, setDetail] = useState<WorkspaceDetail | null>(null)
-  const [failed, setFailed] = useState(false)
+  const detail = state.draft?.current
   const [error, setError] = useState<string | null>(null)
+  if (!detail) return null
+  const marks = changeMarks(state.draft?.changes ?? null)
 
-  const load = useCallback(async () => {
-    const res = await loadWorkspaceDetail(workspaceId)
-    if (res.ok) { setDetail(res.detail); setFailed(false) } else setFailed(true)
-  }, [workspaceId])
-  useEffect(() => { void load() }, [load])
-
-  const change = useCallback(async (id: string, patch: Partial<Task>) => {
+  const change = async (id: string, patch: Partial<Task>) => {
     setError(null)
-    // Shown at once; read back from the server either way.
-    setDetail(d => (d ? { ...d, tasks: d.tasks.map(t => (t.id === id ? { ...t, ...patch } : t)) } : d))
     const res = await patchTask(id, patch)
     if (!res.ok) setError(res.message)
-    await load()
-  }, [load])
-
-  if (failed && !detail) return <div className="p-5"><LoadFailed what="The workspace" onRetry={() => void load()} /></div>
-  if (!detail) return <div className="space-y-3 p-5" aria-busy="true" aria-label="Loading the workspace"><Skeleton className="h-8 w-56" /><Skeleton className="h-40" /></div>
+    await state.reload()
+  }
 
   const views: PlaygroundView[] = ['overview', 'board', 'topics', 'timeline', 'notes']
   const shown = views.includes(view) ? view : 'overview'
-  const days = [...detail.dates.map(d => ({ day: d.day, label: d.title, kind: 'date' as const })), ...detail.tasks.filter(t => t.dueDay).map(t => ({ day: t.dueDay!, label: t.title, kind: 'task' as const }))].sort((a, b) => a.day.localeCompare(b.day))
+  const days = [
+    ...detail.dates.map(d => ({ day: marks.movedDates.get(d.id) ?? d.day, was: marks.movedDates.has(d.id) ? d.day : null, label: d.title, kind: 'date' as const, proposed: false })),
+    ...detail.tasks.filter(t => t.dueDay).map(t => ({ day: t.dueDay!, was: null, label: t.title, kind: 'task' as const, proposed: false })),
+    ...marks.addedDates.map(d => ({ day: d.day, was: null, label: d.title, kind: 'date' as const, proposed: true })),
+  ].sort((a, b) => a.day.localeCompare(b.day))
   const done = detail.tasks.filter(t => t.status === 'done').length
   const words = wordsFor(state.draft?.brief.kind)
   const topics = detail.subjects.reduce((n, s) => n + s.topics.length, 0)
   const stats = [`${done} of ${detail.tasks.length} task${detail.tasks.length === 1 ? '' : 's'} done`, topics ? `${topics} ${topics === 1 ? words.topic : `${words.topic}s`}` : null, detail.notes.length ? `${detail.notes.length} note${detail.notes.length === 1 ? '' : 's'}` : null, detail.dates.length ? `${detail.dates.length} date${detail.dates.length === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ')
+  const talking = state.draft && ['discovery', 'awaiting_approval', 'failed', 'ready'].includes(state.draft.status)
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-live-workspace>
-      <PlaygroundHeader title={detail.workspace.title} badge="live" stats={stats} tabs={<ViewTabs views={views} view={shown} onView={onView} label="Workspace views" names={words.views} />} />
+      <PlaygroundHeader title={detail.title} badge="live" stats={stats} tabs={<ViewTabs views={views} view={shown} onView={onView} label="Workspace views" names={words.views} />} />
       <div id="pg-panel" role="tabpanel" aria-labelledby={`pg-tab-${shown}`} className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-3 sm:px-5">
         {error && <p role="alert" className="mb-3 text-sm text-red-400">{error}</p>}
-        <button type="button" onClick={onImprove} data-hint
-          className="group -mx-2 mb-3 flex w-[calc(100%+1rem)] items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-subtle transition-colors hover:bg-nova/6 hover:text-foreground/85">
-          <Sparkles aria-hidden className="size-3.5 shrink-0 text-nova-ink" />
-          <span className="min-w-0 flex-1">Ask Nova to add to this workspace. To change or remove what&apos;s here, edit it here or where it lives.</span>
-        </button>
+        <ChangeList state={state} />
+        {talking && <div className="-mx-2 mb-3"><NovaHint hint={hintFor(state.draft?.brief.kind, shown)} onAsk={onAsk} /></div>}
         {shown === 'overview' && (
           <div className="space-y-5">
-            {detail.workspace.summary && <p className="text-sm leading-relaxed text-foreground/80">{detail.workspace.summary}</p>}
+            {detail.workspace?.summary && <p className="text-sm leading-relaxed text-foreground/80">{detail.workspace.summary}</p>}
+            <ul className="grid gap-1.5 sm:grid-cols-2">
+              {detail.subjects.map(s => <li key={s.id} className={cn(CARD, 'flex items-center justify-between gap-2 px-3 py-2')}><span className="min-w-0 truncate text-sm font-medium text-foreground">{s.name}</span><span className="shrink-0 text-xs text-subtle">{s.topics.length}{marks.addedTopics.get(s.id) ? ` + ${marks.addedTopics.get(s.id)!.length}` : ''} {words.topic}s</span></li>)}
+              {marks.addedSubjects.map(s => <li key={s.name} className={cn(CARD, PROPOSED, 'px-3 py-2 text-sm text-foreground/85')}>+ {s.name}<Proposed>proposed</Proposed></li>)}
+            </ul>
             <p className="text-xs text-subtle">These are your real records. Changing a task here changes it on your Planner board too.</p>
           </div>
         )}
@@ -101,19 +144,38 @@ export function LiveWorkspace({ workspaceId, view, onView, state, onAsk, onImpro
             {COLUMNS.map(c => (
               <section key={c.status} aria-label={c.label} className="rounded-xl bg-white/[0.025] p-2.5">
                 <h3 className="mb-2 flex justify-between px-1 text-xs font-semibold text-foreground/80">{c.label}<span className="font-normal text-subtle">{detail.tasks.filter(t => t.status === c.status).length}</span></h3>
-                <ul className="space-y-2">{detail.tasks.filter(t => t.status === c.status).map(t => <LiveTask key={t.id} t={t} onChange={patch => change(t.id, patch)} />)}</ul>
+                <ul className="space-y-2">
+                  {detail.tasks.filter(t => t.status === c.status).map(t => <LiveTask key={t.id} t={t} marks={marks} onChange={patch => change(t.id, patch)} />)}
+                  {c.status === 'todo' && marks.addedTasks.map(t => (
+                    <li key={t.key} className={cn(CARD, PROPOSED, 'p-2 text-sm text-foreground/85')} data-proposed-task>+ {t.title}<span className="mt-0.5 block text-[11px] text-subtle">{t.dueDay ? `due ${t.dueDay}` : 'no due day'}{t.priority ? ` · ${t.priority}` : ''}</span><Proposed>proposed</Proposed></li>
+                  ))}
+                </ul>
               </section>
             ))}
-            {detail.tasks.length === 0 && <p className="text-sm text-foreground/65 md:col-span-3">No tasks from this workspace are left. <Link href="/planner?view=board" className="underline underline-offset-4">Open the board</Link></p>}
+            {detail.tasks.length === 0 && marks.addedTasks.length === 0 && <p className="text-sm text-foreground/65 md:col-span-3">No tasks here. <Link href="/planner?view=board" className="underline underline-offset-4">Open the board</Link></p>}
           </div>
         )}
         {shown === 'topics' && (
           <div className="space-y-3">
             {detail.subjects.map(s => (
               <section key={s.id} className={cn(CARD, 'p-3')}>
-                <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-medium text-foreground">{s.name}</h3><Link href={`/knowledge?subject=${s.id}`} className="text-xs font-medium text-foreground/60 hover:text-foreground">Open in Knowledge</Link></div>
-                <ul className="mt-2 flex flex-wrap gap-1.5">{s.topics.map(t => <li key={t.id}><Link href={`/knowledge?topic=${t.id}`} className="block rounded-full border border-white/10 px-2.5 py-0.5 text-xs text-foreground/80 hover:border-white/25">{t.name}</Link></li>)}</ul>
+                <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-medium text-foreground">{s.name}</h3><Link href={`/map?focus=${encodeURIComponent(`subject:${s.id}`)}`} className="text-xs font-medium text-foreground/60 hover:text-foreground">On the map</Link></div>
+                <ul className="mt-2 flex flex-wrap gap-1.5">
+                  {s.topics.map(t => {
+                    const renamed = marks.renamedTopics.get(t.id)
+                    const removed = marks.removedTopics.has(t.id)
+                    return (
+                      <li key={t.id}><Link href={`/knowledge?topic=${t.id}`} className={cn('block rounded-full border px-2.5 py-0.5 text-xs text-foreground/80 hover:border-white/25', renamed || removed ? 'border-nova/40' : 'border-white/10', removed && 'line-through opacity-60')}>
+                        {t.name}{renamed && <span className="text-nova-ink"> → {renamed}</span>}</Link></li>
+                    )
+                  })}
+                  {(marks.addedTopics.get(s.id) ?? []).map(name => <li key={name} className={cn('rounded-full border px-2.5 py-0.5 text-xs text-foreground/85', PROPOSED)} data-proposed-topic>+ {name}</li>)}
+                </ul>
               </section>
+            ))}
+            {marks.addedSubjects.map(s => (
+              <section key={s.name} className={cn(CARD, PROPOSED, 'p-3')}><h3 className="text-sm font-medium text-foreground">+ {s.name}<Proposed>proposed</Proposed></h3>
+                <ul className="mt-2 flex flex-wrap gap-1.5">{s.topics.map(t => <li key={t} className="rounded-full border border-dashed border-nova/40 px-2.5 py-0.5 text-xs text-foreground/80">{t}</li>)}</ul></section>
             ))}
             {detail.subjects.length === 0 && <p className="text-sm text-foreground/65">Its subjects were removed in Knowledge.</p>}
           </div>
@@ -121,18 +183,19 @@ export function LiveWorkspace({ workspaceId, view, onView, state, onAsk, onImpro
         {shown === 'timeline' && (
           days.length === 0 ? <p className="text-sm text-foreground/65">Nothing dated yet. Give tasks a due day on the board, or add a date on the <Link href="/calendar" className="underline underline-offset-4">calendar</Link>.</p> : (
             <ol className="space-y-2">{days.map((d, i) => (
-              <li key={i} className="flex items-center gap-3 text-sm"><span className="w-24 shrink-0 text-xs tabular-nums text-subtle">{d.day}</span><span aria-hidden className={cn('size-2 rounded-full', d.kind === 'date' ? 'bg-amber-400' : 'bg-action')} /><span className="text-foreground/85">{d.label}</span></li>
+              <li key={i} className={cn('flex items-center gap-3 rounded-lg px-1 text-sm', d.proposed && PROPOSED)}><span className="w-24 shrink-0 text-xs tabular-nums text-subtle">{d.day}</span><span aria-hidden className={cn('size-2 rounded-full', d.kind === 'date' ? 'bg-amber-400' : 'bg-action')} /><span className="text-foreground/85">{d.label}{d.was && <Proposed>moved from {d.was}</Proposed>}{d.proposed && <Proposed>proposed</Proposed>}</span></li>
             ))}</ol>
           )
         )}
         {shown === 'notes' && (
           <ul className="space-y-1.5">
             {detail.notes.map(n => <li key={n.id}><Link href={`/notes/${n.id}`} className={cn(CARD, 'block px-3 py-2 text-sm text-foreground/85 hover:border-white/20')}>{n.title}</Link></li>)}
-            {detail.notes.length === 0 && <p className="text-sm text-foreground/65">No notes filed under this workspace&apos;s subjects.</p>}
+            {marks.addedNotes.map(n => <li key={n.title} className={cn(CARD, PROPOSED, 'px-3 py-2 text-sm text-foreground/85')}>+ {n.title}<Proposed>proposed</Proposed></li>)}
+            {detail.notes.length === 0 && marks.addedNotes.length === 0 && <p className="text-sm text-foreground/65">No notes filed under these subjects.</p>}
           </ul>
         )}
       </div>
-      <ProposalActions state={state} words={words} onEdit={() => onView('board')} onAsk={onAsk} onImprove={onImprove} />
+      <ProposalActions state={state} words={words} onEdit={() => onView('board')} onAsk={onAsk} />
     </div>
   )
 }

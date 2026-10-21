@@ -487,6 +487,12 @@ export async function subjectNames(profileId: string, take = 12): Promise<string
 
 // The subjects named, with their active topics in the order given: how a
 // workspace is shown back (builder.ts, workspaces.ts). Only the learner's own.
+// Every subject of theirs with its id, name and course code: what a name the
+// learner says is matched against (builder-changes.ts matchResources).
+export async function subjectsForMatching(profileId: string): Promise<Array<{ id: string; name: string; code: string | null }>> {
+  return prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true, code: true }, orderBy: { createdAt: "asc" }, take: 200 });
+}
+
 export async function subjectsWithTopics(profileId: string, subjectIds: string[]): Promise<Array<{ id: string; name: string; topics: Array<{ id: string; name: string }> }>> {
   if (subjectIds.length === 0) return [];
   const rows = await prisma.novaSubject.findMany({

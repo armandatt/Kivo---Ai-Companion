@@ -1528,8 +1528,16 @@ model NovaWorkspaceDraft {
   jobId             String?
   // Why the last step failed, in words, and which step: { stage, message }.
   failure           Json?
-  // An existing workspace of theirs this improves (added to, never replaced).
+  // What of theirs this conversation works on, when it is something they
+  // already have: a workspace, or subjects that belong to none. Found from
+  // their words (builder.ts resolves the name among their own records), given
+  // by "Improve with Nova", or the workspace this conversation built.
   targetWorkspaceId String?
+  targetSubjectIds  String[] @default([])
+  // The proposed change set for that existing resource: checked operations
+  // on its records by id ({ ops, dropped }). Applied only on approval, through
+  // each record's own writer. Empty ({}) when there is none.
+  changes           Json?
   // The workspace approval made or added to.
   workspaceId       String?
   // The version that was built.

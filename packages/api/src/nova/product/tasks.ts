@@ -197,6 +197,55 @@ export async function listTasksWithKeyPrefix(profileId: string, prefix: string, 
   return rows.map(row => toItem(row, today));
 }
 
+// The learner's tasks filed under these subjects, oldest first: the tasks of
+// a subject Build with Nova works on.
+export async function listTasksInSubjects(profileId: string, subjectIds: string[], options: { now?: Date } = {}): Promise<NovaTaskItem[]> {
+  if (subjectIds.length === 0) return [];
+  const now = options.now ?? new Date();
+  const [today, rows] = await Promise.all([
+    todayOf(profileId, now),
+    prisma.novaTask.findMany({ where: { profileId, subjectId: { in: subjectIds } }, select: ROW, orderBy: { createdAt: "asc" }, take: TASK_OPEN_MAX }),
+  ]);
+  return rows.map(row => toItem(row, today));
+}
+
+// ── Changes Build with Nova applies (product/workspaces.ts changeResource) ────
+// Each inside the caller's transaction, each guarded on the task being the
+// learner's (and, for a removal, still open): a task that is not stops the
+// whole change set (the caller rolls back).
+
+export class TaskChanged extends Error {}
+
+export async function updateTasksIn(
+  tx: Pick<typeof prisma, "novaTask">,
+  profileId: string,
+  changes: Array<{ taskId: string; title?: string; dueDay?: string | null; priority?: "low" | "medium" | "high" | null }>,
+): Promise<void> {
+  for (const c of changes) {
+    const data: Record<string, unknown> = {};
+    if (c.title !== undefined) data.title = c.title;
+    if (c.dueDay !== undefined) data.dueDay = c.dueDay;
+    if (c.priority !== undefined) data.priority = c.priority;
+    const r = await tx.novaTask.updateMany({ where: { id: c.taskId, profileId }, data });
+    if (r.count !== 1) throw new TaskChanged();
+  }
+}
+
+// Only open tasks: a finished one is the learner's record and stays.
+export async function removeOpenTasksIn(tx: Pick<typeof prisma, "novaTask">, profileId: string, taskIds: string[]): Promise<void> {
+  if (taskIds.length === 0) return;
+  const r = await tx.novaTask.deleteMany({ where: { id: { in: taskIds }, profileId, status: { not: "done" } } });
+  if (r.count !== taskIds.length) throw new TaskChanged();
+}
+
+// These open tasks first, in this order (the board's own order, position).
+export async function placeTasksIn(tx: Pick<typeof prisma, "novaTask">, profileId: string, taskIds: string[]): Promise<void> {
+  for (const [position, id] of taskIds.entries()) {
+    const r = await tx.novaTask.updateMany({ where: { id, profileId, status: { not: "done" } }, data: { position } });
+    if (r.count !== 1) throw new TaskChanged();
+  }
+}
+
 // Of these ids, the ones that are this learner's tasks: id → title and status.
 // How the calendar checks a task an event is for, and names it.
 export async function tasksOwnedBy(profileId: string, ids: string[]): Promise<Map<string, { title: string; status: string }>> {

@@ -358,17 +358,40 @@ function Topics({ plan, editable, set, words }: ViewProps) {
               <span className="shrink-0 text-xs text-subtle">{s.topics.length}</span>
               {editable && <IconButton label={`Remove ${s.name}`} onClick={() => set(edit.removeSubject(plan, i))}><X aria-hidden className="size-3.5" /></IconButton>}
             </div>
-            <ul className="mt-2 flex flex-wrap gap-1.5">
-              {s.topics.map((t, k) => {
-                const tm = mark(ids.topic(s.name, t.name))
-                return (
-                  <li key={k} className={cn('flex items-center gap-0.5 rounded-full border border-white/10 py-0.5 pl-2.5 pr-0.5 text-xs text-foreground/85', !editable && 'pr-2.5', tm.className)} style={tm.style} title={t.explanation ?? undefined}>
-                    {t.name}
-                    {editable && <IconButton label={`Remove ${t.name}`} onClick={() => set(edit.removeTopic(plan, i, k))}><X aria-hidden className="size-3" /></IconButton>}
-                  </li>
-                )
-              })}
-            </ul>
+            {s.topics.some(t => t.unit || t.subtopics?.length) ? (
+              // A course in learning order: each unit once, where it starts, and what each topic covers.
+              <ol className="mt-2 space-y-1">
+                {s.topics.map((t, k) => {
+                  const tm = mark(ids.topic(s.name, t.name))
+                  const unit = t.unit && t.unit !== s.topics[k - 1]?.unit ? t.unit : null
+                  return (
+                    <li key={k} className={cn('rounded-lg px-1.5 py-1', tm.className)} style={tm.style}>
+                      {unit && <p className="mb-1 mt-1.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-subtle">{unit}</p>}
+                      <div className="flex items-start gap-1.5">
+                        <span className="w-5 shrink-0 pt-0.5 text-right text-[11px] tabular-nums text-subtle">{k + 1}.</span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-foreground/90">{t.name}</p>
+                          {t.subtopics && t.subtopics.length > 0 && <p className="text-xs leading-relaxed text-foreground/65">{t.subtopics.join(' · ')}</p>}
+                        </div>
+                        {editable && <IconButton label={`Remove ${t.name}`} onClick={() => set(edit.removeTopic(plan, i, k))}><X aria-hidden className="size-3" /></IconButton>}
+                      </div>
+                    </li>
+                  )
+                })}
+              </ol>
+            ) : (
+              <ul className="mt-2 flex flex-wrap gap-1.5">
+                {s.topics.map((t, k) => {
+                  const tm = mark(ids.topic(s.name, t.name))
+                  return (
+                    <li key={k} className={cn('flex items-center gap-0.5 rounded-full border border-white/10 py-0.5 pl-2.5 pr-0.5 text-xs text-foreground/85', !editable && 'pr-2.5', tm.className)} style={tm.style} title={t.explanation ?? undefined}>
+                      {t.name}
+                      {editable && <IconButton label={`Remove ${t.name}`} onClick={() => set(edit.removeTopic(plan, i, k))}><X aria-hidden className="size-3" /></IconButton>}
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
             {editable && <div className="mt-2"><AddRow label={`Add a ${words.topic} to ${s.name}`} placeholder={`Add a ${words.topic}`} onAdd={name => set(edit.addTopic(plan, i, name))} /></div>}
           </section>
         )
@@ -506,8 +529,8 @@ export function PlaygroundWaiting({ draft, words }: { draft: DraftView | null; w
 
 // ── The draft's playground ────────────────────────────────────────────────────
 
-export function DraftPlayground({ state, view, onView, onAsk, onImprove }: {
-  state: DraftState; view: PlaygroundView; onView: (v: PlaygroundView) => void; onAsk: (text: string) => void; onImprove: () => void
+export function DraftPlayground({ state, view, onView, onAsk }: {
+  state: DraftState; view: PlaygroundView; onView: (v: PlaygroundView) => void; onAsk: (text: string) => void
 }) {
   const { draft, plan, arrival } = state
   const words = wordsFor(draft?.brief.kind)
@@ -540,7 +563,7 @@ export function DraftPlayground({ state, view, onView, onAsk, onImprove }: {
         <PlaygroundHeader title={draft.title ?? draft.brief.title ?? 'Your workspace'} badge="draft" state={state} />
         {label && <WorkingStrip label={label} />}
         <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5"><PlaygroundWaiting draft={draft} words={words} /></div>
-        <ProposalActions state={state} words={words} onEdit={onEdit} onAsk={onAsk} onImprove={onImprove} />
+        <ProposalActions state={state} words={words} onEdit={onEdit} onAsk={onAsk} />
       </div>
     )
   }
@@ -584,7 +607,7 @@ export function DraftPlayground({ state, view, onView, onAsk, onImprove }: {
           </div>
         </MarkContext.Provider>
       </div>
-      <ProposalActions state={state} words={words} onEdit={onEdit} onAsk={onAsk} onImprove={onImprove} />
+      <ProposalActions state={state} words={words} onEdit={onEdit} onAsk={onAsk} />
     </div>
   )
 }

@@ -49,7 +49,9 @@ export const TRANSITIONS: Record<DraftStatus, readonly DraftStatus[]> = {
   drafting:          ["awaiting_approval", "discovery", "failed", "cancelled"],
   awaiting_approval: ["awaiting_approval", "drafting", "building", "cancelled"],
   building:          ["ready", "failed", "awaiting_approval"],
-  ready:             [],
+  // A built conversation goes on: the learner asks for more changes to what
+  // it built, which is then proposed and approved like any other.
+  ready:             ["discovery"],
   failed:            ["drafting", "building", "awaiting_approval", "discovery", "cancelled"],
   cancelled:         [],
 };
@@ -80,6 +82,11 @@ export interface TurnReading {
   question:    string | null;
   // For a revision: the change asked for, in words.
   change:      string | null;
+  // Something of theirs already in Kivo the learner referred to, by the name
+  // they used, and what they want with it: see it, change it, or a new one
+  // (builder-changes.ts finds it among their own records; the model never
+  // names an id).
+  resource:    { name: string; intent: "open" | "change" | "new" } | null;
 }
 
 // Lower case, single spaces, curly quotes straightened: so a quote matches
@@ -145,7 +152,16 @@ export function readTurn(raw: unknown, learnerText: string, fileNames: readonly 
     suggestions: listOf(r.suggestions, SUGGESTIONS_MAX),
     question: oneLine(r.question, 300) || null,
     change: oneLine(r.change, 600) || null,
+    resource: resourceOf(r.resource),
   };
+}
+
+function resourceOf(raw: unknown): TurnReading["resource"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const name = oneLine(r.name, 120);
+  const intent = r.intent === "open" || r.intent === "change" || r.intent === "new" ? r.intent : null;
+  return name && intent ? { name, intent } : null;
 }
 
 // ── Deciding the step ─────────────────────────────────────────────────────────
@@ -160,12 +176,14 @@ export type Step =
 
 // improving: the conversation is about a workspace they already have, which
 // is context enough for a specific addition ("add a beta programme").
-export function decideStep(state: { plan: WorkspacePlan | null; brief: BuilderBrief; improving?: boolean }, reading: TurnReading): Step {
+// changes: a change set to an existing resource is proposed (it is the
+// proposal there, as the plan is for a new workspace).
+export function decideStep(state: { plan: WorkspacePlan | null; brief: BuilderBrief; improving?: boolean; changes?: boolean }, reading: TurnReading): Step {
   const facts = reading.facts.length > 0 ? reading.facts : state.brief.facts;
   if (reading.next === "chat") return { type: "chat" };
 
   // A proposal exists: a change to it is a new version; anything else is talk.
-  if (state.plan) {
+  if (state.plan || state.changes) {
     if (reading.next === "revise" || reading.next === "draft") return { type: "revise", change: reading.change ?? reading.reply };
     return reading.question ? { type: "ask", question: reading.question } : { type: "chat" };
   }
@@ -242,6 +260,7 @@ export function readBrief(raw: unknown): BuilderBrief {
     known: facts(r.known, KNOWN_MAX),
     assumptions: listOf(r.assumptions, ASSUMPTIONS_MAX),
     suggestions: listOf(r.suggestions, SUGGESTIONS_MAX),
+    ...(Array.isArray(r.choices) ? { choices: listOf(r.choices, 6) } : {}),
     question: oneLine(r.question, 300) || null,
     questionsAsked: typeof r.questionsAsked === "number" && Number.isInteger(r.questionsAsked) && r.questionsAsked >= 0 ? r.questionsAsked : 0,
     dropped: listOf(r.dropped, 12),

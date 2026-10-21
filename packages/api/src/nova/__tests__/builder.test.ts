@@ -135,8 +135,9 @@ describe("what a turn may do (code decides, not the model)", () => {
 });
 
 describe("statuses and jobs", () => {
-  it("only the listed transitions exist; built and cancelled are final", () => {
-    expect(TRANSITIONS.ready).toEqual([]);
+  it("only the listed transitions exist; cancelled is final, and a built conversation only goes on talking", () => {
+    // Built: the conversation goes on about what it built; nothing of it changes without a new approval.
+    expect(TRANSITIONS.ready).toEqual(["discovery"]);
     expect(TRANSITIONS.cancelled).toEqual([]);
     expect(canMove("discovery", "building")).toBe(false);   // nothing is built without a proposal
     expect(canMove("awaiting_approval", "building")).toBe(true);
@@ -220,7 +221,7 @@ describe("what the model is given", () => {
   it("shows the proposal and the workspace being improved, in short", () => {
     const p = turnPrompt(input({ proposal: { version: 3, title: "TrackerX", milestones: ["Finish the dashboard"], tasks: ["Wire the API"], topics: [], dates: [] }, existing: { title: "TrackerX", subjects: ["TrackerX"], tasks: ["Auth"] } }));
     expect(p).toContain("CURRENT PROPOSAL (version 3): TrackerX. Milestones: Finish the dashboard.");
-    expect(p).toContain("EXISTING WORKSPACE THEY WANT TO IMPROVE: TrackerX.");
+    expect(p).toContain("WORKING ON: TrackerX (it exists in Kivo).");
   });
   it("reads a stub reply, and a failing or garbled model is null (the learner sees the honest error)", async () => {
     const ok = await readBuilderTurn(input(), (async () => JSON.stringify(reply({ next: "ask", question: "Who is it for?", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }] }))) as never);
@@ -329,7 +330,9 @@ describe("who writes what (read from source)", () => {
     for (const table of ["novaSubject.", "novaTask.", "novaNote.", "novaExam.", "novaTopicMastery", "novaWorkspace."]) expect([table, b.includes(table)]).toEqual([table, false]);
     expect(b).toContain("await createWorkspace(platformChatId, {");
     // Approval builds the server's stored copy under a key from the draft and the version.
-    expect(b).toContain("plan, clientKey: `d-${row.id}-v${row.version}`");
+    expect(b).toContain("plan: plan!, clientKey: `d-${row.id}-v${row.version}`");
+    // Changes to what they have are applied by workspaces.ts too, never written here.
+    expect(b).toContain("changeResource(platformChatId, { ref, set, key:");
     expect(b).toContain("if (input.version !== row.version) return { ok: false, error: \"stale\"");
   });
 

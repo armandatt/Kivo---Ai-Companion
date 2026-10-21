@@ -209,8 +209,6 @@ export function checkStudyEdits(structure: StudyStructure, edits: StudyEdit[]): 
 
 // ── Applying ──────────────────────────────────────────────────────────────────
 
-class Stale extends Error {}
-
 // Whether any learning is recorded against a topic: a session, a review, a
 // study date or mastery history. A topic with any is never removed, because
 // removing it would delete that record (an archive needs a column: see the
@@ -241,67 +239,74 @@ export async function applyStudyEdits(profileId: string, raw: unknown): Promise<
   if (issues.length > 0) return { ok: false, error: "invalid", message: "Nothing was changed.", issues, structure: current };
 
   try {
-    await prisma.$transaction(async tx => {
-      // One batch at a time per learner (the same lock a session start takes),
-      // so two batches made from one version cannot both pass the check below.
-      await tx.$queryRaw`SELECT id FROM "NovaAcademicProfile" WHERE id = ${profileId} FOR UPDATE`;
-      // Checked again inside the transaction: the version as read here must be
-      // the one the batch was made from.
-      const now = await tx.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true, topics: { select: { id: true, name: true, archivedAt: true } } } });
-      if (structureVersion(now.map(s => ({ ...s, topics: s.topics.map(t => ({ id: t.id, name: t.name, archived: t.archivedAt !== null })) }))) !== current.version) throw new Stale();
-      const subjectOf = (id: string) => now.find(s => s.id === id);
-      for (const e of parsed.edits) {
-        switch (e.op) {
-          case "add_subject":
-            await declareSubjectsIn(tx, profileId, await tx.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true } }),
-              [{ name: subjectName(e.name), topics: uniqueNames(e.topics, topicName).slice(0, MAX_TOPICS_PER_ADD) }]);
-            break;
-          case "add_topics":
-            await declareTopics(tx, e.subjectId, uniqueNames(e.names, topicName).slice(0, MAX_TOPICS_PER_ADD));
-            break;
-          case "rename_subject":
-            await renameSubjectIn(tx, e.subjectId, subjectName(e.name));
-            break;
-          case "rename_topic": {
-            const t = await tx.novaTopicMastery.findUniqueOrThrow({ where: { id: e.topicId }, select: { name: true, subjectId: true } });
-            const to = { subjectId: t.subjectId, topicName: topicName(e.name) };
-            await renameTopicIn(tx, e.topicId, to.topicName);
-            await refile(tx, profileId, { subjectId: t.subjectId, topicName: t.name }, to);
-            break;
-          }
-          case "move_topic": {
-            const t = await tx.novaTopicMastery.findUniqueOrThrow({ where: { id: e.topicId }, select: { name: true, subjectId: true } });
-            if (!subjectOf(e.toSubjectId)) throw new Stale();
-            await moveTopicIn(tx, e.topicId, e.toSubjectId);
-            await refile(tx, profileId, { subjectId: t.subjectId, topicName: t.name }, { subjectId: e.toSubjectId, topicName: t.name });
-            break;
-          }
-          case "remove_topic": {
-            const t = await tx.novaTopicMastery.findUniqueOrThrow({ where: { id: e.topicId }, select: { name: true, subjectId: true } });
-            // History recorded since the page loaded stops the batch.
-            if (await topicHasHistory(tx, profileId, e.topicId)) throw new Stale();
-            await refile(tx, profileId, { subjectId: t.subjectId, topicName: t.name }, { subjectId: t.subjectId, topicName: null });
-            await removeTopicIn(tx, e.topicId);
-            break;
-          }
-          case "remove_subject": {
-            const left = await tx.novaSubject.findUniqueOrThrow({ where: { id: e.subjectId }, select: { _count: { select: { topics: true, exams: true } } } });
-            if (left._count.topics > 0 || left._count.exams > 0) throw new Stale();
-            await removeSubjectIn(tx, e.subjectId);
-            break;
-          }
-        }
-      }
-    });
+    await prisma.$transaction(tx => playStudyEditsIn(tx, profileId, parsed.edits, current.version));
   } catch (err) {
     // Another change got there first (a second tab, a unique name taken).
-    if (err instanceof Stale || (err as { code?: string } | null)?.code === "P2002" || (err as { code?: string } | null)?.code === "P2025") {
+    if (err instanceof StaleStructure || (err as { code?: string } | null)?.code === "P2002" || (err as { code?: string } | null)?.code === "P2025") {
       return { ok: false, error: "stale", message: "Your subjects changed while this was being saved. Nothing was changed.", structure: await loadStudyStructure(profileId) };
     }
     throw err;
   }
   console.log(JSON.stringify({ layer: "nova_setup_edit", event: "applied", profileId, edits: parsed.edits.length }));
   return { ok: true, structure: await loadStudyStructure(profileId), applied: sentences };
+}
+
+// Plays checked edits inside the caller's transaction (Subject Studio's own,
+// or Build with Nova's when it applies an approved change set with other
+// records): one batch at a time per learner, and only on the structure
+// version the edits were checked against. Throws StaleStructure otherwise.
+export class StaleStructure extends Error {}
+export async function playStudyEditsIn(tx: Tx, profileId: string, edits: StudyEdit[], version: string): Promise<void> {
+  // One batch at a time per learner (the same lock a session start takes),
+  // so two batches made from one version cannot both pass the check below.
+  await tx.$queryRaw`SELECT id FROM "NovaAcademicProfile" WHERE id = ${profileId} FOR UPDATE`;
+  // Checked again inside the transaction: the version as read here must be
+  // the one the batch was made from.
+  const now = await tx.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true, topics: { select: { id: true, name: true, archivedAt: true } } } });
+  if (structureVersion(now.map(s => ({ ...s, topics: s.topics.map(t => ({ id: t.id, name: t.name, archived: t.archivedAt !== null })) }))) !== version) throw new StaleStructure();
+  const subjectOf = (id: string) => now.find(s => s.id === id);
+  for (const e of edits) {
+    switch (e.op) {
+      case "add_subject":
+        await declareSubjectsIn(tx, profileId, await tx.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true } }),
+          [{ name: subjectName(e.name), topics: uniqueNames(e.topics, topicName).slice(0, MAX_TOPICS_PER_ADD) }]);
+        break;
+      case "add_topics":
+        await declareTopics(tx, e.subjectId, uniqueNames(e.names, topicName).slice(0, MAX_TOPICS_PER_ADD));
+        break;
+      case "rename_subject":
+        await renameSubjectIn(tx, e.subjectId, subjectName(e.name));
+        break;
+      case "rename_topic": {
+        const t = await tx.novaTopicMastery.findUniqueOrThrow({ where: { id: e.topicId }, select: { name: true, subjectId: true } });
+        const to = { subjectId: t.subjectId, topicName: topicName(e.name) };
+        await renameTopicIn(tx, e.topicId, to.topicName);
+        await refile(tx, profileId, { subjectId: t.subjectId, topicName: t.name }, to);
+        break;
+      }
+      case "move_topic": {
+        const t = await tx.novaTopicMastery.findUniqueOrThrow({ where: { id: e.topicId }, select: { name: true, subjectId: true } });
+        if (!subjectOf(e.toSubjectId)) throw new StaleStructure();
+        await moveTopicIn(tx, e.topicId, e.toSubjectId);
+        await refile(tx, profileId, { subjectId: t.subjectId, topicName: t.name }, { subjectId: e.toSubjectId, topicName: t.name });
+        break;
+      }
+      case "remove_topic": {
+        const t = await tx.novaTopicMastery.findUniqueOrThrow({ where: { id: e.topicId }, select: { name: true, subjectId: true } });
+        // History recorded since the page loaded stops the batch.
+        if (await topicHasHistory(tx, profileId, e.topicId)) throw new StaleStructure();
+        await refile(tx, profileId, { subjectId: t.subjectId, topicName: t.name }, { subjectId: t.subjectId, topicName: null });
+        await removeTopicIn(tx, e.topicId);
+        break;
+      }
+      case "remove_subject": {
+        const left = await tx.novaSubject.findUniqueOrThrow({ where: { id: e.subjectId }, select: { _count: { select: { topics: true, exams: true } } } });
+        if (left._count.topics > 0 || left._count.exams > 0) throw new StaleStructure();
+        await removeSubjectIn(tx, e.subjectId);
+        break;
+      }
+    }
+  }
 }
 
 async function refile(

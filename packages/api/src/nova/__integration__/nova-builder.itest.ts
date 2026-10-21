@@ -219,8 +219,11 @@ test("a correction is a new version; only the current version is approved; appro
   assert.ok((await builder.builderContextLines(profileId)).some(l => l.startsWith("Workspace they built in Kivo: TrackerX")));
 
   // Built: no more messages to it.
-  const closed = await builder.postMessage(me.id, draft.id, { text: "one more thing" });
-  assert.equal(!closed.ok && closed.error, "closed");
+  // A built conversation goes on: about the workspace it built, as it is now.
+  const goingOn = await builder.postMessage(me.id, draft.id, { text: "one more thing" });
+  assert.ok(goingOn.ok && goingOn.draft.status === "discovery");
+  assert.equal(goingOn.ok && goingOn.draft.resource?.workspaceId, goingOn.ok ? goingOn.draft.workspace!.id : "x");
+  assert.equal(goingOn.ok && goingOn.draft.current!.title, "TrackerX");
 });
 
 test("the learner's edits are saved against their version, and win over a slower Nova", async () => {
@@ -253,7 +256,7 @@ test("the learner's edits are saved against their version, and win over a slower
   assert.equal(draft.pending, null);
 });
 
-test("an existing workspace is improved by adding to it: nothing there is lost", async () => {
+test("an existing workspace is improved by changes to its own records: nothing else is touched", async () => {
   const me = await learner();
   const first = await begin(me.id, "Plan TrackerX, launching on 30 November.", { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan) });
   const built = await builder.approveDraft(me.id, first.id, { version: 1 });
@@ -270,14 +273,21 @@ test("an existing workspace is improved by adding to it: nothing there is lost",
   assert.ok(started.ok && started.draft.target?.id === workspaceId);
   await builder.runJob(me.id, started.job!, {
     read: reader({ next: "draft", facts: [{ label: "Add", value: "a beta programme", quote: "beta programme" }] }, seen),
-    write: writer(() => ({ title: "TrackerX", subjects: [{ name: "TrackerX", topics: ["Beta programme"] }], tasks: [{ key: "beta", title: "Recruit ten beta teams" }] })),
+    writeChanges: async req => ({ ok: true, summary: null, ops: [
+      { op: "add_topics", subjectId: req.current.subjects[0]!.id, names: ["Beta programme"] },
+      { op: "add_task", key: "beta", title: "Recruit ten beta teams", subjectId: req.current.subjects[0]!.id },
+    ] }),
   });
   // The model saw the workspace as it stands.
   assert.ok(seen[0]!.existing!.tasks.includes("Finish dashboard widgets"));
   const draft = (await builder.getDraft(me.id, started.draft.id))!;
-  assert.ok(draft.messages.at(-1)!.text.includes("nothing there is changed or removed"));
+  assert.equal(draft.resource?.workspaceId, workspaceId);
+  assert.equal(draft.changes!.ops.length, 2);
+  assert.ok(draft.messages.at(-1)!.text.includes("Everything else stays as it is"));
+  // Still nothing written: the proposal is only the draft's.
+  assert.ok(!(await listTasks(profileId)).tasks.some(t => t.title === "Recruit ten beta teams"));
   const added = await builder.approveDraft(me.id, draft.id, { version: draft.version });
-  assert.ok(added.ok && added.draft.status === "ready");
+  assert.ok(added.ok && added.draft.status === "ready", added.ok ? "" : added.message);
   assert.equal(added.ok && added.draft.workspace!.id, workspaceId);
 
   const tasks = (await listTasks(profileId)).tasks;
@@ -285,6 +295,7 @@ test("an existing workspace is improved by adding to it: nothing there is lost",
   assert.ok(tasks.some(t => t.title === "Call the design partner"));
   assert.equal(tasks.find(t => t.id === dash.id)!.status, "in_progress");
   assert.equal((await records(profileId)).workspaces, 1);
+  assert.ok(added.ok && added.draft.current!.subjects[0]!.topics.some(t => t.name === "Beta programme"));
 });
 
 test("failures are said and can be retried; a failed build leaves nothing", async () => {

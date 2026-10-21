@@ -36,6 +36,12 @@ export const approveDraft = (draftId: string, body: { version: number; addTo?: s
 export const saveDraftPlan = (draftId: string, plan: WorkspacePlan, baseVersion: number) =>
   call<BuilderResponse>(`/api/nova/builder/${id(draftId)}`, { method: 'PATCH', body: JSON.stringify({ plan, baseVersion }) })
 
+// Which of the proposed changes to an existing resource stay (by id).
+export const saveDraftChanges = (draftId: string, keep: string[], baseVersion: number) =>
+  call<BuilderResponse>(`/api/nova/builder/${id(draftId)}`, { method: 'PATCH', body: JSON.stringify({ keep, baseVersion }) })
+// Removes the conversation only; what it built stays.
+export const deleteDraft = (draftId: string) => call<{ ok: true }>(`/api/nova/builder/${id(draftId)}`, { method: 'DELETE' })
+
 export async function listDrafts(): Promise<DraftListView | Failure> {
   try {
     const res = await fetch('/api/nova/builder', { cache: 'no-store' })

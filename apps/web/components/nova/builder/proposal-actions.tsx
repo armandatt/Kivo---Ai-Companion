@@ -2,11 +2,11 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, Check, Loader2, MessageSquare, PencilLine, RotateCcw, Sparkles, Trash2 } from 'lucide-react'
+import { AlertTriangle, Check, Loader2, MessageSquare, Network, PencilLine, RotateCcw, Sparkles, Trash2 } from 'lucide-react'
 import type { DraftView } from '@repo/api/nova/product/builder.types'
 import { planCounts } from '@repo/api/nova/product/workspace-plan'
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '@/components/nova/workspace/ui'
-import type { Words } from './builder-view'
+import { mapDestinations, type Words } from './builder-view'
 import type { DraftState } from './use-draft'
 
 // The bottom of the playground: the decisions that are the learner's, kept
@@ -22,8 +22,8 @@ const BAR = 'shrink-0 border-t border-white/8 bg-card/85 px-4 py-3 backdrop-blur
 
 function counted(n: number, one: string, many = `${one}s`) { return n ? `${n} ${n === 1 ? one : many}` : null }
 
-export function ProposalActions({ state, words, onEdit, onAsk, onImprove }: {
-  state: DraftState; words: Words; onEdit: () => void; onAsk: (text: string) => void; onImprove: () => void
+export function ProposalActions({ state, words, onEdit, onAsk }: {
+  state: DraftState; words: Words; onEdit: () => void; onAsk: (text: string) => void
 }) {
   const { draft, plan, busy, save } = state
   const [confirmCancel, setConfirmCancel] = useState(false)
@@ -34,23 +34,25 @@ export function ProposalActions({ state, words, onEdit, onAsk, onImprove }: {
   if (draft.status === 'building' || busy === 'approve') {
     return (
       <div className={BAR} role="status" data-actions="building">
-        <p className="flex items-center gap-2 text-sm font-medium text-foreground"><Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none" /> Creating version {draft.version} in Kivo…</p>
-        <p className="mt-1 text-xs text-subtle">Its tasks, {words.areas.toLowerCase()}, notes and dates are written together, or not at all.</p>
+        <p className="flex items-center gap-2 text-sm font-medium text-foreground"><Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none" /> {draft.changes ? `Applying the changes to ${draft.current?.title ?? 'it'}…` : `Creating version ${draft.version} in Kivo…`}</p>
+        <p className="mt-1 text-xs text-subtle">{draft.changes ? 'All of them together, or none; everything else stays as it is.' : `Its tasks, ${words.areas.toLowerCase()}, notes and dates are written together, or not at all.`}</p>
       </div>
     )
   }
 
-  if (draft.status === 'ready' && draft.workspace) {
-    const first = draft.workspace.subjects[0]
+  if (draft.status === 'ready' && draft.current) {
+    const places = mapDestinations(draft)
     return (
       <div className={BAR} role="status" data-actions="ready" data-built>
-        <p className="flex items-center gap-2 text-sm font-semibold text-foreground"><Check aria-hidden className="size-4 text-action-ink" /> {draft.workspace.title} is in Kivo</p>
+        <p className="flex items-center gap-2 text-sm font-semibold text-foreground"><Check aria-hidden className="size-4 text-action-ink" /> {draft.current.title} is in Kivo</p>
+        {places.length > 1 && <p className="mt-1 text-xs text-subtle">See it on the Knowledge Map, one subject at a time:</p>}
         <div className="mt-2 flex flex-wrap items-center gap-2">
+          {places.length === 1
+            ? <Link href={places[0]!.href} className={BUTTON_PRIMARY} data-map-link><Network aria-hidden className="size-4" /> Open on the Knowledge Map</Link>
+            : places.map(p => <Link key={p.href} href={p.href} className={BUTTON_QUIET} data-map-link><Network aria-hidden className="size-3.5" /> {p.label}</Link>)}
           <Link href="/planner?view=board" className={BUTTON_QUIET}>Planner board</Link>
-          {first && <Link href={`/knowledge?subject=${first.id}`} className={BUTTON_QUIET}>Knowledge</Link>}
           <Link href="/calendar" className={BUTTON_QUIET}>Calendar</Link>
-          <Link href="/home" className={BUTTON_QUIET}>Today</Link>
-          <button type="button" onClick={onImprove} className={`${BUTTON_QUIET} sm:ml-auto`}><Sparkles aria-hidden className="size-3.5" /> Add to it with Nova</button>
+          <button type="button" onClick={() => onAsk('')} className={`${BUTTON_QUIET} sm:ml-auto`}><Sparkles aria-hidden className="size-3.5" /> Keep changing it</button>
         </div>
       </div>
     )
@@ -71,7 +73,9 @@ export function ProposalActions({ state, words, onEdit, onAsk, onImprove }: {
 
   const writing = state.working
   // A proposal on screen to approve, or one Nova is rewriting (approval waits for it).
-  if (!plan || !(draft.status === 'awaiting_approval' || (draft.status === 'drafting' && writing))) return null
+  if (!(draft.status === 'awaiting_approval' || (draft.status === 'drafting' && writing))) return null
+  if (draft.changes) return <ChangeActions state={state} onAsk={onAsk} error={error} />
+  if (!plan) return null
 
   const counts = planCounts(plan)
   const blocked = Boolean(busy) || save === 'saving' || writing
@@ -135,4 +139,41 @@ export function workingLabel(draft: DraftView, words: Words): string | null {
   if (!p) return null
   if (p.stage === 'reading') return draft.files.length ? 'Reading your message and files' : 'Reading your message'
   return p.kind === 'revise' ? words.revising : words.writing
+}
+
+// Approving changes to something the learner already has: what they apply
+// to, how many, and the same rules (approval waits for Nova; it names the
+// version on screen). Discarding drops the changes, not the conversation.
+function ChangeActions({ state, onAsk, error }: { state: DraftState; onAsk: (text: string) => void; error: React.ReactNode }) {
+  const { draft, busy, save } = state
+  const [confirm, setConfirm] = useState(false)
+  if (!draft?.changes) return null
+  const writing = state.working
+  const blocked = Boolean(busy) || save === 'saving' || writing
+  const n = (e: 'add' | 'change' | 'remove') => draft.changes!.ops.filter(o => o.effect === e).length
+  const counts = [n('add') && `${n('add')} to add`, n('change') && `${n('change')} to change`, n('remove') && `${n('remove')} to remove`].filter(Boolean).join(' · ')
+  return (
+    <div className={BAR} data-actions="apply" data-approval={draft.version}>
+      {error}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="mr-auto min-w-0">
+          <p className="text-sm font-semibold text-foreground">{writing ? 'Nova is updating the changes…' : `Changes to ${draft.current?.title ?? 'it'} · v${draft.version}`}</p>
+          <p className="truncate text-xs text-subtle">{writing ? 'Approve once they land, so you approve what you see.' : `${counts}. Everything else stays as it is.`}</p>
+        </div>
+        <button type="button" onClick={() => void state.approve()} disabled={blocked} className={`${BUTTON_PRIMARY} order-last w-full justify-center sm:order-0 sm:w-auto`} data-approve>
+          {save === 'saving' ? 'Saving…' : writing ? <><Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none" /> Waiting for Nova</> : <><Check aria-hidden className="size-4" /> Apply changes</>}
+        </button>
+        <button type="button" onClick={() => onAsk('')} className={BUTTON_QUIET}><MessageSquare aria-hidden className="size-3.5" /> Discuss</button>
+        {confirm ? (
+          <span className="flex basis-full flex-wrap items-center gap-2 text-xs text-foreground/75 sm:basis-auto">Discard these changes? Nothing has been changed.
+            <button type="button" onClick={() => { setConfirm(false); void state.cancel() }} className={BUTTON_QUIET} data-confirm-cancel>Discard</button>
+            <button type="button" onClick={() => setConfirm(false)} className={BUTTON_QUIET}>Keep</button>
+          </span>
+        ) : (
+          <button type="button" onClick={() => setConfirm(true)} disabled={blocked} aria-label="Discard these changes" title="Discard these changes"
+            className="grid size-9 place-items-center rounded-lg text-subtle transition-colors hover:bg-white/6 hover:text-foreground disabled:opacity-40"><Trash2 aria-hidden className="size-4" /></button>
+        )}
+      </div>
+    </div>
+  )
 }

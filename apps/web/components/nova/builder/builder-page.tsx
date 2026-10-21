@@ -11,7 +11,7 @@ import { BUTTON_QUIET } from '@/components/nova/workspace/ui'
 import { cn } from '@/lib/utils'
 import { loadWorkspaces } from '@/components/nova/templates/templates-api'
 import * as api from './builder-api'
-import { wordsFor } from './builder-view'
+import { mapDestinations, touchedSubjects, wordsFor } from './builder-view'
 import { BUILD_EXAMPLES, Composer, Conversation, NewConversation, NovaAvatar, STATUS_LABEL, type Seed, type Upload } from './conversation'
 import { LiveWorkspace } from './live-workspace'
 import { DraftPlayground, PlaygroundHeader, PlaygroundWaiting } from './playground'
@@ -101,10 +101,26 @@ export function BuilderPage() {
   const grid = useRef<HTMLDivElement>(null)
 
   useEffect(() => { setSplit(readSplit()) }, [])
-  useEffect(() => {
+  const loadLists = useCallback(() => {
     void api.listDrafts().then(r => { if ('status' in r) setDrafts(r.drafts) })
     void loadWorkspaces().then(r => { if ('status' in r) setWorkspaces(r.workspaces) })
-  }, [draftId, draft?.status, draft?.title])
+  }, [])
+  useEffect(() => { loadLists() }, [loadLists, draftId, draft?.status, draft?.title])
+
+  // Approved here and stored: the Knowledge Map, on what was built or
+  // changed. Only once the server says it is saved (status ready, read back
+  // from the records); a failed build stays here with its error. With several
+  // subjects there is no one place to go: the bar offers each.
+  const approving = useRef<string[] | null>(null)
+  useEffect(() => {
+    // Changes to something they have are seen where they were made: those subjects.
+    if (state.busy === 'approve') { approving.current ??= touchedSubjects(draft); return }
+    if (!approving.current || state.busy) return
+    const touched = approving.current
+    approving.current = null
+    const places = mapDestinations(draft, touched)
+    if (places.length === 1) router.push(places[0]!.href)
+  }, [state.busy, draft, router])
   // A new conversation starts on the conversation, at the overview.
   useEffect(() => { setTab('chat'); setView('overview'); setStartError(null) }, [draftId])
 
@@ -158,12 +174,11 @@ export function BuilderPage() {
   }
 
   const onNew = () => router.push('/build')
-  const onImprove = () => { if (draft?.workspace) void start('', draft.workspace.id) }
   let conversation: React.ReactNode
   let playground: React.ReactNode
   if (!draftId) {
     const header = <ConversationHeader title="New conversation" status={null} drafts={drafts} current={null} onNew={null} />
-    conversation = <NewConversation header={header} onStart={start} busy={starting} error={startError} seed={seed} onExample={ask} drafts={drafts} workspaces={workspaces} />
+    conversation = <NewConversation header={header} onStart={start} busy={starting} error={startError} seed={seed} onExample={ask} drafts={drafts} workspaces={workspaces} onDeleted={loadLists} />
     playground = (
       <div className="flex h-full min-h-0 flex-col">
         <PlaygroundHeader title="Your workspace" badge="draft" />
@@ -176,9 +191,10 @@ export function BuilderPage() {
     conversation = draft
       ? <Conversation key={draftId} state={state} header={header} seed={seed} onReview={() => setTab('playground')} />
       : <div aria-busy="true" aria-label="Opening the conversation" className="space-y-3 p-5"><div className="h-10 animate-pulse rounded-xl bg-white/4 motion-reduce:animate-none" /><div className="h-24 animate-pulse rounded-2xl bg-white/4 motion-reduce:animate-none" /></div>
-    playground = draft?.status === 'ready' && draft.workspace
-      ? <LiveWorkspace workspaceId={draft.workspace.id} view={view} onView={setView} state={state} onAsk={ask} onImprove={onImprove} />
-      : <DraftPlayground state={state} view={view} onView={setView} onAsk={ask} onImprove={onImprove} />
+    // Something stored (what it works on, or what it built): shown as it is, with any proposed changes on it.
+    playground = draft?.current && (draft.resource || draft.status === 'ready')
+      ? <LiveWorkspace view={view} onView={setView} state={state} onAsk={ask} />
+      : <DraftPlayground state={state} view={view} onView={setView} onAsk={ask} />
   }
 
   return (

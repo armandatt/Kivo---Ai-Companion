@@ -167,13 +167,25 @@ export function useDraft(draftId: string | null) {
     return run('approve', () => api.approveDraft(draftId, { version: d.version, ...opts }))
   }, [draftId, flush, run])
 
+  // Leave some of the proposed changes out; saved at once, on the version shown.
+  const keepChanges = useCallback(async (keep: string[]) => {
+    const d = latest.current.draft
+    if (!d) return false
+    setSave('saving')
+    const res = await api.saveDraftChanges(d.id, keep, d.version)
+    if (res.ok) { setDraft(res.draft); setSave('saved'); setSaveError(null); return true }
+    setSave('error'); setSaveError(res.message)
+    if (res.draft) setDraft(res.draft)
+    return false
+  }, [])
+
   const cancel = useCallback(() => (draftId ? run('cancel', () => api.cancelDraft(draftId)) : Promise.resolve(false)), [draftId, run])
   const retry = useCallback(() => (draftId ? run('retry', () => api.retryDraft(draftId)) : Promise.resolve(false)), [draftId, run])
 
   return {
     draft, plan, setPlan, save, saveError, conflict, keepMine, takeTheirs, arrival,
     loadError, actionError, errorOf, clearActionError: () => setActionError(null), busy, working,
-    reload, send, approve, cancel, retry, unsaved: () => dirty.current,
+    reload, send, approve, cancel, retry, keepChanges, unsaved: () => dirty.current,
   }
 }
 

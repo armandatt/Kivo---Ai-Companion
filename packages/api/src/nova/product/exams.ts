@@ -275,6 +275,31 @@ export async function updateExam(platformChatId: string, examId: string, input: 
   return { status: "saved", exams: await examsOf(profile, now) };
 }
 
+// Moves or renames the learner's own dates inside the caller's transaction
+// (Build with Nova's approved changes), by checkExamChange's rules. A date
+// that is gone or a change the rules refuse stops the whole change set.
+export class DateChanged extends Error {}
+export async function updateDatesIn(
+  tx: Pick<typeof prisma, "novaExam">,
+  profileId: string,
+  changes: Array<{ dateId: string; title?: string; day?: string }>,
+  today: string,
+  now: Date,
+): Promise<void> {
+  if (changes.length === 0) return;
+  const all = await tx.novaExam.findMany({ where: { profileId }, select: { id: true, title: true, examType: true, scheduledAt: true, subjectId: true } });
+  const flat = (e: (typeof all)[number]) => ({ title: e.title, date: isoDayOf(e.scheduledAt), subjectId: e.subjectId, type: deadlineType(e.examType) });
+  for (const c of changes) {
+    const row = all.find(e => e.id === c.dateId);
+    if (!row) throw new DateChanged();
+    const check = checkExamChange(flat(row), all.filter(e => e.id !== c.dateId).map(flat), { ...(c.title !== undefined ? { title: c.title } : {}), ...(c.day !== undefined ? { date: c.day } : {}) }, today, now);
+    if (!check.ok) throw new DateChanged();
+    if (!check.changed) continue;
+    const r = await tx.novaExam.updateMany({ where: { id: c.dateId, profileId }, data: { title: check.change.title, scheduledAt: examInstant(check.change.date) } });
+    if (r.count !== 1) throw new DateChanged();
+  }
+}
+
 // Removes one of the learner's own exams. Removing one that is already gone
 // is "not_found", which a caller retrying a removal may take as done.
 export async function removeExam(platformChatId: string, examId: string, now = new Date()): Promise<ExamWriteResult> {

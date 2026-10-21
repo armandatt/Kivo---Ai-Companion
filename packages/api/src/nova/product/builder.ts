@@ -39,15 +39,16 @@ import { WORKING_ON_LABEL, weeklyHoursLabel } from "./onboarding-options";
 import type { LearningContext } from "./learning-context";
 import { ensureSetupProfile, subjectNames } from "./setup";
 import { checkWorkspacePlan, planCounts, type WorkspacePlan } from "./workspace-plan";
-import { checkFiles, writeBuilderPlan } from "./workspace-generation";
+import { checkFiles, writeBuilderChanges, writeBuilderPlan } from "./workspace-generation";
 import type { LlmAttachment } from "../../services/llmProviders";
 import { readBuilderTurn } from "./builder-conversation";
-import { createWorkspace, recentWorkspaceTitles, similarWorkspaces, workspaceDetail, workspaceSummaries } from "./workspaces";
+import { changeResource, createWorkspace, recentWorkspaceTitles, resourceCandidates, resourceDetail, similarWorkspaces, studiedTopicIds, workspaceDetail, workspaceSummaries } from "./workspaces";
+import { bareOps, changeCounts, checkChanges, decideResource, matchResources, readChangeSet } from "./builder-changes";
 import {
-  MESSAGE_MAX, TALKING, canMove, decideStep, describeChanges, emptyBrief, isPendingLive, learnerWords, message,
+  MESSAGE_MAX, TALKING, canMove, decideStep, type Step, describeChanges, emptyBrief, isPendingLive, learnerWords, message,
   needsReply, nextBrief, planChanges, readBrief, readMessages, readPending, replyWithQuestion, spoken, withMessages, holdsLine,
 } from "./builder-state";
-import type { BriefFact, BuilderBrief, BuilderMessage, BuilderResponse, DraftFailure, DraftFile, DraftListView, DraftStatus, DraftView, PendingJob } from "./builder.types";
+import type { BriefFact, BuilderBrief, BuilderMessage, BuilderResponse, ChangeSet, DraftFailure, DraftFile, DraftListView, DraftStatus, DraftView, PendingJob, ResourceRef } from "./builder.types";
 import type { WorkspaceCounts } from "./workspaces.types";
 
 export const OPEN_DRAFTS_MAX = 50;
@@ -60,20 +61,29 @@ const CONVERSATION_FOR_PLAN = 24;
 
 type Read = typeof readBuilderTurn;
 type Write = typeof writeBuilderPlan;
-export interface BuilderDeps { read?: Read; write?: Write }
+type WriteChanges = typeof writeBuilderChanges;
+export interface BuilderDeps { read?: Read; write?: Write; writeChanges?: WriteChanges }
 
 // A model job the route runs after answering.
 export interface BuilderJob { draftId: string; jobId: string; kind: PendingJob["kind"]; change: string | null }
 
 const ROW = {
   id: true, profileId: true, status: true, origin: true, title: true, messages: true, brief: true, plan: true, version: true,
-  pending: true, jobId: true, failure: true, targetWorkspaceId: true, workspaceId: true, builtVersion: true, updatedAt: true,
+  pending: true, jobId: true, failure: true, targetWorkspaceId: true, targetSubjectIds: true, changes: true, workspaceId: true, builtVersion: true, updatedAt: true,
 } as const;
 type Row = {
   id: string; profileId: string; status: string; origin: string; title: string | null; messages: unknown; brief: unknown; plan: unknown;
-  version: number; pending: unknown; jobId: string | null; failure: unknown; targetWorkspaceId: string | null; workspaceId: string | null;
-  builtVersion: number | null; updatedAt: Date;
+  version: number; pending: unknown; jobId: string | null; failure: unknown; targetWorkspaceId: string | null; targetSubjectIds: string[];
+  changes: unknown; workspaceId: string | null; builtVersion: number | null; updatedAt: Date;
 };
+
+// What of theirs this conversation works on, from the row: a workspace (one
+// it was pointed at, found from their words, or built itself), or subjects
+// that belong to none. null: it is shaping something new.
+function refOf(row: Pick<Row, "targetWorkspaceId" | "targetSubjectIds">): Pick<ResourceRef, "workspaceId" | "subjectIds"> | null {
+  if (row.targetWorkspaceId) return { workspaceId: row.targetWorkspaceId, subjectIds: [] };
+  return row.targetSubjectIds.length ? { workspaceId: null, subjectIds: row.targetSubjectIds } : null;
+}
 
 const json = (v: unknown) => v as object;
 // "No job" and "no failure" are stored as {}: the readers take it as none,
@@ -97,6 +107,13 @@ const textOf = (v: unknown): string => (typeof v === "string" ? v.split("\r").jo
 async function profileOf(platformChatId: string): Promise<{ id: string; timezone: string | null; goals: string[] } | null> {
   const user = await prisma.messengerUser.findUnique({ where: learnerKey(platformChatId), select: { novaAcademicProfile: { select: { id: true, timezone: true, goals: true } } } });
   return user?.novaAcademicProfile ?? null;
+}
+
+// The learner key a profile is reached by (its chat id, or web:<user>), for
+// the readers that take one.
+async function chatOfProfile(profileId: string): Promise<string | null> {
+  const p = await prisma.novaAcademicProfile.findUnique({ where: { id: profileId }, select: { user: { select: { platformChatId: true } } } });
+  return p?.user?.platformChatId ?? null;
 }
 
 async function rowOf(profileId: string, id: unknown): Promise<Row | null> {
@@ -179,12 +196,16 @@ async function signupContext(platformChatId: string, profile: { id: string; goal
   return { known: out.slice(0, 8), language: signup?.language ?? null };
 }
 
-// The workspace a draft improves, in short, for the model.
-async function outlineOf(platformChatId: string, profileId: string, workspaceId: string | null) {
-  if (!workspaceId) return null;
-  const d = await workspaceDetail(platformChatId, profileId, workspaceId);
-  return d ? { title: d.workspace.title, subjects: d.subjects.map(s => s.name), tasks: d.tasks.map(t => t.title), notes: d.notes.map(n => n.title) } : null;
+// What a draft works on, in short, for the model.
+async function outlineOf(platformChatId: string, profileId: string, ref: Pick<ResourceRef, "workspaceId" | "subjectIds"> | null) {
+  if (!ref) return null;
+  const d = await resourceDetail(platformChatId, profileId, ref);
+  return d ? { title: d.title, subjects: d.subjects.map(s => s.name), tasks: d.tasks.map(t => t.title), notes: d.notes.map(n => n.title) } : null;
 }
+
+// Their workspaces and subjects by name, for the model to recognise one.
+const resourceNames = (c: Awaited<ReturnType<typeof resourceCandidates>>): string[] =>
+  [...c.workspaces.map(w => `${w.title} (workspace)`), ...c.subjects.map(x => `${x.name}${x.code ? ` [${x.code}]` : ""} (subject)`)];
 
 // ── The view ──────────────────────────────────────────────────────────────────
 
@@ -194,10 +215,14 @@ async function viewOf(row: Row, now: Date, counts: WorkspaceCounts | null = null
   const pending = readPending(row.pending);
   const messages = readMessages(row.messages);
   const ids = [row.targetWorkspaceId, row.workspaceId].filter((x): x is string => Boolean(x));
-  const [summaries, similar, files] = await Promise.all([
+  // What it works on, as stored now: its target, or what it built.
+  const ref = refOf(row) ?? (row.workspaceId ? { workspaceId: row.workspaceId, subjectIds: [] } : null);
+  const platformChatId = ref ? await chatOfProfile(row.profileId) : null;
+  const [summaries, similar, files, current] = await Promise.all([
     workspaceSummaries(row.profileId, ids),
-    status === "awaiting_approval" && plan && !row.targetWorkspaceId ? similarWorkspaces(row.profileId, plan) : Promise.resolve([]),
+    status === "awaiting_approval" && plan && !refOf(row) ? similarWorkspaces(row.profileId, plan) : Promise.resolve([]),
     filesListed(row.id),
+    ref && platformChatId ? resourceDetail(platformChatId, row.profileId, ref, now) : Promise.resolve(null),
   ]);
   return {
     id: row.id, status, origin: row.origin === "telegram" ? "telegram" : "web",
@@ -206,6 +231,9 @@ async function viewOf(row: Row, now: Date, counts: WorkspaceCounts | null = null
     failure: failureOf(row.failure),
     files,
     target: summaries.find(w => w.id === row.targetWorkspaceId) ?? null,
+    resource: ref && current ? { kind: current.workspace ? "workspace" : "subjects", workspaceId: current.workspace?.id ?? null, subjectIds: current.subjects.map(x => x.id), title: current.title } : null,
+    current,
+    changes: readChangeSet(row.changes),
     workspace: summaries.find(w => w.id === row.workspaceId) ?? null,
     builtVersion: row.builtVersion,
     needsReply: TALKING.includes(status) && needsReply(messages, pending, now),
@@ -335,7 +363,6 @@ export async function postMessage(platformChatId: string, id: unknown, body: { t
   const row = profile ? await rowOf(profile.id, id) : null;
   if (!row) return { ok: false, error: "not_found", message: "That conversation isn't one of yours." };
   const status = statusOf(row.status);
-  if (status === "ready") return { ok: false, error: "closed", message: "This one is built. Start a new conversation to improve it.", draft: await viewOf(row, now) };
   if (status === "cancelled") return { ok: false, error: "closed", message: "This conversation was cancelled.", draft: await viewOf(row, now) };
   if (status === "building" || (status === "drafting" && isPendingLive(readPending(row.pending), now)) || isPendingLive(readPending(row.pending), now)) {
     return { ok: false, error: "busy", message: "Nova is still on your last message.", draft: await viewOf(row, now) };
@@ -353,16 +380,20 @@ async function claim(row: Row, now: Date, job: { kind: PendingJob["kind"]; chang
   const jobId = randomUUID();
   const pending: PendingJob = { kind: job.kind, stage: job.kind === "reply" ? "reading" : "writing", startedAt: now.toISOString(), baseVersion: row.version };
   const status = statusOf(row.status);
+  const proposed = Boolean(planOf(row.plan) && !refOf(row)) || Boolean(readChangeSet(row.changes));
   // A stale drafting job (its process went away) leaves the draft where it was.
-  const back: DraftStatus = status === "drafting" ? (planOf(row.plan) ? "awaiting_approval" : "discovery") : status;
-  const nextStatus: DraftStatus = job.kind === "reply" ? (back === "failed" ? (planOf(row.plan) ? "awaiting_approval" : "discovery") : back) : "drafting";
+  const back: DraftStatus = status === "drafting" ? (proposed ? "awaiting_approval" : "discovery") : status;
+  // A built conversation goes on, about what it built: its workspace is now
+  // what it changes (refOf), and the next proposal is a change set to it.
+  const nextStatus: DraftStatus = job.kind === "reply" ? (back === "failed" ? (proposed ? "awaiting_approval" : "discovery") : back === "ready" ? "discovery" : back) : "drafting";
+  const goingOn = status === "ready" ? { targetWorkspaceId: row.targetWorkspaceId ?? row.workspaceId, changes: NONE } : {};
   // The claim and the files it brings are one write: a refused claim keeps no file.
   const claimed = await prisma.$transaction(async tx => {
     const done = await tx.novaWorkspaceDraft.updateMany({
       where: { id: row.id, profileId: row.profileId, updatedAt: row.updatedAt },
       data: {
         messages: json(withMessages(readMessages(row.messages), ...added)), pending: json(pending), jobId, failure: NONE,
-        status: nextStatus,
+        status: nextStatus, ...goingOn,
       },
     });
     if (done.count === 1 && files.length) await tx.novaWorkspaceDraftFile.createMany({ data: fileRows(row.id, files) });
@@ -383,7 +414,7 @@ export async function retryDraft(platformChatId: string, id: unknown, now = new 
   if (isPendingLive(readPending(row.pending), now)) return { ok: false, error: "busy", message: "Nova is still working on it.", draft: await viewOf(row, now) };
   if (!failure || failure.stage === "building") return { ok: false, error: "invalid", message: failure ? "Approve again to retry building it." : "Nothing failed here.", draft: await viewOf(row, now) };
   if (failure.stage === "reply") return claim(row, now, { kind: "reply", change: null }, []);
-  return claim(row, now, { kind: planOf(row.plan) ? "revise" : "draft", change: failure.change ?? null }, []);
+  return claim(row, now, { kind: planOf(row.plan) || readChangeSet(row.changes) ? "revise" : "draft", change: failure.change ?? null }, []);
 }
 
 // ── Running a job (after the request has been answered) ───────────────────────
@@ -397,11 +428,12 @@ export async function runJob(platformChatId: string, job: BuilderJob, deps: Buil
   if (!profile || !row || row.jobId !== job.jobId) return;
   try {
     if (job.kind === "reply") await runTurn(platformChatId, profile, row, job, deps, now);
+    else if (refOf(row)) await runChanges(platformChatId, profile, row, job, job.change ?? lastLearnerText(row), deps, now);
     else await runDraft(platformChatId, profile, row, job, job.change, deps, now);
   } catch (err) {
     console.error("[nova/builder] job failed:", (err as Error)?.name ?? "error");
     await settle(row.id, job.jobId, {
-      status: planOf(row.plan) ? "awaiting_approval" : "discovery",
+      status: (planOf(row.plan) && !refOf(row)) || readChangeSet(row.changes) ? "awaiting_approval" : "discovery",
       failure: { stage: job.kind === "reply" ? "reply" : "drafting", message: job.kind === "reply" ? REPLY_FAILED : DRAFT_FAILED, change: job.change },
       add: [message("nova", job.kind === "reply" ? REPLY_FAILED : DRAFT_FAILED, new Date(), { kind: "error" })],
     });
@@ -412,6 +444,10 @@ export async function runJob(platformChatId: string, job: BuilderJob, deps: Buil
 async function settle(id: string, jobId: string, change: {
   status?: DraftStatus; failure?: DraftFailure | null; add?: BuilderMessage[]; brief?: BuilderBrief; title?: string | null;
   plan?: { plan: WorkspacePlan; version: number; baseVersion: number };
+  // A change set to what it works on, applied like a plan: only on the version the job started from.
+  changes?: { set: ChangeSet; version: number; baseVersion: number };
+  // Something of theirs found from their words: what this conversation works on from now.
+  target?: Pick<ResourceRef, "workspaceId" | "subjectIds">;
 }): Promise<"applied" | "stale_plan" | "gone"> {
   const row = await prisma.novaWorkspaceDraft.findFirst({ where: { id, jobId }, select: { messages: true, status: true } });
   if (!row) return "gone";
@@ -422,7 +458,15 @@ async function settle(id: string, jobId: string, change: {
     ...(change.brief ? { brief: json(change.brief) } : {}),
     ...(change.title !== undefined ? { title: change.title } : {}),
     ...(change.status && canMove(statusOf(row.status), change.status) ? { status: change.status } : {}),
+    ...(change.target ? { targetWorkspaceId: change.target.workspaceId, targetSubjectIds: change.target.workspaceId ? [] : change.target.subjectIds } : {}),
   };
+  if (change.changes) {
+    const applied = await prisma.novaWorkspaceDraft.updateMany({
+      where: { id, jobId, version: change.changes.baseVersion },
+      data: { ...data, changes: json(change.changes.set), version: change.changes.version },
+    });
+    return applied.count === 1 ? "applied" : "stale_plan";
+  }
   if (change.plan) {
     const applied = await prisma.novaWorkspaceDraft.updateMany({
       where: { id, jobId, version: change.plan.baseVersion },
@@ -443,52 +487,152 @@ function proposalSummary(plan: WorkspacePlan): { milestones: string[]; tasks: st
   };
 }
 
+// The learner's last words in the conversation: the change asked for, when
+// the model said none.
+function lastLearnerText(row: Pick<Row, "messages">): string {
+  const last = [...readMessages(row.messages)].reverse().find(m => m.role === "user" && m.text);
+  return last?.text ?? "Apply what the learner asked for.";
+}
+
 async function runTurn(platformChatId: string, profile: { id: string; timezone: string | null; goals: string[] }, row: Row, job: BuilderJob, deps: BuilderDeps, now: Date) {
   const plan = planOf(row.plan);
+  const changes = readChangeSet(row.changes);
+  let ref = refOf(row);
   const before = readBrief(row.brief);
   const messages = readMessages(row.messages);
-  const { known, language } = await signupContext(platformChatId, profile);
+  const [{ known, language }, candidates] = await Promise.all([signupContext(platformChatId, profile), resourceCandidates(profile.id)]);
   const today = dayKey(now, resolveTimezone(profile.timezone));
-  const existing = await outlineOf(platformChatId, profile.id, row.targetWorkspaceId);
+  const existing = await outlineOf(platformChatId, profile.id, ref);
   const shared = await filesForModel(row.id);
   const reading = await (deps.read ?? readBuilderTurn)({
     today, messages: spoken(messages), brief: before, known, files: shared.files, pages: shared.pages, language,
-    proposal: plan ? { version: row.version, title: plan.title, ...proposalSummary(plan) } : null,
+    proposal: plan && !ref ? { version: row.version, title: plan.title, ...proposalSummary(plan) } : null,
     existing: existing ? { title: existing.title, subjects: existing.subjects, tasks: existing.tasks } : null,
+    changes: changes ? changes.ops.map(o => o.says) : null,
+    resources: resourceNames(candidates),
   });
   if (!reading) {
     await settle(row.id, job.jobId, { failure: { stage: "reply", message: REPLY_FAILED }, add: [message("nova", REPLY_FAILED, new Date(), { kind: "error" })] });
     return;
   }
-  const step = decideStep({ plan, brief: before, improving: Boolean(row.targetWorkspaceId) }, reading);
-  const brief = { ...nextBrief(before, reading, step), known };
-  const title = row.title ?? reading.title ?? brief.title;
+
+  // Something of theirs, named in a conversation that works on nothing yet:
+  // code finds it among their own records before anything new is proposed.
+  let found: ResourceRef | null = null;
+  let note: string | null = null;
+  if (!ref && !plan) {
+    const r = decideResource(reading.resource, candidates);
+    if (r.type === "choose" || r.type === "missing") {
+      const brief = { ...nextBrief(before, reading, { type: "ask", question: r.question }), known, choices: r.type === "choose" ? r.names : [] };
+      await settle(row.id, job.jobId, { brief, failure: null, add: [message("nova", r.question, new Date(), { kind: "question" })] });
+      return;
+    }
+    if (r.type === "found") {
+      found = r.ref;
+      ref = { workspaceId: r.ref.workspaceId, subjectIds: r.ref.subjectIds };
+      if (r.intent === "open") {
+        const brief = { ...nextBrief(before, reading, { type: "chat" }), known, choices: [], title: r.ref.title };
+        const text = `Here's ${r.ref.title} as it is in Kivo now, on the right. Tell me what you'd like to add or change; nothing changes until you approve it.`;
+        await settle(row.id, job.jobId, { brief, title: r.ref.title, target: ref, failure: null, add: [message("nova", text, new Date(), { kind: "chat" })] });
+        return;
+      }
+    } else if (reading.resource?.intent === "new") {
+      const same = matchResources(reading.resource.name, candidates);
+      if (same.length) note = `This will be a new workspace, separate from your ${same.slice(0, 2).map(x => x.name).join(" and ")}: nothing there changes.`;
+    }
+  }
+
+  // Found and asked to change: propose the change against what is there.
+  const step: Step = found ? { type: "draft", reason: "ready" } : decideStep({ plan: ref ? null : plan, brief: before, improving: Boolean(ref), changes: Boolean(changes) }, reading);
+  const brief = { ...nextBrief(before, reading, step), known, choices: [] as string[], ...(found ? { title: found.title } : {}) };
+  const title = found?.title ?? row.title ?? reading.title ?? brief.title;
+  const notes = note ? [message("nova", note, new Date(), { kind: "notice" })] : [];
 
   if (step.type === "ask" || step.type === "chat") {
     // Asked once: in the model's words, or as code settled on it when the reply asks nothing.
     const text = step.type === "ask" ? (step.overruled ? step.question : replyWithQuestion(reading.reply, step.question)) : reading.reply;
-    await settle(row.id, job.jobId, { brief, title, failure: null, add: [message("nova", text, new Date(), { kind: step.type === "ask" ? "question" : "chat" })] });
+    await settle(row.id, job.jobId, { brief, title, failure: null, add: [message("nova", text, new Date(), { kind: step.type === "ask" ? "question" : "chat" }), ...notes] });
     return;
   }
 
   // Draft or revise: say what Nova will do, mark the job's stage, then write.
-  const intro = step.type === "draft" && step.reason === "enough_questions" && !plan
-    ? "I have enough to sketch a first version. I'll put it on the right; correct anything that's off."
-    : reading.reply;
+  const intro = found
+    ? `I found ${found.title} in your Kivo. I'll propose the changes on the right, against what's there now; nothing changes until you approve them.`
+    : step.type === "draft" && step.reason === "enough_questions" && !plan
+      ? "I have enough to sketch a first version. I'll put it on the right; correct anything that's off."
+      : reading.reply;
   const moved = await prisma.novaWorkspaceDraft.updateMany({
     where: { id: row.id, jobId: job.jobId },
     data: {
       status: "drafting", brief: json(brief), title,
-      messages: json(withMessages(messages, message("nova", intro, new Date(), { kind: "chat" }))),
+      messages: json(withMessages(messages, message("nova", intro, new Date(), { kind: "chat" }), ...notes)),
       // The version the learner's message was sent on, not the one now:
       // an edit made since then is newer than anything this job writes.
-      pending: json({ kind: plan ? "revise" : "draft", stage: "writing", startedAt: now.toISOString(), baseVersion: readPending(row.pending)?.baseVersion ?? row.version } satisfies PendingJob),
+      pending: json({ kind: plan || changes ? "revise" : "draft", stage: "writing", startedAt: now.toISOString(), baseVersion: readPending(row.pending)?.baseVersion ?? row.version } satisfies PendingJob),
+      ...(found ? { targetWorkspaceId: found.workspaceId, targetSubjectIds: found.workspaceId ? [] : found.subjectIds } : {}),
     },
   });
   if (moved.count !== 1) return;
   const fresh = await rowOf(profile.id, row.id);
   if (!fresh || fresh.jobId !== job.jobId) return;
-  await runDraft(platformChatId, profile, fresh, job, step.type === "revise" ? step.change : null, deps, now);
+  if (ref) await runChanges(platformChatId, profile, fresh, job, step.type === "revise" ? step.change : (reading.change ?? lastLearnerText(fresh)), deps, now);
+  else await runDraft(platformChatId, profile, fresh, job, step.type === "revise" ? step.change : null, deps, now);
+}
+
+// A change set to what the conversation works on: operations on its records
+// by id, checked against them as they are now (builder-changes.ts). Written
+// only to the draft; the records change on approval.
+async function runChanges(platformChatId: string, profile: { id: string; timezone: string | null; goals: string[] }, row: Row, job: BuilderJob, change: string, deps: BuilderDeps, now: Date) {
+  const ref = refOf(row);
+  const before = readChangeSet(row.changes);
+  const brief = readBrief(row.brief);
+  const messages = spoken(readMessages(row.messages));
+  const today = dayKey(now, resolveTimezone(profile.timezone));
+  const baseVersion = readPending(row.pending)?.baseVersion ?? row.version;
+  const fallback: DraftStatus = before ? "awaiting_approval" : "discovery";
+  const [current, studied] = await Promise.all([ref ? resourceDetail(platformChatId, profile.id, ref, now) : Promise.resolve(null), studiedTopicIds(profile.id)]);
+  if (!current) {
+    const gone = "That isn't in your Kivo any more, so there's nothing to change. Start a new conversation to build it again.";
+    await settle(row.id, job.jobId, { status: fallback, failure: null, add: [message("nova", gone, new Date(), { kind: "error" })] });
+    return;
+  }
+  const written = await (deps.writeChanges ?? writeBuilderChanges)({
+    today, kind: brief.kind, facts: brief.facts,
+    current: {
+      title: current.title, subjects: current.subjects,
+      tasks: current.tasks.map(t => ({ id: t.id, title: t.title, status: t.status, dueDay: t.dueDay, priority: t.priority, topicName: t.topicName })),
+      dates: current.dates.map(d => ({ id: d.id, title: d.title, day: d.day })), notes: current.notes.map(n => n.title),
+    },
+    proposed: before ? bareOps(before) : null, change,
+    conversation: messages.slice(-CONVERSATION_FOR_PLAN).map(m => ({ role: m.role, text: m.text })),
+    files: (await filesForModel(row.id)).files,
+  });
+  if (!written.ok) {
+    await settle(row.id, job.jobId, { status: fallback, failure: { stage: "drafting", message: written.message, change }, add: [message("nova", written.message, new Date(), { kind: "error" })] });
+    return;
+  }
+  const set = checkChanges(written.ops, current, { today, studied });
+  if (set.ops.length === 0) {
+    const text = `I couldn't turn that into a change to ${current.title}${set.dropped.length ? `: ${set.dropped.slice(0, 3).join("; ")}` : ""}. Nothing is proposed; could you say it another way?`;
+    await settle(row.id, job.jobId, { status: fallback, failure: null, brief: { ...brief, dropped: set.dropped }, add: [message("nova", text, new Date(), { kind: "chat" })] });
+    return;
+  }
+  const version = baseVersion + 1;
+  const listed = set.ops.slice(0, 8).map(o => `- ${o.says}`).join("\n");
+  const text = [
+    `${before ? `Version ${version} of the changes to ${current.title}` : `Here's what I'd change in ${current.title}`}: ${changeCounts(set)}.`,
+    listed + (set.ops.length > 8 ? `\n- and ${set.ops.length - 8} more` : ""),
+    ...(set.dropped.length ? [`Left out: ${set.dropped.slice(0, 3).join("; ")}.`] : []),
+    "Everything else stays as it is. Nothing changes until you approve it.",
+  ].join("\n\n");
+  const result = await settle(row.id, job.jobId, {
+    status: "awaiting_approval", failure: null, brief: { ...brief, dropped: set.dropped },
+    add: [message("nova", text, new Date(), { kind: before ? "revision" : "proposal", version })],
+    changes: { set, version, baseVersion },
+  });
+  if (result === "stale_plan") {
+    await settle(row.id, job.jobId, { status: fallback, add: [message("nova", `You changed the proposed changes while I was writing, so I kept yours. Ask again if you still want: ${change.slice(0, 200)}`, new Date(), { kind: "notice" })] });
+  }
 }
 
 async function runDraft(platformChatId: string, profile: { id: string; timezone: string | null; goals: string[] }, row: Row, job: BuilderJob, change: string | null, deps: BuilderDeps, now: Date) {
@@ -497,7 +641,7 @@ async function runDraft(platformChatId: string, profile: { id: string; timezone:
   const messages = spoken(readMessages(row.messages));
   const today = dayKey(now, resolveTimezone(profile.timezone));
   const baseVersion = readPending(row.pending)?.baseVersion ?? row.version;
-  const existing = await outlineOf(platformChatId, profile.id, row.targetWorkspaceId);
+  const existing = await outlineOf(platformChatId, profile.id, refOf(row));
   const written = await (deps.write ?? writeBuilderPlan)({
     today, kind: brief.kind, facts: brief.facts, known: brief.known, assumptions: brief.assumptions, suggestions: brief.suggestions,
     conversation: messages.slice(-CONVERSATION_FOR_PLAN).map(m => ({ role: m.role, text: m.text })),
@@ -570,6 +714,33 @@ export async function editDraftPlan(platformChatId: string, id: unknown, body: {
   return { ok: true, draft: await viewOf(fresh, now) };
 }
 
+// The learner leaves out some of the proposed changes: `keep` names the ones
+// that stay, on the version they were looking at. What stays is checked again
+// against the records. Leaving out all of them leaves nothing proposed.
+export async function editDraftChanges(platformChatId: string, id: unknown, body: { keep?: unknown; baseVersion?: unknown }, now = new Date()): Promise<BuilderResponse> {
+  const profile = await profileOf(platformChatId);
+  const row = profile ? await rowOf(profile.id, id) : null;
+  if (!profile || !row) return { ok: false, error: "not_found", message: "That conversation isn't one of yours." };
+  const set = readChangeSet(row.changes);
+  const ref = refOf(row);
+  if (!set || !ref || !["awaiting_approval", "failed"].includes(statusOf(row.status))) return { ok: false, error: "closed", message: "There are no proposed changes to edit.", draft: await viewOf(row, now) };
+  if (body.baseVersion !== row.version) return { ok: false, error: "stale", message: "The proposed changes were updated since you opened them. These are the newest.", draft: await viewOf(row, now) };
+  if (!Array.isArray(body.keep) || !body.keep.every(k => typeof k === "string")) return { ok: false, error: "invalid", message: "That isn't a change Kivo can make." };
+  const keep = new Set(body.keep as string[]);
+  const current = await resourceDetail(platformChatId, profile.id, ref, now);
+  if (!current) return { ok: false, error: "not_found", message: "That isn't in your Kivo any more." };
+  const kept = checkChanges(bareOps({ ops: set.ops.filter(o => keep.has(o.id)), dropped: [] }), current, { today: dayKey(now, resolveTimezone(profile.timezone)), studied: await studiedTopicIds(profile.id) });
+  const saved = await prisma.novaWorkspaceDraft.updateMany({
+    where: { id: row.id, profileId: profile.id, version: row.version, jobId: null },
+    data: kept.ops.length
+      ? { changes: json({ ...kept, dropped: set.dropped }), version: row.version + 1, ...(statusOf(row.status) === "failed" ? { status: "awaiting_approval", failure: NONE } : {}) }
+      : { changes: NONE, version: row.version + 1, status: "discovery", failure: NONE },
+  });
+  const fresh = await rowOf(profile.id, row.id);
+  if (saved.count !== 1 || !fresh) return { ok: false, error: "stale", message: "The proposed changes were updated since you opened them. These are the newest.", ...(fresh ? { draft: await viewOf(fresh, now) } : {}) };
+  return { ok: true, draft: await viewOf(fresh, now) };
+}
+
 // ── Approval ──────────────────────────────────────────────────────────────────
 
 export interface ApproveInput { version?: unknown; addTo?: unknown; confirmAnother?: unknown }
@@ -583,7 +754,10 @@ export async function approveDraft(platformChatId: string, id: unknown, input: A
   if (status === "ready" && row.builtVersion === input.version) return { ok: true, draft: await viewOf(row, now) };
   if (status === "building") return { ok: false, error: "busy", message: "It's being built now.", draft: await viewOf(row, now) };
   const plan = planOf(row.plan);
-  if (!plan || (status !== "awaiting_approval" && !(status === "failed" && failureOf(row.failure)?.stage === "building"))) {
+  // A change set to something of theirs is what is approved there, not a plan.
+  const ref = refOf(row);
+  const set = ref ? readChangeSet(row.changes) : null;
+  if ((!set && (!plan || ref)) || (status !== "awaiting_approval" && !(status === "failed" && failureOf(row.failure)?.stage === "building"))) {
     return { ok: false, error: "not_ready", message: status === "ready" ? "This one is already built." : "There's no proposal to approve yet.", draft: await viewOf(row, now) };
   }
   if (input.version !== row.version) return { ok: false, error: "stale", message: "The proposal changed after you looked at it. Review this version, then approve it.", draft: await viewOf(row, now) };
@@ -610,11 +784,40 @@ export async function approveDraft(platformChatId: string, id: unknown, input: A
     return fresh!;
   };
 
+  if (ref && set) {
+    let changed: Awaited<ReturnType<typeof changeResource>>;
+    try {
+      changed = await changeResource(platformChatId, { ref, set, key: `d${row.id}v${row.version}`.slice(0, 60) }, now);
+    } catch (err) {
+      console.error("[nova/builder] change failed:", (err as Error)?.name ?? "error");
+      const message_ = "Applying the changes didn't work, and nothing was changed. Try approving again.";
+      const fresh = await back({ status: "failed", failure: json({ stage: "building", message: message_ }) }, [message("nova", message_, new Date(), { kind: "error" })]);
+      return { ok: false, error: "failed", message: message_, draft: await viewOf(fresh, now) };
+    }
+    if (!changed.ok) {
+      // The records moved on since the changes were proposed: Nova proposes
+      // them again against what is there (Try again), rather than approving again.
+      const failure = changed.error === "changed"
+        ? { stage: "drafting", message: changed.message, change: "Propose the same changes again against the records as they are now." }
+        : { stage: "building", message: changed.message };
+      const fresh = await back({ status: "failed", failure: json(failure) }, [message("nova", changed.message, new Date(), { kind: "error" })]);
+      return { ok: false, error: changed.error === "changed" ? "stale" : changed.error === "not_found" ? "not_found" : changed.error === "too_many" ? "too_many" : "failed", message: changed.message, draft: await viewOf(fresh, now) };
+    }
+    const c = changed.counts;
+    const said = `Done: ${changed.detail.title} is updated (${[c.added && `${c.added} added`, c.changed && `${c.changed} changed`, c.removed && `${c.removed} removed`].filter(Boolean).join(", ") || "nothing new; it was all there already"}). Everything else is as it was. See it on the Knowledge Map, Planner and Notes.`;
+    const fresh = await back(
+      { status: "ready", workspaceId: ref.workspaceId ?? row.workspaceId, builtVersion: row.version, failure: NONE, changes: NONE, ...(ref.workspaceId ? {} : { targetSubjectIds: changed.subjectIds }) },
+      [message("nova", said, new Date(), { kind: "built", version: row.version })],
+    );
+    await dropFiles(row.id);
+    return { ok: true, draft: await viewOf(fresh, now) };
+  }
+
   let result: Awaited<ReturnType<typeof createWorkspace>>;
   try {
     result = await createWorkspace(platformChatId, {
-      plan, clientKey: `d-${row.id}-v${row.version}`.slice(0, KEY_MAX),
-      addTo: row.targetWorkspaceId ?? (typeof input.addTo === "string" ? input.addTo : undefined),
+      plan: plan!, clientKey: `d-${row.id}-v${row.version}`.slice(0, KEY_MAX),
+      addTo: typeof input.addTo === "string" ? input.addTo : undefined,
       confirmAnother: input.confirmAnother === true,
     }, now);
   } catch (err) {
@@ -651,6 +854,20 @@ export async function cancelDraft(platformChatId: string, id: unknown, now = new
   const profile = await profileOf(platformChatId);
   const row = profile ? await rowOf(profile.id, id) : null;
   if (!profile || !row) return { ok: false, error: "not_found", message: "That conversation isn't one of yours." };
+  // Proposed changes to something of theirs: discarding them leaves the
+  // conversation going (and its records as they are).
+  if (refOf(row) && readChangeSet(row.changes)) {
+    const done = await prisma.novaWorkspaceDraft.updateMany({
+      where: { id: row.id, profileId: profile.id, status: { in: ["awaiting_approval", "failed", "drafting"] } },
+      data: {
+        changes: NONE, status: "discovery", pending: NONE, jobId: null, failure: NONE, version: row.version + 1,
+        messages: json(withMessages(readMessages(row.messages), message("nova", "Discarded the proposed changes. Nothing was changed.", now, { kind: "notice" }))),
+      },
+    });
+    const fresh = await rowOf(profile.id, row.id);
+    if (done.count !== 1 || !fresh) return { ok: false, error: "closed", message: "Those changes can't be discarded now.", ...(fresh ? { draft: await viewOf(fresh, now) } : {}) };
+    return { ok: true, draft: await viewOf(fresh, now) };
+  }
   const done = await prisma.novaWorkspaceDraft.updateMany({
     where: { id: row.id, profileId: profile.id, status: { in: ["discovery", "drafting", "awaiting_approval", "failed"] } },
     data: { status: "cancelled", pending: NONE, jobId: null },
@@ -659,6 +876,20 @@ export async function cancelDraft(platformChatId: string, id: unknown, now = new
   const fresh = await rowOf(profile.id, row.id);
   if (done.count !== 1) return { ok: false, error: "closed", message: statusOf(row.status) === "building" ? "It's being built now, so it can't be cancelled." : "This one can't be cancelled.", ...(fresh ? { draft: await viewOf(fresh, now) } : {}) };
   return { ok: true, draft: await viewOf(fresh!, now) };
+}
+
+// Deleting a conversation removes the conversation and its shared files, and
+// nothing else: what it built or changed (the workspace, its subjects,
+// topics, tasks, notes and dates) is the learner's and stays everywhere it
+// shows. Nothing points from those records to the draft. Not while it is
+// being built.
+export async function deleteDraft(platformChatId: string, id: unknown): Promise<{ ok: true } | { ok: false; error: "not_found" | "busy"; message: string }> {
+  const profile = await profileOf(platformChatId);
+  const row = profile ? await rowOf(profile.id, id) : null;
+  if (!profile || !row) return { ok: false, error: "not_found", message: "That conversation isn't one of yours." };
+  const done = await prisma.novaWorkspaceDraft.deleteMany({ where: { id: row.id, profileId: profile.id, status: { not: "building" } } });
+  if (done.count !== 1) return { ok: false, error: "busy", message: "It's being built right now. Delete it once that's done." };
+  return { ok: true };
 }
 
 // The live workspace a draft built (or any workspace of theirs).

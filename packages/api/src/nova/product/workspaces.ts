@@ -28,11 +28,14 @@ import { declareWorkspaceSubjectsIn, ensureSetupProfile } from "./setup";
 import { addDatesIn } from "./exams";
 import { createTasksIn } from "./tasks";
 import { createNotesIn, listNoteTitlesIn } from "./notes";
-import { subjectsWithTopics } from "./setup";
-import { listTasksWithKeyPrefix } from "./tasks";
-import { listExams } from "./exams";
+import { subjectsForMatching, subjectsWithTopics } from "./setup";
+import { TaskChanged, listTasksInSubjects, listTasksWithKeyPrefix, placeTasksIn, removeOpenTasksIn, updateTasksIn } from "./tasks";
+import { DateChanged, listExams, updateDatesIn } from "./exams";
+import { StaleStructure, checkStudyEdits, loadStudyStructure, playStudyEditsIn } from "./setup-edit";
+import type { StudyEdit } from "./setup-edit.types";
+import { bareOps, checkChanges, type ResourceCandidates } from "./builder-changes";
 import type { CreateWorkspaceResponse, WorkspaceSummary, WorkspacesView } from "./workspaces.types";
-import type { WorkspaceDetail } from "./builder.types";
+import type { ChangeOp, ChangeSet, ResourceRef, WorkspaceDetail } from "./builder.types";
 
 export const WORKSPACES_MAX = 100;
 const KEY_MIN = 8, KEY_MAX = 64;
@@ -186,27 +189,140 @@ export async function workspaceSummaries(profileId: string, ids: string[]): Prom
 
 // A workspace as it now is: the real records it made, read through their
 // owners. Its tasks are the ones keyed under it (renamed or moved ones as
-// they stand, deleted ones gone); its notes and dates are those filed under
-// its subjects. null: not theirs.
+// they stand, deleted ones gone) and those filed under its subjects; its
+// notes and dates are those filed under its subjects. null: not theirs.
 export async function workspaceDetail(platformChatId: string, profileId: string, id: string, now = new Date()): Promise<WorkspaceDetail | null> {
-  const row = await prisma.novaWorkspace.findFirst({ where: { id, profileId }, select: { ...SUMMARY_SELECT, clientKey: true } });
-  if (!row) return null;
-  const [summary, subjects, tasks, notes, exams] = await Promise.all([
-    summaries(profileId, [row]),
-    subjectsWithTopics(profileId, row.subjectIds),
-    listTasksWithKeyPrefix(profileId, `ws:${row.clientKey}:`, { now }),
-    listNoteTitlesIn(profileId, row.subjectIds),
+  return resourceDetail(platformChatId, profileId, { workspaceId: id, subjectIds: [] }, now);
+}
+
+// What a Build with Nova conversation works on, as it is now: a workspace of
+// theirs, or subjects that belong to none (their tasks, notes and dates are
+// those filed under them). Read through each record's owner, every time, so
+// the page shows what is stored and nothing else. null: not theirs.
+export async function resourceDetail(platformChatId: string, profileId: string, ref: Pick<ResourceRef, "workspaceId" | "subjectIds">, now = new Date()): Promise<WorkspaceDetail | null> {
+  const row = ref.workspaceId ? await prisma.novaWorkspace.findFirst({ where: { id: ref.workspaceId, profileId }, select: { ...SUMMARY_SELECT, clientKey: true } }) : null;
+  if (ref.workspaceId && !row) return null;
+  const subjectIds = row ? row.subjectIds : ref.subjectIds;
+  const [summary, subjects, keyed, filed, notes, exams] = await Promise.all([
+    row ? summaries(profileId, [row]) : Promise.resolve([]),
+    subjectsWithTopics(profileId, subjectIds),
+    row ? listTasksWithKeyPrefix(profileId, `ws:${row.clientKey}:`, { now }) : Promise.resolve([]),
+    listTasksInSubjects(profileId, subjectIds, { now }),
+    listNoteTitlesIn(profileId, subjectIds),
     listExams(platformChatId, now),
   ]);
+  if (!row && subjects.length === 0) return null;
+  const tasks = [...keyed, ...filed.filter(t => !keyed.some(k => k.id === t.id))];
   const names = new Set(subjects.map(s => s.name.toLowerCase()));
   return {
-    workspace: summary[0]!,
+    workspace: summary[0] ?? null,
+    title: row?.title ?? subjects.map(s => s.name).join(", "),
     subjects,
     tasks: tasks.map(t => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, dueDay: t.dueDay, subjectId: t.subjectId, topicName: t.topicName, estimatedMinutes: t.estimatedMinutes })),
     notes: notes.map(n => ({ id: n.id, title: n.title, subjectId: n.subjectId, updatedAt: n.updatedAt.toISOString() })),
     dates: (exams ?? []).filter(e => e.subjectName && names.has(e.subjectName.toLowerCase()))
       .map(e => ({ id: e.id, title: e.title, day: e.date, kind: e.type, subjectId: subjects.find(s => s.name.toLowerCase() === e.subjectName!.toLowerCase())?.id ?? null })),
   };
+}
+
+// Their workspaces and subjects, for finding the one a name refers to.
+export async function resourceCandidates(profileId: string): Promise<ResourceCandidates> {
+  const [workspaces, subjects] = await Promise.all([
+    prisma.novaWorkspace.findMany({ where: { profileId }, select: { id: true, title: true, subjectIds: true }, orderBy: { createdAt: "desc" }, take: WORKSPACES_MAX }),
+    subjectsForMatching(profileId),
+  ]);
+  return { workspaces, subjects };
+}
+
+// Topics of theirs with recorded study: renamed, never removed.
+export async function studiedTopicIds(profileId: string): Promise<Set<string>> {
+  const s = await loadStudyStructure(profileId);
+  return new Set(s.subjects.flatMap(x => x.topics.filter(t => t.hasHistory).map(t => t.id)));
+}
+
+// ── Changing what they have (Build with Nova, after approval) ─────────────────
+// An approved change set, applied in one transaction through each record's
+// own writer: topics through study setup's edit batch (playStudyEditsIn, the
+// same rules and lock as Subject Studio), tasks, dates and notes through
+// theirs. Checked again first against the records as they are now: a record
+// a change names that has gone, or a change the rules now refuse, stops the
+// whole set and nothing is written. Additions that are already there are
+// left out, so applying a set again adds nothing twice (tasks are keyed by
+// the change set, notes and dates are never added twice).
+
+export type ChangeResult =
+  | { ok: true; detail: WorkspaceDetail; counts: { added: number; changed: number; removed: number }; subjectIds: string[] }
+  | { ok: false; error: "not_found" | "changed" | "too_many" | "invalid"; message: string };
+
+const target = (o: ChangeOp): string | null =>
+  o.op === "rename_topic" || o.op === "remove_topic" ? `topic:${o.topicId}`
+  : o.op === "update_task" || o.op === "remove_task" ? `task:${o.taskId}`
+  : o.op === "update_date" ? `date:${o.dateId}` : o.op === "order_tasks" ? `order:${o.taskIds.join(",")}` : null;
+
+export async function changeResource(
+  platformChatId: string,
+  input: { ref: Pick<ResourceRef, "workspaceId" | "subjectIds">; set: ChangeSet; key: string },
+  now = new Date(),
+): Promise<ChangeResult> {
+  const ensured = await ensureSetupProfile(platformChatId);
+  if (!ensured) return { ok: false, error: "not_found", message: "Finish setting up with Nova first." };
+  const { profileId } = ensured;
+  const today = dayKey(now, resolveTimezone(ensured.timezone));
+  const row = input.ref.workspaceId ? await prisma.novaWorkspace.findFirst({ where: { id: input.ref.workspaceId, profileId }, select: { id: true, clientKey: true, subjectIds: true } }) : null;
+  if (input.ref.workspaceId && !row) return { ok: false, error: "not_found", message: "That workspace isn't one of yours any more." };
+  const current = await resourceDetail(platformChatId, profileId, input.ref, now);
+  if (!current) return { ok: false, error: "not_found", message: "Those subjects aren't yours any more." };
+  const structure = await loadStudyStructure(profileId);
+  const studied = new Set(structure.subjects.flatMap(x => x.topics.filter(t => t.hasHistory).map(t => t.id)));
+  const again = checkChanges(bareOps(input.set), current, { today, studied });
+  // A change or removal that no longer holds stops everything.
+  const lost = input.set.ops.filter(o => target(o) !== null && !again.ops.some(a => target(a) === target(o)));
+  if (lost.length > 0) {
+    return { ok: false, error: "changed", message: `Since Nova proposed this, ${lost.map(o => o.says.charAt(0).toLowerCase() + o.says.slice(1)).slice(0, 2).join("; ")} no longer fits what's there. Nothing was changed; ask Nova again.` };
+  }
+  const ops = again.ops;
+  const edits: StudyEdit[] = ops.flatMap((o): StudyEdit[] => (
+    o.op === "add_topics" ? [{ op: "add_topics", subjectId: o.subjectId, names: o.names }]
+    : o.op === "add_subject" ? [{ op: "add_subject", name: o.name, topics: o.topics }]
+    : o.op === "rename_topic" ? [{ op: "rename_topic", topicId: o.topicId, name: o.name }]
+    : o.op === "remove_topic" ? [{ op: "remove_topic", topicId: o.topicId }] : []));
+  if (checkStudyEdits(structure, edits).issues.length > 0) {
+    return { ok: false, error: "changed", message: "Your subjects changed since Nova proposed this. Nothing was changed; ask Nova again." };
+  }
+  const prefix = row ? `ws:${row.clientKey}:${input.key}-` : `nb:${input.key}-`;
+  const pick = <K extends ChangeOp["op"]>(k: K) => ops.filter((o): o is Extract<typeof o, { op: K }> => o.op === k);
+  try {
+    const subjectIds = await prisma.$transaction(async tx => {
+      await playStudyEditsIn(tx, profileId, edits, structure.version);
+      // A subject added here belongs to the workspace from now on.
+      const added = pick("add_subject").length
+        ? await tx.novaSubject.findMany({ where: { profileId, name: { in: pick("add_subject").map(o => o.name), mode: "insensitive" } }, select: { id: true } })
+        : [];
+      const ids = [...new Set([...(row?.subjectIds ?? input.ref.subjectIds), ...added.map(a => a.id)])];
+      const made = await createTasksIn(tx, profileId, pick("add_task").map(o => ({
+        title: o.title, priority: o.priority, subjectId: o.subjectId, topicName: o.topicName, dueDay: o.dueDay, clientKey: `${prefix}${o.key}`.slice(0, 120),
+      })));
+      if (!made.ok) throw new RefusedError("too_many", made.message);
+      await updateTasksIn(tx, profileId, pick("update_task").map(({ taskId, title, dueDay, priority }) => ({ taskId, title, dueDay, priority })));
+      await removeOpenTasksIn(tx, profileId, pick("remove_task").map(o => o.taskId));
+      for (const o of pick("order_tasks")) await placeTasksIn(tx, profileId, o.taskIds);
+      await addDatesIn(tx, profileId, pick("add_date").map(o => ({ title: o.title, subjectId: o.subjectId, kind: o.kind, day: o.day })), today, now);
+      await updateDatesIn(tx, profileId, pick("update_date").map(({ dateId, title, day }) => ({ dateId, title, day })), today, now);
+      const notes = await createNotesIn(tx, profileId, pick("add_note").map(o => ({ title: o.title, body: o.body, subjectId: o.subjectId, topicName: o.topicName })));
+      if (!notes.ok) throw new RefusedError("invalid", notes.message);
+      if (row && ids.length !== row.subjectIds.length) await tx.novaWorkspace.update({ where: { id: row.id }, data: { subjectIds: ids } });
+      return ids;
+    }, { timeout: 30_000, maxWait: 10_000 });
+    const detail = await resourceDetail(platformChatId, profileId, row ? { workspaceId: row.id, subjectIds: [] } : { workspaceId: null, subjectIds }, now);
+    const count = (e: string) => ops.filter(o => o.effect === e).length;
+    return { ok: true, detail: detail!, subjectIds, counts: { added: count("add"), changed: count("change"), removed: count("remove") } };
+  } catch (err) {
+    if (err instanceof RefusedError) return { ok: false, error: err.code, message: err.message };
+    if (err instanceof StaleStructure || err instanceof TaskChanged || err instanceof DateChanged || (err as { code?: string } | null)?.code === "P2002" || (err as { code?: string } | null)?.code === "P2025") {
+      return { ok: false, error: "changed", message: "Something here changed while this was being saved. Nothing was changed; ask Nova again." };
+    }
+    throw err;
+  }
 }
 
 // Removing a workspace removes its record only. Its subjects, topics, notes
