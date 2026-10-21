@@ -18,6 +18,13 @@ import { currentZoneName, isValidTimezone } from "../engines/learner-calendar";
 import { parseCheckinTime } from "../decision/proactive-decision";
 import { normalizeLearningContexts, type LearningContext } from "../product/learning-context";
 import { normalizeFirstFocus, type FirstFocus } from "../product/first-focus";
+import {
+  OBSTACLES, OBSTACLE_LABELS, WORKING_ON, WORKING_ON_LABELS, dailyMinutesFromWeekly, focusOfWorkingOn, readMultiAnswer, readWeeklyHours,
+  type MultiAnswer, type ObstacleId, type WeeklyHours, type WorkingOnId,
+} from "../product/onboarding-options";
+import { isTone, toneOfAccountability, type Tone } from "../product/tone";
+import { normalizeAccountability } from "../../personality/mentor-compatibility";
+import { REPLY_LANGUAGES, type ReplyLanguage } from "../types/understanding.types";
 
 export const LEARNING_CONTEXTS_KEY = "learningContexts";
 // What they asked Nova to help with first (product/first-focus.ts), kept
@@ -34,6 +41,50 @@ export function learningContextsIn(onboardingAnswers: unknown): LearningContext[
 export function firstFocusIn(onboardingAnswers: unknown): FirstFocus | null {
   if (!onboardingAnswers || typeof onboardingAnswers !== "object" || Array.isArray(onboardingAnswers)) return null;
   return normalizeFirstFocus((onboardingAnswers as Record<string, unknown>)[FIRST_FOCUS_KEY]);
+}
+
+// ── The v3 answers (product/onboarding-options.ts) ────────────────────────────
+// Each is kept under its own key in the same onboarding answers, and each is
+// read back on its own: one that is missing or unreadable is "not said" and
+// changes nothing about the others.
+export const ANSWER_KEYS = {
+  workingOn: "workingOn", weeklyHours: "weeklyHours", obstacles: "obstacles",
+  language: "language", tone: "tone", telegram: "telegram",
+} as const;
+
+const answersObject = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+
+export interface SignupAnswers {
+  workingOn:   MultiAnswer<WorkingOnId> | null;
+  weeklyHours: WeeklyHours | null;
+  obstacles:   MultiAnswer<ObstacleId> | null;
+  // The language they asked Nova to speak. null: not said.
+  language:    ReplyLanguage | null;
+  // Their chosen tone, or the one their older soft/hard answer stands for.
+  tone:        Tone | null;
+}
+
+export function signupAnswersIn(onboardingAnswers: unknown, accountabilityStyle: string | null = null): SignupAnswers {
+  const a = answersObject(onboardingAnswers) ?? {};
+  const language = REPLY_LANGUAGES.find(l => l === a[ANSWER_KEYS.language]) ?? null;
+  const tone = a[ANSWER_KEYS.tone];
+  return {
+    workingOn:   readMultiAnswer(a[ANSWER_KEYS.workingOn], WORKING_ON, WORKING_ON_LABELS),
+    weeklyHours: readWeeklyHours(a[ANSWER_KEYS.weeklyHours]),
+    obstacles:   readMultiAnswer(a[ANSWER_KEYS.obstacles], OBSTACLES, OBSTACLE_LABELS),
+    language,
+    tone:        isTone(tone) ? tone : toneOfAccountability(normalizeAccountability(accountabilityStyle) as "soft" | "hard" | null),
+  };
+}
+
+// For the setup page: what they asked for first, or, after v3, the kind of
+// work the first thing they said they are working on stands for.
+export function setupFocusIn(onboardingAnswers: unknown): FirstFocus | null {
+  const stated = firstFocusIn(onboardingAnswers);
+  if (stated) return stated;
+  const id = focusOfWorkingOn(signupAnswersIn(onboardingAnswers).workingOn);
+  return id ? { id, detail: null } : null;
 }
 
 const accountOf = (learnerId: string): { userId: string } | { telegramChatId: string } =>
@@ -86,6 +137,51 @@ export async function loadFirstFocus(platformChatId: string): Promise<FirstFocus
     select: { onboardingAnswers: true },
   }).catch(() => null);
   return account ? firstFocusIn(account.onboardingAnswers) : null;
+}
+
+// The same, for the setup page's templates and first step (setupFocusIn).
+export async function loadSetupFocus(platformChatId: string): Promise<FirstFocus | null> {
+  try {
+    const account = await prisma.userProfile.findFirst({ where: accountOf(platformChatId), select: { onboardingAnswers: true } });
+    return account ? setupFocusIn(account.onboardingAnswers) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Every v3 answer. Never throws: unreadable, the learner has said nothing.
+export async function loadSignupAnswers(platformChatId: string): Promise<SignupAnswers> {
+  let account: { onboardingAnswers: unknown; accountabilityStyle: string | null } | null = null;
+  try {
+    account = await prisma.userProfile.findFirst({
+      where:  accountOf(platformChatId),
+      select: { onboardingAnswers: true, accountabilityStyle: true },
+    });
+  } catch {
+    account = null;
+  }
+  return signupAnswersIn(account?.onboardingAnswers ?? null, account?.accountabilityStyle ?? null);
+}
+
+// Only how Nova speaks to them: the language and tone they chose.
+export async function loadVoicePreferences(platformChatId: string): Promise<{ language: ReplyLanguage | null; tone: Tone | null }> {
+  const { language, tone } = await loadSignupAnswers(platformChatId);
+  return { language, tone };
+}
+
+// The usual day a brand-new Nova profile starts with: the weekly time they
+// gave at sign-up spread over the week (onboarding-options.ts). For the
+// `create` half of the upserts that make the profile, and for nothing else,
+// as with the sign-up goal: a profile that exists keeps what it has.
+export async function seedDailyMinutesFromSignup(platformChatId: string): Promise<number | null> {
+  return dailyMinutesFromWeekly((await loadSignupAnswers(platformChatId)).weeklyHours);
+}
+
+// The two columns a usual day is kept in, for a profile being made. Nothing
+// stated: neither is given, and the profile says "not said".
+export function dailyColumns(minutes: number | null): { dailyStudyMinutes?: number; preferredStudyHoursPerDay?: number } {
+  if (minutes === null) return {};
+  return { dailyStudyMinutes: minutes, preferredStudyHoursPerDay: Math.round((minutes / 60) * 100) / 100 };
 }
 
 // The learner's timezone. Nova's own record first; if it has none, the zone

@@ -1,5 +1,9 @@
-// ─── Web onboarding (v2): what the quiz sends, checked ────────────────────────
-// Five steps, each kept because something reads its answer:
+// ─── Web onboarding: what the quiz sends, checked ─────────────────────────────
+// v3 (the current page) is checkOnboardingV3, at the end of this file. v2 is
+// kept below, unchanged, for a page loaded before v3 shipped: the server
+// still accepts it, through the same once-only write.
+//
+// v2 had five steps, each kept because something read its answer:
 //
 //   1. audience       → learningContexts (vocabulary, templates, a context line)
 //   2. first focus    → template order, the setup page's first step, a context
@@ -15,6 +19,12 @@
 
 import { AUDIENCES, checkFirstFocus, type Audience, type FirstFocus } from "./first-focus";
 import { validateStyleAnswers, type StyleAnswers } from "../../personality/style-items";
+import {
+  OBSTACLES, OBSTACLE_LABELS, TELEGRAM_ANSWERS, WORKING_ON, WORKING_ON_LABELS, checkMultiAnswer, checkWeeklyHours, withoutNotSure,
+  type MultiAnswer, type ObstacleId, type TelegramAnswer, type WeeklyHours, type WorkingOnId,
+} from "./onboarding-options";
+import { isTone, type Tone } from "./tone";
+import { REPLY_LANGUAGES, type ReplyLanguage } from "../types/understanding.types";
 
 export const ONBOARDING_VERSION = 2;
 export const DEFAULT_COMPANION_NAME = "Nova";
@@ -85,6 +95,105 @@ export function checkOnboardingV2(body: unknown): OnboardingCheck {
       accountabilityStyle: raw.accountabilityStyle,
       style:               style.answers,
       companionName:       name.name,
+    },
+  };
+}
+
+// ─── v3 ───────────────────────────────────────────────────────────────────────
+// Eight answers, each with a reader (onboarding-options.ts has the lists):
+//
+//   1. audience     → onboardingAnswers.learningContexts: vocabulary, the
+//                     order of templates and options, one context line
+//   2. working on   → onboardingAnswers.workingOn: the setup page's templates
+//                     and first step, one line in Nova's student context
+//   3. weekly hours → onboardingAnswers.weeklyHours: the usual day a new Nova
+//                     profile starts with (NovaAcademicProfile.dailyStudyMinutes,
+//                     the planner's limit), one context line
+//   4. obstacles    → onboardingAnswers.obstacles: a support section in Nova's
+//                     context, for the kinds of message it fits
+//   5. language     → onboardingAnswers.language: the language Nova speaks
+//                     when the message itself does not say (interaction/language.ts)
+//   6. tone         → onboardingAnswers.tone (+ accountabilityStyle kept in
+//                     step): the register line (decision/register.ts)
+//   7. telegram     → onboardingAnswers.telegram: whether the finish screen
+//                     offers the linking flow. Never a connection.
+//   8. creature     → UserProfile.creatureName: the creature's display name.
+//                     Nova stays Nova.
+//
+// No creature colour, appearance, check-in time or personality questions.
+
+export const ONBOARDING_V3 = 3;
+export const DEFAULT_CREATURE_NAME = "Kivo";
+export const CREATURE_NAME_MAX = 30;
+
+// Empty means the default; anything else is kept as typed, on one line.
+export function checkCreatureName(value: unknown): { ok: true; name: string } | { ok: false; message: string } {
+  if (value === undefined || value === null) return { ok: true, name: DEFAULT_CREATURE_NAME };
+  if (typeof value !== "string") return { ok: false, message: "The name should be text." };
+  const name = oneLine(value);
+  if (!name) return { ok: true, name: DEFAULT_CREATURE_NAME };
+  if ([...name].length > CREATURE_NAME_MAX) return { ok: false, message: `Keep the name to ${CREATURE_NAME_MAX} characters or fewer.` };
+  return { ok: true, name };
+}
+
+export interface OnboardingAnswersV3 {
+  audience:     Audience;
+  workingOn:    MultiAnswer<WorkingOnId>;
+  weeklyHours:  WeeklyHours;
+  obstacles:    MultiAnswer<ObstacleId>;
+  language:     ReplyLanguage;
+  tone:         Tone;
+  telegram:     TelegramAnswer;
+  creatureName: string;
+}
+
+// In the order asked, so the page can send the learner back to the first
+// answer that needs fixing.
+export const V3_FIELDS = ["audience", "workingOn", "weeklyHours", "obstacles", "language", "tone", "telegram", "creatureName"] as const;
+export type OnboardingFieldV3 = (typeof V3_FIELDS)[number];
+
+export type OnboardingCheckV3 =
+  | { ok: true; answers: OnboardingAnswersV3 }
+  | { ok: false; field: OnboardingFieldV3; message: string };
+
+export function isOnboardingV3(body: unknown): boolean {
+  return !!body && typeof body === "object" && (body as { version?: unknown }).version === ONBOARDING_V3;
+}
+
+const MULTI_MESSAGE = { empty: "Choose at least one, or add your own.", unknown: "Choose from the list, or add your own.", bad_entry: "Check the ones you added: each should be one short line." };
+
+export function checkOnboardingV3(body: unknown): OnboardingCheckV3 {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, field: "audience", message: "Nothing to save." };
+  const raw = body as Record<string, unknown>;
+
+  if (typeof raw.audience !== "string" || !(AUDIENCES as readonly string[]).includes(raw.audience)) {
+    return { ok: false, field: "audience", message: "Choose what you currently do." };
+  }
+  const workingOn = checkMultiAnswer(raw.workingOn, WORKING_ON, WORKING_ON_LABELS, { required: true });
+  if (!workingOn.ok) return { ok: false, field: "workingOn", message: MULTI_MESSAGE[workingOn.reason] };
+  const weekly = checkWeeklyHours(raw.weeklyHours);
+  if (!weekly.ok) return { ok: false, field: "weeklyHours", message: weekly.message };
+  const obstacles = checkMultiAnswer(raw.obstacles, OBSTACLES, OBSTACLE_LABELS, { required: true });
+  if (!obstacles.ok) return { ok: false, field: "obstacles", message: MULTI_MESSAGE[obstacles.reason] };
+  const language = REPLY_LANGUAGES.find(l => l === raw.language);
+  if (!language) return { ok: false, field: "language", message: "Choose the language Nova should speak." };
+  if (!isTone(raw.tone)) return { ok: false, field: "tone", message: "Choose how Nova should talk to you." };
+  const telegram = TELEGRAM_ANSWERS.find(t => t === raw.telegram);
+  if (!telegram) return { ok: false, field: "telegram", message: "Say whether you use Telegram." };
+  const name = checkCreatureName(raw.creatureName);
+  if (!name.ok) return { ok: false, field: "creatureName", message: name.message };
+
+  return {
+    ok: true,
+    answers: {
+      audience:     raw.audience as Audience,
+      workingOn:    workingOn.value,
+      weeklyHours:  weekly.value,
+      obstacles:    withoutNotSure(obstacles.value),
+      language,
+      tone:         raw.tone,
+      telegram,
+      creatureName: name.name,
     },
   };
 }

@@ -1,5 +1,5 @@
-// Web onboarding v2: every question kept has a use, and each use is checked
-// here. The audience comes first; the cosmetic questions are gone; the
+// Web onboarding v2 (still accepted from a page loaded before v3): every
+// question kept has a use, and each use is checked here. The audience comes first; the cosmetic questions are gone; the
 // preference questions are deterministic and never outrank what the learner
 // asks; the companion's name is a display name; finishing twice writes once.
 
@@ -211,76 +211,6 @@ describe("what Nova's prompt carries", () => {
   });
 });
 
-describe("the onboarding page and route (read from source)", () => {
-  const flow = repo("apps/web/components/onboarding-flow.tsx");
-  const route = repo("apps/api/onboarding/route.ts");
-  const completion = repo("packages/api/src/nova/product/onboarding-completion.ts");
-  const v2 = completion.slice(completion.indexOf("export function profileFromAnswers"));
-
-  it("asks who you are first, then what to help with, then how, then the name", () => {
-    const order = ["{ id: 'audience',", "{ id: 'focus',", "{ id: 'accountability',", "...STYLE_QUESTIONS.map", "{ id: 'name',"].map(s => flow.indexOf(s));
-    expect(order.every(i => i >= 0)).toBe(true);
-    expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(flow).toContain('legend="What best describes you right now?"');
-    expect(flow).toContain('legend="What would you most like Nova to help you with first?"');
-    expect(flow).toContain("What would you like to call your companion?");
-  });
-
-  it("reveals Nova before the naming step, and shows the chosen name while the answers save", () => {
-    expect(flow).toContain("if (STEPS[at + 1]?.id === 'name') { setScene('reveal'); return; }");
-    expect(flow).toContain('>NOVA</h1>');
-    const finish = flow.slice(flow.indexOf("async function finish()"), flow.indexOf("function next("));
-    expect(finish.indexOf("setScene('naming')")).toBeLessThan(finish.indexOf("await fetch('/api/onboarding'"));
-    expect(finish.indexOf("await moment;")).toBeLessThan(finish.indexOf("setDone(true)"));
-    // A failed save leaves the moment and shows why, with the answers kept.
-    expect(finish).toContain("setScene(null);");
-    expect(flow).toContain("prefers-reduced-motion: reduce");
-  });
-
-  it("asks nothing cosmetic: no creature, colour, egg or aspiration words", () => {
-    for (const gone of ["creatureColor", "creatureType", "COLORS", "Phoenix", "egg", "aspirationWords", "energyPattern", "corePain"]) {
-      expect([gone, flow.includes(gone)]).toEqual([gone, false]);
-    }
-    // And none of them is written for a v2 answer.
-    expect(v2).toContain("creatureType:        null,");
-    expect(v2).toContain("creatureColor:       null,");
-    expect(v2).toContain("creatureName:        answers.companionName,");
-  });
-
-  it("scores nothing with a model, and keeps the preference answers out of the profile", () => {
-    expect(route).not.toContain("generateOpenAIText");
-    expect(route).not.toContain("openai");
-    expect(route).toContain("await saveStyleAssessment(session.userId, checked.answers.style)");
-    expect(completion).not.toContain("openai");
-    expect(v2).not.toContain("style:");
-  });
-
-  it("completes once: a conditional write, and a second request is answered without writing", () => {
-    expect(completion).toContain('const written = await prisma.userProfile.updateMany({ where: { userId, onboardingComplete: false }, data: profileData })');
-    expect(completion).toContain('if (existing?.onboardingComplete) return "already_complete"');
-    expect(route).toContain("const outcome = await completeOnboardingOnce(session.userId, profileData)");
-    expect(route).toContain('if (outcome === "completed") {');
-    expect(route.indexOf('if (outcome === "completed") {')).toBeLessThan(route.indexOf("await afterWrite()"));
-  });
-
-  it("the companion stays Nova: the name never decides the persona", () => {
-    expect(v2).toContain('matchMentor({ domain: "study", accountabilityStyle: answers.accountabilityStyle })');
-    expect(v2).toContain("primaryPersona:      match.mentorId,");
-  });
-
-  it("every retained answer can be corrected after onboarding", () => {
-    const settings = repo("apps/api/settings/route.ts");
-    expect(settings).toContain("answerUpdates[FIRST_FOCUS_KEY] = checked.value");
-    expect(settings).toContain("profileUpdates.creatureName = checked.name");
-    expect(settings).toContain("answerUpdates[LEARNING_CONTEXTS_KEY] = contexts");
-    expect(repo("apps/api/personality/route.ts")).toContain("await restateStyle(session.userId, fields.style)");
-    expect(repo("apps/web/components/nova/checkin-settings.tsx")).toContain("accountabilityStyle");
-    expect(repo("apps/web/components/nova/help-preferences.tsx")).toContain("STYLE_QUESTIONS.map");
-  });
-
-  it("finishing goes to the app's own /home, on the host the learner signed in on", () => {
-    expect(flow).toContain("router.push('/home')");
-    expect(flow).not.toContain("thekivo.in");
-    expect(flow).not.toContain("NEXT_PUBLIC_APP_URL");
-  });
-});
+// The page, the route and Settings for the current flow (v3) are held by
+// onboarding-v3.test.ts. v2 answers are still accepted from a page loaded
+// before v3 shipped, so the checks above stay.

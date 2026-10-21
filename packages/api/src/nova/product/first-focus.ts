@@ -28,7 +28,7 @@ export type Audience = (typeof AUDIENCES)[number];
 
 export const AUDIENCE_LABEL: Record<Audience, { label: string; hint: string }> = {
   school:  { label: "School student",             hint: "Subjects, chapters, tests and board exams." },
-  college: { label: "College/university student", hint: "Courses, assignments, projects and semester exams." },
+  college: { label: "University student",         hint: "Courses, assignments, projects and semester exams." },
   working: { label: "Working professional",       hint: "A skill, a certification, an interview or a work project." },
 };
 

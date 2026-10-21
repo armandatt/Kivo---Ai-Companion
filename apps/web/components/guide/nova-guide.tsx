@@ -359,7 +359,7 @@ export function NovaGuide() {
           <Section topic={topic('start')} hidden={hide('start')} lead="Five minutes to set up, and Nova has what it needs to plan your days.">
             <Steps steps={[
               { title: 'Make your account', body: 'Sign up with email (Kivo sends an eight-digit code to confirm it) or continue with Google.' },
-              { title: 'Answer a few questions', body: 'Who you are (school, college or work), what you want help with first, four quick ones about how you like to be helped, and a name for your companion. They set Nova’s words, tone and where setup starts; they decide nothing else, and you can change every answer in Settings.' },
+              { title: 'Answer eight short questions', body: 'What you do, what you’re working on, how much time you have each week, what usually gets in the way, the language and tone Nova should use, whether you use Telegram, and a name for your creature. They set Nova’s words, tone, language and your usual daily time; they create no tasks or reminders, and you can change every answer in Settings.' },
               { title: 'Tell Nova your subjects', body: 'Name your subjects and their topics, your exam dates and how long you usually have. Or start from a template, like a computer science semester, and edit it.' },
               { title: 'Connect Telegram', body: 'Optional, and worth it: from Today or Settings. Nova can then plan, start sessions and log them from a chat.' },
             ]} />
@@ -581,7 +581,7 @@ export function NovaGuide() {
             </div>
             <Grid>
               <Feature title="English, Hinglish or Hindi">
-                Write in Hinglish and Nova answers in Hinglish, commands included; write in Hindi (Devanagari) and its replies are in Hindi. Each reply follows the message it answers, so switching is just writing in the other language.
+                Write in Hinglish and Nova answers in Hinglish, commands included; write in Hindi (Devanagari) and its replies are in Hindi. Each reply follows the message it answers, so switching is just writing in the other language. When a message doesn’t say, and when Nova messages first, it uses the language you chose in Settings → How Nova helps you.
               </Feature>
               <Feature title="Nudges, not alarms">
                 Nova checks in around the time you picked, on days you haven&apos;t studied yet, and otherwise messages first only when something is due: at most twice a day. Change the time in Settings; <span className="font-mono text-keppel-300">/settings</span> on Telegram turns it all off. It cannot set a one-off reminder yet, and says so if you ask.

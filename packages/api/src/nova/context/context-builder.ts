@@ -12,6 +12,7 @@ import { STATED_STYLE_HEADER } from "../../personality/style-items";
 import type { ContextNeed } from "../interaction/semantics";
 import { learningContextLine, normalizeLearningContexts } from "../product/learning-context";
 import { firstFocusLine, normalizeFirstFocus } from "../product/first-focus";
+import { OBSTACLES_HEADER, obstacleLines, weeklyHoursLine, workingOnLine } from "../product/onboarding-options";
 import { DEADLINE_RULES, deadlineType } from "../product/deadline-types";
 
 // "today", "tomorrow", "in N days": a count of calendar days, as the pages say it.
@@ -52,14 +53,28 @@ function buildStudentSection(ctx: NovaContext): string {
   if (name) lines.push(`Name: ${name}`);
   const learningFor = learningContextLine(normalizeLearningContexts(p.learningContexts ?? []) ?? []);
   if (learningFor) lines.push(learningFor);
-  const askedFirst = firstFocusLine(normalizeFirstFocus(p.firstFocus ?? null));
+  // What they are working on (v3) says more than the older single answer,
+  // and an account has one or the other.
+  const workingOn = workingOnLine(p.workingOn ?? null);
+  const askedFirst = workingOn ? null : firstFocusLine(normalizeFirstFocus(p.firstFocus ?? null));
+  if (workingOn) lines.push(workingOn);
   if (askedFirst) lines.push(askedFirst);
+  const weekly = weeklyHoursLine(p.weeklyHours ?? null);
+  if (weekly) lines.push(weekly);
   if (academic.length > 0) lines.push(academic.join(" | "));
   lines.push(`Joined: ${state.daysSinceJoined}d ago | Subjects: ${p.subjects.join(", ") || "none yet"}`);
   if (ctx.operatingStyle && ctx.operatingStyle.length > 0) {
     lines.push(ctx.operatingStyleStated ? STATED_STYLE_HEADER : OPERATING_STYLE_HEADER, ...ctx.operatingStyle.map(l => `- ${l}`));
   }
   return lines.join("\n");
+}
+
+// What they said usually gets in the way, as suggestions for how to help.
+// Absent when they said nothing or only "not sure".
+function buildSupportSection(ctx: NovaContext): string {
+  const lines = obstacleLines(ctx.userProfile.obstacles ?? null);
+  if (lines.length === 0) return "";
+  return [`## How to help (their own answer)`, OBSTACLES_HEADER, ...lines.map(l => `- ${l}`)].join("\n");
 }
 
 // What the learner said they are working toward. Absent when they have said
@@ -276,6 +291,7 @@ export function buildDynamicLayer(ctx: NovaContext): string {
   const sections = [
     buildStudentSection(ctx),
     buildGoalsSection(ctx),
+    buildSupportSection(ctx),
     buildStateSection(ctx),
     buildUnderstandingSection(ctx),
     buildActiveSessionSection(ctx),
@@ -340,6 +356,8 @@ export function buildFocusedLayer(ctx: NovaContext, needs: readonly ContextNeed[
     // Only when the message calls for it (interaction/semantics.ts): starting
     // a session or saying how long they have is not a reason to bring it up.
     has("goals") ? buildGoalsSection(ctx) : "",
+    // Only for the messages it can shape (interaction/semantics.ts).
+    has("support") ? buildSupportSection(ctx) : "",
     has("state") ? buildStateSection(ctx) : "",
     buildMessageSection(ctx),
     has("session") ? buildActiveSessionSection({ ...ctx, sessionAction: null }) : "",

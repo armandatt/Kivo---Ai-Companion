@@ -42,7 +42,7 @@ describe("the sign-up quiz survives a refresh", () => {
   it("clears the draft only once the server has saved the answers", () => {
     const finish = quiz.slice(quiz.indexOf("async function finish()"), quiz.indexOf("function next("));
     expect(finish.indexOf("if (!res.ok || !result?.success)")).toBeLessThan(finish.indexOf("clearDraft()"));
-    expect(finish.indexOf("clearDraft()")).toBeLessThan(finish.indexOf("setDone(true)"));
+    expect(finish.indexOf("clearDraft()")).toBeLessThan(finish.indexOf("setDone({"));
   });
   it("a stored position outside the quiz is ignored", () => {
     expect(quiz).toContain("Number.isInteger(parsed.at) && parsed.at >= 0 && parsed.at < STEPS.length");

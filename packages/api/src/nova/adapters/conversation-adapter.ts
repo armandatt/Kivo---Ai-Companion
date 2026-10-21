@@ -119,7 +119,8 @@ export async function loadConversationHistory(
 // this. Nothing is stored for it: it is read off the log each time, and it
 // changes the moment the learner writes in the other language.
 const LANGUAGE_LOOKBACK = 30;
-export async function loadReplyLanguage(userId: string): Promise<ReplyLanguage> {
+// `fallback`: the language they chose for Nova, when the log holds none yet.
+export async function loadReplyLanguage(userId: string, fallback: ReplyLanguage = "english"): Promise<ReplyLanguage> {
   const rows = await prisma.companionMessage.findMany({
     where:   { userId, role: "user" },
     orderBy: { createdAt: "desc" },
@@ -132,7 +133,7 @@ export async function loadReplyLanguage(userId: string): Promise<ReplyLanguage> 
     const known = REPLY_LANGUAGES.find(l => l === said);
     if (known) return known;
   }
-  return "english";
+  return fallback;
 }
 
 // Per-message classification history for the pattern detector, oldest first.

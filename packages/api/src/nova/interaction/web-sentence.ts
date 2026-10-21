@@ -12,7 +12,8 @@
 // what they said about their term, and adding an exam.
 
 import { prisma } from "@repo/db/client";
-import { loadConversationHistory, saveAssistantMessage, saveUserMessage } from "../adapters/conversation-adapter";
+import { loadConversationHistory, loadReplyLanguage, saveAssistantMessage, saveUserMessage } from "../adapters/conversation-adapter";
+import { loadVoicePreferences } from "../adapters/account-preferences-adapter";
 import { runUnderstandingBrain } from "../brains/understanding-brain";
 import { decideAction, type TurnAction } from "../decision/action-decision";
 import { safeReading } from "../decision/interpretation-safety";
@@ -35,6 +36,7 @@ import type { UnderstandingContext } from "../types/understanding.types";
 import { ensureSetupProfile } from "../product/setup";
 import { interpret } from "./semantics";
 import { runSetupTurn } from "./setup-turn";
+import { chooseLanguage, languageLine, scriptLanguage } from "./language";
 
 // The questions the web chat can ask and have answered in words. A Start
 // offer made on Telegram is not one of them: "yes" typed here must not start
@@ -113,8 +115,16 @@ export async function runWebSentence(input: WebSentenceInput): Promise<WebSenten
   // The one reading of this message, and what of it may be used.
   const read = await (input.understand ?? runUnderstandingBrain)(text, history, context);
   if (read.malformed) return { reply: TEXT.notUnderstood, intervention: null, decision: "unreadable", kind: "unclear" };
-  const understanding = safeReading(read, { today: day });
+  const safe = safeReading(read, { today: day });
+  // The reply the Response Brain words is in the language of this message,
+  // by the rule Telegram uses (chooseLanguage), with the language they chose
+  // for Nova in place of English. Lines code wrote stay English on the web.
+  const preferred = (await loadVoicePreferences(platformChatId).catch(() => ({ language: null }))).language;
+  const language  = scriptLanguage(text) ?? chooseLanguage(safe.request?.language, await loadReplyLanguage(user.id, preferred ?? "english"), text, preferred);
+  const understanding = safe.request ? { ...safe, request: { ...safe.request, language } } : safe;
   const interaction   = interpret(understanding);
+  const inTheirLanguage = languageLine(language);
+  const told = (directive: string) => inTheirLanguage ? `${directive}\n${inTheirLanguage}` : directive;
 
   const decision = decideAction(understanding, {
     session: context.session,
@@ -154,10 +164,10 @@ export async function runWebSentence(input: WebSentenceInput): Promise<WebSenten
     ...(generate
       ? {
           responseFallback: fallback,
-          directive: blocked ? SENTENCE_RUNS_NO_SESSION
+          directive: told(blocked ? SENTENCE_RUNS_NO_SESSION
             : plain ? `Nova's system already did or offered exactly this, and nothing else: "${plain.slice(0, 400)}". Say it in your own words in at most three short sentences. Do not say anything else was started, ended, saved, added or scheduled, and do not state a date, a number of days or any other figure that is not in that sentence or the context above. To start a session the student uses the Start button on this page.`
             : explaining ? NOTHING_WAS_DONE
-            : `${NOTHING_WAS_DONE} Reply in at most three short sentences.`,
+            : `${NOTHING_WAS_DONE} Reply in at most three short sentences.`),
         }
       : { scriptedReply: fallback }),
   });

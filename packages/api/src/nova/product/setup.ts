@@ -24,7 +24,7 @@ import { STUDY_TIMES, type SetupStatement, type StudyTime } from "../types/under
 import { addExam, EXAM_HORIZON_DAYS } from "./exams";
 import { seedGoalFromSignup } from "./goals";
 import { learnerKey } from "./learner-key";
-import { ensureLearnerTimezone, loadFirstFocus, loadLearningContexts } from "../adapters/account-preferences-adapter";
+import { dailyColumns, ensureLearnerTimezone, loadLearningContexts, loadSetupFocus, seedDailyMinutesFromSignup } from "../adapters/account-preferences-adapter";
 import { audienceOf, focusTemplateIds } from "./first-focus";
 import { setupVocabulary, type LearningContext } from "./learning-context";
 import { templatesFor } from "./templates";
@@ -131,8 +131,11 @@ async function loadLearner(platformChatId: string) {
 }
 type Learner = NonNullable<Awaited<ReturnType<typeof loadLearner>>>;
 
-async function viewOf(learner: Learner, now: Date, learningContexts: LearningContext[]): Promise<SetupView> {
+async function viewOf(learner: Learner, now: Date, learningContexts: LearningContext[], platformChatId: string): Promise<SetupView> {
   const profile = learner.novaAcademicProfile;
+  // Before a profile exists, the usual day is the one it will be made with:
+  // the weekly time they gave at sign-up (seedDailyMinutesFromSignup).
+  const seededDaily = profile ? null : await seedDailyMinutesFromSignup(platformChatId);
   const exams = profile
     ? await prisma.novaExam.findMany({
         where:   { profileId: profile.id, scheduledAt: { gte: new Date(now.getTime() - DAY_MS) } },
@@ -146,7 +149,7 @@ async function viewOf(learner: Learner, now: Date, learningContexts: LearningCon
     subjects:      subjects.map(s => ({ name: s.name, topicCount: s.topics.length })),
     upcomingExams: exams.length,
     studyTime:     profile?.preferredStudyTime ?? null,
-    dailyMinutes:  profile ? statedDailyMinutes(profile) : null,
+    dailyMinutes:  profile ? statedDailyMinutes(profile) : seededDaily,
   };
   return {
     subjects,
@@ -165,8 +168,8 @@ async function viewOf(learner: Learner, now: Date, learningContexts: LearningCon
 export async function loadSetup(platformChatId: string, now = new Date()): Promise<SetupView | null> {
   const learner = await loadLearner(platformChatId);
   if (!learner) return null;
-  const [learningContexts, firstFocus] = await Promise.all([loadLearningContexts(platformChatId), loadFirstFocus(platformChatId)]);
-  const view = await viewOf(learner, now, learningContexts);
+  const [learningContexts, firstFocus] = await Promise.all([loadLearningContexts(platformChatId), loadSetupFocus(platformChatId)]);
+  const view = await viewOf(learner, now, learningContexts, platformChatId);
   // What they asked for first leads the templates; the rest keep their order.
   const preferred = focusTemplateIds(firstFocus, audienceOf(learningContexts));
   return { ...view, firstFocus, templateIds: templatesFor(learningContexts, preferred).map(t => t.id) };
@@ -242,7 +245,7 @@ export async function previewSetup(platformChatId: string, raw: unknown, now = n
   if (!learner) return { status: "not_ready" };
   const today = dayKey(now, resolveTimezone(learner.novaAcademicProfile?.timezone ?? null));
   const { draft, issues } = normalizeSetupDraft(raw, today);
-  const { changes, issues: more } = changesOf(await viewOf(learner, now, await loadLearningContexts(platformChatId)), draft, routine);
+  const { changes, issues: more } = changesOf(await viewOf(learner, now, await loadLearningContexts(platformChatId), platformChatId), draft, routine);
   return { status: "ok", draft, changes, issues: [...issues, ...more] };
 }
 
@@ -285,11 +288,12 @@ export async function saveSetup(platformChatId: string, raw: unknown, now = new 
   // A profile made here is the learner's first: it starts with what they said
   // at sign-up they are working toward. One that exists is left as it is.
   const firstGoals = learner.novaAcademicProfile ? [] : await seedGoalFromSignup(prisma, platformChatId);
+  const firstDaily = learner.novaAcademicProfile ? null : await seedDailyMinutesFromSignup(platformChatId);
 
   const write = () => prisma.$transaction(async tx => {
     const profile = await tx.novaAcademicProfile.upsert({
       where:  { userId: learner.id },
-      create: { userId: learner.id, goals: firstGoals },
+      create: { userId: learner.id, goals: firstGoals, ...dailyColumns(firstDaily) },
       update: {},
       select: { id: true, subjects: { select: { id: true, name: true } } },
     });
@@ -338,7 +342,7 @@ export async function saveSetup(platformChatId: string, raw: unknown, now = new 
     await addExam(platformChatId, { title: e.title ?? `${e.subjectName} ${suffix}`, subjectName: e.subjectName, date: e.date, kind: e.type }, now);
   }
 
-  const setup = await viewOf((await loadLearner(platformChatId))!, now, learningContexts);
+  const setup = await viewOf((await loadLearner(platformChatId))!, now, learningContexts, platformChatId);
   return { status: "saved", changes: preview.changes, setup };
 }
 
@@ -442,7 +446,7 @@ export async function ensureSetupProfile(platformChatId: string): Promise<{ prof
   const profile = learner.novaAcademicProfile
     ?? await prisma.novaAcademicProfile.upsert({
       where:  { userId: learner.id },
-      create: { userId: learner.id, goals: await seedGoalFromSignup(prisma, platformChatId) },
+      create: { userId: learner.id, goals: await seedGoalFromSignup(prisma, platformChatId), ...dailyColumns(await seedDailyMinutesFromSignup(platformChatId)) },
       update: {},
       select: { id: true, timezone: true },
     });

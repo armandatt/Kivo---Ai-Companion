@@ -11,9 +11,9 @@ import { buildOnboardingSchedulePayload } from "@repo/api/services/mentorIntake.
 import { matchMentor, type MentorMatch } from "@repo/api/personality/mentor-compatibility"
 import { scoreSignal, validateSignalAnswers, type PersonalitySignal, type SignalAnswers } from "@repo/api/personality/signal-scoring"
 import { recordOnboardingMatch, saveStyleAssessment, type MatchResolution } from "@repo/api/personality/personality.service"
-import { checkOnboardingV2, isOnboardingV2 } from "@repo/api/nova/product/onboarding-answers"
+import { checkOnboardingV2, checkOnboardingV3, isOnboardingV2, isOnboardingV3 } from "@repo/api/nova/product/onboarding-answers"
 //@ts-ignore
-import { completeOnboardingOnce, profileFromAnswers } from "@repo/api/nova/product/onboarding-completion"
+import { completeOnboardingOnce, profileFromAnswers, profileFromAnswersV3 } from "@repo/api/nova/product/onboarding-completion"
 
 export async function POST(req: Request) {
   try {
@@ -34,11 +34,23 @@ export async function POST(req: Request) {
 
     const body = await req.json().catch(() => null)
 
-    // The current quiz (v2) and, for a page loaded before it shipped, the
-    // older payload. Both end in the same one-time write below.
+    // The current quiz (v3) and, for a page loaded before it shipped, v2 and
+    // the older payload. All end in the same one-time write below.
     let profileData: Record<string, unknown>
     let afterWrite: () => Promise<void>
-    if (isOnboardingV2(body)) {
+    if (isOnboardingV3(body)) {
+      // Checked here on its own: the page's own check is a convenience.
+      const checked = checkOnboardingV3(body)
+      if (!checked.ok) {
+        return NextResponse.json({ success: false, error: checked.message, field: checked.field }, { status: 400 })
+      }
+      const v3 = profileFromAnswersV3(checked.answers, readTimezone((body as { timezone?: unknown }).timezone))
+      profileData = v3.profileData
+      afterWrite = () => recordOnboardingMatch({
+        userId: session.userId, answers: null, signal: null,
+        resolution: "engine", match: v3.match, assignedMentorId: v3.profileData.primaryPersona,
+      })
+    } else if (isOnboardingV2(body)) {
       const checked = checkOnboardingV2(body)
       if (!checked.ok) {
         return NextResponse.json({ success: false, error: checked.message, field: checked.field }, { status: 400 })
