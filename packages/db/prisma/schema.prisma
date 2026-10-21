@@ -1540,7 +1540,29 @@ model NovaWorkspaceDraft {
   updatedAt         DateTime @updatedAt
 
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  files   NovaWorkspaceDraftFile[]
 
   @@unique([profileId, clientKey])
   @@index([profileId, updatedAt])
+}
+
+// A PDF or photo the learner shared in a Build with Nova conversation, so
+// Nova can read it on later messages and when it writes the proposal. Only
+// product/builder.ts reads or writes it. Deleted when the conversation is
+// built or cancelled; removed with the draft.
+model NovaWorkspaceDraftFile {
+  id        String   @id @default(cuid())
+  draftId   String
+  name      String
+  // Read from the bytes on upload, never the browser's word.
+  mimeType  String
+  bytes     Bytes
+  size      Int
+  // A PDF's page count when it states one.
+  pages     Int?
+  createdAt DateTime @default(now())
+
+  draft NovaWorkspaceDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
+  @@index([draftId])
 }

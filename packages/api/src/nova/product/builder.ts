@@ -38,17 +38,22 @@ import { WORKING_ON_LABEL, weeklyHoursLabel } from "./onboarding-options";
 import type { LearningContext } from "./learning-context";
 import { ensureSetupProfile, subjectNames } from "./setup";
 import { checkWorkspacePlan, planCounts, type WorkspacePlan } from "./workspace-plan";
-import { writeBuilderPlan } from "./workspace-generation";
+import { checkFiles, writeBuilderPlan } from "./workspace-generation";
+import type { LlmAttachment } from "../../services/llmProviders";
 import { readBuilderTurn } from "./builder-conversation";
 import { createWorkspace, recentWorkspaceTitles, similarWorkspaces, workspaceDetail, workspaceSummaries } from "./workspaces";
 import {
   MESSAGE_MAX, TALKING, canMove, decideStep, describeChanges, emptyBrief, isPendingLive, learnerWords, message,
   needsReply, nextBrief, planChanges, readBrief, readMessages, readPending, spoken, withMessages,
 } from "./builder-state";
-import type { BriefFact, BuilderBrief, BuilderMessage, BuilderResponse, DraftFailure, DraftListView, DraftStatus, DraftView, PendingJob } from "./builder.types";
+import type { BriefFact, BuilderBrief, BuilderMessage, BuilderResponse, DraftFailure, DraftFile, DraftListView, DraftStatus, DraftView, PendingJob } from "./builder.types";
 import type { WorkspaceCounts } from "./workspaces.types";
 
 export const OPEN_DRAFTS_MAX = 50;
+// Files one conversation may hold, in number and in bytes (one message
+// carries at most FILES_MAX files of FILES_TOTAL_BYTES together).
+export const DRAFT_FILES_MAX = 6;
+export const DRAFT_FILE_BYTES_MAX = 12 * 1024 * 1024;
 const KEY_MIN = 8, KEY_MAX = 64;
 const CONVERSATION_FOR_PLAN = 24;
 
@@ -98,6 +103,53 @@ async function rowOf(profileId: string, id: unknown): Promise<Row | null> {
   return prisma.novaWorkspaceDraft.findFirst({ where: { id, profileId }, select: ROW });
 }
 
+// ── Shared files ──────────────────────────────────────────────────────────────
+// The bytes are read only for a model job; every view lists names and sizes.
+
+async function filesListed(draftId: string): Promise<DraftFile[]> {
+  const rows = await prisma.novaWorkspaceDraftFile.findMany({ where: { draftId }, select: { id: true, name: true, mimeType: true, size: true, pages: true }, orderBy: { createdAt: "asc" } });
+  return rows;
+}
+
+async function filesForModel(draftId: string): Promise<{ files: LlmAttachment[]; pages: Record<string, number | null> }> {
+  const rows = await prisma.novaWorkspaceDraftFile.findMany({ where: { draftId }, select: { name: true, mimeType: true, bytes: true, pages: true }, orderBy: { createdAt: "asc" } });
+  return {
+    files: rows.map(r => ({ name: r.name, mimeType: r.mimeType, data: Buffer.from(r.bytes).toString("base64") })),
+    pages: Object.fromEntries(rows.map(r => [r.name, r.pages])),
+  };
+}
+
+type Checked = { ok: true; files: Array<LlmAttachment & { pages: number | null; size: number }> } | { ok: false; message: string };
+
+// Files sent with a message: checked by their bytes (checkFiles), then
+// against what the conversation already holds. A name it already has is
+// numbered, so every file is one source.
+async function checkShared(raw: unknown, draftId: string | null): Promise<Checked> {
+  if (raw === undefined || raw === null || (Array.isArray(raw) && raw.length === 0)) return { ok: true, files: [] };
+  const checked = checkFiles(raw);
+  if (!checked.ok) return { ok: false, message: checked.message };
+  const held = draftId ? await prisma.novaWorkspaceDraftFile.findMany({ where: { draftId }, select: { name: true, size: true } }) : [];
+  if (held.length + checked.files.length > DRAFT_FILES_MAX) return { ok: false, message: `A conversation can hold up to ${DRAFT_FILES_MAX} files. Start a new one for more.` };
+  const added = checked.files.map(f => ({ ...f, size: Buffer.from(f.data, "base64").length, pages: checked.pages[f.name] ?? null }));
+  if (held.reduce((n, f) => n + f.size, 0) + added.reduce((n, f) => n + f.size, 0) > DRAFT_FILE_BYTES_MAX) {
+    return { ok: false, message: `Files in one conversation can add up to ${DRAFT_FILE_BYTES_MAX / 1024 / 1024} MB.` };
+  }
+  const names = new Set(held.map(f => f.name));
+  for (const f of added) {
+    let name = f.name, i = 2;
+    while (names.has(name)) name = `${f.name} (${i++})`;
+    names.add(name);
+    f.name = name;
+  }
+  return { ok: true, files: added };
+}
+
+const fileRows = (draftId: string, files: Array<LlmAttachment & { pages: number | null; size: number }>) =>
+  files.map(f => ({ draftId, name: f.name, mimeType: f.mimeType, bytes: Buffer.from(f.data, "base64"), size: f.size, pages: f.pages }));
+
+// Built or cancelled: the files have done their job and are not kept.
+const dropFiles = (draftId: string) => prisma.novaWorkspaceDraftFile.deleteMany({ where: { draftId } });
+
 // ── What Kivo already knows (never asked again) ───────────────────────────────
 
 const CONTEXT_WORDS: Record<LearningContext, string> = { school: "school student", college: "university student", working: "working professional", other: "something else" };
@@ -135,15 +187,17 @@ async function viewOf(row: Row, now: Date, counts: WorkspaceCounts | null = null
   const pending = readPending(row.pending);
   const messages = readMessages(row.messages);
   const ids = [row.targetWorkspaceId, row.workspaceId].filter((x): x is string => Boolean(x));
-  const [summaries, similar] = await Promise.all([
+  const [summaries, similar, files] = await Promise.all([
     workspaceSummaries(row.profileId, ids),
     status === "awaiting_approval" && plan && !row.targetWorkspaceId ? similarWorkspaces(row.profileId, plan) : Promise.resolve([]),
+    filesListed(row.id),
   ]);
   return {
     id: row.id, status, origin: row.origin === "telegram" ? "telegram" : "web",
     title: row.title, messages, brief: readBrief(row.brief), plan, version: row.version,
     pending: isPendingLive(pending, now) ? pending : null,
     failure: failureOf(row.failure),
+    files,
     target: summaries.find(w => w.id === row.targetWorkspaceId) ?? null,
     workspace: summaries.find(w => w.id === row.workspaceId) ?? null,
     builtVersion: row.builtVersion,
@@ -188,6 +242,8 @@ export interface StartInput {
   clientKey:          unknown;
   // Their opening message, if they typed one.
   text?:              unknown;
+  // PDFs or photos shared with it: [{ name, data (base64) }].
+  files?:             unknown;
   // An existing workspace of theirs to improve.
   targetWorkspaceId?: unknown;
 }
@@ -216,18 +272,25 @@ export async function startDraft(platformChatId: string, input: StartInput, now 
   }
 
   const text = textOf(input.text);
-  const claim = (opts.claim ?? true) && text !== "";
+  const shared = await checkShared(input.files, null);
+  if (!shared.ok) return { ok: false, error: "invalid", message: shared.message };
+  const claim = (opts.claim ?? true) && (text !== "" || shared.files.length > 0);
   const jobId = claim ? randomUUID() : null;
   const pending: PendingJob | null = claim ? { kind: "reply", stage: "reading", startedAt: now.toISOString(), baseVersion: 0 } : null;
   const brief: BuilderBrief = { ...emptyBrief(), known: await knownFacts(platformChatId, { id: profileId, goals: (await profileOf(platformChatId))?.goals ?? [] }) };
   try {
-    const row = await prisma.novaWorkspaceDraft.create({
-      data: {
-        profileId, clientKey: input.clientKey, origin: opts.origin ?? "web", status: "discovery",
-        messages: json(text ? [message("user", text, now)] : []), brief: json(brief),
-        targetWorkspaceId: target, pending: pending ? json(pending) : undefined, jobId,
-      },
-      select: ROW,
+    const opening = text || shared.files.length ? [message("user", text, now, shared.files.length ? { files: shared.files.map(f => ({ name: f.name, pages: f.pages })) } : {})] : [];
+    const row = await prisma.$transaction(async tx => {
+      const made = await tx.novaWorkspaceDraft.create({
+        data: {
+          profileId, clientKey: input.clientKey as string, origin: opts.origin ?? "web", status: "discovery",
+          messages: json(opening), brief: json(brief),
+          targetWorkspaceId: target, pending: pending ? json(pending) : undefined, jobId,
+        },
+        select: ROW,
+      });
+      if (shared.files.length) await tx.novaWorkspaceDraftFile.createMany({ data: fileRows(made.id, shared.files) });
+      return made;
     });
     return { ok: true, draft: await viewOf(row, now), job: jobId ? { draftId: row.id, jobId, kind: "reply", change: null } : null };
   } catch (err) {
@@ -260,7 +323,7 @@ export type ClaimResult =
 
 // The learner said something (or opened a draft that waits for Nova's
 // answer: `resume`). Claims the draft's one job; the route runs it.
-export async function postMessage(platformChatId: string, id: unknown, body: { text?: unknown; resume?: unknown }, now = new Date()): Promise<ClaimResult> {
+export async function postMessage(platformChatId: string, id: unknown, body: { text?: unknown; resume?: unknown; files?: unknown }, now = new Date()): Promise<ClaimResult> {
   const profile = await profileOf(platformChatId);
   const row = profile ? await rowOf(profile.id, id) : null;
   if (!row) return { ok: false, error: "not_found", message: "That conversation isn't one of yours." };
@@ -272,23 +335,31 @@ export async function postMessage(platformChatId: string, id: unknown, body: { t
   }
   const messages = readMessages(row.messages);
   const text = textOf(body.text);
-  if (!text && !(body.resume === true && needsReply(messages, null, now))) return { ok: false, error: "invalid", message: "Say something first." };
-  return claim(row, now, { kind: "reply", change: null }, text ? [message("user", text, now)] : []);
+  const shared = await checkShared(body.files, row.id);
+  if (!shared.ok) return { ok: false, error: "invalid", message: shared.message, draft: await viewOf(row, now) };
+  if (!text && shared.files.length === 0 && !(body.resume === true && needsReply(messages, null, now))) return { ok: false, error: "invalid", message: "Say something first." };
+  const said = text || shared.files.length ? [message("user", text, now, shared.files.length ? { files: shared.files.map(f => ({ name: f.name, pages: f.pages })) } : {})] : [];
+  return claim(row, now, { kind: "reply", change: null }, said, shared.files);
 }
 
-async function claim(row: Row, now: Date, job: { kind: PendingJob["kind"]; change: string | null }, added: BuilderMessage[]): Promise<ClaimResult> {
+async function claim(row: Row, now: Date, job: { kind: PendingJob["kind"]; change: string | null }, added: BuilderMessage[], files: Array<LlmAttachment & { pages: number | null; size: number }> = []): Promise<ClaimResult> {
   const jobId = randomUUID();
   const pending: PendingJob = { kind: job.kind, stage: job.kind === "reply" ? "reading" : "writing", startedAt: now.toISOString(), baseVersion: row.version };
   const status = statusOf(row.status);
   // A stale drafting job (its process went away) leaves the draft where it was.
   const back: DraftStatus = status === "drafting" ? (planOf(row.plan) ? "awaiting_approval" : "discovery") : status;
   const nextStatus: DraftStatus = job.kind === "reply" ? (back === "failed" ? (planOf(row.plan) ? "awaiting_approval" : "discovery") : back) : "drafting";
-  const claimed = await prisma.novaWorkspaceDraft.updateMany({
-    where: { id: row.id, profileId: row.profileId, updatedAt: row.updatedAt },
-    data: {
-      messages: json(withMessages(readMessages(row.messages), ...added)), pending: json(pending), jobId, failure: NONE,
-      status: nextStatus,
-    },
+  // The claim and the files it brings are one write: a refused claim keeps no file.
+  const claimed = await prisma.$transaction(async tx => {
+    const done = await tx.novaWorkspaceDraft.updateMany({
+      where: { id: row.id, profileId: row.profileId, updatedAt: row.updatedAt },
+      data: {
+        messages: json(withMessages(readMessages(row.messages), ...added)), pending: json(pending), jobId, failure: NONE,
+        status: nextStatus,
+      },
+    });
+    if (done.count === 1 && files.length) await tx.novaWorkspaceDraftFile.createMany({ data: fileRows(row.id, files) });
+    return done;
   });
   const fresh = await prisma.novaWorkspaceDraft.findFirst({ where: { id: row.id, profileId: row.profileId }, select: ROW });
   if (claimed.count !== 1 || !fresh) return { ok: false, error: "busy", message: "Nova is still on your last message.", ...(fresh ? { draft: await viewOf(fresh, now) } : {}) };
@@ -372,8 +443,9 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
   const known = await knownFacts(platformChatId, profile);
   const today = dayKey(now, resolveTimezone(profile.timezone));
   const existing = await outlineOf(platformChatId, profile.id, row.targetWorkspaceId);
+  const shared = await filesForModel(row.id);
   const reading = await (deps.read ?? readBuilderTurn)({
-    today, messages: spoken(messages), brief: before, known,
+    today, messages: spoken(messages), brief: before, known, files: shared.files, pages: shared.pages,
     proposal: plan ? { version: row.version, title: plan.title, ...proposalSummary(plan) } : null,
     existing: existing ? { title: existing.title, subjects: existing.subjects, tasks: existing.tasks } : null,
   });
@@ -426,6 +498,7 @@ async function runDraft(platformChatId: string, profile: { id: string; timezone:
     current: before,
     change: before ? change ?? "Apply what the learner said last." : null,
     existing,
+    files: (await filesForModel(row.id)).files,
   });
   const fallback: DraftStatus = before ? "awaiting_approval" : "failed";
   if (!written.ok) {
@@ -475,6 +548,8 @@ export async function editDraftPlan(platformChatId: string, id: unknown, body: {
   const ownLinks = [...stored.resources, ...stored.phases.flatMap(p => p.resources)].filter(r => r.origin === "user" && r.url).map(r => r.url).join(" ");
   const checked = checkWorkspacePlan(body.plan, {
     today: dayKey(now, resolveTimezone(profile.timezone)),
+    // Page references stay only for files shared in this conversation.
+    files: (await filesListed(row.id)).map(f => f.name),
     userText: `${learnerWords(readMessages(row.messages))} ${ownLinks}`,
   });
   if (!checked.ok) return { ok: false, error: "invalid", message: checked.message, draft: await viewOf(row, now) };
@@ -560,6 +635,7 @@ export async function approveDraft(platformChatId: string, id: unknown, input: A
     { status: "ready", workspaceId: result.workspace.id, builtVersion: row.version, failure: NONE },
     [message("nova", said, new Date(), { kind: "built", version: row.version })],
   );
+  await dropFiles(row.id);
   return { ok: true, draft: await viewOf(fresh, now, counts) };
 }
 
@@ -572,6 +648,7 @@ export async function cancelDraft(platformChatId: string, id: unknown, now = new
     where: { id: row.id, profileId: profile.id, status: { in: ["discovery", "drafting", "awaiting_approval", "failed"] } },
     data: { status: "cancelled", pending: NONE, jobId: null },
   });
+  if (done.count === 1) await dropFiles(row.id);
   const fresh = await rowOf(profile.id, row.id);
   if (done.count !== 1) return { ok: false, error: "closed", message: statusOf(row.status) === "building" ? "It's being built now, so it can't be cancelled." : "This one can't be cancelled.", ...(fresh ? { draft: await viewOf(fresh, now) } : {}) };
   return { ok: true, draft: await viewOf(fresh!, now) };

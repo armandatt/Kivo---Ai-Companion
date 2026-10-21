@@ -65,13 +65,41 @@ function Facts({ title, facts, tone }: { title: string; facts: BriefFact[] | str
 
 // What Nova has understood: the learner's words, their record, Nova's
 // assumptions and suggestions, each said for what it is.
+// The files shared in the conversation, and, once a proposal exists, whether
+// Nova reported reading each one.
+function SharedFiles({ draft, plan }: { draft: DraftView; plan: WorkspacePlan | null }) {
+  if (draft.files.length === 0) return null
+  return (
+    <div data-files>
+      <p className={H}>Your files</p>
+      <ul className="mt-2 space-y-1.5 text-sm">
+        {draft.files.map(f => {
+          const src = plan?.sources.find(s => s.file === f.name)
+          return (
+            <li key={f.id} className="flex items-start gap-2" data-file-read={src ? String(src.read) : 'pending'}>
+              <FileText aria-hidden className={cn('mt-0.5 size-4 shrink-0', src && !src.read ? 'text-amber-400' : 'text-action-ink')} />
+              <span className="min-w-0 text-foreground/80"><span className="font-medium text-foreground">{f.name}</span>
+                {' · '}{f.pages ? `${f.pages} pages` : f.mimeType === 'application/pdf' ? 'PDF' : 'photo'}
+                {src ? (src.read ? ' · read for the proposal' : ` · not read${src.note ? `: ${src.note}` : ''}`) : ''}</span>
+            </li>
+          )
+        })}
+      </ul>
+      <p className="mt-2 text-xs text-subtle">Kept with this conversation so you can ask about them; deleted once it&apos;s built or cancelled.</p>
+    </div>
+  )
+}
+
 export function Understanding({ draft }: { draft: DraftView }) {
   const b = draft.brief
+  const said = b.facts.filter(f => !f.file)
+  const fromFiles = b.facts.filter(f => f.file).map(f => ({ label: `${f.label} (${f.file})`, value: f.value }))
   const any = b.facts.length + b.known.length + b.assumptions.length + b.suggestions.length > 0
   if (!any) return null
   return (
     <div className="grid gap-5 sm:grid-cols-2">
-      <Facts title="You told Nova" facts={b.facts} tone="yours" />
+      <Facts title="You told Nova" facts={said} tone="yours" />
+      <Facts title="From your files" facts={fromFiles} tone="yours" />
       <Facts title="From your Kivo profile" facts={b.known} tone="known" />
       <Facts title="Nova is assuming" facts={b.assumptions} tone="assumed" />
       <Facts title="Nova suggests" facts={b.suggestions} tone="suggested" />
@@ -93,6 +121,7 @@ function Overview({ plan, draft, editable, set }: { plan: WorkspacePlan; draft: 
           <div key={k} className={cn(CARD, 'px-3 py-2.5')}><dt className="text-[11px] text-subtle">{k}</dt><dd className="mt-0.5 text-lg font-semibold tabular-nums text-foreground">{v}</dd></div>
         ))}
       </dl>
+      <SharedFiles draft={draft} plan={plan} />
       <Understanding draft={draft} />
       {plan.assumptions.length > 0 && (
         <div>
@@ -343,6 +372,7 @@ export function DraftPlayground({ state, view, onView }: { state: DraftState; vi
               <p className="mt-1">As you talk, what Nova understands fills in below. When there&apos;s enough, Nova proposes a structure you can edit right here before anything is created.</p>
             </div>
           )}
+          <SharedFiles draft={draft} plan={null} />
           <Understanding draft={draft} />
         </div>
       </div>

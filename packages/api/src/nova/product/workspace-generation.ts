@@ -251,6 +251,8 @@ export interface BuilderPlanRequest {
   current:      unknown | null;
   change:       string | null;
   existing:     { title: string; subjects: string[]; tasks: string[]; notes: string[] } | null;
+  // PDFs and photos shared in the conversation, attached for the model to read.
+  files?:       LlmAttachment[];
 }
 
 export function builderPlanPrompt(p: BuilderPlanRequest): string {
@@ -268,7 +270,7 @@ export function builderPlanPrompt(p: BuilderPlanRequest): string {
     p.current ? `CURRENT PROPOSAL (JSON):\n${JSON.stringify(p.current).slice(0, 24_000)}` : "CURRENT PROPOSAL: none yet.",
     `CHANGE ASKED: ${p.change ?? "none; write the first version"}`,
     `CONVERSATION:\n${p.conversation.map(m => `${m.role === "user" ? "LEARNER" : "NOVA"}: ${m.text}`).join("\n")}`,
-    "FILES: none",
+    `FILES: ${p.files?.length ? p.files.map(f => `${f.name} (${f.mimeType})`).join(", ") : "none"}`,
   ].join("\n\n");
 }
 
@@ -277,12 +279,12 @@ export async function writeBuilderPlan(p: BuilderPlanRequest, generate: Generate
   try {
     raw = await generate({
       model: "gpt-4o", systemInstruction: `${PLAN_SYSTEM}\n${BUILDER_RULES}`, prompt: builderPlanPrompt(p), maxOutputTokens: 8000,
-      deadlineMs: PLAN_DEADLINE_MS, attemptMs: PLAN_ATTEMPT_MS,
+      deadlineMs: PLAN_DEADLINE_MS, attemptMs: PLAN_ATTEMPT_MS, ...(p.files?.length ? { attachments: p.files } : {}),
     });
   } catch {
     return { ok: false, unavailable: true, message: "Nova couldn't write the proposal just now. Nothing was lost; try again." };
   }
   const parsed = parsePlanReply(raw);
   if (!parsed) return { ok: false, message: "Nova's proposal came back in a form Kivo couldn't use. Try again." };
-  return withNoResearch(checkWorkspacePlan({ ...parsed, kind: "custom", templateId: null, templateVersion: null }, { today: p.today, files: [], userText: p.learnerText }));
+  return withNoResearch(checkWorkspacePlan({ ...parsed, kind: "custom", templateId: null, templateVersion: null }, { today: p.today, files: (p.files ?? []).map(f => f.name), userText: p.learnerText }));
 }

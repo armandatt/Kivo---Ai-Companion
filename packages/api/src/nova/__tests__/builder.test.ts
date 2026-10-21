@@ -233,13 +233,57 @@ describe("what the model is given", () => {
   });
 });
 
+describe("PDFs and photos in the conversation", () => {
+  const PDF = { name: "syllabus.pdf", mimeType: "application/pdf", data: Buffer.from("%PDF-1.4 x").toString("base64") };
+  const input = (): TurnInput => ({
+    today: TODAY, messages: [message("user", "Here's my syllabus", NOW, { files: [{ name: "syllabus.pdf", pages: 12 }] })], brief: emptyBrief(), known: [],
+    proposal: null, existing: null, files: [PDF], pages: { "syllabus.pdf": 12 },
+  });
+  it("a fact from a shared file is kept with its file; one naming a file nobody shared is an assumption", () => {
+    const r = readTurn(reply({ facts: [
+      { label: "Exam date", value: "12 December", file: "Syllabus.PDF" },
+      { label: "Units", value: "five", file: "notes.pdf" },
+    ] }), "Here's my syllabus", ["syllabus.pdf"])!;
+    expect(r.facts).toEqual([{ label: "Exam date", value: "12 December", file: "syllabus.pdf" }]);
+    expect(r.assumptions).toEqual(["Units: five"]);
+  });
+  it("the model is told which files it has and which message shared them, and gets the files to read", async () => {
+    const p = turnPrompt(input());
+    expect(p).toContain("FILES (attached; the learner's material): syllabus.pdf (PDF, 12 pages)");
+    expect(p).toContain("LEARNER: [shared syllabus.pdf] Here's my syllabus");
+    const calls: Array<Record<string, unknown>> = [];
+    await readBuilderTurn(input(), (async (req: Record<string, unknown>) => { calls.push(req); return JSON.stringify(reply({ next: "chat", reply: "Unit 3 covers deadlocks (page 4)." })); }) as never);
+    expect(calls[0]!.attachments).toEqual([PDF]);
+    // Reading a file takes longer: the job's deadline is longer, not the request's.
+    expect(calls[0]!.deadlineMs).toBe(75_000);
+    const plain = { ...input(), files: [] };
+    await readBuilderTurn(plain, (async (req: Record<string, unknown>) => { calls.push(req); return "{}"; }) as never);
+    expect(calls[1]!.attachments).toBeUndefined();
+    expect(calls[1]!.deadlineMs).toBe(25_000);
+  });
+  it("the proposal is written with the files attached, and page references to them are kept", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const out = await writeBuilderPlan({
+      today: TODAY, kind: "exam", facts: [], known: [], assumptions: [], suggestions: [], conversation: [], learnerText: "",
+      current: null, change: null, existing: null, files: [PDF],
+    }, (async (req: Record<string, unknown>) => { calls.push(req); return JSON.stringify({
+      title: "OS exam", subjects: [{ name: "OS", topics: [{ name: "Deadlocks", sources: [{ file: "syllabus.pdf", page: 4 }, { file: "made-up.pdf", page: 1 }] }] }],
+      sources: [{ file: "syllabus.pdf", read: true, pages: 12 }],
+    }); }) as never);
+    expect(calls[0]!.attachments).toEqual([PDF]);
+    expect(String(calls[0]!.prompt)).toContain("FILES: syllabus.pdf (application/pdf)");
+    expect(out.ok && out.plan.subjects[0]!.topics[0]!.sources).toEqual([{ file: "syllabus.pdf", page: 4 }]);
+    expect(out.ok && out.plan.sources).toEqual([{ file: "syllabus.pdf", read: true, pages: 12, note: null }]);
+  });
+});
+
 describe("who writes what (read from source)", () => {
   const files = (dir: string): string[] => require("node:fs").readdirSync(dir, { withFileTypes: true }).flatMap((e: { name: string; isDirectory(): boolean }) =>
     e.isDirectory() ? (e.name.startsWith("__") ? [] : files(join(dir, e.name))) : e.name.endsWith(".ts") ? [join(dir, e.name)] : []);
   const nova = join(__dirname, "..");
 
   it("builder.ts is the only code that touches NovaWorkspaceDraft, and creates through workspaces.ts", () => {
-    const touching = files(nova).filter(f => readFileSync(f, "utf8").includes("novaWorkspaceDraft.")).map(f => f.slice(nova.length + 1));
+    const touching = files(nova).filter(f => readFileSync(f, "utf8").includes("novaWorkspaceDraft.") || readFileSync(f, "utf8").includes("novaWorkspaceDraftFile.")).map(f => f.slice(nova.length + 1));
     expect(touching).toEqual(["product/builder.ts"]);
     const b = read("product/builder.ts");
     for (const table of ["novaSubject.", "novaTask.", "novaNote.", "novaExam.", "novaTopicMastery", "novaWorkspace."]) expect([table, b.includes(table)]).toEqual([table, false]);

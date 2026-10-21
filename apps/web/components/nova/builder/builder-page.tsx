@@ -11,7 +11,7 @@ import { BUTTON_QUIET } from '@/components/nova/workspace/ui'
 import { cn } from '@/lib/utils'
 import { loadWorkspaces } from '@/components/nova/templates/templates-api'
 import * as api from './builder-api'
-import { Composer, Conversation, NovaAvatar, STATUS_LABEL } from './conversation'
+import { Composer, Conversation, NovaAvatar, STATUS_LABEL, type Upload } from './conversation'
 import { LiveWorkspace } from './live-workspace'
 import { DraftPlayground } from './playground'
 import type { PlaygroundView } from './plan-edit'
@@ -40,7 +40,7 @@ function readSplit(): number {
 
 // The first screen: say anything, or improve something already built.
 export function BuildStart({ onStart, workspaces, drafts, busy, error, compact = false }: {
-  onStart: (text: string, targetWorkspaceId?: string) => Promise<boolean>; workspaces: WorkspaceSummary[]; drafts: DraftListItem[]
+  onStart: (text: string, targetWorkspaceId?: string, files?: Upload[]) => Promise<boolean>; workspaces: WorkspaceSummary[]; drafts: DraftListItem[]
   busy: boolean; error: string | null; compact?: boolean
 }) {
   const [seed, setSeed] = useState('')
@@ -55,7 +55,8 @@ export function BuildStart({ onStart, workspaces, drafts, busy, error, compact =
           <p className="mt-1.5 text-[15px] leading-relaxed text-foreground/70">Start with a rough idea: a project, an exam, a skill, your semester or something at work. Nova asks what it needs, proposes a structure you can edit, and builds nothing until you approve it.</p>
         </div>
       </div>
-      <Composer key={key} initial={seed} onSend={text => onStart(text)} disabled={busy} placeholder="e.g. I'm building TrackerX, a project tracker for small teams" />
+      <Composer key={key} initial={seed} onSend={(text, files) => onStart(text, undefined, files)} disabled={busy} placeholder="e.g. I'm building TrackerX, a project tracker for small teams" />
+      <p className="-mt-3 text-xs text-subtle">You can attach a syllabus, notes or a photo of a plan (PDF, PNG, JPEG or WebP, up to 3 MB at a time). Nova reads it and you can ask about it.</p>
       {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
       <div>
         <p className="mb-2 text-xs text-subtle">Or begin from</p>
@@ -131,16 +132,16 @@ export function BuilderPage() {
   useEffect(() => {
     void api.listDrafts().then(r => { if ('status' in r) setDrafts(r.drafts) })
     void loadWorkspaces().then(r => { if ('status' in r) setWorkspaces(r.workspaces) })
-  }, [draftId, draft?.status])
+  }, [draftId, draft?.status, draft?.title])
 
   // A new proposal or version: the playground tab says so on a phone.
   const seen = useRef(0)
   const fresh = Boolean(draft?.plan) && (draft?.version ?? 0) > seen.current && tab === 'chat'
   useEffect(() => { if (tab === 'playground' && draft) seen.current = draft.version }, [tab, draft])
 
-  const start = useCallback(async (text: string, targetWorkspaceId?: string) => {
+  const start = useCallback(async (text: string, targetWorkspaceId?: string, files: Upload[] = []) => {
     setStarting(true); setStartError(null)
-    const res = await api.startDraft({ clientKey: api.newClientKey(), ...(text ? { text } : {}), ...(targetWorkspaceId ? { targetWorkspaceId } : {}) })
+    const res = await api.startDraft({ clientKey: api.newClientKey(), ...(text ? { text } : {}), ...(files.length ? { files: files.map(f => ({ name: f.name, data: f.data })) } : {}), ...(targetWorkspaceId ? { targetWorkspaceId } : {}) })
     setStarting(false)
     if (!res.ok) { setStartError(res.message); return false }
     router.push(`/build?draft=${encodeURIComponent(res.draft.id)}`)

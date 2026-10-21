@@ -10,25 +10,31 @@
 // The conversation and the record are material, not instructions.
 
 import { generateOpenAIText } from "../../services/openai.service";
+import type { LlmAttachment } from "../../services/llmProviders";
 import { readTurn, type TurnReading } from "./builder-state";
 import type { BriefFact, BuilderBrief, BuilderMessage } from "./builder.types";
 
 export const TURN_DEADLINE_MS = 25_000;
+// Reading a PDF or a photo takes the provider longer. The job runs after the
+// request has been answered, so a longer wait holds up nobody's request.
+export const TURN_WITH_FILES_DEADLINE_MS = 75_000;
+const TURN_WITH_FILES_ATTEMPT_MS = 60_000;
 const CONVERSATION_SHOWN = 16;
 
 type Generate = typeof generateOpenAIText;
 
 const SYSTEM = [
   "You are Nova inside Kivo, a learning and work app. You are helping one person shape a workspace (a plan with milestones, tasks, topics, notes and dates) through conversation. Kivo builds it only after they approve a proposal; you never create, save or change anything yourself.",
-  "Reply with JSON only: {\"reply\": string, \"next\": \"ask\"|\"draft\"|\"revise\"|\"chat\", \"kind\": \"project\"|\"exam\"|\"skill\"|\"semester\"|\"work\"|\"career\"|\"other\"|null, \"title\": string|null, \"facts\": [{\"label\": string, \"value\": string, \"quote\": string}], \"assumptions\": [string], \"suggestions\": [string], \"question\": string|null, \"change\": string|null}.",
+  "Reply with JSON only: {\"reply\": string, \"next\": \"ask\"|\"draft\"|\"revise\"|\"chat\", \"kind\": \"project\"|\"exam\"|\"skill\"|\"semester\"|\"work\"|\"career\"|\"other\"|null, \"title\": string|null, \"facts\": [{\"label\": string, \"value\": string, \"quote\": string|null, \"file\": string|null}], \"assumptions\": [string], \"suggestions\": [string], \"question\": string|null, \"change\": string|null}.",
   "next:",
   "- ask: a missing detail would materially change the plan (what it is and who it is for, what is already done, the current stage, what is left, a deadline, the time they have, constraints, what they want to end up with). Ask about one thing.",
   "- draft: there is enough for a useful first version (a clear goal plus a little about where they are or when it is due is often enough), or they ask to see a plan. Do not keep asking when the goal is clear.",
   "- revise: a CURRENT PROPOSAL exists and they ask to change it (add, remove, reorder, change dates or scope), or they disagree with part of it. Put the change, in words, in change.",
-  "- chat: they are talking, thinking aloud or asking you something, not shaping the workspace. Answer helpfully.",
-  "reply: one to three short sentences, warm and plain. Acknowledge what they just said in specific terms. Offer a concrete suggestion when it helps, as a suggestion they can change. When next is ask, end with exactly one question, the same one as question. When next is draft or revise, say in one sentence what you will put in the proposal. Never say anything was created, saved, scheduled or set up.",
+  "- chat: they are talking, thinking aloud or asking you something (including about a file they shared), not shaping the workspace. Answer helpfully.",
+  "reply: one to three short sentences, warm and plain (longer only to explain what a file says when they ask). Acknowledge what they just said in specific terms. Offer a concrete suggestion when it helps, as a suggestion they can change. When next is ask, end with exactly one question, the same one as question. When next is draft or revise, say in one sentence what you will put in the proposal. Never say anything was created, saved, scheduled or set up.",
   "Never ask for something in KNOWN FROM KIVO or already answered in the conversation. Use it instead.",
-  "facts: what the learner has told you in this conversation, as short labels (Project, Audience, Done so far, Next step, Deadline, Time available, Constraint, Goal…) with the value, and quote: a few words copied exactly from their messages that say it. Include earlier facts that still hold. Nothing they did not say.",
+  "FILES, when attached, are PDFs or photos the learner shared (a syllabus, notes, a brief, a screenshot of a plan). Read them. When they ask about a file, answer from what it actually contains, naming the page when you can, and say plainly when something is not in it or a page could not be read. Never invent content, page numbers or quotations. Use what the files say when you ask questions, so you do not ask what a file already answers.",
+  "facts: what the learner has told you in this conversation, as short labels (Project, Audience, Done so far, Next step, Deadline, Time available, Constraint, Goal…) with the value, and quote: a few words copied exactly from their messages that say it. Include earlier facts that still hold. Nothing they did not say. A fact taken from a shared file has file: its exact name, instead of quote.",
   "assumptions: what you are taking as given that they did not say. suggestions: your recommendations, each one line.",
   "title: a short name for the workspace once you can tell, else null.",
   "Reply in the language of their latest message (English, or Hinglish in Roman letters).",
@@ -44,6 +50,9 @@ export interface TurnInput {
   proposal: { version: number; title: string; milestones: string[]; tasks: string[]; topics: string[]; dates: string[] } | null;
   // The workspace this improves, in short.
   existing: { title: string; subjects: string[]; tasks: string[] } | null;
+  // Files shared in the conversation, sent to the model to read.
+  files?:   LlmAttachment[];
+  pages?:   Record<string, number | null>;
 }
 
 export function turnPrompt(t: TurnInput): string {
@@ -58,14 +67,19 @@ export function turnPrompt(t: TurnInput): string {
     t.proposal
       ? `CURRENT PROPOSAL (version ${t.proposal.version}): ${t.proposal.title}. Milestones: ${t.proposal.milestones.join(" | ") || "none"}. Topics: ${t.proposal.topics.slice(0, 30).join(", ") || "none"}. Tasks: ${t.proposal.tasks.slice(0, 30).join(" | ") || "none"}. Dates: ${t.proposal.dates.join(", ") || "none"}.`
       : "CURRENT PROPOSAL: none yet",
-    `CONVERSATION (oldest first):\n${shown.map(m => `${m.role === "user" ? "LEARNER" : "NOVA"}: ${m.text}`).join("\n")}`,
+    `FILES (attached; the learner's material): ${t.files?.length ? t.files.map(f => `${f.name} (${f.mimeType === "application/pdf" ? `PDF${t.pages?.[f.name] ? `, ${t.pages[f.name]} pages` : ""}` : "photo"})`).join("; ") : "none"}`,
+    `CONVERSATION (oldest first):\n${shown.map(m => `${m.role === "user" ? "LEARNER" : "NOVA"}: ${m.files?.length ? `[shared ${m.files.map(f => f.name).join(", ")}] ` : ""}${m.text}`).join("\n")}`,
   ].join("\n\n");
 }
 
 export async function readBuilderTurn(t: TurnInput, generate: Generate = generateOpenAIText): Promise<TurnReading | null> {
   let raw: string;
   try {
-    raw = await generate({ model: "gpt-4o", systemInstruction: SYSTEM, prompt: turnPrompt(t), maxOutputTokens: 1200, deadlineMs: TURN_DEADLINE_MS });
+    const files = t.files ?? [];
+    raw = await generate({
+      model: "gpt-4o", systemInstruction: SYSTEM, prompt: turnPrompt(t), maxOutputTokens: 1600,
+      ...(files.length ? { attachments: files, deadlineMs: TURN_WITH_FILES_DEADLINE_MS, attemptMs: TURN_WITH_FILES_ATTEMPT_MS } : { deadlineMs: TURN_DEADLINE_MS }),
+    });
   } catch {
     return null;
   }
@@ -73,5 +87,5 @@ export async function readBuilderTurn(t: TurnInput, generate: Generate = generat
   if (start === -1 || end <= start) return null;
   let parsed: unknown;
   try { parsed = JSON.parse(raw.slice(start, end + 1)); } catch { return null; }
-  return readTurn(parsed, t.messages.filter(m => m.role === "user").map(m => m.text).join("\n"));
+  return readTurn(parsed, t.messages.filter(m => m.role === "user").map(m => m.text).join("\n"), (t.files ?? []).map(f => f.name));
 }

@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, ArrowUp, Check, CircleSlash, Loader2, PencilLine, RotateCcw } from 'lucide-react'
+import { AlertTriangle, ArrowUp, Check, CircleSlash, FileText, ImageIcon, Loader2, Paperclip, PencilLine, RotateCcw, X } from 'lucide-react'
+import { FILE_TYPES, FILES_MAX, FILES_TOTAL_BYTES, encodeFile } from '@/components/nova/templates/templates-api'
 import type { BuilderMessage, DraftView } from '@repo/api/nova/product/builder.types'
 import { planCounts } from '@repo/api/nova/product/workspace-plan'
 import { KivoMark } from '@/components/brand/kivo-brand'
@@ -38,7 +39,7 @@ function Working({ draft }: { draft: DraftView }) {
   const p = draft.pending
   if (draft.status === 'building') return <p role="status" className="flex items-center gap-2 text-sm text-foreground/70"><Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none" /> Building your workspace…</p>
   if (!p) return null
-  const text = p.stage === 'reading' ? 'Nova is reading your message' : p.kind === 'revise' ? 'Nova is writing the new version' : 'Nova is writing the proposal'
+  const text = p.stage === 'reading' ? (draft.files.length ? 'Nova is reading your message and files' : 'Nova is reading your message') : p.kind === 'revise' ? 'Nova is writing the new version' : 'Nova is writing the proposal'
   return (
     <div role="status" className="flex items-start gap-3" data-pending={p.stage}>
       <NovaAvatar size="sm" />
@@ -53,8 +54,17 @@ function Working({ draft }: { draft: DraftView }) {
 function Message({ m }: { m: BuilderMessage }) {
   if (m.role === 'user') {
     return (
-      <div className="flex justify-end">
-        <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tr-md bg-action-soft px-3.5 py-2.5 text-[14px] leading-relaxed text-foreground">{m.text}</p>
+      <div className="flex flex-col items-end gap-1.5">
+        {m.files && m.files.length > 0 && (
+          <ul className="flex max-w-[85%] flex-wrap justify-end gap-1.5" aria-label="Shared files">
+            {m.files.map(f => (
+              <li key={f.name} className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-card px-2 py-1 text-xs text-foreground/85" data-shared={f.name}>
+                <FileText aria-hidden className="size-3.5 text-action-ink" /><span className="max-w-[14rem] truncate">{f.name}</span>{f.pages ? <span className="text-subtle">{f.pages} pages</span> : null}
+              </li>
+            ))}
+          </ul>
+        )}
+        {m.text && <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tr-md bg-action-soft px-3.5 py-2.5 text-[14px] leading-relaxed text-foreground">{m.text}</p>}
       </div>
     )
   }
@@ -154,12 +164,22 @@ function BuiltCard({ draft, onImprove }: { draft: DraftView; onImprove: () => vo
   )
 }
 
+// A file chosen in the composer, encoded for the request.
+export type Upload = { name: string; data: string; size: number; type: string }
+
+const ACCEPT = 'application/pdf,image/png,image/jpeg,image/webp,.pdf,.png,.jpg,.jpeg,.webp'
+const kb = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`)
+
 export function Composer({ onSend, disabled, placeholder, inputRef, initial = '' }: {
-  onSend: (text: string) => Promise<boolean>; disabled: boolean; placeholder: string; inputRef?: React.RefObject<HTMLTextAreaElement | null>; initial?: string
+  onSend: (text: string, files: Upload[]) => Promise<boolean>; disabled: boolean; placeholder: string; inputRef?: React.RefObject<HTMLTextAreaElement | null>; initial?: string
 }) {
   const [text, setText] = useState(initial)
+  const [files, setFiles] = useState<Upload[]>([])
+  const [fileError, setFileError] = useState<string | null>(null)
+  const [dragging, setDragging] = useState(false)
   const [sending, setSending] = useState(false)
   const own = useRef<HTMLTextAreaElement>(null)
+  const picker = useRef<HTMLInputElement>(null)
   const ref = inputRef ?? own
   useEffect(() => {
     const el = ref.current
@@ -167,27 +187,66 @@ export function Composer({ onSend, disabled, placeholder, inputRef, initial = ''
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 180)}px`
   }, [text, ref])
+
+  // Checked here only to save a wasted upload; the server checks the bytes.
+  async function add(list: FileList | File[]) {
+    setFileError(null)
+    const next = [...files]
+    for (const f of Array.from(list)) {
+      if (!FILE_TYPES.includes(f.type)) { setFileError(`${f.name} isn't a PDF or a PNG, JPEG or WebP image.`); continue }
+      if (next.length >= FILES_MAX) { setFileError(`Up to ${FILES_MAX} files with one message.`); break }
+      if (next.reduce((n, x) => n + x.size, 0) + f.size > FILES_TOTAL_BYTES) { setFileError('Files with one message can add up to 3 MB.'); continue }
+      const encoded = await encodeFile(f)
+      next.push({ ...encoded, size: f.size, type: f.type })
+    }
+    setFiles(next)
+  }
+
   async function submit() {
     const t = text.trim()
-    if (!t || disabled || sending) return
+    if ((!t && files.length === 0) || disabled || sending) return
     setSending(true)
-    setText('')
-    const ok = await onSend(t)
+    const sent = files
+    setText(''); setFiles([])
+    const ok = await onSend(t, sent)
     setSending(false)
-    // Not sent: their words come back.
-    if (!ok) setText(t)
+    // Not sent: their words and files come back.
+    if (!ok) { setText(t); setFiles(sent) }
   }
   return (
-    <form onSubmit={e => { e.preventDefault(); void submit() }} className="flex items-end gap-2 rounded-2xl border border-white/10 bg-card/80 p-2 focus-within:border-action/60">
-      <label htmlFor="builder-composer" className="sr-only">Message Nova</label>
-      <textarea id="builder-composer" ref={ref} value={text} rows={1} maxLength={2000} placeholder={placeholder}
-        onChange={e => setText(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit() } }}
-        className="max-h-44 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-[14px] leading-relaxed text-foreground outline-none placeholder:text-subtle" />
-      <button type="submit" disabled={disabled || sending || !text.trim()} aria-label="Send"
-        className="grid size-10 shrink-0 place-items-center rounded-xl bg-action text-action-foreground transition-colors hover:bg-action-hover disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
-        {sending ? <Loader2 aria-hidden className="size-4 animate-spin" /> : <ArrowUp aria-hidden className="size-4" />}
-      </button>
+    <form onSubmit={e => { e.preventDefault(); void submit() }}
+      onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true) } }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={e => { if (e.dataTransfer.files.length) { e.preventDefault(); setDragging(false); void add(e.dataTransfer.files) } }}
+      className={cn('rounded-2xl border bg-card/80 p-2 focus-within:border-action/60', dragging ? 'border-action border-dashed' : 'border-white/10')} data-composer>
+      {files.length > 0 && (
+        <ul className="mb-2 flex flex-wrap gap-1.5 px-1" aria-label="Files to send">
+          {files.map((f, i) => (
+            <li key={`${f.name}-${i}`} className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/4 py-1 pl-2 pr-1 text-xs text-foreground/85" data-upload={f.name}>
+              {f.type === 'application/pdf' ? <FileText aria-hidden className="size-3.5 text-action-ink" /> : <ImageIcon aria-hidden className="size-3.5 text-action-ink" />}
+              <span className="max-w-[12rem] truncate">{f.name}</span><span className="text-subtle">{kb(f.size)}</span>
+              <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`} className="grid size-5 place-items-center rounded text-foreground/55 hover:bg-white/8 hover:text-foreground"><X aria-hidden className="size-3" /></button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex items-end gap-2">
+        <input ref={picker} type="file" accept={ACCEPT} multiple hidden onChange={e => { if (e.target.files) void add(e.target.files); e.target.value = '' }} data-file-input />
+        <button type="button" onClick={() => picker.current?.click()} disabled={disabled || sending} aria-label="Attach a PDF or photo" title="Attach a PDF or photo"
+          className="grid size-10 shrink-0 place-items-center rounded-xl text-foreground/60 transition-colors hover:bg-white/6 hover:text-foreground disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-ring">
+          <Paperclip aria-hidden className="size-4" />
+        </button>
+        <label htmlFor="builder-composer" className="sr-only">Message Nova</label>
+        <textarea id="builder-composer" ref={ref} value={text} rows={1} maxLength={2000} placeholder={files.length ? 'Say what to do with it, or just send' : placeholder}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit() } }}
+          className="max-h-44 min-h-10 flex-1 resize-none bg-transparent px-1 py-2 text-[14px] leading-relaxed text-foreground outline-none placeholder:text-subtle" />
+        <button type="submit" disabled={disabled || sending || (!text.trim() && files.length === 0)} aria-label="Send"
+          className="grid size-10 shrink-0 place-items-center rounded-xl bg-action text-action-foreground transition-colors hover:bg-action-hover disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+          {sending ? <Loader2 aria-hidden className="size-4 animate-spin" /> : <ArrowUp aria-hidden className="size-4" />}
+        </button>
+      </div>
+      {fileError && <p role="alert" className="px-2 pt-1.5 text-xs text-red-400">{fileError}</p>}
     </form>
   )
 }

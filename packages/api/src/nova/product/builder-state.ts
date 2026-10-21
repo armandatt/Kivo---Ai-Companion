@@ -20,6 +20,8 @@ import { oneLine, type WorkspacePlan } from "./workspace-plan";
 import { WORK_KINDS, type BriefFact, type BuilderBrief, type BuilderMessage, type DraftStatus, type PendingJob, type PlanChangeSummary, type WorkKind } from "./builder.types";
 
 export const MESSAGE_MAX = 2000;
+// Nova's reply may explain what a shared file says, so it may run longer.
+export const REPLY_MAX = 2400;
 export const MESSAGES_KEPT = 60;
 export const MAX_QUESTIONS = 4;
 // A job that has said nothing for this long is taken to have died with its
@@ -100,11 +102,12 @@ const listOf = (v: unknown, max: number): string[] => {
 
 // The model's reply, read into a TurnReading. Facts are kept as the
 // learner's only when their quote is in `learnerText` (what they wrote in
-// this conversation); the rest become assumptions, said as such.
-export function readTurn(raw: unknown, learnerText: string): TurnReading | null {
+// this conversation), or when they name a file the learner shared
+// (`fileNames`); the rest become assumptions, said as such.
+export function readTurn(raw: unknown, learnerText: string, fileNames: readonly string[] = []): TurnReading | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
-  const reply = typeof r.reply === "string" ? r.reply.split("\r").join("").trim().slice(0, 1200) : "";
+  const reply = typeof r.reply === "string" ? r.reply.split("\r").join("").trim().slice(0, REPLY_MAX) : "";
   const next: NextStep | null = r.next === "ask" || r.next === "chat" || r.next === "draft" || r.next === "revise" ? r.next : null;
   if (!reply || !next) return null;
 
@@ -116,9 +119,11 @@ export function readTurn(raw: unknown, learnerText: string): TurnReading | null 
     const label = oneLine((f as { label?: unknown }).label, 60);
     const value = oneLine((f as { value?: unknown }).value, LINE_MAX);
     const quote = normalized(oneLine((f as { quote?: unknown }).quote, LINE_MAX));
+    const named = oneLine((f as { file?: unknown }).file, 120);
+    const file = named ? fileNames.find(n => normalized(n) === normalized(named)) ?? null : null;
     if (!label || !value) continue;
-    if (quote.length >= 2 && said.includes(quote)) {
-      if (facts.length < FACTS_MAX && !facts.some(x => normalized(x.label) === normalized(label))) facts.push({ label, value });
+    if (file || (quote.length >= 2 && said.includes(quote))) {
+      if (facts.length < FACTS_MAX && !facts.some(x => normalized(x.label) === normalized(label))) facts.push(file ? { label, value, file } : { label, value });
     } else if (assumptions.length < ASSUMPTIONS_MAX) {
       const line = oneLine(`${label}: ${value}`, LINE_MAX);
       if (!assumptions.some(a => normalized(a) === normalized(line))) assumptions.push(line);
@@ -188,7 +193,8 @@ export function readBrief(raw: unknown): BuilderBrief {
   const r = raw as Record<string, unknown>;
   const facts = (v: unknown, max: number): BriefFact[] => (Array.isArray(v) ? v : []).flatMap(f => {
     const label = oneLine((f as { label?: unknown })?.label, 60), value = oneLine((f as { value?: unknown })?.value, LINE_MAX);
-    return label && value ? [{ label, value }] : [];
+    const file = oneLine((f as { file?: unknown })?.file, 120);
+    return label && value ? [file ? { label, value, file } : { label, value }] : [];
   }).slice(0, max);
   return {
     kind: WORK_KINDS.find(k => k === r.kind) ?? null,
@@ -209,7 +215,10 @@ export function readMessages(raw: unknown): BuilderMessage[] {
     if (!m || typeof m !== "object") return [];
     const x = m as Record<string, unknown>;
     if ((x.role !== "user" && x.role !== "nova") || typeof x.text !== "string" || typeof x.id !== "string" || typeof x.at !== "string") return [];
-    return [{ id: x.id, role: x.role, text: x.text, at: x.at, ...(typeof x.kind === "string" ? { kind: x.kind as BuilderMessage["kind"] } : {}), ...(typeof x.version === "number" ? { version: x.version } : {}) }];
+    const files = Array.isArray(x.files)
+      ? x.files.flatMap(f => (f && typeof f === "object" && typeof (f as { name?: unknown }).name === "string" ? [{ name: (f as { name: string }).name, pages: typeof (f as { pages?: unknown }).pages === "number" ? (f as { pages: number }).pages : null }] : []))
+      : [];
+    return [{ id: x.id, role: x.role, text: x.text, at: x.at, ...(typeof x.kind === "string" ? { kind: x.kind as BuilderMessage["kind"] } : {}), ...(typeof x.version === "number" ? { version: x.version } : {}), ...(files.length ? { files } : {}) }];
   });
 }
 
@@ -229,7 +238,7 @@ export function withMessages(list: BuilderMessage[], ...added: BuilderMessage[])
 }
 
 let counter = 0;
-export function message(role: BuilderMessage["role"], text: string, now: Date, extra: Pick<BuilderMessage, "kind" | "version"> = {}): BuilderMessage {
+export function message(role: BuilderMessage["role"], text: string, now: Date, extra: Pick<BuilderMessage, "kind" | "version" | "files"> = {}): BuilderMessage {
   counter = (counter + 1) % 1_000_000;
   return { id: `${now.getTime().toString(36)}-${counter.toString(36)}-${role[0]}`, role, text: text.slice(0, MESSAGE_MAX), at: now.toISOString(), ...extra };
 }

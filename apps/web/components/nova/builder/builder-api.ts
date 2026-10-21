@@ -23,9 +23,11 @@ async function call<T extends { ok: boolean }>(url: string, init: RequestInit = 
 const post = <T extends { ok: boolean }>(url: string, body: unknown = {}) => call<T>(url, { method: 'POST', body: JSON.stringify(body) })
 const id = (draftId: string) => encodeURIComponent(draftId)
 
-export const startDraft = (body: { clientKey: string; text?: string; targetWorkspaceId?: string }) => post<BuilderResponse>('/api/nova/builder', body)
+export type SharedFile = { name: string; data: string }
+export const startDraft = (body: { clientKey: string; text?: string; files?: SharedFile[]; targetWorkspaceId?: string }) => post<BuilderResponse>('/api/nova/builder', body)
 export const loadDraft = (draftId: string) => call<BuilderResponse>(`/api/nova/builder/${id(draftId)}`)
-export const sendMessage = (draftId: string, text: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/messages`, { text })
+export const sendMessage = (draftId: string, text: string, files: SharedFile[] = []) =>
+  post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/messages`, files.length ? { text, files } : { text })
 export const resumeDraft = (draftId: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/messages`, { resume: true })
 export const retryDraft = (draftId: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/retry`)
 export const cancelDraft = (draftId: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/cancel`)

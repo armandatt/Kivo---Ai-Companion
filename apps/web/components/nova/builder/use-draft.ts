@@ -145,10 +145,10 @@ export function useDraft(draftId: string | null) {
     return false
   }, [adopt])
 
-  const send = useCallback(async (text: string) => {
+  const send = useCallback(async (text: string, files: Array<{ name: string; data: string }> = []) => {
     if (!draftId) return false
     await flush()
-    return run('send', () => api.sendMessage(draftId, text))
+    return run('send', () => api.sendMessage(draftId, text, files.map(f => ({ name: f.name, data: f.data }))))
   }, [draftId, flush, run])
 
   const approve = useCallback(async (opts: { addTo?: string; confirmAnother?: boolean } = {}) => {

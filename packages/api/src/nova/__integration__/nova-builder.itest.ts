@@ -65,7 +65,7 @@ const NOTHING = { subjects: 0, tasks: 0, notes: 0, exams: 0, workspaces: 0 };
 // A stand-in reader: the given reply, read through the real fact check.
 const reader = (raw: Record<string, unknown>, seen?: TurnInput[]): NonNullable<BuilderDeps["read"]> => async input => {
   seen?.push(input);
-  return readTurn({ reply: "OK.", facts: [], assumptions: [], suggestions: [], question: null, ...raw }, input.messages.filter(m => m.role === "user").map(m => m.text).join("\n"));
+  return readTurn({ reply: "OK.", facts: [], assumptions: [], suggestions: [], question: null, ...raw }, input.messages.filter(m => m.role === "user").map(m => m.text).join("\n"), (input.files ?? []).map(f => f.name));
 };
 
 function trackerPlan(extra: Record<string, unknown> = {}) {
@@ -390,4 +390,85 @@ test("one learner can neither see nor touch another's draft or workspace", async
   const targeted = await builder.startDraft(other.id, { clientKey: key(), targetWorkspaceId: built.ok ? built.draft.workspace!.id : "" });
   assert.equal(!targeted.ok && targeted.error, "not_found");
   assert.equal((await builder.getDraft(owner.id, draft.id))!.status, "ready");
+});
+
+// A small real-looking PDF and a PNG, as the page sends them (base64).
+const pdf = (pages = 2, name = "syllabus.pdf") => ({ name, data: Buffer.from(`%PDF-1.4\n${Array.from({ length: pages }, (_, i) => `${i + 1} 0 obj << /Type /Page >> endobj`).join("\n")}\n%%EOF`).toString("base64") });
+const png = (name = "plan.png") => ({ name, data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]).toString("base64") });
+
+test("a PDF or photo shared in the conversation is read on every turn, used for the proposal, and deleted once built", async () => {
+  const me = await learner();
+  const seen: TurnInput[] = [];
+  const started = await builder.startDraft(me.id, { clientKey: key(), text: "Here's my OS syllabus", files: [pdf(3)] });
+  assert.ok(started.ok && started.job);
+  assert.deepEqual(started.draft.files.map(f => [f.name, f.mimeType, f.pages]), [["syllabus.pdf", "application/pdf", 3]]);
+  assert.deepEqual(started.draft.messages[0]!.files, [{ name: "syllabus.pdf", pages: 3 }]);
+  await builder.runJob(me.id, started.job!, { read: reader({ next: "ask", question: "When is the exam?", facts: [{ label: "Units", value: "five units", file: "syllabus.pdf" }] }, seen) });
+  assert.deepEqual(seen[0]!.files!.map(f => [f.name, f.mimeType]), [["syllabus.pdf", "application/pdf"]]);
+  let draft = (await builder.getDraft(me.id, started.draft.id))!;
+  assert.deepEqual(draft.brief.facts, [{ label: "Units", value: "five units", file: "syllabus.pdf" }]);
+
+  // A photo later, and a question about the PDF: both files go to the model.
+  const claimed = await builder.postMessage(me.id, draft.id, { text: "And this is my current plan. What does unit 3 cover?", files: [png()] });
+  assert.ok(claimed.ok);
+  await builder.runJob(me.id, claimed.job, { read: reader({ next: "chat", reply: "Unit 3 covers deadlocks (page 2 of syllabus.pdf)." }, seen) });
+  assert.deepEqual(seen.at(-1)!.files!.map(f => f.name), ["syllabus.pdf", "plan.png"]);
+  draft = (await builder.getDraft(me.id, draft.id))!;
+  assert.equal(draft.messages.at(-1)!.text, "Unit 3 covers deadlocks (page 2 of syllabus.pdf).");
+  assert.equal(draft.files.length, 2);
+
+  // The proposal is written with them, and keeps page references to them only.
+  const asked: BuilderPlanRequest[] = [];
+  draft = await say(me.id, draft.id, "Exam is in six weeks. Make the plan.", {
+    read: reader({ next: "draft", facts: [{ label: "Exam", value: "in six weeks", quote: "six weeks" }] }),
+    write: async req => { asked.push(req); return checkWorkspacePlan({ kind: "custom", title: "OS exam", subjects: [{ name: "Operating Systems", topics: [{ name: "Deadlocks", sources: [{ file: "syllabus.pdf", page: 2 }, { file: "other.pdf", page: 1 }] }] }], sources: [{ file: "syllabus.pdf", read: true, pages: 3 }] }, { today: req.today, files: (req.files ?? []).map(f => f.name), userText: req.learnerText }); },
+  });
+  assert.deepEqual(asked[0]!.files!.map(f => f.name), ["syllabus.pdf", "plan.png"]);
+  assert.deepEqual(draft.plan!.subjects[0]!.topics[0]!.sources, [{ file: "syllabus.pdf", page: 2 }]);
+  // The photo was not accounted for, so it says so rather than claiming it was read.
+  assert.deepEqual(draft.plan!.sources.map(s => [s.file, s.read]), [["syllabus.pdf", true], ["plan.png", false]]);
+
+  // An edit keeps the page reference (the file is still in the conversation).
+  const edited = await builder.editDraftPlan(me.id, draft.id, { plan: { ...draft.plan, title: "OS final" }, baseVersion: draft.version });
+  assert.ok(edited.ok && edited.draft.plan!.subjects[0]!.topics[0]!.sources.length === 1);
+
+  const built = await builder.approveDraft(me.id, draft.id, { version: edited.ok ? edited.draft.version : 0 });
+  assert.ok(built.ok && built.draft.status === "ready");
+  assert.equal(built.ok && built.draft.files.length, 0);
+  assert.equal(await prisma.novaWorkspaceDraftFile.count({ where: { draftId: draft.id } }), 0);
+  const notes = await listNotes(await me.profileId());
+  assert.ok(notes.notes.some(n => n.title.startsWith("Operating Systems: topic guide")));
+});
+
+test("files are checked by their bytes and limited per message and per conversation; refused ones are not kept", async () => {
+  const me = await learner();
+  const fake = { name: "notes.pdf", data: Buffer.from("not really a pdf").toString("base64") };
+  const bad = await builder.startDraft(me.id, { clientKey: key(), text: "here", files: [fake] });
+  assert.equal(!bad.ok && bad.error, "invalid");
+  const started = await builder.startDraft(me.id, { clientKey: key(), text: "first", files: [pdf(1, "a.pdf"), pdf(1, "b.pdf"), pdf(1, "c.pdf")] });
+  assert.ok(started.ok && started.job);
+  await builder.runJob(me.id, started.job!, { read: reader({ next: "ask", question: "What for?" }) });
+  const four = await builder.postMessage(me.id, started.draft.id, { files: [pdf(1, "d.pdf"), pdf(1, "e.pdf"), pdf(1, "f.pdf"), pdf(1, "g.pdf")] });
+  assert.equal(!four.ok && four.error, "invalid");   // more than three with one message
+  const more = await builder.postMessage(me.id, started.draft.id, { files: [pdf(1, "a.pdf"), pdf(1, "d.pdf"), pdf(1, "e.pdf")] });
+  assert.ok(more.ok);
+  await builder.runJob(me.id, more.job, { read: reader({ next: "ask", question: "And?" }) });
+  // Same name again is numbered, not merged.
+  assert.deepEqual((await builder.getDraft(me.id, started.draft.id))!.files.map(f => f.name), ["a.pdf", "b.pdf", "c.pdf", "a.pdf (2)", "d.pdf", "e.pdf"]);
+  const seventh = await builder.postMessage(me.id, started.draft.id, { files: [png()] });
+  assert.equal(!seventh.ok && seventh.error, "invalid");
+  assert.equal(await prisma.novaWorkspaceDraftFile.count({ where: { draftId: started.draft.id } }), 6);
+  // A message while Nova works brings no file in.
+  const working = await builder.postMessage(me.id, started.draft.id, { text: "x" });
+  assert.ok(working.ok);
+  const busy = await builder.postMessage(me.id, started.draft.id, { text: "y", files: [png("late.png")] });
+  assert.equal(!busy.ok && busy.error, "busy");
+  assert.equal(await prisma.novaWorkspaceDraftFile.count({ where: { draftId: started.draft.id, name: "late.png" } }), 0);
+  // Cancelling deletes them; another learner never sees them.
+  const other = await learner();
+  await builder.startDraft(other.id, { clientKey: key() });
+  assert.equal(await builder.getDraft(other.id, started.draft.id), null);
+  const stopped = await builder.cancelDraft(me.id, started.draft.id);
+  assert.ok(stopped.ok);
+  assert.equal(await prisma.novaWorkspaceDraftFile.count({ where: { draftId: started.draft.id } }), 0);
 });

@@ -8,7 +8,9 @@ import { builderFail, spendForTurn, startJob, statusFor } from "../../../../lib/
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-const BODY_MAX = 16 * 1024
+// Files travel as base64 inside the JSON: 3 MB of files is about 4 MB here,
+// under the web host's 4.5 MB request limit.
+const BODY_MAX = 4_300_000
 
 // GET /api/nova/builder — the learner's conversations with Nova about a
 // workspace, newest first. Response: DraftListView (builder.types.ts).
@@ -23,7 +25,7 @@ export async function GET() {
   }
 }
 
-// POST /api/nova/builder  { clientKey, text?, targetWorkspaceId? }
+// POST /api/nova/builder  { clientKey, text?, files?, targetWorkspaceId? }
 // Starts a conversation, once per clientKey. With an opening message, Nova
 // answers it after this returns (one request on the AI allowance). Nothing
 // but the conversation is stored. Response: BuilderResponse.
@@ -32,9 +34,9 @@ export async function POST(req: Request) {
     const access = await requireWorkspaceLearner()
     if (access.denied) return access.denied
     const read = await readSmallJson(req, BODY_MAX)
-    if (!read.ok) return builderFail(read.reason === "too_large" ? 413 : 400, "invalid", "That message is too long.")
-    const body = (read.body ?? {}) as { clientKey: unknown; text?: unknown; targetWorkspaceId?: unknown }
-    const talking = typeof body.text === "string" && body.text.trim() !== ""
+    if (!read.ok) return builderFail(read.reason === "too_large" ? 413 : 400, "invalid", read.reason === "too_large" ? "Those files are too large together. Up to 3 MB at a time." : "That message couldn't be read.")
+    const body = (read.body ?? {}) as { clientKey: unknown; text?: unknown; targetWorkspaceId?: unknown; files?: unknown }
+    const talking = (typeof body.text === "string" && body.text.trim() !== "") || (Array.isArray(body.files) && body.files.length > 0)
     if (talking) {
       const refused = await spendForTurn(access.platformChatId)
       if (refused) return refused

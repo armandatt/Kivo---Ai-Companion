@@ -106,9 +106,9 @@ export function NovaOnboarding({ onProgress }: { onProgress: () => void }) {
   useEffect(() => { void listDrafts().then(r => { if ('status' in r) setDrafts(r.drafts) }) }, [])
   const open = drafts.find(d => d.status !== 'ready')
 
-  async function start(text: string) {
+  async function start(text: string, files: Array<{ name: string; data: string }> = []) {
     setBusy(true); setError(null)
-    const res = await startDraft({ clientKey: newClientKey(), ...(text ? { text } : {}) })
+    const res = await startDraft({ clientKey: newClientKey(), ...(text ? { text } : {}), ...(files.length ? { files: files.map(f => ({ name: f.name, data: f.data })) } : {}) })
     setBusy(false)
     if (!res.ok) { setError(res.message); return false }
     router.push(`/build?draft=${encodeURIComponent(res.draft.id)}`)
@@ -123,7 +123,7 @@ export function NovaOnboarding({ onProgress }: { onProgress: () => void }) {
             You have a conversation going: <Link href={`/build?draft=${encodeURIComponent(open.id)}`} className="font-medium text-action-ink underline underline-offset-4">{open.title ?? 'continue it'}</Link>
           </p>
         )}
-        <BuildStart compact onStart={text => start(text)} workspaces={[]} drafts={[]} busy={busy} error={error} />
+        <BuildStart compact onStart={(text, _target, files) => start(text, files)} workspaces={[]} drafts={[]} busy={busy} error={error} />
       </div>
       <div className="mt-8 border-t border-white/8 pt-5">
         <button type="button" onClick={() => setForm(f => !f)} aria-expanded={form} className="text-sm font-medium text-foreground/70 underline-offset-4 hover:text-foreground hover:underline">

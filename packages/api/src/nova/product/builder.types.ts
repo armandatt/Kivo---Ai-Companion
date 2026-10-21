@@ -30,12 +30,23 @@ export interface BuilderMessage {
   // a notice from Kivo (written by code, not by the model).
   kind?: "question" | "chat" | "proposal" | "revision" | "built" | "notice" | "error";
   version?: number;
+  // Files the learner shared with this message (names only; the bytes are
+  // kept apart, in NovaWorkspaceDraftFile).
+  files?: Array<{ name: string; pages: number | null }>;
 }
 
 // Something the learner said, in their words. A fact the model reports is
 // kept as one only when its quote is in what the learner wrote; otherwise it
 // is shown as an assumption.
-export interface BriefFact { label: string; value: string }
+export interface BriefFact {
+  label: string;
+  value: string;
+  // Taken from a file the learner shared, by name, rather than their words.
+  file?: string | null;
+}
+
+// A file shared in the conversation, as the page lists it.
+export interface DraftFile { id: string; name: string; mimeType: string; size: number; pages: number | null }
 
 export interface BuilderBrief {
   kind:        WorkKind | null;
@@ -91,6 +102,9 @@ export interface DraftView {
   version:     number;
   pending:     PendingJob | null;
   failure:     DraftFailure | null;
+  // PDFs and photos shared in this conversation. Kept until it is built or
+  // cancelled.
+  files:       DraftFile[];
   // The workspace of theirs this proposal adds to, if any.
   target:      WorkspaceSummary | null;
   // What approval made or added to.
