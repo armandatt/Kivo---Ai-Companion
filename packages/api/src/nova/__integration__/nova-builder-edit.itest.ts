@@ -393,3 +393,37 @@ test("a subject that belongs elsewhere is removed from the workspace with its to
     writeChanges: changer(() => [{ op: "add_subject", name: "Compilers", topics: ["Lexing"] }]) });
   assert.ok((await builder.approveDraft(me.id, again.id, { version: again.version })).ok);
 });
+
+test("Build with Nova keeps to its job: an unrelated request changes nothing, and a change brings nothing not asked for", async () => {
+  const me = await learner();
+  const { profileId, dsa } = await withDsa(me);
+  const before = await records(profileId);
+  // Unrelated: answered by code; nothing opened, proposed or counted.
+  const off = await begin(me.id, "Write my English essay on climate change", {
+    read: reader({ next: "decline", reply: "Here is an essay…", resource: { name: "DSA", intent: "change" } }), write: noWrite,
+    writeChanges: async () => { throw new Error("changes were written for an unrelated request"); },
+  });
+  assert.equal(off.messages.at(-1)!.text, "That's outside what I do here. In Build with Nova I shape and change your workspaces: their subjects, topics, tasks, dates and notes, and I can talk through files you share for them. For anything else, ask Nova from Today.");
+  assert.equal(off.resource, null);
+  assert.equal(off.brief.questionsAsked, 0);
+  // Nothing to come back to: it is not listed among their conversations.
+  assert.equal((await builder.listDrafts(me.id)).drafts.some(d => d.id === off.id), false);
+  assert.deepEqual(await records(profileId), before);
+
+  // Asked for topics; the writer also slips in a task, a note and a date.
+  const draft = await begin(me.id, "Add two topics to my DSA plan: heaps and tries", {
+    read: reader({ next: "draft", touches: ["topics"], resource: { name: "DSA", intent: "change" } }), write: noWrite,
+    writeChanges: changer(req => [
+      { op: "add_topics", subjectId: req.current.subjects[0]!.id, names: ["Heaps", "Tries"] },
+      { op: "add_task", key: "x", title: "Practise heaps daily" },
+      { op: "add_note", title: "Tries explained", body: "# Tries" },
+      { op: "add_date", title: "Heap quiz", day: inDays(5) },
+    ]),
+  });
+  assert.deepEqual(draft.changes!.ops.map(o => o.op), ["add_topics"]);
+  assert.equal(draft.changes!.dropped.filter(d => d.endsWith("(not asked for)")).length, 3);
+  const done = await builder.approveDraft(me.id, draft.id, { version: draft.version });
+  assert.ok(done.ok);
+  assert.deepEqual(await records(profileId), { ...before, topics: before.topics + 2 });
+  assert.ok((await loadStudyStructure(profileId)).subjects.find(x => x.id === dsa.id)!.topics.some(t => t.name === "Tries"));
+});

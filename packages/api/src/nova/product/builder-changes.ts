@@ -20,7 +20,7 @@
 //
 // No regex: text is compared by characters (SKILL.md; the no-regex guard).
 
-import type { ChangeOp, ChangeSet, ProposedChange, ResourceRef, WorkspaceDetail } from "./builder.types";
+import type { ChangeKind, ChangeOp, ChangeSet, ProposedChange, ResourceRef, WorkspaceDetail } from "./builder.types";
 import { isPlaceholderTopic, oneLine } from "./workspace-plan";
 
 // ── Finding it ────────────────────────────────────────────────────────────────
@@ -313,6 +313,27 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
     }
   }
   return { ops, dropped: dropped.slice(0, 12) };
+}
+
+// ── Only what was asked ───────────────────────────────────────────────────────
+
+export const kindOf = (op: ChangeOp["op"]): ChangeKind =>
+  op === "add_topics" || op === "rename_topic" || op === "remove_topic" ? "topics"
+  : op === "add_subject" || op === "remove_subject" ? "subjects"
+  : op === "add_date" || op === "update_date" ? "dates"
+  : op === "add_note" ? "notes" : "tasks";
+
+// Keeps the changes of the kinds the learner's request is about; the rest
+// are left out and said ("not asked for"). A subject's removal keeps the
+// topic removals it brings. No kinds known (an older reading): all are kept.
+export function withinAsk(set: ChangeSet, touches: readonly ChangeKind[], current: WorkspaceDetail): ChangeSet {
+  if (touches.length === 0) return set;
+  const goingSubjects = new Set(set.ops.flatMap(o => (o.op === "remove_subject" ? [o.subjectId] : [])));
+  const withSubject = new Set(current.subjects.filter(s => goingSubjects.has(s.id)).flatMap(s => s.topics.map(t => t.id)));
+  const ok = (o: ProposedChange) => touches.includes(kindOf(o.op)) || (o.op === "remove_topic" && touches.includes("subjects") && withSubject.has(o.topicId));
+  const kept = set.ops.filter(ok).map((o, i) => ({ ...o, id: `c${i + 1}` }));
+  const left = set.ops.filter(o => !ok(o)).map(o => `${o.says.charAt(0).toLowerCase()}${o.says.slice(1)} (not asked for)`);
+  return { ops: kept, dropped: [...set.dropped, ...left].slice(0, 12) };
 }
 
 // A stored change set, read back. Not re-checked here: that needs the records.

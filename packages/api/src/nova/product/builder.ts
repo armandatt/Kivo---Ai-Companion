@@ -43,9 +43,9 @@ import { checkFiles, writeBuilderChanges, writeBuilderPlan } from "./workspace-g
 import type { LlmAttachment } from "../../services/llmProviders";
 import { readBuilderTurn } from "./builder-conversation";
 import { changeResource, createWorkspace, recentWorkspaceTitles, resourceCandidates, resourceDetail, similarWorkspaces, studiedTopicIds, workspaceDetail, workspaceSummaries } from "./workspaces";
-import { bareOps, changeCounts, checkChanges, decideResource, matchResources, readChangeSet } from "./builder-changes";
+import { bareOps, changeCounts, checkChanges, decideResource, matchResources, readChangeSet, withinAsk } from "./builder-changes";
 import {
-  MESSAGE_MAX, TALKING, canMove, decideStep, type Step, describeChanges, emptyBrief, isPendingLive, learnerWords, message,
+  DECLINE_REPLY, MESSAGE_MAX, TALKING, canMove, decideStep, type Step, describeChanges, emptyBrief, isPendingLive, learnerWords, message,
   needsReply, nextBrief, planChanges, readBrief, readMessages, readPending, replyWithQuestion, spoken, withMessages, holdsLine,
 } from "./builder-state";
 import type { BriefFact, BuilderBrief, BuilderMessage, BuilderResponse, ChangeSet, DraftFailure, DraftFile, DraftListView, DraftStatus, DraftView, PendingJob, ResourceRef } from "./builder.types";
@@ -250,11 +250,20 @@ export async function getDraft(platformChatId: string, id: unknown, now = new Da
 export async function listDrafts(platformChatId: string): Promise<DraftListView> {
   const profile = await profileOf(platformChatId);
   if (!profile) return { status: "ready", drafts: [] };
-  const rows = await prisma.novaWorkspaceDraft.findMany({
+  const rows = (await prisma.novaWorkspaceDraft.findMany({
     where: { profileId: profile.id, status: { not: "cancelled" } },
-    select: { id: true, status: true, title: true, origin: true, updatedAt: true }, orderBy: { updatedAt: "desc" }, take: 30,
-  });
+    select: { id: true, status: true, title: true, origin: true, updatedAt: true, messages: true, plan: true, targetWorkspaceId: true, targetSubjectIds: true },
+    orderBy: { updatedAt: "desc" }, take: 30,
+  })).filter(r => !onlyDeclined(r));
   return { status: "ready", drafts: rows.map(r => ({ id: r.id, status: statusOf(r.status), title: r.title, origin: r.origin === "telegram" ? "telegram" : "web", updatedAt: r.updatedAt.toISOString() })) };
+}
+
+// A conversation that only ever asked for things this page does not do (an
+// essay, a reminder): nothing in it to come back to, so it is not listed.
+function onlyDeclined(r: { messages: unknown; plan: unknown; targetWorkspaceId: string | null; targetSubjectIds: string[] }): boolean {
+  if (planOf(r.plan) || r.targetWorkspaceId || r.targetSubjectIds.length) return false;
+  const nova = readMessages(r.messages).filter(m => m.role === "nova");
+  return nova.length > 0 && nova.every(m => m.text === DECLINE_REPLY);
 }
 
 // The open drafts and built workspaces, in one line each, for Nova's chat
@@ -516,6 +525,12 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
     return;
   }
 
+  // Not what this page does: said by code, and nothing is opened, proposed or counted.
+  if (reading.next === "decline") {
+    await settle(row.id, job.jobId, { failure: null, add: [message("nova", DECLINE_REPLY, new Date(), { kind: "chat" })] });
+    return;
+  }
+
   // Something of theirs, named in a conversation that works on nothing yet:
   // code finds it among their own records before anything new is proposed.
   let found: ResourceRef | null = null;
@@ -544,7 +559,7 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
 
   // Found and asked to change: propose the change against what is there.
   const step: Step = found ? { type: "draft", reason: "ready" } : decideStep({ plan: ref ? null : plan, brief: before, improving: Boolean(ref), changes: Boolean(changes) }, reading);
-  const brief = { ...nextBrief(before, reading, step), known, choices: [] as string[], ...(found ? { title: found.title } : {}) };
+  const brief = { ...nextBrief(before, reading, step), known, choices: [] as string[], touches: reading.touches, ...(found ? { title: found.title } : {}) };
   const title = found?.title ?? row.title ?? reading.title ?? brief.title;
   const notes = note ? [message("nova", note, new Date(), { kind: "notice" })] : [];
 
@@ -611,7 +626,8 @@ async function runChanges(platformChatId: string, profile: { id: string; timezon
     await settle(row.id, job.jobId, { status: fallback, failure: { stage: "drafting", message: written.message, change }, add: [message("nova", written.message, new Date(), { kind: "error" })] });
     return;
   }
-  const set = checkChanges(written.ops, current, { today, studied });
+  // Only the kinds of record the request is about: "add two topics" brings no tasks, notes or dates.
+  const set = withinAsk(checkChanges(written.ops, current, { today, studied }), brief.touches ?? [], current);
   if (set.ops.length === 0) {
     const text = `I couldn't turn that into a change to ${current.title}${set.dropped.length ? `: ${set.dropped.slice(0, 3).join("; ")}` : ""}. Nothing is proposed; could you say it another way?`;
     await settle(row.id, job.jobId, { status: fallback, failure: null, brief: { ...brief, dropped: set.dropped }, add: [message("nova", text, new Date(), { kind: "chat" })] });

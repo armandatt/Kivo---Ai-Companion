@@ -19,7 +19,7 @@
 // No regex: text is compared by characters (SKILL.md; the no-regex guard).
 
 import { oneLine, type WorkspacePlan } from "./workspace-plan";
-import { WORK_KINDS, type BriefFact, type BuilderBrief, type BuilderMessage, type DraftStatus, type PendingJob, type PlanChangeSummary, type WorkKind } from "./builder.types";
+import { CHANGE_KINDS, WORK_KINDS, type ChangeKind, type BriefFact, type BuilderBrief, type BuilderMessage, type DraftStatus, type PendingJob, type PlanChangeSummary, type WorkKind } from "./builder.types";
 
 export const MESSAGE_MAX = 2000;
 // Nova's reply may explain what a shared file says, so it may run longer.
@@ -69,7 +69,13 @@ export function isPendingLive(pending: PendingJob | null, now: Date): boolean {
 
 // ── Reading the model's reply ─────────────────────────────────────────────────
 
-export type NextStep = "ask" | "chat" | "draft" | "revise";
+// decline: the message asks for something Build with Nova does not do
+// (write an essay, set a reminder, change settings, answer something
+// unrelated to what they are building). Code answers it with DECLINE_REPLY.
+export type NextStep = "ask" | "chat" | "draft" | "revise" | "decline";
+
+// Said by code, never worded by the model: what this page is for.
+export const DECLINE_REPLY = "That's outside what I do here. In Build with Nova I shape and change your workspaces: their subjects, topics, tasks, dates and notes, and I can talk through files you share for them. For anything else, ask Nova from Today.";
 
 export interface TurnReading {
   reply:       string;
@@ -82,6 +88,8 @@ export interface TurnReading {
   question:    string | null;
   // For a revision: the change asked for, in words.
   change:      string | null;
+  // For a change: the kinds of record it is about (only those may change).
+  touches:     ChangeKind[];
   // Something of theirs already in Kivo the learner referred to, by the name
   // they used, and what they want with it: see it, change it, or a new one
   // (builder-changes.ts finds it among their own records; the model never
@@ -122,7 +130,7 @@ export function readTurn(raw: unknown, learnerText: string, fileNames: readonly 
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
   const reply = typeof r.reply === "string" ? r.reply.split("\r").join("").trim().slice(0, REPLY_MAX) : "";
-  const next: NextStep | null = r.next === "ask" || r.next === "chat" || r.next === "draft" || r.next === "revise" ? r.next : null;
+  const next: NextStep | null = r.next === "ask" || r.next === "chat" || r.next === "draft" || r.next === "revise" || r.next === "decline" ? r.next : null;
   if (!reply || !next) return null;
 
   const said = normalized(learnerText);
@@ -153,6 +161,7 @@ export function readTurn(raw: unknown, learnerText: string, fileNames: readonly 
     question: oneLine(r.question, 300) || null,
     change: oneLine(r.change, 600) || null,
     resource: resourceOf(r.resource),
+    touches: Array.isArray(r.touches) ? CHANGE_KINDS.filter(k => (r.touches as unknown[]).includes(k)) : [],
   };
 }
 
@@ -171,6 +180,8 @@ export type Step =
   // reply (which says it will propose) is not used.
   | { type: "ask"; question: string; overruled?: true }
   | { type: "chat" }
+  // Not what this page does: answered by code, nothing changes.
+  | { type: "decline" }
   | { type: "draft"; reason: "ready" | "enough_questions" }
   | { type: "revise"; change: string };
 
@@ -180,6 +191,7 @@ export type Step =
 // proposal there, as the plan is for a new workspace).
 export function decideStep(state: { plan: WorkspacePlan | null; brief: BuilderBrief; improving?: boolean; changes?: boolean }, reading: TurnReading): Step {
   const facts = reading.facts.length > 0 ? reading.facts : state.brief.facts;
+  if (reading.next === "decline") return { type: "decline" };
   if (reading.next === "chat") return { type: "chat" };
 
   // A proposal exists: a change to it is a new version; anything else is talk.
@@ -262,6 +274,7 @@ export function readBrief(raw: unknown): BuilderBrief {
     assumptions: listOf(r.assumptions, ASSUMPTIONS_MAX),
     suggestions: listOf(r.suggestions, SUGGESTIONS_MAX),
     ...(Array.isArray(r.choices) ? { choices: listOf(r.choices, 6) } : {}),
+    ...(Array.isArray(r.touches) ? { touches: CHANGE_KINDS.filter(k => (r.touches as unknown[]).includes(k)) } : {}),
     question: oneLine(r.question, 300) || null,
     questionsAsked: typeof r.questionsAsked === "number" && Number.isInteger(r.questionsAsked) && r.questionsAsked >= 0 ? r.questionsAsked : 0,
     dropped: listOf(r.dropped, 12),

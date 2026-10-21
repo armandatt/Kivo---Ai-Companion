@@ -64,6 +64,9 @@ export interface BuilderBrief {
   questionsAsked: number;
   // What the check left out of the last proposal, in words.
   dropped:     string[];
+  // What the learner's last change request is about (topics, tasks, …):
+  // a change set keeps only changes of these kinds (builder-changes.ts).
+  touches?:    ChangeKind[];
   // Names to choose from when the learner referred to something of theirs
   // that more than one of their workspaces or subjects could be.
   choices?:    string[];
@@ -99,6 +102,12 @@ export type ChangeOp =
   | { op: "add_date";     title: string; day: string; subjectId: string | null; kind: "exam" | "assignment" | "project" | "interview" | "certification" | "other" }
   | { op: "update_date";  dateId: string; title?: string; day?: string }
   | { op: "add_note";     title: string; body: string; subjectId: string | null; topicName: string | null };
+
+// The kinds of record a change request is about. A change set keeps only
+// operations on the kinds asked for: "add two topics" never brings new
+// tasks, notes or dates with it.
+export const CHANGE_KINDS = ["topics", "subjects", "tasks", "dates", "notes"] as const;
+export type ChangeKind = (typeof CHANGE_KINDS)[number];
 
 // An operation as proposed: its id (for the learner to leave one out), what
 // it does in words, which side of the change it is, and Nova's reason.

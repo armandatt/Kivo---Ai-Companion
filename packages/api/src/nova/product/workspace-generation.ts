@@ -236,6 +236,7 @@ const BUILDER_RULES = [
   "This plan comes from a conversation with the learner. FACTS are theirs: build on them as given. ASSUMPTIONS are Nova's: rely on them only where needed and keep them in assumptions.",
   "Choose the structure the work needs, not a fixed template: a project gets milestones (phases, in order) with tasks under each and any real dependencies; an exam gets subjects and topics, revision cycles and practice sessions; a skill gets ordered stages with exercises, a project and what done looks like; work gets deliverables, deadlines and reviews.",
   "Use the kind's own words in every title, task and note. A project or work plan has one subject named after the project, whose topics are its parts or components (never a syllabus), and no revision, exam or study-session tasks; its tasks are concrete steps (build, test, ship, review), building on what the learner said is already done. An academic plan uses subjects, topics, revision and practice.",
+  "Hold to what was asked: no subjects, topics, dates or resources the conversation gives no reason for, and nothing about the learner's other workspaces. Tasks and notes serve the plan, a few each, not padding.",
   "When CURRENT PROPOSAL is given, return the whole proposal with only the CHANGE ASKED applied. Keep everything else as it is, including keys, names the learner edited and items they removed (do not bring them back).",
   "When EXISTING WORKSPACE is given, propose only what to add to it. Do not repeat what it already has; never remove or rename what is there.",
 ].join("\n");
@@ -322,6 +323,7 @@ const CHANGES_SYSTEM = [
 {"op":"add_date","title":string,"day":"YYYY-MM-DD","subjectId":ID|null,"kind":"exam"|"assignment"|"project"|"interview"|"certification"|"other"}  {"op":"update_date","dateId":ID,"title"?:string,"day"?:"YYYY-MM-DD"}
 {"op":"add_note","title":string,"body":string,"subjectId":ID|null,"topicName":string|null}`,
   "Rules:",
+  "- Propose nothing the learner did not ask for: no extra tasks, notes, dates or subjects alongside the change (Kivo drops changes of kinds the request is not about). Never touch anything outside CURRENT RECORDS.",
   "- Use only ids shown in CURRENT RECORDS, exactly. Change only what CHANGE ASKED asks for; everything else stays as it is. Never remove or rename something unless asked. Additions must not repeat what is already there.",
   "- Topics have no order in Kivo and cannot be reordered (a milestone is a topic). To put a milestone or a piece of work first, order its tasks with order_tasks, and say so in summary.",
   "- When the learner wants a subject gone (\"delete Prompt Engineering\", \"it belongs to another semester\"), use remove_subject: it takes the subject and its topics together. Use remove_topic only for single topics.",

@@ -3,7 +3,8 @@
 // rules for academic plans. Pure, no database (nova-builder-edit.itest.ts
 // covers the same against Postgres).
 
-import { changeCounts, checkChanges, decideResource, matchResources, readChangeSet, type ResourceCandidates } from "../product/builder-changes";
+import { changeCounts, checkChanges, decideResource, matchResources, readChangeSet, withinAsk, type ResourceCandidates } from "../product/builder-changes";
+import { DECLINE_REPLY, decideStep, emptyBrief, readTurn } from "../product/builder-state";
 import { checkWorkspacePlan, isPlaceholderTopic, planWrites } from "../product/workspace-plan";
 import { NO_SYLLABUS, changesPrompt, writeBuilderPlan, type BuilderPlanRequest } from "../product/workspace-generation";
 import { readBuilderTurn, turnPrompt, type TurnInput } from "../product/builder-conversation";
@@ -227,5 +228,48 @@ describe("the conversation knows their records by name, and what it works on", (
     expect(p).toContain("CHANGES PROPOSED SO FAR (not applied):\n- Add to DSA: Heaps");
     const reading = await readBuilderTurn(input(), (async () => JSON.stringify({ reply: "Hi.", next: "chat", resource: { name: "", intent: "edit" } })) as never);
     expect(reading?.resource).toBeNull();
+  });
+});
+
+describe("Build with Nova keeps to its job", () => {
+  it("a request this page does not do is declined by code, whatever else the model read", () => {
+    const reading = readTurn({ reply: "Sure, here's your essay…", next: "decline", touches: ["topics"] }, "write my essay on climate change")!;
+    expect(reading.next).toBe("decline");
+    expect(decideStep({ plan: null, brief: emptyBrief() }, reading)).toEqual({ type: "decline" });
+    expect(decideStep({ plan: null, brief: emptyBrief(), improving: true, changes: true }, reading)).toEqual({ type: "decline" });
+    expect(DECLINE_REPLY).toContain("outside what I do here");
+  });
+
+  it("a change set keeps only the kinds of record asked about, and says what it left out", () => {
+    const set = checkChanges([
+      { op: "add_topics", subjectId: "s1", names: ["Heaps"] },
+      { op: "add_task", title: "Practice heap problems" },
+      { op: "add_note", title: "Heap cheatsheet", body: "# Heaps" },
+      { op: "update_date", dateId: "d1", day: "2026-11-27" },
+    ], current(), ctx);
+    const asked = withinAsk(set, ["topics"], current());
+    expect(asked.ops.map(o => o.op)).toEqual(["add_topics"]);
+    expect(asked.ops[0]!.id).toBe("c1");
+    expect(asked.dropped.filter(d => d.endsWith("(not asked for)"))).toHaveLength(3);
+    // A moved deadline is about dates and tasks; no kinds known keeps all.
+    expect(withinAsk(set, ["dates", "tasks"], current()).ops.map(o => o.op)).toEqual(["add_task", "update_date"]);
+    expect(withinAsk(set, [], current()).ops).toHaveLength(4);
+  });
+
+  it("a subject asked away keeps the topic removals it brings", () => {
+    const two: WorkspaceDetail = { ...current(), subjects: [...current().subjects, { id: "s2", name: "Prompt Engineering", topics: [{ id: "p1", name: "Guardrails" }] }] };
+    const set = checkChanges([{ op: "remove_subject", subjectId: "s2" }], two, ctx);
+    expect(withinAsk(set, ["subjects"], two).ops.map(o => o.op)).toEqual(["remove_topic", "remove_subject"]);
+  });
+
+  it("the model is told what this page does not do, and to name the kinds a change is about", async () => {
+    let system = "";
+    const reading = await readBuilderTurn({ today: TODAY, messages: [{ id: "m", role: "user", text: "add two topics", at: "" }], brief: emptyBrief(), known: [], proposal: null, existing: null }, (async (req: { systemInstruction: string }) => {
+      system = req.systemInstruction;
+      return JSON.stringify({ reply: "Adding them.", next: "draft", touches: ["topics", "everything"] });
+    }) as never);
+    expect(reading?.touches).toEqual(["topics"]);
+    expect(system).toContain("- decline: they ask for something this page does not do");
+    expect(system).toContain("touches: when next is draft or revise");
   });
 });
