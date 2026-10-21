@@ -29,6 +29,8 @@ export function companionOf(account: {
 export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
   { path: "/home",    label: "Today" },
   { path: "/planner", label: "Planner" },
+  // The template library and Create with Nova (product/workspaces.ts).
+  { path: "/templates", label: "Templates" },
   { path: "/calendar", label: "Calendar" },
   { path: "/focus",   label: "Focus" },
   { path: "/knowledge", label: "Knowledge" },
@@ -47,7 +49,7 @@ export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
 const SHARED_ROUTES = ["/settings"];
 
 // Pages that exist only for Nova.
-const NOVA_ONLY_ROUTES = ["/focus", "/knowledge", "/map", "/notes", "/saved", "/learning-dna"];
+const NOVA_ONLY_ROUTES = ["/focus", "/knowledge", "/map", "/notes", "/saved", "/learning-dna", "/templates"];
 
 const under = (pathname: string, route: string) => pathname === route || pathname.startsWith(`${route}/`);
 

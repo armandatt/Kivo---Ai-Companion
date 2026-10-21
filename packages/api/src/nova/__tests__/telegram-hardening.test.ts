@@ -250,7 +250,7 @@ describe("waiting on a model", () => {
     expect(read("proactive/nova-proactive-response.ts")).toContain("deadlineMs: RESPONSE_DEADLINE_MS");
     expect(read("brains/disambiguation-pass.ts").includes("generateOpenAIText")).toBe(true);
     const client = readFileSync(join(__dirname, "../../services/openai.service.ts"), "utf8");
-    expect(client).toContain("attemptTimeoutMs(input.deadlineMs, Date.now() - started, GEMINI_TIMEOUT_MS)");
+    expect(client).toContain("attemptTimeoutMs(input.deadlineMs, Date.now() - started, input.attemptMs ?? GEMINI_TIMEOUT_MS)");
     expect(client).toContain("input.deadlineMs !== undefined ? { signal: AbortSignal.timeout(input.deadlineMs) } : {}");
   });
 });

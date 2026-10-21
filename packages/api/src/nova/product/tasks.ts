@@ -236,6 +236,38 @@ export async function createTask(profileId: string, raw: unknown, options: { now
   }
 }
 
+// A workspace's tasks (product/workspaces.ts), inside its transaction. Each
+// is checked as createTask checks one, carries its key, and is made once: a
+// key already on record is left as it is. Refused whole when it would take
+// the learner past the open-task limit; the transaction then writes nothing.
+export async function createTasksIn(
+  tx: Pick<typeof prisma, "novaTask">,
+  profileId: string,
+  tasks: Array<Record<string, unknown>>,
+): Promise<{ ok: true; added: number; existing: number } | { ok: false; message: string }> {
+  const parsed = [];
+  for (const raw of tasks) {
+    const p = parseTaskInput(raw, true);
+    if (!p.ok) return { ok: false, message: p.message };
+    parsed.push(p.changes);
+  }
+  const keys = parsed.map(c => c.clientKey).filter((k): k is string => typeof k === "string");
+  const have = new Set((await tx.novaTask.findMany({ where: { profileId, clientKey: { in: keys } }, select: { clientKey: true } })).map(t => t.clientKey));
+  const fresh = parsed.filter(c => !c.clientKey || !have.has(c.clientKey));
+  if (await tx.novaTask.count({ where: { profileId, status: { not: "done" } } }) + fresh.length > TASK_OPEN_MAX) {
+    return { ok: false, message: "That would be more open tasks than Kivo keeps. Finish or remove some first." };
+  }
+  for (const c of fresh) {
+    await tx.novaTask.create({
+      data: {
+        profileId, title: c.title!, status: "todo", priority: c.priority ?? null, subjectId: c.subjectId ?? null,
+        topicName: c.topicName ?? null, dueDay: c.dueDay ?? null, clientKey: c.clientKey ?? null, estimatedMinutes: c.estimatedMinutes ?? null,
+      },
+    });
+  }
+  return { ok: true, added: fresh.length, existing: parsed.length - fresh.length };
+}
+
 export async function updateTask(profileId: string, taskId: string, raw: unknown, options: { now?: Date } = {}): Promise<TaskResponse> {
   const now = options.now ?? new Date();
   const parsed = parseTaskInput(raw, false);

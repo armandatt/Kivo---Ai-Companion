@@ -19,6 +19,31 @@ export interface LlmRequest {
   // retries apply. A chat turn sets it so a slow or rate-limited provider
   // fails in time for the turn to answer without it.
   deadlineMs?:        number;
+  // How long one attempt may run, when the provider's default is too short
+  // for the work (a plan written from a document). Still inside deadlineMs.
+  attemptMs?:         number;
+  // Files the model reads with the prompt: PDFs and images, as base64. Both
+  // providers read them natively (Gemini inline data; OpenAI image and file
+  // parts), scanned pages included. The caller checks type and size first.
+  attachments?:       LlmAttachment[];
+}
+
+export interface LlmAttachment {
+  name:     string;
+  mimeType: string;   // application/pdf, image/png, image/jpeg, image/webp
+  data:     string;   // base64, no data: prefix
+}
+
+// The user turn's content for OpenAI's chat API: text alone, or text with
+// image and file parts.
+export function openAIUserContent(req: LlmRequest): string | Array<Record<string, unknown>> {
+  if (!req.attachments || req.attachments.length === 0) return req.prompt;
+  return [
+    { type: "text", text: req.prompt },
+    ...req.attachments.map(a => a.mimeType === "application/pdf"
+      ? { type: "file", file: { filename: a.name, file_data: `data:${a.mimeType};base64,${a.data}` } }
+      : { type: "image_url", image_url: { url: `data:${a.mimeType};base64,${a.data}` } }),
+  ];
 }
 
 // An attempt shorter than this cannot succeed, so it is not started.
@@ -123,7 +148,10 @@ export function buildGeminiRequest(
       ...(req.systemInstruction
         ? { systemInstruction: { parts: [{ text: req.systemInstruction }] } }
         : {}),
-      contents: [{ role: "user", parts: [{ text: req.prompt }] }],
+      contents: [{ role: "user", parts: [
+        { text: req.prompt },
+        ...(req.attachments ?? []).map(a => ({ inlineData: { mimeType: a.mimeType, data: a.data } })),
+      ] }],
       ...(Object.keys(generationConfig).length > 0 ? { generationConfig } : {}),
     },
   };

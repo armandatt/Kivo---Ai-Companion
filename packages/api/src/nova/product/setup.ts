@@ -264,6 +264,8 @@ export async function declareSubjectsIn(
   profileId: string,
   existing: Array<{ id: string; name: string }>,
   subjects: Array<{ name: string; topics: string[] }>,
+  // Filled in for a caller that needs to know what was made (workspaces).
+  report?: { ids: Map<string, string>; subjectsAdded: number; topicsAdded: number },
 ): Promise<boolean> {
   const known = [...existing];
   let hasTopics = false;
@@ -272,10 +274,35 @@ export async function declareSubjectsIn(
     if (!subject) {
       subject = await tx.novaSubject.create({ data: { profileId, name: s.name }, select: { id: true, name: true } });
       known.push(subject);
+      if (report) report.subjectsAdded++;
     }
-    if (s.topics.length > 0) { await declareTopics(tx, subject.id, s.topics); hasTopics = true; }
+    report?.ids.set(s.name.toLowerCase(), subject.id);
+    if (s.topics.length > 0) {
+      const declared = await declareTopics(tx, subject.id, s.topics);
+      if (report) report.topicsAdded += declared.added.length;
+      hasTopics = true;
+    }
   }
   return hasTopics;
+}
+
+// A workspace's subjects and topics (product/workspaces.ts), inside its
+// transaction: merged by name with what the learner has, never duplicated,
+// with no mastery, review or snapshot. Setup counts as done once a topic
+// exists, as it does for saveSetup. Returns each subject's id by the name
+// the plan gave it, and how many subjects and topics were new.
+export async function declareWorkspaceSubjectsIn(
+  tx: Pick<typeof prisma, "novaSubject" | "novaTopicMastery" | "novaAcademicProfile">,
+  profileId: string,
+  subjects: Array<{ name: string; topics: string[] }>,
+): Promise<{ ids: Map<string, string>; subjectsAdded: number; topicsAdded: number }> {
+  const known = await tx.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true } });
+  const report = { ids: new Map<string, string>(), subjectsAdded: 0, topicsAdded: 0 };
+  await declareSubjectsIn(tx, profileId, known, subjects, report);
+  if (await tx.novaTopicMastery.count({ where: { subject: { profileId }, archivedAt: null } }) > 0) {
+    await tx.novaAcademicProfile.update({ where: { id: profileId }, data: { onboardingComplete: true, onboardingStep: "complete" } });
+  }
+  return report;
 }
 
 export async function saveSetup(platformChatId: string, raw: unknown, now = new Date(), routine: RoutineMode = "replace"): Promise<SaveSetupResult> {

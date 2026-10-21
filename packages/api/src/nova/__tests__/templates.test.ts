@@ -15,6 +15,8 @@ describe("the templates", () => {
     expect(STUDY_TEMPLATES.map(t => t.id)).toEqual([
       "engineering-semester", "exam-preparation", "skill-building",
       "school-subjects", "semester-subjects", "project-sprint", "interview-preparation", "certification",
+      // Templates 2.0: competitive exams and work.
+      "competitive-exam", "revision-notebook", "work-projects", "career-growth",
     ]);
     const text = JSON.stringify(STUDY_TEMPLATES).toLowerCase();
     for (const word of ["gym", "workout", "fitness", "bodybuilding", "calorie"]) expect(text).not.toContain(word);

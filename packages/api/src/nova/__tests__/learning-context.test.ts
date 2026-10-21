@@ -169,7 +169,8 @@ describe("starting points", () => {
 
   it("are offered with the fitting ones first, and nobody loses one", () => {
     const first = (contexts: LearningContext[]) => templatesFor(contexts).slice(0, 3).map(t => t.id);
-    expect(first(["school"])).toEqual(["exam-preparation", "school-subjects", "engineering-semester"]);
+    // A school student is also offered the competitive-exam template (JEE, NEET).
+    expect(first(["school"])).toEqual(["exam-preparation", "school-subjects", "competitive-exam"]);
     expect(first(["working"])).toEqual(["skill-building", "project-sprint", "interview-preparation"]);
     expect(first(["college"]).slice(0, 2)).toEqual(["engineering-semester", "exam-preparation"]);
     expect(templatesFor([]).map(t => t.id)).toEqual(STUDY_TEMPLATES.map(t => t.id));

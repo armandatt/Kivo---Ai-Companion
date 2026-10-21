@@ -108,6 +108,11 @@ export const REQUESTED_ACTIONS = [
   // never mistaken for anything else; Nova has no reminder to create, so the
   // decision answers that plainly and nothing is scheduled.
   "set_reminder",
+  // Asks Nova to set something up: a study plan, a roadmap, a syllabus
+  // structure, a tracker, a workspace. Read so that chat never creates one:
+  // the decision offers the Create with Nova page, where the learner sees
+  // the plan before anything is made.
+  "create_workspace",
   // Asks for the days ahead: this week, the next seven days. Not today's
   // plan, which is what_now.
   "week_plan",

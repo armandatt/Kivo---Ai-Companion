@@ -93,6 +93,9 @@ export type TurnAction =
   // A reminder for a set time. Nova has nothing that creates one, so nothing
   // is created and the reply says exactly that.
   | { type: "reminder_unavailable" }
+  // Something to set up. Chat creates nothing: the reply opens Create with
+  // Nova with the request, where the learner sees the plan first.
+  | { type: "offer_workspace" }
   | { type: "clarify" }
   // No product action. The turn is a conversation: Decision Graph, then the
   // Response Brain.
@@ -171,6 +174,12 @@ export function decideAction(understanding: AcademicUnderstanding, ctx: ActionCo
   // you" gets said about something that does not exist.
   if (req.action === "set_reminder") {
     return { action: { type: "reminder_unavailable" }, proposeExam: null, generate: false, reason: "reminder_not_supported" };
+  }
+
+  // Something to set up: never made from a sentence, and never worded by the
+  // model (it would say it was made). The page shows the plan first.
+  if (req.action === "create_workspace" && req.clarity === "clear") {
+    return { action: { type: "offer_workspace" }, proposeExam: null, generate: false, reason: "workspace_offer" };
   }
 
   if (req.clarity === "unsupported") return decided({ type: "unsupported" }, "unsupported_request", false);
