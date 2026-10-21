@@ -45,6 +45,9 @@ export interface PlanSubject { name: string; topics: PlanTopic[] }
 export interface PlanTask {
   key: string; title: string; priority: "low" | "medium" | "high" | null;
   subject: string | null; topic: string | null; dueDay: string | null; estimatedMinutes: number | null;
+  // The key of a task in the same plan that comes first. Kivo's tasks have
+  // no dependency column, so this is written into the workspace's order note.
+  after?: string | null;
 }
 export interface PlanNote {
   key: string; title: string; subject: string | null; topic: string | null; body: string;
@@ -275,7 +278,19 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
     tasks.push({
       key, title: ttitle, priority: x.priority === "low" || x.priority === "medium" || x.priority === "high" ? x.priority : null,
       subject: subjectName(x.subject), topic: oneLine(x.topic, PLAN_LIMITS.name) || null, dueDay: due, estimatedMinutes: minutes,
+      after: oneLine(x.after, 60) || null,
     });
+  }
+  // An order names another task of this plan, and never loops back.
+  for (const t of tasks) {
+    if (!t.after) { t.after = null; continue; }
+    const before = tasks.find(k => k.key === t.after && k !== t);
+    if (!before) { t.after = null; continue; }
+    let at: PlanTask | undefined = before;
+    for (let hops = 0; at && hops <= tasks.length; hops++) {
+      if (at === t) { t.after = null; break; }
+      at = at.after ? tasks.find(k => k.key === at!.after) : undefined;
+    }
   }
 
   const notes: PlanNote[] = [];
@@ -459,6 +474,11 @@ export function planWrites(plan: WorkspacePlan): PlanWrites {
   }
   if (plan.prerequisites.length > 0) {
     notes.push({ key: "prerequisites", title: `Before you start: ${plan.title}`, subject: subjects[0]?.name ?? null, topic: null, body: `# Prerequisites\n${plan.prerequisites.map(p => `- ${p}`).join("\n")}` });
+  }
+  const ordered = plan.tasks.filter(t => t.after);
+  if (ordered.length > 0) {
+    const titleOf = (key: string) => plan.tasks.find(t => t.key === key)?.title ?? key;
+    notes.push({ key: "order", title: `Order of work: ${plan.title}`, subject: subjects[0]?.name ?? null, topic: null, body: `# What comes first\n${ordered.map(t => `- ${t.title}: after ${titleOf(t.after!)}`).join("\n")}` });
   }
   if (plan.resources.length > 0) {
     notes.push({ key: "resources", title: `Resources: ${plan.title}`, subject: subjects[0]?.name ?? null, topic: null, body: `# Resources\n${plan.resources.map(resourceLine).join("\n")}` });

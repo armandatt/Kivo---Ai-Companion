@@ -17,7 +17,7 @@ import {
   LogOut,
   Map,
   Settings,
-  LayoutTemplate,
+  Sparkles,
   Target,
   Timer,
   TrendingUp,
@@ -56,7 +56,7 @@ const navItems = [
 ]
 
 // Nova's pages, from the one list that also decides route access.
-const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/planner': Calendar, '/templates': LayoutTemplate, '/calendar': CalendarDays, '/focus': Timer, '/knowledge': BookOpen, '/map': Waypoints, '/notes': NotebookPen, '/saved': Bookmark, '/progress': TrendingUp, '/learning-dna': Dna, '/creature': Map, '/guide': Compass }
+const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/build': Sparkles, '/planner': Calendar, '/calendar': CalendarDays, '/focus': Timer, '/knowledge': BookOpen, '/map': Waypoints, '/notes': NotebookPen, '/saved': Bookmark, '/progress': TrendingUp, '/learning-dna': Dna, '/creature': Map, '/guide': Compass }
 const novaNavItems = NOVA_ROUTES.map(r => ({ href: r.path, label: r.label, icon: NOVA_ICONS[r.path] ?? Home }))
 
 type NavItem = typeof navItems[number]
@@ -64,7 +64,7 @@ type NavItem = typeof navItems[number]
 // Nova's pages grouped by what they are for. A page not named here (a new one
 // in NOVA_ROUTES) is listed after the groups, so none is ever dropped.
 const NOVA_GROUPS: ReadonlyArray<{ label: string; paths: readonly string[] }> = [
-  { label: 'Plan',      paths: ['/home', '/planner', '/templates', '/calendar', '/focus'] },
+  { label: 'Plan',      paths: ['/home', '/build', '/planner', '/calendar', '/focus'] },
   { label: 'Knowledge', paths: ['/knowledge', '/map', '/notes', '/saved'] },
   { label: 'Growth',    paths: ['/progress', '/learning-dna', '/creature'] },
 ]

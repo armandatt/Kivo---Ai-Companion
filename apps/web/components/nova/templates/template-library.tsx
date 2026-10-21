@@ -13,8 +13,10 @@ import { cn } from '@/lib/utils'
 import { CreateWithNova, TemplatePreview } from './template-dialogs'
 import { loadWorkspaces, removeWorkspace } from './templates-api'
 
-// The template library: Kivo's templates by who they are for, the learner's
-// own workspaces, and Create with Nova. Every category is open to everyone;
+// The template library: optional ready-made starting points, by who they are
+// for, and the learner's own workspaces. Build with Nova (/build) is the main
+// way in; "Start from a document" is the one-shot Create with Nova that
+// reads a PDF or photo. Every category is open to everyone;
 // what they said at sign-up only picks the one shown first.
 
 type Tab = 'for-you' | TemplateCategory
@@ -91,8 +93,11 @@ export function TemplateLibrary() {
 
   return (
     <PageFrame>
-      <PageHeader title="Templates" description="Start from a Kivo template, or tell Nova what you need and it builds the workspace. You see everything before it is created."
-        actions={<button type="button" onClick={() => setCreating('')} className={BUTTON_PRIMARY} data-open-create><Sparkles aria-hidden className="size-4" /> Create with Nova</button>} />
+      <PageHeader title="Templates" description="Ready-made starting points, if one fits. For anything else, talk it through with Nova: it asks what it needs and builds nothing until you approve."
+        actions={<>
+          <Link href="/build" className={BUTTON_PRIMARY}><Sparkles aria-hidden className="size-4" /> Build with Nova</Link>
+          <button type="button" onClick={() => setCreating('')} className={BUTTON_QUIET} data-open-create>Start from a document</button>
+        </>} />
 
       <div className="mt-8 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div role="tablist" aria-label="Template categories" className="flex gap-1 overflow-x-auto rounded-xl border border-white/8 bg-card/50 p-1">
@@ -143,7 +148,7 @@ export function TemplateLibrary() {
         <p className="mt-1 text-sm text-foreground/60">Made from a template or by Nova. Their subjects, tasks and notes live in Knowledge, the Planner and Notes.</p>
         {workspaces === null && !workspacesFailed && <div aria-busy="true" aria-label="Loading your workspaces" className="mt-4 h-16 animate-pulse rounded-2xl bg-white/4" />}
         {workspacesFailed && <p role="alert" className="mt-4 text-sm text-foreground/70">Your workspaces didn&apos;t load. <button type="button" onClick={() => void refresh()} className="font-medium text-action-ink underline underline-offset-2">Try again</button></p>}
-        {workspaces && workspaces.length === 0 && <p className="mt-4 text-sm text-foreground/60">None yet. Use a template or Create with Nova.</p>}
+        {workspaces && workspaces.length === 0 && <p className="mt-4 text-sm text-foreground/60">None yet. Use a template, or <Link href="/build" className="underline underline-offset-4">build one with Nova</Link>.</p>}
         {workspaces && workspaces.length > 0 && (
           <ul className="mt-4 divide-y divide-white/6 rounded-2xl border border-white/8 bg-card/50">
             {workspaces.map(w => (
@@ -152,6 +157,7 @@ export function TemplateLibrary() {
                   <p className="truncate text-sm font-medium text-foreground">{w.title}</p>
                   <p className="text-xs text-foreground/55">{w.kind === 'template' ? `From ${w.templateName ?? 'a Kivo template'}` : 'Designed by Nova'} · {new Date(w.createdAt).toLocaleDateString()}</p>
                 </div>
+                <Link href={`/build?improve=${encodeURIComponent(w.id)}`} className="text-xs font-medium text-foreground/65 hover:text-foreground">Improve with Nova</Link>
                 <div className="flex flex-wrap gap-1.5">
                   {w.subjects.slice(0, 3).map(s => <Link key={s.id} href={`/knowledge?subject=${s.id}`} className="rounded-full border border-white/10 px-2.5 py-0.5 text-xs text-foreground/75 hover:border-white/25">{s.name}</Link>)}
                 </div>

@@ -1,11 +1,12 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { ArrowUp, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { sendNovaMessage } from './nova-api'
 
-type Turn = { from: 'nova' | 'you'; text: string }
+type Turn = { from: 'nova' | 'you'; text: string; link?: { label: string; path: string } }
 
 type Props = {
   // Shown before the first message. Not sent anywhere.
@@ -38,7 +39,7 @@ export function TalkToNova({ opening, placeholder, onReplied, className }: Props
     const res = await sendNovaMessage(text)
     setSending(false)
     if (res.ok) {
-      setTurns(t => [...t, { from: 'nova', text: res.reply }])
+      setTurns(t => [...t, { from: 'nova', text: res.reply, ...(res.link ? { link: res.link } : {}) }])
       onReplied?.()
     } else {
       setError(res.message)
@@ -57,6 +58,10 @@ export function TalkToNova({ opening, placeholder, onReplied, className }: Props
                 turn.from === 'you' ? 'bg-keppel-400/15 text-foreground' : 'bg-white/5 text-foreground/85',
               )}>
                 {turn.text}
+                {/* Only a path on this site: the server names it, never a full address. */}
+                {turn.link && turn.link.path.startsWith('/') && !turn.link.path.startsWith('//') && (
+                  <Link href={turn.link.path} className="mt-2 block w-fit rounded-lg bg-action px-3 py-1.5 text-xs font-semibold text-action-foreground hover:bg-action-hover">{turn.link.label}</Link>
+                )}
               </p>
             </div>
           ))}

@@ -43,6 +43,7 @@ import { getRelevantMemories } from "./adapters/memory-adapter";
 import { loadActiveRealityFacts } from "./adapters/reality-adapter";
 import { loadCoachingStyle } from "./adapters/operating-style-adapter";
 import { loadFirstFocus, loadLearningContexts, loadSignupAnswers } from "./adapters/account-preferences-adapter";
+import { builderContextLines } from "./product/builder";
 import { preparesTopics, takesOverTheDay } from "./product/deadline-types";
 import { calendarDaysUntil, dayKey, resolveTimezone } from "./engines/learner-calendar";
 import { countedStudyDays, studiedToday, studyGap } from "./engines/recovery-engine";
@@ -66,13 +67,13 @@ const PATTERN_DETECTOR_INTERVAL = 5;
 // Who the learner is, as far as it is on record: the name on their account or
 // chat, and what they said they are working toward. Either may be missing,
 // and a missing one stays missing: nothing stands in for it.
-async function resolveUser(platformChatId: string): Promise<{ id: string; displayName: string | null; goals: string[] } | null> {
+async function resolveUser(platformChatId: string): Promise<{ id: string; displayName: string | null; goals: string[]; profileId: string | null } | null> {
   const user = await prisma.messengerUser.findUnique({
     where:  learnerKey(platformChatId),
-    select: { id: true, displayName: true, novaAcademicProfile: { select: { goals: true } } },
+    select: { id: true, displayName: true, novaAcademicProfile: { select: { id: true, goals: true } } },
   });
   if (!user) return null;
-  return { id: user.id, displayName: user.displayName?.trim() || null, goals: user.novaAcademicProfile?.goals ?? [] };
+  return { id: user.id, displayName: user.displayName?.trim() || null, goals: user.novaAcademicProfile?.goals ?? [], profileId: user.novaAcademicProfile?.id ?? null };
 }
 
 // ── Orchestrator ──────────────────────────────────────────────────────────────
@@ -275,7 +276,7 @@ export async function runNovaOrchestrator(
   }
 
   // ── 11. Memory + Reality (parallel) ──────────────────────────────────────
-  const [memoryResult, realityFacts, coachingStyle, learningContexts, firstFocus, signup] = await Promise.all([
+  const [memoryResult, realityFacts, coachingStyle, learningContexts, firstFocus, signup, building] = await Promise.all([
     getRelevantMemories(userId, understanding),
     loadActiveRealityFacts(userId, understanding),
     loadCoachingStyle(platformChatId),
@@ -285,6 +286,8 @@ export async function runNovaOrchestrator(
     loadLearningContexts(platformChatId).catch(() => []),
     loadFirstFocus(platformChatId).catch(() => null),
     loadSignupAnswers(platformChatId),
+    // What they built or are shaping in Build with Nova (titles only).
+    user.profileId ? builderContextLines(user.profileId).catch(() => [] as string[]) : Promise.resolve([] as string[]),
   ]);
 
   // ── 12. Assemble NovaContext ───────────────────────────────────────────────
@@ -311,6 +314,7 @@ export async function runNovaOrchestrator(
     userProfile: {
       displayName:              user.displayName,
       goals:                    user.goals,
+      building,
       yearOfStudy:              snapshot.yearOfStudy,
       major:                    snapshot.major,
       institution:              snapshot.institution,

@@ -26,7 +26,10 @@ const REX_PAGES = ["/coach", "/goals", "/journey"];
 describe("routeAccess", () => {
   it("shows a Nova learner Nova's pages", () => {
     for (const { path } of NOVA_ROUTES) expect(routeAccess("nova", path)).toBe("render");
-    expect(NOVA_ROUTES.map(r => r.path)).toEqual(["/home", "/planner", "/templates", "/calendar", "/focus", "/knowledge", "/map", "/notes", "/saved", "/progress", "/learning-dna", "/creature", "/guide"]);
+    expect(NOVA_ROUTES.map(r => r.path)).toEqual(["/home", "/build", "/planner", "/calendar", "/focus", "/knowledge", "/map", "/notes", "/saved", "/progress", "/learning-dna", "/creature", "/guide"]);
+    // The template library is still Nova's, reached from Build with Nova rather than the sidebar.
+    expect(routeAccess("nova", "/templates")).toBe("render");
+    expect(routeAccess("rex", "/build")).toBe("not_for_rex");
   });
 
   it("never shows a Nova learner a Rex page", () => {

@@ -186,6 +186,17 @@ export async function listTasksDueBetween(profileId: string, range: { from: stri
   return rows.map(row => toItem(row, today)).sort(compareTasks);
 }
 
+// The learner's tasks created under one key prefix (a workspace's
+// "ws:<key>:"), as they now are: how a workspace shows its tasks back.
+export async function listTasksWithKeyPrefix(profileId: string, prefix: string, options: { now?: Date } = {}): Promise<NovaTaskItem[]> {
+  const now = options.now ?? new Date();
+  const [today, rows] = await Promise.all([
+    todayOf(profileId, now),
+    prisma.novaTask.findMany({ where: { profileId, clientKey: { startsWith: prefix } }, select: ROW, orderBy: { createdAt: "asc" }, take: TASK_OPEN_MAX }),
+  ]);
+  return rows.map(row => toItem(row, today));
+}
+
 // Of these ids, the ones that are this learner's tasks: id → title and status.
 // How the calendar checks a task an event is for, and names it.
 export async function tasksOwnedBy(profileId: string, ids: string[]): Promise<Map<string, { title: string; status: string }>> {

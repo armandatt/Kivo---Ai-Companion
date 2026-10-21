@@ -1,8 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { ArrowRight, Loader2 } from 'lucide-react'
+import type { DraftListItem } from '@repo/api/nova/product/builder.types'
 import { SetupForm } from './setup-form'
+import { BuildStart } from './builder/builder-page'
+import { listDrafts, newClientKey, startDraft } from './builder/builder-api'
 
 function SetupFrame({ step, title, children }: { step: string; title: string; children: React.ReactNode }) {
   return (
@@ -85,19 +90,55 @@ export function ConnectNova({ onCheck }: { onCheck: () => void }) {
   )
 }
 
-// Nova has nothing to plan from yet. This is the study setup: what the
-// learner is taking, what it covers, when the exams are and how they usually
-// study. It is the same setup Telegram and the chat box add to; anything
-// already said there is shown here. Telegram is optional and is connected
-// from Settings. The personality quiz is separate and is not asked again.
+// Nova has nothing to plan from yet: the first thing a new learner sees
+// after onboarding. Build with Nova leads: they say what they are working on
+// in their own words, Nova asks what it needs and proposes a workspace, and
+// nothing is created until they approve it on /build. The study setup form
+// is still here for anyone who would rather fill it in (it is the same
+// setup Telegram and the chat box add to). Telegram is optional and is
+// connected from Settings.
 export function NovaOnboarding({ onProgress }: { onProgress: () => void }) {
+  const router = useRouter()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [form, setForm] = useState(false)
+  const [drafts, setDrafts] = useState<DraftListItem[]>([])
+  useEffect(() => { void listDrafts().then(r => { if ('status' in r) setDrafts(r.drafts) }) }, [])
+  const open = drafts.find(d => d.status !== 'ready')
+
+  async function start(text: string) {
+    setBusy(true); setError(null)
+    const res = await startDraft({ clientKey: newClientKey(), ...(text ? { text } : {}) })
+    setBusy(false)
+    if (!res.ok) { setError(res.message); return false }
+    router.push(`/build?draft=${encodeURIComponent(res.draft.id)}`)
+    return true
+  }
+
   return (
-    <SetupFrame step="Getting started" title="Set up what you're learning">
-      <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">
-        Nova plans from this and nothing else: what you are learning, what each part of it covers, and any dates that matter.
-        Skip what you don&apos;t know yet. Everything else it learns from your sessions.
-      </p>
-      <SetupForm onSaved={onProgress} />
+    <SetupFrame step="Getting started" title="Build your first workspace with Nova">
+      <div className="mt-6" data-first-run>
+        {open && (
+          <p className="mb-5 rounded-xl border border-white/10 bg-white/3 p-3 text-sm text-foreground/80">
+            You have a conversation going: <Link href={`/build?draft=${encodeURIComponent(open.id)}`} className="font-medium text-action-ink underline underline-offset-4">{open.title ?? 'continue it'}</Link>
+          </p>
+        )}
+        <BuildStart compact onStart={text => start(text)} workspaces={[]} drafts={[]} busy={busy} error={error} />
+      </div>
+      <div className="mt-8 border-t border-white/8 pt-5">
+        <button type="button" onClick={() => setForm(f => !f)} aria-expanded={form} className="text-sm font-medium text-foreground/70 underline-offset-4 hover:text-foreground hover:underline">
+          {form ? 'Hide the form' : 'Prefer a form? Set it up yourself'}
+        </button>
+        {form && (
+          <div className="mt-4">
+            <p className="max-w-prose text-sm leading-relaxed text-foreground/65">
+              Nova plans from this: what you are learning, what each part of it covers, and any dates that matter.
+              Skip what you don&apos;t know yet. Everything else it learns from your sessions.
+            </p>
+            <SetupForm onSaved={onProgress} />
+          </div>
+        )}
+      </div>
     </SetupFrame>
   )
 }

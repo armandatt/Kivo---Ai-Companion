@@ -746,6 +746,7 @@ model NovaAcademicProfile {
   mapLayout         NovaMapLayout[]
   calendarEvents    NovaCalendarEvent[]
   workspaces        NovaWorkspace[]
+  workspaceDrafts   NovaWorkspaceDraft[]
 
   user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -1494,4 +1495,52 @@ model NovaWorkspace {
 
   @@unique([profileId, clientKey])
   @@index([profileId, createdAt])
+}
+
+// ─── Build with Nova: one conversation and its proposal (product/builder.ts) ─
+// The only reader and writer is product/builder.ts. A draft is a
+// conversation with Nova and the plan it proposes; it owns no learning data.
+// Nothing in it is a task, topic, note or date: approving a version builds
+// those through their own writers (workspaces.ts), and the draft then points
+// at the workspace it made.
+model NovaWorkspaceDraft {
+  id                String   @id @default(cuid())
+  profileId         String
+  // discovery | drafting | awaiting_approval | building | ready | failed | cancelled
+  status            String   @default("discovery")
+  // Where the conversation began: "web" or "telegram".
+  origin            String   @default("web")
+  title             String?
+  // The conversation: [{ id, role: "user" | "nova", text, at, kind? }], capped.
+  messages          Json
+  // What Nova has understood: the learner's facts, its assumptions and
+  // recommendations, the open question (product/builder-state.ts).
+  brief             Json
+  // The proposed WorkspacePlan, checked; null until one is drafted.
+  plan              Json?
+  // Bumped by every change to the plan, Nova's or the learner's. Approval
+  // names the version it approves.
+  version           Int      @default(0)
+  // A model job in progress: { kind, stage, startedAt, baseVersion }.
+  pending           Json?
+  // The job's id. A job writes its result only while this is still its id,
+  // so a cancelled or superseded job changes nothing.
+  jobId             String?
+  // Why the last step failed, in words, and which step: { stage, message }.
+  failure           Json?
+  // An existing workspace of theirs this improves (added to, never replaced).
+  targetWorkspaceId String?
+  // The workspace approval made or added to.
+  workspaceId       String?
+  // The version that was built.
+  builtVersion      Int?
+  // One draft per start, however many times the request is sent.
+  clientKey         String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, clientKey])
+  @@index([profileId, updatedAt])
 }

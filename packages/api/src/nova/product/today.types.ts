@@ -177,7 +177,7 @@ export interface NovaMessageRequest {
 }
 
 export type NovaMessageResponse =
-  | { ok: true; reply: string; intervention: string | null }
+  | { ok: true; reply: string; intervention: string | null; link?: { label: string; path: string } }
   | { ok: false; error: "unauthenticated" | "not_connected" | "not_nova" | "rate_limited" | "empty" | "failed"; message: string };
 
 // ── Session commands ──────────────────────────────────────────────────────────

@@ -416,8 +416,11 @@ export function NovaGuide() {
               <Feature title="The plan for the coming days">
                 What Nova plans for each day ahead, block by block, against the time you have each day. Change the time for today and the plan follows; the Planner explains what set the length of a day.
               </Feature>
-              <Feature title="Templates and Create with Nova">
-                Templates (in the sidebar) sets up a workspace in one go: subjects and topics, dates, tasks and notes, for college, work or a competitive exam. Or describe what you need, add a syllabus PDF or a photo, and Nova builds it, using a template when one fits. You see and trim everything before it is created, and creating the same thing twice offers to add to the one you have instead. Nova doesn&apos;t search the web, so the resources it names are suggestions.
+              <Feature title="Build with Nova">
+                Build with Nova (in the sidebar) is a conversation: say what you&apos;re working on in your own words, a project, an exam, a skill, your semester or something at work. Nova asks only what it needs, one question at a time, and proposes a workspace on the right: milestones, tasks, topics, notes and dates. Edit any of it there, or tell Nova what to change; each change is a new version. Nothing is created until you approve a version, and then it&apos;s real: tasks on your Planner board, subjects in Knowledge, notes in Notes, dates on the calendar. You can come back to the conversation later, or improve a workspace you already have (Nova only adds; nothing there is changed or removed). Ask Nova on Telegram to set something up and it sends you a link to the same conversation. Nova doesn&apos;t search the web, so the resources it names are suggestions.
+              </Feature>
+              <Feature title="Templates">
+                Ready-made starting points for college, work or a competitive exam, linked from Build with Nova. &ldquo;Start from a document&rdquo; there reads a syllabus PDF or a photo and proposes a workspace from it. You see and trim everything before it is created.
               </Feature>
               <Feature title="Plan changes you can undo">
                 Skip a topic for today from the plan or on Telegram (“skip deadlocks today”): Nova asks first, writes one change, and Undo takes it back. Skipped topics come back tomorrow.

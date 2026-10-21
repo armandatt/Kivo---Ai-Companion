@@ -1,0 +1,585 @@
+// ─── Build with Nova: the conversation and its proposal ───────────────────────
+// The only reader and writer of NovaWorkspaceDraft. A draft is one
+// conversation with Nova about something the learner wants to organise, and
+// the proposal it leads to. It owns no learning data: approving a version
+// creates the workspace through workspaces.ts (subjects, topics, dates,
+// tasks and notes, each through its own writer, in one transaction).
+//
+//   discovery ─▶ drafting ─▶ awaiting_approval ─▶ building ─▶ ready
+//        ▲           │               │  ▲            │
+//        └───────────┘               ▼  │            ▼
+//                                 drafting        failed ─▶ (retry)
+//
+// The rules that hold here, each with a test:
+//   - Nothing the learner has is written before approval. A turn writes only
+//     this row.
+//   - A learner message is answered by one model job, run after the request
+//     returns (the page polls). One job at a time per draft: claiming one is
+//     a conditional write. A job writes only while the row still carries its
+//     jobId, so a cancelled or superseded job changes nothing.
+//   - A job's proposal is applied only if the plan is still the version it
+//     started from. When the learner edited it meanwhile, their edit stays
+//     and Nova says so.
+//   - Every change to the plan makes a new version. Approval names one; only
+//     the current version can be approved, and the server builds its own
+//     stored copy, checked again, never the page's.
+//   - Approving twice builds once: the move to "building" is conditional,
+//     and the workspace is created under a key made from the draft and the
+//     version.
+//   - The learner is the one behind the session. A draft or workspace id
+//     from the request is used only together with their profile.
+
+import { createHash, randomUUID } from "crypto";
+import { prisma } from "@repo/db/client";
+import { dayKey, resolveTimezone } from "../engines/learner-calendar";
+import { learnerKey } from "./learner-key";
+import { loadLearningContexts, loadSignupAnswers } from "../adapters/account-preferences-adapter";
+import { WORKING_ON_LABEL, weeklyHoursLabel } from "./onboarding-options";
+import type { LearningContext } from "./learning-context";
+import { ensureSetupProfile, subjectNames } from "./setup";
+import { checkWorkspacePlan, planCounts, type WorkspacePlan } from "./workspace-plan";
+import { writeBuilderPlan } from "./workspace-generation";
+import { readBuilderTurn } from "./builder-conversation";
+import { createWorkspace, recentWorkspaceTitles, similarWorkspaces, workspaceDetail, workspaceSummaries } from "./workspaces";
+import {
+  MESSAGE_MAX, TALKING, canMove, decideStep, describeChanges, emptyBrief, isPendingLive, learnerWords, message,
+  needsReply, nextBrief, planChanges, readBrief, readMessages, readPending, spoken, withMessages,
+} from "./builder-state";
+import type { BriefFact, BuilderBrief, BuilderMessage, BuilderResponse, DraftFailure, DraftListView, DraftStatus, DraftView, PendingJob } from "./builder.types";
+import type { WorkspaceCounts } from "./workspaces.types";
+
+export const OPEN_DRAFTS_MAX = 50;
+const KEY_MIN = 8, KEY_MAX = 64;
+const CONVERSATION_FOR_PLAN = 24;
+
+type Read = typeof readBuilderTurn;
+type Write = typeof writeBuilderPlan;
+export interface BuilderDeps { read?: Read; write?: Write }
+
+// A model job the route runs after answering.
+export interface BuilderJob { draftId: string; jobId: string; kind: PendingJob["kind"]; change: string | null }
+
+const ROW = {
+  id: true, profileId: true, status: true, origin: true, title: true, messages: true, brief: true, plan: true, version: true,
+  pending: true, jobId: true, failure: true, targetWorkspaceId: true, workspaceId: true, builtVersion: true, updatedAt: true,
+} as const;
+type Row = {
+  id: string; profileId: string; status: string; origin: string; title: string | null; messages: unknown; brief: unknown; plan: unknown;
+  version: number; pending: unknown; jobId: string | null; failure: unknown; targetWorkspaceId: string | null; workspaceId: string | null;
+  builtVersion: number | null; updatedAt: Date;
+};
+
+const json = (v: unknown) => v as object;
+// "No job" and "no failure" are stored as {}: the readers take it as none,
+// and it needs no database null for a Json column.
+const NONE = {} as object;
+const statusOf = (s: string): DraftStatus =>
+  (["discovery", "drafting", "awaiting_approval", "building", "ready", "failed", "cancelled"] as const).find(x => x === s) ?? "discovery";
+const planOf = (raw: unknown): WorkspacePlan | null => (raw && typeof raw === "object" && !Array.isArray(raw) ? raw as WorkspacePlan : null);
+function failureOf(raw: unknown): DraftFailure | null {
+  if (!raw || typeof raw !== "object") return null;
+  const f = raw as Record<string, unknown>;
+  const stage = f.stage === "reply" || f.stage === "drafting" || f.stage === "building" ? f.stage : null;
+  return stage && typeof f.message === "string" ? { stage, message: f.message, change: typeof f.change === "string" ? f.change : null } : null;
+}
+
+const validKey = (v: unknown): v is string =>
+  typeof v === "string" && v.length >= KEY_MIN && v.length <= KEY_MAX && [...v].every(c => (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c === "-" || c === "_");
+
+const textOf = (v: unknown): string => (typeof v === "string" ? v.split("\r").join("").trim().slice(0, MESSAGE_MAX) : "");
+
+async function profileOf(platformChatId: string): Promise<{ id: string; timezone: string | null; goals: string[] } | null> {
+  const user = await prisma.messengerUser.findUnique({ where: learnerKey(platformChatId), select: { novaAcademicProfile: { select: { id: true, timezone: true, goals: true } } } });
+  return user?.novaAcademicProfile ?? null;
+}
+
+async function rowOf(profileId: string, id: unknown): Promise<Row | null> {
+  if (typeof id !== "string" || id.length === 0 || id.length > 64) return null;
+  return prisma.novaWorkspaceDraft.findFirst({ where: { id, profileId }, select: ROW });
+}
+
+// ── What Kivo already knows (never asked again) ───────────────────────────────
+
+const CONTEXT_WORDS: Record<LearningContext, string> = { school: "school student", college: "university student", working: "working professional", other: "something else" };
+
+async function knownFacts(platformChatId: string, profile: { id: string; goals: string[] }): Promise<BriefFact[]> {
+  const [contexts, signup, subjects, workspaces] = await Promise.all([
+    loadLearningContexts(platformChatId).catch(() => [] as LearningContext[]),
+    loadSignupAnswers(platformChatId).catch(() => null),
+    subjectNames(profile.id, 12),
+    recentWorkspaceTitles(profile.id, 6),
+  ]);
+  const out: BriefFact[] = [];
+  if (contexts.length) out.push({ label: "What they do", value: contexts.map(c => CONTEXT_WORDS[c]).join(", ") });
+  const working = signup?.workingOn ? [...signup.workingOn.selected.map(id => WORKING_ON_LABEL[id]), ...signup.workingOn.custom] : [];
+  if (working.length) out.push({ label: "Working on (said at sign-up)", value: working.join("; ") });
+  if (signup?.weeklyHours) out.push({ label: "Time a week (their sign-up estimate)", value: weeklyHoursLabel(signup.weeklyHours) });
+  if (profile.goals.length) out.push({ label: "Goals", value: profile.goals.join("; ") });
+  if (subjects.length) out.push({ label: "Subjects already in Kivo", value: subjects.join(", ") });
+  if (workspaces.length) out.push({ label: "Workspaces already in Kivo", value: workspaces.map(w => w.title).join(", ") });
+  return out.slice(0, 8);
+}
+
+// The workspace a draft improves, in short, for the model.
+async function outlineOf(platformChatId: string, profileId: string, workspaceId: string | null) {
+  if (!workspaceId) return null;
+  const d = await workspaceDetail(platformChatId, profileId, workspaceId);
+  return d ? { title: d.workspace.title, subjects: d.subjects.map(s => s.name), tasks: d.tasks.map(t => t.title), notes: d.notes.map(n => n.title) } : null;
+}
+
+// ── The view ──────────────────────────────────────────────────────────────────
+
+async function viewOf(row: Row, now: Date, counts: WorkspaceCounts | null = null): Promise<DraftView> {
+  const status = statusOf(row.status);
+  const plan = planOf(row.plan);
+  const pending = readPending(row.pending);
+  const messages = readMessages(row.messages);
+  const ids = [row.targetWorkspaceId, row.workspaceId].filter((x): x is string => Boolean(x));
+  const [summaries, similar] = await Promise.all([
+    workspaceSummaries(row.profileId, ids),
+    status === "awaiting_approval" && plan && !row.targetWorkspaceId ? similarWorkspaces(row.profileId, plan) : Promise.resolve([]),
+  ]);
+  return {
+    id: row.id, status, origin: row.origin === "telegram" ? "telegram" : "web",
+    title: row.title, messages, brief: readBrief(row.brief), plan, version: row.version,
+    pending: isPendingLive(pending, now) ? pending : null,
+    failure: failureOf(row.failure),
+    target: summaries.find(w => w.id === row.targetWorkspaceId) ?? null,
+    workspace: summaries.find(w => w.id === row.workspaceId) ?? null,
+    builtVersion: row.builtVersion,
+    needsReply: TALKING.includes(status) && needsReply(messages, pending, now),
+    similar, counts, updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+export async function getDraft(platformChatId: string, id: unknown, now = new Date()): Promise<DraftView | null> {
+  const profile = await profileOf(platformChatId);
+  const row = profile ? await rowOf(profile.id, id) : null;
+  return row ? viewOf(row, now) : null;
+}
+
+export async function listDrafts(platformChatId: string): Promise<DraftListView> {
+  const profile = await profileOf(platformChatId);
+  if (!profile) return { status: "ready", drafts: [] };
+  const rows = await prisma.novaWorkspaceDraft.findMany({
+    where: { profileId: profile.id, status: { not: "cancelled" } },
+    select: { id: true, status: true, title: true, origin: true, updatedAt: true }, orderBy: { updatedAt: "desc" }, take: 30,
+  });
+  return { status: "ready", drafts: rows.map(r => ({ id: r.id, status: statusOf(r.status), title: r.title, origin: r.origin === "telegram" ? "telegram" : "web", updatedAt: r.updatedAt.toISOString() })) };
+}
+
+// The open drafts and built workspaces, in one line each, for Nova's chat
+// context on Telegram and the web: what the learner is building, so a later
+// conversation does not start from nothing. Titles only, never the plan.
+export async function builderContextLines(profileId: string): Promise<string[]> {
+  const [drafts, workspaces] = await Promise.all([
+    prisma.novaWorkspaceDraft.findMany({ where: { profileId, status: { in: ["discovery", "drafting", "awaiting_approval", "failed"] }, title: { not: null } }, select: { title: true, status: true }, orderBy: { updatedAt: "desc" }, take: 2 }),
+    recentWorkspaceTitles(profileId, 3),
+  ]);
+  return [
+    ...workspaces.map(w => `Workspace they built in Kivo: ${w.title}${w.summary ? ` (${w.summary.slice(0, 140)})` : ""}.`),
+    ...drafts.map(d => `Workspace they are still shaping with Nova on the web (${d.status === "awaiting_approval" ? "a proposal is waiting for their approval" : "not proposed yet"}): ${d.title}. Nothing of it exists until they approve it there.`),
+  ];
+}
+
+// ── Starting ──────────────────────────────────────────────────────────────────
+
+export interface StartInput {
+  clientKey:          unknown;
+  // Their opening message, if they typed one.
+  text?:              unknown;
+  // An existing workspace of theirs to improve.
+  targetWorkspaceId?: unknown;
+}
+
+export type StartResult =
+  | { ok: true; draft: DraftView; job: BuilderJob | null }
+  | { ok: false; error: "invalid" | "not_found" | "not_ready" | "too_many"; message: string };
+
+export async function startDraft(platformChatId: string, input: StartInput, now = new Date(), opts: { origin?: "web" | "telegram"; claim?: boolean } = {}): Promise<StartResult> {
+  if (!validKey(input.clientKey)) return { ok: false, error: "invalid", message: "That request is missing its key. Reload and try again." };
+  const ensured = await ensureSetupProfile(platformChatId);
+  if (!ensured) return { ok: false, error: "not_ready", message: "Connect Nova first." };
+  const profileId = ensured.profileId;
+
+  const existing = await prisma.novaWorkspaceDraft.findUnique({ where: { profileId_clientKey: { profileId, clientKey: input.clientKey } }, select: ROW });
+  if (existing) return { ok: true, draft: await viewOf(existing, now), job: null };
+
+  let target: string | null = null;
+  if (input.targetWorkspaceId !== undefined && input.targetWorkspaceId !== null) {
+    const found = typeof input.targetWorkspaceId === "string" ? await workspaceSummaries(profileId, [input.targetWorkspaceId]) : [];
+    if (found.length === 0) return { ok: false, error: "not_found", message: "That workspace isn't one of yours." };
+    target = found[0]!.id;
+  }
+  if (await prisma.novaWorkspaceDraft.count({ where: { profileId, status: { in: ["discovery", "drafting", "awaiting_approval", "failed"] } } }) >= OPEN_DRAFTS_MAX) {
+    return { ok: false, error: "too_many", message: `You have ${OPEN_DRAFTS_MAX} conversations open. Finish or cancel one first.` };
+  }
+
+  const text = textOf(input.text);
+  const claim = (opts.claim ?? true) && text !== "";
+  const jobId = claim ? randomUUID() : null;
+  const pending: PendingJob | null = claim ? { kind: "reply", stage: "reading", startedAt: now.toISOString(), baseVersion: 0 } : null;
+  const brief: BuilderBrief = { ...emptyBrief(), known: await knownFacts(platformChatId, { id: profileId, goals: (await profileOf(platformChatId))?.goals ?? [] }) };
+  try {
+    const row = await prisma.novaWorkspaceDraft.create({
+      data: {
+        profileId, clientKey: input.clientKey, origin: opts.origin ?? "web", status: "discovery",
+        messages: json(text ? [message("user", text, now)] : []), brief: json(brief),
+        targetWorkspaceId: target, pending: pending ? json(pending) : undefined, jobId,
+      },
+      select: ROW,
+    });
+    return { ok: true, draft: await viewOf(row, now), job: jobId ? { draftId: row.id, jobId, kind: "reply", change: null } : null };
+  } catch (err) {
+    // The same start twice at once: the other made it.
+    if ((err as { code?: string } | null)?.code === "P2002") {
+      const made = await prisma.novaWorkspaceDraft.findUnique({ where: { profileId_clientKey: { profileId, clientKey: input.clientKey } }, select: ROW });
+      if (made) return { ok: true, draft: await viewOf(made, now), job: null };
+    }
+    throw err;
+  }
+}
+
+// A conversation begun in chat (Telegram, or the web's Nova box): the
+// learner's words open a draft, and nothing else happens until they open it
+// on the web, where Nova answers. The same words on the same day open the
+// same draft, so a repeated message is not a second conversation.
+export async function openDraftFromChat(platformChatId: string, text: string, now = new Date(), origin: "web" | "telegram" = "telegram"): Promise<string | null> {
+  const words = textOf(text);
+  if (!words) return null;
+  const key = `chat-${createHash("sha256").update(`${now.toISOString().slice(0, 10)}\n${words.toLowerCase()}`).digest("hex").slice(0, 40)}`;
+  const started = await startDraft(platformChatId, { clientKey: key, text: words }, now, { origin, claim: false });
+  return started.ok ? started.draft.id : null;
+}
+
+// ── A message ─────────────────────────────────────────────────────────────────
+
+export type ClaimResult =
+  | { ok: true; draft: DraftView; job: BuilderJob }
+  | { ok: false; error: "invalid" | "not_found" | "busy" | "closed"; message: string; draft?: DraftView };
+
+// The learner said something (or opened a draft that waits for Nova's
+// answer: `resume`). Claims the draft's one job; the route runs it.
+export async function postMessage(platformChatId: string, id: unknown, body: { text?: unknown; resume?: unknown }, now = new Date()): Promise<ClaimResult> {
+  const profile = await profileOf(platformChatId);
+  const row = profile ? await rowOf(profile.id, id) : null;
+  if (!row) return { ok: false, error: "not_found", message: "That conversation isn't one of yours." };
+  const status = statusOf(row.status);
+  if (status === "ready") return { ok: false, error: "closed", message: "This one is built. Start a new conversation to improve it.", draft: await viewOf(row, now) };
+  if (status === "cancelled") return { ok: false, error: "closed", message: "This conversation was cancelled.", draft: await viewOf(row, now) };
+  if (status === "building" || (status === "drafting" && isPendingLive(readPending(row.pending), now)) || isPendingLive(readPending(row.pending), now)) {
+    return { ok: false, error: "busy", message: "Nova is still on your last message.", draft: await viewOf(row, now) };
+  }
+  const messages = readMessages(row.messages);
+  const text = textOf(body.text);
+  if (!text && !(body.resume === true && needsReply(messages, null, now))) return { ok: false, error: "invalid", message: "Say something first." };
+  return claim(row, now, { kind: "reply", change: null }, text ? [message("user", text, now)] : []);
+}
+
+async function claim(row: Row, now: Date, job: { kind: PendingJob["kind"]; change: string | null }, added: BuilderMessage[]): Promise<ClaimResult> {
+  const jobId = randomUUID();
+  const pending: PendingJob = { kind: job.kind, stage: job.kind === "reply" ? "reading" : "writing", startedAt: now.toISOString(), baseVersion: row.version };
+  const status = statusOf(row.status);
+  // A stale drafting job (its process went away) leaves the draft where it was.
+  const back: DraftStatus = status === "drafting" ? (planOf(row.plan) ? "awaiting_approval" : "discovery") : status;
+  const nextStatus: DraftStatus = job.kind === "reply" ? (back === "failed" ? (planOf(row.plan) ? "awaiting_approval" : "discovery") : back) : "drafting";
+  const claimed = await prisma.novaWorkspaceDraft.updateMany({
+    where: { id: row.id, profileId: row.profileId, updatedAt: row.updatedAt },
+    data: {
+      messages: json(withMessages(readMessages(row.messages), ...added)), pending: json(pending), jobId, failure: NONE,
+      status: nextStatus,
+    },
+  });
+  const fresh = await prisma.novaWorkspaceDraft.findFirst({ where: { id: row.id, profileId: row.profileId }, select: ROW });
+  if (claimed.count !== 1 || !fresh) return { ok: false, error: "busy", message: "Nova is still on your last message.", ...(fresh ? { draft: await viewOf(fresh, now) } : {}) };
+  return { ok: true, draft: await viewOf(fresh, now), job: { draftId: row.id, jobId, ...job } };
+}
+
+// Try the failed step again: Nova's answer, or the proposal it was writing.
+// A failed build is retried by approving again.
+export async function retryDraft(platformChatId: string, id: unknown, now = new Date()): Promise<ClaimResult> {
+  const profile = await profileOf(platformChatId);
+  const row = profile ? await rowOf(profile.id, id) : null;
+  if (!row) return { ok: false, error: "not_found", message: "That conversation isn't one of yours." };
+  const failure = failureOf(row.failure);
+  if (isPendingLive(readPending(row.pending), now)) return { ok: false, error: "busy", message: "Nova is still working on it.", draft: await viewOf(row, now) };
+  if (!failure || failure.stage === "building") return { ok: false, error: "invalid", message: failure ? "Approve again to retry building it." : "Nothing failed here.", draft: await viewOf(row, now) };
+  if (failure.stage === "reply") return claim(row, now, { kind: "reply", change: null }, []);
+  return claim(row, now, { kind: planOf(row.plan) ? "revise" : "draft", change: failure.change ?? null }, []);
+}
+
+// ── Running a job (after the request has been answered) ───────────────────────
+
+const DRAFT_FAILED = "Nova couldn't write the proposal just now. Nothing was created or lost; try again.";
+const REPLY_FAILED = "Nova couldn't answer just now. Your message is kept; try again.";
+
+export async function runJob(platformChatId: string, job: BuilderJob, deps: BuilderDeps = {}, now = new Date()): Promise<void> {
+  const profile = await profileOf(platformChatId);
+  const row = profile ? await rowOf(profile.id, job.draftId) : null;
+  if (!profile || !row || row.jobId !== job.jobId) return;
+  try {
+    if (job.kind === "reply") await runTurn(platformChatId, profile, row, job, deps, now);
+    else await runDraft(platformChatId, profile, row, job, job.change, deps, now);
+  } catch (err) {
+    console.error("[nova/builder] job failed:", (err as Error)?.name ?? "error");
+    await settle(row.id, job.jobId, {
+      status: planOf(row.plan) ? "awaiting_approval" : "discovery",
+      failure: { stage: job.kind === "reply" ? "reply" : "drafting", message: job.kind === "reply" ? REPLY_FAILED : DRAFT_FAILED, change: job.change },
+      add: [message("nova", job.kind === "reply" ? REPLY_FAILED : DRAFT_FAILED, new Date(), { kind: "error" })],
+    });
+  }
+}
+
+// The job's last write. Only while the row still carries the job's id.
+async function settle(id: string, jobId: string, change: {
+  status?: DraftStatus; failure?: DraftFailure | null; add?: BuilderMessage[]; brief?: BuilderBrief; title?: string | null;
+  plan?: { plan: WorkspacePlan; version: number; baseVersion: number };
+}): Promise<"applied" | "stale_plan" | "gone"> {
+  const row = await prisma.novaWorkspaceDraft.findFirst({ where: { id, jobId }, select: { messages: true, status: true } });
+  if (!row) return "gone";
+  const data = {
+    messages: json(withMessages(readMessages(row.messages), ...(change.add ?? []))),
+    pending: NONE, jobId: null,
+    ...(change.failure !== undefined ? { failure: change.failure ? json(change.failure) : NONE } : {}),
+    ...(change.brief ? { brief: json(change.brief) } : {}),
+    ...(change.title !== undefined ? { title: change.title } : {}),
+    ...(change.status && canMove(statusOf(row.status), change.status) ? { status: change.status } : {}),
+  };
+  if (change.plan) {
+    const applied = await prisma.novaWorkspaceDraft.updateMany({
+      where: { id, jobId, version: change.plan.baseVersion },
+      data: { ...data, plan: json(change.plan.plan), version: change.plan.version },
+    });
+    return applied.count === 1 ? "applied" : "stale_plan";
+  }
+  const done = await prisma.novaWorkspaceDraft.updateMany({ where: { id, jobId }, data });
+  return done.count === 1 ? "applied" : "gone";
+}
+
+function proposalSummary(plan: WorkspacePlan): { milestones: string[]; tasks: string[]; topics: string[]; dates: string[] } {
+  return {
+    milestones: plan.phases.map(p => p.name),
+    tasks: plan.tasks.map(t => t.title),
+    topics: plan.subjects.flatMap(s => s.topics.map(t => t.name)),
+    dates: plan.dates.map(d => `${d.title} ${d.day}`),
+  };
+}
+
+async function runTurn(platformChatId: string, profile: { id: string; timezone: string | null; goals: string[] }, row: Row, job: BuilderJob, deps: BuilderDeps, now: Date) {
+  const plan = planOf(row.plan);
+  const before = readBrief(row.brief);
+  const messages = readMessages(row.messages);
+  const known = await knownFacts(platformChatId, profile);
+  const today = dayKey(now, resolveTimezone(profile.timezone));
+  const existing = await outlineOf(platformChatId, profile.id, row.targetWorkspaceId);
+  const reading = await (deps.read ?? readBuilderTurn)({
+    today, messages: spoken(messages), brief: before, known,
+    proposal: plan ? { version: row.version, title: plan.title, ...proposalSummary(plan) } : null,
+    existing: existing ? { title: existing.title, subjects: existing.subjects, tasks: existing.tasks } : null,
+  });
+  if (!reading) {
+    await settle(row.id, job.jobId, { failure: { stage: "reply", message: REPLY_FAILED }, add: [message("nova", REPLY_FAILED, new Date(), { kind: "error" })] });
+    return;
+  }
+  const step = decideStep({ plan, brief: before }, reading);
+  const brief = { ...nextBrief(before, reading, step), known };
+  const title = row.title ?? reading.title ?? brief.title;
+
+  if (step.type === "ask" || step.type === "chat") {
+    // The question code settled on is the one asked, whatever the reply said.
+    const text = step.type === "ask" && !reading.reply.includes(step.question) ? `${reading.reply}\n\n${step.question}` : reading.reply;
+    await settle(row.id, job.jobId, { brief, title, failure: null, add: [message("nova", text, new Date(), { kind: step.type === "ask" ? "question" : "chat" })] });
+    return;
+  }
+
+  // Draft or revise: say what Nova will do, mark the job's stage, then write.
+  const intro = step.type === "draft" && step.reason === "enough_questions" && !plan
+    ? "I have enough to sketch a first version. I'll put it on the right; correct anything that's off."
+    : reading.reply;
+  const moved = await prisma.novaWorkspaceDraft.updateMany({
+    where: { id: row.id, jobId: job.jobId },
+    data: {
+      status: "drafting", brief: json(brief), title,
+      messages: json(withMessages(messages, message("nova", intro, new Date(), { kind: "chat" }))),
+      // The version the learner's message was sent on, not the one now:
+      // an edit made since then is newer than anything this job writes.
+      pending: json({ kind: plan ? "revise" : "draft", stage: "writing", startedAt: now.toISOString(), baseVersion: readPending(row.pending)?.baseVersion ?? row.version } satisfies PendingJob),
+    },
+  });
+  if (moved.count !== 1) return;
+  const fresh = await rowOf(profile.id, row.id);
+  if (!fresh || fresh.jobId !== job.jobId) return;
+  await runDraft(platformChatId, profile, fresh, job, step.type === "revise" ? step.change : null, deps, now);
+}
+
+async function runDraft(platformChatId: string, profile: { id: string; timezone: string | null; goals: string[] }, row: Row, job: BuilderJob, change: string | null, deps: BuilderDeps, now: Date) {
+  const before = planOf(row.plan);
+  const brief = readBrief(row.brief);
+  const messages = spoken(readMessages(row.messages));
+  const today = dayKey(now, resolveTimezone(profile.timezone));
+  const baseVersion = readPending(row.pending)?.baseVersion ?? row.version;
+  const existing = await outlineOf(platformChatId, profile.id, row.targetWorkspaceId);
+  const written = await (deps.write ?? writeBuilderPlan)({
+    today, kind: brief.kind, facts: brief.facts, known: brief.known, assumptions: brief.assumptions, suggestions: brief.suggestions,
+    conversation: messages.slice(-CONVERSATION_FOR_PLAN).map(m => ({ role: m.role, text: m.text })),
+    learnerText: learnerWords(messages),
+    current: before,
+    change: before ? change ?? "Apply what the learner said last." : null,
+    existing,
+  });
+  const fallback: DraftStatus = before ? "awaiting_approval" : "failed";
+  if (!written.ok) {
+    await settle(row.id, job.jobId, {
+      status: fallback, failure: { stage: "drafting", message: written.message, change },
+      add: [message("nova", written.message, new Date(), { kind: "error" })],
+    });
+    return;
+  }
+
+  const plan = written.plan;
+  const version = baseVersion + 1;
+  const counts = planCounts(plan);
+  const target = existing ? ` It adds to ${existing.title}: nothing there is changed or removed.` : "";
+  const text = before
+    ? `Version ${version} is ready. ${describeChanges(planChanges(before, plan))}${target} Approve this version to build it, or keep refining.`
+    : `Here's a first proposal: ${plan.title}. ${[counts.subjects && `${counts.subjects} subject${counts.subjects === 1 ? "" : "s"}`, counts.topics && `${counts.topics} topics`, plan.phases.length && `${plan.phases.length} milestones`, counts.tasks && `${counts.tasks} tasks`, counts.notes && `${counts.notes} notes`, counts.dates && `${counts.dates} date${counts.dates === 1 ? "" : "s"}`].filter(Boolean).join(", ")}.${target} Nothing is created until you approve it. Edit anything on the right, or tell me what's off.`;
+  const result = await settle(row.id, job.jobId, {
+    status: "awaiting_approval", failure: null, title: plan.title,
+    brief: { ...brief, dropped: written.dropped, title: plan.title },
+    add: [message("nova", text, new Date(), { kind: before ? "revision" : "proposal", version })],
+    plan: { plan, version, baseVersion },
+  });
+  if (result === "stale_plan") {
+    // The learner edited the proposal while Nova wrote: their version stays.
+    await settle(row.id, job.jobId, {
+      status: before ? "awaiting_approval" : "discovery",
+      add: [message("nova", `You changed the proposal while I was writing, so I kept your version.${change ? ` Ask again if you still want: ${change.slice(0, 200)}` : ""}`, new Date(), { kind: "notice" })],
+    });
+  }
+}
+
+// ── The learner's own edits ───────────────────────────────────────────────────
+
+export async function editDraftPlan(platformChatId: string, id: unknown, body: { plan?: unknown; baseVersion?: unknown }, now = new Date()): Promise<BuilderResponse> {
+  const profile = await profileOf(platformChatId);
+  const row = profile ? await rowOf(profile.id, id) : null;
+  if (!profile || !row) return { ok: false, error: "not_found", message: "That conversation isn't one of yours." };
+  const status = statusOf(row.status);
+  const stored = planOf(row.plan);
+  if (!stored || !["awaiting_approval", "drafting", "failed"].includes(status)) {
+    return { ok: false, error: "closed", message: status === "ready" ? "This one is built. Edit it in the Planner, Knowledge and Notes." : "There's no proposal to edit yet.", draft: await viewOf(row, now) };
+  }
+  if (body.baseVersion !== row.version) return { ok: false, error: "stale", message: "The proposal changed since you opened it. This is the newest version.", draft: await viewOf(row, now) };
+  // Links stay only when the learner wrote them: in this conversation, or
+  // already kept as theirs in the stored plan. The page's copy is not trusted.
+  const ownLinks = [...stored.resources, ...stored.phases.flatMap(p => p.resources)].filter(r => r.origin === "user" && r.url).map(r => r.url).join(" ");
+  const checked = checkWorkspacePlan(body.plan, {
+    today: dayKey(now, resolveTimezone(profile.timezone)),
+    userText: `${learnerWords(readMessages(row.messages))} ${ownLinks}`,
+  });
+  if (!checked.ok) return { ok: false, error: "invalid", message: checked.message, draft: await viewOf(row, now) };
+  const plan = { ...checked.plan, kind: stored.kind, templateId: stored.templateId, templateVersion: stored.templateVersion };
+  const saved = await prisma.novaWorkspaceDraft.updateMany({
+    where: { id: row.id, profileId: profile.id, version: row.version, status: { in: ["awaiting_approval", "drafting", "failed"] } },
+    data: { plan: json(plan), version: row.version + 1, title: plan.title, ...(status === "failed" ? { status: "awaiting_approval", failure: NONE } : {}) },
+  });
+  const fresh = await rowOf(profile.id, row.id);
+  if (saved.count !== 1 || !fresh) return { ok: false, error: "stale", message: "The proposal changed since you opened it. This is the newest version.", ...(fresh ? { draft: await viewOf(fresh, now) } : {}) };
+  return { ok: true, draft: await viewOf(fresh, now) };
+}
+
+// ── Approval ──────────────────────────────────────────────────────────────────
+
+export interface ApproveInput { version?: unknown; addTo?: unknown; confirmAnother?: unknown }
+
+export async function approveDraft(platformChatId: string, id: unknown, input: ApproveInput, now = new Date()): Promise<BuilderResponse> {
+  const profile = await profileOf(platformChatId);
+  const row = profile ? await rowOf(profile.id, id) : null;
+  if (!profile || !row) return { ok: false, error: "not_found", message: "That conversation isn't one of yours." };
+  const status = statusOf(row.status);
+  // Approved before: what it built.
+  if (status === "ready" && row.builtVersion === input.version) return { ok: true, draft: await viewOf(row, now) };
+  if (status === "building") return { ok: false, error: "busy", message: "It's being built now.", draft: await viewOf(row, now) };
+  const plan = planOf(row.plan);
+  if (!plan || (status !== "awaiting_approval" && !(status === "failed" && failureOf(row.failure)?.stage === "building"))) {
+    return { ok: false, error: "not_ready", message: status === "ready" ? "This one is already built." : "There's no proposal to approve yet.", draft: await viewOf(row, now) };
+  }
+  if (input.version !== row.version) return { ok: false, error: "stale", message: "The proposal changed after you looked at it. Review this version, then approve it.", draft: await viewOf(row, now) };
+  if (isPendingLive(readPending(row.pending), now)) return { ok: false, error: "busy", message: "Nova is still changing this proposal. Approve once it's done.", draft: await viewOf(row, now) };
+
+  const took = await prisma.novaWorkspaceDraft.updateMany({
+    where: { id: row.id, profileId: profile.id, version: row.version, status: { in: ["awaiting_approval", "failed"] } },
+    data: { status: "building", failure: NONE },
+  });
+  if (took.count !== 1) {
+    const fresh = await rowOf(profile.id, row.id);
+    return fresh && statusOf(fresh.status) === "ready" && fresh.builtVersion === row.version
+      ? { ok: true, draft: await viewOf(fresh, now) }
+      : { ok: false, error: "busy", message: "It's being built now.", ...(fresh ? { draft: await viewOf(fresh, now) } : {}) };
+  }
+
+  const back = async (data: Record<string, unknown>, add: BuilderMessage[] = []) => {
+    const current = await rowOf(profile.id, row.id);
+    await prisma.novaWorkspaceDraft.updateMany({
+      where: { id: row.id, status: "building" },
+      data: { ...data, ...(add.length && current ? { messages: json(withMessages(readMessages(current.messages), ...add)) } : {}) },
+    });
+    const fresh = await rowOf(profile.id, row.id);
+    return fresh!;
+  };
+
+  let result: Awaited<ReturnType<typeof createWorkspace>>;
+  try {
+    result = await createWorkspace(platformChatId, {
+      plan, clientKey: `d-${row.id}-v${row.version}`.slice(0, KEY_MAX),
+      addTo: row.targetWorkspaceId ?? (typeof input.addTo === "string" ? input.addTo : undefined),
+      confirmAnother: input.confirmAnother === true,
+    }, now);
+  } catch (err) {
+    console.error("[nova/builder] build failed:", (err as Error)?.name ?? "error");
+    const message_ = "Building it didn't work, and nothing was created. Try approving again.";
+    const fresh = await back({ status: "failed", failure: json({ stage: "building", message: message_ }) }, [message("nova", message_, new Date(), { kind: "error" })]);
+    return { ok: false, error: "failed", message: message_, draft: await viewOf(fresh, now) };
+  }
+
+  if (!result.ok) {
+    const fresh = await back({ status: "failed", failure: json({ stage: "building", message: result.message }) }, [message("nova", `${result.message} Nothing was created.`, new Date(), { kind: "error" })]);
+    return { ok: false, error: result.error === "too_many" ? "too_many" : result.error === "not_found" ? "not_found" : "failed", message: result.message, draft: await viewOf(fresh, now) };
+  }
+  if (result.status === "similar") {
+    // Not built: they choose first (add to one, or create another).
+    const fresh = await back({ status: "awaiting_approval" });
+    return { ok: true, draft: { ...(await viewOf(fresh, now)), similar: result.similar } };
+  }
+
+  const counts = result.status === "exists" ? null : result.counts;
+  const said = counts
+    ? `${result.status === "updated" ? `Added to ${result.workspace.title}` : `${result.workspace.title} is built`}: ${[counts.subjectsAdded && `${counts.subjectsAdded} subject${counts.subjectsAdded === 1 ? "" : "s"}`, counts.topicsAdded && `${counts.topicsAdded} topics`, counts.tasksAdded && `${counts.tasksAdded} tasks`, counts.notesAdded && `${counts.notesAdded} notes`, counts.datesAdded && `${counts.datesAdded} date${counts.datesAdded === 1 ? "" : "s"}`].filter(Boolean).join(", ") || "nothing new (you had all of it)"}. It's in your Planner, Knowledge and Notes now.`
+    : `${result.workspace.title} was already built from this version.`;
+  const fresh = await back(
+    { status: "ready", workspaceId: result.workspace.id, builtVersion: row.version, failure: NONE },
+    [message("nova", said, new Date(), { kind: "built", version: row.version })],
+  );
+  return { ok: true, draft: await viewOf(fresh, now, counts) };
+}
+
+// Stopping: nothing was created, and a job still running writes nothing.
+export async function cancelDraft(platformChatId: string, id: unknown, now = new Date()): Promise<BuilderResponse> {
+  const profile = await profileOf(platformChatId);
+  const row = profile ? await rowOf(profile.id, id) : null;
+  if (!profile || !row) return { ok: false, error: "not_found", message: "That conversation isn't one of yours." };
+  const done = await prisma.novaWorkspaceDraft.updateMany({
+    where: { id: row.id, profileId: profile.id, status: { in: ["discovery", "drafting", "awaiting_approval", "failed"] } },
+    data: { status: "cancelled", pending: NONE, jobId: null },
+  });
+  const fresh = await rowOf(profile.id, row.id);
+  if (done.count !== 1) return { ok: false, error: "closed", message: statusOf(row.status) === "building" ? "It's being built now, so it can't be cancelled." : "This one can't be cancelled.", ...(fresh ? { draft: await viewOf(fresh, now) } : {}) };
+  return { ok: true, draft: await viewOf(fresh!, now) };
+}
+
+// The live workspace a draft built (or any workspace of theirs).
+export async function liveWorkspace(platformChatId: string, workspaceId: unknown, now = new Date()) {
+  const profile = await profileOf(platformChatId);
+  if (!profile || typeof workspaceId !== "string") return null;
+  return workspaceDetail(platformChatId, profile.id, workspaceId, now);
+}

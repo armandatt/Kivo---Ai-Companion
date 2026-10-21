@@ -56,6 +56,7 @@ import { slowestStage } from "./telegram.types";
 import { entitlementForLearner, type Entitlement } from "../../billing/entitlements";
 import { allowanceFor } from "../../billing/limits";
 import { spendAiRequest } from "../../billing/usage";
+import { openDraftFromChat } from "../product/builder";
 
 export interface TelegramDeps {
   client:       TelegramClient;
@@ -685,12 +686,16 @@ async function act(
     case "unsupported":        return { reply: { text: textFor(ctx.language).unsupported }, operation: { name: "unsupported", ok: true } };
     // Nothing is created: there is no reminder to create.
     case "reminder_unavailable": return { reply: { text: textFor(ctx.language).reminderUnavailable }, operation: { name: "reminder_unavailable", ok: true } };
-    // Nothing is created: the page shows the plan first, with their words in it.
-    case "offer_workspace":
+    // Nothing is created: their words open a conversation in Build with
+    // Nova, under their own account, where the proposal is shaped, shown and
+    // approved. The same words the same day open the same one.
+    case "offer_workspace": {
+      const draftId = await openDraftFromChat(ctx.chatId, understanding.rawText, now, "telegram").catch(() => null);
       return {
-        reply: { text: textFor(ctx.language).workspaceOffer, link: { label: "Open Create with Nova", path: `/templates?create=${encodeURIComponent(understanding.rawText.slice(0, 500))}` } },
+        reply: { text: textFor(ctx.language).workspaceOffer, link: { label: "Open Build with Nova", path: draftId ? `/build?draft=${encodeURIComponent(draftId)}` : "/build" } },
         operation: { name: "offer_workspace", ok: true },
       };
+    }
     // With a question still open, its buttons are the options: the prompt
     // stays as it is. Otherwise, the fixed choices.
     case "clarify":

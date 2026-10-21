@@ -558,8 +558,8 @@ export const TEXT = {
   // this says so and says what does exist. Never "I'll remind you".
   reminderUnavailable:    "I can't set a reminder for a set time yet, so nothing has been scheduled. What I do send on my own is a nudge when something is due, at most two a day. /settings shows whether those are on.",
   reminderUnavailableWeb: "I can't set a reminder for a set time yet, so nothing has been scheduled.",
-  workspaceOffer:         "I can set that up as a workspace. Open it below: you'll see the plan first, and nothing is created until you press Create.",
-  workspaceOfferWeb:      "I can set that up as a workspace. Open Templates and use Create with Nova: you'll see the plan first, and nothing is created until you press Create.",
+  workspaceOffer:         "Let's shape that together. Open it below: we'll talk it through, you'll see the proposal as it forms, and nothing is created until you approve it.",
+  workspaceOfferWeb:      "Let's shape that together in Build with Nova: we'll talk it through, you'll see the proposal as it forms, and nothing is created until you approve it.",
   nudgesOn:        "Nudges are on.",
   nudgesOff:       "Nudges are off. I'll only speak when you do.",
 };
@@ -604,8 +604,8 @@ export const TEXT_HINGLISH: typeof TEXT = {
   unsupported:     "Ye yahan ke kaam ke bahar hai. Yahan ye milta hai: aaj ka ya hafte ka plan, aaj ke plan mein badlav, tumhara progress, kisi topic ka explanation, study session, ya jo beech mein aa gaya uska note.",
   reminderUnavailable:    "Abhi kisi fixed time ka reminder set nahi ho sakta, to kuch schedule nahi hua. Jo apne aap aata hai wo nudge hai jab kuch due ho, din mein zyada se zyada do. /settings mein dikhta hai wo on hain ya nahi.",
   reminderUnavailableWeb: "Abhi kisi fixed time ka reminder set nahi ho sakta, to kuch schedule nahi hua.",
-  workspaceOffer:         "Ye main ek workspace mein set kar sakta hoon. Neeche kholo: pehle plan dikhega, aur Create dabane tak kuch nahi banega.",
-  workspaceOfferWeb:      "Ye main ek workspace mein set kar sakta hoon. Templates kholo aur Create with Nova use karo: pehle plan dikhega, aur Create dabane tak kuch nahi banega.",
+  workspaceOffer:         "Chalo ise saath mein shape karte hain. Neeche kholo: hum baat karenge, proposal banta hua dikhega, aur approve karne tak kuch nahi banega.",
+  workspaceOfferWeb:      "Chalo ise Build with Nova mein saath mein shape karte hain: hum baat karenge, proposal banta hua dikhega, aur approve karne tak kuch nahi banega.",
   nudgesOn:        "Nudges on hain.",
   nudgesOff:       "Nudges off hain. Ab pehla message tumhara hi hoga.",
 };

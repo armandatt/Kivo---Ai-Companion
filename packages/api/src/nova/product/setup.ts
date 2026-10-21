@@ -480,6 +480,22 @@ export async function ensureSetupProfile(platformChatId: string): Promise<{ prof
   return { profileId: profile.id, timezone: profile.timezone, userId: learner.id };
 }
 
+// The learner's subject names, oldest first: what Nova is told they have.
+export async function subjectNames(profileId: string, take = 12): Promise<string[]> {
+  return (await prisma.novaSubject.findMany({ where: { profileId }, select: { name: true }, orderBy: { createdAt: "asc" }, take })).map(s => s.name);
+}
+
+// The subjects named, with their active topics in the order given: how a
+// workspace is shown back (builder.ts, workspaces.ts). Only the learner's own.
+export async function subjectsWithTopics(profileId: string, subjectIds: string[]): Promise<Array<{ id: string; name: string; topics: Array<{ id: string; name: string }> }>> {
+  if (subjectIds.length === 0) return [];
+  const rows = await prisma.novaSubject.findMany({
+    where:  { profileId, id: { in: subjectIds } },
+    select: { id: true, name: true, topics: { where: { archivedAt: null }, select: { id: true, name: true }, orderBy: { createdAt: "asc" }, take: 80 } },
+  });
+  return subjectIds.flatMap(id => rows.filter(r => r.id === id));
+}
+
 // ── Editing subjects (product/setup-edit.ts) ──────────────────────────────────
 
 export async function renameSubjectIn(tx: Pick<typeof prisma, "novaSubject">, subjectId: string, name: string): Promise<void> {

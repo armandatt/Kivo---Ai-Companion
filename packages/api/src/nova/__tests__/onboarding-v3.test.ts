@@ -438,8 +438,8 @@ describe("the route, Settings and the finish (read from source)", () => {
     for (const asked of ["password\"", "type=\"password\"", "loginCode", "botToken"]) expect([asked, flow.includes(asked)]).toEqual([asked, false]);
   });
 
-  it("finishing goes to the app's own /home, on the host the learner signed in on", () => {
-    expect(flow).toContain("onEnter={() => router.push('/home')}");
+  it("finishing goes to the app's own pages (Build with Nova, or /home when finished before), on the host the learner signed in on", () => {
+    expect(flow).toContain("onEnter={() => router.push(done.alreadyComplete ? '/home' : '/build')}");
     expect(flow).not.toContain("thekivo.in");
     expect(flow).not.toContain("NEXT_PUBLIC_APP_URL");
     expect(flow).not.toContain("window.location.href = 'http");

@@ -36,6 +36,8 @@ export interface NovaTurnResult {
   reply:        string;
   intervention: string | null;
   ok:           boolean;
+  // A page the reply points to, when the action has one (web only).
+  link?:        { label: string; path: string };
 }
 
 export async function handleNovaTurn(input: NovaTurnInput): Promise<NovaTurnResult> {
@@ -74,7 +76,7 @@ export async function handleNovaTurn(input: NovaTurnInput): Promise<NovaTurnResu
         ts: new Date().toISOString(), chatId: platformChatId, layer: "nova", surface: input.surface,
         kind: turn.kind, decision: turn.decision, intervention: turn.intervention, textLength: text.length,
       }));
-      return { reply: turn.reply, intervention: turn.intervention, ok: true };
+      return { reply: turn.reply, intervention: turn.intervention, ok: true, ...(turn.link ? { link: turn.link } : {}) };
     }
 
     const result = await runNovaOrchestrator({

@@ -34,6 +34,7 @@ import type { PromptKind, TelegramReply } from "../telegram/telegram.types";
 import type { NovaOrchestratorInput } from "../types/context.types";
 import type { UnderstandingContext } from "../types/understanding.types";
 import { ensureSetupProfile } from "../product/setup";
+import { openDraftFromChat } from "../product/builder";
 import { interpret } from "./semantics";
 import { runSetupTurn } from "./setup-turn";
 import { chooseLanguage, languageLine, scriptLanguage } from "./language";
@@ -74,6 +75,8 @@ export interface WebSentenceResult {
   // What was decided, for the turn's log line. Not shown to the learner.
   decision:     string;
   kind:         string;
+  // A page the reply points to (Build with Nova), when the action has one.
+  link?:        { label: string; path: string };
 }
 
 // Actions a sentence may not run on this page.
@@ -132,7 +135,7 @@ export async function runWebSentence(input: WebSentenceInput): Promise<WebSenten
   });
   const blocked = PAGE_BUTTONS_ONLY.has(decision.action.type);
 
-  const acted = blocked ? null : await act(decision.action, ctx, prompt, understanding.topic, now);
+  const acted = blocked ? null : await act(decision.action, ctx, prompt, understanding.topic, now, understanding.rawText);
   let reply: TelegramReply | null = acted?.reply ?? null;
 
   if (decision.proposeExam) {
@@ -172,7 +175,10 @@ export async function runWebSentence(input: WebSentenceInput): Promise<WebSenten
       : { scriptedReply: fallback }),
   });
 
-  return { reply: turn.reply, intervention: turn.intervention, decision: `${decision.action.type}:${decision.reason}`, kind: interaction.kind };
+  return {
+    reply: turn.reply, intervention: turn.intervention, decision: `${decision.action.type}:${decision.reason}`, kind: interaction.kind,
+    ...(acted?.reply.link ? { link: acted.reply.link } : {}),
+  };
 }
 
 // What a decided action runs here. null: the turn is a conversation.
@@ -182,6 +188,8 @@ async function act(
   prompt: OpenPrompt | null,
   topic:  string | null,
   now:    Date,
+  // Their words, for a conversation they asked to open (offer_workspace).
+  rawText = "",
 ): Promise<ActionResult | null> {
   switch (action.type) {
     case "answer_prompt": {
@@ -210,7 +218,11 @@ async function act(
     case "acknowledge_report": return { reply: { text: TEXT.selfReport }, operation: { name: "acknowledge_report", ok: true } };
     case "unsupported":        return { reply: { text: TEXT.unsupported }, operation: { name: "unsupported", ok: true } };
     case "reminder_unavailable": return { reply: { text: TEXT.reminderUnavailableWeb }, operation: { name: "reminder_unavailable", ok: true } };
-    case "offer_workspace":      return { reply: { text: TEXT.workspaceOfferWeb }, operation: { name: "offer_workspace", ok: true } };
+    // Nothing is created: the words open a conversation in Build with Nova.
+    case "offer_workspace": {
+      const draftId = await openDraftFromChat(ctx.chatId, rawText, now, "web").catch(() => null);
+      return { reply: { text: TEXT.workspaceOfferWeb, link: { label: "Open Build with Nova", path: draftId ? `/build?draft=${encodeURIComponent(draftId)}` : "/build" } }, operation: { name: "offer_workspace", ok: true } };
+    }
     case "clarify":            return { reply: { text: "I didn't catch that. Tell me in a few more words." }, operation: { name: "clarify", ok: true } };
     default:                   return null;
   }

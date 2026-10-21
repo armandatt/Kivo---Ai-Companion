@@ -27,8 +27,12 @@ import { templateById } from "./templates";
 import { declareWorkspaceSubjectsIn, ensureSetupProfile } from "./setup";
 import { addDatesIn } from "./exams";
 import { createTasksIn } from "./tasks";
-import { createNotesIn } from "./notes";
+import { createNotesIn, listNoteTitlesIn } from "./notes";
+import { subjectsWithTopics } from "./setup";
+import { listTasksWithKeyPrefix } from "./tasks";
+import { listExams } from "./exams";
 import type { CreateWorkspaceResponse, WorkspaceSummary, WorkspacesView } from "./workspaces.types";
+import type { WorkspaceDetail } from "./builder.types";
 
 export const WORKSPACES_MAX = 100;
 const KEY_MIN = 8, KEY_MAX = 64;
@@ -164,6 +168,45 @@ export async function createWorkspace(platformChatId: string, input: CreateInput
 
 class RefusedError extends Error {
   constructor(readonly code: "too_many" | "invalid", message: string) { super(message); }
+}
+
+// Their newest workspaces' titles and summaries, for what Nova is told
+// (builder.ts): a record of what exists.
+export async function recentWorkspaceTitles(profileId: string, take: number): Promise<Array<{ title: string; summary: string | null }>> {
+  return prisma.novaWorkspace.findMany({ where: { profileId }, select: { title: true, summary: true }, orderBy: { createdAt: "desc" }, take });
+}
+
+// These workspaces of theirs, as summaries, in the order asked.
+export async function workspaceSummaries(profileId: string, ids: string[]): Promise<WorkspaceSummary[]> {
+  if (ids.length === 0) return [];
+  const rows = await prisma.novaWorkspace.findMany({ where: { profileId, id: { in: ids } }, select: SUMMARY_SELECT });
+  const list = await summaries(profileId, rows);
+  return ids.flatMap(id => list.filter(w => w.id === id));
+}
+
+// A workspace as it now is: the real records it made, read through their
+// owners. Its tasks are the ones keyed under it (renamed or moved ones as
+// they stand, deleted ones gone); its notes and dates are those filed under
+// its subjects. null: not theirs.
+export async function workspaceDetail(platformChatId: string, profileId: string, id: string, now = new Date()): Promise<WorkspaceDetail | null> {
+  const row = await prisma.novaWorkspace.findFirst({ where: { id, profileId }, select: { ...SUMMARY_SELECT, clientKey: true } });
+  if (!row) return null;
+  const [summary, subjects, tasks, notes, exams] = await Promise.all([
+    summaries(profileId, [row]),
+    subjectsWithTopics(profileId, row.subjectIds),
+    listTasksWithKeyPrefix(profileId, `ws:${row.clientKey}:`, { now }),
+    listNoteTitlesIn(profileId, row.subjectIds),
+    listExams(platformChatId, now),
+  ]);
+  const names = new Set(subjects.map(s => s.name.toLowerCase()));
+  return {
+    workspace: summary[0]!,
+    subjects,
+    tasks: tasks.map(t => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, dueDay: t.dueDay, subjectId: t.subjectId, topicName: t.topicName, estimatedMinutes: t.estimatedMinutes })),
+    notes: notes.map(n => ({ id: n.id, title: n.title, subjectId: n.subjectId, updatedAt: n.updatedAt.toISOString() })),
+    dates: (exams ?? []).filter(e => e.subjectName && names.has(e.subjectName.toLowerCase()))
+      .map(e => ({ id: e.id, title: e.title, day: e.date, kind: e.type, subjectId: subjects.find(s => s.name.toLowerCase() === e.subjectName!.toLowerCase())?.id ?? null })),
+  };
 }
 
 // Removing a workspace removes its record only. Its subjects, topics, notes

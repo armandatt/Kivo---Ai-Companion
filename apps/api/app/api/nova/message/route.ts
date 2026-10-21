@@ -55,7 +55,7 @@ export async function POST(req: Request) {
     if (!run.ok) return run.response
     const turn = run.value as Awaited<ReturnType<typeof handleNovaTurn>>
     if (!turn.ok) return fail(502, "failed", turn.reply)
-    return NextResponse.json({ ok: true, reply: turn.reply, intervention: turn.intervention })
+    return NextResponse.json({ ok: true, reply: turn.reply, intervention: turn.intervention, ...(turn.link ? { link: turn.link } : {}) })
   } catch (err) {
     console.error("[nova/message]", err)
     return fail(500, "failed", "Something went wrong on Nova's end. Try again in a moment.")

@@ -81,11 +81,17 @@ function buildSupportSection(ctx: NovaContext): string {
 // nothing: the model is then told nothing, and has no goal to speak of.
 function buildGoalsSection(ctx: NovaContext): string {
   const goals = ctx.userProfile.goals.slice(0, MAX_GOALS_IN_CONTEXT);
-  if (goals.length === 0) return "";
+  const building = (ctx.userProfile.building ?? []).slice(0, 5);
   return [
-    `## Working toward (their own words; an aim they stated, not something they have done)`,
-    ...goals.map(g => `- ${g}`),
-  ].join("\n");
+    goals.length === 0 ? "" : [
+      `## Working toward (their own words; an aim they stated, not something they have done)`,
+      ...goals.map(g => `- ${g}`),
+    ].join("\n"),
+    building.length === 0 ? "" : [
+      `## What they are building in Kivo (a record; changes to it are proposed and approved in Build with Nova on the web, never made from chat)`,
+      ...building.map(b => `- ${b}`),
+    ].join("\n"),
+  ].filter(Boolean).join("\n\n");
 }
 
 function buildStateSection(ctx: NovaContext): string {

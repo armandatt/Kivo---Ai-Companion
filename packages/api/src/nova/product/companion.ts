@@ -28,9 +28,9 @@ export function companionOf(account: {
 
 export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
   { path: "/home",    label: "Today" },
+  // The conversation with Nova that builds a workspace (product/builder.ts).
+  { path: "/build",   label: "Build with Nova" },
   { path: "/planner", label: "Planner" },
-  // The template library and Create with Nova (product/workspaces.ts).
-  { path: "/templates", label: "Templates" },
   { path: "/calendar", label: "Calendar" },
   { path: "/focus",   label: "Focus" },
   { path: "/knowledge", label: "Knowledge" },
@@ -45,11 +45,15 @@ export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
   { path: "/guide",   label: "Guide" },
 ];
 
+// Nova's pages that are reached from another page, not from the sidebar: the
+// template library is an optional shortcut from Build with Nova.
+export const NOVA_LINKED_ROUTES: readonly string[] = ["/templates"];
+
 // Shared account pages, the same for both companions.
 const SHARED_ROUTES = ["/settings"];
 
 // Pages that exist only for Nova.
-const NOVA_ONLY_ROUTES = ["/focus", "/knowledge", "/map", "/notes", "/saved", "/learning-dna", "/templates"];
+const NOVA_ONLY_ROUTES = ["/focus", "/knowledge", "/map", "/notes", "/saved", "/learning-dna", "/templates", "/build"];
 
 const under = (pathname: string, route: string) => pathname === route || pathname.startsWith(`${route}/`);
 
@@ -61,7 +65,7 @@ export type RouteAccess =
 export function routeAccess(companion: Companion, pathname: string): RouteAccess {
   if (SHARED_ROUTES.some(r => under(pathname, r))) return "render";
   if (companion === "nova") {
-    return NOVA_ROUTES.some(r => under(pathname, r.path)) ? "render" : "nova_unavailable";
+    return NOVA_ROUTES.some(r => under(pathname, r.path)) || NOVA_LINKED_ROUTES.some(r => under(pathname, r)) ? "render" : "nova_unavailable";
   }
   return NOVA_ONLY_ROUTES.some(r => under(pathname, r)) ? "not_for_rex" : "render";
 }

@@ -312,7 +312,7 @@ function OnboardingFlowContent() {
           )}
 
           {done ? (
-            <Finished done={done} onEnter={() => router.push('/home')} headingRef={headingRef} />
+            <Finished done={done} onEnter={() => router.push(done.alreadyComplete ? '/home' : '/build')} headingRef={headingRef} />
           ) : (
             <form onSubmit={next} className="flex flex-1 flex-col pt-10 sm:pt-14" aria-busy={!restored} data-step={step}>
               <div ref={headingRef} tabIndex={-1} key={step} className="kivo-step focus:outline-none">
@@ -500,7 +500,7 @@ function Finished({ done, onEnter, headingRef }: {
           <li className="flex gap-3"><Check aria-hidden className="mt-1 size-4 shrink-0 text-action-ink" />Onboarding was finished before, so these answers didn&apos;t change anything. You can change any of them in Settings.</li>
         ) : (
           <>
-            <li className="flex gap-3"><Check aria-hidden className="mt-1 size-4 shrink-0 text-action-ink" />Nova has your answers. Next, add what you&apos;re working on in setup to get today&apos;s plan.</li>
+            <li className="flex gap-3"><Check aria-hidden className="mt-1 size-4 shrink-0 text-action-ink" />Nova has your answers. Next, tell Nova what you&apos;re working on: you&apos;ll shape your first workspace together, and nothing is created until you approve it.</li>
             <li className="flex gap-3"><Check aria-hidden className="mt-1 size-4 shrink-0 text-action-ink" />{done.creature} is waiting in your world.</li>
             <li className="flex gap-3"><Check aria-hidden className="mt-1 size-4 shrink-0 text-action-ink" />Everything you answered can be changed in Settings.</li>
           </>
@@ -509,7 +509,7 @@ function Finished({ done, onEnter, headingRef }: {
       {done.telegram === 'yes' && <TelegramStep />}
       <button type="button" onClick={onEnter}
         className="mt-8 inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-action px-6 text-[15px] font-semibold text-action-foreground transition-colors hover:bg-action-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
-        Go to Kivo <ArrowRight aria-hidden className="size-4" />
+        {done.alreadyComplete ? 'Go to Kivo' : 'Build my first workspace with Nova'} <ArrowRight aria-hidden className="size-4" />
       </button>
     </section>
   );

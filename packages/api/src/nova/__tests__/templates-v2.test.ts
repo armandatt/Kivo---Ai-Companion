@@ -319,12 +319,14 @@ describe("chat: a creation request is offered, never created", () => {
     expect(kindOf(understanding("create_workspace"))).toBe("action_request");
   });
 
-  it("both surfaces answer with the page, in both languages, and create nothing", () => {
-    expect(TEXT.workspaceOffer).toContain("nothing is created until you press Create");
+  it("both surfaces open a Build with Nova conversation, in both languages, and create nothing else", () => {
+    expect(TEXT.workspaceOffer).toContain("nothing is created until you approve it");
+    expect(TEXT.workspaceOfferWeb).toContain("Build with Nova");
     expect(TEXT_HINGLISH.workspaceOffer).toBeTruthy();
     const turn = read("telegram/telegram-turn.ts");
-    expect(turn).toContain('link: { label: "Open Create with Nova", path: `/templates?create=${encodeURIComponent(understanding.rawText.slice(0, 500))}` }');
-    expect(read("interaction/web-sentence.ts")).toContain('case "offer_workspace":      return { reply: { text: TEXT.workspaceOfferWeb }');
+    expect(turn).toContain('await openDraftFromChat(ctx.chatId, understanding.rawText, now, "telegram")');
+    expect(turn).toContain('path: draftId ? `/build?draft=${encodeURIComponent(draftId)}` : "/build"');
+    expect(read("interaction/web-sentence.ts")).toContain('await openDraftFromChat(ctx.chatId, rawText, now, "web")');
   });
 });
 

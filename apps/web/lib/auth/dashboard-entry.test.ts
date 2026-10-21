@@ -46,7 +46,8 @@ test('the quiz and the sign-in page sit outside the dashboard layout and send no
     assert.ok(!read(page).includes('dashboardEntry'), `${page} does not decide dashboard entry`)
   }
   // Finishing the quiz is what flips the answer, so the quiz leads out, not round.
-  assert.ok(read('components/onboarding-flow.tsx').includes("router.push('/home')"))
+  // A new account goes on to Build with Nova; one finished before, to Today. Both are dashboard pages.
+  assert.ok(read('components/onboarding-flow.tsx').includes("router.push(done.alreadyComplete ? '/home' : '/build')"))
 })
 
 // A finished account is not asked again; an unfinished one answers the quiz.

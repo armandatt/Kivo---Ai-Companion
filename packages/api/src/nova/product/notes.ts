@@ -364,6 +364,13 @@ export async function listNoteLinks(profileId: string, take: number): Promise<{
   return { notes, total };
 }
 
+// Titles of the learner's notes filed under these subjects, newest first:
+// how a workspace shows its notes back. No body leaves this file.
+export async function listNoteTitlesIn(profileId: string, subjectIds: string[], take = 40): Promise<Array<{ id: string; title: string; subjectId: string | null; updatedAt: Date }>> {
+  if (subjectIds.length === 0) return [];
+  return prisma.novaNote.findMany({ where: { profileId, subjectId: { in: subjectIds } }, orderBy: { updatedAt: "desc" }, take, select: { id: true, title: true, subjectId: true, updatedAt: true } });
+}
+
 // ── For Nova's help on a note (product/note-assist.ts) ────────────────────────
 // The note itself and a few of the learner's own notes that belong with it:
 // the ones it links to, the ones that link to it, and others filed under the
