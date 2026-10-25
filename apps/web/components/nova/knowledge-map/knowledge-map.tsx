@@ -613,9 +613,16 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     if (!el) return
     const { minX, minY, maxX, maxY } = placed.bounds
     const w = Math.max(1, maxX - minX), h = Math.max(1, maxY - minY)
+    // A phone's outline is read top down: fitted to the width, from its top,
+    // never shrunk below reading size to show it all at once.
+    if (portrait) {
+      const k = Math.max(0.62, Math.min(1.1, el.clientWidth / w))
+      setT({ k, x: w * k <= el.clientWidth ? el.clientWidth / 2 - ((minX + maxX) / 2) * k : 12 - minX * k, y: 16 - minY * k })
+      return
+    }
     const k = Math.max(MIN_K, Math.min(1.1, Math.min(el.clientWidth / w, el.clientHeight / h)))
     setT({ k, x: el.clientWidth / 2 - ((minX + maxX) / 2) * k, y: el.clientHeight / 2 - ((minY + maxY) / 2) * k })
-  }, [placed])
+  }, [placed, portrait])
 
   // Fitted when the learner asks for a different picture or the saved layout
   // arrives or is reset (fitKey), not when the data reloads and not when a

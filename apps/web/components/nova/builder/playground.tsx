@@ -482,7 +482,7 @@ function TopicTree({ plan, subjectIndex: i, editable, set, words }: ViewProps & 
                 : <span aria-hidden className="grid size-6 shrink-0 place-items-center">{t.kind === 'milestone' ? <Flag className="size-3 text-nova-ink" /> : <span className="size-1.5 rounded-full bg-foreground/30" />}</span>}
               <input aria-label={`${t.kind === 'milestone' ? words.phase : words.topic} name`} value={t.name} disabled={!editable} maxLength={80} onChange={e => set(edit.renameTopic(plan, i, k, e.target.value))}
                 className={cn(FIELD, 'py-0.5', inside ? 'font-medium text-foreground' : 'text-foreground/85')} title={t.explanation ?? undefined} data-editable />
-              {!inside && t.kind !== 'milestone' && <span className="hidden shrink-0 text-[10px] text-subtle sm:inline">studied</span>}
+              {!inside && t.kind !== 'milestone' && <span className="hidden shrink-0 text-[10px] text-subtle sm:inline" title="Studied and reviewed on its own">to study</span>}
               {editable && <span className="flex shrink-0 items-center opacity-70 group-focus-within:opacity-100 group-hover:opacity-100">
                 <IconButton label={`Add a ${words.topic} inside ${t.name}`} onClick={() => setAdding(a => (a === t.name ? null : t.name))}><Plus aria-hidden className="size-3" /></IconButton>
                 <IconButton label={`Move ${t.name} up`} onClick={() => set(edit.reorderTopic(plan, i, k, -1))}><ArrowUp aria-hidden className="size-3" /></IconButton>
