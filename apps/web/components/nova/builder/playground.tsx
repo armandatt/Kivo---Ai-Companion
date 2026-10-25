@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronDown, ChevronRight, FileText, Flag, IndentDecrease, IndentIncrease, LayoutGrid, ListPlus, ListTree, Map as MapIcon, Plus, Sparkles, X } from 'lucide-react'
 import type { BriefFact, DraftView } from '@repo/api/nova/product/builder.types'
-import { planCounts, planPreview, type PlanPriority, type PlanTask, type WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
+import { planCounts, type PlanPriority, type PlanTask, type WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
 import { TASK_DEPTH_MAX } from '@repo/api/nova/product/task-tree'
 import { cn } from '@/lib/utils'
 import { diffSummary, hintFor, ids, planDiff, wordsFor, type Hint, type PlanDiff, type Words } from './builder-view'
@@ -445,7 +445,6 @@ function Board(props: ViewProps & { onAsk?: (text: string) => void }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
   const toggle = (key: string) => setCollapsed(c => { const n = new Set(c); if (n.has(key)) n.delete(key); else n.add(key); return n })
   const withSteps = plan.tasks.filter(t => edit.stepsOf(plan, t.key).length > 0).map(t => t.key)
-  const added = planPreview(plan).added
   return (
     <div className="space-y-4">
       <div className="space-y-2">
@@ -468,11 +467,7 @@ function Board(props: ViewProps & { onAsk?: (text: string) => void }) {
               <span className="font-normal text-subtle">{roots.length} task{roots.length === 1 ? '' : 's'}{steps ? ` · ${steps} step${steps === 1 ? '' : 's'}` : ''}</span>
               <PriorityStrip plan={plan} editable={editable} set={set} keys={g.tasks.map(t => t.key)} compact />
             </h3>
-            <ul className="space-y-2">{roots.map(t => <TaskNode key={t.key} t={t} depth={0} {...props} collapsed={collapsed} onToggle={toggle} />)}
-              {added.filter(a => (a.topic ?? null) === g.milestone).map(a => (
-                <li key={a.key} className="rounded-xl border border-dashed border-white/12 px-3 py-2 text-sm text-foreground/75" data-added-task>{a.title}<span className="ml-2 text-[11px] text-subtle">Kivo adds this from the {props.words.phase}&apos;s project</span></li>
-              ))}
-            </ul>
+            <ul className="space-y-2">{roots.map(t => <TaskNode key={t.key} t={t} depth={0} {...props} collapsed={collapsed} onToggle={toggle} />)}</ul>
             {editable && <div className="mt-2"><AddRow label={`Add a task${g.milestone ? ` to ${g.milestone}` : ''}`} placeholder="Add a task" onAdd={title => set(edit.addTask(plan, title, g.milestone))} /></div>}
           </section>
         )
@@ -528,16 +523,6 @@ function Topics({ plan, editable, set, words }: ViewProps) {
                 })}
               </ul>
             )}
-            {(() => {
-              // What approving also makes here: its milestones become its topics (as on the Knowledge Map).
-              const extra = planPreview(plan).subjects.find(x => x.name === s.name)?.topics.filter(t => t.milestone && !s.topics.some(k => k.name.toLowerCase() === t.name.toLowerCase())) ?? []
-              return extra.length > 0 && (
-                <div className="mt-2" data-milestone-topics>
-                  <p className="text-[11px] text-subtle">Also on the map here, from the {words.phases.toLowerCase()}:</p>
-                  <ul className="mt-1 flex flex-wrap gap-1.5">{extra.map(t => <li key={t.name} className="flex items-center gap-1 rounded-full border border-dashed border-nova/35 px-2.5 py-0.5 text-xs text-foreground/80"><Flag aria-hidden className="size-3 text-nova-ink" />{t.name}</li>)}</ul>
-                </div>
-              )
-            })()}
             {editable && <div className="mt-2"><AddRow label={`Add a ${words.topic} to ${s.name}`} placeholder={`Add a ${words.topic}`} onAdd={name => set(edit.addTopic(plan, i, name))} /></div>}
           </section>
         )
@@ -584,34 +569,12 @@ function Timeline({ plan, editable, set }: ViewProps) {
   )
 }
 
-const WRITTEN_FROM: Record<ReturnType<typeof planPreview>['written'][number]['from'], string> = {
-  topics: 'from the topics and what they cover', milestone: 'from this milestone', prerequisites: 'from the prerequisites', order: 'from what comes first', resources: 'from the resources',
-}
-
-function Notes({ plan, editable, set, words }: ViewProps) {
+function Notes({ plan, editable, set }: ViewProps) {
   const mark = useMarker()
   const [open, setOpen] = useState<string | null>(null)
-  const written = planPreview(plan).written
   return (
     <div className="space-y-2">
-      {plan.notes.length === 0 && written.length === 0 && <p className="text-sm text-foreground/65">No notes in this proposal.</p>}
-      {written.length > 0 && (
-        <section className="space-y-1.5" aria-label="Notes Kivo writes from the plan" data-written-notes>
-          <p className={H}>Kivo writes these from the plan</p>
-          <p className="text-[11px] text-subtle">They go on the Knowledge Map {words.phase === 'milestone' ? 'beside their milestone' : 'beside what they are about'}. Change them by changing the plan.</p>
-          {written.map(n => (
-            <div key={n.key} className="rounded-lg border border-dashed border-white/10 px-2.5 py-1.5" data-written={n.from}>
-              <button type="button" onClick={() => setOpen(o => (o === n.key ? null : n.key))} aria-expanded={open === n.key} className="flex w-full items-center gap-2 text-left">
-                <FileText aria-hidden className="size-3.5 shrink-0 text-subtle" />
-                <span className="min-w-0 flex-1 truncate text-sm text-foreground/85">{n.title}</span>
-                <span className="shrink-0 text-[11px] text-subtle">{WRITTEN_FROM[n.from]}</span>
-              </button>
-              {open === n.key && <pre className="mt-2 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/70">{n.body}</pre>}
-            </div>
-          ))}
-        </section>
-      )}
-      {plan.notes.length > 0 && written.length > 0 && <p className={cn(H, 'pt-2')}>Notes in the proposal</p>}
+      {plan.notes.length === 0 && <p className="text-sm text-foreground/65">No notes in this proposal{plan.phases.length > 0 ? ' besides the ones each step writes for itself' : ''}.</p>}
       {plan.notes.map(n => {
         const m = mark(ids.note(n.key))
         return (

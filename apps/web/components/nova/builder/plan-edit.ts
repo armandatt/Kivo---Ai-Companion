@@ -5,7 +5,7 @@
 // The server checks the result again (checkWorkspacePlan); nothing here is
 // trusted. Run the tests with `npm test`.
 
-import { planPreview, type PlanDate, type PlanNote, type PlanPhase, type PlanPriority, type PlanSubject, type PlanTask, type WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
+import type { PlanDate, PlanNote, PlanPhase, PlanPriority, PlanSubject, PlanTask, WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
 import { TASK_DEPTH_MAX, ancestorsOf, descendantsOf, treeOrder, wouldLoop } from '@repo/api/nova/product/task-tree'
 
 const same = (a: string | null | undefined, b: string | null | undefined) =>
@@ -315,7 +315,6 @@ export function viewsFor(plan: WorkspacePlan | null): PlaygroundView[] {
   out.push('board')
   if (plan.subjects.length > 0) out.push('topics')
   out.push('timeline')
-  // The notes Kivo writes from the plan count: they are made too.
-  if (plan.notes.length > 0 || planPreview(plan).written.length > 0) out.push('notes')
+  if (plan.notes.length > 0 || plan.phases.length > 0) out.push('notes')
   return out
 }
