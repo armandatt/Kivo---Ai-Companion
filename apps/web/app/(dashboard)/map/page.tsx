@@ -12,23 +12,36 @@ import { cn } from '@/lib/utils'
 const TITLE = 'Knowledge Map'
 const DESCRIPTION = 'A workspace as you arranged it: its subjects, topics inside topics, tasks and their steps, notes and saved pages, joined the way they are filed and linked. Nothing here is guessed.'
 
-// The map fills the screen below its title: the frame is a column, and the
-// canvas takes the height that is left.
+// While there is no map to draw: the ordinary page frame, with its title.
 function Frame({ children, actions }: { children: React.ReactNode; actions?: boolean }) {
   return (
     <PageFrame width="wide" className="flex min-h-[calc(100dvh-3rem)] flex-col pb-6">
-      <PageHeader
-        title={TITLE} description={DESCRIPTION} className="pb-5"
-        actions={actions ? <>
-          <PageAction href="/notes/new">New note</PageAction>
-          {/* On a phone, the map comes first: these are in the navigation. */}
-          <Link href="/saved" className={cn(BUTTON_QUIET, 'hidden sm:inline-flex')}>Saved pages</Link>
-          <Link href="/knowledge" className={cn(BUTTON_QUIET, 'hidden sm:inline-flex')}>Topic list</Link>
-          <Link href="/settings/study" className={cn(BUTTON_QUIET, 'hidden sm:inline-flex')}>Add subjects</Link>
-        </> : undefined}
-      />
+      <PageHeader title={TITLE} description={DESCRIPTION} className="pb-5" actions={actions ? <Actions /> : undefined} />
       {children}
     </PageFrame>
+  )
+}
+
+function Actions() {
+  return <>
+    <PageAction href="/notes/new">New note</PageAction>
+    {/* On a phone, the map comes first: these are in the navigation. */}
+    <Link href="/saved" className={cn(BUTTON_QUIET, 'hidden h-9 md:inline-flex')}>Saved pages</Link>
+    <Link href="/knowledge" className={cn(BUTTON_QUIET, 'hidden h-9 md:inline-flex')}>Topic list</Link>
+  </>
+}
+
+// The map is the page: a one-line title, and the canvas takes every pixel
+// left below it (the dashboard's main area pads 1.5rem on each side).
+function Workspace({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mx-auto flex h-[calc(100dvh-3rem)] w-full max-w-[120rem] flex-col pt-10 lg:pt-0">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 pb-3">
+        <h1 className="text-xl font-semibold tracking-[-0.02em] text-foreground sm:text-2xl" title={DESCRIPTION}>{TITLE}</h1>
+        <div className="flex items-center gap-2 [&_a]:h-9 [&_a]:text-sm"><Actions /></div>
+      </header>
+      {children}
+    </div>
   )
 }
 
@@ -48,6 +61,7 @@ export default function KnowledgeMapPage() {
     const url = new URL(window.location.href)
     url.searchParams.set('workspace', id)
     url.searchParams.delete('focus')
+    url.searchParams.delete('explore')
     window.history.replaceState(null, '', url.toString())
   }
 
@@ -85,5 +99,5 @@ export default function KnowledgeMapPage() {
       </Frame>
     )
   }
-  return <Frame actions><KnowledgeMap key={view.workspaceId ?? 'all'} view={view} onChanged={() => void refresh()} onWorkspace={choose} /></Frame>
+  return <Workspace><KnowledgeMap key={view.workspaceId ?? 'all'} view={view} onChanged={() => void refresh()} onWorkspace={choose} /></Workspace>
 }

@@ -166,12 +166,17 @@ describe("the map page (read from source)", () => {
   it("the drawing is a group that holds its items, not an image", () => {
     expect(page).not.toContain('role="img"');
     expect(page).toContain('<svg className="absolute inset-0 size-full" role="group"');
-    expect(page).toContain('role="button" tabIndex={0} aria-label={`${TYPE_LABEL[n.type]}: ${n.label}`} aria-pressed={on}');
+    expect(page).toContain("role=\"button\" tabIndex={0} aria-label={`${TYPE_LABEL[n.type]}: ${n.label}${kids ? `, ${kids} inside` : ''}`} aria-pressed={on}");
   });
 
-  it("the map moves, zooms and fits from the keyboard, only while the map itself has focus", () => {
-    expect(page).toContain("if (e.target !== e.currentTarget) return");
-    for (const key of ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]) expect(page).toContain(`${key}: [`);
-    expect(page).toContain("else if (e.key === '0') { e.preventDefault(); fit() }");
+  // The keys themselves are map-shortcuts.ts (apps/web, tested there); the
+  // page's one handler never takes a key while the learner types or while
+  // focus is somewhere else on the page, and leaves Enter, Space and the
+  // arrows to a focused button.
+  it("the map's shortcuts apply only while the map has focus, and never while typing", () => {
+    expect(page).toContain("if (!r || e.defaultPrevented || isTypingTarget(e.target)) return");
+    expect(page).toContain("if (!onCanvas && !r.contains(active)) return");
+    expect(page).toContain("if (ownKeys && ['open', 'explore', 'fold', 'navigate', 'pan', 'delete', 'nudge', 'escape'].includes(k.action)) return");
+    expect(page).toContain("case 'fit': act(); fit(); return");
   });
 });

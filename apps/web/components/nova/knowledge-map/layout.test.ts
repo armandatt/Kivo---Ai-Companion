@@ -131,3 +131,31 @@ test('the tree under a card can be read for folding: what hangs from it, at ever
   assert.deepEqual(children.get('topic:unit1'), ['topic:t1'])
   assert.deepEqual(children.get('topic:t1'), ['task:build'])
 })
+
+test('editing a note never moves its branch: notes and pages hang in name order, not in the order they arrive', () => {
+  const { nodes, edges } = world()
+  // The server sends notes newest first: an edit reorders them, nothing else.
+  const shuffled = [...nodes.filter(n => n.type !== 'note'), ...nodes.filter(n => n.type === 'note').reverse()]
+  const a = layoutMap(nodes, edges), b = layoutMap(shuffled, edges)
+  for (const n of nodes) assert.deepEqual(b.at.get(n.id), a.at.get(n.id), n.id)
+  const kids = treeOf(nodes, edges).children.get('topic:os4')!
+  assert.deepEqual(kids, [...kids].sort((x, y) => x.localeCompare(y)))
+})
+
+test('a large map lays out quickly, the same way every time', () => {
+  const nodes: MapNode[] = [], edges: MapEdge[] = []
+  for (let s = 0; s < 12; s++) {
+    nodes.push(subject(`s${s}`))
+    for (let i = 0; i < 40; i++) {
+      const t = topic(`s${s}t${i}`, `s${s}`)
+      nodes.push(t); edges.push(edge(`subject:s${s}`, t.id, 'has_topic'))
+      for (let j = 0; j < 4; j++) { const sub = topic(`s${s}t${i}u${j}`, `s${s}`); nodes.push(sub); edges.push(edge(t.id, sub.id, 'subtopic')) }
+    }
+  }
+  const started = performance.now()
+  const a = layoutMap(nodes, edges)
+  const ms = performance.now() - started
+  assert.equal(a.at.size, nodes.length)
+  assert.ok(ms < 1000, `${nodes.length} cards took ${Math.round(ms)} ms`)
+  assert.deepEqual([...layoutMap(nodes, edges).at.entries()], [...a.at.entries()])
+})
