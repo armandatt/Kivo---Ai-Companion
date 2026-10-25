@@ -2,20 +2,21 @@
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import type { WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
+import { topicRows, type WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
 import * as edit from './plan-edit'
 
+const M = { weeks: null, hoursPerWeek: null, goals: [], exercises: [], project: null, completion: null, resources: [] }
 const plan = (): WorkspacePlan => ({
-  version: 1, kind: 'custom', templateId: null, templateVersion: null, category: null,
+  version: 2, kind: 'custom', templateId: null, templateVersion: null, category: null,
   title: 'TrackerX', summary: '', prerequisites: [], resources: [], sources: [], assumptions: [],
-  subjects: [{ name: 'TrackerX', topics: [{ name: 'Dashboard', explanation: null, sources: [] }] }],
-  phases: [
-    { name: 'Dashboard', subject: 'TrackerX', weeks: null, hoursPerWeek: null, goals: [], exercises: [], project: null, completion: null, resources: [] },
-    { name: 'APIs', subject: 'TrackerX', weeks: null, hoursPerWeek: null, goals: [], exercises: [], project: null, completion: null, resources: [] },
-  ],
+  // Milestones are topics of kind milestone, first in their subject.
+  subjects: [{ name: 'TrackerX', topics: [
+    { name: 'Dashboard', explanation: null, sources: [], kind: 'milestone', milestone: { ...M } },
+    { name: 'APIs', explanation: null, sources: [], kind: 'milestone', milestone: { ...M } },
+  ] }],
   tasks: [
-    { key: 'a', title: 'Widgets', priority: null, subject: 'TrackerX', topic: 'Dashboard', dueDay: null, estimatedMinutes: null, after: null },
-    { key: 'b', title: 'Wire API', priority: null, subject: 'TrackerX', topic: 'APIs', dueDay: '2026-11-01', estimatedMinutes: null, after: 'a' },
+    { key: 'a', title: 'Widgets', priority: null, subject: 'TrackerX', topic: 'Dashboard', dueDay: null, estimatedMinutes: null, after: [] },
+    { key: 'b', title: 'Wire API', priority: null, subject: 'TrackerX', topic: 'APIs', dueDay: '2026-11-01', estimatedMinutes: null, after: ['a'] },
   ],
   notes: [{ key: 'n', title: 'Scope', subject: 'TrackerX', topic: null, body: 'x', origin: 'nova', sources: [] }],
   dates: [{ title: 'Launch', subject: 'TrackerX', kind: 'project', day: '2026-11-10' }],
@@ -25,13 +26,16 @@ test('renaming a milestone moves its tasks with it; removing one leaves them und
   const renamed = edit.updatePhase(plan(), 1, { name: 'Integrations' })
   assert.equal(renamed.tasks.find(t => t.key === 'b')!.topic, 'Integrations')
   const removed = edit.removePhase(plan(), 0)
-  assert.equal(removed.phases.length, 1)
+  assert.equal(edit.milestones(removed).length, 1)
+  // A milestone's own fields are edited in place.
+  assert.equal(edit.milestones(edit.updatePhase(plan(), 0, { completion: 'Widgets ship' }))[0]!.completion, 'Widgets ship')
   assert.equal(removed.tasks.find(t => t.key === 'a')!.topic, null)
 })
 
 test('renaming a subject re-files everything under it; removing it unfiles, never deletes', () => {
   const p = edit.renameSubject(plan(), 0, 'Tracker')
-  assert.ok([...p.tasks, ...p.phases, ...p.notes, ...p.dates].every(x => x.subject === 'Tracker'))
+  assert.ok([...p.tasks, ...p.notes, ...p.dates].every(x => x.subject === 'Tracker'))
+  assert.ok(edit.milestones(p).every(m => m.subject === 'Tracker'))
   const gone = edit.removeSubject(plan(), 0)
   assert.equal(gone.subjects.length, 0)
   assert.equal(gone.tasks.length, 2)
@@ -40,7 +44,7 @@ test('renaming a subject re-files everything under it; removing it unfiles, neve
 
 test('removing a task clears what waited for it; an order never loops', () => {
   const p = edit.removeTask(plan(), 'a')
-  assert.equal(p.tasks[0]!.after, null)
+  assert.deepEqual(p.tasks[0]!.after, [])
   // a cannot wait for b, since b already waits for a.
   assert.deepEqual(edit.possibleAfter(plan(), 'a').map(t => t.key), [])
   assert.deepEqual(edit.possibleAfter(plan(), 'b').map(t => t.key), ['a'])
@@ -59,7 +63,7 @@ test('reading back: tasks by milestone, the timeline soonest first, views that h
   assert.deepEqual(edit.viewsFor(plan()), ['overview', 'roadmap', 'board', 'topics', 'timeline', 'notes'])
   assert.deepEqual(edit.viewsFor(null), ['overview'])
   // A topic already there, in any case, is not added twice.
-  assert.equal(edit.addTopic(plan(), 0, 'dashboard').subjects[0]!.topics.length, 1)
+  assert.equal(edit.addTopic(plan(), 0, 'dashboard').subjects[0]!.topics.length, 2)
   assert.deepEqual(edit.moveItem([1, 2, 3], 0, 2), [2, 3, 1])
 })
 
@@ -117,4 +121,56 @@ test("a priority is the learner's: Nova's suggestion is used only when they take
 
 test('a dependency is shown both ways', () => {
   assert.deepEqual(edit.waitingOn(plan(), 'a').map(t => t.key), ['b'])
+})
+
+test('a subject goes inside another of the plan; never inside itself or one inside it; renaming or removing the group carries that through', () => {
+  let p = plan()
+  p.subjects = [{ name: 'Semester Five', topics: [] }, { name: 'Automata', topics: [] }, { name: 'NLP', topics: [] }]
+  p = edit.setSubjectParent(p, 1, 'Semester Five')
+  p = edit.setSubjectParent(p, 2, 'Automata')
+  assert.deepEqual(p.subjects.map(s => s.parent ?? null), [null, 'Semester Five', 'Automata'])
+  // Semester Five can't go inside what is inside it.
+  assert.deepEqual(edit.parentChoices(p, 0), [])
+  assert.equal(edit.setSubjectParent(p, 0, 'NLP'), p)
+  const renamed = edit.renameSubject(p, 0, 'Sem 5')
+  assert.equal(renamed.subjects[1]!.parent, 'Sem 5')
+  const removed = edit.removeSubject(p, 0)
+  assert.deepEqual(removed.subjects.map(s => [s.name, s.parent ?? null]), [['Automata', null], ['NLP', 'Automata']])
+  assert.equal(edit.setSubjectParent(p, 2, null).subjects[2]!.parent, null)
+})
+
+// ── Topics as a tree, waits as a list ─────────────────────────────────────────
+
+const outline = (p: WorkspacePlan) => topicRows(p.subjects[0]!).map(r => `${'-'.repeat(r.depth)}${r.topic.name}`)
+
+test('topics nest and keep their order: added inside, moved inside, moved up and down, renamed and removed with what is inside', () => {
+  let p = plan()
+  p = edit.addTopic(p, 0, 'Unit 1')
+  p = edit.addTopic(p, 0, 'Arrays', 'Unit 1')
+  p = edit.addTopic(p, 0, 'Strings', 'Unit 1')
+  p = edit.addTopic(p, 0, 'Two pointers', 'Arrays')
+  assert.deepEqual(outline(p), ['Dashboard', 'APIs', 'Unit 1', '-Arrays', '--Two pointers', '-Strings'])
+  p = edit.reorderTopic(p, 0, p.subjects[0]!.topics.findIndex(t => t.name === 'Strings'), -1)
+  assert.deepEqual(outline(p), ['Dashboard', 'APIs', 'Unit 1', '-Strings', '-Arrays', '--Two pointers'])
+  // Never inside itself or what is inside it.
+  const unit = p.subjects[0]!.topics.findIndex(t => t.name === 'Unit 1')
+  assert.ok(!edit.topicParentChoices(p, 0, unit).includes('Two pointers'))
+  p = edit.renameTopic(p, 0, p.subjects[0]!.topics.findIndex(t => t.name === 'Arrays'), 'Arrays and lists')
+  assert.deepEqual(outline(p).slice(-2), ['-Arrays and lists', '--Two pointers'])
+  p = edit.setTopicParent(p, 0, p.subjects[0]!.topics.findIndex(t => t.name === 'Strings'), null)
+  assert.equal(outline(p).at(-1), 'Strings')
+  p = edit.removeTopic(p, 0, p.subjects[0]!.topics.findIndex(t => t.name === 'Unit 1'))
+  assert.deepEqual(outline(p), ['Dashboard', 'APIs', 'Strings'])
+})
+
+test('a task waits on several, and never round in a circle', () => {
+  let p = edit.addTask(plan(), 'Test it', 'APIs')
+  const test3 = p.tasks[2]!.key
+  p = edit.toggleWait(p, test3, 'a')
+  p = edit.toggleWait(p, test3, 'b')
+  assert.deepEqual(p.tasks[2]!.after, ['a', 'b'])
+  // a can't wait on what waits on it.
+  assert.equal(edit.toggleWait(p, 'a', test3), p)
+  p = edit.toggleWait(p, test3, 'a')
+  assert.deepEqual(p.tasks[2]!.after, ['b'])
 })

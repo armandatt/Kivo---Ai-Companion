@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { milestonesOf } from '@repo/api/nova/product/workspace-plan'
 import { History, X } from 'lucide-react'
 import type { VersionItem } from '@repo/api/nova/product/builder.types'
 import { treeOrder } from '@repo/api/nova/product/task-tree'
@@ -124,7 +125,7 @@ function VersionPreview({ view }: { view: api.VersionView }) {
   return (
     <div className="space-y-2 text-xs">
       <p className="font-medium text-foreground">{title}</p>
-      {view.plan?.phases.length ? <p className="text-foreground/70">Milestones: {view.plan.phases.map(p => p.name).join(' · ')}</p> : null}
+      {view.plan && milestonesOf(view.plan).length ? <p className="text-foreground/70">Milestones: {milestonesOf(view.plan).map(m => m.topic.name).join(' · ')}</p> : null}
       {subjects.map(s => <p key={s.name} className="text-foreground/70"><span className="text-foreground/85">{s.name}</span>{s.topics.length ? `: ${s.topics.join(', ')}` : ''}</p>)}
       {tasks.length > 0 && (
         <ul className="space-y-0.5">

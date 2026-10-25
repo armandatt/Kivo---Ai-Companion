@@ -113,14 +113,16 @@ describe("what a turn may do (code decides, not the model)", () => {
   });
 
   it("what a proposal holds is said in its kind's words: a project has parts and milestones, not subjects (seen 22 Oct)", () => {
-    // Topics as written: the 3 milestones are topics too, counted once.
-    const c = { subjects: 1, topics: 6, phases: 3, tasks: 8, notes: 9, dates: 1 };
+    // Milestones are counted apart from topics (planCounts): once each.
+    const c = { subjects: 1, topics: 3, milestones: 3, tasks: 8, notes: 9, dates: 1 };
     expect(holdsLine("project", c)).toBe("3 parts, 3 milestones, 8 tasks, 9 notes, 1 date");
     // Seen 25 Oct: "4 parts, 4 milestones" for a project whose parts are its milestones.
-    expect(holdsLine("project", { ...c, topics: 3 })).toBe("3 milestones, 8 tasks, 9 notes, 1 date");
-    expect(holdsLine("semester", { ...c, subjects: 4, topics: 3, phases: 0 })).toBe("4 subjects, 3 topics, 8 tasks, 9 notes, 1 date");
+    expect(holdsLine("project", { ...c, topics: 0 })).toBe("3 milestones, 8 tasks, 9 notes, 1 date");
+    // A project with several workstreams says so.
+    expect(holdsLine("project", { ...c, subjects: 3, topics: 0 })).toBe("3 workstreams, 3 milestones, 8 tasks, 9 notes, 1 date");
+    expect(holdsLine("semester", { ...c, subjects: 4, topics: 3, milestones: 0 })).toBe("4 subjects, 3 topics, 8 tasks, 9 notes, 1 date");
     expect(holdsLine("skill", c)).toBe("1 area, 3 concepts, 3 stages, 8 tasks, 9 notes, 1 date");
-    expect(holdsLine(null, { subjects: 0, topics: 0, phases: 0, tasks: 0, notes: 0, dates: 0 })).toBe("");
+    expect(holdsLine(null, { subjects: 0, topics: 0, milestones: 0, tasks: 0, notes: 0, dates: 0 })).toBe("");
   });
   it("a question is asked once: the model's own wording, or code's when the reply asks nothing", () => {
     // Seen with the real model (21 Oct): the reply asked it, and code asked it again in other words.
@@ -197,31 +199,38 @@ describe("a new version says what changed", () => {
   });
 });
 
-describe("task order in a plan", () => {
-  it("keeps an order that names another task, and drops one that loops or names nothing", () => {
-    const p = plan({ tasks: [
-      { key: "a", title: "A", after: "c" }, { key: "b", title: "B", after: "a" }, { key: "c", title: "C", after: "b" },
-      { key: "d", title: "D", after: "ghost" }, { key: "e", title: "E", after: "e" }, { key: "f", title: "F", after: "a" },
-    ] });
-    const after = Object.fromEntries(p.tasks.map(t => [t.key, t.after]));
-    expect(after.d).toBeNull();
-    expect(after.e).toBeNull();
-    expect(after.f).toBe("a");
-    // The loop a → c → b → a is broken somewhere; no task waits on itself through it.
-    const loops = (k: string) => { let at = p.tasks.find(t => t.key === k)?.after; for (let i = 0; at && i < 10; i++) { if (at === k) return true; at = p.tasks.find(t => t.key === at)?.after; } return false; };
-    for (const k of ["a", "b", "c"]) expect([k, loops(k)]).toEqual([k, false]);
+describe("task waits in a plan", () => {
+  it("keeps waits that name other tasks, several each, and says what it drops (nothing name, itself, a circle)", () => {
+    const r = checkWorkspacePlan({ title: "X", subjects: [{ name: "X", topics: ["Y"] }], tasks: [
+      { key: "a", title: "A", after: ["c"] }, { key: "b", title: "B", after: "a" }, { key: "c", title: "C", after: ["b"] },
+      { key: "d", title: "D", after: ["ghost"] }, { key: "e", title: "E", after: ["e"] }, { key: "f", title: "F", after: ["a", "b"] },
+    ] }, { today: TODAY });
+    if (!r.ok) throw new Error(r.message);
+    const after = Object.fromEntries(r.plan.tasks.map(t => [t.key, t.after]));
+    expect(after.d).toEqual([]);
+    expect(after.e).toEqual([]);
+    expect(after.f).toEqual(["a", "b"]);
+    // The loop a → c → b → a is broken once, and said.
+    expect([after.a, after.b, after.c].filter(x => x!.length === 0)).toHaveLength(1);
+    expect(r.dropped.some(d => d.includes("round in a circle"))).toBe(true);
+    expect(r.dropped.filter(d => d.startsWith("a wait in"))).toHaveLength(2);
   });
-  it("is written into the workspace's one plan note (tasks have no dependency column)", () => {
-    const notes = planWrites(plan()).notes;
-    const how = notes.find(n => n.key === "plan")!;
-    expect(how.title).toBe("How it goes: TrackerX");
-    expect(how.body).toContain("# What comes first\n- Wire the tasks API: after Finish dashboard widgets");
-    expect(notes.filter(n => n.key !== "plan" && !n.key.startsWith("topics:"))).toEqual([]);
-  });
-  it("milestone tasks stay under their milestone (a topic of the subject)", () => {
+  it("are data, not a note: the plan writes no note of its own", () => {
     const w = planWrites(plan());
-    expect(w.subjects[0]!.topics).toEqual(["Dashboard", "API integration", "Finish the dashboard", "Integrate the APIs"]);
+    expect(w.notes).toEqual([]);
+    expect(w.tasks.find(t => t.key === "api")!.after).toEqual(["dash"]);
+  });
+  it("milestones are topics of kind milestone, first in their subject, and their tasks stay under them", () => {
+    const w = planWrites(plan());
+    expect(w.subjects[0]!.topics.map(t => [t.name, t.kind])).toEqual([["Finish the dashboard", "milestone"], ["Integrate the APIs", "milestone"], ["Dashboard", null], ["API integration", null]]);
     expect(w.tasks.find(t => t.key === "api")!.topic).toBe("Integrate the APIs");
+  });
+  it("a revision that only nests a task, or reorders steps, is a change (26 Oct)", () => {
+    const before = plan();
+    const nested = { ...before, tasks: before.tasks.map(t => (t.key === "api" ? { ...t, parent: "dash" } : t)) };
+    expect(changedNothing(planChanges(before, nested))).toBe(false);
+    const moved = { ...before, subjects: before.subjects.map(s => ({ ...s, topics: s.topics.map(t => (t.name === "API integration" ? { ...t, parent: "Dashboard" } : t)) })) };
+    expect(changedNothing(planChanges(before, moved))).toBe(false);
   });
 });
 
@@ -260,21 +269,20 @@ describe("what the model is given", () => {
     expect(system).toContain("- exam or semester (academic): subjects, units, topics, revision");
     expect(system).toContain("is not enough: ask first");
   });
-  it("a revision gets the proposal as it stands and the change asked for", () => {
+  it("a first version gets the facts and assumptions; a proposal is never sent back to be rewritten (revisions are operations)", () => {
     const req: BuilderPlanRequest = {
       today: TODAY, kind: "project", facts: [{ label: "Project", value: "TrackerX" }], known: [], assumptions: ["Solo developer"], suggestions: [],
-      conversation: [{ role: "user", text: "make it four weeks" }], learnerText: "make it four weeks", current: plan(), change: "Make it four weeks", existing: null,
+      conversation: [{ role: "user", text: "make it four weeks" }], learnerText: "make it four weeks", existing: null,
     };
     const p = builderPlanPrompt(req);
-    expect(p).toContain("CURRENT PROPOSAL (JSON):\n{");
-    expect(p).toContain("CHANGE ASKED: Make it four weeks");
+    expect(p).not.toContain("CURRENT PROPOSAL");
     expect(p).toContain("FACTS (the learner's own):\n- Project: TrackerX");
     expect(p).toContain("ASSUMPTIONS (Nova's):\n- Solo developer");
   });
   it("the plan it writes is checked: Nova's links dropped, the learner's kept, no web search said by code", async () => {
     const req: BuilderPlanRequest = {
       today: TODAY, kind: "skill", facts: [], known: [], assumptions: [], suggestions: [], conversation: [],
-      learnerText: "I want to learn FastAPI from https://fastapi.tiangolo.com", current: null, change: null, existing: null,
+      learnerText: "I want to learn FastAPI from https://fastapi.tiangolo.com", existing: null,
     };
     const out = await writeBuilderPlan(req, (async () => JSON.stringify({
       title: "Learn FastAPI", subjects: [{ name: "FastAPI", topics: ["Routing"] }],
@@ -290,7 +298,7 @@ describe("what the model is given", () => {
     expect(out.plan.kind).toBe("custom");
   });
   it("a model that is down is an honest 'unavailable', not an empty plan", async () => {
-    const out = await writeBuilderPlan({ today: TODAY, kind: null, facts: [], known: [], assumptions: [], suggestions: [], conversation: [], learnerText: "", current: null, change: null, existing: null }, (async () => { throw new Error("down"); }) as never);
+    const out = await writeBuilderPlan({ today: TODAY, kind: null, facts: [], known: [], assumptions: [], suggestions: [], conversation: [], learnerText: "", existing: null }, (async () => { throw new Error("down"); }) as never);
     expect(out.ok).toBe(false);
     expect("unavailable" in out && out.unavailable).toBe(true);
   });
@@ -328,7 +336,7 @@ describe("PDFs and photos in the conversation", () => {
     const calls: Array<Record<string, unknown>> = [];
     const out = await writeBuilderPlan({
       today: TODAY, kind: "exam", facts: [], known: [], assumptions: [], suggestions: [], conversation: [], learnerText: "",
-      current: null, change: null, existing: null, files: [PDF],
+      existing: null, files: [PDF],
     }, (async (req: Record<string, unknown>) => { calls.push(req); return JSON.stringify({
       title: "OS exam", subjects: [{ name: "OS", topics: [{ name: "Deadlocks", sources: [{ file: "syllabus.pdf", page: 4 }, { file: "made-up.pdf", page: 1 }] }] }],
       sources: [{ file: "syllabus.pdf", read: true, pages: 12 }],

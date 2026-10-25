@@ -12,7 +12,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react'
-import type { StudyEdit, StudyEditResponse, StudyStructure, StudyStructureView } from '@repo/api/nova/product/setup-edit.types'
+import { SUBJECT_DEPTH_MAX, type StudyEdit, type StudyEditResponse, type StudyStructure, type StudyStructureView } from '@repo/api/nova/product/setup-edit.types'
+import { canPlace, treeOrder } from '@repo/api/nova/product/task-tree'
 import type { StudyProposalResponse } from '@repo/api/nova/product/study-proposal.types'
 import { STUDY_REQUEST_MAX } from '@repo/api/nova/product/study-proposal.types'
 
@@ -112,6 +113,19 @@ export function SubjectStudio({ onChanged, onClose }: { onChanged: () => void; o
 
 // ── By hand ───────────────────────────────────────────────────────────────────
 
+// How deep a topic sits, and what is inside it (never a place to put it).
+type StudioTopic = StudyStructure['subjects'][number]['topics'][number]
+function depthIn(topics: StudioTopic[], t: StudioTopic): number {
+  let d = 0
+  for (let at = t.parentId ?? null; at && d < 8; d++) at = topics.find(x => x.id === at)?.parentId ?? null
+  return d
+}
+function insideOf(topics: StudioTopic[], id: string): Set<string> {
+  const out = new Set<string>()
+  for (let grew = true; grew;) { grew = false; for (const x of topics) if (x.parentId && (x.parentId === id || out.has(x.parentId)) && !out.has(x.id)) { out.add(x.id); grew = true } }
+  return out
+}
+
 function ManualEditor({ structure, onSave, busy, onRestore }: { structure: StudyStructure; onSave: (e: StudyEdit[], key: string) => Promise<boolean>; busy: string | null; onRestore: (topicId: string) => Promise<void> }) {
   const [renaming, setRenaming] = useState<{ id: string; kind: 'subject' | 'topic'; name: string } | null>(null)
   const [adding, setAdding]     = useState<Record<string, string>>({})
@@ -130,10 +144,13 @@ function ManualEditor({ structure, onSave, busy, onRestore }: { structure: Study
     <div className="mt-7">
       <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-foreground/45">Edit by hand</h3>
       <ul className="mt-3 space-y-4">
-        {structure.subjects.map(s => {
+        {treeOrder(structure.subjects.map(x => ({ ...x, parent: x.parentId ?? null }))).map(({ item: s, depth }) => {
           const removable = s.topics.length === 0 && s.dates === 0
+          // Where it may go: any other subject, not one inside it, never deeper than subjects go.
+          const nodes = structure.subjects.map(x => ({ id: x.id, parent: x.parentId ?? null }))
+          const homes = structure.subjects.filter(x => x.id !== s.id && canPlace(nodes, s.id, x.id, SUBJECT_DEPTH_MAX).ok)
           return (
-            <li key={s.id} className="rounded-2xl border border-white/8 p-4" data-studio-subject={s.name}>
+            <li key={s.id} className="rounded-2xl border border-white/8 p-4" style={depth ? { marginLeft: depth * 20 } : undefined} data-studio-subject={s.name}>
               <div className="flex flex-wrap items-center gap-2">
                 {renaming?.id === s.id ? (
                   <form className="flex flex-1 flex-wrap gap-2" onSubmit={e => { e.preventDefault(); void rename() }}>
@@ -153,10 +170,22 @@ function ManualEditor({ structure, onSave, busy, onRestore }: { structure: Study
                   </>
                 )}
               </div>
+              {(s.parentId || homes.length > 0) && (
+                // On the Knowledge Map a subject inside another is drawn around it.
+                <div className="mt-2 flex items-center gap-2 text-xs text-foreground/60">
+                  <label htmlFor={`inside-${s.id}`}>Inside</label>
+                  <select id={`inside-${s.id}`} value={s.parentId ?? ''} disabled={disabled} className={`${FIELD} h-8 text-xs`} data-subject-parent
+                    onChange={e => void onSave([{ op: 'move_subject', subjectId: s.id, parentId: e.target.value || null }], `place:${s.id}`)}>
+                    <option value="">nothing (on its own)</option>
+                    {[...new Map([...structure.subjects.filter(x => x.id === s.parentId), ...homes].map(x => [x.id, x])).values()].map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+                  </select>
+                </div>
+              )}
 
               <ul className="mt-2 divide-y divide-white/6">
                 {s.topics.map(t => (
-                  <li key={t.id} className="flex flex-wrap items-center gap-2 py-2" data-studio-topic={t.name} data-archived={t.archived || undefined}>
+                  // Indented under the topic it sits inside (the server sends them in that order).
+                  <li key={t.id} className="flex flex-wrap items-center gap-2 py-2" style={{ paddingLeft: depthIn(s.topics, t) * 18 }} data-studio-topic={t.name} data-archived={t.archived || undefined}>
                     {t.archived ? (
                       <>
                         <span className="min-w-0 flex-1 truncate text-sm text-foreground/50">{t.name}<span className="ml-2 rounded-full border border-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-foreground/45">archived</span></span>
@@ -173,6 +202,12 @@ function ManualEditor({ structure, onSave, busy, onRestore }: { structure: Study
                       <>
                         <span className="min-w-0 flex-1 truncate text-sm text-foreground/85">{t.name}{t.hasHistory && <span className="ml-2 text-xs text-foreground/40">studied</span>}</span>
                         <button type="button" className={SMALL} disabled={disabled} onClick={() => setRenaming({ id: t.id, kind: 'topic', name: t.name })} aria-label={`Rename ${t.name}`}><Pencil className="size-3.5" /> Rename</button>
+                        <label className="sr-only" htmlFor={`inside-topic-${t.id}`}>Put {t.name} inside</label>
+                        <select id={`inside-topic-${t.id}`} value={t.parentId ?? ''} disabled={disabled} className={`${FIELD} h-8 max-w-[10rem] text-xs`} data-topic-parent
+                          onChange={e => void onSave([{ op: 'move_topic', topicId: t.id, parentId: e.target.value || null }], `inside:${t.id}`)}>
+                          <option value="">At the top</option>
+                          {s.topics.filter(x => !x.archived && x.id !== t.id && !insideOf(s.topics, t.id).has(x.id)).map(x => <option key={x.id} value={x.id}>Inside {x.name}</option>)}
+                        </select>
                         {structure.subjects.length > 1 && (
                           <>
                             <label className="sr-only" htmlFor={`move-${t.id}`}>Move {t.name} to</label>

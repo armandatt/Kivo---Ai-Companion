@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
 import { KnowledgeMap } from '@/components/nova/knowledge-map/knowledge-map'
@@ -9,7 +10,7 @@ import { BUTTON_QUIET } from '@/components/nova/workspace/ui'
 import { cn } from '@/lib/utils'
 
 const TITLE = 'Knowledge Map'
-const DESCRIPTION = 'Your subjects, topics, notes and saved pages, joined the way you filed and linked them. Nothing here is guessed.'
+const DESCRIPTION = 'A workspace as you arranged it: its subjects, topics inside topics, tasks and their steps, notes and saved pages, joined the way they are filed and linked. Nothing here is guessed.'
 
 // The map fills the screen below its title: the frame is a column, and the
 // canvas takes the height that is left.
@@ -31,8 +32,24 @@ function Frame({ children, actions }: { children: React.ReactNode; actions?: boo
   )
 }
 
+// Which workspace's map: ?workspace=<id> (or "all"), else the one worked on last.
+function workspaceInAddress(): string | null {
+  if (typeof window === 'undefined') return null
+  const w = new URLSearchParams(window.location.search).get('workspace')
+  return w && w.length <= 64 ? w : null
+}
+
 export default function KnowledgeMapPage() {
-  const { view, loading, refreshing, refresh } = useNovaView<NovaKnowledgeMapView>('/api/nova/knowledge-map')
+  const [workspace, setWorkspace] = useState<string | null>(null)
+  useEffect(() => { setWorkspace(workspaceInAddress()) }, [])
+  const { view, loading, refreshing, refresh } = useNovaView<NovaKnowledgeMapView>(`/api/nova/knowledge-map${workspace ? `?workspace=${encodeURIComponent(workspace)}` : ''}`)
+  const choose = (id: string) => {
+    setWorkspace(id)
+    const url = new URL(window.location.href)
+    url.searchParams.set('workspace', id)
+    url.searchParams.delete('focus')
+    window.history.replaceState(null, '', url.toString())
+  }
 
   if (loading) {
     return (
@@ -68,5 +85,5 @@ export default function KnowledgeMapPage() {
       </Frame>
     )
   }
-  return <Frame actions><KnowledgeMap view={view} onChanged={() => void refresh()} /></Frame>
+  return <Frame actions><KnowledgeMap key={view.workspaceId ?? 'all'} view={view} onChanged={() => void refresh()} onWorkspace={choose} /></Frame>
 }

@@ -15,7 +15,7 @@
 
 import { prisma } from "@repo/db/client";
 import { dayKey, dayNumber, resolveTimezone } from "../engines/learner-calendar";
-import { TASK_DEPTH_MAX, canPlace, levelOf, parentsOf, subtreeOf, type TreeNode } from "./task-tree";
+import { TASK_DEPTH_MAX, canPlace, levelOf, parentsOf, subtreeOf, wouldLoop, type TreeNode, type Wait } from "./task-tree";
 import {
   TASK_DONE_SHOWN, TASK_KEY_MAX, TASK_MINUTES_MAX, TASK_MINUTES_MIN, TASK_OPEN_MAX, TASK_ORDER_MAX, TASK_PRIORITIES, TASK_STATUSES, TASK_TITLE_MAX, TASK_TOPIC_MAX,
   type NovaTaskItem, type NovaTasksReady, type TaskError, type TaskInput, type TaskPriority, type TaskResponse, type TaskStatus,
@@ -130,11 +130,13 @@ const ROW = {
   id: true, title: true, status: true, priority: true, subjectId: true, topicName: true, dueDay: true,
   completedAt: true, createdAt: true, updatedAt: true, subject: { select: { name: true } },
   estimatedMinutes: true, position: true, parentId: true,
+  waitsOn: { select: { dependsOnId: true }, orderBy: { createdAt: "asc" as const } },
 } as const;
 type Row = {
   id: string; title: string; status: string; priority: string | null; subjectId: string | null; topicName: string | null;
   dueDay: string | null; completedAt: Date | null; createdAt: Date; updatedAt: Date; subject: { name: string } | null;
   estimatedMinutes: number | null; position: number | null; parentId: string | null;
+  waitsOn: Array<{ dependsOnId: string }>;
 };
 
 function toItem(row: Row, today: string): NovaTaskItem {
@@ -147,6 +149,7 @@ function toItem(row: Row, today: string): NovaTaskItem {
     dueInDays: row.dueDay ? dayNumber(row.dueDay) - dayNumber(today) : null,
     completedAt: row.completedAt?.toISOString() ?? null,
     estimatedMinutes: row.estimatedMinutes, position: row.position, parentId: row.parentId,
+    after: row.waitsOn.map(w => w.dependsOnId),
     createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
   };
 }
@@ -178,13 +181,23 @@ export async function listTasks(profileId: string, options: { now?: Date } = {})
 // Every open task and the most recently finished, as an outline (title,
 // status, the task it is a step of, where it is filed): what the Knowledge
 // Map shows in a topic's panel.
-export async function listTaskOutline(profileId: string): Promise<Array<{ id: string; title: string; status: TaskStatus; parentId: string | null; subjectId: string | null; topicName: string | null }>> {
+export interface TaskOutlineRow {
+  id: string; title: string; status: TaskStatus; parentId: string | null; subjectId: string | null; topicName: string | null;
+  dueDay: string | null; priority: TaskPriority | null; estimatedMinutes: number | null; clientKey: string | null; after: string[];
+}
+export async function listTaskOutline(profileId: string): Promise<TaskOutlineRow[]> {
+  const select = { id: true, title: true, status: true, parentId: true, subjectId: true, topicName: true, createdAt: true, dueDay: true, priority: true, estimatedMinutes: true, clientKey: true, position: true, waitsOn: { select: { dependsOnId: true } } } as const;
   const [open, done] = await Promise.all([
-    prisma.novaTask.findMany({ where: { profileId, status: { not: "done" } }, select: { id: true, title: true, status: true, parentId: true, subjectId: true, topicName: true, createdAt: true }, orderBy: { createdAt: "asc" }, take: TASK_OPEN_MAX }),
-    prisma.novaTask.findMany({ where: { profileId, status: "done" }, select: { id: true, title: true, status: true, parentId: true, subjectId: true, topicName: true, createdAt: true }, orderBy: { completedAt: "desc" }, take: TASK_DONE_SHOWN * 4 }),
+    prisma.novaTask.findMany({ where: { profileId, status: { not: "done" } }, select, orderBy: { createdAt: "asc" }, take: TASK_OPEN_MAX }),
+    prisma.novaTask.findMany({ where: { profileId, status: "done" }, select, orderBy: { completedAt: "desc" }, take: TASK_DONE_SHOWN * 4 }),
   ]);
+  // In the order they were made (a plan's order), a board position first where the learner gave one.
   return [...open, ...done].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-    .map(t => ({ id: t.id, title: t.title, status: TASK_STATUSES.find(s => s === t.status) ?? "todo", parentId: t.parentId, subjectId: t.subjectId, topicName: t.topicName }));
+    .map(t => ({
+      id: t.id, title: t.title, status: TASK_STATUSES.find(s => s === t.status) ?? "todo", parentId: t.parentId, subjectId: t.subjectId, topicName: t.topicName,
+      dueDay: t.dueDay, priority: TASK_PRIORITIES.find(p => p === t.priority) ?? null, estimatedMinutes: t.estimatedMinutes, clientKey: t.clientKey,
+      after: t.waitsOn.map(w => w.dependsOnId),
+    }));
 }
 
 // ── Writes ────────────────────────────────────────────────────────────────────
@@ -243,7 +256,7 @@ export class TaskChanged extends Error {}
 export async function updateTasksIn(
   tx: Pick<typeof prisma, "novaTask">,
   profileId: string,
-  changes: Array<{ taskId: string; title?: string; dueDay?: string | null; priority?: "low" | "medium" | "high" | null; parentId?: string | null }>,
+  changes: Array<{ taskId: string; title?: string; dueDay?: string | null; priority?: "low" | "medium" | "high" | null; parentId?: string | null; estimatedMinutes?: number | null; topicName?: string | null }>,
 ): Promise<void> {
   for (const c of changes) {
     const data: Record<string, unknown> = {};
@@ -255,6 +268,9 @@ export async function updateTasksIn(
     if (c.title !== undefined) data.title = c.title;
     if (c.dueDay !== undefined) data.dueDay = c.dueDay;
     if (c.priority !== undefined) data.priority = c.priority;
+    if (c.estimatedMinutes !== undefined) data.estimatedMinutes = c.estimatedMinutes;
+    if (c.topicName !== undefined) data.topicName = c.topicName;
+    if (Object.keys(data).length === 0) continue;
     const r = await tx.novaTask.updateMany({ where: { id: c.taskId, profileId }, data });
     if (r.count !== 1) throw new TaskChanged();
   }
@@ -372,16 +388,19 @@ export async function createTask(profileId: string, raw: unknown, options: { now
 // each step is made under the task it belongs to. A step whose parent can't
 // be found stops the batch.
 export async function createTasksIn(
-  tx: Pick<typeof prisma, "novaTask">,
+  tx: Pick<typeof prisma, "novaTask" | "novaTaskDependency">,
   profileId: string,
   tasks: Array<Record<string, unknown>>,
 ): Promise<{ ok: true; added: number; existing: number } | { ok: false; message: string }> {
-  const parsed: Array<TaskInput & { parentKey?: string }> = [];
+  const parsed: Array<TaskInput & { parentKey?: string; afterKeys?: string[]; afterIds?: string[] }> = [];
+  const keysOf = (v: unknown) => (Array.isArray(v) ? v.filter((k): k is string => typeof k === "string" && k.length > 0 && k.length <= 160) : []);
   for (const raw of tasks) {
     const p = parseTaskInput(raw, true);
     if (!p.ok) return { ok: false, message: p.message };
     const parentKey = typeof raw.parentKey === "string" && raw.parentKey ? raw.parentKey : undefined;
-    parsed.push({ ...p.changes, ...(parentKey ? { parentKey } : {}) });
+    // What it waits on: tasks of this batch or stored ones by clientKey (afterKeys), or by id (afterIds).
+    const afterKeys = keysOf(raw.afterKeys), afterIds = keysOf(raw.afterIds);
+    parsed.push({ ...p.changes, ...(parentKey ? { parentKey } : {}), ...(afterKeys.length ? { afterKeys } : {}), ...(afterIds.length ? { afterIds } : {}) });
   }
   const keys = parsed.map(c => c.clientKey).filter((k): k is string => typeof k === "string");
   const have = new Set((await tx.novaTask.findMany({ where: { profileId, clientKey: { in: keys } }, select: { clientKey: true } })).map(t => t.clientKey));
@@ -393,6 +412,7 @@ export async function createTasksIn(
   const parentKeys = parsed.map(c => c.parentKey).filter((k): k is string => typeof k === "string");
   const ids = new Map((await tx.novaTask.findMany({ where: { profileId, clientKey: { in: [...keys, ...parentKeys] } }, select: { id: true, clientKey: true } })).map(t => [t.clientKey!, t.id]));
   const nodes: TreeNode[] = await treeOf(tx, profileId);
+  const keysMissing = new Set<string>();
   // Parents first: a step waits until the task it names has been made.
   let pending = fresh;
   for (let round = 0; pending.length > 0; round++) {
@@ -418,7 +438,59 @@ export async function createTasksIn(
     }
     pending = pending.filter(c => !ready.includes(c));
   }
+  // Waits, once every task of the batch is there. A wait on a task that
+  // can't be found stops the batch.
+  const waits: Array<{ taskId: string; after: string[] }> = [];
+  for (const c of fresh) {
+    if (!c.clientKey || (!c.afterKeys?.length && !c.afterIds?.length)) continue;
+    const on = [...(c.afterKeys ?? []).map(k => ids.get(k) ?? (keysMissing.add(k), "")), ...(c.afterIds ?? [])].filter(Boolean);
+    if (on.length) waits.push({ taskId: ids.get(c.clientKey)!, after: on });
+  }
+  if (keysMissing.size > 0) {
+    const late = await tx.novaTask.findMany({ where: { profileId, clientKey: { in: [...keysMissing] } }, select: { id: true, clientKey: true } });
+    if (late.length !== keysMissing.size) return { ok: false, message: "A task waits on one that isn't there." };
+    for (const t of late) ids.set(t.clientKey!, t.id);
+    for (const c of fresh) {
+      const w = waits.find(x => x.taskId === ids.get(c.clientKey ?? ""));
+      const extra = (c.afterKeys ?? []).filter(k => keysMissing.has(k)).map(k => ids.get(k)!);
+      if (w) w.after.push(...extra); else if (extra.length && c.clientKey) waits.push({ taskId: ids.get(c.clientKey)!, after: extra });
+    }
+  }
+  try { await addWaitsIn(tx, profileId, waits); } catch (err) { if (err instanceof TaskChanged) return { ok: false, message: "A task can't wait on itself or go round in a circle." }; throw err; }
   return { ok: true, added: fresh.length, existing: parsed.length - fresh.length };
+}
+
+// ── Waits (NovaTaskDependency; this file is its only writer) ──────────────────
+
+async function waitsOf(db: Pick<typeof prisma, "novaTaskDependency">, profileId: string): Promise<Wait[]> {
+  return (await db.novaTaskDependency.findMany({ where: { task: { profileId } }, select: { taskId: true, dependsOnId: true }, take: 5_000 }))
+    .map(w => ({ task: w.taskId, on: w.dependsOnId }));
+}
+
+// Adds these waits (each task on the ones listed), inside the caller's
+// transaction. Every task named must be the learner's; a wait on itself, or
+// one that would go round in a circle, stops it all (TaskChanged).
+export async function addWaitsIn(tx: Pick<typeof prisma, "novaTask" | "novaTaskDependency">, profileId: string, changes: Array<{ taskId: string; after: string[] }>): Promise<void> {
+  const pairs = changes.flatMap(c => [...new Set(c.after)].map(on => ({ task: c.taskId, on })));
+  if (pairs.length === 0) return;
+  const named = [...new Set(pairs.flatMap(p => [p.task, p.on]))];
+  if (await tx.novaTask.count({ where: { id: { in: named }, profileId } }) !== named.length) throw new TaskChanged();
+  const waits = await waitsOf(tx, profileId);
+  for (const p of pairs) {
+    if (waits.some(w => w.task === p.task && w.on === p.on)) continue;
+    if (wouldLoop(waits, p.task, p.on)) throw new TaskChanged();
+    waits.push(p);
+    await tx.novaTaskDependency.create({ data: { taskId: p.task, dependsOnId: p.on } });
+  }
+}
+
+// What a task waits on, set to exactly these (an empty list: nothing).
+export async function setWaitsIn(tx: Pick<typeof prisma, "novaTask" | "novaTaskDependency">, profileId: string, changes: Array<{ taskId: string; after: string[] }>): Promise<void> {
+  for (const c of changes) {
+    if (await tx.novaTask.count({ where: { id: c.taskId, profileId } }) !== 1) throw new TaskChanged();
+    await tx.novaTaskDependency.deleteMany({ where: { taskId: c.taskId, task: { profileId } } });
+  }
+  await addWaitsIn(tx, profileId, changes);
 }
 
 export async function updateTask(profileId: string, taskId: string, raw: unknown, options: { now?: Date } = {}): Promise<TaskResponse> {

@@ -80,7 +80,7 @@ export function ProposalActions({ state, words, onEdit, onAsk }: {
   const counts = planCounts(plan)
   const blocked = Boolean(busy) || save === 'saving' || writing
   const similar = draft.similar.length > 0 && !draft.target
-  const holds = [counted(plan.phases.length, words.phase), counted(counts.tasks, 'task'), counted(counts.topics, words.topic), counted(counts.notes, 'note'), counted(counts.dates, 'date')].filter(Boolean).join(' · ')
+  const holds = [counted(counts.milestones, words.phase), counted(counts.tasks, 'task'), counted(counts.topics, words.topic), counted(counts.notes, 'note'), counted(counts.dates, 'date')].filter(Boolean).join(' · ')
   const suggestions = draft.brief.suggestions.slice(0, 3)
 
   return (

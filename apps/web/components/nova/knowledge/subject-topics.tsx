@@ -226,6 +226,12 @@ export function SubjectTopics({ subject, focusTopic = null, showHeading = true, 
   onChanged?:   () => void
 }) {
   const { topicCount, dueCount } = subject.summary
+  // Topics inside topics: shown as arranged (units, their topics, their
+  // subtopics, in saved order), with each studied topic in its place; or,
+  // on request, the studied ones due first. Flat subjects keep the list.
+  const nested = (subject.outline ?? []).some(r => r.depth > 0 || !r.studied)
+  const [arranged, setArranged] = useState(true)
+  const byId = new Map(subject.topics.map(t => [t.id, t]))
   // ?subject=<id>, from the Knowledge Map: this subject is brought into view.
   const [linked, setLinked] = useState(false)
   const section = useRef<HTMLElement>(null)
@@ -239,8 +245,13 @@ export function SubjectTopics({ subject, focusTopic = null, showHeading = true, 
       {showHeading && (
         <div className="flex items-baseline justify-between gap-4">
           <h3 className="text-[15px] font-semibold tracking-tight text-foreground">{subject.subjectName}</h3>
-          <p className="text-xs text-foreground/55">
-            {topicCount === 0 ? 'No topics yet' : `${topicCount} topic${topicCount === 1 ? '' : 's'}${dueCount > 0 ? ` · ${dueCount} due` : ''}`}
+          <p className="flex items-center gap-2 text-xs text-foreground/55">
+            {topicCount === 0 ? 'No topics yet' : `${topicCount} topic${topicCount === 1 ? '' : 's'} studied${dueCount > 0 ? ` · ${dueCount} due` : ''}`}
+            {nested && topicCount > 0 && (
+              <button type="button" onClick={() => setArranged(a => !a)} className="rounded-full border border-white/10 px-2 py-0.5 text-[11px] text-foreground/70 hover:text-foreground" data-topic-order={arranged ? 'arranged' : 'due'}>
+                {arranged ? 'Due first' : 'As arranged'}
+              </button>
+            )}
           </p>
         </div>
       )}
@@ -248,6 +259,19 @@ export function SubjectTopics({ subject, focusTopic = null, showHeading = true, 
         <p className="mt-3 rounded-lg border border-dashed border-white/12 px-4 py-4 text-sm text-foreground/60" data-empty="topics">
           Nova hasn&apos;t built enough topic evidence here yet. Finish a focused session on something in {subject.subjectName} and it will appear.
         </p>
+      ) : nested && arranged ? (
+        <ul className="mt-3 divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8" data-topic-outline>
+          {subject.outline!.map(r => {
+            const topic = byId.get(r.id)
+            if (r.studied && topic) return <li key={r.id} style={{ paddingLeft: r.depth * 18 }} className="list-none"><ul><TopicRow topic={topic} subjectId={subject.subjectId} focus={focusTopic?.id === topic.id ? focusTopic.n : 0} actions={actions} onChanged={onChanged} /></ul></li>
+            // A unit, a topic with topics inside it, or a milestone: it organises, and is not studied on its own.
+            return (
+              <li key={r.id} style={{ paddingLeft: 16 + r.depth * 18 }} className="bg-white/[0.02] py-2 pr-4 text-sm font-medium text-foreground/85" data-organiser={r.kind ?? 'topic'}>
+                {r.kind === 'milestone' && <span className="mr-1.5 text-[10px] uppercase tracking-wide text-foreground/50">Milestone</span>}{r.name}
+              </li>
+            )
+          })}
+        </ul>
       ) : (
         <ul className="mt-3 divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8">
           {subject.topics.map(topic => <TopicRow key={topic.id} topic={topic} subjectId={subject.subjectId} focus={focusTopic?.id === topic.id ? focusTopic.n : 0} actions={actions} onChanged={onChanged} />)}

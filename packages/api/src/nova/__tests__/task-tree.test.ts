@@ -76,7 +76,7 @@ describe("a plan's steps", () => {
 
   it("steps of one task wait on nothing among themselves: their order says it", () => {
     const p = plan([{ key: "a", title: "A" }, { key: "s1", title: "One", parent: "a" }, { key: "s2", title: "Two", parent: "a", after: "s1" }, { key: "b", title: "B", after: "a" }]);
-    expect(p.tasks.map(t => t.after ?? null)).toEqual([null, null, null, "a"]);
+    expect(p.tasks.map(t => t.after)).toEqual([[], [], [], ["a"]]);
   });
 
   it("a step of nothing, or in a loop, becomes a task of its own", () => {
@@ -170,7 +170,7 @@ describe("changes to steps", () => {
 import { buildKnowledgeMap } from "../product/knowledge-map";
 
 describe("the Knowledge Map shows a topic's tasks with their steps", () => {
-  it("a tree goes to the topic its top task is filed under, steps included; tasks are never points on the map", () => {
+  it("a tree goes to the topic its top task is filed under, steps included; each task is a card too, an unfiled one on its own", () => {
     const map = buildKnowledgeMap({
       subjects: [{ id: "s1", name: "TrackerX" }],
       topics: [{ id: "t1", subjectId: "s1", name: "Backend", masteryProbability: 0, reviewCount: 0 }],
@@ -187,6 +187,9 @@ describe("the Knowledge Map shows a topic's tasks with their steps", () => {
     const subject = map.nodes.find(n => n.id === "subject:s1");
     expect(topic?.type === "topic" && topic.tasks?.map(t => [t.id, t.parentId])).toEqual([["a", null], ["a1", "a"]]);
     expect(subject?.type === "subject" && subject.tasks?.map(t => t.id)).toEqual(["b"]);
-    expect(map.nodes.length).toBe(2);
+    // Every task is a card: under its topic (or subject), a step under its task, an unfiled one with no edge.
+    expect(map.nodes.filter(n => n.type === "task").map(n => n.id)).toEqual(["task:a", "task:a1", "task:b", "task:c"]);
+    expect(map.edges.filter(e => e.kind === "has_task" || e.kind === "step").map(e => `${e.from}>${e.to}`)).toEqual(["topic:t1>task:a", "task:a>task:a1", "subject:s1>task:b"]);
+    expect(map.edges.some(e => e.to === "task:c" || e.from === "task:c")).toBe(false);
   });
 });

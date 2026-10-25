@@ -5,13 +5,26 @@
 // shown and again, on the server, before anything is created. The page may
 // edit a plan; the server never trusts the copy it gets back.
 //
-// A plan creates only records Kivo already has (workspaces.ts makes them,
-// each through its own writer, in one transaction):
-//   subjects and topics → Knowledge, the Map, the Planner's new material
+// The plan is the records it creates, nothing beside them (workspaces.ts
+// makes them, each through its own writer, in one transaction):
+//   subjects            → Knowledge, the Map, the Planner's new material;
+//                         one may sit inside another (Semester Five › DSA)
+//   topics              → a tree in each subject, in order: units, their
+//                         topics, their subtopics (topic-tree.ts). Only a
+//                         leaf is studied. A milestone is a topic of kind
+//                         "milestone": a stage of a project or roadmap, with
+//                         its effort, goals and done-when on its row.
 //   dates               → Today, the Planner, the calendar (exams.ts)
-//   tasks               → the Planner's board and the calendar (tasks.ts)
-//   notes               → Notes and the Map (notes.ts); phases, explanations,
-//                         prerequisites and resources are written as notes
+//   tasks               → the Planner's board and the calendar (tasks.ts),
+//                         nested in steps, each waiting on any others it
+//                         needs (NovaTaskDependency)
+//   notes               → Notes and the Map (notes.ts): only notes the plan
+//                         means as notes; what a topic covers stays on it.
+// What applies to the whole workspace (prerequisites, resources,
+// assumptions) is kept with the workspace row.
+//
+// What the check changes or leaves out it says, in `dropped`: nothing goes
+// silently.
 //
 // Honesty rules, held here and not left to the model:
 //   - a source reference names a file the learner gave and a page or none;
@@ -21,19 +34,26 @@
 //   - what came from the learner's files and what Nova added are labelled
 //     apart in every note this writes.
 //
-// Pure, no imports beyond types, so the web app renders and edits with it.
+// Pure, no imports beyond types and the tree rules, so the web app renders
+// and edits with it.
 
-import { TASK_DEPTH_MAX, untangle } from "./task-tree";
+import { TASK_DEPTH_MAX, treeOrder, untangle } from "./task-tree";
+import { SUBJECT_DEPTH_MAX } from "./setup-edit.types";
+import { TOPIC_DEPTH_MAX, readTopicDetails, topicKindOf, type TopicDetails, type TopicKind } from "./topic-tree";
 import type { StudyTemplate, TemplateCategory } from "./templates";
 import { TEMPLATE_CATEGORIES } from "./templates";
 import type { DeadlineType } from "./deadline-types";
 
-export const PLAN_VERSION = 1;
+// 2: topics nest and milestones are topics; tasks wait on a list. A stored
+// version-1 plan is read into this shape by checkWorkspacePlan.
+export const PLAN_VERSION = 2;
 
+// The same limits the prompts state (workspace-generation.ts) and the
+// writers hold (MAX_TOPICS_PER_SUBJECT, TASK_OPEN_MAX).
 export const PLAN_LIMITS = {
-  title: 80, summary: 400, subjects: 12, topicsPerSubject: 40, name: 80, explanation: 600, subtopics: 12,
+  title: 80, summary: 400, subjects: 12, topicsPerSubject: 200, name: 80, explanation: 600,
   tasks: 80, taskTitle: 160, priorityReason: 160, notes: 20, noteTitle: 120, noteBody: 8000, dates: 10,
-  phases: 12, listItems: 10, item: 240, resources: 12, prerequisites: 10, assumptions: 6, sources: 5,
+  milestones: 12, listItems: 10, item: 240, resources: 12, prerequisites: 10, assumptions: 6, sources: 5, after: 5,
 } as const;
 
 const DATE_KINDS: readonly DeadlineType[] = ["exam", "assignment", "project", "interview", "certification", "other"];
@@ -41,12 +61,30 @@ const RESOURCE_KINDS = ["book", "course", "docs", "video", "practice", "article"
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
 
 export interface SourceRef { file: string; page: number | null }
-// A topic, in the order it is learnt (prerequisites first). unit: the part
-// of the course or syllabus it belongs to; subtopics: what it covers, named
-// specifically. Both live in the subject's topic guide note: Kivo's topics
-// have no columns for them.
-export interface PlanTopic { name: string; explanation: string | null; sources: SourceRef[]; unit?: string | null; subtopics?: string[] }
-export interface PlanSubject { name: string; topics: PlanTopic[] }
+export interface PlanResource {
+  title: string; kind: ResourceKind; url: string | null;
+  // source: named in the learner's files. user: in their own request. nova:
+  // Nova's suggestion from general knowledge, not checked.
+  origin: "source" | "user" | "nova";
+}
+// A milestone's own fields: effort is an estimate, never a promise.
+export interface MilestoneDetails {
+  weeks: number | null; hoursPerWeek: number | null;
+  goals: string[]; exercises: string[]; project: string | null; completion: string | null; resources: PlanResource[];
+}
+// A topic, in the order it is learnt among the topics beside it
+// (prerequisites first). parent: the topic of the same subject it sits
+// inside, by name (a subject holds a name once); absent or null: at the top
+// of its subject. kind "milestone": a stage of work (milestone holds its
+// fields), never studied.
+export interface PlanTopic {
+  name: string; explanation: string | null; sources: SourceRef[];
+  parent?: string | null;
+  kind?: TopicKind;
+  milestone?: MilestoneDetails;
+}
+// parent: another subject of the plan it sits inside ("Semester Five"), by name.
+export interface PlanSubject { name: string; topics: PlanTopic[]; parent?: string | null }
 export interface PlanTask {
   // priority is the learner's own, never Nova's: a plan Nova writes carries
   // its view as suggestedPriority, with the reason, for them to accept.
@@ -56,9 +94,9 @@ export interface PlanTask {
   // The key of the task in this plan it is a step of (product/task-tree.ts).
   parent?: string | null;
   subject: string | null; topic: string | null; dueDay: string | null; estimatedMinutes: number | null;
-  // The key of a task in the same plan that comes first. Kivo's tasks have
-  // no dependency column, so this is written into the workspace's order note.
-  after?: string | null;
+  // The keys of tasks in the same plan that must be finished first, because
+  // this one needs what they produce (NovaTaskDependency once built).
+  after?: string[];
 }
 export interface PlanNote {
   key: string; title: string; subject: string | null; topic: string | null; body: string;
@@ -67,16 +105,6 @@ export interface PlanNote {
   origin: "template" | "source" | "nova"; sources: SourceRef[];
 }
 export interface PlanDate { title: string; subject: string | null; kind: DeadlineType; day: string }
-export interface PlanResource {
-  title: string; kind: ResourceKind; url: string | null;
-  // source: named in the learner's files. user: in their own request. nova:
-  // Nova's suggestion from general knowledge, not checked.
-  origin: "source" | "user" | "nova";
-}
-export interface PlanPhase {
-  name: string; subject: string | null; weeks: number | null; hoursPerWeek: number | null;
-  goals: string[]; exercises: string[]; project: string | null; completion: string | null; resources: PlanResource[];
-}
 export interface PlanSourceFile { file: string; read: boolean; pages: number | null; note: string | null }
 
 export interface WorkspacePlan {
@@ -89,7 +117,6 @@ export interface WorkspacePlan {
   summary:         string;
   prerequisites:   string[];
   subjects:        PlanSubject[];
-  phases:          PlanPhase[];
   dates:           PlanDate[];
   tasks:           PlanTask[];
   notes:           PlanNote[];
@@ -98,6 +125,27 @@ export interface WorkspacePlan {
   sources:         PlanSourceFile[];
   // What the plan takes as given (time a week, no web search, …).
   assumptions:     string[];
+}
+
+// ── Reading a plan's tree (the page and the server alike) ─────────────────────
+
+const same = (a: string, b: string) => a.toLocaleLowerCase() === b.toLocaleLowerCase();
+
+// A subject's topics as an outline: each after the topic it sits inside,
+// siblings in the plan's order. index: its place in subject.topics.
+export function topicRows(subject: Pick<PlanSubject, "topics">): Array<{ topic: PlanTopic; index: number; depth: number }> {
+  const rows = subject.topics.map((t, index) => ({ id: t.name.toLowerCase(), parent: t.parent ? t.parent.toLowerCase() : null, topic: t, index }));
+  return treeOrder(rows).map(({ item, depth }) => ({ topic: item.topic, index: item.index, depth }));
+}
+
+// The milestones of a plan, in order: each subject's, in its outline order.
+export function milestonesOf(plan: Pick<WorkspacePlan, "subjects">): Array<{ subject: string; subjectIndex: number; topic: PlanTopic; index: number }> {
+  return plan.subjects.flatMap((s, subjectIndex) => topicRows(s).filter(r => r.topic.kind === "milestone").map(r => ({ subject: s.name, subjectIndex, topic: r.topic, index: r.index })));
+}
+
+// Topics with topics inside them: they organise, and only the others are studied.
+export function parentTopicNames(subject: Pick<PlanSubject, "topics">): Set<string> {
+  return new Set(subject.topics.filter(t => t.parent).map(t => t.parent!.toLowerCase()));
 }
 
 export type PlanCheck =
@@ -158,8 +206,6 @@ function block(text: unknown, max: number): string {
 
 const list = (value: unknown, maxItems: number, maxLen: number): string[] =>
   (Array.isArray(value) ? value : []).map(v => oneLine(v, maxLen)).filter(Boolean).slice(0, maxItems);
-
-const same = (a: string, b: string) => a.toLocaleLowerCase() === b.toLocaleLowerCase();
 
 export function isIsoDay(value: unknown): value is string {
   if (typeof value !== "string" || value.length !== 10 || value[4] !== "-" || value[7] !== "-") return false;
@@ -244,8 +290,26 @@ export interface PlanContext {
   nova?: boolean;
 }
 
+const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+
+function milestoneOf(x: Record<string, unknown>, rctx: { files: readonly string[]; userText: string }): MilestoneDetails {
+  return {
+    weeks: positive(x.weeks, 104), hoursPerWeek: positive(x.hoursPerWeek, 80),
+    goals: list(x.goals, PLAN_LIMITS.listItems, PLAN_LIMITS.item),
+    exercises: list(x.exercises, PLAN_LIMITS.listItems, PLAN_LIMITS.item),
+    project: oneLine(x.project, PLAN_LIMITS.item) || null,
+    completion: oneLine(x.completion, PLAN_LIMITS.item) || null,
+    resources: resourcesOf(x.resources, rctx, 6),
+  };
+}
+
 // Everything a plan may say, checked and normalized. What does not fit is
-// dropped and counted, never cut silently: `dropped` says what went.
+// dropped or moved, and said in `dropped`; nothing is cut silently.
+//
+// Topics are read as a tree in any of the shapes a plan comes in: nested
+// (a topic's own "topics"), flat with "parent" (the shape stored and edited),
+// or as an older plan said it ("unit" and "subtopics"; milestones in
+// "phases"). Each becomes a topic of its subject, under its parent, in order.
 export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, message: "That isn't a workspace plan." };
   const r = raw as Record<string, unknown>;
@@ -256,56 +320,140 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
   const title = oneLine(r.title, PLAN_LIMITS.title);
   if (!title) return { ok: false, message: "The workspace needs a name." };
 
-  // Subjects, once each by name; topics once each within a subject.
+  // ── Subjects and their topics ──
   const subjects: PlanSubject[] = [];
-  for (const s of Array.isArray(r.subjects) ? r.subjects : []) {
-    if (!s || typeof s !== "object") continue;
-    const name = oneLine((s as { name?: unknown }).name, PLAN_LIMITS.name);
-    if (!name) { dropped.push("a subject with no name"); continue; }
-    if (subjects.length >= PLAN_LIMITS.subjects) { dropped.push(`subject "${name}" (more than ${PLAN_LIMITS.subjects})`); continue; }
-    const into = subjects.find(x => same(x.name, name)) ?? (subjects.push({ name, topics: [] }), subjects[subjects.length - 1]!);
-    for (const t of Array.isArray((s as { topics?: unknown }).topics) ? (s as { topics: unknown[] }).topics : []) {
-      const topicRaw = typeof t === "string" ? { name: t } : t;
-      if (!topicRaw || typeof topicRaw !== "object") continue;
-      const tname = oneLine((topicRaw as { name?: unknown }).name, PLAN_LIMITS.name);
-      if (!tname || into.topics.some(x => same(x.name, tname))) continue;
-      if (into.topics.length >= PLAN_LIMITS.topicsPerSubject) { dropped.push(`topic "${tname}" (more than ${PLAN_LIMITS.topicsPerSubject} in ${name})`); continue; }
-      if (isPlaceholderTopic(tname, name)) { dropped.push(`topic "${tname}" in ${name} (too general to study from: name what it covers)`); continue; }
-      const explanation = block((topicRaw as { explanation?: unknown }).explanation, PLAN_LIMITS.explanation) || null;
-      const unit = oneLine((topicRaw as { unit?: unknown }).unit, PLAN_LIMITS.name) || null;
-      const subtopics: string[] = [];
-      for (const st of Array.isArray((topicRaw as { subtopics?: unknown }).subtopics) ? (topicRaw as { subtopics: unknown[] }).subtopics : []) {
-        const sn = oneLine(st, PLAN_LIMITS.name);
-        if (!sn || same(sn, tname) || subtopics.some(x => same(x, sn)) || isPlaceholderTopic(sn, tname) || subtopics.length >= PLAN_LIMITS.subtopics) continue;
-        subtopics.push(sn);
+  // A topic's parent given by name in the flat shape, settled once every topic is read.
+  const named = new Map<PlanTopic, string>();
+  const findTopic = (s: PlanSubject, name: string) => s.topics.find(t => same(t.name, name));
+  // Adds a topic under `parent` (a name in this subject, or null). A name
+  // already taken elsewhere in the subject is told apart by its parent's
+  // name; the same topic listed twice in one place is kept once. Returns the
+  // topic's name in the plan, or null when it is left out.
+  const addTopic = (s: PlanSubject, t: PlanTopic): string | null => {
+    const there = findTopic(s, t.name);
+    if (there) {
+      if ((there.parent ?? null)?.toLowerCase() === (t.parent ?? null)?.toLowerCase()) {
+        if (t.kind === "milestone" && there.kind !== "milestone") { there.kind = "milestone"; there.milestone = t.milestone; }
+        return there.name;
       }
-      into.topics.push({ name: tname, explanation, sources: sourcesOf((topicRaw as { sources?: unknown }).sources, files), ...(unit ? { unit } : {}), ...(subtopics.length ? { subtopics } : {}) });
+      const apart = oneLine(`${t.name} (${t.parent ?? s.name})`, PLAN_LIMITS.name);
+      if (findTopic(s, apart)) { dropped.push(`topic "${t.name}" in ${s.name} (listed twice)`); return null; }
+      dropped.push(`topic "${t.name}" under ${t.parent ?? s.name} renamed "${apart}" (a subject holds a name once)`);
+      t = { ...t, name: apart };
     }
+    if (s.topics.length >= PLAN_LIMITS.topicsPerSubject) { dropped.push(`topic "${t.name}" (more than ${PLAN_LIMITS.topicsPerSubject} in ${s.name})`); return null; }
+    s.topics.push(t);
+    return t.name;
+  };
+  const readTopics = (s: PlanSubject, items: unknown[], parent: string | null) => {
+    for (const item of items) {
+      const x = (typeof item === "string" ? { name: item } : item) as Record<string, unknown> | null;
+      if (!x || typeof x !== "object" || Array.isArray(x)) continue;
+      const name = oneLine(x.name, PLAN_LIMITS.name);
+      if (!name) continue;
+      // An older plan's unit is a topic this one sits inside.
+      let under = parent;
+      const unit = parent === null ? oneLine(x.unit, PLAN_LIMITS.name) : "";
+      if (unit && !same(unit, name)) under = addTopic(s, { name: unit, explanation: null, sources: [] }) ?? null;
+      if (isPlaceholderTopic(name, under ?? s.name)) { dropped.push(`topic "${name}" in ${s.name} (too general to study from: name what it covers)`); continue; }
+      const kind = topicKindOf(x.kind);
+      const topic: PlanTopic = {
+        name, explanation: block(x.explanation, PLAN_LIMITS.explanation) || null, sources: sourcesOf(x.sources, files),
+        ...(under ? { parent: under } : {}),
+        ...(kind ? { kind, milestone: milestoneOf((x.milestone && typeof x.milestone === "object" ? x.milestone : x) as Record<string, unknown>, rctx) } : {}),
+      };
+      const at = addTopic(s, topic);
+      if (at === null) continue;
+      const flatParent = under === null ? oneLine(x.parent, PLAN_LIMITS.name) : "";
+      const placed = findTopic(s, at);
+      if (flatParent && placed && !same(flatParent, at)) named.set(placed, flatParent);
+      readTopics(s, [...arr(x.topics), ...arr(x.children), ...arr(x.subtopics)], at);
+    }
+  };
+  for (const raw of arr(r.subjects)) {
+    if (!raw || typeof raw !== "object") continue;
+    const x = raw as Record<string, unknown>;
+    const name = oneLine(x.name, PLAN_LIMITS.name);
+    if (!name) { dropped.push("a subject with no name"); continue; }
+    let into = subjects.find(v => same(v.name, name));
+    if (!into) {
+      if (subjects.length >= PLAN_LIMITS.subjects) { dropped.push(`subject "${name}" (more than ${PLAN_LIMITS.subjects})`); continue; }
+      into = { name, topics: [] };
+      subjects.push(into);
+    }
+    readTopics(into, arr(x.topics), null);
   }
   const subjectName = (v: unknown): string | null => {
     const n = oneLine(v, PLAN_LIMITS.name);
     return n ? subjects.find(s => same(s.name, n))?.name ?? null : null;
   };
 
-  const phases: PlanPhase[] = [];
-  for (const p of Array.isArray(r.phases) ? r.phases.slice(0, PLAN_LIMITS.phases) : []) {
+  // Milestones given apart ("phases": an older plan, or a reply that lists
+  // them so): topics of kind milestone, at the top of the subject each
+  // names, before its other topics, in their order.
+  const phases = arr(r.phases);
+  const firstOf = new Map<PlanSubject, PlanTopic[]>();
+  for (const [i, p] of phases.entries()) {
     if (!p || typeof p !== "object") continue;
     const x = p as Record<string, unknown>;
     const name = oneLine(x.name, PLAN_LIMITS.name);
     if (!name) continue;
-    phases.push({
-      name, subject: subjectName(x.subject) ?? subjects[0]?.name ?? null,
-      weeks: positive(x.weeks, 104), hoursPerWeek: positive(x.hoursPerWeek, 80),
-      goals: list(x.goals, PLAN_LIMITS.listItems, PLAN_LIMITS.item),
-      exercises: list(x.exercises, PLAN_LIMITS.listItems, PLAN_LIMITS.item),
-      project: oneLine(x.project, PLAN_LIMITS.item) || null,
-      completion: oneLine(x.completion, PLAN_LIMITS.item) || null,
-      resources: resourcesOf(x.resources, rctx, 6),
-    });
+    if (i >= PLAN_LIMITS.milestones) { dropped.push(`milestone "${name}" (more than ${PLAN_LIMITS.milestones})`); continue; }
+    let into = subjects.find(s => s.name === subjectName(x.subject));
+    if (!into) {
+      if (subjects.length === 0) { into = { name: title, topics: [] }; subjects.push(into); }
+      else {
+        into = subjects[0]!;
+        if (subjects.length > 1) dropped.push(`milestone "${name}" filed under ${into.name} (it named no subject of the plan)`);
+      }
+    }
+    // A topic of that name already there is that milestone, kept once.
+    let topic = findTopic(into, name);
+    if (topic) {
+      if (topic.kind !== "milestone") dropped.push(`topic "${name}" in ${into.name} kept once, as the milestone of that name`);
+      topic.kind = "milestone";
+      topic.milestone = milestoneOf(x, rctx);
+      delete topic.parent;
+    } else {
+      const at = addTopic(into, { name, explanation: null, sources: [], kind: "milestone", milestone: milestoneOf(x, rctx) });
+      topic = at ? findTopic(into, at) : undefined;
+    }
+    if (!topic) continue;
+    firstOf.set(into, [...(firstOf.get(into) ?? []), topic]);
+    readTopics(into, [...arr(x.topics), ...arr(x.concepts)], topic.name);
+  }
+  for (const [s, first] of firstOf) s.topics = [...first, ...s.topics.filter(t => !first.includes(t))];
+
+  // Parents named by name (the flat shape), then the tree made sound: under
+  // a topic of the same subject, never in a loop, never too deep.
+  for (const s of subjects) {
+    for (const t of s.topics) {
+      const given = named.get(t);
+      if (!given) continue;
+      const parent = findTopic(s, given);
+      if (parent && parent !== t) t.parent = parent.name;
+      else dropped.push(`the place of topic "${t.name}" (inside "${given}", which isn't a topic of ${s.name}): at the top of ${s.name}`);
+    }
+    const before = new Map(s.topics.map(t => [t.name.toLowerCase(), t.parent ? t.parent.toLowerCase() : null]));
+    const tree = untangle(s.topics.map(t => ({ id: t.name.toLowerCase(), parent: t.parent ? t.parent.toLowerCase() : null })), TOPIC_DEPTH_MAX);
+    for (const t of s.topics) {
+      const p = tree.find(n => n.id === t.name.toLowerCase())?.parent ?? null;
+      if (p !== before.get(t.name.toLowerCase())) dropped.push(`the place of topic "${t.name}" (${p === null ? "it went round in a circle" : `topics go at most ${TOPIC_DEPTH_MAX} levels deep`}): moved up`);
+      if (p) t.parent = s.topics.find(x => x.name.toLowerCase() === p)!.name;
+      else delete t.parent;
+    }
   }
 
+  // A subject inside another of the plan's: never itself, no loop, not too deep.
+  const parents = untangle(subjects.map(s => {
+    const given = arr(r.subjects).find(x => x && typeof x === "object" && same(oneLine((x as { name?: unknown }).name, PLAN_LIMITS.name), s.name)) as { parent?: unknown } | undefined;
+    return { id: s.name, parent: subjectName(given?.parent) };
+  }), SUBJECT_DEPTH_MAX);
+  for (const s of subjects) { const p = parents.find(x => x.id === s.name)?.parent ?? null; if (p) s.parent = p; }
+
+  // ── Dates ──
   const dates: PlanDate[] = [];
-  for (const d of Array.isArray(r.dates) ? r.dates : []) {
+  for (const d of arr(r.dates)) {
     if (!d || typeof d !== "object") continue;
     const x = d as Record<string, unknown>;
     const dtitle = oneLine(x.title, PLAN_LIMITS.name);
@@ -315,55 +463,107 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
     dates.push({ title: dtitle, subject: subjectName(x.subject), kind: DATE_KINDS.find(k => k === x.kind) ?? "other", day: x.day });
   }
 
+  // ── Tasks ──
+  // The topic a task is filed under, by name: one of its subject's, or of
+  // any subject when it names none (it then goes under that subject).
+  const topicFor = (subject: string | null, topic: string): { subject: string; topic: string } | null => {
+    const within = subject ? subjects.filter(s => s.name === subject) : subjects;
+    for (const s of within) { const t = findTopic(s, topic); if (t) return { subject: s.name, topic: t.name }; }
+    return null;
+  };
   const tasks: PlanTask[] = [];
-  for (const [i, t] of (Array.isArray(r.tasks) ? r.tasks : []).entries()) {
+  for (const [i, t] of arr(r.tasks).entries()) {
     if (!t || typeof t !== "object") continue;
     const x = t as Record<string, unknown>;
     const ttitle = oneLine(x.title, PLAN_LIMITS.taskTitle);
+    if (!ttitle) continue;
     const tparent = oneLine(x.parent, 60) || null;
     // One title once among a task's steps: two "Write tests" under two features are two tasks.
-    if (!ttitle || tasks.some(k => same(k.title, ttitle) && (k.parent ?? null) === tparent)) continue;
+    if (tasks.some(k => same(k.title, ttitle) && (k.parent ?? null) === tparent)) { dropped.push(`task "${ttitle}" (listed twice)`); continue; }
     if (tasks.length >= PLAN_LIMITS.tasks) { dropped.push(`task "${ttitle}" (more than ${PLAN_LIMITS.tasks})`); continue; }
     let key = oneLine(x.key, 60) || slug(ttitle, i);
     if (tasks.some(k => k.key === key)) key = `${key}-${i}`;
+    if (x.dueDay != null && x.dueDay !== "" && !(isIsoDay(x.dueDay) && x.dueDay >= ctx.today)) dropped.push(`the due day of "${ttitle}" (not a day from today on)`);
     const due = isIsoDay(x.dueDay) && x.dueDay >= ctx.today ? x.dueDay : null;
     const minutes = typeof x.estimatedMinutes === "number" && Number.isInteger(x.estimatedMinutes) && x.estimatedMinutes >= 5 && x.estimatedMinutes <= 600 ? x.estimatedMinutes : null;
     const level = (v: unknown) => (v === "low" || v === "medium" || v === "high" ? v : null);
     const reason = oneLine(x.priorityReason, PLAN_LIMITS.priorityReason) || null;
     // Nova's priority is a suggestion, and only with a reason it can give.
     const suggested = ctx.nova ? (level(x.suggestedPriority) ?? level(x.priority)) : level(x.suggestedPriority);
+    let subject = subjectName(x.subject);
+    if (x.subject && !subject && oneLine(x.subject, PLAN_LIMITS.name)) dropped.push(`the subject of "${ttitle}" ("${oneLine(x.subject, PLAN_LIMITS.name)}" isn't one of the plan's)`);
+    const asked = oneLine(x.topic, PLAN_LIMITS.name);
+    const found = asked ? topicFor(subject, asked) : null;
+    if (asked && !found) dropped.push(`the topic of "${ttitle}" ("${asked}" isn't in the plan${subject ? `'s ${subject}` : ""}; it stays under ${subject ?? "no topic"})`);
+    if (found) subject = found.subject;
+    const after = [...new Set((Array.isArray(x.after) ? x.after : x.after ? [x.after] : []).map(a => oneLine(a, 60)).filter(Boolean))];
     tasks.push({
       key, title: ttitle, priority: ctx.nova ? null : level(x.priority),
       ...(suggested && reason ? { suggestedPriority: suggested, priorityReason: reason } : {}),
-      subject: subjectName(x.subject), topic: oneLine(x.topic, PLAN_LIMITS.name) || null, dueDay: due, estimatedMinutes: minutes,
-      after: oneLine(x.after, 60) || null, parent: tparent,
+      subject, topic: found?.topic ?? null, dueDay: due, estimatedMinutes: minutes,
+      after, parent: tparent,
     });
   }
   // Steps: under a task of this plan, never in a loop, within the depth. A
   // step is filed where the task it belongs to is.
   const tree = untangle(tasks.map(t => ({ id: t.key, parent: t.parent ?? null })));
-  for (const [i, t] of tasks.entries()) t.parent = tree[i]!.parent;
-  // Steps of one task are done in their order: one waiting on its sibling says nothing new.
-  for (const t of tasks) if (t.after && t.parent && tasks.find(k => k.key === t.after)?.parent === t.parent) t.after = null;
-  for (const t of tasks) {
-    let root: PlanTask = t;
-    for (let hops = 0; root.parent && hops <= TASK_DEPTH_MAX; hops++) root = tasks.find(k => k.key === root.parent) ?? root;
-    if (root !== t) { t.subject = root.subject ?? t.subject; t.topic = root.topic ?? t.topic; }
+  for (const [i, t] of tasks.entries()) {
+    const p = tree[i]!.parent;
+    if ((t.parent ?? null) !== p) dropped.push(`the place of "${t.title}" (${t.parent && !tasks.some(k => k.key === t.parent) ? "a step of a task that isn't in the plan" : `steps go at most ${TASK_DEPTH_MAX} levels deep, never in a circle`}): ${p ? "moved up" : "a task of its own"}`);
+    t.parent = p;
   }
-  // An order names another task of this plan, and never loops back.
+  const keyed = new Map(tasks.map(t => [t.key, t]));
+  const ancestors = (t: PlanTask): string[] => {
+    const out: string[] = [];
+    for (let at = t.parent ?? null, hops = 0; at && hops <= TASK_DEPTH_MAX; hops++) { out.push(at); at = keyed.get(at)?.parent ?? null; }
+    return out;
+  };
   for (const t of tasks) {
-    if (!t.after) { t.after = null; continue; }
-    const before = tasks.find(k => k.key === t.after && k !== t);
-    if (!before) { t.after = null; continue; }
-    let at: PlanTask | undefined = before;
-    for (let hops = 0; at && hops <= tasks.length; hops++) {
-      if (at === t) { t.after = null; break; }
-      at = at.after ? tasks.find(k => k.key === at!.after) : undefined;
+    const top = ancestors(t).at(-1);
+    const root = top ? keyed.get(top) : undefined;
+    if (root) { t.subject = root.subject ?? t.subject; t.topic = root.topic ?? t.topic; }
+  }
+  // Waits: on other tasks of this plan, a few each, never round in a circle.
+  // A step waiting on one beside it, or a task on what it is part of or
+  // holds, says nothing the outline doesn't: left out, and said once.
+  let inOrder = 0;
+  for (const t of tasks) {
+    const kept: string[] = [];
+    for (const k of t.after ?? []) {
+      const on = keyed.get(k);
+      if (!on || on === t) { dropped.push(`a wait in "${t.title}" (on a task that isn't in the plan)`); continue; }
+      if ((on.parent ?? null) === (t.parent ?? null) && t.parent) { inOrder++; continue; }
+      if (ancestors(t).includes(on.key) || ancestors(on).includes(t.key)) { inOrder++; continue; }
+      if (kept.length >= PLAN_LIMITS.after) { dropped.push(`"${t.title}" waiting on "${on.title}" (more than ${PLAN_LIMITS.after} waits)`); continue; }
+      kept.push(on.key);
     }
+    t.after = kept;
+  }
+  if (inOrder) dropped.push(`${inOrder} wait${inOrder === 1 ? "" : "s"} between steps of one task (steps already go in order)`);
+  // A wait that would close a circle is the one left out.
+  const reaches = (from: string, to: string): boolean => {
+    const seen = new Set<string>();
+    const walk = (at: string): boolean => {
+      if (at === to) return true;
+      if (seen.has(at)) return false;
+      seen.add(at);
+      return (keyed.get(at)?.after ?? []).some(walk);
+    };
+    return walk(from);
+  };
+  for (const t of tasks) {
+    const kept: string[] = [];
+    for (const k of t.after ?? []) {
+      t.after = kept;
+      if (reaches(k, t.key)) { dropped.push(`"${t.title}" waiting on "${keyed.get(k)!.title}" (it would go round in a circle)`); continue; }
+      kept.push(k);
+    }
+    t.after = kept;
   }
 
+  // ── Notes, sources ──
   const notes: PlanNote[] = [];
-  for (const [i, n] of (Array.isArray(r.notes) ? r.notes : []).entries()) {
+  for (const [i, n] of arr(r.notes).entries()) {
     if (!n || typeof n !== "object") continue;
     const x = n as Record<string, unknown>;
     const ntitle = oneLine(x.title, PLAN_LIMITS.noteTitle);
@@ -377,7 +577,7 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
   }
 
   const sources: PlanSourceFile[] = [];
-  for (const f of Array.isArray(r.sources) ? r.sources : []) {
+  for (const f of arr(r.sources)) {
     if (!f || typeof f !== "object") continue;
     const file = files.find(x => same(x, oneLine((f as { file?: unknown }).file, 120)));
     if (!file || sources.some(s => s.file === file)) continue;
@@ -387,7 +587,7 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
   // A file the reply did not account for was not read, as far as anyone knows.
   for (const file of files) if (!sources.some(s => s.file === file)) sources.push({ file, read: false, pages: null, note: "Nova did not report reading this file." });
 
-  if (subjects.length === 0 && tasks.length === 0 && notes.length === 0 && phases.length === 0) {
+  if (subjects.length === 0 && tasks.length === 0 && notes.length === 0) {
     return { ok: false, message: "That plan had nothing in it to create." };
   }
 
@@ -403,7 +603,7 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
       category, title,
       summary: oneLine(r.summary, PLAN_LIMITS.summary),
       prerequisites: list(r.prerequisites, PLAN_LIMITS.prerequisites, PLAN_LIMITS.item),
-      subjects, phases, dates, tasks, notes,
+      subjects, dates, tasks, notes,
       resources: resourcesOf(r.resources, rctx, PLAN_LIMITS.resources),
       sources: sources.slice(0, PLAN_LIMITS.sources),
       assumptions: list(r.assumptions, PLAN_LIMITS.assumptions, PLAN_LIMITS.item),
@@ -493,83 +693,63 @@ export function planFromTemplate(t: StudyTemplate, inputs: TemplateInputs, ctx: 
 }
 
 // ── What the plan becomes ─────────────────────────────────────────────────────
-// The records, in the shape each writer takes. Notes carry their sources in
-// words, with what came from the learner's files kept apart from Nova's own.
+// The records, in the shape each writer takes, nothing left out: every
+// topic with its place, kind and what the plan said about it (its details);
+// every task with its steps and waits; the plan's own notes, with what came
+// from the learner's files kept apart from Nova's own.
 
+export interface PlanTopicWrite { name: string; parent: string | null; kind: TopicKind | null; details: TopicDetails | null }
 export interface PlanWrites {
-  subjects: Array<{ name: string; topics: string[] }>;
+  // Topics in outline order: a parent before what is inside it, siblings in order.
+  subjects: Array<{ name: string; topics: PlanTopicWrite[]; parent?: string | null }>;
   dates:    PlanDate[];
   tasks:    PlanTask[];
   notes:    Array<{ key: string; title: string; subject: string | null; topic: string | null; body: string }>;
 }
 
 const cite = (refs: SourceRef[]) => refs.map(r => (r.page ? `${r.file}, page ${r.page}` : r.file)).join("; ");
-const resourceLine = (r: PlanResource) =>
-  `- ${r.title} (${r.kind})${r.url ? ` ${r.url}` : ""}${r.origin === "nova" ? " — suggested by Nova, not checked" : r.origin === "source" ? " — named in your files" : ""}`;
 
-export function planWrites(plan: WorkspacePlan): PlanWrites {
-  const subjects = plan.subjects.map(s => ({ name: s.name, topics: s.topics.map(t => t.name) }));
-  // Each phase is a topic of its subject, in order, so the Planner offers them in that order.
-  for (const p of plan.phases) {
-    const into = subjects.find(s => p.subject !== null && same(s.name, p.subject)) ?? subjects[0];
-    if (into) { if (!into.topics.some(t => same(t, p.name))) into.topics.push(p.name); }
-    else subjects.push({ name: plan.title, topics: [p.name] });
-  }
-
-  const notes: PlanWrites["notes"] = [];
-  // Topic explanations and sources, one note per subject that has any.
-  for (const s of plan.subjects) {
-    const explained = s.topics.filter(t => t.explanation || t.sources.length > 0 || (t.subtopics?.length ?? 0) > 0);
-    if (explained.length === 0) continue;
-    const fromFiles = explained.some(t => t.sources.length > 0);
-    // In learning order, under their units: a unit's heading once, where it starts.
-    let unit: string | null = null;
-    const body = explained.map(t => {
-      const heading = t.unit && t.unit !== unit ? [`# ${t.unit}`] : [];
-      if (t.unit) unit = t.unit;
-      return [
-        ...heading,
-        `${t.unit ? "##" : "#"} ${t.name}`,
-        ...((t.subtopics?.length ?? 0) > 0 ? t.subtopics!.map(x => `- ${x}`) : []),
-        ...(t.sources.length > 0 ? [`From your files: ${cite(t.sources)}`] : []),
-        ...(t.explanation ? [t.sources.length > 0 ? `Nova's explanation: ${t.explanation}` : `Nova's explanation (not from your files): ${t.explanation}`] : []),
-      ].join("\n");
-    }).join("\n\n");
-    notes.push({ key: `topics:${s.name.toLowerCase()}`, title: `${s.name}: topic guide${fromFiles ? "" : " (Nova)"}`, subject: s.name, topic: null, body });
-  }
-  // How the work goes, in one note: each milestone's details, what comes
-  // before, the order of tasks and the resources. One note, not one each:
-  // every note is a point on the Knowledge Map.
-  const ordered = plan.tasks.filter(t => t.after);
-  const titleOf = (key: string) => plan.tasks.find(t => t.key === key)?.title ?? key;
-  const sections = [
-    plan.prerequisites.length ? `# Before you start\n${plan.prerequisites.map(p => `- ${p}`).join("\n")}` : null,
-    ...plan.phases.map((p, i) => {
-      const effort = [p.weeks ? `${p.weeks} week${p.weeks === 1 ? "" : "s"}` : null, p.hoursPerWeek ? `about ${p.hoursPerWeek} hours a week` : null].filter(Boolean).join(", ");
-      const lines = [
-        effort ? `Effort (an estimate): ${effort}` : null,
-        p.goals.length ? `Goals:\n${p.goals.map(g => `- ${g}`).join("\n")}` : null,
-        p.exercises.length ? `Exercises:\n${p.exercises.map(g => `- ${g}`).join("\n")}` : null,
-        p.project ? `Project: ${p.project}` : null,
-        p.completion ? `Done when: ${p.completion}` : null,
-        p.resources.length ? `Resources:\n${p.resources.map(resourceLine).join("\n")}` : null,
-      ].filter(Boolean);
-      return lines.length ? `# ${i + 1}. ${p.name}\n${lines.join("\n")}` : null;
-    }),
-    ordered.length ? `# What comes first\n${ordered.map(t => `- ${t.title}: after ${titleOf(t.after!)}`).join("\n")}` : null,
-    plan.resources.length ? `# Resources\n${plan.resources.map(resourceLine).join("\n")}` : null,
-  ].filter(Boolean);
-  if (sections.length > 0) notes.push({ key: "plan", title: `How it goes: ${plan.title}`, subject: subjects[0]?.name ?? null, topic: null, body: sections.join("\n\n") });
-  for (const n of plan.notes) {
-    const attribution = n.origin === "source" ? `From your files: ${cite(n.sources)}\n\n` : n.origin === "nova" ? "Written by Nova (not from your files).\n\n" : "";
-    notes.push({ key: n.key, title: n.title, subject: n.subject, topic: n.topic, body: `${attribution}${n.body}` });
-  }
-
-  return { subjects, dates: plan.dates, tasks: plan.tasks.slice(0, PLAN_LIMITS.tasks), notes: notes.slice(0, PLAN_LIMITS.notes + 2) };
+export function topicDetailsOf(t: PlanTopic): TopicDetails | null {
+  return readTopicDetails({ explanation: t.explanation, sources: t.sources, ...(t.kind === "milestone" && t.milestone ? t.milestone : {}) });
 }
 
-// What creating it would add, in words, for the preview.
-export function planCounts(plan: WorkspacePlan): { subjects: number; topics: number; tasks: number; notes: number; dates: number } {
-  const w = planWrites(plan);
-  return { subjects: w.subjects.length, topics: w.subjects.reduce((n, s) => n + s.topics.length, 0), tasks: w.tasks.length, notes: w.notes.length, dates: w.dates.length };
+export function planWrites(plan: WorkspacePlan): PlanWrites {
+  const subjects: PlanWrites["subjects"] = plan.subjects.map(s => ({
+    name: s.name,
+    topics: topicRows(s).map(({ topic: t }) => ({ name: t.name, parent: t.parent ?? null, kind: t.kind ?? null, details: topicDetailsOf(t) })),
+    ...(s.parent ? { parent: s.parent } : {}),
+  }));
+  const notes: PlanWrites["notes"] = plan.notes.map(n => {
+    const attribution = n.origin === "source" ? `From your files: ${cite(n.sources)}\n\n` : n.origin === "nova" ? "Written by Nova (not from your files).\n\n" : "";
+    return { key: n.key, title: n.title, subject: n.subject, topic: n.topic, body: `${attribution}${n.body}` };
+  });
+  return { subjects, dates: plan.dates, tasks: plan.tasks.slice(0, PLAN_LIMITS.tasks), notes: notes.slice(0, PLAN_LIMITS.notes) };
+}
+
+// What creating it would add, in words, for the preview. Topics are what is
+// studied (leaves) and what organises them; milestones are counted apart.
+export function planCounts(plan: WorkspacePlan): { subjects: number; topics: number; milestones: number; tasks: number; notes: number; dates: number; waits: number } {
+  const all = plan.subjects.flatMap(s => s.topics);
+  const milestones = all.filter(t => t.kind === "milestone").length;
+  return {
+    subjects: plan.subjects.length, topics: all.length - milestones, milestones, tasks: plan.tasks.length, notes: plan.notes.length, dates: plan.dates.length,
+    waits: plan.tasks.reduce((n, t) => n + (t.after?.length ?? 0), 0),
+  };
+}
+
+// A plan as stored (a draft, a version in its history, a workspace's
+// record), read back in this shape. One of this version was checked when it
+// was stored and is taken as it is; an older one (units and subtopics as
+// labels, milestones apart in "phases", a single wait) is read through the
+// check, with its own days, files and links, so nothing it held is lost.
+export function readStoredPlan(raw: unknown): WorkspacePlan | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Partial<WorkspacePlan> & { version?: unknown };
+  if (r.version === PLAN_VERSION && Array.isArray(r.subjects) && Array.isArray(r.tasks)) return r as WorkspacePlan;
+  const files = (Array.isArray(r.sources) ? r.sources : []).map(s => (typeof s?.file === "string" ? s.file : "")).filter(Boolean);
+  const links = [...(Array.isArray(r.resources) ? r.resources : []), ...arr((raw as { phases?: unknown }).phases).flatMap(p => arr((p as { resources?: unknown } | null)?.resources))]
+    .map(x => x as { origin?: unknown; url?: unknown }).filter(x => x?.origin === "user" && typeof x.url === "string").map(x => x.url as string).join(" ");
+  const checked = checkWorkspacePlan(raw, { today: "0000-01-01", files, userText: links });
+  if (!checked.ok) return null;
+  return { ...checked.plan, kind: r.kind === "template" ? "template" : "custom", templateId: r.templateId ?? null, templateVersion: r.templateVersion ?? null };
 }

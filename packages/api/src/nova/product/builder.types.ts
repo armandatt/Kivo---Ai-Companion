@@ -3,6 +3,8 @@
 
 import type { WorkspacePlan } from "./workspace-plan";
 import type { WorkspaceCounts, WorkspaceSummary } from "./workspaces.types";
+import type { TopicDetails, TopicKind } from "./topic-tree";
+import type { Feasibility } from "./plan-feasibility";
 
 // Where a draft is in its life (builder-state.ts holds the transitions):
 //   discovery          Nova is learning what the learner wants
@@ -67,6 +69,9 @@ export interface BuilderBrief {
   // What the learner's last change request is about (topics, tasks, …):
   // a change set keeps only changes of these kinds (builder-changes.ts).
   touches?:    ChangeKind[];
+  // Whether that request asks for anything to be taken out. false: a change
+  // set keeps no removal (builder-changes.ts withinAsk). Absent: not read.
+  removes?:    boolean | null;
   // Names to choose from when the learner referred to something of theirs
   // that more than one of their workspaces or subjects could be.
   choices?:    string[];
@@ -86,10 +91,18 @@ export type VersionAuthor = "nova" | "you" | "restored";
 export interface SnapshotTask {
   key: string; title: string; status: "todo" | "in_progress" | "done"; priority: "low" | "medium" | "high" | null;
   dueDay: string | null; subject: string | null; topic: string | null; parent: string | null;
+  // The keys of the tasks it waited on (absent in older snapshots: none).
+  after?: string[];
 }
+// A topic as it stood: the topic it sat inside, by name, and its kind. Its
+// place among those beside it is its place in the list.
+export interface SnapshotTopic { name: string; parent: string | null; kind?: "milestone" | null }
 export interface Snapshot {
   title:    string;
-  subjects: Array<{ name: string; topics: string[] }>;
+  // parent: the subject it sat inside, by name (absent in older snapshots: on its own).
+  // topics: names in outline order; tree: the same topics with their places
+  // (absent in older snapshots: all at the top).
+  subjects: Array<{ name: string; topics: string[]; tree?: SnapshotTopic[]; parent?: string | null }>;
   tasks:    SnapshotTask[];
   dates:    Array<{ title: string; day: string; kind: string; subject: string | null }>;
   // A note's text is kept where it is known without reading the learner's
@@ -140,20 +153,49 @@ export interface ResourceRef {
 // One proposed change to an existing record, by its id. Checked against the
 // records as they are (builder-changes.ts) when proposed and again when
 // applied; applied only on approval, each through its record's own writer.
-// Topics have no order in Kivo, so nothing reorders them; tasks have one.
+// The same operations revise a proposal before anything exists: there the
+// "records" are the proposal's own items (builder-plan.ts gives them ids),
+// and approving the new version is what makes them.
+//
+// A subject can sit inside another (Semester Five › Automata): add_subject
+// names the one it goes inside by id (parentId) or, for one this set adds,
+// by its key (parentKey); move_subject puts one there (null: on its own).
+// Topics nest the same way inside a subject (a unit › its topics › their
+// subtopics) and keep an order: add_topics puts names inside a topic
+// (parentId, or parentKey for a topic this set adds, by one of its keys),
+// move_topic and order_topics place them. A milestone is a topic of kind
+// "milestone"; update_topic changes what is said about it.
+// A task waits on others (after: ids of tasks there, or keys of tasks this set adds).
+export interface TopicPatch {
+  explanation?: string | null;
+  weeks?: number | null; hoursPerWeek?: number | null; goals?: string[]; exercises?: string[]; project?: string | null; completion?: string | null;
+}
 export type ChangeOp =
-  | { op: "add_topics";   subjectId: string; names: string[] }
-  | { op: "add_subject";  name: string; topics: string[] }
+  // The workspace's (or the proposal's) own name.
+  | { op: "rename";       title: string }
+  | { op: "add_topics";   subjectId: string; names: string[]; keys?: string[]; parentId?: string | null; parentKey?: string | null; kind?: "milestone" | null }
+  | { op: "add_subject";  name: string; topics: string[]; key?: string; parentId?: string | null; parentKey?: string | null }
+  | { op: "move_subject"; subjectId: string; parentId?: string | null; parentKey?: string | null }
+  | { op: "rename_subject"; subjectId: string; name: string }
   | { op: "rename_topic"; topicId: string; name: string }
+  // Inside another topic of its subject (parentId; null: at the top), at
+  // `index` among the topics there (absent: after them).
+  | { op: "move_topic";   topicId: string; parentId?: string | null; parentKey?: string | null; index?: number | null }
+  // These topics, all beside one another, in this order.
+  | { op: "order_topics"; topicIds: string[] }
+  | { op: "update_topic"; topicId: string; patch: TopicPatch }
+  // With everything inside it (each removed by its own operation, listed
+  // before it). Never one with study recorded, or with such a topic inside.
   | { op: "remove_topic"; topicId: string }
   // The subject itself, with its topics and dates (each removed by its own
   // operation); its notes and tasks stay, unfiled. Never with studied topics.
   | { op: "remove_subject"; subjectId: string }
   // A step: parentId names a task that is there, parentKey another add_task
   // of this set (by key). Neither: a task of its own.
-  | { op: "add_task";     key: string; title: string; subjectId: string | null; topicName: string | null; dueDay: string | null; priority: "low" | "medium" | "high" | null; parentId?: string | null; parentKey?: string | null }
+  | { op: "add_task";     key: string; title: string; subjectId: string | null; topicName: string | null; dueDay: string | null; priority: "low" | "medium" | "high" | null; parentId?: string | null; parentKey?: string | null; estimatedMinutes?: number | null; after?: string[] }
   // parentId moves it under another task; null makes it a task of its own.
-  | { op: "update_task";  taskId: string; title?: string; dueDay?: string | null; priority?: "low" | "medium" | "high" | null; parentId?: string | null }
+  // after: exactly what it waits on from now ([]: nothing).
+  | { op: "update_task";  taskId: string; title?: string; dueDay?: string | null; priority?: "low" | "medium" | "high" | null; parentId?: string | null; estimatedMinutes?: number | null; topicName?: string | null; after?: string[] }
   | { op: "remove_task";  taskId: string }
   | { op: "order_tasks";  taskIds: string[] }
   | { op: "add_date";     title: string; day: string; subjectId: string | null; kind: "exam" | "assignment" | "project" | "interview" | "certification" | "other" }
@@ -206,6 +248,8 @@ export interface PlanChangeSummary {
   changed?: { tasks: number; milestones: number; topics: number; notes: number };
   // "Kivo version 1 to Kivo": a subject renamed in place.
   renamedSubjects?: string[];
+  // "Automata inside Semester Five": a subject kept, now inside another (or "… on its own").
+  movedSubjects?: string[];
 }
 
 export interface DraftView {
@@ -244,6 +288,9 @@ export interface DraftView {
   similar:     WorkspaceSummary[];
   // The counts of the last build, when it was this draft's.
   counts:      WorkspaceCounts | null;
+  // Whether the proposal can be done (product/plan-feasibility.ts): errors
+  // stop approval until fixed; warnings are advice. null: no proposal.
+  feasibility?: Feasibility | null;
   updatedAt:   string;
 }
 
@@ -259,18 +306,29 @@ export type BuilderResponse =
   | { ok: false; error: BuilderError; message: string; draft?: DraftView };
 
 // The live workspace: the real records approval made, as they now are.
+export interface DetailTopic {
+  id: string; name: string;
+  // The topic of the same subject it sits inside. null or absent: at its top.
+  parentId?: string | null;
+  kind?: TopicKind | null;
+  details?: TopicDetails | null;
+}
+// What applies to the whole workspace, kept with its row: what to know
+// before starting, resources, and what the plan took as given.
+export interface WorkspaceAbout { prerequisites: string[]; resources: Array<{ title: string; kind: string; url: string | null; origin: "source" | "user" | "nova" }>; assumptions: string[] }
+
 export interface WorkspaceDetail {
   // The workspace, or null for subjects that belong to none.
   workspace: WorkspaceSummary | null;
   title:     string;
-  // A topic's unit and what it covers come from the plan the workspace was
-  // built from, when it names that topic (topics have no columns for them).
-  subjects:  Array<{ id: string; name: string; topics: Array<{ id: string; name: string; unit?: string | null; subtopics?: string[] }> }>;
-  // The workspace's milestones, in order, from the plan it was built from:
-  // each is one of its topics, and its tasks are those filed under it.
-  phases?:   Array<{ name: string; weeks: number | null; goals: string[]; completion: string | null }>;
-  tasks:     Array<{ id: string; title: string; status: "todo" | "in_progress" | "done"; priority: "low" | "medium" | "high" | null; dueDay: string | null; subjectId: string | null; topicName: string | null; estimatedMinutes: number | null; parentId: string | null }>;
+  // parentId: the subject it sits inside (one of these, or another of theirs). Absent on an older server.
+  // Its topics as stored, in outline order (a parent before what is inside
+  // it, siblings in their saved order), each with the topic it sits inside,
+  // its kind and what is said about it (topic-tree.ts).
+  subjects:  Array<{ id: string; name: string; parentId?: string | null; topics: DetailTopic[] }>;
+  tasks:     Array<{ id: string; title: string; status: "todo" | "in_progress" | "done"; priority: "low" | "medium" | "high" | null; dueDay: string | null; subjectId: string | null; topicName: string | null; estimatedMinutes: number | null; parentId: string | null; after?: string[] }>;
   notes:     Array<{ id: string; title: string; subjectId: string | null; updatedAt: string }>;
   dates:     Array<{ id: string; title: string; day: string; kind: string; subjectId: string | null }>;
+  about?:    WorkspaceAbout | null;
 }
 export type WorkspaceDetailResponse = { ok: true; detail: WorkspaceDetail } | { ok: false; error: "not_found"; message: string };

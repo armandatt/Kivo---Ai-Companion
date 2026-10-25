@@ -352,36 +352,102 @@ const isUniqueViolation = (err: unknown) =>
 // the student knows of it is still written only by updateTopicMastery, from a
 // session. A name the subject already has (in any casing) is left alone.
 
-export const MAX_TOPICS_PER_SUBJECT = 80;
+// Topics of every level: a semester subject in units, topics and subtopics.
+export const MAX_TOPICS_PER_SUBJECT = 300;
 
-export async function declareTopics(
-  tx:        Pick<typeof prisma, "novaTopicMastery">,
+type TreeTx = Pick<typeof prisma, "novaTopicMastery">;
+type Have = { id: string; name: string; archivedAt: Date | null; parentId: string | null; position: number | null; createdAt: Date };
+const nameKey = (n: string) => normalizeTopicName(n).toLowerCase();
+
+// Siblings in their saved order: position, then (an older row with none)
+// the order they were added in. Never by name (product/topic-tree.ts).
+const bySavedOrder = (a: Have, b: Have) =>
+  a.position !== null && b.position !== null && a.position !== b.position ? a.position - b.position
+  : a.position === null && b.position !== null ? 1 : a.position !== null && b.position === null ? -1
+  : a.createdAt.getTime() - b.createdAt.getTime();
+
+// The topics beside one another under a parent get positions 0, 1, 2… in
+// the order they already have, so a topic added after them comes after
+// them. Rows that already say their order are left as they are.
+async function settlePositions(tx: TreeTx, have: Have[], parentId: string | null): Promise<number> {
+  const siblings = have.filter(t => t.parentId === parentId).sort(bySavedOrder);
+  for (const [i, t] of siblings.entries()) {
+    if (t.position === i) continue;
+    await tx.novaTopicMastery.update({ where: { id: t.id }, data: { position: i } });
+    t.position = i;
+  }
+  return siblings.length;
+}
+
+export interface TopicTreeInput {
+  name: string;
+  // The topic of this subject it sits inside, by name: one already there or
+  // one earlier in this list. null: under `under` (the top, by default).
+  parent: string | null;
+  kind?: "milestone" | null;
+  details?: object | null;
+}
+
+// Adds topics to a subject as a tree, merging by name with what is there:
+// a topic it has already stays where it is, as it is (an archived one comes
+// back, with its history); a new one goes inside its parent, after the
+// topics already beside it, in the order given. One query per level.
+export async function declareTopicTree(
+  tx: TreeTx,
   subjectId: string,
-  names:     string[],
-): Promise<{ added: string[]; existing: string[] }> {
-  const have  = await tx.novaTopicMastery.findMany({ where: { subjectId }, select: { id: true, name: true, archivedAt: true } });
-  const known = new Set(have.map(t => normalizeTopicName(t.name).toLowerCase()));
+  topics: TopicTreeInput[],
+  options: { under?: string | null } = {},
+): Promise<{ added: string[]; existing: string[]; ids: Map<string, string> }> {
+  const have: Have[] = await tx.novaTopicMastery.findMany({ where: { subjectId }, select: { id: true, name: true, archivedAt: true, parentId: true, position: true, createdAt: true } });
+  const ids = new Map(have.map(t => [nameKey(t.name), t.id]));
   // Naming an archived topic again brings it back, with its history.
-  const wanted = new Set(names.map(n => normalizeTopicName(n).toLowerCase()));
-  const back = have.filter(t => t.archivedAt !== null && wanted.has(normalizeTopicName(t.name).toLowerCase()));
+  const wanted = new Set(topics.map(t => nameKey(t.name)));
+  const back = have.filter(t => t.archivedAt !== null && wanted.has(nameKey(t.name)));
   if (back.length > 0) await tx.novaTopicMastery.updateMany({ where: { id: { in: back.map(t => t.id) } }, data: { archivedAt: null } });
+
   const added: string[] = [];
   const existing: string[] = [];
-  for (const raw of names) {
-    const name = normalizeTopicName(raw).slice(0, 120);
-    if (!name) continue;
-    if (known.has(name.toLowerCase())) { existing.push(name); continue; }
-    if (known.size >= MAX_TOPICS_PER_SUBJECT) break;
-    known.add(name.toLowerCase());
-    added.push(name);
-  }
-  if (added.length > 0) {
-    // A millisecond apart, so the order the learner listed them in is kept.
+  const under = options.under ?? null;
+  // Level by level: each topic's parent is made before it.
+  let pending = topics.map(t => ({ ...t, name: normalizeTopicName(t.name).slice(0, 120) })).filter(t => t.name);
+  const seen = new Set<string>();
+  for (let round = 0; pending.length > 0 && round < 12; round++) {
+    const ready = pending.filter(t => t.parent === null || ids.has(nameKey(t.parent)) || !pending.some(p => nameKey(p.name) === nameKey(t.parent!)));
+    if (ready.length === 0) break;
+    const rows: Array<{ subjectId: string; name: string; parentId: string | null; position: number; kind?: string; details?: object; createdAt: Date }> = [];
+    const next = new Map<string | null, number>();
     const at = Date.now();
-    await tx.novaTopicMastery.createMany({
-      data: added.map((name, i) => ({ subjectId, name, createdAt: new Date(at + i) })), skipDuplicates: true,
-    });
+    for (const t of ready) {
+      const k = nameKey(t.name);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (ids.has(k)) { existing.push(t.name); continue; }
+      if (have.length + rows.length >= MAX_TOPICS_PER_SUBJECT) break;
+      const parentId = t.parent ? ids.get(nameKey(t.parent)) ?? under : under;
+      if (!next.has(parentId)) next.set(parentId, await settlePositions(tx, have, parentId));
+      const position = next.get(parentId)!;
+      next.set(parentId, position + 1);
+      // A millisecond apart too, so an older reader that orders by time agrees.
+      rows.push({ subjectId, name: t.name, parentId, position, ...(t.kind ? { kind: t.kind } : {}), ...(t.details ? { details: t.details } : {}), createdAt: new Date(at + rows.length) });
+    }
+    if (rows.length > 0) {
+      const made = await tx.novaTopicMastery.createManyAndReturn({ data: rows, skipDuplicates: true, select: { id: true, name: true, archivedAt: true, parentId: true, position: true, createdAt: true } });
+      for (const m of made) { ids.set(nameKey(m.name), m.id); have.push(m); added.push(m.name); }
+    }
+    pending = pending.filter(t => !ready.includes(t));
   }
+  return { added, existing, ids };
+}
+
+// Topics by name at the top of a subject (or inside `under`): setup, Subject
+// Studio and Build with Nova's "add these topics".
+export async function declareTopics(
+  tx:        TreeTx,
+  subjectId: string,
+  names:     string[],
+  options:   { under?: string | null; kind?: "milestone" | null } = {},
+): Promise<{ added: string[]; existing: string[] }> {
+  const { added, existing } = await declareTopicTree(tx, subjectId, names.map(name => ({ name, parent: null, kind: options.kind ?? null })), { under: options.under ?? null });
   return { added, existing };
 }
 
@@ -407,8 +473,49 @@ export async function renameTopicIn(tx: TopicTx, topicId: string, name: string):
   await tx.novaTopicMastery.update({ where: { id: topicId }, data: { name: normalizeTopicName(name).slice(0, 120) } });
 }
 
+// To another subject, with everything inside it, at the top of that subject
+// after its topics. The caller has checked no name there is taken.
 export async function moveTopicIn(tx: TopicTx, topicId: string, subjectId: string): Promise<void> {
-  await tx.novaTopicMastery.update({ where: { id: topicId }, data: { subjectId } });
+  const all = await tx.novaTopicMastery.findMany({ where: { subjectId: (await tx.novaTopicMastery.findUniqueOrThrow({ where: { id: topicId }, select: { subjectId: true } })).subjectId }, select: { id: true, parentId: true } });
+  const inside = new Set([topicId]);
+  for (let grew = true; grew;) { grew = false; for (const t of all) if (t.parentId && inside.has(t.parentId) && !inside.has(t.id)) { inside.add(t.id); grew = true; } }
+  const there: Have[] = await tx.novaTopicMastery.findMany({ where: { subjectId }, select: { id: true, name: true, archivedAt: true, parentId: true, position: true, createdAt: true } });
+  const position = await settlePositions(tx, there, null);
+  await tx.novaTopicMastery.updateMany({ where: { id: { in: [...inside] } }, data: { subjectId } });
+  await tx.novaTopicMastery.update({ where: { id: topicId }, data: { parentId: null, position } });
+}
+
+// Inside another topic of the same subject (null: at its top), after the
+// topics already there, or at `index` among them. The caller has checked it
+// makes no loop and is not too deep (product/topic-tree.ts rules).
+export async function placeTopicIn(tx: TopicTx, topicId: string, parentId: string | null, index: number | null = null): Promise<void> {
+  const t = await tx.novaTopicMastery.findUniqueOrThrow({ where: { id: topicId }, select: { subjectId: true } });
+  const there: Have[] = await tx.novaTopicMastery.findMany({ where: { subjectId: t.subjectId }, select: { id: true, name: true, archivedAt: true, parentId: true, position: true, createdAt: true } });
+  const siblings = there.filter(x => x.parentId === parentId && x.id !== topicId).sort(bySavedOrder);
+  const at = index === null ? siblings.length : Math.max(0, Math.min(index, siblings.length));
+  const order = [...siblings.slice(0, at).map(x => x.id), topicId, ...siblings.slice(at).map(x => x.id)];
+  await tx.novaTopicMastery.update({ where: { id: topicId }, data: { parentId } });
+  for (const [i, id] of order.entries()) await tx.novaTopicMastery.update({ where: { id }, data: { position: i } });
+}
+
+// These topics, all beside one another, in this order; the others beside
+// them keep theirs, after these.
+export async function orderTopicsIn(tx: TopicTx, topicIds: string[]): Promise<void> {
+  if (topicIds.length === 0) return;
+  const first = await tx.novaTopicMastery.findUniqueOrThrow({ where: { id: topicIds[0]! }, select: { subjectId: true, parentId: true } });
+  const there: Have[] = await tx.novaTopicMastery.findMany({ where: { subjectId: first.subjectId, parentId: first.parentId }, select: { id: true, name: true, archivedAt: true, parentId: true, position: true, createdAt: true } });
+  const rest = there.filter(x => !topicIds.includes(x.id)).sort(bySavedOrder).map(x => x.id);
+  for (const [i, id] of [...topicIds, ...rest].entries()) await tx.novaTopicMastery.update({ where: { id }, data: { position: i } });
+}
+
+// What a plan or the learner says about a topic (its explanation, a
+// milestone's effort and goals), and whether it is a milestone. null
+// details: none (stored as {}, which reads as none).
+export async function setTopicDetailsIn(tx: TopicTx, topicId: string, change: { details?: object | null; kind?: "milestone" | null }): Promise<void> {
+  await tx.novaTopicMastery.update({
+    where: { id: topicId },
+    data: { ...(change.details !== undefined ? { details: change.details ?? {} } : {}), ...(change.kind !== undefined ? { kind: change.kind } : {}) },
+  });
 }
 
 // Only for a topic with no history (topicHasHistory), checked by the caller in

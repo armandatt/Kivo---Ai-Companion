@@ -209,7 +209,7 @@ test("an old conversation goes on: it changes what it built, in place, and keeps
   const profileId = await me.profileId();
   // Reopened, it shows the plan's own shape on the live records: its milestones, in order, with their tasks.
   const reopened = (await builder.getDraft(me.id, first.id))!;
-  assert.deepEqual(reopened.current!.phases!.map(p => p.name), ["Tasks API", "Notifications"]);
+  assert.deepEqual(reopened.current!.subjects[0]!.topics.filter(t => t.kind === "milestone").map(t => t.name), ["Tasks API", "Notifications"]);
   assert.equal(reopened.current!.tasks.find(t => t.title === "Build the tasks API")!.topicName, "Tasks API");
   const api = (await listTasks(profileId)).tasks.find(t => t.title === "Build the tasks API")!;
   await prisma.novaTask.update({ where: { id: api.id }, data: { status: "in_progress" } });
@@ -337,8 +337,10 @@ test("a subject inside a bigger workspace opens as that subject alone, and chang
   assert.deepEqual(draft.current!.subjects.map(s => s.name), ["DSA"]);
   assert.deepEqual(draft.current!.tasks.map(t => t.title), ["DSA tree problems"]);
   assert.equal(draft.current!.title, "DSA");
-  // The subject keeps the outline its plan gave it.
-  assert.deepEqual(draft.current!.subjects[0]!.topics[0], { ...draft.current!.subjects[0]!.topics[0]!, unit: "Unit 1", subtopics: ["Open addressing", "Chaining"] });
+  // The subject keeps the outline its plan gave it, as rows: the unit, its topic, its subtopics.
+  const outline = draft.current!.subjects[0]!.topics;
+  const parentOf = (name: string) => { const t = outline.find(x => x.name === name)!; return t.parentId ? outline.find(x => x.id === t.parentId)!.name : null; };
+  assert.deepEqual(outline.map(t => [t.name, parentOf(t.name)]), [["Unit 1", null], ["Hashing", "Unit 1"], ["Open addressing", "Hashing"], ["Chaining", "Hashing"], ["Trees", null]]);
 
   const changed = await say(me.id, draft.id, "Add graphs to it", {
     read: reader({ next: "draft", change: "Add graphs" }), write: noWrite,
@@ -354,7 +356,8 @@ test("a subject inside a bigger workspace opens as that subject alone, and chang
   const s = await loadStudyStructure(profileId);
   assert.deepEqual(s.subjects.find(x => x.name === "OS")!.topics.map(t => t.name), ["Scheduling", "Deadlocks"]);
   // Still part of the semester workspace, which shows the new topic too.
-  assert.equal((await builder.getDraft(me.id, first.id))!.current!.subjects.find(x => x.name === "DSA")!.topics.length, 3);
+  // Unit 1, Hashing and its two subtopics, Trees, and the Graphs just added: rows, all of them.
+  assert.equal((await builder.getDraft(me.id, first.id))!.current!.subjects.find(x => x.name === "DSA")!.topics.length, 6);
 });
 
 test("a subject that belongs elsewhere is removed from the workspace with its topics; its tasks stay, unfiled (seen 22 Oct)", async () => {
@@ -467,7 +470,7 @@ test("what a conversation applied can be taken back, and a project can be delete
   draft = await say(me.id, first.id, "no, revert the changes", { read: reader({ next: "revise", undo: true }), write: noWrite, writeChanges: noModel });
   assert.equal(draft.status, "awaiting_approval");
   assert.deepEqual(draft.changes!.ops.map(o => o.says).sort(), [
-    'Add to Kivo: Final polish',
+    'Add milestone to Kivo: Final polish',
     'Add task "Fix the last bugs", due ' + inDays(4) + ', medium priority',
     'Change task "Build the home page UI": high priority',
   ].sort());
@@ -563,7 +566,8 @@ test("History: every version is kept; restoring an old proposal makes a new vers
   const me = await learner();
   const v = (title: string) => async (req: { today: string; learnerText: string }) => checkWorkspacePlan({ kind: "custom", title, subjects: [{ name: title, topics: ["Build"] }], tasks: [{ key: "a", title: `Do ${title}` }] }, { today: req.today, userText: req.learnerText });
   const first = await begin(me.id, "Plan Alpha, due in a month.", { read: reader({ next: "draft", facts: [{ label: "Project", value: "Alpha", quote: "Alpha" }, { label: "Deadline", value: "a month", quote: "a month" }] }), write: v("Alpha") });
-  const second = await say(me.id, first.id, "Call it Beta instead", { read: reader({ next: "revise", change: "Rename to Beta" }), write: v("Beta") });
+  // A revision is an operation on the proposal: here, its new name.
+  const second = await say(me.id, first.id, "Call it Beta instead", { read: reader({ next: "revise", change: "Rename to Beta" }), write: v("Beta"), writeChanges: async () => ({ ok: true, summary: null, ops: [{ op: "rename", title: "Beta" }] }) });
   assert.equal(second.plan!.title, "Beta");
   const listed = await builder.draftVersions(me.id, first.id);
   assert.ok(listed.ok);

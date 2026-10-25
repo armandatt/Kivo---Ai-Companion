@@ -6,12 +6,13 @@ import { resolveNovaLearner } from "../../../../lib/nova/resolve-learner"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-// GET /api/nova/knowledge-map
-// The learner's subjects, topics, notes and saved pages, and the links
+// GET /api/nova/knowledge-map?workspace=<id>|all
+// A workspace's subjects, topics, tasks, notes and saved pages (by default
+// the one the learner worked on last; "all" for everything), and the links
 // between them that are on record. Read-only, no LLM call. The learner is
-// always the signed-in account's own: the route reads nothing from the
-// request. Response: NovaKnowledgeMapView (product/knowledge-map.types.ts).
-export async function GET() {
+// always the signed-in account's own; a workspace id is used only among
+// their own. Response: NovaKnowledgeMapView (product/knowledge-map.types.ts).
+export async function GET(req: Request) {
   try {
     const learner = await resolveNovaLearner()
     if (learner.kind === "unauthenticated") {
@@ -19,7 +20,8 @@ export async function GET() {
     }
     if (learner.kind !== "learner") return NextResponse.json({ status: learner.kind })
 
-    return NextResponse.json(await loadNovaKnowledgeMap(learner.platformChatId))
+    const workspace = new URL(req.url).searchParams.get("workspace")
+    return NextResponse.json(await loadNovaKnowledgeMap(learner.platformChatId, { workspace: workspace && workspace.length <= 64 ? workspace : null }))
   } catch (err) {
     console.error("[nova/knowledge-map]", err)
     return NextResponse.json({ error: "Failed to load the map" }, { status: 500 })

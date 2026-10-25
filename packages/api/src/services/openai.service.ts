@@ -16,6 +16,7 @@ import {
   mayWait,
   selectProvider,
   shouldDisableThinking,
+  TRUNCATED,
   type GeminiResponse,
   type LlmRequest,
   openAIUserContent,
@@ -95,7 +96,7 @@ async function callGemini(input: LlmRequest, model: string, apiKey: string, time
 
   if (res.ok) {
     try {
-      const text = parseGeminiResponse(data, model);
+      const text = parseGeminiResponse(data, model, { json: input.json });
       reportLlmUsage({ provider: "gemini", model, inputTokens: data.usageMetadata?.promptTokenCount ?? null, outputTokens: data.usageMetadata?.candidatesTokenCount ?? null });
       return { ok: true, text };
     } catch (err) {
@@ -166,6 +167,7 @@ async function generateWithOpenAI(input: LlmRequest, apiKey: string): Promise<st
       ...(input.maxOutputTokens !== undefined
         ? { max_completion_tokens: input.maxOutputTokens }
         : {}),
+      ...(input.json ? { response_format: { type: "json_object" } } : {}),
     }),
   });
 
@@ -189,6 +191,7 @@ async function generateWithOpenAI(input: LlmRequest, apiKey: string): Promise<st
   if (refusal) {
     throw new Error(`OpenAI refused the request: ${refusal}`);
   }
+  if (input.json && choice?.finish_reason === "length") throw new Error(`OpenAI: ${TRUNCATED} (model: ${model})`);
 
   if (!text) {
     // Reasoning models (gpt-5, o-series) can exhaust max_completion_tokens on CoT
@@ -208,6 +211,7 @@ export async function generateOpenAIText(input: {
   deadlineMs?: number;        // the longest the caller will wait, retries included
   attemptMs?: number;         // one attempt's limit, for long work (see LlmRequest)
   attachments?: LlmRequest["attachments"];
+  json?: boolean;             // one JSON object back (see LlmRequest)
 }) {
   loadPackageEnv();
   const provider = selectProvider(process.env);

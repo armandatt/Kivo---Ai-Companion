@@ -10,6 +10,7 @@ import { getAllTopicMasteries, masteryLevel } from "../engines/knowledge-engine"
 import { REVIEW_BLOCK_MINUTES } from "../engines/planning-engine";
 import { daysOverdue, getOverdueTopics, isDueForReview } from "../engines/retention-engine";
 import { SESSION_OUTCOMES } from "../engines/study-session-engine";
+import { studyTopicIds, topicKindOf, topicOutline } from "./topic-tree";
 import { normalizeTopicName } from "../engines/topic-mastery-engine";
 import type { TopicMasteryState } from "../types/engine.types";
 import type {
@@ -43,6 +44,8 @@ export interface KnowledgeInputs {
   sessions: SessionRecord[];          // completed only
   activeSession: { topicName: string | null; subjectName: string | null } | null;
   now:      Date;
+  // Each subject's active topics with their places (absent: none known).
+  trees?:   Array<{ subjectId: string; topics: Array<{ id: string; name: string; parentId: string | null; position: number | null; kind: string | null; createdAt: Date }> }>;
 }
 
 const key = (name: string | null) => (name ? normalizeTopicName(name).toLowerCase() : "");
@@ -116,10 +119,13 @@ export function buildKnowledgeView(input: KnowledgeInputs): NovaKnowledgeReady {
   const knowledgeSubjects: KnowledgeSubject[] = subjects.map(s => {
     const own = topics.filter(t => t.subjectName === s.name).map(toTopic).sort((a, b) =>
       Number(b.reviewState === "due") - Number(a.reviewState === "due") || a.masteryPercent - b.masteryPercent);
+    const tree = input.trees?.find(x => x.subjectId === s.id)?.topics ?? [];
+    const studied = studyTopicIds(tree);
     return {
       subjectId:   s.id,
       subjectName: s.name,
       topics:      own,
+      ...(tree.length ? { outline: topicOutline(tree).map(({ item: t, depth }) => ({ id: t.id, name: t.name, depth, kind: topicKindOf(t.kind), studied: studied.has(t.id) })) } : {}),
       summary:     { topicCount: own.length, dueCount: own.filter(t => t.reviewState === "due").length },
     };
   }).sort((a, b) => b.summary.dueCount - a.summary.dueCount || b.summary.topicCount - a.summary.topicCount || a.subjectName.localeCompare(b.subjectName));
@@ -150,7 +156,7 @@ export async function loadNovaKnowledge(
       novaAcademicProfile: {
         select: {
           id: true, onboardingComplete: true,
-          subjects: { select: { id: true, name: true }, orderBy: { name: "asc" } },
+          subjects: { select: { id: true, name: true, topics: { where: { archivedAt: null }, select: { id: true, name: true, parentId: true, position: true, kind: true, createdAt: true } } }, orderBy: { name: "asc" } },
         },
       },
     },
@@ -177,7 +183,8 @@ export async function loadNovaKnowledge(
   ]);
 
   return buildKnowledgeView({
-    subjects: profile.subjects,
+    subjects: profile.subjects.map(s => ({ id: s.id, name: s.name })),
+    trees: profile.subjects.map(s => ({ subjectId: s.id, topics: s.topics })),
     topics,
     sessions,
     activeSession: active ? {

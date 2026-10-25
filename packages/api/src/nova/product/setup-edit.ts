@@ -15,20 +15,25 @@
 //     be renamed or moved but not removed. A subject can be removed only once
 //     it has no topics and no dates; its notes, tasks and saved pages stay,
 //     unfiled.
+//   - A subject can sit inside another (Semester Five › Automata), up to
+//     SUBJECT_DEPTH_MAX levels, never inside itself or what is inside it.
+//     Removing one leaves the subjects inside it on their own.
 //   - Renaming keeps a topic's mastery, review schedule and history: they
 //     belong to its row. Past sessions keep the name they were recorded with.
 //   - No model is called here, and nothing is counted as study.
 
 import { createHash } from "node:crypto";
 import { prisma } from "@repo/db/client";
-import { declareTopics, moveTopicIn, normalizeTopicName, removeTopicIn, renameTopicIn } from "../engines/topic-mastery-engine";
+import { declareTopics, moveTopicIn, normalizeTopicName, orderTopicsIn, placeTopicIn, removeTopicIn, renameTopicIn, setTopicDetailsIn } from "../engines/topic-mastery-engine";
+import { TOPIC_DEPTH_MAX, readTopicDetails, topicKindOf, topicOutline } from "./topic-tree";
 import { topicsWithMasteryHistory } from "./progress";
-import { declareSubjectsIn, removeSubjectIn, renameSubjectIn } from "./setup";
+import { declareSubjectsIn, placeSubjectIn, removeSubjectIn, renameSubjectIn } from "./setup";
+import { canPlace, levelOf, parentsOf, subtreeOf } from "./task-tree";
 import { refileNotesForTopic } from "./notes";
 import { refileTasksForTopic } from "./tasks";
 import { refileResourcesForTopic } from "./learning-events";
 import {
-  STUDY_EDITS_MAX, SUBJECT_NAME_MAX, TOPIC_NAME_MAX,
+  STUDY_EDITS_MAX, SUBJECT_DEPTH_MAX, SUBJECT_NAME_MAX, TOPIC_NAME_MAX,
   type StudyEdit, type StudyEditIssue, type StudyEditResponse, type StudyStructure,
 } from "./setup-edit.types";
 
@@ -45,10 +50,12 @@ const uniqueNames = (raw: string[], tidy: (s: string) => string): string[] => {
 
 // ── Reading ───────────────────────────────────────────────────────────────────
 
-export function structureVersion(subjects: Array<{ id: string; name: string; topics: Array<{ id: string; name: string; archived?: boolean }> }>): string {
+export function structureVersion(subjects: Array<{ id: string; name: string; parentId?: string | null; topics: Array<{ id: string; name: string; archived?: boolean; parentId?: string | null; position?: number | null }> }>): string {
   // Archiving or restoring is a change too: a batch made before it is stale.
+  // So is moving a subject into another, or a topic inside another or to
+  // another place among its siblings (one on its own, never placed, reads as before).
   const text = [...subjects].sort((a, b) => a.id.localeCompare(b.id))
-    .map(s => `${s.id}=${s.name}:${[...s.topics].sort((a, b) => a.id.localeCompare(b.id)).map(t => `${t.id}=${t.name}${t.archived ? "~archived" : ""}`).join(",")}`)
+    .map(s => `${s.id}=${s.name}${s.parentId ? `^${s.parentId}` : ""}:${[...s.topics].sort((a, b) => a.id.localeCompare(b.id)).map(t => `${t.id}=${t.name}${t.archived ? "~archived" : ""}${t.parentId ? `^${t.parentId}` : ""}${t.position !== null && t.position !== undefined ? `#${t.position}` : ""}`).join(",")}`)
     .join("|");
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
@@ -56,7 +63,7 @@ export function structureVersion(subjects: Array<{ id: string; name: string; top
 export async function loadStudyStructure(profileId: string): Promise<StudyStructure> {
   const subjects = await prisma.novaSubject.findMany({
     where:   { profileId },
-    select:  { id: true, name: true, _count: { select: { exams: true } }, topics: { select: { id: true, name: true, reviewCount: true, lastStudiedAt: true, archivedAt: true }, orderBy: { createdAt: "asc" } } },
+    select:  { id: true, name: true, parentId: true, _count: { select: { exams: true } }, topics: { select: { id: true, name: true, reviewCount: true, lastStudiedAt: true, archivedAt: true, parentId: true, position: true, kind: true, createdAt: true }, orderBy: { createdAt: "asc" } } },
     orderBy: { createdAt: "asc" },
   });
   const topicIds = subjects.flatMap(s => s.topics.map(t => t.id));
@@ -66,16 +73,26 @@ export async function loadStudyStructure(profileId: string): Promise<StudyStruct
   ]);
   const recorded = new Set([...withHistory, ...sessions.map(s => s.topicId).filter((id): id is string => id !== null)]);
   const shaped = subjects.map(s => ({
-    id: s.id, name: s.name, dates: s._count.exams,
-    topics: s.topics.map(t => ({ id: t.id, name: t.name, hasHistory: recorded.has(t.id) || t.reviewCount > 0 || t.lastStudiedAt !== null, archived: t.archivedAt !== null })),
+    id: s.id, name: s.name, parentId: s.parentId, dates: s._count.exams,
+    topics: topicOutline(s.topics).map(({ item: t }) => ({
+      id: t.id, name: t.name, hasHistory: recorded.has(t.id) || t.reviewCount > 0 || t.lastStudiedAt !== null, archived: t.archivedAt !== null,
+      parentId: t.parentId && s.topics.some(x => x.id === t.parentId) ? t.parentId : null, kind: topicKindOf(t.kind),
+    })),
   }));
-  return { version: structureVersion(shaped), subjects: shaped };
+  const versioned = subjects.map(s => ({ ...s, topics: s.topics.map(t => ({ id: t.id, name: t.name, archived: t.archivedAt !== null, parentId: t.parentId, position: t.position })) }));
+  return { version: structureVersion(versioned), subjects: shaped };
 }
 
 // ── Checking (pure) ───────────────────────────────────────────────────────────
 
 const str = (v: unknown): v is string => typeof v === "string";
 const strs = (v: unknown): v is string[] => Array.isArray(v) && v.every(str);
+
+// Where a subject goes: parentName (a subject by name) wins over parentId; neither is on its own.
+const parentOk = (x: Record<string, unknown>) =>
+  (x.parentId === undefined || x.parentId === null || str(x.parentId)) && (x.parentName === undefined || str(x.parentName));
+const parentOf = (x: Record<string, unknown>): { parentId: string | null; parentName?: string } =>
+  str(x.parentName) && x.parentName.trim() ? { parentId: null, parentName: x.parentName } : { parentId: str(x.parentId) ? x.parentId : null };
 
 // Reads an untrusted request body. Only the fields of StudyEdit are read.
 export function parseStudyEdits(raw: unknown): { ok: true; version: string; edits: StudyEdit[] } | { ok: false } {
@@ -87,11 +104,17 @@ export function parseStudyEdits(raw: unknown): { ok: true; version: string; edit
     if (!e || typeof e !== "object") return { ok: false };
     const x = e as Record<string, unknown>;
     switch (x.op) {
-      case "add_subject":    if (!str(x.name) || !strs(x.topics ?? [])) return { ok: false }; out.push({ op: "add_subject", name: x.name, topics: (x.topics as string[] | undefined) ?? [] }); break;
-      case "add_topics":     if (!str(x.subjectId) || !strs(x.names)) return { ok: false }; out.push({ op: "add_topics", subjectId: x.subjectId, names: x.names }); break;
+      case "add_subject":    if (!str(x.name) || !strs(x.topics ?? []) || !parentOk(x)) return { ok: false }; out.push({ op: "add_subject", name: x.name, topics: (x.topics as string[] | undefined) ?? [], ...parentOf(x) }); break;
+      case "move_subject":   if (!str(x.subjectId) || !parentOk(x)) return { ok: false }; out.push({ op: "move_subject", subjectId: x.subjectId, ...parentOf(x) }); break;
+      case "add_topics":     if (!str(x.subjectId) || !strs(x.names) || !parentOk(x)) return { ok: false }; out.push({ op: "add_topics", subjectId: x.subjectId, names: x.names, ...parentOf(x), ...(x.kind === "milestone" ? { kind: "milestone" as const } : {}) }); break;
       case "rename_subject": if (!str(x.subjectId) || !str(x.name)) return { ok: false }; out.push({ op: "rename_subject", subjectId: x.subjectId, name: x.name }); break;
       case "rename_topic":   if (!str(x.topicId) || !str(x.name)) return { ok: false }; out.push({ op: "rename_topic", topicId: x.topicId, name: x.name }); break;
-      case "move_topic":     if (!str(x.topicId) || !str(x.toSubjectId)) return { ok: false }; out.push({ op: "move_topic", topicId: x.topicId, toSubjectId: x.toSubjectId }); break;
+      case "move_topic":
+        if (!str(x.topicId) || (x.toSubjectId !== undefined && !str(x.toSubjectId)) || !parentOk(x) || (x.index !== undefined && x.index !== null && !(typeof x.index === "number" && Number.isInteger(x.index) && x.index >= 0))) return { ok: false };
+        out.push(str(x.toSubjectId) ? { op: "move_topic", topicId: x.topicId, toSubjectId: x.toSubjectId } : { op: "move_topic", topicId: x.topicId, ...parentOf(x), index: typeof x.index === "number" ? x.index : null });
+        break;
+      case "order_topics":   if (!strs(x.topicIds) || x.topicIds.length < 2 || x.topicIds.length > 300) return { ok: false }; out.push({ op: "order_topics", topicIds: x.topicIds }); break;
+      case "update_topic":   if (!str(x.topicId) || !x.details || typeof x.details !== "object" || Array.isArray(x.details)) return { ok: false }; out.push({ op: "update_topic", topicId: x.topicId, details: x.details as Record<string, unknown> }); break;
       case "remove_topic":   if (!str(x.topicId)) return { ok: false }; out.push({ op: "remove_topic", topicId: x.topicId }); break;
       case "remove_subject": if (!str(x.subjectId)) return { ok: false }; out.push({ op: "remove_subject", subjectId: x.subjectId }); break;
       default: return { ok: false };
@@ -104,15 +127,31 @@ export function parseStudyEdits(raw: unknown): { ok: true; version: string; edit
 // at its turn, every name must be free where it lands. Returns what each one
 // would do as a sentence, or the issues that stop the whole batch.
 export function checkStudyEdits(structure: StudyStructure, edits: StudyEdit[]): { issues: StudyEditIssue[]; sentences: string[] } {
-  type T = { id: string; name: string; hasHistory: boolean; archived?: boolean };
-  type S = { id: string; name: string; dates: number; topics: T[] };
-  const subjects: S[] = structure.subjects.map(s => ({ ...s, topics: s.topics.map(t => ({ ...t })) }));
+  type T = { id: string; name: string; hasHistory: boolean; archived?: boolean; parentId?: string | null };
+  type S = { id: string; name: string; parentId: string | null; dates: number; topics: T[] };
+  const subjects: S[] = structure.subjects.map(s => ({ ...s, parentId: s.parentId ?? null, topics: s.topics.map(t => ({ ...t })) }));
   const issues: StudyEditIssue[] = [];
   const sentences: string[] = [];
   const subjectById = (id: string) => subjects.find(s => s.id === id);
   const topicById = (id: string) => { for (const s of subjects) { const t = s.topics.find(x => x.id === id); if (t) return { s, t }; } return null; };
   const takenIn = (s: S, name: string, except?: string) => s.topics.some(t => t.id !== except && key(t.name) === key(name));
   let fresh = 0;
+  // The subject a parent names (undefined: none of theirs), and whether one may go there.
+  const parentFor = (e: { parentId?: string | null; parentName?: string }): S | null | undefined =>
+    e.parentName !== undefined && e.parentName.trim() ? subjects.find(s => key(s.name) === key(subjectName(e.parentName!)))
+    : e.parentId ? subjectById(e.parentId) : null;
+  const placing = (s: S, parent: S | null): string | null => {
+    const placed = canPlace(subjects.map(x => ({ id: x.id, parent: x.parentId })), s.id, parent?.id ?? null, SUBJECT_DEPTH_MAX);
+    return placed.ok ? null
+      : placed.reason === "too_deep" ? `Subjects go at most ${SUBJECT_DEPTH_MAX} levels deep, so ${s.name} can't go inside ${parent!.name}.`
+      : `${s.name} can't go inside itself or a subject inside it.`;
+  };
+
+  // Where a topic goes in its subject: a topic there by id or by name; null: the top. undefined: not one of its topics.
+  const topicParentFor = (s: S, e: { parentId?: string | null; parentName?: string }): T | null | undefined =>
+    e.parentName !== undefined && e.parentName.trim() ? s.topics.find(t => key(t.name) === key(topicName(e.parentName!)))
+    : e.parentId ? s.topics.find(t => t.id === e.parentId) : null;
+  const topicNodes = (s: S) => s.topics.map(t => ({ id: t.id, parent: t.parentId ?? null }));
 
   edits.forEach((e, index) => {
     const bad = (message: string) => issues.push({ index, message });
@@ -121,23 +160,44 @@ export function checkStudyEdits(structure: StudyStructure, edits: StudyEdit[]): 
         const name = subjectName(e.name);
         if (!name) return bad("A subject needs a name.");
         if (subjects.some(s => key(s.name) === key(name))) return bad(`You already have a subject called "${name}".`);
+        const parent = parentFor(e);
+        if (parent === undefined) return bad("The subject to put it inside isn't one of yours.");
         const topics = uniqueNames(e.topics, topicName).slice(0, MAX_TOPICS_PER_ADD);
-        subjects.push({ id: `new:${fresh++}`, name, dates: 0, topics: topics.map((t, i) => ({ id: `new:${fresh}:${i}`, name: t, hasHistory: false })) });
-        sentences.push(topics.length ? `Add the subject ${name} with ${topics.length} topic${topics.length === 1 ? "" : "s"}.` : `Add the subject ${name}.`);
+        const added: S = { id: `new:${fresh++}`, name, parentId: null, dates: 0, topics: topics.map((t, i) => ({ id: `new:${fresh}:${i}`, name: t, hasHistory: false })) };
+        subjects.push(added);
+        if (parent) { const why = placing(added, parent); if (why) return bad(why); added.parentId = parent.id; }
+        const inside = parent ? ` inside ${parent.name}` : "";
+        sentences.push(topics.length ? `Add the subject ${name}${inside} with ${topics.length} topic${topics.length === 1 ? "" : "s"}.` : `Add the subject ${name}${inside}.`);
+        return;
+      }
+      case "move_subject": {
+        const s = subjectById(e.subjectId);
+        if (!s) return bad("That subject isn't one of yours.");
+        const parent = parentFor(e);
+        if (parent === undefined) return bad("The subject to put it inside isn't one of yours.");
+        if ((parent?.id ?? null) === s.parentId) return bad(parent ? `${s.name} is already inside ${parent.name}.` : `${s.name} is already a subject of its own.`);
+        const why = placing(s, parent);
+        if (why) return bad(why);
+        const from = subjects.find(x => x.id === s.parentId);
+        sentences.push(parent ? `Put ${s.name} inside ${parent.name}${from ? ` (out of ${from.name})` : ""}.` : `Take ${s.name} out of ${from?.name ?? "its subject"}, as a subject of its own.`);
+        s.parentId = parent?.id ?? null;
         return;
       }
       case "add_topics": {
         const s = subjectById(e.subjectId);
         if (!s) return bad("That subject isn't one of yours.");
+        const parent = topicParentFor(s, e);
+        if (parent === undefined) return bad(`The topic to put them inside isn't one of ${s.name}'s.`);
+        if (parent && levelOf(parentsOf(topicNodes(s)), parent.id) + 1 > TOPIC_DEPTH_MAX) return bad(`Topics go at most ${TOPIC_DEPTH_MAX} levels deep, so nothing more can go inside ${parent.name}.`);
         // A name of an archived topic brings that topic back (declareTopics).
         const wanted = uniqueNames(e.names, topicName).slice(0, MAX_TOPICS_PER_ADD);
         const archivedOf = (n: string) => s.topics.find(t => t.archived && key(t.name) === key(n));
         const restored = wanted.map(archivedOf).filter((t): t is T => t !== undefined);
         const names = wanted.filter(n => !takenIn(s, n));
         if (names.length === 0 && restored.length === 0) return bad(`Nothing new to add to ${s.name}.`);
-        s.topics.push(...names.map((n, i) => ({ id: `new:${fresh++}:${i}`, name: n, hasHistory: false })));
+        s.topics.push(...names.map((n, i) => ({ id: `new:${fresh++}:${i}`, name: n, hasHistory: false, parentId: parent?.id ?? null })));
         for (const t of restored) t.archived = false;
-        if (names.length) sentences.push(`Add to ${s.name}: ${names.join(", ")}.`);
+        if (names.length) sentences.push(`Add to ${parent ? `${parent.name} in ${s.name}` : s.name}: ${names.join(", ")}.`);
         if (restored.length) sentences.push(`Restore in ${s.name}: ${restored.map(t => t.name).join(", ")} (archived, with ${restored.length === 1 ? "its" : "their"} history).`);
         return;
       }
@@ -170,20 +230,52 @@ export function checkStudyEdits(structure: StudyStructure, edits: StudyEdit[]): 
       }
       case "move_topic": {
         const hit = topicById(e.topicId);
-        const to = subjectById(e.toSubjectId);
         if (!hit) return bad("That topic isn't one of yours.");
-        if (!to) return bad("That subject isn't one of yours.");
-        if (to.id === hit.s.id) return bad(`${hit.t.name} is already under ${to.name}.`);
-        if (takenIn(to, hit.t.name)) return bad(`${to.name} already has a topic called "${hit.t.name}".`);
-        hit.s.topics = hit.s.topics.filter(t => t.id !== hit.t.id);
-        to.topics.push(hit.t);
-        sentences.push(`Move ${hit.t.name} from ${hit.s.name} to ${to.name} (with its notes, tasks, saved pages and history).`);
+        if (e.toSubjectId !== undefined) {
+          const to = subjectById(e.toSubjectId);
+          if (!to) return bad("That subject isn't one of yours.");
+          if (to.id === hit.s.id) return bad(`${hit.t.name} is already under ${to.name}.`);
+          // With everything inside it.
+          const ids = subtreeOf(topicNodes(hit.s), hit.t.id);
+          const going = hit.s.topics.filter(t => ids.includes(t.id));
+          const clash = going.find(t => takenIn(to, t.name));
+          if (clash) return bad(`${to.name} already has a topic called "${clash.name}".`);
+          hit.s.topics = hit.s.topics.filter(t => !ids.includes(t.id));
+          hit.t.parentId = null;
+          to.topics.push(...going);
+          sentences.push(going.length > 1
+            ? `Move ${hit.t.name} and the ${going.length - 1} topic${going.length === 2 ? "" : "s"} inside it from ${hit.s.name} to ${to.name} (with their notes, tasks, saved pages and history).`
+            : `Move ${hit.t.name} from ${hit.s.name} to ${to.name} (with its notes, tasks, saved pages and history).`);
+          return;
+        }
+        const parent = topicParentFor(hit.s, e);
+        if (parent === undefined) return bad(`The topic to put it inside isn't one of ${hit.s.name}'s.`);
+        const placed = canPlace(topicNodes(hit.s), hit.t.id, parent?.id ?? null, TOPIC_DEPTH_MAX);
+        if (!placed.ok) return bad(placed.reason === "too_deep" ? `Topics go at most ${TOPIC_DEPTH_MAX} levels deep, so ${hit.t.name} can't go inside ${parent!.name}.` : `${hit.t.name} can't go inside itself or a topic inside it.`);
+        if ((parent?.id ?? null) === (hit.t.parentId ?? null) && (e.index === undefined || e.index === null)) return bad(parent ? `${hit.t.name} is already inside ${parent.name}.` : `${hit.t.name} is already at the top of ${hit.s.name}.`);
+        hit.t.parentId = parent?.id ?? null;
+        sentences.push(parent ? `Put ${hit.t.name} inside ${parent.name}.` : `Put ${hit.t.name} at the top of ${hit.s.name}.`);
+        return;
+      }
+      case "order_topics": {
+        const hits = e.topicIds.map(id => topicById(id));
+        if (hits.some(h => !h)) return bad("That topic isn't one of yours.");
+        const first = hits[0]!;
+        if (hits.some(h => h!.s.id !== first.s.id || (h!.t.parentId ?? null) !== (first.t.parentId ?? null))) return bad("Only topics beside one another can be put in an order.");
+        sentences.push(`Put ${hits.map(h => h!.t.name).join(", ")} in that order.`);
+        return;
+      }
+      case "update_topic": {
+        const hit = topicById(e.topicId);
+        if (!hit) return bad("That topic isn't one of yours.");
+        sentences.push(`Change what is said about ${hit.t.name}.`);
         return;
       }
       case "remove_topic": {
         const hit = topicById(e.topicId);
         if (!hit) return bad("That topic isn't one of yours.");
         if (hit.t.hasHistory) return bad(`${hit.t.name} has recorded study, so removing it would delete that record. Rename or move it instead.`);
+        if (hit.s.topics.some(t => t.parentId === hit.t.id)) return bad(`${hit.t.name} has topics inside it. Move or remove them first.`);
         hit.s.topics = hit.s.topics.filter(t => t.id !== hit.t.id);
         sentences.push(`Remove ${hit.t.name} from ${hit.s.name} (its notes, tasks and saved pages stay under ${hit.s.name}).`);
         return;
@@ -199,7 +291,9 @@ export function checkStudyEdits(structure: StudyStructure, edits: StudyEdit[]): 
         }
         if (s.dates > 0) return bad(`${s.name} has dates on record. Move or remove them in study settings first.`);
         subjects.splice(subjects.indexOf(s), 1);
-        sentences.push(`Remove the subject ${s.name} (its notes, tasks and saved pages stay, unfiled).`);
+        const inside = subjects.filter(x => x.parentId === s.id);
+        for (const x of inside) x.parentId = null;
+        sentences.push(`Remove the subject ${s.name} (its notes, tasks and saved pages stay, unfiled${inside.length ? `; ${inside.map(x => x.name).join(", ")} stay${inside.length === 1 ? "s" : ""}, on ${inside.length === 1 ? "its" : "their"} own` : ""}).`);
         return;
       }
     }
@@ -262,18 +356,55 @@ export async function playStudyEditsIn(tx: Tx, profileId: string, edits: StudyEd
   await tx.$queryRaw`SELECT id FROM "NovaAcademicProfile" WHERE id = ${profileId} FOR UPDATE`;
   // Checked again inside the transaction: the version as read here must be
   // the one the batch was made from.
-  const now = await tx.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true, topics: { select: { id: true, name: true, archivedAt: true } } } });
-  if (structureVersion(now.map(s => ({ ...s, topics: s.topics.map(t => ({ id: t.id, name: t.name, archived: t.archivedAt !== null })) }))) !== version) throw new StaleStructure();
+  const now = await tx.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true, parentId: true, topics: { select: { id: true, name: true, archivedAt: true, parentId: true, position: true } } } });
+  if (structureVersion(now.map(s => ({ ...s, topics: s.topics.map(t => ({ id: t.id, name: t.name, archived: t.archivedAt !== null, parentId: t.parentId, position: t.position })) }))) !== version) throw new StaleStructure();
+  // A topic's parent by name may be one this batch added, so it is looked up as the batch goes.
+  const topicParentIdOf = async (subjectId: string, e: { parentId?: string | null; parentName?: string }): Promise<string | null> => {
+    if (e.parentName !== undefined && e.parentName.trim()) {
+      const found = await tx.novaTopicMastery.findFirst({ where: { subjectId, name: { equals: topicName(e.parentName), mode: "insensitive" } }, select: { id: true } });
+      if (!found) throw new StaleStructure();
+      return found.id;
+    }
+    if (e.parentId && !(await tx.novaTopicMastery.findFirst({ where: { id: e.parentId, subjectId }, select: { id: true } }))) throw new StaleStructure();
+    return e.parentId ?? null;
+  };
   const subjectOf = (id: string) => now.find(s => s.id === id);
+  // A parent by name may be one this batch added, so it is looked up as the batch goes.
+  const parentIdOf = async (e: { parentId?: string | null; parentName?: string }): Promise<string | null> => {
+    if (e.parentName !== undefined && e.parentName.trim()) {
+      const found = await tx.novaSubject.findFirst({ where: { profileId, name: { equals: subjectName(e.parentName), mode: "insensitive" } }, select: { id: true } });
+      if (!found) throw new StaleStructure();
+      return found.id;
+    }
+    if (e.parentId && !subjectOf(e.parentId)) throw new StaleStructure();
+    return e.parentId ?? null;
+  };
   for (const e of edits) {
     switch (e.op) {
-      case "add_subject":
+      case "add_subject": {
+        const report = { ids: new Map<string, string>(), subjectsAdded: 0, topicsAdded: 0 };
         await declareSubjectsIn(tx, profileId, await tx.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true } }),
-          [{ name: subjectName(e.name), topics: uniqueNames(e.topics, topicName).slice(0, MAX_TOPICS_PER_ADD) }]);
+          [{ name: subjectName(e.name), topics: uniqueNames(e.topics, topicName).slice(0, MAX_TOPICS_PER_ADD) }], report);
+        const parentId = await parentIdOf(e);
+        const id = report.ids.get(subjectName(e.name).toLowerCase());
+        if (parentId && id) await placeSubjectIn(tx, id, parentId);
+        break;
+      }
+      case "move_subject":
+        if (!subjectOf(e.subjectId)) throw new StaleStructure();
+        await placeSubjectIn(tx, e.subjectId, await parentIdOf(e));
         break;
       case "add_topics":
-        await declareTopics(tx, e.subjectId, uniqueNames(e.names, topicName).slice(0, MAX_TOPICS_PER_ADD));
+        await declareTopics(tx, e.subjectId, uniqueNames(e.names, topicName).slice(0, MAX_TOPICS_PER_ADD), { under: await topicParentIdOf(e.subjectId, e), kind: e.kind ?? null });
         break;
+      case "order_topics":
+        await orderTopicsIn(tx, e.topicIds);
+        break;
+      case "update_topic": {
+        const t = await tx.novaTopicMastery.findUniqueOrThrow({ where: { id: e.topicId }, select: { details: true } });
+        await setTopicDetailsIn(tx, e.topicId, { details: readTopicDetails({ ...((readTopicDetails(t.details) ?? {}) as object), ...e.details }) ?? {} });
+        break;
+      }
       case "rename_subject":
         await renameSubjectIn(tx, e.subjectId, subjectName(e.name));
         break;
@@ -286,9 +417,17 @@ export async function playStudyEditsIn(tx: Tx, profileId: string, edits: StudyEd
       }
       case "move_topic": {
         const t = await tx.novaTopicMastery.findUniqueOrThrow({ where: { id: e.topicId }, select: { name: true, subjectId: true } });
-        if (!subjectOf(e.toSubjectId)) throw new StaleStructure();
-        await moveTopicIn(tx, e.topicId, e.toSubjectId);
-        await refile(tx, profileId, { subjectId: t.subjectId, topicName: t.name }, { subjectId: e.toSubjectId, topicName: t.name });
+        if (e.toSubjectId === undefined) {
+          await placeTopicIn(tx, e.topicId, await topicParentIdOf(t.subjectId, e), e.index ?? null);
+          break;
+        }
+        const toSubjectId = e.toSubjectId;
+        if (!subjectOf(toSubjectId)) throw new StaleStructure();
+        // Everything inside it goes too, and what is filed under each follows.
+        const all = await tx.novaTopicMastery.findMany({ where: { subjectId: t.subjectId }, select: { id: true, name: true, parentId: true } });
+        const ids = subtreeOf(all.map(x => ({ id: x.id, parent: x.parentId })), e.topicId);
+        await moveTopicIn(tx, e.topicId, toSubjectId);
+        for (const x of all.filter(v => ids.includes(v.id))) await refile(tx, profileId, { subjectId: t.subjectId, topicName: x.name }, { subjectId: toSubjectId, topicName: x.name });
         break;
       }
       case "remove_topic": {

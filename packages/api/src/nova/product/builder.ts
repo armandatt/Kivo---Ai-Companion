@@ -38,7 +38,9 @@ import type { ReplyLanguage } from "../types/understanding.types";
 import { WORKING_ON_LABEL, weeklyHoursLabel } from "./onboarding-options";
 import type { LearningContext } from "./learning-context";
 import { ensureSetupProfile, subjectNames } from "./setup";
-import { checkWorkspacePlan, planCounts, type WorkspacePlan } from "./workspace-plan";
+import { checkWorkspacePlan, milestonesOf, planCounts, readStoredPlan, topicRows, type WorkspacePlan } from "./workspace-plan";
+import { applyToPlan, planDetail } from "./builder-plan";
+import { checkFeasibility } from "./plan-feasibility";
 import { checkFiles, writeBuilderChanges, writeBuilderPlan } from "./workspace-generation";
 import type { LlmAttachment } from "../../services/llmProviders";
 import { readBuilderTurn } from "./builder-conversation";
@@ -94,7 +96,8 @@ const json = (v: unknown) => v as object;
 const NONE = {} as object;
 const statusOf = (s: string): DraftStatus =>
   (["discovery", "drafting", "awaiting_approval", "building", "ready", "failed", "cancelled"] as const).find(x => x === s) ?? "discovery";
-const planOf = (raw: unknown): WorkspacePlan | null => (raw && typeof raw === "object" && !Array.isArray(raw) ? raw as WorkspacePlan : null);
+// An older stored plan is read into the current shape (readStoredPlan).
+const planOf = (raw: unknown): WorkspacePlan | null => readStoredPlan(raw);
 function failureOf(raw: unknown): DraftFailure | null {
   if (!raw || typeof raw !== "object") return null;
   const f = raw as Record<string, unknown>;
@@ -204,7 +207,8 @@ async function signupContext(platformChatId: string, profile: { id: string; goal
 async function outlineOf(platformChatId: string, profileId: string, ref: Pick<ResourceRef, "workspaceId" | "subjectIds"> | null) {
   if (!ref) return null;
   const d = await resourceDetail(platformChatId, profileId, ref);
-  return d ? { title: d.title, subjects: d.subjects.map(s => s.name), tasks: treeOrder(d.tasks.map(t => ({ ...t, parent: t.parentId }))).map(({ item: t, depth }) => taskLine(t.title, { depth, status: t.status, priority: t.priority, dueDay: t.dueDay, under: depth === 0 ? t.topicName : null })), notes: d.notes.map(n => n.title) } : null;
+  const inside = (s: { parentId?: string | null }) => (s.parentId ? d!.subjects.find(x => x.id === s.parentId)?.name ?? null : null);
+  return d ? { title: d.title, subjects: d.subjects.map(s => (inside(s) ? `${s.name} (inside ${inside(s)})` : s.name)), tasks: treeOrder(d.tasks.map(t => ({ ...t, parent: t.parentId }))).map(({ item: t, depth }) => taskLine(t.title, { depth, status: t.status, priority: t.priority, dueDay: t.dueDay, under: depth === 0 ? t.topicName : null })), notes: d.notes.map(n => n.title) } : null;
 }
 
 // Their workspaces and subjects by name, for the model to recognise one.
@@ -222,7 +226,8 @@ async function viewOf(row: Row, now: Date, counts: WorkspaceCounts | null = null
   // What it works on, as stored now: its target, or what it built.
   const ref = refOf(row) ?? (row.workspaceId ? { workspaceId: row.workspaceId, subjectIds: [] } : null);
   const platformChatId = await chatOfProfile(row.profileId);
-  const language = platformChatId ? (await loadSignupAnswers(platformChatId).catch(() => null))?.language ?? null : null;
+  const signup = platformChatId ? await loadSignupAnswers(platformChatId).catch(() => null) : null;
+  const language = signup?.language ?? null;
   const [summaries, similar, files, current] = await Promise.all([
     workspaceSummaries(row.profileId, ids),
     status === "awaiting_approval" && plan && !refOf(row) ? similarWorkspaces(row.profileId, plan) : Promise.resolve([]),
@@ -243,6 +248,9 @@ async function viewOf(row: Row, now: Date, counts: WorkspaceCounts | null = null
     builtVersion: row.builtVersion,
     needsReply: TALKING.includes(status) && needsReply(messages, pending, now),
     similar, counts, updatedAt: row.updatedAt.toISOString(),
+    // Whether the proposal can be done, by code (plan-feasibility.ts), with
+    // the time a week they gave at sign-up.
+    feasibility: plan && !refOf(row) ? checkFeasibility(plan, { hoursPerWeek: signup?.weeklyHours?.hours ?? null, kind: readBrief(row.brief).kind, learnerText: learnerWords(messages) }) : null,
   };
 }
 
@@ -507,12 +515,13 @@ function taskLine(title: string, t: { depth?: number; status?: string; priority:
 
 function proposalSummary(plan: WorkspacePlan): { milestones: string[]; tasks: string[]; topics: string[]; dates: string[] } {
   return {
-    milestones: plan.phases.map(p => p.name),
+    milestones: milestonesOf(plan).map(m => m.topic.name),
     tasks: treeOrder(plan.tasks.map(t => ({ ...t, id: t.key, parent: t.parent ?? null }))).map(({ item: t, depth }) => taskLine(t.title, {
       depth, priority: t.priority, suggested: t.suggestedPriority ?? null, reason: t.priorityReason ?? null, dueDay: t.dueDay,
-      under: depth === 0 ? t.topic : null, after: t.after ? plan.tasks.find(x => x.key === t.after)?.title ?? null : null,
+      under: depth === 0 ? t.topic : null, after: t.after?.length ? t.after.map(a => plan.tasks.find(x => x.key === a)?.title ?? a).join(", ") : null,
     })),
-    topics: plan.subjects.flatMap(s => s.topics.map(t => t.name)),
+    // Each topic under the one it sits inside, in order.
+    topics: plan.subjects.flatMap(s => topicRows(s).filter(r => r.topic.kind !== "milestone").map(r => `${"  ".repeat(r.depth)}${r.topic.name}`)),
     dates: plan.dates.map(d => `${d.title} ${d.day}`),
   };
 }
@@ -619,7 +628,7 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
 
   // Found and asked to change: propose the change against what is there.
   const step: Step = found ? { type: "draft", reason: "ready" } : decideStep({ plan: ref ? null : plan, brief: before, improving: Boolean(ref), changes: Boolean(changes) }, reading);
-  const brief = { ...nextBrief(before, reading, step), known, choices: [] as string[], touches: reading.touches, ...(found ? { title: found.title } : {}) };
+  const brief = { ...nextBrief(before, reading, step), known, choices: [] as string[], touches: reading.touches, removes: reading.removes ?? null, ...(found ? { title: found.title } : {}) };
   const title = found?.title ?? row.title ?? reading.title ?? brief.title;
   const notes = note ? [message("nova", note, new Date(), { kind: "notice" })] : [];
 
@@ -677,7 +686,8 @@ async function runChanges(platformChatId: string, profile: { id: string; timezon
     today, kind: brief.kind, facts: brief.facts,
     current: {
       title: current.title, subjects: current.subjects,
-      tasks: current.tasks.map(t => ({ id: t.id, title: t.title, status: t.status, dueDay: t.dueDay, priority: t.priority, topicName: t.topicName })),
+      // Steps under their tasks, and what each waits on: the model sees the tree it changes.
+      tasks: current.tasks.map(t => ({ id: t.id, title: t.title, status: t.status, dueDay: t.dueDay, priority: t.priority, topicName: t.topicName, parentId: t.parentId, estimatedMinutes: t.estimatedMinutes, after: t.after ?? [] })),
       dates: current.dates.map(d => ({ id: d.id, title: d.title, day: d.day })), notes: current.notes.map(n => ({ id: n.id, title: n.title })),
     },
     proposed: before ? bareOps(before) : null, change,
@@ -693,7 +703,7 @@ async function runChanges(platformChatId: string, profile: { id: string; timezon
   const ops = asked.includes("priorities") ? written.ops : withoutPriorities(written.ops);
   // Only the kinds of record the request is about: "add two topics" brings no tasks, notes or dates.
   const checked = checkChanges(ops, current, { today, studied });
-  const set = withinAsk(checked, brief.touches ?? [], current);
+  const set = withinAsk(checked, brief.touches ?? [], current, { removes: brief.removes ?? null });
   if (set.ops.length === 0) {
     const text = `I couldn't turn that into a change to ${current.title}${set.dropped.length ? `: ${set.dropped.slice(0, 3).join("; ")}` : ""}. Nothing is proposed; could you say it another way?`;
     await settle(row.id, job.jobId, { status: fallback, failure: null, brief: { ...brief, dropped: set.dropped }, add: [message("nova", text, new Date(), { kind: "chat" })] });
@@ -720,6 +730,8 @@ async function runChanges(platformChatId: string, profile: { id: string; timezon
 
 async function runDraft(platformChatId: string, profile: { id: string; timezone: string | null; goals: string[] }, row: Row, job: BuilderJob, change: string | null, deps: BuilderDeps, now: Date) {
   const before = planOf(row.plan);
+  // A proposal there is revised by operations on it, never written again.
+  if (before) return runRevision(profile, row, job, before, change ?? lastLearnerText(row), deps, now);
   const brief = readBrief(row.brief);
   const messages = spoken(readMessages(row.messages));
   const today = dayKey(now, resolveTimezone(profile.timezone));
@@ -729,46 +741,97 @@ async function runDraft(platformChatId: string, profile: { id: string; timezone:
     today, kind: brief.kind, facts: brief.facts, known: brief.known, assumptions: brief.assumptions, suggestions: brief.suggestions,
     conversation: messages.slice(-CONVERSATION_FOR_PLAN).map(m => ({ role: m.role, text: m.text })),
     learnerText: learnerWords(messages),
-    current: before,
-    change: before ? change ?? "Apply what the learner said last." : null,
     existing,
     files: (await filesForModel(row.id)).files,
   });
-  const fallback: DraftStatus = before ? "awaiting_approval" : "failed";
   if (!written.ok) {
     await settle(row.id, job.jobId, {
-      status: fallback, failure: { stage: "drafting", message: written.message, change },
+      status: "failed", failure: { stage: "drafting", message: written.message, change },
       add: [message("nova", written.message, new Date(), { kind: "error" })],
     });
     return;
   }
 
   const plan = written.plan;
-  const diff = before ? planChanges(before, plan) : null;
-  // The same proposal back is not a new version: said, and nothing moves.
-  if (before && diff && changedNothing(diff) && plan.summary === before.summary) {
+  const version = baseVersion + 1;
+  const counts = planCounts(plan);
+  const target = existing ? ` It adds to ${existing.title}: nothing there is changed or removed.` : "";
+  const left = written.dropped.length ? ` Left out or adjusted: ${written.dropped.slice(0, 3).join("; ")}${written.dropped.length > 3 ? ` and ${written.dropped.length - 3} more` : ""}.` : "";
+  const text = `Here's a first proposal: ${plan.title}. ${holdsLine(brief.kind, counts)}.${target}${left} Nothing is created until you approve it. Edit anything on the right, or tell me what's off.`;
+  const result = await settle(row.id, job.jobId, {
+    status: "awaiting_approval", failure: null, title: plan.title,
+    brief: { ...brief, dropped: written.dropped, title: plan.title },
+    add: [message("nova", text, new Date(), { kind: "proposal", version })],
+    plan: { plan, version, baseVersion },
+  });
+  if (result === "applied") await recordVersion({ draftId: row.id, profileId: profile.id, version, kind: "proposal", author: "nova", summary: `First proposal: ${holdsLine(brief.kind, counts)}.`, content: plan });
+  if (result === "stale_plan") {
+    // The learner edited the proposal while Nova wrote: their version stays.
+    await settle(row.id, job.jobId, { status: "discovery", add: [message("nova", "You changed the proposal while I was writing, so I kept your version.", new Date(), { kind: "notice" })] });
+  }
+}
+
+// A revision of a proposal: the change asked for, as operations on its
+// items (the same vocabulary and checks as a change to a workspace there),
+// applied by code. Whatever no operation names stays exactly as it was.
+async function runRevision(profile: { id: string; timezone: string | null }, row: Row, job: BuilderJob, before: WorkspacePlan, change: string, deps: BuilderDeps, now: Date) {
+  const brief = readBrief(row.brief);
+  const messages = spoken(readMessages(row.messages));
+  const today = dayKey(now, resolveTimezone(profile.timezone));
+  const baseVersion = readPending(row.pending)?.baseVersion ?? row.version;
+  const { detail } = planDetail(before);
+  const shared = await filesForModel(row.id);
+  const written = await (deps.writeChanges ?? writeBuilderChanges)({
+    today, kind: brief.kind, facts: brief.facts, proposal: true,
+    current: { title: detail.title, subjects: detail.subjects, tasks: detail.tasks, dates: detail.dates.map(d => ({ id: d.id, title: d.title, day: d.day })), notes: detail.notes.map(n => ({ id: n.id, title: n.title })) },
+    proposed: null, change,
+    conversation: messages.slice(-CONVERSATION_FOR_PLAN).map(m => ({ role: m.role, text: m.text })),
+    files: shared.files,
+  });
+  if (!written.ok) {
+    await settle(row.id, job.jobId, { status: "awaiting_approval", failure: { stage: "drafting", message: written.message, change }, add: [message("nova", written.message, new Date(), { kind: "error" })] });
+    return;
+  }
+  // A priority is the learner's: Nova changes one only when they asked about priorities.
+  const asked = brief.touches ?? [];
+  const ops = asked.includes("priorities") ? written.ops : withoutPriorities(written.ops);
+  const set = withinAsk(checkChanges(ops, detail, { today, studied: new Set() }), asked, detail, { removes: brief.removes ?? null });
+  if (set.ops.length === 0) {
+    const text = `I couldn't turn that into a change to the proposal${set.dropped.length ? `: ${set.dropped.slice(0, 3).join("; ")}` : ""}. Nothing changed; could you say it another way?`;
+    await settle(row.id, job.jobId, { status: "awaiting_approval", failure: null, brief: { ...brief, dropped: set.dropped }, add: [message("nova", text, new Date(), { kind: "chat" })] });
+    return;
+  }
+  // The links kept are those the learner wrote, here or already theirs in the plan.
+  const ownLinks = [...before.resources, ...before.subjects.flatMap(s => s.topics.flatMap(t => t.milestone?.resources ?? []))].filter(r => r.origin === "user" && r.url).map(r => r.url).join(" ");
+  const checked = checkWorkspacePlan(applyToPlan(before, set), { today, files: shared.files.map(f => f.name), userText: `${learnerWords(messages)} ${ownLinks}` });
+  if (!checked.ok) {
+    await settle(row.id, job.jobId, { status: "awaiting_approval", failure: null, add: [message("nova", `That change would leave the proposal empty (${checked.message}), so I didn't make it.`, new Date(), { kind: "chat" })] });
+    return;
+  }
+  const plan: WorkspacePlan = { ...checked.plan, kind: before.kind, templateId: before.templateId, templateVersion: before.templateVersion };
+  const dropped = [...set.dropped, ...checked.dropped];
+  const diff = planChanges(before, plan);
+  if (changedNothing(diff) && plan.summary === before.summary) {
     await settle(row.id, job.jobId, { status: "awaiting_approval", failure: null, add: [message("nova", "I couldn't find anything in the proposal to change for that, so it's as it was. Could you say what should be different?", new Date(), { kind: "chat" })] });
     return;
   }
   const version = baseVersion + 1;
-  const counts = planCounts(plan);
-  const target = existing ? ` It adds to ${existing.title}: nothing there is changed or removed.` : "";
-  const text = before
-    ? `Version ${version} is ready. ${describeChanges(diff!)}${target} Approve this version to build it, or keep refining.`
-    : `Here's a first proposal: ${plan.title}. ${holdsLine(brief.kind, { ...counts, phases: plan.phases.length })}.${target} Nothing is created until you approve it. Edit anything on the right, or tell me what's off.`;
+  const listed = set.ops.slice(0, 8).map(o => `- ${o.says}`).join("\n") + (set.ops.length > 8 ? `\n- and ${set.ops.length - 8} more` : "");
+  const text = [
+    `Version ${version} is ready: ${changeCounts(set)}.`,
+    listed,
+    ...(dropped.length ? [`Left out: ${dropped.slice(0, 3).join("; ")}.`] : []),
+    "Everything else is as it was. Approve this version to build it, or keep refining.",
+  ].join("\n\n");
   const result = await settle(row.id, job.jobId, {
     status: "awaiting_approval", failure: null, title: plan.title,
-    brief: { ...brief, dropped: written.dropped, title: plan.title },
-    add: [message("nova", text, new Date(), { kind: before ? "revision" : "proposal", version })],
+    brief: { ...brief, dropped, title: plan.title },
+    add: [message("nova", text, new Date(), { kind: "revision", version })],
     plan: { plan, version, baseVersion },
   });
-  if (result === "applied") await recordVersion({ draftId: row.id, profileId: profile.id, version, kind: "proposal", author: "nova", summary: before ? describeChanges(diff!) : `First proposal: ${holdsLine(brief.kind, { ...counts, phases: plan.phases.length })}.`, content: plan });
+  if (result === "applied") await recordVersion({ draftId: row.id, profileId: profile.id, version, kind: "proposal", author: "nova", summary: describeChanges(diff), content: plan });
   if (result === "stale_plan") {
-    // The learner edited the proposal while Nova wrote: their version stays.
-    await settle(row.id, job.jobId, {
-      status: before ? "awaiting_approval" : "discovery",
-      add: [message("nova", `You changed the proposal while I was writing, so I kept your version.${change ? ` Ask again if you still want: ${change.slice(0, 200)}` : ""}`, new Date(), { kind: "notice" })],
-    });
+    await settle(row.id, job.jobId, { status: "awaiting_approval", add: [message("nova", `You changed the proposal while I was writing, so I kept your version. Ask again if you still want: ${change.slice(0, 200)}`, new Date(), { kind: "notice" })] });
   }
 }
 
@@ -786,7 +849,7 @@ export async function editDraftPlan(platformChatId: string, id: unknown, body: {
   if (body.baseVersion !== row.version) return { ok: false, error: "stale", message: "The proposal changed since you opened it. This is the newest version.", draft: await viewOf(row, now) };
   // Links stay only when the learner wrote them: in this conversation, or
   // already kept as theirs in the stored plan. The page's copy is not trusted.
-  const ownLinks = [...stored.resources, ...stored.phases.flatMap(p => p.resources)].filter(r => r.origin === "user" && r.url).map(r => r.url).join(" ");
+  const ownLinks = [...stored.resources, ...stored.subjects.flatMap(s => s.topics.flatMap(t => t.milestone?.resources ?? []))].filter(r => r.origin === "user" && r.url).map(r => r.url).join(" ");
   const checked = checkWorkspacePlan(body.plan, {
     today: dayKey(now, resolveTimezone(profile.timezone)),
     // Page references stay only for files shared in this conversation.
@@ -854,6 +917,13 @@ export async function approveDraft(platformChatId: string, id: unknown, input: A
   }
   if (input.version !== row.version) return { ok: false, error: "stale", message: "The proposal changed after you looked at it. Review this version, then approve it.", draft: await viewOf(row, now) };
   if (isPendingLive(readPending(row.pending), now)) return { ok: false, error: "busy", message: "Nova is still changing this proposal. Approve once it's done.", draft: await viewOf(row, now) };
+  // A plan that contradicts itself (work due after its deadline, a task due
+  // before what it waits on) is fixed first: by hand, or by asking Nova.
+  if (plan && !ref) {
+    const signup = await loadSignupAnswers(platformChatId).catch(() => null);
+    const errors = checkFeasibility(plan, { hoursPerWeek: signup?.weeklyHours?.hours ?? null, kind: readBrief(row.brief).kind }).errors;
+    if (errors.length) return { ok: false, error: "invalid", message: `This version can't be built as it is: ${errors.slice(0, 2).map(e => e.message).join(" ")}${errors.length > 2 ? ` And ${errors.length - 2} more.` : ""} Change it on the right, or ask Nova to fix it.`, draft: await viewOf(row, now) };
+  }
 
   const took = await prisma.novaWorkspaceDraft.updateMany({
     where: { id: row.id, profileId: profile.id, version: row.version, status: { in: ["awaiting_approval", "failed"] } },
@@ -932,8 +1002,10 @@ export async function approveDraft(platformChatId: string, id: unknown, input: A
   }
 
   const counts = result.status === "exists" ? null : result.counts;
+  // Milestones are topics too: counted once, as milestones, when this made them.
+  const milestonesMade = counts && result.status === "created" ? Math.min(counts.topicsAdded, planCounts(plan!).milestones) : 0;
   const said = counts
-    ? `${result.status === "updated" ? `Added to ${result.workspace.title}` : `${result.workspace.title} is built`}: ${holdsLine(readBrief(row.brief).kind, { subjects: counts.subjectsAdded, topics: counts.topicsAdded, phases: result.status === "created" ? plan!.phases.length : 0, tasks: counts.tasksAdded, notes: counts.notesAdded, dates: counts.datesAdded }) || "nothing new (you had all of it)"}. It's in your Planner, Knowledge and Notes now.`
+    ? `${result.status === "updated" ? `Added to ${result.workspace.title}` : `${result.workspace.title} is built`}: ${holdsLine(readBrief(row.brief).kind, { subjects: counts.subjectsAdded, topics: Math.max(0, counts.topicsAdded - milestonesMade), milestones: milestonesMade, tasks: counts.tasksAdded, notes: counts.notesAdded, dates: counts.datesAdded }) || "nothing new (you had all of it)"}. It's in your Planner, Knowledge and Notes now.`
     : `${result.workspace.title} was already built from this version.`;
   const fresh = await back(
     { status: "ready", workspaceId: result.workspace.id, builtVersion: row.version, failure: NONE },

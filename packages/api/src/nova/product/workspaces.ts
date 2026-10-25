@@ -22,20 +22,20 @@
 
 import { prisma } from "@repo/db/client";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
-import { checkWorkspacePlan, planWrites, type WorkspacePlan } from "./workspace-plan";
+import { checkWorkspacePlan, planWrites, readStoredPlan, type WorkspacePlan } from "./workspace-plan";
 import { templateById } from "./templates";
 import { declareWorkspaceSubjectsIn, ensureSetupProfile } from "./setup";
 import { addDatesIn } from "./exams";
 import { createTasksIn } from "./tasks";
 import { createNotesIn, listNoteTitlesIn, removeNotesIn, untouchedNotesIn } from "./notes";
 import { subjectsForMatching, subjectsWithTopics } from "./setup";
-import { TaskChanged, listTasksInSubjects, listTasksWithKeyPrefix, placeTasksIn, liftStepsIn, removeOpenTasksIn, removeTasksIn, tasksMadeUnder, updateTasksIn } from "./tasks";
+import { TaskChanged, listTasksInSubjects, listTasksWithKeyPrefix, placeTasksIn, liftStepsIn, removeOpenTasksIn, removeTasksIn, setWaitsIn, tasksMadeUnder, updateTasksIn } from "./tasks";
 import { DateChanged, listExams, removeDatesIn, unfileDatesIn, updateDatesIn } from "./exams";
 import { StaleStructure, checkStudyEdits, loadStudyStructure, playStudyEditsIn } from "./setup-edit";
 import type { StudyEdit } from "./setup-edit.types";
 import { bareOps, checkChanges, type ResourceCandidates } from "./builder-changes";
 import type { CreateWorkspaceResponse, WorkspaceSummary, WorkspacesView } from "./workspaces.types";
-import type { ChangeOp, ChangeSet, DeletionScope, ResourceRef, WorkspaceDetail } from "./builder.types";
+import type { ChangeOp, ChangeSet, DeletionScope, ResourceRef, WorkspaceAbout, WorkspaceDetail } from "./builder.types";
 
 export const WORKSPACES_MAX = 100;
 const KEY_MIN = 8, KEY_MAX = 64;
@@ -128,7 +128,7 @@ export async function createWorkspace(platformChatId: string, input: CreateInput
 
   try {
     const result = await prisma.$transaction(async tx => {
-      const subjects = await declareWorkspaceSubjectsIn(tx, profileId, writes.subjects);
+      const subjects = await declareWorkspaceSubjectsIn(tx, profileId, writes.subjects.map(s => ({ ...s, topics: s.topics.map(t => ({ name: t.name, parent: t.parent, kind: t.kind, details: t.details })) })));
       const idOf = (name: string | null) => (name ? subjects.ids.get(name.toLowerCase()) ?? null : null);
       const dates = await addDatesIn(tx, profileId, writes.dates.map(d => ({ title: d.title, subjectId: idOf(d.subject), kind: d.kind, day: d.day })), today, now);
       const tasks = await createTasksIn(tx, profileId, writes.tasks.map(t => ({
@@ -136,13 +136,14 @@ export async function createWorkspace(platformChatId: string, input: CreateInput
         estimatedMinutes: t.estimatedMinutes, clientKey: `ws:${keyBase}:${t.key}`.slice(0, 120),
         // A step is made under its task (createTasksIn writes parents first).
         ...(t.parent ? { parentKey: `ws:${keyBase}:${t.parent}`.slice(0, 120) } : {}),
+        ...(t.after?.length ? { afterKeys: t.after.map(k => `ws:${keyBase}:${k}`.slice(0, 120)) } : {}),
       })));
       if (!tasks.ok) throw new RefusedError("too_many", tasks.message);
       const notes = await createNotesIn(tx, profileId, writes.notes.map(n => ({ title: n.title, body: n.body, subjectId: idOf(n.subject), topicName: n.topic })));
       if (!notes.ok) throw new RefusedError("invalid", notes.message);
       const subjectIds = [...new Set([...(target?.subjectIds ?? []), ...subjects.ids.values()])];
       const row = target
-        ? await tx.novaWorkspace.update({ where: { id: target.id }, data: { subjectIds }, select: SUMMARY_SELECT })
+        ? await tx.novaWorkspace.update({ where: { id: target.id }, data: { subjectIds, plan: await withAbout(tx, target.id, plan) }, select: SUMMARY_SELECT })
         : await tx.novaWorkspace.create({
             data: {
               profileId, kind: plan.kind, templateId: plan.templateId, templateVersion: plan.templateVersion, title: plan.title,
@@ -177,6 +178,12 @@ class RefusedError extends Error {
 // A note a change set removes had already gone.
 class NoteChanged extends Error {}
 
+// Their workspaces, the one they worked on last first: what the Knowledge
+// Map draws one of (its subjects, and the tasks it made by its key).
+export async function workspaceScopes(profileId: string): Promise<Array<{ id: string; title: string; subjectIds: string[]; clientKey: string }>> {
+  return prisma.novaWorkspace.findMany({ where: { profileId }, select: { id: true, title: true, subjectIds: true, clientKey: true }, orderBy: { updatedAt: "desc" }, take: WORKSPACES_MAX });
+}
+
 // Their newest workspaces' titles and summaries, for what Nova is told
 // (builder.ts): a record of what exists.
 export async function recentWorkspaceTitles(profileId: string, take: number): Promise<Array<{ title: string; summary: string | null }>> {
@@ -206,10 +213,6 @@ export async function workspaceDetail(platformChatId: string, profileId: string,
 export async function resourceDetail(platformChatId: string, profileId: string, ref: Pick<ResourceRef, "workspaceId" | "subjectIds">, now = new Date()): Promise<WorkspaceDetail | null> {
   const row = ref.workspaceId ? await prisma.novaWorkspace.findFirst({ where: { id: ref.workspaceId, profileId }, select: { ...SUMMARY_SELECT, clientKey: true, plan: true } }) : null;
   if (ref.workspaceId && !row) return null;
-  // What the plan it was built from says about its topics and milestones;
-  // the records themselves are read live below. A subject asked for alone
-  // takes the outline of a workspace that holds it.
-  const built = (row?.plan ?? (ref.subjectIds.length ? (await prisma.novaWorkspace.findFirst({ where: { profileId, subjectIds: { hasSome: ref.subjectIds } }, select: { plan: true }, orderBy: { createdAt: "desc" } }))?.plan : null)) as Partial<WorkspacePlan> | null;
   const subjectIds = row ? row.subjectIds : ref.subjectIds;
   const [summary, subjects, keyed, filed, notes, exams] = await Promise.all([
     row ? summaries(profileId, [row]) : Promise.resolve([]),
@@ -222,26 +225,47 @@ export async function resourceDetail(platformChatId: string, profileId: string, 
   if (!row && subjects.length === 0) return null;
   const tasks = [...keyed, ...filed.filter(t => !keyed.some(k => k.id === t.id))];
   const names = new Set(subjects.map(s => s.name.toLowerCase()));
-  const planned = new Map<string, { unit: string | null; subtopics: string[] }>();
-  for (const s of Array.isArray(built?.subjects) ? built!.subjects : []) {
-    for (const t of Array.isArray(s?.topics) ? s.topics : []) if (t && typeof t.name === "string") planned.set(`${s.name.toLowerCase()}\n${t.name.toLowerCase()}`, { unit: t.unit ?? null, subtopics: Array.isArray(t.subtopics) ? t.subtopics : [] });
-  }
-  const live = new Set(subjects.flatMap(s => s.topics.map(t => t.name.toLowerCase())));
-  const phases = (Array.isArray(built?.phases) ? built!.phases : [])
-    .filter(p => p && typeof p.name === "string" && (live.has(p.name.toLowerCase()) || tasks.some(t => t.topicName?.toLowerCase() === p.name.toLowerCase())))
-    .map(p => ({ name: p.name, weeks: p.weeks ?? null, goals: Array.isArray(p.goals) ? p.goals : [], completion: p.completion ?? null }));
+  const shown = new Set(tasks.map(t => t.id));
   return {
     workspace: summary[0] ?? null,
     title: row?.title ?? subjects.map(s => s.name).join(", "),
-    subjects: subjects.map(s => ({ ...s, topics: s.topics.map(t => {
-      const p = planned.get(`${s.name.toLowerCase()}\n${t.name.toLowerCase()}`);
-      return p ? { ...t, unit: p.unit, ...(p.subtopics.length ? { subtopics: p.subtopics } : {}) } : t;
-    }) })),
-    ...(phases.length ? { phases } : {}),
-    tasks: tasks.map(t => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, dueDay: t.dueDay, subjectId: t.subjectId, topicName: t.topicName, estimatedMinutes: t.estimatedMinutes, parentId: t.parentId })),
+    // The topics as stored, by id, with their places, kinds and details: nothing matched by name.
+    subjects: subjects.map(s => ({ id: s.id, name: s.name, parentId: s.parentId, topics: s.topics.map(t => ({ id: t.id, name: t.name, parentId: t.parentId, kind: t.kind, details: t.details })) })),
+    tasks: tasks.map(t => ({
+      id: t.id, title: t.title, status: t.status, priority: t.priority, dueDay: t.dueDay, subjectId: t.subjectId, topicName: t.topicName,
+      estimatedMinutes: t.estimatedMinutes, parentId: t.parentId, after: (t.after ?? []).filter(a => shown.has(a)),
+    })),
     notes: notes.map(n => ({ id: n.id, title: n.title, subjectId: n.subjectId, updatedAt: n.updatedAt.toISOString() })),
     dates: (exams ?? []).filter(e => e.subjectName && names.has(e.subjectName.toLowerCase()))
       .map(e => ({ id: e.id, title: e.title, day: e.date, kind: e.type, subjectId: subjects.find(s => s.name.toLowerCase() === e.subjectName!.toLowerCase())?.id ?? null })),
+    about: aboutOf(row?.plan ?? null),
+  };
+}
+
+// What applies to the whole workspace, as kept with its row.
+export function aboutOf(plan: unknown): WorkspaceAbout | null {
+  const p = plan as Partial<WorkspacePlan> | null;
+  if (!p || typeof p !== "object") return null;
+  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+  const about: WorkspaceAbout = {
+    prerequisites: strings(p.prerequisites),
+    resources: (Array.isArray(p.resources) ? p.resources : []).filter(r => r && typeof r.title === "string").map(r => ({ title: r.title, kind: r.kind, url: r.url ?? null, origin: r.origin })),
+    assumptions: strings(p.assumptions),
+  };
+  return about.prerequisites.length || about.resources.length || about.assumptions.length ? about : null;
+}
+
+// A workspace's record, with what a plan added to it kept beside what it had:
+// prerequisites, resources and assumptions once each.
+async function withAbout(tx: Pick<typeof prisma, "novaWorkspace">, id: string, plan: WorkspacePlan): Promise<object> {
+  const row = await tx.novaWorkspace.findUnique({ where: { id }, select: { plan: true } });
+  const was = (row?.plan ?? {}) as Partial<WorkspacePlan> & Record<string, unknown>;
+  const once = <T>(list: T[], by: (x: T) => string) => list.filter((x, i) => list.findIndex(y => by(y) === by(x)) === i);
+  return {
+    ...was,
+    prerequisites: once([...(was.prerequisites ?? []), ...plan.prerequisites], x => x.toLowerCase()),
+    resources: once([...(was.resources ?? []), ...plan.resources], x => x.title.toLowerCase()),
+    assumptions: once([...(was.assumptions ?? []), ...plan.assumptions], x => x.toLowerCase()),
   };
 }
 
@@ -277,10 +301,12 @@ export type ChangeResult =
 
 const target = (o: ChangeOp): string | null =>
   o.op === "rename_topic" || o.op === "remove_topic" ? `topic:${o.topicId}`
+  : o.op === "move_topic" ? `topic-place:${o.topicId}` : o.op === "update_topic" ? `topic-details:${o.topicId}` : o.op === "order_topics" ? `topic-order:${o.topicIds.join(",")}`
   : o.op === "update_task" || o.op === "remove_task" ? `task:${o.taskId}`
   : o.op === "update_date" ? `date:${o.dateId}` : o.op === "order_tasks" ? `order:${o.taskIds.join(",")}`
   : o.op === "remove_subject" ? `subject:${o.subjectId}` : o.op === "remove_date" ? `date:${o.dateId}`
-  : o.op === "remove_note" ? `note:${o.noteId}` : null;
+  : o.op === "remove_note" ? `note:${o.noteId}`
+  : o.op === "move_subject" ? `subject-place:${o.subjectId}` : o.op === "rename_subject" ? `subject-name:${o.subjectId}` : o.op === "rename" ? "title" : null;
 
 export async function changeResource(
   platformChatId: string,
@@ -304,9 +330,26 @@ export async function changeResource(
     return { ok: false, error: "changed", message: `Since Nova proposed this, ${lost.map(o => o.says.charAt(0).toLowerCase() + o.says.slice(1)).slice(0, 2).join("; ")} no longer fits what's there. Nothing was changed; ask Nova again.` };
   }
   const ops = again.ops;
+  // A subject this set adds is named, for a subject going inside it, by its name.
+  const parentOf = (o: { parentId?: string | null; parentKey?: string | null }): { parentId: string | null; parentName?: string } => {
+    const added = o.parentKey ? ops.find((a): a is Extract<typeof a, { op: "add_subject" }> => a.op === "add_subject" && a.key === o.parentKey) : undefined;
+    return added ? { parentId: null, parentName: added.name } : { parentId: o.parentId ?? null };
+  };
+  // A topic this set adds is named, for one going inside it, by its name (a subject holds a name once).
+  const topicPlace = (o: { parentId?: string | null; parentKey?: string | null }): { parentId: string | null; parentName?: string } => {
+    if (o.parentKey) {
+      for (const a of ops) if (a.op === "add_topics" && a.keys) { const i = a.keys.indexOf(o.parentKey); if (i >= 0) return { parentId: null, parentName: a.names[i]! }; }
+    }
+    return { parentId: o.parentId ?? null };
+  };
   const edits: StudyEdit[] = ops.flatMap((o): StudyEdit[] => (
-    o.op === "add_topics" ? [{ op: "add_topics", subjectId: o.subjectId, names: o.names }]
-    : o.op === "add_subject" ? [{ op: "add_subject", name: o.name, topics: o.topics }]
+    o.op === "add_topics" ? [{ op: "add_topics", subjectId: o.subjectId, names: o.names, ...topicPlace(o), ...(o.kind ? { kind: o.kind } : {}) }]
+    : o.op === "move_topic" ? [{ op: "move_topic", topicId: o.topicId, ...topicPlace(o), index: o.index ?? null }]
+    : o.op === "order_topics" ? [{ op: "order_topics", topicIds: o.topicIds }]
+    : o.op === "update_topic" ? [{ op: "update_topic", topicId: o.topicId, details: o.patch as Record<string, unknown> }]
+    : o.op === "add_subject" ? [{ op: "add_subject", name: o.name, topics: o.topics, ...parentOf(o) }]
+    : o.op === "move_subject" ? [{ op: "move_subject", subjectId: o.subjectId, ...parentOf(o) }]
+    : o.op === "rename_subject" ? [{ op: "rename_subject", subjectId: o.subjectId, name: o.name }]
     : o.op === "rename_topic" ? [{ op: "rename_topic", topicId: o.topicId, name: o.name }]
     : o.op === "remove_topic" ? [{ op: "remove_topic", topicId: o.topicId }] : []))
     // A subject is removed once its topics are gone.
@@ -330,12 +373,24 @@ export async function changeResource(
         : [];
       const gone = new Set(pick("remove_subject").map(o => o.subjectId));
       const ids = [...new Set([...(row?.subjectIds ?? input.ref.subjectIds), ...added.map(a => a.id)])].filter(id => !gone.has(id));
+      // A wait names a task here by id, or one this set adds by its key.
+      const addedKeys = new Set(pick("add_task").map(o => o.key));
+      const waitRefs = (after: string[] | undefined) => ({
+        afterKeys: (after ?? []).filter(a => addedKeys.has(a)).map(a => `${prefix}${a}`.slice(0, 120)),
+        afterIds: (after ?? []).filter(a => !addedKeys.has(a)),
+      });
       const made = await createTasksIn(tx, profileId, pick("add_task").map(o => ({
         title: o.title, priority: o.priority, subjectId: o.subjectId, topicName: o.topicName, dueDay: o.dueDay, clientKey: `${prefix}${o.key}`.slice(0, 120),
+        ...(o.estimatedMinutes ? { estimatedMinutes: o.estimatedMinutes } : {}),
         ...(o.parentId ? { parentId: o.parentId } : o.parentKey ? { parentKey: `${prefix}${o.parentKey}`.slice(0, 120) } : {}),
+        ...waitRefs(o.after),
       })));
       if (!made.ok) throw new RefusedError("too_many", made.message);
-      await updateTasksIn(tx, profileId, pick("update_task").map(({ taskId, title, dueDay, priority, parentId }) => ({ taskId, title, dueDay, priority, parentId })));
+      await updateTasksIn(tx, profileId, pick("update_task").map(({ taskId, title, dueDay, priority, parentId, estimatedMinutes, topicName }) => ({ taskId, title, dueDay, priority, parentId, estimatedMinutes, topicName })));
+      const keyed = new Map((await tx.novaTask.findMany({ where: { profileId, clientKey: { in: [...addedKeys].map(k => `${prefix}${k}`.slice(0, 120)) } }, select: { id: true, clientKey: true } })).map(t => [t.clientKey!, t.id]));
+      await setWaitsIn(tx, profileId, pick("update_task").filter(o => o.after !== undefined).map(o => ({
+        taskId: o.taskId, after: o.after!.map(a => (addedKeys.has(a) ? keyed.get(`${prefix}${a}`.slice(0, 120)) ?? "" : a)).filter(Boolean),
+      })));
       await removeOpenTasksIn(tx, profileId, pick("remove_task").map(o => o.taskId));
       for (const o of pick("order_tasks")) await placeTasksIn(tx, profileId, o.taskIds);
       await addDatesIn(tx, profileId, pick("add_date").map(o => ({ title: o.title, subjectId: o.subjectId, kind: o.kind, day: o.day })), today, now);
@@ -346,6 +401,9 @@ export async function changeResource(
       // What Nova adds to a workspace is recorded as Nova's (deletionScope).
       if (row) await recordAdded(tx, row.id, ops, id => current.subjects.find(x => x.id === id)?.name ?? null);
       if (row && (ids.length !== row.subjectIds.length || gone.size > 0)) await tx.novaWorkspace.update({ where: { id: row.id }, data: { subjectIds: ids } });
+      // A new name: the workspace's own (subjects keep theirs).
+      const renamed = pick("rename")[0];
+      if (row && renamed) await tx.novaWorkspace.update({ where: { id: row.id }, data: { title: renamed.title } });
       return ids;
     }, { timeout: 30_000, maxWait: 10_000 });
     const detail = await resourceDetail(platformChatId, profileId, row ? { workspaceId: row.id, subjectIds: [] } : { workspaceId: null, subjectIds }, now);
@@ -383,21 +441,25 @@ export async function workspacePlanOf(profileId: string, workspaceId: string | n
 // known as Nova's too.
 
 const low = (x: string) => x.trim().toLowerCase();
-interface Added { topics: Array<{ subject: string; name: string }>; notes: string[]; dates: string[] }
+interface Added { topics: Array<{ subject: string; name: string }>; notes: string[]; dates: string[]; subjects: string[] }
 const addedOf = (plan: unknown): Added => {
   const a = (plan as { nova?: { added?: Partial<Added> } } | null)?.nova?.added;
-  return { topics: Array.isArray(a?.topics) ? a!.topics : [], notes: Array.isArray(a?.notes) ? a!.notes : [], dates: Array.isArray(a?.dates) ? a!.dates : [] };
+  return {
+    topics: Array.isArray(a?.topics) ? a!.topics : [], notes: Array.isArray(a?.notes) ? a!.notes : [], dates: Array.isArray(a?.dates) ? a!.dates : [],
+    subjects: Array.isArray(a?.subjects) ? a!.subjects : [],
+  };
 };
 
 // What Nova made for a workspace, by name: from the plan it was built from
 // and the changes since.
 function madeBy(plan: unknown): { subjects: Set<string>; topics: Set<string>; notes: Set<string>; dates: Set<string> } {
-  const p = plan as Partial<WorkspacePlan> | null;
-  const written = p && Array.isArray(p.subjects) && Array.isArray(p.tasks) ? planWrites(p as WorkspacePlan) : null;
+  // An older record's plan is read into the current shape (milestones are topics there too).
+  const p = readStoredPlan(plan);
+  const written = p ? planWrites(p) : null;
   const added = addedOf(plan);
   return {
-    subjects: new Set((written?.subjects ?? []).map(s => low(s.name))),
-    topics: new Set([...(written?.subjects ?? []).flatMap(s => s.topics.map(t => `${low(s.name)}\n${low(t)}`)), ...added.topics.map(t => `${low(t.subject)}\n${low(t.name)}`)]),
+    subjects: new Set([...(written?.subjects ?? []).map(s => low(s.name)), ...added.subjects.map(low)]),
+    topics: new Set([...(written?.subjects ?? []).flatMap(s => s.topics.map(t => `${low(s.name)}\n${low(t.name)}`)), ...added.topics.map(t => `${low(t.subject)}\n${low(t.name)}`)]),
     notes: new Set([...(written?.notes ?? []).map(n => low(n.title)), ...added.notes.map(low)]),
     dates: new Set([...(written?.dates ?? []).map(d => low(d.title)), ...added.dates.map(low)]),
   };
@@ -434,6 +496,18 @@ export async function deletionScope(platformChatId: string, profileId: string, r
     dates = detail.dates.map(d => ({ id: d.id, name: `${d.title} (${d.day})` }));
     topics = detail.subjects.flatMap(s => s.topics.filter(t => !studied.has(t.id)).map(t => ({ id: t.id, name: t.name })));
   }
+  // A topic goes only with everything inside it: one that keeps a topic of
+  // the learner's (or one with study) inside it stays, and goes after them.
+  for (let settled = false; !settled;) {
+    settled = true;
+    const going = new Set(topics.map(t => t.id));
+    for (const s of detail.subjects) for (const t of s.topics) {
+      if (!going.has(t.id)) continue;
+      if (s.topics.some(x => x.parentId === t.id && !going.has(x.id))) { topics = topics.filter(x => x.id !== t.id); settled = false; }
+    }
+  }
+  const depthOf = (id: string) => { for (const s of detail.subjects) { let d = 0; for (let at = s.topics.find(t => t.id === id)?.parentId ?? null; at && d < 12; d++) at = s.topics.find(t => t.id === at)?.parentId ?? null; if (s.topics.some(t => t.id === id)) return d; } return 0; };
+  topics = [...topics].sort((a, b) => depthOf(b.id) - depthOf(a.id));
   const goingTopics = new Set(topics.map(t => t.id));
   const goingTasks = new Set(tasks.map(t => t.id));
   const goingNotes = new Set(notes.map(n => n.id));
@@ -519,7 +593,7 @@ async function recordAdded(tx: Pick<typeof prisma, "novaWorkspace">, workspaceId
   const added = addedOf(row.plan);
   for (const o of ops) {
     if (o.op === "add_topics") for (const name of o.names) added.topics.push({ subject: subjectName(o.subjectId) ?? "", name });
-    if (o.op === "add_subject") for (const name of o.topics) added.topics.push({ subject: o.name, name });
+    if (o.op === "add_subject") { added.subjects.push(o.name); for (const name of o.topics) added.topics.push({ subject: o.name, name }); }
     if (o.op === "add_note") added.notes.push(o.title);
     if (o.op === "add_date") added.dates.push(o.title);
   }

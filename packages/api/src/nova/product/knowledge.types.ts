@@ -58,10 +58,18 @@ export interface KnowledgeDueReview extends KnowledgeTopic {
   reviewMinutes:  number;
 }
 
+// One line of a subject's topics as arranged: units, their topics, their
+// subtopics, in saved order. studied: a leaf topic, one of `topics`; the
+// others organise them (or are milestones) and are not studied on their own.
+export interface KnowledgeOutlineRow { id: string; name: string; depth: number; kind: "milestone" | null; studied: boolean }
+
 export interface KnowledgeSubject {
   subjectId:   string;
   subjectName: string;
-  topics:      KnowledgeTopic[];        // due first, then weakest first
+  // The topics studied on their own (leaves): due first, then weakest first.
+  topics:      KnowledgeTopic[];
+  // Every active topic as arranged. Absent on an older server.
+  outline?:    KnowledgeOutlineRow[];
   summary:     { topicCount: number; dueCount: number };
 }
 

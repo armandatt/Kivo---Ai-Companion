@@ -17,7 +17,7 @@ import { SectionHeading, Skeleton, TEXT_LINK } from './workspace/ui'
 
 type MapState = { view: NovaKnowledgeMapView | null; loading: boolean; error: boolean; refresh: () => void }
 
-const ICON: Record<MapNode['type'], typeof NotebookPen> = { subject: FolderClosed, topic: FolderClosed, note: NotebookPen, resource: Bookmark }
+const ICON: Record<MapNode['type'], typeof NotebookPen> = { subject: FolderClosed, topic: FolderClosed, task: NotebookPen, note: NotebookPen, resource: Bookmark }
 const KIND_WORD = (n: LocalNeighbour) =>
   n.node.type === 'subject' ? 'Subject'
   : n.kind === 'links_to' ? 'Note that links here'

@@ -86,9 +86,15 @@ export async function getTopicMastery(
 // caller judges "due" by.
 // An archived topic is left out of every active list; Progress passes
 // `includeArchived` because what was studied stays history.
+// Only what is studied on its own (product/topic-tree.ts): a leaf topic, not
+// a milestone and not a topic with active topics inside it. Every queue,
+// review, plan and count reads this, so one concept is counted once. A topic
+// that gains topics inside it keeps its row and history and comes back here
+// if they go.
+export const STUDY_TOPIC_WHERE = { kind: null, children: { none: { archivedAt: null } } } as const;
 export async function getAllTopicMasteries(profileId: string, now: Date = new Date(), options: { includeArchived?: boolean } = {}): Promise<TopicMasteryState[]> {
   const topics = await prisma.novaTopicMastery.findMany({
-    where:   { subject: { profileId }, ...(options.includeArchived ? {} : { archivedAt: null }) },
+    where:   { subject: { profileId }, ...STUDY_TOPIC_WHERE, ...(options.includeArchived ? {} : { archivedAt: null }) },
     include: { subject: { select: { name: true } } },
     // Topics with no review date keep the order they were added in.
     orderBy: [{ nextReviewAt: "asc" }, { createdAt: "asc" }],

@@ -44,6 +44,8 @@
     "./nova/product/templates": "./src/nova/product/templates.ts",
     "./nova/product/workspace-plan": "./src/nova/product/workspace-plan.ts",
     "./nova/product/task-tree": "./src/nova/product/task-tree.ts",
+    "./nova/product/topic-tree": "./src/nova/product/topic-tree.ts",
+    "./nova/product/plan-feasibility": "./src/nova/product/plan-feasibility.ts",
     "./nova/product/greetings": "./src/nova/product/greetings.ts",
     "./nova/product/workspace-routing": "./src/nova/product/workspace-routing.ts",
     "./nova/product/workspaces.types": "./src/nova/product/workspaces.types.ts",
