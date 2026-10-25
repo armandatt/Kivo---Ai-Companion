@@ -185,7 +185,7 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
 
   // Removals that bring others with them are checked after everything else
   // in the set (a workspace's last), so what they bring is not said twice.
-  const late = (o: unknown) => ((o as { op?: unknown })?.op === "remove_workspace" ? 2 : (o as { op?: unknown })?.op === "remove_subject" ? 1 : 0);
+  const late = (o: unknown) => ((o as { op?: unknown })?.op === "remove_subject" ? 1 : 0);
   const ordered = parentsFirst([...list.slice(0, CHANGE_OPS_MAX * 2)]).sort((a, b) => late(a) - late(b));
   // The tasks as a tree: stored ones by id, ones this set adds as "+key".
   const tree: TreeNode[] = current.tasks.map(t => ({ id: t.id, parent: t.parentId ?? null }));
@@ -242,29 +242,6 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         const s = subjectById(x.subjectId);
         if (!s) { dropped.push("removing a subject that isn't part of this"); break; }
         removeSubject(s, x);
-        break;
-      }
-      case "remove_workspace": {
-        const w = current.workspace;
-        if (!w || (x.workspaceId !== undefined && x.workspaceId !== w.id)) { dropped.push("removing a workspace that isn't this one"); break; }
-        // All of it or none of it: a workspace half removed would leave its
-        // studied subjects outside any workspace.
-        const studied = current.subjects.flatMap(s => s.topics.filter(t => ctx.studied.has(t.id)));
-        if (studied.length) { dropped.push(`deleting ${quoted(current.title)} (you've studied ${studied.slice(0, 2).map(t => quoted(t.name)).join(", ")}; topics with study are kept)`); break; }
-        for (const s of current.subjects) removeSubject(s, {});
-        for (const t of current.tasks) {
-          if (t.status === "done" || touched.has(t.id)) continue;
-          touched.add(t.id);
-          keep({ op: "remove_task", taskId: t.id }, `Remove task ${quoted(t.title)}`, "remove", {});
-        }
-        for (const n of current.notes) {
-          if (touched.has(n.id)) continue;
-          touched.add(n.id);
-          keep({ op: "remove_note", noteId: n.id }, `Remove note ${quoted(n.title)}`, "remove", {});
-        }
-        for (const d of current.dates) removeDate(d);
-        const kept = current.tasks.filter(t => t.status === "done").length;
-        keep({ op: "remove_workspace", workspaceId: w.id }, `Delete the workspace ${quoted(current.title)}${kept ? ` (${kept} finished task${kept === 1 ? "" : "s"} stay in your Planner)` : ""}. This can't be undone`, "remove", x);
         break;
       }
       case "remove_date": {
@@ -417,7 +394,7 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
 
 export const kindOf = (op: ChangeOp["op"]): ChangeKind =>
   op === "add_topics" || op === "rename_topic" || op === "remove_topic" ? "topics"
-  : op === "add_subject" || op === "remove_subject" || op === "remove_workspace" ? "subjects"
+  : op === "add_subject" || op === "remove_subject" ? "subjects"
   : op === "add_date" || op === "update_date" || op === "remove_date" ? "dates"
   : op === "add_note" || op === "remove_note" ? "notes" : "tasks";
 
@@ -426,7 +403,7 @@ export const kindOf = (op: ChangeOp["op"]): ChangeKind =>
 // topic and date removals it brings, a workspace's everything it brings.
 // No kinds known (an older reading): all are kept.
 export function withinAsk(set: ChangeSet, touches: readonly ChangeKind[], current: WorkspaceDetail): ChangeSet {
-  if (touches.length === 0 || set.ops.some(o => o.op === "remove_workspace")) return set;
+  if (touches.length === 0) return set;
   const goingSubjects = new Set(set.ops.flatMap(o => (o.op === "remove_subject" ? [o.subjectId] : [])));
   const withSubject = new Set([
     ...current.subjects.filter(s => goingSubjects.has(s.id)).flatMap(s => s.topics.map(t => t.id)),
@@ -537,15 +514,9 @@ export function undoOf(set: ChangeSet, before: WorkspaceDetail, notes: readonly 
         if (n) steps.push({ op: "add_note", title: n.title, body: n.body, subjectName: subjectName(n.subjectId), topicName: n.topicName });
         break;
       }
-      case "remove_workspace": kept.push(`the deleted workspace ${quoted(before.title)}`); break;
     }
   }
   return { label, steps, kept };
-}
-
-// Undoing a build: the workspace it made, all of it, as one proposed removal.
-export function undoOfBuild(title: string): UndoRecord {
-  return { label: `the build of ${title}`, steps: [{ op: "remove_workspace" }], kept: [] };
 }
 
 // The steps as operations on the records as they are now. A step whose
@@ -594,7 +565,6 @@ export function resolveUndo(undo: UndoRecord, current: WorkspaceDetail): { ops: 
         break;
       }
       case "remove_note": { const n = note(x.noteTitle); if (n) ops.push({ op: "remove_note", noteId: n.id }); else gone(`note ${quoted(String(x.noteTitle))}`); break; }
-      case "remove_workspace": if (current.workspace) ops.push({ op: "remove_workspace", workspaceId: current.workspace.id }); else gone("the workspace"); break;
       // Additions name their subject; one that is not there (yet) files them under none.
       case "add_subject": ops.push(x); break;
       case "add_task": case "add_date": case "add_note": {

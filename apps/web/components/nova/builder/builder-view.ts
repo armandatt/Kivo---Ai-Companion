@@ -264,14 +264,12 @@ export interface ChangeMarks {
   addedSubjects: Array<Extract<ProposedChange, { op: 'add_subject' }>>
   removedDates: Set<string>
   removedNotes: Set<string>
-  // The whole workspace is to be deleted.
-  removedWorkspace: boolean
 }
 
 export function changeMarks(set: ChangeSet | null): ChangeMarks {
   const m: ChangeMarks = {
     addedTopics: new Map(), renamedTopics: new Map(), removedTopics: new Set(), removedSubjects: new Set(), addedTasks: [], changedTasks: new Map(), removedTasks: new Set(),
-    firstTasks: [], movedDates: new Map(), addedDates: [], addedNotes: [], addedSubjects: [], removedDates: new Set(), removedNotes: new Set(), removedWorkspace: false,
+    firstTasks: [], movedDates: new Map(), addedDates: [], addedNotes: [], addedSubjects: [], removedDates: new Set(), removedNotes: new Set(),
   }
   for (const o of set?.ops ?? []) {
     switch (o.op) {
@@ -289,7 +287,6 @@ export function changeMarks(set: ChangeSet | null): ChangeMarks {
       case 'add_subject': m.addedSubjects.push(o); break
       case 'remove_date': m.removedDates.add(o.dateId); break
       case 'remove_note': m.removedNotes.add(o.noteId); break
-      case 'remove_workspace': m.removedWorkspace = true; break
     }
   }
   return m

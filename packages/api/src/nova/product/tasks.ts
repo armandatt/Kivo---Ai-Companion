@@ -15,7 +15,7 @@
 
 import { prisma } from "@repo/db/client";
 import { dayKey, dayNumber, resolveTimezone } from "../engines/learner-calendar";
-import { TASK_DEPTH_MAX, canPlace, levelOf, parentsOf, type TreeNode } from "./task-tree";
+import { TASK_DEPTH_MAX, canPlace, levelOf, parentsOf, subtreeOf, type TreeNode } from "./task-tree";
 import {
   TASK_DONE_SHOWN, TASK_KEY_MAX, TASK_MINUTES_MAX, TASK_MINUTES_MIN, TASK_OPEN_MAX, TASK_ORDER_MAX, TASK_PRIORITIES, TASK_STATUSES, TASK_TITLE_MAX, TASK_TOPIC_MAX,
   type NovaTaskItem, type NovaTasksReady, type TaskError, type TaskInput, type TaskPriority, type TaskResponse, type TaskStatus,
@@ -258,6 +258,35 @@ export async function updateTasksIn(
     const r = await tx.novaTask.updateMany({ where: { id: c.taskId, profileId }, data });
     if (r.count !== 1) throw new TaskChanged();
   }
+}
+
+// The tasks one key prefix made (a workspace's "ws:<key>:", its build and
+// every change applied to it) and everything under them, as an outline:
+// what deleting that workspace removes. A step the learner added under one
+// of them goes with it, and is counted.
+export async function tasksMadeUnder(profileId: string, prefix: string): Promise<Array<{ id: string; title: string; status: TaskStatus; parentId: string | null; made: boolean }>> {
+  const all = await prisma.novaTask.findMany({ where: { profileId }, select: { id: true, title: true, status: true, parentId: true, clientKey: true }, take: 2_000 });
+  const made = new Set(all.filter(t => t.clientKey?.startsWith(prefix)).map(t => t.id));
+  const nodes = all.map(t => ({ id: t.id, parent: t.parentId }));
+  const going = new Set([...made].flatMap(id => subtreeOf(nodes, id)));
+  return all.filter(t => going.has(t.id)).map(t => ({ id: t.id, title: t.title, status: TASK_STATUSES.find(s => s === t.status) ?? "todo", parentId: t.parentId, made: made.has(t.id) }));
+}
+
+// These steps become tasks of their own (the learner's steps under tasks
+// about to be removed), inside the caller's transaction.
+export async function liftStepsIn(tx: Pick<typeof prisma, "novaTask">, profileId: string, taskIds: string[]): Promise<void> {
+  if (taskIds.length === 0) return;
+  const r = await tx.novaTask.updateMany({ where: { id: { in: taskIds }, profileId }, data: { parentId: null } });
+  if (r.count !== taskIds.length) throw new TaskChanged();
+}
+
+// Removes these tasks, finished or not, and their steps (a confirmed
+// deletion of what Nova made). One that is not the learner's stops it.
+export async function removeTasksIn(tx: Pick<typeof prisma, "novaTask">, profileId: string, taskIds: string[]): Promise<void> {
+  if (taskIds.length === 0) return;
+  const owned = await tx.novaTask.count({ where: { id: { in: taskIds }, profileId } });
+  if (owned !== taskIds.length) throw new TaskChanged();
+  await tx.novaTask.deleteMany({ where: { id: { in: taskIds }, profileId } });
 }
 
 // Only open tasks: a finished one is the learner's record and stays.

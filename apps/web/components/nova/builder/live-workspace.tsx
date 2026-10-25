@@ -148,7 +148,6 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
       <PlaygroundHeader title={detail.title} badge="live" stats={stats} tabs={<ViewTabs views={views} view={shown} onView={onView} label="Workspace views" names={words.views} />} />
       <div id="pg-panel" role="tabpanel" aria-labelledby={`pg-tab-${shown}`} className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-3 sm:px-5">
         {error && <p role="alert" className="mb-3 text-sm text-red-400">{error}</p>}
-        {marks.removedWorkspace && <p role="status" className="mb-3 rounded-xl border border-red-400/40 bg-red-400/8 px-3 py-2 text-sm text-foreground/90">Approving deletes {detail.title} and everything listed below, everywhere in Kivo. Finished tasks stay in your Planner. This can&apos;t be undone.</p>}
         <ChangeList state={state} />
         {talking && <div className="-mx-2 mb-3"><NovaHint hint={hintFor(state.draft?.brief.kind, shown)} onAsk={onAsk} /></div>}
         {shown === 'overview' && (

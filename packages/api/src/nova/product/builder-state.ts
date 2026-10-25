@@ -288,6 +288,7 @@ export function readBrief(raw: unknown): BuilderBrief {
     ...(Array.isArray(r.choices) ? { choices: listOf(r.choices, 6) } : {}),
     ...(Array.isArray(r.touches) ? { touches: CHANGE_KINDS.filter(k => (r.touches as unknown[]).includes(k)) } : {}),
     ...(r.undo ? { undo: readUndo(r.undo) } : {}),
+    ...(r.deletion && typeof r.deletion === "object" && typeof (r.deletion as { fingerprint?: unknown }).fingerprint === "string" ? { deletion: r.deletion as BuilderBrief["deletion"] } : {}),
     question: oneLine(r.question, 300) || null,
     questionsAsked: typeof r.questionsAsked === "number" && Number.isInteger(r.questionsAsked) && r.questionsAsked >= 0 ? r.questionsAsked : 0,
     dropped: listOf(r.dropped, 12),

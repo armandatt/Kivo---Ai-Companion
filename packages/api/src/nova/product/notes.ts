@@ -347,6 +347,19 @@ export async function removeNotesIn(tx: Pick<typeof prisma, "novaNote">, profile
   return (await tx.novaNote.deleteMany({ where: { id: { in: noteIds }, profileId } })).count === noteIds.length;
 }
 
+// Of the learner's notes filed under these subjects, the ones with these
+// titles that nobody has edited since they were made (a workspace's own
+// notes, as Nova wrote them): the only notes deleting a workspace removes.
+// A note the learner changed, or wrote, is theirs and stays. No body leaves
+// this file.
+export const UNTOUCHED_MS = 5_000;
+export async function untouchedNotesIn(profileId: string, subjectIds: string[], titles: string[]): Promise<Array<{ id: string; title: string }>> {
+  if (subjectIds.length === 0 || titles.length === 0) return [];
+  const wanted = new Set(titles.map(t => t.trim().toLowerCase()));
+  const rows = await prisma.novaNote.findMany({ where: { profileId, subjectId: { in: subjectIds } }, select: { id: true, title: true, createdAt: true, updatedAt: true }, take: 400 });
+  return rows.filter(r => wanted.has(r.title.trim().toLowerCase()) && r.updatedAt.getTime() - r.createdAt.getTime() < UNTOUCHED_MS).map(r => ({ id: r.id, title: r.title }));
+}
+
 // Notes as they are, bodies included: what taking a removal back needs.
 export async function notesWithBodies(profileId: string, noteIds: string[]): Promise<Array<{ id: string; title: string; body: string; subjectId: string | null; topicName: string | null }>> {
   if (noteIds.length === 0) return [];

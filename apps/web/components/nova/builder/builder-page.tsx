@@ -13,6 +13,7 @@ import { loadWorkspaces } from '@/components/nova/templates/templates-api'
 import * as api from './builder-api'
 import { mapDestinations, touchedSubjects, wordsFor } from './builder-view'
 import { BUILD_EXAMPLES, Composer, Conversation, NewConversation, NovaAvatar, STATUS_LABEL, type Seed, type Upload } from './conversation'
+import { DeletionPanel } from './deletion-panel'
 import { LiveWorkspace } from './live-workspace'
 import { DraftPlayground, PlaygroundHeader, PlaygroundWaiting } from './playground'
 import type { PlaygroundView } from './plan-edit'
@@ -192,7 +193,10 @@ export function BuilderPage() {
       ? <Conversation key={draftId} state={state} header={header} seed={seed} onReview={() => setTab('playground')} />
       : <div aria-busy="true" aria-label="Opening the conversation" className="space-y-3 p-5"><div className="h-10 animate-pulse rounded-xl bg-white/4 motion-reduce:animate-none" /><div className="h-24 animate-pulse rounded-2xl bg-white/4 motion-reduce:animate-none" /></div>
     // Something stored (what it works on, or what it built): shown as it is, with any proposed changes on it.
-    playground = draft?.current && (draft.resource || draft.status === 'ready')
+    // A deletion waiting for them comes first: nothing else should be acted on meanwhile.
+    playground = draft?.brief.deletion
+      ? <DeletionPanel state={state} />
+      : draft?.current && (draft.resource || draft.status === 'ready')
       ? <LiveWorkspace view={view} onView={setView} state={state} onAsk={ask} />
       : <DraftPlayground state={state} view={view} onView={setView} onAsk={ask} />
   }

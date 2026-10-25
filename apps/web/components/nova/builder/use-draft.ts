@@ -31,8 +31,8 @@ export function useDraft(draftId: string | null) {
   const [conflict, setConflict] = useState<DraftView | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   // Which action the error is about, so it shows beside that action only.
-  const [errorOf, setErrorOf] = useState<null | 'send' | 'approve' | 'cancel' | 'retry'>(null)
-  const [busy, setBusy] = useState<null | 'send' | 'approve' | 'cancel' | 'retry'>(null)
+  const [errorOf, setErrorOf] = useState<null | 'send' | 'approve' | 'cancel' | 'retry' | 'delete' | 'keep'>(null)
+  const [busy, setBusy] = useState<null | 'send' | 'approve' | 'cancel' | 'retry' | 'delete' | 'keep'>(null)
   // The newest version that arrived from the server while the page was
   // open, and the plan it replaced (null for a first proposal).
   const [arrival, setArrival] = useState<{ version: number; previous: WorkspacePlan | null; next: WorkspacePlan } | null>(null)
@@ -143,7 +143,7 @@ export function useDraft(draftId: string | null) {
     setDraft(conflict); setPlanState(conflict.plan); setConflict(null); setSave('idle'); setSaveError(null)
   }, [conflict])
 
-  const run = useCallback(async (kind: 'send' | 'approve' | 'cancel' | 'retry', call: () => Promise<api.Failure | { ok: true; draft: DraftView }>) => {
+  const run = useCallback(async (kind: 'send' | 'approve' | 'cancel' | 'retry' | 'delete' | 'keep', call: () => Promise<api.Failure | { ok: true; draft: DraftView }>) => {
     setBusy(kind); setActionError(null); setErrorOf(kind)
     const res = await call()
     setBusy(null)
@@ -181,11 +181,17 @@ export function useDraft(draftId: string | null) {
 
   const cancel = useCallback(() => (draftId ? run('cancel', () => api.cancelDraft(draftId)) : Promise.resolve(false)), [draftId, run])
   const retry = useCallback(() => (draftId ? run('retry', () => api.retryDraft(draftId)) : Promise.resolve(false)), [draftId, run])
+  // A deletion is carried out only on the scope shown (its fingerprint).
+  const confirmDeletion = useCallback(() => {
+    const scope = latest.current.draft?.brief.deletion
+    return draftId && scope ? run('delete', () => api.confirmDeletion(draftId, scope.fingerprint)) : Promise.resolve(false)
+  }, [draftId, run])
+  const keepResource = useCallback(() => (draftId ? run('keep', () => api.keepResource(draftId)) : Promise.resolve(false)), [draftId, run])
 
   return {
     draft, plan, setPlan, save, saveError, conflict, keepMine, takeTheirs, arrival,
     loadError, actionError, errorOf, clearActionError: () => setActionError(null), busy, working,
-    reload, send, approve, cancel, retry, keepChanges, unsaved: () => dirty.current,
+    reload, send, approve, cancel, retry, keepChanges, confirmDeletion, keepResource, unsaved: () => dirty.current,
   }
 }
 

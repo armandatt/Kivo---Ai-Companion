@@ -445,12 +445,11 @@ test("what a conversation applied can be taken back, and a project can be delete
   });
   const built = await builder.approveDraft(me.id, first.id, { version: first.version });
   assert.ok(built.ok && built.draft.status === "ready");
-  assert.equal(built.ok && built.draft.brief.undo?.label, "the build of Kivo v1");
   const afterBuild = await records(profileId);
 
   // A change set: a topic and a task removed, a task's priority changed.
   let draft = await say(me.id, first.id, "remove the final polish milestone and make the UI low priority", {
-    read: reader({ next: "draft", change: "Remove Final polish; UI low priority" }), write: noWrite,
+    read: reader({ next: "draft", change: "Remove Final polish; UI low priority", touches: ["topics", "tasks", "priorities"] }), write: noWrite,
     writeChanges: changer(req => [
       { op: "remove_topic", topicId: req.current.subjects[0]!.topics.find(t => t.name === "Final polish")!.id },
       { op: "remove_task", taskId: req.current.tasks.find(t => t.title === "Fix the last bugs")!.id },
@@ -467,7 +466,7 @@ test("what a conversation applied can be taken back, and a project can be delete
   assert.equal(draft.status, "awaiting_approval");
   assert.deepEqual(draft.changes!.ops.map(o => o.says), [
     'Add to Kivo: Final polish',
-    'Add task "Fix the last bugs", due ' + inDays(4),
+    'Add task "Fix the last bugs", due ' + inDays(4) + ', medium priority',
     'Change task "Build the home page UI": high priority',
   ]);
   const undone = await builder.approveDraft(me.id, draft.id, { version: draft.version });
@@ -477,22 +476,68 @@ test("what a conversation applied can be taken back, and a project can be delete
   assert.equal(ui.priority, "high");
   assert.equal((await listTasks(profileId)).tasks.find(t => t.title === "Fix the last bugs")!.topicName, "Final polish");
 
-  // "Delete it from everywhere": the workspace with its subject, topics, open tasks, notes and dates.
-  // A finished task stays.
+  // "Delete it from everywhere": only what Nova made goes, after an explicit confirmation.
+  // What the learner added themselves stays.
   await prisma.novaTask.update({ where: { id: ui.id }, data: { status: "done" } });
-  // Built by code: even when the model called it off-topic (seen 25 Oct), and without the change model.
-  draft = await say(me.id, first.id, "delete the kivo project from everywhere", {
-    read: reader({ next: "decline", deleteAll: true }), write: noWrite, writeChanges: noModel,
-  });
-  assert.equal(draft.changes!.ops.at(-1)!.op, "remove_workspace");
-  assert.ok(draft.changes!.ops.some(o => o.op === "remove_date"));
-  const deleted = await builder.approveDraft(me.id, draft.id, { version: draft.version });
+  const subject = (await prisma.novaSubject.findFirst({ where: { profileId, name: "Kivo" } }))!;
+  const mine = await createTask(profileId, { title: "Call the designer", subjectId: subject.id });
+  assert.ok(mine.ok);
+  const myStep = await createTask(profileId, { title: "Buy a domain", parentId: ui.id });
+  assert.ok(myStep.ok);
+  const myNote = await prisma.novaNote.create({ data: { profileId, title: "My launch thoughts", body: "mine", subjectId: subject.id } });
+  // Seen 25 Oct: called off-topic by the model. Code reads it as a deletion, and nothing goes yet.
+  draft = await say(me.id, first.id, "delete the kivo project from everywhere", { read: reader({ next: "decline", deleteAll: true }), write: noWrite, writeChanges: noModel });
+  const scope = draft.brief.deletion!;
+  assert.ok(scope, "a deletion is shown");
+  assert.equal(scope.workspaceId, built.ok ? built.draft.workspace!.id : "");
+  assert.ok(scope.removes.tasks.some(t => t.name === "Build the home page UI" && t.done));
+  assert.ok(!scope.removes.tasks.some(t => t.name === "Call the designer" || t.name === "Buy a domain"));
+  assert.ok(scope.removes.dates.some(d => d.name.startsWith("Kivo v1 launch")));
+  assert.deepEqual(scope.removes.subjects, []);
+  assert.ok(scope.keeps.some(k => k.includes("Kivo, with what you added")));
+  assert.ok(scope.keeps.some(k => k.includes("1 step you added")));
+  assert.ok(draft.messages.at(-1)!.text.includes("Nothing is deleted until you confirm"));
+  assert.equal(await prisma.novaWorkspace.count({ where: { profileId } }), 1);
+
+  // A stale confirmation deletes nothing.
+  const stale = await builder.confirmDeletion(me.id, draft.id, { fingerprint: "not-it" });
+  assert.equal(!stale.ok && stale.error, "stale");
+  assert.equal(await prisma.novaWorkspace.count({ where: { profileId } }), 1);
+
+  const deleted = await builder.confirmDeletion(me.id, draft.id, { fingerprint: scope.fingerprint });
   assert.ok(deleted.ok, deleted.ok ? "" : deleted.message);
   assert.equal(deleted.ok && deleted.draft.status, "discovery");
   assert.equal(deleted.ok && deleted.draft.current, null);
-  assert.deepEqual(await records(profileId), { subjects: 0, topics: 0, tasks: 1, notes: 0, exams: 0, workspaces: 0 });
-  // The conversation is still theirs, and nothing is left to take back.
-  assert.equal(deleted.ok && (deleted.draft.brief.undo ?? null), null);
+  assert.equal(deleted.ok && (deleted.draft.brief.deletion ?? null), null);
+  assert.equal(await prisma.novaWorkspace.count({ where: { profileId } }), 0);
+  const left = await prisma.novaTask.findMany({ where: { profileId }, select: { title: true, parentId: true } });
+  assert.deepEqual(left.map(t => t.title).sort(), ["Buy a domain", "Call the designer"]);
+  assert.equal(left.find(t => t.title === "Buy a domain")!.parentId, null);
+  assert.ok(await prisma.novaNote.findUnique({ where: { id: myNote.id } }));
+  assert.equal(await prisma.novaExam.count({ where: { profileId } }), 0);
+  // The subject stays, with what was theirs in it.
+  assert.ok(await prisma.novaSubject.findUnique({ where: { id: subject.id } }));
+});
+
+test("deleting from a new chat names what goes first; a name that could be several asks which; Keep it changes nothing", async () => {
+  const me = await learner();
+  const { profileId } = await withDsa(me);
+  const s = await loadStudyStructure(profileId);
+  assert.ok((await applyStudyEdits(profileId, { version: s.version, edits: [{ op: "add_subject", name: "DSA Lab", topics: ["Sorting lab"] }, { op: "add_subject", name: "OS Lab", topics: ["Shell lab"] }] })).ok);
+  const ask = await begin(me.id, "delete my lab", { read: reader({ next: "decline", deleteAll: true, resource: { name: "lab", intent: "change" } }), write: noWrite });
+  assert.ok(ask.messages.at(-1)!.text.includes("more than one"), ask.messages.at(-1)!.text);
+  assert.equal(ask.brief.deletion ?? null, null);
+  const shown = await say(me.id, ask.id, "DSA Lab", { read: reader({ next: "chat", deleteAll: true, resource: { name: "DSA Lab", intent: "change" } }), write: noWrite });
+  const scope = shown.brief.deletion!;
+  assert.equal(scope.title, "DSA Lab");
+  assert.deepEqual(scope.removes.subjects.map(x => x.name), ["DSA Lab"]);
+  // A subject of theirs named outright: DSA, with its in-progress task kept, unfiled.
+  const dsa = await begin(me.id, "delete DSA", { read: reader({ next: "decline", deleteAll: true, resource: { name: "DSA", intent: "change" } }), write: noWrite });
+  assert.equal(dsa.brief.deletion!.title, "Data Structures and Algorithms");
+  assert.ok(dsa.brief.deletion!.keeps.some(k => k.includes("1 task") && k.includes("unfiled")));
+  const kept = await builder.keepResource(me.id, ask.id);
+  assert.ok(kept.ok && !kept.draft.brief.deletion);
+  assert.equal(await prisma.novaSubject.count({ where: { profileId } }), 3);
 });
 
 test("a subject with a date is removed with that date, listed; a past date is kept, unfiled", async () => {

@@ -70,6 +70,9 @@ export interface BuilderBrief {
   // Names to choose from when the learner referred to something of theirs
   // that more than one of their workspaces or subjects could be.
   choices?:    string[];
+  // A deletion they asked for, worked out and waiting for their
+  // confirmation on the page. Nothing is deleted from a message.
+  deletion?:   DeletionScope | null;
   // How to take back what this conversation last applied (a build or a
   // change set), written by code when it was applied (builder-changes.ts
   // undoOf). Records are named, not given by id: what was added has ids
@@ -83,6 +86,31 @@ export interface UndoRecord {
   steps: Array<Record<string, unknown>>;
   // What can't be taken back, in words (a new order of tasks).
   kept:  string[];
+}
+
+// ── Deleting what Nova made ───────────────────────────────────────────────────
+
+// What deleting a workspace (or subjects of theirs) would remove, worked out
+// by code (workspaces.ts deletionScope) and shown in full before anything
+// goes: only what Nova made for it, never what the learner wrote, edited,
+// studied or keeps elsewhere. The fingerprint is checked again on
+// confirmation, so a deletion is never carried out on something that changed.
+export interface DeletionScope {
+  title:       string;
+  workspaceId: string | null;
+  subjectIds:  string[];
+  removes: {
+    subjects: Array<{ id: string; name: string }>;
+    topics:   Array<{ id: string; name: string }>;
+    tasks:    Array<{ id: string; name: string; done: boolean; step: boolean }>;
+    notes:    Array<{ id: string; name: string }>;
+    dates:    Array<{ id: string; name: string }>;
+  };
+  // Steps the learner added under tasks that go: kept, as tasks of their own.
+  lifts:       string[];
+  // What stays, in words ("3 of your own tasks in DSA, unfiled").
+  keeps:       string[];
+  fingerprint: string;
 }
 
 // ── Changing something they already have ──────────────────────────────────────
@@ -119,11 +147,7 @@ export type ChangeOp =
   | { op: "update_date";  dateId: string; title?: string; day?: string }
   | { op: "add_note";     title: string; body: string; subjectId: string | null; topicName: string | null }
   | { op: "remove_date";  dateId: string }
-  | { op: "remove_note";  noteId: string }
-  // The workspace record itself, last: the learner asked for all of it to go.
-  // Its subjects, topics, open tasks, notes and dates go by their own
-  // operations, each listed; finished tasks are kept.
-  | { op: "remove_workspace"; workspaceId: string };
+  | { op: "remove_note";  noteId: string };
 
 // The kinds of record a change request is about. A change set keeps only
 // operations on the kinds asked for: "add two topics" never brings new

@@ -31,6 +31,9 @@ export const sendMessage = (draftId: string, text: string, files: SharedFile[] =
 export const resumeDraft = (draftId: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/messages`, { resume: true })
 export const retryDraft = (draftId: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/retry`)
 export const cancelDraft = (draftId: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/cancel`)
+// The deletion shown in the conversation: confirmed (exactly that scope), or kept.
+export const confirmDeletion = (draftId: string, fingerprint: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/delete`, { fingerprint })
+export const keepResource = (draftId: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/keep`)
 export const approveDraft = (draftId: string, body: { version: number; addTo?: string; confirmAnother?: boolean }) =>
   post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/approve`, body)
 export const saveDraftPlan = (draftId: string, plan: WorkspacePlan, baseVersion: number) =>

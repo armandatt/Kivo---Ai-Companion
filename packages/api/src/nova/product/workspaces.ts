@@ -27,15 +27,15 @@ import { templateById } from "./templates";
 import { declareWorkspaceSubjectsIn, ensureSetupProfile } from "./setup";
 import { addDatesIn } from "./exams";
 import { createTasksIn } from "./tasks";
-import { createNotesIn, listNoteTitlesIn, removeNotesIn } from "./notes";
+import { createNotesIn, listNoteTitlesIn, removeNotesIn, untouchedNotesIn } from "./notes";
 import { subjectsForMatching, subjectsWithTopics } from "./setup";
-import { TaskChanged, listTasksInSubjects, listTasksWithKeyPrefix, placeTasksIn, removeOpenTasksIn, updateTasksIn } from "./tasks";
+import { TaskChanged, listTasksInSubjects, listTasksWithKeyPrefix, placeTasksIn, liftStepsIn, removeOpenTasksIn, removeTasksIn, tasksMadeUnder, updateTasksIn } from "./tasks";
 import { DateChanged, listExams, removeDatesIn, unfileDatesIn, updateDatesIn } from "./exams";
 import { StaleStructure, checkStudyEdits, loadStudyStructure, playStudyEditsIn } from "./setup-edit";
 import type { StudyEdit } from "./setup-edit.types";
 import { bareOps, checkChanges, type ResourceCandidates } from "./builder-changes";
 import type { CreateWorkspaceResponse, WorkspaceSummary, WorkspacesView } from "./workspaces.types";
-import type { ChangeOp, ChangeSet, ResourceRef, WorkspaceDetail } from "./builder.types";
+import type { ChangeOp, ChangeSet, DeletionScope, ResourceRef, WorkspaceDetail } from "./builder.types";
 
 export const WORKSPACES_MAX = 100;
 const KEY_MIN = 8, KEY_MAX = 64;
@@ -271,8 +271,7 @@ export async function studiedTopicIds(profileId: string): Promise<Set<string>> {
 // the change set, notes and dates are never added twice).
 
 export type ChangeResult =
-  // deleted: the workspace itself is gone (detail null).
-  | { ok: true; detail: WorkspaceDetail | null; title: string; deleted: boolean; counts: { added: number; changed: number; removed: number }; subjectIds: string[] }
+  | { ok: true; detail: WorkspaceDetail; title: string; counts: { added: number; changed: number; removed: number }; subjectIds: string[] }
   | { ok: false; error: "not_found" | "changed" | "too_many" | "invalid"; message: string };
 
 const target = (o: ChangeOp): string | null =>
@@ -280,7 +279,7 @@ const target = (o: ChangeOp): string | null =>
   : o.op === "update_task" || o.op === "remove_task" ? `task:${o.taskId}`
   : o.op === "update_date" ? `date:${o.dateId}` : o.op === "order_tasks" ? `order:${o.taskIds.join(",")}`
   : o.op === "remove_subject" ? `subject:${o.subjectId}` : o.op === "remove_date" ? `date:${o.dateId}`
-  : o.op === "remove_note" ? `note:${o.noteId}` : o.op === "remove_workspace" ? `workspace:${o.workspaceId}` : null;
+  : o.op === "remove_note" ? `note:${o.noteId}` : null;
 
 export async function changeResource(
   platformChatId: string,
@@ -343,16 +342,15 @@ export async function changeResource(
       const notes = await createNotesIn(tx, profileId, pick("add_note").map(o => ({ title: o.title, body: o.body, subjectId: o.subjectId, topicName: o.topicName })));
       if (!notes.ok) throw new RefusedError("invalid", notes.message);
       if (!(await removeNotesIn(tx, profileId, pick("remove_note").map(o => o.noteId)))) throw new NoteChanged();
-      // The workspace record last, once everything in it has gone.
-      if (row && pick("remove_workspace").length) await tx.novaWorkspace.delete({ where: { id: row.id } });
-      else if (row && (ids.length !== row.subjectIds.length || gone.size > 0)) await tx.novaWorkspace.update({ where: { id: row.id }, data: { subjectIds: ids } });
+      // What Nova adds to a workspace is recorded as Nova's (deletionScope).
+      if (row) await recordAdded(tx, row.id, ops, id => current.subjects.find(x => x.id === id)?.name ?? null);
+      if (row && (ids.length !== row.subjectIds.length || gone.size > 0)) await tx.novaWorkspace.update({ where: { id: row.id }, data: { subjectIds: ids } });
       return ids;
     }, { timeout: 30_000, maxWait: 10_000 });
-    const deleted = pick("remove_workspace").length > 0;
-    const detail = deleted ? null : await resourceDetail(platformChatId, profileId, row ? { workspaceId: row.id, subjectIds: [] } : { workspaceId: null, subjectIds }, now);
+    const detail = await resourceDetail(platformChatId, profileId, row ? { workspaceId: row.id, subjectIds: [] } : { workspaceId: null, subjectIds }, now);
     // Items, not operations: two topics added in one go are two added.
     const count = (e: string) => ops.filter(o => o.effect === e).reduce((n, o) => n + (o.op === "add_topics" ? o.names.length : 1), 0);
-    return { ok: true, detail, title: current.title, deleted, subjectIds, counts: { added: count("add"), changed: count("change"), removed: count("remove") } };
+    return { ok: true, detail: detail!, title: current.title, subjectIds, counts: { added: count("add"), changed: count("change"), removed: count("remove") } };
   } catch (err) {
     if (err instanceof RefusedError) return { ok: false, error: err.code, message: err.message };
     if (err instanceof StaleStructure || err instanceof TaskChanged || err instanceof DateChanged || err instanceof NoteChanged || (err as { code?: string } | null)?.code === "P2002" || (err as { code?: string } | null)?.code === "P2025") {
@@ -360,6 +358,165 @@ export async function changeResource(
     }
     throw err;
   }
+}
+
+// ── Deleting what Nova made (Build with Nova, on confirmation) ────────────────
+// Only what Nova made for a workspace goes: the tasks it made (and their
+// steps), the notes it wrote that nobody has edited since, the dates it
+// added, the topics it made that have no study behind them, and its
+// subjects once nothing else is left in them and no other workspace holds
+// them. What the learner wrote, edited, studied or keeps elsewhere stays,
+// and is said. For subjects of theirs that no workspace made, deleting them
+// is their subject removal: topics with study keep the subject; their tasks
+// and notes stay, unfiled.
+//
+// What Nova added later (through changes approved in Build with Nova) is
+// recorded on the workspace's plan as it is applied (recordAdded), so it is
+// known as Nova's too.
+
+const low = (x: string) => x.trim().toLowerCase();
+interface Added { topics: Array<{ subject: string; name: string }>; notes: string[]; dates: string[] }
+const addedOf = (plan: unknown): Added => {
+  const a = (plan as { nova?: { added?: Partial<Added> } } | null)?.nova?.added;
+  return { topics: Array.isArray(a?.topics) ? a!.topics : [], notes: Array.isArray(a?.notes) ? a!.notes : [], dates: Array.isArray(a?.dates) ? a!.dates : [] };
+};
+
+// What Nova made for a workspace, by name: from the plan it was built from
+// and the changes since.
+function madeBy(plan: unknown): { subjects: Set<string>; topics: Set<string>; notes: Set<string>; dates: Set<string> } {
+  const p = plan as Partial<WorkspacePlan> | null;
+  const written = p && Array.isArray(p.subjects) && Array.isArray(p.tasks) ? planWrites(p as WorkspacePlan) : null;
+  const added = addedOf(plan);
+  return {
+    subjects: new Set((written?.subjects ?? []).map(s => low(s.name))),
+    topics: new Set([...(written?.subjects ?? []).flatMap(s => s.topics.map(t => `${low(s.name)}\n${low(t)}`)), ...added.topics.map(t => `${low(t.subject)}\n${low(t.name)}`)]),
+    notes: new Set([...(written?.notes ?? []).map(n => low(n.title)), ...added.notes.map(low)]),
+    dates: new Set([...(written?.dates ?? []).map(d => low(d.title)), ...added.dates.map(low)]),
+  };
+}
+
+export async function deletionScope(platformChatId: string, profileId: string, ref: Pick<ResourceRef, "workspaceId" | "subjectIds">, now = new Date()): Promise<DeletionScope | null> {
+  const row = ref.workspaceId ? await prisma.novaWorkspace.findFirst({ where: { id: ref.workspaceId, profileId }, select: { id: true, title: true, clientKey: true, plan: true, subjectIds: true } }) : null;
+  if (ref.workspaceId && !row) return null;
+  const detail = await resourceDetail(platformChatId, profileId, ref, now);
+  if (!detail) return null;
+  const [studied, others] = await Promise.all([
+    studiedTopicIds(profileId),
+    prisma.novaWorkspace.findMany({ where: { profileId, ...(row ? { id: { not: row.id } } : {}) }, select: { title: true, subjectIds: true } }),
+  ]);
+  const keeps: string[] = [];
+
+  let tasks: DeletionScope["removes"]["tasks"] = [], notes: DeletionScope["removes"]["notes"] = [], dates: DeletionScope["removes"]["dates"] = [], topics: DeletionScope["removes"]["topics"] = [];
+  let made: ReturnType<typeof madeBy> | null = null;
+  let lifts: string[] = [];
+  if (row) {
+    made = madeBy(row.plan);
+    const under = await tasksMadeUnder(profileId, `ws:${row.clientKey}:`);
+    // A step the learner added under one of Nova's tasks is theirs: lifted out, kept.
+    const yours = under.filter(t => !t.made);
+    const madeIds = new Set(under.filter(t => t.made).map(t => t.id));
+    lifts = yours.filter(t => t.parentId !== null && madeIds.has(t.parentId)).map(t => t.id);
+    tasks = under.filter(t => t.made).map(t => ({ id: t.id, name: t.title, done: t.status === "done", step: t.parentId !== null }));
+    if (yours.length) keeps.push(`${yours.length} step${yours.length === 1 ? "" : "s"} you added under its tasks, as tasks of your own`);
+    notes = (await untouchedNotesIn(profileId, detail.subjects.map(s => s.id), [...made.notes])).map(n => ({ id: n.id, name: n.title }));
+    dates = detail.dates.filter(d => made!.dates.has(low(d.title))).map(d => ({ id: d.id, name: `${d.title} (${d.day})` }));
+    topics = detail.subjects.flatMap(s => s.topics.filter(t => made!.topics.has(`${low(s.name)}\n${low(t.name)}`) && !studied.has(t.id)).map(t => ({ id: t.id, name: t.name })));
+  } else {
+    // Subjects of theirs, asked away: the subjects with their unstudied topics and their dates.
+    dates = detail.dates.map(d => ({ id: d.id, name: `${d.title} (${d.day})` }));
+    topics = detail.subjects.flatMap(s => s.topics.filter(t => !studied.has(t.id)).map(t => ({ id: t.id, name: t.name })));
+  }
+  const goingTopics = new Set(topics.map(t => t.id));
+  const goingTasks = new Set(tasks.map(t => t.id));
+  const goingNotes = new Set(notes.map(n => n.id));
+  const goingDates = new Set(dates.map(d => d.id));
+  const subjects: DeletionScope["removes"]["subjects"] = [];
+  for (const s of detail.subjects) {
+    const elsewhere = others.find(w => w.subjectIds.includes(s.id));
+    const studiedHere = s.topics.filter(t => studied.has(t.id));
+    const topicsLeft = s.topics.filter(t => !goingTopics.has(t.id));
+    const tasksLeft = detail.tasks.filter(t => t.subjectId === s.id && !goingTasks.has(t.id));
+    const notesLeft = detail.notes.filter(n => n.subjectId === s.id && !goingNotes.has(n.id));
+    const datesLeft = detail.dates.filter(d => d.subjectId === s.id && !goingDates.has(d.id));
+    if (studiedHere.length) keeps.push(`${s.name}, because you've studied ${studiedHere.slice(0, 2).map(t => t.name).join(", ")}`);
+    else if (elsewhere) keeps.push(`${s.name}, which ${elsewhere.title} also uses`);
+    else if (row && !made!.subjects.has(low(s.name))) keeps.push(`${s.name}: it was yours before this workspace`);
+    else if (row && (topicsLeft.length || tasksLeft.length || notesLeft.length || datesLeft.length)) {
+      keeps.push(`${s.name}, with what you added to it yourself (${[topicsLeft.length && `${topicsLeft.length} topic${topicsLeft.length === 1 ? "" : "s"}`, tasksLeft.length && `${tasksLeft.length} task${tasksLeft.length === 1 ? "" : "s"}`, notesLeft.length && `${notesLeft.length} note${notesLeft.length === 1 ? "" : "s"}`].filter(Boolean).join(", ") || "its dates"})`);
+    } else {
+      subjects.push({ id: s.id, name: s.name });
+      if (!row && (tasksLeft.length || notesLeft.length)) keeps.push(`Your ${[tasksLeft.length && `${tasksLeft.length} task${tasksLeft.length === 1 ? "" : "s"}`, notesLeft.length && `${notesLeft.length} note${notesLeft.length === 1 ? "" : "s"}`].filter(Boolean).join(" and ")} in ${s.name}, unfiled`);
+    }
+  }
+  if (row) {
+    const yourNotes = detail.notes.filter(n => !goingNotes.has(n.id)).length;
+    if (yourNotes) keeps.push(`${yourNotes} note${yourNotes === 1 ? "" : "s"} you wrote or edited`);
+  }
+  const removes = { subjects, topics, tasks, notes, dates };
+  const fingerprint = [row?.id ?? "-", ...Object.values(removes).flatMap(list => list.map(x => x.id)).sort(), "|", ...lifts].join(",");
+  return { title: detail.title, workspaceId: row?.id ?? null, subjectIds: detail.subjects.map(s => s.id), removes, lifts, keeps: keeps.slice(0, 8), fingerprint: fingerprintOf(fingerprint) };
+}
+
+const fingerprintOf = (text: string): string => {
+  // A short, stable hash (FNV-1a), only to tell "the same scope" from "a changed one".
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(36);
+};
+
+export type DeleteResult =
+  | { ok: true; scope: DeletionScope }
+  | { ok: false; error: "not_found" | "changed"; message: string };
+
+export async function deleteResource(platformChatId: string, input: { ref: Pick<ResourceRef, "workspaceId" | "subjectIds">; fingerprint: string }, now = new Date()): Promise<DeleteResult> {
+  const ensured = await ensureSetupProfile(platformChatId);
+  if (!ensured) return { ok: false, error: "not_found", message: "Finish setting up with Nova first." };
+  const { profileId } = ensured;
+  const scope = await deletionScope(platformChatId, profileId, input.ref, now);
+  if (!scope) return { ok: false, error: "not_found", message: "That isn't in your Kivo any more, so there's nothing to delete." };
+  if (scope.fingerprint !== input.fingerprint) return { ok: false, error: "changed", message: "What this would delete changed since it was shown. Nothing was deleted; here is what it would delete now." };
+  const structure = await loadStudyStructure(profileId);
+  const going = new Set(scope.removes.subjects.map(s => s.id));
+  const edits: StudyEdit[] = [
+    ...scope.removes.topics.map(t => ({ op: "remove_topic" as const, topicId: t.id })),
+    ...[...going].map(subjectId => ({ op: "remove_subject" as const, subjectId })),
+  ];
+  const checkable = { ...structure, subjects: structure.subjects.map(x => (going.has(x.id) ? { ...x, dates: 0 } : x)) };
+  if (checkStudyEdits(checkable, edits).issues.length > 0) return { ok: false, error: "changed", message: "Your subjects changed since this was shown. Nothing was deleted; look at it again." };
+  try {
+    await prisma.$transaction(async tx => {
+      // The learner's own steps first come out from under what goes.
+      await liftStepsIn(tx, profileId, scope.lifts);
+      await removeTasksIn(tx, profileId, scope.removes.tasks.map(t => t.id));
+      if (!(await removeNotesIn(tx, profileId, scope.removes.notes.map(n => n.id)))) throw new NoteChanged();
+      await removeDatesIn(tx, profileId, scope.removes.dates.map(d => d.id));
+      await unfileDatesIn(tx, profileId, [...going]);
+      await playStudyEditsIn(tx, profileId, edits, structure.version);
+      if (scope.workspaceId) await tx.novaWorkspace.deleteMany({ where: { id: scope.workspaceId, profileId } });
+    }, { timeout: 30_000, maxWait: 10_000 });
+  } catch (err) {
+    if (err instanceof StaleStructure || err instanceof TaskChanged || err instanceof DateChanged || err instanceof NoteChanged || (err as { code?: string } | null)?.code === "P2025") {
+      return { ok: false, error: "changed", message: "Something here changed while it was being deleted. Nothing was deleted; look at it again." };
+    }
+    throw err;
+  }
+  return { ok: true, scope };
+}
+
+// What Nova added to a workspace through an approved change, recorded on
+// its plan so that it is known as Nova's (deletionScope).
+async function recordAdded(tx: Pick<typeof prisma, "novaWorkspace">, workspaceId: string, ops: ChangeOp[], subjectName: (id: string | null) => string | null): Promise<void> {
+  const row = await tx.novaWorkspace.findUnique({ where: { id: workspaceId }, select: { plan: true } });
+  if (!row) return;
+  const added = addedOf(row.plan);
+  for (const o of ops) {
+    if (o.op === "add_topics") for (const name of o.names) added.topics.push({ subject: subjectName(o.subjectId) ?? "", name });
+    if (o.op === "add_subject") for (const name of o.topics) added.topics.push({ subject: o.name, name });
+    if (o.op === "add_note") added.notes.push(o.title);
+    if (o.op === "add_date") added.dates.push(o.title);
+  }
+  const plan = { ...(row.plan as object), nova: { added } };
+  await tx.novaWorkspace.update({ where: { id: workspaceId }, data: { plan: plan as object } });
 }
 
 // Removing a workspace removes its record only. Its subjects, topics, notes

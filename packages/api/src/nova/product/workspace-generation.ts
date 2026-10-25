@@ -405,8 +405,7 @@ const CHANGES_SYSTEM = [
 {"op":"order_tasks","taskIds":[ID]}  (these open tasks first, in this order)
 {"op":"add_date","title":string,"day":"YYYY-MM-DD","subjectId":ID|null,"kind":"exam"|"assignment"|"project"|"interview"|"certification"|"other"}  {"op":"update_date","dateId":ID,"title"?:string,"day"?:"YYYY-MM-DD"}
 {"op":"add_note","title":string,"body":string,"subjectId":ID|null,"topicName":string|null}
-{"op":"remove_date","dateId":ID}  {"op":"remove_note","noteId":ID}
-{"op":"remove_workspace"}  (the whole workspace: Kivo lists everything it takes with it)`,
+{"op":"remove_date","dateId":ID}  {"op":"remove_note","noteId":ID}`,
   "Rules:",
   "- Propose nothing the learner did not ask for: no extra tasks, notes, dates or subjects alongside the change (Kivo drops changes of kinds the request is not about). Never touch anything outside CURRENT RECORDS.",
   "- Tasks nest: CURRENT RECORDS shows each step indented under its task. To break a task down, add_task with parentId (or parentKey for a task added in this set); to regroup, update_task with parentId. Titles start with a verb and name a concrete outcome.",
@@ -414,7 +413,6 @@ const CHANGES_SYSTEM = [
   "- Use only ids shown in CURRENT RECORDS, exactly. Change only what CHANGE ASKED asks for; everything else stays as it is. Never remove or rename something unless asked. Additions must not repeat what is already there.",
   "- Topics have no order in Kivo and cannot be reordered (a milestone is a topic). To put a milestone or a piece of work first, order its tasks with order_tasks, and say so in summary.",
   "- When the learner wants a subject gone (\"delete Prompt Engineering\", \"it belongs to another semester\"), use remove_subject: it takes the subject with its topics and dates. Use remove_topic only for single topics.",
-  "- When they want the whole workspace or project gone (\"delete this\", \"delete it from everywhere\"), use remove_workspace alone.",
   "- A new deadline: update_date for the date, then update_task for each open task whose due day no longer fits before it; nothing else.",
   "- New topics for a subject or exam are specific, in learning order after what is there, never what a topic there already covers (its \"covers\" list), never a placeholder (\"Introduction\", \"Advanced concepts\", \"Practice questions\"); practice and revision are tasks. Note bodies use \"# \" headings and \"- \" lists.",
   "- When CHANGES PROPOSED SO FAR is given, return the whole new set: the earlier changes that still apply, with CHANGE ASKED applied to them.",

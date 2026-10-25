@@ -42,15 +42,15 @@ import { checkWorkspacePlan, planCounts, type WorkspacePlan } from "./workspace-
 import { checkFiles, writeBuilderChanges, writeBuilderPlan } from "./workspace-generation";
 import type { LlmAttachment } from "../../services/llmProviders";
 import { readBuilderTurn } from "./builder-conversation";
-import { changeResource, createWorkspace, recentWorkspaceTitles, resourceCandidates, resourceDetail, similarWorkspaces, studiedTopicIds, workspaceDetail, workspaceSummaries } from "./workspaces";
-import { withoutPriorities, bareOps, changeCounts, checkChanges, decideResource, matchResources, readChangeSet, resolveUndo, undoOf, undoOfBuild, withinAsk } from "./builder-changes";
+import { changeResource, deleteResource, deletionScope, createWorkspace, recentWorkspaceTitles, resourceCandidates, resourceDetail, similarWorkspaces, studiedTopicIds, workspaceDetail, workspaceSummaries } from "./workspaces";
+import { withoutPriorities, bareOps, changeCounts, checkChanges, decideResource, matchResources, readChangeSet, resolveUndo, undoOf, withinAsk } from "./builder-changes";
 import { notesWithBodies } from "./notes";
 import { treeOrder } from "./task-tree";
 import {
   DECLINE_REPLY, MESSAGE_MAX, TALKING, canMove, decideStep, type Step, describeChanges, emptyBrief, isPendingLive, learnerWords, message,
   needsReply, nextBrief, planChanges, changedNothing, readBrief, readMessages, readPending, replyWithQuestion, spoken, withMessages, holdsLine,
 } from "./builder-state";
-import type { BriefFact, BuilderBrief, BuilderMessage, BuilderResponse, ChangeSet, DraftFailure, DraftFile, DraftListView, DraftStatus, DraftView, PendingJob, ResourceRef } from "./builder.types";
+import type { BriefFact, BuilderBrief, BuilderMessage, BuilderResponse, ChangeSet, DeletionScope, DraftFailure, DraftFile, DraftListView, DraftStatus, DraftView, PendingJob, ResourceRef } from "./builder.types";
 import type { WorkspaceCounts } from "./workspaces.types";
 
 export const OPEN_DRAFTS_MAX = 50;
@@ -542,12 +542,35 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
     return;
   }
 
-  // "Delete all of it": built by code (a workspace's removal, or each of its
-  // subjects'), whatever the model's next step was.
-  const deleting = Boolean(reading.deleteAll && ref);
+  // Asked to delete something whole: never declined, whatever the model's
+  // next step was (seen 25 Oct: "delete it from everywhere" read as off-topic).
+  const deleting = reading.deleteAll === true;
   // Not what this page does: said by code, and nothing is opened, proposed or counted.
   if (reading.next === "decline" && !deleting) {
     await settle(row.id, job.jobId, { failure: null, add: [message("nova", DECLINE_REPLY, new Date(), { kind: "chat" })] });
+    return;
+  }
+
+  // Deleting: which one is settled first (asked when unclear), then what it
+  // would remove is worked out by code and shown in full. Nothing goes until
+  // they confirm on the page (confirmDeletion).
+  if (deleting) {
+    let target: Pick<ResourceRef, "workspaceId" | "subjectIds"> | null = ref ?? (row.workspaceId ? { workspaceId: row.workspaceId, subjectIds: [] } : null);
+    if (!ref && reading.resource) {
+      const r = decideResource({ name: reading.resource.name, intent: "change" }, candidates);
+      if (r.type === "choose" || r.type === "missing") {
+        const brief = { ...nextBrief(before, reading, { type: "ask", question: r.question }), known, choices: r.type === "choose" ? r.names : [], deletion: null };
+        await settle(row.id, job.jobId, { brief, failure: null, add: [message("nova", r.question, new Date(), { kind: "question" })] });
+        return;
+      }
+      if (r.type === "found") target = { workspaceId: r.ref.workspaceId, subjectIds: r.ref.subjectIds };
+    }
+    const scope = target ? await deletionScope(platformChatId, profile.id, target, now) : null;
+    const text = !target ? "Which workspace or subject should I delete? Name it, and I'll show you exactly what would go before anything happens."
+      : !scope ? "That isn't in your Kivo any more, so there's nothing to delete."
+      : deletionText(scope);
+    const brief = { ...nextBrief(before, reading, { type: "chat" }), known, choices: [] as string[], deletion: scope };
+    await settle(row.id, job.jobId, { brief, failure: null, add: [message("nova", text, new Date(), { kind: "question" })] });
     return;
   }
 
@@ -586,7 +609,7 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
   }
 
   // Found and asked to change: propose the change against what is there.
-  const step: Step = found || undoing || deleting ? { type: "draft", reason: "ready" } : decideStep({ plan: ref ? null : plan, brief: before, improving: Boolean(ref), changes: Boolean(changes) }, reading);
+  const step: Step = found || undoing ? { type: "draft", reason: "ready" } : decideStep({ plan: ref ? null : plan, brief: before, improving: Boolean(ref), changes: Boolean(changes) }, reading);
   const brief = { ...nextBrief(before, reading, step), known, choices: [] as string[], touches: reading.touches, ...(found ? { title: found.title } : {}) };
   const title = found?.title ?? row.title ?? reading.title ?? brief.title;
   const notes = note ? [message("nova", note, new Date(), { kind: "notice" })] : [];
@@ -599,9 +622,7 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
   }
 
   // Draft or revise: say what Nova will do, mark the job's stage, then write.
-  const intro = deleting
-    ? "I'll list everything that deleting it would remove, on the right; nothing is deleted until you approve it."
-    : undoing
+  const intro = undoing
     ? `I'll propose taking back ${before.undo!.label}, on the right; nothing changes until you approve it.`
     : found
     ? `I found ${found.title} in your Kivo. I'll propose the changes on the right, against what's there now; nothing changes until you approve them.`
@@ -622,16 +643,15 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
   if (moved.count !== 1) return;
   const fresh = await rowOf(profile.id, row.id);
   if (!fresh || fresh.jobId !== job.jobId) return;
-  if (ref) await runChanges(platformChatId, profile, fresh, job, step.type === "revise" ? step.change : (reading.change ?? lastLearnerText(fresh)), deps, now, deleting ? "delete" : undoing ? "undo" : null);
+  if (ref) await runChanges(platformChatId, profile, fresh, job, step.type === "revise" ? step.change : (reading.change ?? lastLearnerText(fresh)), deps, now, undoing ? "undo" : null);
   else await runDraft(platformChatId, profile, fresh, job, step.type === "revise" ? step.change : null, deps, now);
 }
 
 // A change set to what the conversation works on: operations on its records
 // by id, checked against them as they are now (builder-changes.ts). Written
 // only to the draft; the records change on approval.
-// by: "undo" takes back what was last applied, "delete" removes all of it;
-// both built by code, not by the model.
-async function runChanges(platformChatId: string, profile: { id: string; timezone: string | null; goals: string[] }, row: Row, job: BuilderJob, change: string, deps: BuilderDeps, now: Date, by: "undo" | "delete" | null = null) {
+// by: "undo" takes back what was last applied, built by code, not by the model.
+async function runChanges(platformChatId: string, profile: { id: string; timezone: string | null; goals: string[] }, row: Row, job: BuilderJob, change: string, deps: BuilderDeps, now: Date, by: "undo" | null = null) {
   const ref = refOf(row);
   const before = readChangeSet(row.changes);
   const brief = readBrief(row.brief);
@@ -647,9 +667,7 @@ async function runChanges(platformChatId: string, profile: { id: string; timezon
   }
   // Taking back what was applied: the steps code wrote then, not the model's.
   const undo = by === "undo" ? brief.undo ?? null : null;
-  const resolved = undo ? resolveUndo(undo, current)
-    : by === "delete" ? { ops: current.workspace ? [{ op: "remove_workspace", workspaceId: current.workspace.id }] : current.subjects.map(x => ({ op: "remove_subject", subjectId: x.id })), missing: [] }
-    : null;
+  const resolved = undo ? resolveUndo(undo, current) : null;
   const unresolved = undo && resolved ? [...resolved.missing.map(m => `${m} (not there any more)`), ...undo.kept.map(k => `${k} (can't be taken back)`)] : [];
   const written = resolved ? { ok: true as const, ops: resolved.ops, summary: null } : await (deps.writeChanges ?? writeBuilderChanges)({
     today, kind: brief.kind, facts: brief.facts,
@@ -668,7 +686,7 @@ async function runChanges(platformChatId: string, profile: { id: string; timezon
   }
   // A priority is the learner's: Nova changes one only when they asked about priorities.
   const asked = brief.touches ?? [];
-  const ops = asked.includes("priorities") ? written.ops : withoutPriorities(written.ops);
+  const ops = by === "undo" || asked.includes("priorities") ? written.ops : withoutPriorities(written.ops);
   // Only the kinds of record the request is about: "add two topics" brings no tasks, notes or dates.
   const checked = checkChanges(ops, current, { today, studied });
   const set = by ? { ops: checked.ops, dropped: [...unresolved, ...checked.dropped].slice(0, 12) } : withinAsk(checked, brief.touches ?? [], current);
@@ -874,17 +892,6 @@ export async function approveDraft(platformChatId: string, id: unknown, input: A
     }
     const c = changed.counts;
     const brief = readBrief(row.brief);
-    if (changed.deleted) {
-      // Gone, as asked: the conversation goes on with nothing to work on.
-      const kept = set.ops.find(o => o.op === "remove_workspace")?.says.includes("finished task") ? " Finished tasks stay in your Planner." : "";
-      const said = `Done: ${changed.title} is deleted, with its subjects, topics, open tasks, notes and dates.${kept} This conversation can build something new.`;
-      const fresh = await back(
-        { status: "discovery", workspaceId: null, targetWorkspaceId: null, targetSubjectIds: [], plan: NONE, changes: NONE, builtVersion: null, failure: NONE, version: row.version + 1, brief: json({ ...brief, undo: null }) },
-        [message("nova", said, new Date(), { kind: "built", version: row.version })],
-      );
-      await dropFiles(row.id);
-      return { ok: true, draft: await viewOf(fresh, now) };
-    }
     const said = `Done: ${changed.title} is updated (${[c.added && `${c.added} added`, c.changed && `${c.changed} changed`, c.removed && `${c.removed} removed`].filter(Boolean).join(", ") || "nothing new; it was all there already"}). Everything else is as it was. See it on the Knowledge Map, Planner and Notes.`;
     const undo = prior ? undoOf(set, prior, priorNotes, `the changes of version ${row.version}`) : null;
     const fresh = await back(
@@ -923,9 +930,8 @@ export async function approveDraft(platformChatId: string, id: unknown, input: A
   const said = counts
     ? `${result.status === "updated" ? `Added to ${result.workspace.title}` : `${result.workspace.title} is built`}: ${holdsLine(readBrief(row.brief).kind, { subjects: counts.subjectsAdded, topics: counts.topicsAdded, phases: result.status === "created" ? plan!.phases.length : 0, tasks: counts.tasksAdded, notes: counts.notesAdded, dates: counts.datesAdded }) || "nothing new (you had all of it)"}. It's in your Planner, Knowledge and Notes now.`
     : `${result.workspace.title} was already built from this version.`;
-  // Taking it back is deleting it, all of it, proposed and approved like any change.
-  // Added to a workspace they had: not taken back here (what it added is mixed with what was there).
-  const undo = result.status === "created" ? undoOfBuild(result.workspace.title) : result.status === "exists" ? readBrief(row.brief).undo ?? null : null;
+  // Taking a build back is deleting it: asked for in words, confirmed on the page.
+  const undo = result.status === "exists" ? readBrief(row.brief).undo ?? null : null;
   const fresh = await back(
     { status: "ready", workspaceId: result.workspace.id, builtVersion: row.version, failure: NONE, brief: json({ ...readBrief(row.brief), undo }) },
     [message("nova", said, new Date(), { kind: "built", version: row.version })],
@@ -961,6 +967,76 @@ export async function cancelDraft(platformChatId: string, id: unknown, now = new
   const fresh = await rowOf(profile.id, row.id);
   if (done.count !== 1) return { ok: false, error: "closed", message: statusOf(row.status) === "building" ? "It's being built now, so it can't be cancelled." : "This one can't be cancelled.", ...(fresh ? { draft: await viewOf(fresh, now) } : {}) };
   return { ok: true, draft: await viewOf(fresh!, now) };
+}
+
+// ── Deleting what Nova made ───────────────────────────────────────────────────
+
+// The deletion, in words: everything that would go, and what stays.
+export function deletionText(scope: DeletionScope): string {
+  const r = scope.removes;
+  const n = (count: number, one: string, many = `${one}s`) => (count ? `${count} ${count === 1 ? one : many}` : null);
+  const done = r.tasks.filter(t => t.done).length;
+  const parts = [
+    n(r.subjects.length, "subject"), n(r.topics.length, "topic"),
+    r.tasks.length ? `${n(r.tasks.length, "task")}${r.tasks.some(t => t.step) ? " and steps" : ""}${done ? ` (${done} finished)` : ""}` : null,
+    n(r.notes.length, "note"), n(r.dates.length, "date"),
+  ].filter(Boolean);
+  const named = (label: string, list: Array<{ name: string }>) => (list.length ? `- ${label}: ${list.slice(0, 6).map(x => x.name).join(", ")}${list.length > 6 ? ` and ${list.length - 6} more` : ""}` : null);
+  if (parts.length === 0 && !scope.workspaceId) return `There's nothing of ${scope.title} that deleting would remove: everything there is yours to keep${scope.keeps.length ? `:\n${scope.keeps.map(k => `- ${k}`).join("\n")}` : "."}`;
+  return [
+    `Deleting ${scope.title} removes${scope.workspaceId ? " the workspace and" : ""} what Nova made for it${parts.length ? `: ${parts.join(", ")}` : ""}.`,
+    [named("Subjects", r.subjects), named("Topics", r.topics), named("Tasks", r.tasks.filter(t => !t.step)), named("Notes", r.notes), named("Dates", r.dates)].filter(Boolean).join("\n"),
+    ...(scope.keeps.length ? [`It keeps:\n${scope.keeps.map(k => `- ${k}`).join("\n")}`] : []),
+    "Nothing is deleted until you confirm with Delete on the right.",
+  ].filter(Boolean).join("\n\n");
+}
+
+// Confirmed on the page: deleted, exactly what was shown (the fingerprint),
+// or nothing and the new scope shown instead. The conversation goes on with
+// nothing to work on.
+export async function confirmDeletion(platformChatId: string, id: unknown, body: { fingerprint?: unknown }, now = new Date()): Promise<BuilderResponse> {
+  const profile = await profileOf(platformChatId);
+  const row = profile ? await rowOf(profile.id, id) : null;
+  if (!profile || !row) return { ok: false, error: "not_found", message: "That conversation isn't one of yours." };
+  const brief = readBrief(row.brief);
+  const scope = brief.deletion ?? null;
+  if (!scope) return { ok: false, error: "not_ready", message: "There's nothing waiting to be deleted here.", draft: await viewOf(row, now) };
+  if (isPendingLive(readPending(row.pending), now) || statusOf(row.status) === "building") return { ok: false, error: "busy", message: "Nova is still working here. Delete once it's done.", draft: await viewOf(row, now) };
+  if (body.fingerprint !== scope.fingerprint) return { ok: false, error: "stale", message: "What this would delete changed. Look at it again.", draft: await viewOf(row, now) };
+  const ref = { workspaceId: scope.workspaceId, subjectIds: scope.subjectIds };
+  const result = await deleteResource(platformChatId, { ref, fingerprint: scope.fingerprint }, now);
+  const say = async (data: Record<string, unknown>, text: string) => {
+    await prisma.novaWorkspaceDraft.updateMany({ where: { id: row.id, profileId: profile.id }, data: { ...data, messages: json(withMessages(readMessages(row.messages), message("nova", text, now, { kind: "notice" }))) } });
+    return (await rowOf(profile.id, row.id))!;
+  };
+  if (!result.ok) {
+    // Shown again as it is now, never carried out on something that changed.
+    const fresh = result.error === "changed" ? await deletionScope(platformChatId, profile.id, ref, now) : null;
+    const updated = await say({ brief: json({ ...brief, deletion: fresh }) }, fresh ? `${result.message}\n\n${deletionText(fresh)}` : result.message);
+    return { ok: false, error: result.error === "changed" ? "stale" : "not_found", message: result.message, draft: await viewOf(updated, now) };
+  }
+  const r = result.scope.removes;
+  const gone = [r.subjects.length && `${r.subjects.length} subject${r.subjects.length === 1 ? "" : "s"}`, r.topics.length && `${r.topics.length} topic${r.topics.length === 1 ? "" : "s"}`, r.tasks.length && `${r.tasks.length} task${r.tasks.length === 1 ? "" : "s"}`, r.notes.length && `${r.notes.length} note${r.notes.length === 1 ? "" : "s"}`, r.dates.length && `${r.dates.length} date${r.dates.length === 1 ? "" : "s"}`].filter(Boolean).join(", ");
+  const text = `Deleted ${result.scope.title}${gone ? `: ${gone}` : ""}. It's gone from your Planner, Knowledge, the Knowledge Map and Notes.${result.scope.keeps.length ? ` Kept: ${result.scope.keeps.join("; ")}.` : ""}`;
+  // What this conversation worked on is gone: it starts again from nothing.
+  const own = row.workspaceId === scope.workspaceId || row.targetWorkspaceId === scope.workspaceId || (!scope.workspaceId && scope.subjectIds.some(x => row.targetSubjectIds.includes(x)));
+  const reset = own ? { status: "discovery", workspaceId: null, targetWorkspaceId: null, targetSubjectIds: [], plan: NONE, changes: NONE, builtVersion: null, version: row.version + 1 } : {};
+  const updated = await say({ ...reset, failure: NONE, brief: json({ ...brief, deletion: null, undo: null }) }, text);
+  return { ok: true, draft: await viewOf(updated, now) };
+}
+
+// "Keep it": the deletion set aside, nothing changed.
+export async function keepResource(platformChatId: string, id: unknown, now = new Date()): Promise<BuilderResponse> {
+  const profile = await profileOf(platformChatId);
+  const row = profile ? await rowOf(profile.id, id) : null;
+  if (!profile || !row) return { ok: false, error: "not_found", message: "That conversation isn't one of yours." };
+  const brief = readBrief(row.brief);
+  if (!brief.deletion) return { ok: true, draft: await viewOf(row, now) };
+  await prisma.novaWorkspaceDraft.updateMany({ where: { id: row.id, profileId: profile.id }, data: {
+    brief: json({ ...brief, deletion: null }),
+    messages: json(withMessages(readMessages(row.messages), message("nova", `Kept ${brief.deletion.title}. Nothing was deleted.`, now, { kind: "notice" }))),
+  } });
+  return { ok: true, draft: await viewOf((await rowOf(profile.id, row.id))!, now) };
 }
 
 // Deleting a conversation removes the conversation and its shared files, and
