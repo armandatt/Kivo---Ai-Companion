@@ -22,6 +22,10 @@ type Props = {
   // Something the opening page offers beside the task (the calendar's
   // "set aside time"), shown above the buttons.
   extra?:   ReactNode
+  // The tasks this one may be a step of (never itself or its own steps),
+  // and the one a new step starts under. Absent: no "A step of" field.
+  parents?: Array<{ id: string; title: string }>
+  initialParentId?: string | null
   onSave:   (input: TaskInput) => Promise<boolean>
   onDelete?: () => Promise<boolean>
   onClose:  () => void
@@ -33,7 +37,8 @@ const LABEL = 'mb-1.5 block text-xs font-medium text-foreground/55'
 
 // Create or edit one task. Nothing is saved until Save, and the dialog stays
 // open with the reason when the server refuses.
-export function TaskEditor({ task, subjects, initialStatus = 'todo', initialDueDay, extra, onSave, onDelete, onClose, error }: Props) {
+export function TaskEditor({ task, subjects, initialStatus = 'todo', initialDueDay, extra, parents, initialParentId, onSave, onDelete, onClose, error }: Props) {
+  const [parentId, setParentId]   = useState(task?.parentId ?? initialParentId ?? '')
   const [title, setTitle]         = useState(task?.title ?? '')
   const [status, setStatus]       = useState(task?.status ?? initialStatus)
   const [priority, setPriority]   = useState(task?.priority ?? '')
@@ -81,6 +86,7 @@ export function TaskEditor({ task, subjects, initialStatus = 'todo', initialDueD
       topicName: topicName.trim() || null,
       dueDay:    dueDay || null,
       estimatedMinutes: minutes.trim() ? Number(minutes) : null,
+      ...(parents && (parentId || null) !== (task?.parentId ?? null) ? { parentId: parentId || null } : {}),
     })
     setSaving(false)
     if (ok) onClose()
@@ -146,6 +152,16 @@ export function TaskEditor({ task, subjects, initialStatus = 'todo', initialDueD
             </div>
           </div>
         </div>
+
+        {parents && parents.length > 0 && (
+          <div className="mt-4">
+            <label htmlFor="task-parent" className={LABEL}>A step of <span className="text-foreground/35">(optional)</span></label>
+            <select id="task-parent" value={parentId} onChange={e => setParentId(e.target.value)} className={FIELD}>
+              <option value="">Nothing: a task of its own</option>
+              {parents.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+            </select>
+          </div>
+        )}
 
         {extra && <div className="mt-5">{extra}</div>}
         {error && <p role="alert" className="mt-4 text-sm text-red-300">{error}</p>}

@@ -22,11 +22,12 @@ import { prisma } from "@repo/db/client";
 import { learnerKey } from "./learner-key";
 import { listResourceLinks } from "./learning-events";
 import { listNoteLinks } from "./notes";
+import { listTaskOutline } from "./tasks";
 import { masteryLevel } from "../engines/knowledge-engine";
 import { normalizeTopicName } from "../engines/topic-mastery-engine";
 import {
   MAP_NOTES_MAX, MAP_RESOURCES_MAX,
-  type MapEdge, type MapNode, type MapNodeType, type MapSuggestion, type NovaKnowledgeMapReady, type NovaKnowledgeMapView,
+  type MapEdge, type MapNode, type MapNodeType, type MapSuggestion, type MapTask, type NovaKnowledgeMapReady, type NovaKnowledgeMapView,
 } from "./knowledge-map.types";
 
 export interface MapInputs {
@@ -40,6 +41,9 @@ export interface MapInputs {
     suggestions?: Array<{ subjectId: string; topicName: string | null; confidence: "high" | "possible"; basis: MapSuggestion["basis"] }>;
   }>;
   totals:    { notes: number; resources: number };
+  // The learner's tasks (tasks.ts), each with the task it is a step of. A
+  // tree goes to the topic its top task is filed under, else its subject.
+  tasks?:    Array<MapTask & { subjectId: string | null; topicName: string | null }>;
 }
 
 const topicKey = (subjectId: string, name: string) => `${subjectId}\n${normalizeTopicName(name).toLowerCase()}`;
@@ -101,6 +105,23 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
     };
   });
 
+  // Each task tree, by where its top task is filed.
+  const treeAt = new Map<string, MapTask[]>();
+  const allTasks = input.tasks ?? [];
+  const rootOf = (t: (typeof allTasks)[number]) => {
+    let at = t;
+    for (let i = 0; at.parentId && i < 12; i++) at = allTasks.find(x => x.id === at.parentId) ?? at;
+    return at;
+  };
+  for (const t of allTasks) {
+    const root = rootOf(t);
+    const subject = root.subjectId && subjectName.has(root.subjectId) ? root.subjectId : null;
+    if (!subject) continue;
+    const topicId = root.topicName ? topicAt.get(topicKey(subject, root.topicName)) : undefined;
+    const at = topicId ? `topic:${topicId}` : `subject:${subject}`;
+    treeAt.set(at, [...(treeAt.get(at) ?? []), { id: t.id, title: t.title, status: t.status, parentId: t.parentId }]);
+  }
+
   const topicNodes: MapNode[] = topics.map(t => {
     const id = `topic:${t.id}`;
     link(`subject:${t.subjectId}`, id, "has_topic");
@@ -113,6 +134,7 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
       level: known === "unverified" ? null : known,
       masteryPercent: studied ? Math.round(t.masteryProbability * 100) : null,
       notes: tally.get(id)?.notes ?? 0, resources: tally.get(id)?.resources ?? 0,
+      ...(treeAt.has(id) ? { tasks: treeAt.get(id)! } : {}),
     };
   });
   const subjectNodes: MapNode[] = input.subjects.map(s => {
@@ -121,6 +143,7 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
       id, type: "subject", label: s.name, href: `/knowledge?subject=${encodeURIComponent(s.id)}`, subjectId: s.id,
       topics: topics.filter(t => t.subjectId === s.id).length,
       notes: tally.get(id)?.notes ?? 0, resources: tally.get(id)?.resources ?? 0,
+      ...(treeAt.has(id) ? { tasks: treeAt.get(id)! } : {}),
     };
   });
 
@@ -168,7 +191,7 @@ export async function loadNovaKnowledgeMap(platformChatId: string): Promise<Nova
 
   // Notes and saved pages are read through their owners: this file touches
   // neither table.
-  const [subjects, topics, noted, saved] = await Promise.all([
+  const [subjects, topics, noted, saved, tasks] = await Promise.all([
     prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.novaTopicMastery.findMany({
       where: { subject: { profileId }, archivedAt: null }, orderBy: { name: "asc" },
@@ -176,9 +199,10 @@ export async function loadNovaKnowledgeMap(platformChatId: string): Promise<Nova
     }),
     listNoteLinks(profileId, MAP_NOTES_MAX),
     listResourceLinks(profileId, MAP_RESOURCES_MAX),
+    listTaskOutline(profileId),
   ]);
   return buildKnowledgeMap({
-    subjects, topics, notes: noted.notes, resources: saved.resources,
+    subjects, topics, notes: noted.notes, resources: saved.resources, tasks,
     totals: { notes: noted.total, resources: saved.total },
   });
 }

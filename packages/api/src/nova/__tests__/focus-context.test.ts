@@ -16,7 +16,7 @@ const OS = { id: "s-os", name: "Operating Systems" };
 let n = 0;
 const task = (over: Partial<NovaTaskItem>): NovaTaskItem => ({
   id: `t${++n}`, title: "Task", status: "todo", priority: null, subjectId: OS.id, subjectName: OS.name, topicName: "Deadlocks",
-  dueDay: null, dueInDays: null, completedAt: null, estimatedMinutes: null, position: null, createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z", ...over,
+  dueDay: null, dueInDays: null, completedAt: null, estimatedMinutes: null, position: null, parentId: null, createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z", ...over,
 });
 const page = (over: Partial<{ id: string; title: string; url: string; domain: string; subjectId: string | null; topicName: string | null }>) => ({
   id: `r${++n}`, title: "A page", url: "https://example.com/a", domain: "example.com", subjectId: OS.id, topicName: "Deadlocks", ...over,

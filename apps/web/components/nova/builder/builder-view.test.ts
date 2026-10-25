@@ -105,7 +105,7 @@ test('changes go to the map where they were made: the subjects they touch', () =
   const current: WorkspaceDetail = {
     workspace: null, title: 'DSA',
     subjects: [{ id: 's1', name: 'Linear', topics: [{ id: 't1', name: 'Arrays' }] }, { id: 's2', name: 'Non-linear', topics: [{ id: 't2', name: 'Trees' }] }],
-    tasks: [{ id: 'k1', title: 'x', status: 'todo', priority: null, dueDay: null, subjectId: 's2', topicName: null, estimatedMinutes: null }], notes: [], dates: [],
+    tasks: [{ id: 'k1', title: 'x', status: 'todo', priority: null, dueDay: null, subjectId: 's2', topicName: null, estimatedMinutes: null, parentId: null }], notes: [], dates: [],
   }
   const changes: ChangeSet = { dropped: [], ops: [
     { op: 'add_topics', subjectId: 's2', names: ['Dynamic programming'], id: 'c1', says: '', effect: 'add', why: null },

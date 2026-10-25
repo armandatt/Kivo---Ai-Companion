@@ -23,6 +23,7 @@
 //
 // Pure, no imports beyond types, so the web app renders and edits with it.
 
+import { TASK_DEPTH_MAX, untangle } from "./task-tree";
 import type { StudyTemplate, TemplateCategory } from "./templates";
 import { TEMPLATE_CATEGORIES } from "./templates";
 import type { DeadlineType } from "./deadline-types";
@@ -31,7 +32,7 @@ export const PLAN_VERSION = 1;
 
 export const PLAN_LIMITS = {
   title: 80, summary: 400, subjects: 12, topicsPerSubject: 40, name: 80, explanation: 600, subtopics: 12,
-  tasks: 40, taskTitle: 160, notes: 20, noteTitle: 120, noteBody: 8000, dates: 10,
+  tasks: 80, taskTitle: 160, priorityReason: 160, notes: 20, noteTitle: 120, noteBody: 8000, dates: 10,
   phases: 12, listItems: 10, item: 240, resources: 12, prerequisites: 10, assumptions: 6, sources: 5,
 } as const;
 
@@ -47,7 +48,13 @@ export interface SourceRef { file: string; page: number | null }
 export interface PlanTopic { name: string; explanation: string | null; sources: SourceRef[]; unit?: string | null; subtopics?: string[] }
 export interface PlanSubject { name: string; topics: PlanTopic[] }
 export interface PlanTask {
+  // priority is the learner's own, never Nova's: a plan Nova writes carries
+  // its view as suggestedPriority, with the reason, for them to accept.
   key: string; title: string; priority: "low" | "medium" | "high" | null;
+  suggestedPriority?: "low" | "medium" | "high" | null;
+  priorityReason?: string | null;
+  // The key of the task in this plan it is a step of (product/task-tree.ts).
+  parent?: string | null;
   subject: string | null; topic: string | null; dueDay: string | null; estimatedMinutes: number | null;
   // The key of a task in the same plan that comes first. Kivo's tasks have
   // no dependency column, so this is written into the workspace's order note.
@@ -232,6 +239,9 @@ export interface PlanContext {
   files?:   readonly string[];
   // Their request, in their words: the only place a web address is taken from.
   userText?: string;
+  // Nova wrote it: a priority it gives is a suggestion (kept only with a
+  // reason), never the learner's own priority.
+  nova?: boolean;
 }
 
 // Everything a plan may say, checked and normalized. What does not fit is
@@ -310,17 +320,33 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
     if (!t || typeof t !== "object") continue;
     const x = t as Record<string, unknown>;
     const ttitle = oneLine(x.title, PLAN_LIMITS.taskTitle);
-    if (!ttitle || tasks.some(k => same(k.title, ttitle))) continue;
+    const tparent = oneLine(x.parent, 60) || null;
+    // One title once among a task's steps: two "Write tests" under two features are two tasks.
+    if (!ttitle || tasks.some(k => same(k.title, ttitle) && (k.parent ?? null) === tparent)) continue;
     if (tasks.length >= PLAN_LIMITS.tasks) { dropped.push(`task "${ttitle}" (more than ${PLAN_LIMITS.tasks})`); continue; }
     let key = oneLine(x.key, 60) || slug(ttitle, i);
     if (tasks.some(k => k.key === key)) key = `${key}-${i}`;
     const due = isIsoDay(x.dueDay) && x.dueDay >= ctx.today ? x.dueDay : null;
     const minutes = typeof x.estimatedMinutes === "number" && Number.isInteger(x.estimatedMinutes) && x.estimatedMinutes >= 5 && x.estimatedMinutes <= 600 ? x.estimatedMinutes : null;
+    const level = (v: unknown) => (v === "low" || v === "medium" || v === "high" ? v : null);
+    const reason = oneLine(x.priorityReason, PLAN_LIMITS.priorityReason) || null;
+    // Nova's priority is a suggestion, and only with a reason it can give.
+    const suggested = ctx.nova ? (level(x.suggestedPriority) ?? level(x.priority)) : level(x.suggestedPriority);
     tasks.push({
-      key, title: ttitle, priority: x.priority === "low" || x.priority === "medium" || x.priority === "high" ? x.priority : null,
+      key, title: ttitle, priority: ctx.nova ? null : level(x.priority),
+      ...(suggested && reason ? { suggestedPriority: suggested, priorityReason: reason } : {}),
       subject: subjectName(x.subject), topic: oneLine(x.topic, PLAN_LIMITS.name) || null, dueDay: due, estimatedMinutes: minutes,
-      after: oneLine(x.after, 60) || null,
+      after: oneLine(x.after, 60) || null, parent: tparent,
     });
+  }
+  // Steps: under a task of this plan, never in a loop, within the depth. A
+  // step is filed where the task it belongs to is.
+  const tree = untangle(tasks.map(t => ({ id: t.key, parent: t.parent ?? null })));
+  for (const [i, t] of tasks.entries()) t.parent = tree[i]!.parent;
+  for (const t of tasks) {
+    let root: PlanTask = t;
+    for (let hops = 0; root.parent && hops <= TASK_DEPTH_MAX; hops++) root = tasks.find(k => k.key === root.parent) ?? root;
+    if (root !== t) { t.subject = root.subject ?? t.subject; t.topic = root.topic ?? t.topic; }
   }
   // An order names another task of this plan, and never loops back.
   for (const t of tasks) {

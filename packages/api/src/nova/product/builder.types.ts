@@ -108,8 +108,11 @@ export type ChangeOp =
   // The subject itself, with its topics and dates (each removed by its own
   // operation); its notes and tasks stay, unfiled. Never with studied topics.
   | { op: "remove_subject"; subjectId: string }
-  | { op: "add_task";     key: string; title: string; subjectId: string | null; topicName: string | null; dueDay: string | null; priority: "low" | "medium" | "high" | null }
-  | { op: "update_task";  taskId: string; title?: string; dueDay?: string | null; priority?: "low" | "medium" | "high" | null }
+  // A step: parentId names a task that is there, parentKey another add_task
+  // of this set (by key). Neither: a task of its own.
+  | { op: "add_task";     key: string; title: string; subjectId: string | null; topicName: string | null; dueDay: string | null; priority: "low" | "medium" | "high" | null; parentId?: string | null; parentKey?: string | null }
+  // parentId moves it under another task; null makes it a task of its own.
+  | { op: "update_task";  taskId: string; title?: string; dueDay?: string | null; priority?: "low" | "medium" | "high" | null; parentId?: string | null }
   | { op: "remove_task";  taskId: string }
   | { op: "order_tasks";  taskIds: string[] }
   | { op: "add_date";     title: string; day: string; subjectId: string | null; kind: "exam" | "assignment" | "project" | "interview" | "certification" | "other" }
@@ -125,7 +128,9 @@ export type ChangeOp =
 // The kinds of record a change request is about. A change set keeps only
 // operations on the kinds asked for: "add two topics" never brings new
 // tasks, notes or dates with it.
-export const CHANGE_KINDS = ["topics", "subjects", "tasks", "dates", "notes"] as const;
+// "priorities": a task's priority is the learner's, and Nova sets one only
+// when the request is about priorities (builder.ts runChanges).
+export const CHANGE_KINDS = ["topics", "subjects", "tasks", "dates", "notes", "priorities"] as const;
 export type ChangeKind = (typeof CHANGE_KINDS)[number];
 
 // An operation as proposed: its id (for the learner to leave one out), what
@@ -224,7 +229,7 @@ export interface WorkspaceDetail {
   // The workspace's milestones, in order, from the plan it was built from:
   // each is one of its topics, and its tasks are those filed under it.
   phases?:   Array<{ name: string; weeks: number | null; goals: string[]; completion: string | null }>;
-  tasks:     Array<{ id: string; title: string; status: "todo" | "in_progress" | "done"; priority: "low" | "medium" | "high" | null; dueDay: string | null; subjectId: string | null; topicName: string | null; estimatedMinutes: number | null }>;
+  tasks:     Array<{ id: string; title: string; status: "todo" | "in_progress" | "done"; priority: "low" | "medium" | "high" | null; dueDay: string | null; subjectId: string | null; topicName: string | null; estimatedMinutes: number | null; parentId: string | null }>;
   notes:     Array<{ id: string; title: string; subjectId: string | null; updatedAt: string }>;
   dates:     Array<{ id: string; title: string; day: string; kind: string; subjectId: string | null }>;
 }

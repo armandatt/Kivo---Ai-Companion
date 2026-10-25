@@ -43,8 +43,9 @@ import { checkFiles, writeBuilderChanges, writeBuilderPlan } from "./workspace-g
 import type { LlmAttachment } from "../../services/llmProviders";
 import { readBuilderTurn } from "./builder-conversation";
 import { changeResource, createWorkspace, recentWorkspaceTitles, resourceCandidates, resourceDetail, similarWorkspaces, studiedTopicIds, workspaceDetail, workspaceSummaries } from "./workspaces";
-import { bareOps, changeCounts, checkChanges, decideResource, matchResources, readChangeSet, resolveUndo, undoOf, undoOfBuild, withinAsk } from "./builder-changes";
+import { withoutPriorities, bareOps, changeCounts, checkChanges, decideResource, matchResources, readChangeSet, resolveUndo, undoOf, undoOfBuild, withinAsk } from "./builder-changes";
 import { notesWithBodies } from "./notes";
+import { treeOrder } from "./task-tree";
 import {
   DECLINE_REPLY, MESSAGE_MAX, TALKING, canMove, decideStep, type Step, describeChanges, emptyBrief, isPendingLive, learnerWords, message,
   needsReply, nextBrief, planChanges, changedNothing, readBrief, readMessages, readPending, replyWithQuestion, spoken, withMessages, holdsLine,
@@ -201,7 +202,7 @@ async function signupContext(platformChatId: string, profile: { id: string; goal
 async function outlineOf(platformChatId: string, profileId: string, ref: Pick<ResourceRef, "workspaceId" | "subjectIds"> | null) {
   if (!ref) return null;
   const d = await resourceDetail(platformChatId, profileId, ref);
-  return d ? { title: d.title, subjects: d.subjects.map(s => s.name), tasks: d.tasks.map(t => taskLine(t.title, { status: t.status, priority: t.priority, dueDay: t.dueDay, under: t.topicName })), notes: d.notes.map(n => n.title) } : null;
+  return d ? { title: d.title, subjects: d.subjects.map(s => s.name), tasks: treeOrder(d.tasks.map(t => ({ ...t, parent: t.parentId }))).map(({ item: t, depth }) => taskLine(t.title, { depth, status: t.status, priority: t.priority, dueDay: t.dueDay, under: depth === 0 ? t.topicName : null })), notes: d.notes.map(n => n.title) } : null;
 }
 
 // Their workspaces and subjects by name, for the model to recognise one.
@@ -489,16 +490,24 @@ async function settle(id: string, jobId: string, change: {
 }
 
 // A task as the model reads it: its title and what the plan says about it,
-// so a question about a priority or a date is answered from what is there.
-function taskLine(title: string, t: { status?: string; priority: string | null; dueDay: string | null; under: string | null; after?: string | null }): string {
-  const parts = [t.status && t.status !== "todo" ? t.status : null, t.priority ? `${t.priority} priority` : null, t.dueDay ? `due ${t.dueDay}` : null, t.under ? `in ${t.under}` : null, t.after ? `after ${t.after}` : null].filter(Boolean);
-  return parts.length ? `${title} (${parts.join(", ")})` : title;
+// indented under the task it is a step of, its priority said for what it is
+// (the learner's, or Nova's suggestion and why). So a question about a
+// priority, a date or an order is answered from what is there (seen 25 Oct:
+// Nova said it had set no priorities while the proposal showed them).
+function taskLine(title: string, t: { depth?: number; status?: string; priority: string | null; suggested?: string | null; reason?: string | null; dueDay: string | null; under: string | null; after?: string | null }): string {
+  const priority = t.priority ? `priority ${t.priority} (set by the learner)`
+    : t.suggested ? `Nova suggests ${t.suggested} priority${t.reason ? `: ${t.reason}` : ""} (not accepted)` : "no priority";
+  const parts = [t.status && t.status !== "todo" ? t.status : null, priority, t.dueDay ? `due ${t.dueDay}` : null, t.under ? `in ${t.under}` : null, t.after ? `after ${t.after}` : null].filter(Boolean);
+  return `${"  ".repeat(t.depth ?? 0)}${title} (${parts.join(", ")})`;
 }
 
 function proposalSummary(plan: WorkspacePlan): { milestones: string[]; tasks: string[]; topics: string[]; dates: string[] } {
   return {
     milestones: plan.phases.map(p => p.name),
-    tasks: plan.tasks.map(t => taskLine(t.title, { priority: t.priority, dueDay: t.dueDay, under: t.topic, after: t.after ? plan.tasks.find(x => x.key === t.after)?.title ?? null : null })),
+    tasks: treeOrder(plan.tasks.map(t => ({ ...t, id: t.key, parent: t.parent ?? null }))).map(({ item: t, depth }) => taskLine(t.title, {
+      depth, priority: t.priority, suggested: t.suggestedPriority ?? null, reason: t.priorityReason ?? null, dueDay: t.dueDay,
+      under: depth === 0 ? t.topic : null, after: t.after ? plan.tasks.find(x => x.key === t.after)?.title ?? null : null,
+    })),
     topics: plan.subjects.flatMap(s => s.topics.map(t => t.name)),
     dates: plan.dates.map(d => `${d.title} ${d.day}`),
   };
@@ -657,8 +666,11 @@ async function runChanges(platformChatId: string, profile: { id: string; timezon
     await settle(row.id, job.jobId, { status: fallback, failure: { stage: "drafting", message: written.message, change }, add: [message("nova", written.message, new Date(), { kind: "error" })] });
     return;
   }
+  // A priority is the learner's: Nova changes one only when they asked about priorities.
+  const asked = brief.touches ?? [];
+  const ops = asked.includes("priorities") ? written.ops : withoutPriorities(written.ops);
   // Only the kinds of record the request is about: "add two topics" brings no tasks, notes or dates.
-  const checked = checkChanges(written.ops, current, { today, studied });
+  const checked = checkChanges(ops, current, { today, studied });
   const set = by ? { ops: checked.ops, dropped: [...unresolved, ...checked.dropped].slice(0, 12) } : withinAsk(checked, brief.touches ?? [], current);
   if (set.ops.length === 0) {
     const text = `I couldn't turn that into a change to ${current.title}${set.dropped.length ? `: ${set.dropped.slice(0, 3).join("; ")}` : ""}. Nothing is proposed; could you say it another way?`;

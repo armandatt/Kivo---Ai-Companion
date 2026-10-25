@@ -62,3 +62,59 @@ test('reading back: tasks by milestone, the timeline soonest first, views that h
   assert.equal(edit.addTopic(plan(), 0, 'dashboard').subjects[0]!.topics.length, 1)
   assert.deepEqual(edit.moveItem([1, 2, 3], 0, 2), [2, 3, 1])
 })
+
+// ── Steps and priorities ──────────────────────────────────────────────────────
+
+const keys = (p: WorkspacePlan) => edit.treeRows(p.tasks).map(r => `${'-'.repeat(r.depth)}${r.task.key}`)
+
+test('a step goes under its task, after its other steps, filed where the task is', () => {
+  let p = edit.addStep(plan(), 'a', 'Chart widget')
+  p = edit.addStep(p, 'a', 'Table widget')
+  const first = p.tasks.find(t => t.title === 'Chart widget')!
+  p = edit.addStep(p, first.key, 'Pick a chart library')
+  assert.deepEqual(edit.treeRows(p.tasks).map(r => `${'-'.repeat(r.depth)}${r.task.title}`), ['Widgets', '-Chart widget', '--Pick a chart library', '-Table widget', 'Wire API'])
+  assert.equal(p.tasks.find(t => t.title === 'Pick a chart library')!.topic, 'Dashboard')
+  assert.equal(edit.treeRows(p.tasks)[0]!.steps, 3)
+})
+
+test('indent makes a task a step of the one above; outdent moves it up a level; never into a loop', () => {
+  let p = edit.addTask(plan(), 'Polish', 'Dashboard')
+  const polish = p.tasks.find(t => t.title === 'Polish')!.key
+  assert.ok(edit.canIndent(p, polish))
+  p = edit.indent(p, polish)
+  assert.equal(p.tasks.find(t => t.key === polish)!.parent, 'a')
+  p = edit.outdent(p, polish)
+  assert.equal(p.tasks.find(t => t.key === polish)!.parent, null)
+  // A task can't go under its own step.
+  const s = edit.addStep(plan(), 'a', 'Step')
+  const step = s.tasks.find(t => t.title === 'Step')!.key
+  assert.equal(edit.setParent(s, 'a', step), s)
+})
+
+test('a task moved under another follows its milestone; removing a task removes its steps and what waited for them waits for nothing', () => {
+  let p = edit.addStep(plan(), 'a', 'Chart widget')
+  p = edit.setParent(p, 'b', 'a')
+  assert.equal(p.tasks.find(t => t.key === 'b')!.topic, 'Dashboard')
+  assert.deepEqual(keys(p).filter(k => k.endsWith('b')), ['-b'])
+  const removed = edit.removeTask(p, 'a')
+  assert.deepEqual(removed.tasks, [])
+})
+
+test('moving a task up or down takes its steps with it, among its siblings only', () => {
+  let p = edit.addStep(plan(), 'a', 'Chart widget')
+  p = edit.reorderTask(p, 'b', -1)
+  assert.deepEqual(keys(p), ['b', 'a', '-' + p.tasks.find(t => t.title === 'Chart widget')!.key])
+})
+
+test("a priority is the learner's: Nova's suggestion is used only when they take it", () => {
+  const p = edit.updateTask(plan(), 'a', { suggestedPriority: 'high', priorityReason: 'The launch waits on it' })
+  assert.equal(p.tasks[0]!.priority, null)
+  const used = edit.acceptSuggestion(p, 'a')
+  assert.deepEqual([used.tasks[0]!.priority, used.tasks[0]!.suggestedPriority], ['high', null])
+  const dropped = edit.dismissSuggestion(p, 'a')
+  assert.deepEqual([dropped.tasks[0]!.priority, dropped.tasks[0]!.suggestedPriority], [null, null])
+})
+
+test('a dependency is shown both ways', () => {
+  assert.deepEqual(edit.waitingOn(plan(), 'a').map(t => t.key), ['b'])
+})

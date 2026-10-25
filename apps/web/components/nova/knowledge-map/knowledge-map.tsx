@@ -6,6 +6,7 @@ import { useStartSession } from '../use-start-session'
 import { ArrowUpRight, Link2, Maximize2, Minus, Plus, RotateCcw, Search, Waypoints, X } from 'lucide-react'
 import type { MapNode, MapNodeType, NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
 import { MAP_LAYOUT_COORD_MAX } from '@repo/api/nova/product/map-layout.types'
+import { treeOrder } from '@repo/api/nova/product/task-tree'
 import { cn } from '@/lib/utils'
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '../workspace/ui'
 import { toneStyle } from '../subject-color'
@@ -325,6 +326,23 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
           <h3 className="text-[11px] font-medium uppercase tracking-[0.14em] text-subtle">Connect</h3>
           {node.type === 'note' && <LinkEditor key={`link-${node.id}`} node={node} view={view} onChanged={onChanged} />}
           <FileEditor key={`file-${node.id}`} node={node} view={view} onChanged={onChanged} />
+        </div>
+      )}
+
+      {(node.type === 'topic' || node.type === 'subject') && node.tasks && node.tasks.length > 0 && (
+        <div className="mt-6" data-map-tasks>
+          <h3 className="flex items-center justify-between text-[11px] font-medium uppercase tracking-[0.14em] text-subtle">
+            Tasks <span className="normal-case tracking-normal">{node.tasks.filter(t => t.status === 'done').length} of {node.tasks.length} done</span>
+          </h3>
+          <ul className="mt-2 space-y-0.5">
+            {treeOrder(node.tasks.map(t => ({ ...t, parent: t.parentId }))).map(({ item: t, depth }) => (
+              <li key={t.id} className="flex items-start gap-2 py-0.5 text-sm" style={{ paddingLeft: depth * 14 }} data-depth={depth}>
+                <span aria-hidden className={cn('mt-1.5 size-1.5 shrink-0 rounded-full', t.status === 'done' ? 'bg-action' : t.status === 'in_progress' ? 'bg-amber-400' : 'bg-foreground/30')} />
+                <span className={cn('min-w-0 break-words', t.status === 'done' ? 'text-subtle line-through' : depth > 0 ? 'text-foreground/75' : 'text-foreground/90')}>{t.title}</span>
+              </li>
+            ))}
+          </ul>
+          <Link href="/planner?view=board" className="mt-2 inline-block text-xs font-medium text-foreground/60 underline-offset-4 hover:text-foreground hover:underline">Open on the board</Link>
         </div>
       )}
 

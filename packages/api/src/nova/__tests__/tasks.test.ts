@@ -12,7 +12,7 @@ const api  = (file: string) => readFileSync(join(__dirname, "../../../../../apps
 
 const task = (over: Partial<NovaTaskItem>): NovaTaskItem => ({
   id: "t", title: "T", status: "todo", priority: null, subjectId: null, subjectName: null, topicName: null,
-  dueDay: null, dueInDays: null, completedAt: null, estimatedMinutes: null, position: null, createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z", ...over,
+  dueDay: null, dueInDays: null, completedAt: null, estimatedMinutes: null, position: null, parentId: null, createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z", ...over,
 });
 
 describe("what a task request may carry", () => {

@@ -22,6 +22,23 @@
 
 import type { ChangeKind, ChangeOp, ChangeSet, ProposedChange, ResourceRef, UndoRecord, WorkspaceDetail } from "./builder.types";
 import { isPlaceholderTopic, oneLine } from "./workspace-plan";
+import { TASK_DEPTH_MAX, canPlace, levelOf, parentsOf, subtreeOf, type TreeNode } from "./task-tree";
+
+// New tasks before their new steps (parentKey), whatever order the model
+// gave; everything else keeps its place.
+function parentsFirst(list: unknown[]): unknown[] {
+  const keyOf = (o: unknown) => ((o as { op?: unknown })?.op === "add_task" ? (o as { key?: unknown }).key : undefined);
+  const parentOf = (o: unknown) => ((o as { op?: unknown })?.op === "add_task" ? (o as { parentKey?: unknown }).parentKey : undefined);
+  const out: unknown[] = [];
+  const place = (o: unknown, depth: number) => {
+    if (out.includes(o) || depth > TASK_DEPTH_MAX + 1) return;
+    const p = parentOf(o);
+    if (typeof p === "string") { const parent = list.find(x => keyOf(x) === p); if (parent && parent !== o) place(parent, depth + 1); }
+    out.push(o);
+  };
+  for (const o of list) place(o, 0);
+  return out;
+}
 
 // ── Finding it ────────────────────────────────────────────────────────────────
 
@@ -169,7 +186,9 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
   // Removals that bring others with them are checked after everything else
   // in the set (a workspace's last), so what they bring is not said twice.
   const late = (o: unknown) => ((o as { op?: unknown })?.op === "remove_workspace" ? 2 : (o as { op?: unknown })?.op === "remove_subject" ? 1 : 0);
-  const ordered = [...list.slice(0, CHANGE_OPS_MAX * 2)].sort((a, b) => late(a) - late(b));
+  const ordered = parentsFirst([...list.slice(0, CHANGE_OPS_MAX * 2)]).sort((a, b) => late(a) - late(b));
+  // The tasks as a tree: stored ones by id, ones this set adds as "+key".
+  const tree: TreeNode[] = current.tasks.map(t => ({ id: t.id, parent: t.parentId ?? null }));
   for (const item of ordered) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const x = item as Record<string, unknown>;
@@ -265,17 +284,37 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
       case "add_task": {
         const title = oneLine(x.title, TITLE_MAX);
         if (!title) break;
-        if (current.tasks.some(t => t.status !== "done" && low(t.title) === low(title)) || addedTasks.has(low(title))) { dropped.push(`task ${quoted(title)} (already there)`); break; }
-        const subjectId = subjectOrNull(x.subjectId);
-        if (subjectId === undefined) { dropped.push(`task ${quoted(title)} (filed under a subject that isn't part of this)`); break; }
+        // A step: under a task here (parentId) or one this set adds (parentKey).
+        const parentTask = typeof x.parentId === "string" && x.parentId ? taskById(x.parentId) : null;
+        if (typeof x.parentId === "string" && x.parentId && !parentTask) { dropped.push(`task ${quoted(title)} (a step of a task that isn't part of this)`); break; }
+        const parentKey = !parentTask && typeof x.parentKey === "string" && x.parentKey ? oneLine(x.parentKey, 40) : null;
+        const parentAdded = parentKey ? ops.find((o): o is ProposedChange & Extract<ChangeOp, { op: "add_task" }> => o.op === "add_task" && o.key === parentKey) : undefined;
+        if (parentKey && !parentAdded) { dropped.push(`task ${quoted(title)} (a step of a task this change doesn't add)`); break; }
+        const parentNode = parentTask ? parentTask.id : parentAdded ? `+${parentAdded.key}` : null;
+        // One title once among a task's steps (two "Write tests" under two features are two tasks).
+        const sibling = `${parentNode ?? ""}\n${low(title)}`;
+        const twin = !parentAdded && current.tasks.some(t => t.status !== "done" && low(t.title) === low(title) && (t.parentId ?? null) === (parentTask?.id ?? null));
+        if (twin || addedTasks.has(sibling)) { dropped.push(`task ${quoted(title)} (already there)`); break; }
+        if (parentNode && levelOf(parentsOf(tree), parentNode) + 1 > TASK_DEPTH_MAX) { dropped.push(`task ${quoted(title)} (steps go at most ${TASK_DEPTH_MAX} levels deep)`); break; }
+        const subjectIdRaw = subjectOrNull(x.subjectId);
+        if (subjectIdRaw === undefined) { dropped.push(`task ${quoted(title)} (filed under a subject that isn't part of this)`); break; }
+        // A step is filed where the task it belongs to is.
+        const subjectId = parentTask ? parentTask.subjectId : parentAdded ? parentAdded.subjectId : subjectIdRaw;
+        const topicFromParent = parentTask ? parentTask.topicName : parentAdded ? parentAdded.topicName : null;
         const dueDay = isDay(x.dueDay) && x.dueDay >= ctx.today ? x.dueDay : null;
         if (x.dueDay != null && dueDay === null) dropped.push(`the due day of ${quoted(title)} (not a day from today on)`);
         const priority = PRIORITIES.find(p => p === x.priority) ?? null;
         const key = oneLine(x.key, 40) || `t${ops.length + 1}`;
         const keyOk = [...key].every(c => (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c === "-" || c === "_");
-        addedTasks.add(low(title));
-        keep({ op: "add_task", key: keyOk ? key : `t${ops.length + 1}`, title, subjectId: subjectId ?? (current.subjects.length === 1 ? current.subjects[0]!.id : null), topicName: oneLine(x.topicName, NAME_MAX) || null, dueDay, priority },
-          `Add task ${quoted(title)}${dueDay ? `, due ${dueDay}` : ""}${priority === "high" ? ", high priority" : ""}`, "add", x);
+        addedTasks.add(sibling);
+        const finalKey = keyOk && !ops.some(o => o.op === "add_task" && o.key === key) ? key : `t${ops.length + 1}`;
+        tree.push({ id: `+${finalKey}`, parent: parentNode });
+        const parentTitle = parentTask?.title ?? parentAdded?.title ?? null;
+        keep({
+          op: "add_task", key: finalKey, title, subjectId: subjectId ?? (current.subjects.length === 1 ? current.subjects[0]!.id : null),
+          topicName: topicFromParent ?? (oneLine(x.topicName, NAME_MAX) || null), dueDay, priority,
+          ...(parentTask ? { parentId: parentTask.id } : parentAdded ? { parentKey: parentAdded.key } : {}),
+        }, `${parentTitle ? `Add step ${quoted(title)} under ${quoted(parentTitle)}` : `Add task ${quoted(title)}`}${dueDay ? `, due ${dueDay}` : ""}${priority ? `, ${priority} priority` : ""}`, "add", x);
         break;
       }
       case "update_task": {
@@ -295,6 +334,14 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
           const p = x.priority === null ? null : PRIORITIES.find(v => v === x.priority);
           if (p !== undefined && p !== t.priority) { change.priority = p; parts.push(p ? `${p} priority` : "no priority"); }
         }
+        if (x.parentId !== undefined) {
+          const to = x.parentId === null || x.parentId === "" ? null : typeof x.parentId === "string" ? x.parentId : undefined;
+          if (to !== (t.parentId ?? null)) {
+            const placed = to === undefined ? { ok: false as const, reason: "missing" as const } : canPlace(tree, t.id, to);
+            if (placed.ok) { change.parentId = to!; parts.push(to ? `move under ${quoted(taskById(to)?.title ?? "")}` : "make it a task of its own"); }
+            else dropped.push(`moving ${quoted(t.title)} (${placed.reason === "too_deep" ? `steps go at most ${TASK_DEPTH_MAX} levels deep` : placed.reason === "missing" ? "under a task that isn't part of this" : "not under itself or its own steps"})`);
+          }
+        }
         if (parts.length === 0) break;
         touched.add(t.id);
         keep(change, `Change task ${quoted(t.title)}: ${parts.join(", ")}`, "change", x);
@@ -305,8 +352,12 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         if (!t) { dropped.push("removing a task that isn't part of this"); break; }
         if (t.status === "done") { dropped.push(`removing ${quoted(t.title)} (it's finished; finished tasks are kept)`); break; }
         if (touched.has(t.id)) break;
+        // Its steps go with it: never one that is finished.
+        const steps = subtreeOf(tree, t.id).slice(1).map(id => taskById(id)).filter((k): k is WorkspaceDetail["tasks"][number] => Boolean(k));
+        if (steps.some(k => k.status === "done")) { dropped.push(`removing ${quoted(t.title)} (it has finished steps; finished tasks are kept)`); break; }
         touched.add(t.id);
-        keep({ op: "remove_task", taskId: t.id }, `Remove task ${quoted(t.title)}`, "remove", x);
+        for (const k of steps) touched.add(k.id);
+        keep({ op: "remove_task", taskId: t.id }, `Remove task ${quoted(t.title)}${steps.length ? ` and its ${steps.length} step${steps.length === 1 ? "" : "s"}` : ""}`, "remove", x);
         break;
       }
       case "order_tasks": {
@@ -381,11 +432,25 @@ export function withinAsk(set: ChangeSet, touches: readonly ChangeKind[], curren
     ...current.subjects.filter(s => goingSubjects.has(s.id)).flatMap(s => s.topics.map(t => t.id)),
     ...current.dates.filter(d => d.subjectId !== null && goingSubjects.has(d.subjectId)).map(d => d.id),
   ]);
-  const ok = (o: ProposedChange) => touches.includes(kindOf(o.op))
+  // A change to a task's priority alone is about priorities.
+  const onlyPriority = (o: ProposedChange) => o.op === "update_task" && o.priority !== undefined && o.title === undefined && o.dueDay === undefined && o.parentId === undefined;
+  const ok = (o: ProposedChange) => touches.includes(onlyPriority(o) ? "priorities" : kindOf(o.op))
     || (touches.includes("subjects") && ((o.op === "remove_topic" && withSubject.has(o.topicId)) || (o.op === "remove_date" && withSubject.has(o.dateId))));
   const kept = set.ops.filter(ok).map((o, i) => ({ ...o, id: `c${i + 1}` }));
   const left = set.ops.filter(o => !ok(o)).map(o => `${o.says.charAt(0).toLowerCase()}${o.says.slice(1)} (not asked for)`);
   return { ops: kept, dropped: [...set.dropped, ...left].slice(0, 12) };
+}
+
+// Operations with any priority taken out: what Nova may propose when the
+// learner's request is not about priorities (their priorities are theirs).
+export function withoutPriorities(ops: unknown[]): unknown[] {
+  return ops.map(o => {
+    if (!o || typeof o !== "object" || Array.isArray(o)) return o;
+    const x = o as Record<string, unknown>;
+    if (x.op !== "add_task" && x.op !== "update_task") return o;
+    const { priority: _p, ...rest } = x;
+    return rest;
+  });
 }
 
 // A stored change set, read back. Not re-checked here: that needs the records.

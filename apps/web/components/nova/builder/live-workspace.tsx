@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, ArrowRight, Sparkles } from 'lucide-react'
 import type { ProposedChange, WorkspaceDetail } from '@repo/api/nova/product/builder.types'
+import { treeOrder } from '@repo/api/nova/product/task-tree'
 import { cn } from '@/lib/utils'
 import { patchTask } from './builder-api'
 import { changeMarks, hintFor, wordsFor, type ChangeMarks } from './builder-view'
@@ -70,7 +71,8 @@ const STATUS_LABEL: Record<Task['status'], string> = { todo: 'To do', in_progres
 const same = (a: string | null | undefined, b: string | null | undefined) => a != null && b != null && a.toLocaleLowerCase() === b.toLocaleLowerCase()
 
 // A task with its progress, moved through To do → In progress → Done here.
-function LiveTaskRow({ t, marks, onChange }: { t: Task; marks: ChangeMarks; onChange: (patch: Partial<Task>) => Promise<void> }) {
+// Indented under the task it is a step of; its priority is the learner's to set here.
+function LiveTaskRow({ t, depth, marks, onChange }: { t: Task; depth: number; marks: ChangeMarks; onChange: (patch: Partial<Task>) => Promise<void> }) {
   const [title, setTitle] = useState(t.title)
   useEffect(() => setTitle(t.title), [t.title])
   const i = COLUMNS.findIndex(c => c.status === t.status)
@@ -78,12 +80,16 @@ function LiveTaskRow({ t, marks, onChange }: { t: Task; marks: ChangeMarks; onCh
   const changed = marks.changedTasks.get(t.id)
   const first = marks.firstTasks.indexOf(t.id)
   return (
-    <li className={cn(CARD, 'p-2', removed && 'opacity-60', (changed || first >= 0) && 'border-nova/40', t.status === 'done' && 'opacity-75')} data-live-task={t.id}>
+    <li className={cn(CARD, 'p-2', removed && 'opacity-60', (changed || first >= 0) && 'border-nova/40', t.status === 'done' && 'opacity-75')} style={{ marginLeft: depth * 16 }} data-live-task={t.id} data-depth={depth}>
       <textarea aria-label="Task title" value={title} maxLength={160} rows={1} onChange={e => setTitle(e.target.value.split('\n').join(' '))}
         onBlur={() => { if (title.trim() && title !== t.title) void onChange({ title: title.trim() }) }} className={cn(FIELD, TITLE_AREA, (removed || t.status === 'done') && 'line-through')} />
       <div className="flex flex-wrap items-center gap-1.5 px-1.5 pt-1 text-[11px] text-subtle">
         <span className={cn('rounded px-1.5 py-0.5 font-medium', t.status === 'done' ? 'bg-action-soft text-action-ink' : t.status === 'in_progress' ? 'bg-amber-400/12 text-amber-300' : 'bg-white/5')}>{STATUS_LABEL[t.status]}</span>
-        {t.priority && <span className={cn('rounded px-1.5 py-0.5 font-medium', t.priority === 'high' ? 'bg-amber-400/12 text-amber-300' : 'bg-white/5')}>{t.priority}</span>}
+        <label className="sr-only" htmlFor={`live-prio-${t.id}`}>Priority of {t.title}</label>
+        <select id={`live-prio-${t.id}`} value={t.priority ?? ''} onChange={e => void onChange({ priority: (e.target.value || null) as Task['priority'] })}
+          className={cn('h-6 rounded-md border px-1 text-[11px] font-medium', t.priority === 'high' ? 'border-amber-400/40 bg-amber-400/12 text-amber-200' : t.priority ? 'border-white/12 bg-white/5' : 'border-white/10 bg-background text-subtle')}>
+          <option value="">No priority</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
+        </select>
         {t.dueDay && <span className="rounded bg-white/5 px-1.5 py-0.5 tabular-nums">due {t.dueDay}</span>}
         {t.estimatedMinutes && <span>~{t.estimatedMinutes} min</span>}
         {changed && <Proposed>→ {changed}</Proposed>}
@@ -196,7 +202,7 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
                 {g.phase!.completion && <p className="mt-1 pl-8 text-[11px] text-subtle">Done when {g.phase!.completion}</p>}
                 {(g.tasks.length > 0 || proposedIn(g.name).length > 0) && (
                   <ul className="ml-3 mt-2 space-y-1 border-l border-white/8 pl-4">
-                    {g.tasks.map(t => <li key={t.id} className={cn('flex items-center gap-2 text-sm text-foreground/80', t.status === 'done' && 'text-subtle line-through', marks.removedTasks.has(t.id) && 'opacity-60 line-through')}><span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', t.status === 'done' ? 'bg-action' : t.status === 'in_progress' ? 'bg-amber-400' : 'bg-foreground/30')} />{t.title}{marks.changedTasks.get(t.id) && <Proposed>→ {marks.changedTasks.get(t.id)}</Proposed>}</li>)}
+                    {treeOrder(g.tasks.map(t => ({ ...t, parent: t.parentId }))).map(({ item: t, depth }) => <li key={t.id} style={{ marginLeft: depth * 14 }} data-depth={depth} className={cn('flex items-center gap-2 text-sm text-foreground/80', t.status === 'done' && 'text-subtle line-through', marks.removedTasks.has(t.id) && 'opacity-60 line-through')}><span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', t.status === 'done' ? 'bg-action' : t.status === 'in_progress' ? 'bg-amber-400' : 'bg-foreground/30')} />{t.title}{marks.changedTasks.get(t.id) && <Proposed>→ {marks.changedTasks.get(t.id)}</Proposed>}</li>)}
                     {proposedIn(g.name).map(a => <li key={a.key} className="text-sm text-foreground/85">+ {a.title}<Proposed>proposed</Proposed></li>)}
                   </ul>
                 )}
@@ -214,9 +220,9 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
                   <span className="font-normal text-subtle">{g.tasks.length ? progress(g.tasks) : ''}</span>
                 </h3>
                 <ul className="space-y-2">
-                  {g.tasks.map(t => <LiveTaskRow key={t.id} t={t} marks={marks} onChange={patch => change(t.id, patch)} />)}
+                  {treeOrder(g.tasks.map(t => ({ ...t, parent: t.parentId }))).map(({ item: t, depth }) => <LiveTaskRow key={t.id} t={t} depth={depth} marks={marks} onChange={patch => change(t.id, patch)} />)}
                   {proposedIn(g.name).map(a => (
-                    <li key={a.key} className={cn(CARD, PROPOSED, 'p-2 text-sm text-foreground/85')} data-proposed-task>+ {a.title}<span className="mt-0.5 block text-[11px] text-subtle">{a.dueDay ? `due ${a.dueDay}` : 'no due day'}{a.priority ? ` · ${a.priority}` : ''}</span><Proposed>proposed</Proposed></li>
+                    <li key={a.key} className={cn(CARD, PROPOSED, 'p-2 text-sm text-foreground/85')} data-proposed-task>+ {a.title}<span className="mt-0.5 block text-[11px] text-subtle">{a.parentId ? `a step of ${detail.tasks.find(x => x.id === a.parentId)?.title ?? 'a task'} · ` : a.parentKey ? `a step of ${marks.addedTasks.find(x => x.key === a.parentKey)?.title ?? 'a new task'} · ` : ''}{a.dueDay ? `due ${a.dueDay}` : 'no due day'}{a.priority ? ` · ${a.priority}` : ''}</span><Proposed>proposed</Proposed></li>
                   ))}
                 </ul>
               </section>

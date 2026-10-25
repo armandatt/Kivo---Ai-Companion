@@ -23,6 +23,7 @@ export const TASK_MINUTES_MIN = 5;
 export const TASK_MINUTES_MAX = 600;
 // Tasks one reorder may place.
 export const TASK_ORDER_MAX = 100;
+export { TASK_DEPTH_MAX } from "./task-tree";
 
 export interface NovaTaskItem {
   id:          string;
@@ -42,6 +43,8 @@ export interface NovaTaskItem {
   estimatedMinutes: number | null;
   // Their own place for it within its column. null: not placed.
   position:    number | null;
+  // The task this one is a step of (product/task-tree.ts). null: its own.
+  parentId:    string | null;
   createdAt:   string;
   updatedAt:   string;
 }
@@ -71,12 +74,14 @@ export interface TaskInput {
   topicName?: string | null;
   dueDay?:    string | null;
   estimatedMinutes?: number | null;
+  // The task it is a step of; null makes it a task of its own.
+  parentId?:  string | null;
   clientKey?: string;              // create only
 }
 
 export type TaskError =
   | "invalid" | "title_required" | "title_too_long" | "topic_too_long"
-  | "unknown_status" | "unknown_priority" | "bad_due_day" | "unknown_subject" | "bad_minutes" | "changed"
+  | "unknown_status" | "unknown_priority" | "bad_due_day" | "unknown_subject" | "bad_minutes" | "changed" | "bad_parent"
   | "too_many" | "not_found" | "failed";
 
 export type TaskResponse =

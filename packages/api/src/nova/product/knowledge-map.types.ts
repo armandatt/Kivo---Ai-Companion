@@ -25,8 +25,13 @@ interface NodeBase {
   subjectId: string | null;
 }
 
+// A task shown in a topic's or subject's panel, with its steps under it
+// (parentId names the task it is a step of). Tasks are not drawn as points:
+// the map stays subjects, topics, notes and pages.
+export interface MapTask { id: string; title: string; status: "todo" | "in_progress" | "done"; parentId: string | null }
+
 export type MapNode =
-  | (NodeBase & { type: "subject"; topics: number; notes: number; resources: number })
+  | (NodeBase & { type: "subject"; topics: number; notes: number; resources: number; tasks?: MapTask[] })
   | (NodeBase & {
       type: "topic"; subjectName: string;
       // Finished sessions that fed the topic. 0: declared, never studied.
@@ -34,6 +39,7 @@ export type MapNode =
       // A self-report-driven estimate, as on Knowledge. null with no session.
       level: MapLevel | null; masteryPercent: number | null;
       notes: number; resources: number;
+      tasks?: MapTask[];
     })
   | (NodeBase & {
       type: "note"; subjectName: string | null;

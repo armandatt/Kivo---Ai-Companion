@@ -1258,9 +1258,15 @@ model NovaTask {
   // request, a double click or a template applied twice carries the same key
   // and creates nothing.
   clientKey   String?
+  // The task this one is a step of. null: a task of its own. Steps nest up
+  // to TASK_DEPTH_MAX levels (tasks.types.ts); tasks.ts keeps the tree free
+  // of loops. Removing a task removes its steps with it.
+  parentId    String?
 
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   subject NovaSubject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  parent  NovaTask?           @relation("NovaTaskSteps", fields: [parentId], references: [id], onDelete: Cascade)
+  steps   NovaTask[]          @relation("NovaTaskSteps")
 
   // Times the learner set aside on the calendar to work on this task. The
   // task stays the one record of the work; an event only schedules it.
@@ -1272,6 +1278,7 @@ model NovaTask {
   @@unique([profileId, clientKey])
   @@index([profileId, status])
   @@index([profileId, dueDay])
+  @@index([parentId])
 }
 
 // ─── Calendar events (product/calendar.ts is the only reader and writer) ─────

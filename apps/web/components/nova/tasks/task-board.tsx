@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Plus } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ListTree, Plus } from 'lucide-react'
+import { subtreeOf } from '@repo/api/nova/product/task-tree'
 import {
   TASK_STATUSES, TASK_STATUS_LABEL,
   type NovaTaskItem, type NovaTasksReady, type TaskInput, type TaskStatus,
@@ -29,9 +30,34 @@ const EMPTY: Record<TaskStatus, string> = {
 
 const PRIORITY_TONE = { high: 'text-rose-300', medium: 'text-amber-300', low: 'text-foreground/45' } as const
 
-function Card({ task, onOpen, onMove, onShift, dragging, onDragStart, onDragEnd }: {
+// A task's steps, as a checklist under it: ticking one finishes it, and a
+// step's own steps sit under it. Opening one edits it like any task.
+function Steps({ parent, all, onOpen, onToggle }: { parent: string; all: NovaTaskItem[]; onOpen: (t: NovaTaskItem) => void; onToggle: (t: NovaTaskItem) => void }) {
+  const children = all.filter(t => t.parentId === parent)
+  if (children.length === 0) return null
+  return (
+    <ul className="mt-1.5 space-y-1 border-l border-white/10 pl-3" data-steps>
+      {children.map(t => (
+        <li key={t.id} data-step={t.id}>
+          <span className="flex items-start gap-2">
+            <input type="checkbox" checked={t.status === 'done'} onChange={() => onToggle(t)} aria-label={`${t.status === 'done' ? 'Reopen' : 'Finish'} ${t.title}`} className="mt-0.5 size-3.5 shrink-0 accent-keppel-400" />
+            <button type="button" onClick={() => onOpen(t)} className={`min-w-0 text-left text-xs leading-snug hover:underline ${t.status === 'done' ? 'text-foreground/45 line-through' : 'text-foreground/85'}`}>{t.title}</button>
+          </span>
+          <Steps parent={t.id} all={all} onOpen={onOpen} onToggle={onToggle} />
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function Card({ task, all, onOpen, onOpenStep, onToggleStep, onAddStep, onMove, onShift, dragging, onDragStart, onDragEnd }: {
   task: NovaTaskItem
+  // Every task on the board, for this one's steps.
+  all: NovaTaskItem[]
   onOpen: () => void
+  onOpenStep: (t: NovaTaskItem) => void
+  onToggleStep: (t: NovaTaskItem) => void
+  onAddStep: (title: string) => Promise<boolean>
   onMove: (status: TaskStatus) => void
   // Up or down within its column; absent where it cannot move that way.
   onShift?: { up?: () => void; down?: () => void }
@@ -45,6 +71,9 @@ function Card({ task, onOpen, onMove, onShift, dragging, onDragStart, onDragEnd 
   const due   = dueLabel(task)
   const late  = isOverdue(task)
   const where = [task.subjectName, task.topicName].filter(Boolean).join(' · ')
+  const under = subtreeOf(all.map(t => ({ id: t.id, parent: t.parentId })), task.id).slice(1).map(id => all.find(t => t.id === id)!)
+  const [open, setOpen] = useState(false)
+  const [step, setStep] = useState('')
 
   return (
     <li
@@ -65,6 +94,19 @@ function Card({ task, onOpen, onMove, onShift, dragging, onDragStart, onDragEnd 
           </span>
         )}
       </button>
+      {under.length > 0 && (
+        <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} className="mt-2 inline-flex items-center gap-1 rounded-md text-[11px] text-foreground/60 hover:text-foreground" data-step-count>
+          <ListTree aria-hidden className="size-3.5" />{under.filter(t => t.status === 'done').length} of {under.length} step{under.length === 1 ? '' : 's'} done
+          <ChevronDown aria-hidden className={`size-3 transition-transform ${open ? 'rotate-180' : ''}`} />
+        </button>
+      )}
+      {open && <Steps parent={task.id} all={all} onOpen={onOpenStep} onToggle={onToggleStep} />}
+      {(open || under.length === 0) && task.status !== 'done' && (
+        <form className="mt-2" onSubmit={async e => { e.preventDefault(); if (step.trim() && await onAddStep(step.trim())) { setStep(''); setOpen(true) } }}>
+          <input aria-label={`Add a step to ${task.title}`} value={step} onChange={e => setStep(e.target.value)} placeholder="Add a step" maxLength={160}
+            className="h-7 w-full rounded-lg border border-dashed border-white/10 bg-transparent px-2 text-[11px] text-foreground outline-none placeholder:text-foreground/35 focus:border-keppel-400/60" />
+        </form>
+      )}
       {/* Moving without dragging: for touch screens and the keyboard. */}
       <div className="mt-2.5 flex items-center justify-between border-t border-white/6 pt-2">
         <button type="button" disabled={!prev} onClick={() => prev && onMove(prev)} aria-label={prev ? `Move to ${TASK_STATUS_LABEL[prev]}` : 'First column'}
@@ -112,8 +154,9 @@ export function TaskBoard({ view, tasks, error, onClearError, onCreate, onUpdate
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {TASK_STATUSES.map(status => {
-          const column = tasks.filter(t => t.status === status)
-          const hidden = view.counts[status] - column.length
+          // Cards are tasks of their own; a step shows inside the card of its task.
+          const column = tasks.filter(t => t.status === status && (!t.parentId || !tasks.some(x => x.id === t.parentId)))
+          const hidden = Math.max(0, view.counts[status] - tasks.filter(t => t.status === status).length)
           return (
             <section
               key={status}
@@ -141,7 +184,10 @@ export function TaskBoard({ view, tasks, error, onClearError, onCreate, onUpdate
                 <ul className="space-y-2.5">
                   {column.map((task, i) => (
                     <Card
-                      key={task.id} task={task}
+                      key={task.id} task={task} all={tasks}
+                      onOpenStep={t => setEditing(t)}
+                      onToggleStep={t => void onUpdate(t.id, { status: t.status === 'done' ? 'todo' : 'done' })}
+                      onAddStep={title => onCreate({ title, parentId: task.id })}
                       onShift={onReorder && status !== 'done' ? {
                         // The whole column's order, with this card moved one place.
                         up:   i > 0 ? () => { const ids = column.map(t => t.id); [ids[i - 1], ids[i]] = [ids[i]!, ids[i - 1]!]; void onReorder(status, ids) } : undefined,
@@ -167,6 +213,8 @@ export function TaskBoard({ view, tasks, error, onClearError, onCreate, onUpdate
           task={editing}
           subjects={view.subjects}
           initialStatus={adding ?? 'todo'}
+          // Any task but itself and its own steps.
+          parents={tasks.filter(t => !editing || !subtreeOf(tasks.map(x => ({ id: x.id, parent: x.parentId })), editing.id).includes(t.id)).map(t => ({ id: t.id, title: t.title }))}
           error={error}
           onClose={close}
           onSave={input => editing ? onUpdate(editing.id, input) : onCreate(input)}

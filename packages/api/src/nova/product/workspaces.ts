@@ -134,6 +134,8 @@ export async function createWorkspace(platformChatId: string, input: CreateInput
       const tasks = await createTasksIn(tx, profileId, writes.tasks.map(t => ({
         title: t.title, priority: t.priority, subjectId: idOf(t.subject), topicName: t.topic, dueDay: t.dueDay,
         estimatedMinutes: t.estimatedMinutes, clientKey: `ws:${keyBase}:${t.key}`.slice(0, 120),
+        // A step is made under its task (createTasksIn writes parents first).
+        ...(t.parent ? { parentKey: `ws:${keyBase}:${t.parent}`.slice(0, 120) } : {}),
       })));
       if (!tasks.ok) throw new RefusedError("too_many", tasks.message);
       const notes = await createNotesIn(tx, profileId, writes.notes.map(n => ({ title: n.title, body: n.body, subjectId: idOf(n.subject), topicName: n.topic })));
@@ -236,7 +238,7 @@ export async function resourceDetail(platformChatId: string, profileId: string, 
       return p ? { ...t, unit: p.unit, ...(p.subtopics.length ? { subtopics: p.subtopics } : {}) } : t;
     }) })),
     ...(phases.length ? { phases } : {}),
-    tasks: tasks.map(t => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, dueDay: t.dueDay, subjectId: t.subjectId, topicName: t.topicName, estimatedMinutes: t.estimatedMinutes })),
+    tasks: tasks.map(t => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, dueDay: t.dueDay, subjectId: t.subjectId, topicName: t.topicName, estimatedMinutes: t.estimatedMinutes, parentId: t.parentId })),
     notes: notes.map(n => ({ id: n.id, title: n.title, subjectId: n.subjectId, updatedAt: n.updatedAt.toISOString() })),
     dates: (exams ?? []).filter(e => e.subjectName && names.has(e.subjectName.toLowerCase()))
       .map(e => ({ id: e.id, title: e.title, day: e.date, kind: e.type, subjectId: subjects.find(s => s.name.toLowerCase() === e.subjectName!.toLowerCase())?.id ?? null })),
@@ -330,9 +332,10 @@ export async function changeResource(
       const ids = [...new Set([...(row?.subjectIds ?? input.ref.subjectIds), ...added.map(a => a.id)])].filter(id => !gone.has(id));
       const made = await createTasksIn(tx, profileId, pick("add_task").map(o => ({
         title: o.title, priority: o.priority, subjectId: o.subjectId, topicName: o.topicName, dueDay: o.dueDay, clientKey: `${prefix}${o.key}`.slice(0, 120),
+        ...(o.parentId ? { parentId: o.parentId } : o.parentKey ? { parentKey: `${prefix}${o.parentKey}`.slice(0, 120) } : {}),
       })));
       if (!made.ok) throw new RefusedError("too_many", made.message);
-      await updateTasksIn(tx, profileId, pick("update_task").map(({ taskId, title, dueDay, priority }) => ({ taskId, title, dueDay, priority })));
+      await updateTasksIn(tx, profileId, pick("update_task").map(({ taskId, title, dueDay, priority, parentId }) => ({ taskId, title, dueDay, priority, parentId })));
       await removeOpenTasksIn(tx, profileId, pick("remove_task").map(o => o.taskId));
       for (const o of pick("order_tasks")) await placeTasksIn(tx, profileId, o.taskIds);
       await addDatesIn(tx, profileId, pick("add_date").map(o => ({ title: o.title, subjectId: o.subjectId, kind: o.kind, day: o.day })), today, now);

@@ -6,6 +6,7 @@
 // trusted. Run the tests with `npm test`.
 
 import type { PlanDate, PlanNote, PlanPhase, PlanSubject, PlanTask, WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
+import { canPlace, subtreeOf, treeOrder } from '@repo/api/nova/product/task-tree'
 
 const same = (a: string | null | undefined, b: string | null | undefined) =>
   a != null && b != null && a.toLocaleLowerCase() === b.toLocaleLowerCase()
@@ -35,19 +36,98 @@ export function addTask(plan: WorkspacePlan, title: string, milestone: string | 
   const phase = milestone ? plan.phases.find(p => same(p.name, milestone)) : null
   const task: PlanTask = {
     key: newTaskKey(plan), title, priority: null, subject: phase?.subject ?? plan.subjects[0]?.name ?? null,
-    topic: phase?.name ?? null, dueDay: null, estimatedMinutes: null, after: null,
+    topic: phase?.name ?? null, dueDay: null, estimatedMinutes: null, after: null, parent: null,
   }
   return { ...plan, tasks: [...plan.tasks, task] }
 }
 
-export function removeTask(plan: WorkspacePlan, key: string): WorkspacePlan {
-  return { ...plan, tasks: plan.tasks.filter(t => t.key !== key).map(t => (t.after === key ? { ...t, after: null } : t)) }
+// ── Steps (product/task-tree.ts holds the rules) ──────────────────────────────
+
+const nodes = (plan: WorkspacePlan) => plan.tasks.map(t => ({ id: t.key, parent: t.parent ?? null }))
+
+// A step under a task, after its last step, filed where its task is.
+export function addStep(plan: WorkspacePlan, parentKey: string, title: string): WorkspacePlan {
+  const parent = plan.tasks.find(t => t.key === parentKey)
+  if (!parent || !canPlace([...nodes(plan), { id: '+new', parent: null }], '+new', parentKey).ok) return plan
+  const step: PlanTask = { key: newTaskKey(plan), title, priority: null, subject: parent.subject, topic: parent.topic, dueDay: null, estimatedMinutes: null, after: null, parent: parentKey }
+  const under = subtreeOf(nodes(plan), parentKey)
+  const last = Math.max(...under.map(k => plan.tasks.findIndex(t => t.key === k)))
+  const tasks = [...plan.tasks]
+  tasks.splice(last + 1, 0, step)
+  return { ...plan, tasks }
 }
 
-export function reorderTask(plan: WorkspacePlan, key: string, by: -1 | 1): WorkspacePlan {
-  const i = plan.tasks.findIndex(t => t.key === key)
-  return { ...plan, tasks: moveItem(plan.tasks, i, i + by) }
+// Under another task (null: a task of its own), when the tree allows it.
+// A step follows its new task's milestone.
+export function setParent(plan: WorkspacePlan, key: string, parent: string | null): WorkspacePlan {
+  if (!canPlace(nodes(plan), key, parent).ok) return plan
+  const to = parent ? plan.tasks.find(t => t.key === parent) : null
+  const moving = new Set(subtreeOf(nodes(plan), key))
+  return { ...plan, tasks: plan.tasks.map(t => (t.key === key ? { ...t, parent, ...(to ? { topic: to.topic, subject: to.subject } : {}) } : moving.has(t.key) && to ? { ...t, topic: to.topic, subject: to.subject } : t)) }
 }
+
+// The task just above among its siblings, or null.
+function siblingBefore(plan: WorkspacePlan, key: string): PlanTask | null {
+  const t = plan.tasks.find(x => x.key === key)
+  if (!t) return null
+  const siblings = plan.tasks.filter(x => (x.parent ?? null) === (t.parent ?? null) && (t.parent ? true : same(x.topic, t.topic) || (!x.topic && !t.topic)))
+  const i = siblings.findIndex(x => x.key === key)
+  return i > 0 ? siblings[i - 1]! : null
+}
+
+// A step of the task above it (indent), or one level up (outdent).
+export const canIndent = (plan: WorkspacePlan, key: string) => { const s = siblingBefore(plan, key); return Boolean(s && canPlace(nodes(plan), key, s.key).ok) }
+export function indent(plan: WorkspacePlan, key: string): WorkspacePlan {
+  const s = siblingBefore(plan, key)
+  return s ? setParent(plan, key, s.key) : plan
+}
+export function outdent(plan: WorkspacePlan, key: string): WorkspacePlan {
+  const t = plan.tasks.find(x => x.key === key)
+  if (!t?.parent) return plan
+  const up = plan.tasks.find(x => x.key === t.parent)?.parent ?? null
+  return setParent(plan, key, up)
+}
+
+// A task and its steps go together; whatever waited for one of them waits for nothing.
+export function removeTask(plan: WorkspacePlan, key: string): WorkspacePlan {
+  const going = new Set(subtreeOf(nodes(plan), key))
+  return { ...plan, tasks: plan.tasks.filter(t => !going.has(t.key)).map(t => (t.after && going.has(t.after) ? { ...t, after: null } : t)) }
+}
+
+// Up or down among its siblings, its steps with it.
+export function reorderTask(plan: WorkspacePlan, key: string, by: -1 | 1): WorkspacePlan {
+  const t = plan.tasks.find(x => x.key === key)
+  if (!t) return plan
+  const siblings = plan.tasks.filter(x => (x.parent ?? null) === (t.parent ?? null))
+  const i = siblings.findIndex(x => x.key === key)
+  const other = siblings[i + by]
+  if (!other) return plan
+  const a = subtreeOf(nodes(plan), key), b = subtreeOf(nodes(plan), other.key)
+  const block = (keys: string[]) => plan.tasks.filter(x => keys.includes(x.key))
+  const first = by === -1 ? [...block(a), ...block(b)] : [...block(b), ...block(a)]
+  const at = Math.min(...[...a, ...b].map(k => plan.tasks.findIndex(x => x.key === k)))
+  const rest = plan.tasks.filter(x => !a.includes(x.key) && !b.includes(x.key))
+  return { ...plan, tasks: [...rest.slice(0, at), ...first, ...rest.slice(at)] }
+}
+
+// Tasks as rows of a tree: each with its depth and how many steps it has.
+export function treeRows(tasks: PlanTask[]): Array<{ task: PlanTask; depth: number; steps: number }> {
+  const all = tasks.map(t => ({ ...t, id: t.key, parent: t.parent ?? null }))
+  return treeOrder(all).map(({ item, depth }) => ({ task: tasks.find(t => t.key === item.id)!, depth, steps: subtreeOf(all, item.id).length - 1 }))
+}
+
+// ── Priorities: the learner's ─────────────────────────────────────────────────
+
+// Nova's suggestion taken as their own priority, or set aside.
+export function acceptSuggestion(plan: WorkspacePlan, key: string): WorkspacePlan {
+  return { ...plan, tasks: plan.tasks.map(t => (t.key === key && t.suggestedPriority ? { ...t, priority: t.suggestedPriority, suggestedPriority: null, priorityReason: null } : t)) }
+}
+export function dismissSuggestion(plan: WorkspacePlan, key: string): WorkspacePlan {
+  return { ...plan, tasks: plan.tasks.map(t => (t.key === key ? { ...t, suggestedPriority: null, priorityReason: null } : t)) }
+}
+
+// What waits on a task (its "after" names it).
+export const waitingOn = (plan: WorkspacePlan, key: string): PlanTask[] => plan.tasks.filter(t => t.after === key)
 
 // Which tasks a task may wait for: any other, except one already waiting
 // (directly or not) on it, so an order never loops.
@@ -151,9 +231,11 @@ export const removeNote = (plan: WorkspacePlan, key: string): WorkspacePlan => (
 // ── Reading it back ───────────────────────────────────────────────────────────
 
 // Tasks under each milestone, in the plan's order, then those under none.
+// A step goes with its task, wherever its own topic says.
 export function tasksByMilestone(plan: WorkspacePlan): Array<{ milestone: string | null; index: number | null; tasks: PlanTask[] }> {
-  const groups = plan.phases.map((p, index) => ({ milestone: p.name as string | null, index: index as number | null, tasks: plan.tasks.filter(t => same(t.topic, p.name)) }))
-  const rest = plan.tasks.filter(t => !plan.phases.some(p => same(t.topic, p.name)))
+  const rootOf = (t: PlanTask): PlanTask => { let at = t; for (let i = 0; at.parent && i < 12; i++) at = plan.tasks.find(x => x.key === at.parent) ?? at; return at }
+  const groups = plan.phases.map((p, index) => ({ milestone: p.name as string | null, index: index as number | null, tasks: plan.tasks.filter(t => same(rootOf(t).topic, p.name)) }))
+  const rest = plan.tasks.filter(t => !plan.phases.some(p => same(rootOf(t).topic, p.name)))
   return rest.length > 0 || groups.length === 0 ? [...groups, { milestone: null, index: null, tasks: rest }] : groups
 }
 
