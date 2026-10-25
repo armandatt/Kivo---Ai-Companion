@@ -25,7 +25,6 @@ type Multi<Id extends string> = { selected: Id[]; custom: string[] }
 type Note = { ok: boolean; text: string } | null
 
 type Loaded = {
-  preferredName: string
   creatureName: string
   contexts:     string[]
   workingOn:    Multi<WorkingOnId>
@@ -85,8 +84,8 @@ export function HelpPreferences() {
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [failed, setFailed] = useState(false)
   const [draft, setDraft]   = useState<Loaded | null>(null)
-  const [busy, setBusy]     = useState<'about' | 'voice' | 'creature' | 'style' | 'preferredName' | null>(null)
-  const [notes, setNotes]   = useState<Record<'about' | 'voice' | 'creature' | 'style' | 'preferredName', Note>>({ about: null, voice: null, creature: null, style: null, preferredName: null })
+  const [busy, setBusy]     = useState<'about' | 'voice' | 'creature' | 'style' | null>(null)
+  const [notes, setNotes]   = useState<Record<'about' | 'voice' | 'creature' | 'style', Note>>({ about: null, voice: null, creature: null, style: null })
 
   useEffect(() => {
     let live = true
@@ -96,13 +95,12 @@ export function HelpPreferences() {
     ])
       .then(([settings, personality]: [
         { creatureName?: string; companionName?: string; learningContexts?: string[]; workingOn?: MultiAnswer<WorkingOnId> | null;
-          weeklyHours?: WeeklyHours | null; obstacles?: MultiAnswer<ObstacleId> | null; language?: ReplyLanguage | null; tone?: Tone | null; preferredName?: string | null },
+          weeklyHours?: WeeklyHours | null; obstacles?: MultiAnswer<ObstacleId> | null; language?: ReplyLanguage | null; tone?: Tone | null },
         { style?: { choices?: Record<StyleDimension, string> | null } },
       ]) => {
         if (!live) return
         const weekly = settings.weeklyHours ?? null
         const now: Loaded = {
-          preferredName: settings.preferredName ?? '',
           creatureName: settings.creatureName || settings.companionName || DEFAULT_CREATURE_NAME,
           contexts:     settings.learningContexts ?? [],
           workingOn:    multi(settings.workingOn),
@@ -232,17 +230,6 @@ export function HelpPreferences() {
           </div>
           <p className="mt-2 text-xs text-subtle">Tone changes Nova&apos;s manner, not its advice. It turns calm whenever an exam is close or something is weighing on you.</p>
         </fieldset>
-      </Card>
-
-      <Card title="What Nova calls you" description="Your name or a nickname. Optional: leave it empty and Nova uses no name. It changes nothing about your account."
-        footer={<>
-          {saveButton('preferredName', () => void run('preferredName', { preferredName: draft.preferredName.trim() || null }, ['preferredName']))}
-          <Saved note={notes.preferredName} />
-        </>}>
-        <div className="max-w-sm">
-          <label htmlFor="pref-name" className={LABEL}>Call me</label>
-          <input id="pref-name" value={draft.preferredName} maxLength={40} onChange={e => set({ preferredName: e.target.value })} placeholder="e.g. Avi" autoComplete="nickname" className={FIELD} />
-        </div>
       </Card>
 
       <Card title="Your creature" description="The name of the creature in your world. Nova is always called Nova."

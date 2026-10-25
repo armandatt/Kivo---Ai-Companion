@@ -2,7 +2,7 @@
 // a request that fails keeps nothing from the page (the caller holds the
 // words and the edits).
 
-import type { BuilderResponse, DraftListView, DraftView, VersionResponse, VersionsResponse, WorkspaceDetailResponse } from '@repo/api/nova/product/builder.types'
+import type { BuilderResponse, DraftListView, DraftView, WorkspaceDetailResponse } from '@repo/api/nova/product/builder.types'
 import type { WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
 
 export type Failure = { ok: false; error: string; message: string; draft?: DraftView }
@@ -39,15 +39,6 @@ export const saveDraftPlan = (draftId: string, plan: WorkspacePlan, baseVersion:
 // Which of the proposed changes to an existing resource stay (by id).
 export const saveDraftChanges = (draftId: string, keep: string[], baseVersion: number) =>
   call<BuilderResponse>(`/api/nova/builder/${id(draftId)}`, { method: 'PATCH', body: JSON.stringify({ keep, baseVersion }) })
-// The conversation's versions, one of them as it was, and returning to one
-// (a new version is made; none is removed).
-export const loadVersions = (draftId: string) => call<VersionsResponse>(`/api/nova/builder/${id(draftId)}/versions`)
-export const loadVersion = (draftId: string, versionId: string) => call<VersionResponse>(`/api/nova/builder/${id(draftId)}/versions/${encodeURIComponent(versionId)}`)
-export const restoreVersion = (draftId: string, versionId: string, baseVersion: number) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/restore`, { versionId, baseVersion })
-// A deletion this conversation showed: carried out only with its fingerprint, or dropped.
-export const confirmDeletion = (draftId: string, fingerprint: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/delete-resource`, { fingerprint })
-export const cancelDeletion = (draftId: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/delete-resource`, { cancel: true })
-
 // Removes the conversation only; what it built stays.
 export const deleteDraft = (draftId: string) => call<{ ok: true }>(`/api/nova/builder/${id(draftId)}`, { method: 'DELETE' })
 

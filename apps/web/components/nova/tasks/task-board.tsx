@@ -29,11 +29,8 @@ const EMPTY: Record<TaskStatus, string> = {
 
 const PRIORITY_TONE = { high: 'text-rose-300', medium: 'text-amber-300', low: 'text-foreground/45' } as const
 
-function Card({ task, onOpen, onMove, onShift, dragging, onDragStart, onDragEnd, partOf, steps = 0 }: {
+function Card({ task, onOpen, onMove, onShift, dragging, onDragStart, onDragEnd }: {
   task: NovaTaskItem
-  // The task this one is a step of, by title, and how many steps it has.
-  partOf?: string | null
-  steps?: number
   onOpen: () => void
   onMove: (status: TaskStatus) => void
   // Up or down within its column; absent where it cannot move that way.
@@ -59,9 +56,7 @@ function Card({ task, onOpen, onMove, onShift, dragging, onDragStart, onDragEnd,
     >
       <button type="button" onClick={onOpen} className="block w-full cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-keppel-400/60 rounded-lg">
         <span className={`block text-sm font-medium leading-snug ${task.status === 'done' ? 'text-foreground/50 line-through decoration-foreground/25' : 'text-foreground'}`}>{task.title}</span>
-        {partOf && <span className="mt-1 block truncate text-xs text-foreground/55" data-step-of>↳ Step of {partOf}</span>}
         {where && <span className="mt-1 block truncate text-xs text-foreground/50">{where}</span>}
-        {steps > 0 && <span className="mt-1 block text-[11px] text-foreground/50">{steps} step{steps === 1 ? '' : 's'}</span>}
         {(due || task.priority || task.estimatedMinutes) && (
           <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
             {due && task.status !== 'done' && <span className={late ? 'font-medium text-rose-300' : 'text-foreground/55'}>{due}</span>}
@@ -147,8 +142,6 @@ export function TaskBoard({ view, tasks, error, onClearError, onCreate, onUpdate
                   {column.map((task, i) => (
                     <Card
                       key={task.id} task={task}
-                      partOf={task.parentId ? tasks.find(x => x.id === task.parentId)?.title ?? null : null}
-                      steps={tasks.filter(x => x.parentId === task.id).length}
                       onShift={onReorder && status !== 'done' ? {
                         // The whole column's order, with this card moved one place.
                         up:   i > 0 ? () => { const ids = column.map(t => t.id); [ids[i - 1], ids[i]] = [ids[i]!, ids[i - 1]!]; void onReorder(status, ids) } : undefined,

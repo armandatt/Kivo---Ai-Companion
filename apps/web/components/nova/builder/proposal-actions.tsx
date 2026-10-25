@@ -31,9 +31,6 @@ export function ProposalActions({ state, words, onEdit, onAsk }: {
   const error = state.actionError && (state.errorOf === 'approve' || state.errorOf === 'cancel')
     ? <p role="alert" className="mb-2 text-xs text-red-400">{state.actionError}</p> : null
 
-  // A deletion shown in the conversation: said in full, carried out only here.
-  if (draft.deletion) return <DeletionActions state={state} />
-
   if (draft.status === 'building' || busy === 'approve') {
     return (
       <div className={BAR} role="status" data-actions="building">
@@ -129,47 +126,6 @@ export function ProposalActions({ state, words, onEdit, onAsk }: {
           <button type="button" onClick={() => setConfirmCancel(true)} disabled={blocked} aria-label="Discard this proposal" title="Discard this proposal"
             className="grid size-9 place-items-center rounded-lg text-subtle transition-colors hover:bg-white/6 hover:text-foreground disabled:opacity-40"><Trash2 aria-hidden className="size-4" /></button>
         )}
-      </div>
-    </div>
-  )
-}
-
-// Deleting something of theirs: everything it would remove and everything
-// it keeps, worked out by the server from the records, and one button that
-// does it. A chat message never does; Keep it drops the request.
-function DeletionActions({ state }: { state: DraftState }) {
-  const d = state.draft?.deletion
-  if (!d) return null
-  const r = d.removes, k = d.keeps
-  const goes = [
-    r.workspace ? `The workspace ${d.title}` : null,
-    ...r.subjects.map(s => `Subject ${s.name}`),
-    r.topics.length ? `${r.topics.length} topic${r.topics.length === 1 ? '' : 's'}: ${r.topics.slice(0, 4).map(t => t.name).join(', ')}${r.topics.length > 4 ? '…' : ''}` : null,
-    r.tasks.length ? `${r.tasks.length} open task${r.tasks.length === 1 ? '' : 's'}, steps included` : null,
-    r.dates.length ? `${r.dates.length} date${r.dates.length === 1 ? '' : 's'}: ${r.dates.slice(0, 3).map(x => x.title).join(', ')}` : null,
-    r.notes.length ? `${r.notes.length} note${r.notes.length === 1 ? '' : 's'} Nova wrote and nobody edited` : null,
-  ].filter(Boolean) as string[]
-  const stays = [
-    k.topics.length ? `${k.topics.length} studied topic${k.topics.length === 1 ? '' : 's'}, with their history` : null,
-    k.finishedTasks ? `${k.finishedTasks} finished task${k.finishedTasks === 1 ? '' : 's'}` : null,
-    k.notes.length ? `${k.notes.length} note${k.notes.length === 1 ? '' : 's'} you wrote or edited` : null,
-    ...k.subjects,
-  ].filter(Boolean) as string[]
-  const busy = state.busy === 'delete'
-  return (
-    <div className={`${BAR} border-red-400/25`} role="alertdialog" aria-label={`Delete ${d.title}?`} data-actions="delete">
-      {state.actionError && state.errorOf === 'delete' && <p role="alert" className="mb-2 text-xs text-red-400">{state.actionError}</p>}
-      <p className="flex items-center gap-2 text-sm font-semibold text-foreground"><AlertTriangle aria-hidden className="size-4 text-red-400" /> Delete {d.title}?</p>
-      <div className="mt-2 grid gap-3 text-xs sm:grid-cols-2">
-        <div><p className="font-medium text-foreground/85">This removes</p><ul className="mt-1 space-y-0.5 text-foreground/70">{goes.length ? goes.map(g => <li key={g}>• {g}</li>) : <li>Nothing: all of it is yours to keep.</li>}</ul></div>
-        <div><p className="font-medium text-foreground/85">This keeps</p><ul className="mt-1 space-y-0.5 text-foreground/70">{stays.length ? stays.map(g => <li key={g}>• {g}</li>) : <li>Nothing else is affected.</li>}</ul></div>
-      </div>
-      <p className="mt-2 text-[11px] text-subtle">Your other workspaces, subjects and notes aren&apos;t touched. Afterwards, Version history can bring it back as a new proposal.</p>
-      <div className="mt-2.5 flex flex-wrap gap-2">
-        <button type="button" onClick={() => void state.confirmDeletion()} disabled={busy || goes.length === 0} className="inline-flex items-center gap-1.5 rounded-lg bg-red-500/85 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50" data-confirm-delete>
-          {busy ? <Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none" /> : <Trash2 aria-hidden className="size-4" />} Delete {d.title}
-        </button>
-        <button type="button" onClick={() => void state.keepResource()} disabled={busy} className={BUTTON_QUIET}>Keep it</button>
       </div>
     </div>
   )

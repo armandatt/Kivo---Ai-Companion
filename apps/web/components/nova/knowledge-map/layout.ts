@@ -22,7 +22,6 @@ export const CARD: Record<MapNodeType, { w: number; h: number }> = {
   topic:    { w: 180, h: 58 },
   note:     { w: 164, h: 48 },
   resource: { w: 164, h: 48 },
-  task:     { w: 168, h: 44 },
 }
 
 const LEAF_DX     = 180   // a column of notes and pages behind a topic
@@ -35,7 +34,6 @@ const CLUSTER_GAP = 120
 const LOOSE_COLS  = 5   // in portrait, 2
 const LOOSE_DX    = 184
 const LOOSE_DY    = 62
-const STEP_DX     = 26    // a step sits this far in from the task it belongs to
 
 // How far a w × h box reaches from its centre in the direction (c, s).
 const reach = (w: number, h: number, c: number, s: number) => Math.abs(c) * w / 2 + Math.abs(s) * h / 2
@@ -53,45 +51,24 @@ export function layoutMap(nodes: MapNode[], edges: MapEdge[], { portrait = false
     hasParent.add(e.to)
   }
   const type = new Map(nodes.map(n => [n.id, n.type]))
-  // A task's steps (has_step), nested to any depth, are drawn under it in the
-  // same block, each level indented: the block reads as the outline it is.
-  const stepsOf = new Map<string, string[]>()
-  for (const e of edges) if (e.kind === 'has_step' && present.has(e.from) && present.has(e.to)) stepsOf.set(e.from, [...(stepsOf.get(e.from) ?? []), e.to])
-  const withSteps = (ids: string[]): Array<{ id: string; depth: number }> => {
-    const out: Array<{ id: string; depth: number }> = []
-    const seen = new Set<string>()
-    const walk = (id: string, depth: number) => {
-      if (seen.has(id)) return
-      seen.add(id); out.push({ id, depth })
-      for (const c of stepsOf.get(id) ?? []) walk(c, depth + 1)
-    }
-    for (const id of ids) walk(id, 0)
-    return out
-  }
 
   // One cluster per subject, laid out around (0, 0) first and sized by what
   // hangs from it.
   const clusters = nodes.filter(n => n.type === 'subject').map(s => {
     const kids   = children.get(s.id) ?? []
     const topics = kids.filter(k => type.get(k) === 'topic').map(id => {
-      const items   = withSteps(children.get(id) ?? [])
-      const leaves  = items.map(i => i.id)
-      const nested  = items.some(i => i.depth > 0)
-      const deepest = Math.max(0, ...items.map(i => i.depth))
-      // An outline is one column; a plain block of notes and pages, a grid.
-      const perRow  = nested ? 1 : leaves.length > 6 ? 3 : leaves.length > 1 ? 2 : 1
+      const leaves  = children.get(id) ?? []
+      const perRow  = leaves.length > 6 ? 3 : leaves.length > 1 ? 2 : 1
       const rows    = Math.ceil(leaves.length / perRow)
-      const blockW  = leaves.length === 0 ? 0 : perRow * LEAF_DX - (LEAF_DX - CARD.note.w) + deepest * STEP_DX
+      const blockW  = leaves.length === 0 ? 0 : perRow * LEAF_DX - (LEAF_DX - CARD.note.w)
       const blockH  = leaves.length === 0 ? 0 : rows * LEAF_DY - (LEAF_DY - CARD.note.h)
-      return { id, leaves, depth: new Map(items.map(i => [i.id, i.depth])), perRow, blockW, blockH, weight: Math.max(TOPIC_MIN_W, Math.max(blockW, blockH) + 48) }
+      return { id, leaves, perRow, blockW, blockH, weight: Math.max(TOPIC_MIN_W, Math.max(blockW, blockH) + 48) }
     })
-    const directItems = withSteps(kids.filter(k => type.get(k) !== 'topic'))
-    const direct = directItems.map(i => i.id)
-    const directDepth = new Map(directItems.map(i => [i.id, i.depth]))
+    const direct = kids.filter(k => type.get(k) !== 'topic')
 
     // Items filed under the subject only: a block just below it, inside the
     // ring of topics.
-    const dCols   = directItems.some(i => i.depth > 0) ? 1 : direct.length > 4 ? 3 : Math.min(2, direct.length)
+    const dCols   = direct.length > 4 ? 3 : Math.min(2, direct.length)
     const dRows   = dCols === 0 ? 0 : Math.ceil(direct.length / dCols)
     const dTop    = CARD.subject.h / 2 + DIRECT_GAP
     const dBottom = dTop + dRows * LEAF_DY - (LEAF_DY - CARD.note.h)
@@ -119,7 +96,7 @@ export function layoutMap(nodes: MapNode[], edges: MapEdge[], { portrait = false
         const row = Math.floor(k / t.perRow), col = k % t.perRow
         const inRow = Math.min(t.perRow, t.leaves.length - row * t.perRow)
         local.set(leaf, {
-          x: bx + (col - (inRow - 1) / 2) * LEAF_DX + ((t.depth.get(leaf) ?? 0) - (t.perRow === 1 ? Math.max(0, ...t.depth.values()) / 2 : 0)) * STEP_DX,
+          x: bx + (col - (inRow - 1) / 2) * LEAF_DX,
           y: by - t.blockH / 2 + CARD.note.h / 2 + row * LEAF_DY,
         })
       })
@@ -128,7 +105,7 @@ export function layoutMap(nodes: MapNode[], edges: MapEdge[], { portrait = false
     direct.forEach((d, k) => {
       const row = Math.floor(k / dCols), col = k % dCols
       const inRow = Math.min(dCols, direct.length - row * dCols)
-      local.set(d, { x: (col - (inRow - 1) / 2) * LEAF_DX + (directDepth.get(d) ?? 0) * STEP_DX, y: dTop + CARD.note.h / 2 + row * LEAF_DY })
+      local.set(d, { x: (col - (inRow - 1) / 2) * LEAF_DX, y: dTop + CARD.note.h / 2 + row * LEAF_DY })
     })
 
     // How far the cluster reaches from its subject each way, cards included.

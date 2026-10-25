@@ -30,7 +30,7 @@ const LEVEL_STEPS = { weak: 1, developing: 2, solid: 3 } as const
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
 const nodeIcon = (n: MapNode) => n.type === 'note' ? FileText : n.type === 'resource' ? Bookmark : n.type === 'topic' ? Hash : FolderOpen
-const TYPE_LABEL: Record<MapNode['type'], string> = { subject: 'Subject', topic: 'Topic', note: 'Note', resource: 'Saved page', task: 'Task' }
+const TYPE_LABEL: Record<MapNode['type'], string> = { subject: 'Subject', topic: 'Topic', note: 'Note', resource: 'Saved page' }
 const NOTE_CHIP = 'bg-[color-mix(in_oklch,var(--map-note)_18%,transparent)] text-[var(--map-note)]'
 const PAGE_CHIP = 'bg-[color-mix(in_oklch,var(--map-resource)_18%,transparent)] text-[var(--map-resource)]'
 

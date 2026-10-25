@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, ArrowRight, Sparkles } from 'lucide-react'
 import type { ProposedChange, WorkspaceDetail } from '@repo/api/nova/product/builder.types'
-import { treeOrder } from '@repo/api/nova/product/task-tree'
 import { cn } from '@/lib/utils'
 import { patchTask } from './builder-api'
 import { changeMarks, hintFor, wordsFor, type ChangeMarks } from './builder-view'
@@ -12,7 +11,6 @@ import type { PlaygroundView } from './plan-edit'
 import { NovaHint, PlaygroundHeader, TITLE_AREA, ViewTabs } from './playground'
 import { ProposalActions } from './proposal-actions'
 import type { DraftState } from './use-draft'
-import { HistoryButton, VersionHistory } from './version-history'
 
 // What a conversation works on when it is something the learner already
 // has: the real tasks, topics, notes and dates, read back from their owners
@@ -72,13 +70,7 @@ const STATUS_LABEL: Record<Task['status'], string> = { todo: 'To do', in_progres
 const same = (a: string | null | undefined, b: string | null | undefined) => a != null && b != null && a.toLocaleLowerCase() === b.toLocaleLowerCase()
 
 // A task with its progress, moved through To do → In progress → Done here.
-// A group's tasks in reading order: each followed by its steps, with depth.
-// A step whose task is in another group starts its own line there.
-function inTree(tasks: Task[]): Array<{ t: Task; depth: number }> {
-  return treeOrder(tasks.map(t => ({ ...t, key: t.id, parent: t.parentId && tasks.some(x => x.id === t.parentId) ? t.parentId : null }))).map(r => ({ t: r.item, depth: r.depth }))
-}
-
-function LiveTaskRow({ t, marks, onChange, depth = 0 }: { t: Task; marks: ChangeMarks; onChange: (patch: Partial<Task>) => Promise<void>; depth?: number }) {
+function LiveTaskRow({ t, marks, onChange }: { t: Task; marks: ChangeMarks; onChange: (patch: Partial<Task>) => Promise<void> }) {
   const [title, setTitle] = useState(t.title)
   useEffect(() => setTitle(t.title), [t.title])
   const i = COLUMNS.findIndex(c => c.status === t.status)
@@ -86,7 +78,7 @@ function LiveTaskRow({ t, marks, onChange, depth = 0 }: { t: Task; marks: Change
   const changed = marks.changedTasks.get(t.id)
   const first = marks.firstTasks.indexOf(t.id)
   return (
-    <li className={cn(depth ? 'rounded-lg border border-white/6 bg-card/40' : CARD, 'p-2', removed && 'opacity-60', (changed || first >= 0) && 'border-nova/40', t.status === 'done' && 'opacity-75')} style={depth ? { marginLeft: `${Math.min(depth, 6) * 18}px` } : undefined} data-live-task={t.id} data-depth={depth}>
+    <li className={cn(CARD, 'p-2', removed && 'opacity-60', (changed || first >= 0) && 'border-nova/40', t.status === 'done' && 'opacity-75')} data-live-task={t.id}>
       <textarea aria-label="Task title" value={title} maxLength={160} rows={1} onChange={e => setTitle(e.target.value.split('\n').join(' '))}
         onBlur={() => { if (title.trim() && title !== t.title) void onChange({ title: title.trim() }) }} className={cn(FIELD, TITLE_AREA, (removed || t.status === 'done') && 'line-through')} />
       <div className="flex flex-wrap items-center gap-1.5 px-1.5 pt-1 text-[11px] text-subtle">
@@ -108,32 +100,11 @@ function LiveTaskRow({ t, marks, onChange, depth = 0 }: { t: Task; marks: Change
   )
 }
 
-// A live task and, right under it, the steps Nova proposes to add to it.
-function LiveStep({ t, depth, marks, onChange }: { t: Task; depth: number; marks: ChangeMarks; onChange: (patch: Partial<Task>) => Promise<void> }) {
-  const proposedSteps = marks.addedTasks.filter(a => a.parentId === t.id)
-  return (
-    <>
-      <LiveTaskRow t={t} depth={depth} marks={marks} onChange={onChange} />
-      {proposedSteps.map(a => (
-        <li key={a.key} className={cn('rounded-lg border p-2 text-sm text-foreground/85', PROPOSED)} style={{ marginLeft: `${Math.min(depth + 1, 6) * 18}px` }} data-proposed-step>
-          + {a.title}<Proposed>proposed step</Proposed>
-        </li>
-      ))}
-      {marks.addedTasks.filter(a => a.parentKey && proposedSteps.some(p => p.key === a.parentKey)).map(a => (
-        <li key={a.key} className={cn('rounded-lg border p-2 text-sm text-foreground/85', PROPOSED)} style={{ marginLeft: `${Math.min(depth + 2, 6) * 18}px` }} data-proposed-step>
-          + {a.title}<Proposed>proposed step</Proposed>
-        </li>
-      ))}
-    </>
-  )
-}
-
 export function LiveWorkspace({ view, onView, state, onAsk }: {
   view: PlaygroundView; onView: (v: PlaygroundView) => void; state: DraftState; onAsk: (text: string) => void
 }) {
   const detail = state.draft?.current
   const [error, setError] = useState<string | null>(null)
-  const [history, setHistory] = useState(false)
   if (!detail) return null
   const marks = changeMarks(state.draft?.changes ?? null)
 
@@ -155,9 +126,9 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
   ].filter(g => g.name !== null || g.tasks.length > 0 || marks.addedTasks.some(a => !phases.some(p => same(a.topicName, p.name))))
   const proposedIn = (name: string | null) => marks.addedTasks.filter(a => (name === null ? !phases.some(p => same(a.topicName, p.name)) : same(a.topicName, name)))
   const days = [
-    ...detail.dates.map(d => ({ day: marks.movedDates.get(d.id) ?? d.day, was: marks.movedDates.has(d.id) ? d.day : null, label: d.title, kind: 'date' as const, proposed: false, removed: marks.removedDates.has(d.id) })),
-    ...detail.tasks.filter(t => t.dueDay && t.status !== 'done').map(t => ({ day: t.dueDay!, was: null, label: t.title, kind: 'task' as const, proposed: false, removed: false })),
-    ...marks.addedDates.map(d => ({ day: d.day, was: null, label: d.title, kind: 'date' as const, proposed: true, removed: false })),
+    ...detail.dates.map(d => ({ day: marks.movedDates.get(d.id) ?? d.day, was: marks.movedDates.has(d.id) ? d.day : null, label: d.title, kind: 'date' as const, proposed: false })),
+    ...detail.tasks.filter(t => t.dueDay && t.status !== 'done').map(t => ({ day: t.dueDay!, was: null, label: t.title, kind: 'task' as const, proposed: false })),
+    ...marks.addedDates.map(d => ({ day: d.day, was: null, label: d.title, kind: 'date' as const, proposed: true })),
   ].sort((a, b) => a.day.localeCompare(b.day))
   const done = detail.tasks.filter(t => t.status === 'done').length
   const words = wordsFor(state.draft?.brief.kind)
@@ -167,9 +138,8 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
   const progress = (tasks: Task[]) => `${tasks.filter(t => t.status === 'done').length}/${tasks.length} done`
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col" data-live-workspace>
-      {history && <VersionHistory state={state} onClose={() => setHistory(false)} />}
-      <PlaygroundHeader title={detail.title} badge="live" stats={stats} extra={<HistoryButton onOpen={() => setHistory(true)} />} tabs={<ViewTabs views={views} view={shown} onView={onView} label="Workspace views" names={words.views} />} />
+    <div className="flex h-full min-h-0 flex-col" data-live-workspace>
+      <PlaygroundHeader title={detail.title} badge="live" stats={stats} tabs={<ViewTabs views={views} view={shown} onView={onView} label="Workspace views" names={words.views} />} />
       <div id="pg-panel" role="tabpanel" aria-labelledby={`pg-tab-${shown}`} className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-3 sm:px-5">
         {error && <p role="alert" className="mb-3 text-sm text-red-400">{error}</p>}
         <ChangeList state={state} />
@@ -225,7 +195,7 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
                 {g.phase!.completion && <p className="mt-1 pl-8 text-[11px] text-subtle">Done when {g.phase!.completion}</p>}
                 {(g.tasks.length > 0 || proposedIn(g.name).length > 0) && (
                   <ul className="ml-3 mt-2 space-y-1 border-l border-white/8 pl-4">
-                    {inTree(g.tasks).map(({ t, depth }) => <li key={t.id} style={{ paddingLeft: `${depth * 16}px` }} className={cn('flex items-center gap-2 text-sm text-foreground/80', depth && 'text-[13px]', t.status === 'done' && 'text-subtle line-through', marks.removedTasks.has(t.id) && 'opacity-60 line-through')} data-depth={depth}>{depth > 0 && <span aria-hidden className="text-subtle">↳</span>}<span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', t.status === 'done' ? 'bg-action' : t.status === 'in_progress' ? 'bg-amber-400' : 'bg-foreground/30')} />{t.title}{marks.changedTasks.get(t.id) && <Proposed>→ {marks.changedTasks.get(t.id)}</Proposed>}</li>)}
+                    {g.tasks.map(t => <li key={t.id} className={cn('flex items-center gap-2 text-sm text-foreground/80', t.status === 'done' && 'text-subtle line-through', marks.removedTasks.has(t.id) && 'opacity-60 line-through')}><span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', t.status === 'done' ? 'bg-action' : t.status === 'in_progress' ? 'bg-amber-400' : 'bg-foreground/30')} />{t.title}{marks.changedTasks.get(t.id) && <Proposed>→ {marks.changedTasks.get(t.id)}</Proposed>}</li>)}
                     {proposedIn(g.name).map(a => <li key={a.key} className="text-sm text-foreground/85">+ {a.title}<Proposed>proposed</Proposed></li>)}
                   </ul>
                 )}
@@ -243,10 +213,8 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
                   <span className="font-normal text-subtle">{g.tasks.length ? progress(g.tasks) : ''}</span>
                 </h3>
                 <ul className="space-y-2">
-                  {inTree(g.tasks).map(({ t, depth }) => (
-                    <LiveStep key={t.id} t={t} depth={depth} marks={marks} onChange={patch => change(t.id, patch)} />
-                  ))}
-                  {proposedIn(g.name).filter(a => !a.parentId || !g.tasks.some(t => t.id === a.parentId)).map(a => (
+                  {g.tasks.map(t => <LiveTaskRow key={t.id} t={t} marks={marks} onChange={patch => change(t.id, patch)} />)}
+                  {proposedIn(g.name).map(a => (
                     <li key={a.key} className={cn(CARD, PROPOSED, 'p-2 text-sm text-foreground/85')} data-proposed-task>+ {a.title}<span className="mt-0.5 block text-[11px] text-subtle">{a.dueDay ? `due ${a.dueDay}` : 'no due day'}{a.priority ? ` · ${a.priority}` : ''}</span><Proposed>proposed</Proposed></li>
                   ))}
                 </ul>
@@ -309,7 +277,7 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
         {shown === 'timeline' && (
           days.length === 0 ? <p className="text-sm text-foreground/65">Nothing dated yet. Give tasks a due day on the board, or add a date on the <Link href="/calendar" className="underline underline-offset-4">calendar</Link>.</p> : (
             <ol className="space-y-2">{days.map((d, i) => (
-              <li key={i} className={cn('flex items-center gap-3 rounded-lg px-1 text-sm', d.proposed && PROPOSED)}><span className="w-24 shrink-0 text-xs tabular-nums text-subtle">{d.day}</span><span aria-hidden className={cn('size-2 rounded-full', d.kind === 'date' ? 'bg-amber-400' : 'bg-action')} /><span className={cn('text-foreground/85', d.removed && 'line-through opacity-60')}>{d.label}{d.was && <Proposed>moved from {d.was}</Proposed>}{d.proposed && <Proposed>proposed</Proposed>}{d.removed && <Proposed>to be removed</Proposed>}</span></li>
+              <li key={i} className={cn('flex items-center gap-3 rounded-lg px-1 text-sm', d.proposed && PROPOSED)}><span className="w-24 shrink-0 text-xs tabular-nums text-subtle">{d.day}</span><span aria-hidden className={cn('size-2 rounded-full', d.kind === 'date' ? 'bg-amber-400' : 'bg-action')} /><span className="text-foreground/85">{d.label}{d.was && <Proposed>moved from {d.was}</Proposed>}{d.proposed && <Proposed>proposed</Proposed>}</span></li>
             ))}</ol>
           )
         )}
