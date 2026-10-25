@@ -100,8 +100,10 @@ export function checkOnboardingV2(body: unknown): OnboardingCheck {
 }
 
 // ─── v3 ───────────────────────────────────────────────────────────────────────
-// Eight answers, each with a reader (onboarding-options.ts has the lists):
+// Nine answers, each with a reader (onboarding-options.ts has the lists):
 //
+//   0. nickname     → onboardingAnswers.nickname (optional): what Nova calls
+//                     them, wherever it speaks (account-preferences-adapter.ts)
 //   1. audience     → onboardingAnswers.learningContexts: vocabulary, the
 //                     order of templates and options, one context line
 //   2. working on   → onboardingAnswers.workingOn: the setup page's templates
@@ -123,6 +125,17 @@ export function checkOnboardingV2(body: unknown): OnboardingCheck {
 // No creature colour, appearance, check-in time or personality questions.
 
 export const ONBOARDING_V3 = 3;
+// What Nova calls them, if they say (optional). Kept as typed, on one line.
+export const NICKNAME_MAX = 40;
+export function checkNickname(value: unknown): { ok: true; nickname: string | null } | { ok: false; message: string } {
+  if (value === undefined || value === null) return { ok: true, nickname: null };
+  if (typeof value !== "string") return { ok: false, message: "The name should be text." };
+  const name = oneLine(value);
+  if (!name) return { ok: true, nickname: null };
+  if ([...name].length > NICKNAME_MAX) return { ok: false, message: `Keep it to ${NICKNAME_MAX} characters or fewer.` };
+  if (name.includes("://") || name.includes("www.")) return { ok: false, message: "That looks like a link, not a name." };
+  return { ok: true, nickname: name };
+}
 export const DEFAULT_CREATURE_NAME = "Kivo";
 export const CREATURE_NAME_MAX = 30;
 
@@ -137,6 +150,8 @@ export function checkCreatureName(value: unknown): { ok: true; name: string } | 
 }
 
 export interface OnboardingAnswersV3 {
+  // What Nova calls them; null: their account name.
+  nickname:     string | null;
   audience:     Audience;
   workingOn:    MultiAnswer<WorkingOnId>;
   weeklyHours:  WeeklyHours;
@@ -149,7 +164,7 @@ export interface OnboardingAnswersV3 {
 
 // In the order asked, so the page can send the learner back to the first
 // answer that needs fixing.
-export const V3_FIELDS = ["audience", "workingOn", "weeklyHours", "obstacles", "language", "tone", "telegram", "creatureName"] as const;
+export const V3_FIELDS = ["nickname", "audience", "workingOn", "weeklyHours", "obstacles", "language", "tone", "telegram", "creatureName"] as const;
 export type OnboardingFieldV3 = (typeof V3_FIELDS)[number];
 
 export type OnboardingCheckV3 =
@@ -166,6 +181,8 @@ export function checkOnboardingV3(body: unknown): OnboardingCheckV3 {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, field: "audience", message: "Nothing to save." };
   const raw = body as Record<string, unknown>;
 
+  const nickname = checkNickname(raw.nickname);
+  if (!nickname.ok) return { ok: false, field: "nickname", message: nickname.message };
   if (typeof raw.audience !== "string" || !(AUDIENCES as readonly string[]).includes(raw.audience)) {
     return { ok: false, field: "audience", message: "Choose what you currently do." };
   }
@@ -186,6 +203,7 @@ export function checkOnboardingV3(body: unknown): OnboardingCheckV3 {
   return {
     ok: true,
     answers: {
+      nickname:     nickname.nickname,
       audience:     raw.audience as Audience,
       workingOn:    workingOn.value,
       weeklyHours:  weekly.value,

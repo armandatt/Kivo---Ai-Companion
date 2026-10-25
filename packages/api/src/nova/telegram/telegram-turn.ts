@@ -277,10 +277,11 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     // message in Devanagari says so itself, model or no model.
     // The language they chose for Nova starts the conversation and answers a
     // sentence the reading cannot place; what they write in still wins.
-    const preferredLanguage = (await loadVoicePreferences(event.chatId).catch(() => ({ language: null }))).language;
+    const voice = await loadVoicePreferences(event.chatId).catch(() => ({ language: null, nickname: null }));
+    const preferredLanguage = voice.language;
     const lastLanguage = user ? await loadReplyLanguage(user.id, preferredLanguage ?? "english") : (preferredLanguage ?? "english");
     ctx = {
-      chatId: event.chatId, profileId: profile.id, timezone: profile.timezone, name: user?.displayName ?? null, now,
+      chatId: event.chatId, profileId: profile.id, timezone: profile.timezone, name: voice.nickname ?? user?.displayName ?? null, now,
       language: event.kind === "text" ? (scriptLanguage(event.text) ?? chooseLanguage(null, lastLanguage, event.text, preferredLanguage)) : lastLanguage,
       preferredLanguage,
     };

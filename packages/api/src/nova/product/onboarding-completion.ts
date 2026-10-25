@@ -113,6 +113,8 @@ export function profileFromAnswersV3(answers: OnboardingAnswersV3, timezone: str
       // Whether they said they use Telegram: what the finish screen offers.
       // A connection is only ever UserProfile.telegramConnected.
       telegram:         answers.telegram,
+      // What Nova calls them, when they said. Absent: their account name.
+      ...(answers.nickname ? { nickname: answers.nickname } : {}),
     },
     ...buildOnboardingSchedulePayload({ energyPattern: null, preferredCheckInTime: null }),
   };

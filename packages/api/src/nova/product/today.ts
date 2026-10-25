@@ -10,6 +10,7 @@ import type { StudySnapshotResult } from "../engines/study-snapshot";
 import { calendarDaysUntil, dayKey, dayNumber, resolveTimezone } from "../engines/learner-calendar";
 import { daysOverdue, getOverdueTopics, isDueForReview } from "../engines/retention-engine";
 import { loadPlanningInputs, planEmptyReason, planMode } from "./planning-inputs";
+import { loadVoicePreferences } from "../adapters/account-preferences-adapter";
 import { shortfallView } from "./shortfall";
 import { DEADLINE_RULES, deadlineType } from "./deadline-types";
 import type { AcademicState } from "../types/academic-state.types";
@@ -255,10 +256,14 @@ export async function loadNovaToday(
   // for the Planner. Home then shows the first blocks of that plan.
   const loaded = await loadPlanningInputs(platformChatId, { availableMinutes: options.availableMinutes, now, focusSubject: options.focusSubject });
   if (loaded.status !== "ready") return { status: loaded.status };
+  const voice = await loadVoicePreferences(platformChatId).catch(() => null);
 
-  return buildTodayView({
-    ...loaded.inputs,
-    learnerName:      options.learnerName ?? null,
-    goals:            loaded.inputs.goals.slice(0, 3),
-  });
+  return {
+    ...buildTodayView({
+      ...loaded.inputs,
+      learnerName:      voice?.nickname ?? options.learnerName ?? null,
+      goals:            loaded.inputs.goals.slice(0, 3),
+    }),
+    language: voice?.language ?? null,
+  } as NovaTodayView;
 }

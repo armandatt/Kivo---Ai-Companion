@@ -114,7 +114,10 @@ export interface NovaTodayReady {
   status:      "ready";
   generatedAt: string;
   planChanges?: TodayPlanChangesView;
-  learnerName: string | null;       // from the signed-in account
+  learnerName: string | null;       // what they asked Nova to call them, else the signed-in account's name
+  // The language they chose for Nova: the greeting is in it (greetings.ts).
+  // null: not said. Absent on an older server.
+  language?:   "english" | "hindi" | "hinglish" | null;
   goals:       string[];            // what the student said they are working toward
   subjects:    string[];
   // What the student said they have today. The whole plan below was fitted

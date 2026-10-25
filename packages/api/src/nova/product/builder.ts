@@ -46,8 +46,9 @@ import { changeResource, deleteResource, deletionScope, workspacePlanOf, createW
 import { withoutPriorities, bareOps, changeCounts, checkChanges, decideResource, matchResources, readChangeSet, withinAsk } from "./builder-changes";
 import { changesToReach, listVersions, readProposal, readSnapshot, recordVersion, snapshotOf, snapshotOfPlan, versionById, type VersionItem } from "./builder-history";
 import { treeOrder } from "./task-tree";
+import { builderOpening, startingQuestion } from "./greetings";
 import {
-  DECLINE_REPLY, MESSAGE_MAX, TALKING, canMove, decideStep, type Step, describeChanges, emptyBrief, isPendingLive, learnerWords, message,
+  DECLINE_REPLY, MESSAGE_MAX, OPENING_QUESTION, STARTING_QUESTION, TALKING, canMove, decideStep, type Step, describeChanges, emptyBrief, isPendingLive, learnerWords, message,
   needsReply, nextBrief, planChanges, changedNothing, readBrief, readMessages, readPending, replyWithQuestion, spoken, withMessages, holdsLine,
 } from "./builder-state";
 import type { BriefFact, BuilderBrief, BuilderMessage, BuilderResponse, ChangeSet, DeletionScope, DraftFailure, DraftFile, DraftListView, DraftStatus, DraftView, PendingJob, ResourceRef } from "./builder.types";
@@ -188,6 +189,7 @@ async function signupContext(platformChatId: string, profile: { id: string; goal
     recentWorkspaceTitles(profile.id, 6),
   ]);
   const out: BriefFact[] = [];
+  if (signup?.nickname) out.push({ label: "Call them", value: signup.nickname });
   if (contexts.length) out.push({ label: "What they do", value: contexts.map(c => CONTEXT_WORDS[c]).join(", ") });
   const working = signup?.workingOn ? [...signup.workingOn.selected.map(id => WORKING_ON_LABEL[id]), ...signup.workingOn.custom] : [];
   if (working.length) out.push({ label: "Working on (said at sign-up)", value: working.join("; ") });
@@ -219,7 +221,8 @@ async function viewOf(row: Row, now: Date, counts: WorkspaceCounts | null = null
   const ids = [row.targetWorkspaceId, row.workspaceId].filter((x): x is string => Boolean(x));
   // What it works on, as stored now: its target, or what it built.
   const ref = refOf(row) ?? (row.workspaceId ? { workspaceId: row.workspaceId, subjectIds: [] } : null);
-  const platformChatId = ref ? await chatOfProfile(row.profileId) : null;
+  const platformChatId = await chatOfProfile(row.profileId);
+  const language = platformChatId ? (await loadSignupAnswers(platformChatId).catch(() => null))?.language ?? null : null;
   const [summaries, similar, files, current] = await Promise.all([
     workspaceSummaries(row.profileId, ids),
     status === "awaiting_approval" && plan && !refOf(row) ? similarWorkspaces(row.profileId, plan) : Promise.resolve([]),
@@ -227,7 +230,7 @@ async function viewOf(row: Row, now: Date, counts: WorkspaceCounts | null = null
     ref && platformChatId ? resourceDetail(platformChatId, row.profileId, ref, now) : Promise.resolve(null),
   ]);
   return {
-    id: row.id, status, origin: row.origin === "telegram" ? "telegram" : "web",
+    id: row.id, status, origin: row.origin === "telegram" ? "telegram" : "web", language,
     title: row.title, messages, brief: readBrief(row.brief), plan, version: row.version,
     pending: isPendingLive(pending, now) ? pending : null,
     failure: failureOf(row.failure),
@@ -257,7 +260,8 @@ export async function listDrafts(platformChatId: string): Promise<DraftListView>
     select: { id: true, status: true, title: true, origin: true, updatedAt: true, messages: true, plan: true, targetWorkspaceId: true, targetSubjectIds: true },
     orderBy: { updatedAt: "desc" }, take: 30,
   })).filter(r => !onlyDeclined(r));
-  return { status: "ready", drafts: rows.map(r => ({ id: r.id, status: statusOf(r.status), title: r.title, origin: r.origin === "telegram" ? "telegram" : "web", updatedAt: r.updatedAt.toISOString() })) };
+  const language = (await loadSignupAnswers(platformChatId).catch(() => null))?.language ?? null;
+  return { status: "ready", language, drafts: rows.map(r => ({ id: r.id, status: statusOf(r.status), title: r.title, origin: r.origin === "telegram" ? "telegram" : "web", updatedAt: r.updatedAt.toISOString() })) };
 }
 
 // A conversation that only ever asked for things this page does not do (an
@@ -621,7 +625,9 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
 
   if (step.type === "ask" || step.type === "chat") {
     // Asked once: in the model's words, or as code settled on it when the reply asks nothing.
-    const text = step.type === "ask" ? (step.overruled ? step.question : replyWithQuestion(reading.reply, step.question)) : reading.reply;
+    // Code's own questions are in the language they chose (greetings.ts).
+    const asked = step.type === "ask" ? (step.question === STARTING_QUESTION ? startingQuestion(language) : step.question === OPENING_QUESTION ? builderOpening(language).question : step.question) : "";
+    const text = step.type === "ask" ? (step.overruled ? asked : replyWithQuestion(reading.reply, asked)) : reading.reply;
     await settle(row.id, job.jobId, { brief, title, failure: null, add: [message("nova", text, new Date(), { kind: step.type === "ask" ? "question" : "chat" }), ...notes] });
     return;
   }

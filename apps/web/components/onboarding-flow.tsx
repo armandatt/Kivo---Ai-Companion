@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, ArrowRight, Check, Loader2, Send } from 'lucide-react';
 import { AUDIENCES, AUDIENCE_LABEL, type Audience } from '@repo/api/nova/product/first-focus';
 import {
-  CREATURE_NAME_MAX, DEFAULT_CREATURE_NAME, ONBOARDING_V3, V3_FIELDS, checkCreatureName, checkOnboardingV3, type OnboardingFieldV3,
+  CREATURE_NAME_MAX, DEFAULT_CREATURE_NAME, NICKNAME_MAX, ONBOARDING_V3, V3_FIELDS, checkCreatureName, checkNickname, checkOnboardingV3, type OnboardingFieldV3,
 } from '@repo/api/nova/product/onboarding-answers';
 import {
   OBSTACLE, OBSTACLES, OBSTACLE_LABELS, WEEKLY_HOURS_MAX, WEEKLY_PRESETS, WORKING_ON_LABELS, checkWeeklyHours, workingOnOptions,
@@ -33,6 +33,7 @@ import { cn } from '@/lib/utils';
 type Multi<Id extends string> = { selected: Id[]; custom: string[] };
 
 type Draft = {
+  nickname:     string;
   audience:     Audience | null;
   workingOn:    Multi<WorkingOnId>;
   weekly:       { preset: WeeklyPresetId | 'custom' | null; hours: string };
@@ -44,7 +45,7 @@ type Draft = {
 };
 
 const EMPTY: Draft = {
-  audience: null, workingOn: { selected: [], custom: [] }, weekly: { preset: null, hours: '' },
+  nickname: '', audience: null, workingOn: { selected: [], custom: [] }, weekly: { preset: null, hours: '' },
   obstacles: { selected: [], custom: [] }, language: null, tone: null, telegram: null, creatureName: DEFAULT_CREATURE_NAME,
 };
 
@@ -80,7 +81,7 @@ type StepId = 'welcome' | OnboardingFieldV3;
 const QUESTIONS: readonly OnboardingFieldV3[] = V3_FIELDS;
 const STEPS: readonly StepId[] = ['welcome', ...QUESTIONS];
 const PART: Record<OnboardingFieldV3, string> = {
-  audience: 'About you', workingOn: 'About you', weeklyHours: 'Your time', obstacles: 'What gets in the way',
+  nickname: 'About you', audience: 'About you', workingOn: 'About you', weeklyHours: 'Your time', obstacles: 'What gets in the way',
   language: 'How Nova talks', tone: 'How Nova talks', telegram: 'Telegram', creatureName: 'Your creature',
 };
 
@@ -112,6 +113,7 @@ function readDraft(): { draft: Draft; at: number } | null {
         workingOn: multi(d.workingOn), obstacles: multi(d.obstacles),
         weekly: { preset: d.weekly?.preset ?? null, hours: typeof d.weekly?.hours === 'string' ? d.weekly.hours : '' },
         creatureName: typeof d.creatureName === 'string' ? d.creatureName : DEFAULT_CREATURE_NAME,
+        nickname: typeof d.nickname === 'string' ? d.nickname : '',
       },
       at,
     };
@@ -171,10 +173,12 @@ function OnboardingFlowContent() {
     : { preset: draft.weekly.preset };
   const weeklyCheck = weeklyAnswer ? checkWeeklyHours(weeklyAnswer) : null;
   const nameCheck = checkCreatureName(draft.creatureName);
+  const nicknameCheck = checkNickname(draft.nickname);
 
   const answered = (() => {
     switch (step) {
       case 'welcome':      return true;
+      case 'nickname':     return nicknameCheck.ok;
       case 'audience':     return draft.audience !== null;
       case 'workingOn':    return draft.workingOn.selected.length + draft.workingOn.custom.length > 0;
       case 'weeklyHours':  return weeklyCheck?.ok === true;
@@ -188,6 +192,7 @@ function OnboardingFlowContent() {
 
   const payload = () => ({
     version:      ONBOARDING_V3,
+    nickname:     draft.nickname,
     audience:     draft.audience,
     workingOn:    draft.workingOn,
     weeklyHours:  weeklyAnswer,
@@ -324,7 +329,22 @@ function OnboardingFlowContent() {
                     <p className="mt-4 max-w-lg text-[17px] leading-relaxed text-foreground/75">
                       Tell Kivo what you&apos;re working on, how you spend your time, and what kind of support helps you make progress.
                     </p>
-                    <p className="mt-6 text-sm text-foreground/60">Eight short questions. You can change every answer later in Settings.</p>
+                    <p className="mt-6 text-sm text-foreground/60">Nine short questions. You can change every answer later in Settings.</p>
+                  </div>
+                )}
+
+                {step === 'nickname' && (
+                  <div>
+                    <label htmlFor="nickname" className="block text-[1.65rem] font-semibold leading-tight tracking-[-0.02em] text-foreground sm:text-[2rem]">
+                      What should Nova call you?
+                    </label>
+                    <p className="mt-2 text-[15px] leading-relaxed text-foreground/70">A first name or a nickname. You can leave it empty, and Nova will use the name on your account.</p>
+                    <input id="nickname" value={draft.nickname} maxLength={NICKNAME_MAX} onChange={e => set({ nickname: e.target.value })} autoComplete="nickname"
+                      aria-invalid={!nicknameCheck.ok} aria-describedby="nickname-note" placeholder="Optional"
+                      className="mt-6 h-12 w-full rounded-xl border border-white/15 bg-card px-4 text-lg text-foreground placeholder:text-foreground/45 focus:border-action focus:outline-none" />
+                    <p id="nickname-note" className={cn('mt-2 text-xs', nicknameCheck.ok ? 'text-subtle' : 'text-red-400')}>
+                      {nicknameCheck.ok ? 'Change it any time in Settings.' : nicknameCheck.message}
+                    </p>
                   </div>
                 )}
 

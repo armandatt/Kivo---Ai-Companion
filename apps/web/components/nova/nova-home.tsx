@@ -24,7 +24,8 @@ import { CompanionCard, ContinueLearning, Deadlines, PageProperties, WeekSoFar }
 import { TodayTasks } from './tasks/today-tasks'
 import { useTasks } from './tasks/use-tasks'
 import { useNovaView } from './use-nova-view'
-import { firstName, greeting, inDays } from './format'
+import { firstName, inDays } from './format'
+import { greetingFor } from '@repo/api/nova/product/greetings'
 import { useStartSession } from './use-start-session'
 import { CommandButton, CommandPalette, useCommandShortcut } from './workspace/command-palette'
 import { NewMenu } from './workspace/new-menu'
@@ -137,7 +138,7 @@ export function NovaHome({ view, minutes, onMinutes, subject, onSubject, refresh
           ways to act on anything, then the one thing to do next beside the
           day's flow */}
       <TodayHero
-        greeting={<>{greeting(new Date())}{name ? <span className="text-foreground/45">, {name}</span> : ''}</>}
+        greeting={<>{greetingFor(view.language, new Date().getHours())}{name ? <span className="text-foreground/45">, {name}</span> : ''}</>}
         context={context}
         properties={<>
           <PageProperties view={view} tasksDueToday={dueToday} />

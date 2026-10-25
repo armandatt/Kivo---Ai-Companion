@@ -92,6 +92,7 @@ export function BuilderPage() {
   const state = useDraft(draftId)
   const { draft } = state
   const [drafts, setDrafts] = useState<DraftListItem[]>([])
+  const [language, setLanguage] = useState<string | null>(null)
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([])
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
@@ -103,7 +104,7 @@ export function BuilderPage() {
 
   useEffect(() => { setSplit(readSplit()) }, [])
   const loadLists = useCallback(() => {
-    void api.listDrafts().then(r => { if ('status' in r) setDrafts(r.drafts) })
+    void api.listDrafts().then(r => { if ('status' in r) { setDrafts(r.drafts); setLanguage(r.language ?? null) } })
     void loadWorkspaces().then(r => { if ('status' in r) setWorkspaces(r.workspaces) })
   }, [])
   useEffect(() => { loadLists() }, [loadLists, draftId, draft?.status, draft?.title])
@@ -179,7 +180,7 @@ export function BuilderPage() {
   let playground: React.ReactNode
   if (!draftId) {
     const header = <ConversationHeader title="New conversation" status={null} drafts={drafts} current={null} onNew={null} />
-    conversation = <NewConversation header={header} onStart={start} busy={starting} error={startError} seed={seed} onExample={ask} drafts={drafts} workspaces={workspaces} onDeleted={loadLists} />
+    conversation = <NewConversation header={header} onStart={start} busy={starting} error={startError} seed={seed} onExample={ask} drafts={drafts} workspaces={workspaces} onDeleted={loadLists} language={language} />
     playground = (
       <div className="flex h-full min-h-0 flex-col">
         <PlaygroundHeader title="Your workspace" badge="draft" />

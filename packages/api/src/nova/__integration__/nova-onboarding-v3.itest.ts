@@ -86,7 +86,7 @@ test("the answers are stored on the account, each where Nova reads it", async ()
   assert.deepEqual(signup.workingOn, ANSWERS.workingOn);
   assert.deepEqual(signup.weeklyHours, { hours: 4, preset: "3_5" });
   assert.deepEqual(signup.obstacles, ANSWERS.obstacles);
-  assert.deepEqual(await loadVoicePreferences(learner), { language: "hinglish", tone: "direct" });
+  assert.deepEqual(await loadVoicePreferences(learner), { language: "hinglish", tone: "direct", nickname: null });
   assert.equal(await loadTone(learner), "direct");
   assert.equal(await loadAccountabilityStyle(learner), null);
 
@@ -164,7 +164,7 @@ test("one account's answers never reach another learner", async () => {
   await finish(a);
   await prisma.userProfile.create({ data: { userId: b, secondaryDomains: [], aspirationWords: [], primaryPersona: "nova", onboardingComplete: true } });
   const other = await loadSignupAnswers(`web:${b}`);
-  assert.deepEqual(other, { workingOn: null, weeklyHours: null, obstacles: null, language: null, tone: null });
+  assert.deepEqual(other, { workingOn: null, weeklyHours: null, obstacles: null, language: null, tone: null, nickname: null });
   assert.equal(await loadTone(`web:${b}`), null);
 });
 
@@ -216,4 +216,15 @@ test("what they write in wins over their choice", async () => {
   const turn = worded.at(-1);
   assert.ok(turn);
   assert.doesNotMatch(turn!.prompt, /Language: Hinglish/);
+});
+
+test("the name they ask Nova to use is kept, read back, and replaces the account name for Nova", async () => {
+  const userId = await account();
+  assert.equal(await finish(userId, { ...ANSWERS, nickname: "  Akki " }), "completed");
+  const learner = `web:${userId}`;
+  assert.equal((await loadVoicePreferences(learner)).nickname, "Akki");
+  // Left empty: none, and Nova uses the account's name.
+  const other = await account();
+  assert.equal(await finish(other, { ...ANSWERS, nickname: "" }), "completed");
+  assert.equal((await loadVoicePreferences(`web:${other}`)).nickname, null);
 });

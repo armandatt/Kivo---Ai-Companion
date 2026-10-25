@@ -11,7 +11,7 @@ import { normalizeLearningContexts } from "@repo/api/nova/product/learning-conte
 //@ts-ignore
 import { ANSWER_KEYS, FIRST_FOCUS_KEY, LEARNING_CONTEXTS_KEY, firstFocusIn, learningContextsIn, signupAnswersIn } from "@repo/api/nova/adapters/account-preferences-adapter"
 import { checkFirstFocus } from "@repo/api/nova/product/first-focus"
-import { checkCreatureName, DEFAULT_CREATURE_NAME } from "@repo/api/nova/product/onboarding-answers"
+import { checkCreatureName, checkNickname, DEFAULT_CREATURE_NAME } from "@repo/api/nova/product/onboarding-answers"
 import { OBSTACLES, OBSTACLE_LABELS, WORKING_ON, WORKING_ON_LABELS, checkMultiAnswer, checkWeeklyHours, withoutNotSure } from "@repo/api/nova/product/onboarding-options"
 import { accountabilityOfTone, isTone } from "@repo/api/nova/product/tone"
 import { REPLY_LANGUAGES } from "@repo/api/nova/types/understanding.types"
@@ -67,7 +67,7 @@ export async function GET() {
       firstFocus: firstFocusIn(profile?.onboardingAnswers),
       ...(() => {
         const a = signupAnswersIn(profile?.onboardingAnswers, profile?.accountabilityStyle ?? null)
-        return { workingOn: a.workingOn, weeklyHours: a.weeklyHours, obstacles: a.obstacles, language: a.language, tone: a.tone }
+        return { workingOn: a.workingOn, weeklyHours: a.weeklyHours, obstacles: a.obstacles, language: a.language, tone: a.tone, nickname: a.nickname }
       })(),
       platforms: {
         telegram: {
@@ -95,7 +95,7 @@ export async function PATCH(req: NextRequest) {
     if (!account) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 })
 
     const body = await req.json()
-    const { persona, checkInTime, accountabilityStyle, timezone, name, learningContexts, firstFocus, workingOn, weeklyHours, obstacles, language, tone } = body
+    const { persona, checkInTime, accountabilityStyle, timezone, name, learningContexts, firstFocus, workingOn, weeklyHours, obstacles, language, tone, nickname } = body
     // companionName is the older name of the same field, from a page loaded
     // before the creature was named apart from Nova.
     const creatureName = body.creatureName !== undefined ? body.creatureName : body.companionName
@@ -190,6 +190,12 @@ export async function PATCH(req: NextRequest) {
       answerUpdates[ANSWER_KEYS.language] = language
     }
     if (tone !== undefined) answerUpdates[ANSWER_KEYS.tone] = tone
+    // What Nova calls them; empty or null goes back to their account name.
+    if (nickname !== undefined) {
+      const checked = checkNickname(nickname)
+      if (!checked.ok) return NextResponse.json({ error: checked.message }, { status: 400 })
+      answerUpdates[ANSWER_KEYS.nickname] = checked.nickname
+    }
     if (Object.keys(answerUpdates).length > 0) {
       const current = await prisma.userProfile.findUnique({ where: { userId: session.userId }, select: { onboardingAnswers: true } })
       const answers = current?.onboardingAnswers && typeof current.onboardingAnswers === "object" && !Array.isArray(current.onboardingAnswers)

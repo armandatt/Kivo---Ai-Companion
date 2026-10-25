@@ -5,7 +5,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
-  CREATURE_NAME_MAX, DEFAULT_CREATURE_NAME, V3_FIELDS, checkCreatureName, checkOnboardingV3, isOnboardingV3,
+  CREATURE_NAME_MAX, DEFAULT_CREATURE_NAME, V3_FIELDS, checkCreatureName, checkNickname, checkOnboardingV3, isOnboardingV3,
 } from "../product/onboarding-answers";
 import {
   CUSTOM_ENTRIES_MAX, CUSTOM_ENTRY_MAX, OBSTACLES, OBSTACLE_LABELS, WEEKLY_HOURS_MAX, WORKING_ON, WORKING_ON_LABELS,
@@ -41,8 +41,8 @@ const VALID = {
 };
 
 describe("the questions, in order", () => {
-  it("are the eight the brief asks for, in its order, and the page asks exactly these", () => {
-    expect([...V3_FIELDS]).toEqual(["audience", "workingOn", "weeklyHours", "obstacles", "language", "tone", "telegram", "creatureName"]);
+  it("are the eight the brief asks for, after the optional name Nova should use, and the page asks exactly these", () => {
+    expect([...V3_FIELDS]).toEqual(["nickname", "audience", "workingOn", "weeklyHours", "obstacles", "language", "tone", "telegram", "creatureName"]);
     const flow = repo("apps/web/components/onboarding-flow.tsx");
     expect(flow).toContain("const QUESTIONS: readonly OnboardingFieldV3[] = V3_FIELDS;");
     const legends = [
@@ -109,6 +109,7 @@ describe("each answer, checked on its own", () => {
     const checked = checkOnboardingV3(VALID);
     expect(isOnboardingV3(VALID)).toBe(true);
     expect(checked.ok && checked.answers).toEqual({
+      nickname: null,
       audience: "college",
       workingOn: { selected: ["semester_exams", "new_skill"], custom: ["Final-year thesis"] },
       weeklyHours: { hours: 8, preset: "6_10" },
@@ -238,8 +239,8 @@ describe("where each answer is kept", () => {
 
   it("is read back by Nova's one adapter; anything unreadable is 'not said'", () => {
     const read = signupAnswersIn(profileData.onboardingAnswers);
-    expect(read).toEqual({ workingOn: answers.workingOn, weeklyHours: answers.weeklyHours, obstacles: answers.obstacles, language: "hinglish", tone: "direct" });
-    expect(signupAnswersIn({ tone: "shouty", language: "klingon", workingOn: "lots" })).toEqual({ workingOn: null, weeklyHours: null, obstacles: null, language: null, tone: null });
+    expect(read).toEqual({ workingOn: answers.workingOn, weeklyHours: answers.weeklyHours, obstacles: answers.obstacles, language: "hinglish", tone: "direct", nickname: null });
+    expect(signupAnswersIn({ tone: "shouty", language: "klingon", workingOn: "lots", nickname: 42 })).toEqual({ workingOn: null, weeklyHours: null, obstacles: null, language: null, tone: null, nickname: null });
     // An account from before tones: its soft/hard answer is its tone.
     expect(signupAnswersIn(null, "hard").tone).toBe("no_mercy");
     expect(signupAnswersIn({ tone: "calm" }, "hard").tone).toBe("calm");
@@ -455,5 +456,28 @@ describe("the route, Settings and the finish (read from source)", () => {
 
   it("an account that already finished is told nothing changed", () => {
     expect(flow).toContain("Onboarding was finished before, so these answers didn&apos;t change anything.");
+  });
+});
+
+describe("what Nova calls them (point 9 of the 25 Oct brief)", () => {
+  it("is optional, kept as typed on one line, and never a link or too long", () => {
+    expect(checkNickname(undefined)).toEqual({ ok: true, nickname: null });
+    expect(checkNickname("   ")).toEqual({ ok: true, nickname: null });
+    expect(checkNickname("  Akki \n ")).toEqual({ ok: true, nickname: "Akki" });
+    expect(checkNickname("x".repeat(41)).ok).toBe(false);
+    expect(checkNickname("https://evil.example").ok).toBe(false);
+    const checked = checkOnboardingV3({ ...VALID, nickname: "Akki" });
+    expect(checked.ok && checked.answers.nickname).toBe("Akki");
+    expect(checkOnboardingV3({ ...VALID, nickname: 5 })).toEqual({ ok: false, field: "nickname", message: "The name should be text." });
+  });
+
+  it("is kept with the answers, read back by the one adapter, and used wherever Nova speaks", () => {
+    const checked = checkOnboardingV3({ ...VALID, nickname: "Akki" });
+    if (!checked.ok) throw new Error(checked.message);
+    const { profileData } = profileFromAnswersV3(checked.answers, undefined);
+    expect(signupAnswersIn(profileData.onboardingAnswers).nickname).toBe("Akki");
+    expect(repo("packages/api/src/nova/nova-orchestrator.ts")).toContain("displayName: nickname ?? (user.displayName?.trim() || null)");
+    expect(repo("packages/api/src/nova/telegram/telegram-turn.ts")).toContain("name: voice.nickname ?? user?.displayName ?? null");
+    expect(repo("packages/api/src/nova/product/builder.ts")).toContain('if (signup?.nickname) out.push({ label: "Call them", value: signup.nickname });');
   });
 });

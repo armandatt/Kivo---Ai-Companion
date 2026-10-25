@@ -18,13 +18,6 @@ export const ACTIVITY_LABEL: Record<TodayActivity, string> = {
   exam_prep:    'Exam prep',
 }
 
-export function greeting(now: Date): string {
-  const hour = now.getHours()
-  if (hour >= 5 && hour < 12) return 'Good morning'
-  if (hour >= 12 && hour < 17) return 'Good afternoon'
-  return 'Good evening'
-}
-
 export function firstName(name: string | null): string | null {
   const first = name?.trim().split(/\s+/)[0]
   return first ? first : null

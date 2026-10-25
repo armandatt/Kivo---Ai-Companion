@@ -246,10 +246,10 @@ describe("Nova's context", () => {
 // ── Where it is kept, asked and changed (read from source) ────────────────────
 
 describe("asked once, kept in one place, changed in Settings", () => {
-  it("the quiz asks who they are first, as one answer, and keeps it as their learning context", () => {
+  it("the quiz asks who they are first (after the optional name Nova should use), as one answer, and keeps it as their learning context", () => {
     const quiz = repo("apps/web/components/onboarding-flow.tsx");
     expect(quiz).toContain("const QUESTIONS: readonly OnboardingFieldV3[] = V3_FIELDS;");
-    expect(repo("packages/api/src/nova/product/onboarding-answers.ts")).toContain('export const V3_FIELDS = ["audience", ');
+    expect(repo("packages/api/src/nova/product/onboarding-answers.ts")).toContain('export const V3_FIELDS = ["nickname", "audience", ');
     expect(quiz).toContain('legend="What do you currently do?"');
     // Each audience is a learning context, so every reader of contexts reads it.
     for (const a of AUDIENCES) expect([a, (LEARNING_CONTEXTS as readonly string[]).includes(a)]).toEqual([a, true]);

@@ -25,6 +25,7 @@ import {
 import { isTone, toneOfAccountability, type Tone } from "../product/tone";
 import { normalizeAccountability } from "../../personality/mentor-compatibility";
 import { REPLY_LANGUAGES, type ReplyLanguage } from "../types/understanding.types";
+import { checkNickname } from "../product/onboarding-answers";
 
 export const LEARNING_CONTEXTS_KEY = "learningContexts";
 // What they asked Nova to help with first (product/first-focus.ts), kept
@@ -49,7 +50,7 @@ export function firstFocusIn(onboardingAnswers: unknown): FirstFocus | null {
 // changes nothing about the others.
 export const ANSWER_KEYS = {
   workingOn: "workingOn", weeklyHours: "weeklyHours", obstacles: "obstacles",
-  language: "language", tone: "tone", telegram: "telegram",
+  language: "language", tone: "tone", telegram: "telegram", nickname: "nickname",
 } as const;
 
 const answersObject = (value: unknown): Record<string, unknown> | null =>
@@ -63,6 +64,8 @@ export interface SignupAnswers {
   language:    ReplyLanguage | null;
   // Their chosen tone, or the one their older soft/hard answer stands for.
   tone:        Tone | null;
+  // What they asked Nova to call them. null: not said (their account name).
+  nickname:    string | null;
 }
 
 export function signupAnswersIn(onboardingAnswers: unknown, accountabilityStyle: string | null = null): SignupAnswers {
@@ -75,6 +78,7 @@ export function signupAnswersIn(onboardingAnswers: unknown, accountabilityStyle:
     obstacles:   readMultiAnswer(a[ANSWER_KEYS.obstacles], OBSTACLES, OBSTACLE_LABELS),
     language,
     tone:        isTone(tone) ? tone : toneOfAccountability(normalizeAccountability(accountabilityStyle) as "soft" | "hard" | null),
+    nickname:    (() => { const n = checkNickname(a[ANSWER_KEYS.nickname]); return n.ok ? n.nickname : null; })(),
   };
 }
 
@@ -163,10 +167,11 @@ export async function loadSignupAnswers(platformChatId: string): Promise<SignupA
   return signupAnswersIn(account?.onboardingAnswers ?? null, account?.accountabilityStyle ?? null);
 }
 
-// Only how Nova speaks to them: the language and tone they chose.
-export async function loadVoicePreferences(platformChatId: string): Promise<{ language: ReplyLanguage | null; tone: Tone | null }> {
-  const { language, tone } = await loadSignupAnswers(platformChatId);
-  return { language, tone };
+// Only how Nova speaks to them: the language and tone they chose, and the
+// name they asked to be called.
+export async function loadVoicePreferences(platformChatId: string): Promise<{ language: ReplyLanguage | null; tone: Tone | null; nickname: string | null }> {
+  const { language, tone, nickname } = await loadSignupAnswers(platformChatId);
+  return { language, tone, nickname };
 }
 
 // The usual day a brand-new Nova profile starts with: the weekly time they

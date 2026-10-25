@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, Check, CircleSlash, FileText, LayoutTemplate, Loader2, MoreHorizontal, Paperclip, RotateCcw, Trash2, X } from 'lucide-react'
 import { FILE_TYPES, FILES_MAX, FILES_TOTAL_BYTES, encodeFile } from '@/components/nova/templates/templates-api'
 import { SHRINK_OVER_BYTES, imagesOnClipboard, pastedName, shrunkSize } from './paste'
+import { builderOpening } from '@repo/api/nova/product/greetings'
 import type { BuilderMessage, DraftListItem, DraftView } from '@repo/api/nova/product/builder.types'
 import type { WorkspaceSummary } from '@repo/api/nova/product/workspaces.types'
 import { KivoMark } from '@/components/brand/kivo-brand'
@@ -357,7 +358,7 @@ export function Conversation({ state, header, seed, onReview }: {
 
   // A built conversation goes on: what it built is what it changes next.
   const talking = draft && ['discovery', 'awaiting_approval', 'failed', 'drafting', 'ready'].includes(draft.status)
-  const placeholder = !draft ? '' : state.working ? 'Nova is working…' : draft.status === 'ready' ? `Ask for a change to ${draft.current?.title ?? 'it'}…` : draft.plan || draft.changes ? 'Ask for a change, or ask Nova anything…' : 'Tell Nova about it…'
+  const placeholder = !draft ? '' : state.working ? 'Nova is working…' : draft.status === 'ready' ? `Ask for a change to ${draft.current?.title ?? 'it'}…` : draft.plan || draft.changes ? builderOpening(draft.language).reply : 'Tell Nova about it…'
   const lastNova = draft ? [...draft.messages].reverse().find(m => m.role === 'nova') : undefined
   const reviewable = draft && draft.plan && (draft.status === 'awaiting_approval' || draft.status === 'ready' || draft.status === 'building')
 
@@ -374,7 +375,7 @@ export function Conversation({ state, header, seed, onReview }: {
       {header}
       <div ref={box} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-5" aria-label="Conversation with Nova">
         {draft && draft.messages.length === 0 && !draft.pending && (
-          <div className="flex items-start gap-3"><NovaAvatar size="sm" /><div className="pt-0.5 text-[14px] leading-relaxed text-foreground/85"><p className="mb-1 text-xs font-semibold text-foreground/80">Nova</p>{draft.target ? `What would you like to add to ${draft.target.title}? I'll only add to it: nothing there is changed or removed.` : 'What are you working on, and what would you like to end up with?'}</div></div>
+          <div className="flex items-start gap-3"><NovaAvatar size="sm" /><div className="pt-0.5 text-[14px] leading-relaxed text-foreground/85"><p className="mb-1 text-xs font-semibold text-foreground/80">Nova</p>{draft.target ? builderOpening(draft.language).addTo(draft.target.title) : builderOpening(draft.language).question}</div></div>
         )}
         {draft?.messages.map(m => <Message key={m.id} m={m} fresh={m.role === 'nova' && !seen.current?.has(m.id)} />)}
         {outgoing && <UserMessage text={outgoing.text} files={outgoing.files.map(f => ({ name: f.name, pages: null }))} sending />}
@@ -414,10 +415,13 @@ export function Conversation({ state, header, seed, onReview }: {
 
 // ── Before there is a conversation ────────────────────────────────────────────
 
-export function NewConversation({ header, onStart, busy, error, seed, onExample, drafts, workspaces, onDeleted }: {
+export function NewConversation({ header, onStart, busy, error, seed, onExample, drafts, workspaces, onDeleted, language }: {
+  // Theirs (sign-up or Settings): Nova's opening words are in it.
+  language?: string | null
   header: React.ReactNode; onStart: (text: string, targetWorkspaceId?: string, files?: Upload[]) => Promise<boolean>; busy: boolean; error: string | null
   seed: Seed | null; onExample: (text: string) => void; drafts: DraftListItem[]; workspaces: WorkspaceSummary[]; onDeleted: () => void
 }) {
+  const opening = builderOpening(language)
   const open = drafts.filter(d => d.status !== 'cancelled').slice(0, 8)
   const [outgoing, setOutgoing] = useState<string | null>(null)
   const start = async (text: string, files: Upload[]) => {
@@ -433,8 +437,8 @@ export function NewConversation({ header, onStart, busy, error, seed, onExample,
         <div className="flex items-start gap-3">
           <NovaAvatar />
           <div className="min-w-0 pt-0.5">
-            <h1 className="text-lg font-semibold tracking-tight text-foreground">What would you like to build?</h1>
-            <p className="mt-1 text-[14px] leading-relaxed text-foreground/70">Tell me about an exam, a project, a skill or something at work. I&apos;ll ask what I need, then propose a workspace on the right that you can edit. Nothing is created until you approve it.</p>
+            <h1 className="text-lg font-semibold tracking-tight text-foreground" data-opening>{opening.heading}</h1>
+            <p className="mt-1 text-[14px] leading-relaxed text-foreground/70">{opening.intro}</p>
           </div>
         </div>
         {outgoing !== null ? <UserMessage text={outgoing} sending /> : (
@@ -465,7 +469,7 @@ export function NewConversation({ header, onStart, busy, error, seed, onExample,
       </div>
       <div className="shrink-0 space-y-2 border-t border-white/8 p-3 sm:p-4">
         {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
-        <Composer onSend={start} disabled={busy} seed={seed} placeholder="e.g. I'm building TrackerX, a project tracker for small teams" hint="Attach or paste a syllabus, notes or a screenshot (up to 3 MB)" />
+        <Composer onSend={start} disabled={busy} seed={seed} placeholder={opening.placeholder} hint="Attach or paste a syllabus, notes or a screenshot (up to 3 MB)" />
         <p className="text-center text-[11px] text-subtle"><Link href="/templates" className="inline-flex items-center gap-1 underline-offset-4 hover:text-foreground hover:underline"><LayoutTemplate aria-hidden className="size-3" /> Prefer a ready-made start? Browse templates</Link></p>
       </div>
     </div>

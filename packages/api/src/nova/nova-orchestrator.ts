@@ -19,6 +19,7 @@
 //      evidence → consolidation → durable state (SKILL.md §11.7)
 // Owner: Nova Orchestrator.
 
+import { loadVoicePreferences } from "./adapters/account-preferences-adapter";
 import { loadStudySnapshot } from "./engines/study-snapshot";
 import { learnerKey } from "./product/learner-key";
 import { runUnderstandingBrain } from "./brains/understanding-brain";
@@ -73,7 +74,9 @@ async function resolveUser(platformChatId: string): Promise<{ id: string; displa
     select: { id: true, displayName: true, novaAcademicProfile: { select: { id: true, goals: true } } },
   });
   if (!user) return null;
-  return { id: user.id, displayName: user.displayName?.trim() || null, goals: user.novaAcademicProfile?.goals ?? [], profileId: user.novaAcademicProfile?.id ?? null };
+  // The name they asked Nova to use (onboarding, Settings) comes before their account's.
+  const nickname = (await loadVoicePreferences(platformChatId).catch(() => null))?.nickname ?? null;
+  return { id: user.id, displayName: nickname ?? (user.displayName?.trim() || null), goals: user.novaAcademicProfile?.goals ?? [], profileId: user.novaAcademicProfile?.id ?? null };
 }
 
 // ── Orchestrator ──────────────────────────────────────────────────────────────

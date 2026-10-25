@@ -25,6 +25,7 @@ type Multi<Id extends string> = { selected: Id[]; custom: string[] }
 type Note = { ok: boolean; text: string } | null
 
 type Loaded = {
+  nickname:     string
   creatureName: string
   contexts:     string[]
   workingOn:    Multi<WorkingOnId>
@@ -95,12 +96,13 @@ export function HelpPreferences() {
     ])
       .then(([settings, personality]: [
         { creatureName?: string; companionName?: string; learningContexts?: string[]; workingOn?: MultiAnswer<WorkingOnId> | null;
-          weeklyHours?: WeeklyHours | null; obstacles?: MultiAnswer<ObstacleId> | null; language?: ReplyLanguage | null; tone?: Tone | null },
+          weeklyHours?: WeeklyHours | null; obstacles?: MultiAnswer<ObstacleId> | null; language?: ReplyLanguage | null; tone?: Tone | null; nickname?: string | null },
         { style?: { choices?: Record<StyleDimension, string> | null } },
       ]) => {
         if (!live) return
         const weekly = settings.weeklyHours ?? null
         const now: Loaded = {
+          nickname:     settings.nickname ?? '',
           creatureName: settings.creatureName || settings.companionName || DEFAULT_CREATURE_NAME,
           contexts:     settings.learningContexts ?? [],
           workingOn:    multi(settings.workingOn),
@@ -208,9 +210,14 @@ export function HelpPreferences() {
 
       <Card title="Language and tone" description="How Nova speaks to you on the web and on Telegram. Writing to it in another language, or asking for a different manner, always wins."
         footer={<>
-          {saveButton('voice', () => void run('voice', { language: draft.language, tone: draft.tone }, [...(draft.language ? ['language'] : []), ...(draft.tone ? ['tone'] : [])]), !draft.language && !draft.tone)}
+          {saveButton('voice', () => void run('voice', { language: draft.language, tone: draft.tone, nickname: draft.nickname.trim() || null }, [...(draft.language ? ['language'] : []), ...(draft.tone ? ['tone'] : []), 'nickname']), false)}
           <Saved note={notes.voice} />
         </>}>
+        <div className="max-w-sm">
+          <label htmlFor="pref-nickname" className={LABEL}>What Nova calls you</label>
+          <input id="pref-nickname" value={draft.nickname} maxLength={40} onChange={e => set({ nickname: e.target.value })} placeholder="Your account name" autoComplete="nickname" className={FIELD} />
+          <p className="mt-1.5 text-xs text-subtle">Empty: Nova uses the name on your account.</p>
+        </div>
         <fieldset>
           <legend className="text-sm font-medium text-foreground/85">Language</legend>
           <div className="mt-2 grid gap-2 sm:grid-cols-3">

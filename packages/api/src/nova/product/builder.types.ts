@@ -210,6 +210,8 @@ export interface PlanChangeSummary {
 
 export interface DraftView {
   id:          string;
+  // The language they chose for Nova, for its opening words (greetings.ts). null: not said.
+  language?:   "english" | "hindi" | "hinglish" | null;
   status:      DraftStatus;
   origin:      "web" | "telegram";
   title:       string | null;
@@ -246,7 +248,8 @@ export interface DraftView {
 }
 
 export interface DraftListItem { id: string; status: DraftStatus; title: string | null; origin: "web" | "telegram"; updatedAt: string }
-export interface DraftListView { status: "ready"; drafts: DraftListItem[] }
+// language: theirs, for Build with Nova's opening words before any draft exists.
+export interface DraftListView { status: "ready"; drafts: DraftListItem[]; language?: "english" | "hindi" | "hinglish" | null }
 
 export type BuilderError =
   | "invalid" | "not_found" | "not_ready" | "busy" | "stale" | "closed" | "too_many" | "rate_limited" | "unavailable" | "failed";
