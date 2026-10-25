@@ -347,7 +347,8 @@ export async function changeResource(
     }, { timeout: 30_000, maxWait: 10_000 });
     const deleted = pick("remove_workspace").length > 0;
     const detail = deleted ? null : await resourceDetail(platformChatId, profileId, row ? { workspaceId: row.id, subjectIds: [] } : { workspaceId: null, subjectIds }, now);
-    const count = (e: string) => ops.filter(o => o.effect === e).length;
+    // Items, not operations: two topics added in one go are two added.
+    const count = (e: string) => ops.filter(o => o.effect === e).reduce((n, o) => n + (o.op === "add_topics" ? o.names.length : 1), 0);
     return { ok: true, detail, title: current.title, deleted, subjectIds, counts: { added: count("add"), changed: count("change"), removed: count("remove") } };
   } catch (err) {
     if (err instanceof RefusedError) return { ok: false, error: err.code, message: err.message };

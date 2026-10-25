@@ -909,7 +909,7 @@ export async function approveDraft(platformChatId: string, id: unknown, input: A
 
   const counts = result.status === "exists" ? null : result.counts;
   const said = counts
-    ? `${result.status === "updated" ? `Added to ${result.workspace.title}` : `${result.workspace.title} is built`}: ${holdsLine(readBrief(row.brief).kind, { subjects: counts.subjectsAdded, topics: counts.topicsAdded, phases: 0, tasks: counts.tasksAdded, notes: counts.notesAdded, dates: counts.datesAdded }) || "nothing new (you had all of it)"}. It's in your Planner, Knowledge and Notes now.`
+    ? `${result.status === "updated" ? `Added to ${result.workspace.title}` : `${result.workspace.title} is built`}: ${holdsLine(readBrief(row.brief).kind, { subjects: counts.subjectsAdded, topics: counts.topicsAdded, phases: result.status === "created" ? plan!.phases.length : 0, tasks: counts.tasksAdded, notes: counts.notesAdded, dates: counts.datesAdded }) || "nothing new (you had all of it)"}. It's in your Planner, Knowledge and Notes now.`
     : `${result.workspace.title} was already built from this version.`;
   // Taking it back is deleting it, all of it, proposed and approved like any change.
   // Added to a workspace they had: not taken back here (what it added is mixed with what was there).

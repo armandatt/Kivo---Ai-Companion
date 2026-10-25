@@ -6,7 +6,7 @@
 import { changeCounts, checkChanges, decideResource, matchResources, readChangeSet, readUndo, resolveUndo, undoOf, undoOfBuild, withinAsk, type ResourceCandidates } from "../product/builder-changes";
 import { DECLINE_REPLY, decideStep, emptyBrief, readTurn } from "../product/builder-state";
 import { checkWorkspacePlan, isPlaceholderTopic, planWrites } from "../product/workspace-plan";
-import { NO_SYLLABUS, changesPrompt, projectShape, writeBuilderPlan, type BuilderPlanRequest } from "../product/workspace-generation";
+import { NO_SYLLABUS, changesPrompt, projectShape, studyShape, writeBuilderPlan, type BuilderPlanRequest } from "../product/workspace-generation";
 import { readBuilderTurn, turnPrompt, type TurnInput } from "../product/builder-conversation";
 import type { WorkspaceDetail } from "../product/builder.types";
 
@@ -189,6 +189,15 @@ describe("academic plans: specific topics, in learning order", () => {
     conversation: [], learnerText: "", current: null, change: null, existing: null, ...over,
   });
   const plan = JSON.stringify({ title: "DSA", subjects: [{ name: "DSA", topics: [{ name: "Asymptotic analysis", subtopics: ["Big-O"] }] }] });
+
+  it("a reply that isn't JSON is asked for once more before the learner sees an error (seen 25 Oct, about one in ten)", async () => {
+    let calls = 0;
+    const once = await writeBuilderPlan(request(), (async () => (++calls === 1 ? '{"title": "DSA", "subjects": [{"name": "x"}, "phases": []}]}' : plan)) as never);
+    expect([once.ok, calls]).toEqual([true, 2]);
+    calls = 0;
+    const never = await writeBuilderPlan(request(), (async () => { calls++; return "not json"; }) as never);
+    expect([never.ok, calls]).toEqual([false, 2]);
+  });
 
   it("without a syllabus, a study plan says by code that it follows the common course, not an official one", async () => {
     let system = "";
@@ -406,3 +415,26 @@ describe("a project's shape is held by code", () => {
   });
 });
 function assert(v: unknown): asserts v { expect(v).toBeTruthy(); }
+
+describe("the change model sees what each topic covers", () => {
+  it("so a new topic doesn't repeat one that is there", () => {
+    const text = changesPrompt({ today: TODAY, kind: "exam", facts: [], proposed: null, change: "add two topics", conversation: [],
+      current: { title: "DSA", subjects: [{ id: "s1", name: "DSA", topics: [{ id: "t1", name: "Advanced paradigms", subtopics: ["Greedy algorithms", "Dynamic programming"] }] }], tasks: [], dates: [], notes: [] } });
+    expect(text).toContain('t1 "Advanced paradigms" (covers Greedy algorithms; Dynamic programming)');
+  });
+});
+
+describe("a study plan's shape is held by code", () => {
+  it("no phases beside its topics; a task is filed under a real topic or none", () => {
+    const checked = checkWorkspacePlan({ kind: "custom", title: "DSA",
+      subjects: [{ name: "DSA", topics: ["Asymptotic Analysis and Sorting Algorithms", "Trees"] }],
+      phases: [{ name: "Sorting and Asymptotic Analysis", subject: "DSA" }, { name: "Trees", subject: "DSA" }],
+      tasks: [{ key: "a", title: "Solve 10 sorting problems", subject: "DSA", topic: "Sorting and Asymptotic Analysis" }, { key: "b", title: "Tree quiz", subject: "DSA", topic: "trees" }] }, { today: TODAY });
+    const shaped = studyShape(checked, "exam");
+    assert(shaped.ok);
+    expect(shaped.plan.phases).toEqual([]);
+    expect(shaped.plan.tasks.map(t => t.topic)).toEqual([null, "Trees"]);
+    expect(planWrites(shaped.plan).subjects).toEqual([{ name: "DSA", topics: ["Asymptotic Analysis and Sorting Algorithms", "Trees"] }]);
+    expect(studyShape(checked, "skill")).toBe(checked);
+  });
+});
