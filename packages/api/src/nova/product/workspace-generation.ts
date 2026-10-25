@@ -153,9 +153,10 @@ const PLAN_SYSTEM = [
   "- Content you add from your own knowledge has origin \"nova\" and no sources. Content taken from a file has origin \"source\" and its sources.",
   "- Resources: name well-known books, official docs or courses by title only, origin \"nova\", url null. Never invent links, authors, editions or statistics. You have not searched the web.",
   "- A task's topic is the topic or phase (milestone) it belongs to, by name: the milestone whose outcome it produces; work several milestones need goes in the first that needs it.",
+  "- When the learner names the parts of a piece of work (\"the home page: workflow architecture, UI, Nova integration\"), that piece is a task and each part is a step under it, never one task listing them all.",
   "- Tasks nest. A task that holds several pieces of work has steps: each step is a task with parent = that task's key, in the order they are done; a step that still holds several pieces of work has steps of its own. A piece of work done in one sitting has none. Usually 2 to 5 steps where a task needs them; never a step that only restates its task, and never one made up to fill space.",
   "- Every title starts with a verb and names a concrete outcome in the field's own terms (\"Issue and refresh JWTs in the auth service\", \"Solve 15 sliding-window problems\"), not an area (\"Work on auth\", \"Practice DSA\").",
-  "- after is the key of another task that must be finished first because this one needs what it produces; only when it truly must, else null. Steps of one task are already in order and need no after.",
+  "- after is the key of another task in the same milestone that must be finished first because this one needs what it produces; only when it truly must, else null. Milestones are already in order, and steps of one task are too: neither needs after. Most tasks have none.",
   "- Priority is the learner's to set: never write one as theirs. suggestedPriority only when what the learner said justifies it (a deadline the task gates, other tasks waiting on it), with priorityReason saying that reason in a few words; otherwise both null. Most tasks have none.",
   "- Note bodies use \"# \" headings and \"- \" lists only. Keep each topic name to a few words. At most 12 subjects, 40 topics per subject, 40 tasks, 12 phases, 20 notes.",
   "- Dates and due days only on or after TODAY, and only days the learner gave or that follow directly from them.",
@@ -359,6 +360,13 @@ export function projectShape(checked: PlanCheck, kind: string | null, before: Wo
     if (milestone(t.topic)) return { ...t, topic: milestone(t.topic) };
     const was = milestone(before?.tasks.find(b => b.key === t.key)?.topic ?? null);
     return was ? { ...t, topic: was } : t;
+  });
+  // Milestones are in order already: a task waiting on one in another
+  // milestone says nothing new (seen 25 Oct: every task chained to the one
+  // before). Only waits inside a milestone stay.
+  plan.tasks = plan.tasks.map(t => {
+    const on = t.after ? plan.tasks.find(x => x.key === t.after) : null;
+    return on && (on.topic ?? null) !== (t.topic ?? null) ? { ...t, after: null } : t;
   });
   const name = plan.subjects[0]?.name ?? plan.title;
   const topics = plan.phases.map(ph => ({ name: ph.name, explanation: null, sources: [] }));

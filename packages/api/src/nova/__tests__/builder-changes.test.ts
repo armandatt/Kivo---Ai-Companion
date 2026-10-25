@@ -323,6 +323,15 @@ describe("a project's shape is held by code", () => {
     expect(projectShape(checked, "exam")).toBe(checked);
   });
 
+  it("a task waits only on one in its own milestone: milestones are in order already (seen 25 Oct: all eight chained)", () => {
+    const checked = checkWorkspacePlan({ kind: "custom", title: "K", subjects: [{ name: "K", topics: ["Day 1", "Day 2"] }],
+      phases: [{ name: "Day 1", subject: "K" }, { name: "Day 2", subject: "K" }],
+      tasks: [{ key: "a", title: "Build the API", topic: "Day 1" }, { key: "b", title: "Wire the UI", topic: "Day 1", after: "a" }, { key: "c", title: "Test it", topic: "Day 2", after: "b" }] }, { today: TODAY });
+    const shaped = projectShape(checked, "project");
+    assert(shaped.ok);
+    expect(shaped.plan.tasks.map(t => t.after ?? null)).toEqual([null, "a", null]);
+  });
+
   it("a revision keeps each task under its milestone when the model left it under none; dates are the project's", () => {
     const make = (topic: string | null) => checkWorkspacePlan({ kind: "custom", title: "Kivo v1",
       subjects: [{ name: "Kivo", topics: ["Home page"] }], phases: [{ name: "Home page", subject: "Kivo" }],

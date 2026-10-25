@@ -74,6 +74,11 @@ describe("a plan's steps", () => {
     expect(planWrites(p).tasks.find(t => t.key === "jwt")!.parent).toBe("auth");
   });
 
+  it("steps of one task wait on nothing among themselves: their order says it", () => {
+    const p = plan([{ key: "a", title: "A" }, { key: "s1", title: "One", parent: "a" }, { key: "s2", title: "Two", parent: "a", after: "s1" }, { key: "b", title: "B", after: "a" }]);
+    expect(p.tasks.map(t => t.after ?? null)).toEqual([null, null, null, "a"]);
+  });
+
   it("a step of nothing, or in a loop, becomes a task of its own", () => {
     const p = plan([{ key: "a", title: "A", parent: "b" }, { key: "b", title: "B", parent: "a" }, { key: "c", title: "C", parent: "ghost" }]);
     expect(p.tasks.find(t => t.key === "c")!.parent).toBeNull();

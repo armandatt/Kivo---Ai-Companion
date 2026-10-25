@@ -343,6 +343,8 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
   // step is filed where the task it belongs to is.
   const tree = untangle(tasks.map(t => ({ id: t.key, parent: t.parent ?? null })));
   for (const [i, t] of tasks.entries()) t.parent = tree[i]!.parent;
+  // Steps of one task are done in their order: one waiting on its sibling says nothing new.
+  for (const t of tasks) if (t.after && t.parent && tasks.find(k => k.key === t.after)?.parent === t.parent) t.after = null;
   for (const t of tasks) {
     let root: PlanTask = t;
     for (let hops = 0; root.parent && hops <= TASK_DEPTH_MAX; hops++) root = tasks.find(k => k.key === root.parent) ?? root;
