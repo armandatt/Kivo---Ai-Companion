@@ -271,7 +271,8 @@ export async function studiedTopicIds(profileId: string): Promise<Set<string>> {
 // the change set, notes and dates are never added twice).
 
 export type ChangeResult =
-  | { ok: true; detail: WorkspaceDetail; title: string; counts: { added: number; changed: number; removed: number }; subjectIds: string[] }
+  // detail: what is there now; null when nothing of it is left (its last subject removed).
+  | { ok: true; detail: WorkspaceDetail | null; title: string; counts: { added: number; changed: number; removed: number }; subjectIds: string[] }
   | { ok: false; error: "not_found" | "changed" | "too_many" | "invalid"; message: string };
 
 const target = (o: ChangeOp): string | null =>
@@ -350,7 +351,7 @@ export async function changeResource(
     const detail = await resourceDetail(platformChatId, profileId, row ? { workspaceId: row.id, subjectIds: [] } : { workspaceId: null, subjectIds }, now);
     // Items, not operations: two topics added in one go are two added.
     const count = (e: string) => ops.filter(o => o.effect === e).reduce((n, o) => n + (o.op === "add_topics" ? o.names.length : 1), 0);
-    return { ok: true, detail: detail!, title: current.title, subjectIds, counts: { added: count("add"), changed: count("change"), removed: count("remove") } };
+    return { ok: true, detail, title: current.title, subjectIds, counts: { added: count("add"), changed: count("change"), removed: count("remove") } };
   } catch (err) {
     if (err instanceof RefusedError) return { ok: false, error: err.code, message: err.message };
     if (err instanceof StaleStructure || err instanceof TaskChanged || err instanceof DateChanged || err instanceof NoteChanged || (err as { code?: string } | null)?.code === "P2002" || (err as { code?: string } | null)?.code === "P2025") {
@@ -358,6 +359,13 @@ export async function changeResource(
     }
     throw err;
   }
+}
+
+// The plan a workspace was built from, as stored with it (the history's
+// snapshots read note text from it). null: none, or not theirs.
+export async function workspacePlanOf(profileId: string, workspaceId: string | null): Promise<unknown> {
+  if (!workspaceId) return null;
+  return (await prisma.novaWorkspace.findFirst({ where: { id: workspaceId, profileId }, select: { plan: true } }))?.plan ?? null;
 }
 
 // ── Deleting what Nova made (Build with Nova, on confirmation) ────────────────

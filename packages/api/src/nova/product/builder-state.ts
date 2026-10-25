@@ -19,7 +19,6 @@
 // No regex: text is compared by characters (SKILL.md; the no-regex guard).
 
 import { oneLine, type WorkspacePlan } from "./workspace-plan";
-import { readUndo } from "./builder-changes";
 import { CHANGE_KINDS, WORK_KINDS, type ChangeKind, type BriefFact, type BuilderBrief, type BuilderMessage, type DraftStatus, type PendingJob, type PlanChangeSummary, type WorkKind } from "./builder.types";
 
 export const MESSAGE_MAX = 2000;
@@ -287,7 +286,6 @@ export function readBrief(raw: unknown): BuilderBrief {
     suggestions: listOf(r.suggestions, SUGGESTIONS_MAX),
     ...(Array.isArray(r.choices) ? { choices: listOf(r.choices, 6) } : {}),
     ...(Array.isArray(r.touches) ? { touches: CHANGE_KINDS.filter(k => (r.touches as unknown[]).includes(k)) } : {}),
-    ...(r.undo ? { undo: readUndo(r.undo) } : {}),
     ...(r.deletion && typeof r.deletion === "object" && typeof (r.deletion as { fingerprint?: unknown }).fingerprint === "string" ? { deletion: r.deletion as BuilderBrief["deletion"] } : {}),
     question: oneLine(r.question, 300) || null,
     questionsAsked: typeof r.questionsAsked === "number" && Number.isInteger(r.questionsAsked) && r.questionsAsked >= 0 ? r.questionsAsked : 0,

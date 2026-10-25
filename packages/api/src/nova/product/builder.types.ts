@@ -73,19 +73,32 @@ export interface BuilderBrief {
   // A deletion they asked for, worked out and waiting for their
   // confirmation on the page. Nothing is deleted from a message.
   deletion?:   DeletionScope | null;
-  // How to take back what this conversation last applied (a build or a
-  // change set), written by code when it was applied (builder-changes.ts
-  // undoOf). Records are named, not given by id: what was added has ids
-  // only once it exists. Proposed, checked and approved like any change.
-  undo?:       UndoRecord | null;
 }
 
-export interface UndoRecord {
-  // What it takes back, in words ("the changes of version 7").
-  label: string;
-  steps: Array<Record<string, unknown>>;
-  // What can't be taken back, in words (a new order of tasks).
-  kept:  string[];
+
+// ── Versions (product/builder-history.ts) ─────────────────────────────────────
+
+export type VersionKind = "proposal" | "built";
+export type VersionAuthor = "nova" | "you" | "restored";
+
+// The records of a workspace, by name: enough to compare with what is there
+// later and to bring it back.
+export interface SnapshotTask {
+  key: string; title: string; status: "todo" | "in_progress" | "done"; priority: "low" | "medium" | "high" | null;
+  dueDay: string | null; subject: string | null; topic: string | null; parent: string | null;
+}
+export interface Snapshot {
+  title:    string;
+  subjects: Array<{ name: string; topics: string[] }>;
+  tasks:    SnapshotTask[];
+  dates:    Array<{ title: string; day: string; kind: string; subject: string | null }>;
+  // A note's text is kept where it is known without reading the learner's
+  // notes: the ones a plan wrote.
+  notes:    Array<{ title: string; subject: string | null; body: string | null }>;
+}
+
+export interface VersionItem {
+  id: string; version: number; kind: VersionKind; author: VersionAuthor; summary: string; createdAt: string;
 }
 
 // ── Deleting what Nova made ───────────────────────────────────────────────────

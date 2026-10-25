@@ -1556,9 +1556,36 @@ model NovaWorkspaceDraft {
 
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   files   NovaWorkspaceDraftFile[]
+  history NovaWorkspaceDraftVersion[]
 
   @@unique([profileId, clientKey])
   @@index([profileId, updatedAt])
+}
+
+// One version of what a Build with Nova conversation proposed or built, kept
+// so the learner can look back at it and restore it (product/builder-history.ts).
+// Restoring never removes a version: it makes a new one.
+model NovaWorkspaceDraftVersion {
+  id        String   @id @default(cuid())
+  draftId   String
+  profileId String
+  // The draft's version number this records.
+  version   Int
+  // proposal: a plan, or { changes, title }. built: the records as they
+  // stood after it was built or applied (builder-history.ts Snapshot).
+  kind      String
+  // nova | you | restored
+  author    String
+  // What it changed, in words, for the list.
+  summary   String   @db.Text
+  content   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  draft NovaWorkspaceDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
+  @@unique([draftId, version, kind])
+  @@index([draftId, createdAt])
 }
 
 // A PDF or photo the learner shared in a Build with Nova conversation, so

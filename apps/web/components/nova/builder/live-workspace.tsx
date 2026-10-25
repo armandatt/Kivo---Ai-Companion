@@ -145,7 +145,7 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-live-workspace>
-      <PlaygroundHeader title={detail.title} badge="live" stats={stats} tabs={<ViewTabs views={views} view={shown} onView={onView} label="Workspace views" names={words.views} />} />
+      <PlaygroundHeader title={detail.title} badge="live" state={state} stats={stats} tabs={<ViewTabs views={views} view={shown} onView={onView} label="Workspace views" names={words.views} />} />
       <div id="pg-panel" role="tabpanel" aria-labelledby={`pg-tab-${shown}`} className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-3 sm:px-5">
         {error && <p role="alert" className="mb-3 text-sm text-red-400">{error}</p>}
         <ChangeList state={state} />

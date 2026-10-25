@@ -458,17 +458,19 @@ test("what a conversation applied can be taken back, and a project can be delete
   });
   const changed = await builder.approveDraft(me.id, draft.id, { version: draft.version });
   assert.ok(changed.ok && changed.draft.status === "ready", changed.ok ? "" : changed.message);
-  assert.equal(changed.ok && changed.draft.brief.undo?.label, `the changes of version ${draft.version}`);
+  // Each build and each applied change is a version in the history.
+  const history = await builder.draftVersions(me.id, draft.id);
+  assert.ok(history.ok && history.versions.filter(v => v.kind === "built").length === 2);
 
-  // "Revert the changes": code proposes the inverse; nothing changes before approval.
+  // "Revert the changes": the version built before, brought back through the history; nothing changes before approval.
   const noModel: NonNullable<BuilderDeps["writeChanges"]> = async () => { throw new Error("the model wrote the undo"); };
   draft = await say(me.id, first.id, "no, revert the changes", { read: reader({ next: "revise", undo: true }), write: noWrite, writeChanges: noModel });
   assert.equal(draft.status, "awaiting_approval");
-  assert.deepEqual(draft.changes!.ops.map(o => o.says), [
+  assert.deepEqual(draft.changes!.ops.map(o => o.says).sort(), [
     'Add to Kivo: Final polish',
     'Add task "Fix the last bugs", due ' + inDays(4) + ', medium priority',
     'Change task "Build the home page UI": high priority',
-  ]);
+  ].sort());
   const undone = await builder.approveDraft(me.id, draft.id, { version: draft.version });
   assert.ok(undone.ok, undone.ok ? "" : undone.message);
   assert.deepEqual(await records(profileId), afterBuild);
@@ -555,4 +557,30 @@ test("a subject with a date is removed with that date, listed; a past date is ke
   const exams = await prisma.novaExam.findMany({ where: { profileId }, select: { title: true, subjectId: true } });
   assert.deepEqual(exams, [{ title: "DSA quiz 1", subjectId: null }]);
   assert.equal(await prisma.novaSubject.count({ where: { profileId } }), 0);
+});
+
+test("History: every version is kept; restoring an old proposal makes a new version and loses none", async () => {
+  const me = await learner();
+  const v = (title: string) => async (req: { today: string; learnerText: string }) => checkWorkspacePlan({ kind: "custom", title, subjects: [{ name: title, topics: ["Build"] }], tasks: [{ key: "a", title: `Do ${title}` }] }, { today: req.today, userText: req.learnerText });
+  const first = await begin(me.id, "Plan Alpha, due in a month.", { read: reader({ next: "draft", facts: [{ label: "Project", value: "Alpha", quote: "Alpha" }, { label: "Deadline", value: "a month", quote: "a month" }] }), write: v("Alpha") });
+  const second = await say(me.id, first.id, "Call it Beta instead", { read: reader({ next: "revise", change: "Rename to Beta" }), write: v("Beta") });
+  assert.equal(second.plan!.title, "Beta");
+  const listed = await builder.draftVersions(me.id, first.id);
+  assert.ok(listed.ok);
+  const alpha = listed.ok ? listed.versions.find(x => x.version === first.version)! : null!;
+  assert.equal(alpha.author, "nova");
+  const seen = await builder.draftVersion(me.id, first.id, alpha.id);
+  assert.ok(seen.ok && seen.plan!.title === "Alpha");
+  // A restore on an older view of the conversation is refused.
+  assert.equal((await builder.restoreVersion(me.id, first.id, { versionId: alpha.id, baseVersion: first.version })).ok, false);
+  const restored = await builder.restoreVersion(me.id, first.id, { versionId: alpha.id, baseVersion: second.version });
+  assert.ok(restored.ok, restored.ok ? "" : restored.message);
+  assert.equal(restored.ok && restored.draft.plan!.title, "Alpha");
+  assert.equal(restored.ok && restored.draft.version, second.version + 1);
+  const after_ = await builder.draftVersions(me.id, first.id);
+  assert.ok(after_.ok && after_.versions.length === 3 && after_.versions[0]!.author === "restored");
+  // Another learner can't see or restore it.
+  const other = await learner();
+  assert.equal((await builder.draftVersions(other.id, first.id)).ok, false);
+  assert.equal((await builder.restoreVersion(other.id, first.id, { versionId: alpha.id, baseVersion: second.version + 1 })).ok, false);
 });

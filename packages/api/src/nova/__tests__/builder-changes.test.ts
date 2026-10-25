@@ -3,7 +3,7 @@
 // rules for academic plans. Pure, no database (nova-builder-edit.itest.ts
 // covers the same against Postgres).
 
-import { changeCounts, checkChanges, decideResource, matchResources, readChangeSet, readUndo, resolveUndo, undoOf, withinAsk, type ResourceCandidates } from "../product/builder-changes";
+import { changeCounts, checkChanges, decideResource, matchResources, readChangeSet, withinAsk, type ResourceCandidates } from "../product/builder-changes";
 import { DECLINE_REPLY, decideStep, emptyBrief, readTurn } from "../product/builder-state";
 import { checkWorkspacePlan, isPlaceholderTopic, planWrites } from "../product/workspace-plan";
 import { NO_SYLLABUS, changesPrompt, projectShape, studyShape, writeBuilderPlan, type BuilderPlanRequest } from "../product/workspace-generation";
@@ -292,59 +292,6 @@ describe("removing single dates and notes", () => {
     const set = checkChanges([{ op: "remove_date", dateId: "d1" }, { op: "remove_note", noteId: "n1" }, { op: "remove_note", noteId: "ghost" }], current(), ctx);
     expect(set.ops.map(o => o.says)).toEqual(['Remove date "DSA mid-term" (2026-11-20)', 'Remove note "DSA cheatsheet"']);
     expect(set.dropped).toEqual(["removing a note that isn't part of this"]);
-  });
-});
-
-describe("taking back what was applied", () => {
-  const free = { ...ctx, studied: new Set<string>() };
-
-  it("undoes removals, renames and changes with what was there before, by name", () => {
-    const before = current();
-    const set = checkChanges([
-      { op: "remove_task", taskId: "k3" },
-      { op: "update_task", taskId: "k1", dueDay: "2026-11-08", priority: "high" },
-      { op: "rename_topic", topicId: "t3", name: "Graph algorithms" },
-      { op: "add_topics", subjectId: "s1", names: ["Dynamic programming"] },
-      { op: "remove_note", noteId: "n1" },
-      { op: "order_tasks", taskIds: ["k3", "k1"] },
-    ], before, free);
-    const undo = undoOf(set, before, [{ id: "n1", title: "DSA cheatsheet", body: "# Big O", subjectId: "s1", topicName: null }], "the changes of version 7");
-    expect(undo.kept).toEqual(["the new order of tasks"]);
-
-    // The records as they are after it was applied.
-    const after: WorkspaceDetail = {
-      ...before,
-      subjects: [{ ...before.subjects[0]!, topics: [{ id: "t1", name: "Arrays" }, { id: "t2", name: "Trees" }, { id: "t3", name: "Graph algorithms" }, { id: "t9", name: "Dynamic programming" }] }],
-      tasks: [{ ...before.tasks[0]!, dueDay: "2026-11-08", priority: "high" }, before.tasks[1]!],
-      notes: [],
-    };
-    const r = resolveUndo(readUndo(JSON.parse(JSON.stringify(undo)))!, after);
-    expect(r.missing).toEqual([]);
-    const back = checkChanges(r.ops, after, free);
-    expect(back.ops.map(o => o.says)).toEqual([
-      'Add task "Graph quiz", low priority',
-      'Change task "Solve 10 tree problems": due 2026-11-01 (was 2026-11-08), no priority',
-      'Rename topic "Graph algorithms" to "Graphs"',
-      'Remove topic "Dynamic programming" from Data Structures and Algorithms',
-      'Add note "DSA cheatsheet"',
-    ]);
-    expect(back.ops[0]!.op === "add_task" && back.ops[0]!.topicName).toBe("Graphs");
-  });
-
-  it("a removed subject comes back whole, with its topics", () => {
-    const before = current();
-    const set = checkChanges([{ op: "remove_subject", subjectId: "s1" }], before, free);
-    const undo = undoOf(set, before, [], "v2");
-    const r = resolveUndo(undo, { ...before, subjects: [], dates: [] });
-    expect(r.ops.filter(o => o.op === "add_subject")).toEqual([{ op: "add_subject", name: "Data Structures and Algorithms", topics: ["Arrays", "Trees", "Graphs"] }]);
-    expect(r.ops.filter(o => o.op === "add_topics")).toEqual([]);
-    expect(r.ops.some(o => o.op === "add_date" && o.title === "DSA mid-term")).toBe(true);
-  });
-
-  it("what is no longer there is said, not guessed", () => {
-    const undo = { label: "x", steps: [{ op: "remove_task", taskTitle: "Gone" }], kept: [] };
-    expect(resolveUndo(undo, current())).toEqual({ ops: [], missing: ['task "Gone"'] });
-    expect(readUndo({ label: "x", steps: [] })).toBeNull();
   });
 });
 

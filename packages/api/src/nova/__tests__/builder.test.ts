@@ -348,6 +348,8 @@ describe("who writes what (read from source)", () => {
   it("builder.ts is the only code that touches NovaWorkspaceDraft, and creates through workspaces.ts", () => {
     const touching = files(nova).filter(f => readFileSync(f, "utf8").includes("novaWorkspaceDraft.") || readFileSync(f, "utf8").includes("novaWorkspaceDraftFile.")).map(f => f.slice(nova.length + 1));
     expect(touching).toEqual(["product/builder.ts"]);
+    // The versions a conversation keeps: builder-history.ts alone.
+    expect(files(nova).filter(f => readFileSync(f, "utf8").includes("novaWorkspaceDraftVersion.")).map(f => f.slice(nova.length + 1))).toEqual(["product/builder-history.ts"]);
     const b = read("product/builder.ts");
     for (const table of ["novaSubject.", "novaTask.", "novaNote.", "novaExam.", "novaTopicMastery", "novaWorkspace."]) expect([table, b.includes(table)]).toEqual([table, false]);
     expect(b).toContain("await createWorkspace(platformChatId, {");

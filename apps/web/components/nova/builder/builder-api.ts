@@ -2,7 +2,7 @@
 // a request that fails keeps nothing from the page (the caller holds the
 // words and the edits).
 
-import type { BuilderResponse, DraftListView, DraftView, WorkspaceDetailResponse } from '@repo/api/nova/product/builder.types'
+import type { BuilderResponse, ChangeSet, DraftListView, DraftView, Snapshot, VersionItem, WorkspaceDetailResponse } from '@repo/api/nova/product/builder.types'
 import type { WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
 
 export type Failure = { ok: false; error: string; message: string; draft?: DraftView }
@@ -31,6 +31,11 @@ export const sendMessage = (draftId: string, text: string, files: SharedFile[] =
 export const resumeDraft = (draftId: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/messages`, { resume: true })
 export const retryDraft = (draftId: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/retry`)
 export const cancelDraft = (draftId: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/cancel`)
+// The conversation's history: every version, one to look at, and restoring one.
+export type VersionView = { ok: true; item: VersionItem; plan: WorkspacePlan | null; changes: ChangeSet | null; snapshot: Snapshot | null }
+export const listVersions = (draftId: string) => call<{ ok: true; versions: VersionItem[]; current: number }>(`/api/nova/builder/${id(draftId)}/versions`)
+export const loadVersion = (draftId: string, versionId: string) => call<VersionView>(`/api/nova/builder/${id(draftId)}/versions/${encodeURIComponent(versionId)}`)
+export const restoreVersion = (draftId: string, versionId: string, baseVersion: number) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/versions/${encodeURIComponent(versionId)}/restore`, { baseVersion })
 // The deletion shown in the conversation: confirmed (exactly that scope), or kept.
 export const confirmDeletion = (draftId: string, fingerprint: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/delete`, { fingerprint })
 export const keepResource = (draftId: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/keep`)

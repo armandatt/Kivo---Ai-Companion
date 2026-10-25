@@ -9,6 +9,7 @@ import { diffSummary, hintFor, ids, planDiff, wordsFor, type Hint, type PlanDiff
 import * as edit from './plan-edit'
 import type { PlaygroundView } from './plan-edit'
 import { ProposalActions, workingLabel } from './proposal-actions'
+import { HistoryButton } from './history-panel'
 import type { DraftState } from './use-draft'
 
 // The right half of Build with Nova: the proposal itself, the structured
@@ -701,7 +702,7 @@ export function PlaygroundHeader({ title, badge, state, onTitle, tabs, stats }: 
           <span aria-hidden className={cn('size-1.5 rounded-full', badge === 'live' ? 'bg-action' : badge === 'building' ? 'bg-nova' : 'bg-amber-400')} />
           {badge === 'live' ? 'Live workspace' : badge === 'building' ? 'Building…' : `Draft${state?.draft?.plan ? ` · v${state.draft.version}` : ''} · not created yet`}
         </span>
-        <span className="ml-auto">{state && <SaveIndicator state={state} />}</span>
+        <span className="ml-auto flex items-center gap-2">{state && <SaveIndicator state={state} />}{state?.draft && <HistoryButton state={state} />}</span>
       </div>
       {onTitle
         ? <input aria-label="Workspace name" value={title} maxLength={80} onChange={e => onTitle(e.target.value)} className={cn(FIELD, '-ml-1.5 mt-1 text-lg font-semibold tracking-tight')} />
