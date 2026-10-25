@@ -26,7 +26,16 @@ export interface LlmRequest {
   // providers read them natively (Gemini inline data; OpenAI image and file
   // parts), scanned pages included. The caller checks type and size first.
   attachments?:       LlmAttachment[];
+  // The reply must be one JSON object: the provider's JSON output mode is
+  // asked for (OpenAI response_format, Gemini responseMimeType), and a reply
+  // cut off at its length limit is an error (TRUNCATED), never half an object.
+  json?:              boolean;
 }
+
+// Said in the error when a reply stopped at its length limit, so a caller
+// can tell "too long" from "unavailable" (isTruncated).
+export const TRUNCATED = "the reply was cut off at its length limit";
+export const isTruncated = (err: unknown): boolean => err instanceof Error && err.message.includes(TRUNCATED);
 
 export interface LlmAttachment {
   name:     string;
@@ -141,6 +150,7 @@ export function buildGeminiRequest(
   if (opts.disableThinking) {
     generationConfig["thinkingConfig"] = { thinkingBudget: 0 };
   }
+  if (req.json) generationConfig["responseMimeType"] = "application/json";
 
   return {
     url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
@@ -175,11 +185,12 @@ export function unwrapSingleFence(text: string): string {
   return m ? m[1]!.trim() : text;
 }
 
-export function parseGeminiResponse(data: GeminiResponse, model: string): string {
+export function parseGeminiResponse(data: GeminiResponse, model: string, opts: { json?: boolean } = {}): string {
   if (data.promptFeedback?.blockReason) {
     throw new Error(`Gemini blocked the request: ${data.promptFeedback.blockReason}`);
   }
   const candidate = data.candidates?.[0];
+  if (opts.json && candidate?.finishReason === "MAX_TOKENS") throw new Error(`Gemini: ${TRUNCATED} (model: ${model})`);
   const text = (candidate?.content?.parts ?? [])
     .filter(p => !p.thought)               // never surface hidden reasoning
     .map(p => p.text ?? "")

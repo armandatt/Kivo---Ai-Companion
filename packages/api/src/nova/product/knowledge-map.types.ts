@@ -1,13 +1,14 @@
 // ─── Knowledge Map: the contract between Nova and the map page ────────────────
-// The learner's subjects, topics, notes and saved pages, and how they are
-// connected ON RECORD. Every node is a row the learner can open; every edge
+// A workspace's (or all of the learner's) subjects, topics as they are
+// arranged, tasks, notes and saved pages, and how they are connected ON
+// RECORD. Every node is a row the learner can open; every edge
 // is a link that is stored (a topic belongs to its subject; a note or a saved
 // page was filed under a subject, and under a topic when it names one of that
 // subject's topics). Nothing is inferred, and no edge is drawn to make the
 // picture fuller: an item filed under nothing is shown unconnected.
 // No imports, so the web app can import the types directly.
 
-export type MapNodeType = "subject" | "topic" | "note" | "resource";
+export type MapNodeType = "subject" | "topic" | "task" | "note" | "resource";
 export type MapLevel    = "weak" | "developing" | "solid";
 
 export const MAP_NOTES_MAX     = 150;
@@ -26,8 +27,7 @@ interface NodeBase {
 }
 
 // A task shown in a topic's or subject's panel, with its steps under it
-// (parentId names the task it is a step of). Tasks are not drawn as points:
-// the map stays subjects, topics, notes and pages.
+// (parentId names the task it is a step of). Each is a card too (type "task").
 export interface MapTask { id: string; title: string; status: "todo" | "in_progress" | "done"; parentId: string | null }
 
 export type MapNode =
@@ -35,12 +35,32 @@ export type MapNode =
   | (NodeBase & { type: "subject"; topics: number; notes: number; resources: number; tasks?: MapTask[]; parentId?: string })
   | (NodeBase & {
       type: "topic"; subjectName: string;
+      // The topic of the same subject it sits inside (a "subtopic" edge comes
+      // from it). Absent: at the top of its subject. order: its place among
+      // the topics beside it (0 first), as saved.
+      parentId?: string; order?: number;
+      // "milestone": a stage of work, never studied. Absent: a topic.
+      kind?: "milestone";
+      // A topic with topics inside it organises them and is not studied on
+      // its own (studied false); only leaves are. Absent on an older server.
+      studied?: boolean;
+      // What the plan said about it: an explanation, a milestone's effort, goals and done-when.
+      details?: { explanation?: string | null; weeks?: number | null; hoursPerWeek?: number | null; goals?: string[]; exercises?: string[]; project?: string | null; completion?: string | null };
       // Finished sessions that fed the topic. 0: declared, never studied.
       sessions: number;
       // A self-report-driven estimate, as on Knowledge. null with no session.
       level: MapLevel | null; masteryPercent: number | null;
       notes: number; resources: number;
       tasks?: MapTask[];
+    })
+  | (NodeBase & {
+      type: "task"; subjectName: string | null; topicName: string | null;
+      status: "todo" | "in_progress" | "done"; priority: "low" | "medium" | "high" | null;
+      dueDay: string | null; estimatedMinutes: number | null;
+      // The task it is a step of (a "step" edge comes from it). Absent: a task of its own.
+      parentId?: string; order: number;
+      // How many tasks it waits on ("depends_on" edges go from it).
+      waitsOn: number;
     })
   | (NodeBase & {
       type: "note"; subjectName: string | null;
@@ -58,7 +78,11 @@ export type MapNode =
 
 export type MapEdgeKind =
   | "contains"      // subject → subject: the learner put one inside the other
-  | "has_topic"     // subject → topic: the topic is one of the subject's
+  | "has_topic"     // subject → topic: a topic at the top of the subject
+  | "subtopic"      // topic → topic: a topic inside another (a unit's topic, a topic's subtopic)
+  | "has_task"      // topic or subject → task: a task filed there (its top task, for a step)
+  | "step"          // task → task: a step of the task
+  | "depends_on"    // task → task: the first can't start until the second is finished
   | "about_topic"   // topic → note or saved page filed under that topic
   | "filed_under"   // subject → note or saved page filed under the subject only
   | "links_to";     // note → note or topic: the learner wrote [[its name]] in the note
@@ -77,8 +101,15 @@ export interface MapSuggestion {
   basis: "name_in_title" | "name_in_selection" | "model";
 }
 
+export interface MapWorkspace { id: string; title: string }
+
 export interface NovaKnowledgeMapReady {
   status: "ready";
+  // What is drawn: one workspace (its subjects, everything inside them and
+  // its tasks), or null for everything the learner has. The learner's
+  // workspaces, newest first, to switch between. Absent on an older server.
+  workspaceId?: string | null;
+  workspaces?:  MapWorkspace[];
   nodes:  MapNode[];
   edges:  MapEdge[];
   // Absent on an older server.

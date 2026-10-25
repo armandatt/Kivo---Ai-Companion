@@ -16,11 +16,11 @@
 // No regex: text is compared by characters (SKILL.md; the no-regex guard).
 
 import { prisma } from "@repo/db/client";
-import { planWrites, type WorkspacePlan } from "./workspace-plan";
+import { planWrites, readStoredPlan, type WorkspacePlan } from "./workspace-plan";
 import { treeOrder } from "./task-tree";
 import type { ChangeSet, WorkspaceDetail } from "./builder.types";
 
-import type { Snapshot, VersionAuthor, VersionItem, VersionKind } from "./builder.types";
+import type { Snapshot, SnapshotTopic, VersionAuthor, VersionItem, VersionKind } from "./builder.types";
 export type { Snapshot, SnapshotTask, VersionAuthor, VersionItem, VersionKind } from "./builder.types";
 
 // A learner's edits a short while apart are one version, not one per keystroke.
@@ -76,7 +76,8 @@ export function readProposal(content: unknown): { plan: WorkspacePlan } | { chan
   if (!content || typeof content !== "object" || Array.isArray(content)) return null;
   const c = content as Record<string, unknown>;
   if (c.changes && typeof c.changes === "object" && Array.isArray((c.changes as ChangeSet).ops)) return { changes: c.changes as ChangeSet, title: typeof c.title === "string" ? c.title : "" };
-  if (typeof c.title === "string" && Array.isArray(c.tasks) && Array.isArray(c.subjects)) return { plan: c as unknown as WorkspacePlan };
+  // An older version's plan is read into the current shape.
+  if (typeof c.title === "string" && Array.isArray(c.tasks) && Array.isArray(c.subjects)) { const plan = readStoredPlan(c); return plan ? { plan } : null; }
   return null;
 }
 
@@ -101,11 +102,17 @@ export function snapshotOf(d: WorkspaceDetail, plan: WorkspacePlan | null = null
     // Where each subject sat; one inside a subject that isn't part of this is left unsaid (not moved back).
     subjects: d.subjects.map(s => {
       const parent = s.parentId ? d.subjects.find(x => x.id === s.parentId)?.name : null;
-      return { name: s.name, topics: s.topics.map(t => t.name), ...(parent !== undefined ? { parent } : {}) };
+      const topicName = (id: string | null | undefined) => (id ? s.topics.find(t => t.id === id)?.name ?? null : null);
+      return {
+        name: s.name, topics: s.topics.map(t => t.name),
+        tree: s.topics.map(t => ({ name: t.name, parent: topicName(t.parentId), ...(t.kind ? { kind: t.kind } : {}) })),
+        ...(parent !== undefined ? { parent } : {}),
+      };
     }),
     tasks: d.tasks.map(t => ({
       key: t.id, title: t.title, status: t.status, priority: t.priority, dueDay: t.dueDay, subject: subjectName(t.subjectId), topic: t.topicName,
       parent: t.parentId && d.tasks.some(x => x.id === t.parentId) ? t.parentId : null,
+      after: (t.after ?? []).filter(a => d.tasks.some(x => x.id === a)),
     })),
     dates: d.dates.map(x => ({ title: x.title, day: x.day, kind: x.kind, subject: subjectName(x.subjectId) })),
     notes: d.notes.map(n => ({ title: n.title, subject: subjectName(n.subjectId), body: written.find(w => low(w.title) === low(n.title))?.body ?? null })),
@@ -117,8 +124,8 @@ export function snapshotOfPlan(plan: WorkspacePlan): Snapshot {
   const w = planWrites(plan);
   return {
     title: plan.title,
-    subjects: w.subjects.map(s => ({ name: s.name, topics: [...s.topics], parent: s.parent ?? null })),
-    tasks: w.tasks.map(t => ({ key: t.key, title: t.title, status: "todo", priority: t.priority, dueDay: t.dueDay, subject: t.subject, topic: t.topic, parent: t.parent ?? null })),
+    subjects: w.subjects.map(s => ({ name: s.name, topics: s.topics.map(t => t.name), tree: s.topics.map(t => ({ name: t.name, parent: t.parent, ...(t.kind ? { kind: t.kind } : {}) })), parent: s.parent ?? null })),
+    tasks: w.tasks.map(t => ({ key: t.key, title: t.title, status: "todo", priority: t.priority, dueDay: t.dueDay, subject: t.subject, topic: t.topic, parent: t.parent ?? null, after: t.after ?? [] })),
     dates: w.dates.map(d => ({ title: d.title, day: d.day, kind: d.kind, subject: d.subject })),
     notes: w.notes.map(n => ({ title: n.title, subject: n.subject, body: n.body })),
   };
@@ -160,9 +167,32 @@ export function changesToReach(current: WorkspaceDetail, target: Snapshot, today
       continue;
     }
     if (place && ("parentKey" in place || (place.parentId ?? null) !== (live.parentId ?? null))) ops.push({ op: "move_subject", subjectId: live.id, ...place });
-    const missing = s.topics.filter(t => !live.topics.some(x => low(x.name) === low(t)));
-    if (missing.length) ops.push({ op: "add_topics", subjectId: live.id, names: missing });
-    for (const t of live.topics) if (!s.topics.some(x => low(x) === low(t.name))) ops.push({ op: "remove_topic", topicId: t.id });
+    // Topics as the tree they were: what is missing added where it sat (a
+    // parent before what is inside it), what sits elsewhere moved back, what
+    // was not there taken out (after the moves, so nothing kept goes with it).
+    const tree: SnapshotTopic[] = s.tree ?? s.topics.map(name => ({ name, parent: null }));
+    const liveTopic = (name: string | null) => (name ? live.topics.find(x => low(x.name) === low(name)) ?? null : null);
+    const topicKey = new Map<string, string>();
+    const groups = new Map<string, { op: string; subjectId: string; names: string[]; keys: string[]; parentId?: string | null; parentKey?: string }>();
+    const moves: Array<Record<string, unknown>> = [];
+    for (const t of tree) {
+      const there = liveTopic(t.name);
+      const parentLive = liveTopic(t.parent);
+      const parentRef = t.parent === null ? {} : parentLive ? { parentId: parentLive.id } : topicKey.has(low(t.parent)) ? { parentKey: topicKey.get(low(t.parent))! } : {};
+      if (there) {
+        const want = "parentId" in parentRef ? parentRef.parentId : "parentKey" in parentRef ? `+${parentRef.parentKey}` : null;
+        if (want !== (there.parentId ?? null)) moves.push({ op: "move_topic", topicId: there.id, ...(Object.keys(parentRef).length ? parentRef : { parentId: null }) });
+        continue;
+      }
+      const key = `rt${subjectKey.size}-${topicKey.size + 1}`;
+      topicKey.set(low(t.name), key);
+      const group = `${"parentId" in parentRef ? parentRef.parentId : "parentKey" in parentRef ? `+${parentRef.parentKey}` : ""}\n${t.kind ?? ""}`;
+      const g = groups.get(group) ?? { op: "add_topics", subjectId: live.id, names: [], keys: [], ...parentRef, ...(t.kind ? { kind: t.kind } : {}) };
+      g.names.push(t.name); g.keys.push(key);
+      if (!groups.has(group)) { groups.set(group, g); ops.push(g); }
+    }
+    ops.push(...moves);
+    for (const t of live.topics) if (!tree.some(x => low(x.name) === low(t.name))) ops.push({ op: "remove_topic", topicId: t.id });
   }
 
   // Tasks, by the path of titles from the top.
@@ -182,6 +212,13 @@ export function changesToReach(current: WorkspaceDetail, target: Snapshot, today
     if (hit) { matched.set(t.key, hit.id); used.add(hit.id); }
   }
   const addedKey = new Map<string, string>();
+  // What a task waited on, as ids there or keys of tasks this adds; null:
+  // one of them can't be named (not brought back), so its waits are left.
+  const waitsOf = (t: { after?: string[] }): string[] | null => {
+    const out: string[] = [];
+    for (const a of t.after ?? []) { const id = matched.get(a) ?? addedKey.get(a); if (!id) return null; out.push(id); }
+    return out;
+  };
   for (const { item: t } of treeOrder(target.tasks.map(x => ({ ...x, id: x.key })))) {
     const liveId = matched.get(t.key);
     const parentLive = t.parent ? matched.get(t.parent) ?? null : null;
@@ -194,6 +231,8 @@ export function changesToReach(current: WorkspaceDetail, target: Snapshot, today
       if (x.dueDay !== due) change.dueDay = due;
       if (x.priority !== t.priority) change.priority = t.priority;
       if (!parentAdded && (x.parentId ?? null) !== parentLive) change.parentId = parentLive;
+      const after = waitsOf(t);
+      if (after !== null && (after.length !== (x.after ?? []).length || after.some(a => !(x.after ?? []).includes(a)))) change.after = after;
       if (Object.keys(change).length) ops.push({ op: "update_task", taskId: liveId, ...change });
       continue;
     }
@@ -204,6 +243,7 @@ export function changesToReach(current: WorkspaceDetail, target: Snapshot, today
       op: "add_task", key, title: t.title, subjectId: subjectByName(t.subject)?.id ?? null, topicName: t.topic,
       dueDay: t.dueDay && t.dueDay >= today ? t.dueDay : null, priority: t.priority,
       ...(parentLive ? { parentId: parentLive } : parentAdded ? { parentKey: parentAdded } : {}),
+      ...((waitsOf(t) ?? []).length ? { after: waitsOf(t) } : {}),
     });
   }
   const kept = new Set(matched.values());

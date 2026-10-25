@@ -5,8 +5,8 @@
 
 import { changeCounts, checkChanges, decideResource, matchResources, readChangeSet, withinAsk, type ResourceCandidates } from "../product/builder-changes";
 import { DECLINE_REPLY, decideStep, emptyBrief, readTurn } from "../product/builder-state";
-import { checkWorkspacePlan, isPlaceholderTopic, planWrites } from "../product/workspace-plan";
-import { NO_SYLLABUS, changesPrompt, projectShape, studyShape, writeBuilderPlan, type BuilderPlanRequest } from "../product/workspace-generation";
+import { checkWorkspacePlan, isPlaceholderTopic, planWrites, topicRows } from "../product/workspace-plan";
+import { NO_SYLLABUS, changesPrompt, writeBuilderPlan, type BuilderPlanRequest } from "../product/workspace-generation";
 import { readBuilderTurn, turnPrompt, type TurnInput } from "../product/builder-conversation";
 import type { WorkspaceDetail } from "../product/builder.types";
 
@@ -146,7 +146,7 @@ describe("proposed changes, checked against the records by id", () => {
       today: TODAY, kind: "exam", facts: [], change: "Add dynamic programming", proposed: null, conversation: [],
       current: { title: "DSA", subjects: current().subjects, tasks: current().tasks.map(t => ({ id: t.id, title: t.title, status: t.status, dueDay: t.dueDay, priority: t.priority, topicName: t.topicName })), dates: [{ id: "d1", title: "DSA mid-term", day: "2026-11-20" }], notes: [{ id: "n1", title: "DSA cheatsheet" }] },
     });
-    expect(p).toContain('- subject s1 "Data Structures and Algorithms": t1 "Arrays", t2 "Trees", t3 "Graphs"');
+    expect(p).toContain('- subject s1 "Data Structures and Algorithms"\n  - topic t1 "Arrays"\n  - topic t2 "Trees"\n  - topic t3 "Graphs"');
     expect(p).toContain('- task k1 "Solve 10 tree problems" (in_progress, due 2026-11-01, under Trees)');
     expect(p).toContain('- date d1 "DSA mid-term" on 2026-11-20');
     expect(p).toContain("CHANGE ASKED: Add dynamic programming");
@@ -159,7 +159,7 @@ describe("academic plans: specific topics, in learning order", () => {
     for (const name of ["Asymptotic analysis", "Introduction to graph traversal", "Dynamic programming on trees", "Binary heaps"]) expect(isPlaceholderTopic(name, "DSA")).toBe(false);
   });
 
-  it("units and specific subtopics are kept in the order given; placeholders and repeats are dropped and said", () => {
+  it("units and specific subtopics become nested topics in the order given; placeholders and repeats are dropped and said", () => {
     const checked = checkWorkspacePlan({
       kind: "custom", title: "DSA semester",
       subjects: [{ name: "Data Structures and Algorithms", topics: [
@@ -172,21 +172,38 @@ describe("academic plans: specific topics, in learning order", () => {
     }, { today: TODAY });
     expect(checked.ok).toBe(true);
     if (!checked.ok) return;
-    const topics = checked.plan.subjects[0]!.topics;
-    expect(topics.map(t => t.name)).toEqual(["Asymptotic analysis", "Arrays and strings", "Trees"]);
-    expect(topics[0]!.subtopics).toEqual(["Big-O, Omega and Theta", "Recurrence relations", "Master theorem"]);
-    expect(topics[2]!.unit).toBe("Unit 2: Non-linear structures");
-    expect(checked.dropped.filter(d => d.includes("too general"))).toHaveLength(2);
-    // The topic guide note keeps the units and what each topic covers.
-    const guide = planWrites(checked.plan).notes.find(n => n.title.startsWith("Data Structures and Algorithms: topic guide"))!;
-    expect(guide.body).toContain("# Unit 1: Foundations\n## Asymptotic analysis\n- Big-O, Omega and Theta");
-    expect(guide.body.indexOf("# Unit 2: Non-linear structures")).toBeGreaterThan(guide.body.indexOf("## Arrays and strings"));
-    expect(guide.body.split("# Unit 1: Foundations").length).toBe(2);
+    const rows = topicRows(checked.plan.subjects[0]!).map(r => `${"  ".repeat(r.depth)}${r.topic.name}`);
+    expect(rows).toEqual([
+      "Unit 1: Foundations", "  Asymptotic analysis", "    Big-O, Omega and Theta", "    Recurrence relations", "    Master theorem",
+      "  Arrays and strings", "    Two pointers", "    Sliding window", "    Prefix sums",
+      "Unit 2: Non-linear structures", "  Trees", "    Binary search trees", "    Tree traversals",
+      "Unit 3",
+    ]);
+    expect(checked.dropped.filter(d => d.includes("too general"))).toHaveLength(3);
+    // No topic guide note: what a topic covers is its own rows.
+    expect(planWrites(checked.plan).notes).toEqual([]);
+  });
+
+  it("the nested shape a reply gives and the flat shape a page sends read as the same tree", () => {
+    const nested = checkWorkspacePlan({ title: "OS", subjects: [{ name: "OS", topics: [{ name: "Unit 2: Memory", topics: [{ name: "Paging", topics: ["Page tables", "TLB"] }, "Segmentation"] }] }] }, { today: TODAY });
+    assert(nested.ok);
+    const flat = checkWorkspacePlan({ title: "OS", subjects: [{ name: "OS", topics: [{ name: "TLB", parent: "Paging" }, { name: "Unit 2: Memory" }, { name: "Paging", parent: "Unit 2: Memory" }, { name: "Page tables", parent: "Paging" }, { name: "Segmentation", parent: "Unit 2: Memory" }] }] }, { today: TODAY });
+    assert(flat.ok);
+    const outline = (p: typeof nested) => (p.ok ? topicRows(p.plan.subjects[0]!).map(r => [r.topic.name, r.depth]) : []);
+    expect(outline(nested)).toEqual([["Unit 2: Memory", 0], ["Paging", 1], ["Page tables", 2], ["TLB", 2], ["Segmentation", 1]]);
+    expect(new Set(outline(flat).map(x => JSON.stringify(x)))).toEqual(new Set(outline(nested).map(x => JSON.stringify(x))));
+  });
+
+  it("a name used twice in a subject under different parents is told apart, and said", () => {
+    const r = checkWorkspacePlan({ title: "DSA", subjects: [{ name: "DSA", topics: [{ name: "Trees", topics: ["Applications"] }, { name: "Graphs", topics: ["Applications"] }] }] }, { today: TODAY });
+    assert(r.ok);
+    expect(r.plan.subjects[0]!.topics.map(t => t.name)).toEqual(["Trees", "Applications", "Graphs", "Applications (Graphs)"]);
+    expect(r.dropped.some(d => d.includes('renamed "Applications (Graphs)"'))).toBe(true);
   });
 
   const request = (over: Partial<BuilderPlanRequest> = {}): BuilderPlanRequest => ({
     today: TODAY, kind: "exam", facts: [{ label: "Exam", value: "DSA end-semester" }], known: [], assumptions: [], suggestions: [],
-    conversation: [], learnerText: "", current: null, change: null, existing: null, ...over,
+    conversation: [], learnerText: "", existing: null, ...over,
   });
   const plan = JSON.stringify({ title: "DSA", subjects: [{ name: "DSA", topics: [{ name: "Asymptotic analysis", subtopics: ["Big-O"] }] }] });
 
@@ -203,9 +220,10 @@ describe("academic plans: specific topics, in learning order", () => {
     let system = "";
     const written = await writeBuilderPlan(request(), (async (req: { systemInstruction: string }) => { system = req.systemInstruction; return plan; }) as never);
     expect(written.ok && written.plan.assumptions[0]).toBe(NO_SYLLABUS);
-    expect(system).toContain("each subject in units (unit), each unit's topics in the order they are learnt, prerequisites and foundations first");
+    expect(system).toContain("each subject's syllabus units as topics, with their topics and subtopics inside, in teaching order");
+    expect(system).toContain("Match the depth and detail to the learner's actual goal");
     expect(system).toContain("never claim the plan matches an official syllabus");
-    expect(system).toContain("Data Structures and Algorithms runs from asymptotic analysis");
+    expect(system).toContain("Example for Data Structures and Algorithms: asymptotic analysis");
     // A shared syllabus, or one the learner described, and a project: not said.
     const withFile = await writeBuilderPlan(request({ files: [{ name: "syllabus.pdf", mimeType: "application/pdf", data: "JVBERi0=" }] }), (async () => plan) as never);
     expect(withFile.ok && withFile.plan.assumptions.includes(NO_SYLLABUS)).toBe(false);
@@ -305,66 +323,55 @@ describe("the reading says when they want it taken back", () => {
   });
 });
 
-describe("a project's shape is held by code", () => {
-  it("one subject, whose topics are exactly its milestones; nothing beside them", () => {
+describe("a plan's structure is the model's and the learner's, never rewritten by its kind (26 Oct)", () => {
+  it("a project keeps several workstreams; a milestone also listed as a topic is kept once, and both are said", () => {
     const checked = checkWorkspacePlan({ kind: "custom", title: "Kivo v1",
       subjects: [{ name: "Kivo", topics: [{ name: "Kivo", explanation: "everything" }, { name: "Home page" }] }, { name: "Extras", topics: ["Docs"] }],
       phases: [{ name: "Home page", subject: "Kivo" }, { name: "Final polish", subject: "Extras" }],
       tasks: [{ key: "a", title: "Build the UI", topic: "Home page", subject: "Extras" }] }, { today: TODAY });
-    const shaped = projectShape(checked, "project");
-    assert(shaped.ok);
-    expect(shaped.plan.subjects).toEqual([{ name: "Kivo", topics: [{ name: "Home page", explanation: null, sources: [] }, { name: "Final polish", explanation: null, sources: [] }] }]);
-    expect(shaped.plan.tasks[0]!.subject).toBe("Kivo");
-    const w = planWrites(shaped.plan);
-    expect(w.subjects).toEqual([{ name: "Kivo", topics: ["Home page", "Final polish"] }]);
-    // No topic guide for a project: milestones are said in the one plan note.
-    expect(w.notes.some(n => n.key.startsWith("topics:"))).toBe(false);
-    // An exam plan is left as it is.
-    expect(projectShape(checked, "exam")).toBe(checked);
+    assert(checked.ok);
+    expect(checked.plan.subjects.map(s => [s.name, s.topics.map(t => `${t.name}${t.kind ? ` (${t.kind})` : ""}`)])).toEqual([
+      ["Kivo", ["Home page (milestone)"]], ["Extras", ["Final polish (milestone)", "Docs"]],
+    ]);
+    // Seen 25 Oct: a topic named after the project beside its milestones. Now dropped by the placeholder rule, and said.
+    expect(checked.dropped.some(d => d.includes('topic "Kivo" in Kivo'))).toBe(true);
+    expect(checked.dropped.some(d => d.includes('topic "Home page" in Kivo kept once, as the milestone'))).toBe(true);
+    // A task's topic names a topic of its subject; one that names another subject's is said, and filed where the topic is.
+    expect(checked.dropped.some(d => d.includes('the topic of "Build the UI"'))).toBe(true);
   });
 
-  it("a task waits only on one in its own milestone: milestones are in order already (seen 25 Oct: all eight chained)", () => {
-    const checked = checkWorkspacePlan({ kind: "custom", title: "K", subjects: [{ name: "K", topics: ["Day 1", "Day 2"] }],
+  it("steps waiting on steps beside them are left out once and said (seen 25 Oct: all eight chained); real waits stay", () => {
+    const checked = checkWorkspacePlan({ kind: "custom", title: "K", subjects: [{ name: "K", topics: [] }],
       phases: [{ name: "Day 1", subject: "K" }, { name: "Day 2", subject: "K" }],
-      tasks: [{ key: "a", title: "Build the API", topic: "Day 1" }, { key: "b", title: "Wire the UI", topic: "Day 1", after: "a" }, { key: "c", title: "Test it", topic: "Day 2", after: "b" }] }, { today: TODAY });
-    const shaped = projectShape(checked, "project");
-    assert(shaped.ok);
-    expect(shaped.plan.tasks.map(t => t.after ?? null)).toEqual([null, "a", null]);
+      tasks: [
+        { key: "a", title: "Build the API", topic: "Day 1" }, { key: "b", title: "Wire the UI", topic: "Day 1", after: ["a"] },
+        { key: "s1", title: "Write the schema", parent: "a" }, { key: "s2", title: "Write the handlers", parent: "a", after: ["s1"] },
+      ] }, { today: TODAY });
+    assert(checked.ok);
+    expect(checked.plan.tasks.map(t => [t.key, t.after])).toEqual([["a", []], ["b", ["a"]], ["s1", []], ["s2", []]]);
+    expect(checked.dropped).toContain("1 wait between steps of one task (steps already go in order)");
   });
 
-  it("a revision keeps each task under its milestone when the model left it under none; dates are the project's", () => {
-    const make = (topic: string | null) => checkWorkspacePlan({ kind: "custom", title: "Kivo v1",
-      subjects: [{ name: "Kivo", topics: ["Home page"] }], phases: [{ name: "Home page", subject: "Kivo" }],
-      tasks: [{ key: "a", title: "Build the UI", topic }], dates: [{ title: "Launch", subject: null, kind: "project", day: "2026-10-29" }] }, { today: TODAY });
-    const before = projectShape(make("Home page"), "project");
-    assert(before.ok);
-    const after = projectShape(make("Kivo"), "project", before.plan);
-    assert(after.ok);
-    expect(after.plan.tasks[0]!.topic).toBe("Home page");
-    expect(after.plan.dates[0]!.subject).toBe("Kivo");
+  it("an academic plan keeps a milestone the reply gave beside its topics, and files a task by its topic in any case", () => {
+    const checked = checkWorkspacePlan({ kind: "custom", title: "DSA",
+      subjects: [{ name: "DSA", topics: ["Asymptotic Analysis and Sorting Algorithms", "Trees"] }],
+      phases: [{ name: "Sorting and Asymptotic Analysis", subject: "DSA" }],
+      tasks: [{ key: "a", title: "Solve 10 sorting problems", subject: "DSA", topic: "Sorting and Asymptotic Analysis" }, { key: "b", title: "Tree quiz", subject: "DSA", topic: "trees" }] }, { today: TODAY });
+    assert(checked.ok);
+    expect(checked.plan.tasks.map(t => t.topic)).toEqual(["Sorting and Asymptotic Analysis", "Trees"]);
+    expect(planWrites(checked.plan).subjects[0]!.topics.map(t => t.name)).toEqual(["Sorting and Asymptotic Analysis", "Asymptotic Analysis and Sorting Algorithms", "Trees"]);
   });
 });
 function assert(v: unknown): asserts v { expect(v).toBeTruthy(); }
 
-describe("the change model sees what each topic covers", () => {
-  it("so a new topic doesn't repeat one that is there", () => {
+describe("the change model sees the topics as arranged", () => {
+  it("each topic under the one it sits inside, milestones as milestones, steps under tasks with their waits", () => {
     const text = changesPrompt({ today: TODAY, kind: "exam", facts: [], proposed: null, change: "add two topics", conversation: [],
-      current: { title: "DSA", subjects: [{ id: "s1", name: "DSA", topics: [{ id: "t1", name: "Advanced paradigms", subtopics: ["Greedy algorithms", "Dynamic programming"] }] }], tasks: [], dates: [], notes: [] } });
-    expect(text).toContain('t1 "Advanced paradigms" (covers Greedy algorithms; Dynamic programming)');
+      current: { title: "DSA", subjects: [{ id: "s1", name: "DSA", topics: [{ id: "t1", name: "Unit 1" }, { id: "t2", name: "Greedy algorithms", parentId: "t1" }, { id: "t3", name: "Revise", kind: "milestone" }] }],
+        tasks: [{ id: "k1", title: "Solve set A", status: "todo", dueDay: null, priority: null, topicName: null }, { id: "k2", title: "Part 1", status: "todo", dueDay: null, priority: null, topicName: null, parentId: "k1", after: ["k3"] }, { id: "k3", title: "Read notes", status: "todo", dueDay: null, priority: null, topicName: null }],
+        dates: [], notes: [] } });
+    expect(text).toContain('- subject s1 "DSA"\n  - topic t1 "Unit 1"\n    - topic t2 "Greedy algorithms"\n  - milestone t3 "Revise"');
+    expect(text).toContain('  - task k2 "Part 1" (todo, after k3)');
   });
 });
 
-describe("a study plan's shape is held by code", () => {
-  it("no phases beside its topics; a task is filed under a real topic or none", () => {
-    const checked = checkWorkspacePlan({ kind: "custom", title: "DSA",
-      subjects: [{ name: "DSA", topics: ["Asymptotic Analysis and Sorting Algorithms", "Trees"] }],
-      phases: [{ name: "Sorting and Asymptotic Analysis", subject: "DSA" }, { name: "Trees", subject: "DSA" }],
-      tasks: [{ key: "a", title: "Solve 10 sorting problems", subject: "DSA", topic: "Sorting and Asymptotic Analysis" }, { key: "b", title: "Tree quiz", subject: "DSA", topic: "trees" }] }, { today: TODAY });
-    const shaped = studyShape(checked, "exam");
-    assert(shaped.ok);
-    expect(shaped.plan.phases).toEqual([]);
-    expect(shaped.plan.tasks.map(t => t.topic)).toEqual([null, "Trees"]);
-    expect(planWrites(shaped.plan).subjects).toEqual([{ name: "DSA", topics: ["Asymptotic Analysis and Sorting Algorithms", "Trees"] }]);
-    expect(studyShape(checked, "skill")).toBe(checked);
-  });
-});

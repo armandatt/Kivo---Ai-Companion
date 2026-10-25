@@ -5,7 +5,13 @@
 // only because a row says so:
 //
 //   subject → subject    NovaSubject.parentId: a subject inside another
-//   subject → topic      NovaTopicMastery.subjectId
+//   subject → topic      NovaTopicMastery.subjectId, for a topic at its top
+//   topic   → topic      NovaTopicMastery.parentId: a topic inside another,
+//                        in the order its position gives (never by name)
+//   topic   → task       NovaTask.topicName naming a topic of its subject
+//                        (the top task of a tree; else subject → task)
+//   task    → task       NovaTask.parentId: a step of the task
+//   task    → task       NovaTaskDependency: waits on (depends_on)
 //   topic   → note       NovaNote.subjectId + topicName naming a topic of
 //                        that subject (compared the way sessions compare
 //                        topic names: trimmed, single-spaced, any case)
@@ -24,16 +30,19 @@ import { learnerKey } from "./learner-key";
 import { listResourceLinks } from "./learning-events";
 import { listNoteLinks } from "./notes";
 import { listTaskOutline } from "./tasks";
+import { workspaceScopes } from "./workspaces";
+import { readTopicDetails, studyTopicIds, topicKindOf, topicOutline } from "./topic-tree";
+import { treeOrder } from "./task-tree";
 import { masteryLevel } from "../engines/knowledge-engine";
 import { normalizeTopicName } from "../engines/topic-mastery-engine";
 import {
   MAP_NOTES_MAX, MAP_RESOURCES_MAX,
-  type MapEdge, type MapNode, type MapNodeType, type MapSuggestion, type MapTask, type NovaKnowledgeMapReady, type NovaKnowledgeMapView,
+  type MapEdge, type MapNode, type MapNodeType, type MapSuggestion, type MapTask, type MapWorkspace, type NovaKnowledgeMapReady, type NovaKnowledgeMapView,
 } from "./knowledge-map.types";
 
 export interface MapInputs {
   subjects:  Array<{ id: string; name: string; parentId?: string | null }>;
-  topics:    Array<{ id: string; subjectId: string; name: string; masteryProbability: number; reviewCount: number }>;
+  topics:    Array<{ id: string; subjectId: string; name: string; masteryProbability: number; reviewCount: number; parentId?: string | null; position?: number | null; kind?: string | null; details?: unknown; createdAt?: Date }>;
   // linksTo: titles the note names in [[...]] (notes.ts). Absent: none.
   notes:     Array<{ id: string; title: string; subjectId: string | null; topicName: string | null; updatedAt: Date; linksTo?: string[] }>;
   resources: Array<{
@@ -44,7 +53,10 @@ export interface MapInputs {
   totals:    { notes: number; resources: number };
   // The learner's tasks (tasks.ts), each with the task it is a step of. A
   // tree goes to the topic its top task is filed under, else its subject.
-  tasks?:    Array<MapTask & { subjectId: string | null; topicName: string | null }>;
+  tasks?:    Array<MapTask & { subjectId: string | null; topicName: string | null; dueDay?: string | null; priority?: "low" | "medium" | "high" | null; estimatedMinutes?: number | null; after?: string[] }>;
+  // What is drawn and what else there is to switch to.
+  workspaceId?: string | null;
+  workspaces?:  MapWorkspace[];
 }
 
 const topicKey = (subjectId: string, name: string) => `${subjectId}\n${normalizeTopicName(name).toLowerCase()}`;
@@ -123,21 +135,37 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
     treeAt.set(at, [...(treeAt.get(at) ?? []), { id: t.id, title: t.title, status: t.status, parentId: t.parentId }]);
   }
 
-  const topicNodes: MapNode[] = topics.map(t => {
-    const id = `topic:${t.id}`;
-    link(`subject:${t.subjectId}`, id, "has_topic");
-    // "unverified" (no session behind it) is no level at all here.
-    const known   = masteryLevel(t);
-    const studied = known !== "unverified";
-    return {
-      id, type: "topic", label: t.name, href: `/knowledge?topic=${encodeURIComponent(t.id)}`, subjectId: t.subjectId, subjectName: subjectName.get(t.subjectId)!,
-      sessions: t.reviewCount,
-      level: known === "unverified" ? null : known,
-      masteryPercent: studied ? Math.round(t.masteryProbability * 100) : null,
-      notes: tally.get(id)?.notes ?? 0, resources: tally.get(id)?.resources ?? 0,
-      ...(treeAt.has(id) ? { tasks: treeAt.get(id)! } : {}),
-    };
-  });
+  // Topics as arranged: each subject's outline, a parent before what is
+  // inside it, siblings in their saved order.
+  const topicNodes: MapNode[] = [];
+  for (const s of input.subjects) {
+    const own = topics.filter(t => t.subjectId === s.id);
+    const studied = studyTopicIds(own);
+    const order = new Map<string, number>();
+    for (const { item: t } of topicOutline(own)) {
+      const id = `topic:${t.id}`;
+      const parent = t.parentId && own.some(x => x.id === t.parentId) ? t.parentId : null;
+      const k = parent ?? "";
+      const at = order.get(k) ?? 0;
+      order.set(k, at + 1);
+      link(parent ? `topic:${parent}` : `subject:${s.id}`, id, parent ? "subtopic" : "has_topic");
+      // "unverified" (no session behind it) is no level at all here.
+      const known   = masteryLevel(t);
+      const kind = topicKindOf(t.kind);
+      const details = readTopicDetails(t.details);
+      topicNodes.push({
+        id, type: "topic", label: t.name, href: `/knowledge?topic=${encodeURIComponent(t.id)}`, subjectId: t.subjectId, subjectName: s.name,
+        sessions: t.reviewCount,
+        level: known === "unverified" ? null : known,
+        masteryPercent: known !== "unverified" ? Math.round(t.masteryProbability * 100) : null,
+        notes: tally.get(id)?.notes ?? 0, resources: tally.get(id)?.resources ?? 0,
+        order: at, studied: studied.has(t.id),
+        ...(parent ? { parentId: parent } : {}), ...(kind ? { kind } : {}),
+        ...(details ? { details: { explanation: details.explanation, weeks: details.weeks, hoursPerWeek: details.hoursPerWeek, goals: details.goals, exercises: details.exercises, project: details.project, completion: details.completion } } : {}),
+        ...(treeAt.has(id) ? { tasks: treeAt.get(id)! } : {}),
+      });
+    }
+  }
   const subjectNodes: MapNode[] = input.subjects.map(s => {
     const id = `subject:${s.id}`;
     const parentId = s.parentId && subjectName.has(s.parentId) && s.parentId !== s.id ? s.parentId : null;
@@ -150,6 +178,32 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
       ...(treeAt.has(id) ? { tasks: treeAt.get(id)! } : {}),
     };
   });
+
+  // Every task is a card: a step under its task, a top task under its topic
+  // (else its subject, else on its own), in their order; waits between them.
+  const taskIds = new Set(allTasks.map(t => t.id));
+  const stepOrder = new Map<string, number>();
+  const taskNodes: MapNode[] = treeOrder(allTasks.map(t => ({ ...t, parent: t.parentId && taskIds.has(t.parentId) ? t.parentId : null }))).map(({ item: t }) => {
+    const id = `task:${t.id}`;
+    const parent = t.parent;
+    const root = rootOf(t);
+    const subject = root.subjectId && subjectName.has(root.subjectId) ? root.subjectId : null;
+    if (parent) link(`task:${parent}`, id, "step");
+    else if (subject) {
+      const topicId = root.topicName ? topicAt.get(topicKey(subject, root.topicName)) : undefined;
+      link(topicId ? `topic:${topicId}` : `subject:${subject}`, id, "has_task");
+    }
+    const k = parent ?? `${subject ?? ""}\n${root.topicName ?? ""}`;
+    const order = stepOrder.get(k) ?? 0;
+    stepOrder.set(k, order + 1);
+    return {
+      id, type: "task", label: t.title, href: `/planner?view=board&task=${encodeURIComponent(t.id)}`, subjectId: subject,
+      subjectName: subject ? subjectName.get(subject)! : null, topicName: root.topicName,
+      status: t.status, priority: t.priority ?? null, dueDay: t.dueDay ?? null, estimatedMinutes: t.estimatedMinutes ?? null,
+      ...(parent ? { parentId: parent } : {}), order, waitsOn: (t.after ?? []).filter(a => taskIds.has(a)).length,
+    };
+  });
+  for (const t of allTasks) for (const a of t.after ?? []) if (taskIds.has(a)) link(`task:${t.id}`, `task:${a}`, "depends_on");
 
   // [[Links]] the learner wrote: to the note with that title (the most
   // recently edited, when two share one), else to a topic of theirs with that
@@ -170,20 +224,24 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
     }
   }
 
-  const nodes = [...subjectNodes, ...topicNodes, ...noteNodes, ...resourceNodes];
+  const nodes = [...subjectNodes, ...topicNodes, ...taskNodes, ...noteNodes, ...resourceNodes];
   const linked = new Set(edges.flatMap(e => [e.from, e.to]));
   const counts: Record<MapNodeType, number> = {
-    subject: subjectNodes.length, topic: topicNodes.length, note: noteNodes.length, resource: resourceNodes.length,
+    subject: subjectNodes.length, topic: topicNodes.length, task: taskNodes.length, note: noteNodes.length, resource: resourceNodes.length,
   };
   return {
     status: "ready", nodes, edges, suggestions, counts,
+    workspaceId: input.workspaceId ?? null, workspaces: input.workspaces ?? [],
     notShown: { notes: Math.max(0, input.totals.notes - noteNodes.length), resources: Math.max(0, input.totals.resources - resourceNodes.length) },
     unconnected: nodes.filter(n => !linked.has(n.id)).length,
   };
 }
 
 // A fixed number of queries whatever the learner has.
-export async function loadNovaKnowledgeMap(platformChatId: string): Promise<NovaKnowledgeMapView> {
+// workspace: one of theirs by id, "all" for everything, or absent for the
+// one they worked on last (everything when they have none). A workspace is
+// its subjects with everything inside them, and the tasks it made.
+export async function loadNovaKnowledgeMap(platformChatId: string, options: { workspace?: string | null } = {}): Promise<NovaKnowledgeMapView> {
   const user = await prisma.messengerUser.findUnique({
     where:  learnerKey(platformChatId),
     select: { novaAcademicProfile: { select: { id: true, onboardingComplete: true } } },
@@ -193,20 +251,43 @@ export async function loadNovaKnowledgeMap(platformChatId: string): Promise<Nova
   if (!profile?.onboardingComplete) return { status: "onboarding_incomplete" };
   const profileId = profile.id;
 
+  const workspaces = await workspaceScopes(profileId);
+  const chosen = options.workspace === "all" ? null
+    : options.workspace ? workspaces.find(w => w.id === options.workspace) ?? null
+    : workspaces[0] ?? null;
+
   // Notes and saved pages are read through their owners: this file touches
   // neither table.
-  const [subjects, topics, noted, saved, tasks] = await Promise.all([
-    prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true, parentId: true }, orderBy: { name: "asc" } }),
+  const [allSubjects, allTopics, noted, saved, allTasks] = await Promise.all([
+    prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true, parentId: true }, orderBy: { createdAt: "asc" } }),
     prisma.novaTopicMastery.findMany({
-      where: { subject: { profileId }, archivedAt: null }, orderBy: { name: "asc" },
-      select: { id: true, subjectId: true, name: true, masteryProbability: true, reviewCount: true },
+      where: { subject: { profileId }, archivedAt: null }, orderBy: { createdAt: "asc" },
+      select: { id: true, subjectId: true, name: true, masteryProbability: true, reviewCount: true, parentId: true, position: true, kind: true, details: true, createdAt: true },
     }),
     listNoteLinks(profileId, MAP_NOTES_MAX),
     listResourceLinks(profileId, MAP_RESOURCES_MAX),
     listTaskOutline(profileId),
   ]);
+  // A workspace's subjects and every subject inside them.
+  const inScope = new Set(chosen ? chosen.subjectIds : allSubjects.map(s => s.id));
+  for (let grew = true; chosen && grew;) {
+    grew = false;
+    for (const s of allSubjects) if (s.parentId && inScope.has(s.parentId) && !inScope.has(s.id)) { inScope.add(s.id); grew = true; }
+  }
+  const subjects = allSubjects.filter(s => inScope.has(s.id));
+  // Its tasks: those filed under its subjects, those it made (filed under
+  // nothing, too), and every step under them.
+  const made = (t: { clientKey: string | null }) => chosen !== null && (t.clientKey?.startsWith(`ws:${chosen.clientKey}:`) ?? false);
+  const top = new Set(allTasks.filter(t => !chosen || made(t) || (t.subjectId !== null && inScope.has(t.subjectId))).map(t => t.id));
+  for (let grew = true; chosen && grew;) {
+    grew = false;
+    for (const t of allTasks) if (t.parentId && top.has(t.parentId) && !top.has(t.id)) { top.add(t.id); grew = true; }
+  }
+  const scoped = <T extends { subjectId: string | null }>(list: T[]) => (chosen ? list.filter(x => x.subjectId !== null && inScope.has(x.subjectId)) : list);
   return buildKnowledgeMap({
-    subjects, topics, notes: noted.notes, resources: saved.resources, tasks,
-    totals: { notes: noted.total, resources: saved.total },
+    subjects, topics: allTopics.filter(t => inScope.has(t.subjectId)),
+    notes: scoped(noted.notes), resources: scoped(saved.resources), tasks: allTasks.filter(t => top.has(t.id)),
+    totals: { notes: chosen ? scoped(noted.notes).length : noted.total, resources: chosen ? scoped(saved.resources).length : saved.total },
+    workspaceId: chosen?.id ?? null, workspaces: workspaces.map(w => ({ id: w.id, title: w.title })),
   });
 }

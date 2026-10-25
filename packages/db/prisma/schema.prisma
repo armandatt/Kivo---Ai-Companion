@@ -807,6 +807,22 @@ model NovaTopicMastery {
   // and keeps its row, mastery and history. Null: active. Cleared on restore.
   archivedAt DateTime?
 
+  // A topic can sit inside another topic of the same subject (a unit, its
+  // topics, their subtopics), in the order given by position among the
+  // topics beside it. Null parent: at the top of its subject. Null position:
+  // an older row, in the order it was added. Only a leaf is studied on its
+  // own (product/topic-tree.ts): a topic with topics inside it organises them.
+  parentId String?
+  position Int?
+  // null: a topic to learn. "milestone": a stage of work in a project or
+  // roadmap, which has tasks and is never studied or reviewed.
+  kind     String?
+  // What the plan said about it: an explanation and its sources, and for a
+  // milestone its effort, goals, exercises, project, done-when and resources.
+  details  Json?
+  parent   NovaTopicMastery?  @relation("NovaTopicTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children NovaTopicMastery[] @relation("NovaTopicTree")
+
   subject       NovaSubject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
   snapshots     NovaTopicMasterySnapshot[]
   planOverrides NovaPlanOverride[]
@@ -817,6 +833,7 @@ model NovaTopicMastery {
   @@unique([subjectId, name])
   @@index([subjectId])
   @@index([nextReviewAt])
+  @@index([parentId])
 }
 
 // One row per change the Topic Mastery Engine made to a topic: the value
@@ -1274,6 +1291,9 @@ model NovaTask {
   subject NovaSubject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
   parent  NovaTask?           @relation("NovaTaskSteps", fields: [parentId], references: [id], onDelete: Cascade)
   steps   NovaTask[]          @relation("NovaTaskSteps")
+  // What must be finished before this one (NovaTaskDependency), and what waits on it.
+  waitsOn NovaTaskDependency[] @relation("NovaTaskWaits")
+  blocks  NovaTaskDependency[] @relation("NovaTaskBlocks")
 
   // Times the learner set aside on the calendar to work on this task. The
   // task stays the one record of the work; an event only schedules it.
@@ -1286,6 +1306,24 @@ model NovaTask {
   @@index([profileId, status])
   @@index([profileId, dueDay])
   @@index([parentId])
+}
+
+// A task that cannot start until another is finished: taskId waits on
+// dependsOnId. Both are the same learner's tasks (checked by tasks.ts, the
+// only writer); never a task on itself, never a loop. Removing either task
+// removes the link.
+model NovaTaskDependency {
+  id          String @id @default(cuid())
+  taskId      String
+  dependsOnId String
+
+  task      NovaTask @relation("NovaTaskWaits", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOn NovaTask @relation("NovaTaskBlocks", fields: [dependsOnId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([taskId, dependsOnId])
+  @@index([dependsOnId])
 }
 
 // ─── Calendar events (product/calendar.ts is the only reader and writer) ─────

@@ -165,7 +165,6 @@ test("a clear request becomes a proposal without more questions, and still write
   assert.equal(draft.messages.at(-1)!.kind, "proposal");
   assert.ok(draft.messages.at(-1)!.text.includes("Nothing is created until you approve it"));
   assert.deepEqual(asked[0]!.facts, [{ label: "Done so far", value: "authentication" }, { label: "Next step", value: "API integration" }]);
-  assert.equal(asked[0]!.current, null);
   assert.deepEqual(await records(await me.profileId()), NOTHING);
 });
 
@@ -176,17 +175,24 @@ test("a correction is a new version; only the current version is approved; appro
   });
   assert.equal(draft.version, 1);
 
-  const asked: BuilderPlanRequest[] = [];
+  // A revision is operations on the proposal's items, never the plan written again.
+  const asked: Array<Parameters<NonNullable<BuilderDeps["writeChanges"]>>[0]> = [];
+  const before = draft.plan!;
   draft = await say(me.id, draft.id, "Add a task to write the release notes.", {
-    read: reader({ next: "revise", change: "Add a task to write the release notes" }),
-    write: writer(() => trackerPlan({ tasks: [...trackerPlan().tasks as object[], { key: "notes", title: "Write the release notes" }] }), asked),
+    read: reader({ next: "revise", change: "Add a task to write the release notes", touches: ["tasks"] }),
+    write: async () => { throw new Error("a revision must not rewrite the plan"); },
+    writeChanges: async req => { asked.push(req); return { ok: true, ops: [{ op: "add_task", key: "notes", title: "Write the release notes", subjectId: "s1", topicName: null, dueDay: null, priority: null }], summary: null }; },
   });
   assert.equal(draft.version, 2);
   assert.equal(draft.messages.at(-1)!.kind, "revision");
-  assert.ok(draft.messages.at(-1)!.text.includes("Added task Write the release notes"));
-  // The revision was written from the proposal as it stood, with the change.
-  assert.equal((asked[0]!.current as { title: string }).title, "TrackerX");
+  assert.ok(draft.messages.at(-1)!.text.includes('Add task "Write the release notes"'), draft.messages.at(-1)!.text);
+  // The model was shown the proposal's items, with ids, and the change.
+  assert.equal(asked[0]!.proposal, true);
+  assert.equal(asked[0]!.current.subjects[0]!.name, "TrackerX");
   assert.equal(asked[0]!.change, "Add a task to write the release notes");
+  // Everything else is as it was: same keys, priorities, waits, milestones.
+  assert.deepEqual(draft.plan!.tasks.slice(0, 3), before.tasks);
+  assert.deepEqual(draft.plan!.subjects, before.subjects);
 
   const profileId = await me.profileId();
   const stale = await builder.approveDraft(me.id, draft.id, { version: 1 });
@@ -199,23 +205,26 @@ test("a correction is a new version; only the current version is approved; appro
   assert.ok(again.ok);
   assert.equal(again.ok && again.draft.status, "ready");
   const built = await records(profileId);
-  // Four tasks; notes: one for how it goes (the milestones' goals and the order
-  // of work, together) and the scope note. Each note is a point on the map.
-  assert.deepEqual(built, { subjects: 1, tasks: 4, notes: 2, exams: 1, workspaces: 1 });
+  // Four tasks and the plan's one note: milestones and waits are records of
+  // their own now, not a "how it goes" note beside them (26 Oct).
+  assert.deepEqual(built, { subjects: 1, tasks: 4, notes: 1, exams: 1, workspaces: 1 });
 
   // The board, Knowledge, Notes and the dates are the real records.
   const board = await listTasks(profileId);
   for (const title of ["Finish dashboard widgets", "Wire the tasks API", "Test the full flow", "Write the release notes"]) assert.ok(board.tasks.some(t => t.title === title && t.status === "todo"), title);
   const map = await loadNovaKnowledgeMap(me.id);
-  assert.ok(map.status === "ready" && map.nodes.some(x => x.label === "Finish the dashboard"));
+  assert.ok(map.status === "ready" && map.nodes.some(x => x.label === "Finish the dashboard" && x.type === "topic" && x.kind === "milestone"));
+  // The waits are edges between the tasks.
+  assert.ok(map.status === "ready" && map.edges.filter(e => e.kind === "depends_on").length === 2);
   const notes = await listNotes(profileId);
-  assert.ok(notes.notes.some(x => x.title === "How it goes: TrackerX"));
+  assert.ok(!notes.notes.some(x => x.title.startsWith("How it goes")));
   assert.ok((await listExams(me.id))!.some(e => e.title === "TrackerX launch"));
 
   // The live view reads them back, and Nova's chat context names it.
   const live = await builder.liveWorkspace(me.id, again.ok ? again.draft.workspace!.id : "");
   assert.equal(live!.tasks.length, 4);
-  assert.deepEqual(live!.subjects[0]!.topics.map(t => t.name).slice(0, 3), ["Dashboard", "API integration", "End-to-end testing"]);
+  // Milestones first, as the plan has them, then the other topics, in order.
+  assert.deepEqual(live!.subjects[0]!.topics.map(t => t.name), ["Finish the dashboard", "Integrate the APIs", "Dashboard", "API integration", "End-to-end testing"]);
   assert.ok((await builder.builderContextLines(profileId)).some(l => l.startsWith("Workspace they built in Kivo: TrackerX")));
 
   // Built: no more messages to it.
@@ -247,7 +256,8 @@ test("the learner's edits are saved against their version, and win over a slower
   assert.ok(claimed.ok);
   const meanwhile = await builder.editDraftPlan(me.id, draft.id, { plan: { ...mine, title: "Mine, newer" }, baseVersion: 3 });
   assert.ok(meanwhile.ok);
-  await builder.runJob(me.id, claimed.job, { read: reader({ next: "revise", change: "Add testing back" }), write: writer(trackerPlan) });
+  await builder.runJob(me.id, claimed.job, { read: reader({ next: "revise", change: "Add testing back" }), write: writer(trackerPlan),
+    writeChanges: async () => ({ ok: true, summary: null, ops: [{ op: "add_task", key: "e2e2", title: "Test the full flow", subjectId: "s1", topicName: null, dueDay: null, priority: null }] }) });
   draft = (await builder.getDraft(me.id, draft.id))!;
   assert.equal(draft.plan!.title, "Mine, newer");
   assert.equal(draft.version, 4);
@@ -447,8 +457,11 @@ test("a PDF or photo shared in the conversation is read on every turn, used for 
   assert.ok(built.ok && built.draft.status === "ready");
   assert.equal(built.ok && built.draft.files.length, 0);
   assert.equal(await prisma.novaWorkspaceDraftFile.count({ where: { draftId: draft.id } }), 0);
+  // The page it came from is kept on the topic's own row, not in a note beside it.
+  const deadlocks = await prisma.novaTopicMastery.findFirstOrThrow({ where: { name: "Deadlocks", subject: { profileId: await me.profileId() } }, select: { details: true } });
+  assert.deepEqual((deadlocks.details as { sources?: unknown }).sources, [{ file: "syllabus.pdf", page: 2 }]);
   const notes = await listNotes(await me.profileId());
-  assert.ok(notes.notes.some(n => n.title.startsWith("Operating Systems: topic guide")));
+  assert.ok(!notes.notes.some(n => n.title.includes("topic guide")));
 });
 
 test("files are checked by their bytes and limited per message and per conversation; refused ones are not kept", async () => {

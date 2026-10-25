@@ -18,7 +18,8 @@ import { prisma } from "@repo/db/client";
 import { isIsoDay } from "../brains/understanding-parser";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
 import { statedDailyMinutes } from "../engines/study-snapshot";
-import { declareTopics, normalizeTopicName, subjectsNamedIn } from "../engines/topic-mastery-engine";
+import { MAX_TOPICS_PER_SUBJECT, declareTopicTree, declareTopics, normalizeTopicName, subjectsNamedIn, type TopicTreeInput } from "../engines/topic-mastery-engine";
+import { readTopicDetails, topicKindOf, topicOutline, type TopicDetails, type TopicKind } from "./topic-tree";
 import { nextSetupQuestion, setupGaps, type SetupFacts, type SetupGap } from "../interaction/initialization";
 import { STUDY_TIMES, type SetupStatement, type StudyTime } from "../types/understanding.types";
 import { addExam, EXAM_HORIZON_DAYS } from "./exams";
@@ -297,11 +298,16 @@ export async function declareSubjectsIn(
 export async function declareWorkspaceSubjectsIn(
   tx: Pick<typeof prisma, "novaSubject" | "novaTopicMastery" | "novaAcademicProfile">,
   profileId: string,
-  subjects: Array<{ name: string; topics: string[]; parent?: string | null }>,
+  subjects: Array<{ name: string; topics: TopicTreeInput[]; parent?: string | null }>,
 ): Promise<{ ids: Map<string, string>; subjectsAdded: number; topicsAdded: number; created: Set<string> }> {
   const known = await tx.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true } });
   const report = { ids: new Map<string, string>(), subjectsAdded: 0, topicsAdded: 0, created: new Set<string>() };
-  await declareSubjectsIn(tx, profileId, known, subjects, report);
+  await declareSubjectsIn(tx, profileId, known, subjects.map(s => ({ name: s.name, topics: [] })), report);
+  // Each subject's topics as the tree the plan gives, in its order.
+  for (const s of subjects) {
+    const id = report.ids.get(s.name.toLowerCase());
+    if (id && s.topics.length) report.topicsAdded += (await declareTopicTree(tx, id, s.topics)).added.length;
+  }
   for (const s of subjects) {
     const id = report.ids.get(s.name.toLowerCase());
     const parentId = s.parent ? report.ids.get(s.parent.toLowerCase()) : undefined;
@@ -501,13 +507,25 @@ export async function subjectsForMatching(profileId: string): Promise<Array<{ id
   return prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true, code: true }, orderBy: { createdAt: "asc" }, take: 200 });
 }
 
-export async function subjectsWithTopics(profileId: string, subjectIds: string[]): Promise<Array<{ id: string; name: string; parentId: string | null; topics: Array<{ id: string; name: string }> }>> {
+export interface SubjectTopic { id: string; name: string; parentId: string | null; kind: TopicKind | null; details: TopicDetails | null }
+// Topics in outline order (a parent before what is inside it, siblings in
+// their saved order), each with its parent, kind and details, by id.
+export async function subjectsWithTopics(profileId: string, subjectIds: string[]): Promise<Array<{ id: string; name: string; parentId: string | null; topics: SubjectTopic[] }>> {
   if (subjectIds.length === 0) return [];
   const rows = await prisma.novaSubject.findMany({
     where:  { profileId, id: { in: subjectIds } },
-    select: { id: true, name: true, parentId: true, topics: { where: { archivedAt: null }, select: { id: true, name: true }, orderBy: { createdAt: "asc" }, take: 80 } },
+    select: {
+      id: true, name: true, parentId: true,
+      topics: { where: { archivedAt: null }, select: { id: true, name: true, parentId: true, position: true, kind: true, details: true, createdAt: true }, orderBy: { createdAt: "asc" }, take: MAX_TOPICS_PER_SUBJECT },
+    },
   });
-  return subjectIds.flatMap(id => rows.filter(r => r.id === id));
+  return subjectIds.flatMap(id => rows.filter(r => r.id === id)).map(r => ({
+    id: r.id, name: r.name, parentId: r.parentId,
+    topics: topicOutline(r.topics).map(({ item: t }) => ({
+      id: t.id, name: t.name, parentId: t.parentId && r.topics.some(x => x.id === t.parentId) ? t.parentId : null,
+      kind: topicKindOf(t.kind), details: readTopicDetails(t.details),
+    })),
+  }));
 }
 
 // ── Editing subjects (product/setup-edit.ts) ──────────────────────────────────

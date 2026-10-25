@@ -254,17 +254,17 @@ export function nextBrief(before: BuilderBrief, reading: TurnReading, step: Step
 
 // What a plan holds, in the words of its kind of work (the page uses the
 // same words, components/nova/builder/builder-view.ts). A project or work
-// plan's one subject is the project itself, so it is not counted as one.
-export interface HeldCounts { subjects: number; topics: number; phases: number; tasks: number; notes: number; dates: number }
+// plan with one subject is the project itself, so it is not counted; with
+// more, each is a workstream. Topics are counted apart from milestones.
+export interface HeldCounts { subjects: number; topics: number; milestones: number; tasks: number; notes: number; dates: number }
 export function holdsLine(kind: WorkKind | null, c: HeldCounts): string {
   const n = (count: number, one: string, many = `${one}s`) => (count ? `${count} ${count === 1 ? one : many}` : null);
   const academic = kind === "exam" || kind === "semester";
   const project = kind === "project", work = kind === "work" || kind === "career", skill = kind === "skill";
   return [
-    project || work ? null : n(c.subjects, academic ? "subject" : "area"),
-    // Milestones are written as topics too (planWrites): counted once, as milestones.
-    n(Math.max(0, c.topics - c.phases), project ? "part" : work ? "area" : skill ? "concept" : "topic"),
-    n(c.phases, academic ? "phase" : skill ? "stage" : "milestone"),
+    project || work ? (c.subjects > 1 ? n(c.subjects, "workstream") : null) : n(c.subjects, academic ? "subject" : "area"),
+    n(c.topics, project ? "part" : work ? "area" : skill ? "concept" : "topic"),
+    n(c.milestones, academic ? "phase" : skill ? "stage" : "milestone"),
     n(c.tasks, "task"), n(c.notes, "note"), n(c.dates, "date"),
   ].filter(Boolean).join(", ");
 }
@@ -354,14 +354,21 @@ export function planChanges(before: WorkspacePlan | null, after: WorkspacePlan):
   const names = (p: WorkspacePlan | null): Map<string, Seen> => {
     const out = new Map<string, Seen>();
     if (!p) return out;
-    // A topic by its name and its subject's place: renaming the subject is not every topic changing.
+    // A topic by its name and its subject's place: renaming the subject is
+    // not every topic changing. What it sits inside and its place among
+    // those beside it are part of it: a move alone is a change.
     for (const [i, s] of p.subjects.entries()) {
       out.set(`subject:${normalized(s.name)}`, { label: `subject ${s.name}`, kind: null, sig: "" });
-      for (const t of s.topics) out.set(`topic:${i}:${normalized(t.name)}`, { label: `topic ${t.name}`, kind: "topics", sig: JSON.stringify([t.unit ?? null, t.subtopics ?? []]) });
+      const place = (t: { name: string; parent?: string | null }) => s.topics.filter(x => normalized(x.parent ?? "") === normalized(t.parent ?? "")).findIndex(x => x.name === t.name);
+      for (const t of s.topics) {
+        const milestone = t.kind === "milestone";
+        out.set(`topic:${i}:${normalized(t.name)}`, { label: `${milestone ? "milestone" : "topic"} ${t.name}`, kind: milestone ? "milestones" : "topics", sig: JSON.stringify([normalized(t.parent ?? ""), place(t), t.kind ?? null, t.explanation, t.milestone ?? null]) });
+      }
     }
-    for (const ph of p.phases) out.set(`phase:${normalized(ph.name)}`, { label: `milestone ${ph.name}`, kind: "milestones", sig: JSON.stringify([ph.weeks, ph.hoursPerWeek, ph.goals, ph.completion, ph.project]) });
-    // By key: a task renamed is the same task, changed.
-    for (const t of p.tasks) out.set(`task:${t.key}`, { label: `task ${t.title}`, kind: "tasks", sig: JSON.stringify([t.title, t.priority, t.dueDay, t.topic, t.after ?? null, t.estimatedMinutes]) });
+    // By key: a task renamed is the same task, changed; so is one moved under
+    // another, to another place among its steps, or waiting on others.
+    const step = (t: { key: string; parent?: string | null }) => p.tasks.filter(x => (x.parent ?? null) === (t.parent ?? null)).findIndex(x => x.key === t.key);
+    for (const t of p.tasks) out.set(`task:${t.key}`, { label: `task ${t.title}`, kind: "tasks", sig: JSON.stringify([t.title, t.priority, t.dueDay, t.topic, [...(t.after ?? [])].sort(), t.estimatedMinutes, t.parent ?? null, step(t)]) });
     for (const n of p.notes) out.set(`note:${normalized(n.title)}`, { label: `note ${n.title}`, kind: "notes", sig: n.body });
     for (const d of p.dates) out.set(`date:${normalized(d.title)}:${d.day}`, { label: `date ${d.title} (${d.day})`, kind: null, sig: "" });
     return out;

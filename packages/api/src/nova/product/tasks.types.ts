@@ -45,6 +45,9 @@ export interface NovaTaskItem {
   position:    number | null;
   // The task this one is a step of (product/task-tree.ts). null: its own.
   parentId:    string | null;
+  // The tasks that must be finished before this one (NovaTaskDependency),
+  // by id. Absent on an older server: none.
+  after?:      string[];
   createdAt:   string;
   updatedAt:   string;
 }

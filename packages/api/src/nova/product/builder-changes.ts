@@ -20,21 +20,24 @@
 //
 // No regex: text is compared by characters (SKILL.md; the no-regex guard).
 
-import type { ChangeKind, ChangeOp, ChangeSet, ProposedChange, ResourceRef, WorkspaceDetail } from "./builder.types";
+import type { ChangeKind, ChangeOp, ChangeSet, ProposedChange, ResourceRef, TopicPatch, WorkspaceDetail } from "./builder.types";
 import { isPlaceholderTopic, oneLine } from "./workspace-plan";
-import { TASK_DEPTH_MAX, canPlace, levelOf, parentsOf, subtreeOf, type TreeNode } from "./task-tree";
+import { TASK_DEPTH_MAX, canPlace, levelOf, parentsOf, subtreeOf, wouldLoop, type TreeNode, type Wait } from "./task-tree";
 import { SUBJECT_DEPTH_MAX } from "./setup-edit.types";
+import { TOPIC_DEPTH_MAX } from "./topic-tree";
 
 // New tasks before their new steps (parentKey), whatever order the model
 // gave; everything else keeps its place.
 function parentsFirst(list: unknown[]): unknown[] {
-  const keyOf = (o: unknown) => ((o as { op?: unknown })?.op === "add_task" ? (o as { key?: unknown }).key : undefined);
-  const parentOf = (o: unknown) => ((o as { op?: unknown })?.op === "add_task" ? (o as { parentKey?: unknown }).parentKey : undefined);
+  const opOf = (o: unknown) => (o as { op?: unknown })?.op;
+  // A task by its key; topics this set adds by each of their keys.
+  const keysOf = (o: unknown): unknown[] => (opOf(o) === "add_task" ? [(o as { key?: unknown }).key] : opOf(o) === "add_topics" ? (Array.isArray((o as { keys?: unknown }).keys) ? (o as { keys: unknown[] }).keys : []) : []);
+  const parentOf = (o: unknown) => (opOf(o) === "add_task" || opOf(o) === "add_topics" ? (o as { parentKey?: unknown }).parentKey : undefined);
   const out: unknown[] = [];
   const place = (o: unknown, depth: number) => {
-    if (out.includes(o) || depth > TASK_DEPTH_MAX + 1) return;
+    if (out.includes(o) || depth > TASK_DEPTH_MAX + TOPIC_DEPTH_MAX + 1) return;
     const p = parentOf(o);
-    if (typeof p === "string") { const parent = list.find(x => keyOf(x) === p); if (parent && parent !== o) place(parent, depth + 1); }
+    if (typeof p === "string") { const parent = list.find(x => x !== o && opOf(x) === opOf(o) && keysOf(x).includes(p)); if (parent) place(parent, depth + 1); }
     out.push(o);
   };
   for (const o of list) place(o, 0);
@@ -163,6 +166,74 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
   };
   const subjectOrNull = (v: unknown): string | null | undefined => (v === null || v === undefined || v === "" ? null : subjectById(v) ? (v as string) : undefined);
 
+  // Each subject's topics as a tree: stored ones by id, ones this set adds
+  // as "+key". A subject holds a name once, at any level.
+  const topicTree = new Map<string, TreeNode[]>(current.subjects.map(x => [x.id, x.topics.map(t => ({ id: t.id, parent: t.parentId ?? null }))]));
+  const addedTopicKeys = new Map<string, { subjectId: string; name: string }>();
+  const topicName = (subjectId: string, node: string | null): string | null =>
+    node === null ? null : node.startsWith("+") ? addedTopicKeys.get(node.slice(1))?.name ?? null : subjectById(subjectId)?.topics.find(t => t.id === node)?.name ?? null;
+  // Where a topic goes in its subject: a topic there (parentId), one this set
+  // adds (parentKey), or the top (null). undefined: nowhere in that subject.
+  const topicParent = (subjectId: string, x: Record<string, unknown>): string | null | undefined => {
+    if (typeof x.parentKey === "string" && x.parentKey) { const a = addedTopicKeys.get(x.parentKey); return a && a.subjectId === subjectId ? `+${x.parentKey}` : undefined; }
+    if (typeof x.parentId === "string" && x.parentId) return topicTree.get(subjectId)?.some(n => n.id === x.parentId) ? x.parentId : undefined;
+    return null;
+  };
+  const keyOk = (k: string) => k.length > 0 && k.length <= 40 && [...k].every(c => (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c === "-" || c === "_");
+  // A topic and everything inside it, deepest first: the order they can go in.
+  const topicSubtree = (subjectId: string, id: string): string[] => {
+    const nodes = topicTree.get(subjectId) ?? [];
+    const depthOf = (n: string) => levelOf(parentsOf(nodes), n);
+    return subtreeOf(nodes, id).sort((a, b) => depthOf(b) - depthOf(a));
+  };
+  const removeTopicTree = (hit: { s: WorkspaceDetail["subjects"][number]; t: WorkspaceDetail["subjects"][number]["topics"][number] }, x: Record<string, unknown>): void => {
+    const ids = topicSubtree(hit.s.id, hit.t.id).filter(id => !id.startsWith("+"));
+    const studied = ids.filter(id => ctx.studied.has(id)).map(id => hit.s.topics.find(t => t.id === id)!);
+    if (studied.length) {
+      dropped.push(studied.some(t => t.id === hit.t.id) ? `removing ${quoted(hit.t.name)} (you've studied it; it can be renamed but not removed)` : `removing ${quoted(hit.t.name)} (you've studied ${quoted(studied[0]!.name)} inside it; topics with study are kept)`);
+      return;
+    }
+    for (const id of ids) {
+      if (touched.has(id)) continue;
+      touched.add(id);
+      const t = hit.s.topics.find(v => v.id === id)!;
+      keep({ op: "remove_topic", topicId: id }, id === hit.t.id ? `Remove topic ${quoted(t.name)} from ${hit.s.name}` : `Remove ${quoted(t.name)} (inside ${quoted(hit.t.name)})`, "remove", id === hit.t.id ? x : {});
+    }
+    const nodes = topicTree.get(hit.s.id)!;
+    topicTree.set(hit.s.id, nodes.filter(n => !ids.includes(n.id)));
+  };
+  const patchOf = (raw: unknown): TopicPatch => {
+    const x = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    const out: TopicPatch = {};
+    const num = (v: unknown, max: number) => (v === null ? null : typeof v === "number" && Number.isFinite(v) && v > 0 && v <= max ? Math.round(v * 10) / 10 : undefined);
+    const texts = (v: unknown) => (Array.isArray(v) ? v.map(t => oneLine(t, 240)).filter(Boolean).slice(0, 10) : undefined);
+    if (x.explanation !== undefined) out.explanation = x.explanation === null ? null : oneLine(x.explanation, 600) || null;
+    const w = num(x.weeks, 104), h = num(x.hoursPerWeek, 80);
+    if (w !== undefined) out.weeks = w;
+    if (h !== undefined) out.hoursPerWeek = h;
+    const g = texts(x.goals), e = texts(x.exercises);
+    if (g) out.goals = g;
+    if (e) out.exercises = e;
+    if (x.project !== undefined) out.project = x.project === null ? null : oneLine(x.project, 240) || null;
+    if (x.completion !== undefined) out.completion = x.completion === null ? null : oneLine(x.completion, 240) || null;
+    return out;
+  };
+  // Waits, as they are and as this set changes them: stored tasks by id, ones it adds as "+key".
+  const waits: Wait[] = current.tasks.flatMap(t => (t.after ?? []).map(on => ({ task: t.id, on })));
+  const waitTargets = (task: string, raw: unknown, title: string): string[] => {
+    const out: string[] = [];
+    for (const a of Array.isArray(raw) ? raw.slice(0, 10) : []) {
+      if (typeof a !== "string" || !a) continue;
+      const node = taskById(a) ? a : ops.some(o => o.op === "add_task" && o.key === a) ? `+${a}` : null;
+      if (!node) { dropped.push(`a wait in ${quoted(title)} (on a task that isn't part of this)`); continue; }
+      if (out.includes(node)) continue;
+      if (wouldLoop(waits.filter(w => w.task !== task), task, node)) { dropped.push(`${quoted(title)} waiting on ${quoted(taskById(a)?.title ?? a)} (it would go round in a circle)`); continue; }
+      out.push(node);
+    }
+    return out;
+  };
+  const refOf = (node: string) => (node.startsWith("+") ? node.slice(1) : node);
+
   const removeDate = (d: WorkspaceDetail["dates"][number], x: Record<string, unknown> = {}) => {
     if (touched.has(d.id)) return;
     touched.add(d.id);
@@ -175,7 +246,10 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
     const studied = s.topics.filter(t => ctx.studied.has(t.id));
     if (studied.length) { dropped.push(`removing ${quoted(s.name)} (you've studied ${studied.slice(0, 2).map(t => quoted(t.name)).join(", ")}; topics with study are kept)`); return; }
     touched.add(s.id);
-    for (const t of s.topics) {
+    // Inside ones first, so each goes once nothing is inside it.
+    const nodes = topicTree.get(s.id) ?? [];
+    const depth = (id: string) => levelOf(parentsOf(nodes), id);
+    for (const t of [...s.topics].sort((a, b) => depth(b.id) - depth(a.id))) {
       if (touched.has(t.id)) continue;
       touched.add(t.id);
       keep({ op: "remove_topic", topicId: t.id }, `Remove topic ${quoted(t.name)} from ${s.name}`, "remove", {});
@@ -191,7 +265,8 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
   // Removals that bring others with them are checked after everything else
   // in the set (a workspace's last), so what they bring is not said twice.
   // A subject is moved once the subjects this set adds are there to go into.
-  const late = (o: unknown) => ({ move_subject: 1, remove_subject: 2 } as Record<string, number>)[String((o as { op?: unknown })?.op)] ?? 0;
+  // A topic is taken out after the moves, so one moved out of it is not taken with it.
+  const late = (o: unknown) => ({ move_subject: 1, move_topic: 1, order_topics: 1, remove_topic: 1.5, remove_subject: 2 } as Record<string, number>)[String((o as { op?: unknown })?.op)] ?? 0;
   const ordered = parentsFirst([...list.slice(0, CHANGE_OPS_MAX * 2)]).sort((a, b) => late(a) - late(b));
   // The tasks as a tree: stored ones by id, ones this set adds as "+key".
   const tree: TreeNode[] = current.tasks.map(t => ({ id: t.id, parent: t.parentId ?? null }));
@@ -230,21 +305,88 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const x = item as Record<string, unknown>;
     switch (x.op) {
+      case "rename": {
+        const title = oneLine(x.title, 80);
+        if (!title || title === current.title || touched.has("title")) break;
+        touched.add("title");
+        keep({ op: "rename", title }, `Rename ${quoted(current.title)} to ${quoted(title)}`, "change", x);
+        break;
+      }
       case "add_topics": {
         const s = subjectById(x.subjectId);
         if (!s) { dropped.push("topics for a subject that isn't part of this"); break; }
+        const parent = topicParent(s.id, x);
+        if (parent === undefined) { dropped.push(`topics for ${s.name} (inside a topic that isn't part of it)`); break; }
+        const parentName = topicName(s.id, parent);
+        const nodes = topicTree.get(s.id)!;
+        if (parent && levelOf(parentsOf(nodes), parent) + 1 > TOPIC_DEPTH_MAX) { dropped.push(`topics inside ${quoted(parentName ?? "")} (topics go at most ${TOPIC_DEPTH_MAX} levels deep)`); break; }
         const have = new Set([...s.topics.map(t => low(t.name)), ...(addedTopics.get(s.id) ?? [])]);
+        const rawKeys = Array.isArray(x.keys) ? x.keys : [];
         const names: string[] = [];
-        for (const n of Array.isArray(x.names) ? x.names : []) {
+        const keys: string[] = [];
+        for (const [i, n] of (Array.isArray(x.names) ? x.names : []).entries()) {
           const name = oneLine(n, NAME_MAX);
           if (!name) continue;
           if (have.has(low(name))) { dropped.push(`topic ${quoted(name)} (${s.name} already has it)`); continue; }
-          if (isPlaceholderTopic(name, s.name)) { dropped.push(`topic ${quoted(name)} (too general: name what it covers)`); continue; }
-          if (names.length < NAMES_PER_ADD) { names.push(name); have.add(low(name)); }
+          if (isPlaceholderTopic(name, parentName ?? s.name)) { dropped.push(`topic ${quoted(name)} (too general: name what it covers)`); continue; }
+          if (names.length >= NAMES_PER_ADD) continue;
+          const given = typeof rawKeys[i] === "string" ? oneLine(rawKeys[i], 40) : "";
+          const key = keyOk(given) && !addedTopicKeys.has(given) ? given : `k${ops.length + 1}-${names.length + 1}`;
+          names.push(name); keys.push(key); have.add(low(name));
+          addedTopicKeys.set(key, { subjectId: s.id, name });
+          nodes.push({ id: `+${key}`, parent });
         }
         if (names.length === 0) break;
         addedTopics.set(s.id, new Set([...(addedTopics.get(s.id) ?? []), ...names.map(low)]));
-        keep({ op: "add_topics", subjectId: s.id, names }, `Add to ${s.name}: ${names.join(", ")}`, "add", x);
+        const milestone = x.kind === "milestone";
+        const placeRef = parent === null ? {} : parent.startsWith("+") ? { parentKey: parent.slice(1) } : { parentId: parent };
+        keep({ op: "add_topics", subjectId: s.id, names, keys, ...placeRef, ...(milestone ? { kind: "milestone" as const } : {}) },
+          `Add ${milestone ? `milestone${names.length === 1 ? "" : "s"} ` : ""}to ${parentName ? `${quoted(parentName)} in ${s.name}` : s.name}: ${names.join(", ")}`, "add", x);
+        break;
+      }
+      case "move_topic": {
+        const hit = topicById(x.topicId);
+        if (!hit) { dropped.push("moving a topic that isn't part of this"); break; }
+        if (touched.has(`place:${hit.t.id}`)) break;
+        const parent = topicParent(hit.s.id, x);
+        if (parent === undefined) { dropped.push(`moving ${quoted(hit.t.name)} (inside a topic that isn't part of ${hit.s.name})`); break; }
+        const nodes = topicTree.get(hit.s.id)!;
+        const node = nodes.find(n => n.id === hit.t.id)!;
+        const index = typeof x.index === "number" && Number.isInteger(x.index) && x.index >= 0 ? x.index : null;
+        if (parent === node.parent && index === null) break;
+        const placed = canPlace(nodes, hit.t.id, parent, TOPIC_DEPTH_MAX);
+        if (!placed.ok) { dropped.push(`moving ${quoted(hit.t.name)} (${placed.reason === "too_deep" ? `topics go at most ${TOPIC_DEPTH_MAX} levels deep` : "not inside itself or a topic inside it"})`); break; }
+        touched.add(`place:${hit.t.id}`);
+        node.parent = parent;
+        const to = topicName(hit.s.id, parent);
+        const placeRef = parent === null ? { parentId: null } : parent.startsWith("+") ? { parentKey: parent.slice(1) } : { parentId: parent };
+        keep({ op: "move_topic", topicId: hit.t.id, ...placeRef, ...(index !== null ? { index } : {}) },
+          to ? `Put ${quoted(hit.t.name)} inside ${quoted(to)}${index !== null ? ` (as number ${index + 1})` : ""}` : `Put ${quoted(hit.t.name)} at the top of ${hit.s.name}${index !== null ? ` (as number ${index + 1})` : ""}`, "change", x);
+        break;
+      }
+      case "order_topics": {
+        const ids = (Array.isArray(x.topicIds) ? x.topicIds : []).filter((id, i, all) => typeof id === "string" && all.indexOf(id) === i) as string[];
+        const hits = ids.map(id => topicById(id));
+        if (hits.length < 2 || hits.some(h => !h)) { dropped.push("a new order that names topics that aren't here"); break; }
+        const s0 = hits[0]!.s;
+        const nodes = topicTree.get(s0.id)!;
+        const parentOf = (id: string) => nodes.find(n => n.id === id)?.parent ?? null;
+        if (hits.some(h => h!.s.id !== s0.id) || ids.some(id => parentOf(id) !== parentOf(ids[0]!))) { dropped.push("a new order for topics that aren't beside one another"); break; }
+        keep({ op: "order_topics", topicIds: ids }, `Put topics in this order: ${hits.map(h => quoted(h!.t.name)).join(", ")}`, "change", x);
+        break;
+      }
+      case "update_topic": {
+        const hit = topicById(x.topicId);
+        if (!hit) { dropped.push("a change to a topic that isn't part of this"); break; }
+        if (touched.has(`details:${hit.t.id}`)) break;
+        const patch = patchOf(x.patch ?? x);
+        const was = hit.t.details ?? {};
+        const changed = (Object.keys(patch) as Array<keyof TopicPatch>).filter(k => JSON.stringify(patch[k] ?? null) !== JSON.stringify((was as Record<string, unknown>)[k] ?? null));
+        if (changed.length === 0) break;
+        touched.add(`details:${hit.t.id}`);
+        const said: Record<string, string> = { explanation: "what it covers", weeks: "weeks", hoursPerWeek: "hours a week", goals: "goals", exercises: "exercises", project: "project", completion: "done when" };
+        keep({ op: "update_topic", topicId: hit.t.id, patch: Object.fromEntries(changed.map(k => [k, patch[k]])) as TopicPatch },
+          `Change ${hit.t.kind === "milestone" ? "milestone" : "topic"} ${quoted(hit.t.name)}: ${changed.map(k => said[k]).join(", ")}`, "change", x);
         break;
       }
       case "add_subject": {
@@ -302,10 +444,8 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
       case "remove_topic": {
         const hit = topicById(x.topicId);
         if (!hit) { dropped.push("removing a topic that isn't part of this"); break; }
-        if (ctx.studied.has(hit.t.id)) { dropped.push(`removing ${quoted(hit.t.name)} (you've studied it; it can be renamed but not removed)`); break; }
         if (touched.has(hit.t.id)) break;
-        touched.add(hit.t.id);
-        keep({ op: "remove_topic", topicId: hit.t.id }, `Remove topic ${quoted(hit.t.name)} from ${hit.s.name}`, "remove", x);
+        removeTopicTree(hit, x);
         break;
       }
       case "remove_subject": {
@@ -357,11 +497,15 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         const finalKey = keyOk && !ops.some(o => o.op === "add_task" && o.key === key) ? key : `t${ops.length + 1}`;
         tree.push({ id: `+${finalKey}`, parent: parentNode });
         const parentTitle = parentTask?.title ?? parentAdded?.title ?? null;
+        const minutes = typeof x.estimatedMinutes === "number" && Number.isInteger(x.estimatedMinutes) && x.estimatedMinutes >= 5 && x.estimatedMinutes <= 600 ? x.estimatedMinutes : null;
+        const on = waitTargets(`+${finalKey}`, x.after, title);
+        for (const n of on) waits.push({ task: `+${finalKey}`, on: n });
         keep({
           op: "add_task", key: finalKey, title, subjectId: subjectId ?? (current.subjects.length === 1 ? current.subjects[0]!.id : null),
           topicName: topicFromParent ?? (oneLine(x.topicName, NAME_MAX) || null), dueDay, priority,
           ...(parentTask ? { parentId: parentTask.id } : parentAdded ? { parentKey: parentAdded.key } : {}),
-        }, `${parentTitle ? `Add step ${quoted(title)} under ${quoted(parentTitle)}` : `Add task ${quoted(title)}`}${dueDay ? `, due ${dueDay}` : ""}${priority ? `, ${priority} priority` : ""}`, "add", x);
+          ...(minutes ? { estimatedMinutes: minutes } : {}), ...(on.length ? { after: on.map(refOf) } : {}),
+        }, `${parentTitle ? `Add step ${quoted(title)} under ${quoted(parentTitle)}` : `Add task ${quoted(title)}`}${dueDay ? `, due ${dueDay}` : ""}${priority ? `, ${priority} priority` : ""}${on.length ? `, after ${on.map(n => quoted(taskById(n)?.title ?? (ops.find(o => o.op === "add_task" && `+${o.key}` === n) as { title?: string } | undefined)?.title ?? n)).join(", ")}` : ""}`, "add", x);
         break;
       }
       case "update_task": {
@@ -387,6 +531,24 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
             const placed = to === undefined ? { ok: false as const, reason: "missing" as const } : canPlace(tree, t.id, to);
             if (placed.ok) { change.parentId = to!; parts.push(to ? `move under ${quoted(taskById(to)?.title ?? "")}` : "make it a task of its own"); }
             else dropped.push(`moving ${quoted(t.title)} (${placed.reason === "too_deep" ? `steps go at most ${TASK_DEPTH_MAX} levels deep` : placed.reason === "missing" ? "under a task that isn't part of this" : "not under itself or its own steps"})`);
+          }
+        }
+        if (x.estimatedMinutes !== undefined) {
+          const m = x.estimatedMinutes === null ? null : typeof x.estimatedMinutes === "number" && Number.isInteger(x.estimatedMinutes) && x.estimatedMinutes >= 5 && x.estimatedMinutes <= 600 ? x.estimatedMinutes : undefined;
+          if (m !== undefined && m !== t.estimatedMinutes) { change.estimatedMinutes = m; parts.push(m ? `about ${m} min` : "no estimate"); }
+        }
+        if (x.topicName !== undefined && !t.parentId) {
+          const name = x.topicName === null ? null : oneLine(x.topicName, NAME_MAX) || null;
+          if (name !== t.topicName) { change.topicName = name; parts.push(name ? `under ${quoted(name)}` : "under no topic"); }
+        }
+        if (x.after !== undefined) {
+          const on = waitTargets(t.id, x.after, t.title);
+          const was = t.after ?? [];
+          if (on.length !== was.length || on.some(n => !was.includes(n))) {
+            for (let i = waits.length - 1; i >= 0; i--) if (waits[i]!.task === t.id) waits.splice(i, 1);
+            for (const n of on) waits.push({ task: t.id, on: n });
+            change.after = on.map(refOf);
+            parts.push(on.length ? `after ${on.map(n => quoted(taskById(n)?.title ?? (ops.find(o => o.op === "add_task" && `+${o.key}` === n) as { title?: string } | undefined)?.title ?? n)).join(", ")}` : "waits on nothing");
           }
         }
         if (parts.length === 0) break;
@@ -463,7 +625,7 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
 // ── Only what was asked ───────────────────────────────────────────────────────
 
 export const kindOf = (op: ChangeOp["op"]): ChangeKind =>
-  op === "add_topics" || op === "rename_topic" || op === "remove_topic" ? "topics"
+  op === "add_topics" || op === "rename_topic" || op === "remove_topic" || op === "move_topic" || op === "order_topics" || op === "update_topic" ? "topics"
   : op === "add_subject" || op === "remove_subject" || op === "move_subject" || op === "rename_subject" ? "subjects"
   : op === "add_date" || op === "update_date" || op === "remove_date" ? "dates"
   : op === "add_note" || op === "remove_note" ? "notes" : "tasks";
@@ -487,8 +649,9 @@ export function withinAsk(set: ChangeSet, touches: readonly ChangeKind[], curren
     ...current.dates.filter(d => d.subjectId !== null && goingSubjects.has(d.subjectId)).map(d => d.id),
   ]);
   // A change to a task's priority alone is about priorities.
-  const onlyPriority = (o: ProposedChange) => o.op === "update_task" && o.priority !== undefined && o.title === undefined && o.dueDay === undefined && o.parentId === undefined;
-  const ok = (o: ProposedChange) => touches.includes(onlyPriority(o) ? "priorities" : kindOf(o.op))
+  const onlyPriority = (o: ProposedChange) => o.op === "update_task" && o.priority !== undefined && o.title === undefined && o.dueDay === undefined && o.parentId === undefined && o.after === undefined && o.estimatedMinutes === undefined && o.topicName === undefined;
+  // A new name for the whole thing is what it is about, whatever kinds were read.
+  const ok = (o: ProposedChange) => o.op === "rename" || touches.includes(onlyPriority(o) ? "priorities" : kindOf(o.op))
     || (touches.includes("subjects") && ((o.op === "remove_topic" && withSubject.has(o.topicId)) || (o.op === "remove_date" && withSubject.has(o.dateId))));
   const kept = set.ops.filter(ok).map((o, i) => ({ ...o, id: `c${i + 1}` }));
   const left = set.ops.filter(o => !ok(o)).map(o => `${o.says.charAt(0).toLowerCase()}${o.says.slice(1)} (not asked for)`);

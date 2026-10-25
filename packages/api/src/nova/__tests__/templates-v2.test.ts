@@ -164,7 +164,7 @@ describe("the plan check: what any plan may say, held by code", () => {
     ]);
   });
 
-  it("phases become ordered topics, a note each, and a task for each project; Nova's text is labelled", () => {
+  it("phases become milestones (topics) first in their subject, with their own details; nothing becomes a note beside them", () => {
     const r = checkWorkspacePlan({
       ...base, title: "Backend in 12 weeks", subjects: [{ name: "Backend", topics: [{ name: "HTTP basics", explanation: "How requests work." }] }],
       prerequisites: ["Basic JavaScript"],
@@ -174,17 +174,14 @@ describe("the plan check: what any plan may say, held by code", () => {
       ],
     }, { today: TODAY });
     const writes = planWrites((r as { plan: WorkspacePlan }).plan);
-    expect(writes.subjects).toEqual([{ name: "Backend", topics: ["HTTP basics", "Node fundamentals", "Databases"] }]);
-    const titles = writes.notes.map(n => n.title);
-    // One note for how it goes, not one per milestone: each note is a point on the Knowledge Map.
-    expect(titles).toEqual(["Backend: topic guide (Nova)", "How it goes: Backend in 12 weeks"]);
-    const how = writes.notes[1]!.body;
-    expect(how).toContain("# Before you start\n- Basic JavaScript");
-    expect(how).toContain("# 1. Node fundamentals\nEffort (an estimate): 3 weeks, about 8 hours a week");
-    expect(how).toContain("Done when: Serves files with tests");
-    expect(how).toContain("Node.js docs (docs) — suggested by Nova, not checked");
-    expect(writes.notes[0]!.body).toContain("Nova's explanation (not from your files): How requests work.");
-    // A milestone's project is in the note; no task is made that the plan didn't hold.
+    expect(writes.subjects[0]!.topics.map(t => [t.name, t.kind])).toEqual([["Node fundamentals", "milestone"], ["Databases", "milestone"], ["HTTP basics", null]]);
+    // What each says is on its own row; Nova's suggestions stay marked as Nova's, no link.
+    expect(writes.subjects[0]!.topics[0]!.details).toEqual({ weeks: 3, hoursPerWeek: 8, goals: ["Event loop"], exercises: ["Build a CLI"], project: "A file server", completion: "Serves files with tests", resources: [{ title: "Node.js docs", kind: "docs", url: null, origin: "nova" }] });
+    expect(writes.subjects[0]!.topics[2]!.details).toEqual({ explanation: "How requests work." });
+    // No note is made for them; what applies to the whole plan stays with the plan (the workspace row).
+    expect(writes.notes).toEqual([]);
+    expect((r as { plan: WorkspacePlan }).plan.prerequisites).toEqual(["Basic JavaScript"]);
+    // A milestone's project is on it; no task is made that the plan didn't hold.
     expect(writes.tasks.map(t => t.title)).not.toContain("Build: A file server");
   });
 });

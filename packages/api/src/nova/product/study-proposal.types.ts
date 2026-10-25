@@ -1,18 +1,12 @@
 // ─── Ask Nova to update your subjects: the contract with the web app ──────────
-// No imports, so the web app imports it directly (a StudyEdit is the same
-// shape as in setup-edit.types.ts). Rules: product/study-proposal.ts.
+// Only a type import from setup-edit.types.ts (itself import-free), so the
+// web app imports it directly. Rules: product/study-proposal.ts.
+
+import type { StudyEdit } from "./setup-edit.types";
 
 export const STUDY_REQUEST_MAX = 800;
 
-type Edit =
-  | { op: "add_subject";    name: string; topics: string[]; parentId?: string | null; parentName?: string }
-  | { op: "move_subject";   subjectId: string; parentId: string | null; parentName?: string }
-  | { op: "add_topics";     subjectId: string; names: string[] }
-  | { op: "rename_subject"; subjectId: string; name: string }
-  | { op: "rename_topic";   topicId: string; name: string }
-  | { op: "move_topic";     topicId: string; toSubjectId: string }
-  | { op: "remove_topic";   topicId: string }
-  | { op: "remove_subject"; subjectId: string };
+type Edit = StudyEdit;
 
 export type StudyProposalResponse =
   | {

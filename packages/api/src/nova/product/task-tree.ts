@@ -125,3 +125,26 @@ export function treeOrder<T extends TreeNode>(nodes: readonly T[]): Array<{ item
   for (const n of nodes) if (!seen.has(n.id)) { seen.add(n.id); out.push({ item: n, depth: 0 }); walk(n.id, 1); }
   return out;
 }
+
+// ── Waits: a task that can't start until others are finished ────────────────
+// A wait is from a task to one it needs first (NovaTaskDependency). Never on
+// itself, never round in a circle; a task may wait on several.
+export interface Wait { task: string; on: string }
+
+// Whether `on` is reached from `task` by following waits (so `task` waiting
+// on `on` adds nothing), or — the question asked before adding one — whether
+// `on` already waits, directly or not, on `task` (adding it would loop).
+export function waitsReach(waits: readonly Wait[], from: string, to: string): boolean {
+  const next = new Map<string, string[]>();
+  for (const w of waits) next.set(w.task, [...(next.get(w.task) ?? []), w.on]);
+  const seen = new Set<string>();
+  const walk = (at: string): boolean => {
+    if (at === to) return true;
+    if (seen.has(at)) return false;
+    seen.add(at);
+    return (next.get(at) ?? []).some(walk);
+  };
+  return walk(from);
+}
+
+export const wouldLoop = (waits: readonly Wait[], task: string, on: string): boolean => task === on || waitsReach(waits, on, task);

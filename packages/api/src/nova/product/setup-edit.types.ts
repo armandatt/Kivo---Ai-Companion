@@ -15,16 +15,31 @@ export const SUBJECT_DEPTH_MAX = 4;
 export type StudyEdit =
   | { op: "add_subject";    name: string; topics: string[]; parentId?: string | null; parentName?: string }
   | { op: "move_subject";   subjectId: string; parentId: string | null; parentName?: string }
-  | { op: "add_topics";     subjectId: string; names: string[] }
+  // Topics nest inside a subject (a unit › its topics › their subtopics, up
+  // to TOPIC_DEPTH_MAX levels) and keep an order. parentId names a topic of
+  // that subject, parentName one by its name (also one added earlier in the
+  // same batch); neither: at the top.
+  | { op: "add_topics";     subjectId: string; names: string[]; parentId?: string | null; parentName?: string; kind?: "milestone" | null }
   | { op: "rename_subject"; subjectId: string; name: string }
   | { op: "rename_topic";   topicId: string; name: string }
-  | { op: "move_topic";     topicId: string; toSubjectId: string }
+  // To another subject (toSubjectId, at its top, with everything inside it),
+  // or inside another topic of its own subject (parentId / parentName; null:
+  // its top), at `index` among the topics there (absent: after them).
+  | { op: "move_topic";     topicId: string; toSubjectId?: string; parentId?: string | null; parentName?: string; index?: number | null }
+  // These topics, all beside one another, in this order.
+  | { op: "order_topics";   topicIds: string[] }
+  // What is said about a topic (its explanation, a milestone's effort and goals).
+  | { op: "update_topic";   topicId: string; details: Record<string, unknown> }
   | { op: "remove_topic";   topicId: string }
   | { op: "remove_subject"; subjectId: string };
 
 export interface StudyTopic {
   id:         string;
   name:       string;
+  // The topic of the same subject it sits inside. null or absent: at its top.
+  parentId?:  string | null;
+  // "milestone": a stage of work, never studied. null or absent: a topic.
+  kind?:      "milestone" | null;
   // Learning is recorded against it (a session, a review, mastery history).
   // It can be renamed or moved, never removed: that would delete the record.
   hasHistory: boolean;
@@ -38,6 +53,7 @@ export interface StudySubject {
   name:   string;
   // The subject it sits inside. null or absent: one of its own.
   parentId?: string | null;
+  // In outline order: a topic before the topics inside it, siblings in their saved order.
   topics: StudyTopic[];
   // Dated items (exams, interviews, …) filed under it.
   dates:  number;

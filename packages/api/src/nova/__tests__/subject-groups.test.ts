@@ -252,7 +252,7 @@ describe("history brings placement back", () => {
 
   it("a plan's version knows its groups", () => {
     const r = checkWorkspacePlan({ kind: "custom", title: "S", subjects: [{ name: "G", topics: [] }, { name: "X", topics: ["Y"], parent: "G" }] }, { today: TODAY });
-    expect(r.ok && snapshotOfPlan(r.plan).subjects).toEqual([{ name: "G", topics: [], parent: null }, { name: "X", topics: ["Y"], parent: "G" }]);
+    expect(r.ok && snapshotOfPlan(r.plan).subjects).toEqual([{ name: "G", topics: [], tree: [], parent: null }, { name: "X", topics: ["Y"], tree: [{ name: "Y", parent: null }], parent: "G" }]);
   });
 });
 
