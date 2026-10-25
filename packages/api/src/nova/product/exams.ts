@@ -300,6 +300,21 @@ export async function updateDatesIn(
   }
 }
 
+// Removes the learner's own dates inside the caller's transaction (Build with
+// Nova's approved changes). One already gone stops the whole change set.
+export async function removeDatesIn(tx: Pick<typeof prisma, "novaExam">, profileId: string, dateIds: string[]): Promise<void> {
+  if (dateIds.length === 0) return;
+  const gone = await tx.novaExam.deleteMany({ where: { id: { in: dateIds }, profileId } });
+  if (gone.count !== dateIds.length) throw new DateChanged();
+}
+
+// Dates still filed under subjects about to be removed (past ones, which
+// the learner was not shown): kept, filed under no subject.
+export async function unfileDatesIn(tx: Pick<typeof prisma, "novaExam">, profileId: string, subjectIds: string[]): Promise<void> {
+  if (subjectIds.length === 0) return;
+  await tx.novaExam.updateMany({ where: { profileId, subjectId: { in: subjectIds } }, data: { subjectId: null } });
+}
+
 // Removes one of the learner's own exams. Removing one that is already gone
 // is "not_found", which a caller retrying a removal may take as done.
 export async function removeExam(platformChatId: string, examId: string, now = new Date()): Promise<ExamWriteResult> {

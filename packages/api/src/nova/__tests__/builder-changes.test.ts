@@ -3,10 +3,10 @@
 // rules for academic plans. Pure, no database (nova-builder-edit.itest.ts
 // covers the same against Postgres).
 
-import { changeCounts, checkChanges, decideResource, matchResources, readChangeSet, withinAsk, type ResourceCandidates } from "../product/builder-changes";
+import { changeCounts, checkChanges, decideResource, matchResources, readChangeSet, readUndo, resolveUndo, undoOf, undoOfBuild, withinAsk, type ResourceCandidates } from "../product/builder-changes";
 import { DECLINE_REPLY, decideStep, emptyBrief, readTurn } from "../product/builder-state";
 import { checkWorkspacePlan, isPlaceholderTopic, planWrites } from "../product/workspace-plan";
-import { NO_SYLLABUS, changesPrompt, writeBuilderPlan, type BuilderPlanRequest } from "../product/workspace-generation";
+import { NO_SYLLABUS, changesPrompt, projectShape, writeBuilderPlan, type BuilderPlanRequest } from "../product/workspace-generation";
 import { readBuilderTurn, turnPrompt, type TurnInput } from "../product/builder-conversation";
 import type { WorkspaceDetail } from "../product/builder.types";
 
@@ -128,8 +128,10 @@ describe("proposed changes, checked against the records by id", () => {
     const kept = checkChanges([{ op: "remove_subject", subjectId: "s1" }], current(), ctx);
     expect(kept.ops).toEqual([]);
     expect(kept.dropped[0]).toContain("topics with study are kept");
+    // Seen 25 Oct: "delete this" was refused because the subject had a date. Its dates now go with it, each listed.
     const dated = checkChanges([{ op: "remove_subject", subjectId: "s1" }], current(), { ...ctx, studied: new Set() });
-    expect(dated.dropped[0]).toContain("it has dates");
+    expect(dated.ops.map(o => o.op)).toEqual(["remove_topic", "remove_topic", "remove_topic", "remove_date", "remove_subject"]);
+    expect(dated.ops[3]!.says).toBe('Remove date "DSA mid-term" (2026-11-20)');
   });
 
   it("a stored change set reads back; nothing stored is nothing proposed", () => {
@@ -142,7 +144,7 @@ describe("proposed changes, checked against the records by id", () => {
   it("the change writer is shown each record with its id, and the change asked", () => {
     const p = changesPrompt({
       today: TODAY, kind: "exam", facts: [], change: "Add dynamic programming", proposed: null, conversation: [],
-      current: { title: "DSA", subjects: current().subjects, tasks: current().tasks.map(t => ({ id: t.id, title: t.title, status: t.status, dueDay: t.dueDay, priority: t.priority, topicName: t.topicName })), dates: [{ id: "d1", title: "DSA mid-term", day: "2026-11-20" }], notes: ["DSA cheatsheet"] },
+      current: { title: "DSA", subjects: current().subjects, tasks: current().tasks.map(t => ({ id: t.id, title: t.title, status: t.status, dueDay: t.dueDay, priority: t.priority, topicName: t.topicName })), dates: [{ id: "d1", title: "DSA mid-term", day: "2026-11-20" }], notes: [{ id: "n1", title: "DSA cheatsheet" }] },
     });
     expect(p).toContain('- subject s1 "Data Structures and Algorithms": t1 "Arrays", t2 "Trees", t3 "Graphs"');
     expect(p).toContain('- task k1 "Solve 10 tree problems" (in_progress, due 2026-11-01, under Trees)');
@@ -269,7 +271,138 @@ describe("Build with Nova keeps to its job", () => {
       return JSON.stringify({ reply: "Adding them.", next: "draft", touches: ["topics", "everything"] });
     }) as never);
     expect(reading?.touches).toEqual(["topics"]);
-    expect(system).toContain("- decline: they ask for something this page does not do");
+    expect(system).toContain("Decline only when they ask for something this page does not do");
+    // Seen 25 Oct: "delete the kivo project from everywhere" was declined as off-topic.
+    expect(system).toContain("never for removing, deleting or undoing anything they are working on here");
     expect(system).toContain("touches: when next is draft or revise");
   });
 });
+
+describe("deleting all of it, when that is what they ask", () => {
+  const ws = (): WorkspaceDetail => ({ ...current(), workspace: { id: "w1" } as WorkspaceDetail["workspace"], title: "Kivo v1" });
+  const free = { ...ctx, studied: new Set<string>() };
+
+  it("lists everything the workspace takes with it, keeps finished tasks, and says it can't be undone", () => {
+    const set = checkChanges([{ op: "remove_workspace" }], ws(), free);
+    expect(set.ops.map(o => o.op)).toEqual(["remove_topic", "remove_topic", "remove_topic", "remove_date", "remove_subject", "remove_task", "remove_task", "remove_note", "remove_workspace"]);
+    // k2 is finished: kept.
+    expect(set.ops.filter(o => o.op === "remove_task").map(o => o.op === "remove_task" && o.taskId)).toEqual(["k1", "k3"]);
+    expect(set.ops.at(-1)!.says).toBe('Delete the workspace "Kivo v1" (1 finished task stay in your Planner). This can\'t be undone');
+    // Whatever the request was about, a workspace's removal keeps all it brings.
+    expect(withinAsk(set, ["subjects"], ws()).ops).toHaveLength(set.ops.length);
+  });
+
+  it("all or nothing: a workspace with studied topics is not removed at all", () => {
+    const set = checkChanges([{ op: "remove_workspace" }], ws(), ctx);
+    expect(set.ops).toEqual([]);
+    expect(set.dropped[0]).toContain("topics with study are kept");
+  });
+
+  it("only this workspace, and not subjects that belong to none", () => {
+    expect(checkChanges([{ op: "remove_workspace", workspaceId: "other" }], ws(), free).ops).toEqual([]);
+    expect(checkChanges([{ op: "remove_workspace" }], current(), free).ops).toEqual([]);
+  });
+
+  it("removes single dates and notes by id", () => {
+    const set = checkChanges([{ op: "remove_date", dateId: "d1" }, { op: "remove_note", noteId: "n1" }, { op: "remove_note", noteId: "ghost" }], current(), ctx);
+    expect(set.ops.map(o => o.says)).toEqual(['Remove date "DSA mid-term" (2026-11-20)', 'Remove note "DSA cheatsheet"']);
+    expect(set.dropped).toEqual(["removing a note that isn't part of this"]);
+  });
+});
+
+describe("taking back what was applied", () => {
+  const free = { ...ctx, studied: new Set<string>() };
+
+  it("undoes removals, renames and changes with what was there before, by name", () => {
+    const before = current();
+    const set = checkChanges([
+      { op: "remove_task", taskId: "k3" },
+      { op: "update_task", taskId: "k1", dueDay: "2026-11-08", priority: "high" },
+      { op: "rename_topic", topicId: "t3", name: "Graph algorithms" },
+      { op: "add_topics", subjectId: "s1", names: ["Dynamic programming"] },
+      { op: "remove_note", noteId: "n1" },
+      { op: "order_tasks", taskIds: ["k3", "k1"] },
+    ], before, free);
+    const undo = undoOf(set, before, [{ id: "n1", title: "DSA cheatsheet", body: "# Big O", subjectId: "s1", topicName: null }], "the changes of version 7");
+    expect(undo.kept).toEqual(["the new order of tasks"]);
+
+    // The records as they are after it was applied.
+    const after: WorkspaceDetail = {
+      ...before,
+      subjects: [{ ...before.subjects[0]!, topics: [{ id: "t1", name: "Arrays" }, { id: "t2", name: "Trees" }, { id: "t3", name: "Graph algorithms" }, { id: "t9", name: "Dynamic programming" }] }],
+      tasks: [{ ...before.tasks[0]!, dueDay: "2026-11-08", priority: "high" }, before.tasks[1]!],
+      notes: [],
+    };
+    const r = resolveUndo(readUndo(JSON.parse(JSON.stringify(undo)))!, after);
+    expect(r.missing).toEqual([]);
+    const back = checkChanges(r.ops, after, free);
+    expect(back.ops.map(o => o.says)).toEqual([
+      'Add task "Graph quiz"',
+      'Change task "Solve 10 tree problems": due 2026-11-01 (was 2026-11-08), no priority',
+      'Rename topic "Graph algorithms" to "Graphs"',
+      'Remove topic "Dynamic programming" from Data Structures and Algorithms',
+      'Add note "DSA cheatsheet"',
+    ]);
+    expect(back.ops[0]!.op === "add_task" && back.ops[0]!.topicName).toBe("Graphs");
+  });
+
+  it("a removed subject comes back whole, with its topics", () => {
+    const before = current();
+    const set = checkChanges([{ op: "remove_subject", subjectId: "s1" }], before, free);
+    const undo = undoOf(set, before, [], "v2");
+    const r = resolveUndo(undo, { ...before, subjects: [], dates: [] });
+    expect(r.ops.filter(o => o.op === "add_subject")).toEqual([{ op: "add_subject", name: "Data Structures and Algorithms", topics: ["Arrays", "Trees", "Graphs"] }]);
+    expect(r.ops.filter(o => o.op === "add_topics")).toEqual([]);
+    expect(r.ops.some(o => o.op === "add_date" && o.title === "DSA mid-term")).toBe(true);
+  });
+
+  it("what is no longer there is said, not guessed; a build is taken back by deleting it", () => {
+    const undo = { label: "x", steps: [{ op: "remove_task", taskTitle: "Gone" }], kept: [] };
+    expect(resolveUndo(undo, current())).toEqual({ ops: [], missing: ['task "Gone"'] });
+    const ws = { ...current(), workspace: { id: "w1" } as WorkspaceDetail["workspace"] };
+    expect(resolveUndo(undoOfBuild("Kivo v1"), ws).ops).toEqual([{ op: "remove_workspace", workspaceId: "w1" }]);
+    expect(readUndo({ label: "x", steps: [] })).toBeNull();
+  });
+});
+
+describe("the reading says when they want it taken back", () => {
+  it("undo is read only when the model says true", () => {
+    const base = { reply: "ok", next: "revise", facts: [], assumptions: [], suggestions: ["a", "b", "c"] };
+    expect(readTurn({ ...base, undo: true }, "revert the changes")!.undo).toBe(true);
+    expect(readTurn({ ...base, undo: "yes" }, "revert")!.undo).toBe(false);
+    // One suggestion at most: Nova proposes what was asked, not a menu.
+    expect(readTurn(base, "x")!.suggestions).toEqual(["a"]);
+  });
+});
+
+describe("a project's shape is held by code", () => {
+  it("one subject, whose topics are exactly its milestones; nothing beside them", () => {
+    const checked = checkWorkspacePlan({ kind: "custom", title: "Kivo v1",
+      subjects: [{ name: "Kivo", topics: [{ name: "Kivo", explanation: "everything" }, { name: "Home page" }] }, { name: "Extras", topics: ["Docs"] }],
+      phases: [{ name: "Home page", subject: "Kivo" }, { name: "Final polish", subject: "Extras" }],
+      tasks: [{ key: "a", title: "Build the UI", topic: "Home page", subject: "Extras" }] }, { today: TODAY });
+    const shaped = projectShape(checked, "project");
+    assert(shaped.ok);
+    expect(shaped.plan.subjects).toEqual([{ name: "Kivo", topics: [{ name: "Home page", explanation: null, sources: [] }, { name: "Final polish", explanation: null, sources: [] }] }]);
+    expect(shaped.plan.tasks[0]!.subject).toBe("Kivo");
+    const w = planWrites(shaped.plan);
+    expect(w.subjects).toEqual([{ name: "Kivo", topics: ["Home page", "Final polish"] }]);
+    // No topic guide for a project: milestones are said in the one plan note.
+    expect(w.notes.some(n => n.key.startsWith("topics:"))).toBe(false);
+    // An exam plan is left as it is.
+    expect(projectShape(checked, "exam")).toBe(checked);
+  });
+
+  it("a revision keeps each task under its milestone when the model left it under none; dates are the project's", () => {
+    const make = (topic: string | null) => checkWorkspacePlan({ kind: "custom", title: "Kivo v1",
+      subjects: [{ name: "Kivo", topics: ["Home page"] }], phases: [{ name: "Home page", subject: "Kivo" }],
+      tasks: [{ key: "a", title: "Build the UI", topic }], dates: [{ title: "Launch", subject: null, kind: "project", day: "2026-10-29" }] }, { today: TODAY });
+    const before = projectShape(make("Home page"), "project");
+    assert(before.ok);
+    const after = projectShape(make("Kivo"), "project", before.plan);
+    assert(after.ok);
+    expect(after.plan.tasks[0]!.topic).toBe("Home page");
+    expect(after.plan.dates[0]!.subject).toBe("Kivo");
+  });
+});
+function assert(v: unknown): asserts v { expect(v).toBeTruthy(); }

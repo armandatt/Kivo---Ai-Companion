@@ -20,7 +20,7 @@
 
 import { generateOpenAIText } from "../../services/openai.service";
 import type { LlmAttachment } from "../../services/llmProviders";
-import { checkWorkspacePlan, type PlanCheck } from "./workspace-plan";
+import { checkWorkspacePlan, type PlanCheck, type WorkspacePlan } from "./workspace-plan";
 import { parseCreationIntent, type CreationIntent } from "./workspace-routing";
 import { CATEGORY_INFO, type StudyTemplate, type TemplateCategory } from "./templates";
 
@@ -235,8 +235,12 @@ export async function writeWorkspacePlan(p: PlanRequest, generate: Generate = ge
 const BUILDER_RULES = [
   "This plan comes from a conversation with the learner. FACTS are theirs: build on them as given. ASSUMPTIONS are Nova's: rely on them only where needed and keep them in assumptions.",
   "Choose the structure the work needs, not a fixed template: a project gets milestones (phases, in order) with tasks under each and any real dependencies; an exam gets subjects and topics, revision cycles and practice sessions; a skill gets ordered stages with exercises, a project and what done looks like; work gets deliverables, deadlines and reviews.",
-  "Use the kind's own words in every title, task and note. A project or work plan has one subject named after the project, whose topics are its parts or components (never a syllabus), and no revision, exam or study-session tasks; its tasks are concrete steps (build, test, ship, review), building on what the learner said is already done. An academic plan uses subjects, topics, revision and practice.",
-  "Hold to what was asked: no subjects, topics, dates or resources the conversation gives no reason for, and nothing about the learner's other workspaces. Tasks and notes serve the plan, a few each, not padding.",
+  "Use the kind's own words in every title, task and note. A project or work plan has exactly one subject, named after the project (or what the learner calls it), whose topics are exactly its milestones' names in order, nothing else (no separate parts, never a syllabus); no revision, exam or study-session tasks; its tasks are concrete steps (build, test, ship, review), building on what the learner said is already done. An academic plan uses subjects, topics, revision and practice.",
+  "Every task's topic is the exact name of the milestone (phase) it belongs to, when there are milestones.",
+  "When the learner wants everything under one name (\"all milestones under one main topic called Kivo\"), rename the project's one subject to that name and change nothing else (milestones, tasks and dates stay exactly as they are); never add it as another topic.",
+  "A milestone's weeks and hoursPerWeek fit the time the learner has: null when the whole plan is shorter than two weeks (the tasks' due days carry the timing).",
+  "Keep it simple. Hold to what was asked: no subjects, topics, milestones, tasks, dates or resources the conversation gives no reason for, and nothing about the learner's other workspaces. A few tasks per milestone, no padding. notes: [] unless the learner asked for a note or shared material worth keeping; milestone details already go in their own fields. resources: [] unless asked for. prerequisites: [] unless they matter.",
+  "priority: high only for what the deadline or other tasks depend on, medium for the rest, low for what could be dropped.",
   "When CURRENT PROPOSAL is given, return the whole proposal with only the CHANGE ASKED applied. Keep everything else as it is, including keys, names the learner edited and items they removed (do not bring them back).",
   "When EXISTING WORKSPACE is given, propose only what to add to it. Do not repeat what it already has; never remove or rename what is there.",
 ].join("\n");
@@ -291,7 +295,42 @@ export async function writeBuilderPlan(p: BuilderPlanRequest, generate: Generate
   const parsed = parsePlanReply(raw);
   if (!parsed) return { ok: false, message: "Nova's proposal came back in a form Kivo couldn't use. Try again." };
   const checked = withNoResearch(checkWorkspacePlan({ ...parsed, kind: "custom", templateId: null, templateVersion: null }, { today: p.today, files: (p.files ?? []).map(f => f.name), userText: p.learnerText }));
-  return withSyllabusNote(checked, p);
+  return withSyllabusNote(projectShape(checked, p.kind, isPlan(p.current) ? p.current : null), p);
+}
+
+// A project's shape, held by code: one subject named after it, whose topics
+// are exactly its milestones, every task filed there. On the Knowledge Map
+// that is the project with its milestones around it, nothing beside them
+// (seen 25 Oct: separate "parts" next to the milestones, and a topic added
+// for a name the learner wanted the whole project under).
+const PROJECT_KINDS = ["project", "work", "career"];
+const isPlan = (v: unknown): v is WorkspacePlan => Boolean(v) && typeof v === "object" && Array.isArray((v as WorkspacePlan).tasks) && Array.isArray((v as WorkspacePlan).phases);
+export function projectShape(checked: PlanCheck, kind: string | null, before: WorkspacePlan | null = null): PlanCheck {
+  if (!checked.ok || !kind || !PROJECT_KINDS.includes(kind) || checked.plan.phases.length === 0) return checked;
+  const plan = checked.plan;
+  // A revision keeps each task under its milestone when the model left it
+  // under none and that milestone is still there (seen 25 Oct: a rename of
+  // the project took every task out of its milestone).
+  const milestone = (topic: string | null) => (topic ? plan.phases.find(ph => ph.name.toLowerCase() === topic.toLowerCase())?.name ?? null : null);
+  plan.tasks = plan.tasks.map(t => {
+    if (milestone(t.topic)) return { ...t, topic: milestone(t.topic) };
+    const was = milestone(before?.tasks.find(b => b.key === t.key)?.topic ?? null);
+    return was ? { ...t, topic: was } : t;
+  });
+  const name = plan.subjects[0]?.name ?? plan.title;
+  const topics = plan.phases.map(ph => ({ name: ph.name, explanation: null, sources: [] }));
+  return {
+    ...checked,
+    plan: {
+      ...plan,
+      subjects: [{ name, topics }],
+      phases: plan.phases.map(ph => ({ ...ph, subject: name })),
+      tasks: plan.tasks.map(t => ({ ...t, subject: name })),
+      notes: plan.notes.map(n => ({ ...n, subject: n.subject === null ? null : name })),
+      // Its dates are the project's: filed under it, so they go where it goes.
+      dates: plan.dates.map(d => ({ ...d, subject: name })),
+    },
+  };
 }
 
 // Said by code for a study plan made without a syllabus: what it follows.
@@ -316,17 +355,20 @@ const CHANGES_SYSTEM = [
   "You propose changes to a learner's existing workspace in Kivo, a learning and work app. Kivo applies them only after the learner approves.",
   "Reply with JSON only: {\"ops\": [operation], \"summary\": string}. Each operation has \"why\" (one short line) and is one of:",
   `{"op":"add_topics","subjectId":ID,"names":[string]}  {"op":"add_subject","name":string,"topics":[string]}
-{"op":"rename_topic","topicId":ID,"name":string}  {"op":"remove_topic","topicId":ID}  {"op":"remove_subject","subjectId":ID}  (the subject and all its topics; its notes and tasks stay, unfiled)
+{"op":"rename_topic","topicId":ID,"name":string}  {"op":"remove_topic","topicId":ID}  {"op":"remove_subject","subjectId":ID}  (the subject with its topics and dates; its notes and tasks stay, unfiled)
 {"op":"add_task","key":string,"title":string,"subjectId":ID|null,"topicName":string|null,"dueDay":"YYYY-MM-DD"|null,"priority":"low"|"medium"|"high"|null}
 {"op":"update_task","taskId":ID,"title"?:string,"dueDay"?:"YYYY-MM-DD"|null,"priority"?:"low"|"medium"|"high"|null}  {"op":"remove_task","taskId":ID}
 {"op":"order_tasks","taskIds":[ID]}  (these open tasks first, in this order)
 {"op":"add_date","title":string,"day":"YYYY-MM-DD","subjectId":ID|null,"kind":"exam"|"assignment"|"project"|"interview"|"certification"|"other"}  {"op":"update_date","dateId":ID,"title"?:string,"day"?:"YYYY-MM-DD"}
-{"op":"add_note","title":string,"body":string,"subjectId":ID|null,"topicName":string|null}`,
+{"op":"add_note","title":string,"body":string,"subjectId":ID|null,"topicName":string|null}
+{"op":"remove_date","dateId":ID}  {"op":"remove_note","noteId":ID}
+{"op":"remove_workspace"}  (the whole workspace: Kivo lists everything it takes with it)`,
   "Rules:",
   "- Propose nothing the learner did not ask for: no extra tasks, notes, dates or subjects alongside the change (Kivo drops changes of kinds the request is not about). Never touch anything outside CURRENT RECORDS.",
   "- Use only ids shown in CURRENT RECORDS, exactly. Change only what CHANGE ASKED asks for; everything else stays as it is. Never remove or rename something unless asked. Additions must not repeat what is already there.",
   "- Topics have no order in Kivo and cannot be reordered (a milestone is a topic). To put a milestone or a piece of work first, order its tasks with order_tasks, and say so in summary.",
-  "- When the learner wants a subject gone (\"delete Prompt Engineering\", \"it belongs to another semester\"), use remove_subject: it takes the subject and its topics together. Use remove_topic only for single topics.",
+  "- When the learner wants a subject gone (\"delete Prompt Engineering\", \"it belongs to another semester\"), use remove_subject: it takes the subject with its topics and dates. Use remove_topic only for single topics.",
+  "- When they want the whole workspace or project gone (\"delete this\", \"delete it from everywhere\"), use remove_workspace alone.",
   "- A new deadline: update_date for the date, then update_task for each open task whose due day no longer fits before it; nothing else.",
   "- New topics for a subject or exam are specific, in learning order after what is there, never a placeholder (\"Introduction\", \"Advanced concepts\", \"Practice questions\"); practice and revision are tasks. Note bodies use \"# \" headings and \"- \" lists.",
   "- When CHANGES PROPOSED SO FAR is given, return the whole new set: the earlier changes that still apply, with CHANGE ASKED applied to them.",
@@ -339,7 +381,7 @@ export interface ChangesRequest {
   kind:         string | null;
   facts:        Array<{ label: string; value: string }>;
   // The records as they are now, with their ids.
-  current:      { title: string; subjects: Array<{ id: string; name: string; topics: Array<{ id: string; name: string }> }>; tasks: Array<{ id: string; title: string; status: string; dueDay: string | null; priority: string | null; topicName: string | null }>; dates: Array<{ id: string; title: string; day: string }>; notes: string[] };
+  current:      { title: string; subjects: Array<{ id: string; name: string; topics: Array<{ id: string; name: string }> }>; tasks: Array<{ id: string; title: string; status: string; dueDay: string | null; priority: string | null; topicName: string | null }>; dates: Array<{ id: string; title: string; day: string }>; notes: Array<{ id: string; title: string }> };
   // The change set proposed so far (operations), when there is one.
   proposed:     unknown[] | null;
   change:       string;
@@ -357,7 +399,7 @@ export function changesPrompt(p: ChangesRequest): string {
     `Subjects and topics:\n${c.subjects.map(s => `- subject ${s.id} "${s.name}": ${s.topics.map(t => `${t.id} "${t.name}"`).join(", ") || "no topics"}`).join("\n") || "- none"}`,
     `Tasks:\n${c.tasks.slice(0, 80).map(t => `- task ${t.id} "${t.title}" (${t.status}${t.dueDay ? `, due ${t.dueDay}` : ""}${t.priority ? `, ${t.priority}` : ""}${t.topicName ? `, under ${t.topicName}` : ""})`).join("\n") || "- none"}`,
     `Dates:\n${c.dates.map(d => `- date ${d.id} "${d.title}" on ${d.day}`).join("\n") || "- none"}`,
-    `Notes: ${c.notes.slice(0, 30).join(" | ") || "none"}`,
+    `Notes:\n${c.notes.slice(0, 30).map(n => `- note ${n.id} "${n.title}"`).join("\n") || "- none"}`,
     p.proposed?.length ? `CHANGES PROPOSED SO FAR (JSON):\n${JSON.stringify(p.proposed).slice(0, 12_000)}` : "CHANGES PROPOSED SO FAR: none",
     `CHANGE ASKED: ${p.change}`,
     `CONVERSATION:\n${p.conversation.map(m => `${m.role === "user" ? "LEARNER" : "NOVA"}: ${m.text}`).join("\n")}`,

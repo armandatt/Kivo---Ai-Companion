@@ -241,7 +241,7 @@ export function touchedSubjects(draft: Pick<DraftView, 'changes' | 'current'> | 
       : o.op === 'remove_subject' ? o.subjectId
       : o.op === 'add_task' || o.op === 'add_note' || o.op === 'add_date' ? o.subjectId
       : o.op === 'update_task' || o.op === 'remove_task' ? c.tasks.find(t => t.id === o.taskId)?.subjectId
-      : o.op === 'update_date' ? c.dates.find(d => d.id === o.dateId)?.subjectId : null
+      : o.op === 'update_date' || o.op === 'remove_date' ? c.dates.find(d => d.id === o.dateId)?.subjectId : null
     if (id) out.add(id)
   }
   return [...out]
@@ -262,12 +262,16 @@ export interface ChangeMarks {
   addedDates: Array<Extract<ProposedChange, { op: 'add_date' }>>
   addedNotes: Array<Extract<ProposedChange, { op: 'add_note' }>>
   addedSubjects: Array<Extract<ProposedChange, { op: 'add_subject' }>>
+  removedDates: Set<string>
+  removedNotes: Set<string>
+  // The whole workspace is to be deleted.
+  removedWorkspace: boolean
 }
 
 export function changeMarks(set: ChangeSet | null): ChangeMarks {
   const m: ChangeMarks = {
     addedTopics: new Map(), renamedTopics: new Map(), removedTopics: new Set(), removedSubjects: new Set(), addedTasks: [], changedTasks: new Map(), removedTasks: new Set(),
-    firstTasks: [], movedDates: new Map(), addedDates: [], addedNotes: [], addedSubjects: [],
+    firstTasks: [], movedDates: new Map(), addedDates: [], addedNotes: [], addedSubjects: [], removedDates: new Set(), removedNotes: new Set(), removedWorkspace: false,
   }
   for (const o of set?.ops ?? []) {
     switch (o.op) {
@@ -283,6 +287,9 @@ export function changeMarks(set: ChangeSet | null): ChangeMarks {
       case 'update_date': if (o.day) m.movedDates.set(o.dateId, o.day); break
       case 'add_note': m.addedNotes.push(o); break
       case 'add_subject': m.addedSubjects.push(o); break
+      case 'remove_date': m.removedDates.add(o.dateId); break
+      case 'remove_note': m.removedNotes.add(o.noteId); break
+      case 'remove_workspace': m.removedWorkspace = true; break
     }
   }
   return m
