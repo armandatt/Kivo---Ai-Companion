@@ -327,3 +327,46 @@ test("deleting happens only on confirmation, keeps what is theirs, and can be br
   assert.ok(back.draft.plan!.tasks.some(t => t.title === "Implement recursive task hierarchy"));
   assert.equal(await prisma.novaWorkspace.count({ where: { profileId } }), 0);
 });
+
+test("the Knowledge Map after approval is exactly what the proposal showed: same parts, milestones, tasks, steps and notes", async () => {
+  const { planPreview } = await import("../product/workspace-plan.js");
+  const me = await learner();
+  // As seen on 25 Oct: parts named apart from the milestones, tasks filed under the parts.
+  const shaped = () => kivo({
+    subjects: [{ name: "Kivo", topics: [{ name: "Home Page Development", subtopics: ["Workflow architecture"] }, { name: "Knowledge Map and Planner" }] }],
+    phases: [{ name: "Home Page Sprint", subject: "Kivo", project: "Ship the home page" }, { name: "Knowledge Map & Planner Sprint", subject: "Kivo" }],
+    tasks: [
+      { key: "a", title: "Build home page workflow architecture", topic: "Home Page Development", steps: [{ key: "a1", title: "Map the flow", steps: [{ title: "List entry points" }] }] },
+      { key: "b", title: "Develop knowledge map interface", topic: "Knowledge Map and Planner" },
+    ],
+  });
+  const draft = await begin(me.id, { read: reader({ next: "draft" }), write: writer(shaped) });
+  const preview = planPreview(draft.plan!);
+  const done = await builder.approveDraft(me.id, draft.id, { version: draft.version });
+  assert.ok(done.ok && done.draft.status === "ready");
+  const profileId = await me.profileId();
+  await prisma.novaAcademicProfile.update({ where: { id: profileId }, data: { onboardingComplete: true } });
+  const map = await loadNovaKnowledgeMap(me.id);
+  assert.equal(map.status, "ready");
+  if (map.status !== "ready") return;
+  const labels = (type: string) => map.nodes.filter(x => x.type === type).map(x => x.label).sort();
+  // Parts and milestones: one subject, its milestones as its topics, once each.
+  assert.deepEqual(labels("subject"), preview.subjects.map(s => s.name).sort());
+  assert.deepEqual(labels("topic"), preview.subjects.flatMap(s => s.topics.map(t => t.name)).sort());
+  assert.deepEqual(labels("topic"), ["Home Page Sprint", "Knowledge Map & Planner Sprint"]);
+  // Tasks: the proposal's, plus only what the preview said Kivo adds (none here: the milestone has tasks).
+  assert.deepEqual(labels("task"), [...draft.plan!.tasks.map(t => t.title), ...preview.added.map(t => t.title)].sort());
+  assert.equal(preview.added.length, 0);
+  // Notes: the proposal's own and the ones the preview said Kivo writes.
+  assert.deepEqual(labels("note"), [...draft.plan!.notes.map(n => n.title), ...preview.written.map(n => n.title)].sort());
+  // The hierarchy: milestone → task → step → step, as the Tasks view drew it.
+  const node = (label: string) => map.nodes.find(x => x.label === label)!;
+  const edge = (from: string, to: string, kind: string) => map.edges.some(e => e.from === node(from).id && e.to === node(to).id && e.kind === kind);
+  assert.ok(edge("Kivo", "Home Page Sprint", "has_topic"));
+  assert.ok(edge("Home Page Sprint", "Build home page workflow architecture", "task_of"));
+  assert.ok(edge("Build home page workflow architecture", "Map the flow", "has_step"));
+  assert.ok(edge("Map the flow", "List entry points", "has_step"));
+  assert.ok(edge("Knowledge Map & Planner Sprint", "Develop knowledge map interface", "task_of"));
+  // Nothing on the map that the preview did not show.
+  assert.equal(map.nodes.length, labels("subject").length + labels("topic").length + labels("task").length + labels("note").length);
+});

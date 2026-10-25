@@ -694,14 +694,40 @@ export function planWrites(plan: WorkspacePlan): PlanWrites {
     notes.push({ key: n.key, title: n.title, subject: n.subject, topic: n.topic, body: `${attribution}${n.body}` });
   }
 
-  // Each phase's project is a task, so it shows on the board.
+  // A phase's project is a task, so it shows on the board, when the phase
+  // has no tasks of its own (a project's milestones have theirs; one more
+  // would be a task the proposal never showed).
   const tasks = [...plan.tasks];
   for (const [i, p] of plan.phases.entries()) {
-    if (!p.project) continue;
+    if (!p.project || plan.tasks.some(t => t.topic !== null && same(t.topic, p.name))) continue;
     const title = oneLine(`Build: ${p.project}`, PLAN_LIMITS.taskTitle);
     if (!tasks.some(t => same(t.title, title))) tasks.push({ key: `phase-project-${i}`, title, priority: null, subject: p.subject, topic: p.name, dueDay: null, estimatedMinutes: null, parent: null });
   }
   return { subjects, dates: plan.dates, tasks: tasks.slice(0, PLAN_LIMITS.tasks + PLAN_LIMITS.phases), notes: notes.slice(0, PLAN_LIMITS.notes + PLAN_LIMITS.phases + 4) };
+}
+
+// ── What approving it makes, as the page shows it before approval ──────────────
+// The same records planWrites gives (so the Knowledge Map after approval is
+// this, and nothing else): each subject with every topic it will have (its
+// milestones among them, marked), the notes Kivo writes from the plan beside
+// the plan's own, and the tasks Kivo adds for a milestone's project.
+export interface PlanPreview {
+  subjects: Array<{ name: string; topics: Array<{ name: string; milestone: boolean }> }>;
+  // Notes the plan does not list but building writes, and what each is from.
+  written:  Array<{ key: string; title: string; subject: string | null; topic: string | null; from: "topics" | "milestone" | "prerequisites" | "order" | "resources"; body: string }>;
+  added:    PlanTask[];
+}
+
+export function planPreview(plan: WorkspacePlan): PlanPreview {
+  const w = planWrites(plan);
+  const own = new Set(plan.notes.map(n => n.key));
+  const fromOf = (key: string): PlanPreview["written"][number]["from"] =>
+    key.startsWith("topics:") ? "topics" : key.startsWith("phase:") ? "milestone" : key === "prerequisites" ? "prerequisites" : key === "order" ? "order" : "resources";
+  return {
+    subjects: w.subjects.map(s => ({ name: s.name, topics: s.topics.map(t => ({ name: t, milestone: plan.phases.some(p => same(p.name, t)) })) })),
+    written: w.notes.filter(n => !own.has(n.key)).map(n => ({ ...n, from: fromOf(n.key) })),
+    added: w.tasks.filter(t => !plan.tasks.some(k => k.key === t.key)),
+  };
 }
 
 // What creating it would add, in words, for the preview.
