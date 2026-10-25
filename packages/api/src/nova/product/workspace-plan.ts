@@ -509,42 +509,35 @@ export function planWrites(plan: WorkspacePlan): PlanWrites {
     }).join("\n\n");
     notes.push({ key: `topics:${s.name.toLowerCase()}`, title: `${s.name}: topic guide${fromFiles ? "" : " (Nova)"}`, subject: s.name, topic: null, body });
   }
-  for (const [i, p] of plan.phases.entries()) {
-    const effort = [p.weeks ? `${p.weeks} week${p.weeks === 1 ? "" : "s"}` : null, p.hoursPerWeek ? `about ${p.hoursPerWeek} hours a week` : null].filter(Boolean).join(", ");
-    const body = [
-      effort ? `Effort (an estimate): ${effort}` : null,
-      p.goals.length ? `# Goals\n${p.goals.map(g => `- ${g}`).join("\n")}` : null,
-      p.exercises.length ? `# Exercises\n${p.exercises.map(g => `- ${g}`).join("\n")}` : null,
-      p.project ? `# Project\n${p.project}` : null,
-      p.completion ? `# Done when\n${p.completion}` : null,
-      p.resources.length ? `# Resources\n${p.resources.map(resourceLine).join("\n")}` : null,
-    ].filter(Boolean).join("\n\n");
-    if (body) notes.push({ key: `phase:${i}`, title: `Phase ${i + 1}: ${p.name}`, subject: p.subject ?? subjects[0]?.name ?? null, topic: p.name, body });
-  }
-  if (plan.prerequisites.length > 0) {
-    notes.push({ key: "prerequisites", title: `Before you start: ${plan.title}`, subject: subjects[0]?.name ?? null, topic: null, body: `# Prerequisites\n${plan.prerequisites.map(p => `- ${p}`).join("\n")}` });
-  }
+  // How the work goes, in one note: each milestone's details, what comes
+  // before, the order of tasks and the resources. One note, not one each:
+  // every note is a point on the Knowledge Map.
   const ordered = plan.tasks.filter(t => t.after);
-  if (ordered.length > 0) {
-    const titleOf = (key: string) => plan.tasks.find(t => t.key === key)?.title ?? key;
-    notes.push({ key: "order", title: `Order of work: ${plan.title}`, subject: subjects[0]?.name ?? null, topic: null, body: `# What comes first\n${ordered.map(t => `- ${t.title}: after ${titleOf(t.after!)}`).join("\n")}` });
-  }
-  if (plan.resources.length > 0) {
-    notes.push({ key: "resources", title: `Resources: ${plan.title}`, subject: subjects[0]?.name ?? null, topic: null, body: `# Resources\n${plan.resources.map(resourceLine).join("\n")}` });
-  }
+  const titleOf = (key: string) => plan.tasks.find(t => t.key === key)?.title ?? key;
+  const sections = [
+    plan.prerequisites.length ? `# Before you start\n${plan.prerequisites.map(p => `- ${p}`).join("\n")}` : null,
+    ...plan.phases.map((p, i) => {
+      const effort = [p.weeks ? `${p.weeks} week${p.weeks === 1 ? "" : "s"}` : null, p.hoursPerWeek ? `about ${p.hoursPerWeek} hours a week` : null].filter(Boolean).join(", ");
+      const lines = [
+        effort ? `Effort (an estimate): ${effort}` : null,
+        p.goals.length ? `Goals:\n${p.goals.map(g => `- ${g}`).join("\n")}` : null,
+        p.exercises.length ? `Exercises:\n${p.exercises.map(g => `- ${g}`).join("\n")}` : null,
+        p.project ? `Project: ${p.project}` : null,
+        p.completion ? `Done when: ${p.completion}` : null,
+        p.resources.length ? `Resources:\n${p.resources.map(resourceLine).join("\n")}` : null,
+      ].filter(Boolean);
+      return lines.length ? `# ${i + 1}. ${p.name}\n${lines.join("\n")}` : null;
+    }),
+    ordered.length ? `# What comes first\n${ordered.map(t => `- ${t.title}: after ${titleOf(t.after!)}`).join("\n")}` : null,
+    plan.resources.length ? `# Resources\n${plan.resources.map(resourceLine).join("\n")}` : null,
+  ].filter(Boolean);
+  if (sections.length > 0) notes.push({ key: "plan", title: `How it goes: ${plan.title}`, subject: subjects[0]?.name ?? null, topic: null, body: sections.join("\n\n") });
   for (const n of plan.notes) {
     const attribution = n.origin === "source" ? `From your files: ${cite(n.sources)}\n\n` : n.origin === "nova" ? "Written by Nova (not from your files).\n\n" : "";
     notes.push({ key: n.key, title: n.title, subject: n.subject, topic: n.topic, body: `${attribution}${n.body}` });
   }
 
-  // Each phase's project is a task, so it shows on the board.
-  const tasks = [...plan.tasks];
-  for (const [i, p] of plan.phases.entries()) {
-    if (!p.project) continue;
-    const title = oneLine(`Build: ${p.project}`, PLAN_LIMITS.taskTitle);
-    if (!tasks.some(t => same(t.title, title))) tasks.push({ key: `phase-project-${i}`, title, priority: "medium", subject: p.subject, topic: p.name, dueDay: null, estimatedMinutes: null });
-  }
-  return { subjects, dates: plan.dates, tasks: tasks.slice(0, PLAN_LIMITS.tasks + PLAN_LIMITS.phases), notes: notes.slice(0, PLAN_LIMITS.notes + PLAN_LIMITS.phases + 4) };
+  return { subjects, dates: plan.dates, tasks: plan.tasks.slice(0, PLAN_LIMITS.tasks), notes: notes.slice(0, PLAN_LIMITS.notes + 2) };
 }
 
 // What creating it would add, in words, for the preview.

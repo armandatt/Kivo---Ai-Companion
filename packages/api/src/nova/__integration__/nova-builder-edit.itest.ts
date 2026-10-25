@@ -427,3 +427,87 @@ test("Build with Nova keeps to its job: an unrelated request changes nothing, an
   assert.deepEqual(await records(profileId), { ...before, topics: before.topics + 2 });
   assert.ok((await loadStudyStructure(profileId)).subjects.find(x => x.id === dsa.id)!.topics.some(t => t.name === "Tries"));
 });
+
+// Seen 25 Oct: after a change set was applied, "revert the changes" and "make
+// version 6 back" were not understood, and "delete this" was refused because
+// the subject had a date.
+test("what a conversation applied can be taken back, and a project can be deleted from everywhere", async () => {
+  const me = await learner();
+  const profileId = await me.profileId();
+  const first = await begin(me.id, "Plan Kivo v1, done in four days.", {
+    read: reader({ next: "draft", facts: [{ label: "Project", value: "Kivo v1", quote: "Kivo v1" }, { label: "Deadline", value: "four days", quote: "four days" }] }),
+    write: async req => checkWorkspacePlan({ kind: "custom", title: "Kivo v1", summary: "Finish Kivo v1",
+      subjects: [{ name: "Kivo", topics: ["Home page", "Final polish"] }],
+      phases: [{ name: "Home page", subject: "Kivo" }, { name: "Final polish", subject: "Kivo" }],
+      tasks: [{ key: "ui", title: "Build the home page UI", topic: "Home page", priority: "high", dueDay: inDays(1) }, { key: "bugs", title: "Fix the last bugs", topic: "Final polish", priority: "medium", dueDay: inDays(4) }],
+      dates: [{ title: "Kivo v1 launch", subject: "Kivo", kind: "project", day: inDays(4) }],
+    }, { today: req.today, userText: req.learnerText }),
+  });
+  const built = await builder.approveDraft(me.id, first.id, { version: first.version });
+  assert.ok(built.ok && built.draft.status === "ready");
+  assert.equal(built.ok && built.draft.brief.undo?.label, "the build of Kivo v1");
+  const afterBuild = await records(profileId);
+
+  // A change set: a topic and a task removed, a task's priority changed.
+  let draft = await say(me.id, first.id, "remove the final polish milestone and make the UI low priority", {
+    read: reader({ next: "draft", change: "Remove Final polish; UI low priority" }), write: noWrite,
+    writeChanges: changer(req => [
+      { op: "remove_topic", topicId: req.current.subjects[0]!.topics.find(t => t.name === "Final polish")!.id },
+      { op: "remove_task", taskId: req.current.tasks.find(t => t.title === "Fix the last bugs")!.id },
+      { op: "update_task", taskId: req.current.tasks.find(t => t.title === "Build the home page UI")!.id, priority: "low" },
+    ]),
+  });
+  const changed = await builder.approveDraft(me.id, draft.id, { version: draft.version });
+  assert.ok(changed.ok && changed.draft.status === "ready", changed.ok ? "" : changed.message);
+  assert.equal(changed.ok && changed.draft.brief.undo?.label, `the changes of version ${draft.version}`);
+
+  // "Revert the changes": code proposes the inverse; nothing changes before approval.
+  const noModel: NonNullable<BuilderDeps["writeChanges"]> = async () => { throw new Error("the model wrote the undo"); };
+  draft = await say(me.id, first.id, "no, revert the changes", { read: reader({ next: "revise", undo: true }), write: noWrite, writeChanges: noModel });
+  assert.equal(draft.status, "awaiting_approval");
+  assert.deepEqual(draft.changes!.ops.map(o => o.says), [
+    'Add to Kivo: Final polish',
+    'Add task "Fix the last bugs", due ' + inDays(4),
+    'Change task "Build the home page UI": high priority',
+  ]);
+  const undone = await builder.approveDraft(me.id, draft.id, { version: draft.version });
+  assert.ok(undone.ok, undone.ok ? "" : undone.message);
+  assert.deepEqual(await records(profileId), afterBuild);
+  const ui = (await listTasks(profileId)).tasks.find(t => t.title === "Build the home page UI")!;
+  assert.equal(ui.priority, "high");
+  assert.equal((await listTasks(profileId)).tasks.find(t => t.title === "Fix the last bugs")!.topicName, "Final polish");
+
+  // "Delete it from everywhere": the workspace with its subject, topics, open tasks, notes and dates.
+  // A finished task stays.
+  await prisma.novaTask.update({ where: { id: ui.id }, data: { status: "done" } });
+  // Built by code: even when the model called it off-topic (seen 25 Oct), and without the change model.
+  draft = await say(me.id, first.id, "delete the kivo project from everywhere", {
+    read: reader({ next: "decline", deleteAll: true }), write: noWrite, writeChanges: noModel,
+  });
+  assert.equal(draft.changes!.ops.at(-1)!.op, "remove_workspace");
+  assert.ok(draft.changes!.ops.some(o => o.op === "remove_date"));
+  const deleted = await builder.approveDraft(me.id, draft.id, { version: draft.version });
+  assert.ok(deleted.ok, deleted.ok ? "" : deleted.message);
+  assert.equal(deleted.ok && deleted.draft.status, "discovery");
+  assert.equal(deleted.ok && deleted.draft.current, null);
+  assert.deepEqual(await records(profileId), { subjects: 0, topics: 0, tasks: 1, notes: 0, exams: 0, workspaces: 0 });
+  // The conversation is still theirs, and nothing is left to take back.
+  assert.equal(deleted.ok && (deleted.draft.brief.undo ?? null), null);
+});
+
+test("a subject with a date is removed with that date, listed; a past date is kept, unfiled", async () => {
+  const me = await learner();
+  const { profileId, dsa } = await withDsa(me);
+  await prisma.novaExam.create({ data: { profileId, subjectId: dsa.id, title: "DSA mid-term", examType: "exam", scheduledAt: new Date(`${inDays(10)}T12:00:00.000Z`) } });
+  await prisma.novaExam.create({ data: { profileId, subjectId: dsa.id, title: "DSA quiz 1", examType: "exam", scheduledAt: new Date(`${inDays(-20)}T12:00:00.000Z`) } });
+  const draft = await begin(me.id, "Delete my DSA subject", {
+    read: reader({ next: "draft", resource: { name: "DSA", intent: "change" }, touches: ["subjects"] }), write: noWrite,
+    writeChanges: changer(req => [{ op: "remove_subject", subjectId: req.current.subjects[0]!.id }]),
+  });
+  assert.ok(draft.changes!.ops.some(o => o.says === `Remove date "DSA mid-term" (${inDays(10)})`));
+  const done = await builder.approveDraft(me.id, draft.id, { version: draft.version });
+  assert.ok(done.ok, done.ok ? "" : done.message);
+  const exams = await prisma.novaExam.findMany({ where: { profileId }, select: { title: true, subjectId: true } });
+  assert.deepEqual(exams, [{ title: "DSA quiz 1", subjectId: null }]);
+  assert.equal(await prisma.novaSubject.count({ where: { profileId } }), 0);
+});

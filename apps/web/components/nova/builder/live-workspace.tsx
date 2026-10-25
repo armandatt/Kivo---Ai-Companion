@@ -126,9 +126,9 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
   ].filter(g => g.name !== null || g.tasks.length > 0 || marks.addedTasks.some(a => !phases.some(p => same(a.topicName, p.name))))
   const proposedIn = (name: string | null) => marks.addedTasks.filter(a => (name === null ? !phases.some(p => same(a.topicName, p.name)) : same(a.topicName, name)))
   const days = [
-    ...detail.dates.map(d => ({ day: marks.movedDates.get(d.id) ?? d.day, was: marks.movedDates.has(d.id) ? d.day : null, label: d.title, kind: 'date' as const, proposed: false })),
-    ...detail.tasks.filter(t => t.dueDay && t.status !== 'done').map(t => ({ day: t.dueDay!, was: null, label: t.title, kind: 'task' as const, proposed: false })),
-    ...marks.addedDates.map(d => ({ day: d.day, was: null, label: d.title, kind: 'date' as const, proposed: true })),
+    ...detail.dates.map(d => ({ day: marks.movedDates.get(d.id) ?? d.day, was: marks.movedDates.has(d.id) ? d.day : null, label: d.title, kind: 'date' as const, proposed: false, removed: marks.removedDates.has(d.id) })),
+    ...detail.tasks.filter(t => t.dueDay && t.status !== 'done').map(t => ({ day: t.dueDay!, was: null, label: t.title, kind: 'task' as const, proposed: false, removed: marks.removedTasks.has(t.id) })),
+    ...marks.addedDates.map(d => ({ day: d.day, was: null, label: d.title, kind: 'date' as const, proposed: true, removed: false })),
   ].sort((a, b) => a.day.localeCompare(b.day))
   const done = detail.tasks.filter(t => t.status === 'done').length
   const words = wordsFor(state.draft?.brief.kind)
@@ -142,6 +142,7 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
       <PlaygroundHeader title={detail.title} badge="live" stats={stats} tabs={<ViewTabs views={views} view={shown} onView={onView} label="Workspace views" names={words.views} />} />
       <div id="pg-panel" role="tabpanel" aria-labelledby={`pg-tab-${shown}`} className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-3 sm:px-5">
         {error && <p role="alert" className="mb-3 text-sm text-red-400">{error}</p>}
+        {marks.removedWorkspace && <p role="status" className="mb-3 rounded-xl border border-red-400/40 bg-red-400/8 px-3 py-2 text-sm text-foreground/90">Approving deletes {detail.title} and everything listed below, everywhere in Kivo. Finished tasks stay in your Planner. This can&apos;t be undone.</p>}
         <ChangeList state={state} />
         {talking && <div className="-mx-2 mb-3"><NovaHint hint={hintFor(state.draft?.brief.kind, shown)} onAsk={onAsk} /></div>}
         {shown === 'overview' && (
@@ -277,13 +278,13 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
         {shown === 'timeline' && (
           days.length === 0 ? <p className="text-sm text-foreground/65">Nothing dated yet. Give tasks a due day on the board, or add a date on the <Link href="/calendar" className="underline underline-offset-4">calendar</Link>.</p> : (
             <ol className="space-y-2">{days.map((d, i) => (
-              <li key={i} className={cn('flex items-center gap-3 rounded-lg px-1 text-sm', d.proposed && PROPOSED)}><span className="w-24 shrink-0 text-xs tabular-nums text-subtle">{d.day}</span><span aria-hidden className={cn('size-2 rounded-full', d.kind === 'date' ? 'bg-amber-400' : 'bg-action')} /><span className="text-foreground/85">{d.label}{d.was && <Proposed>moved from {d.was}</Proposed>}{d.proposed && <Proposed>proposed</Proposed>}</span></li>
+              <li key={i} className={cn('flex items-center gap-3 rounded-lg px-1 text-sm', d.proposed && PROPOSED)}><span className="w-24 shrink-0 text-xs tabular-nums text-subtle">{d.day}</span><span aria-hidden className={cn('size-2 rounded-full', d.kind === 'date' ? 'bg-amber-400' : 'bg-action')} /><span className={cn('text-foreground/85', d.removed && 'line-through opacity-60')}>{d.label}{d.was && <Proposed>moved from {d.was}</Proposed>}{d.proposed && <Proposed>proposed</Proposed>}{d.removed && <Proposed>to be removed</Proposed>}</span></li>
             ))}</ol>
           )
         )}
         {shown === 'notes' && (
           <ul className="space-y-1.5">
-            {detail.notes.map(n => <li key={n.id}><Link href={`/notes/${n.id}`} className={cn(CARD, 'block px-3 py-2 text-sm text-foreground/85 hover:border-white/20')}>{n.title}</Link></li>)}
+            {detail.notes.map(n => <li key={n.id}><Link href={`/notes/${n.id}`} className={cn(CARD, 'block px-3 py-2 text-sm text-foreground/85 hover:border-white/20', marks.removedNotes.has(n.id) && 'border-red-400/40 line-through opacity-60')}>{n.title}{marks.removedNotes.has(n.id) && <Proposed>to be removed</Proposed>}</Link></li>)}
             {marks.addedNotes.map(n => <li key={n.title} className={cn(CARD, PROPOSED, 'px-3 py-2 text-sm text-foreground/85')}>+ {n.title}<Proposed>proposed</Proposed></li>)}
             {detail.notes.length === 0 && marks.addedNotes.length === 0 && <p className="text-sm text-foreground/65">No notes filed under these subjects.</p>}
           </ul>

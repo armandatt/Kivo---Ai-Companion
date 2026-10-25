@@ -340,6 +340,19 @@ export async function updateNote(profileId: string, noteId: string, raw: unknown
   return note ? { ok: true, note } : NOT_FOUND;
 }
 
+// Removes the learner's own notes inside the caller's transaction (Build with
+// Nova's approved changes). false: one was already gone, nothing is assumed.
+export async function removeNotesIn(tx: Pick<typeof prisma, "novaNote">, profileId: string, noteIds: string[]): Promise<boolean> {
+  if (noteIds.length === 0) return true;
+  return (await tx.novaNote.deleteMany({ where: { id: { in: noteIds }, profileId } })).count === noteIds.length;
+}
+
+// Notes as they are, bodies included: what taking a removal back needs.
+export async function notesWithBodies(profileId: string, noteIds: string[]): Promise<Array<{ id: string; title: string; body: string; subjectId: string | null; topicName: string | null }>> {
+  if (noteIds.length === 0) return [];
+  return prisma.novaNote.findMany({ where: { id: { in: noteIds }, profileId }, select: { id: true, title: true, body: true, subjectId: true, topicName: true } });
+}
+
 export async function deleteNote(profileId: string, noteId: string): Promise<boolean> {
   const deleted = await prisma.novaNote.deleteMany({ where: { id: noteId, profileId } });
   return deleted.count === 1;

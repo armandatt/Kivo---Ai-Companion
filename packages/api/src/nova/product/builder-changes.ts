@@ -20,7 +20,7 @@
 //
 // No regex: text is compared by characters (SKILL.md; the no-regex guard).
 
-import type { ChangeKind, ChangeOp, ChangeSet, ProposedChange, ResourceRef, WorkspaceDetail } from "./builder.types";
+import type { ChangeKind, ChangeOp, ChangeSet, ProposedChange, ResourceRef, UndoRecord, WorkspaceDetail } from "./builder.types";
 import { isPlaceholderTopic, oneLine } from "./workspace-plan";
 
 // ── Finding it ────────────────────────────────────────────────────────────────
@@ -145,10 +145,31 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
   };
   const subjectOrNull = (v: unknown): string | null | undefined => (v === null || v === undefined || v === "" ? null : subjectById(v) ? (v as string) : undefined);
 
-  // A subject's removal is checked after everything else in the set, so the
-  // topic removals it brings are not said twice.
-  const ordered = [...list.slice(0, CHANGE_OPS_MAX * 2)].sort((a, b) =>
-    Number((a as { op?: unknown })?.op === "remove_subject") - Number((b as { op?: unknown })?.op === "remove_subject"));
+  const removeDate = (d: WorkspaceDetail["dates"][number], x: Record<string, unknown> = {}) => {
+    if (touched.has(d.id)) return;
+    touched.add(d.id);
+    keep({ op: "remove_date", dateId: d.id }, `Remove date ${quoted(d.title)} (${d.day})`, "remove", x);
+  };
+  // A subject goes with its topics and dates, each said, so the learner sees
+  // exactly what goes. Never one with studied topics.
+  const removeSubject = (s: WorkspaceDetail["subjects"][number], x: Record<string, unknown>) => {
+    if (touched.has(s.id)) return;
+    const studied = s.topics.filter(t => ctx.studied.has(t.id));
+    if (studied.length) { dropped.push(`removing ${quoted(s.name)} (you've studied ${studied.slice(0, 2).map(t => quoted(t.name)).join(", ")}; topics with study are kept)`); return; }
+    touched.add(s.id);
+    for (const t of s.topics) {
+      if (touched.has(t.id)) continue;
+      touched.add(t.id);
+      keep({ op: "remove_topic", topicId: t.id }, `Remove topic ${quoted(t.name)} from ${s.name}`, "remove", {});
+    }
+    for (const d of current.dates.filter(v => v.subjectId === s.id)) removeDate(d);
+    keep({ op: "remove_subject", subjectId: s.id }, `Remove subject ${quoted(s.name)} (its notes and tasks stay, unfiled)`, "remove", x);
+  };
+
+  // Removals that bring others with them are checked after everything else
+  // in the set (a workspace's last), so what they bring is not said twice.
+  const late = (o: unknown) => ((o as { op?: unknown })?.op === "remove_workspace" ? 2 : (o as { op?: unknown })?.op === "remove_subject" ? 1 : 0);
+  const ordered = [...list.slice(0, CHANGE_OPS_MAX * 2)].sort((a, b) => late(a) - late(b));
   for (const item of ordered) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const x = item as Record<string, unknown>;
@@ -201,18 +222,44 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
       case "remove_subject": {
         const s = subjectById(x.subjectId);
         if (!s) { dropped.push("removing a subject that isn't part of this"); break; }
-        if (touched.has(s.id)) break;
-        const studied = s.topics.filter(t => ctx.studied.has(t.id));
-        if (studied.length) { dropped.push(`removing ${quoted(s.name)} (you've studied ${studied.slice(0, 2).map(t => quoted(t.name)).join(", ")}; topics with study are kept)`); break; }
-        if (current.dates.some(d => d.subjectId === s.id)) { dropped.push(`removing ${quoted(s.name)} (it has dates; move or remove them on the calendar first)`); break; }
-        touched.add(s.id);
-        // Its topics go with it: each said, so the learner sees exactly what goes.
-        for (const t of s.topics) {
-          if (touched.has(t.id)) continue;
+        removeSubject(s, x);
+        break;
+      }
+      case "remove_workspace": {
+        const w = current.workspace;
+        if (!w || (x.workspaceId !== undefined && x.workspaceId !== w.id)) { dropped.push("removing a workspace that isn't this one"); break; }
+        // All of it or none of it: a workspace half removed would leave its
+        // studied subjects outside any workspace.
+        const studied = current.subjects.flatMap(s => s.topics.filter(t => ctx.studied.has(t.id)));
+        if (studied.length) { dropped.push(`deleting ${quoted(current.title)} (you've studied ${studied.slice(0, 2).map(t => quoted(t.name)).join(", ")}; topics with study are kept)`); break; }
+        for (const s of current.subjects) removeSubject(s, {});
+        for (const t of current.tasks) {
+          if (t.status === "done" || touched.has(t.id)) continue;
           touched.add(t.id);
-          keep({ op: "remove_topic", topicId: t.id }, `Remove topic ${quoted(t.name)} from ${s.name}`, "remove", {});
+          keep({ op: "remove_task", taskId: t.id }, `Remove task ${quoted(t.title)}`, "remove", {});
         }
-        keep({ op: "remove_subject", subjectId: s.id }, `Remove subject ${quoted(s.name)} (its notes and tasks stay, unfiled)`, "remove", x);
+        for (const n of current.notes) {
+          if (touched.has(n.id)) continue;
+          touched.add(n.id);
+          keep({ op: "remove_note", noteId: n.id }, `Remove note ${quoted(n.title)}`, "remove", {});
+        }
+        for (const d of current.dates) removeDate(d);
+        const kept = current.tasks.filter(t => t.status === "done").length;
+        keep({ op: "remove_workspace", workspaceId: w.id }, `Delete the workspace ${quoted(current.title)}${kept ? ` (${kept} finished task${kept === 1 ? "" : "s"} stay in your Planner)` : ""}. This can't be undone`, "remove", x);
+        break;
+      }
+      case "remove_date": {
+        const d = dateById(x.dateId);
+        if (!d) { dropped.push("removing a date that isn't part of this"); break; }
+        removeDate(d, x);
+        break;
+      }
+      case "remove_note": {
+        const n = current.notes.find(v => v.id === x.noteId);
+        if (!n) { dropped.push("removing a note that isn't part of this"); break; }
+        if (touched.has(n.id)) break;
+        touched.add(n.id);
+        keep({ op: "remove_note", noteId: n.id }, `Remove note ${quoted(n.title)}`, "remove", x);
         break;
       }
       case "add_task": {
@@ -319,18 +366,23 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
 
 export const kindOf = (op: ChangeOp["op"]): ChangeKind =>
   op === "add_topics" || op === "rename_topic" || op === "remove_topic" ? "topics"
-  : op === "add_subject" || op === "remove_subject" ? "subjects"
-  : op === "add_date" || op === "update_date" ? "dates"
-  : op === "add_note" ? "notes" : "tasks";
+  : op === "add_subject" || op === "remove_subject" || op === "remove_workspace" ? "subjects"
+  : op === "add_date" || op === "update_date" || op === "remove_date" ? "dates"
+  : op === "add_note" || op === "remove_note" ? "notes" : "tasks";
 
 // Keeps the changes of the kinds the learner's request is about; the rest
 // are left out and said ("not asked for"). A subject's removal keeps the
-// topic removals it brings. No kinds known (an older reading): all are kept.
+// topic and date removals it brings, a workspace's everything it brings.
+// No kinds known (an older reading): all are kept.
 export function withinAsk(set: ChangeSet, touches: readonly ChangeKind[], current: WorkspaceDetail): ChangeSet {
-  if (touches.length === 0) return set;
+  if (touches.length === 0 || set.ops.some(o => o.op === "remove_workspace")) return set;
   const goingSubjects = new Set(set.ops.flatMap(o => (o.op === "remove_subject" ? [o.subjectId] : [])));
-  const withSubject = new Set(current.subjects.filter(s => goingSubjects.has(s.id)).flatMap(s => s.topics.map(t => t.id)));
-  const ok = (o: ProposedChange) => touches.includes(kindOf(o.op)) || (o.op === "remove_topic" && touches.includes("subjects") && withSubject.has(o.topicId));
+  const withSubject = new Set([
+    ...current.subjects.filter(s => goingSubjects.has(s.id)).flatMap(s => s.topics.map(t => t.id)),
+    ...current.dates.filter(d => d.subjectId !== null && goingSubjects.has(d.subjectId)).map(d => d.id),
+  ]);
+  const ok = (o: ProposedChange) => touches.includes(kindOf(o.op))
+    || (touches.includes("subjects") && ((o.op === "remove_topic" && withSubject.has(o.topicId)) || (o.op === "remove_date" && withSubject.has(o.dateId))));
   const kept = set.ops.filter(ok).map((o, i) => ({ ...o, id: `c${i + 1}` }));
   const left = set.ops.filter(o => !ok(o)).map(o => `${o.says.charAt(0).toLowerCase()}${o.says.slice(1)} (not asked for)`);
   return { ops: kept, dropped: [...set.dropped, ...left].slice(0, 12) };
@@ -358,3 +410,142 @@ export function changeCounts(set: ChangeSet): string {
 // The operations without what the page needs to show them, as stored for
 // checking again (checkChanges reads the same fields back).
 export const bareOps = (set: ChangeSet): Array<Record<string, unknown>> => set.ops.map(({ id: _id, says: _says, effect: _effect, ...op }) => op as Record<string, unknown>);
+
+// ── Taking it back ────────────────────────────────────────────────────────────
+// "Revert that": what this conversation last applied, taken back by code
+// rather than by the model. When a set is applied, undoOf writes the steps
+// that would undo it from the records as they were before. Records are
+// named, not given by id (what was added has an id only once it exists);
+// resolveUndo finds them again among the records as they are, and the
+// result is checked by checkChanges and approved like any other change.
+
+export interface NoteBefore { id: string; title: string; body: string; subjectId: string | null; topicName: string | null }
+
+export function undoOf(set: ChangeSet, before: WorkspaceDetail, notes: readonly NoteBefore[], label: string): UndoRecord {
+  const steps: Array<Record<string, unknown>> = [];
+  const kept: string[] = [];
+  const subjectName = (id: string | null) => (id ? before.subjects.find(s => s.id === id)?.name ?? null : null);
+  const topicOf = (id: string) => { for (const s of before.subjects) { const t = s.topics.find(x => x.id === id); if (t) return { s, t }; } return null; };
+  const going = new Set(set.ops.flatMap(o => (o.op === "remove_subject" ? [o.subjectId] : [])));
+  for (const o of set.ops) {
+    switch (o.op) {
+      case "add_topics": for (const name of o.names) steps.push({ op: "remove_topic", subjectName: subjectName(o.subjectId), topicName: name }); break;
+      case "add_subject": steps.push({ op: "remove_subject", subjectName: o.name }); break;
+      case "rename_topic": { const hit = topicOf(o.topicId); if (hit) steps.push({ op: "rename_topic", subjectName: hit.s.name, topicName: o.name, name: hit.t.name }); break; }
+      case "remove_topic": {
+        const hit = topicOf(o.topicId);
+        // A subject that goes comes back whole, with its topics.
+        if (hit && !going.has(hit.s.id)) steps.push({ op: "add_topics", subjectName: hit.s.name, names: [hit.t.name] });
+        break;
+      }
+      case "remove_subject": { const s = before.subjects.find(x => x.id === o.subjectId); if (s) steps.push({ op: "add_subject", name: s.name, topics: s.topics.map(t => t.name) }); break; }
+      case "add_task": steps.push({ op: "remove_task", taskTitle: o.title }); break;
+      case "update_task": {
+        const t = before.tasks.find(x => x.id === o.taskId);
+        if (!t) break;
+        steps.push({
+          op: "update_task", taskTitle: o.title ?? t.title,
+          ...(o.title !== undefined ? { title: t.title } : {}), ...(o.dueDay !== undefined ? { dueDay: t.dueDay } : {}), ...(o.priority !== undefined ? { priority: t.priority } : {}),
+        });
+        break;
+      }
+      case "remove_task": {
+        const t = before.tasks.find(x => x.id === o.taskId);
+        if (t) steps.push({ op: "add_task", key: `u${steps.length + 1}`, title: t.title, subjectName: subjectName(t.subjectId), topicName: t.topicName, dueDay: t.dueDay, priority: t.priority });
+        break;
+      }
+      case "order_tasks": kept.push("the new order of tasks"); break;
+      case "add_date": steps.push({ op: "remove_date", dateTitle: o.title }); break;
+      case "update_date": {
+        const d = before.dates.find(x => x.id === o.dateId);
+        if (d) steps.push({ op: "update_date", dateTitle: o.title ?? d.title, ...(o.title !== undefined ? { title: d.title } : {}), ...(o.day !== undefined ? { day: d.day } : {}) });
+        break;
+      }
+      case "remove_date": {
+        const d = before.dates.find(x => x.id === o.dateId);
+        if (d) steps.push({ op: "add_date", title: d.title, day: d.day, kind: d.kind, subjectName: subjectName(d.subjectId) });
+        break;
+      }
+      case "add_note": steps.push({ op: "remove_note", noteTitle: o.title }); break;
+      case "remove_note": {
+        const n = notes.find(x => x.id === o.noteId);
+        if (n) steps.push({ op: "add_note", title: n.title, body: n.body, subjectName: subjectName(n.subjectId), topicName: n.topicName });
+        break;
+      }
+      case "remove_workspace": kept.push(`the deleted workspace ${quoted(before.title)}`); break;
+    }
+  }
+  return { label, steps, kept };
+}
+
+// Undoing a build: the workspace it made, all of it, as one proposed removal.
+export function undoOfBuild(title: string): UndoRecord {
+  return { label: `the build of ${title}`, steps: [{ op: "remove_workspace" }], kept: [] };
+}
+
+// The steps as operations on the records as they are now. A step whose
+// record is no longer there is left out and said.
+export function resolveUndo(undo: UndoRecord, current: WorkspaceDetail): { ops: Array<Record<string, unknown>>; missing: string[] } {
+  const ops: Array<Record<string, unknown>> = [];
+  const missing: string[] = [];
+  const subject = (name: unknown) => (typeof name === "string" ? current.subjects.find(s => low(s.name) === low(name)) ?? null : null);
+  const subjectId = (name: unknown) => subject(name)?.id ?? null;
+  const task = (title: unknown) => (typeof title === "string" ? current.tasks.find(t => t.status !== "done" && low(t.title) === low(title)) ?? null : null);
+  const date = (title: unknown) => (typeof title === "string" ? current.dates.find(d => low(d.title) === low(title)) ?? null : null);
+  const note = (title: unknown) => (typeof title === "string" ? current.notes.find(n => low(n.title) === low(title)) ?? null : null);
+  const gone = (what: string) => missing.push(what);
+  for (const x of undo.steps) {
+    switch (x.op) {
+      case "remove_topic": {
+        const t = subject(x.subjectName)?.topics.find(v => typeof x.topicName === "string" && low(v.name) === low(x.topicName));
+        if (t) ops.push({ op: "remove_topic", topicId: t.id }); else gone(`topic ${quoted(String(x.topicName))}`);
+        break;
+      }
+      case "rename_topic": {
+        const t = subject(x.subjectName)?.topics.find(v => typeof x.topicName === "string" && low(v.name) === low(x.topicName));
+        if (t) ops.push({ op: "rename_topic", topicId: t.id, name: x.name }); else gone(`topic ${quoted(String(x.topicName))}`);
+        break;
+      }
+      case "remove_subject": { const s = subject(x.subjectName); if (s) ops.push({ op: "remove_subject", subjectId: s.id }); else gone(`subject ${quoted(String(x.subjectName))}`); break; }
+      case "add_topics": {
+        const s = subject(x.subjectName);
+        if (s) ops.push({ op: "add_topics", subjectId: s.id, names: x.names }); else gone(`subject ${quoted(String(x.subjectName))}`);
+        break;
+      }
+      case "remove_task": { const t = task(x.taskTitle); if (t) ops.push({ op: "remove_task", taskId: t.id }); else gone(`task ${quoted(String(x.taskTitle))}`); break; }
+      case "update_task": {
+        const t = task(x.taskTitle);
+        if (!t) { gone(`task ${quoted(String(x.taskTitle))}`); break; }
+        const { taskTitle: _t, ...rest } = x;
+        ops.push({ ...rest, taskId: t.id });
+        break;
+      }
+      case "remove_date": { const d = date(x.dateTitle); if (d) ops.push({ op: "remove_date", dateId: d.id }); else gone(`date ${quoted(String(x.dateTitle))}`); break; }
+      case "update_date": {
+        const d = date(x.dateTitle);
+        if (!d) { gone(`date ${quoted(String(x.dateTitle))}`); break; }
+        const { dateTitle: _d, ...rest } = x;
+        ops.push({ ...rest, dateId: d.id });
+        break;
+      }
+      case "remove_note": { const n = note(x.noteTitle); if (n) ops.push({ op: "remove_note", noteId: n.id }); else gone(`note ${quoted(String(x.noteTitle))}`); break; }
+      case "remove_workspace": if (current.workspace) ops.push({ op: "remove_workspace", workspaceId: current.workspace.id }); else gone("the workspace"); break;
+      // Additions name their subject; one that is not there (yet) files them under none.
+      case "add_subject": ops.push(x); break;
+      case "add_task": case "add_date": case "add_note": {
+        const { subjectName, ...rest } = x;
+        ops.push({ ...rest, subjectId: subjectId(subjectName) });
+        break;
+      }
+    }
+  }
+  return { ops, missing };
+}
+
+export function readUndo(raw: unknown): UndoRecord | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const steps = Array.isArray(r.steps) ? r.steps.filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object" && !Array.isArray(x) && typeof (x as { op?: unknown }).op === "string") : [];
+  if (typeof r.label !== "string" || steps.length === 0) return null;
+  return { label: r.label.slice(0, 160), steps: steps.slice(0, CHANGE_OPS_MAX * 2), kept: Array.isArray(r.kept) ? r.kept.filter((k): k is string => typeof k === "string").slice(0, 6) : [] };
+}

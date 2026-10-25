@@ -43,10 +43,11 @@ import { checkFiles, writeBuilderChanges, writeBuilderPlan } from "./workspace-g
 import type { LlmAttachment } from "../../services/llmProviders";
 import { readBuilderTurn } from "./builder-conversation";
 import { changeResource, createWorkspace, recentWorkspaceTitles, resourceCandidates, resourceDetail, similarWorkspaces, studiedTopicIds, workspaceDetail, workspaceSummaries } from "./workspaces";
-import { bareOps, changeCounts, checkChanges, decideResource, matchResources, readChangeSet, withinAsk } from "./builder-changes";
+import { bareOps, changeCounts, checkChanges, decideResource, matchResources, readChangeSet, resolveUndo, undoOf, undoOfBuild, withinAsk } from "./builder-changes";
+import { notesWithBodies } from "./notes";
 import {
   DECLINE_REPLY, MESSAGE_MAX, TALKING, canMove, decideStep, type Step, describeChanges, emptyBrief, isPendingLive, learnerWords, message,
-  needsReply, nextBrief, planChanges, readBrief, readMessages, readPending, replyWithQuestion, spoken, withMessages, holdsLine,
+  needsReply, nextBrief, planChanges, changedNothing, readBrief, readMessages, readPending, replyWithQuestion, spoken, withMessages, holdsLine,
 } from "./builder-state";
 import type { BriefFact, BuilderBrief, BuilderMessage, BuilderResponse, ChangeSet, DraftFailure, DraftFile, DraftListView, DraftStatus, DraftView, PendingJob, ResourceRef } from "./builder.types";
 import type { WorkspaceCounts } from "./workspaces.types";
@@ -200,7 +201,7 @@ async function signupContext(platformChatId: string, profile: { id: string; goal
 async function outlineOf(platformChatId: string, profileId: string, ref: Pick<ResourceRef, "workspaceId" | "subjectIds"> | null) {
   if (!ref) return null;
   const d = await resourceDetail(platformChatId, profileId, ref);
-  return d ? { title: d.title, subjects: d.subjects.map(s => s.name), tasks: d.tasks.map(t => t.title), notes: d.notes.map(n => n.title) } : null;
+  return d ? { title: d.title, subjects: d.subjects.map(s => s.name), tasks: d.tasks.map(t => taskLine(t.title, { status: t.status, priority: t.priority, dueDay: t.dueDay, under: t.topicName })), notes: d.notes.map(n => n.title) } : null;
 }
 
 // Their workspaces and subjects by name, for the model to recognise one.
@@ -487,10 +488,17 @@ async function settle(id: string, jobId: string, change: {
   return done.count === 1 ? "applied" : "gone";
 }
 
+// A task as the model reads it: its title and what the plan says about it,
+// so a question about a priority or a date is answered from what is there.
+function taskLine(title: string, t: { status?: string; priority: string | null; dueDay: string | null; under: string | null; after?: string | null }): string {
+  const parts = [t.status && t.status !== "todo" ? t.status : null, t.priority ? `${t.priority} priority` : null, t.dueDay ? `due ${t.dueDay}` : null, t.under ? `in ${t.under}` : null, t.after ? `after ${t.after}` : null].filter(Boolean);
+  return parts.length ? `${title} (${parts.join(", ")})` : title;
+}
+
 function proposalSummary(plan: WorkspacePlan): { milestones: string[]; tasks: string[]; topics: string[]; dates: string[] } {
   return {
     milestones: plan.phases.map(p => p.name),
-    tasks: plan.tasks.map(t => t.title),
+    tasks: plan.tasks.map(t => taskLine(t.title, { priority: t.priority, dueDay: t.dueDay, under: t.topic, after: t.after ? plan.tasks.find(x => x.key === t.after)?.title ?? null : null })),
     topics: plan.subjects.flatMap(s => s.topics.map(t => t.name)),
     dates: plan.dates.map(d => `${d.title} ${d.day}`),
   };
@@ -525,9 +533,20 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
     return;
   }
 
+  // "Delete all of it": built by code (a workspace's removal, or each of its
+  // subjects'), whatever the model's next step was.
+  const deleting = Boolean(reading.deleteAll && ref);
   // Not what this page does: said by code, and nothing is opened, proposed or counted.
-  if (reading.next === "decline") {
+  if (reading.next === "decline" && !deleting) {
     await settle(row.id, job.jobId, { failure: null, add: [message("nova", DECLINE_REPLY, new Date(), { kind: "chat" })] });
+    return;
+  }
+
+  // "Revert that": only what this conversation applied can be taken back, by code.
+  const undoing = Boolean(reading.undo && ref) && !deleting;
+  if (undoing && !before.undo) {
+    const text = "There's nothing I've applied in this conversation to take back. Tell me what you'd like changed and I'll propose it.";
+    await settle(row.id, job.jobId, { brief: { ...nextBrief(before, reading, { type: "chat" }), known }, failure: null, add: [message("nova", text, new Date(), { kind: "chat" })] });
     return;
   }
 
@@ -558,7 +577,7 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
   }
 
   // Found and asked to change: propose the change against what is there.
-  const step: Step = found ? { type: "draft", reason: "ready" } : decideStep({ plan: ref ? null : plan, brief: before, improving: Boolean(ref), changes: Boolean(changes) }, reading);
+  const step: Step = found || undoing || deleting ? { type: "draft", reason: "ready" } : decideStep({ plan: ref ? null : plan, brief: before, improving: Boolean(ref), changes: Boolean(changes) }, reading);
   const brief = { ...nextBrief(before, reading, step), known, choices: [] as string[], touches: reading.touches, ...(found ? { title: found.title } : {}) };
   const title = found?.title ?? row.title ?? reading.title ?? brief.title;
   const notes = note ? [message("nova", note, new Date(), { kind: "notice" })] : [];
@@ -571,7 +590,11 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
   }
 
   // Draft or revise: say what Nova will do, mark the job's stage, then write.
-  const intro = found
+  const intro = deleting
+    ? "I'll list everything that deleting it would remove, on the right; nothing is deleted until you approve it."
+    : undoing
+    ? `I'll propose taking back ${before.undo!.label}, on the right; nothing changes until you approve it.`
+    : found
     ? `I found ${found.title} in your Kivo. I'll propose the changes on the right, against what's there now; nothing changes until you approve them.`
     : step.type === "draft" && step.reason === "enough_questions" && !plan
       ? "I have enough to sketch a first version. I'll put it on the right; correct anything that's off."
@@ -590,14 +613,16 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
   if (moved.count !== 1) return;
   const fresh = await rowOf(profile.id, row.id);
   if (!fresh || fresh.jobId !== job.jobId) return;
-  if (ref) await runChanges(platformChatId, profile, fresh, job, step.type === "revise" ? step.change : (reading.change ?? lastLearnerText(fresh)), deps, now);
+  if (ref) await runChanges(platformChatId, profile, fresh, job, step.type === "revise" ? step.change : (reading.change ?? lastLearnerText(fresh)), deps, now, deleting ? "delete" : undoing ? "undo" : null);
   else await runDraft(platformChatId, profile, fresh, job, step.type === "revise" ? step.change : null, deps, now);
 }
 
 // A change set to what the conversation works on: operations on its records
 // by id, checked against them as they are now (builder-changes.ts). Written
 // only to the draft; the records change on approval.
-async function runChanges(platformChatId: string, profile: { id: string; timezone: string | null; goals: string[] }, row: Row, job: BuilderJob, change: string, deps: BuilderDeps, now: Date) {
+// by: "undo" takes back what was last applied, "delete" removes all of it;
+// both built by code, not by the model.
+async function runChanges(platformChatId: string, profile: { id: string; timezone: string | null; goals: string[] }, row: Row, job: BuilderJob, change: string, deps: BuilderDeps, now: Date, by: "undo" | "delete" | null = null) {
   const ref = refOf(row);
   const before = readChangeSet(row.changes);
   const brief = readBrief(row.brief);
@@ -611,12 +636,18 @@ async function runChanges(platformChatId: string, profile: { id: string; timezon
     await settle(row.id, job.jobId, { status: fallback, failure: null, add: [message("nova", gone, new Date(), { kind: "error" })] });
     return;
   }
-  const written = await (deps.writeChanges ?? writeBuilderChanges)({
+  // Taking back what was applied: the steps code wrote then, not the model's.
+  const undo = by === "undo" ? brief.undo ?? null : null;
+  const resolved = undo ? resolveUndo(undo, current)
+    : by === "delete" ? { ops: current.workspace ? [{ op: "remove_workspace", workspaceId: current.workspace.id }] : current.subjects.map(x => ({ op: "remove_subject", subjectId: x.id })), missing: [] }
+    : null;
+  const unresolved = undo && resolved ? [...resolved.missing.map(m => `${m} (not there any more)`), ...undo.kept.map(k => `${k} (can't be taken back)`)] : [];
+  const written = resolved ? { ok: true as const, ops: resolved.ops, summary: null } : await (deps.writeChanges ?? writeBuilderChanges)({
     today, kind: brief.kind, facts: brief.facts,
     current: {
       title: current.title, subjects: current.subjects,
       tasks: current.tasks.map(t => ({ id: t.id, title: t.title, status: t.status, dueDay: t.dueDay, priority: t.priority, topicName: t.topicName })),
-      dates: current.dates.map(d => ({ id: d.id, title: d.title, day: d.day })), notes: current.notes.map(n => n.title),
+      dates: current.dates.map(d => ({ id: d.id, title: d.title, day: d.day })), notes: current.notes.map(n => ({ id: n.id, title: n.title })),
     },
     proposed: before ? bareOps(before) : null, change,
     conversation: messages.slice(-CONVERSATION_FOR_PLAN).map(m => ({ role: m.role, text: m.text })),
@@ -627,7 +658,8 @@ async function runChanges(platformChatId: string, profile: { id: string; timezon
     return;
   }
   // Only the kinds of record the request is about: "add two topics" brings no tasks, notes or dates.
-  const set = withinAsk(checkChanges(written.ops, current, { today, studied }), brief.touches ?? [], current);
+  const checked = checkChanges(written.ops, current, { today, studied });
+  const set = by ? { ops: checked.ops, dropped: [...unresolved, ...checked.dropped].slice(0, 12) } : withinAsk(checked, brief.touches ?? [], current);
   if (set.ops.length === 0) {
     const text = `I couldn't turn that into a change to ${current.title}${set.dropped.length ? `: ${set.dropped.slice(0, 3).join("; ")}` : ""}. Nothing is proposed; could you say it another way?`;
     await settle(row.id, job.jobId, { status: fallback, failure: null, brief: { ...brief, dropped: set.dropped }, add: [message("nova", text, new Date(), { kind: "chat" })] });
@@ -636,7 +668,7 @@ async function runChanges(platformChatId: string, profile: { id: string; timezon
   const version = baseVersion + 1;
   const listed = set.ops.slice(0, 8).map(o => `- ${o.says}`).join("\n");
   const text = [
-    `${before ? `Version ${version} of the changes to ${current.title}` : `Here's what I'd change in ${current.title}`}: ${changeCounts(set)}.`,
+    `${undo ? `To take back ${undo.label}` : before ? `Version ${version} of the changes to ${current.title}` : `Here's what I'd change in ${current.title}`}: ${changeCounts(set)}.`,
     listed + (set.ops.length > 8 ? `\n- and ${set.ops.length - 8} more` : ""),
     ...(set.dropped.length ? [`Left out: ${set.dropped.slice(0, 3).join("; ")}.`] : []),
     "Everything else stays as it is. Nothing changes until you approve it.",
@@ -677,11 +709,17 @@ async function runDraft(platformChatId: string, profile: { id: string; timezone:
   }
 
   const plan = written.plan;
+  const diff = before ? planChanges(before, plan) : null;
+  // The same proposal back is not a new version: said, and nothing moves.
+  if (before && diff && changedNothing(diff) && plan.summary === before.summary) {
+    await settle(row.id, job.jobId, { status: "awaiting_approval", failure: null, add: [message("nova", "I couldn't find anything in the proposal to change for that, so it's as it was. Could you say what should be different?", new Date(), { kind: "chat" })] });
+    return;
+  }
   const version = baseVersion + 1;
   const counts = planCounts(plan);
   const target = existing ? ` It adds to ${existing.title}: nothing there is changed or removed.` : "";
   const text = before
-    ? `Version ${version} is ready. ${describeChanges(planChanges(before, plan))}${target} Approve this version to build it, or keep refining.`
+    ? `Version ${version} is ready. ${describeChanges(diff!)}${target} Approve this version to build it, or keep refining.`
     : `Here's a first proposal: ${plan.title}. ${holdsLine(brief.kind, { ...counts, phases: plan.phases.length })}.${target} Nothing is created until you approve it. Edit anything on the right, or tell me what's off.`;
   const result = await settle(row.id, job.jobId, {
     status: "awaiting_approval", failure: null, title: plan.title,
@@ -802,6 +840,9 @@ export async function approveDraft(platformChatId: string, id: unknown, input: A
 
   if (ref && set) {
     let changed: Awaited<ReturnType<typeof changeResource>>;
+    // What is there before, so what this applies can be taken back.
+    const prior = await resourceDetail(platformChatId, profile.id, ref, now);
+    const priorNotes = await notesWithBodies(profile.id, set.ops.flatMap(o => (o.op === "remove_note" ? [o.noteId] : [])));
     try {
       changed = await changeResource(platformChatId, { ref, set, key: `d${row.id}v${row.version}`.slice(0, 60) }, now);
     } catch (err) {
@@ -820,9 +861,22 @@ export async function approveDraft(platformChatId: string, id: unknown, input: A
       return { ok: false, error: changed.error === "changed" ? "stale" : changed.error === "not_found" ? "not_found" : changed.error === "too_many" ? "too_many" : "failed", message: changed.message, draft: await viewOf(fresh, now) };
     }
     const c = changed.counts;
-    const said = `Done: ${changed.detail.title} is updated (${[c.added && `${c.added} added`, c.changed && `${c.changed} changed`, c.removed && `${c.removed} removed`].filter(Boolean).join(", ") || "nothing new; it was all there already"}). Everything else is as it was. See it on the Knowledge Map, Planner and Notes.`;
+    const brief = readBrief(row.brief);
+    if (changed.deleted) {
+      // Gone, as asked: the conversation goes on with nothing to work on.
+      const kept = set.ops.find(o => o.op === "remove_workspace")?.says.includes("finished task") ? " Finished tasks stay in your Planner." : "";
+      const said = `Done: ${changed.title} is deleted, with its subjects, topics, open tasks, notes and dates.${kept} This conversation can build something new.`;
+      const fresh = await back(
+        { status: "discovery", workspaceId: null, targetWorkspaceId: null, targetSubjectIds: [], plan: NONE, changes: NONE, builtVersion: null, failure: NONE, version: row.version + 1, brief: json({ ...brief, undo: null }) },
+        [message("nova", said, new Date(), { kind: "built", version: row.version })],
+      );
+      await dropFiles(row.id);
+      return { ok: true, draft: await viewOf(fresh, now) };
+    }
+    const said = `Done: ${changed.title} is updated (${[c.added && `${c.added} added`, c.changed && `${c.changed} changed`, c.removed && `${c.removed} removed`].filter(Boolean).join(", ") || "nothing new; it was all there already"}). Everything else is as it was. See it on the Knowledge Map, Planner and Notes.`;
+    const undo = prior ? undoOf(set, prior, priorNotes, `the changes of version ${row.version}`) : null;
     const fresh = await back(
-      { status: "ready", workspaceId: ref.workspaceId ?? row.workspaceId, builtVersion: row.version, failure: NONE, changes: NONE, ...(ref.workspaceId ? {} : { targetSubjectIds: changed.subjectIds }) },
+      { status: "ready", workspaceId: ref.workspaceId ?? row.workspaceId, builtVersion: row.version, failure: NONE, changes: NONE, brief: json({ ...brief, undo: undo && undo.steps.length ? undo : null }), ...(ref.workspaceId ? {} : { targetSubjectIds: changed.subjectIds }) },
       [message("nova", said, new Date(), { kind: "built", version: row.version })],
     );
     await dropFiles(row.id);
@@ -857,8 +911,11 @@ export async function approveDraft(platformChatId: string, id: unknown, input: A
   const said = counts
     ? `${result.status === "updated" ? `Added to ${result.workspace.title}` : `${result.workspace.title} is built`}: ${holdsLine(readBrief(row.brief).kind, { subjects: counts.subjectsAdded, topics: counts.topicsAdded, phases: 0, tasks: counts.tasksAdded, notes: counts.notesAdded, dates: counts.datesAdded }) || "nothing new (you had all of it)"}. It's in your Planner, Knowledge and Notes now.`
     : `${result.workspace.title} was already built from this version.`;
+  // Taking it back is deleting it, all of it, proposed and approved like any change.
+  // Added to a workspace they had: not taken back here (what it added is mixed with what was there).
+  const undo = result.status === "created" ? undoOfBuild(result.workspace.title) : result.status === "exists" ? readBrief(row.brief).undo ?? null : null;
   const fresh = await back(
-    { status: "ready", workspaceId: result.workspace.id, builtVersion: row.version, failure: NONE },
+    { status: "ready", workspaceId: result.workspace.id, builtVersion: row.version, failure: NONE, brief: json({ ...readBrief(row.brief), undo }) },
     [message("nova", said, new Date(), { kind: "built", version: row.version })],
   );
   await dropFiles(row.id);

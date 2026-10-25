@@ -19,6 +19,7 @@
 // No regex: text is compared by characters (SKILL.md; the no-regex guard).
 
 import { oneLine, type WorkspacePlan } from "./workspace-plan";
+import { readUndo } from "./builder-changes";
 import { CHANGE_KINDS, WORK_KINDS, type ChangeKind, type BriefFact, type BuilderBrief, type BuilderMessage, type DraftStatus, type PendingJob, type PlanChangeSummary, type WorkKind } from "./builder.types";
 
 export const MESSAGE_MAX = 2000;
@@ -29,7 +30,8 @@ export const MAX_QUESTIONS = 4;
 // A job that has said nothing for this long is taken to have died with its
 // process; the learner may try again.
 export const PENDING_STALE_MS = 180_000;
-const FACTS_MAX = 12, KNOWN_MAX = 8, ASSUMPTIONS_MAX = 8, SUGGESTIONS_MAX = 6, LINE_MAX = 200;
+// One suggestion at most: Nova proposes what was asked, not a menu of extras.
+const FACTS_MAX = 12, KNOWN_MAX = 8, ASSUMPTIONS_MAX = 8, SUGGESTIONS_MAX = 1, LINE_MAX = 200;
 
 export const OPENING_QUESTION = "What are you working on, and what would you like to end up with?";
 // Asked when code holds back a proposal the model wanted to write from one
@@ -48,7 +50,8 @@ export const TRANSITIONS: Record<DraftStatus, readonly DraftStatus[]> = {
   discovery:         ["discovery", "drafting", "cancelled"],
   drafting:          ["awaiting_approval", "discovery", "failed", "cancelled"],
   awaiting_approval: ["awaiting_approval", "drafting", "building", "cancelled"],
-  building:          ["ready", "failed", "awaiting_approval"],
+  // discovery: what it changed was deleted, and the conversation can build anew.
+  building:          ["ready", "failed", "awaiting_approval", "discovery"],
   // A built conversation goes on: the learner asks for more changes to what
   // it built, which is then proposed and approved like any other.
   ready:             ["discovery"],
@@ -95,6 +98,12 @@ export interface TurnReading {
   // (builder-changes.ts finds it among their own records; the model never
   // names an id).
   resource:    { name: string; intent: "open" | "change" | "new" } | null;
+  // They ask to take back what this conversation last applied ("revert
+  // that", "bring version 6 back"). Code builds the undo (builder-changes.ts).
+  undo?:       boolean;
+  // They want all of what this conversation works on deleted. Code builds
+  // the removal (builder.ts), listed and approved like any change.
+  deleteAll?:  boolean;
 }
 
 // Lower case, single spaces, curly quotes straightened: so a quote matches
@@ -162,6 +171,8 @@ export function readTurn(raw: unknown, learnerText: string, fileNames: readonly 
     change: oneLine(r.change, 600) || null,
     resource: resourceOf(r.resource),
     touches: Array.isArray(r.touches) ? CHANGE_KINDS.filter(k => (r.touches as unknown[]).includes(k)) : [],
+    undo: r.undo === true,
+    deleteAll: r.deleteAll === true,
   };
 }
 
@@ -249,7 +260,8 @@ export function holdsLine(kind: WorkKind | null, c: HeldCounts): string {
   const project = kind === "project", work = kind === "work" || kind === "career", skill = kind === "skill";
   return [
     project || work ? null : n(c.subjects, academic ? "subject" : "area"),
-    n(c.topics, project ? "part" : work ? "area" : skill ? "concept" : "topic"),
+    // Milestones are written as topics too (planWrites): counted once, as milestones.
+    n(Math.max(0, c.topics - c.phases), project ? "part" : work ? "area" : skill ? "concept" : "topic"),
     n(c.phases, academic ? "phase" : skill ? "stage" : "milestone"),
     n(c.tasks, "task"), n(c.notes, "note"), n(c.dates, "date"),
   ].filter(Boolean).join(", ");
@@ -275,6 +287,7 @@ export function readBrief(raw: unknown): BuilderBrief {
     suggestions: listOf(r.suggestions, SUGGESTIONS_MAX),
     ...(Array.isArray(r.choices) ? { choices: listOf(r.choices, 6) } : {}),
     ...(Array.isArray(r.touches) ? { touches: CHANGE_KINDS.filter(k => (r.touches as unknown[]).includes(k)) } : {}),
+    ...(r.undo ? { undo: readUndo(r.undo) } : {}),
     question: oneLine(r.question, 300) || null,
     questionsAsked: typeof r.questionsAsked === "number" && Number.isInteger(r.questionsAsked) && r.questionsAsked >= 0 ? r.questionsAsked : 0,
     dropped: listOf(r.dropped, 12),
@@ -334,24 +347,45 @@ export function needsReply(messages: BuilderMessage[], pending: PendingJob | nul
 // What a new version adds and takes away, by name: shown with it, so a
 // revision never changes the proposal unseen.
 export function planChanges(before: WorkspacePlan | null, after: WorkspacePlan): PlanChangeSummary {
-  const names = (p: WorkspacePlan | null): Map<string, string> => {
-    const out = new Map<string, string>();
+  type Seen = { label: string; kind: "tasks" | "milestones" | "topics" | "notes" | null; sig: string };
+  const names = (p: WorkspacePlan | null): Map<string, Seen> => {
+    const out = new Map<string, Seen>();
     if (!p) return out;
-    for (const s of p.subjects) { out.set(`subject:${normalized(s.name)}`, `subject ${s.name}`); for (const t of s.topics) out.set(`topic:${normalized(s.name)}:${normalized(t.name)}`, `topic ${t.name}`); }
-    for (const ph of p.phases) out.set(`phase:${normalized(ph.name)}`, `milestone ${ph.name}`);
-    for (const t of p.tasks) out.set(`task:${normalized(t.title)}`, `task ${t.title}`);
-    for (const n of p.notes) out.set(`note:${normalized(n.title)}`, `note ${n.title}`);
-    for (const d of p.dates) out.set(`date:${normalized(d.title)}:${d.day}`, `date ${d.title} (${d.day})`);
+    // A topic by its name and its subject's place: renaming the subject is not every topic changing.
+    for (const [i, s] of p.subjects.entries()) {
+      out.set(`subject:${normalized(s.name)}`, { label: `subject ${s.name}`, kind: null, sig: "" });
+      for (const t of s.topics) out.set(`topic:${i}:${normalized(t.name)}`, { label: `topic ${t.name}`, kind: "topics", sig: JSON.stringify([t.unit ?? null, t.subtopics ?? []]) });
+    }
+    for (const ph of p.phases) out.set(`phase:${normalized(ph.name)}`, { label: `milestone ${ph.name}`, kind: "milestones", sig: JSON.stringify([ph.weeks, ph.hoursPerWeek, ph.goals, ph.completion, ph.project]) });
+    // By key: a task renamed is the same task, changed.
+    for (const t of p.tasks) out.set(`task:${t.key}`, { label: `task ${t.title}`, kind: "tasks", sig: JSON.stringify([t.title, t.priority, t.dueDay, t.topic, t.after ?? null, t.estimatedMinutes]) });
+    for (const n of p.notes) out.set(`note:${normalized(n.title)}`, { label: `note ${n.title}`, kind: "notes", sig: n.body });
+    for (const d of p.dates) out.set(`date:${normalized(d.title)}:${d.day}`, { label: `date ${d.title} (${d.day})`, kind: null, sig: "" });
     return out;
   };
   const a = names(before), b = names(after);
-  const added = [...b.keys()].filter(k => !a.has(k)).map(k => b.get(k)!);
-  const removed = [...a.keys()].filter(k => !b.has(k)).map(k => a.get(k)!);
-  return { added, removed, renamed: before && normalized(before.title) !== normalized(after.title) ? 1 : 0 };
+  // One subject for another in the same place: a rename, said once.
+  const renamedSubject = before && before.subjects.length === after.subjects.length
+    ? before.subjects.flatMap((s, i) => (normalized(s.name) !== normalized(after.subjects[i]!.name) && !after.subjects.some(x => normalized(x.name) === normalized(s.name)) ? [`${s.name} to ${after.subjects[i]!.name}`] : []))
+    : [];
+  const isRename = (label: string) => label.startsWith("subject ") && renamedSubject.some(r => r.startsWith(`${label.slice(8)} to `) || r.endsWith(` to ${label.slice(8)}`));
+  const added = [...b.keys()].filter(k => !a.has(k)).map(k => b.get(k)!.label).filter(l => !isRename(l));
+  const removed = [...a.keys()].filter(k => !b.has(k)).map(k => a.get(k)!.label).filter(l => !isRename(l));
+  const changed = { tasks: 0, milestones: 0, topics: 0, notes: 0 };
+  for (const [k, v] of b) { const was = a.get(k); if (was && v.kind && was.sig !== v.sig) changed[v.kind]++; }
+  return { added, removed, renamed: before && normalized(before.title) !== normalized(after.title) ? 1 : 0, changed, ...(renamedSubject.length ? { renamedSubjects: renamedSubject } : {}) };
+}
+
+export function changedNothing(c: PlanChangeSummary): boolean {
+  const ch = c.changed ?? { tasks: 0, milestones: 0, topics: 0, notes: 0 };
+  return c.added.length === 0 && c.removed.length === 0 && c.renamed === 0 && !c.renamedSubjects?.length && ch.tasks + ch.milestones + ch.topics + ch.notes === 0;
 }
 
 export function describeChanges(c: PlanChangeSummary): string {
-  const part = (label: string, list: string[]) => (list.length === 0 ? null : `${label} ${list.slice(0, 4).join(", ")}${list.length > 4 ? ` and ${list.length - 4} more` : ""}`);
-  const parts = [part("Added", c.added), part("Removed", c.removed), c.renamed ? "Renamed the workspace" : null].filter(Boolean);
-  return parts.length ? `${parts.join(". ")}.` : "Nothing was added or removed.";
+  const part = (label: string, list: string[]) => (list.length === 0 ? null : `${label} ${list.slice(0, 3).join(", ")}${list.length > 3 ? ` and ${list.length - 3} more` : ""}`);
+  const n = (count: number, one: string, many = `${one}s`) => (count ? `${count} ${count === 1 ? one : many}` : null);
+  const ch = c.changed ?? { tasks: 0, milestones: 0, topics: 0, notes: 0 };
+  const changed = [n(ch.tasks, "task"), n(ch.milestones, "milestone"), n(ch.topics, "topic"), n(ch.notes, "note")].filter(Boolean);
+  const parts = [c.renamedSubjects?.length ? `Renamed ${c.renamedSubjects.join(", ")}` : null, part("Added", c.added), part("Removed", c.removed), changed.length ? `Changed ${changed.join(", ")}` : null, c.renamed ? "Renamed the workspace" : null].filter(Boolean);
+  return parts.length ? `${parts.join(". ")}.` : "Nothing in it changed.";
 }

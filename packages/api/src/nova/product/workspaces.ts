@@ -27,10 +27,10 @@ import { templateById } from "./templates";
 import { declareWorkspaceSubjectsIn, ensureSetupProfile } from "./setup";
 import { addDatesIn } from "./exams";
 import { createTasksIn } from "./tasks";
-import { createNotesIn, listNoteTitlesIn } from "./notes";
+import { createNotesIn, listNoteTitlesIn, removeNotesIn } from "./notes";
 import { subjectsForMatching, subjectsWithTopics } from "./setup";
 import { TaskChanged, listTasksInSubjects, listTasksWithKeyPrefix, placeTasksIn, removeOpenTasksIn, updateTasksIn } from "./tasks";
-import { DateChanged, listExams, updateDatesIn } from "./exams";
+import { DateChanged, listExams, removeDatesIn, unfileDatesIn, updateDatesIn } from "./exams";
 import { StaleStructure, checkStudyEdits, loadStudyStructure, playStudyEditsIn } from "./setup-edit";
 import type { StudyEdit } from "./setup-edit.types";
 import { bareOps, checkChanges, type ResourceCandidates } from "./builder-changes";
@@ -172,6 +172,8 @@ export async function createWorkspace(platformChatId: string, input: CreateInput
 class RefusedError extends Error {
   constructor(readonly code: "too_many" | "invalid", message: string) { super(message); }
 }
+// A note a change set removes had already gone.
+class NoteChanged extends Error {}
 
 // Their newest workspaces' titles and summaries, for what Nova is told
 // (builder.ts): a record of what exists.
@@ -267,14 +269,16 @@ export async function studiedTopicIds(profileId: string): Promise<Set<string>> {
 // the change set, notes and dates are never added twice).
 
 export type ChangeResult =
-  | { ok: true; detail: WorkspaceDetail; counts: { added: number; changed: number; removed: number }; subjectIds: string[] }
+  // deleted: the workspace itself is gone (detail null).
+  | { ok: true; detail: WorkspaceDetail | null; title: string; deleted: boolean; counts: { added: number; changed: number; removed: number }; subjectIds: string[] }
   | { ok: false; error: "not_found" | "changed" | "too_many" | "invalid"; message: string };
 
 const target = (o: ChangeOp): string | null =>
   o.op === "rename_topic" || o.op === "remove_topic" ? `topic:${o.topicId}`
   : o.op === "update_task" || o.op === "remove_task" ? `task:${o.taskId}`
   : o.op === "update_date" ? `date:${o.dateId}` : o.op === "order_tasks" ? `order:${o.taskIds.join(",")}`
-  : o.op === "remove_subject" ? `subject:${o.subjectId}` : null;
+  : o.op === "remove_subject" ? `subject:${o.subjectId}` : o.op === "remove_date" ? `date:${o.dateId}`
+  : o.op === "remove_note" ? `note:${o.noteId}` : o.op === "remove_workspace" ? `workspace:${o.workspaceId}` : null;
 
 export async function changeResource(
   platformChatId: string,
@@ -305,13 +309,18 @@ export async function changeResource(
     : o.op === "remove_topic" ? [{ op: "remove_topic", topicId: o.topicId }] : []))
     // A subject is removed once its topics are gone.
     .concat(ops.flatMap((o): StudyEdit[] => (o.op === "remove_subject" ? [{ op: "remove_subject", subjectId: o.subjectId }] : [])));
-  if (checkStudyEdits(structure, edits).issues.length > 0) {
+  // Dates go before the subjects they belong to: past ones, never listed, are kept unfiled.
+  const goingSubjects = ops.flatMap(o => (o.op === "remove_subject" ? [o.subjectId] : []));
+  const checkable = { ...structure, subjects: structure.subjects.map(x => (goingSubjects.includes(x.id) ? { ...x, dates: 0 } : x)) };
+  if (checkStudyEdits(checkable, edits).issues.length > 0) {
     return { ok: false, error: "changed", message: "Your subjects changed since Nova proposed this. Nothing was changed; ask Nova again." };
   }
   const prefix = row ? `ws:${row.clientKey}:${input.key}-` : `nb:${input.key}-`;
   const pick = <K extends ChangeOp["op"]>(k: K) => ops.filter((o): o is Extract<typeof o, { op: K }> => o.op === k);
   try {
     const subjectIds = await prisma.$transaction(async tx => {
+      await removeDatesIn(tx, profileId, pick("remove_date").map(o => o.dateId));
+      await unfileDatesIn(tx, profileId, goingSubjects);
       await playStudyEditsIn(tx, profileId, edits, structure.version);
       // A subject added here belongs to the workspace from now on.
       const added = pick("add_subject").length
@@ -330,15 +339,19 @@ export async function changeResource(
       await updateDatesIn(tx, profileId, pick("update_date").map(({ dateId, title, day }) => ({ dateId, title, day })), today, now);
       const notes = await createNotesIn(tx, profileId, pick("add_note").map(o => ({ title: o.title, body: o.body, subjectId: o.subjectId, topicName: o.topicName })));
       if (!notes.ok) throw new RefusedError("invalid", notes.message);
-      if (row && (ids.length !== row.subjectIds.length || gone.size > 0)) await tx.novaWorkspace.update({ where: { id: row.id }, data: { subjectIds: ids } });
+      if (!(await removeNotesIn(tx, profileId, pick("remove_note").map(o => o.noteId)))) throw new NoteChanged();
+      // The workspace record last, once everything in it has gone.
+      if (row && pick("remove_workspace").length) await tx.novaWorkspace.delete({ where: { id: row.id } });
+      else if (row && (ids.length !== row.subjectIds.length || gone.size > 0)) await tx.novaWorkspace.update({ where: { id: row.id }, data: { subjectIds: ids } });
       return ids;
     }, { timeout: 30_000, maxWait: 10_000 });
-    const detail = await resourceDetail(platformChatId, profileId, row ? { workspaceId: row.id, subjectIds: [] } : { workspaceId: null, subjectIds }, now);
+    const deleted = pick("remove_workspace").length > 0;
+    const detail = deleted ? null : await resourceDetail(platformChatId, profileId, row ? { workspaceId: row.id, subjectIds: [] } : { workspaceId: null, subjectIds }, now);
     const count = (e: string) => ops.filter(o => o.effect === e).length;
-    return { ok: true, detail: detail!, subjectIds, counts: { added: count("add"), changed: count("change"), removed: count("remove") } };
+    return { ok: true, detail, title: current.title, deleted, subjectIds, counts: { added: count("add"), changed: count("change"), removed: count("remove") } };
   } catch (err) {
     if (err instanceof RefusedError) return { ok: false, error: err.code, message: err.message };
-    if (err instanceof StaleStructure || err instanceof TaskChanged || err instanceof DateChanged || (err as { code?: string } | null)?.code === "P2002" || (err as { code?: string } | null)?.code === "P2025") {
+    if (err instanceof StaleStructure || err instanceof TaskChanged || err instanceof DateChanged || err instanceof NoteChanged || (err as { code?: string } | null)?.code === "P2002" || (err as { code?: string } | null)?.code === "P2025") {
       return { ok: false, error: "changed", message: "Something here changed while this was being saved. Nothing was changed; ask Nova again." };
     }
     throw err;

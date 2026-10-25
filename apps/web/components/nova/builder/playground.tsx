@@ -569,10 +569,12 @@ export function DraftPlayground({ state, view, onView, onAsk }: {
   }
 
   const counts = planCounts(plan)
+  // Milestones are written as topics too: counted once, as milestones.
+  const topics = Math.max(0, counts.topics - plan.phases.length)
   const stats = [
     plan.phases.length ? `${plan.phases.length} ${words.phases.toLowerCase()}` : null,
     `${counts.tasks} task${counts.tasks === 1 ? '' : 's'}`,
-    counts.topics ? `${counts.topics} ${counts.topics === 1 ? words.topic : `${words.topic}s`}` : null,
+    topics ? `${topics} ${topics === 1 ? words.topic : `${words.topic}s`}` : null,
     counts.dates ? `${counts.dates} date${counts.dates === 1 ? '' : 's'}` : null,
   ].filter(Boolean).join(' · ')
 

@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   MAX_QUESTIONS, OPENING_QUESTION, PENDING_STALE_MS, TRANSITIONS, canMove, decideStep, describeChanges, emptyBrief,
-  isPendingLive, needsReply, nextBrief, normalized, planChanges, readTurn, withMessages, message, MESSAGES_KEPT, replyWithQuestion, MIN_FACTS_TO_DRAFT, STARTING_QUESTION, holdsLine,
+  isPendingLive, needsReply, nextBrief, normalized, planChanges, readTurn, withMessages, changedNothing, message, MESSAGES_KEPT, replyWithQuestion, MIN_FACTS_TO_DRAFT, STARTING_QUESTION, holdsLine,
 } from "../product/builder-state";
 import { languageRule, readBuilderTurn, turnPrompt, type TurnInput } from "../product/builder-conversation";
 import { builderPlanPrompt, writeBuilderPlan, NO_RESEARCH, type BuilderPlanRequest } from "../product/workspace-generation";
@@ -113,9 +113,12 @@ describe("what a turn may do (code decides, not the model)", () => {
   });
 
   it("what a proposal holds is said in its kind's words: a project has parts and milestones, not subjects (seen 22 Oct)", () => {
-    const c = { subjects: 1, topics: 3, phases: 3, tasks: 8, notes: 9, dates: 1 };
+    // Topics as written: the 3 milestones are topics too, counted once.
+    const c = { subjects: 1, topics: 6, phases: 3, tasks: 8, notes: 9, dates: 1 };
     expect(holdsLine("project", c)).toBe("3 parts, 3 milestones, 8 tasks, 9 notes, 1 date");
-    expect(holdsLine("semester", { ...c, subjects: 4, phases: 0 })).toBe("4 subjects, 3 topics, 8 tasks, 9 notes, 1 date");
+    // Seen 25 Oct: "4 parts, 4 milestones" for a project whose parts are its milestones.
+    expect(holdsLine("project", { ...c, topics: 3 })).toBe("3 milestones, 8 tasks, 9 notes, 1 date");
+    expect(holdsLine("semester", { ...c, subjects: 4, topics: 3, phases: 0 })).toBe("4 subjects, 3 topics, 8 tasks, 9 notes, 1 date");
     expect(holdsLine("skill", c)).toBe("1 area, 3 concepts, 3 stages, 8 tasks, 9 notes, 1 date");
     expect(holdsLine(null, { subjects: 0, topics: 0, phases: 0, tasks: 0, notes: 0, dates: 0 })).toBe("");
   });
@@ -175,7 +178,22 @@ describe("a new version says what changed", () => {
     expect(c.added).toEqual(["task Test the full flow"]);
     expect(c.removed).toEqual(["task Wire the tasks API"]);
     expect(describeChanges(c)).toBe("Added task Test the full flow. Removed task Wire the tasks API.");
-    expect(describeChanges(planChanges(before, before))).toBe("Nothing was added or removed.");
+    expect(describeChanges(planChanges(before, before))).toBe("Nothing in it changed.");
+    expect(changedNothing(planChanges(before, before))).toBe(true);
+  });
+  it("counts what changed in place: a task's priority or date is a change, not nothing", () => {
+    const before = plan();
+    const after = { ...before, tasks: before.tasks.map((t, i) => (i === 0 ? { ...t, priority: "high" as const, dueDay: "2026-10-30" } : t)) };
+    const c = planChanges(before, after);
+    expect(changedNothing(c)).toBe(false);
+    expect(describeChanges(c)).toBe("Changed 1 task.");
+  });
+  it("a subject renamed is said once, not as every topic added and removed", () => {
+    const before = plan();
+    const after = { ...before, subjects: before.subjects.map(s => ({ ...s, name: "Kivo" })) };
+    const c = planChanges(before, after);
+    expect(describeChanges(c)).toBe(`Renamed ${before.subjects[0]!.name} to Kivo.`);
+    expect(changedNothing(c)).toBe(false);
   });
 });
 
@@ -193,10 +211,12 @@ describe("task order in a plan", () => {
     const loops = (k: string) => { let at = p.tasks.find(t => t.key === k)?.after; for (let i = 0; at && i < 10; i++) { if (at === k) return true; at = p.tasks.find(t => t.key === at)?.after; } return false; };
     for (const k of ["a", "b", "c"]) expect([k, loops(k)]).toEqual([k, false]);
   });
-  it("is written into the workspace as an order note (tasks have no dependency column)", () => {
-    const order = planWrites(plan()).notes.find(n => n.key === "order")!;
-    expect(order.title).toBe("Order of work: TrackerX");
-    expect(order.body).toContain("- Wire the tasks API: after Finish dashboard widgets");
+  it("is written into the workspace's one plan note (tasks have no dependency column)", () => {
+    const notes = planWrites(plan()).notes;
+    const how = notes.find(n => n.key === "plan")!;
+    expect(how.title).toBe("How it goes: TrackerX");
+    expect(how.body).toContain("# What comes first\n- Wire the tasks API: after Finish dashboard widgets");
+    expect(notes.filter(n => n.key !== "plan" && !n.key.startsWith("topics:"))).toEqual([]);
   });
   it("milestone tasks stay under their milestone (a topic of the subject)", () => {
     const w = planWrites(plan());

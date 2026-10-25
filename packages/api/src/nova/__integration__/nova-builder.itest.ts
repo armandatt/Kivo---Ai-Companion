@@ -199,9 +199,9 @@ test("a correction is a new version; only the current version is approved; appro
   assert.ok(again.ok);
   assert.equal(again.ok && again.draft.status, "ready");
   const built = await records(profileId);
-  // Four tasks; notes: the first milestone's goals, the order of work, and the scope note
-  // (the second milestone has nothing to write, so no note).
-  assert.deepEqual(built, { subjects: 1, tasks: 4, notes: 3, exams: 1, workspaces: 1 });
+  // Four tasks; notes: one for how it goes (the milestones' goals and the order
+  // of work, together) and the scope note. Each note is a point on the map.
+  assert.deepEqual(built, { subjects: 1, tasks: 4, notes: 2, exams: 1, workspaces: 1 });
 
   // The board, Knowledge, Notes and the dates are the real records.
   const board = await listTasks(profileId);
@@ -209,7 +209,7 @@ test("a correction is a new version; only the current version is approved; appro
   const map = await loadNovaKnowledgeMap(me.id);
   assert.ok(map.status === "ready" && map.nodes.some(x => x.label === "Finish the dashboard"));
   const notes = await listNotes(profileId);
-  assert.ok(notes.notes.some(x => x.title === "Order of work: TrackerX"));
+  assert.ok(notes.notes.some(x => x.title === "How it goes: TrackerX"));
   assert.ok((await listExams(me.id))!.some(e => e.title === "TrackerX launch"));
 
   // The live view reads them back, and Nova's chat context names it.
@@ -279,7 +279,7 @@ test("an existing workspace is improved by changes to its own records: nothing e
     ] }),
   });
   // The model saw the workspace as it stands.
-  assert.ok(seen[0]!.existing!.tasks.includes("Finish dashboard widgets"));
+  assert.ok(seen[0]!.existing!.tasks.some(t => t.startsWith("Finish dashboard widgets")));
   const draft = (await builder.getDraft(me.id, started.draft.id))!;
   assert.equal(draft.resource?.workspaceId, workspaceId);
   assert.equal(draft.changes!.ops.length, 2);

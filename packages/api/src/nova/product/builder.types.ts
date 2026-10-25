@@ -70,6 +70,19 @@ export interface BuilderBrief {
   // Names to choose from when the learner referred to something of theirs
   // that more than one of their workspaces or subjects could be.
   choices?:    string[];
+  // How to take back what this conversation last applied (a build or a
+  // change set), written by code when it was applied (builder-changes.ts
+  // undoOf). Records are named, not given by id: what was added has ids
+  // only once it exists. Proposed, checked and approved like any change.
+  undo?:       UndoRecord | null;
+}
+
+export interface UndoRecord {
+  // What it takes back, in words ("the changes of version 7").
+  label: string;
+  steps: Array<Record<string, unknown>>;
+  // What can't be taken back, in words (a new order of tasks).
+  kept:  string[];
 }
 
 // ── Changing something they already have ──────────────────────────────────────
@@ -92,8 +105,8 @@ export type ChangeOp =
   | { op: "add_subject";  name: string; topics: string[] }
   | { op: "rename_topic"; topicId: string; name: string }
   | { op: "remove_topic"; topicId: string }
-  // The subject itself, with its topics (each removed by its own remove_topic);
-  // its notes and tasks stay, unfiled. Never with studied topics or dates.
+  // The subject itself, with its topics and dates (each removed by its own
+  // operation); its notes and tasks stay, unfiled. Never with studied topics.
   | { op: "remove_subject"; subjectId: string }
   | { op: "add_task";     key: string; title: string; subjectId: string | null; topicName: string | null; dueDay: string | null; priority: "low" | "medium" | "high" | null }
   | { op: "update_task";  taskId: string; title?: string; dueDay?: string | null; priority?: "low" | "medium" | "high" | null }
@@ -101,7 +114,13 @@ export type ChangeOp =
   | { op: "order_tasks";  taskIds: string[] }
   | { op: "add_date";     title: string; day: string; subjectId: string | null; kind: "exam" | "assignment" | "project" | "interview" | "certification" | "other" }
   | { op: "update_date";  dateId: string; title?: string; day?: string }
-  | { op: "add_note";     title: string; body: string; subjectId: string | null; topicName: string | null };
+  | { op: "add_note";     title: string; body: string; subjectId: string | null; topicName: string | null }
+  | { op: "remove_date";  dateId: string }
+  | { op: "remove_note";  noteId: string }
+  // The workspace record itself, last: the learner asked for all of it to go.
+  // Its subjects, topics, open tasks, notes and dates go by their own
+  // operations, each listed; finished tasks are kept.
+  | { op: "remove_workspace"; workspaceId: string };
 
 // The kinds of record a change request is about. A change set keeps only
 // operations on the kinds asked for: "add two topics" never brings new
@@ -141,6 +160,10 @@ export interface PlanChangeSummary {
   added:   string[];
   removed: string[];
   renamed: number;
+  // Kept but different (a task's date or priority, a milestone's details), by kind.
+  changed?: { tasks: number; milestones: number; topics: number; notes: number };
+  // "Kivo version 1 to Kivo": a subject renamed in place.
+  renamedSubjects?: string[];
 }
 
 export interface DraftView {
