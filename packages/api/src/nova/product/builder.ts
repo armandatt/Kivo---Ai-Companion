@@ -204,7 +204,8 @@ async function signupContext(platformChatId: string, profile: { id: string; goal
 async function outlineOf(platformChatId: string, profileId: string, ref: Pick<ResourceRef, "workspaceId" | "subjectIds"> | null) {
   if (!ref) return null;
   const d = await resourceDetail(platformChatId, profileId, ref);
-  return d ? { title: d.title, subjects: d.subjects.map(s => s.name), tasks: treeOrder(d.tasks.map(t => ({ ...t, parent: t.parentId }))).map(({ item: t, depth }) => taskLine(t.title, { depth, status: t.status, priority: t.priority, dueDay: t.dueDay, under: depth === 0 ? t.topicName : null })), notes: d.notes.map(n => n.title) } : null;
+  const inside = (s: { parentId?: string | null }) => (s.parentId ? d!.subjects.find(x => x.id === s.parentId)?.name ?? null : null);
+  return d ? { title: d.title, subjects: d.subjects.map(s => (inside(s) ? `${s.name} (inside ${inside(s)})` : s.name)), tasks: treeOrder(d.tasks.map(t => ({ ...t, parent: t.parentId }))).map(({ item: t, depth }) => taskLine(t.title, { depth, status: t.status, priority: t.priority, dueDay: t.dueDay, under: depth === 0 ? t.topicName : null })), notes: d.notes.map(n => n.title) } : null;
 }
 
 // Their workspaces and subjects by name, for the model to recognise one.
@@ -619,7 +620,7 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
 
   // Found and asked to change: propose the change against what is there.
   const step: Step = found ? { type: "draft", reason: "ready" } : decideStep({ plan: ref ? null : plan, brief: before, improving: Boolean(ref), changes: Boolean(changes) }, reading);
-  const brief = { ...nextBrief(before, reading, step), known, choices: [] as string[], touches: reading.touches, ...(found ? { title: found.title } : {}) };
+  const brief = { ...nextBrief(before, reading, step), known, choices: [] as string[], touches: reading.touches, removes: reading.removes ?? null, ...(found ? { title: found.title } : {}) };
   const title = found?.title ?? row.title ?? reading.title ?? brief.title;
   const notes = note ? [message("nova", note, new Date(), { kind: "notice" })] : [];
 
@@ -693,7 +694,7 @@ async function runChanges(platformChatId: string, profile: { id: string; timezon
   const ops = asked.includes("priorities") ? written.ops : withoutPriorities(written.ops);
   // Only the kinds of record the request is about: "add two topics" brings no tasks, notes or dates.
   const checked = checkChanges(ops, current, { today, studied });
-  const set = withinAsk(checked, brief.touches ?? [], current);
+  const set = withinAsk(checked, brief.touches ?? [], current, { removes: brief.removes ?? null });
   if (set.ops.length === 0) {
     const text = `I couldn't turn that into a change to ${current.title}${set.dropped.length ? `: ${set.dropped.slice(0, 3).join("; ")}` : ""}. Nothing is proposed; could you say it another way?`;
     await settle(row.id, job.jobId, { status: fallback, failure: null, brief: { ...brief, dropped: set.dropped }, add: [message("nova", text, new Date(), { kind: "chat" })] });

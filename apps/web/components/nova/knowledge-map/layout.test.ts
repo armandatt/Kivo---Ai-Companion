@@ -67,3 +67,31 @@ test('a portrait frame stacks the subjects, and is as deterministic as the lands
   const w = tall.bounds.maxX - tall.bounds.minX, h = tall.bounds.maxY - tall.bounds.minY
   assert.ok(h > w, `taller than wide: ${w} × ${h}`)
 })
+
+test('subjects inside a subject sit around it, each with its own, with nothing drawn on top of anything (Semester Five)', () => {
+  const { nodes, edges } = world()
+  nodes.push(subject('sem5'), subject('nlp'))
+  for (let i = 0; i < 4; i++) { const t = topic(`nlp${i}`, 'nlp'); nodes.push(t); edges.push(edge('subject:nlp', t.id, 'has_topic')) }
+  for (const s of ['os', 'db', 'nlp']) edges.push(edge('subject:sem5', `subject:${s}`, 'contains'))
+  for (const portrait of [false, true]) {
+    const { at } = layoutMap(nodes, edges, { portrait })
+    assert.equal(at.size, nodes.length)
+    const type = new Map(nodes.map(n => [n.id, n.type]))
+    const placed = [...at.values()].map(p => ({ id: p.id, x: p.x, y: p.y, t: type.get(p.id)! }))
+    for (let i = 0; i < placed.length; i++) {
+      for (let j = i + 1; j < placed.length; j++) assert.equal(overlap(placed[i]!, placed[j]!), false, `${portrait ? 'portrait' : 'landscape'}: ${placed[i]!.id} and ${placed[j]!.id}`)
+    }
+    // Each subject inside is nearer the group than any other subject is to it, and keeps its topics around it.
+    const g = at.get('subject:sem5')!, nlp = at.get('subject:nlp')!
+    const d = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y)
+    for (let i = 0; i < 4; i++) assert.ok(d(at.get(`topic:nlp${i}`)!, nlp) < d(at.get(`topic:nlp${i}`)!, g), 'a topic stays by its own subject')
+    // A subject inside is not also a subject filed under it.
+    assert.ok(d(nlp, g) > CARD.subject.w, 'drawn on a ring, not in the block under the group')
+  }
+})
+
+test('a loop of subjects on record still draws every card once', () => {
+  const nodes = [subject('a'), subject('b')]
+  const edges = [edge('subject:a', 'subject:b', 'contains'), edge('subject:b', 'subject:a', 'contains')]
+  assert.equal(layoutMap(nodes, edges).at.size, 2)
+})

@@ -24,6 +24,7 @@
 // Pure, no imports beyond types, so the web app renders and edits with it.
 
 import { TASK_DEPTH_MAX, untangle } from "./task-tree";
+import { SUBJECT_DEPTH_MAX } from "./setup-edit.types";
 import type { StudyTemplate, TemplateCategory } from "./templates";
 import { TEMPLATE_CATEGORIES } from "./templates";
 import type { DeadlineType } from "./deadline-types";
@@ -46,7 +47,8 @@ export interface SourceRef { file: string; page: number | null }
 // specifically. Both live in the subject's topic guide note: Kivo's topics
 // have no columns for them.
 export interface PlanTopic { name: string; explanation: string | null; sources: SourceRef[]; unit?: string | null; subtopics?: string[] }
-export interface PlanSubject { name: string; topics: PlanTopic[] }
+// parent: another subject of the plan it sits inside ("Semester Five"), by name.
+export interface PlanSubject { name: string; topics: PlanTopic[]; parent?: string | null }
 export interface PlanTask {
   // priority is the learner's own, never Nova's: a plan Nova writes carries
   // its view as suggestedPriority, with the reason, for them to accept.
@@ -286,6 +288,12 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
     const n = oneLine(v, PLAN_LIMITS.name);
     return n ? subjects.find(s => same(s.name, n))?.name ?? null : null;
   };
+  // A subject inside another of the plan's: never itself, no loop, not too deep.
+  const parents = untangle(subjects.map(s => {
+    const given = (Array.isArray(r.subjects) ? r.subjects : []).find(x => x && typeof x === "object" && same(oneLine((x as { name?: unknown }).name, PLAN_LIMITS.name), s.name)) as { parent?: unknown } | undefined;
+    return { id: s.name, parent: subjectName(given?.parent) };
+  }), SUBJECT_DEPTH_MAX);
+  for (const s of subjects) { const p = parents.find(x => x.id === s.name)?.parent ?? null; if (p) s.parent = p; }
 
   const phases: PlanPhase[] = [];
   for (const p of Array.isArray(r.phases) ? r.phases.slice(0, PLAN_LIMITS.phases) : []) {
@@ -497,7 +505,7 @@ export function planFromTemplate(t: StudyTemplate, inputs: TemplateInputs, ctx: 
 // words, with what came from the learner's files kept apart from Nova's own.
 
 export interface PlanWrites {
-  subjects: Array<{ name: string; topics: string[] }>;
+  subjects: Array<{ name: string; topics: string[]; parent?: string | null }>;
   dates:    PlanDate[];
   tasks:    PlanTask[];
   notes:    Array<{ key: string; title: string; subject: string | null; topic: string | null; body: string }>;
@@ -508,7 +516,7 @@ const resourceLine = (r: PlanResource) =>
   `- ${r.title} (${r.kind})${r.url ? ` ${r.url}` : ""}${r.origin === "nova" ? " — suggested by Nova, not checked" : r.origin === "source" ? " — named in your files" : ""}`;
 
 export function planWrites(plan: WorkspacePlan): PlanWrites {
-  const subjects = plan.subjects.map(s => ({ name: s.name, topics: s.topics.map(t => t.name) }));
+  const subjects: PlanWrites["subjects"] = plan.subjects.map(s => ({ name: s.name, topics: s.topics.map(t => t.name), ...(s.parent ? { parent: s.parent } : {}) }));
   // Each phase is a topic of its subject, in order, so the Planner offers them in that order.
   for (const p of plan.phases) {
     const into = subjects.find(s => p.subject !== null && same(s.name, p.subject)) ?? subjects[0];

@@ -56,16 +56,23 @@ const clampCoord = (v: number) => Math.max(-MAP_LAYOUT_COORD_MAX, Math.min(MAP_L
 
 // How one item stands to another, in words, from the selected item's side.
 const RELATION: Record<string, [string, string]> = {
+  contains:    ['A subject inside this one', 'The subject it is inside'],
   has_topic:   ['Topic of this subject', 'Its subject'],
   about_topic: ['Filed under this topic', 'Its topic'],
   filed_under: ['Filed under this subject', 'Its subject'],
   links_to:    ['This note links to it', 'Links to this'],
 }
 
-// Everything within two links of an item: what a scoped view shows.
-function around(id: string, edges: Array<{ from: string; to: string }>, hops = 2): Set<string> {
-  let frontier = new Set([id])
-  const seen = new Set([id])
+// Everything within two links of an item: what a scoped view shows. A
+// subject comes with every subject inside it, each with what is around it.
+function around(id: string, edges: Array<{ from: string; to: string; kind?: string }>, hops = 2): Set<string> {
+  const start = new Set([id])
+  for (let grew = true; grew;) {
+    grew = false
+    for (const e of edges) if (e.kind === 'contains' && start.has(e.from) && !start.has(e.to)) { start.add(e.to); grew = true }
+  }
+  let frontier = new Set(start)
+  const seen = new Set(start)
   for (let i = 0; i < hops; i++) {
     const next = new Set<string>()
     for (const e of edges) {
@@ -253,6 +260,10 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
   const { start, starting, error: startError } = useStartSession()
   const facts: Array<[string, string]> = []
   if (node.type === 'subject') {
+    const parent = node.parentId ? view.nodes.find(n => n.id === `subject:${node.parentId}`) : undefined
+    if (parent) facts.push(['Inside', parent.label])
+    const inside = view.edges.filter(e => e.kind === 'contains' && e.from === node.id).length
+    if (inside) facts.push(['Subjects inside', String(inside)])
     facts.push(['Topics', String(node.topics)], ['Notes', String(node.notes)], ['Saved pages', String(node.resources)])
   } else if (node.type === 'topic') {
     facts.push(['Subject', node.subjectName])
@@ -668,7 +679,7 @@ export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady;
     return (
       <line key={e.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
         stroke={lit ? 'var(--action)' : 'var(--map-line)'}
-        strokeWidth={lit ? 2 : e.kind === 'has_topic' ? 1.6 : 1.1}
+        strokeWidth={lit ? 2.4 : e.kind === 'contains' ? 2.2 : e.kind === 'has_topic' ? 1.6 : 1.1}
         strokeDasharray={e.kind === 'filed_under' ? '5 4' : undefined}
         vectorEffect="non-scaling-stroke" data-edge={e.kind}
         opacity={dim ? 0.25 : 1} />
@@ -841,7 +852,7 @@ export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady;
 
         {inScope && scope && (
           <div className="flex items-center justify-between gap-3 border-b border-white/8 px-3 py-2 text-xs text-foreground/70" role="status" data-map-scope>
-            <span>Showing what is within two links of <span className="text-foreground">{byId.get(scope)?.label}</span>.</span>
+            <span>Showing what is within two links of <span className="text-foreground">{byId.get(scope)?.label}</span>{view.edges.some(e => e.kind === 'contains' && e.from === scope) ? ' and of each subject inside it' : ''}.</span>
             <button type="button" onClick={() => setScope(null)} className={cn(BUTTON_QUIET, 'h-7 rounded-full')}>Show everything</button>
           </div>
         )}
@@ -901,7 +912,7 @@ export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady;
           </div>
 
           <p className="pointer-events-none absolute bottom-3 left-3 hidden max-w-[60%] rounded-lg bg-background/80 px-2.5 py-1.5 text-[11px] leading-relaxed text-foreground/70 backdrop-blur-sm sm:block">
-            Drag a card to arrange it (Alt and the arrow keys move a focused card); drag the background to move around; scroll to zoom. A dashed card is a topic with no session yet; a dashed line is filed under the subject only; a teal curve is a [[link]] you wrote in a note.{suggestions.length > 0 && <> A dotted line is a suggestion Nova made, not a link: file the page to make it one.</>}
+            Drag a card to arrange it (Alt and the arrow keys move a focused card); drag the background to move around; scroll to zoom. A thick line joins a subject to the subjects you put inside it; a dashed card is a topic with no session yet; a dashed line is filed under the subject only; a teal curve is a [[link]] you wrote in a note.{suggestions.length > 0 && <> A dotted line is a suggestion Nova made, not a link: file the page to make it one.</>}
             {view.unconnected > 0 && <> {view.unconnected} {view.unconnected === 1 ? 'item is' : 'items are'} not connected to anything.</>}
             {(view.notShown.notes > 0 || view.notShown.resources > 0) && <> Older notes and pages beyond the newest 150 of each are not drawn.</>}
           </p>

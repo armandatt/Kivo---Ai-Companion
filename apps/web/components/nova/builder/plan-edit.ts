@@ -7,6 +7,7 @@
 
 import type { PlanDate, PlanNote, PlanPhase, PlanSubject, PlanTask, WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
 import { canPlace, subtreeOf, treeOrder } from '@repo/api/nova/product/task-tree'
+import { SUBJECT_DEPTH_MAX } from '@repo/api/nova/product/setup-edit.types'
 
 const same = (a: string | null | undefined, b: string | null | undefined) =>
   a != null && b != null && a.toLocaleLowerCase() === b.toLocaleLowerCase()
@@ -178,7 +179,8 @@ export function renameSubject(plan: WorkspacePlan, index: number, name: string):
   const refile = <T extends { subject: string | null }>(x: T): T => (same(x.subject, before.name) ? { ...x, subject: name } : x)
   return {
     ...plan,
-    subjects: plan.subjects.map((s, i) => (i === index ? { ...s, name } : s)),
+    // The subjects inside it stay inside it.
+    subjects: plan.subjects.map((s, i) => (i === index ? { ...s, name } : same(s.parent ?? null, before.name) ? { ...s, parent: name } : s)),
     tasks: plan.tasks.map(refile), phases: plan.phases.map(refile), notes: plan.notes.map(refile), dates: plan.dates.map(refile),
   }
 }
@@ -188,16 +190,32 @@ export function addSubject(plan: WorkspacePlan, name: string): WorkspacePlan {
   return { ...plan, subjects: [...plan.subjects, subject] }
 }
 
-// What was filed under it stays, filed under nothing.
+// What was filed under it stays, filed under nothing; the subjects inside it, on their own.
 export function removeSubject(plan: WorkspacePlan, index: number): WorkspacePlan {
   const gone = plan.subjects[index]
   if (!gone) return plan
   const unfile = <T extends { subject: string | null }>(x: T): T => (same(x.subject, gone.name) ? { ...x, subject: null } : x)
   return {
     ...plan,
-    subjects: plan.subjects.filter((_, i) => i !== index),
+    subjects: plan.subjects.filter((_, i) => i !== index).map(s => (same(s.parent ?? null, gone.name) ? { ...s, parent: null } : s)),
     tasks: plan.tasks.map(unfile), phases: plan.phases.map(unfile), notes: plan.notes.map(unfile), dates: plan.dates.map(unfile),
   }
+}
+
+// The subjects one may go inside: not itself or one inside it, and never
+// deeper than subjects go (the server checks the same).
+export function parentChoices(plan: WorkspacePlan, index: number): string[] {
+  const s = plan.subjects[index]
+  if (!s) return []
+  const nodes = plan.subjects.map(x => ({ id: x.name.toLowerCase(), parent: x.parent ? x.parent.toLowerCase() : null }))
+  return plan.subjects.filter((x, i) => i !== index && canPlace(nodes, s.name.toLowerCase(), x.name.toLowerCase(), SUBJECT_DEPTH_MAX).ok).map(x => x.name)
+}
+
+// Puts a subject inside another of the plan's (null: on its own).
+export function setSubjectParent(plan: WorkspacePlan, index: number, parent: string | null): WorkspacePlan {
+  const s = plan.subjects[index]
+  if (!s || (parent !== null && !parentChoices(plan, index).some(n => same(n, parent)))) return plan
+  return { ...plan, subjects: plan.subjects.map((x, i) => (i === index ? { ...x, parent } : x)) }
 }
 
 export function addTopic(plan: WorkspacePlan, subjectIndex: number, name: string): WorkspacePlan {

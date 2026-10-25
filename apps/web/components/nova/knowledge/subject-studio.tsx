@@ -12,7 +12,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react'
-import type { StudyEdit, StudyEditResponse, StudyStructure, StudyStructureView } from '@repo/api/nova/product/setup-edit.types'
+import { SUBJECT_DEPTH_MAX, type StudyEdit, type StudyEditResponse, type StudyStructure, type StudyStructureView } from '@repo/api/nova/product/setup-edit.types'
+import { canPlace, treeOrder } from '@repo/api/nova/product/task-tree'
 import type { StudyProposalResponse } from '@repo/api/nova/product/study-proposal.types'
 import { STUDY_REQUEST_MAX } from '@repo/api/nova/product/study-proposal.types'
 
@@ -130,10 +131,13 @@ function ManualEditor({ structure, onSave, busy, onRestore }: { structure: Study
     <div className="mt-7">
       <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-foreground/45">Edit by hand</h3>
       <ul className="mt-3 space-y-4">
-        {structure.subjects.map(s => {
+        {treeOrder(structure.subjects.map(x => ({ ...x, parent: x.parentId ?? null }))).map(({ item: s, depth }) => {
           const removable = s.topics.length === 0 && s.dates === 0
+          // Where it may go: any other subject, not one inside it, never deeper than subjects go.
+          const nodes = structure.subjects.map(x => ({ id: x.id, parent: x.parentId ?? null }))
+          const homes = structure.subjects.filter(x => x.id !== s.id && canPlace(nodes, s.id, x.id, SUBJECT_DEPTH_MAX).ok)
           return (
-            <li key={s.id} className="rounded-2xl border border-white/8 p-4" data-studio-subject={s.name}>
+            <li key={s.id} className="rounded-2xl border border-white/8 p-4" style={depth ? { marginLeft: depth * 20 } : undefined} data-studio-subject={s.name}>
               <div className="flex flex-wrap items-center gap-2">
                 {renaming?.id === s.id ? (
                   <form className="flex flex-1 flex-wrap gap-2" onSubmit={e => { e.preventDefault(); void rename() }}>
@@ -153,6 +157,17 @@ function ManualEditor({ structure, onSave, busy, onRestore }: { structure: Study
                   </>
                 )}
               </div>
+              {(s.parentId || homes.length > 0) && (
+                // On the Knowledge Map a subject inside another is drawn around it.
+                <div className="mt-2 flex items-center gap-2 text-xs text-foreground/60">
+                  <label htmlFor={`inside-${s.id}`}>Inside</label>
+                  <select id={`inside-${s.id}`} value={s.parentId ?? ''} disabled={disabled} className={`${FIELD} h-8 text-xs`} data-subject-parent
+                    onChange={e => void onSave([{ op: 'move_subject', subjectId: s.id, parentId: e.target.value || null }], `place:${s.id}`)}>
+                    <option value="">nothing (on its own)</option>
+                    {[...new Map([...structure.subjects.filter(x => x.id === s.parentId), ...homes].map(x => [x.id, x])).values()].map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+                  </select>
+                </div>
+              )}
 
               <ul className="mt-2 divide-y divide-white/6">
                 {s.topics.map(t => (

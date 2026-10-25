@@ -4,11 +4,17 @@
 export const SUBJECT_NAME_MAX = 80;
 export const TOPIC_NAME_MAX   = 120;
 export const STUDY_EDITS_MAX  = 60;
+// Levels of subjects inside subjects: "Semester Five" › "Automata" is two.
+export const SUBJECT_DEPTH_MAX = 4;
 
 // One change to the learner's subjects and topics. Ids are the learner's own
 // (checked on the server); names are what they typed.
+// A subject can sit inside another: parentId names one of theirs, parentName
+// one by its name (also one added earlier in the same batch); null or
+// neither, a subject of its own.
 export type StudyEdit =
-  | { op: "add_subject";    name: string; topics: string[] }
+  | { op: "add_subject";    name: string; topics: string[]; parentId?: string | null; parentName?: string }
+  | { op: "move_subject";   subjectId: string; parentId: string | null; parentName?: string }
   | { op: "add_topics";     subjectId: string; names: string[] }
   | { op: "rename_subject"; subjectId: string; name: string }
   | { op: "rename_topic";   topicId: string; name: string }
@@ -30,6 +36,8 @@ export interface StudyTopic {
 export interface StudySubject {
   id:     string;
   name:   string;
+  // The subject it sits inside. null or absent: one of its own.
+  parentId?: string | null;
   topics: StudyTopic[];
   // Dated items (exams, interviews, …) filed under it.
   dates:  number;

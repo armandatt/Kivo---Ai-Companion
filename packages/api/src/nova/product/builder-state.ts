@@ -92,6 +92,8 @@ export interface TurnReading {
   change:      string | null;
   // For a change: the kinds of record it is about (only those may change).
   touches:     ChangeKind[];
+  // For a change: whether it asks for anything to be removed. null: not said.
+  removes?:    boolean | null;
   // Something of theirs already in Kivo the learner referred to, by the name
   // they used, and what they want with it: see it, change it, or a new one
   // (builder-changes.ts finds it among their own records; the model never
@@ -170,6 +172,7 @@ export function readTurn(raw: unknown, learnerText: string, fileNames: readonly 
     change: oneLine(r.change, 600) || null,
     resource: resourceOf(r.resource),
     touches: Array.isArray(r.touches) ? CHANGE_KINDS.filter(k => (r.touches as unknown[]).includes(k)) : [],
+    removes: typeof r.removes === "boolean" ? r.removes : null,
     undo: r.undo === true,
     deleteAll: r.deleteAll === true,
   };
@@ -286,6 +289,7 @@ export function readBrief(raw: unknown): BuilderBrief {
     suggestions: listOf(r.suggestions, SUGGESTIONS_MAX),
     ...(Array.isArray(r.choices) ? { choices: listOf(r.choices, 6) } : {}),
     ...(Array.isArray(r.touches) ? { touches: CHANGE_KINDS.filter(k => (r.touches as unknown[]).includes(k)) } : {}),
+    ...(typeof r.removes === "boolean" ? { removes: r.removes } : {}),
     ...(r.deletion && typeof r.deletion === "object" && typeof (r.deletion as { fingerprint?: unknown }).fingerprint === "string" ? { deletion: r.deletion as BuilderBrief["deletion"] } : {}),
     question: oneLine(r.question, 300) || null,
     questionsAsked: typeof r.questionsAsked === "number" && Number.isInteger(r.questionsAsked) && r.questionsAsked >= 0 ? r.questionsAsked : 0,
@@ -372,12 +376,21 @@ export function planChanges(before: WorkspacePlan | null, after: WorkspacePlan):
   const removed = [...a.keys()].filter(k => !b.has(k)).map(k => a.get(k)!.label).filter(l => !isRename(l));
   const changed = { tasks: 0, milestones: 0, topics: 0, notes: 0 };
   for (const [k, v] of b) { const was = a.get(k); if (was && v.kind && was.sig !== v.sig) changed[v.kind]++; }
-  return { added, removed, renamed: before && normalized(before.title) !== normalized(after.title) ? 1 : 0, changed, ...(renamedSubject.length ? { renamedSubjects: renamedSubject } : {}) };
+  // A subject kept, now inside another (or out on its own).
+  const moved = before ? after.subjects.flatMap(s => {
+    const was = before.subjects.find(x => normalized(x.name) === normalized(s.name));
+    if (!was || normalized(was.parent ?? "") === normalized(s.parent ?? "")) return [];
+    return [s.parent ? `${s.name} inside ${s.parent}` : `${s.name} on its own`];
+  }) : [];
+  return {
+    added, removed, renamed: before && normalized(before.title) !== normalized(after.title) ? 1 : 0, changed,
+    ...(renamedSubject.length ? { renamedSubjects: renamedSubject } : {}), ...(moved.length ? { movedSubjects: moved } : {}),
+  };
 }
 
 export function changedNothing(c: PlanChangeSummary): boolean {
   const ch = c.changed ?? { tasks: 0, milestones: 0, topics: 0, notes: 0 };
-  return c.added.length === 0 && c.removed.length === 0 && c.renamed === 0 && !c.renamedSubjects?.length && ch.tasks + ch.milestones + ch.topics + ch.notes === 0;
+  return c.added.length === 0 && c.removed.length === 0 && c.renamed === 0 && !c.renamedSubjects?.length && !c.movedSubjects?.length && ch.tasks + ch.milestones + ch.topics + ch.notes === 0;
 }
 
 export function describeChanges(c: PlanChangeSummary): string {
@@ -385,6 +398,6 @@ export function describeChanges(c: PlanChangeSummary): string {
   const n = (count: number, one: string, many = `${one}s`) => (count ? `${count} ${count === 1 ? one : many}` : null);
   const ch = c.changed ?? { tasks: 0, milestones: 0, topics: 0, notes: 0 };
   const changed = [n(ch.tasks, "task"), n(ch.milestones, "milestone"), n(ch.topics, "topic"), n(ch.notes, "note")].filter(Boolean);
-  const parts = [c.renamedSubjects?.length ? `Renamed ${c.renamedSubjects.join(", ")}` : null, part("Added", c.added), part("Removed", c.removed), changed.length ? `Changed ${changed.join(", ")}` : null, c.renamed ? "Renamed the workspace" : null].filter(Boolean);
+  const parts = [c.renamedSubjects?.length ? `Renamed ${c.renamedSubjects.join(", ")}` : null, part("Added", c.added), part("Put", c.movedSubjects ?? []), part("Removed", c.removed), changed.length ? `Changed ${changed.join(", ")}` : null, c.renamed ? "Renamed the workspace" : null].filter(Boolean);
   return parts.length ? `${parts.join(". ")}.` : "Nothing in it changed.";
 }

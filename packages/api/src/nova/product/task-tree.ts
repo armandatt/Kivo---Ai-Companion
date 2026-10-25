@@ -6,7 +6,8 @@
 // views. No imports, so the web app imports it directly.
 //
 // Nodes are named by an id (a stored task) or a key (a task in a plan); the
-// rules are the same.
+// rules are the same. Subjects inside subjects (setup-edit.ts) use them too,
+// with their own cap (`max`).
 
 // Levels a tree may have: a task, its steps, their steps, … Deep enough for
 // any real plan; a cap so a view can always indent it.
@@ -60,21 +61,21 @@ export type MoveCheck = { ok: true } | { ok: false; reason: "self" | "loop" | "m
 
 // Whether a node may go under `parent` (null: be a task of its own): not
 // under itself or anything under it, under a node that exists, and the whole
-// subtree within TASK_DEPTH_MAX levels.
-export function canPlace(nodes: readonly TreeNode[], id: string, parent: string | null): MoveCheck {
+// subtree within `max` levels.
+export function canPlace(nodes: readonly TreeNode[], id: string, parent: string | null, max = TASK_DEPTH_MAX): MoveCheck {
   if (parent === null) return { ok: true };
   if (parent === id) return { ok: false, reason: "self" };
   if (!nodes.some(n => n.id === parent)) return { ok: false, reason: "missing" };
   if (subtreeOf(nodes, id).includes(parent)) return { ok: false, reason: "loop" };
   const parents = parentsOf(nodes);
-  if (levelOf(parents, parent) + heightOf(nodes, id) > TASK_DEPTH_MAX) return { ok: false, reason: "too_deep" };
+  if (levelOf(parents, parent) + heightOf(nodes, id) > max) return { ok: false, reason: "too_deep" };
   return { ok: true };
 }
 
 // The nodes with any parent that would loop, is missing or is too deep set
 // to null (a task of its own), in their order: what a plan or a stored list
 // is read as, whatever it said.
-export function untangle<T extends TreeNode>(nodes: readonly T[]): T[] {
+export function untangle<T extends TreeNode>(nodes: readonly T[], max = TASK_DEPTH_MAX): T[] {
   const kept: T[] = [];
   const ids = new Set(nodes.map(n => n.id));
   for (const n of nodes) {
@@ -94,7 +95,7 @@ export function untangle<T extends TreeNode>(nodes: readonly T[]): T[] {
   // Too deep: a node below the cap moves up to the deepest level allowed.
   for (const n of kept) {
     const parents = parentsOf(kept);
-    while (n.parent !== null && levelOf(parents, n.id) > TASK_DEPTH_MAX) n.parent = parents.get(n.parent) ?? null;
+    while (n.parent !== null && levelOf(parents, n.id) > max) n.parent = parents.get(n.parent) ?? null;
   }
   return kept;
 }

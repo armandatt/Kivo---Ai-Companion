@@ -67,6 +67,9 @@ export interface BuilderBrief {
   // What the learner's last change request is about (topics, tasks, …):
   // a change set keeps only changes of these kinds (builder-changes.ts).
   touches?:    ChangeKind[];
+  // Whether that request asks for anything to be taken out. false: a change
+  // set keeps no removal (builder-changes.ts withinAsk). Absent: not read.
+  removes?:    boolean | null;
   // Names to choose from when the learner referred to something of theirs
   // that more than one of their workspaces or subjects could be.
   choices?:    string[];
@@ -89,7 +92,8 @@ export interface SnapshotTask {
 }
 export interface Snapshot {
   title:    string;
-  subjects: Array<{ name: string; topics: string[] }>;
+  // parent: the subject it sat inside, by name (absent in older snapshots: on its own).
+  subjects: Array<{ name: string; topics: string[]; parent?: string | null }>;
   tasks:    SnapshotTask[];
   dates:    Array<{ title: string; day: string; kind: string; subject: string | null }>;
   // A note's text is kept where it is known without reading the learner's
@@ -141,9 +145,14 @@ export interface ResourceRef {
 // records as they are (builder-changes.ts) when proposed and again when
 // applied; applied only on approval, each through its record's own writer.
 // Topics have no order in Kivo, so nothing reorders them; tasks have one.
+// A subject can sit inside another (Semester Five › Automata): add_subject
+// names the one it goes inside by id (parentId) or, for one this set adds,
+// by its key (parentKey); move_subject puts one there (null: on its own).
 export type ChangeOp =
   | { op: "add_topics";   subjectId: string; names: string[] }
-  | { op: "add_subject";  name: string; topics: string[] }
+  | { op: "add_subject";  name: string; topics: string[]; key?: string; parentId?: string | null; parentKey?: string | null }
+  | { op: "move_subject"; subjectId: string; parentId?: string | null; parentKey?: string | null }
+  | { op: "rename_subject"; subjectId: string; name: string }
   | { op: "rename_topic"; topicId: string; name: string }
   | { op: "remove_topic"; topicId: string }
   // The subject itself, with its topics and dates (each removed by its own
@@ -206,6 +215,8 @@ export interface PlanChangeSummary {
   changed?: { tasks: number; milestones: number; topics: number; notes: number };
   // "Kivo version 1 to Kivo": a subject renamed in place.
   renamedSubjects?: string[];
+  // "Automata inside Semester Five": a subject kept, now inside another (or "… on its own").
+  movedSubjects?: string[];
 }
 
 export interface DraftView {
@@ -265,7 +276,8 @@ export interface WorkspaceDetail {
   title:     string;
   // A topic's unit and what it covers come from the plan the workspace was
   // built from, when it names that topic (topics have no columns for them).
-  subjects:  Array<{ id: string; name: string; topics: Array<{ id: string; name: string; unit?: string | null; subtopics?: string[] }> }>;
+  // parentId: the subject it sits inside (one of these, or another of theirs). Absent on an older server.
+  subjects:  Array<{ id: string; name: string; parentId?: string | null; topics: Array<{ id: string; name: string; unit?: string | null; subtopics?: string[] }> }>;
   // The workspace's milestones, in order, from the plan it was built from:
   // each is one of its topics, and its tasks are those filed under it.
   phases?:   Array<{ name: string; weeks: number | null; goals: string[]; completion: string | null }>;

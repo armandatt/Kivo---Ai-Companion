@@ -4,6 +4,7 @@
 // nothing, calls no LLM and creates no relationship. An edge exists here
 // only because a row says so:
 //
+//   subject → subject    NovaSubject.parentId: a subject inside another
 //   subject → topic      NovaTopicMastery.subjectId
 //   topic   → note       NovaNote.subjectId + topicName naming a topic of
 //                        that subject (compared the way sessions compare
@@ -31,7 +32,7 @@ import {
 } from "./knowledge-map.types";
 
 export interface MapInputs {
-  subjects:  Array<{ id: string; name: string }>;
+  subjects:  Array<{ id: string; name: string; parentId?: string | null }>;
   topics:    Array<{ id: string; subjectId: string; name: string; masteryProbability: number; reviewCount: number }>;
   // linksTo: titles the note names in [[...]] (notes.ts). Absent: none.
   notes:     Array<{ id: string; title: string; subjectId: string | null; topicName: string | null; updatedAt: Date; linksTo?: string[] }>;
@@ -139,7 +140,10 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
   });
   const subjectNodes: MapNode[] = input.subjects.map(s => {
     const id = `subject:${s.id}`;
+    const parentId = s.parentId && subjectName.has(s.parentId) && s.parentId !== s.id ? s.parentId : null;
+    if (parentId) link(`subject:${parentId}`, id, "contains");
     return {
+      ...(parentId ? { parentId } : {}),
       id, type: "subject", label: s.name, href: `/knowledge?subject=${encodeURIComponent(s.id)}`, subjectId: s.id,
       topics: topics.filter(t => t.subjectId === s.id).length,
       notes: tally.get(id)?.notes ?? 0, resources: tally.get(id)?.resources ?? 0,
@@ -192,7 +196,7 @@ export async function loadNovaKnowledgeMap(platformChatId: string): Promise<Nova
   // Notes and saved pages are read through their owners: this file touches
   // neither table.
   const [subjects, topics, noted, saved, tasks] = await Promise.all([
-    prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true, parentId: true }, orderBy: { name: "asc" } }),
     prisma.novaTopicMastery.findMany({
       where: { subject: { profileId }, archivedAt: null }, orderBy: { name: "asc" },
       select: { id: true, subjectId: true, name: true, masteryProbability: true, reviewCount: true },

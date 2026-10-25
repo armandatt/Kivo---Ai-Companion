@@ -13,7 +13,8 @@
 //     elements (nothing is ever treated as HTML).
 // Run the tests with `npm test`.
 
-import type { ChangeSet, DraftView, ProposedChange, WorkKind } from '@repo/api/nova/product/builder.types'
+import type { ChangeSet, DraftView, ProposedChange, WorkKind, WorkspaceDetail } from '@repo/api/nova/product/builder.types'
+import { treeOrder } from '@repo/api/nova/product/task-tree'
 import type { WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
 import type { PlaygroundView } from './plan-edit'
 
@@ -223,10 +224,15 @@ export function messageBlocks(text: string): Block[] {
 // One subject is the obvious place to go; several are offered to choose from.
 // `touched`: the subjects an approved change set changed (touchedSubjects,
 // taken before approval), which is where those changes are to be seen.
+// A subject inside another of these is seen on the map from that one, which
+// shows everything inside it: Semester Five, not its five subjects again.
 export function mapDestinations(draft: Pick<DraftView, 'status' | 'current'> | null, touched: string[] = []): Array<{ label: string; href: string }> {
   if (!draft || draft.status !== 'ready' || !draft.current) return []
-  const changed = draft.current.subjects.filter(s => touched.includes(s.id))
-  return (changed.length ? changed : draft.current.subjects).map(s => ({ label: s.name, href: `/map?focus=${encodeURIComponent(`subject:${s.id}`)}` }))
+  const all = draft.current.subjects
+  const outer = (id: string) => { let at = all.find(s => s.id === id); for (let i = 0; at?.parentId && i < 8; i++) at = all.find(s => s.id === at!.parentId) ?? at; return at }
+  const changed = all.filter(s => touched.includes(s.id))
+  const tops = [...new Set((changed.length ? changed : all).map(s => outer(s.id)!).filter(Boolean))]
+  return tops.map(s => ({ label: s.name, href: `/map?focus=${encodeURIComponent(`subject:${s.id}`)}` }))
 }
 
 // The subjects a proposed change set changes, by id, found from its records.
@@ -238,11 +244,13 @@ export function touchedSubjects(draft: Pick<DraftView, 'changes' | 'current'> | 
   for (const o of draft.changes.ops) {
     const id = o.op === 'add_topics' ? o.subjectId
       : o.op === 'rename_topic' || o.op === 'remove_topic' ? topicSubject(o.topicId)
-      : o.op === 'remove_subject' ? o.subjectId
+      : o.op === 'remove_subject' || o.op === 'move_subject' || o.op === 'rename_subject' ? o.subjectId
       : o.op === 'add_task' || o.op === 'add_note' || o.op === 'add_date' ? o.subjectId
       : o.op === 'update_task' || o.op === 'remove_task' ? c.tasks.find(t => t.id === o.taskId)?.subjectId
       : o.op === 'update_date' || o.op === 'remove_date' ? c.dates.find(d => d.id === o.dateId)?.subjectId : null
     if (id) out.add(id)
+    // Where a subject goes is changed too.
+    if (o.op === 'move_subject' && o.parentId) out.add(o.parentId)
   }
   return [...out]
 }
@@ -262,6 +270,8 @@ export interface ChangeMarks {
   addedDates: Array<Extract<ProposedChange, { op: 'add_date' }>>
   addedNotes: Array<Extract<ProposedChange, { op: 'add_note' }>>
   addedSubjects: Array<Extract<ProposedChange, { op: 'add_subject' }>>
+  movedSubjects: Map<string, { parentId?: string | null; parentKey?: string | null }>   // subject id → where it goes
+  renamedSubjects: Map<string, string>        // subject id → new name
   removedDates: Set<string>
   removedNotes: Set<string>
 }
@@ -269,7 +279,7 @@ export interface ChangeMarks {
 export function changeMarks(set: ChangeSet | null): ChangeMarks {
   const m: ChangeMarks = {
     addedTopics: new Map(), renamedTopics: new Map(), removedTopics: new Set(), removedSubjects: new Set(), addedTasks: [], changedTasks: new Map(), removedTasks: new Set(),
-    firstTasks: [], movedDates: new Map(), addedDates: [], addedNotes: [], addedSubjects: [], removedDates: new Set(), removedNotes: new Set(),
+    firstTasks: [], movedDates: new Map(), addedDates: [], addedNotes: [], addedSubjects: [], movedSubjects: new Map(), renamedSubjects: new Map(), removedDates: new Set(), removedNotes: new Set(),
   }
   for (const o of set?.ops ?? []) {
     switch (o.op) {
@@ -285,9 +295,50 @@ export function changeMarks(set: ChangeSet | null): ChangeMarks {
       case 'update_date': if (o.day) m.movedDates.set(o.dateId, o.day); break
       case 'add_note': m.addedNotes.push(o); break
       case 'add_subject': m.addedSubjects.push(o); break
+      case 'move_subject': m.movedSubjects.set(o.subjectId, { parentId: o.parentId ?? null, parentKey: o.parentKey ?? null }); break
+      case 'rename_subject': m.renamedSubjects.set(o.subjectId, o.name); break
       case 'remove_date': m.removedDates.add(o.dateId); break
       case 'remove_note': m.removedNotes.add(o.noteId); break
     }
   }
   return m
+}
+
+// ── Subjects inside subjects ──────────────────────────────────────────────────
+
+// A proposal's subjects in the order shown: a subject right after the one it
+// sits inside, indented one more (depth), with its index in plan.subjects.
+export function planSubjects(plan: Pick<WorkspacePlan, 'subjects'>): Array<{ index: number; depth: number; inside: number }> {
+  const nodes = plan.subjects.map((s, index) => ({ id: low(s.name), parent: s.parent ? low(s.parent) : null, index }))
+  return treeOrder(nodes).map(({ item, depth }) => ({ index: item.index, depth, inside: nodes.filter(n => n.parent === item.id).length }))
+}
+
+// The live subjects as they will be once the proposed changes are applied:
+// a subject moving is shown where it goes, marked; one added is shown where
+// it goes, marked proposed.
+export interface SubjectRow {
+  key: string; id: string | null; name: string; renamed: string | null; depth: number; topics: number; addedTopics: number
+  // under: the subject it sits inside, once the changes apply; inside: how many sit inside it.
+  under: string | null; inside: number; proposed: boolean; moved: boolean; removed: boolean
+}
+export function subjectOutline(detail: Pick<WorkspaceDetail, 'subjects'>, marks: ChangeMarks): SubjectRow[] {
+  const here = new Set(detail.subjects.map(s => s.id))
+  const goesTo = (to: { parentId?: string | null; parentKey?: string | null }) => (to.parentKey ? `+${to.parentKey}` : to.parentId && here.has(to.parentId) ? to.parentId : null)
+  const rows = [
+    ...detail.subjects.map(s => {
+      const move = marks.movedSubjects.get(s.id)
+      return {
+        id: s.id, parent: move ? goesTo(move) : s.parentId && here.has(s.parentId) ? s.parentId : null,
+        row: { key: s.id, id: s.id, name: s.name, renamed: marks.renamedSubjects.get(s.id) ?? null, topics: s.topics.length, addedTopics: marks.addedTopics.get(s.id)?.length ?? 0, proposed: false, moved: Boolean(move), removed: marks.removedSubjects.has(s.id) },
+      }
+    }),
+    ...marks.addedSubjects.map(a => ({
+      id: `+${a.key ?? a.name}`, parent: goesTo(a),
+      row: { key: `+${a.key ?? a.name}`, id: null, name: a.name, renamed: null, topics: a.topics.length, addedTopics: 0, proposed: true, moved: false, removed: false },
+    })),
+  ]
+  return treeOrder(rows).map(({ item, depth }) => ({
+    ...item.row, depth, inside: rows.filter(r => r.parent === item.id).length,
+    under: depth > 0 ? rows.find(r => r.id === item.parent)?.row.name ?? null : null,
+  }))
 }

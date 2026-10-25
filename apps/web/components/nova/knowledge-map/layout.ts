@@ -3,7 +3,9 @@ import type { MapEdge, MapNode, MapNodeType } from '@repo/api/nova/product/knowl
 // Where each card is drawn. The picture is worked out from the links on
 // record and nothing else: a subject in the middle of its topics, a topic's
 // notes and saved pages in a block behind it, and what is filed under the
-// subject alone on rings close to it. No physics, so the same data always
+// subject alone on rings close to it. A subject the learner put inside
+// another sits, with all of its own, on a ring around that one (Semester
+// Five in the middle of its five subjects), as deep as they nest. No physics, so the same data always
 // draws the same map and nothing moves while it is being read. A card the
 // learner moved keeps the place they gave it (withPositions); every other
 // card stays where this puts it.
@@ -31,6 +33,7 @@ const TOPIC_MIN_W = 220   // room around the ring for one topic
 const MIN_RING    = 210
 const DIRECT_GAP  = 30    // between a subject and what is filed under it alone
 const CLUSTER_GAP = 120
+const INSIDE_GAP  = 90    // between the subjects around a subject they are inside
 const LOOSE_COLS  = 5   // in portrait, 2
 const LOOSE_DX    = 184
 const LOOSE_DY    = 62
@@ -64,7 +67,8 @@ export function layoutMap(nodes: MapNode[], edges: MapEdge[], { portrait = false
       const blockH  = leaves.length === 0 ? 0 : rows * LEAF_DY - (LEAF_DY - CARD.note.h)
       return { id, leaves, perRow, blockW, blockH, weight: Math.max(TOPIC_MIN_W, Math.max(blockW, blockH) + 48) }
     })
-    const direct = kids.filter(k => type.get(k) !== 'topic')
+    // A subject inside this one is drawn around it, not as an item filed under it.
+    const direct = kids.filter(k => type.get(k) !== 'topic' && type.get(k) !== 'subject')
 
     // Items filed under the subject only: a block just below it, inside the
     // ring of topics.
@@ -118,13 +122,54 @@ export function layoutMap(nodes: MapNode[], edges: MapEdge[], { portrait = false
     return { id: s.id, local, box }
   })
 
+  // Subjects inside a subject: each one's whole cluster on a ring around it,
+  // far enough out that no two meet, and the ring's cluster is one cluster.
+  type Cluster = (typeof clusters)[number]
+  const own = new Map(clusters.map(c => [c.id, c]))
+  const insideOf = (id: string) => (children.get(id) ?? []).filter(k => type.get(k) === 'subject')
+  const reachOf = (c: Cluster) => Math.hypot(Math.max(-c.box.minX, c.box.maxX), Math.max(-c.box.minY, c.box.maxY))
+  const placedSubjects = new Set<string>()
+  const compose = (id: string): Cluster => {
+    placedSubjects.add(id)
+    const base = own.get(id)!
+    const kids = insideOf(id).filter(k => own.has(k) && !placedSubjects.has(k)).map(compose)
+    if (kids.length === 0) return base
+    const local = new Map(base.local)
+    const reaches = kids.map(reachOf)
+    const weights = reaches.map(r => 2 * r + INSIDE_GAP)
+    const total = weights.reduce((sum, w) => sum + w, 0)
+    const ring = Math.max(reachOf(base) + Math.max(...reaches) + INSIDE_GAP, total / (2 * Math.PI))
+    let used = 0
+    kids.forEach((k, i) => {
+      // The first below the subject they are inside (to its right in
+      // landscape), and round from there.
+      const start = portrait ? Math.PI / 2 : 0
+      const a = start + (kids.length === 1 ? 0 : (2 * Math.PI * (used + weights[i]! / 2)) / total - (Math.PI * weights[0]!) / total)
+      used += weights[i]!
+      const cx = ring * Math.cos(a), cy = ring * Math.sin(a)
+      for (const [nid, p] of k.local) local.set(nid, { x: cx + p.x, y: cy + p.y })
+    })
+    const box = { minX: 0, minY: 0, maxX: 0, maxY: 0 }
+    for (const [nid, p] of local) {
+      const size = CARD[type.get(nid) ?? 'note']
+      box.minX = Math.min(box.minX, p.x - size.w / 2); box.maxX = Math.max(box.maxX, p.x + size.w / 2)
+      box.minY = Math.min(box.minY, p.y - size.h / 2); box.maxY = Math.max(box.maxY, p.y + size.h / 2)
+    }
+    return { id, local, box }
+  }
+  // Only subjects inside no other drawn subject are clusters of their own.
+  const inside = new Set(clusters.flatMap(c => insideOf(c.id)))
+  const tops = clusters.filter(c => !inside.has(c.id)).map(c => compose(c.id))
+  // A loop on record (never written, but drawn anyway): what is left, on its own.
+  for (const c of clusters) if (!placedSubjects.has(c.id)) tops.push(compose(c.id))
+
   // Clusters on shelves, left to right, as many to a shelf as keep the whole
   // about as wide as a screen (one to a shelf in portrait), each shelf as
   // tall as its tallest cluster.
-  const perShelf = portrait ? 1 : Math.max(1, Math.ceil(Math.sqrt(clusters.length * 1.8)))
+  const perShelf = portrait ? 1 : Math.max(1, Math.ceil(Math.sqrt(tops.length * 1.8)))
   let shelfTop = 0
-  for (let i = 0; i < clusters.length; i += perShelf) {
-    const shelf = clusters.slice(i, i + perShelf)
+  for (let i = 0; i < tops.length; i += perShelf) {
+    const shelf = tops.slice(i, i + perShelf)
     const up    = Math.max(...shelf.map(c => -c.box.minY))
     const down  = Math.max(...shelf.map(c => c.box.maxY))
     const width = shelf.reduce((sum, c) => sum + c.box.maxX - c.box.minX, 0) + CLUSTER_GAP * (shelf.length - 1)

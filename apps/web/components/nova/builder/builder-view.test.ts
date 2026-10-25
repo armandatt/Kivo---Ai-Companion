@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
-import { changeMarks, diffSummary, familyOf, hintFor, ids, mapDestinations, messageBlocks, planDiff, touchedSubjects, wordsFor } from './builder-view'
+import { changeMarks, diffSummary, familyOf, hintFor, ids, mapDestinations, messageBlocks, planDiff, planSubjects, subjectOutline, touchedSubjects, wordsFor } from './builder-view'
 import type { ChangeSet, DraftView, WorkspaceDetail } from '@repo/api/nova/product/builder.types'
 import { viewsFor } from './plan-edit'
 
@@ -116,4 +116,35 @@ test('changes go to the map where they were made: the subjects they touch', () =
   assert.deepEqual(mapDestinations({ status: 'ready', current }, touched), [{ label: 'Non-linear', href: '/map?focus=subject%3As2' }])
   // A new workspace of several subjects: each is offered.
   assert.equal(mapDestinations({ status: 'ready', current }).length, 2)
+})
+
+test('Semester Five: a proposed regroup is drawn as it will be, each subject under the group and marked as moving', () => {
+  const names = ['Automata', 'NLP', 'SPM']
+  const detail: WorkspaceDetail = { workspace: null, title: 'Semester', subjects: names.map(n => ({ id: n, name: n, parentId: null, topics: [{ id: `${n}-t`, name: 't' }] })), tasks: [], notes: [], dates: [] }
+  const op = <T extends object>(o: T, i: number) => ({ ...o, id: `c${i}`, says: '', effect: 'change' as const, why: null })
+  const set: ChangeSet = { dropped: [], ops: [
+    { ...op({ op: 'add_subject' as const, name: 'Semester Five', topics: [], key: 'sem5' }, 1), effect: 'add' },
+    ...names.map((n, i) => op({ op: 'move_subject' as const, subjectId: n, parentKey: 'sem5' }, i + 2)),
+  ] }
+  const rows = subjectOutline(detail, changeMarks(set))
+  assert.deepEqual(rows.map(r => [r.name, r.depth, r.proposed, r.moved, r.under, r.inside]), [
+    ['Semester Five', 0, true, false, null, 3],
+    ['Automata', 1, false, true, 'Semester Five', 0],
+    ['NLP', 1, false, true, 'Semester Five', 0],
+    ['SPM', 1, false, true, 'Semester Five', 0],
+  ])
+  // Nothing proposed: the records as they stand, a subject under the one it is inside.
+  detail.subjects[2]!.parentId = 'Automata'
+  assert.deepEqual(subjectOutline(detail, changeMarks(null)).map(r => [r.name, r.depth]), [['Automata', 0], ['SPM', 1], ['NLP', 0]])
+})
+
+test('a plan lists a subject right under the one it is inside; the map opens on the group, which shows what is inside it', () => {
+  const p = plan()
+  p.subjects = [{ name: 'NLP', topics: [], parent: 'Semester Five' }, { name: 'Semester Five', topics: [] }, { name: 'Automata', topics: [], parent: 'Semester Five' }]
+  assert.deepEqual(planSubjects(p), [{ index: 1, depth: 0, inside: 2 }, { index: 0, depth: 1, inside: 0 }, { index: 2, depth: 1, inside: 0 }])
+  const current: WorkspaceDetail = { workspace: null, title: 'x', tasks: [], notes: [], dates: [], subjects: [
+    { id: 'g', name: 'Semester Five', parentId: null, topics: [] }, { id: 'a', name: 'Automata', parentId: 'g', topics: [] }, { id: 'n', name: 'NLP', parentId: 'g', topics: [] },
+  ] }
+  assert.deepEqual(mapDestinations({ status: 'ready', current }), [{ label: 'Semester Five', href: '/map?focus=subject%3Ag' }])
+  assert.deepEqual(mapDestinations({ status: 'ready', current }, ['a']), [{ label: 'Semester Five', href: '/map?focus=subject%3Ag' }])
 })

@@ -280,7 +280,8 @@ const target = (o: ChangeOp): string | null =>
   : o.op === "update_task" || o.op === "remove_task" ? `task:${o.taskId}`
   : o.op === "update_date" ? `date:${o.dateId}` : o.op === "order_tasks" ? `order:${o.taskIds.join(",")}`
   : o.op === "remove_subject" ? `subject:${o.subjectId}` : o.op === "remove_date" ? `date:${o.dateId}`
-  : o.op === "remove_note" ? `note:${o.noteId}` : null;
+  : o.op === "remove_note" ? `note:${o.noteId}`
+  : o.op === "move_subject" ? `subject-place:${o.subjectId}` : o.op === "rename_subject" ? `subject-name:${o.subjectId}` : null;
 
 export async function changeResource(
   platformChatId: string,
@@ -304,9 +305,16 @@ export async function changeResource(
     return { ok: false, error: "changed", message: `Since Nova proposed this, ${lost.map(o => o.says.charAt(0).toLowerCase() + o.says.slice(1)).slice(0, 2).join("; ")} no longer fits what's there. Nothing was changed; ask Nova again.` };
   }
   const ops = again.ops;
+  // A subject this set adds is named, for a subject going inside it, by its name.
+  const parentOf = (o: { parentId?: string | null; parentKey?: string | null }): { parentId: string | null; parentName?: string } => {
+    const added = o.parentKey ? ops.find((a): a is Extract<typeof a, { op: "add_subject" }> => a.op === "add_subject" && a.key === o.parentKey) : undefined;
+    return added ? { parentId: null, parentName: added.name } : { parentId: o.parentId ?? null };
+  };
   const edits: StudyEdit[] = ops.flatMap((o): StudyEdit[] => (
     o.op === "add_topics" ? [{ op: "add_topics", subjectId: o.subjectId, names: o.names }]
-    : o.op === "add_subject" ? [{ op: "add_subject", name: o.name, topics: o.topics }]
+    : o.op === "add_subject" ? [{ op: "add_subject", name: o.name, topics: o.topics, ...parentOf(o) }]
+    : o.op === "move_subject" ? [{ op: "move_subject", subjectId: o.subjectId, ...parentOf(o) }]
+    : o.op === "rename_subject" ? [{ op: "rename_subject", subjectId: o.subjectId, name: o.name }]
     : o.op === "rename_topic" ? [{ op: "rename_topic", topicId: o.topicId, name: o.name }]
     : o.op === "remove_topic" ? [{ op: "remove_topic", topicId: o.topicId }] : []))
     // A subject is removed once its topics are gone.
@@ -383,10 +391,13 @@ export async function workspacePlanOf(profileId: string, workspaceId: string | n
 // known as Nova's too.
 
 const low = (x: string) => x.trim().toLowerCase();
-interface Added { topics: Array<{ subject: string; name: string }>; notes: string[]; dates: string[] }
+interface Added { topics: Array<{ subject: string; name: string }>; notes: string[]; dates: string[]; subjects: string[] }
 const addedOf = (plan: unknown): Added => {
   const a = (plan as { nova?: { added?: Partial<Added> } } | null)?.nova?.added;
-  return { topics: Array.isArray(a?.topics) ? a!.topics : [], notes: Array.isArray(a?.notes) ? a!.notes : [], dates: Array.isArray(a?.dates) ? a!.dates : [] };
+  return {
+    topics: Array.isArray(a?.topics) ? a!.topics : [], notes: Array.isArray(a?.notes) ? a!.notes : [], dates: Array.isArray(a?.dates) ? a!.dates : [],
+    subjects: Array.isArray(a?.subjects) ? a!.subjects : [],
+  };
 };
 
 // What Nova made for a workspace, by name: from the plan it was built from
@@ -396,7 +407,7 @@ function madeBy(plan: unknown): { subjects: Set<string>; topics: Set<string>; no
   const written = p && Array.isArray(p.subjects) && Array.isArray(p.tasks) ? planWrites(p as WorkspacePlan) : null;
   const added = addedOf(plan);
   return {
-    subjects: new Set((written?.subjects ?? []).map(s => low(s.name))),
+    subjects: new Set([...(written?.subjects ?? []).map(s => low(s.name)), ...added.subjects.map(low)]),
     topics: new Set([...(written?.subjects ?? []).flatMap(s => s.topics.map(t => `${low(s.name)}\n${low(t)}`)), ...added.topics.map(t => `${low(t.subject)}\n${low(t.name)}`)]),
     notes: new Set([...(written?.notes ?? []).map(n => low(n.title)), ...added.notes.map(low)]),
     dates: new Set([...(written?.dates ?? []).map(d => low(d.title)), ...added.dates.map(low)]),
@@ -519,7 +530,7 @@ async function recordAdded(tx: Pick<typeof prisma, "novaWorkspace">, workspaceId
   const added = addedOf(row.plan);
   for (const o of ops) {
     if (o.op === "add_topics") for (const name of o.names) added.topics.push({ subject: subjectName(o.subjectId) ?? "", name });
-    if (o.op === "add_subject") for (const name of o.topics) added.topics.push({ subject: o.name, name });
+    if (o.op === "add_subject") { added.subjects.push(o.name); for (const name of o.topics) added.topics.push({ subject: o.name, name }); }
     if (o.op === "add_note") added.notes.push(o.title);
     if (o.op === "add_date") added.dates.push(o.title);
   }

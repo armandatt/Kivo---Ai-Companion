@@ -265,7 +265,7 @@ export async function declareSubjectsIn(
   existing: Array<{ id: string; name: string }>,
   subjects: Array<{ name: string; topics: string[] }>,
   // Filled in for a caller that needs to know what was made (workspaces).
-  report?: { ids: Map<string, string>; subjectsAdded: number; topicsAdded: number },
+  report?: { ids: Map<string, string>; subjectsAdded: number; topicsAdded: number; created?: Set<string> },
 ): Promise<boolean> {
   const known = [...existing];
   let hasTopics = false;
@@ -274,7 +274,7 @@ export async function declareSubjectsIn(
     if (!subject) {
       subject = await tx.novaSubject.create({ data: { profileId, name: s.name }, select: { id: true, name: true } });
       known.push(subject);
-      if (report) report.subjectsAdded++;
+      if (report) { report.subjectsAdded++; report.created?.add(subject.id); }
     }
     report?.ids.set(s.name.toLowerCase(), subject.id);
     if (s.topics.length > 0) {
@@ -291,14 +291,22 @@ export async function declareSubjectsIn(
 // with no mastery, review or snapshot. Setup counts as done once a topic
 // exists, as it does for saveSetup. Returns each subject's id by the name
 // the plan gave it, and how many subjects and topics were new.
+// A subject made here goes inside the one the plan names (`parent`, another
+// subject of the plan, checked by workspace-plan.ts); one they already had
+// stays where it is: adding to a workspace changes nothing that is there.
 export async function declareWorkspaceSubjectsIn(
   tx: Pick<typeof prisma, "novaSubject" | "novaTopicMastery" | "novaAcademicProfile">,
   profileId: string,
-  subjects: Array<{ name: string; topics: string[] }>,
-): Promise<{ ids: Map<string, string>; subjectsAdded: number; topicsAdded: number }> {
+  subjects: Array<{ name: string; topics: string[]; parent?: string | null }>,
+): Promise<{ ids: Map<string, string>; subjectsAdded: number; topicsAdded: number; created: Set<string> }> {
   const known = await tx.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true } });
-  const report = { ids: new Map<string, string>(), subjectsAdded: 0, topicsAdded: 0 };
+  const report = { ids: new Map<string, string>(), subjectsAdded: 0, topicsAdded: 0, created: new Set<string>() };
   await declareSubjectsIn(tx, profileId, known, subjects, report);
+  for (const s of subjects) {
+    const id = report.ids.get(s.name.toLowerCase());
+    const parentId = s.parent ? report.ids.get(s.parent.toLowerCase()) : undefined;
+    if (id && parentId && id !== parentId && report.created.has(id)) await placeSubjectIn(tx, id, parentId);
+  }
   if (await tx.novaTopicMastery.count({ where: { subject: { profileId }, archivedAt: null } }) > 0) {
     await tx.novaAcademicProfile.update({ where: { id: profileId }, data: { onboardingComplete: true, onboardingStep: "complete" } });
   }
@@ -493,11 +501,11 @@ export async function subjectsForMatching(profileId: string): Promise<Array<{ id
   return prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true, code: true }, orderBy: { createdAt: "asc" }, take: 200 });
 }
 
-export async function subjectsWithTopics(profileId: string, subjectIds: string[]): Promise<Array<{ id: string; name: string; topics: Array<{ id: string; name: string }> }>> {
+export async function subjectsWithTopics(profileId: string, subjectIds: string[]): Promise<Array<{ id: string; name: string; parentId: string | null; topics: Array<{ id: string; name: string }> }>> {
   if (subjectIds.length === 0) return [];
   const rows = await prisma.novaSubject.findMany({
     where:  { profileId, id: { in: subjectIds } },
-    select: { id: true, name: true, topics: { where: { archivedAt: null }, select: { id: true, name: true }, orderBy: { createdAt: "asc" }, take: 80 } },
+    select: { id: true, name: true, parentId: true, topics: { where: { archivedAt: null }, select: { id: true, name: true }, orderBy: { createdAt: "asc" }, take: 80 } },
   });
   return subjectIds.flatMap(id => rows.filter(r => r.id === id));
 }
@@ -506,6 +514,13 @@ export async function subjectsWithTopics(profileId: string, subjectIds: string[]
 
 export async function renameSubjectIn(tx: Pick<typeof prisma, "novaSubject">, subjectId: string, name: string): Promise<void> {
   await tx.novaSubject.update({ where: { id: subjectId }, data: { name } });
+}
+
+// Puts a subject inside another of the same learner's (null: on its own).
+// The caller has checked it is theirs, makes no loop and is not too deep
+// (setup-edit.ts checkStudyEdits), in the same transaction.
+export async function placeSubjectIn(tx: Pick<typeof prisma, "novaSubject">, subjectId: string, parentId: string | null): Promise<void> {
+  await tx.novaSubject.update({ where: { id: subjectId }, data: { parentId } });
 }
 
 // Only for a subject with no topics and no dates left, checked by the caller

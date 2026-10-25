@@ -118,3 +118,19 @@ test("a priority is the learner's: Nova's suggestion is used only when they take
 test('a dependency is shown both ways', () => {
   assert.deepEqual(edit.waitingOn(plan(), 'a').map(t => t.key), ['b'])
 })
+
+test('a subject goes inside another of the plan; never inside itself or one inside it; renaming or removing the group carries that through', () => {
+  let p = plan()
+  p.subjects = [{ name: 'Semester Five', topics: [] }, { name: 'Automata', topics: [] }, { name: 'NLP', topics: [] }]
+  p = edit.setSubjectParent(p, 1, 'Semester Five')
+  p = edit.setSubjectParent(p, 2, 'Automata')
+  assert.deepEqual(p.subjects.map(s => s.parent ?? null), [null, 'Semester Five', 'Automata'])
+  // Semester Five can't go inside what is inside it.
+  assert.deepEqual(edit.parentChoices(p, 0), [])
+  assert.equal(edit.setSubjectParent(p, 0, 'NLP'), p)
+  const renamed = edit.renameSubject(p, 0, 'Sem 5')
+  assert.equal(renamed.subjects[1]!.parent, 'Sem 5')
+  const removed = edit.removeSubject(p, 0)
+  assert.deepEqual(removed.subjects.map(s => [s.name, s.parent ?? null]), [['Automata', null], ['NLP', 'Automata']])
+  assert.equal(edit.setSubjectParent(p, 2, null).subjects[2]!.parent, null)
+})

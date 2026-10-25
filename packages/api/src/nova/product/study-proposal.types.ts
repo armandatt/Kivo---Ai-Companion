@@ -5,7 +5,8 @@
 export const STUDY_REQUEST_MAX = 800;
 
 type Edit =
-  | { op: "add_subject";    name: string; topics: string[] }
+  | { op: "add_subject";    name: string; topics: string[]; parentId?: string | null; parentName?: string }
+  | { op: "move_subject";   subjectId: string; parentId: string | null; parentName?: string }
   | { op: "add_topics";     subjectId: string; names: string[] }
   | { op: "rename_subject"; subjectId: string; name: string }
   | { op: "rename_topic";   topicId: string; name: string }

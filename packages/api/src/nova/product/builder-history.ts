@@ -98,7 +98,11 @@ export function snapshotOf(d: WorkspaceDetail, plan: WorkspacePlan | null = null
   const written = plan ? planWrites(plan).notes : [];
   return {
     title: d.title,
-    subjects: d.subjects.map(s => ({ name: s.name, topics: s.topics.map(t => t.name) })),
+    // Where each subject sat; one inside a subject that isn't part of this is left unsaid (not moved back).
+    subjects: d.subjects.map(s => {
+      const parent = s.parentId ? d.subjects.find(x => x.id === s.parentId)?.name : null;
+      return { name: s.name, topics: s.topics.map(t => t.name), ...(parent !== undefined ? { parent } : {}) };
+    }),
     tasks: d.tasks.map(t => ({
       key: t.id, title: t.title, status: t.status, priority: t.priority, dueDay: t.dueDay, subject: subjectName(t.subjectId), topic: t.topicName,
       parent: t.parentId && d.tasks.some(x => x.id === t.parentId) ? t.parentId : null,
@@ -113,7 +117,7 @@ export function snapshotOfPlan(plan: WorkspacePlan): Snapshot {
   const w = planWrites(plan);
   return {
     title: plan.title,
-    subjects: w.subjects.map(s => ({ name: s.name, topics: [...s.topics] })),
+    subjects: w.subjects.map(s => ({ name: s.name, topics: [...s.topics], parent: s.parent ?? null })),
     tasks: w.tasks.map(t => ({ key: t.key, title: t.title, status: "todo", priority: t.priority, dueDay: t.dueDay, subject: t.subject, topic: t.topic, parent: t.parent ?? null })),
     dates: w.dates.map(d => ({ title: d.title, day: d.day, kind: d.kind, subject: d.subject })),
     notes: w.notes.map(n => ({ title: n.title, subject: n.subject, body: n.body })),
@@ -136,9 +140,26 @@ export function changesToReach(current: WorkspaceDetail, target: Snapshot, today
   const notes: string[] = [];
   const subjectByName = (name: string | null) => (name ? current.subjects.find(s => low(s.name) === low(name)) ?? null : null);
 
-  for (const s of target.subjects) {
+  // Subjects, a group before the subjects inside it, so one added can be gone into.
+  const subjectKey = new Map<string, string>();
+  const placeOf = (parent: string | null | undefined): Record<string, unknown> | undefined => {
+    if (parent === undefined) return undefined;
+    if (parent === null) return { parentId: null };
+    const liveParent = subjectByName(parent);
+    if (liveParent) return { parentId: liveParent.id };
+    const key = subjectKey.get(low(parent));
+    return key ? { parentKey: key } : undefined;
+  };
+  for (const { item: s } of treeOrder(target.subjects.map(x => ({ ...x, id: low(x.name), parent: x.parent ? low(x.parent) : null })))) {
     const live = subjectByName(s.name);
-    if (!live) { ops.push({ op: "add_subject", name: s.name, topics: s.topics }); continue; }
+    const place = placeOf(target.subjects.find(x => low(x.name) === s.id)?.parent);
+    if (!live) {
+      const key = `rs${subjectKey.size + 1}`;
+      subjectKey.set(s.id, key);
+      ops.push({ op: "add_subject", key, name: s.name, topics: s.topics, ...(place && (place.parentId || place.parentKey) ? place : {}) });
+      continue;
+    }
+    if (place && ("parentKey" in place || (place.parentId ?? null) !== (live.parentId ?? null))) ops.push({ op: "move_subject", subjectId: live.id, ...place });
     const missing = s.topics.filter(t => !live.topics.some(x => low(x.name) === low(t)));
     if (missing.length) ops.push({ op: "add_topics", subjectId: live.id, names: missing });
     for (const t of live.topics) if (!s.topics.some(x => low(x) === low(t.name))) ops.push({ op: "remove_topic", topicId: t.id });

@@ -5,7 +5,7 @@ import { ArrowDown, ArrowUp, CalendarDays, ChevronRight, FileText, Flag, IndentD
 import type { BriefFact, DraftView } from '@repo/api/nova/product/builder.types'
 import { planCounts, type PlanTask, type WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
 import { cn } from '@/lib/utils'
-import { diffSummary, hintFor, ids, planDiff, wordsFor, type Hint, type PlanDiff, type Words } from './builder-view'
+import { diffSummary, hintFor, ids, planDiff, planSubjects, wordsFor, type Hint, type PlanDiff, type Words } from './builder-view'
 import * as edit from './plan-edit'
 import type { PlaygroundView } from './plan-edit'
 import { ProposalActions, workingLabel } from './proposal-actions'
@@ -190,9 +190,12 @@ function Overview({ plan, draft, editable, set, words, onView }: ViewProps & { d
         <section aria-labelledby="pg-outline">
           <div className="flex items-baseline justify-between"><h3 id="pg-outline" className={H}>{words.areas}</h3><button type="button" onClick={() => onView('topics')} className="text-xs font-medium text-foreground/60 hover:text-foreground">Open</button></div>
           <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
-            {plan.subjects.map(s => {
+            {planSubjects(plan).map(({ index, depth, inside }) => {
+              const s = plan.subjects[index]!
               const m = mark(ids.subject(s.name))
-              return <li key={s.name} className={cn(CARD, 'flex items-center justify-between gap-2 px-3 py-2', m.className)} style={m.style}><span className="min-w-0 truncate text-sm font-medium text-foreground">{s.name}</span><span className="shrink-0 text-xs text-subtle">{s.topics.length} {s.topics.length === 1 ? words.topic : `${words.topic}s`}</span></li>
+              // A subject inside another is listed under it, indented, across the whole row.
+              const nested = plan.subjects.some(x => x.parent)
+              return <li key={s.name} className={cn(CARD, 'flex items-center justify-between gap-2 px-3 py-2', nested && 'sm:col-span-2', m.className)} style={{ ...m.style, ...(depth ? { marginLeft: depth * 18 } : {}) }} data-subject-depth={depth}><span className="min-w-0 truncate text-sm font-medium text-foreground">{s.name}</span><span className="shrink-0 text-xs text-subtle">{inside ? `${inside} ${inside === 1 ? words.area : `${words.area}s`}${s.topics.length ? ' · ' : ''}` : ''}{inside && !s.topics.length ? '' : `${s.topics.length} ${s.topics.length === 1 ? words.topic : `${words.topic}s`}`}</span></li>
             })}
           </ul>
         </section>
@@ -417,15 +420,27 @@ function Topics({ plan, editable, set, words }: ViewProps) {
   const mark = useMarker()
   return (
     <div className="space-y-3">
-      {plan.subjects.map((s, i) => {
+      {planSubjects(plan).map(({ index: i, depth }) => {
+        const s = plan.subjects[i]!
         const m = mark(ids.subject(s.name))
+        const choices = editable ? edit.parentChoices(plan, i) : []
         return (
-          <section key={i} className={cn(CARD, 'p-3', m.className)} style={m.style} data-subject={i}>
+          <section key={i} className={cn(CARD, 'p-3', m.className)} style={{ ...m.style, ...(depth ? { marginLeft: depth * 18 } : {}) }} data-subject={i} data-subject-depth={depth}>
             <div className="flex items-center gap-2">
               <input aria-label={`${words.area} ${i + 1} name`} value={s.name} disabled={!editable} maxLength={80} onChange={e => set(edit.renameSubject(plan, i, e.target.value))} className={cn(FIELD, 'font-medium')} data-editable />
               <span className="shrink-0 text-xs text-subtle">{s.topics.length}</span>
               {editable && <IconButton label={`Remove ${s.name}`} onClick={() => set(edit.removeSubject(plan, i))}><X aria-hidden className="size-3.5" /></IconButton>}
             </div>
+            {(s.parent || choices.length > 0) && (
+              // Where it sits on the Knowledge Map: on its own, or inside another of these.
+              <label className="mt-1.5 flex items-center gap-2 text-xs text-subtle">
+                Inside
+                <select value={s.parent ?? ''} disabled={!editable} onChange={e => set(edit.setSubjectParent(plan, i, e.target.value || null))} className="h-7 rounded-md border border-white/10 bg-transparent px-1.5 text-xs text-foreground/85" data-subject-parent>
+                  <option value="">nothing (on its own)</option>
+                  {[...new Set([...(s.parent ? [s.parent] : []), ...choices])].map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </label>
+            )}
             {s.topics.some(t => t.unit || t.subtopics?.length) ? (
               // A course in learning order: each unit once, where it starts, and what each topic covers.
               <ol className="mt-2 space-y-1">

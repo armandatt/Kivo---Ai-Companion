@@ -7,7 +7,7 @@ import type { ProposedChange, WorkspaceDetail } from '@repo/api/nova/product/bui
 import { treeOrder } from '@repo/api/nova/product/task-tree'
 import { cn } from '@/lib/utils'
 import { patchTask } from './builder-api'
-import { changeMarks, hintFor, wordsFor, type ChangeMarks } from './builder-view'
+import { changeMarks, hintFor, subjectOutline, wordsFor, type ChangeMarks } from './builder-view'
 import type { PlaygroundView } from './plan-edit'
 import { NovaHint, PlaygroundHeader, TITLE_AREA, ViewTabs } from './playground'
 import { ProposalActions } from './proposal-actions'
@@ -139,6 +139,9 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
   const done = detail.tasks.filter(t => t.status === 'done').length
   const words = wordsFor(state.draft?.brief.kind)
   const topics = detail.subjects.reduce((n, s) => n + s.topics.length, 0)
+  // The subjects as they will sit once the proposed changes apply, a subject under the one it is inside.
+  const outline = subjectOutline(detail, marks)
+  const nested = outline.some(r => r.depth > 0)
   const stats = [phases.length ? `${phases.length} ${phases.length === 1 ? words.phase : words.phases.toLowerCase()}` : null, `${done} of ${detail.tasks.length} task${detail.tasks.length === 1 ? '' : 's'} done`, topics ? `${topics} ${topics === 1 ? words.topic : `${words.topic}s`}` : null, detail.dates.length ? `${detail.dates.length} date${detail.dates.length === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ')
   const talking = state.draft && ['discovery', 'awaiting_approval', 'failed', 'ready'].includes(state.draft.status)
   const progress = (tasks: Task[]) => `${tasks.filter(t => t.status === 'done').length}/${tasks.length} done`
@@ -171,9 +174,13 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
             ) : (
               <section aria-labelledby="live-outline">
                 <div className="flex items-baseline justify-between"><h3 id="live-outline" className={H}>{words.areas}</h3><button type="button" onClick={() => onView('topics')} className="text-xs font-medium text-foreground/60 hover:text-foreground">Open</button></div>
-                <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                  {detail.subjects.map(s => <li key={s.id} className={cn(CARD, 'flex items-center justify-between gap-2 px-3 py-2', marks.removedSubjects.has(s.id) && 'border-red-400/40 opacity-60')}><span className={cn('min-w-0 truncate text-sm font-medium text-foreground', marks.removedSubjects.has(s.id) && 'line-through')}>{s.name}{marks.removedSubjects.has(s.id) && <Proposed>to be removed</Proposed>}</span><span className="shrink-0 text-xs text-subtle">{s.topics.length}{marks.addedTopics.get(s.id) ? ` + ${marks.addedTopics.get(s.id)!.length}` : ''} {words.topic}s</span></li>)}
-                  {marks.addedSubjects.map(s => <li key={s.name} className={cn(CARD, PROPOSED, 'px-3 py-2 text-sm text-foreground/85')}>+ {s.name}<Proposed>proposed</Proposed></li>)}
+                <ul className={cn('mt-2 gap-1.5', nested ? 'flex flex-col' : 'grid sm:grid-cols-2')}>
+                  {outline.map(r => (
+                    <li key={r.key} className={cn(CARD, 'flex items-center justify-between gap-2 px-3 py-2', r.proposed && PROPOSED, r.removed && 'border-red-400/40 opacity-60')} style={r.depth ? { marginLeft: r.depth * 18 } : undefined} data-subject-depth={r.depth}>
+                      <span className={cn('min-w-0 truncate text-sm font-medium text-foreground', r.removed && 'line-through')}>{r.proposed ? '+ ' : ''}{r.name}{r.renamed && <span className="text-nova-ink"> → {r.renamed}</span>}{r.proposed && <Proposed>proposed</Proposed>}{r.moved && <Proposed>{r.under ? `moves inside ${r.under}` : 'moves out, on its own'}</Proposed>}{r.removed && <Proposed>to be removed</Proposed>}</span>
+                      <span className="shrink-0 text-xs text-subtle">{r.inside ? `${r.inside} ${r.inside === 1 ? words.area : `${words.area}s`}${r.topics ? ' · ' : ''}` : ''}{r.inside && !r.topics ? '' : `${r.topics}${r.addedTopics ? ` + ${r.addedTopics}` : ''} ${words.topic}s`}</span>
+                    </li>
+                  ))}
                 </ul>
               </section>
             )}
@@ -231,11 +238,20 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
         )}
         {shown === 'topics' && (
           <div className="space-y-3">
-            {detail.subjects.map(s => {
+            {outline.map(r => {
+              const s = r.id ? detail.subjects.find(x => x.id === r.id) : undefined
+              const added = !s ? marks.addedSubjects.find(a => `+${a.key ?? a.name}` === r.key) : undefined
+              const indent = r.depth ? { marginLeft: r.depth * 18 } : undefined
+              if (added) return (
+                <section key={r.key} className={cn(CARD, PROPOSED, 'p-3')} style={indent} data-subject-depth={r.depth}><h3 className="text-sm font-medium text-foreground">+ {added.name}<Proposed>{r.under ? `proposed, inside ${r.under}` : 'proposed'}</Proposed></h3>
+                  {added.topics.length > 0 && <ul className="mt-2 flex flex-wrap gap-1.5">{added.topics.map(t => <li key={t} className="rounded-full border border-dashed border-nova/40 px-2.5 py-0.5 text-xs text-foreground/80">{t}</li>)}</ul>}</section>
+              )
+              if (!s) return null
               const outlined = s.topics.some(t => t.unit || t.subtopics?.length)
               return (
-                <section key={s.id} className={cn(CARD, 'p-3', marks.removedSubjects.has(s.id) && 'border-red-400/40 opacity-60')}>
-                  <div className="flex items-center justify-between gap-2"><h3 className={cn('text-sm font-medium text-foreground', marks.removedSubjects.has(s.id) && 'line-through')}>{s.name}{marks.removedSubjects.has(s.id) && <Proposed>to be removed</Proposed>}</h3><Link href={`/map?focus=${encodeURIComponent(`subject:${s.id}`)}`} className="text-xs font-medium text-foreground/60 hover:text-foreground">On the map</Link></div>
+                <section key={s.id} className={cn(CARD, 'p-3', marks.removedSubjects.has(s.id) && 'border-red-400/40 opacity-60')} style={indent} data-subject-depth={r.depth}>
+                  <div className="flex items-center justify-between gap-2"><h3 className={cn('text-sm font-medium text-foreground', marks.removedSubjects.has(s.id) && 'line-through')}>{s.name}{r.renamed && <span className="text-nova-ink"> → {r.renamed}</span>}{r.moved && <Proposed>{r.under ? `moves inside ${r.under}` : 'moves out, on its own'}</Proposed>}{marks.removedSubjects.has(s.id) && <Proposed>to be removed</Proposed>}</h3><Link href={`/map?focus=${encodeURIComponent(`subject:${s.id}`)}`} className="text-xs font-medium text-foreground/60 hover:text-foreground">On the map</Link></div>
+                  {r.inside > 0 && s.topics.length === 0 && !marks.addedTopics.get(s.id) && <p className="mt-1 text-xs text-subtle">{r.inside} {r.inside === 1 ? words.area : `${words.area}s`} inside it</p>}
                   {outlined ? (
                     <ol className="mt-2 space-y-1">
                       {s.topics.map((t, k) => {
@@ -273,10 +289,6 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
                 </section>
               )
             })}
-            {marks.addedSubjects.map(s => (
-              <section key={s.name} className={cn(CARD, PROPOSED, 'p-3')}><h3 className="text-sm font-medium text-foreground">+ {s.name}<Proposed>proposed</Proposed></h3>
-                <ul className="mt-2 flex flex-wrap gap-1.5">{s.topics.map(t => <li key={t} className="rounded-full border border-dashed border-nova/40 px-2.5 py-0.5 text-xs text-foreground/80">{t}</li>)}</ul></section>
-            ))}
             {detail.subjects.length === 0 && <p className="text-sm text-foreground/65">Its subjects were removed in Knowledge.</p>}
           </div>
         )}

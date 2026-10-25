@@ -765,6 +765,12 @@ model NovaSubject {
   subjectType String?   // "core" | "elective" | "lab"
   isWeak      Boolean @default(false)
   isStrong    Boolean @default(false)
+  // The subject it sits inside ("Automata" inside "Semester Five"), so the
+  // learner arranges their own Knowledge Map. Removing that subject leaves
+  // this one on its own.
+  parentId    String?
+  parent      NovaSubject?  @relation("NovaSubjectGroups", fields: [parentId], references: [id], onDelete: SetNull)
+  children    NovaSubject[] @relation("NovaSubjectGroups")
 
   topics NovaTopicMastery[]
   exams  NovaExam[]
@@ -780,6 +786,7 @@ model NovaSubject {
 
   @@unique([profileId, name])
   @@index([profileId])
+  @@index([parentId])
 }
 
 model NovaTopicMastery {

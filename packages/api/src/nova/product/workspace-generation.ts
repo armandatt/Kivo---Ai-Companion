@@ -136,7 +136,7 @@ const PLAN_SYSTEM = [
   "Reply with JSON only, in this shape (leave out what does not apply; use [] for empty lists):",
   `{"title": string, "summary": string, "category": "college"|"professional"|"competitive",
  "prerequisites": [string],
- "subjects": [{"name": string, "topics": [{"name": string, "unit": string|null, "subtopics": [string], "explanation": string|null, "sources": [{"file": string, "page": number|null}]}]}],
+ "subjects": [{"name": string, "parent": string|null, "topics": [{"name": string, "unit": string|null, "subtopics": [string], "explanation": string|null, "sources": [{"file": string, "page": number|null}]}]}],
  "phases": [{"name": string, "subject": string, "weeks": number|null, "hoursPerWeek": number|null, "goals": [string], "exercises": [string], "project": string|null, "completion": string, "resources": [{"title": string, "kind": "book"|"course"|"docs"|"video"|"practice"|"article"|"tool"|"other", "url": null, "origin": "nova"|"source"}]}],
  "dates": [{"title": string, "subject": string|null, "kind": "exam"|"assignment"|"project"|"interview"|"certification"|"other", "day": "YYYY-MM-DD"}],
  "tasks": [{"key": string, "title": string, "parent": string|null, "suggestedPriority": "low"|"medium"|"high"|null, "priorityReason": string|null, "subject": string|null, "topic": string|null, "after": string|null, "dueDay": "YYYY-MM-DD"|null, "estimatedMinutes": number|null}],
@@ -243,6 +243,7 @@ const BUILDER_RULES = [
   "Choose the structure the work needs, not a fixed template: a project gets milestones (phases, in order) with tasks under each and any real dependencies; an exam gets subjects and topics, revision cycles and practice sessions; a skill gets ordered stages with exercises, a project and what done looks like; work gets deliverables, deadlines and reviews.",
   "Use the kind's own words in every title, task and note. A project or work plan has exactly one subject, named after the project (or what the learner calls it), whose topics are exactly its milestones' names in order, nothing else (no separate parts, never a syllabus); no revision, exam or study-session tasks; its tasks are concrete steps (build, test, ship, review), building on what the learner said is already done. An academic plan uses subjects, topics, revision and practice.",
   "Every task's topic is the exact name of the milestone (phase) it belongs to, when there are milestones.",
+  "A subject's parent is another subject of the plan it sits inside, by name; null for nearly all. Only when the learner asks for subjects grouped under one name (\"put all five under Semester Five\"): add that name as a subject with no topics and set each grouped subject's parent to it, changing nothing else (topics, tasks, notes and dates stay exactly as they are). Never make a group nobody asked for.",
   "When the learner wants everything under one name (\"all milestones under one main topic called Kivo\"), rename the project's one subject to that name and change nothing else (milestones, tasks and dates stay exactly as they are); never add it as another topic.",
   "A milestone's weeks and hoursPerWeek fit the time the learner has: null when the whole plan is shorter than two weeks (the tasks' due days carry the timing).",
   "Keep it simple. Hold to what was asked: no subjects, topics, milestones, tasks, dates or resources the conversation gives no reason for, and nothing about the learner's other workspaces. A few tasks per milestone, no padding. notes: [] unless the learner asked for a note or shared material worth keeping; milestone details already go in their own fields. resources: [] unless asked for. prerequisites: [] unless they matter.",
@@ -405,7 +406,8 @@ function withSyllabusNote(checked: PlanCheck, p: Pick<BuilderPlanRequest, "kind"
 const CHANGES_SYSTEM = [
   "You propose changes to a learner's existing workspace in Kivo, a learning and work app. Kivo applies them only after the learner approves.",
   "Reply with JSON only: {\"ops\": [operation], \"summary\": string}. Each operation has \"why\" (one short line) and is one of:",
-  `{"op":"add_topics","subjectId":ID,"names":[string]}  {"op":"add_subject","name":string,"topics":[string]}
+  `{"op":"add_topics","subjectId":ID,"names":[string]}  {"op":"add_subject","key":string,"name":string,"topics":[string],"parentId":ID|null,"parentKey":string|null}  (parentId: inside that subject; parentKey: inside another add_subject of this set, by its key)
+{"op":"move_subject","subjectId":ID,"parentId":ID|null,"parentKey":string|null}  (puts the subject, with everything in it, inside another; parentId null takes it out, on its own)  {"op":"rename_subject","subjectId":ID,"name":string}
 {"op":"rename_topic","topicId":ID,"name":string}  {"op":"remove_topic","topicId":ID}  {"op":"remove_subject","subjectId":ID}  (the subject with its topics and dates; its notes and tasks stay, unfiled)
 {"op":"add_task","key":string,"title":string,"parentId":ID|null,"parentKey":string|null,"subjectId":ID|null,"topicName":string|null,"dueDay":"YYYY-MM-DD"|null,"priority":"low"|"medium"|"high"|null}  (parentId: a step of that task; parentKey: a step of another add_task in this set, by its key)
 {"op":"update_task","taskId":ID,"title"?:string,"parentId"?:ID|null,"dueDay"?:"YYYY-MM-DD"|null,"priority"?:"low"|"medium"|"high"|null}  (parentId moves it under another task; null makes it a task of its own)
@@ -420,6 +422,7 @@ const CHANGES_SYSTEM = [
   "- Priority is the learner's: set or change one only when CHANGE ASKED is about priority (Kivo drops it otherwise).",
   "- Use only ids shown in CURRENT RECORDS, exactly. Change only what CHANGE ASKED asks for; everything else stays as it is. Never remove or rename something unless asked. Additions must not repeat what is already there.",
   "- Topics have no order in Kivo and cannot be reordered (a milestone is a topic). To put a milestone or a piece of work first, order its tasks with order_tasks, and say so in summary.",
+  "- Subjects nest: CURRENT RECORDS shows a subject inside another indented under it. To group subjects under one name (\"put them all under Semester Five\"), add_subject the group (no topics) with a key, then move_subject each subject into it with parentKey; to put one inside a subject already there, move_subject with parentId. Moving keeps every topic, task, note and date where it is: never remove and re-add to regroup, and never list subjects as topics of another.",
   "- When the learner wants a subject gone (\"delete Prompt Engineering\", \"it belongs to another semester\"), use remove_subject: it takes the subject with its topics and dates. Use remove_topic only for single topics.",
   "- A new deadline: update_date for the date, then update_task for each open task whose due day no longer fits before it; nothing else.",
   "- New topics for a subject or exam are specific, in learning order after what is there, never what a topic there already covers (its \"covers\" list), never a placeholder (\"Introduction\", \"Advanced concepts\", \"Practice questions\"); practice and revision are tasks. Note bodies use \"# \" headings and \"- \" lists.",
@@ -433,7 +436,7 @@ export interface ChangesRequest {
   kind:         string | null;
   facts:        Array<{ label: string; value: string }>;
   // The records as they are now, with their ids.
-  current:      { title: string; subjects: Array<{ id: string; name: string; topics: Array<{ id: string; name: string; subtopics?: string[] }> }>; tasks: Array<{ id: string; title: string; status: string; dueDay: string | null; priority: string | null; topicName: string | null; parentId?: string | null }>; dates: Array<{ id: string; title: string; day: string }>; notes: Array<{ id: string; title: string }> };
+  current:      { title: string; subjects: Array<{ id: string; name: string; parentId?: string | null; topics: Array<{ id: string; name: string; subtopics?: string[] }> }>; tasks: Array<{ id: string; title: string; status: string; dueDay: string | null; priority: string | null; topicName: string | null; parentId?: string | null }>; dates: Array<{ id: string; title: string; day: string }>; notes: Array<{ id: string; title: string }> };
   // The change set proposed so far (operations), when there is one.
   proposed:     unknown[] | null;
   change:       string;
@@ -448,7 +451,7 @@ export function changesPrompt(p: ChangesRequest): string {
     `KIND OF WORK: ${p.kind ?? "work it out from the records"}`,
     `FACTS (the learner's own):\n${p.facts.length ? p.facts.map(f => `- ${f.label}: ${f.value}`).join("\n") : "- none"}`,
     `CURRENT RECORDS: ${c.title}`,
-    `Subjects and topics:\n${c.subjects.map(s => `- subject ${s.id} "${s.name}": ${s.topics.map(t => `${t.id} "${t.name}"${t.subtopics?.length ? ` (covers ${t.subtopics.join("; ")})` : ""}`).join(", ") || "no topics"}`).join("\n") || "- none"}`,
+    `Subjects and topics (a subject inside another is indented under it):\n${treeOrder(c.subjects.map(s => ({ ...s, parent: s.parentId ?? null }))).map(({ item: s, depth }) => `${"  ".repeat(depth)}- subject ${s.id} "${s.name}": ${s.topics.map(t => `${t.id} "${t.name}"${t.subtopics?.length ? ` (covers ${t.subtopics.join("; ")})` : ""}`).join(", ") || "no topics"}`).join("\n") || "- none"}`,
     `Tasks (a step is indented under its task):\n${treeOrder(c.tasks.map(t => ({ ...t, parent: t.parentId ?? null }))).slice(0, 120).map(({ item: t, depth }) => `${"  ".repeat(depth)}- task ${t.id} "${t.title}" (${t.status}${t.dueDay ? `, due ${t.dueDay}` : ""}${t.priority ? `, ${t.priority}` : ""}${t.topicName && depth === 0 ? `, under ${t.topicName}` : ""})`).join("\n") || "- none"}`,
     `Dates:\n${c.dates.map(d => `- date ${d.id} "${d.title}" on ${d.day}`).join("\n") || "- none"}`,
     `Notes:\n${c.notes.slice(0, 30).map(n => `- note ${n.id} "${n.title}"`).join("\n") || "- none"}`,

@@ -23,6 +23,7 @@
 import type { ChangeKind, ChangeOp, ChangeSet, ProposedChange, ResourceRef, WorkspaceDetail } from "./builder.types";
 import { isPlaceholderTopic, oneLine } from "./workspace-plan";
 import { TASK_DEPTH_MAX, canPlace, levelOf, parentsOf, subtreeOf, type TreeNode } from "./task-tree";
+import { SUBJECT_DEPTH_MAX } from "./setup-edit.types";
 
 // New tasks before their new steps (parentKey), whatever order the model
 // gave; everything else keeps its place.
@@ -180,15 +181,51 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
       keep({ op: "remove_topic", topicId: t.id }, `Remove topic ${quoted(t.name)} from ${s.name}`, "remove", {});
     }
     for (const d of current.dates.filter(v => v.subjectId === s.id)) removeDate(d);
-    keep({ op: "remove_subject", subjectId: s.id }, `Remove subject ${quoted(s.name)} (its notes and tasks stay, unfiled)`, "remove", x);
+    // The subjects inside it stay, on their own.
+    const inside = subjectTree.filter(n => n.parent === s.id);
+    for (const n of inside) n.parent = null;
+    const insideNames = inside.map(n => nameOfNode(n.id)).filter((n): n is string => n !== null);
+    keep({ op: "remove_subject", subjectId: s.id }, `Remove subject ${quoted(s.name)} (its notes and tasks stay, unfiled${insideNames.length ? `; ${insideNames.join(", ")} stay${insideNames.length === 1 ? "s" : ""}, on ${insideNames.length === 1 ? "its" : "their"} own` : ""})`, "remove", x);
   };
 
   // Removals that bring others with them are checked after everything else
   // in the set (a workspace's last), so what they bring is not said twice.
-  const late = (o: unknown) => ((o as { op?: unknown })?.op === "remove_subject" ? 1 : 0);
+  // A subject is moved once the subjects this set adds are there to go into.
+  const late = (o: unknown) => ({ move_subject: 1, remove_subject: 2 } as Record<string, number>)[String((o as { op?: unknown })?.op)] ?? 0;
   const ordered = parentsFirst([...list.slice(0, CHANGE_OPS_MAX * 2)]).sort((a, b) => late(a) - late(b));
   // The tasks as a tree: stored ones by id, ones this set adds as "+key".
   const tree: TreeNode[] = current.tasks.map(t => ({ id: t.id, parent: t.parentId ?? null }));
+  // The subjects as a tree, the same way. A subject they keep elsewhere that
+  // one of these sits inside is a node too.
+  const subjectTree: TreeNode[] = current.subjects.map(x => ({ id: x.id, parent: x.parentId ?? null }));
+  for (const x of current.subjects) if (x.parentId && !subjectTree.some(n => n.id === x.parentId)) subjectTree.push({ id: x.parentId, parent: null });
+  const addedSubjects: Array<{ key: string; name: string }> = [];
+  // Where a subject goes: one here (parentId) or one this set adds (parentKey).
+  // null: on its own; undefined: nowhere that is part of this.
+  const parentRef = (x: Record<string, unknown>): { node: string; name: string; ref: { parentId: string } | { parentKey: string } } | null | undefined => {
+    if (typeof x.parentKey === "string" && x.parentKey) {
+      const a = addedSubjects.find(v => v.key === x.parentKey);
+      return a ? { node: `+${a.key}`, name: a.name, ref: { parentKey: a.key } } : undefined;
+    }
+    if (typeof x.parentId === "string" && x.parentId) {
+      const p = subjectById(x.parentId);
+      return p ? { node: p.id, name: p.name, ref: { parentId: p.id } } : undefined;
+    }
+    return null;
+  };
+  const nameOfNode = (node: string | null) => (node === null ? null : node.startsWith("+") ? addedSubjects.find(a => `+${a.key}` === node)?.name ?? null : subjectById(node)?.name ?? null);
+  const moveSubject = (s: WorkspaceDetail["subjects"][number], parent: NonNullable<ReturnType<typeof parentRef>> | null, x: Record<string, unknown>) => {
+    if (touched.has(`move:${s.id}`)) return;
+    const node = subjectTree.find(n => n.id === s.id)!;
+    if ((parent?.node ?? null) === node.parent) return;
+    const placed = canPlace(subjectTree, s.id, parent?.node ?? null, SUBJECT_DEPTH_MAX);
+    if (!placed.ok) { dropped.push(`putting ${quoted(s.name)} inside ${quoted(parent!.name)} (${placed.reason === "too_deep" ? `subjects go at most ${SUBJECT_DEPTH_MAX} levels deep` : "not inside itself or a subject inside it"})`); return; }
+    touched.add(`move:${s.id}`);
+    const from = nameOfNode(node.parent);
+    node.parent = parent?.node ?? null;
+    keep({ op: "move_subject", subjectId: s.id, ...(parent ? parent.ref : { parentId: null }) },
+      parent ? `Put ${quoted(s.name)} inside ${quoted(parent.name)}` : `Take ${quoted(s.name)} out of ${quoted(from ?? "its subject")}, on its own`, "change", x);
+  };
   for (const item of ordered) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const x = item as Record<string, unknown>;
@@ -213,9 +250,42 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
       case "add_subject": {
         const name = oneLine(x.name, NAME_MAX);
         if (!name) break;
-        const topics = (Array.isArray(x.topics) ? x.topics : []).map(t => oneLine(t, NAME_MAX)).filter(t => t && !isPlaceholderTopic(t, name)).slice(0, NAMES_PER_ADD);
         if (current.subjects.some(s => low(s.name) === low(name))) { dropped.push(`subject ${quoted(name)} (it's already here; add topics to it instead)`); break; }
-        keep({ op: "add_subject", name, topics }, `Add subject ${quoted(name)}${topics.length ? ` with ${topics.join(", ")}` : ""}`, "add", x);
+        if (addedSubjects.some(a => low(a.name) === low(name))) { dropped.push(`subject ${quoted(name)} (already added)`); break; }
+        const parent = parentRef(x);
+        if (parent === undefined) { dropped.push(`subject ${quoted(name)} (inside a subject that isn't part of this)`); break; }
+        // A "topic" that is one of their subjects here is that subject going
+        // inside the new one ("put them all under Semester Five"), never a
+        // topic of the same name beside it.
+        const named = (Array.isArray(x.topics) ? x.topics : []).map(t => oneLine(t, NAME_MAX)).filter(Boolean);
+        const inside = current.subjects.filter(s => named.some(t => low(t) === low(s.name)));
+        const topics = named.filter(t => !inside.some(s => low(s.name) === low(t)) && !isPlaceholderTopic(t, name)).slice(0, NAMES_PER_ADD);
+        const rawKey = oneLine(x.key, 40);
+        const key = rawKey && [...rawKey].every(c => (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c === "-" || c === "_") && !addedSubjects.some(a => a.key === rawKey) ? rawKey : `s${ops.length + 1}`;
+        subjectTree.push({ id: `+${key}`, parent: parent?.node ?? null });
+        if (parent && levelOf(parentsOf(subjectTree), `+${key}`) > SUBJECT_DEPTH_MAX) { subjectTree.pop(); dropped.push(`subject ${quoted(name)} (subjects go at most ${SUBJECT_DEPTH_MAX} levels deep)`); break; }
+        addedSubjects.push({ key, name });
+        keep({ op: "add_subject", name, topics, key, ...(parent ? parent.ref : {}) },
+          `Add subject ${quoted(name)}${parent ? ` inside ${quoted(parent.name)}` : ""}${topics.length ? ` with ${topics.join(", ")}` : ""}`, "add", x);
+        for (const s of inside) moveSubject(s, { node: `+${key}`, name, ref: { parentKey: key } }, {});
+        break;
+      }
+      case "move_subject": {
+        const s = subjectById(x.subjectId);
+        if (!s) { dropped.push("moving a subject that isn't part of this"); break; }
+        const parent = parentRef(x);
+        if (parent === undefined) { dropped.push(`putting ${quoted(s.name)} inside a subject that isn't part of this`); break; }
+        moveSubject(s, parent, x);
+        break;
+      }
+      case "rename_subject": {
+        const s = subjectById(x.subjectId);
+        const name = oneLine(x.name, NAME_MAX);
+        if (!s || !name) { dropped.push("a rename of a subject that isn't part of this"); break; }
+        if (s.name === name || touched.has(`name:${s.id}`)) break;
+        if (current.subjects.some(v => v.id !== s.id && low(v.name) === low(name)) || addedSubjects.some(a => low(a.name) === low(name))) { dropped.push(`renaming ${quoted(s.name)} (there's already a subject called ${quoted(name)})`); break; }
+        touched.add(`name:${s.id}`);
+        keep({ op: "rename_subject", subjectId: s.id, name }, `Rename subject ${quoted(s.name)} to ${quoted(name)}`, "change", x);
         break;
       }
       case "rename_topic": {
@@ -394,15 +464,22 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
 
 export const kindOf = (op: ChangeOp["op"]): ChangeKind =>
   op === "add_topics" || op === "rename_topic" || op === "remove_topic" ? "topics"
-  : op === "add_subject" || op === "remove_subject" ? "subjects"
+  : op === "add_subject" || op === "remove_subject" || op === "move_subject" || op === "rename_subject" ? "subjects"
   : op === "add_date" || op === "update_date" || op === "remove_date" ? "dates"
   : op === "add_note" || op === "remove_note" ? "notes" : "tasks";
 
 // Keeps the changes of the kinds the learner's request is about; the rest
 // are left out and said ("not asked for"). A subject's removal keeps the
 // topic and date removals it brings, a workspace's everything it brings.
-// No kinds known (an older reading): all are kept.
-export function withinAsk(set: ChangeSet, touches: readonly ChangeKind[], current: WorkspaceDetail): ChangeSet {
+// No kinds known (an older reading): all are kept. A request that asks for
+// nothing to be removed keeps no removal ("keep everything, just put them
+// under Semester Five" never takes a subject away).
+export function withinAsk(set: ChangeSet, touches: readonly ChangeKind[], current: WorkspaceDetail, asked: { removes?: boolean | null } = {}): ChangeSet {
+  if (asked.removes === false && set.ops.some(o => o.effect === "remove")) {
+    const kept = set.ops.filter(o => o.effect !== "remove").map((o, i) => ({ ...o, id: `c${i + 1}` }));
+    const left = set.ops.filter(o => o.effect === "remove").map(o => `${o.says.charAt(0).toLowerCase()}${o.says.slice(1)} (you didn't ask to remove anything)`);
+    return withinAsk({ ops: kept, dropped: [...set.dropped, ...left].slice(0, 12) }, touches, current);
+  }
   if (touches.length === 0) return set;
   const goingSubjects = new Set(set.ops.flatMap(o => (o.op === "remove_subject" ? [o.subjectId] : [])));
   const withSubject = new Set([

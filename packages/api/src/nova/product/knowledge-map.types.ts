@@ -31,7 +31,8 @@ interface NodeBase {
 export interface MapTask { id: string; title: string; status: "todo" | "in_progress" | "done"; parentId: string | null }
 
 export type MapNode =
-  | (NodeBase & { type: "subject"; topics: number; notes: number; resources: number; tasks?: MapTask[] })
+  // parentId: the subject it sits inside (a "contains" edge comes from it). Absent: on its own.
+  | (NodeBase & { type: "subject"; topics: number; notes: number; resources: number; tasks?: MapTask[]; parentId?: string })
   | (NodeBase & {
       type: "topic"; subjectName: string;
       // Finished sessions that fed the topic. 0: declared, never studied.
@@ -56,6 +57,7 @@ export type MapNode =
     });
 
 export type MapEdgeKind =
+  | "contains"      // subject → subject: the learner put one inside the other
   | "has_topic"     // subject → topic: the topic is one of the subject's
   | "about_topic"   // topic → note or saved page filed under that topic
   | "filed_under"   // subject → note or saved page filed under the subject only
