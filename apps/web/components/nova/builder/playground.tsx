@@ -1,15 +1,17 @@
 'use client'
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, CalendarDays, ChevronRight, FileText, Flag, LayoutGrid, ListTree, Map as MapIcon, Plus, Sparkles, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, CalendarDays, Check, ChevronDown, ChevronRight, FileText, Flag, IndentDecrease, IndentIncrease, LayoutGrid, ListPlus, ListTree, Map as MapIcon, Plus, Sparkles, X } from 'lucide-react'
 import type { BriefFact, DraftView } from '@repo/api/nova/product/builder.types'
-import { planCounts, type PlanTask, type WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
+import { planCounts, type PlanPriority, type PlanTask, type WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
+import { TASK_DEPTH_MAX } from '@repo/api/nova/product/task-tree'
 import { cn } from '@/lib/utils'
 import { diffSummary, hintFor, ids, planDiff, wordsFor, type Hint, type PlanDiff, type Words } from './builder-view'
 import * as edit from './plan-edit'
 import type { PlaygroundView } from './plan-edit'
 import { ProposalActions, workingLabel } from './proposal-actions'
 import type { DraftState } from './use-draft'
+import { HistoryButton, VersionHistory } from './version-history'
 
 // The right half of Build with Nova: the proposal itself, the structured
 // plan the server checked, not a picture of it. While it is a draft every
@@ -174,12 +176,13 @@ function Overview({ plan, draft, editable, set, words, onView }: ViewProps & { d
           <ol className="mt-2 space-y-1.5">
             {plan.phases.map((p, i) => {
               const m = mark(ids.phase(p.name))
-              const n = groups.find(g => g.index === i)?.tasks.length ?? 0
+              const rows = groups.find(g => g.index === i)?.rows ?? []
+              const n = rows.filter(r => r.depth === 0).length, steps = rows.length - n
               return (
                 <li key={p.name} className={cn(CARD, 'flex items-center gap-3 px-3 py-2', m.className)} style={m.style}>
                   <span className="grid size-6 shrink-0 place-items-center rounded-full bg-nova/12 text-[11px] font-semibold text-nova-ink">{i + 1}</span>
                   <span className="min-w-0 flex-1 text-sm font-medium text-foreground">{p.name}</span>
-                  <span className="shrink-0 text-xs text-subtle">{n} task{n === 1 ? '' : 's'}</span>
+                  <span className="shrink-0 text-xs text-subtle">{n} task{n === 1 ? '' : 's'}{steps ? ` · ${steps} step${steps === 1 ? '' : 's'}` : ''}</span>
                 </li>
               )
             })}
@@ -222,6 +225,7 @@ function Overview({ plan, draft, editable, set, words, onView }: ViewProps & { d
           </div>
         </details>
       )}
+      {(draft.brief.fixed?.length ?? 0) > 0 && <p className="text-xs text-subtle" data-fixed>Kivo tidied the structure: {draft.brief.fixed!.slice(0, 3).join('; ')}{draft.brief.fixed!.length > 3 ? ` and ${draft.brief.fixed!.length - 3} more` : ''}.</p>}
       {draft.brief.dropped.length > 0 && <p className="text-xs text-subtle" data-dropped>Left out to fit Kivo&apos;s limits: {draft.brief.dropped.slice(0, 4).join('; ')}{draft.brief.dropped.length > 4 ? ` and ${draft.brief.dropped.length - 4} more` : ''}.</p>}
     </div>
   )
@@ -234,7 +238,7 @@ function Roadmap({ plan, editable, set, words }: ViewProps) {
     <div className="space-y-3">
       <ol className="space-y-3">
         {plan.phases.map((p, i) => {
-          const tasks = groups.find(g => g.index === i)?.tasks ?? []
+          const rows = groups.find(g => g.index === i)?.rows ?? []
           const m = mark(ids.phase(p.name))
           return (
             <li key={i} className={cn(CARD, 'p-3', m.className)} style={m.style} data-milestone={i}>
@@ -256,11 +260,17 @@ function Roadmap({ plan, editable, set, words }: ViewProps) {
               <label className="mt-1.5 flex items-center gap-1 pl-8 text-[11px] text-subtle"><span className="shrink-0">Done when</span>
                 <input value={p.completion ?? ''} disabled={!editable} maxLength={240} placeholder="what finishing this looks like" onChange={e => set(edit.updatePhase(plan, i, { completion: e.target.value || null }))} className={cn(FIELD, 'text-xs')} />
               </label>
-              {tasks.length > 0 && (
-                <ul className="ml-3 mt-2 space-y-1 border-l border-white/8 pl-4">
-                  {tasks.map(t => {
+              {rows.length > 0 && (
+                <ul className="ml-3 mt-2 space-y-1 border-l border-white/8 pl-4" aria-label={`Tasks of ${p.name}`}>
+                  {rows.map(({ task: t, depth }) => {
                     const tm = mark(ids.task(t.key))
-                    return <li key={t.key} className={cn('rounded px-1 text-sm text-foreground/80', tm.className)} style={tm.style}>{t.title}{t.after && <span className="ml-1.5 text-[11px] text-subtle">after {plan.tasks.find(x => x.key === t.after)?.title}</span>}</li>
+                    return (
+                      <li key={t.key} className={cn('flex items-baseline gap-1.5 rounded px-1 text-sm', depth ? 'text-[13px] text-foreground/70' : 'text-foreground/85', tm.className)} style={{ ...tm.style, paddingLeft: `${depth * 16 + 4}px` }} data-depth={depth}>
+                        {depth > 0 && <span aria-hidden className="text-subtle">↳</span>}
+                        <span className="min-w-0">{t.title}{t.after && <span className="ml-1.5 text-[11px] text-subtle">after {plan.tasks.find(x => x.key === t.after)?.title}</span>}</span>
+                        {t.priority && <span className={cn('ml-auto shrink-0 rounded px-1 text-[10px] font-medium', PRIORITY_TONE[t.priority])}>{PRIORITY_LABEL[t.priority]}</span>}
+                      </li>
+                    )
                   })}
                 </ul>
               )}
@@ -274,73 +284,194 @@ function Roadmap({ plan, editable, set, words }: ViewProps) {
   )
 }
 
-function TaskRow({ t, plan, editable, set, words, m }: { t: PlanTask; m: Marked } & ViewProps) {
+const PRIORITY_LABEL: Record<PlanPriority, string> = { high: 'High', medium: 'Medium', low: 'Low' }
+const PRIORITY_TONE: Record<PlanPriority, string> = { high: 'bg-amber-400/12 text-amber-300', medium: 'bg-action-soft text-action-ink', low: 'bg-white/6 text-foreground/70' }
+
+// A task's priority: the learner's when set; otherwise Nova's suggestion,
+// shown as one with its basis, to accept or dismiss; otherwise a quiet "Set".
+// Choosing is one click on High, Medium, Low or Unset.
+export function PriorityControl({ task, editable, onSet, onDismiss }: {
+  task: Pick<PlanTask, 'title' | 'priority' | 'suggestedPriority' | 'priorityReason'>; editable: boolean
+  onSet: (p: PlanPriority | null) => void; onDismiss?: () => void
+}) {
   const [open, setOpen] = useState(false)
-  const index = plan.tasks.findIndex(x => x.key === t.key)
-  return (
-    <li className={cn(CARD, 'p-2', m.className)} style={m.style} data-task={t.key}>
-      <div className="flex items-center gap-1">
-        <textarea aria-label="Task title" value={t.title} disabled={!editable} maxLength={160} rows={1} onChange={e => set(edit.updateTask(plan, t.key, { title: e.target.value.split('\n').join(' ') }))} className={cn(FIELD, TITLE_AREA)} data-editable />
+  const suggested = !task.priority && task.suggestedPriority ? task.suggestedPriority : null
+  if (open && editable) {
+    return (
+      <span role="group" aria-label={`Priority of ${task.title}`} className="inline-flex overflow-hidden rounded-md border border-white/12" data-priority-picker>
+        {(['high', 'medium', 'low'] as const).map(p => (
+          <button key={p} type="button" aria-pressed={task.priority === p} onClick={() => { onSet(p); setOpen(false) }}
+            className={cn('px-1.5 py-0.5 text-[11px] font-medium transition-colors', task.priority === p ? PRIORITY_TONE[p] : 'text-foreground/70 hover:bg-white/6')}>{PRIORITY_LABEL[p]}</button>
+        ))}
+        <button type="button" aria-pressed={!task.priority} onClick={() => { onSet(null); setOpen(false) }} className="border-l border-white/10 px-1.5 py-0.5 text-[11px] text-subtle hover:bg-white/6">Unset</button>
+      </span>
+    )
+  }
+  if (task.priority) {
+    return <button type="button" disabled={!editable} onClick={() => setOpen(true)} title="Your priority. Click to change." className={cn('rounded px-1.5 py-0.5 text-[11px] font-medium', PRIORITY_TONE[task.priority])} data-priority={task.priority}>{PRIORITY_LABEL[task.priority]}</button>
+  }
+  if (suggested) {
+    return (
+      <span className="inline-flex items-center gap-0.5 rounded border border-dashed border-nova/45 py-0.5 pl-1.5 pr-0.5 text-[11px] text-nova-ink" data-suggested={suggested}
+        title={`Nova suggests ${suggested}${task.priorityReason ? `: ${task.priorityReason}` : ''}. Not set until you accept it.`}>
+        <Sparkles aria-hidden className="size-2.5" /> {PRIORITY_LABEL[suggested]}?
         {editable && <>
-          <IconButton label={`Move ${t.title} up`} disabled={index === 0} onClick={() => set(edit.reorderTask(plan, t.key, -1))}><ArrowUp aria-hidden className="size-3.5" /></IconButton>
-          <IconButton label={`Move ${t.title} down`} disabled={index === plan.tasks.length - 1} onClick={() => set(edit.reorderTask(plan, t.key, 1))}><ArrowDown aria-hidden className="size-3.5" /></IconButton>
-          <IconButton label={`Remove ${t.title}`} onClick={() => set(edit.removeTask(plan, t.key))}><X aria-hidden className="size-3.5" /></IconButton>
+          <button type="button" onClick={() => onSet(suggested)} aria-label={`Accept ${suggested} priority for ${task.title}`} className="grid size-4 place-items-center rounded hover:bg-nova/15"><Check aria-hidden className="size-3" /></button>
+          <button type="button" onClick={() => setOpen(true)} aria-label={`Choose another priority for ${task.title}`} className="grid size-4 place-items-center rounded hover:bg-nova/15"><ChevronDown aria-hidden className="size-3" /></button>
+          {onDismiss && <button type="button" onClick={onDismiss} aria-label={`Dismiss Nova's suggestion for ${task.title}`} className="grid size-4 place-items-center rounded hover:bg-nova/15"><X aria-hidden className="size-3" /></button>}
         </>}
-      </div>
-      <div className="flex flex-wrap items-center gap-1.5 px-1.5 pt-1 text-[11px] text-subtle">
-        {t.priority && <span className={cn('rounded px-1.5 py-0.5 font-medium', t.priority === 'high' ? 'bg-amber-400/12 text-amber-300' : 'bg-white/5')}>{t.priority}</span>}
-        {t.dueDay && <span className="rounded bg-white/5 px-1.5 py-0.5 tabular-nums">due {t.dueDay}</span>}
-        {t.estimatedMinutes && <span>~{t.estimatedMinutes} min</span>}
-        {t.after && <span>after {plan.tasks.find(x => x.key === t.after)?.title}</span>}
-        <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} className="ml-auto rounded px-1 font-medium text-foreground/60 hover:text-foreground">{open ? 'Done' : editable ? 'Details' : 'More'}</button>
-      </div>
-      {open && (
-        <div className="mt-2 grid gap-2 px-1.5 pb-1 sm:grid-cols-2">
-          <label className="text-[11px] text-subtle">{words.phase[0]!.toUpperCase() + words.phase.slice(1)}
-            <select value={t.topic ?? ''} disabled={!editable} onChange={e => set(edit.updateTask(plan, t.key, { topic: e.target.value || null }))} className="mt-0.5 h-8 w-full rounded-md border border-white/10 bg-background px-1.5 text-xs text-foreground">
-              <option value="">None</option>
-              {plan.phases.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
-              {t.topic && !plan.phases.some(p => p.name === t.topic) && <option value={t.topic}>{t.topic}</option>}
-            </select>
-          </label>
-          <label className="text-[11px] text-subtle">Priority
-            <select value={t.priority ?? ''} disabled={!editable} onChange={e => set(edit.updateTask(plan, t.key, { priority: (e.target.value || null) as PlanTask['priority'] }))} className="mt-0.5 h-8 w-full rounded-md border border-white/10 bg-background px-1.5 text-xs text-foreground">
-              <option value="">Not set</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
-            </select>
-          </label>
-          <label className="text-[11px] text-subtle">Due
-            <input type="date" value={t.dueDay ?? ''} disabled={!editable} onChange={e => set(edit.updateTask(plan, t.key, { dueDay: e.target.value || null }))} className="mt-0.5 h-8 w-full rounded-md border border-white/10 bg-background px-1.5 text-xs text-foreground" />
-          </label>
-          <label className="text-[11px] text-subtle">Comes after
-            <select value={t.after ?? ''} disabled={!editable} onChange={e => set(edit.updateTask(plan, t.key, { after: e.target.value || null }))} className="mt-0.5 h-8 w-full rounded-md border border-white/10 bg-background px-1.5 text-xs text-foreground">
-              <option value="">Nothing</option>
-              {edit.possibleAfter(plan, t.key).map(x => <option key={x.key} value={x.key}>{x.title}</option>)}
-            </select>
-          </label>
+      </span>
+    )
+  }
+  return editable ? <button type="button" onClick={() => setOpen(true)} className="rounded px-1 text-[11px] text-subtle hover:bg-white/6 hover:text-foreground" data-priority="unset">Set priority</button> : null
+}
+
+// One task in the tree: its title, its controls, and (unless collapsed) its
+// steps below it, indented, joined to it by a line.
+function TaskNode({ t, depth, plan, editable, set, words, collapsed, onToggle }: ViewProps & { t: PlanTask; depth: number; collapsed: Set<string>; onToggle: (key: string) => void }) {
+  const mark = useMarker()
+  const m = mark(ids.task(t.key))
+  const [open, setOpen] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [confirmRemove, setConfirmRemove] = useState(false)
+  const steps = edit.stepsOf(plan, t.key)
+  const all = edit.allStepsOf(plan, t.key)
+  const shut = collapsed.has(t.key)
+  const canAddStep = edit.depthIn(plan, t.key) + 2 <= TASK_DEPTH_MAX
+  // Something worth a line under the title; otherwise the line waits for a pointer or focus.
+  const hasMeta = Boolean(t.priority || t.suggestedPriority || t.dueDay || t.estimatedMinutes || t.after || (all.length > 0 && shut))
+  return (
+    <li className="relative" data-task={t.key} data-depth={depth}>
+      <div className={cn('group/task', depth === 0 ? CARD : 'rounded-lg border border-transparent hover:border-white/8 hover:bg-card/40 focus-within:border-white/8', 'p-1.5', m.className)} style={m.style}>
+        <div className="flex flex-wrap items-start gap-0.5 sm:flex-nowrap">
+          {steps.length > 0
+            ? <button type="button" onClick={() => onToggle(t.key)} aria-expanded={!shut} aria-label={`${shut ? 'Show' : 'Hide'} the steps of ${t.title}`} className="mt-1 grid size-6 shrink-0 place-items-center rounded text-foreground/55 hover:bg-white/6 hover:text-foreground"><ChevronRight aria-hidden className={cn('size-3.5 transition-transform', !shut && 'rotate-90')} /></button>
+            : <span aria-hidden className="mt-1 grid size-6 shrink-0 place-items-center"><span className={cn('size-1.5 rounded-full', depth === 0 ? 'bg-action/70' : 'bg-foreground/30')} /></span>}
+          <textarea aria-label={depth ? 'Step title' : 'Task title'} value={t.title} disabled={!editable} maxLength={160} rows={1} onChange={e => set(edit.updateTask(plan, t.key, { title: e.target.value.split('\n').join(' ') }))} className={cn(FIELD, TITLE_AREA, 'min-w-0 flex-1', depth > 0 && 'text-[13px]')} data-editable />
+          {editable && (
+            // Out of the way until the row is pointed at or focused (always shown on touch screens).
+            <span className="flex shrink-0 items-center max-sm:order-last max-sm:w-full max-sm:justify-end sm:opacity-0 sm:transition-opacity sm:group-hover/task:opacity-100 sm:group-focus-within/task:opacity-100">
+              {canAddStep && <IconButton label={`Add a step to ${t.title}`} onClick={() => { setAdding(true); if (shut) onToggle(t.key) }}><ListPlus aria-hidden className="size-3.5" /></IconButton>}
+              <IconButton label={`Make ${t.title} a step of the task above`} disabled={!edit.canIndent(plan, t.key)} onClick={() => set(edit.indentTask(plan, t.key))}><IndentIncrease aria-hidden className="size-3.5" /></IconButton>
+              <IconButton label={`Move ${t.title} out a level`} disabled={!edit.canOutdent(plan, t.key)} onClick={() => set(edit.outdentTask(plan, t.key))}><IndentDecrease aria-hidden className="size-3.5" /></IconButton>
+              <IconButton label={`Move ${t.title} up`} disabled={!edit.canMove(plan, t.key, -1)} onClick={() => set(edit.reorderTask(plan, t.key, -1))}><ArrowUp aria-hidden className="size-3.5" /></IconButton>
+              <IconButton label={`Move ${t.title} down`} disabled={!edit.canMove(plan, t.key, 1)} onClick={() => set(edit.reorderTask(plan, t.key, 1))}><ArrowDown aria-hidden className="size-3.5" /></IconButton>
+              <IconButton label={`Remove ${t.title}`} onClick={() => (all.length ? setConfirmRemove(true) : set(edit.removeTask(plan, t.key)))}><X aria-hidden className="size-3.5" /></IconButton>
+            </span>
+          )}
         </div>
-      )}
+        {confirmRemove && (
+          <div role="alertdialog" aria-label={`Remove ${t.title}?`} className="mx-1.5 mt-1 flex flex-wrap items-center gap-2 rounded-md border border-red-400/25 bg-red-400/5 px-2 py-1.5 text-[11px] text-foreground/85" data-confirm-remove>
+            <span className="min-w-0 flex-1">It has {all.length} step{all.length === 1 ? '' : 's'}.</span>
+            <button type="button" onClick={() => { setConfirmRemove(false); set(edit.removeTask(plan, t.key, { withSteps: true })) }} className="rounded bg-red-500/80 px-2 py-0.5 font-medium text-white hover:bg-red-500">Remove with its steps</button>
+            <button type="button" onClick={() => { setConfirmRemove(false); set(edit.removeTask(plan, t.key)) }} className="rounded border border-white/12 px-2 py-0.5 font-medium hover:bg-white/5">Keep the steps</button>
+            <button type="button" onClick={() => setConfirmRemove(false)} className="rounded px-1.5 py-0.5 text-subtle hover:text-foreground">Cancel</button>
+          </div>
+        )}
+        <div className={cn('flex flex-wrap items-center gap-1.5 pl-7 pr-1 pt-0.5 text-[11px] text-subtle', !hasMeta && !open && 'sm:hidden sm:group-hover/task:flex sm:group-focus-within/task:flex')}>
+          <PriorityControl task={t} editable={editable} onSet={p => set(edit.setPriority(plan, t.key, p))} onDismiss={() => set(edit.clearSuggestions(plan, [t.key]))} />
+          {t.dueDay && <span className="rounded bg-white/5 px-1.5 py-0.5 tabular-nums">due {t.dueDay}</span>}
+          {t.estimatedMinutes && <span>~{t.estimatedMinutes} min</span>}
+          {t.after && <span>after {plan.tasks.find(x => x.key === t.after)?.title}</span>}
+          {all.length > 0 && shut && <span>{all.length} step{all.length === 1 ? '' : 's'} hidden</span>}
+          <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} className="ml-auto rounded px-1 font-medium text-foreground/60 hover:text-foreground">{open ? 'Done' : editable ? 'Details' : 'More'}</button>
+        </div>
+        {t.description && !open && <p className="pl-8 pr-2 pt-0.5 text-xs leading-relaxed text-foreground/60">{t.description}</p>}
+        {open && (
+          <div className="mt-2 grid gap-2 px-1.5 pb-1 pl-7 sm:grid-cols-2">
+            <label className="text-[11px] text-subtle sm:col-span-2">What it involves
+              <textarea value={t.description ?? ''} disabled={!editable} maxLength={600} rows={2} onChange={e => set(edit.updateTask(plan, t.key, { description: e.target.value || null }))} placeholder="Optional: what this covers, or what done looks like" className="mt-0.5 w-full resize-y rounded-md border border-white/10 bg-background px-1.5 py-1 text-xs text-foreground" />
+            </label>
+            {depth === 0 && (
+              <label className="text-[11px] text-subtle">{words.phase[0]!.toUpperCase() + words.phase.slice(1)}
+                <select value={t.topic ?? ''} disabled={!editable} onChange={e => set(edit.updateTask(plan, t.key, { topic: e.target.value || null }))} className="mt-0.5 h-8 w-full rounded-md border border-white/10 bg-background px-1.5 text-xs text-foreground">
+                  <option value="">None</option>
+                  {plan.phases.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
+                  {t.topic && !plan.phases.some(p => p.name === t.topic) && <option value={t.topic}>{t.topic}</option>}
+                </select>
+              </label>
+            )}
+            <label className="text-[11px] text-subtle">Due
+              <input type="date" value={t.dueDay ?? ''} disabled={!editable} onChange={e => set(edit.updateTask(plan, t.key, { dueDay: e.target.value || null }))} className="mt-0.5 h-8 w-full rounded-md border border-white/10 bg-background px-1.5 text-xs text-foreground" />
+            </label>
+            <label className="text-[11px] text-subtle">Comes after
+              <select value={t.after ?? ''} disabled={!editable} onChange={e => set(edit.updateTask(plan, t.key, { after: e.target.value || null }))} className="mt-0.5 h-8 w-full rounded-md border border-white/10 bg-background px-1.5 text-xs text-foreground">
+                <option value="">Nothing</option>
+                {edit.possibleAfter(plan, t.key).map(x => <option key={x.key} value={x.key}>{x.title}</option>)}
+              </select>
+            </label>
+            {t.suggestedPriority && <p className="text-[11px] text-subtle sm:col-span-2">Nova suggested {t.suggestedPriority}{t.priorityReason ? `: ${t.priorityReason}` : ''}.</p>}
+          </div>
+        )}
+      </div>
+      {(steps.length > 0 && !shut) || adding ? (
+        <ul className="relative ml-[13px] mt-1 space-y-1 border-l border-white/10 pl-3" aria-label={`Steps of ${t.title}`}>
+          {!shut && steps.map(c => <TaskNode key={c.key} t={c} depth={depth + 1} plan={plan} editable={editable} set={set} words={words} collapsed={collapsed} onToggle={onToggle} />)}
+          {adding && <li><AddRow label={`Add a step to ${t.title}`} placeholder="Add a step" onAdd={title => { set(edit.addStep(plan, t.key, title)); setAdding(false) }} /></li>}
+        </ul>
+      ) : null}
     </li>
   )
 }
 
-// Tasks by milestone. In the Planner they start in To do.
-function Board(props: ViewProps) {
+// Priorities: optional. Nova's suggestions are said as suggestions, and set
+// only when the learner accepts them (all, a milestone's, or one by one).
+function PriorityStrip({ plan, editable, set, onAsk, keys, compact }: Pick<ViewProps, 'plan' | 'editable' | 'set'> & { onAsk?: (t: string) => void; keys?: string[]; compact?: boolean }) {
+  const open = edit.suggestionsOpen(plan, keys)
+  const anySet = plan.tasks.some(t => t.priority)
+  if (!editable) return null
+  if (open > 0) {
+    return (
+      <div className={cn('flex flex-wrap items-center gap-2 text-[11px]', compact ? '' : 'rounded-lg border border-nova/25 bg-nova/5 px-2.5 py-1.5')} data-priority-strip>
+        <span className="min-w-0 flex-1 text-foreground/80">{compact ? `${open} suggested` : <><Sparkles aria-hidden className="mr-1 inline size-3 text-nova-ink" />Nova suggested priorities for {open} task{open === 1 ? '' : 's'}, each with its reason. None is set until you accept it.</>}</span>
+        <button type="button" onClick={() => set(edit.acceptSuggestions(plan, keys))} className="rounded border border-nova/40 px-2 py-0.5 font-medium text-nova-ink hover:bg-nova/10" data-accept-suggestions>Accept {compact ? '' : 'all'}</button>
+        <button type="button" onClick={() => set(edit.clearSuggestions(plan, keys))} className="rounded px-1.5 py-0.5 text-subtle hover:text-foreground">Dismiss</button>
+      </div>
+    )
+  }
+  if (compact || anySet || plan.tasks.length < 3 || !onAsk) return null
+  return (
+    <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-subtle" data-priority-hint>
+      Priorities are optional. Set one on any task, or
+      <button type="button" onClick={() => onAsk('Suggest priorities for these tasks, with the reason for each: ')} className="font-medium text-nova-ink hover:underline">ask Nova to suggest them</button>.
+    </p>
+  )
+}
+
+// Tasks by milestone, each with its steps. In the Planner they start in To do.
+function Board(props: ViewProps & { onAsk?: (text: string) => void }) {
   const { plan, editable, set } = props
-  const mark = useMarker()
   const groups = edit.tasksByMilestone(plan)
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
+  const toggle = (key: string) => setCollapsed(c => { const n = new Set(c); if (n.has(key)) n.delete(key); else n.add(key); return n })
+  const withSteps = plan.tasks.filter(t => edit.stepsOf(plan, t.key).length > 0).map(t => t.key)
   return (
     <div className="space-y-4">
-      {groups.map(g => (
-        <section key={g.milestone ?? '—'} aria-label={g.milestone ?? 'Other tasks'}>
-          <h3 className="mb-2 flex items-center gap-2 px-1 text-xs font-semibold text-foreground/85">
-            {g.index !== null && <span className="grid size-5 place-items-center rounded-full bg-nova/12 text-[10px] text-nova-ink">{g.index + 1}</span>}
-            <span className="min-w-0 flex-1">{g.milestone ?? (plan.phases.length ? 'Other tasks' : 'Tasks')}</span>
-            <span className="font-normal text-subtle">{g.tasks.length}</span>
-          </h3>
-          <ul className="space-y-2">{g.tasks.map(t => <TaskRow key={t.key} t={t} m={mark(ids.task(t.key))} {...props} />)}</ul>
-          {editable && <div className="mt-2"><AddRow label={`Add a task${g.milestone ? ` to ${g.milestone}` : ''}`} placeholder="Add a task" onAdd={title => set(edit.addTask(plan, title, g.milestone))} /></div>}
-        </section>
-      ))}
+      <div className="space-y-2">
+        <PriorityStrip plan={plan} editable={editable} set={set} onAsk={props.onAsk} />
+        {withSteps.length > 0 && (
+          <div className="flex justify-end gap-2 text-[11px]">
+            <button type="button" onClick={() => setCollapsed(new Set(withSteps))} className="text-subtle hover:text-foreground">Collapse all</button>
+            <button type="button" onClick={() => setCollapsed(new Set())} className="text-subtle hover:text-foreground">Expand all</button>
+          </div>
+        )}
+      </div>
+      {groups.map(g => {
+        const roots = g.rows.filter(r => r.depth === 0).map(r => r.task)
+        const steps = g.rows.length - roots.length
+        return (
+          <section key={g.milestone ?? '—'} aria-label={g.milestone ?? 'Other tasks'} data-group={g.milestone ?? ''}>
+            <h3 className="mb-2 flex flex-wrap items-center gap-2 px-1 text-xs font-semibold text-foreground/85">
+              {g.index !== null && <span className="grid size-5 place-items-center rounded-full bg-nova/12 text-[10px] text-nova-ink">{g.index + 1}</span>}
+              <span className="min-w-0 flex-1">{g.milestone ?? (plan.phases.length ? 'Other tasks' : 'Tasks')}</span>
+              <span className="font-normal text-subtle">{roots.length} task{roots.length === 1 ? '' : 's'}{steps ? ` · ${steps} step${steps === 1 ? '' : 's'}` : ''}</span>
+              <PriorityStrip plan={plan} editable={editable} set={set} keys={g.tasks.map(t => t.key)} compact />
+            </h3>
+            <ul className="space-y-2">{roots.map(t => <TaskNode key={t.key} t={t} depth={0} {...props} collapsed={collapsed} onToggle={toggle} />)}</ul>
+            {editable && <div className="mt-2"><AddRow label={`Add a task${g.milestone ? ` to ${g.milestone}` : ''}`} placeholder="Add a task" onAdd={title => set(edit.addTask(plan, title, g.milestone))} /></div>}
+          </section>
+        )
+      })}
     </div>
   )
 }
@@ -537,6 +668,7 @@ export function DraftPlayground({ state, view, onView, onAsk }: {
   // What the newest version brought, lit for a few seconds after it lands.
   const diff = useMemo(() => (arrival ? planDiff(arrival.previous, arrival.next) : null), [arrival])
   const [marking, setMarking] = useState(false)
+  const [history, setHistory] = useState(false)
   useEffect(() => {
     if (!arrival) return
     setMarking(true)
@@ -557,10 +689,12 @@ export function DraftPlayground({ state, view, onView, onAsk }: {
     requestAnimationFrame(() => document.querySelector<HTMLElement>('#pg-panel [data-editable]:not(:disabled)')?.focus())
   }
 
+  const historyLayer = history ? <VersionHistory state={state} onClose={() => setHistory(false)} /> : null
   if (!plan) {
     return (
-      <div className="flex h-full min-h-0 flex-col">
-        <PlaygroundHeader title={draft.title ?? draft.brief.title ?? 'Your workspace'} badge="draft" state={state} />
+      <div className="relative flex h-full min-h-0 flex-col">
+        <PlaygroundHeader title={draft.title ?? draft.brief.title ?? 'Your workspace'} badge="draft" state={state} extra={draft.messages.length > 0 ? <HistoryButton onOpen={() => setHistory(true)} /> : null} />
+        {historyLayer}
         {label && <WorkingStrip label={label} />}
         <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5"><PlaygroundWaiting draft={draft} words={words} /></div>
         <ProposalActions state={state} words={words} onEdit={onEdit} onAsk={onAsk} />
@@ -577,8 +711,9 @@ export function DraftPlayground({ state, view, onView, onAsk }: {
   ].filter(Boolean).join(' · ')
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <PlaygroundHeader title={plan.title} badge={draft.status === 'building' ? 'building' : 'draft'} state={state} stats={stats}
+    <div className="relative flex h-full min-h-0 flex-col">
+      {historyLayer}
+      <PlaygroundHeader title={plan.title} badge={draft.status === 'building' ? 'building' : 'draft'} state={state} stats={stats} extra={<HistoryButton onOpen={() => setHistory(true)} />}
         onTitle={editable ? title => state.setPlan({ ...plan, title }) : undefined}
         tabs={<ViewTabs views={views} view={shown} onView={onView} label="Proposal views" names={words.views} />} />
       {label && <WorkingStrip label={label} />}
@@ -600,7 +735,7 @@ export function DraftPlayground({ state, view, onView, onAsk }: {
           <div key={arrival?.version ?? 0}>
             {shown === 'overview' && <Overview plan={plan} draft={draft} editable={editable} set={state.setPlan} words={words} onView={onView} />}
             {shown === 'roadmap' && <Roadmap plan={plan} editable={editable} set={state.setPlan} words={words} />}
-            {shown === 'board' && <Board plan={plan} editable={editable} set={state.setPlan} words={words} />}
+            {shown === 'board' && <Board plan={plan} editable={editable} set={state.setPlan} words={words} onAsk={onAsk} />}
             {shown === 'topics' && <Topics plan={plan} editable={editable} set={state.setPlan} words={words} />}
             {shown === 'timeline' && <Timeline plan={plan} editable={editable} set={state.setPlan} words={words} />}
             {shown === 'notes' && <Notes plan={plan} editable={editable} set={state.setPlan} words={words} />}
@@ -622,8 +757,8 @@ function WorkingStrip({ label }: { label: string }) {
   )
 }
 
-export function PlaygroundHeader({ title, badge, state, onTitle, tabs, stats }: {
-  title: string; badge: 'draft' | 'building' | 'live'; state?: DraftState; onTitle?: (t: string) => void; tabs?: React.ReactNode; stats?: string
+export function PlaygroundHeader({ title, badge, state, onTitle, tabs, stats, extra }: {
+  title: string; badge: 'draft' | 'building' | 'live'; state?: DraftState; onTitle?: (t: string) => void; tabs?: React.ReactNode; stats?: string; extra?: React.ReactNode
 }) {
   return (
     <div className="shrink-0 border-b border-white/8 px-4 pt-3.5 sm:px-5">
@@ -632,7 +767,7 @@ export function PlaygroundHeader({ title, badge, state, onTitle, tabs, stats }: 
           <span aria-hidden className={cn('size-1.5 rounded-full', badge === 'live' ? 'bg-action' : badge === 'building' ? 'bg-nova' : 'bg-amber-400')} />
           {badge === 'live' ? 'Live workspace' : badge === 'building' ? 'Building…' : `Draft${state?.draft?.plan ? ` · v${state.draft.version}` : ''} · not created yet`}
         </span>
-        <span className="ml-auto">{state && <SaveIndicator state={state} />}</span>
+        <span className="ml-auto flex items-center gap-2">{state && <SaveIndicator state={state} />}{extra}</span>
       </div>
       {onTitle
         ? <input aria-label="Workspace name" value={title} maxLength={80} onChange={e => onTitle(e.target.value)} className={cn(FIELD, '-ml-1.5 mt-1 text-lg font-semibold tracking-tight')} />

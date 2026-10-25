@@ -435,6 +435,15 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
     return { ok: false, message: "That plan had nothing in it to create." };
   }
   if (ctx.kind === "project" || ctx.kind === "work" || ctx.kind === "career") fixed.push(...alignMilestones(subjects, phases, tasks));
+  // A task given no subject is filed where its milestone is, or under the
+  // plan's one subject: otherwise it would be built unfiled, missing from the
+  // subject's map and lists (seen in the local check, 25 Oct).
+  for (const t of tasks) {
+    if (t.subject || t.parent) continue;
+    const topic = t.topic;
+    const phase = topic ? phases.find(p => same(p.name, topic)) : undefined;
+    t.subject = phase?.subject ?? (subjects.length === 1 ? subjects[0]!.name : null);
+  }
   // A step belongs where its task belongs: the same subject and milestone.
   const asTree = tasks.map(x => ({ key: x.key, parent: x.parent ?? null }));
   for (const t of tasks) {
@@ -515,12 +524,13 @@ const dayNumber = (day: string) => Math.round(Date.parse(`${day}T12:00:00Z`) / 8
 // An effort estimate in weeks is dropped where the plan's own due days say
 // the work is done in less than a week (found 25 Oct: a four-day sprint
 // showed "≈ 1 week · 30 h a week" on every milestone). Only a milestone whose
-// tasks all have due days is judged; the estimate stays otherwise.
+// own tasks all have due days is judged; the estimate stays otherwise.
 function fitEstimates(phases: PlanPhase[], tasks: PlanTask[], today: string): string[] {
   const fixes: string[] = [];
   for (const p of phases) {
     if (!p.weeks && !p.hoursPerWeek) continue;
-    const under = tasks.filter(t => t.topic !== null && same(t.topic, p.name));
+    // Its own tasks, not their steps: a step has its task's day, or none of its own.
+    const under = tasks.filter(t => !t.parent && t.topic !== null && same(t.topic, p.name));
     if (under.length === 0 || under.some(t => !t.dueDay)) continue;
     const span = Math.max(...under.map(t => dayNumber(t.dueDay!))) - dayNumber(today) + 1;
     if (span >= 7) continue;

@@ -164,7 +164,7 @@ test("one account's answers never reach another learner", async () => {
   await finish(a);
   await prisma.userProfile.create({ data: { userId: b, secondaryDomains: [], aspirationWords: [], primaryPersona: "nova", onboardingComplete: true } });
   const other = await loadSignupAnswers(`web:${b}`);
-  assert.deepEqual(other, { workingOn: null, weeklyHours: null, obstacles: null, language: null, tone: null });
+  assert.deepEqual(other, { workingOn: null, weeklyHours: null, obstacles: null, language: null, tone: null, preferredName: null });
   assert.equal(await loadTone(`web:${b}`), null);
 });
 

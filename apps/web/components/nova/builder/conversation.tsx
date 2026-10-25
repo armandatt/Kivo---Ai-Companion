@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, Check, CircleSlash, FileText, ImageIcon, LayoutTemplate, Loader2, MoreHorizontal, Paperclip, RotateCcw, Trash2, X } from 'lucide-react'
 import { FILE_TYPES, FILES_MAX, FILES_TOTAL_BYTES, encodeFile } from '@/components/nova/templates/templates-api'
-import type { BuilderMessage, DraftListItem, DraftView } from '@repo/api/nova/product/builder.types'
+import type { BuilderGreeting, BuilderMessage, DraftListItem, DraftView } from '@repo/api/nova/product/builder.types'
 import type { WorkspaceSummary } from '@repo/api/nova/product/workspaces.types'
 import { KivoMark } from '@/components/brand/kivo-brand'
 import { BUTTON_QUIET } from '@/components/nova/workspace/ui'
@@ -182,8 +182,18 @@ function FailureCard({ state }: { state: DraftState }) {
 
 // ── The composer ──────────────────────────────────────────────────────────────
 
-// A file chosen in the composer, encoded for the request.
-export type Upload = { name: string; data: string; size: number; type: string }
+// A file chosen, dropped or pasted in the composer, encoded for the request.
+// preview: a local address for an image's thumbnail (this tab only).
+export type Upload = { name: string; data: string; size: number; type: string; preview?: string }
+
+// A pasted screenshot usually arrives as "image.png": it is named for when it
+// was pasted, so two in one conversation stay apart.
+function pastedName(file: File, i: number): string {
+  if (file.name && file.name !== 'image.png' && file.name !== 'image.jpg' && file.name !== 'image.jpeg') return file.name
+  const d = new Date(), pad = (n: number) => String(n).padStart(2, '0')
+  const ext = file.type === 'image/jpeg' ? 'jpg' : file.type === 'image/webp' ? 'webp' : 'png'
+  return `Screenshot ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}${i ? ` (${i + 1})` : ''}.${ext}`
+}
 // Text put in the message box from elsewhere on the page (a hint, an
 // example, a suggestion); n changes each time, so the same text can be put twice.
 export type Seed = { text: string; n: number }
@@ -218,19 +228,41 @@ export function Composer({ onSend, disabled, placeholder, seed, hint }: {
     requestAnimationFrame(() => { const n = el.value.length; el.setSelectionRange(n, n) })
   }, [seed])
 
-  // Checked here only to save a wasted upload; the server checks the bytes.
-  async function add(list: FileList | File[]) {
+  // Checked here only to save a wasted upload; the server checks the bytes,
+  // the type, the size and the page count again.
+  async function add(list: FileList | File[], names?: (f: File, i: number) => string) {
     setFileError(null)
     const next = [...files]
-    for (const f of Array.from(list)) {
-      if (!FILE_TYPES.includes(f.type)) { setFileError(`${f.name} isn't a PDF or a PNG, JPEG or WebP image.`); continue }
+    for (const [i, f] of Array.from(list).entries()) {
+      const name = names ? names(f, i) : f.name
+      if (!FILE_TYPES.includes(f.type)) { setFileError(`${name || 'That file'} isn't a PDF or a PNG, JPEG or WebP image.`); continue }
+      if (f.size === 0) { setFileError(`${name} is empty.`); continue }
       if (next.length >= FILES_MAX) { setFileError(`Up to ${FILES_MAX} files with one message.`); break }
-      if (next.reduce((n, x) => n + x.size, 0) + f.size > FILES_TOTAL_BYTES) { setFileError('Files with one message can add up to 3 MB.'); continue }
+      if (next.reduce((n, x) => n + x.size, 0) + f.size > FILES_TOTAL_BYTES) { setFileError(`${name} is too large: files with one message can add up to 3 MB.`); continue }
       const encoded = await encodeFile(f)
-      next.push({ ...encoded, size: f.size, type: f.type })
+      next.push({ ...encoded, name, size: f.size, type: f.type, ...(f.type.startsWith('image/') ? { preview: URL.createObjectURL(f) } : {}) })
     }
     setFiles(next)
   }
+
+  // A pasted image (Cmd+V / Ctrl+V) is attached like a chosen one; text
+  // pasted with it still goes into the box.
+  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const pasted = Array.from(e.clipboardData.files)
+    if (pasted.length === 0) return
+    if (!e.clipboardData.getData('text/plain')) e.preventDefault()
+    void add(pasted, pastedName)
+  }
+
+  const removeFile = (i: number) => {
+    const gone = files[i]
+    if (gone?.preview) URL.revokeObjectURL(gone.preview)
+    setFiles(files.filter((_, j) => j !== i))
+  }
+  // Thumbnails are this tab's; let them go when the composer does.
+  const filesRef = useRef(files)
+  filesRef.current = files
+  useEffect(() => () => { for (const f of filesRef.current) if (f.preview) URL.revokeObjectURL(f.preview) }, [])
 
   async function submit() {
     const t = text.trim()
@@ -240,8 +272,9 @@ export function Composer({ onSend, disabled, placeholder, seed, hint }: {
     setText(''); setFiles([])
     const ok = await onSend(t, sent)
     setSending(false)
-    // Not sent: their words and files come back.
+    // Not sent: their words and files come back. Sent: the thumbnails go.
     if (!ok) { setText(t); setFiles(sent) }
+    else for (const f of sent) if (f.preview) URL.revokeObjectURL(f.preview)
   }
   return (
     <form onSubmit={e => { e.preventDefault(); void submit() }}
@@ -252,17 +285,22 @@ export function Composer({ onSend, disabled, placeholder, seed, hint }: {
       {files.length > 0 && (
         <ul className="mb-1.5 flex flex-wrap gap-1.5 px-1.5 pt-1" aria-label="Files to send">
           {files.map((f, i) => (
-            <li key={`${f.name}-${i}`} className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/4 py-1 pl-2 pr-1 text-xs text-foreground/85" data-upload={f.name}>
-              {f.type === 'application/pdf' ? <FileText aria-hidden className="size-3.5 text-action-ink" /> : <ImageIcon aria-hidden className="size-3.5 text-action-ink" />}
-              <span className="max-w-48 truncate">{f.name}</span><span className="text-subtle">{kb(f.size)}</span>
-              <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`} className="grid size-5 place-items-center rounded text-foreground/55 hover:bg-white/8 hover:text-foreground"><X aria-hidden className="size-3" /></button>
+            <li key={`${f.name}-${i}`} className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/4 py-1 pl-1 pr-1 text-xs text-foreground/85" data-upload={f.name}>
+              {f.preview
+                // eslint-disable-next-line @next/next/no-img-element
+                ? <img src={f.preview} alt={`Preview of ${f.name}`} className="size-10 rounded-md object-cover" data-preview />
+                : f.type === 'application/pdf' ? <FileText aria-hidden className="ml-1 size-3.5 text-action-ink" /> : <ImageIcon aria-hidden className="ml-1 size-3.5 text-action-ink" />}
+              <span className="max-w-40 truncate">{f.name}</span><span className="text-subtle">{kb(f.size)}</span>
+              <button type="button" onClick={() => removeFile(i)} aria-label={`Remove ${f.name}`} className="grid size-5 place-items-center rounded text-foreground/55 hover:bg-white/8 hover:text-foreground"><X aria-hidden className="size-3" /></button>
             </li>
           ))}
         </ul>
       )}
       <label htmlFor="builder-composer" className="sr-only">Message Nova</label>
       <textarea id="builder-composer" ref={ref} value={text} rows={1} maxLength={2000} placeholder={files.length ? 'Say what to do with it, or just send' : placeholder}
+        aria-describedby="composer-paste-hint"
         onChange={e => setText(e.target.value)}
+        onPaste={onPaste}
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit() } }}
         className="block max-h-44 min-h-11 w-full resize-none bg-transparent px-2.5 py-2 text-[14px] leading-relaxed text-foreground outline-none placeholder:text-subtle" />
       <div className="flex items-center gap-1">
@@ -271,7 +309,7 @@ export function Composer({ onSend, disabled, placeholder, seed, hint }: {
           className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs text-foreground/60 transition-colors hover:bg-white/6 hover:text-foreground disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-ring">
           <Paperclip aria-hidden className="size-4" /><span className="hidden sm:inline">PDF or photo</span>
         </button>
-        <span className="hidden min-w-0 flex-1 truncate text-[11px] text-subtle sm:block">{hint ?? 'Enter to send · Shift+Enter for a new line'}</span>
+        <span id="composer-paste-hint" className="hidden min-w-0 flex-1 truncate text-[11px] text-subtle sm:block">{hint ?? 'Enter to send · Shift+Enter for a new line · paste a screenshot to share it'}</span>
         <button type="submit" disabled={disabled || sending || (!text.trim() && files.length === 0)} aria-label="Send"
           className="ml-auto grid size-8 shrink-0 place-items-center rounded-lg bg-action text-action-foreground transition-colors hover:bg-action-hover disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
           {sending ? <Loader2 aria-hidden className="size-4 animate-spin" /> : <ArrowUp aria-hidden className="size-4" />}
@@ -341,7 +379,9 @@ export function Conversation({ state, header, seed, onReview }: {
       {header}
       <div ref={box} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-5" aria-label="Conversation with Nova">
         {draft && draft.messages.length === 0 && !draft.pending && (
-          <div className="flex items-start gap-3"><NovaAvatar size="sm" /><div className="pt-0.5 text-[14px] leading-relaxed text-foreground/85"><p className="mb-1 text-xs font-semibold text-foreground/80">Nova</p>{draft.target ? `What would you like to add to ${draft.target.title}? I'll only add to it: nothing there is changed or removed.` : 'What are you working on, and what would you like to end up with?'}</div></div>
+          <div className="flex items-start gap-3" data-greeting={draft.greeting?.language ?? 'english'}><NovaAvatar size="sm" /><div className="pt-0.5 text-[14px] leading-relaxed text-foreground/85"><p className="mb-1 text-xs font-semibold text-foreground/80">Nova</p>{draft.target
+            ? (draft.greeting ? draft.greeting.openingFor.split('{title}').join(draft.target.title) : `What would you like to add to ${draft.target.title}? I'll only add to it: nothing there is changed or removed.`)
+            : draft.greeting?.opening ?? 'What are you working on, and what would you like to end up with?'}</div></div>
         )}
         {draft?.messages.map(m => <Message key={m.id} m={m} fresh={m.role === 'nova' && !seen.current?.has(m.id)} />)}
         {outgoing && <UserMessage text={outgoing.text} files={outgoing.files.map(f => ({ name: f.name, pages: null }))} sending />}
@@ -381,9 +421,11 @@ export function Conversation({ state, header, seed, onReview }: {
 
 // ── Before there is a conversation ────────────────────────────────────────────
 
-export function NewConversation({ header, onStart, busy, error, seed, onExample, drafts, workspaces, onDeleted }: {
+export function NewConversation({ header, onStart, busy, error, seed, onExample, drafts, workspaces, onDeleted, greeting }: {
   header: React.ReactNode; onStart: (text: string, targetWorkspaceId?: string, files?: Upload[]) => Promise<boolean>; busy: boolean; error: string | null
   seed: Seed | null; onExample: (text: string) => void; drafts: DraftListItem[]; workspaces: WorkspaceSummary[]; onDeleted: () => void
+  // In the learner's language, with their name; English until it loads.
+  greeting?: BuilderGreeting | null
 }) {
   const open = drafts.filter(d => d.status !== 'cancelled').slice(0, 8)
   const [outgoing, setOutgoing] = useState<string | null>(null)
@@ -400,8 +442,8 @@ export function NewConversation({ header, onStart, busy, error, seed, onExample,
         <div className="flex items-start gap-3">
           <NovaAvatar />
           <div className="min-w-0 pt-0.5">
-            <h1 className="text-lg font-semibold tracking-tight text-foreground">What would you like to build?</h1>
-            <p className="mt-1 text-[14px] leading-relaxed text-foreground/70">Tell me about an exam, a project, a skill or something at work. I&apos;ll ask what I need, then propose a workspace on the right that you can edit. Nothing is created until you approve it.</p>
+            <h1 className="text-lg font-semibold tracking-tight text-foreground" lang={greeting?.language === 'hindi' ? 'hi' : undefined} data-greeting={greeting?.language ?? 'english'}>{greeting?.title ?? 'What would you like to build?'}</h1>
+            <p className="mt-1 text-[14px] leading-relaxed text-foreground/70" lang={greeting?.language === 'hindi' ? 'hi' : undefined}>{greeting?.body ?? "Tell me about an exam, a project, a skill or something at work. I'll ask what I need, then propose a workspace on the right that you can edit. Nothing is created until you approve it."}</p>
           </div>
         </div>
         {outgoing !== null ? <UserMessage text={outgoing} sending /> : (

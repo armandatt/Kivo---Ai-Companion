@@ -208,7 +208,7 @@ test("the map is the learner's own items and exactly the links on record, and re
   if (map.status !== "ready") return;
   assert.equal(await elsewhere(l.profileId), before, "a read model");
 
-  assert.deepEqual(map.counts, { subject: 2, topic: 3, note: 3, resource: 1 });
+  assert.deepEqual(map.counts, { subject: 2, topic: 3, note: 3, resource: 1, task: 0 });
   const label = new Map(map.nodes.map(n => [n.id, n.label]));
   const edges = map.edges.map(e => `${label.get(e.from)} -${e.kind}-> ${label.get(e.to)}`).sort();
   assert.deepEqual(edges, [
@@ -233,7 +233,7 @@ test("the map is the learner's own items and exactly the links on record, and re
 
   // The other learner's map is theirs alone.
   const theirs = await loadNovaKnowledgeMap(other.chat);
-  assert.deepEqual(theirs.status === "ready" && theirs.counts, { subject: 1, topic: 1, note: 1, resource: 0 });
+  assert.deepEqual(theirs.status === "ready" && theirs.counts, { subject: 1, topic: 1, note: 1, resource: 0, task: 0 });
 });
 
 test("a learner with nothing yet has an empty map, and one still setting up has none", async () => {

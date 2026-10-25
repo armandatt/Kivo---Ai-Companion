@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { ArrowRight, Bookmark, FolderClosed, NotebookPen, Waypoints } from 'lucide-react'
+import { ArrowRight, Bookmark, FolderClosed, ListChecks, NotebookPen, Waypoints } from 'lucide-react'
 import type { MapNode, NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
 import type { NovaFocusContextReady } from '@repo/api/nova/product/focus-context.types'
 import { cn } from '@/lib/utils'
@@ -17,7 +17,7 @@ import { SectionHeading, Skeleton, TEXT_LINK } from './workspace/ui'
 
 type MapState = { view: NovaKnowledgeMapView | null; loading: boolean; error: boolean; refresh: () => void }
 
-const ICON: Record<MapNode['type'], typeof NotebookPen> = { subject: FolderClosed, topic: FolderClosed, note: NotebookPen, resource: Bookmark }
+const ICON: Record<MapNode['type'], typeof NotebookPen> = { subject: FolderClosed, topic: FolderClosed, note: NotebookPen, resource: Bookmark, task: ListChecks }
 const KIND_WORD = (n: LocalNeighbour) =>
   n.node.type === 'subject' ? 'Subject'
   : n.kind === 'links_to' ? 'Note that links here'

@@ -470,14 +470,24 @@ export async function applySetup(platformChatId: string, change: SetupChange, no
 export async function ensureSetupProfile(platformChatId: string): Promise<{ profileId: string; timezone: string | null; userId: string } | null> {
   const learner = await loadLearner(platformChatId);
   if (!learner) return null;
-  const profile = learner.novaAcademicProfile
-    ?? await prisma.novaAcademicProfile.upsert({
-      where:  { userId: learner.id },
-      create: { userId: learner.id, goals: await seedGoalFromSignup(prisma, platformChatId), ...dailyColumns(await seedDailyMinutesFromSignup(platformChatId)) },
+  const profile = learner.novaAcademicProfile ?? await makeProfile(learner.id, platformChatId);
+  return { profileId: profile.id, timezone: profile.timezone, userId: learner.id };
+}
+
+// Two first requests at once (approving twice, two tabs) both try to insert
+// the one profile: the second meets the first's row and takes it.
+async function makeProfile(userId: string, platformChatId: string): Promise<{ id: string; timezone: string | null }> {
+  try {
+    return await prisma.novaAcademicProfile.upsert({
+      where:  { userId },
+      create: { userId, goals: await seedGoalFromSignup(prisma, platformChatId), ...dailyColumns(await seedDailyMinutesFromSignup(platformChatId)) },
       update: {},
       select: { id: true, timezone: true },
     });
-  return { profileId: profile.id, timezone: profile.timezone, userId: learner.id };
+  } catch (err) {
+    if ((err as { code?: string } | null)?.code !== "P2002") throw err;
+    return prisma.novaAcademicProfile.findUniqueOrThrow({ where: { userId }, select: { id: true, timezone: true } });
+  }
 }
 
 // The learner's subject names, oldest first: what Nova is told they have.

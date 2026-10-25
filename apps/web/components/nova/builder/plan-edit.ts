@@ -5,7 +5,8 @@
 // The server checks the result again (checkWorkspacePlan); nothing here is
 // trusted. Run the tests with `npm test`.
 
-import type { PlanDate, PlanNote, PlanPhase, PlanSubject, PlanTask, WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
+import type { PlanDate, PlanNote, PlanPhase, PlanPriority, PlanSubject, PlanTask, WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
+import { TASK_DEPTH_MAX, ancestorsOf, descendantsOf, treeOrder, wouldLoop } from '@repo/api/nova/product/task-tree'
 
 const same = (a: string | null | undefined, b: string | null | undefined) =>
   a != null && b != null && a.toLocaleLowerCase() === b.toLocaleLowerCase()
@@ -40,14 +41,142 @@ export function addTask(plan: WorkspacePlan, title: string, milestone: string | 
   return { ...plan, tasks: [...plan.tasks, task] }
 }
 
-export function removeTask(plan: WorkspacePlan, key: string): WorkspacePlan {
-  return { ...plan, tasks: plan.tasks.filter(t => t.key !== key).map(t => (t.after === key ? { ...t, after: null } : t)) }
+// ── Steps (tasks inside tasks; task-tree.ts holds the rules) ──────────────────
+
+const treeOf = (plan: WorkspacePlan) => plan.tasks.map(t => ({ key: t.key, parent: t.parent ?? null }))
+export const stepsOf = (plan: WorkspacePlan, key: string): PlanTask[] => plan.tasks.filter(t => (t.parent ?? null) === key)
+export const allStepsOf = (plan: WorkspacePlan, key: string): string[] => descendantsOf(treeOf(plan), key)
+export const depthIn = (plan: WorkspacePlan, key: string): number => ancestorsOf(treeOf(plan), key).length
+// How many levels a task and its steps take (1: none).
+const heightOf = (plan: WorkspacePlan, key: string) => 1 + Math.max(0, ...allStepsOf(plan, key).map(k => depthIn(plan, k) - depthIn(plan, key)))
+
+// A step of `parent`, filed where it is, after its last step.
+export function addStep(plan: WorkspacePlan, parentKey: string, title: string): WorkspacePlan {
+  const parent = plan.tasks.find(t => t.key === parentKey)
+  if (!parent || depthIn(plan, parentKey) + 2 > TASK_DEPTH_MAX) return plan
+  const step: PlanTask = { key: newTaskKey(plan), title, priority: null, subject: parent.subject, topic: parent.topic, dueDay: null, estimatedMinutes: null, after: null, parent: parentKey }
+  // In the list right after the parent's last step (at any depth), so it reads in place.
+  const inside = [parentKey, ...allStepsOf(plan, parentKey)]
+  const at = Math.max(...inside.map(k => plan.tasks.findIndex(t => t.key === k))) + 1
+  return { ...plan, tasks: [...plan.tasks.slice(0, at), step, ...plan.tasks.slice(at)] }
 }
 
-export function reorderTask(plan: WorkspacePlan, key: string, by: -1 | 1): WorkspacePlan {
-  const i = plan.tasks.findIndex(t => t.key === key)
-  return { ...plan, tasks: moveItem(plan.tasks, i, i + by) }
+// The siblings of a task, in the order they read.
+function siblingsOf(plan: WorkspacePlan, key: string): PlanTask[] {
+  const t = plan.tasks.find(x => x.key === key)
+  if (!t) return []
+  const parent = t.parent ?? null
+  // Top-level tasks are siblings within their milestone.
+  return plan.tasks.filter(x => (x.parent ?? null) === parent && (parent !== null || same(x.topic, t.topic) || (x.topic == null && t.topic == null)))
 }
+
+// Indent: becomes a step of the sibling above it (with its own steps).
+export function canIndent(plan: WorkspacePlan, key: string): boolean {
+  const sib = siblingsOf(plan, key)
+  const i = sib.findIndex(t => t.key === key)
+  return i > 0 && depthIn(plan, sib[i - 1]!.key) + 1 + heightOf(plan, key) <= TASK_DEPTH_MAX
+}
+export function indentTask(plan: WorkspacePlan, key: string): WorkspacePlan {
+  if (!canIndent(plan, key)) return plan
+  const sib = siblingsOf(plan, key)
+  const above = sib[sib.findIndex(t => t.key === key) - 1]!
+  return moveUnder(plan, key, above.key)
+}
+
+// Outdent: leaves its parent and sits right after it, a sibling of it.
+export const canOutdent = (plan: WorkspacePlan, key: string): boolean => Boolean(plan.tasks.find(t => t.key === key)?.parent)
+export function outdentTask(plan: WorkspacePlan, key: string): WorkspacePlan {
+  const t = plan.tasks.find(x => x.key === key)
+  const parent = t?.parent ? plan.tasks.find(x => x.key === t.parent) : null
+  if (!t || !parent) return plan
+  const moved = plan.tasks.map(x => (x.key === key ? { ...x, parent: parent.parent ?? null, topic: parent.topic, subject: parent.subject } : x))
+  // Placed after the parent's whole block.
+  const block = new Set([key, ...descendantsOf(moved.map(x => ({ key: x.key, parent: x.parent ?? null })), key)])
+  const rest = moved.filter(x => !block.has(x.key))
+  const mine = moved.filter(x => block.has(x.key))
+  const parentBlock = [parent.key, ...descendantsOf(rest.map(x => ({ key: x.key, parent: x.parent ?? null })), parent.key)]
+  const at = Math.max(...parentBlock.map(k => rest.findIndex(x => x.key === k))) + 1
+  return { ...plan, tasks: [...rest.slice(0, at), ...mine, ...rest.slice(at)] }
+}
+
+// Moves a task (with its steps) under another task, as its last step. A move
+// into its own steps, or past the depth limit, changes nothing.
+export function moveUnder(plan: WorkspacePlan, key: string, parentKey: string | null): WorkspacePlan {
+  const tree = treeOf(plan)
+  if (wouldLoop(tree, key, parentKey)) return plan
+  if (parentKey !== null && ancestorsOf(tree, parentKey).length + 1 + heightOf(plan, key) > TASK_DEPTH_MAX) return plan
+  const parent = parentKey ? plan.tasks.find(t => t.key === parentKey) : null
+  const block = new Set([key, ...allStepsOf(plan, key)])
+  const moved = plan.tasks.map(t => (t.key === key ? { ...t, parent: parentKey } : block.has(t.key) ? t : t))
+    // A task and its steps follow their new parent's milestone and subject.
+    .map(t => (block.has(t.key) && parent ? { ...t, topic: parent.topic, subject: parent.subject } : t))
+  const rest = moved.filter(t => !block.has(t.key))
+  const mine = moved.filter(t => block.has(t.key))
+  if (!parentKey) return { ...plan, tasks: [...rest, ...mine] }
+  const target = [parentKey, ...descendantsOf(rest.map(x => ({ key: x.key, parent: x.parent ?? null })), parentKey)]
+  const at = Math.max(...target.map(k => rest.findIndex(x => x.key === k))) + 1
+  return { ...plan, tasks: [...rest.slice(0, at), ...mine, ...rest.slice(at)] }
+}
+
+// Up or down among its siblings, taking its steps with it.
+export function reorderTask(plan: WorkspacePlan, key: string, by: -1 | 1): WorkspacePlan {
+  const sib = siblingsOf(plan, key)
+  const i = sib.findIndex(t => t.key === key)
+  const other = sib[i + by]
+  if (!other) return plan
+  const blockOf = (k: string) => [k, ...allStepsOf(plan, k)]
+  const first = by === -1 ? other.key : key, second = by === -1 ? key : other.key
+  const a = blockOf(first), b = blockOf(second)
+  const all = new Set([...a, ...b])
+  const start = Math.min(...[...all].map(k => plan.tasks.findIndex(t => t.key === k)))
+  const rest = plan.tasks.filter(t => !all.has(t.key))
+  const pick = (keys: string[]) => plan.tasks.filter(t => keys.includes(t.key))
+  const at = plan.tasks.slice(0, start).filter(t => !all.has(t.key)).length
+  return { ...plan, tasks: [...rest.slice(0, at), ...pick(b), ...pick(a), ...rest.slice(at)] }
+}
+export const canMove = (plan: WorkspacePlan, key: string, by: -1 | 1): boolean => {
+  const sib = siblingsOf(plan, key)
+  const i = sib.findIndex(t => t.key === key)
+  return i >= 0 && Boolean(sib[i + by])
+}
+
+// Removing a task: with its steps (`withSteps`), or its steps move up to
+// where it was. Whatever waited for a removed task waits for nothing.
+export function removeTask(plan: WorkspacePlan, key: string, opts: { withSteps?: boolean } = {}): WorkspacePlan {
+  const t = plan.tasks.find(x => x.key === key)
+  if (!t) return plan
+  const gone = new Set(opts.withSteps ? [key, ...allStepsOf(plan, key)] : [key])
+  return {
+    ...plan,
+    tasks: plan.tasks.filter(x => !gone.has(x.key)).map(x => ({
+      ...x,
+      ...(x.after && gone.has(x.after) ? { after: null } : {}),
+      ...(x.parent === key ? { parent: t.parent ?? null } : {}),
+    })),
+  }
+}
+
+// ── Priorities: the learner's; Nova's only suggests ───────────────────────────
+
+export function setPriority(plan: WorkspacePlan, key: string, priority: PlanPriority | null): WorkspacePlan {
+  return updateTask(plan, key, { priority })
+}
+
+// Takes Nova's suggestion as the learner's priority, for these tasks (a
+// milestone's, or all), where one is suggested and none is set.
+export function acceptSuggestions(plan: WorkspacePlan, keys?: readonly string[]): WorkspacePlan {
+  const pick = keys ? new Set(keys) : null
+  return { ...plan, tasks: plan.tasks.map(t => ((!pick || pick.has(t.key)) && !t.priority && t.suggestedPriority ? { ...t, priority: t.suggestedPriority } : t)) }
+}
+
+// Leaves Nova's suggestions out: nothing is set, and no suggestion shows.
+export function clearSuggestions(plan: WorkspacePlan, keys?: readonly string[]): WorkspacePlan {
+  const pick = keys ? new Set(keys) : null
+  return { ...plan, tasks: plan.tasks.map(t => ((!pick || pick.has(t.key)) && t.suggestedPriority ? { ...t, suggestedPriority: null, priorityReason: null } : t)) }
+}
+
+export const suggestionsOpen = (plan: WorkspacePlan, keys?: readonly string[]): number =>
+  plan.tasks.filter(t => (!keys || keys.includes(t.key)) && !t.priority && t.suggestedPriority).length
 
 // Which tasks a task may wait for: any other, except one already waiting
 // (directly or not) on it, so an order never loops.
@@ -150,11 +279,23 @@ export const removeNote = (plan: WorkspacePlan, key: string): WorkspacePlan => (
 
 // ── Reading it back ───────────────────────────────────────────────────────────
 
-// Tasks under each milestone, in the plan's order, then those under none.
-export function tasksByMilestone(plan: WorkspacePlan): Array<{ milestone: string | null; index: number | null; tasks: PlanTask[] }> {
-  const groups = plan.phases.map((p, index) => ({ milestone: p.name as string | null, index: index as number | null, tasks: plan.tasks.filter(t => same(t.topic, p.name)) }))
-  const rest = plan.tasks.filter(t => !plan.phases.some(p => same(t.topic, p.name)))
-  return rest.length > 0 || groups.length === 0 ? [...groups, { milestone: null, index: null, tasks: rest }] : groups
+// Tasks under each milestone, in reading order (each task followed by its
+// steps, with their depth), then those under none. A step goes with its
+// task's group whatever its own topic says.
+export type TaskRow = { task: PlanTask; depth: number }
+export function tasksByMilestone(plan: WorkspacePlan): Array<{ milestone: string | null; index: number | null; tasks: PlanTask[]; rows: TaskRow[] }> {
+  const rows = treeOrder(plan.tasks.map(t => ({ ...t, parent: t.parent ?? null }))).map(r => ({ task: r.item as PlanTask, depth: r.depth }))
+  // Each row's group: its top-level task's milestone.
+  let root: PlanTask | null = null
+  const grouped = rows.map(r => { if (r.depth === 0) root = r.task; return { ...r, root: root! } })
+  const groupOf = (topic: string | null) => plan.phases.findIndex(p => same(topic, p.name))
+  const groups = plan.phases.map((p, index) => {
+    const mine = grouped.filter(r => groupOf(r.root.topic) === index)
+    return { milestone: p.name as string | null, index: index as number | null, tasks: mine.map(r => r.task), rows: mine.map(({ task, depth }) => ({ task, depth })) }
+  })
+  const rest = grouped.filter(r => groupOf(r.root.topic) === -1)
+  const other = { milestone: null, index: null, tasks: rest.map(r => r.task), rows: rest.map(({ task, depth }) => ({ task, depth })) }
+  return rest.length > 0 || groups.length === 0 ? [...groups, other] : groups
 }
 
 // Everything with a day, soonest first: dates and tasks due.

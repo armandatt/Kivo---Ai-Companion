@@ -86,6 +86,12 @@ describe("a plan with steps (workspace-plan.ts)", () => {
     for (const w of writes) if (w.parent) expect(writes.findIndex(x => x.key === w.parent)).toBeLessThan(writes.indexOf(w));
   });
 
+  it("a task given no subject is filed under its milestone's subject, or the plan's one subject", () => {
+    const t = plan({ subjects: [{ name: "Kivo", topics: [] }, { name: "Other", topics: [] }], phases: [{ name: "Sprint", subject: "Kivo" }], tasks: [{ title: "A", topic: "Sprint", steps: [{ title: "A1" }] }, { title: "B" }] }).plan.tasks;
+    expect(t.map(x => [x.title, x.subject])).toEqual([["A", "Kivo"], ["A1", "Kivo"], ["B", null]]);
+    expect(plan({ subjects: [{ name: "Kivo", topics: [] }], tasks: [{ title: "B" }] }).plan.tasks[0]!.subject).toBe("Kivo");
+  });
+
   it("the same title under two parents is two tasks; twice under one parent is one", () => {
     const t = plan({ tasks: [
       { key: "a", title: "Ship web" }, { key: "b", title: "Ship app" },
@@ -164,8 +170,9 @@ describe("milestones and estimates, repaired by code (found 25 Oct)", () => {
   });
 
   it("takes a weekly estimate off a milestone whose tasks are all due within a week", () => {
+    // Steps without days of their own don't stop it (seen in the local check, 25 Oct).
     const checked = plan({ phases: [{ name: "Sprint", weeks: 1, hoursPerWeek: 30 }, { name: "Later", weeks: 3 }], tasks: [
-      { title: "A", topic: "Sprint", dueDay: "2026-10-26" }, { title: "B", topic: "Sprint", dueDay: "2026-10-28" }, { title: "C", topic: "Later" },
+      { title: "A", topic: "Sprint", dueDay: "2026-10-26", steps: [{ title: "A1" }, { title: "A2" }] }, { title: "B", topic: "Sprint", dueDay: "2026-10-28" }, { title: "C", topic: "Later" },
     ] });
     expect(checked.plan.phases.map(p => [p.weeks, p.hoursPerWeek])).toEqual([[null, null], [3, null]]);
     expect(checked.fixed.join(" ")).toContain("Took a weekly estimate off");

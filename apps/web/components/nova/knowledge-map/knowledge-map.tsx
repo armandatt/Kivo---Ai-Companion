@@ -21,14 +21,16 @@ const TYPES: Array<{ type: MapNodeType; label: string; plural: string }> = [
   { type: 'topic',    label: 'Topic',      plural: 'Topics' },
   { type: 'note',     label: 'Note',       plural: 'Notes' },
   { type: 'resource', label: 'Saved page', plural: 'Saved pages' },
+  { type: 'task',     label: 'Task',       plural: 'Tasks' },
 ]
 const TYPE_LABEL = Object.fromEntries(TYPES.map(t => [t.type, t.label])) as Record<MapNodeType, string>
 
 // One colour per kind of thing, taken from the theme so both themes work.
 // Teal (Nova's) marks subjects and learning; selection uses the action colour.
 const FILL: Record<MapNodeType, string> = {
-  subject: 'var(--nova)', topic: 'var(--map-topic)', note: 'var(--map-note)', resource: 'var(--map-resource)',
+  subject: 'var(--nova)', topic: 'var(--map-topic)', note: 'var(--map-note)', resource: 'var(--map-resource)', task: 'var(--action)',
 }
+const TASK_STATUS = { todo: 'To do', in_progress: 'In progress', done: 'Done' } as const
 const LEVEL_TEXT = { weak: 'Weak', developing: 'Developing', solid: 'Solid' } as const
 
 const short = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text)
@@ -59,6 +61,8 @@ const RELATION: Record<string, [string, string]> = {
   about_topic: ['Filed under this topic', 'Its topic'],
   filed_under: ['Filed under this subject', 'Its subject'],
   links_to:    ['This note links to it', 'Links to this'],
+  task_of:     ['Task under this', 'Where it belongs'],
+  has_step:    ['A step of this task', 'The task it is a step of'],
 }
 
 // Everything within two links of an item: what a scoped view shows.
@@ -262,6 +266,11 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
     facts.push(['Subject', node.subjectName ?? 'Not filed under a subject'])
     if (node.topicName) facts.push(['Topic', node.topicLinked ? node.topicName : `${node.topicName} (not one of that subject's topics yet)`])
     facts.push(['Last edited', day(node.updatedAt)])
+  } else if (node.type === 'task') {
+    facts.push(['Subject', node.subjectName ?? 'Not filed under a subject'])
+    if (node.topicName && !node.parent) facts.push(['Under', node.topicName])
+    facts.push(['Status', TASK_STATUS[node.status]])
+    if (node.steps > 0) facts.push(['Steps inside it', String(node.steps)])
   } else {
     facts.push(['Site', node.domain])
     facts.push(['Subject', node.subjectName ?? 'Not filed under a subject'])
@@ -269,7 +278,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
     if (node.filedBy === 'nova') facts.push(['Filed by', 'Nova, from a name match. Keep or undo it on Saved.'])
     facts.push([node.kind === 'study_requested' ? 'Asked to study' : 'Saved', day(node.savedAt)])
   }
-  const open = node.type === 'note' ? 'Open note' : node.type === 'resource' ? 'Open in Saved' : node.type === 'topic' ? 'Open this topic' : 'Open this subject'
+  const open = node.type === 'note' ? 'Open note' : node.type === 'resource' ? 'Open in Saved' : node.type === 'topic' ? 'Open this topic' : node.type === 'task' ? 'Open the Planner board' : 'Open this subject'
   // A new note filed where this node is. The note editor reads both from the address.
   const noteHere = node.type === 'topic' ? `/notes/new?subjectId=${encodeURIComponent(node.subjectId ?? '')}&topic=${encodeURIComponent(node.label)}`
     : node.type === 'subject' ? `/notes/new?subjectId=${encodeURIComponent(node.subjectId ?? '')}` : null
@@ -410,6 +419,18 @@ function CardFace({ n, detail }: { n: MapNode; detail: CardDetail }) {
       </>
     )
   }
+  if (n.type === 'task') {
+    const done = n.status === 'done'
+    return (
+      <>
+        <rect x={x0} y={y0} width={w} height={h} rx={9} fill="var(--card)" stroke={n.parent ? 'var(--map-line)' : 'var(--border)'} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        {n.subjectName && !n.parent && <rect x={x0 + 6} y={y0 + 9} width={3} height={h - 18} rx={1.5} fill="var(--sc)" />}
+        <rect x={x0 + 15} y={detail === 2 ? -10 : -5} width={10} height={10} rx={2.5} fill={done ? 'var(--action)' : 'none'} stroke="var(--action)" strokeWidth={1.25} vectorEffect="non-scaling-stroke" />
+        {detail >= 1 && <text x={x0 + 31} y={detail === 2 ? -1.5 : 4} className={text} fontSize={12} fontWeight={500} opacity={done ? 0.6 : 1} textDecoration={done ? 'line-through' : undefined}>{short(n.label, 21)}</text>}
+        {detail === 2 && <text x={x0 + 31} y={12.5} {...meta}>{[TASK_STATUS[n.status], n.steps ? plural(n.steps, 'step') : null].filter(Boolean).join(' · ')}</text>}
+      </>
+    )
+  }
   const resource = n.type === 'resource'
   return (
     <>
@@ -428,7 +449,7 @@ function CardFace({ n, detail }: { n: MapNode; detail: CardDetail }) {
 // Every card is a real item and every line a link that is stored; the server
 // decides both. Moving a card changes only where it is drawn.
 export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady; onChanged: () => void }) {
-  const [shown, setShown]       = useState<Record<MapNodeType, boolean>>({ subject: true, topic: true, note: true, resource: true })
+  const [shown, setShown]       = useState<Record<MapNodeType, boolean>>({ subject: true, topic: true, note: true, resource: true, task: true })
   const [subject, setSubject]   = useState('')
   // Show [[links]] between notes (the learner's own links), or hide them.
   const [showLinks, setShowLinks] = useState(true)
