@@ -22,7 +22,6 @@
 
 import type { ChangeKind, ChangeOp, ChangeSet, ProposedChange, ResourceRef, WorkspaceDetail } from "./builder.types";
 import { isPlaceholderTopic, oneLine } from "./workspace-plan";
-import { TASK_DEPTH_MAX, ancestorsOf, descendantsOf, wouldLoop } from "./task-tree";
 
 // ── Finding it ────────────────────────────────────────────────────────────────
 
@@ -89,7 +88,7 @@ export type ResourceStep =
 
 // What happens with the name the learner used. "new" (they asked for a new
 // one) and no name at all: nothing is opened.
-export function decideResource(said: { name: string; intent: "open" | "change" | "new" | "delete" } | null, c: ResourceCandidates): ResourceStep {
+export function decideResource(said: { name: string; intent: "open" | "change" | "new" } | null, c: ResourceCandidates): ResourceStep {
   if (!said || said.intent === "new") return { type: "none" };
   const hits = matchResources(said.name, c);
   if (hits.length === 0) {
@@ -100,11 +99,10 @@ export function decideResource(said: { name: string; intent: "open" | "change" |
     return { type: "choose", names, question: `You have more than one that could be "${said.name}": ${names.join(", ")}. Which one do you mean?` };
   }
   const h = hits[0]!;
-  const intent = said.intent === "delete" ? "change" : said.intent;
-  if (h.kind === "workspace") return { type: "found", intent, ref: { kind: "workspace", workspaceId: h.id, subjectIds: h.subjectIds, title: h.name } };
+  if (h.kind === "workspace") return { type: "found", intent: said.intent, ref: { kind: "workspace", workspaceId: h.id, subjectIds: h.subjectIds, title: h.name } };
   // A subject is opened as that subject alone, even when a workspace holds
   // it with others: "my DSA plan" is DSA, not the whole semester (seen 22 Oct).
-  return { type: "found", intent, ref: { kind: "subjects", workspaceId: null, subjectIds: [h.id], title: h.name } };
+  return { type: "found", intent: said.intent, ref: { kind: "subjects", workspaceId: null, subjectIds: [h.id], title: h.name } };
 }
 
 // ── Changing it ───────────────────────────────────────────────────────────────
@@ -124,16 +122,6 @@ export interface ChangeContext {
   today: string;
   // Topics with recorded study (sessions, reviews, mastery history): renamed, never removed.
   studied: ReadonlySet<string>;
-  // The learner asked about priorities in this request. Otherwise a priority
-  // the model put on a task is not Nova's to set: left off, and said.
-  priorityAsked?: boolean;
-}
-
-// Whether the learner's words are about priority ("make X high priority",
-// "what's most important"): a character check, not a classifier.
-export function asksAboutPriority(text: string): boolean {
-  const t = text.toLowerCase();
-  return ["priorit", "most important", "urgent", "प्राथमिकता", "zaroori", "important"].some(w => t.includes(w));
 }
 
 // The model's operations (or a stored or edited change set), kept only where
@@ -150,11 +138,6 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
   const addedTopics = new Map<string, Set<string>>();
   const addedTasks = new Set<string>();
   const touched = new Set<string>();
-  // The tree as it would stand: the tasks there now and the ones added here
-  // (keyed "+<key>"), each with its parent, so a step's depth and loops are
-  // checked against everything the set does.
-  const tree = current.tasks.map(t => ({ key: t.id, parent: t.parentId ?? null }));
-  let priorityLeft = 0;
   const why = (x: Record<string, unknown>) => oneLine(x.why, 200) || null;
   const keep = (op: ChangeOp, says: string, effect: ProposedChange["effect"], x: Record<string, unknown>) => {
     if (ops.length >= CHANGE_OPS_MAX) { dropped.push(`${says} (too many changes at once)`); return; }
@@ -221,9 +204,7 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         if (touched.has(s.id)) break;
         const studied = s.topics.filter(t => ctx.studied.has(t.id));
         if (studied.length) { dropped.push(`removing ${quoted(s.name)} (you've studied ${studied.slice(0, 2).map(t => quoted(t.name)).join(", ")}; topics with study are kept)`); break; }
-        // Its dates must go first, in this same change (remove_date), or it stays.
-        const goingDates = new Set(ops.flatMap(o => (o.op === "remove_date" ? [o.dateId] : [])));
-        if (current.dates.some(d => d.subjectId === s.id && !goingDates.has(d.id))) { dropped.push(`removing ${quoted(s.name)} (it has dates; move or remove them on the calendar first)`); break; }
+        if (current.dates.some(d => d.subjectId === s.id)) { dropped.push(`removing ${quoted(s.name)} (it has dates; move or remove them on the calendar first)`); break; }
         touched.add(s.id);
         // Its topics go with it: each said, so the learner sees exactly what goes.
         for (const t of s.topics) {
@@ -237,39 +218,17 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
       case "add_task": {
         const title = oneLine(x.title, TITLE_MAX);
         if (!title) break;
-        // Its parent: a task here (by id) or one this set adds (by key).
-        const parentId = typeof x.parentId === "string" && x.parentId ? x.parentId : null;
-        const parentKey = typeof x.parentKey === "string" && x.parentKey ? oneLine(x.parentKey, 40) : null;
-        const parentTask = parentId ? taskById(parentId) : undefined;
-        const parentAdded = parentKey ? ops.find((o): o is ProposedChange & Extract<ChangeOp, { op: "add_task" }> => o.op === "add_task" && o.key === parentKey) : undefined;
-        if (parentId && !parentTask) { dropped.push(`task ${quoted(title)} (a step of a task that isn't part of this)`); break; }
-        if (parentKey && !parentAdded) { dropped.push(`task ${quoted(title)} (a step of a task this change doesn't add)`); break; }
-        const parentNode = parentTask ? parentTask.id : parentAdded ? `+${parentAdded.key}` : null;
-        // The same title under the same parent is the same task.
-        const sameParent = (t: WorkspaceDetail["tasks"][number]) => (t.parentId ?? null) === (parentTask?.id ?? null);
-        if (current.tasks.some(t => t.status !== "done" && low(t.title) === low(title) && sameParent(t)) || addedTasks.has(`${parentNode ?? ""}\n${low(title)}`)) { dropped.push(`task ${quoted(title)} (already there)`); break; }
-        if (parentNode && ancestorsOf(tree, parentNode).length + 2 > TASK_DEPTH_MAX) { dropped.push(`task ${quoted(title)} (steps go at most ${TASK_DEPTH_MAX} levels deep)`); break; }
+        if (current.tasks.some(t => t.status !== "done" && low(t.title) === low(title)) || addedTasks.has(low(title))) { dropped.push(`task ${quoted(title)} (already there)`); break; }
         const subjectId = subjectOrNull(x.subjectId);
         if (subjectId === undefined) { dropped.push(`task ${quoted(title)} (filed under a subject that isn't part of this)`); break; }
         const dueDay = isDay(x.dueDay) && x.dueDay >= ctx.today ? x.dueDay : null;
         if (x.dueDay != null && dueDay === null) dropped.push(`the due day of ${quoted(title)} (not a day from today on)`);
-        const given = PRIORITIES.find(p => p === x.priority) ?? null;
-        const priority = ctx.priorityAsked ? given : null;
-        if (given && !priority) priorityLeft++;
+        const priority = PRIORITIES.find(p => p === x.priority) ?? null;
         const key = oneLine(x.key, 40) || `t${ops.length + 1}`;
         const keyOk = [...key].every(c => (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c === "-" || c === "_");
-        const finalKey = keyOk && !ops.some(o => o.op === "add_task" && o.key === key) ? key : `t${ops.length + 1}`;
-        addedTasks.add(`${parentNode ?? ""}\n${low(title)}`);
-        tree.push({ key: `+${finalKey}`, parent: parentNode });
-        // A step is filed where its task is.
-        const under = parentTask ? { subjectId: parentTask.subjectId, topicName: parentTask.topicName } : parentAdded ? { subjectId: parentAdded.subjectId, topicName: parentAdded.topicName } : null;
-        const description = typeof x.description === "string" ? x.description.split("\r").join("").trim().slice(0, 600) || null : null;
-        keep({
-          op: "add_task", key: finalKey, title,
-          subjectId: under ? under.subjectId : subjectId ?? (current.subjects.length === 1 ? current.subjects[0]!.id : null),
-          topicName: under ? under.topicName : oneLine(x.topicName, NAME_MAX) || null, dueDay, priority,
-          parentId: parentTask?.id ?? null, parentKey: parentAdded?.key ?? null, description,
-        }, `Add ${parentNode ? "step" : "task"} ${quoted(title)}${parentNode ? ` under ${quoted(parentTask?.title ?? parentAdded!.title)}` : ""}${dueDay ? `, due ${dueDay}` : ""}${priority ? `, ${priority} priority` : ""}`, "add", x);
+        addedTasks.add(low(title));
+        keep({ op: "add_task", key: keyOk ? key : `t${ops.length + 1}`, title, subjectId: subjectId ?? (current.subjects.length === 1 ? current.subjects[0]!.id : null), topicName: oneLine(x.topicName, NAME_MAX) || null, dueDay, priority },
+          `Add task ${quoted(title)}${dueDay ? `, due ${dueDay}` : ""}${priority === "high" ? ", high priority" : ""}`, "add", x);
         break;
       }
       case "update_task": {
@@ -287,29 +246,7 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         }
         if (x.priority !== undefined) {
           const p = x.priority === null ? null : PRIORITIES.find(v => v === x.priority);
-          if (p !== undefined && p !== t.priority) {
-            if (ctx.priorityAsked) { change.priority = p; parts.push(p ? `${p} priority` : "no priority"); } else priorityLeft++;
-          }
-        }
-        if (x.parentId !== undefined) {
-          const to = x.parentId === null || x.parentId === "" ? null : typeof x.parentId === "string" ? x.parentId : undefined;
-          const parent = to ? taskById(to) : null;
-          if (to === undefined || (to !== null && !parent)) dropped.push(`moving ${quoted(t.title)} (under a task that isn't part of this)`);
-          else if (to !== (t.parentId ?? null)) {
-            const height = 1 + Math.max(0, ...descendantsOf(tree, t.id).map(k => ancestorsOf(tree, k).length - ancestorsOf(tree, t.id).length));
-            if (wouldLoop(tree, t.id, to)) dropped.push(`moving ${quoted(t.title)} (it can't go inside its own steps)`);
-            else if (to !== null && ancestorsOf(tree, to).length + 1 + height > TASK_DEPTH_MAX) dropped.push(`moving ${quoted(t.title)} (steps go at most ${TASK_DEPTH_MAX} levels deep)`);
-            else {
-              change.parentId = to;
-              parts.push(to ? `move under ${quoted(parent!.title)}` : "make it a task of its own");
-              const at = tree.find(n => n.key === t.id);
-              if (at) at.parent = to;
-            }
-          }
-        }
-        if (x.description !== undefined) {
-          const d = x.description === null ? null : typeof x.description === "string" ? x.description.split("\r").join("").trim().slice(0, 600) || null : undefined;
-          if (d !== undefined && d !== (t.description ?? null)) { change.description = d; parts.push(d ? "new description" : "no description"); }
+          if (p !== undefined && p !== t.priority) { change.priority = p; parts.push(p ? `${p} priority` : "no priority"); }
         }
         if (parts.length === 0) break;
         touched.add(t.id);
@@ -321,13 +258,8 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         if (!t) { dropped.push("removing a task that isn't part of this"); break; }
         if (t.status === "done") { dropped.push(`removing ${quoted(t.title)} (it's finished; finished tasks are kept)`); break; }
         if (touched.has(t.id)) break;
-        // Its open steps go with it; finished ones stay and move up.
-        const inside = descendantsOf(tree, t.id).filter(k => !k.startsWith("+"));
-        const steps = inside.filter(k => taskById(k)?.status !== "done" && !touched.has(k));
-        const kept = inside.filter(k => taskById(k)?.status === "done").length;
         touched.add(t.id);
-        for (const k of steps) touched.add(k);
-        keep({ op: "remove_task", taskId: t.id, steps }, `Remove task ${quoted(t.title)}${steps.length ? ` and its ${steps.length} open step${steps.length === 1 ? "" : "s"}` : ""}${kept ? ` (${kept} finished step${kept === 1 ? "" : "s"} stay${kept === 1 ? "s" : ""})` : ""}`, "remove", x);
+        keep({ op: "remove_task", taskId: t.id }, `Remove task ${quoted(t.title)}`, "remove", x);
         break;
       }
       case "order_tasks": {
@@ -365,14 +297,6 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         keep(change, `Change date ${quoted(d.title)}: ${parts.join(", ")}`, "change", x);
         break;
       }
-      case "remove_date": {
-        const d = dateById(x.dateId);
-        if (!d) { dropped.push("removing a date that isn't part of this"); break; }
-        if (touched.has(d.id)) break;
-        touched.add(d.id);
-        keep({ op: "remove_date", dateId: d.id }, `Remove date ${quoted(d.title)} (${d.day})`, "remove", x);
-        break;
-      }
       case "add_note": {
         const title = oneLine(x.title, NOTE_TITLE_MAX);
         const body = typeof x.body === "string" ? x.body.split("\r").join("").trim().slice(0, NOTE_BODY_MAX) : "";
@@ -388,7 +312,6 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         break;
     }
   }
-  if (priorityLeft > 0) dropped.push(`priorities on ${priorityLeft} task${priorityLeft === 1 ? "" : "s"} (yours to set; ask Nova to suggest them, or set them on the board)`);
   return { ops, dropped: dropped.slice(0, 12) };
 }
 
@@ -397,7 +320,7 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
 export const kindOf = (op: ChangeOp["op"]): ChangeKind =>
   op === "add_topics" || op === "rename_topic" || op === "remove_topic" ? "topics"
   : op === "add_subject" || op === "remove_subject" ? "subjects"
-  : op === "add_date" || op === "update_date" || op === "remove_date" ? "dates"
+  : op === "add_date" || op === "update_date" ? "dates"
   : op === "add_note" ? "notes" : "tasks";
 
 // Keeps the changes of the kinds the learner's request is about; the rest

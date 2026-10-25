@@ -3,7 +3,6 @@
 // rules for academic plans. Pure, no database (nova-builder-edit.itest.ts
 // covers the same against Postgres).
 
-import { asksAboutPriority } from "../product/builder-changes";
 import { changeCounts, checkChanges, decideResource, matchResources, readChangeSet, withinAsk, type ResourceCandidates } from "../product/builder-changes";
 import { DECLINE_REPLY, decideStep, emptyBrief, readTurn } from "../product/builder-state";
 import { checkWorkspacePlan, isPlaceholderTopic, planWrites } from "../product/workspace-plan";
@@ -62,9 +61,9 @@ const current = (): WorkspaceDetail => ({
   workspace: null, title: "Data Structures and Algorithms",
   subjects: [{ id: "s1", name: "Data Structures and Algorithms", topics: [{ id: "t1", name: "Arrays" }, { id: "t2", name: "Trees" }, { id: "t3", name: "Graphs" }] }],
   tasks: [
-    { id: "k1", title: "Solve 10 tree problems", status: "in_progress", priority: null, dueDay: "2026-11-01", subjectId: "s1", topicName: "Trees", estimatedMinutes: null, parentId: null, description: null },
-    { id: "k2", title: "Read about heaps", status: "done", priority: null, dueDay: null, subjectId: "s1", topicName: null, estimatedMinutes: null, parentId: null, description: null },
-    { id: "k3", title: "Graph quiz", status: "todo", priority: "low", dueDay: null, subjectId: "s1", topicName: "Graphs", estimatedMinutes: null, parentId: null, description: null },
+    { id: "k1", title: "Solve 10 tree problems", status: "in_progress", priority: null, dueDay: "2026-11-01", subjectId: "s1", topicName: "Trees", estimatedMinutes: null },
+    { id: "k2", title: "Read about heaps", status: "done", priority: null, dueDay: null, subjectId: "s1", topicName: null, estimatedMinutes: null },
+    { id: "k3", title: "Graph quiz", status: "todo", priority: "low", dueDay: null, subjectId: "s1", topicName: "Graphs", estimatedMinutes: null },
   ],
   notes: [{ id: "n1", title: "DSA cheatsheet", subjectId: "s1", updatedAt: "2026-10-01T00:00:00.000Z" }],
   dates: [{ id: "d1", title: "DSA mid-term", day: "2026-11-20", kind: "exam", subjectId: "s1" }],
@@ -81,7 +80,7 @@ describe("proposed changes, checked against the records by id", () => {
       { op: "add_task", key: "dp", title: "Solve 5 DP problems", dueDay: "2026-11-10" },
       { op: "add_note", title: "DP patterns", body: "# Patterns\n- Knapsack" },
       { op: "remove_topic", topicId: "t3" },
-    ] }, current(), { ...ctx, priorityAsked: true });
+    ] }, current(), ctx);
     expect(set.ops.map(o => o.op)).toEqual(["add_topics", "update_task", "update_date", "order_tasks", "add_task", "add_note", "remove_topic"]);
     expect(set.ops.map(o => o.id)).toEqual(["c1", "c2", "c3", "c4", "c5", "c6", "c7"]);
     expect(set.ops.map(o => o.effect)).toEqual(["add", "change", "change", "change", "add", "add", "remove"]);
@@ -92,18 +91,6 @@ describe("proposed changes, checked against the records by id", () => {
     expect(set.ops[4]!.op === "add_task" && set.ops[4]!.subjectId).toBe("s1");
     expect(changeCounts(set)).toBe("3 additions, 3 changes and 1 removal");
     expect(set.dropped).toEqual([]);
-  });
-
-  it("a priority is the learner's: Nova's is left off unless they asked about priorities, and that is said", () => {
-    const ops = [{ op: "update_task", taskId: "k1", priority: "high" }, { op: "add_task", key: "dp", title: "Solve 5 DP problems", priority: "high" }];
-    const unasked = checkChanges(ops, current(), ctx);
-    expect(unasked.ops.map(o => o.op)).toEqual(["add_task"]);
-    expect(unasked.ops[0]!.op === "add_task" && unasked.ops[0]!.priority).toBeNull();
-    expect(unasked.dropped).toEqual(["priorities on 2 tasks (yours to set; ask Nova to suggest them, or set them on the board)"]);
-    const asked = checkChanges(ops, current(), { ...ctx, priorityAsked: true });
-    expect(asked.ops.map(o => o.op)).toEqual(["update_task", "add_task"]);
-    expect(asksAboutPriority("make the home page high priority")).toBe(true);
-    expect(asksAboutPriority("add two topics")).toBe(false);
   });
 
   it("leaves out ids that aren't this resource's, repeats, placeholders, studied topics, finished tasks and the past, saying why", () => {

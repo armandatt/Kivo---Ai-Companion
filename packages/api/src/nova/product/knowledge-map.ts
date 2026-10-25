@@ -22,12 +22,10 @@ import { prisma } from "@repo/db/client";
 import { learnerKey } from "./learner-key";
 import { listResourceLinks } from "./learning-events";
 import { listNoteLinks } from "./notes";
-import { listTaskLinks } from "./tasks";
-import { descendantsOf } from "./task-tree";
 import { masteryLevel } from "../engines/knowledge-engine";
 import { normalizeTopicName } from "../engines/topic-mastery-engine";
 import {
-  MAP_NOTES_MAX, MAP_RESOURCES_MAX, MAP_TASKS_MAX,
+  MAP_NOTES_MAX, MAP_RESOURCES_MAX,
   type MapEdge, type MapNode, type MapNodeType, type MapSuggestion, type NovaKnowledgeMapReady, type NovaKnowledgeMapView,
 } from "./knowledge-map.types";
 
@@ -41,9 +39,7 @@ export interface MapInputs {
     filedBy?: "learner" | "nova" | null;
     suggestions?: Array<{ subjectId: string; topicName: string | null; confidence: "high" | "possible"; basis: MapSuggestion["basis"] }>;
   }>;
-  // Tasks filed under a subject (tasks.ts listTaskLinks). Absent: none drawn.
-  tasks?:    Array<{ id: string; title: string; status: "todo" | "in_progress" | "done"; subjectId: string | null; topicName: string | null; parentId: string | null }>;
-  totals:    { notes: number; resources: number; tasks?: number };
+  totals:    { notes: number; resources: number };
 }
 
 const topicKey = (subjectId: string, name: string) => `${subjectId}\n${normalizeTopicName(name).toLowerCase()}`;
@@ -105,26 +101,6 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
     };
   });
 
-  // Tasks: a step hangs from its task; a task of its own from the topic it
-  // names in its subject (its milestone), else from the subject.
-  const taskRows = (input.tasks ?? []).filter(t => t.subjectId !== null && subjectName.has(t.subjectId));
-  const shown = new Set(taskRows.map(t => t.id));
-  const tree = taskRows.map(t => ({ key: t.id, parent: t.parentId && shown.has(t.parentId) ? t.parentId : null }));
-  const taskNodes: MapNode[] = taskRows.map(t => {
-    const id = `task:${t.id}`;
-    const parent = t.parentId && shown.has(t.parentId) ? `task:${t.parentId}` : null;
-    if (parent) link(parent, id, "has_step");
-    else {
-      const topicId = t.topicName ? topicAt.get(topicKey(t.subjectId!, t.topicName)) : undefined;
-      link(topicId ? `topic:${topicId}` : `subject:${t.subjectId}`, id, "task_of");
-    }
-    return {
-      id, type: "task", label: t.title, href: "/planner?view=board", subjectId: t.subjectId,
-      subjectName: subjectName.get(t.subjectId!) ?? null, topicName: t.topicName, status: t.status, parent,
-      steps: descendantsOf(tree, t.id).length,
-    };
-  });
-
   const topicNodes: MapNode[] = topics.map(t => {
     const id = `topic:${t.id}`;
     link(`subject:${t.subjectId}`, id, "has_topic");
@@ -167,14 +143,14 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
     }
   }
 
-  const nodes = [...subjectNodes, ...topicNodes, ...noteNodes, ...resourceNodes, ...taskNodes];
+  const nodes = [...subjectNodes, ...topicNodes, ...noteNodes, ...resourceNodes];
   const linked = new Set(edges.flatMap(e => [e.from, e.to]));
   const counts: Record<MapNodeType, number> = {
-    subject: subjectNodes.length, topic: topicNodes.length, note: noteNodes.length, resource: resourceNodes.length, task: taskNodes.length,
+    subject: subjectNodes.length, topic: topicNodes.length, note: noteNodes.length, resource: resourceNodes.length,
   };
   return {
     status: "ready", nodes, edges, suggestions, counts,
-    notShown: { notes: Math.max(0, input.totals.notes - noteNodes.length), resources: Math.max(0, input.totals.resources - resourceNodes.length), tasks: Math.max(0, (input.totals.tasks ?? 0) - taskNodes.length) },
+    notShown: { notes: Math.max(0, input.totals.notes - noteNodes.length), resources: Math.max(0, input.totals.resources - resourceNodes.length) },
     unconnected: nodes.filter(n => !linked.has(n.id)).length,
   };
 }
@@ -192,7 +168,7 @@ export async function loadNovaKnowledgeMap(platformChatId: string): Promise<Nova
 
   // Notes and saved pages are read through their owners: this file touches
   // neither table.
-  const [subjects, topics, noted, saved, tasked] = await Promise.all([
+  const [subjects, topics, noted, saved] = await Promise.all([
     prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.novaTopicMastery.findMany({
       where: { subject: { profileId }, archivedAt: null }, orderBy: { name: "asc" },
@@ -200,10 +176,9 @@ export async function loadNovaKnowledgeMap(platformChatId: string): Promise<Nova
     }),
     listNoteLinks(profileId, MAP_NOTES_MAX),
     listResourceLinks(profileId, MAP_RESOURCES_MAX),
-    listTaskLinks(profileId, MAP_TASKS_MAX),
   ]);
   return buildKnowledgeMap({
-    subjects, topics, notes: noted.notes, resources: saved.resources, tasks: tasked.tasks,
-    totals: { notes: noted.total, resources: saved.total, tasks: tasked.total },
+    subjects, topics, notes: noted.notes, resources: saved.resources,
+    totals: { notes: noted.total, resources: saved.total },
   });
 }

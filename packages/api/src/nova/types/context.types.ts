@@ -16,8 +16,6 @@ import type { MultiAnswer, ObstacleId, WeeklyHours, WorkingOnId } from "../produ
 export interface NovaUserProfile {
   // The name on the learner's account or chat. null: none on record.
   displayName:              string | null;
-  // What they asked Nova to call them (onboarding / Settings). Absent: not said.
-  preferredName?:           string | null;
   // What they said they are working toward, in their words. A statement of
   // intent: never evidence of anything studied.
   goals:                    string[];

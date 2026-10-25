@@ -72,10 +72,7 @@ export function isPendingLive(pending: PendingJob | null, now: Date): boolean {
 // decline: the message asks for something Build with Nova does not do
 // (write an essay, set a reminder, change settings, answer something
 // unrelated to what they are building). Code answers it with DECLINE_REPLY.
-// delete: they ask to delete a workspace or subject of theirs (not this
-// conversation): code works out what that would remove and asks them to
-// confirm on the page. Nothing is deleted from a message.
-export type NextStep = "ask" | "chat" | "draft" | "revise" | "decline" | "delete";
+export type NextStep = "ask" | "chat" | "draft" | "revise" | "decline";
 
 // Said by code, never worded by the model: what this page is for.
 export const DECLINE_REPLY = "That's outside what I do here. In Build with Nova I shape and change your workspaces: their subjects, topics, tasks, dates and notes, and I can talk through files you share for them. For anything else, ask Nova from Today.";
@@ -97,7 +94,7 @@ export interface TurnReading {
   // they used, and what they want with it: see it, change it, or a new one
   // (builder-changes.ts finds it among their own records; the model never
   // names an id).
-  resource:    { name: string; intent: "open" | "change" | "new" | "delete" } | null;
+  resource:    { name: string; intent: "open" | "change" | "new" } | null;
 }
 
 // Lower case, single spaces, curly quotes straightened: so a quote matches
@@ -133,7 +130,7 @@ export function readTurn(raw: unknown, learnerText: string, fileNames: readonly 
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
   const reply = typeof r.reply === "string" ? r.reply.split("\r").join("").trim().slice(0, REPLY_MAX) : "";
-  const next: NextStep | null = r.next === "ask" || r.next === "chat" || r.next === "draft" || r.next === "revise" || r.next === "decline" || r.next === "delete" ? r.next : null;
+  const next: NextStep | null = r.next === "ask" || r.next === "chat" || r.next === "draft" || r.next === "revise" || r.next === "decline" ? r.next : null;
   if (!reply || !next) return null;
 
   const said = normalized(learnerText);
@@ -172,7 +169,7 @@ function resourceOf(raw: unknown): TurnReading["resource"] {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
   const name = oneLine(r.name, 120);
-  const intent = r.intent === "open" || r.intent === "change" || r.intent === "new" || r.intent === "delete" ? r.intent : null;
+  const intent = r.intent === "open" || r.intent === "change" || r.intent === "new" ? r.intent : null;
   return name && intent ? { name, intent } : null;
 }
 
@@ -195,8 +192,7 @@ export type Step =
 export function decideStep(state: { plan: WorkspacePlan | null; brief: BuilderBrief; improving?: boolean; changes?: boolean }, reading: TurnReading): Step {
   const facts = reading.facts.length > 0 ? reading.facts : state.brief.facts;
   if (reading.next === "decline") return { type: "decline" };
-  // A deletion is handled before this (builder.ts); here it is only talk.
-  if (reading.next === "chat" || reading.next === "delete") return { type: "chat" };
+  if (reading.next === "chat") return { type: "chat" };
 
   // A proposal exists: a change to it is a new version; anything else is talk.
   if (state.plan || state.changes) {
@@ -282,16 +278,7 @@ export function readBrief(raw: unknown): BuilderBrief {
     question: oneLine(r.question, 300) || null,
     questionsAsked: typeof r.questionsAsked === "number" && Number.isInteger(r.questionsAsked) && r.questionsAsked >= 0 ? r.questionsAsked : 0,
     dropped: listOf(r.dropped, 12),
-    ...(Array.isArray(r.fixed) ? { fixed: listOf(r.fixed, 12) } : {}),
-    ...(deletionOf(r.deletion) ? { deletion: deletionOf(r.deletion) } : {}),
   };
-}
-
-// A stored deletion scope, read back only when it has the shape code wrote.
-function deletionOf(raw: unknown): BuilderBrief["deletion"] {
-  if (!raw || typeof raw !== "object") return null;
-  const d = raw as NonNullable<BuilderBrief["deletion"]>;
-  return typeof d.fingerprint === "string" && typeof d.title === "string" && d.removes && d.keeps && Array.isArray(d.subjectIds) ? d : null;
 }
 
 export function readMessages(raw: unknown): BuilderMessage[] {

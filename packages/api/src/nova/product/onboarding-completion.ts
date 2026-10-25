@@ -110,8 +110,6 @@ export function profileFromAnswersV3(answers: OnboardingAnswersV3, timezone: str
       obstacles:        answers.obstacles,
       language:         answers.language,
       tone:             answers.tone,
-      // What Nova calls them; absent when they skipped it.
-      ...(answers.preferredName ? { preferredName: answers.preferredName } : {}),
       // Whether they said they use Telegram: what the finish screen offers.
       // A connection is only ever UserProfile.telegramConnected.
       telegram:         answers.telegram,

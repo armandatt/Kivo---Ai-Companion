@@ -26,13 +26,12 @@
 import type { StudyTemplate, TemplateCategory } from "./templates";
 import { TEMPLATE_CATEGORIES } from "./templates";
 import type { DeadlineType } from "./deadline-types";
-import { TASK_DEPTH_MAX, checkTree, parentsFirst, rootOf } from "./task-tree";
 
 export const PLAN_VERSION = 1;
 
 export const PLAN_LIMITS = {
   title: 80, summary: 400, subjects: 12, topicsPerSubject: 40, name: 80, explanation: 600, subtopics: 12,
-  tasks: 120, taskTitle: 160, taskDescription: 600, priorityReason: 200, notes: 20, noteTitle: 120, noteBody: 8000, dates: 10,
+  tasks: 40, taskTitle: 160, notes: 20, noteTitle: 120, noteBody: 8000, dates: 10,
   phases: 12, listItems: 10, item: 240, resources: 12, prerequisites: 10, assumptions: 6, sources: 5,
 } as const;
 
@@ -47,23 +46,12 @@ export interface SourceRef { file: string; page: number | null }
 // have no columns for them.
 export interface PlanTopic { name: string; explanation: string | null; sources: SourceRef[]; unit?: string | null; subtopics?: string[] }
 export interface PlanSubject { name: string; topics: PlanTopic[] }
-export type PlanPriority = "low" | "medium" | "high";
 export interface PlanTask {
-  key: string; title: string;
-  // The learner's own priority: set by them on the page, never by Nova.
-  priority: PlanPriority | null;
+  key: string; title: string; priority: "low" | "medium" | "high" | null;
   subject: string | null; topic: string | null; dueDay: string | null; estimatedMinutes: number | null;
   // The key of a task in the same plan that comes first. Kivo's tasks have
   // no dependency column, so this is written into the workspace's order note.
   after?: string | null;
-  // The key of the task this one is a step of (task-tree.ts holds the
-  // rules: no loops, at most TASK_DEPTH_MAX levels). null: a task of its own.
-  parent?: string | null;
-  description?: string | null;
-  // Nova's suggestion, with its reason, shown as a suggestion. It becomes the
-  // task's priority only when the learner accepts it.
-  suggestedPriority?: PlanPriority | null;
-  priorityReason?: string | null;
 }
 export interface PlanNote {
   key: string; title: string; subject: string | null; topic: string | null; body: string;
@@ -106,9 +94,7 @@ export interface WorkspacePlan {
 }
 
 export type PlanCheck =
-  // fixed: what code repaired rather than dropped (a task inside itself, a
-  // task filed under a milestone by another name), in words.
-  | { ok: true; plan: WorkspacePlan; dropped: string[]; fixed: string[] }
+  | { ok: true; plan: WorkspacePlan; dropped: string[] }
   | { ok: false; message: string };
 
 // ── Small readers ─────────────────────────────────────────────────────────────
@@ -246,34 +232,6 @@ export interface PlanContext {
   files?:   readonly string[];
   // Their request, in their words: the only place a web address is taken from.
   userText?: string;
-  // Who wrote this plan. "nova": a priority it gives is a suggestion (it may
-  // not decide what matters most to the learner). "template": the same, from
-  // a template. "learner" (the default): the page's copy, whose priorities
-  // the learner set or accepted.
-  author?:  "nova" | "template" | "learner";
-  // The kind of work, when known: a project's milestones are matched to the
-  // tasks filed under them by another name (alignMilestones).
-  kind?:    string | null;
-}
-
-const PRIORITIES: readonly PlanPriority[] = ["low", "medium", "high"];
-const priorityOf = (v: unknown): PlanPriority | null => PRIORITIES.find(p => p === v) ?? null;
-
-// Steps given inside a task ("steps": [...]) are the same tasks with a
-// parent: flattened here, so one list is checked. Keys are given where a
-// step has none.
-function flattenSteps(list: unknown[], parent: string | null, out: Array<Record<string, unknown>>, depth = 0) {
-  for (const item of list) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-    const x = { ...(item as Record<string, unknown>) };
-    const nested = Array.isArray(x.steps) ? x.steps : Array.isArray(x.subtasks) ? x.subtasks : null;
-    delete x.steps; delete x.subtasks;
-    if (parent !== null && (x.parent === undefined || x.parent === null)) x.parent = parent;
-    if (nested && (typeof x.key !== "string" || !x.key)) x.key = `t${out.length + 1}`;
-    out.push(x);
-    // A reply nested past any sense is cut by the tree check; this only stops a runaway walk.
-    if (nested && depth < TASK_DEPTH_MAX * 2) flattenSteps(nested, x.key as string, out, depth + 1);
-  }
 }
 
 // Everything a plan may say, checked and normalized. What does not fit is
@@ -347,53 +305,23 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
     dates.push({ title: dtitle, subject: subjectName(x.subject), kind: DATE_KINDS.find(k => k === x.kind) ?? "other", day: x.day });
   }
 
-  const fixed: string[] = [];
-  const author = ctx.author ?? "learner";
-  const rawTasks: Array<Record<string, unknown>> = [];
-  flattenSteps(Array.isArray(r.tasks) ? r.tasks : [], null, rawTasks);
   const tasks: PlanTask[] = [];
-  // A key as the reply gave it → the key it has here (a repeated key is renamed).
-  const keyOf = new Map<string, string>();
-  for (const [i, x] of rawTasks.entries()) {
+  for (const [i, t] of (Array.isArray(r.tasks) ? r.tasks : []).entries()) {
+    if (!t || typeof t !== "object") continue;
+    const x = t as Record<string, unknown>;
     const ttitle = oneLine(x.title, PLAN_LIMITS.taskTitle);
-    if (!ttitle) continue;
-    const given = oneLine(x.key, 60);
-    const parentGiven = oneLine(x.parent, 60) || null;
-    // The same task twice under the same parent is one task; under two parents it is two.
-    const parentHere = parentGiven ? keyOf.get(parentGiven) ?? parentGiven : null;
-    if (tasks.some(k => same(k.title, ttitle) && (k.parent ?? null) === parentHere)) {
-      if (given && !keyOf.has(given)) keyOf.set(given, tasks.find(k => same(k.title, ttitle) && (k.parent ?? null) === parentHere)!.key);
-      continue;
-    }
+    if (!ttitle || tasks.some(k => same(k.title, ttitle))) continue;
     if (tasks.length >= PLAN_LIMITS.tasks) { dropped.push(`task "${ttitle}" (more than ${PLAN_LIMITS.tasks})`); continue; }
-    let key = given || slug(ttitle, i);
+    let key = oneLine(x.key, 60) || slug(ttitle, i);
     if (tasks.some(k => k.key === key)) key = `${key}-${i}`;
-    if (given && !keyOf.has(given)) keyOf.set(given, key);
     const due = isIsoDay(x.dueDay) && x.dueDay >= ctx.today ? x.dueDay : null;
     const minutes = typeof x.estimatedMinutes === "number" && Number.isInteger(x.estimatedMinutes) && x.estimatedMinutes >= 5 && x.estimatedMinutes <= 600 ? x.estimatedMinutes : null;
-    // Nova (or a template) suggests; only the learner sets.
-    const stated = priorityOf(x.priority);
-    const suggested = priorityOf(x.suggestedPriority) ?? (author === "learner" ? null : stated);
-    const reason = oneLine(x.priorityReason, PLAN_LIMITS.priorityReason) || (suggested && author === "template" ? "The template suggests it." : null);
     tasks.push({
-      key, title: ttitle, priority: author === "learner" ? stated : null,
+      key, title: ttitle, priority: x.priority === "low" || x.priority === "medium" || x.priority === "high" ? x.priority : null,
       subject: subjectName(x.subject), topic: oneLine(x.topic, PLAN_LIMITS.name) || null, dueDay: due, estimatedMinutes: minutes,
       after: oneLine(x.after, 60) || null,
-      parent: parentHere,
-      ...(block(x.description, PLAN_LIMITS.taskDescription) ? { description: block(x.description, PLAN_LIMITS.taskDescription) } : {}),
-      ...(suggested ? { suggestedPriority: suggested, priorityReason: reason } : {}),
     });
   }
-  // Parents and orders name the task as it is keyed here.
-  for (const t of tasks) {
-    if (t.parent) t.parent = keyOf.get(t.parent) ?? t.parent;
-    if (t.after) t.after = keyOf.get(t.after) ?? t.after;
-  }
-  // The tree: no loops, no step under a task that isn't here, not too deep.
-  const tree = checkTree(tasks.map(t => ({ ...t, parent: t.parent ?? null })), t => t.title);
-  fixed.push(...tree.fixes);
-  tasks.splice(0, tasks.length, ...parentsFirst(tree.items));
-
   // An order names another task of this plan, and never loops back.
   for (const t of tasks) {
     if (!t.after) { t.after = null; continue; }
@@ -434,20 +362,11 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
   if (subjects.length === 0 && tasks.length === 0 && notes.length === 0 && phases.length === 0) {
     return { ok: false, message: "That plan had nothing in it to create." };
   }
-  if (ctx.kind === "project" || ctx.kind === "work" || ctx.kind === "career") fixed.push(...alignMilestones(subjects, phases, tasks));
-  // A step belongs where its task belongs: the same subject and milestone.
-  const asTree = tasks.map(x => ({ key: x.key, parent: x.parent ?? null }));
-  for (const t of tasks) {
-    if (!t.parent) continue;
-    const root = tasks.find(k => k.key === rootOf(asTree, t.key));
-    if (root && root !== t) { t.subject = root.subject; t.topic = root.topic; }
-  }
-  fixed.push(...fitEstimates(phases, tasks, ctx.today));
 
   const category = TEMPLATE_CATEGORIES.find(c => c === r.category) ?? null;
   return {
     ok: true,
-    dropped, fixed: fixed.slice(0, 12),
+    dropped,
     plan: {
       version: PLAN_VERSION,
       kind: r.kind === "template" ? "template" : "custom",
@@ -462,72 +381,6 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
       assumptions: list(r.assumptions, PLAN_LIMITS.assumptions, PLAN_LIMITS.item),
     },
   };
-}
-
-// ── Structure repairs (said in `fixed`) ───────────────────────────────────────
-
-const MINOR = new Set(["and", "the", "of", "for", "to", "a", "an", "in", "on", "with", "phase", "milestone", "sprint", "stage", "part", "complete", "final", "development", "build", "module", "modules"]);
-const significant = (text: string): string[] => wordsOf(text).split(" ").filter(w => w && !MINOR.has(w));
-
-// The milestone a name means: one of the milestones by that name, else the
-// one milestone sharing the most words with it (at least one, and no tie).
-function milestoneFor(name: string, phases: PlanPhase[]): PlanPhase | null {
-  const exact = phases.find(p => same(p.name, name));
-  if (exact) return exact;
-  const words = significant(name);
-  if (words.length === 0) return null;
-  const scored = phases.map(p => ({ p, n: significant(p.name).filter(w => words.includes(w)).length })).filter(x => x.n > 0).sort((a, b) => b.n - a.n);
-  return scored.length === 1 || (scored.length > 1 && scored[0]!.n > scored[1]!.n) ? scored[0]!.p : null;
-}
-
-// A project's milestones are its phases, and Kivo makes each one a topic of
-// the project's subject. A reply that also lists the same milestones as
-// topics under other names ("Home Page Development" beside the milestone
-// "Home Page Sprint") would show every milestone twice and file its tasks
-// under neither (found 25 Oct: every milestone said "0 tasks"). Each task is
-// filed under the milestone its topic means, and a topic that is only another
-// name for a milestone is listed once, as the milestone (its subtopics kept
-// as the milestone's goals when it has none).
-function alignMilestones(subjects: PlanSubject[], phases: PlanPhase[], tasks: PlanTask[]): string[] {
-  if (phases.length === 0) return [];
-  const fixes: string[] = [];
-  for (const t of tasks) {
-    const topic = t.topic;
-    if (t.parent || !topic || phases.some(p => same(p.name, topic))) continue;
-    const m = milestoneFor(topic, phases);
-    if (m) t.topic = m.name;
-  }
-  for (const s of subjects) {
-    s.topics = s.topics.filter(topic => {
-      if (phases.some(p => same(p.name, topic.name))) return true;
-      const m = milestoneFor(topic.name, phases.filter(p => p.subject === null || same(p.subject, s.name)));
-      if (!m) return true;
-      if (m.goals.length === 0 && topic.subtopics?.length) m.goals = topic.subtopics.slice(0, PLAN_LIMITS.listItems);
-      fixes.push(`"${topic.name}" is the milestone "${m.name}", so it is listed once`);
-      return false;
-    });
-  }
-  return fixes;
-}
-
-const dayNumber = (day: string) => Math.round(Date.parse(`${day}T12:00:00Z`) / 86_400_000);
-
-// An effort estimate in weeks is dropped where the plan's own due days say
-// the work is done in less than a week (found 25 Oct: a four-day sprint
-// showed "≈ 1 week · 30 h a week" on every milestone). Only a milestone whose
-// tasks all have due days is judged; the estimate stays otherwise.
-function fitEstimates(phases: PlanPhase[], tasks: PlanTask[], today: string): string[] {
-  const fixes: string[] = [];
-  for (const p of phases) {
-    if (!p.weeks && !p.hoursPerWeek) continue;
-    const under = tasks.filter(t => t.topic !== null && same(t.topic, p.name));
-    if (under.length === 0 || under.some(t => !t.dueDay)) continue;
-    const span = Math.max(...under.map(t => dayNumber(t.dueDay!))) - dayNumber(today) + 1;
-    if (span >= 7) continue;
-    p.weeks = null; p.hoursPerWeek = null;
-    fixes.push(`the estimate on "${p.name}" (its tasks are all due within ${span} day${span === 1 ? "" : "s"})`);
-  }
-  return fixes.length ? [`Took a weekly estimate off ${fixes.length === 1 ? fixes[0] : `${fixes.length} milestones whose tasks are all due within a week`}`] : [];
 }
 
 // ── A template, applied to the learner's inputs ───────────────────────────────
@@ -607,7 +460,7 @@ export function planFromTemplate(t: StudyTemplate, inputs: TemplateInputs, ctx: 
     dates: date ? [{ title: name ? `${name}` : t.name, subject: first, kind: t.dateType ?? "exam", day: date }] : [],
     tasks: t.tasks.map(k => ({ key: k.key, title: k.title, priority: k.priority ?? null, subject: k.subject ?? first })),
     notes: (t.notes ?? []).map(n => ({ key: n.key, title: name ? `${n.title}: ${name}` : n.title, subject: first, body: n.body, origin: "template" })),
-  }, { today: ctx.today, author: "template" });
+  }, { today: ctx.today });
   return checked.ok ? { ok: true, plan: checked.plan } : { ok: false, field: "name", message: checked.message };
 }
 
@@ -689,7 +542,7 @@ export function planWrites(plan: WorkspacePlan): PlanWrites {
   for (const [i, p] of plan.phases.entries()) {
     if (!p.project) continue;
     const title = oneLine(`Build: ${p.project}`, PLAN_LIMITS.taskTitle);
-    if (!tasks.some(t => same(t.title, title))) tasks.push({ key: `phase-project-${i}`, title, priority: null, subject: p.subject, topic: p.name, dueDay: null, estimatedMinutes: null, parent: null });
+    if (!tasks.some(t => same(t.title, title))) tasks.push({ key: `phase-project-${i}`, title, priority: "medium", subject: p.subject, topic: p.name, dueDay: null, estimatedMinutes: null });
   }
   return { subjects, dates: plan.dates, tasks: tasks.slice(0, PLAN_LIMITS.tasks + PLAN_LIMITS.phases), notes: notes.slice(0, PLAN_LIMITS.notes + PLAN_LIMITS.phases + 4) };
 }

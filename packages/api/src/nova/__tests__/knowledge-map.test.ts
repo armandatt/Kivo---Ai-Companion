@@ -25,7 +25,7 @@ describe("nodes", () => {
   it("is one node per subject, topic, note and saved page, each with its own id", () => {
     const map = buildKnowledgeMap(input({ notes: [note("n1", "os", null)], resources: [page("r1", null, null)], totals: { notes: 1, resources: 1 } }));
     expect(map.nodes.map(n => n.id).sort()).toEqual(["note:n1", "resource:r1", "subject:db", "subject:os", "topic:t1", "topic:t2"]);
-    expect(map.counts).toEqual({ subject: 2, topic: 2, note: 1, resource: 1, task: 0 });
+    expect(map.counts).toEqual({ subject: 2, topic: 2, note: 1, resource: 1 });
   });
 
   it("opens the real item", () => {
@@ -108,7 +108,7 @@ describe("edges are links that are stored", () => {
   });
 
   it("says what was left out by the caps", () => {
-    expect(buildKnowledgeMap(input({ notes: [note("n1", "os", null)], totals: { notes: 180, resources: 0 } })).notShown).toEqual({ notes: 179, resources: 0, tasks: 0 });
+    expect(buildKnowledgeMap(input({ notes: [note("n1", "os", null)], totals: { notes: 180, resources: 0 } })).notShown).toEqual({ notes: 179, resources: 0 });
   });
 });
 

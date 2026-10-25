@@ -371,29 +371,6 @@ export async function listNoteTitlesIn(profileId: string, subjectIds: string[], 
   return prisma.novaNote.findMany({ where: { profileId, subjectId: { in: subjectIds } }, orderBy: { updatedAt: "desc" }, take, select: { id: true, title: true, subjectId: true, updatedAt: true } });
 }
 
-// Of the learner's notes filed under these subjects, the ones with these
-// titles that nobody has edited since they were made (a workspace's own
-// notes, as Nova wrote them): the only notes a confirmed workspace deletion
-// removes. A note the learner changed, or wrote, is theirs and stays. No body
-// leaves this file.
-export const UNTOUCHED_MS = 5_000;
-export async function untouchedNotesIn(profileId: string, subjectIds: string[], titles: string[]): Promise<Array<{ id: string; title: string; subjectId: string | null }>> {
-  if (subjectIds.length === 0 || titles.length === 0) return [];
-  const wanted = new Set(titles.map(t => t.trim().toLowerCase()));
-  const rows = await prisma.novaNote.findMany({ where: { profileId, subjectId: { in: subjectIds } }, select: { id: true, title: true, subjectId: true, createdAt: true, updatedAt: true }, take: 400 });
-  return rows.filter(r => wanted.has(r.title.trim().toLowerCase()) && r.updatedAt.getTime() - r.createdAt.getTime() < UNTOUCHED_MS)
-    .map(r => ({ id: r.id, title: r.title, subjectId: r.subjectId }));
-}
-
-// Removes these notes of the learner's inside the caller's transaction (a
-// confirmed workspace deletion). One that is not theirs, or gone, stops it.
-export class NoteChanged extends Error {}
-export async function removeNotesIn(tx: Pick<typeof prisma, "novaNote">, profileId: string, noteIds: string[]): Promise<void> {
-  if (noteIds.length === 0) return;
-  const r = await tx.novaNote.deleteMany({ where: { id: { in: noteIds }, profileId } });
-  if (r.count !== noteIds.length) throw new NoteChanged();
-}
-
 // ── For Nova's help on a note (product/note-assist.ts) ────────────────────────
 // The note itself and a few of the learner's own notes that belong with it:
 // the ones it links to, the ones that link to it, and others filed under the

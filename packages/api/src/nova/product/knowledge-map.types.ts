@@ -7,12 +7,11 @@
 // picture fuller: an item filed under nothing is shown unconnected.
 // No imports, so the web app can import the types directly.
 
-export type MapNodeType = "subject" | "topic" | "note" | "resource" | "task";
+export type MapNodeType = "subject" | "topic" | "note" | "resource";
 export type MapLevel    = "weak" | "developing" | "solid";
 
 export const MAP_NOTES_MAX     = 150;
 export const MAP_RESOURCES_MAX = 150;
-export const MAP_TASKS_MAX     = 200;
 
 interface NodeBase {
   // Unique on the map: "<type>:<row id>".
@@ -48,24 +47,13 @@ export type MapNode =
       // "nova": Nova filed it where it is from a name match, and the learner
       // has not kept or undone that yet. Absent on an older server.
       filedBy?: "learner" | "nova" | null;
-    })
-  | (NodeBase & {
-      // A task filed under a subject, with its steps (each a task node too).
-      type: "task"; subjectName: string | null; topicName: string | null;
-      status: "todo" | "in_progress" | "done";
-      // The task this one is a step of, as a map id ("task:<id>"). null: a task of its own.
-      parent: string | null;
-      // Steps inside it, at any depth.
-      steps: number;
     });
 
 export type MapEdgeKind =
   | "has_topic"     // subject → topic: the topic is one of the subject's
   | "about_topic"   // topic → note or saved page filed under that topic
   | "filed_under"   // subject → note or saved page filed under the subject only
-  | "links_to"      // note → note or topic: the learner wrote [[its name]] in the note
-  | "task_of"       // topic or subject → a task filed under it (a task of its own)
-  | "has_step";     // task → a step of it (NovaTask.parentId)
+  | "links_to";     // note → note or topic: the learner wrote [[its name]] in the note
 
 export interface MapEdge { id: string; from: string; to: string; kind: MapEdgeKind }
 
@@ -89,7 +77,7 @@ export interface NovaKnowledgeMapReady {
   suggestions?: MapSuggestion[];
   counts: Record<MapNodeType, number>;
   // Items on record that are not drawn because of the caps above.
-  notShown: { notes: number; resources: number; tasks?: number };
+  notShown: { notes: number; resources: number };
   // Nodes with no edge at all.
   unconnected: number;
 }
