@@ -9,13 +9,12 @@ import type { ChangeSet, DraftView, WorkspaceDetail } from '@repo/api/nova/produ
 import { viewsFor } from './plan-edit'
 
 const plan = (): WorkspacePlan => ({
-  version: 1, kind: 'custom', templateId: null, templateVersion: null, category: null,
+  version: 2, kind: 'custom', templateId: null, templateVersion: null, category: null,
   title: 'TrackerX', summary: '', prerequisites: [], resources: [], sources: [], assumptions: [],
-  subjects: [{ name: 'TrackerX', topics: [{ name: 'Dashboard', explanation: null, sources: [] }] }],
-  phases: [{ name: 'Dashboard', subject: 'TrackerX', weeks: null, hoursPerWeek: null, goals: [], exercises: [], project: null, completion: null, resources: [] }],
+  subjects: [{ name: 'TrackerX', topics: [{ name: 'Dashboard', explanation: null, sources: [], kind: 'milestone', milestone: { weeks: null, hoursPerWeek: null, goals: [], exercises: [], project: null, completion: null, resources: [] } }] }],
   tasks: [
-    { key: 'a', title: 'Widgets', priority: null, subject: 'TrackerX', topic: 'Dashboard', dueDay: null, estimatedMinutes: null, after: null },
-    { key: 'b', title: 'Wire API', priority: null, subject: 'TrackerX', topic: 'Dashboard', dueDay: null, estimatedMinutes: null, after: null },
+    { key: 'a', title: 'Widgets', priority: null, subject: 'TrackerX', topic: 'Dashboard', dueDay: null, estimatedMinutes: null, after: [] },
+    { key: 'b', title: 'Wire API', priority: null, subject: 'TrackerX', topic: 'Dashboard', dueDay: null, estimatedMinutes: null, after: [] },
   ],
   notes: [], dates: [{ title: 'Launch', subject: 'TrackerX', kind: 'project', day: '2026-12-01' }],
 })
@@ -49,7 +48,7 @@ test('the first version is all new; a later one marks only what moved, and names
   assert.ok(first.fresh.has(ids.task('a')) && first.fresh.has(ids.phase('Dashboard')) && first.fresh.has(ids.date('Launch')))
   const v2: WorkspacePlan = {
     ...v1,
-    tasks: [{ ...v1.tasks[0]!, title: 'Finish widgets' }, { key: 'c', title: 'Write tests', priority: 'high', subject: 'TrackerX', topic: 'Dashboard', dueDay: null, estimatedMinutes: null, after: null }],
+    tasks: [{ ...v1.tasks[0]!, title: 'Finish widgets' }, { key: 'c', title: 'Write tests', priority: 'high', subject: 'TrackerX', topic: 'Dashboard', dueDay: null, estimatedMinutes: null, after: [] }],
     dates: [{ ...v1.dates[0]!, day: '2026-12-08' }],
   }
   const d = planDiff(v1, v2)
@@ -59,7 +58,7 @@ test('the first version is all new; a later one marks only what moved, and names
   assert.equal(diffSummary(d), '1 new, 2 changed, 1 removed')
   assert.equal(diffSummary(planDiff(v1, v1)), null)
   // A name differing only in case or spacing is the same item.
-  assert.equal(planDiff(v1, { ...v1, phases: [{ ...v1.phases[0]!, name: ' dashboard' }] }).fresh.size, 0)
+  assert.equal(planDiff(v1, { ...v1, subjects: [{ ...v1.subjects[0]!, topics: [{ ...v1.subjects[0]!.topics[0]!, name: ' dashboard' }] }] }).fresh.size, 0)
 })
 
 test("Nova's reply becomes paragraphs and lists, with bold kept as a span", () => {
@@ -74,10 +73,14 @@ test("Nova's reply becomes paragraphs and lists, with bold kept as a span", () =
   assert.equal(messageBlocks('2027. GATE')[0]!.type, 'p')
 })
 
-test('after approval the map opens on what was stored: one subject is the place to go, several are a choice, nothing before it is saved', () => {
+test('after approval the map opens on what was stored: its workspace, or for subjects of no workspace one place each; nothing before it is saved', () => {
   const current = (subjects: Array<{ id: string; name: string }>): WorkspaceDetail => ({ workspace: null, title: 'x', subjects: subjects.map(x => ({ ...x, topics: [] })), tasks: [], notes: [], dates: [] })
   const view = (status: DraftView['status'], subjects: Array<{ id: string; name: string }>) => ({ status, current: current(subjects) })
-  assert.deepEqual(mapDestinations(view('ready', [{ id: 's1', name: 'DSA' }])), [{ label: 'DSA', href: '/map?focus=subject%3As1' }])
+  assert.deepEqual(mapDestinations(view('ready', [{ id: 's1', name: 'DSA' }])), [{ label: 'DSA', href: '/map?workspace=all&focus=subject%3As1' }])
+  // A workspace opens as its own map, one place whatever its subjects.
+  const ws = { status: 'ready' as const, current: { ...current([{ id: 's1', name: 'DSA' }, { id: 's2', name: 'OS' }]), workspace: { id: 'w1', title: 'Sem 5', kind: 'custom' as const, templateId: null, templateName: null, summary: null, createdAt: '', subjects: [] } } }
+  assert.deepEqual(mapDestinations(ws), [{ label: 'Sem 5', href: '/map?workspace=w1' }])
+  assert.deepEqual(mapDestinations(ws, ['s2']), [{ label: 'Sem 5', href: '/map?workspace=w1&focus=subject%3As2' }])
   assert.equal(mapDestinations(view('ready', [{ id: 's1', name: 'DSA' }, { id: 's2', name: 'OS' }])).length, 2)
   for (const status of ['awaiting_approval', 'building', 'failed'] as const) assert.deepEqual(mapDestinations(view(status, [{ id: 's1', name: 'DSA' }])), [])
   assert.deepEqual(mapDestinations({ status: 'ready', current: null }), [])
@@ -113,7 +116,7 @@ test('changes go to the map where they were made: the subjects they touch', () =
   ] }
   const touched = touchedSubjects({ changes, current })
   assert.deepEqual(touched, ['s2'])
-  assert.deepEqual(mapDestinations({ status: 'ready', current }, touched), [{ label: 'Non-linear', href: '/map?focus=subject%3As2' }])
+  assert.deepEqual(mapDestinations({ status: 'ready', current }, touched), [{ label: 'Non-linear', href: '/map?workspace=all&focus=subject%3As2' }])
   // A new workspace of several subjects: each is offered.
   assert.equal(mapDestinations({ status: 'ready', current }).length, 2)
 })
@@ -145,6 +148,6 @@ test('a plan lists a subject right under the one it is inside; the map opens on 
   const current: WorkspaceDetail = { workspace: null, title: 'x', tasks: [], notes: [], dates: [], subjects: [
     { id: 'g', name: 'Semester Five', parentId: null, topics: [] }, { id: 'a', name: 'Automata', parentId: 'g', topics: [] }, { id: 'n', name: 'NLP', parentId: 'g', topics: [] },
   ] }
-  assert.deepEqual(mapDestinations({ status: 'ready', current }), [{ label: 'Semester Five', href: '/map?focus=subject%3Ag' }])
-  assert.deepEqual(mapDestinations({ status: 'ready', current }, ['a']), [{ label: 'Semester Five', href: '/map?focus=subject%3Ag' }])
+  assert.deepEqual(mapDestinations({ status: 'ready', current }), [{ label: 'Semester Five', href: '/map?workspace=all&focus=subject%3Ag' }])
+  assert.deepEqual(mapDestinations({ status: 'ready', current }, ['a']), [{ label: 'Semester Five', href: '/map?workspace=all&focus=subject%3Ag' }])
 })

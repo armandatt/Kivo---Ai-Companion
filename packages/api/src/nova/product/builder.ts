@@ -250,7 +250,7 @@ async function viewOf(row: Row, now: Date, counts: WorkspaceCounts | null = null
     similar, counts, updatedAt: row.updatedAt.toISOString(),
     // Whether the proposal can be done, by code (plan-feasibility.ts), with
     // the time a week they gave at sign-up.
-    feasibility: plan && !refOf(row) ? checkFeasibility(plan, { hoursPerWeek: signup?.weeklyHours?.hours ?? null, kind: readBrief(row.brief).kind }) : null,
+    feasibility: plan && !refOf(row) ? checkFeasibility(plan, { hoursPerWeek: signup?.weeklyHours?.hours ?? null, kind: readBrief(row.brief).kind, learnerText: learnerWords(messages) }) : null,
   };
 }
 

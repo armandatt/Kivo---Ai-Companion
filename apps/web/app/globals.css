@@ -73,6 +73,7 @@
   --map-topic: oklch(86% 0.02 292);
   --map-note: oklch(80% 0.13 82);
   --map-resource: oklch(74% 0.11 235);
+  --map-task: oklch(78% 0.12 150);
   --map-line: oklch(100% 0 0 / 0.16);
 }
 
@@ -184,6 +185,7 @@ html[data-kivo-theme="light"] .kivo-app {
   --map-topic: oklch(42% 0.03 292);
   --map-note: oklch(68% 0.15 75);
   --map-resource: oklch(58% 0.14 240);
+  --map-task: oklch(52% 0.13 150);
   --map-line: oklch(24% 0.02 290 / 0.2);
   /* Subject tones and raised surfaces, set for paper (see below). */
   --tone-l: 66%;

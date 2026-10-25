@@ -146,11 +146,14 @@ export const ids = {
 // Each item of a plan by its id, with what makes it "the same" and its name.
 function itemsOf(plan: WorkspacePlan): Map<string, { sig: string; name: string }> {
   const out = new Map<string, { sig: string; name: string }>()
-  for (const p of plan.phases) out.set(ids.phase(p.name), { sig: JSON.stringify([p.goals, p.completion, p.weeks, p.hoursPerWeek, p.project]), name: p.name })
-  for (const t of plan.tasks) out.set(ids.task(t.key), { sig: JSON.stringify([t.title, t.priority, t.dueDay, t.topic, t.after, t.estimatedMinutes]), name: t.title })
+  for (const t of plan.tasks) out.set(ids.task(t.key), { sig: JSON.stringify([t.title, t.priority, t.dueDay, t.topic, t.after ?? [], t.estimatedMinutes, t.parent ?? null]), name: t.title })
   for (const s of plan.subjects) {
-    out.set(ids.subject(s.name), { sig: '', name: s.name })
-    for (const t of s.topics) out.set(ids.topic(s.name, t.name), { sig: t.explanation ?? '', name: t.name })
+    out.set(ids.subject(s.name), { sig: s.parent ?? '', name: s.name })
+    // A milestone is marked as one; a topic moved inside another is changed.
+    for (const t of s.topics) {
+      if (t.kind === 'milestone') out.set(ids.phase(t.name), { sig: JSON.stringify([t.milestone ?? null, t.parent ?? null]), name: t.name })
+      else out.set(ids.topic(s.name, t.name), { sig: JSON.stringify([t.explanation ?? '', t.parent ?? null]), name: t.name })
+    }
   }
   for (const n of plan.notes) out.set(ids.note(n.key), { sig: JSON.stringify([n.title, n.body]), name: n.title })
   for (const d of plan.dates) out.set(ids.date(d.title), { sig: d.day, name: d.title })
@@ -218,24 +221,28 @@ export function messageBlocks(text: string): Block[] {
 
 // ── After approval: the Knowledge Map ─────────────────────────────────────────
 
-// Where the learner sees what was built or changed: each subject of it on the
-// Knowledge Map, focused there (the map shows it and what is around it). Only
-// once it is stored (status ready, read back from the records): never before.
-// One subject is the obvious place to go; several are offered to choose from.
-// `touched`: the subjects an approved change set changed (touchedSubjects,
-// taken before approval), which is where those changes are to be seen.
-// A subject inside another of these is seen on the map from that one, which
-// shows everything inside it: Semester Five, not its five subjects again.
+// Where the learner sees what was built or changed: the Knowledge Map of
+// that workspace (26 Oct: a workspace opens as its own map), focused on the
+// one subject a change touched when it touched one. Only once it is stored
+// (status ready, read back from the records): never before. Subjects that
+// belong to no workspace are each seen on the map of everything, focused
+// there; one is the obvious place to go, several are offered to choose from.
+// A subject inside another of these is seen from that one, which shows
+// everything inside it: Semester Five, not its five subjects again.
 export function mapDestinations(draft: Pick<DraftView, 'status' | 'current'> | null, touched: string[] = []): Array<{ label: string; href: string }> {
   if (!draft || draft.status !== 'ready' || !draft.current) return []
   const all = draft.current.subjects
   const outer = (id: string) => { let at = all.find(s => s.id === id); for (let i = 0; at?.parentId && i < 8; i++) at = all.find(s => s.id === at!.parentId) ?? at; return at }
   const changed = all.filter(s => touched.includes(s.id))
   const tops = [...new Set((changed.length ? changed : all).map(s => outer(s.id)!).filter(Boolean))]
-  return tops.map(s => ({ label: s.name, href: `/map?focus=${encodeURIComponent(`subject:${s.id}`)}` }))
+  const ws = draft.current.workspace
+  if (ws) {
+    const focus = changed.length && tops.length === 1 ? `&focus=${encodeURIComponent(`subject:${tops[0]!.id}`)}` : ''
+    return [{ label: ws.title, href: `/map?workspace=${encodeURIComponent(ws.id)}${focus}` }]
+  }
+  return tops.map(s => ({ label: s.name, href: `/map?workspace=all&focus=${encodeURIComponent(`subject:${s.id}`)}` }))
 }
 
-// The subjects a proposed change set changes, by id, found from its records.
 export function touchedSubjects(draft: Pick<DraftView, 'changes' | 'current'> | null): string[] {
   if (!draft?.changes || !draft.current) return []
   const c = draft.current

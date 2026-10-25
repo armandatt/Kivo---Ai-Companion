@@ -345,6 +345,29 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         break;
       }
       case "move_topic": {
+        // A topic this set adds, named by its key or its name: it is added where it is moved to.
+        const added = typeof x.topicId === "string" ? [...addedTopicKeys].find(([k, v]) => k === x.topicId || low(v.name) === low(x.topicId as string)) : undefined;
+        if (added && !topicById(x.topicId)) {
+          const [key, { subjectId, name }] = added;
+          const parent = topicParent(subjectId, x);
+          const nodes = topicTree.get(subjectId)!;
+          const node = nodes.find(n => n.id === `+${key}`);
+          const from = ops.find((o): o is ProposedChange & Extract<ChangeOp, { op: "add_topics" }> => o.op === "add_topics" && (o.keys ?? []).includes(key));
+          if (parent === undefined || !node || !from || parent === `+${key}`) { dropped.push(`moving ${quoted(name)} (inside a topic that isn't part of it)`); break; }
+          if (parent === node.parent) break;
+          if (!canPlace(nodes, node.id, parent, TOPIC_DEPTH_MAX).ok) { dropped.push(`moving ${quoted(name)} (not inside itself, at most ${TOPIC_DEPTH_MAX} levels deep)`); break; }
+          // Out of the set it was added with, into one of its own under its new parent.
+          const i = from.keys!.indexOf(key);
+          from.names = from.names.filter((_, k) => k !== i);
+          from.keys = from.keys!.filter((_, k) => k !== i);
+          if (from.names.length === 0) ops.splice(ops.indexOf(from), 1);
+          else from.says = `Add to ${topicName(from.subjectId, from.parentId ?? (from.parentKey ? `+${from.parentKey}` : null)) ?? subjectById(from.subjectId)!.name}: ${from.names.join(", ")}`;
+          node.parent = parent;
+          const placeRef = parent === null ? {} : parent.startsWith("+") ? { parentKey: parent.slice(1) } : { parentId: parent };
+          const where = topicName(subjectId, parent);
+          keep({ op: "add_topics", subjectId, names: [name], keys: [key], ...placeRef, ...(from.kind ? { kind: from.kind } : {}) }, `Add to ${where ? `${quoted(where)} in ${subjectById(subjectId)!.name}` : subjectById(subjectId)!.name}: ${name}`, "add", x);
+          break;
+        }
         const hit = topicById(x.topicId);
         if (!hit) { dropped.push("moving a topic that isn't part of this"); break; }
         if (touched.has(`place:${hit.t.id}`)) break;
@@ -619,7 +642,8 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         break;
     }
   }
-  return { ops, dropped: dropped.slice(0, 12) };
+  // Numbered in their final order (a moved addition may have left a gap).
+  return { ops: ops.map((o, i) => ({ ...o, id: `c${i + 1}` })), dropped: dropped.slice(0, 12) };
 }
 
 // ── Only what was asked ───────────────────────────────────────────────────────

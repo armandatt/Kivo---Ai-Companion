@@ -220,7 +220,7 @@ describe("academic plans: specific topics, in learning order", () => {
     let system = "";
     const written = await writeBuilderPlan(request(), (async (req: { systemInstruction: string }) => { system = req.systemInstruction; return plan; }) as never);
     expect(written.ok && written.plan.assumptions[0]).toBe(NO_SYLLABUS);
-    expect(system).toContain("each subject's syllabus units as topics, with their topics and subtopics inside, in teaching order");
+    expect(system).toContain("each subject's syllabus units as topics, with their topics inside, and each topic's specific subtopics inside it");
     expect(system).toContain("Match the depth and detail to the learner's actual goal");
     expect(system).toContain("never claim the plan matches an official syllabus");
     expect(system).toContain("Example for Data Structures and Algorithms: asymptotic analysis");

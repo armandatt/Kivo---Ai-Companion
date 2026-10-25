@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
+import { milestones, removePhase } from '../builder/plan-edit'
 import Link from 'next/link'
 import { AlertTriangle, ArrowLeft, Check, FileText, Loader2, X } from 'lucide-react'
 import { planCounts, type WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
@@ -116,16 +117,16 @@ export function PlanReview({ route, reason, plan: proposed, dropped, similar: si
         </div>
       )}
 
-      {plan.phases.length > 0 && (
+      {milestones(plan).length > 0 && (
         <div className={SECTION}>
           <p className={H}>Phases</p>
           <ol className="mt-3 space-y-2">
-            {plan.phases.map((p, i) => (
+            {milestones(plan).map((p, i) => (
               <li key={i} className="rounded-xl border border-white/8 p-3 text-sm">
                 <div className="flex items-start justify-between gap-2">
                   <p className="font-medium text-foreground">{i + 1}. {p.name}
                     {(p.weeks || p.hoursPerWeek) && <span className="ml-2 text-xs font-normal text-foreground/60">{[p.weeks ? `${p.weeks} wk` : null, p.hoursPerWeek ? `~${p.hoursPerWeek} h/wk` : null].filter(Boolean).join(' · ')} (estimate)</span>}</p>
-                  <RemoveButton label={p.name} onClick={() => set({ phases: without(plan.phases, i) })} />
+                  <RemoveButton label={p.name} onClick={() => set(removePhase(plan, i))} />
                 </div>
                 {p.goals.length > 0 && <p className="mt-1 text-foreground/70">{p.goals.join(' · ')}</p>}
                 {p.project && <p className="mt-1 text-foreground/70"><span className="text-foreground/55">Project:</span> {p.project}</p>}

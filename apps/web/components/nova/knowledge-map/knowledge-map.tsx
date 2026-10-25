@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useStartSession } from '../use-start-session'
-import { ArrowUpRight, Link2, Maximize2, Minus, Plus, RotateCcw, Search, Waypoints, X } from 'lucide-react'
-import type { MapNode, MapNodeType, NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
+import { ArrowUpRight, ChevronsDownUp, ChevronsUpDown, Focus, Link2, Maximize2, Minus, Plus, RotateCcw, Search, Waypoints, X } from 'lucide-react'
+import type { MapEdgeKind, MapNode, MapNodeType, NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
 import { MAP_LAYOUT_COORD_MAX } from '@repo/api/nova/product/map-layout.types'
 import { treeOrder } from '@repo/api/nova/product/task-tree'
 import { cn } from '@/lib/utils'
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '../workspace/ui'
 import { toneStyle } from '../subject-color'
-import { CARD, layoutMap, withPositions, type MapLayout } from './layout'
+import { CARD, TREE_EDGES, layoutMap, treeOf, withPositions, type MapLayout } from './layout'
 import { useMapLayout } from './use-map-layout'
 import { filingChoices, placementLabel, placementOf, planLink, samePlacement, type Placement } from './map-edit'
 import { addNoteLink, fileItem, type EditOutcome } from './map-actions'
@@ -20,6 +20,7 @@ import { fitKey, focusToApply, keepValid } from './view-state'
 const TYPES: Array<{ type: MapNodeType; label: string; plural: string }> = [
   { type: 'subject',  label: 'Subject',    plural: 'Subjects' },
   { type: 'topic',    label: 'Topic',      plural: 'Topics' },
+  { type: 'task',     label: 'Task',       plural: 'Tasks' },
   { type: 'note',     label: 'Note',       plural: 'Notes' },
   { type: 'resource', label: 'Saved page', plural: 'Saved pages' },
 ]
@@ -28,7 +29,7 @@ const TYPE_LABEL = Object.fromEntries(TYPES.map(t => [t.type, t.label])) as Reco
 // One colour per kind of thing, taken from the theme so both themes work.
 // Teal (Nova's) marks subjects and learning; selection uses the action colour.
 const FILL: Record<MapNodeType, string> = {
-  subject: 'var(--nova)', topic: 'var(--map-topic)', note: 'var(--map-note)', resource: 'var(--map-resource)',
+  subject: 'var(--nova)', topic: 'var(--map-topic)', task: 'var(--map-task)', note: 'var(--map-note)', resource: 'var(--map-resource)',
 }
 const LEVEL_TEXT = { weak: 'Weak', developing: 'Developing', solid: 'Solid' } as const
 
@@ -58,30 +59,29 @@ const clampCoord = (v: number) => Math.max(-MAP_LAYOUT_COORD_MAX, Math.min(MAP_L
 const RELATION: Record<string, [string, string]> = {
   contains:    ['A subject inside this one', 'The subject it is inside'],
   has_topic:   ['Topic of this subject', 'Its subject'],
+  subtopic:    ['A topic inside this one', 'The topic it is inside'],
+  has_task:    ['Task filed here', 'Where it is filed'],
+  step:        ['A step of this task', 'The task it is a step of'],
+  depends_on:  ['Waits for it', 'Waiting on this'],
   about_topic: ['Filed under this topic', 'Its topic'],
   filed_under: ['Filed under this subject', 'Its subject'],
   links_to:    ['This note links to it', 'Links to this'],
 }
 
-// Everything within two links of an item: what a scoped view shows. A
-// subject comes with every subject inside it, each with what is around it.
-function around(id: string, edges: Array<{ from: string; to: string; kind?: string }>, hops = 2): Set<string> {
-  const start = new Set([id])
+// What a focused view shows: the item, everything inside it (a subject's
+// subjects, topics, tasks and notes; a topic's topics; a task's steps), the
+// items it sits inside up to the top, and what is one link away from any of
+// those (a [[link]], a wait).
+function around(id: string, edges: Array<{ from: string; to: string; kind?: string }>): Set<string> {
+  const tree = edges.filter(e => e.kind && TREE_EDGES.has(e.kind as MapEdgeKind))
+  const seen = new Set([id])
   for (let grew = true; grew;) {
     grew = false
-    for (const e of edges) if (e.kind === 'contains' && start.has(e.from) && !start.has(e.to)) { start.add(e.to); grew = true }
+    for (const e of tree) if (seen.has(e.from) && !seen.has(e.to)) { seen.add(e.to); grew = true }
   }
-  let frontier = new Set(start)
-  const seen = new Set(start)
-  for (let i = 0; i < hops; i++) {
-    const next = new Set<string>()
-    for (const e of edges) {
-      if (frontier.has(e.from) && !seen.has(e.to)) next.add(e.to)
-      if (frontier.has(e.to) && !seen.has(e.from)) next.add(e.from)
-    }
-    next.forEach(n => seen.add(n))
-    frontier = next
-  }
+  for (let at: string | undefined = id, hops = 0; at && hops < 50; hops++) { const up: { from: string } | undefined = tree.find(e => e.to === at); if (!up) break; seen.add(up.from); at = up.from }
+  const core = new Set(seen)
+  for (const e of edges) if (!(e.kind && TREE_EDGES.has(e.kind as MapEdgeKind))) { if (core.has(e.from)) seen.add(e.to); if (core.has(e.to)) seen.add(e.from) }
   return seen
 }
 
@@ -252,10 +252,12 @@ function FileEditor({ node, view, onChanged }: { node: MapNode; view: NovaKnowle
   )
 }
 
-function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onChanged, panelRef }: {
+function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onChanged, panelRef, inside, collapsed, onCollapse }: {
   node: MapNode; neighbours: Array<{ node: MapNode; relation: string }>; onPick: (id: string) => void; onClose: () => void
   onScope: () => void; scoped: boolean; view: NovaKnowledgeMapReady; onChanged: () => void
   panelRef?: React.Ref<HTMLElement>
+  // How many cards hang from it, and whether they are folded away.
+  inside: number; collapsed: boolean; onCollapse: () => void
 }) {
   const { start, starting, error: startError } = useStartSession()
   const facts: Array<[string, string]> = []
@@ -267,9 +269,30 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
     facts.push(['Topics', String(node.topics)], ['Notes', String(node.notes)], ['Saved pages', String(node.resources)])
   } else if (node.type === 'topic') {
     facts.push(['Subject', node.subjectName])
-    facts.push(['Sessions behind it', node.sessions === 0 ? 'None yet' : String(node.sessions)])
-    if (node.level && node.masteryPercent !== null) facts.push(['Your own estimate', `${LEVEL_TEXT[node.level]} · ${node.masteryPercent}%`])
+    const parent = node.parentId ? view.nodes.find(n => n.id === `topic:${node.parentId}`) : undefined
+    if (parent) facts.push(['Inside', parent.label])
+    const within = view.edges.filter(e => e.kind === 'subtopic' && e.from === node.id).length
+    if (within) facts.push(['Topics inside', String(within)])
+    if (node.kind === 'milestone') {
+      facts.push(['Kind', 'A milestone (a stage of work, not studied)'])
+      const d = node.details
+      if (d?.weeks || d?.hoursPerWeek) facts.push(['Effort (an estimate)', [d.weeks ? `${d.weeks} week${d.weeks === 1 ? '' : 's'}` : null, d.hoursPerWeek ? `${d.hoursPerWeek} h a week` : null].filter(Boolean).join(', ')])
+      if (d?.completion) facts.push(['Done when', d.completion])
+    } else if (node.studied === false) {
+      facts.push(['Studied', 'Through the topics inside it'])
+    } else {
+      facts.push(['Sessions behind it', node.sessions === 0 ? 'None yet' : String(node.sessions)])
+      if (node.level && node.masteryPercent !== null) facts.push(['Your own estimate', `${LEVEL_TEXT[node.level]} · ${node.masteryPercent}%`])
+    }
     facts.push(['Notes', String(node.notes)], ['Saved pages', String(node.resources)])
+  } else if (node.type === 'task') {
+    facts.push(['Status', node.status === 'done' ? 'Done' : node.status === 'in_progress' ? 'In progress' : 'To do'])
+    if (node.subjectName) facts.push(['Subject', node.subjectName])
+    if (node.topicName) facts.push(['Filed under', node.topicName])
+    if (node.dueDay) facts.push(['Due', node.dueDay])
+    if (node.estimatedMinutes) facts.push(['Estimate', `about ${node.estimatedMinutes} min`])
+    if (node.priority) facts.push(['Priority', node.priority[0]!.toUpperCase() + node.priority.slice(1)])
+    if (node.waitsOn) facts.push(['Waits for', `${node.waitsOn} task${node.waitsOn === 1 ? '' : 's'}`])
   } else if (node.type === 'note') {
     facts.push(['Subject', node.subjectName ?? 'Not filed under a subject'])
     if (node.topicName) facts.push(['Topic', node.topicLinked ? node.topicName : `${node.topicName} (not one of that subject's topics yet)`])
@@ -281,11 +304,13 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
     if (node.filedBy === 'nova') facts.push(['Filed by', 'Nova, from a name match. Keep or undo it on Saved.'])
     facts.push([node.kind === 'study_requested' ? 'Asked to study' : 'Saved', day(node.savedAt)])
   }
-  const open = node.type === 'note' ? 'Open note' : node.type === 'resource' ? 'Open in Saved' : node.type === 'topic' ? 'Open this topic' : 'Open this subject'
+  const open = node.type === 'note' ? 'Open note' : node.type === 'resource' ? 'Open in Saved' : node.type === 'topic' ? 'Open this topic' : node.type === 'task' ? 'Open on the board' : 'Open this subject'
   // A new note filed where this node is. The note editor reads both from the address.
   const noteHere = node.type === 'topic' ? `/notes/new?subjectId=${encodeURIComponent(node.subjectId ?? '')}&topic=${encodeURIComponent(node.label)}`
     : node.type === 'subject' ? `/notes/new?subjectId=${encodeURIComponent(node.subjectId ?? '')}` : null
-  const tone = node.type === 'subject' ? node.label : node.subjectName
+  const tone = node.type === 'subject' ? node.label : node.subjectName ?? null
+  const explanation = node.type === 'topic' ? node.details?.explanation ?? null : null
+  const goals = node.type === 'topic' ? node.details?.goals ?? [] : []
 
   return (
     <aside ref={panelRef} aria-label="Selected item" className="subject-tone flex max-h-[52vh] flex-col overflow-y-auto border-t border-white/8 bg-card p-5 lg:max-h-none lg:w-[22rem] lg:shrink-0 lg:border-l lg:border-t-0" style={toneStyle(tone)}>
@@ -308,9 +333,11 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
           </div>
         ))}
       </dl>
-      {node.type === 'topic' && node.level && (
+      {node.type === 'topic' && node.level && node.studied !== false && (
         <p className="mt-3 text-xs leading-relaxed text-subtle">The estimate comes from how you said your sessions went. It is not a test result.</p>
       )}
+      {explanation && <p className="mt-3 text-sm leading-relaxed text-foreground/80">{explanation}</p>}
+      {goals.length > 0 && <ul className="mt-3 list-disc space-y-0.5 pl-5 text-sm text-foreground/80" data-milestone-goals>{goals.map(g => <li key={g}>{g}</li>)}</ul>}
 
       <div className="mt-5 flex flex-wrap gap-2">
         {node.href && <Link href={node.href} className={BUTTON_PRIMARY}>{open}</Link>}
@@ -319,8 +346,8 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
             Visit page <ArrowUpRight className="size-3.5" />
           </a>
         )}
-        {/* The ordinary start, on this topic under its own subject. */}
-        {node.type === 'topic' && (
+        {/* The ordinary start, on a topic studied on its own, under its own subject. */}
+        {node.type === 'topic' && node.studied !== false && node.kind !== 'milestone' && (
           <button type="button" disabled={starting !== null} data-start-topic
             onClick={() => void start({ topicName: node.label, subjectName: node.subjectName, durationMinutes: MAP_SESSION_MINUTES }, node.id)}
             className={cn(BUTTON_QUIET, 'h-10')}>
@@ -328,7 +355,8 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
           </button>
         )}
         {noteHere && <Link href={noteHere} className={cn(BUTTON_QUIET, 'h-10')} data-note-here>New note here</Link>}
-        {!scoped && <button type="button" onClick={onScope} className={cn(BUTTON_QUIET, 'h-10')} data-scope-here>Show only what&apos;s around this</button>}
+        {!scoped && <button type="button" onClick={onScope} className={cn(BUTTON_QUIET, 'h-10')} data-scope-here><Focus aria-hidden className="size-3.5" /> Focus on this branch</button>}
+        {inside > 0 && <button type="button" onClick={onCollapse} className={cn(BUTTON_QUIET, 'h-10')} data-collapse aria-pressed={collapsed}>{collapsed ? <ChevronsUpDown aria-hidden className="size-3.5" /> : <ChevronsDownUp aria-hidden className="size-3.5" />} {collapsed ? `Show the ${inside} inside` : `Fold the ${inside} inside`}</button>}
       </div>
       {startError && <p role="alert" className="mt-3 text-sm text-red-400">{startError}</p>}
 
@@ -413,6 +441,30 @@ function CardFace({ n, detail }: { n: MapNode; detail: CardDetail }) {
       </>
     )
   }
+  if (n.type === 'task') {
+    const done = n.status === 'done'
+    return (
+      <>
+        <rect x={x0} y={y0} width={w} height={h} rx={9} fill="var(--card)" stroke="var(--border)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        <rect x={x0 + 10} y={-5} width={10} height={10} rx={2.5} fill={done ? FILL.task : 'none'} stroke={FILL.task} strokeWidth={1.4} vectorEffect="non-scaling-stroke" />
+        {detail >= 1 && <text x={x0 + 28} y={detail === 2 ? -4 : 4.5} className={cn(text, done && 'opacity-60')} fontSize={12.5} fontWeight={500} textDecoration={done ? 'line-through' : undefined}>{short(n.label, 21)}</text>}
+        {detail === 2 && <text x={x0 + 28} y={13} {...meta}>{[n.status === 'in_progress' ? 'In progress' : done ? 'Done' : 'To do', n.dueDay ? `due ${shortDay(`${n.dueDay}T12:00:00Z`)}` : null, n.waitsOn ? `waits on ${n.waitsOn}` : null].filter(Boolean).join(' · ')}</text>}
+      </>
+    )
+  }
+  if (n.type === 'topic' && (n.kind === 'milestone' || n.studied === false)) {
+    // A milestone, or a topic that organises the topics inside it: not studied on its own.
+    const milestone = n.kind === 'milestone'
+    return (
+      <>
+        <rect x={x0} y={y0} width={w} height={h} rx={milestone ? 6 : 14} fill="var(--card)" stroke={milestone ? 'var(--nova)' : 'var(--map-topic)'} strokeWidth={1.4} vectorEffect="non-scaling-stroke" />
+        {n.subjectName && <rect x={x0 + 7} y={y0 + 11} width={3} height={h - 22} rx={1.5} fill="var(--sc)" />}
+        {milestone && <path d={`M ${x0 + 18} ${-8} v 16 M ${x0 + 18} ${-8} h 9 l -2.5 3.5 l 2.5 3.5 h -9`} fill="none" stroke="var(--nova)" strokeWidth={1.4} vectorEffect="non-scaling-stroke" />}
+        {detail >= 1 && <text x={x0 + (milestone ? 34 : 18)} y={detail === 2 ? -7 : 5} className={text} fontSize={13} fontWeight={600}>{short(n.label, milestone ? 18 : 20)}</text>}
+        {detail === 2 && <text x={x0 + (milestone ? 34 : 18)} y={10} {...meta}>{milestone ? (n.details?.weeks ? `Milestone · ≈ ${n.details.weeks} wk` : 'Milestone') : 'Its topics are studied'}</text>}
+      </>
+    )
+  }
   if (n.type === 'topic') {
     const unstudied = n.sessions === 0
     const barW = w - 36
@@ -456,8 +508,10 @@ function CardFace({ n, detail }: { n: MapNode; detail: CardDetail }) {
 // The learner's knowledge as a canvas they can move around in and arrange.
 // Every card is a real item and every line a link that is stored; the server
 // decides both. Moving a card changes only where it is drawn.
-export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady; onChanged: () => void }) {
-  const [shown, setShown]       = useState<Record<MapNodeType, boolean>>({ subject: true, topic: true, note: true, resource: true })
+export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowledgeMapReady; onChanged: () => void; onWorkspace?: (id: string) => void }) {
+  const [shown, setShown]       = useState<Record<MapNodeType, boolean>>({ subject: true, topic: true, task: true, note: true, resource: true })
+  // Branches folded away: what hangs from these cards is not drawn.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [subject, setSubject]   = useState('')
   // Show [[links]] between notes (the learner's own links), or hide them.
   const [showLinks, setShowLinks] = useState(true)
@@ -485,8 +539,23 @@ export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady;
   // What the filters leave. A filter hides items; it never changes a link.
   const usable = useMemo(() => view.edges.filter(e => showLinks || e.kind !== 'links_to'), [view.edges, showLinks])
   const inScope = useMemo(() => (scope && view.nodes.some(n => n.id === scope) ? around(scope, usable) : null), [scope, usable, view.nodes])
+  // The whole tree on record, and what a folded branch hides.
+  const tree = useMemo(() => treeOf(view.nodes, view.edges), [view.nodes, view.edges])
+  const folded = useMemo(() => {
+    const out = new Set<string>()
+    const hide = (id: string) => { for (const c of tree.children.get(id) ?? []) if (!out.has(c)) { out.add(c); hide(c) } }
+    for (const id of collapsed) hide(id)
+    return out
+  }, [tree, collapsed])
+  const insideOf = useCallback((id: string) => {
+    let n = 0
+    const count = (at: string) => { for (const c of tree.children.get(at) ?? []) { n++; count(c) } }
+    count(id)
+    return n
+  }, [tree])
+  const toggleFold = useCallback((id: string) => setCollapsed(c => { const next = new Set(c); if (next.has(id)) next.delete(id); else next.add(id); return next }), [])
   const nodes = useMemo(() => view.nodes.filter(n =>
-    shown[n.type] && (subject === '' || n.subjectId === subject) && (!inScope || inScope.has(n.id))), [view.nodes, shown, subject, inScope])
+    shown[n.type] && !folded.has(n.id) && (subject === '' || n.subjectId === subject) && (!inScope || inScope.has(n.id))), [view.nodes, shown, folded, subject, inScope])
   const ids   = useMemo(() => new Set(nodes.map(n => n.id)), [nodes])
   const edges = useMemo(() => usable.filter(e => ids.has(e.from) && ids.has(e.to)), [usable, ids])
   const linkCount = useMemo(() => view.edges.filter(e => e.kind === 'links_to').length, [view.edges])
@@ -553,7 +622,7 @@ export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady;
   // card is moved: a reload keeps the pan and zoom they had.
   const fitNow = useRef(fit)
   useEffect(() => { fitNow.current = fit }, [fit])
-  const fitWhen = fitKey({ shown, subject, scope, showLinks, portrait, generation: layout.generation })
+  const fitWhen = fitKey({ shown, subject, scope, showLinks, portrait, generation: layout.generation }) + `|${view.workspaceId ?? 'all'}|${collapsed.size}`
   useEffect(() => { fitNow.current() }, [fitWhen])
 
   const zoomAt = useCallback((factor: number, cx?: number, cy?: number) => {
@@ -668,6 +737,14 @@ export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady;
     if (!a || !b) return null
     const lit = focusId !== null && (e.from === focusId || e.to === focusId)
     const dim = focusId !== null && !lit
+    if (e.kind === 'depends_on') {
+      // A wait: from the task that waits to the one it waits for, dashed in the tasks' colour.
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y
+      return (
+        <path key={e.id} d={`M ${a.x} ${a.y} Q ${mx + dy * 0.22} ${my - dx * 0.22} ${b.x} ${b.y}`} fill="none" data-edge={e.kind}
+          stroke={lit ? 'var(--action)' : 'var(--map-task)'} strokeWidth={lit ? 2 : 1.4} strokeDasharray="6 4" vectorEffect="non-scaling-stroke" opacity={dim ? 0.2 : 0.9} />
+      )
+    }
     if (e.kind === 'links_to') {
       // A [[link]] curves, so it reads apart from where things are filed.
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y
@@ -679,7 +756,7 @@ export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady;
     return (
       <line key={e.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
         stroke={lit ? 'var(--action)' : 'var(--map-line)'}
-        strokeWidth={lit ? 2.4 : e.kind === 'contains' ? 2.2 : e.kind === 'has_topic' ? 1.6 : 1.1}
+        strokeWidth={lit ? 2.4 : e.kind === 'contains' ? 2.2 : e.kind === 'has_topic' || e.kind === 'subtopic' ? 1.6 : 1.1}
         strokeDasharray={e.kind === 'filed_under' ? '5 4' : undefined}
         vectorEffect="non-scaling-stroke" data-edge={e.kind}
         opacity={dim ? 0.25 : 1} />
@@ -737,9 +814,19 @@ export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady;
         {(on || dragging) && <rect x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
         <rect className="map-focus opacity-0" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--ring)" strokeWidth={2.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" />
         <g style={dragging ? { filter: 'drop-shadow(0 10px 18px rgb(0 0 0 / 0.25))' } : undefined}><CardFace n={n} detail={detail} /></g>
+        {(tree.children.get(n.id)?.length ?? 0) > 0 && detail >= 1 && (
+          // Fold or show what hangs from it.
+          <g transform={`translate(${w / 2} 0)`} role="button" tabIndex={-1} aria-label={collapsed.has(n.id) ? `Show what is inside ${n.label}` : `Fold what is inside ${n.label}`} data-fold={collapsed.has(n.id) ? 'folded' : 'open'}
+            onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); toggleFold(n.id) }} className="cursor-pointer">
+            <circle r={9} fill="var(--card)" stroke="var(--border)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+            {collapsed.has(n.id)
+              ? <text textAnchor="middle" y={3.5} fontSize={9.5} fontWeight={600} className="fill-foreground">{Math.min(99, insideOf(n.id))}</text>
+              : <path d="M -4 0 h 8" stroke="var(--subtle)" strokeWidth={1.6} vectorEffect="non-scaling-stroke" />}
+          </g>
+        )}
       </g>
     )
-  }), [nodes, placed, neighbourIds, selected, dragAt, detail, onCardPointerDown, onCardPointerMove, onCardPointerUp, onCardPointerCancel, moveCard])
+  }), [nodes, placed, neighbourIds, selected, dragAt, detail, onCardPointerDown, onCardPointerMove, onCardPointerUp, onCardPointerCancel, moveCard, tree, collapsed, insideOf, toggleFold])
 
   // Far out, the subjects' names over their cards, at a size that can be read.
   const farLabels = detail === 0 ? nodes.filter(n => n.type === 'subject').map(n => {
@@ -788,6 +875,14 @@ export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady;
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Filters. Each does what it says, and none changes what is stored. */}
         <div className="flex flex-wrap items-center gap-2 border-b border-white/8 p-3">
+          {(view.workspaces?.length ?? 0) > 0 && onWorkspace && (
+            // One workspace's map at a time; everything together on request.
+            <select value={view.workspaceId ?? 'all'} onChange={e => onWorkspace(e.target.value)} aria-label="Which workspace's map" data-workspace-switch
+              className="h-8 max-w-[14rem] rounded-full border border-white/12 bg-background px-3 text-xs font-medium text-foreground outline-none focus-visible:border-ring">
+              {view.workspaces!.map(w => <option key={w.id} value={w.id}>{w.title}</option>)}
+              <option value="all">Everything you have</option>
+            </select>
+          )}
           {TYPES.map(({ type, plural: label }) => (
             <button key={type} type="button" aria-pressed={shown[type]} onClick={() => setShown(s => ({ ...s, [type]: !s[type] }))} className={chip(shown[type])}>
               <span className="inline-block size-2 rounded-full" style={{ background: FILL[type], opacity: shown[type] ? 1 : 0.35 }} />
@@ -806,6 +901,9 @@ export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady;
               {subjects.map(s => <option key={s.id} value={s.subjectId ?? ''}>{s.label}</option>)}
             </select>
           )}
+          <button type="button" onClick={() => setCollapsed(c => (c.size ? new Set() : new Set(view.nodes.filter(n => n.type !== 'subject' && (tree.children.get(n.id)?.length ?? 0) > 0).map(n => n.id))))} className={chip(collapsed.size > 0)} data-fold-all>
+            {collapsed.size ? <ChevronsUpDown aria-hidden className="size-3.5" /> : <ChevronsDownUp aria-hidden className="size-3.5" />} {collapsed.size ? 'Show everything inside' : 'Fold topics and tasks'}
+          </button>
           <div className="ml-auto flex items-center gap-2">
             <span role="status" className={cn('text-xs tabular-nums', saver.status === 'failed' ? 'text-red-400' : 'text-subtle')} data-layout-status={saver.status}>
               {layout.load === 'loading' ? 'Loading layout…' : saveText}
@@ -852,7 +950,7 @@ export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady;
 
         {inScope && scope && (
           <div className="flex items-center justify-between gap-3 border-b border-white/8 px-3 py-2 text-xs text-foreground/70" role="status" data-map-scope>
-            <span>Showing what is within two links of <span className="text-foreground">{byId.get(scope)?.label}</span>{view.edges.some(e => e.kind === 'contains' && e.from === scope) ? ' and of each subject inside it' : ''}.</span>
+            <span>Showing <span className="text-foreground">{byId.get(scope)?.label}</span>, everything inside it, what it sits inside, and what links to them.</span>
             <button type="button" onClick={() => setScope(null)} className={cn(BUTTON_QUIET, 'h-7 rounded-full')}>Show everything</button>
           </div>
         )}
@@ -912,7 +1010,7 @@ export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady;
           </div>
 
           <p className="pointer-events-none absolute bottom-3 left-3 hidden max-w-[60%] rounded-lg bg-background/80 px-2.5 py-1.5 text-[11px] leading-relaxed text-foreground/70 backdrop-blur-sm sm:block">
-            Drag a card to arrange it (Alt and the arrow keys move a focused card); drag the background to move around; scroll to zoom. A thick line joins a subject to the subjects you put inside it; a dashed card is a topic with no session yet; a dashed line is filed under the subject only; a teal curve is a [[link]] you wrote in a note.{suggestions.length > 0 && <> A dotted line is a suggestion Nova made, not a link: file the page to make it one.</>}
+            Drag a card to arrange it (Alt and the arrow keys move a focused card); drag the background to move around; scroll to zoom. Each branch reads top to bottom in its saved order; the round button on a card folds what is inside it. A dashed card is a topic with no session yet; a flag is a milestone; a dashed green curve is a task waiting on another; a teal curve is a [[link]] you wrote in a note.{suggestions.length > 0 && <> A dotted line is a suggestion Nova made, not a link: file the page to make it one.</>}
             {view.unconnected > 0 && <> {view.unconnected} {view.unconnected === 1 ? 'item is' : 'items are'} not connected to anything.</>}
             {(view.notShown.notes > 0 || view.notShown.resources > 0) && <> Older notes and pages beyond the newest 150 of each are not drawn.</>}
           </p>
@@ -922,7 +1020,8 @@ export function KnowledgeMap({ view, onChanged }: { view: NovaKnowledgeMapReady;
 
       {picked && (
         <Detail node={picked} neighbours={neighbours} onPick={select} onClose={() => setSelected(null)} onScope={() => setScope(picked.id)}
-          scoped={scope === picked.id} view={view} onChanged={onChanged} panelRef={panel} />
+          scoped={scope === picked.id} view={view} onChanged={onChanged} panelRef={panel}
+          inside={insideOf(picked.id)} collapsed={collapsed.has(picked.id)} onCollapse={() => toggleFold(picked.id)} />
       )}
     </div>
   )

@@ -7,7 +7,7 @@
 import { applyToPlan, planDetail } from "../product/builder-plan";
 import { checkChanges, withinAsk } from "../product/builder-changes";
 import { changedNothing, planChanges } from "../product/builder-state";
-import { checkFeasibility } from "../product/plan-feasibility";
+import { checkFeasibility, namesDay } from "../product/plan-feasibility";
 import { checkWorkspacePlan, planWrites, readStoredPlan, topicRows, type WorkspacePlan } from "../product/workspace-plan";
 import { compareTopics, studyTopicIds, topicOutline } from "../product/topic-tree";
 import { TOO_LONG, writeBuilderChanges, writeBuilderPlan } from "../product/workspace-generation";
@@ -93,6 +93,19 @@ describe("a revision is operations on the proposal, applied by code", () => {
     ]);
     // The heap task is still filed under Heaps, wherever Heaps now sits.
     expect(after.tasks.find(t => t.key === "heap")!.topic).toBe("Heaps");
+  });
+
+  it("a topic added in the set can be moved by its key or name: it is added where it goes", () => {
+    const before = semester();
+    const { detail } = planDetail(before);
+    const dsa = detail.subjects.find(s => s.name === "DSA")!;
+    const { set, after } = revise(before, [
+      { op: "add_topics", subjectId: dsa.id, names: ["Unit 3: NP", "P vs NP", "Reductions"], keys: ["u3", "pnp", "red"] },
+      { op: "move_topic", topicId: "pnp", parentKey: "u3" },
+      { op: "move_topic", topicId: "Reductions", parentKey: "u3" },
+    ], ["topics"]);
+    expect(set.ops.map(o => o.id)).toEqual(["c1", "c2", "c3"]);
+    expect(topicRows(after.subjects.find(s => s.name === "DSA")!).slice(-3).map(r => `${"  ".repeat(r.depth)}${r.topic.name}`)).toEqual(["Unit 3: NP", "  P vs NP", "  Reductions"]);
   });
 
   it("a move that loops or goes too deep is left out and said", () => {
@@ -252,6 +265,18 @@ describe("whether a plan can be done, by code", () => {
     expect(f.errors).toEqual([]);
     expect(f.warnings.map(w => w.code).sort()).toEqual(["duplicate_titles", "missing_estimates", "unpractised_topics", "week_overload"]);
     expect(f.warnings.find(w => w.code === "unpractised_topics")!.message).toContain("Heaps");
+  });
+
+  it("a dated item the learner never gave, and tasks filed nowhere, are pointed out", () => {
+    const p = plan({ title: "X", subjects: [{ name: "OS", topics: ["Paging"] }], tasks: [{ key: "a", title: "Revise paging" }],
+      dates: [{ title: "OS exam", subject: "OS", kind: "exam", day: "2026-12-16" }, { title: "DAA exam", subject: "OS", kind: "exam", day: "2026-12-14" }] });
+    const f = checkFeasibility(p, { hoursPerWeek: null, kind: "exam", learnerText: "My DAA exam is on 14th December." });
+    expect(f.warnings.filter(w => w.code === "unconfirmed_date").map(w => w.message)).toEqual(["OS exam on 2026-12-16 is not a day you gave: check it, or remove it."]);
+    expect(f.warnings.some(w => w.code === "unfiled_tasks")).toBe(true);
+    expect(namesDay("exams start 2026-12-14", "2026-12-14")).toBe(true);
+    expect(namesDay("due Dec 20", "2026-12-20")).toBe(true);
+    expect(namesDay("on 20/12", "2026-12-20")).toBe(true);
+    expect(namesDay("on the 21st", "2026-12-20")).toBe(false);
   });
 
   it("dates are never moved to make it fit: the check only reads", () => {

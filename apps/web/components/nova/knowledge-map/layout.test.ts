@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { MapEdge, MapNode } from '@repo/api/nova/product/knowledge-map.types'
-import { CARD, layoutMap, withPositions } from './layout'
+import { CARD, layoutMap, treeOf, withPositions } from './layout'
 
 const subject = (id: string): MapNode => ({ id: `subject:${id}`, type: 'subject', label: id, href: null, subjectId: id, topics: 0, notes: 0, resources: 0 })
 const topic = (id: string, s: string): MapNode => ({ id: `topic:${id}`, type: 'topic', label: id, href: null, subjectId: s, subjectName: s, sessions: 0, level: null, masteryPercent: null, notes: 0, resources: 0 })
@@ -94,4 +94,40 @@ test('a loop of subjects on record still draws every card once', () => {
   const nodes = [subject('a'), subject('b')]
   const edges = [edge('subject:a', 'subject:b', 'contains'), edge('subject:b', 'subject:a', 'contains')]
   assert.equal(layoutMap(nodes, edges).at.size, 2)
+})
+
+const ordered = (id: string, s: string, order: number, parentId?: string): MapNode => ({ ...topic(id, s), order, ...(parentId ? { parentId } : {}) } as MapNode)
+const task = (id: string, order: number, parentId?: string): MapNode => ({ id: `task:${id}`, type: 'task', label: id, href: null, subjectId: 'dsa', subjectName: 'dsa', topicName: null, status: 'todo', priority: null, dueDay: null, estimatedMinutes: null, order, waitsOn: 0, ...(parentId ? { parentId } : {}) })
+
+test('a tree reads in its saved order: each level a column to the right, siblings top to bottom, never alphabetical', () => {
+  const nodes: MapNode[] = [subject('dsa'), ordered('unit2', 'dsa', 1), ordered('unit1', 'dsa', 0), ordered('zeta', 'dsa', 0, 'unit1'), ordered('alpha', 'dsa', 1, 'unit1'), task('build', 0), task('step', 0, 'build')]
+  const edges: MapEdge[] = [
+    edge('subject:dsa', 'topic:unit2', 'has_topic'), edge('subject:dsa', 'topic:unit1', 'has_topic'),
+    edge('topic:unit1', 'topic:zeta', 'subtopic'), edge('topic:unit1', 'topic:alpha', 'subtopic'),
+    edge('topic:alpha', 'task:build', 'has_task'), edge('task:build', 'task:step', 'step'),
+    // A wait is drawn, never laid out.
+    edge('task:step', 'topic:unit2', 'depends_on' as MapEdge['kind']),
+  ]
+  const { at } = layoutMap(nodes, edges)
+  const p = (id: string) => at.get(id)!
+  assert.ok(p('topic:unit1').y < p('topic:unit2').y, 'unit 1 (order 0) above unit 2')
+  assert.ok(p('topic:zeta').y < p('topic:alpha').y, 'saved order, not by name')
+  assert.ok(p('subject:dsa').x < p('topic:unit1').x && p('topic:unit1').x < p('topic:zeta').x && p('topic:alpha').x < p('task:build').x && p('task:build').x < p('task:step').x, 'each level one column deeper')
+  const type = new Map(nodes.map(n => [n.id, n.type]))
+  const placed = [...at.values()].map(q => ({ ...q, t: type.get(q.id)! }))
+  for (let i = 0; i < placed.length; i++) for (let j = i + 1; j < placed.length; j++) assert.equal(overlap(placed[i]!, placed[j]!), false, `${placed[i]!.id} and ${placed[j]!.id}`)
+  // Portrait: the same tree as an indented outline, in the same order.
+  const tall = layoutMap(nodes, edges, { portrait: true }).at
+  const order = [...tall.values()].sort((a, b) => a.y - b.y).map(q => q.id)
+  assert.deepEqual(order, ['subject:dsa', 'topic:unit1', 'topic:zeta', 'topic:alpha', 'task:build', 'task:step', 'topic:unit2'])
+  assert.ok(tall.get('task:step')!.x > tall.get('task:build')!.x)
+})
+
+test('the tree under a card can be read for folding: what hangs from it, at every level', () => {
+  const nodes: MapNode[] = [subject('dsa'), ordered('unit1', 'dsa', 0), ordered('t1', 'dsa', 0, 'unit1'), task('build', 0)]
+  const edges: MapEdge[] = [edge('subject:dsa', 'topic:unit1', 'has_topic'), edge('topic:unit1', 'topic:t1', 'subtopic'), edge('topic:t1', 'task:build', 'has_task')]
+  const { children, roots } = treeOf(nodes, edges)
+  assert.deepEqual(roots, ['subject:dsa'])
+  assert.deepEqual(children.get('topic:unit1'), ['topic:t1'])
+  assert.deepEqual(children.get('topic:t1'), ['task:build'])
 })

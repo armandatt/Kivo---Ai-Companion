@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { fitKey, focusToApply, keepValid, type FitInputs } from './view-state'
 
-const base: FitInputs = { shown: { subject: true, topic: true, note: true, resource: true }, subject: '', scope: null, showLinks: true, portrait: false, generation: 1 }
+const base: FitInputs = { shown: { subject: true, topic: true, task: true, note: true, resource: true }, subject: '', scope: null, showLinks: true, portrait: false, generation: 1 }
 
 test('a reload of the same picture keeps the view: nothing in the fit key comes from the data', () => {
   // A reload builds new objects with the same values; the key is the same.

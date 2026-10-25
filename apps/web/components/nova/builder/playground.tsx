@@ -1,9 +1,10 @@
 'use client'
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, CalendarDays, ChevronRight, FileText, Flag, IndentDecrease, IndentIncrease, LayoutGrid, Link2, ListTree, Map as MapIcon, Plus, Sparkles, X } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowUp, CalendarDays, ChevronRight, CircleAlert, FileText, Flag, IndentDecrease, IndentIncrease, LayoutGrid, Link2, ListTree, Map as MapIcon, Plus, Sparkles, X } from 'lucide-react'
 import type { BriefFact, DraftView } from '@repo/api/nova/product/builder.types'
-import { planCounts, type PlanTask, type WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
+import { planCounts, topicRows, type PlanTask, type WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
+import type { Feasibility } from '@repo/api/nova/product/plan-feasibility'
 import { cn } from '@/lib/utils'
 import { diffSummary, hintFor, ids, planDiff, planSubjects, wordsFor, type Hint, type PlanDiff, type Words } from './builder-view'
 import * as edit from './plan-edit'
@@ -153,6 +154,28 @@ export function Understanding({ draft }: { draft: DraftView }) {
   )
 }
 
+// Whether the proposal can be done, as Kivo's own check says (no model):
+// what must change before it can be built, and what is worth a look.
+export function FeasibilityPanel({ feasibility }: { feasibility: Feasibility | null }) {
+  if (!feasibility || (feasibility.errors.length === 0 && feasibility.warnings.length === 0)) return null
+  return (
+    <div className="space-y-2" data-feasibility>
+      {feasibility.errors.length > 0 && (
+        <div role="alert" className="rounded-xl border border-red-400/30 bg-red-400/6 p-3" data-feasibility-errors>
+          <p className="flex items-center gap-1.5 text-xs font-semibold text-red-300"><CircleAlert aria-hidden className="size-3.5" /> Fix before building ({feasibility.errors.length})</p>
+          <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-xs leading-relaxed text-foreground/85">{feasibility.errors.map((e, i) => <li key={i}>{e.message}</li>)}</ul>
+        </div>
+      )}
+      {feasibility.warnings.length > 0 && (
+        <details className="rounded-xl border border-amber-300/20 bg-amber-300/5 p-3" data-feasibility-warnings>
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-amber-200"><AlertTriangle aria-hidden className="size-3.5" /> Worth a look ({feasibility.warnings.length})</summary>
+          <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-xs leading-relaxed text-foreground/80">{feasibility.warnings.map((w, i) => <li key={i}>{w.message}</li>)}</ul>
+        </details>
+      )}
+    </div>
+  )
+}
+
 // ── Views ─────────────────────────────────────────────────────────────────────
 
 type ViewProps = { plan: WorkspacePlan; editable: boolean; set: (p: WorkspacePlan) => void; words: Words }
@@ -162,18 +185,20 @@ function Overview({ plan, draft, editable, set, words, onView }: ViewProps & { d
   const groups = edit.tasksByMilestone(plan)
   const soon = edit.timeline(plan).slice(0, 3)
   const basis = draft.brief.facts.length + draft.brief.known.length + draft.brief.assumptions.length + plan.assumptions.length
+  const phases = edit.milestones(plan)
   return (
     <div className="space-y-6">
+      <FeasibilityPanel feasibility={draft.feasibility ?? null} />
       <div>
         <label htmlFor="pg-summary" className={H}>What it&apos;s for</label>
         <textarea id="pg-summary" value={plan.summary} disabled={!editable} maxLength={400} rows={2} onChange={e => set({ ...plan, summary: e.target.value })} data-editable
           className={cn(FIELD, TITLE_AREA, 'mt-1 leading-relaxed text-foreground/85')} placeholder="A line about what this workspace is for" />
       </div>
-      {plan.phases.length > 0 ? (
+      {phases.length > 0 ? (
         <section aria-labelledby="pg-outline">
           <div className="flex items-baseline justify-between"><h3 id="pg-outline" className={H}>{words.phases}</h3><button type="button" onClick={() => onView('roadmap')} className="text-xs font-medium text-foreground/60 hover:text-foreground">Open</button></div>
           <ol className="mt-2 space-y-1.5">
-            {plan.phases.map((p, i) => {
+            {phases.map((p, i) => {
               const m = mark(ids.phase(p.name))
               const n = groups.find(g => g.index === i)?.tasks.length ?? 0
               return (
@@ -226,7 +251,12 @@ function Overview({ plan, draft, editable, set, words, onView }: ViewProps & { d
           </div>
         </details>
       )}
-      {draft.brief.dropped.length > 0 && <p className="text-xs text-subtle" data-dropped>Left out to fit Kivo&apos;s limits: {draft.brief.dropped.slice(0, 4).join('; ')}{draft.brief.dropped.length > 4 ? ` and ${draft.brief.dropped.length - 4} more` : ''}.</p>}
+      {draft.brief.dropped.length > 0 && (
+        <details className="text-xs text-subtle" data-dropped>
+          <summary className="cursor-pointer">Left out or adjusted when Kivo checked it ({draft.brief.dropped.length})</summary>
+          <ul className="mt-1.5 list-disc space-y-0.5 pl-5">{draft.brief.dropped.map((d, i) => <li key={i}>{d}</li>)}</ul>
+        </details>
+      )}
     </div>
   )
 }
@@ -234,10 +264,11 @@ function Overview({ plan, draft, editable, set, words, onView }: ViewProps & { d
 function Roadmap({ plan, editable, set, words }: ViewProps) {
   const mark = useMarker()
   const groups = edit.tasksByMilestone(plan)
+  const phases = edit.milestones(plan)
   return (
     <div className="space-y-3">
       <ol className="space-y-3">
-        {plan.phases.map((p, i) => {
+        {phases.map((p, i) => {
           const tasks = groups.find(g => g.index === i)?.tasks ?? []
           const m = mark(ids.phase(p.name))
           return (
@@ -247,7 +278,7 @@ function Roadmap({ plan, editable, set, words }: ViewProps) {
                 <input aria-label={`${words.phase} ${i + 1} name`} value={p.name} disabled={!editable} maxLength={80} onChange={e => set(edit.updatePhase(plan, i, { name: e.target.value }))} className={cn(FIELD, 'font-medium')} data-editable />
                 {editable && <>
                   <IconButton label={`Move ${p.name} up`} disabled={i === 0} onClick={() => set(edit.reorderPhase(plan, i, -1))}><ArrowUp aria-hidden className="size-3.5" /></IconButton>
-                  <IconButton label={`Move ${p.name} down`} disabled={i === plan.phases.length - 1} onClick={() => set(edit.reorderPhase(plan, i, 1))}><ArrowDown aria-hidden className="size-3.5" /></IconButton>
+                  <IconButton label={`Move ${p.name} down`} disabled={i === phases.length - 1} onClick={() => set(edit.reorderPhase(plan, i, 1))}><ArrowDown aria-hidden className="size-3.5" /></IconButton>
                   <IconButton label={`Remove ${p.name}`} onClick={() => set(edit.removePhase(plan, i))}><X aria-hidden className="size-3.5" /></IconButton>
                 </>}
               </div>
@@ -264,7 +295,7 @@ function Roadmap({ plan, editable, set, words }: ViewProps) {
                 <ul className="ml-3 mt-2 space-y-1 border-l border-white/8 pl-4">
                   {edit.treeRows(tasks).map(({ task: t, depth }) => {
                     const tm = mark(ids.task(t.key))
-                    return <li key={t.key} className={cn('rounded px-1 text-sm text-foreground/80', depth > 0 && 'text-foreground/65', tm.className)} style={{ ...tm.style, marginLeft: depth * 14 }} data-depth={depth}>{depth > 0 && <span aria-hidden className="mr-1 text-subtle">└</span>}{t.title}{t.after && <span className="ml-1.5 text-[11px] text-subtle">waits for {plan.tasks.find(x => x.key === t.after)?.title}</span>}</li>
+                    return <li key={t.key} className={cn('rounded px-1 text-sm text-foreground/80', depth > 0 && 'text-foreground/65', tm.className)} style={{ ...tm.style, marginLeft: depth * 14 }} data-depth={depth}>{depth > 0 && <span aria-hidden className="mr-1 text-subtle">└</span>}{t.title}{t.after && t.after.length > 0 && <span className="ml-1.5 text-[11px] text-subtle">waits for {t.after.map(a => plan.tasks.find(x => x.key === a)?.title ?? a).join(', ')}</span>}</li>
                   })}
                 </ul>
               )}
@@ -311,8 +342,10 @@ function PriorityPicker({ t, plan, editable, set }: { t: PlanTask } & Pick<ViewP
 function TaskRow({ t, depth, steps, folded, onFold, plan, editable, set, words, m }: { t: PlanTask; depth: number; steps: number; folded: boolean; onFold: () => void; m: Marked } & ViewProps) {
   const [open, setOpen] = useState(false)
   const [adding, setAdding] = useState(false)
-  const waits = t.after ? plan.tasks.find(x => x.key === t.after) : null
+  const waits = (t.after ?? []).map(a => plan.tasks.find(x => x.key === a)).filter((x): x is PlanTask => Boolean(x))
   const blocks = edit.waitingOn(plan, t.key)
+  // Where it may be filed: any topic or milestone of its subject (of any, with no subject).
+  const filing = plan.subjects.filter(s => !t.subject || s.name === t.subject).flatMap(s => topicRows(s).map(r => ({ name: r.topic.name, depth: r.depth, milestone: r.topic.kind === 'milestone' })))
   return (
     <li className={cn('relative', depth > 0 && 'border-l border-white/10 pl-3')} style={{ marginLeft: depth * 16 }} data-task={t.key} data-depth={depth}>
       <div className={cn(CARD, 'p-2', m.className)} style={m.style}>
@@ -335,28 +368,34 @@ function TaskRow({ t, depth, steps, folded, onFold, plan, editable, set, words, 
           {steps > 0 && <span className="rounded bg-white/5 px-1.5 py-0.5">{steps} step{steps === 1 ? '' : 's'}</span>}
           {t.dueDay && <span className="rounded bg-white/5 px-1.5 py-0.5 tabular-nums">due {t.dueDay}</span>}
           {t.estimatedMinutes && <span>~{t.estimatedMinutes} min</span>}
-          {waits && <span className="inline-flex items-center gap-1 rounded bg-white/5 px-1.5 py-0.5" data-waits><Link2 aria-hidden className="size-3" />waits for {waits.title}</span>}
+          {waits.length > 0 && <span className="inline-flex items-center gap-1 rounded bg-white/5 px-1.5 py-0.5" data-waits><Link2 aria-hidden className="size-3" />waits for {waits.map(w => w.title).join(', ')}</span>}
           {blocks.length > 0 && <span className="inline-flex items-center gap-1 rounded bg-white/5 px-1.5 py-0.5" data-blocks><Link2 aria-hidden className="size-3" />{blocks.length === 1 ? `${blocks[0]!.title} waits for this` : `${blocks.length} tasks wait for this`}</span>}
           <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} className="ml-auto rounded px-1 font-medium text-foreground/60 hover:text-foreground">{open ? 'Done' : editable ? 'Details' : 'More'}</button>
         </div>
         {open && (
           <div className="mt-2 grid gap-2 pl-7 pb-1 sm:grid-cols-2">
-            {!t.parent && <label className="text-[11px] text-subtle">{words.phase[0]!.toUpperCase() + words.phase.slice(1)}
+            {!t.parent && <label className="text-[11px] text-subtle">Filed under
               <select value={t.topic ?? ''} disabled={!editable} onChange={e => set(edit.updateTask(plan, t.key, { topic: e.target.value || null }))} className="mt-0.5 h-8 w-full rounded-md border border-white/10 bg-background px-1.5 text-xs text-foreground">
-                <option value="">None</option>
-                {plan.phases.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
-                {t.topic && !plan.phases.some(p => p.name === t.topic) && <option value={t.topic}>{t.topic}</option>}
+                <option value="">No {words.topic}</option>
+                {filing.map(f => <option key={f.name} value={f.name}>{`${'  '.repeat(f.depth)}${f.milestone ? `${words.phase}: ` : ''}${f.name}`}</option>)}
+                {t.topic && !filing.some(f => f.name === t.topic) && <option value={t.topic}>{t.topic}</option>}
               </select>
             </label>}
             <label className="text-[11px] text-subtle">Due
               <input type="date" value={t.dueDay ?? ''} disabled={!editable} onChange={e => set(edit.updateTask(plan, t.key, { dueDay: e.target.value || null }))} className="mt-0.5 h-8 w-full rounded-md border border-white/10 bg-background px-1.5 text-xs text-foreground" />
             </label>
-            <label className="text-[11px] text-subtle">Waits for
-              <select value={t.after ?? ''} disabled={!editable} onChange={e => set(edit.updateTask(plan, t.key, { after: e.target.value || null }))} className="mt-0.5 h-8 w-full rounded-md border border-white/10 bg-background px-1.5 text-xs text-foreground">
-                <option value="">Nothing</option>
-                {edit.possibleAfter(plan, t.key).map(x => <option key={x.key} value={x.key}>{x.title}</option>)}
-              </select>
-            </label>
+            <fieldset className="text-[11px] text-subtle sm:col-span-2" data-wait-picker>
+              <legend>Waits for (any it needs finished first)</legend>
+              <div className="mt-1 flex max-h-32 flex-wrap gap-1 overflow-y-auto">
+                {[...waits, ...edit.possibleAfter(plan, t.key).filter(x => !(t.after ?? []).includes(x.key))].map(x => {
+                  const on = (t.after ?? []).includes(x.key)
+                  return (
+                    <button key={x.key} type="button" disabled={!editable} aria-pressed={on} onClick={() => set(edit.toggleWait(plan, t.key, x.key))}
+                      className={cn('rounded-full border px-2 py-0.5 text-[11px]', on ? 'border-action/60 bg-action-soft text-action-ink' : 'border-white/10 text-foreground/70 hover:text-foreground')}>{x.title}</button>
+                  )
+                })}
+              </div>
+            </fieldset>
             <label className="text-[11px] text-subtle">A step of
               <select value={t.parent ?? ''} disabled={!editable} onChange={e => set(edit.setParent(plan, t.key, e.target.value || null))} className="mt-0.5 h-8 w-full rounded-md border border-white/10 bg-background px-1.5 text-xs text-foreground">
                 <option value="">Nothing (a task of its own)</option>
@@ -405,7 +444,7 @@ function Board(props: ViewProps) {
         <section key={g.milestone ?? '—'} aria-label={g.milestone ?? 'Other tasks'}>
           <h3 className="mb-2 flex items-center gap-2 px-1 text-xs font-semibold text-foreground/85">
             {g.index !== null && <span className="grid size-5 place-items-center rounded-full bg-nova/12 text-[10px] text-nova-ink">{g.index + 1}</span>}
-            <span className="min-w-0 flex-1">{g.milestone ?? (plan.phases.length ? 'Other tasks' : 'Tasks')}</span>
+            <span className="min-w-0 flex-1">{g.milestone ?? (groups.some(x => x.milestone) ? 'Other tasks' : 'Tasks')}</span>
             <span className="font-normal text-subtle">{g.tasks.length}</span>
           </h3>
           <TaskTree tasks={g.tasks} {...props} folded={folded} onFold={fold} />
@@ -413,6 +452,54 @@ function Board(props: ViewProps) {
         </section>
       ))}
     </div>
+  )
+}
+
+// A subject's topics as arranged: units, their topics, their subtopics, in
+// order. Each can be renamed, moved up or down beside its siblings, put
+// inside another, given topics of its own, or removed with what is inside it.
+function TopicTree({ plan, subjectIndex: i, editable, set, words }: ViewProps & { subjectIndex: number }) {
+  const mark = useMarker()
+  const s = plan.subjects[i]!
+  const [adding, setAdding] = useState<string | null>(null)
+  const [folded, setFolded] = useState<Set<string>>(new Set())
+  const rows = topicRows(s)
+  const parents = edit.parentNames(s)
+  const hidden = new Set<string>()
+  for (const r of rows) if (r.topic.parent && (hidden.has(r.topic.parent.toLowerCase()) || folded.has(r.topic.parent.toLowerCase()))) hidden.add(r.topic.name.toLowerCase())
+  if (rows.length === 0) return <p className="mt-2 text-xs text-subtle">No {words.topic}s yet.</p>
+  return (
+    <ol className="mt-2 space-y-0.5" data-topic-tree>
+      {rows.filter(r => !hidden.has(r.topic.name.toLowerCase())).map(({ topic: t, index: k, depth }) => {
+        const tm = mark(ids.topic(s.name, t.name))
+        const inside = parents.has(t.name.toLowerCase())
+        const choices = editable ? edit.topicParentChoices(plan, i, k) : []
+        return (
+          <li key={t.name} className={cn('rounded-lg py-0.5', tm.className)} style={{ ...tm.style, paddingLeft: depth * 16 }} data-topic={t.name} data-topic-depth={depth}>
+            <div className="group flex items-center gap-1">
+              {inside
+                ? <button type="button" onClick={() => setFolded(f => { const n = new Set(f); const key = t.name.toLowerCase(); if (n.has(key)) n.delete(key); else n.add(key); return n })} aria-expanded={!folded.has(t.name.toLowerCase())} aria-label={`${folded.has(t.name.toLowerCase()) ? 'Show' : 'Hide'} what is inside ${t.name}`} className="grid size-6 shrink-0 place-items-center rounded-md text-foreground/60 hover:bg-white/6"><ChevronRight aria-hidden className={cn('size-3.5 transition-transform', !folded.has(t.name.toLowerCase()) && 'rotate-90')} /></button>
+                : <span aria-hidden className="grid size-6 shrink-0 place-items-center">{t.kind === 'milestone' ? <Flag className="size-3 text-nova-ink" /> : <span className="size-1.5 rounded-full bg-foreground/30" />}</span>}
+              <input aria-label={`${t.kind === 'milestone' ? words.phase : words.topic} name`} value={t.name} disabled={!editable} maxLength={80} onChange={e => set(edit.renameTopic(plan, i, k, e.target.value))}
+                className={cn(FIELD, 'py-0.5', inside ? 'font-medium text-foreground' : 'text-foreground/85')} title={t.explanation ?? undefined} data-editable />
+              {!inside && t.kind !== 'milestone' && <span className="hidden shrink-0 text-[10px] text-subtle sm:inline">studied</span>}
+              {editable && <span className="flex shrink-0 items-center opacity-70 group-focus-within:opacity-100 group-hover:opacity-100">
+                <IconButton label={`Add a ${words.topic} inside ${t.name}`} onClick={() => setAdding(a => (a === t.name ? null : t.name))}><Plus aria-hidden className="size-3" /></IconButton>
+                <IconButton label={`Move ${t.name} up`} onClick={() => set(edit.reorderTopic(plan, i, k, -1))}><ArrowUp aria-hidden className="size-3" /></IconButton>
+                <IconButton label={`Move ${t.name} down`} onClick={() => set(edit.reorderTopic(plan, i, k, 1))}><ArrowDown aria-hidden className="size-3" /></IconButton>
+                <label className="sr-only" htmlFor={`tp-${i}-${k}`}>Put {t.name} inside</label>
+                <select id={`tp-${i}-${k}`} value={t.parent ?? ''} onChange={e => set(edit.setTopicParent(plan, i, k, e.target.value || null))} className="h-6 max-w-[7rem] rounded-md border border-white/10 bg-transparent px-1 text-[11px] text-foreground/75" data-topic-parent>
+                  <option value="">top level</option>
+                  {[...new Set([...(t.parent ? [t.parent] : []), ...choices])].map(n => <option key={n} value={n}>inside {n}</option>)}
+                </select>
+                <IconButton label={`Remove ${t.name}${inside ? ' and what is inside it' : ''}`} onClick={() => set(edit.removeTopic(plan, i, k))}><X aria-hidden className="size-3" /></IconButton>
+              </span>}
+            </div>
+            {adding === t.name && editable && <div className="mt-1" style={{ paddingLeft: 24 }}><AddRow label={`Add a ${words.topic} inside ${t.name}`} placeholder={`Add inside ${t.name}`} onAdd={name => { set(edit.addTopic(plan, i, name, t.name)); setAdding(null) }} /></div>}
+          </li>
+        )
+      })}
+    </ol>
   )
 }
 
@@ -441,40 +528,7 @@ function Topics({ plan, editable, set, words }: ViewProps) {
                 </select>
               </label>
             )}
-            {s.topics.some(t => t.unit || t.subtopics?.length) ? (
-              // A course in learning order: each unit once, where it starts, and what each topic covers.
-              <ol className="mt-2 space-y-1">
-                {s.topics.map((t, k) => {
-                  const tm = mark(ids.topic(s.name, t.name))
-                  const unit = t.unit && t.unit !== s.topics[k - 1]?.unit ? t.unit : null
-                  return (
-                    <li key={k} className={cn('rounded-lg px-1.5 py-1', tm.className)} style={tm.style}>
-                      {unit && <p className="mb-1 mt-1.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-subtle">{unit}</p>}
-                      <div className="flex items-start gap-1.5">
-                        <span className="w-5 shrink-0 pt-0.5 text-right text-[11px] tabular-nums text-subtle">{k + 1}.</span>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-foreground/90">{t.name}</p>
-                          {t.subtopics && t.subtopics.length > 0 && <p className="text-xs leading-relaxed text-foreground/65">{t.subtopics.join(' · ')}</p>}
-                        </div>
-                        {editable && <IconButton label={`Remove ${t.name}`} onClick={() => set(edit.removeTopic(plan, i, k))}><X aria-hidden className="size-3" /></IconButton>}
-                      </div>
-                    </li>
-                  )
-                })}
-              </ol>
-            ) : (
-              <ul className="mt-2 flex flex-wrap gap-1.5">
-                {s.topics.map((t, k) => {
-                  const tm = mark(ids.topic(s.name, t.name))
-                  return (
-                    <li key={k} className={cn('flex items-center gap-0.5 rounded-full border border-white/10 py-0.5 pl-2.5 pr-0.5 text-xs text-foreground/85', !editable && 'pr-2.5', tm.className)} style={tm.style} title={t.explanation ?? undefined}>
-                      {t.name}
-                      {editable && <IconButton label={`Remove ${t.name}`} onClick={() => set(edit.removeTopic(plan, i, k))}><X aria-hidden className="size-3" /></IconButton>}
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
+            <TopicTree plan={plan} subjectIndex={i} editable={editable} set={set} words={words} />
             {editable && <div className="mt-2"><AddRow label={`Add a ${words.topic} to ${s.name}`} placeholder={`Add a ${words.topic}`} onAdd={name => set(edit.addTopic(plan, i, name))} /></div>}
           </section>
         )
@@ -521,12 +575,12 @@ function Timeline({ plan, editable, set }: ViewProps) {
   )
 }
 
-function Notes({ plan, editable, set }: ViewProps) {
+function Notes({ plan, editable, set, words }: ViewProps) {
   const mark = useMarker()
   const [open, setOpen] = useState<string | null>(null)
   return (
     <div className="space-y-2">
-      {plan.notes.length === 0 && <p className="text-sm text-foreground/65">No notes in this proposal{plan.phases.length > 0 ? ' besides the ones each step writes for itself' : ''}.</p>}
+      {plan.notes.length === 0 && <p className="text-sm text-foreground/65">No notes in this proposal. What each {words.topic} and {words.phase} covers is kept on it.</p>}
       {plan.notes.map(n => {
         const m = mark(ids.note(n.key))
         return (
@@ -652,10 +706,9 @@ export function DraftPlayground({ state, view, onView, onAsk }: {
   }
 
   const counts = planCounts(plan)
-  // Milestones are written as topics too: counted once, as milestones.
-  const topics = Math.max(0, counts.topics - plan.phases.length)
+  const topics = counts.topics
   const stats = [
-    plan.phases.length ? `${plan.phases.length} ${words.phases.toLowerCase()}` : null,
+    counts.milestones ? `${counts.milestones} ${words.phases.toLowerCase()}` : null,
     `${counts.tasks} task${counts.tasks === 1 ? '' : 's'}`,
     topics ? `${topics} ${topics === 1 ? words.topic : `${words.topic}s`}` : null,
     counts.dates ? `${counts.dates} date${counts.dates === 1 ? '' : 's'}` : null,

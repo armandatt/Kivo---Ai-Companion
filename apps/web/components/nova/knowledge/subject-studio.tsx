@@ -113,6 +113,19 @@ export function SubjectStudio({ onChanged, onClose }: { onChanged: () => void; o
 
 // ── By hand ───────────────────────────────────────────────────────────────────
 
+// How deep a topic sits, and what is inside it (never a place to put it).
+type StudioTopic = StudyStructure['subjects'][number]['topics'][number]
+function depthIn(topics: StudioTopic[], t: StudioTopic): number {
+  let d = 0
+  for (let at = t.parentId ?? null; at && d < 8; d++) at = topics.find(x => x.id === at)?.parentId ?? null
+  return d
+}
+function insideOf(topics: StudioTopic[], id: string): Set<string> {
+  const out = new Set<string>()
+  for (let grew = true; grew;) { grew = false; for (const x of topics) if (x.parentId && (x.parentId === id || out.has(x.parentId)) && !out.has(x.id)) { out.add(x.id); grew = true } }
+  return out
+}
+
 function ManualEditor({ structure, onSave, busy, onRestore }: { structure: StudyStructure; onSave: (e: StudyEdit[], key: string) => Promise<boolean>; busy: string | null; onRestore: (topicId: string) => Promise<void> }) {
   const [renaming, setRenaming] = useState<{ id: string; kind: 'subject' | 'topic'; name: string } | null>(null)
   const [adding, setAdding]     = useState<Record<string, string>>({})
@@ -171,7 +184,8 @@ function ManualEditor({ structure, onSave, busy, onRestore }: { structure: Study
 
               <ul className="mt-2 divide-y divide-white/6">
                 {s.topics.map(t => (
-                  <li key={t.id} className="flex flex-wrap items-center gap-2 py-2" data-studio-topic={t.name} data-archived={t.archived || undefined}>
+                  // Indented under the topic it sits inside (the server sends them in that order).
+                  <li key={t.id} className="flex flex-wrap items-center gap-2 py-2" style={{ paddingLeft: depthIn(s.topics, t) * 18 }} data-studio-topic={t.name} data-archived={t.archived || undefined}>
                     {t.archived ? (
                       <>
                         <span className="min-w-0 flex-1 truncate text-sm text-foreground/50">{t.name}<span className="ml-2 rounded-full border border-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-foreground/45">archived</span></span>
@@ -188,6 +202,12 @@ function ManualEditor({ structure, onSave, busy, onRestore }: { structure: Study
                       <>
                         <span className="min-w-0 flex-1 truncate text-sm text-foreground/85">{t.name}{t.hasHistory && <span className="ml-2 text-xs text-foreground/40">studied</span>}</span>
                         <button type="button" className={SMALL} disabled={disabled} onClick={() => setRenaming({ id: t.id, kind: 'topic', name: t.name })} aria-label={`Rename ${t.name}`}><Pencil className="size-3.5" /> Rename</button>
+                        <label className="sr-only" htmlFor={`inside-topic-${t.id}`}>Put {t.name} inside</label>
+                        <select id={`inside-topic-${t.id}`} value={t.parentId ?? ''} disabled={disabled} className={`${FIELD} h-8 max-w-[10rem] text-xs`} data-topic-parent
+                          onChange={e => void onSave([{ op: 'move_topic', topicId: t.id, parentId: e.target.value || null }], `inside:${t.id}`)}>
+                          <option value="">At the top</option>
+                          {s.topics.filter(x => !x.archived && x.id !== t.id && !insideOf(s.topics, t.id).has(x.id)).map(x => <option key={x.id} value={x.id}>Inside {x.name}</option>)}
+                        </select>
                         {structure.subjects.length > 1 && (
                           <>
                             <label className="sr-only" htmlFor={`move-${t.id}`}>Move {t.name} to</label>

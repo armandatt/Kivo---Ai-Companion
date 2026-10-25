@@ -23,7 +23,8 @@ export interface FeasibilityIssue {
   level: "error" | "warning";
   code:
     | "after_deadline" | "wait_order" | "step_after_parent" | "broken_wait" | "broken_step" | "wait_loop"
-    | "week_overload" | "milestone_overload" | "missing_estimates" | "duplicate_titles" | "unpractised_topics" | "syllabus_uncited" | "unread_file";
+    | "week_overload" | "milestone_overload" | "missing_estimates" | "duplicate_titles" | "unpractised_topics" | "syllabus_uncited" | "unread_file"
+    | "unfiled_tasks" | "unconfirmed_date";
   message: string;
   // What it is about, for the page to point at.
   tasks?: string[];
@@ -36,6 +37,24 @@ export interface FeasibilityContext {
   hoursPerWeek: number | null;
   // The kind of work (exam and semester plans are checked for practice).
   kind: string | null;
+  // Everything the learner wrote, when known: a dated item whose day it never
+  // names is pointed out (a deadline is theirs to give, not Nova's).
+  learnerText?: string | null;
+}
+
+const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+// Whether the learner's words name this day: as written (2026-12-14), or as
+// "14 December", "December 14", "14 Dec", "Dec 14", "14/12", "14-12", "14.12".
+export function namesDay(text: string, day: string): boolean {
+  const t = ` ${words(text)} `, raw = text.toLowerCase()
+  if (raw.includes(day)) return true
+  const m = Number(day.slice(5, 7)), d = Number(day.slice(8, 10))
+  const month = MONTHS[m - 1]!, short = month.slice(0, 3)
+  const nth = (n: number) => [String(n), `${n}st`, `${n}nd`, `${n}rd`, `${n}th`]
+  for (const n of nth(d)) for (const mo of [month, short]) if (t.includes(` ${n} ${mo} `) || t.includes(` ${mo} ${n} `) || t.includes(` ${n} of ${mo} `)) return true
+  const dd = String(d).padStart(2, "0"), mm = String(m).padStart(2, "0")
+  for (const sep of ["/", "-", "."]) for (const a of [String(d), dd]) for (const b of [String(m), mm]) if (raw.includes(`${a}${sep}${b}`)) return true
+  return false
 }
 
 const DEADLINE_KINDS = new Set(["exam", "assignment", "project", "certification", "interview"]);
@@ -165,6 +184,13 @@ export function checkFeasibility(plan: WorkspacePlan, ctx: FeasibilityContext): 
       const bare = leaves.filter(t => !covered.has(t.name.toLowerCase()));
       if (bare.length) warnings.push({ level: "warning", code: "unpractised_topics", message: `${bare.length} of ${plural(leaves.length, "topic")} in ${s.name} have no practice or revision task (${bare.slice(0, 3).map(t => t.name).join(", ")}${bare.length > 3 ? ", …" : ""}).`, subject: s.name });
     }
+  }
+
+  // ── Tasks filed nowhere, and dated items nobody gave ──
+  const unfiled = plan.subjects.length > 0 ? plan.tasks.filter(t => !t.parent && !t.subject) : [];
+  if (unfiled.length) warnings.push({ level: "warning", code: "unfiled_tasks", message: `${plural(unfiled.length, "task")} ${unfiled.length === 1 ? "is" : "are"} filed under no subject, so ${unfiled.length === 1 ? "it sits" : "they sit"} apart on the Knowledge Map (${unfiled.slice(0, 3).map(t => quoted(t.title)).join(", ")}${unfiled.length > 3 ? ", …" : ""}).`, tasks: unfiled.map(t => t.key) });
+  if (ctx.learnerText) for (const d of plan.dates) {
+    if (!namesDay(ctx.learnerText, d.day)) warnings.push({ level: "warning", code: "unconfirmed_date", message: `${d.title} on ${d.day} is not a day you gave: check it, or remove it.` });
   }
 
   // ── Files the plan was meant to follow ──
