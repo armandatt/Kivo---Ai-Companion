@@ -75,6 +75,8 @@
   --map-resource: oklch(74% 0.11 235);
   --map-task: oklch(78% 0.12 150);
   --map-line: oklch(100% 0 0 / 0.16);
+  /* An understated line that still reads on its own: a [[link]], an outside card. */
+  --map-line-strong: oklch(100% 0 0 / 0.34);
 }
 
 /* ── The app's dark theme (the default) ─────────────────────────────────────────
@@ -187,6 +189,7 @@ html[data-kivo-theme="light"] .kivo-app {
   --map-resource: oklch(58% 0.14 240);
   --map-task: oklch(52% 0.13 150);
   --map-line: oklch(24% 0.02 290 / 0.2);
+  --map-line-strong: oklch(24% 0.02 290 / 0.42);
   /* Subject tones and raised surfaces, set for paper (see below). */
   --tone-l: 66%;
   --tone-ink: 46%;
@@ -530,6 +533,9 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 @keyframes kivo-node-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .kivo-node-pulse { animation: kivo-node-pulse 1.4s ease-in-out infinite; }
 
+/* Going into a card on the Knowledge Map: what is inside fades in as the view zooms to it. */
+@keyframes map-enter { from { opacity: 0; } to { opacity: 1; } }
+.map-enter { animation: map-enter 260ms ease-out both; }
 @keyframes nova-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .nova-rise { animation: nova-rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 @keyframes nova-flow { to { stroke-dashoffset: -18; } }

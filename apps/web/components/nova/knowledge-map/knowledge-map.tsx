@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useStartSession } from '../use-start-session'
-import { ArrowUpRight, ChevronsDownUp, ChevronsUpDown, Focus, Link2, Maximize2, Minus, Plus, RotateCcw, Search, Waypoints, X } from 'lucide-react'
+import { ArrowUpRight, ChevronsDownUp, ChevronsUpDown, Focus, Info, Keyboard, Layers, Link2, Maximize2, Minus, PanelRightOpen, Plus, RotateCcw, Search, SlidersHorizontal, Trash2, Waypoints, X } from 'lucide-react'
 import type { MapEdgeKind, MapNode, MapNodeType, NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
 import { MAP_LAYOUT_COORD_MAX } from '@repo/api/nova/product/map-layout.types'
 import { treeOrder } from '@repo/api/nova/product/task-tree'
@@ -14,8 +14,12 @@ import { CARD, TREE_EDGES, layoutMap, treeOf, withPositions, type MapLayout } fr
 import { useMapLayout } from './use-map-layout'
 import { filingChoices, placementLabel, placementOf, planLink, samePlacement, type Placement } from './map-edit'
 import { addNoteLink, fileItem, type EditOutcome } from './map-actions'
-import { revealDetail } from './reveal-detail'
 import { fitKey, focusToApply, keepValid } from './view-state'
+import { START, back, canExplore, crossLinks, current, enter, insideOf, keepLevels, MARKER_R, pathTo, placeOutside, reach, up, type Level, type View } from './explore'
+import { isMacPlatform, isTypingTarget, navigate, shortcutFor } from './map-shortcuts'
+import { OUTLINE_QUERY, browserStore, chooseOrientation, chosenOrientation, forgetViews, pictureKey, recallView, rememberView, type Orientation } from './view-memory'
+import { NEW_SUBJECT } from './map-structure'
+import { AddDialog, Breadcrumbs, DeleteDialog, Legend, ShortcutsHelp } from './map-panels'
 
 const TYPES: Array<{ type: MapNodeType; label: string; plural: string }> = [
   { type: 'subject',  label: 'Subject',    plural: 'Subjects' },
@@ -38,7 +42,6 @@ const day   = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day
 const shortDay = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
-type View = { x: number; y: number; k: number }
 const MIN_K = 0.2, MAX_K = 2.5
 
 // A session started from the map has no planned block behind it, so it is
@@ -252,20 +255,21 @@ function FileEditor({ node, view, onChanged }: { node: MapNode; view: NovaKnowle
   )
 }
 
-function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onChanged, panelRef, inside, collapsed, onCollapse }: {
+function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onChanged, inside, collapsed, onCollapse, onExplore, onAdd, onDelete }: {
   node: MapNode; neighbours: Array<{ node: MapNode; relation: string }>; onPick: (id: string) => void; onClose: () => void
-  onScope: () => void; scoped: boolean; view: NovaKnowledgeMapReady; onChanged: () => void
-  panelRef?: React.Ref<HTMLElement>
+  onScope: (() => void) | null; scoped: boolean; view: NovaKnowledgeMapReady; onChanged: () => void
   // How many cards hang from it, and whether they are folded away.
   inside: number; collapsed: boolean; onCollapse: () => void
+  // null: not offered for this card.
+  onExplore: (() => void) | null; onAdd: (() => void) | null; onDelete: (() => void) | null
 }) {
   const { start, starting, error: startError } = useStartSession()
   const facts: Array<[string, string]> = []
   if (node.type === 'subject') {
     const parent = node.parentId ? view.nodes.find(n => n.id === `subject:${node.parentId}`) : undefined
     if (parent) facts.push(['Inside', parent.label])
-    const inside = view.edges.filter(e => e.kind === 'contains' && e.from === node.id).length
-    if (inside) facts.push(['Subjects inside', String(inside)])
+    const inner = view.edges.filter(e => e.kind === 'contains' && e.from === node.id).length
+    if (inner) facts.push(['Subjects inside', String(inner)])
     facts.push(['Topics', String(node.topics)], ['Notes', String(node.notes)], ['Saved pages', String(node.resources)])
   } else if (node.type === 'topic') {
     facts.push(['Subject', node.subjectName])
@@ -311,9 +315,12 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
   const tone = node.type === 'subject' ? node.label : node.subjectName ?? null
   const explanation = node.type === 'topic' ? node.details?.explanation ?? null : null
   const goals = node.type === 'topic' ? node.details?.goals ?? [] : []
+  const action = cn(BUTTON_QUIET, 'h-9')
 
   return (
-    <aside ref={panelRef} aria-label="Selected item" className="subject-tone flex max-h-[52vh] flex-col overflow-y-auto border-t border-white/8 bg-card p-5 lg:max-h-none lg:w-[22rem] lg:shrink-0 lg:border-l lg:border-t-0" style={toneStyle(tone)}>
+    <aside aria-label="Selected item" data-map-overlay data-detail
+      className="subject-tone absolute inset-x-0 bottom-0 z-20 flex max-h-[58%] flex-col overflow-y-auto overscroll-contain rounded-t-2xl border-t border-white/10 bg-card/95 p-5 shadow-float backdrop-blur lg:inset-x-auto lg:bottom-3 lg:right-3 lg:top-3 lg:max-h-none lg:w-[22rem] lg:rounded-2xl lg:border"
+      style={toneStyle(tone)} onPointerDown={e => e.stopPropagation()}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em] text-subtle">
@@ -322,7 +329,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
           </p>
           <h2 className="mt-2 break-words text-xl font-semibold leading-tight tracking-[-0.01em] text-foreground">{node.label}</h2>
         </div>
-        <button type="button" onClick={onClose} aria-label="Close details" className="rounded-lg p-1.5 text-subtle transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"><X className="size-4" /></button>
+        <button type="button" onClick={onClose} aria-label="Hide details (the card stays selected)" title="Hide details" className="rounded-lg p-1.5 text-subtle transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"><X className="size-4" /></button>
       </div>
 
       <dl className="mt-4 divide-y divide-white/6 border-y border-white/6 text-sm">
@@ -342,7 +349,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
       <div className="mt-5 flex flex-wrap gap-2">
         {node.href && <Link href={node.href} className={BUTTON_PRIMARY}>{open}</Link>}
         {node.type === 'resource' && (
-          <a href={node.url} target="_blank" rel="noopener noreferrer" className={cn(BUTTON_QUIET, 'h-10')}>
+          <a href={node.url} target="_blank" rel="noopener noreferrer" className={action}>
             Visit page <ArrowUpRight className="size-3.5" />
           </a>
         )}
@@ -350,15 +357,21 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
         {node.type === 'topic' && node.studied !== false && node.kind !== 'milestone' && (
           <button type="button" disabled={starting !== null} data-start-topic
             onClick={() => void start({ topicName: node.label, subjectName: node.subjectName, durationMinutes: MAP_SESSION_MINUTES }, node.id)}
-            className={cn(BUTTON_QUIET, 'h-10')}>
+            className={action}>
             {starting === node.id ? 'Starting…' : `Start a ${MAP_SESSION_MINUTES} min session`}
           </button>
         )}
-        {noteHere && <Link href={noteHere} className={cn(BUTTON_QUIET, 'h-10')} data-note-here>New note here</Link>}
-        {!scoped && <button type="button" onClick={onScope} className={cn(BUTTON_QUIET, 'h-10')} data-scope-here><Focus aria-hidden className="size-3.5" /> Focus on this branch</button>}
-        {inside > 0 && <button type="button" onClick={onCollapse} className={cn(BUTTON_QUIET, 'h-10')} data-collapse aria-pressed={collapsed}>{collapsed ? <ChevronsUpDown aria-hidden className="size-3.5" /> : <ChevronsDownUp aria-hidden className="size-3.5" />} {collapsed ? `Show the ${inside} inside` : `Fold the ${inside} inside`}</button>}
+        {noteHere && <Link href={noteHere} className={action} data-note-here>New note here</Link>}
       </div>
       {startError && <p role="alert" className="mt-3 text-sm text-red-400">{startError}</p>}
+
+      <div className="mt-4 flex flex-wrap gap-2" data-node-actions>
+        {onExplore && <button type="button" onClick={onExplore} className={action} data-explore title="Explore inside (Shift+Enter)"><Layers aria-hidden className="size-3.5" /> Explore inside</button>}
+        {onScope && !scoped && <button type="button" onClick={onScope} className={action} data-scope-here><Focus aria-hidden className="size-3.5" /> Show what is around it</button>}
+        {inside > 0 && <button type="button" onClick={onCollapse} className={action} data-collapse aria-pressed={collapsed} title="Space">{collapsed ? <ChevronsUpDown aria-hidden className="size-3.5" /> : <ChevronsDownUp aria-hidden className="size-3.5" />} {collapsed ? `Show the ${inside} inside` : `Fold the ${inside} inside`}</button>}
+        {onAdd && <button type="button" onClick={onAdd} className={action} data-add-open title="N"><Plus aria-hidden className="size-3.5" /> Add…</button>}
+        {onDelete && <button type="button" onClick={onDelete} className={cn(action, 'hover:text-red-400')} data-delete-open title="Delete"><Trash2 aria-hidden className="size-3.5" /> Delete…</button>}
+      </div>
 
       {(node.type === 'note' || node.type === 'resource') && (
         <div className="mt-6 space-y-2">
@@ -398,7 +411,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
             {neighbours.map(({ node: n, relation }) => (
               <li key={`${n.id}:${relation}`}>
                 <button type="button" onClick={() => onPick(n.id)} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-foreground/85 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
-                  <span className="inline-block size-2 shrink-0 rounded-full" style={{ background: FILL[n.type] }} />
+                  <span className={cn('inline-block size-2 shrink-0', relation === RELATION.links_to![0] || relation === RELATION.links_to![1] ? 'rounded-full ring-1 ring-[var(--nova)]' : 'rounded-full')} style={{ background: FILL[n.type] }} />
                   <span className="min-w-0">
                     <span className="block truncate">{n.label}</span>
                     <span className="block text-[11px] text-subtle">{relation}</span>
@@ -507,7 +520,28 @@ function CardFace({ n, detail }: { n: MapNode; detail: CardDetail }) {
 
 // The learner's knowledge as a canvas they can move around in and arrange.
 // Every card is a real item and every line a link that is stored; the server
-// decides both. Moving a card changes only where it is drawn.
+// decides both. Moving a card changes only where it is drawn. Adding or
+// deleting a card goes through the route that owns it, and the map is read
+// again from the server after.
+type Panel =
+  | { kind: 'add'; node: MapNode | null }
+  | { kind: 'delete'; node: MapNode }
+  | { kind: 'help' } | { kind: 'legend' } | { kind: 'filters' } | { kind: 'reset' }
+
+const ADDABLE: ReadonlySet<MapNodeType> = new Set(['subject', 'topic', 'task'])
+const reducedMotion = () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+const isMac = () => typeof navigator !== 'undefined' && isMacPlatform((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform ?? '')
+
+// The point a [[link]]'s ring sits on: where the line, arriving from `from`,
+// meets the edge of the card (or round marker) it links to.
+function ringPoint(from: { x: number; y: number }, to: { x: number; y: number }, size: { w: number; h: number } | number) {
+  const dx = from.x - to.x, dy = from.y - to.y
+  const len = Math.hypot(dx, dy) || 1
+  const ux = dx / len, uy = dy / len
+  const s = typeof size === 'number' ? size : Math.min(Math.abs(ux) > 1e-6 ? size.w / 2 / Math.abs(ux) : Infinity, Math.abs(uy) > 1e-6 ? size.h / 2 / Math.abs(uy) : Infinity)
+  return { x: to.x + ux * s, y: to.y + uy * s }
+}
+
 export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowledgeMapReady; onChanged: () => void; onWorkspace?: (id: string) => void }) {
   const [shown, setShown]       = useState<Record<MapNodeType, boolean>>({ subject: true, topic: true, task: true, note: true, resource: true })
   // Branches folded away: what hangs from these cards is not drawn.
@@ -515,30 +549,58 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   const [subject, setSubject]   = useState('')
   // Show [[links]] between notes (the learner's own links), or hide them.
   const [showLinks, setShowLinks] = useState(true)
-  // A scoped view: one item and what is within two links of it.
+  // A scoped view: one item and what is around it (a ?focus= link, or a card with nothing inside).
   const [scope, setScope]       = useState<string | null>(null)
+  // Where the learner is: the whole map, or a card explored, and the views below it.
+  const [stack, setStack]       = useState<Level[]>(() => [...START])
   const [query, setQuery]       = useState('')
   const [selected, setSelected] = useState<string | null>(null)
+  const [detailOpen, setDetailOpen] = useState(true)
   const [hover, setHover]       = useState<string | null>(null)
   const [t, setT]               = useState<View>({ x: 0, y: 0, k: 1 })
   const [dragAt, setDragAt]     = useState<{ id: string; x: number; y: number } | null>(null)
-  const [confirmReset, setConfirmReset] = useState(false)
-  const [said, setSaid]         = useState('')
+  const [panel, setPanel]       = useState<Panel | null>(null)
+  const [notice, setNotice]     = useState<{ text: string; n: number } | null>(null)
+  const [mac, setMac]           = useState(false)
+  const store = useMemo(() => browserStore(), [])
+  // The orientation: the learner's choice, else the device's own (by width,
+  // never by the frame's shape, so opening a panel never turns the map round).
+  const [chosen, setChosen]     = useState<Orientation | null>(() => chosenOrientation(store))
+  const [narrow, setNarrow]     = useState(() => typeof window !== 'undefined' && window.matchMedia(OUTLINE_QUERY).matches)
+  const orientation: Orientation = chosen ?? (narrow ? 'outline' : 'tree')
+  const portrait = orientation === 'outline'
+  const root = useRef<HTMLDivElement>(null)
   const frame = useRef<HTMLDivElement>(null)
+  const search = useRef<HTMLInputElement>(null)
   const drag  = useRef<{ x: number; y: number; moved: boolean } | null>(null)
+  const pinch = useRef(new Map<number, { x: number; y: number }>())
   const cardDrag = useRef<{ id: string; sx: number; sy: number; ox: number; oy: number; moved: boolean; at: { x: number; y: number } | null } | null>(null)
   const swallowClick = useRef(false)
-  // Set by an explicit selection (a click, Enter or Space on a card, a search
-  // result): the details are then brought into view on a narrow screen.
-  const revealNext = useRef(false)
-  const panel = useRef<HTMLElement>(null)
+  // A card to select once the map has it (after an add, or a jump to a card outside).
+  const pendingSelect = useRef<string | null>(null)
   const layout = useMapLayout()
 
+  useEffect(() => { setMac(isMac()) }, [])
+  useEffect(() => {
+    const q = window.matchMedia(OUTLINE_QUERY)
+    const on = () => setNarrow(q.matches)
+    q.addEventListener('change', on)
+    return () => q.removeEventListener('change', on)
+  }, [])
+  const say = useCallback((text: string) => setNotice(n => ({ text, n: (n?.n ?? 0) + 1 })), [])
+  useEffect(() => {
+    if (!notice) return
+    const id = window.setTimeout(() => setNotice(null), 3200)
+    return () => window.clearTimeout(id)
+  }, [notice])
+
   const subjects = useMemo(() => view.nodes.filter(n => n.type === 'subject'), [view.nodes])
+  const byId     = useMemo(() => new Map(view.nodes.map(n => [n.id, n])), [view.nodes])
+  const allIds   = useMemo(() => new Set(view.nodes.map(n => n.id)), [view.nodes])
 
   // What the filters leave. A filter hides items; it never changes a link.
   const usable = useMemo(() => view.edges.filter(e => showLinks || e.kind !== 'links_to'), [view.edges, showLinks])
-  const inScope = useMemo(() => (scope && view.nodes.some(n => n.id === scope) ? around(scope, usable) : null), [scope, usable, view.nodes])
+  const inScope = useMemo(() => (scope && allIds.has(scope) ? around(scope, usable) : null), [scope, usable, allIds])
   // The whole tree on record, and what a folded branch hides.
   const tree = useMemo(() => treeOf(view.nodes, view.edges), [view.nodes, view.edges])
   const folded = useMemo(() => {
@@ -547,127 +609,263 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     for (const id of collapsed) hide(id)
     return out
   }, [tree, collapsed])
-  const insideOf = useCallback((id: string) => {
-    let n = 0
-    const count = (at: string) => { for (const c of tree.children.get(at) ?? []) { n++; count(c) } }
-    count(id)
-    return n
-  }, [tree])
+  const insideCount = useCallback((id: string) => insideOf(tree, id).size - 1, [tree])
   const toggleFold = useCallback((id: string) => setCollapsed(c => { const next = new Set(c); if (next.has(id)) next.delete(id); else next.add(id); return next }), [])
+  // Every card the filters leave, explored or not: the layout is worked out
+  // for these, so a card explored keeps the place it has on the whole map.
   const nodes = useMemo(() => view.nodes.filter(n =>
     shown[n.type] && !folded.has(n.id) && (subject === '' || n.subjectId === subject) && (!inScope || inScope.has(n.id))), [view.nodes, shown, folded, subject, inScope])
   const ids   = useMemo(() => new Set(nodes.map(n => n.id)), [nodes])
   const edges = useMemo(() => usable.filter(e => ids.has(e.from) && ids.has(e.to)), [usable, ids])
   const linkCount = useMemo(() => view.edges.filter(e => e.kind === 'links_to').length, [view.edges])
 
-  // Every item on the map now, whatever the filters show.
-  const allIds = useMemo(() => new Set(view.nodes.map(n => n.id)), [view.nodes])
+  // The card explored, if any, and what of the map that shows.
+  const level = current(stack)
+  const focus = level.focus !== null && allIds.has(level.focus) ? level.focus : null
+  const inside = useMemo(() => (focus ? insideOf(tree, focus) : null), [focus, tree])
+  const drawn = useMemo(() => (inside ? nodes.filter(n => inside.has(n.id)) : nodes), [nodes, inside])
+  const drawnIds = useMemo(() => new Set(drawn.map(n => n.id)), [drawn])
+  const drawnEdges = useMemo(() => (inside ? edges.filter(e => drawnIds.has(e.from) && drawnIds.has(e.to)) : edges), [edges, inside, drawnIds])
+  // Links from inside to cards outside, kept, to round markers beside the map.
+  // Only to cards the filters leave (a folded one is unfolded when it is gone to).
+  const cross = useMemo(() => (inside ? crossLinks(drawnIds, usable).filter(c => ids.has(c.outside) || (folded.has(c.outside) && shown[byId.get(c.outside)?.type ?? 'note'])) : []), [inside, drawnIds, usable, ids, folded, byId, shown])
 
   // A link from elsewhere names an item (?focus=note:<id>): open the map on
-  // it, scoped to what is around it. On the first view only: a reload (every
-  // minute, and after an edit) keeps what the learner has done since.
+  // it, scoped to what is around it; ?explore=<id> opens inside a card. On
+  // the first view only: a reload keeps what the learner has done since.
   const focusApplied = useRef(false)
   useEffect(() => {
-    const focus = focusToApply(new URLSearchParams(window.location.search).get('focus'), allIds, focusApplied.current)
+    if (focusApplied.current) return
+    const params = new URLSearchParams(window.location.search)
+    const f = focusToApply(params.get('focus'), allIds, false)
+    const ex = params.get('explore')
     focusApplied.current = true
-    if (focus) { setScope(focus); setSelected(focus) }
-  }, [allIds])
-  // After a reload, a selection, scope or hover on an item that has gone
-  // (deleted elsewhere, archived) is dropped; one still there is kept.
+    if (ex && allIds.has(ex) && canExplore(tree, ex)) setStack(s => enter(s, ex, null))
+    if (f) { setScope(f); setSelected(f) }
+  }, [allIds, tree])
+  // The address says which card is explored, so a reload opens there again.
+  useEffect(() => {
+    if (!focusApplied.current) return
+    const url = new URL(window.location.href)
+    if (focus) url.searchParams.set('explore', focus); else url.searchParams.delete('explore')
+    if (url.toString() !== window.location.href) window.history.replaceState(window.history.state, '', url.toString())
+  }, [focus])
+  // After a reload, a selection, scope, hover or explored card that has gone
+  // (deleted, archived) is dropped; one still there is kept.
   useEffect(() => {
     setSelected(id => keepValid(id, allIds))
     setScope(id => keepValid(id, allIds))
     setHover(id => keepValid(id, allIds))
-  }, [allIds])
+    setStack(s => keepLevels(s, allIds, tree))
+  }, [allIds, tree])
   // Places a saved page was suggested for and is not filed under. Drawn, never laid out.
-  const suggestions = useMemo(() => (view.suggestions ?? []).filter(s => ids.has(s.from) && ids.has(s.to)), [view.suggestions, ids])
-  // A [[link]] is drawn but does not place anything: an item sits by what it
-  // is filed under, wherever notes link to it from.
-  // Drawn for the frame's shape: a phone's tall frame stacks the subjects.
-  const [portrait, setPortrait] = useState(false)
-  useEffect(() => {
-    const el = frame.current
-    if (!el || typeof ResizeObserver === 'undefined') return
-    const watch = new ResizeObserver(() => setPortrait(el.clientWidth < el.clientHeight * 0.9))
-    watch.observe(el)
-    return () => watch.disconnect()
-  }, [])
-  const auto = useMemo(() => layoutMap(nodes, edges.filter(e => e.kind !== 'links_to'), { portrait }), [nodes, edges, portrait])
+  const suggestions = useMemo(() => (view.suggestions ?? []).filter(s => drawnIds.has(s.from) && drawnIds.has(s.to)), [view.suggestions, drawnIds])
+
+  // A [[link]] or a wait is drawn but places nothing.
+  const auto = useMemo(() => layoutMap(nodes, edges.filter(e => TREE_EDGES.has(e.kind)), { portrait }), [nodes, edges, portrait])
   // The learner's own positions over the computed ones, and the card being dragged.
   const placed: MapLayout = useMemo(() => {
     const positions = dragAt ? new Map(layout.positions).set(dragAt.id, { x: dragAt.x, y: dragAt.y }) : layout.positions
     return withPositions(auto, nodes, positions)
   }, [auto, nodes, layout.positions, dragAt])
-  const byId   = useMemo(() => new Map(view.nodes.map(n => [n.id, n])), [view.nodes])
+
+  // The explored card's own box, and its markers to the right of it.
+  const box = useMemo(() => {
+    if (!inside) return placed.bounds
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const n of drawn) {
+      const p = placed.at.get(n.id); if (!p) continue
+      const { w, h } = CARD[n.type]
+      minX = Math.min(minX, p.x - w / 2); maxX = Math.max(maxX, p.x + w / 2); minY = Math.min(minY, p.y - h / 2); maxY = Math.max(maxY, p.y + h / 2)
+    }
+    return minX === Infinity ? placed.bounds : { minX: minX - 60, minY: minY - 60, maxX: maxX + 60, maxY: maxY + 90 }
+  }, [inside, drawn, placed])
+  const markers = useMemo(() => (inside ? placeOutside(cross, placed.at, box.maxX - 60) : new Map<string, { x: number; y: number }>()), [inside, cross, placed.at, box.maxX])
+  const bounds = useMemo(() => {
+    if (markers.size === 0) return box
+    let { minY, maxX, maxY } = box
+    for (const m of markers.values()) { maxX = Math.max(maxX, m.x + MARKER_R + 190); minY = Math.min(minY, m.y - MARKER_R - 30); maxY = Math.max(maxY, m.y + MARKER_R + 30) }
+    return { minX: box.minX, minY, maxX, maxY }
+  }, [box, markers])
 
   const neighbourIds = useMemo(() => {
-    const focus = hover ?? selected
-    if (!focus) return null
-    const set = new Set<string>([focus])
-    for (const e of view.edges) { if (e.from === focus) set.add(e.to); if (e.to === focus) set.add(e.from) }
+    const f = hover ?? selected
+    if (!f) return null
+    const set = new Set<string>([f])
+    for (const e of view.edges) { if (e.from === f) set.add(e.to); if (e.to === f) set.add(e.from) }
     return set
   }, [hover, selected, view.edges])
 
-  const fit = useCallback(() => {
+  // ── The view: pan and zoom ─────────────────────────────────────────────────
+  const tNow = useRef(t)
+  useEffect(() => { tNow.current = t }, [t])
+  const anim = useRef<number | null>(null)
+  const stopAnim = useCallback(() => { if (anim.current !== null) cancelAnimationFrame(anim.current); anim.current = null }, [])
+  // Eased: the point at the centre of the screen glides, and the zoom changes
+  // by the same proportion each frame, so going in reads as a zoom into it.
+  const animateTo = useCallback((to: View, ms = 320) => {
+    stopAnim()
     const el = frame.current
-    if (!el) return
-    const { minX, minY, maxX, maxY } = placed.bounds
+    if (!el || reducedMotion()) { setT(to); return }
+    const from = tNow.current, cw = el.clientWidth / 2, ch = el.clientHeight / 2
+    const a = { x: (cw - from.x) / from.k, y: (ch - from.y) / from.k }, b = { x: (cw - to.x) / to.k, y: (ch - to.y) / to.k }
+    const start = performance.now()
+    const step = (now: number) => {
+      const p = Math.min(1, (now - start) / ms), e = 1 - (1 - p) ** 3
+      const k = from.k * (to.k / from.k) ** e
+      const cx = a.x + (b.x - a.x) * e, cy = a.y + (b.y - a.y) * e
+      setT(p === 1 ? to : { k, x: cw - cx * k, y: ch - cy * k })
+      anim.current = p < 1 ? requestAnimationFrame(step) : null
+    }
+    anim.current = requestAnimationFrame(step)
+  }, [stopAnim])
+
+  // The details panel covers the right of a wide canvas: fit beside it.
+  const besidePanel = useCallback((el: HTMLElement) => (selected && detailOpen && el.clientWidth >= 1024 ? 372 : 0), [selected, detailOpen])
+  const fitTarget = useCallback((): View | null => {
+    const el = frame.current
+    if (!el) return null
+    const { minX, minY, maxX, maxY } = bounds
     const w = Math.max(1, maxX - minX), h = Math.max(1, maxY - minY)
+    const room = el.clientWidth - besidePanel(el)
     // A phone's outline is read top down: fitted to the width, from its top,
     // never shrunk below reading size to show it all at once.
+    // Rounded as a remembered view is, so a fitted view and the same view
+    // brought back on the next visit are the same.
+    const round = (v: View): View => ({ x: Math.round(v.x), y: Math.round(v.y), k: Math.round(v.k * 1000) / 1000 })
     if (portrait) {
       const k = Math.max(0.62, Math.min(1.1, el.clientWidth / w))
-      setT({ k, x: w * k <= el.clientWidth ? el.clientWidth / 2 - ((minX + maxX) / 2) * k : 12 - minX * k, y: 16 - minY * k })
-      return
+      return round({ k, x: w * k <= el.clientWidth ? el.clientWidth / 2 - ((minX + maxX) / 2) * k : 12 - minX * k, y: 16 - minY * k })
     }
-    const k = Math.max(MIN_K, Math.min(1.1, Math.min(el.clientWidth / w, el.clientHeight / h)))
-    setT({ k, x: el.clientWidth / 2 - ((minX + maxX) / 2) * k, y: el.clientHeight / 2 - ((minY + maxY) / 2) * k })
-  }, [placed, portrait])
+    const k = Math.max(MIN_K, Math.min(1.1, Math.min(room / w, el.clientHeight / h)))
+    return round({ k, x: room / 2 - ((minX + maxX) / 2) * k, y: el.clientHeight / 2 - ((minY + maxY) / 2) * k })
+  }, [bounds, portrait, besidePanel])
+  const fit = useCallback((animated = true) => { const to = fitTarget(); if (to) { if (animated) animateTo(to); else { stopAnim(); setT(to) } } }, [fitTarget, animateTo, stopAnim])
 
-  // Fitted when the learner asks for a different picture or the saved layout
-  // arrives or is reset (fitKey), not when the data reloads and not when a
-  // card is moved: a reload keeps the pan and zoom they had.
-  const fitNow = useRef(fit)
-  useEffect(() => { fitNow.current = fit }, [fit])
-  const fitWhen = fitKey({ shown, subject, scope, showLinks, portrait, generation: layout.generation }) + `|${view.workspaceId ?? 'all'}|${collapsed.size}`
-  useEffect(() => { fitNow.current() }, [fitWhen])
+  // What this view is, for remembering it: the workspace, the card explored,
+  // and the cards drawn. A view comes back only for the same picture.
+  const where = `${view.workspaceId ?? 'all'}/${focus ?? 'root'}`
+  const picture = useMemo(() => pictureKey([...drawnIds, ...markers.keys()], orientation), [drawnIds, markers, orientation])
+  useEffect(() => {
+    if (anim.current !== null) return
+    const id = window.setTimeout(() => rememberView(store, where, picture, t), 500)
+    return () => window.clearTimeout(id)
+  }, [t, store, where, picture])
+
+  // The view is settled when the learner asks for a different picture (a
+  // filter, a subject, a scope, the orientation, a card explored or left) or
+  // the saved layout arrives or is reset: back to the view they left there,
+  // else the one they had last time for the same picture, else fitted. New
+  // data for the same picture, and a card moved or folded, keep the view.
+  const settle = useRef<(animated: boolean) => void>(() => {})
+  settle.current = (animated: boolean) => {
+    const to = level.view ?? recallView(store, where, picture) ?? fitTarget()
+    if (!to) return
+    if (animated) animateTo(to); else { stopAnim(); setT(to) }
+  }
+  const settleWhen = fitKey({ shown, subject, scope, showLinks, portrait, generation: layout.generation }) + `|${view.workspaceId ?? 'all'}|${focus ?? ''}|${stack.length}`
+  const lastFocus = useRef<string | null | undefined>(undefined)
+  useEffect(() => {
+    const moved = lastFocus.current !== undefined && lastFocus.current !== focus
+    lastFocus.current = focus
+    settle.current(moved)
+  }, [settleWhen, focus])
 
   const zoomAt = useCallback((factor: number, cx?: number, cy?: number) => {
     const el = frame.current
     if (!el) return
+    stopAnim()
     const px = cx ?? el.clientWidth / 2, py = cy ?? el.clientHeight / 2
     setT(v => {
       const k = Math.max(MIN_K, Math.min(MAX_K, v.k * factor))
       return { k, x: px - ((px - v.x) / v.k) * k, y: py - ((py - v.y) / v.k) * k }
     })
-  }, [])
+  }, [stopAnim])
 
   // The wheel zooms where the pointer is. Registered by hand so it can stop
-  // the page from scrolling under the map.
+  // the page from scrolling under the map; a panel over the map scrolls itself.
   useEffect(() => {
     const el = frame.current
     if (!el) return
     const onWheel = (e: WheelEvent) => {
+      if ((e.target as Element | null)?.closest?.('[data-map-overlay]')) return
       e.preventDefault()
-      const box = el.getBoundingClientRect()
-      zoomAt(Math.exp(-e.deltaY * 0.0015), e.clientX - box.left, e.clientY - box.top)
+      const b = el.getBoundingClientRect()
+      zoomAt(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX - b.left, e.clientY - b.top)
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
   }, [zoomAt])
 
-  const select = useCallback((id: string | null) => {
-    setSelected(id)
-    const p = id ? placed.at.get(id) : null
+  const centreOn = useCallback((id: string, k?: number) => {
+    const p = placed.at.get(id) ?? markers.get(id)
     const el = frame.current
-    // Bring a node picked from a list into view.
-    if (p && el) setT(v => ({ ...v, x: el.clientWidth / 2 - p.x * v.k, y: el.clientHeight / 2 - p.y * v.k }))
-  }, [placed])
+    if (!p || !el) return
+    const kk = k ?? tNow.current.k
+    animateTo({ k: kk, x: (el.clientWidth - besidePanel(el)) / 2 - p.x * kk, y: el.clientHeight / 2 - p.y * kk }, 260)
+  }, [placed, markers, animateTo, besidePanel])
+  // Keeps a card reached by the keyboard on screen, moving the view only when it is not.
+  const keepInView = useCallback((id: string) => {
+    const p = placed.at.get(id)
+    const el = frame.current
+    if (!p || !el) return
+    const v = tNow.current, sx = v.x + p.x * v.k, sy = v.y + p.y * v.k, m = 80
+    if (sx < m || sy < m || sx > el.clientWidth - m - besidePanel(el) || sy > el.clientHeight - m) centreOn(id)
+  }, [placed, centreOn, besidePanel])
 
-  // Moving a card: the pointer past the threshold, or Alt and an arrow key.
-  // The scale is read when the drag starts and kept for it.
-  const scale = useRef(1)
-  useEffect(() => { scale.current = t.k }, [t.k])
+  // Shows the card's details, keeping it selected.
+  const select = useCallback((id: string | null, opts: { centre?: boolean; focusCard?: boolean } = {}) => {
+    setSelected(id)
+    if (!id) return
+    setDetailOpen(true)
+    if (opts.centre) centreOn(id)
+    if (opts.focusCard) requestAnimationFrame(() => root.current?.querySelector<SVGGElement>(`[data-node-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true }))
+  }, [centreOn])
+
+  // Unfolds what a card sits inside, so it can be drawn.
+  const revealCard = useCallback((id: string) => {
+    const up = new Set(pathTo(tree, id).slice(0, -1))
+    setCollapsed(c => ([...c].some(x => up.has(x)) ? new Set([...c].filter(x => !up.has(x))) : c))
+  }, [tree])
+
+  // ── Exploring inside a card ────────────────────────────────────────────────
+  const explore = useCallback((id: string) => {
+    if (!canExplore(tree, id)) { say('Nothing is inside this card to explore.'); return }
+    setCollapsed(c => (c.has(id) ? new Set([...c].filter(x => x !== id)) : c))
+    setStack(s => enter(s, id, tNow.current))
+    setSelected(id)
+    setScope(null)
+  }, [tree, say])
+  const goBack = useCallback(() => setStack(s => back(s)), [])
+  const goUp = useCallback(() => {
+    if (!focus) { say('You are on the whole map.'); return }
+    const from = focus
+    setStack(s => up(s, tree))
+    setSelected(from)
+  }, [focus, tree, say])
+  // A breadcrumb: back to that view when it is open, else into that card.
+  const goTo = useCallback((id: string | null) => {
+    if (id === null) { setStack(s => [s[0]!]); return }
+    const at = stack.findIndex(l => l.focus === id)
+    if (at >= 0) setStack(s => s.slice(0, at + 1)); else explore(id)
+  }, [stack, explore])
+  // A round marker: to the card outside, in the deepest view that holds it.
+  const goOutside = useCallback((id: string) => {
+    revealCard(id)
+    pendingSelect.current = id
+    setStack(s => reach(s, tree, id))
+  }, [tree, revealCard])
+  // Once the map has a card it was asked to select, select it and bring it into view.
+  useEffect(() => {
+    const id = pendingSelect.current
+    if (!id || !drawnIds.has(id) || !placed.at.has(id)) return
+    pendingSelect.current = null
+    select(id, { centre: true, focusCard: true })
+  }, [drawnIds, placed, select])
+
+  // ── Moving a card ──────────────────────────────────────────────────────────
+  // The pointer past the threshold, or Alt and an arrow key. The scale is read
+  // when the drag starts and kept for it.
   const placedNow = useRef(placed)
   useEffect(() => { placedNow.current = placed }, [placed])
   const moveCard = layout.move
@@ -675,18 +873,19 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   const onCardPointerDown = useCallback((e: React.PointerEvent<SVGGElement>, id: string) => {
     e.stopPropagation()
     if (e.button !== 0) return
+    stopAnim()
     const p = placedNow.current.at.get(id)
     if (!p) return
     e.currentTarget.setPointerCapture(e.pointerId)
     cardDrag.current = { id, sx: e.clientX, sy: e.clientY, ox: p.x, oy: p.y, moved: false, at: null }
-  }, [])
+  }, [stopAnim])
   const onCardPointerMove = useCallback((e: React.PointerEvent<SVGGElement>) => {
     const d = cardDrag.current
     if (!d) return
     const dx = e.clientX - d.sx, dy = e.clientY - d.sy
     if (!d.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return
     d.moved = true
-    d.at = { x: clampCoord(d.ox + dx / scale.current), y: clampCoord(d.oy + dy / scale.current) }
+    d.at = { x: clampCoord(d.ox + dx / tNow.current.k), y: clampCoord(d.oy + dy / tNow.current.k) }
     setDragAt({ id: d.id, ...d.at })
   }, [])
   const onCardPointerUp = useCallback((e: React.PointerEvent<SVGGElement>) => {
@@ -703,14 +902,6 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
 
   const picked = selected ? byId.get(selected) ?? null : null
 
-  // After an explicit selection has rendered its details: on a narrow screen,
-  // where they sit under the canvas, scroll them into view.
-  useEffect(() => {
-    const explicit = revealNext.current
-    revealNext.current = false
-    if (!explicit || !selected) return
-    revealDetail(panel.current, window)
-  }, [selected])
   const neighbours = useMemo(() => {
     if (!picked) return []
     const out: Array<{ node: MapNode; relation: string }> = []
@@ -722,7 +913,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     return out
   }, [picked, view.edges, byId])
 
-  // Found by its name, and by what it is filed under or comes from.
+  // Found by its name, and by what it is filed under or comes from, anywhere
+  // the filters leave (a card outside an explored one is reached by going to it).
   const found = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return []
@@ -730,45 +922,199 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
       .filter(Boolean).join('\n').toLowerCase()
     return nodes.filter(n => about(n).includes(q)).slice(0, 8)
   }, [query, nodes])
+  const [foundAt, setFoundAt] = useState(0)
+  useEffect(() => setFoundAt(0), [query])
+  const pick = useCallback((id: string) => {
+    setQuery('')
+    pendingSelect.current = null
+    if (drawnIds.has(id)) select(id, { centre: true, focusCard: true })
+    else goOutside(id)
+  }, [drawnIds, select, goOutside])
 
+  // ── Adding and deleting ────────────────────────────────────────────────────
+  const canDelete = (n: MapNode) => n.type === 'subject' || n.type === 'topic' || n.type === 'task'
+  const openAdd = useCallback((n: MapNode | null) => setPanel({ kind: 'add', node: n }), [])
+  const openDelete = useCallback((n: MapNode) => setPanel({ kind: 'delete', node: n }), [])
+  const closePanel = useCallback(() => setPanel(null), [])
+  const afterEdit = useCallback((said: string, select: string | null) => {
+    setPanel(null)
+    say(said)
+    if (select) { pendingSelect.current = select; revealCard(select) }
+    onChanged()
+  }, [say, onChanged, revealCard])
+  // A dialog sits by its card, kept inside the map; on a phone, along the bottom.
+  const anchor = useCallback((id: string | null): React.CSSProperties => {
+    const el = frame.current
+    const W = el?.clientWidth ?? 0, H = el?.clientHeight ?? 0
+    if (W < 640 || !id) return W < 640 ? { left: 12, right: 12, bottom: 12, width: 'auto' } : { right: 12, top: 12 }
+    const p = placed.at.get(id), n = byId.get(id)
+    if (!p || !n) return { right: 12, top: 12 }
+    const sx = t.x + p.x * t.k, sy = t.y + (p.y + CARD[n.type].h / 2) * t.k
+    return { left: Math.max(12, Math.min(sx - 170, W - 396)), top: Math.max(12, Math.min(sy + 10, H - 380)) }
+  }, [placed, byId, t])
+
+  // ── The keyboard ───────────────────────────────────────────────────────────
+  // One handler for the whole map, so a key means the same thing on a card,
+  // on the canvas or with nothing focused. See map-shortcuts.ts for the rules.
+  const cardOf = (el: Element | null): string | null => el?.closest?.('[data-node-id]')?.getAttribute('data-node-id') ?? null
+  const onKey = useRef<(e: KeyboardEvent) => void>(() => {})
+  onKey.current = (e: KeyboardEvent) => {
+    const r = root.current
+    if (!r || e.defaultPrevented || isTypingTarget(e.target)) return
+    const active = document.activeElement
+    const onCanvas = !active || active === document.body || active === frame.current
+    if (!onCanvas && !r.contains(active)) return
+    const k = shortcutFor(e)
+    if (!k) return
+    const card = cardOf(active)
+    // Enter, Space, the arrows and Delete keep their own meaning on a button or link.
+    const ownKeys = !onCanvas && !card && active instanceof HTMLElement && active.matches('button, a[href], select, summary, [role="button"], [role="radio"], [role="checkbox"]')
+    if (ownKeys && ['open', 'explore', 'fold', 'navigate', 'pan', 'delete', 'nudge', 'escape'].includes(k.action)) return
+    const target = card ?? selected
+    const node = target ? byId.get(target) ?? null : null
+    const act = () => e.preventDefault()
+    switch (k.action) {
+      case 'search': act(); search.current?.focus(); search.current?.select(); return
+      case 'help': act(); setPanel(p => (p?.kind === 'help' ? null : { kind: 'help' })); return
+      case 'escape':
+        if (panel) { act(); setPanel(null); return }
+        if (selected) { act(); setSelected(null); frame.current?.focus({ preventScroll: true }) }
+        return
+      case 'zoom_in': act(); zoomAt(1.25); return
+      case 'zoom_out': act(); zoomAt(0.8); return
+      case 'fit': act(); fit(); return
+      case 'actual_size': {
+        act()
+        if (selected && placed.at.has(selected)) centreOn(selected, 1)
+        else { const el = frame.current; if (el) zoomAt(1 / tNow.current.k) }
+        say('Zoom 100%.')
+        return
+      }
+      case 'up': act(); goUp(); return
+      case 'pan': {
+        act()
+        const step = PAN_STEP * 3
+        const by = { left: [step, 0], right: [-step, 0], up: [0, step], down: [0, -step] }[k.arrow]
+        stopAnim(); setT(v => ({ ...v, x: v.x + by[0]!, y: v.y + by[1]! }))
+        return
+      }
+      case 'navigate': {
+        act()
+        if (!target || !drawnIds.has(target)) {
+          const by = { left: [PAN_STEP, 0], right: [-PAN_STEP, 0], up: [0, PAN_STEP], down: [0, -PAN_STEP] }[k.arrow]
+          stopAnim(); setT(v => ({ ...v, x: v.x + by[0]!, y: v.y + by[1]! }))
+          return
+        }
+        const order = [...drawnIds].filter(id => placed.at.has(id)).sort((a, b) => placed.at.get(a)!.y - placed.at.get(b)!.y || placed.at.get(a)!.x - placed.at.get(b)!.x)
+        const roots = order.filter(id => { const p = tree.parent.get(id); return p === undefined || !drawnIds.has(p) })
+        const res = navigate(target, k.arrow, { children: tree.children, parent: tree.parent, roots }, drawnIds, { outline: portrait, rows: order, folded: collapsed.has(target) })
+        if (res.to !== null) { pendingSelect.current = null; select(res.to, { focusCard: true }); keepInView(res.to) } else say(res.why)
+        return
+      }
+      case 'nudge': {
+        if (!card) return
+        act()
+        const p = placed.at.get(card)
+        if (!p) return
+        const by = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }[k.arrow]
+        const step = k.far ? NUDGE * 4 : NUDGE
+        moveCard(card, clampCoord(p.x + by[0]! * step), clampCoord(p.y + by[1]! * step))
+        say(`Moved ${byId.get(card)?.label ?? 'the card'}.`)
+        return
+      }
+      case 'open':
+        if (!target) { if (onCanvas) { act(); say('Select a card first: Tab to one, or click it.') } return }
+        act(); select(target)
+        return
+      case 'explore':
+        act()
+        if (!target) { say('Select a card to explore inside.'); return }
+        explore(target)
+        return
+      case 'fold':
+        if (!target) return
+        act()
+        if (!tree.children.get(target)?.length) { say('Nothing is inside this card to fold.'); return }
+        toggleFold(target)
+        say(collapsed.has(target) ? 'Showing what is inside.' : 'Folded.')
+        return
+      case 'add':
+        act()
+        if (!node) { say(view.workspaceId ? 'Select a subject, topic or task to add to.' : 'Select a subject, topic or task to add to, or use New subject.'); return }
+        if (!ADDABLE.has(node.type)) { say(`A ${TYPE_LABEL[node.type].toLowerCase()} has nothing added inside it. Select a subject, topic or task.`); return }
+        openAdd(node)
+        return
+      case 'delete':
+        act()
+        if (!node) { say('Select a card to delete.'); return }
+        openDelete(node)
+        return
+    }
+  }
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => onKey.current(e)
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [])
+
+  // ── What is drawn ──────────────────────────────────────────────────────────
   // How much a card says at this zoom: far out, only the shapes and the
   // subjects' names (drawn at a readable size); then titles; then facts.
   const detail: CardDetail = t.k >= 0.62 ? 2 : t.k >= 0.36 ? 1 : 0
   const textScale = 1 / Math.max(t.k, 0.0001)
   const focusId = hover ?? selected
+  // A card outside an explored one is drawn at its marker, not where it sits on the whole map.
+  const pointOf = useCallback((id: string) => markers.get(id) ?? placed.at.get(id), [placed, markers])
 
-  // Lines between cards. Memoised apart from the pan, which only moves the
-  // group they sit in.
-  const edgeLayer = useMemo(() => edges.map(e => {
-    const a = placed.at.get(e.from), b = placed.at.get(e.to)
+  // Lines between cards, and the cross-links to markers. Memoised apart from
+  // the pan, which only moves the group they sit in.
+  const allLines = useMemo(() => [...drawnEdges, ...cross.map(c => c.edge)], [drawnEdges, cross])
+  const edgeLayer = useMemo(() => allLines.map(e => {
+    const a = pointOf(e.from), b = pointOf(e.to)
     if (!a || !b) return null
     const lit = focusId !== null && (e.from === focusId || e.to === focusId)
     const dim = focusId !== null && !lit
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y
     if (e.kind === 'depends_on') {
       // A wait: from the task that waits to the one it waits for, dashed in the tasks' colour.
-      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y
       return (
         <path key={e.id} d={`M ${a.x} ${a.y} Q ${mx + dy * 0.22} ${my - dx * 0.22} ${b.x} ${b.y}`} fill="none" data-edge={e.kind}
-          stroke={lit ? 'var(--action)' : 'var(--map-task)'} strokeWidth={lit ? 2 : 1.4} strokeDasharray="6 4" vectorEffect="non-scaling-stroke" opacity={dim ? 0.2 : 0.9} />
+          stroke={lit ? 'var(--action)' : 'var(--map-task)'} strokeWidth={lit ? 1.8 : 1.2} strokeDasharray="6 4" vectorEffect="non-scaling-stroke" opacity={dim ? 0.2 : 0.8} />
       )
     }
     if (e.kind === 'links_to') {
-      // A [[link]] curves, so it reads apart from where things are filed.
-      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y
+      // A [[link]]: a quiet curve; the ring where it arrives says what it is.
       return (
         <path key={e.id} d={`M ${a.x} ${a.y} Q ${mx - dy * 0.18} ${my + dx * 0.18} ${b.x} ${b.y}`} fill="none" data-edge={e.kind}
-          stroke={lit ? 'var(--action)' : 'var(--nova)'} strokeWidth={lit ? 2 : 1.5} vectorEffect="non-scaling-stroke" opacity={dim ? 0.2 : 0.9} />
+          stroke={lit ? 'var(--action)' : 'var(--map-line-strong)'} strokeWidth={lit ? 1.6 : 1.1} vectorEffect="non-scaling-stroke" opacity={dim ? 0.25 : 1} />
       )
     }
     return (
       <line key={e.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
         stroke={lit ? 'var(--action)' : 'var(--map-line)'}
-        strokeWidth={lit ? 2.4 : e.kind === 'contains' ? 2.2 : e.kind === 'has_topic' || e.kind === 'subtopic' ? 1.6 : 1.1}
+        strokeWidth={lit ? 2.2 : e.kind === 'contains' ? 2 : e.kind === 'has_topic' || e.kind === 'subtopic' ? 1.5 : 1.1}
         strokeDasharray={e.kind === 'filed_under' ? '5 4' : undefined}
         vectorEffect="non-scaling-stroke" data-edge={e.kind}
         opacity={dim ? 0.25 : 1} />
     )
-  }), [edges, placed, focusId])
+  }), [allLines, pointOf, focusId])
+
+  // The rings of [[links]], over the cards: one where each link arrives.
+  const ringLayer = useMemo(() => allLines.filter(e => e.kind === 'links_to').map(e => {
+    const a = pointOf(e.from), b = pointOf(e.to)
+    const to = byId.get(e.to), from = byId.get(e.from)
+    if (!a || !b || !to || !from) return null
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y
+    const ctrl = { x: mx - dy * 0.18, y: my + dx * 0.18 }
+    const at = ringPoint(ctrl, b, markers.has(e.to) ? MARKER_R : CARD[to.type])
+    const lit = focusId !== null && (e.from === focusId || e.to === focusId)
+    return (
+      <circle key={`ring-${e.id}`} cx={at.x} cy={at.y} r={4.5} fill="var(--card)" stroke={lit ? 'var(--action)' : 'var(--nova)'} strokeWidth={1.5} vectorEffect="non-scaling-stroke" data-backlink={e.id}
+        opacity={focusId !== null && !lit ? 0.35 : 1}>
+        <title>{`“${from.label}” links to “${to.label}” with [[${to.label}]]`}</title>
+      </circle>
+    )
+  }), [allLines, pointOf, byId, markers, focusId])
 
   const suggestionLayer = useMemo(() => suggestions.map(s => {
     const a = placed.at.get(s.from), b = placed.at.get(s.to)
@@ -776,7 +1122,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     const lit = focusId !== null && (s.from === focusId || s.to === focusId)
     return (
       <line key={s.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y} data-suggestion={s.confidence}
-        stroke={lit ? 'var(--action)' : 'var(--map-line)'}
+        stroke={lit ? 'var(--action)' : 'var(--map-line-strong)'}
         strokeWidth={1.2} strokeDasharray="1 6" strokeLinecap="round" vectorEffect="non-scaling-stroke"
         opacity={focusId !== null && !lit ? 0.15 : 0.8} />
     )
@@ -784,7 +1130,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
 
   // The cards. Memoised apart from the pan; the zoom only changes them when
   // it crosses into another level of detail.
-  const nodeLayer = useMemo(() => nodes.map(n => {
+  const nodeLayer = useMemo(() => drawn.map(n => {
     const p = placed.at.get(n.id)
     if (!p) return null
     const { w, h } = CARD[n.type]
@@ -792,51 +1138,79 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     const on  = selected === n.id
     const dragging = dragAt?.id === n.id
     const tone = n.type === 'subject' ? n.label : n.subjectName
+    const kids = tree.children.get(n.id)?.length ?? 0
     return (
       <g
         key={n.id} transform={`translate(${p.x} ${p.y})`} opacity={dim ? 0.38 : 1}
-        role="button" tabIndex={0} aria-label={`${TYPE_LABEL[n.type]}: ${n.label}`} aria-pressed={on}
-        aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
-        className={cn('subject-tone outline-none [&:focus-visible_.map-focus]:opacity-100', dragging ? 'cursor-grabbing' : 'cursor-pointer')}
-        style={toneStyle(tone)} data-node={n.type}
+        role="button" tabIndex={0} aria-label={`${TYPE_LABEL[n.type]}: ${n.label}${kids ? `, ${kids} inside` : ''}`} aria-pressed={on}
+        aria-keyshortcuts="Enter Shift+Enter Space N Delete Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+        className={cn('subject-tone group/card outline-none [&:focus-visible_.map-focus]:opacity-100', dragging ? 'cursor-grabbing' : 'cursor-pointer')}
+        style={toneStyle(tone)} data-node={n.type} data-node-id={n.id}
         onPointerDown={e => onCardPointerDown(e, n.id)} onPointerMove={onCardPointerMove}
         onPointerUp={onCardPointerUp} onPointerCancel={onCardPointerCancel}
         onClick={() => {
           if (swallowClick.current) { swallowClick.current = false; return }
-          revealNext.current = !on
-          setSelected(on ? null : n.id)
+          pendingSelect.current = null
+          if (on) { setDetailOpen(o => !o); return }
+          select(n.id)
         }}
-        onKeyDown={e => {
-          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); revealNext.current = !on; setSelected(on ? null : n.id); return }
-          const by = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<string, [number, number]>)[e.key]
-          if (e.altKey && by) {
-            e.preventDefault()
-            const step = e.shiftKey ? NUDGE * 4 : NUDGE
-            moveCard(n.id, clampCoord(p.x + by[0] * step), clampCoord(p.y + by[1] * step))
-            setSaid(`Moved ${n.label}.`)
-          }
-        }}
+        onDoubleClick={() => { if (kids) explore(n.id) }}
         onPointerEnter={() => setHover(n.id)} onPointerLeave={() => setHover(null)}
       >
-        {(on || dragging) && <rect x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
+        {(on || dragging) && <rect x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="color-mix(in oklch, var(--action) 9%, transparent)" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
         <rect className="map-focus opacity-0" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--ring)" strokeWidth={2.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" />
         <g style={dragging ? { filter: 'drop-shadow(0 10px 18px rgb(0 0 0 / 0.25))' } : undefined}><CardFace n={n} detail={detail} /></g>
-        {(tree.children.get(n.id)?.length ?? 0) > 0 && detail >= 1 && (
+        {kids > 0 && detail >= 1 && (
           // Fold or show what hangs from it.
           <g transform={`translate(${w / 2} 0)`} role="button" tabIndex={-1} aria-label={collapsed.has(n.id) ? `Show what is inside ${n.label}` : `Fold what is inside ${n.label}`} data-fold={collapsed.has(n.id) ? 'folded' : 'open'}
             onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); toggleFold(n.id) }} className="cursor-pointer">
             <circle r={9} fill="var(--card)" stroke="var(--border)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
             {collapsed.has(n.id)
-              ? <text textAnchor="middle" y={3.5} fontSize={9.5} fontWeight={600} className="fill-foreground">{Math.min(99, insideOf(n.id))}</text>
+              ? <text textAnchor="middle" y={3.5} fontSize={9.5} fontWeight={600} className="fill-foreground">{Math.min(99, insideCount(n.id))}</text>
               : <path d="M -4 0 h 8" stroke="var(--subtle)" strokeWidth={1.6} vectorEffect="non-scaling-stroke" />}
+          </g>
+        )}
+        {ADDABLE.has(n.type) && detail >= 1 && (
+          // Add a card inside or beside it. Shown on hover, focus and selection.
+          <g transform={`translate(${w / 2 - 14} ${-h / 2})`} role="button" tabIndex={-1} aria-label={`Add to ${n.label}`} data-add={n.id}
+            className={cn('map-add cursor-pointer transition-opacity', on ? 'opacity-100' : 'opacity-0 group-hover/card:opacity-100 group-focus-visible/card:opacity-100')}
+            onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setSelected(n.id); openAdd(n) }}>
+            <title>{`Add to ${n.label} (N)`}</title>
+            <circle r={9} fill="var(--action)" />
+            <path d="M -4 0 h 8 M 0 -4 v 8" stroke="var(--action-foreground)" strokeWidth={1.8} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
           </g>
         )}
       </g>
     )
-  }), [nodes, placed, neighbourIds, selected, dragAt, detail, onCardPointerDown, onCardPointerMove, onCardPointerUp, onCardPointerCancel, moveCard, tree, collapsed, insideOf, toggleFold])
+  }), [drawn, placed, neighbourIds, selected, dragAt, detail, onCardPointerDown, onCardPointerMove, onCardPointerUp, onCardPointerCancel, tree, collapsed, insideCount, toggleFold, select, explore, openAdd])
+
+  // Round markers for the cards outside an explored one, joined by a link.
+  const markerLayer = useMemo(() => [...markers.entries()].map(([id, m]) => {
+    const n = byId.get(id)
+    if (!n) return null
+    const lit = focusId === id
+    return (
+      <g key={`out-${id}`} transform={`translate(${m.x} ${m.y})`} role="button" tabIndex={0} data-outside={id} data-node-id={id}
+        aria-label={`Outside this map: ${TYPE_LABEL[n.type]} ${n.label}. Go to it.`} className="group/out cursor-pointer outline-none [&:focus-visible_.map-focus]:opacity-100"
+        onPointerDown={e => e.stopPropagation()} onClick={() => goOutside(id)}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); goOutside(id) } }}
+        onPointerEnter={() => setHover(id)} onPointerLeave={() => setHover(null)}>
+        <title>{`${n.label}: outside this map. Go to it.`}</title>
+        <circle className="map-focus opacity-0" r={MARKER_R + 5} fill="none" stroke="var(--ring)" strokeWidth={2.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" />
+        <circle r={MARKER_R} fill="var(--card)" stroke={lit ? 'var(--action)' : 'var(--map-line-strong)'} strokeWidth={1.4} strokeDasharray="3 2.5" vectorEffect="non-scaling-stroke" />
+        <circle r={5} fill={FILL[n.type]} />
+        {detail >= 1 && (
+          <>
+            <text x={MARKER_R + 9} y={detail === 2 ? -2 : 4} fontSize={12.5} fontWeight={500} className="fill-foreground">{short(n.label, 24)}</text>
+            {detail === 2 && <text x={MARKER_R + 9} y={13} fontSize={10.5} className="fill-[var(--subtle)]">{TYPE_LABEL[n.type]} · outside</text>}
+          </>
+        )}
+      </g>
+    )
+  }), [markers, byId, focusId, detail, goOutside])
 
   // Far out, the subjects' names over their cards, at a size that can be read.
-  const farLabels = detail === 0 ? nodes.filter(n => n.type === 'subject').map(n => {
+  const farLabels = detail === 0 ? drawn.filter(n => n.type === 'subject').map(n => {
     const p = placed.at.get(n.id)
     if (!p) return null
     const size = 13 * Math.min(textScale, 4)
@@ -848,12 +1222,15 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     )
   }) : null
 
+  // ── Around the canvas ──────────────────────────────────────────────────────
   const saver = layout.saver
   const hasLayout = layout.positions.size > 0 || saver.unsaved > 0
   const chip = (on: boolean) => cn(
     'inline-flex h-8 items-center gap-2 rounded-full border px-3 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring',
     on ? 'border-white/16 bg-white/6 text-foreground' : 'border-white/8 text-subtle hover:text-foreground',
   )
+  const tool = 'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-white/10 px-3 text-xs font-medium text-foreground/75 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-40'
+  const hidden = TYPES.filter(x => !shown[x.type]).length + (subject ? 1 : 0) + (showLinks ? 0 : 1) + (collapsed.size ? 1 : 0)
 
   let layoutNote: ReactNode = null
   if (layout.load === 'failed') {
@@ -877,159 +1254,265 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   }
   const saveText = saver.status === 'saving' ? 'Saving layout…' : saver.status === 'pending' ? 'Unsaved changes' : saver.status === 'failed' ? 'Layout not saved' : layout.positions.size > 0 ? 'Layout saved' : ''
 
+  // Reset: Kivo's own layout and orientation, fitted. Saved card positions
+  // are removed only after the learner confirms it.
+  const resetView = () => { forgetViews(store); chooseOrientation(store, null); setChosen(null); requestAnimationFrame(() => fit()) }
+  const askReset = () => { if (hasLayout) setPanel({ kind: 'reset' }); else { resetView(); say('The map is in its own layout. View reset.') } }
+
+  const trail = [{ id: null as string | null, label: view.workspaces?.find(w => w.id === view.workspaceId)?.title ?? 'Everything' },
+    ...(focus ? pathTo(tree, focus).map(id => ({ id, label: byId.get(id)?.label ?? '' })) : [])]
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] border border-white/8 bg-card/60 lg:flex-row">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {/* Filters. Each does what it says, and none changes what is stored. */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-white/8 p-3">
-          {(view.workspaces?.length ?? 0) > 0 && onWorkspace && (
-            // One workspace's map at a time; everything together on request.
-            <select value={view.workspaceId ?? 'all'} onChange={e => onWorkspace(e.target.value)} aria-label="Which workspace's map" data-workspace-switch
-              className="h-8 max-w-[14rem] rounded-full border border-white/12 bg-background px-3 text-xs font-medium text-foreground outline-none focus-visible:border-ring">
-              {view.workspaces!.map(w => <option key={w.id} value={w.id}>{w.title}</option>)}
-              <option value="all">Everything you have</option>
-            </select>
-          )}
-          {TYPES.map(({ type, plural: label }) => (
-            <button key={type} type="button" aria-pressed={shown[type]} onClick={() => setShown(s => ({ ...s, [type]: !s[type] }))} className={chip(shown[type])}>
-              <span className="inline-block size-2 rounded-full" style={{ background: FILL[type], opacity: shown[type] ? 1 : 0.35 }} />
-              {label} <span className="tabular-nums text-subtle">{view.counts[type]}</span>
-            </button>
-          ))}
-          {linkCount > 0 && (
-            <button type="button" aria-pressed={showLinks} onClick={() => setShowLinks(v => !v)} className={chip(showLinks)}>
-              Links between notes <span className="tabular-nums text-subtle">{linkCount}</span>
-            </button>
-          )}
-          {subjects.length > 1 && (
-            <select value={subject} onChange={e => setSubject(e.target.value)} aria-label="Show one subject"
-              className="h-8 rounded-full border border-white/10 bg-background px-3 text-xs text-foreground outline-none focus-visible:border-ring">
-              <option value="">All subjects</option>
-              {subjects.map(s => <option key={s.id} value={s.subjectId ?? ''}>{s.label}</option>)}
-            </select>
-          )}
-          <button type="button" onClick={() => setCollapsed(c => (c.size ? new Set() : new Set(view.nodes.filter(n => n.type !== 'subject' && (tree.children.get(n.id)?.length ?? 0) > 0).map(n => n.id))))} className={chip(collapsed.size > 0)} data-fold-all>
-            {collapsed.size ? <ChevronsUpDown aria-hidden className="size-3.5" /> : <ChevronsDownUp aria-hidden className="size-3.5" />} {collapsed.size ? 'Show everything inside' : 'Fold topics and tasks'}
-          </button>
-          <div className="ml-auto flex items-center gap-2">
-            <span role="status" className={cn('text-xs tabular-nums', saver.status === 'failed' ? 'text-red-400' : 'text-subtle')} data-layout-status={saver.status}>
-              {layout.load === 'loading' ? 'Loading layout…' : saveText}
-            </span>
-            <button type="button" onClick={() => setConfirmReset(true)} disabled={!hasLayout || confirmReset} className={cn(BUTTON_QUIET, 'h-8 rounded-full')} data-reset-layout>
-              <RotateCcw aria-hidden className="size-3" /> Reset layout
-            </button>
-          </div>
-          <div className="relative">
+    <div ref={root} className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-white/8 bg-card/60" data-knowledge-map>
+      {/* The toolbar: where you are, finding, and the view. Filters are folded into one menu. */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-white/8 px-3 py-2">
+        {(view.workspaces?.length ?? 0) > 0 && onWorkspace && (
+          // One workspace's map at a time; everything together on request.
+          <select value={view.workspaceId ?? 'all'} onChange={e => onWorkspace(e.target.value)} aria-label="Which workspace's map" data-workspace-switch
+            className="h-8 max-w-[11rem] rounded-full border border-white/12 bg-background px-3 text-xs font-medium text-foreground outline-none focus-visible:border-ring sm:max-w-[14rem]">
+            {view.workspaces!.map(w => <option key={w.id} value={w.id}>{w.title}</option>)}
+            <option value="all">Everything you have</option>
+          </select>
+        )}
+        <Breadcrumbs trail={trail} canBack={stack.length > 1} onBack={goBack} onUp={goUp} onGo={goTo} />
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 max-sm:w-full">
+          <div className="relative order-last w-full sm:order-none sm:w-44 xl:w-56">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-subtle" />
-            <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Find on the map" aria-label="Find on the map"
-              className="h-8 w-44 rounded-full border border-white/10 bg-background pl-8 pr-3 text-xs text-foreground outline-none placeholder:text-subtle focus-visible:border-ring" />
+            <input ref={search} value={query} onChange={e => setQuery(e.target.value)} placeholder="Find on the map" aria-label="Find on the map"
+              role="combobox" aria-expanded={found.length > 0} aria-controls="map-found" aria-activedescendant={found[foundAt] ? `map-found-${foundAt}` : undefined}
+              onKeyDown={e => {
+                if (e.key === 'Escape') { e.preventDefault(); e.nativeEvent.stopImmediatePropagation(); setQuery(''); frame.current?.focus({ preventScroll: true }) }
+                else if (e.key === 'ArrowDown' && found.length) { e.preventDefault(); setFoundAt(i => (i + 1) % found.length) }
+                else if (e.key === 'ArrowUp' && found.length) { e.preventDefault(); setFoundAt(i => (i - 1 + found.length) % found.length) }
+                else if (e.key === 'Enter' && found[foundAt]) { e.preventDefault(); pick(found[foundAt]!.id) }
+              }}
+              className="h-8 w-full rounded-full border border-white/10 bg-background pl-8 pr-12 text-xs text-foreground outline-none placeholder:text-subtle focus-visible:border-ring" />
+            <kbd className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded border border-white/10 px-1 font-sans text-[10px] text-subtle sm:block">{mac ? '⌘K' : '/'}</kbd>
             {query.trim() && found.length === 0 && (
-              <p role="status" className="absolute right-0 top-10 z-20 w-64 rounded-xl border border-white/10 bg-popover px-3 py-2 text-xs text-foreground/70 shadow-float">Nothing on the map matches. Hidden types and subjects are not searched.</p>
+              <p role="status" className="absolute right-0 top-10 z-30 w-64 rounded-xl border border-white/10 bg-popover px-3 py-2 text-xs text-foreground/70 shadow-float">Nothing on the map matches. Hidden types and subjects are not searched.</p>
             )}
             {found.length > 0 && (
-              <ul className="absolute right-0 top-10 z-20 w-64 overflow-hidden rounded-xl border border-white/10 bg-popover shadow-float">
-                {found.map(n => (
-                  <li key={n.id}>
-                    <button type="button" onClick={() => { revealNext.current = true; select(n.id); setQuery('') }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground/85 hover:bg-white/6">
+              <ul id="map-found" role="listbox" data-map-overlay className="absolute right-0 top-10 z-30 w-full min-w-64 overflow-hidden rounded-xl border border-white/10 bg-popover shadow-float">
+                {found.map((n, i) => (
+                  <li key={n.id} id={`map-found-${i}`} role="option" aria-selected={i === foundAt}>
+                    <button type="button" tabIndex={-1} onClick={() => pick(n.id)} className={cn('flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground/85 hover:bg-white/6', i === foundAt && 'bg-white/6')}>
                       <span className="inline-block size-2 shrink-0 rounded-full" style={{ background: FILL[n.type] }} />
                       <span className="truncate">{n.label}</span>
-                      <span className="ml-auto shrink-0 text-subtle">{TYPE_LABEL[n.type]}</span>
+                      <span className="ml-auto shrink-0 text-subtle">{inside && !drawnIds.has(n.id) ? 'Outside' : TYPE_LABEL[n.type]}</span>
                     </button>
                   </li>
                 ))}
               </ul>
             )}
           </div>
+
+          <span role="status" className={cn('hidden text-xs tabular-nums xl:inline', saver.status === 'failed' ? 'text-red-400' : 'text-subtle')} data-layout-status={saver.status}>
+            {layout.load === 'loading' ? 'Loading layout…' : saveText}
+          </span>
+          <div className="relative">
+            <button type="button" onClick={() => setPanel(p => (p?.kind === 'filters' ? null : { kind: 'filters' }))} aria-expanded={panel?.kind === 'filters'} className={tool} data-filters-open>
+              <SlidersHorizontal aria-hidden className="size-3.5" /> <span className="hidden sm:inline">Show</span>{hidden > 0 && <span className="rounded-full bg-action-soft px-1.5 text-[10px] tabular-nums text-foreground">{hidden}</span>}
+            </button>
+            {panel?.kind === 'filters' && (
+              <div data-map-overlay className="absolute right-0 top-10 z-30 w-[min(20rem,calc(100vw-2rem))] space-y-3 rounded-2xl border border-white/10 bg-popover p-3 shadow-float" onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); setPanel(null) } }}>
+                <div className="flex flex-wrap gap-1.5">
+                  {TYPES.map(({ type, plural: label }) => (
+                    <button key={type} type="button" aria-pressed={shown[type]} onClick={() => setShown(s => ({ ...s, [type]: !s[type] }))} className={chip(shown[type])}>
+                      <span className="inline-block size-2 rounded-full" style={{ background: FILL[type], opacity: shown[type] ? 1 : 0.35 }} />
+                      {label} <span className="tabular-nums text-subtle">{view.counts[type]}</span>
+                    </button>
+                  ))}
+                  {linkCount > 0 && (
+                    <button type="button" aria-pressed={showLinks} onClick={() => setShowLinks(v => !v)} className={chip(showLinks)}>
+                      <span aria-hidden className="inline-block size-2.5 rounded-full border-[1.5px] border-[var(--nova)]" /> Links between notes <span className="tabular-nums text-subtle">{linkCount}</span>
+                    </button>
+                  )}
+                </div>
+                {subjects.length > 1 && (
+                  <select value={subject} onChange={e => setSubject(e.target.value)} aria-label="Show one subject"
+                    className="h-8 w-full rounded-full border border-white/10 bg-background px-3 text-xs text-foreground outline-none focus-visible:border-ring">
+                    <option value="">All subjects</option>
+                    {subjects.map(s => <option key={s.id} value={s.subjectId ?? ''}>{s.label}</option>)}
+                  </select>
+                )}
+                <button type="button" onClick={() => setCollapsed(c => (c.size ? new Set() : new Set(view.nodes.filter(n => n.type !== 'subject' && (tree.children.get(n.id)?.length ?? 0) > 0).map(n => n.id))))} className={chip(collapsed.size > 0)} data-fold-all>
+                  {collapsed.size ? <ChevronsUpDown aria-hidden className="size-3.5" /> : <ChevronsDownUp aria-hidden className="size-3.5" />} {collapsed.size ? 'Show everything inside' : 'Fold topics and tasks'}
+                </button>
+                <div className="flex items-center justify-between gap-2 border-t border-white/8 pt-3">
+                  <span className="text-xs text-subtle">Read the map</span>
+                  <div role="radiogroup" aria-label="Orientation" className="inline-flex rounded-full border border-white/10 p-0.5">
+                    {(['tree', 'outline'] as const).map(o => (
+                      <button key={o} type="button" role="radio" aria-checked={orientation === o} data-orientation={o}
+                        onClick={() => { setChosen(o); chooseOrientation(store, o) }}
+                        className={cn('rounded-full px-2.5 py-1 text-xs font-medium', orientation === o ? 'bg-white/8 text-foreground' : 'text-subtle hover:text-foreground')}>
+                        {o === 'tree' ? 'Left to right' : 'Top to bottom'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          {!view.workspaceId && (
+            <button type="button" onClick={() => openAdd(null)} className={tool} data-new-subject title="A subject of its own">
+              <Plus aria-hidden className="size-3.5" /> <span className="hidden sm:inline">New subject</span>
+            </button>
+          )}
+          <button type="button" onClick={askReset} className={tool} data-reset-layout title="Kivo's own layout, fitted to the screen">
+            <RotateCcw aria-hidden className="size-3" /> <span className="hidden md:inline">Reset layout</span>
+          </button>
+          <button type="button" onClick={() => setPanel(p => (p?.kind === 'help' ? null : { kind: 'help' }))} className={cn(tool, 'px-2.5')} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" data-shortcuts-open>
+            <Keyboard aria-hidden className="size-3.5" />
+          </button>
         </div>
+      </div>
 
-        {confirmReset && (
-          <div role="group" aria-label="Reset layout" className="flex flex-wrap items-center justify-between gap-2 border-b border-white/8 bg-action-soft px-3 py-2 text-xs text-foreground/85">
-            <span>Put every card back where Kivo places it? Your notes, pages and links stay as they are.</span>
-            <span className="flex gap-2">
-              <button type="button" disabled={layout.reset.busy} data-reset-confirm
-                onClick={() => void layout.resetPositions().then(ok => { if (ok) { setConfirmReset(false); setSaid('Layout reset.') } })}
-                className={cn(BUTTON_PRIMARY, 'h-7 px-3 text-xs')}>{layout.reset.busy ? 'Resetting…' : 'Reset layout'}</button>
-              <button type="button" onClick={() => setConfirmReset(false)} disabled={layout.reset.busy} className={cn(BUTTON_QUIET, 'h-7')}>Cancel</button>
-            </span>
-          </div>
-        )}
-        {layoutNote}
+      {layoutNote}
 
-        {inScope && scope && (
-          <div className="flex items-center justify-between gap-3 border-b border-white/8 px-3 py-2 text-xs text-foreground/70" role="status" data-map-scope>
-            <span>Showing <span className="text-foreground">{byId.get(scope)?.label}</span>, everything inside it, what it sits inside, and what links to them.</span>
-            <button type="button" onClick={() => setScope(null)} className={cn(BUTTON_QUIET, 'h-7 rounded-full')}>Show everything</button>
-          </div>
-        )}
+      {inScope && scope && (
+        <div className="flex items-center justify-between gap-3 border-b border-white/8 px-3 py-2 text-xs text-foreground/70" role="status" data-map-scope>
+          <span>Showing <span className="text-foreground">{byId.get(scope)?.label}</span>, what it sits inside, and what links to it.</span>
+          <button type="button" onClick={() => setScope(null)} className={cn(BUTTON_QUIET, 'h-7 rounded-full')}>Show everything</button>
+        </div>
+      )}
 
-        <div
-          ref={frame}
-          className="nova-canvas relative min-h-[24rem] flex-1 touch-none select-none overflow-hidden bg-background/40 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-          style={{ cursor: drag.current ? 'grabbing' : 'grab' }}
-          // The map can be moved without a pointer: arrow keys pan it, plus and
-          // minus zoom, 0 fits it. Only while the map itself has focus, so the
-          // keys keep their meaning on a node or in the search box.
-          tabIndex={0} role="group" aria-label="Knowledge map. Arrow keys move the view, plus and minus zoom, zero fits it all. Tab reaches each item; on an item, Alt and the arrow keys move it."
-          onKeyDown={e => {
-            if (e.target !== e.currentTarget) return
-            const step = e.shiftKey ? PAN_STEP * 3 : PAN_STEP
-            const move: Record<string, [number, number]> = { ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] }
-            const by = move[e.key]
-            if (by) { e.preventDefault(); setT(v => ({ ...v, x: v.x + by[0], y: v.y + by[1] })) }
-            else if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomAt(1.25) }
-            else if (e.key === '-') { e.preventDefault(); zoomAt(0.8) }
-            else if (e.key === '0') { e.preventDefault(); fit() }
-          }}
-          onPointerDown={e => { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); drag.current = { x: e.clientX, y: e.clientY, moved: false } }}
-          onPointerMove={e => {
-            const d = drag.current
-            if (!d) return
-            const dx = e.clientX - d.x, dy = e.clientY - d.y
-            if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true
-            d.x = e.clientX; d.y = e.clientY
-            setT(v => ({ ...v, x: v.x + dx, y: v.y + dy }))
-          }}
-          // A press on the background that did not pan clears the selection.
-          onPointerUp={() => { const d = drag.current; drag.current = null; if (d && !d.moved) setSelected(null) }}
-          onPointerCancel={() => { drag.current = null }}
-        >
-          {nodes.length === 0 ? (
-            <p className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm text-foreground/65">Nothing matches these filters{inScope ? ' around this item' : ''}. Turn one back on{inScope ? ', or show everything,' : ''} to see the map.</p>
-          ) : (
-            // A group, not an image: it holds the items a keyboard reaches.
-            <svg className="absolute inset-0 size-full" role="group" aria-label={`${nodes.length} items and ${edges.length} links`}>
-              <g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>
-                {placed.loose && (
+      <div
+        ref={frame}
+        className="nova-canvas relative min-h-[20rem] flex-1 touch-none select-none overflow-hidden bg-background/40 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+        style={{ cursor: drag.current ? 'grabbing' : 'grab' }}
+        tabIndex={0} role="group" aria-roledescription="map"
+        aria-label={`Knowledge map${focus ? `, exploring ${byId.get(focus)?.label ?? ''}` : ''}. Arrow keys move the view or, with a card selected, between cards; plus and minus zoom; F fits; question mark lists every shortcut.`}
+        onPointerDown={e => {
+          stopAnim()
+          const el = e.currentTarget as HTMLElement
+          el.setPointerCapture(e.pointerId)
+          pinch.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+          drag.current = pinch.current.size === 1 ? { x: e.clientX, y: e.clientY, moved: false } : null
+        }}
+        onPointerMove={e => {
+          const pts = pinch.current
+          if (pts.size === 2 && pts.has(e.pointerId)) {
+            // Two fingers: zoom about the point between them.
+            const [a, b] = [...pts.values()]
+            const before = Math.hypot(a!.x - b!.x, a!.y - b!.y)
+            pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+            const [c, d] = [...pts.values()]
+            const after = Math.hypot(c!.x - d!.x, c!.y - d!.y)
+            const box2 = e.currentTarget.getBoundingClientRect()
+            if (before > 0) zoomAt(after / before, (c!.x + d!.x) / 2 - box2.left, (c!.y + d!.y) / 2 - box2.top)
+            return
+          }
+          const dd = drag.current
+          if (!dd) return
+          const dx = e.clientX - dd.x, dy = e.clientY - dd.y
+          if (Math.abs(dx) + Math.abs(dy) > 3) dd.moved = true
+          dd.x = e.clientX; dd.y = e.clientY
+          pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+          setT(v => ({ ...v, x: v.x + dx, y: v.y + dy }))
+        }}
+        // A press on the background that did not pan clears the selection.
+        onPointerUp={e => { pinch.current.delete(e.pointerId); const dd = drag.current; drag.current = null; if (dd && !dd.moved && pinch.current.size === 0) { setSelected(null); setPanel(p => (p?.kind === 'filters' || p?.kind === 'legend' ? null : p)) } }}
+        onPointerCancel={e => { pinch.current.delete(e.pointerId); drag.current = null }}
+      >
+        {drawn.length === 0 ? (
+          <p className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm text-foreground/65">Nothing matches these filters{inScope ? ' around this item' : ''}. Turn one back on{inScope ? ', or show everything,' : ''} to see the map.</p>
+        ) : (
+          // A group, not an image: it holds the items a keyboard reaches.
+          <svg className="absolute inset-0 size-full" role="group" aria-label={`${drawn.length} items and ${drawnEdges.length} links${markers.size ? `, ${markers.size} outside` : ''}`}>
+            <g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>
+              <g key={focus ?? 'root'} className="map-enter">
+                {!inside && placed.loose && (
                   <text x={placed.loose.x - CARD.note.w / 2} y={placed.loose.y - 44} className="fill-[var(--subtle)]" fontSize={12 * Math.min(textScale, 2.5)}>Not filed under a subject</text>
                 )}
                 {edgeLayer}
                 {suggestionLayer}
                 {nodeLayer}
+                {markerLayer}
+                {ringLayer}
                 {farLabels}
               </g>
-            </svg>
-          )}
+            </g>
+          </svg>
+        )}
 
-          <div className="absolute bottom-3 right-3 flex flex-col overflow-hidden rounded-xl border border-white/10 bg-card/90 shadow-soft backdrop-blur" onPointerDown={e => e.stopPropagation()}>
-            <button type="button" onClick={() => zoomAt(1.25)} aria-label="Zoom in" className="p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"><Plus className="size-4" /></button>
-            <button type="button" onClick={() => zoomAt(0.8)} aria-label="Zoom out" className="border-t border-white/8 p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"><Minus className="size-4" /></button>
-            <button type="button" onClick={fit} aria-label="Fit the whole map" className="border-t border-white/8 p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"><Maximize2 className="size-4" /></button>
+        {/* What the selected card can do, beside it. */}
+        {picked && drawnIds.has(picked.id) && !dragAt && !panel && (() => {
+          const p = placed.at.get(picked.id)
+          const el = frame.current
+          if (!p || !el) return null
+          const { h } = CARD[picked.type]
+          const sx = t.x + p.x * t.k, sy = t.y + (p.y - h / 2) * t.k
+          if (sx < 0 || sy < 44 || sx > el.clientWidth || sy > el.clientHeight) return null
+          const kids = (tree.children.get(picked.id)?.length ?? 0) > 0
+          const bar = 'inline-flex size-8 items-center justify-center rounded-full text-foreground/75 transition-colors hover:bg-white/8 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring'
+          return (
+            <div data-map-overlay data-node-bar role="toolbar" aria-label={`Actions for ${picked.label}`} onPointerDown={e => e.stopPropagation()}
+              className="absolute z-10 flex -translate-x-1/2 -translate-y-full items-center gap-0.5 rounded-full border border-white/10 bg-popover/95 p-0.5 shadow-soft backdrop-blur"
+              style={{ left: Math.max(90, Math.min(sx, el.clientWidth - 90)), top: sy - 8 }}>
+              {kids && <button type="button" onClick={() => explore(picked.id)} className={cn(bar, 'w-auto gap-1.5 px-3 text-xs font-medium')} title="Explore inside (Shift+Enter)" data-bar-explore><Layers aria-hidden className="size-3.5" /> Explore</button>}
+              {ADDABLE.has(picked.type) && <button type="button" onClick={() => openAdd(picked)} className={bar} aria-label="Add" title="Add (N)"><Plus className="size-4" /></button>}
+              {kids && <button type="button" onClick={() => toggleFold(picked.id)} className={bar} aria-label={collapsed.has(picked.id) ? 'Show what is inside' : 'Fold what is inside'} title="Fold (Space)">{collapsed.has(picked.id) ? <ChevronsUpDown className="size-4" /> : <ChevronsDownUp className="size-4" />}</button>}
+              {!detailOpen && <button type="button" onClick={() => setDetailOpen(true)} className={bar} aria-label="Show details" title="Details (Enter)"><PanelRightOpen className="size-4" /></button>}
+              {canDelete(picked) && <button type="button" onClick={() => openDelete(picked)} className={cn(bar, 'hover:text-red-400')} aria-label="Delete" title="Delete"><Trash2 className="size-4" /></button>}
+            </div>
+          )
+        })()}
+
+        {panel?.kind === 'add' && <AddDialog key={`add-${panel.node?.id ?? 'subject'}`} node={panel.node} nodes={view.nodes} choices={panel.node ? undefined : [NEW_SUBJECT]} style={anchor(panel.node?.id ?? null)} onClose={closePanel} onAdded={a => afterEdit(a.said, a.select)} />}
+        {panel?.kind === 'delete' && (
+          <DeleteDialog key={`del-${panel.node.id}`} node={panel.node} edges={view.edges} tree={tree} style={anchor(panel.node.id)} onClose={closePanel}
+            onDeleted={said => { if (selected === panel.node.id) setSelected(null); afterEdit(said, null) }} onStale={onChanged} />
+        )}
+        {panel?.kind === 'reset' && (
+          <div role="alertdialog" aria-label="Reset layout" data-map-overlay className="absolute left-1/2 top-3 z-30 w-[min(26rem,calc(100%-1.5rem))] -translate-x-1/2 rounded-2xl border border-white/10 bg-popover p-4 text-sm shadow-float" onPointerDown={e => e.stopPropagation()}>
+            <p className="leading-relaxed text-foreground/85">Put every card back where Kivo places it, in the device&apos;s own orientation, and fit the map? Your subjects, topics, tasks, notes and links stay as they are.</p>
+            <div className="mt-3 flex justify-end gap-2">
+              <button type="button" onClick={closePanel} disabled={layout.reset.busy} className={cn(BUTTON_QUIET, 'h-8')} autoFocus>Cancel</button>
+              <button type="button" disabled={layout.reset.busy} data-reset-confirm
+                onClick={() => void layout.resetPositions().then(ok => { if (ok) { setPanel(null); resetView(); say('Layout reset.') } })}
+                className={cn(BUTTON_PRIMARY, 'h-8 px-3 text-xs')}>{layout.reset.busy ? 'Resetting…' : 'Reset layout'}</button>
+            </div>
           </div>
+        )}
+        {panel?.kind === 'help' && <ShortcutsHelp mac={mac} onClose={closePanel} />}
+        {panel?.kind === 'legend' && <Legend onClose={closePanel} suggestions={suggestions.length > 0} outside={markers.size > 0} />}
 
-          <p className="pointer-events-none absolute bottom-3 left-3 hidden max-w-[60%] rounded-lg bg-background/80 px-2.5 py-1.5 text-[11px] leading-relaxed text-foreground/70 backdrop-blur-sm sm:block">
-            Drag a card to arrange it (Alt and the arrow keys move a focused card); drag the background to move around; scroll to zoom. Each branch reads top to bottom in its saved order; the round button on a card folds what is inside it. A dashed card is a topic with no session yet; a flag is a milestone; a dashed green curve is a task waiting on another; a teal curve is a [[link]] you wrote in a note.{suggestions.length > 0 && <> A dotted line is a suggestion Nova made, not a link: file the page to make it one.</>}
-            {view.unconnected > 0 && <> {view.unconnected} {view.unconnected === 1 ? 'item is' : 'items are'} not connected to anything.</>}
-            {(view.notShown.notes > 0 || view.notShown.resources > 0) && <> Older notes and pages beyond the newest 150 of each are not drawn.</>}
-          </p>
-          <p className="sr-only" role="status" aria-live="polite">{said}</p>
+        <div className="absolute bottom-3 left-3 flex items-center gap-2" onPointerDown={e => e.stopPropagation()}>
+          <button type="button" onClick={() => setPanel(p => (p?.kind === 'legend' ? null : { kind: 'legend' }))} aria-expanded={panel?.kind === 'legend'}
+            className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-card/90 px-3 text-xs font-medium text-foreground/75 shadow-soft backdrop-blur hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" data-legend-open>
+            <Info aria-hidden className="size-3.5" /> Legend
+          </button>
+          {(view.unconnected > 0 || view.notShown.notes > 0 || view.notShown.resources > 0) && (
+            <p className="hidden rounded-lg bg-background/80 px-2.5 py-1.5 text-[11px] text-foreground/70 backdrop-blur-sm md:block">
+              {view.unconnected > 0 && <>{view.unconnected} {view.unconnected === 1 ? 'item is' : 'items are'} not connected to anything.</>}
+              {(view.notShown.notes > 0 || view.notShown.resources > 0) && <> Older notes and pages beyond the newest 150 of each are not drawn.</>}
+            </p>
+          )}
         </div>
+
+        <div className={cn('absolute bottom-3 flex flex-col overflow-hidden rounded-xl border border-white/10 bg-card/90 shadow-soft backdrop-blur transition-[right]', picked && detailOpen ? 'right-3 max-lg:bottom-[calc(58%+0.75rem)] lg:right-[23.5rem]' : 'right-3')} onPointerDown={e => e.stopPropagation()}>
+          <button type="button" onClick={() => zoomAt(1.25)} aria-label="Zoom in" title="Zoom in (+)" className="p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"><Plus className="size-4" /></button>
+          <button type="button" onClick={() => { if (selected && placed.at.has(selected)) centreOn(selected, 1); else zoomAt(1 / t.k) }} aria-label={`Zoom ${Math.round(t.k * 100)}%. Set to 100%`} title="Zoom to 100% (0)"
+            className="border-t border-white/8 py-1 text-[10px] font-medium tabular-nums text-foreground/70 hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring">{Math.round(t.k * 100)}%</button>
+          <button type="button" onClick={() => zoomAt(0.8)} aria-label="Zoom out" title="Zoom out (-)" className="border-t border-white/8 p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"><Minus className="size-4" /></button>
+          <button type="button" onClick={() => fit()} aria-label="Fit the map on screen" title="Fit (F)" className="border-t border-white/8 p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"><Maximize2 className="size-4" /></button>
+        </div>
+
+        {picked && detailOpen && (
+          <Detail node={picked} neighbours={neighbours} onPick={id => pick(id)} onClose={() => setDetailOpen(false)}
+            onScope={!canExplore(tree, picked.id) && focus === null ? () => setScope(picked.id) : null}
+            scoped={scope === picked.id} view={view} onChanged={onChanged}
+            inside={insideCount(picked.id)} collapsed={collapsed.has(picked.id)} onCollapse={() => toggleFold(picked.id)}
+            onExplore={canExplore(tree, picked.id) && focus !== picked.id ? () => explore(picked.id) : null}
+            onAdd={ADDABLE.has(picked.type) ? () => openAdd(picked) : null}
+            onDelete={canDelete(picked) ? () => openDelete(picked) : null} />
+        )}
+        {notice && (
+          <p key={notice.n} className="pointer-events-none absolute left-1/2 top-3 z-20 max-w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 rounded-full border border-white/10 bg-popover/95 px-3.5 py-1.5 text-center text-xs text-foreground/85 shadow-soft" data-map-notice>{notice.text}</p>
+        )}
+        <p className="sr-only" role="status" aria-live="polite">{notice?.text ?? ''}</p>
       </div>
 
-      {picked && (
-        <Detail node={picked} neighbours={neighbours} onPick={select} onClose={() => setSelected(null)} onScope={() => setScope(picked.id)}
-          scoped={scope === picked.id} view={view} onChanged={onChanged} panelRef={panel}
-          inside={insideOf(picked.id)} collapsed={collapsed.has(picked.id)} onCollapse={() => toggleFold(picked.id)} />
-      )}
     </div>
   )
 }

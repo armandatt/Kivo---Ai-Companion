@@ -41,9 +41,13 @@ const LOOSE_DX  = 184
 const LOOSE_DY  = 62
 
 // The order of what hangs from a card: subjects inside it, then topics and
-// tasks in their saved order, then notes and saved pages as they come.
+// tasks in their saved order, then notes and saved pages by name. Notes come
+// from the server newest first; ordering them by that would move a branch
+// every time a note is edited, so the map never uses it.
 const RANK: Record<MapNodeType, number> = { subject: 0, topic: 1, task: 2, note: 3, resource: 3 }
 const orderOf = (n: MapNode): number => ('order' in n && typeof n.order === 'number' ? n.order : 0)
+const byName = (a: MapNode, b: MapNode): number =>
+  a.type === 'note' || a.type === 'resource' ? a.label.localeCompare(b.label, 'en', { sensitivity: 'base' }) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0) : 0
 
 // The tree the links make: each card's children in order, and the cards at
 // its top (subjects inside no drawn subject). A card is under one parent
@@ -60,10 +64,10 @@ export function treeOf(nodes: MapNode[], edges: MapEdge[]): { children: Map<stri
     if (!loop) parent.set(e.to, e.from)
   }
   const children = new Map<string, string[]>()
-  for (const [child, p] of parent) children.set(p, [...(children.get(p) ?? []), child])
+  for (const [child, p] of parent) { const list = children.get(p); if (list) list.push(child); else children.set(p, [child]) }
   for (const list of children.values()) list.sort((a, b) => {
     const x = byId.get(a)!, y = byId.get(b)!
-    return RANK[x.type] - RANK[y.type] || orderOf(x) - orderOf(y) || index.get(a)! - index.get(b)!
+    return RANK[x.type] - RANK[y.type] || orderOf(x) - orderOf(y) || byName(x, y) || index.get(a)! - index.get(b)!
   })
   const roots = nodes.filter(n => n.type === 'subject' && !parent.has(n.id)).map(n => n.id)
   return { children, roots, parent }
@@ -88,22 +92,23 @@ export function layoutMap(nodes: MapNode[], edges: MapEdge[], { portrait = false
     for (const r of roots) { walk(r, 0); y += BRANCH_GAP }
   } else {
     // A tree: a card's column is its level; it sits level with the middle of
-    // what hangs from it, and never over the card above it.
+    // what hangs from it, and never over the card above it. `placed` lists
+    // cards in the order they were placed, so a branch is one stretch of it.
+    const placed: string[] = []
     const place = (id: string, depth: number, top: number): number => {
       const kids = (children.get(id) ?? []).filter(c => !at.has(c))
       const x = depth * COL
       if (kids.length === 0) {
         at.set(id, { id, x, y: top + h(id) / 2 })
+        placed.push(id)
         return top + h(id)
       }
       at.set(id, { id, x, y: 0 })
+      placed.push(id)
       let bottom = top
-      const below: string[] = []
-      for (const c of kids) {
-        const before = new Set(at.keys())
-        bottom = place(c, depth + 1, bottom === top ? top : bottom + ROW_GAP)
-        for (const k of at.keys()) if (!before.has(k)) below.push(k)
-      }
+      const from = placed.length
+      for (const c of kids) bottom = place(c, depth + 1, bottom === top ? top : bottom + ROW_GAP)
+      const below = placed.slice(from)
       const first = at.get(kids[0]!)!.y, last = at.get(kids[kids.length - 1]!)!.y
       let y = (first + last) / 2
       // Taller than what hangs from it: the whole branch moves down.
@@ -126,7 +131,7 @@ export function layoutMap(nodes: MapNode[], edges: MapEdge[], { portrait = false
   }
 
   // Filed under nothing: a plain block below the rest, never joined to it.
-  const alone = nodes.filter(n => !at.has(n.id) && !parent.has(n.id))
+  const alone = nodes.filter(n => !at.has(n.id) && !parent.has(n.id)).sort((a, b) => RANK[a.type] - RANK[b.type] || byName(a, b))
   let loose: MapLayout['loose'] = null
   if (alone.length > 0) {
     const b     = centres()
