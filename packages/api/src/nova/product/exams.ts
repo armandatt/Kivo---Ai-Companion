@@ -300,6 +300,15 @@ export async function updateDatesIn(
   }
 }
 
+// Removes dates of the learner's inside the caller's transaction (a change
+// Build with Nova applies, or a workspace deleted on confirmation). A date
+// that is not theirs, or already gone, stops the whole set.
+export async function removeDatesIn(tx: Pick<typeof prisma, "novaExam">, profileId: string, dateIds: string[]): Promise<void> {
+  if (dateIds.length === 0) return;
+  const r = await tx.novaExam.deleteMany({ where: { id: { in: dateIds }, profileId } });
+  if (r.count !== dateIds.length) throw new DateChanged();
+}
+
 // Removes one of the learner's own exams. Removing one that is already gone
 // is "not_found", which a caller retrying a removal may take as done.
 export async function removeExam(platformChatId: string, examId: string, now = new Date()): Promise<ExamWriteResult> {

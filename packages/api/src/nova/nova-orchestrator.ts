@@ -313,6 +313,7 @@ export async function runNovaOrchestrator(
     signals,
     userProfile: {
       displayName:              user.displayName,
+      preferredName:            signup.preferredName ?? null,
       goals:                    user.goals,
       building,
       yearOfStudy:              snapshot.yearOfStudy,

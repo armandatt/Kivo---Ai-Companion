@@ -1258,9 +1258,20 @@ model NovaTask {
   // request, a double click or a template applied twice carries the same key
   // and creates nothing.
   clientKey   String?
+  // The task this one is a step of. null: a task of its own (every task made
+  // before subtasks existed). Steps nest to any depth tasks.ts allows
+  // (TASK_DEPTH_MAX); tasks.ts keeps the tree free of loops and never leaves
+  // a step pointing at a task that is gone: removing a task moves its steps
+  // up to its own parent unless they are removed with it. SetNull is the
+  // database's last word only.
+  parentId    String?
+  // What the task is, in more words than its title. null: none given.
+  description String?   @db.Text
 
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   subject NovaSubject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  parent  NovaTask?           @relation("NovaTaskSteps", fields: [parentId], references: [id], onDelete: SetNull)
+  steps   NovaTask[]          @relation("NovaTaskSteps")
 
   // Times the learner set aside on the calendar to work on this task. The
   // task stays the one record of the work; an event only schedules it.
@@ -1272,6 +1283,7 @@ model NovaTask {
   @@unique([profileId, clientKey])
   @@index([profileId, status])
   @@index([profileId, dueDay])
+  @@index([parentId])
 }
 
 // ─── Calendar events (product/calendar.ts is the only reader and writer) ─────
@@ -1547,11 +1559,43 @@ model NovaWorkspaceDraft {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  files   NovaWorkspaceDraftFile[]
+  profile  NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  files    NovaWorkspaceDraftFile[]
+  versions NovaWorkspaceDraftVersion[]
 
   @@unique([profileId, clientKey])
   @@index([profileId, updatedAt])
+}
+
+// A version of a Build with Nova conversation's work, kept so the learner can
+// look back and return to it (product/builder-history.ts, its only reader
+// and writer). Written after the change it records has been stored, never
+// before, so a snapshot is always of something that existed. Restoring never
+// deletes a snapshot: it makes a new version from an old one.
+//   proposal  the plan, or the change set to something of theirs, at a version
+//   applied   the workspace's records as they stood after a version was built
+//             or applied (and "deleted": as they stood before being deleted)
+model NovaWorkspaceDraftVersion {
+  id        String   @id @default(cuid())
+  draftId   String
+  profileId String
+  // The draft's version number this records.
+  version   Int
+  // proposal | applied | deleted
+  kind      String
+  // nova | learner | restore | build | delete
+  author    String
+  // What changed, in words, for the history list.
+  summary   String   @db.Text
+  // proposal: the WorkspacePlan, or { changes: ChangeSet, title }.
+  // applied / deleted: the records (builder-history.ts WorkspaceState).
+  content   Json
+  createdAt DateTime @default(now())
+
+  draft NovaWorkspaceDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
+  @@unique([draftId, version, kind])
+  @@index([draftId, createdAt])
 }
 
 // A PDF or photo the learner shared in a Build with Nova conversation, so

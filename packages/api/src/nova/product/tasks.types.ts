@@ -13,6 +13,7 @@ export const TASK_STATUS_LABEL: Record<TaskStatus, string> = { todo: "To do", in
 
 export const TASK_TITLE_MAX = 160;
 export const TASK_TOPIC_MAX = 120;
+export const TASK_DESCRIPTION_MAX = 2000;
 export const TASK_KEY_MAX   = 120;
 // Open tasks a learner can hold. A list longer than this is not a plan.
 export const TASK_OPEN_MAX  = 300;
@@ -42,6 +43,10 @@ export interface NovaTaskItem {
   estimatedMinutes: number | null;
   // Their own place for it within its column. null: not placed.
   position:    number | null;
+  // The task this one is a step of (task-tree.ts: no loops, limited depth).
+  // null: a task of its own. Absent on an older server.
+  parentId?:   string | null;
+  description?: string | null;
   createdAt:   string;
   updatedAt:   string;
 }
@@ -71,12 +76,16 @@ export interface TaskInput {
   topicName?: string | null;
   dueDay?:    string | null;
   estimatedMinutes?: number | null;
+  // The learner's own task this one is a step of; null makes it a task of its own.
+  parentId?:  string | null;
+  description?: string | null;
   clientKey?: string;              // create only
 }
 
 export type TaskError =
   | "invalid" | "title_required" | "title_too_long" | "topic_too_long"
   | "unknown_status" | "unknown_priority" | "bad_due_day" | "unknown_subject" | "bad_minutes" | "changed"
+  | "unknown_parent" | "bad_parent" | "description_too_long"
   | "too_many" | "not_found" | "failed";
 
 export type TaskResponse =

@@ -49,7 +49,7 @@ export function firstFocusIn(onboardingAnswers: unknown): FirstFocus | null {
 // changes nothing about the others.
 export const ANSWER_KEYS = {
   workingOn: "workingOn", weeklyHours: "weeklyHours", obstacles: "obstacles",
-  language: "language", tone: "tone", telegram: "telegram",
+  language: "language", tone: "tone", telegram: "telegram", preferredName: "preferredName",
 } as const;
 
 const answersObject = (value: unknown): Record<string, unknown> | null =>
@@ -63,6 +63,8 @@ export interface SignupAnswers {
   language:    ReplyLanguage | null;
   // Their chosen tone, or the one their older soft/hard answer stands for.
   tone:        Tone | null;
+  // What they asked Nova to call them. null: not said.
+  preferredName?: string | null;
 }
 
 export function signupAnswersIn(onboardingAnswers: unknown, accountabilityStyle: string | null = null): SignupAnswers {
@@ -75,7 +77,20 @@ export function signupAnswersIn(onboardingAnswers: unknown, accountabilityStyle:
     obstacles:   readMultiAnswer(a[ANSWER_KEYS.obstacles], OBSTACLES, OBSTACLE_LABELS),
     language,
     tone:        isTone(tone) ? tone : toneOfAccountability(normalizeAccountability(accountabilityStyle) as "soft" | "hard" | null),
+    preferredName: preferredNameIn(a[ANSWER_KEYS.preferredName]),
   };
+}
+
+// A stored name, read the way it was checked: one line, not too long.
+function preferredNameIn(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  let out = "", gap = false;
+  for (const ch of value) {
+    if (ch.trim() === "" || ch.charCodeAt(0) < 32) { gap = out.length > 0; continue; }
+    if (gap) out += " ";
+    out += ch; gap = false;
+  }
+  return out && [...out].length <= 40 ? out : null;
 }
 
 // For the setup page: what they asked for first, or, after v3, the kind of

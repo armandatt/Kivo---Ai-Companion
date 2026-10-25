@@ -136,7 +136,22 @@ export function checkCreatureName(value: unknown): { ok: true; name: string } | 
   return { ok: true, name };
 }
 
+// What Nova calls them: a name or a nickname, or nothing. One line, at most
+// PREFERRED_NAME_MAX characters. It is how Nova addresses them, never who
+// they are: it names no account and signs nothing in.
+export const PREFERRED_NAME_MAX = 40;
+export function checkPreferredName(value: unknown): { ok: true; name: string | null } | { ok: false; message: string } {
+  if (value === undefined || value === null) return { ok: true, name: null };
+  if (typeof value !== "string") return { ok: false, message: "The name should be text." };
+  const name = oneLine(value);
+  if (!name) return { ok: true, name: null };
+  if ([...name].length > PREFERRED_NAME_MAX) return { ok: false, message: `Keep it to ${PREFERRED_NAME_MAX} characters or fewer.` };
+  return { ok: true, name };
+}
+
 export interface OnboardingAnswersV3 {
+  // Optional: null when they skipped it.
+  preferredName: string | null;
   audience:     Audience;
   workingOn:    MultiAnswer<WorkingOnId>;
   weeklyHours:  WeeklyHours;
@@ -149,7 +164,7 @@ export interface OnboardingAnswersV3 {
 
 // In the order asked, so the page can send the learner back to the first
 // answer that needs fixing.
-export const V3_FIELDS = ["audience", "workingOn", "weeklyHours", "obstacles", "language", "tone", "telegram", "creatureName"] as const;
+export const V3_FIELDS = ["preferredName", "audience", "workingOn", "weeklyHours", "obstacles", "language", "tone", "telegram", "creatureName"] as const;
 export type OnboardingFieldV3 = (typeof V3_FIELDS)[number];
 
 export type OnboardingCheckV3 =
@@ -166,6 +181,8 @@ export function checkOnboardingV3(body: unknown): OnboardingCheckV3 {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, field: "audience", message: "Nothing to save." };
   const raw = body as Record<string, unknown>;
 
+  const preferred = checkPreferredName(raw.preferredName);
+  if (!preferred.ok) return { ok: false, field: "preferredName", message: preferred.message };
   if (typeof raw.audience !== "string" || !(AUDIENCES as readonly string[]).includes(raw.audience)) {
     return { ok: false, field: "audience", message: "Choose what you currently do." };
   }
@@ -186,6 +203,7 @@ export function checkOnboardingV3(body: unknown): OnboardingCheckV3 {
   return {
     ok: true,
     answers: {
+      preferredName: preferred.name,
       audience:     raw.audience as Audience,
       workingOn:    workingOn.value,
       weeklyHours:  weekly.value,

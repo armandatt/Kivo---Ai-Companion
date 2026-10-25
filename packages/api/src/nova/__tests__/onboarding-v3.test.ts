@@ -42,7 +42,8 @@ const VALID = {
 
 describe("the questions, in order", () => {
   it("are the eight the brief asks for, in its order, and the page asks exactly these", () => {
-    expect([...V3_FIELDS]).toEqual(["audience", "workingOn", "weeklyHours", "obstacles", "language", "tone", "telegram", "creatureName"]);
+    // "What should Nova call you?" first (optional), then the eight.
+    expect([...V3_FIELDS]).toEqual(["preferredName", "audience", "workingOn", "weeklyHours", "obstacles", "language", "tone", "telegram", "creatureName"]);
     const flow = repo("apps/web/components/onboarding-flow.tsx");
     expect(flow).toContain("const QUESTIONS: readonly OnboardingFieldV3[] = V3_FIELDS;");
     const legends = [
@@ -109,6 +110,7 @@ describe("each answer, checked on its own", () => {
     const checked = checkOnboardingV3(VALID);
     expect(isOnboardingV3(VALID)).toBe(true);
     expect(checked.ok && checked.answers).toEqual({
+      preferredName: null,
       audience: "college",
       workingOn: { selected: ["semester_exams", "new_skill"], custom: ["Final-year thesis"] },
       weeklyHours: { hours: 8, preset: "6_10" },
@@ -238,8 +240,8 @@ describe("where each answer is kept", () => {
 
   it("is read back by Nova's one adapter; anything unreadable is 'not said'", () => {
     const read = signupAnswersIn(profileData.onboardingAnswers);
-    expect(read).toEqual({ workingOn: answers.workingOn, weeklyHours: answers.weeklyHours, obstacles: answers.obstacles, language: "hinglish", tone: "direct" });
-    expect(signupAnswersIn({ tone: "shouty", language: "klingon", workingOn: "lots" })).toEqual({ workingOn: null, weeklyHours: null, obstacles: null, language: null, tone: null });
+    expect(read).toEqual({ workingOn: answers.workingOn, weeklyHours: answers.weeklyHours, obstacles: answers.obstacles, language: "hinglish", tone: "direct", preferredName: null });
+    expect(signupAnswersIn({ tone: "shouty", language: "klingon", workingOn: "lots", preferredName: 42 })).toEqual({ workingOn: null, weeklyHours: null, obstacles: null, language: null, tone: null, preferredName: null });
     // An account from before tones: its soft/hard answer is its tone.
     expect(signupAnswersIn(null, "hard").tone).toBe("no_mercy");
     expect(signupAnswersIn({ tone: "calm" }, "hard").tone).toBe("calm");

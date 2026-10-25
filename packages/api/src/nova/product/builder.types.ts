@@ -64,12 +64,18 @@ export interface BuilderBrief {
   questionsAsked: number;
   // What the check left out of the last proposal, in words.
   dropped:     string[];
+  // What the check repaired in it (a task inside itself, a milestone named
+  // twice), in words. Absent on an older draft.
+  fixed?:      string[];
   // What the learner's last change request is about (topics, tasks, …):
   // a change set keeps only changes of these kinds (builder-changes.ts).
   touches?:    ChangeKind[];
   // Names to choose from when the learner referred to something of theirs
   // that more than one of their workspaces or subjects could be.
   choices?:    string[];
+  // A deletion the learner asked for, worked out and waiting for their
+  // confirmation on the page. Never carried out from a message.
+  deletion?:   DeletionScope | null;
 }
 
 // ── Changing something they already have ──────────────────────────────────────
@@ -95,12 +101,18 @@ export type ChangeOp =
   // The subject itself, with its topics (each removed by its own remove_topic);
   // its notes and tasks stay, unfiled. Never with studied topics or dates.
   | { op: "remove_subject"; subjectId: string }
-  | { op: "add_task";     key: string; title: string; subjectId: string | null; topicName: string | null; dueDay: string | null; priority: "low" | "medium" | "high" | null }
-  | { op: "update_task";  taskId: string; title?: string; dueDay?: string | null; priority?: "low" | "medium" | "high" | null }
-  | { op: "remove_task";  taskId: string }
+  // A step: of a task that exists (parentId) or of another task this change
+  // set adds (parentKey, that task's key). Neither: a task of its own.
+  | { op: "add_task";     key: string; title: string; subjectId: string | null; topicName: string | null; dueDay: string | null; priority: "low" | "medium" | "high" | null; parentId?: string | null; parentKey?: string | null; description?: string | null }
+  // parentId: move it under another task (null: make it a task of its own).
+  | { op: "update_task";  taskId: string; title?: string; dueDay?: string | null; priority?: "low" | "medium" | "high" | null; parentId?: string | null; description?: string | null }
+  // Its open steps go with it (steps, by id, said in words); finished ones
+  // stay and move up.
+  | { op: "remove_task";  taskId: string; steps?: string[] }
   | { op: "order_tasks";  taskIds: string[] }
   | { op: "add_date";     title: string; day: string; subjectId: string | null; kind: "exam" | "assignment" | "project" | "interview" | "certification" | "other" }
   | { op: "update_date";  dateId: string; title?: string; day?: string }
+  | { op: "remove_date";  dateId: string }
   | { op: "add_note";     title: string; body: string; subjectId: string | null; topicName: string | null };
 
 // The kinds of record a change request is about. A change set keeps only
@@ -117,6 +129,38 @@ export interface ChangeSet {
   ops:     ProposedChange[];
   // What was asked for but left out, and why ("that topic isn't in DSA").
   dropped: string[];
+}
+
+// ── Deleting something of theirs (on confirmation only) ─────────────────────
+// Worked out by code from their records (workspaces.ts deletionScope), shown
+// in full, and carried out only when the learner confirms on the page with
+// this fingerprint. A chat message is never a confirmation.
+export interface DeletionScope {
+  title:       string;
+  workspaceId: string | null;
+  subjectIds:  string[];
+  removes: {
+    workspace: boolean;
+    subjects:  Array<{ id: string; name: string }>;
+    topics:    Array<{ id: string; name: string }>;
+    // Open tasks, steps included.
+    tasks:     Array<{ id: string; title: string }>;
+    dates:     Array<{ id: string; title: string; day: string }>;
+    // Only notes Nova wrote for it that nobody has edited since.
+    notes:     Array<{ id: string; title: string }>;
+  };
+  keeps: {
+    // With study on record: kept, with their history.
+    topics:        string[];
+    finishedTasks: number;
+    // Notes the learner wrote or edited.
+    notes:         string[];
+    // Subjects kept because something above stays in them, or another workspace has them.
+    subjects:      string[];
+  };
+  // Of exactly what would be removed. Confirming names it; a different one
+  // (the records moved on) is refused and the scope is shown again.
+  fingerprint: string;
 }
 
 // A model job in progress, with the stage it has actually reached.
@@ -177,11 +221,42 @@ export interface DraftView {
   similar:     WorkspaceSummary[];
   // The counts of the last build, when it was this draft's.
   counts:      WorkspaceCounts | null;
+  // A deletion waiting for the learner's confirmation, in full. Absent on an older server.
+  deletion?:   DeletionScope | null;
+  // What Nova calls them and the words of the page's own lines, in their
+  // language. Absent on an older server.
+  greeting?:   BuilderGreeting;
   updatedAt:   string;
 }
 
 export interface DraftListItem { id: string; status: DraftStatus; title: string | null; origin: "web" | "telegram"; updatedAt: string }
-export interface DraftListView { status: "ready"; drafts: DraftListItem[] }
+// Build with Nova's opening lines, written by code in the language the
+// learner chose (English, Hindi or Hinglish), with the name they asked to be
+// called, when they gave one.
+export interface BuilderGreeting {
+  language: "english" | "hindi" | "hinglish";
+  name:     string | null;
+  title:    string;
+  body:     string;
+  // The first line of a new conversation, before anything is said.
+  opening:  string;
+  // Opening a conversation about a workspace of theirs ({title} is its name).
+  openingFor: string;
+}
+export interface DraftListView { status: "ready"; drafts: DraftListItem[]; greeting?: BuilderGreeting }
+
+// The conversation's versions, newest first (builder-history.ts).
+export interface VersionListItem {
+  id: string; version: number; kind: "proposal" | "applied" | "deleted"; author: "nova" | "learner" | "restore" | "build" | "delete";
+  summary: string; createdAt: string; title: string;
+  // What restoring it does, in words; null: it can't be restored from here.
+  restores: string | null;
+}
+export type VersionsResponse = { ok: true; versions: VersionListItem[]; current: number } | { ok: false; error: "not_found"; message: string };
+// One version as it was, to look at before restoring it.
+export type VersionResponse =
+  | { ok: true; version: VersionListItem; plan: WorkspacePlan | null; changes: ChangeSet | null; state: { title: string; subjects: Array<{ name: string; topics: string[] }>; tasks: Array<{ key: string; title: string; status: string; parent: string | null; dueDay: string | null; priority: string | null }>; dates: Array<{ title: string; day: string }>; notes: Array<{ title: string }> } | null }
+  | { ok: false; error: "not_found"; message: string };
 
 export type BuilderError =
   | "invalid" | "not_found" | "not_ready" | "busy" | "stale" | "closed" | "too_many" | "rate_limited" | "unavailable" | "failed";
@@ -201,7 +276,8 @@ export interface WorkspaceDetail {
   // The workspace's milestones, in order, from the plan it was built from:
   // each is one of its topics, and its tasks are those filed under it.
   phases?:   Array<{ name: string; weeks: number | null; goals: string[]; completion: string | null }>;
-  tasks:     Array<{ id: string; title: string; status: "todo" | "in_progress" | "done"; priority: "low" | "medium" | "high" | null; dueDay: string | null; subjectId: string | null; topicName: string | null; estimatedMinutes: number | null }>;
+  // A step names the task it belongs to (parentId); the rest are tasks of their own.
+  tasks:     Array<{ id: string; title: string; status: "todo" | "in_progress" | "done"; priority: "low" | "medium" | "high" | null; dueDay: string | null; subjectId: string | null; topicName: string | null; estimatedMinutes: number | null; parentId: string | null; description: string | null }>;
   notes:     Array<{ id: string; title: string; subjectId: string | null; updatedAt: string }>;
   dates:     Array<{ id: string; title: string; day: string; kind: string; subjectId: string | null }>;
 }

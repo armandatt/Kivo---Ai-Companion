@@ -15,8 +15,9 @@
 
 import { prisma } from "@repo/db/client";
 import { dayKey, dayNumber, resolveTimezone } from "../engines/learner-calendar";
+import { TASK_DEPTH_MAX, ancestorsOf, descendantsOf, wouldLoop } from "./task-tree";
 import {
-  TASK_DONE_SHOWN, TASK_KEY_MAX, TASK_MINUTES_MAX, TASK_MINUTES_MIN, TASK_OPEN_MAX, TASK_ORDER_MAX, TASK_PRIORITIES, TASK_STATUSES, TASK_TITLE_MAX, TASK_TOPIC_MAX,
+  TASK_DESCRIPTION_MAX, TASK_DONE_SHOWN, TASK_KEY_MAX, TASK_MINUTES_MAX, TASK_MINUTES_MIN, TASK_OPEN_MAX, TASK_ORDER_MAX, TASK_PRIORITIES, TASK_STATUSES, TASK_TITLE_MAX, TASK_TOPIC_MAX,
   type NovaTaskItem, type NovaTasksReady, type TaskError, type TaskInput, type TaskPriority, type TaskResponse, type TaskStatus,
 } from "./tasks.types";
 
@@ -92,6 +93,20 @@ export function parseTaskInput(raw: unknown, creating: boolean): Parsed {
       && input.estimatedMinutes >= TASK_MINUTES_MIN && input.estimatedMinutes <= TASK_MINUTES_MAX) changes.estimatedMinutes = input.estimatedMinutes;
     else return reject("bad_minutes", `A task's time is ${TASK_MINUTES_MIN} to ${TASK_MINUTES_MAX} minutes, in whole minutes.`);
   }
+  if (input.parentId !== undefined) {
+    if (input.parentId === null || input.parentId === "") changes.parentId = null;
+    else if (typeof input.parentId === "string" && input.parentId.length <= 64) changes.parentId = input.parentId;
+    else return reject("unknown_parent", "That task isn't one of yours.");
+  }
+  if (input.description !== undefined) {
+    if (input.description === null) changes.description = null;
+    else if (typeof input.description !== "string") return reject("invalid", "The description must be text.");
+    else {
+      const text = input.description.split("\r").join("").trim();
+      if (text.length > TASK_DESCRIPTION_MAX) return reject("description_too_long", `Keep the description under ${TASK_DESCRIPTION_MAX} characters.`);
+      changes.description = text || null;
+    }
+  }
   if (creating && input.clientKey !== undefined) {
     if (typeof input.clientKey !== "string" || !input.clientKey.trim() || input.clientKey.length > TASK_KEY_MAX) return reject("invalid", "That is not a task.");
     changes.clientKey = input.clientKey.trim();
@@ -123,12 +138,12 @@ export function compareTasks(a: NovaTaskItem, b: NovaTaskItem): number {
 const ROW = {
   id: true, title: true, status: true, priority: true, subjectId: true, topicName: true, dueDay: true,
   completedAt: true, createdAt: true, updatedAt: true, subject: { select: { name: true } },
-  estimatedMinutes: true, position: true,
+  estimatedMinutes: true, position: true, parentId: true, description: true,
 } as const;
 type Row = {
   id: string; title: string; status: string; priority: string | null; subjectId: string | null; topicName: string | null;
   dueDay: string | null; completedAt: Date | null; createdAt: Date; updatedAt: Date; subject: { name: string } | null;
-  estimatedMinutes: number | null; position: number | null;
+  estimatedMinutes: number | null; position: number | null; parentId: string | null; description: string | null;
 };
 
 function toItem(row: Row, today: string): NovaTaskItem {
@@ -141,8 +156,55 @@ function toItem(row: Row, today: string): NovaTaskItem {
     dueInDays: row.dueDay ? dayNumber(row.dueDay) - dayNumber(today) : null,
     completedAt: row.completedAt?.toISOString() ?? null,
     estimatedMinutes: row.estimatedMinutes, position: row.position,
+    parentId: row.parentId, description: row.description,
     createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+// ── The tree (task-tree.ts holds the rules) ───────────────────────────────────
+
+type TreeReader = Pick<typeof prisma, "novaTask">;
+
+// Every task of the learner's as tree items, for checking a parent.
+async function treeOf(db: TreeReader, profileId: string): Promise<Array<{ key: string; parent: string | null }>> {
+  const rows = await db.novaTask.findMany({ where: { profileId }, select: { id: true, parentId: true } });
+  return rows.map(r => ({ key: r.id, parent: r.parentId }));
+}
+
+// How many levels a task and its steps take (1: no steps).
+const heightOf = (tree: Array<{ key: string; parent: string | null }>, key: string): number =>
+  1 + Math.max(0, ...descendantsOf(tree, key).map(k => ancestorsOf(tree, k).length - ancestorsOf(tree, key).length));
+
+// Whether `taskId` (null: a new task) may be a step of `parentId`: the
+// parent is the learner's, it is not inside the task, and the result is not
+// deeper than TASK_DEPTH_MAX. A message, or null when it may.
+export async function parentProblem(db: TreeReader, profileId: string, taskId: string | null, parentId: string | null): Promise<string | null> {
+  if (parentId === null) return null;
+  const tree = await treeOf(db, profileId);
+  if (!tree.some(t => t.key === parentId)) return "That task isn't one of yours.";
+  if (taskId !== null && wouldLoop(tree, taskId, parentId)) return "A task can't be a step of itself or of one of its own steps.";
+  const depth = ancestorsOf(tree, parentId).length + 1 + (taskId ? heightOf(tree, taskId) : 1);
+  if (depth > TASK_DEPTH_MAX) return `Steps go at most ${TASK_DEPTH_MAX} levels deep.`;
+  return null;
+}
+
+// Before tasks are removed: their steps that stay move up to the nearest
+// task above them that stays, so no step is left pointing at nothing.
+export async function promoteStepsIn(tx: TreeReader, profileId: string, removed: readonly string[]): Promise<void> {
+  if (removed.length === 0) return;
+  const gone = new Set(removed);
+  const tree = await treeOf(tx, profileId);
+  for (const t of tree) {
+    if (gone.has(t.key) || t.parent === null || !gone.has(t.parent)) continue;
+    const up = ancestorsOf(tree, t.key).find(k => !gone.has(k)) ?? null;
+    await tx.novaTask.updateMany({ where: { id: t.key, profileId }, data: { parentId: up } });
+  }
+}
+
+// A task and every step inside it, by id (the learner's own only).
+export async function taskWithSteps(profileId: string, taskId: string): Promise<string[]> {
+  const tree = await treeOf(prisma, profileId);
+  return tree.some(t => t.key === taskId) ? [taskId, ...descendantsOf(tree, taskId)] : [];
 }
 
 async function todayOf(profileId: string, now: Date): Promise<string> {
@@ -219,13 +281,19 @@ export class TaskChanged extends Error {}
 export async function updateTasksIn(
   tx: Pick<typeof prisma, "novaTask">,
   profileId: string,
-  changes: Array<{ taskId: string; title?: string; dueDay?: string | null; priority?: "low" | "medium" | "high" | null }>,
+  changes: Array<{ taskId: string; title?: string; dueDay?: string | null; priority?: "low" | "medium" | "high" | null; parentId?: string | null; description?: string | null }>,
 ): Promise<void> {
   for (const c of changes) {
     const data: Record<string, unknown> = {};
     if (c.title !== undefined) data.title = c.title;
     if (c.dueDay !== undefined) data.dueDay = c.dueDay;
     if (c.priority !== undefined) data.priority = c.priority;
+    if (c.description !== undefined) data.description = c.description;
+    if (c.parentId !== undefined) {
+      // Checked against the tree as it is inside this transaction.
+      if (await parentProblem(tx, profileId, c.taskId, c.parentId)) throw new TaskChanged();
+      data.parentId = c.parentId;
+    }
     const r = await tx.novaTask.updateMany({ where: { id: c.taskId, profileId }, data });
     if (r.count !== 1) throw new TaskChanged();
   }
@@ -234,6 +302,7 @@ export async function updateTasksIn(
 // Only open tasks: a finished one is the learner's record and stays.
 export async function removeOpenTasksIn(tx: Pick<typeof prisma, "novaTask">, profileId: string, taskIds: string[]): Promise<void> {
   if (taskIds.length === 0) return;
+  await promoteStepsIn(tx, profileId, taskIds);
   const r = await tx.novaTask.deleteMany({ where: { id: { in: taskIds }, profileId, status: { not: "done" } } });
   if (r.count !== taskIds.length) throw new TaskChanged();
 }
@@ -244,6 +313,22 @@ export async function placeTasksIn(tx: Pick<typeof prisma, "novaTask">, profileI
     const r = await tx.novaTask.updateMany({ where: { id, profileId, status: { not: "done" } }, data: { position } });
     if (r.count !== 1) throw new TaskChanged();
   }
+}
+
+// The learner's tasks filed under a subject, with their parents, for the
+// Knowledge Map: open ones first, then the most recently finished, at most
+// `take`. Steps of a task that is shown come with it when they fit.
+export async function listTaskLinks(profileId: string, take: number): Promise<{
+  tasks: Array<{ id: string; title: string; status: "todo" | "in_progress" | "done"; subjectId: string | null; topicName: string | null; parentId: string | null }>; total: number;
+}> {
+  const select = { id: true, title: true, status: true, subjectId: true, topicName: true, parentId: true } as const;
+  const [open, done, total] = await Promise.all([
+    prisma.novaTask.findMany({ where: { profileId, subjectId: { not: null }, status: { not: "done" } }, select, orderBy: { createdAt: "asc" }, take }),
+    prisma.novaTask.findMany({ where: { profileId, subjectId: { not: null }, status: "done" }, select, orderBy: { completedAt: "desc" }, take }),
+    prisma.novaTask.count({ where: { profileId, subjectId: { not: null } } }),
+  ]);
+  const rows = [...open, ...done].slice(0, take);
+  return { tasks: rows.map(r => ({ ...r, status: TASK_STATUSES.find(s => s === r.status) ?? "todo" })), total };
 }
 
 // Of these ids, the ones that are this learner's tasks: id → title and status.
@@ -263,6 +348,14 @@ export async function createTask(profileId: string, raw: unknown, options: { now
     return { ok: false, error: "unknown_subject", message: "That subject isn't one of yours." };
   }
   const today = await todayOf(profileId, now);
+  const problem = await parentProblem(prisma, profileId, null, changes.parentId ?? null);
+  if (problem) return { ok: false, error: changes.parentId ? "bad_parent" : "unknown_parent", message: problem };
+  // A step is filed where its task is, unless the learner said otherwise.
+  if (changes.parentId) {
+    const parent = await prisma.novaTask.findFirst({ where: { id: changes.parentId, profileId }, select: { subjectId: true, topicName: true } });
+    if (parent && changes.subjectId === undefined) changes.subjectId = parent.subjectId;
+    if (parent && changes.topicName === undefined) changes.topicName = parent.topicName;
+  }
 
   // The same key means the same task: a retry or a double click finds it.
   if (changes.clientKey) {
@@ -281,6 +374,7 @@ export async function createTask(profileId: string, raw: unknown, options: { now
         priority: changes.priority ?? null, subjectId: changes.subjectId ?? null, topicName: changes.topicName ?? null,
         dueDay: changes.dueDay ?? null, clientKey: changes.clientKey ?? null,
         estimatedMinutes: changes.estimatedMinutes ?? null,
+        parentId: changes.parentId ?? null, description: changes.description ?? null,
         completedAt: status === "done" ? now : null,
       },
       select: ROW,
@@ -300,32 +394,52 @@ export async function createTask(profileId: string, raw: unknown, options: { now
 // is checked as createTask checks one, carries its key, and is made once: a
 // key already on record is left as it is. Refused whole when it would take
 // the learner past the open-task limit; the transaction then writes nothing.
+// A task may name its parent by the parent's key (`parentKey`: a task made
+// in the same call or already on record under that key) or by id
+// (`parentId`: a task of the learner's). Parents are made before their steps;
+// a step whose parent is neither is made a task of its own. The tree rules
+// (task-tree.ts) are the caller's: a plan was checked before it got here.
 export async function createTasksIn(
   tx: Pick<typeof prisma, "novaTask">,
   profileId: string,
   tasks: Array<Record<string, unknown>>,
-): Promise<{ ok: true; added: number; existing: number } | { ok: false; message: string }> {
-  const parsed = [];
+): Promise<{ ok: true; added: number; existing: number; ids: Map<string, string> } | { ok: false; message: string }> {
+  const parsed: Array<TaskInput & { parentKey: string | null }> = [];
   for (const raw of tasks) {
     const p = parseTaskInput(raw, true);
     if (!p.ok) return { ok: false, message: p.message };
-    parsed.push(p.changes);
+    const parentKey = typeof raw.parentKey === "string" && raw.parentKey ? raw.parentKey : null;
+    parsed.push({ ...p.changes, parentKey });
   }
-  const keys = parsed.map(c => c.clientKey).filter((k): k is string => typeof k === "string");
-  const have = new Set((await tx.novaTask.findMany({ where: { profileId, clientKey: { in: keys } }, select: { clientKey: true } })).map(t => t.clientKey));
-  const fresh = parsed.filter(c => !c.clientKey || !have.has(c.clientKey));
+  const keys = parsed.flatMap(c => [c.clientKey, c.parentKey]).filter((k): k is string => typeof k === "string");
+  const existing = await tx.novaTask.findMany({ where: { profileId, clientKey: { in: keys } }, select: { id: true, clientKey: true } });
+  // key → id, for every task this call makes or finds.
+  const ids = new Map(existing.map(t => [t.clientKey!, t.id]));
+  const fresh = parsed.filter(c => !c.clientKey || !ids.has(c.clientKey));
   if (await tx.novaTask.count({ where: { profileId, status: { not: "done" } } }) + fresh.length > TASK_OPEN_MAX) {
     return { ok: false, message: "That would be more open tasks than Kivo keeps. Finish or remove some first." };
   }
-  for (const c of fresh) {
-    await tx.novaTask.create({
-      data: {
-        profileId, title: c.title!, status: "todo", priority: c.priority ?? null, subjectId: c.subjectId ?? null,
-        topicName: c.topicName ?? null, dueDay: c.dueDay ?? null, clientKey: c.clientKey ?? null, estimatedMinutes: c.estimatedMinutes ?? null,
-      },
-    });
+  const own = new Set((await tx.novaTask.findMany({ where: { profileId, id: { in: fresh.flatMap(c => (c.parentId ? [c.parentId] : [])) } }, select: { id: true } })).map(t => t.id));
+  // Parents first: a step waits until the task it belongs to is made.
+  const pending = [...fresh];
+  for (let pass = 0; pending.length > 0 && pass <= fresh.length; pass++) {
+    for (const c of [...pending]) {
+      const waiting = c.parentKey !== null && !ids.has(c.parentKey) && pending.some(o => o.clientKey === c.parentKey);
+      if (waiting) continue;
+      const parentId = c.parentKey !== null ? ids.get(c.parentKey) ?? null : c.parentId && own.has(c.parentId) ? c.parentId : null;
+      const made = await tx.novaTask.create({
+        data: {
+          profileId, title: c.title!, status: "todo", priority: c.priority ?? null, subjectId: c.subjectId ?? null,
+          topicName: c.topicName ?? null, dueDay: c.dueDay ?? null, clientKey: c.clientKey ?? null, estimatedMinutes: c.estimatedMinutes ?? null,
+          parentId, description: c.description ?? null,
+        },
+        select: { id: true },
+      });
+      if (c.clientKey) ids.set(c.clientKey, made.id);
+      pending.splice(pending.indexOf(c), 1);
+    }
   }
-  return { ok: true, added: fresh.length, existing: parsed.length - fresh.length };
+  return { ok: true, added: fresh.length, existing: parsed.length - fresh.length, ids };
 }
 
 export async function updateTask(profileId: string, taskId: string, raw: unknown, options: { now?: Date } = {}): Promise<TaskResponse> {
@@ -346,6 +460,12 @@ export async function updateTask(profileId: string, taskId: string, raw: unknown
   if (changes.topicName !== undefined) data.topicName = changes.topicName;
   if (changes.dueDay !== undefined)    data.dueDay = changes.dueDay;
   if (changes.estimatedMinutes !== undefined) data.estimatedMinutes = changes.estimatedMinutes;
+  if (changes.description !== undefined) data.description = changes.description;
+  if (changes.parentId !== undefined) {
+    const problem = await parentProblem(prisma, profileId, taskId, changes.parentId);
+    if (problem) return { ok: false, error: "bad_parent", message: problem };
+    data.parentId = changes.parentId;
+  }
   if (changes.status !== undefined && changes.status !== current.status) {
     data.status = changes.status;
     // Entering "done" stamps it once; leaving clears it.
@@ -362,8 +482,14 @@ export async function updateTask(profileId: string, taskId: string, raw: unknown
   return { ok: true, task: toItem(row, today) };
 }
 
+// Its steps stay: they move up to the task it was a step of (or become tasks
+// of their own). Removing a task with its steps is a choice the page makes
+// explicitly (deleteTasks).
 export async function deleteTask(profileId: string, taskId: string): Promise<boolean> {
-  return (await prisma.novaTask.deleteMany({ where: { id: taskId, profileId } })).count === 1;
+  return prisma.$transaction(async tx => {
+    await promoteStepsIn(tx, profileId, [taskId]);
+    return (await tx.novaTask.deleteMany({ where: { id: taskId, profileId } })).count === 1;
+  });
 }
 
 // ── Recovery (product/recovery.ts) ────────────────────────────────────────────

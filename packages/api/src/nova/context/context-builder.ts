@@ -49,8 +49,12 @@ function buildStudentSection(ctx: NovaContext): string {
   ].filter(Boolean);
 
   const lines: string[] = [`## Student`];
+  // The name they asked to be called wins over the one on their chat; it is
+  // for addressing them now and then, never in every reply.
+  const preferred = p.preferredName ? singleLine(p.preferredName).slice(0, MAX_NAME_CHARS).trim() : "";
   const name = p.displayName ? singleLine(p.displayName).slice(0, MAX_NAME_CHARS).trim() : "";
-  if (name) lines.push(`Name: ${name}`);
+  if (preferred) lines.push(`Call them: ${preferred} (the name they asked Nova to use; use it now and then, where it fits, not in every reply)`);
+  else if (name) lines.push(`Name: ${name}`);
   const learningFor = learningContextLine(normalizeLearningContexts(p.learningContexts ?? []) ?? []);
   if (learningFor) lines.push(learningFor);
   // What they are working on (v3) says more than the older single answer,
