@@ -2,7 +2,7 @@
 // a request that fails keeps nothing from the page (the caller holds the
 // words and the edits).
 
-import type { BuilderResponse, ChangeSet, DraftListView, DraftView, Snapshot, VersionItem, WorkspaceDetailResponse } from '@repo/api/nova/product/builder.types'
+import type { BuilderAction, BuilderResponse, ChangeSet, DraftListView, DraftView, Snapshot, VersionItem, WorkspaceDetailResponse } from '@repo/api/nova/product/builder.types'
 import type { WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
 
 export type Failure = { ok: false; error: string; message: string; draft?: DraftView }
@@ -26,8 +26,9 @@ const id = (draftId: string) => encodeURIComponent(draftId)
 export type SharedFile = { name: string; data: string }
 export const startDraft = (body: { clientKey: string; text?: string; files?: SharedFile[]; targetWorkspaceId?: string }) => post<BuilderResponse>('/api/nova/builder', body)
 export const loadDraft = (draftId: string) => call<BuilderResponse>(`/api/nova/builder/${id(draftId)}`)
-export const sendMessage = (draftId: string, text: string, files: SharedFile[] = []) =>
-  post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/messages`, files.length ? { text, files } : { text })
+// action: a choice pressed under Nova's last message, sent with its words.
+export const sendMessage = (draftId: string, text: string, files: SharedFile[] = [], action?: BuilderAction) =>
+  post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/messages`, { text, ...(files.length ? { files } : {}), ...(action ? { action } : {}) })
 export const resumeDraft = (draftId: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/messages`, { resume: true })
 export const retryDraft = (draftId: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/retry`)
 export const cancelDraft = (draftId: string) => post<BuilderResponse>(`/api/nova/builder/${id(draftId)}/cancel`)

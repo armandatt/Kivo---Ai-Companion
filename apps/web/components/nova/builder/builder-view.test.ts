@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
-import { changeMarks, diffSummary, familyOf, hintFor, ids, mapDestinations, messageBlocks, planDiff, planSubjects, subjectOutline, touchedSubjects, wordsFor } from './builder-view'
+import { changeMarks, diffSummary, familyOf, hintFor, ids, mapDestinations, messageBlocks, nestRows, planDiff, planSubjects, subjectOutline, topicOutline, touchedSubjects, wordsFor } from './builder-view'
 import type { ChangeSet, DraftView, WorkspaceDetail } from '@repo/api/nova/product/builder.types'
 import { viewsFor } from './plan-edit'
 
@@ -150,4 +150,50 @@ test('a plan lists a subject right under the one it is inside; the map opens on 
   ] }
   assert.deepEqual(mapDestinations({ status: 'ready', current }), [{ label: 'Semester Five', href: '/map?workspace=all&focus=subject%3Ag' }])
   assert.deepEqual(mapDestinations({ status: 'ready', current }, ['a']), [{ label: 'Semester Five', href: '/map?workspace=all&focus=subject%3Ag' }])
+})
+
+test('a parent is drawn holding what sits inside it: Finance with its four phases (Scenario D)', () => {
+  const p = { subjects: [{ name: 'Phase 1', parent: 'Finance', topics: [] }, { name: 'Finance', topics: [] }, { name: 'Phase 2', parent: 'Finance', topics: [] }, { name: 'Cooking', topics: [] }] }
+  const tree = nestRows(planSubjects(p))
+  assert.deepEqual(tree.map(n => p.subjects[n.row.index]!.name), ['Finance', 'Cooking'])
+  assert.deepEqual(tree[0]!.inside.map(n => p.subjects[n.row.index]!.name), ['Phase 1', 'Phase 2'])
+  // Deeper levels nest too; a row after a deeper one goes back up.
+  const rows = [{ name: 'A', depth: 0 }, { name: 'B', depth: 1 }, { name: 'C', depth: 2 }, { name: 'D', depth: 1 }, { name: 'E', depth: 0 }]
+  const nested = nestRows(rows)
+  assert.deepEqual(nested.map(n => n.row.name), ['A', 'E'])
+  assert.deepEqual(nested[0]!.inside.map(n => n.row.name), ['B', 'D'])
+  assert.deepEqual(nested[0]!.inside[0]!.inside.map(n => n.row.name), ['C'])
+})
+
+test('proposed topic changes are drawn where they go: four phases moved inside Finance, new topics inside a new one', () => {
+  const subject = { id: 's', topics: [
+    { id: 'fin', name: 'Finance', parentId: null }, { id: 'p1', name: 'Phase 1', parentId: null }, { id: 'p2', name: 'Phase 2', parentId: null },
+    { id: 'bud', name: 'Budgeting', parentId: 'p1' }, { id: 'old', name: 'Old notes', parentId: null },
+  ] }
+  const set = { dropped: [], ops: [
+    { id: 'c1', op: 'move_topic', topicId: 'p1', parentId: 'fin', says: '', effect: 'change', why: null },
+    { id: 'c2', op: 'move_topic', topicId: 'p2', parentId: 'fin', says: '', effect: 'change', why: null },
+    { id: 'c3', op: 'add_topics', subjectId: 's', names: ['Phase 3'], keys: ['p3'], parentId: 'fin', kind: 'milestone', says: '', effect: 'add', why: null },
+    { id: 'c4', op: 'add_topics', subjectId: 's', names: ['Index funds'], parentKey: 'p3', says: '', effect: 'add', why: null },
+    { id: 'c5', op: 'add_topics', subjectId: 'other', names: ['Elsewhere'], says: '', effect: 'add', why: null },
+    { id: 'c6', op: 'remove_topic', topicId: 'old', says: '', effect: 'remove', why: null },
+  ] } as unknown as ChangeSet
+  const rows = topicOutline(subject, set)
+  assert.deepEqual(rows.map(r => `${'  '.repeat(r.depth)}${r.name}:${r.state}`), [
+    'Finance:same', '  Phase 1:moved', '    Budgeting:same', '  Phase 2:moved', '  Phase 3:added', '    Index funds:added', 'Old notes:removed',
+  ])
+  const p1 = rows.find(r => r.name === 'Phase 1')!
+  assert.equal(p1.under, 'Finance')
+  assert.equal(p1.was, 'the top')
+  assert.equal(p1.id, 'p1')
+  assert.equal(rows.find(r => r.name === 'Phase 3')!.id, null)
+  assert.ok(rows.find(r => r.name === 'Finance')!.holds)
+  // Nothing proposed: the tree as stored.
+  assert.deepEqual(topicOutline(subject, null).map(r => `${r.depth}${r.name}`), ['0Finance', '0Phase 1', '1Budgeting', '0Phase 2', '0Old notes'])
+})
+
+test('a move with a place puts the topic there among those beside it', () => {
+  const subject = { id: 's', topics: [{ id: 'a', name: 'A', parentId: null }, { id: 'b', name: 'B', parentId: null }, { id: 'c', name: 'C', parentId: null }] }
+  const set = { dropped: [], ops: [{ id: 'c1', op: 'move_topic', topicId: 'c', parentId: null, index: 0, says: '', effect: 'change', why: null }] } as unknown as ChangeSet
+  assert.deepEqual(topicOutline(subject, set).map(r => r.name), ['C', 'A', 'B'])
 })

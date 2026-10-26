@@ -5,11 +5,19 @@
 //
 //   - A fact is the learner's only when its quote is in what they wrote.
 //     Anything else the model calls a fact is shown as an assumption.
-//   - Nova asks one question at a time, at most MAX_QUESTIONS before it
-//     proposes something, and never drafts from nothing: it needs at least
-//     one thing the learner said they are working on. A first message that
-//     says one thing ("I'm building TrackerX") gets a question before any
-//     proposal, whatever the model wanted.
+//   - Nova asks one question at a time, as many as the plan needs (there is
+//     no count after which it drafts), and never drafts from nothing: it
+//     needs at least one thing the learner said they are working on. A first
+//     message that says one thing ("I'm building TrackerX") gets a question
+//     before any proposal, whatever the model wanted.
+//   - A new plan is drafted only with the learner's consent: a button they
+//     pressed, or words of theirs the model quotes from their latest message
+//     ("build it now"). A goal, a file, an answer or brainstorming is not
+//     consent. When the model thinks it knows enough without it, Nova asks
+//     whether they have a plan of their own or want one built.
+//   - After BUILD_OFFER_AFTER learner messages, a question offers to build a
+//     draft with what Nova has; the offer is not consent, pressing it is.
+//   - Tasks are written only when asked for (TaskConsent; task-consent.ts).
 //   - Talk is talk. A reading of "chat" changes nothing.
 //   - A proposal is changed only by a new version. Approval names a version
 //     (builder.ts checks it); every change, Nova's or the learner's, makes a
@@ -19,13 +27,15 @@
 // No regex: text is compared by characters (SKILL.md; the no-regex guard).
 
 import { oneLine, type WorkspacePlan } from "./workspace-plan";
-import { CHANGE_KINDS, WORK_KINDS, type ChangeKind, type BriefFact, type BuilderBrief, type BuilderMessage, type DraftStatus, type PendingJob, type PlanChangeSummary, type WorkKind } from "./builder.types";
+import { BUILDER_ACTIONS, CHANGE_KINDS, WORK_KINDS, type BuilderAction, type BuilderOffer, type ChangeKind, type BriefFact, type BuilderBrief, type BuilderMessage, type DraftStatus, type PendingJob, type PlanChangeSummary, type TaskConsent, type WorkKind } from "./builder.types";
 
 export const MESSAGE_MAX = 2000;
 // Nova's reply may explain what a shared file says, so it may run longer.
 export const REPLY_MAX = 2400;
 export const MESSAGES_KEPT = 60;
-export const MAX_QUESTIONS = 4;
+// The learner messages in a planning conversation after which a question
+// offers to build a draft with what Nova has (builder.types.ts BuilderOffer).
+export const BUILD_OFFER_AFTER = 3;
 // A job that has said nothing for this long is taken to have died with its
 // process; the learner may try again.
 export const PENDING_STALE_MS = 180_000;
@@ -38,6 +48,20 @@ export const OPENING_QUESTION = "What are you working on, and what would you lik
 export const STARTING_QUESTION = "Before I propose anything: where are you with it right now, and is there a date you're working towards?";
 // What a first proposal needs, unless a question has already been asked.
 export const MIN_FACTS_TO_DRAFT = 2;
+
+// Asked by code when the model would draft without the learner's consent
+// (greetings.ts planQuestion has it in their language).
+export const PLAN_QUESTION = "I think I have enough to go on. Do you already have a plan you want to follow, or should I build one with you?";
+// What the page sends for a choice, as the learner's words in the conversation.
+export const ACTION_WORDS: Record<BuilderAction, string> = {
+  build: "Build a draft with what we have.",
+  own_plan: "I already have a plan.",
+  explore: "I'm just exploring for now.",
+  tasks: "Create tasks for the whole plan.",
+};
+// Which offer a choice answers: pressed under any other, it is only words.
+const ANSWERS: Record<BuilderAction, readonly BuilderOffer[]> = { build: ["build", "plan"], own_plan: ["plan"], explore: ["plan"], tasks: ["tasks"] };
+export const NO_TASKS: TaskConsent = { mode: "none", scope: [] };
 
 export function emptyBrief(): BuilderBrief {
   return { kind: null, title: null, facts: [], known: [], assumptions: [], suggestions: [], question: null, questionsAsked: 0, dropped: [] };
@@ -105,6 +129,16 @@ export interface TurnReading {
   // They want all of what this conversation works on deleted. Code builds
   // the removal (builder.ts), listed and approved like any change.
   deleteAll?:  boolean;
+  // Their latest message asks for the plan to be built now: true only when
+  // the model's quote of it is in that message.
+  build?:      boolean;
+  // Their latest message asks for tasks (all, or for named parts) or for
+  // none, quoted from it as build is. null: it says nothing about tasks.
+  tasks?:      TaskConsent | null;
+  // What they said about a plan of their own. null: nothing.
+  stance?:     BuilderBrief["stance"];
+  // The existing subject, topic or milestone they ask to put things inside.
+  under?:      string | null;
 }
 
 // Lower case, single spaces, curly quotes straightened: so a quote matches
@@ -136,7 +170,9 @@ const listOf = (v: unknown, max: number): string[] => {
 // learner's only when their quote is in `learnerText` (what they wrote in
 // this conversation), or when they name a file the learner shared
 // (`fileNames`); the rest become assumptions, said as such.
-export function readTurn(raw: unknown, learnerText: string, fileNames: readonly string[] = []): TurnReading | null {
+// `latest` is their latest message: consent to build and to tasks counts
+// only when quoted from it, never from something said earlier.
+export function readTurn(raw: unknown, learnerText: string, fileNames: readonly string[] = [], latest: string = learnerText): TurnReading | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
   const reply = typeof r.reply === "string" ? r.reply.split("\r").join("").trim().slice(0, REPLY_MAX) : "";
@@ -175,8 +211,31 @@ export function readTurn(raw: unknown, learnerText: string, fileNames: readonly 
     removes: typeof r.removes === "boolean" ? r.removes : null,
     undo: r.undo === true,
     deleteAll: r.deleteAll === true,
+    build: quoted(r.build, latest),
+    tasks: taskConsentOf(r.tasks, latest),
+    stance: r.stance === "own_plan" || r.stance === "help" || r.stance === "explore" ? r.stance : null,
+    under: oneLine(r.under, 120) || null,
   };
 }
+
+// {"quote": "..."}: true when the quote is in `said`, a few words at least.
+function quoted(raw: unknown, said: string): boolean {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const quote = normalized(oneLine((raw as { quote?: unknown }).quote, LINE_MAX));
+  return quote.length >= 3 && normalized(said).includes(quote);
+}
+
+function taskConsentOf(raw: unknown, said: string): TaskConsent | null {
+  if (!quoted(raw, said)) return null;
+  const r = raw as { want?: unknown; scope?: unknown };
+  if (r.want === "none") return NO_TASKS;
+  if (r.want === "all") return { mode: "all", scope: [] };
+  const scope = listOf(r.scope, 12);
+  return r.want === "some" && scope.length ? { mode: "scoped", scope } : null;
+}
+
+// The consent they gave for tasks so far, read from the brief.
+export const taskConsent = (brief: Pick<BuilderBrief, "tasks">): TaskConsent => brief.tasks ?? NO_TASKS;
 
 function resourceOf(raw: unknown): TurnReading["resource"] {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -190,41 +249,79 @@ function resourceOf(raw: unknown): TurnReading["resource"] {
 
 export type Step =
   // overruled: the model wanted to propose and code asked instead, so its
-  // reply (which says it will propose) is not used.
-  | { type: "ask"; question: string; overruled?: true }
+  // reply (which says it will propose) is not used. offer: the choices the
+  // page shows under the question.
+  | { type: "ask"; question: string; overruled?: true; offer?: BuilderOffer }
   | { type: "chat" }
   // Not what this page does: answered by code, nothing changes.
   | { type: "decline" }
-  | { type: "draft"; reason: "ready" | "enough_questions" }
+  // consented: the learner asked for it (a button or their words); improving:
+  // a change to something of theirs, proposed for their approval.
+  | { type: "draft"; reason: "consented" | "improving" }
   | { type: "revise"; change: string };
 
 // improving: the conversation is about a workspace they already have, which
-// is context enough for a specific addition ("add a beta programme").
+// is context enough for a specific addition ("add a beta programme"), and
+// what is proposed there is a change they approve, not a new plan.
 // changes: a change set to an existing resource is proposed (it is the
 // proposal there, as the plan is for a new workspace).
-export function decideStep(state: { plan: WorkspacePlan | null; brief: BuilderBrief; improving?: boolean; changes?: boolean }, reading: TurnReading): Step {
+// consent: they asked for a plan before this turn. turns: their messages in
+// this planning conversation (planningTurns), this one included.
+// files: they shared material, which is something to build from.
+export function decideStep(state: { plan: WorkspacePlan | null; brief: BuilderBrief; improving?: boolean; changes?: boolean; turns?: number; files?: boolean }, reading: TurnReading): Step {
   const facts = reading.facts.length > 0 ? reading.facts : state.brief.facts;
   if (reading.next === "decline") return { type: "decline" };
-  if (reading.next === "chat") return { type: "chat" };
 
   // A proposal exists: a change to it is a new version; anything else is talk.
   if (state.plan || state.changes) {
+    if (reading.next === "chat") return { type: "chat" };
     if (reading.next === "revise" || reading.next === "draft") return { type: "revise", change: reading.change ?? reading.reply };
     return reading.question ? { type: "ask", question: reading.question } : { type: "chat" };
   }
 
-  // Nothing to draft from: ask what it is for, whatever the model wanted.
-  // Working on something of theirs, it is the context: "add graphs to it" needs no facts.
-  if (facts.length === 0 && !state.improving) return { type: "ask", question: reading.question ?? OPENING_QUESTION };
-  const wantsDraft = reading.next === "draft" || reading.next === "revise";
-  // One thing said and nothing asked yet: a proposal now would be generic.
-  if (facts.length < MIN_FACTS_TO_DRAFT && state.brief.questionsAsked === 0 && !state.improving) {
-    return wantsDraft ? { type: "ask", question: STARTING_QUESTION, overruled: true } : { type: "ask", question: reading.question ?? STARTING_QUESTION };
+  // Something of theirs: what is drafted is a change, shown and approved before anything happens.
+  if (state.improving) {
+    if (reading.next === "chat") return { type: "chat" };
+    return reading.next === "draft" || reading.next === "revise" ? { type: "draft", reason: "improving" } : { type: "ask", question: reading.question ?? OPENING_QUESTION };
   }
-  if (wantsDraft) return { type: "draft", reason: "ready" };
-  // Enough questions: propose something and let the learner correct it.
-  if (state.brief.questionsAsked >= MAX_QUESTIONS) return { type: "draft", reason: "enough_questions" };
-  return { type: "ask", question: reading.question ?? OPENING_QUESTION };
+
+  const consented = state.brief.consent === true || reading.build === true;
+  const offer = (state.turns ?? 0) >= BUILD_OFFER_AFTER ? { offer: "build" as const } : {};
+  // Talk stays talk, consent or not, unless this very message asks to build.
+  if (reading.next === "chat" && !reading.build) return { type: "chat" };
+  // Nothing to draft from: ask what it is for, whatever the model wanted.
+  if (facts.length === 0 && !state.files) return { type: "ask", question: reading.question ?? OPENING_QUESTION };
+  if (consented) {
+    // Asked to build from one detail with nothing asked yet: the one question every plan needs, then it is built.
+    if (facts.length < MIN_FACTS_TO_DRAFT && state.brief.questionsAsked === 0 && !state.files && !reading.build) return { type: "ask", question: STARTING_QUESTION, overruled: true };
+    return { type: "draft", reason: "consented" };
+  }
+  const wantsDraft = reading.next === "draft" || reading.next === "revise";
+  // One thing said and nothing asked yet: even a question about a plan would be early.
+  if (facts.length < MIN_FACTS_TO_DRAFT && state.brief.questionsAsked === 0 && !state.files) {
+    return wantsDraft ? { type: "ask", question: STARTING_QUESTION, overruled: true, ...offer } : { type: "ask", question: reading.question ?? STARTING_QUESTION, ...offer };
+  }
+  // Ready, by the model's reading, but not asked to build: ask, never assume.
+  if (wantsDraft) return { type: "ask", question: PLAN_QUESTION, overruled: true, offer: "plan" };
+  return { type: "ask", question: reading.question ?? OPENING_QUESTION, ...offer };
+}
+
+// The learner's messages in this planning conversation: since the last
+// thing it built (a built conversation going on is a new plan), Kivo's own
+// notices aside. Stored messages, so a refresh keeps the count; a message
+// sent twice is refused while the first is answered (builder.ts claim).
+export function planningTurns(messages: BuilderMessage[]): number {
+  const said = spoken(messages);
+  const from = said.map(m => m.kind).lastIndexOf("built") + 1;
+  return said.slice(from).filter(m => m.role === "user").length;
+}
+
+// The choice the learner pressed, when the message before theirs offered it.
+export function pressed(messages: BuilderMessage[]): BuilderAction | null {
+  const said = spoken(messages);
+  const last = said.at(-1), before = said.at(-2);
+  if (!last || last.role !== "user" || !last.action || !before || before.role !== "nova" || !before.offer) return null;
+  return ANSWERS[last.action].includes(before.offer) ? last.action : null;
 }
 
 // Nova's words for an "ask" step. The model usually ends its reply with the
@@ -249,6 +346,10 @@ export function nextBrief(before: BuilderBrief, reading: TurnReading, step: Step
     suggestions: reading.suggestions.length > 0 ? reading.suggestions : before.suggestions,
     question: step.type === "ask" ? step.question : null,
     questionsAsked: before.questionsAsked + (step.type === "ask" ? 1 : 0),
+    consent: before.consent === true || reading.build === true,
+    stance: reading.stance ?? before.stance ?? null,
+    tasks: reading.tasks ?? taskConsent(before),
+    under: reading.under ?? null,
   };
 }
 
@@ -291,10 +392,21 @@ export function readBrief(raw: unknown): BuilderBrief {
     ...(Array.isArray(r.touches) ? { touches: CHANGE_KINDS.filter(k => (r.touches as unknown[]).includes(k)) } : {}),
     ...(typeof r.removes === "boolean" ? { removes: r.removes } : {}),
     ...(r.deletion && typeof r.deletion === "object" && typeof (r.deletion as { fingerprint?: unknown }).fingerprint === "string" ? { deletion: r.deletion as BuilderBrief["deletion"] } : {}),
+    ...(r.consent === true ? { consent: true } : {}),
+    ...(r.stance === "own_plan" || r.stance === "help" || r.stance === "explore" ? { stance: r.stance } : {}),
+    ...(readTaskConsent(r.tasks) ? { tasks: readTaskConsent(r.tasks)! } : {}),
+    ...(oneLine(r.under, 120) ? { under: oneLine(r.under, 120) } : {}),
     question: oneLine(r.question, 300) || null,
     questionsAsked: typeof r.questionsAsked === "number" && Number.isInteger(r.questionsAsked) && r.questionsAsked >= 0 ? r.questionsAsked : 0,
     dropped: listOf(r.dropped, 12),
   };
+}
+
+function readTaskConsent(raw: unknown): TaskConsent | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as { mode?: unknown; scope?: unknown };
+  const scope = listOf(r.scope, 12);
+  return r.mode === "none" || r.mode === "all" ? { mode: r.mode, scope: [] } : r.mode === "scoped" && scope.length ? { mode: "scoped", scope } : null;
 }
 
 export function readMessages(raw: unknown): BuilderMessage[] {
@@ -306,7 +418,12 @@ export function readMessages(raw: unknown): BuilderMessage[] {
     const files = Array.isArray(x.files)
       ? x.files.flatMap(f => (f && typeof f === "object" && typeof (f as { name?: unknown }).name === "string" ? [{ name: (f as { name: string }).name, pages: typeof (f as { pages?: unknown }).pages === "number" ? (f as { pages: number }).pages : null }] : []))
       : [];
-    return [{ id: x.id, role: x.role, text: x.text, at: x.at, ...(typeof x.kind === "string" ? { kind: x.kind as BuilderMessage["kind"] } : {}), ...(typeof x.version === "number" ? { version: x.version } : {}), ...(files.length ? { files } : {}) }];
+    const offer = x.offer === "build" || x.offer === "plan" || x.offer === "tasks" ? x.offer : null;
+    const action = BUILDER_ACTIONS.find(a => a === x.action) ?? null;
+    return [{
+      id: x.id, role: x.role, text: x.text, at: x.at, ...(typeof x.kind === "string" ? { kind: x.kind as BuilderMessage["kind"] } : {}), ...(typeof x.version === "number" ? { version: x.version } : {}), ...(files.length ? { files } : {}),
+      ...(offer ? { offer } : {}), ...(action ? { action } : {}),
+    }];
   });
 }
 
@@ -326,7 +443,7 @@ export function withMessages(list: BuilderMessage[], ...added: BuilderMessage[])
 }
 
 let counter = 0;
-export function message(role: BuilderMessage["role"], text: string, now: Date, extra: Pick<BuilderMessage, "kind" | "version" | "files"> = {}): BuilderMessage {
+export function message(role: BuilderMessage["role"], text: string, now: Date, extra: Pick<BuilderMessage, "kind" | "version" | "files" | "offer" | "action"> = {}): BuilderMessage {
   counter = (counter + 1) % 1_000_000;
   return { id: `${now.getTime().toString(36)}-${counter.toString(36)}-${role[0]}`, role, text: text.slice(0, MESSAGE_MAX), at: now.toISOString(), ...extra };
 }

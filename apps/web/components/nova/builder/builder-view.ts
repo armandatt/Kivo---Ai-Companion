@@ -349,3 +349,79 @@ export function subjectOutline(detail: Pick<WorkspaceDetail, 'subjects'>, marks:
     under: depth > 0 ? rows.find(r => r.id === item.parent)?.row.name ?? null : null,
   }))
 }
+
+// ── Drawing a tree ────────────────────────────────────────────────────────────
+
+// Rows in tree order with their depth (planSubjects, subjectOutline), as a
+// nested tree: each row with the rows inside it. So a parent is drawn as a
+// container holding its children, never as a box above boxes merely shifted
+// to the right.
+export interface Nested<T> { row: T; inside: Array<Nested<T>> }
+export function nestRows<T extends { depth: number }>(rows: readonly T[]): Array<Nested<T>> {
+  const roots: Array<Nested<T>> = []
+  const open: Array<Nested<T>> = []
+  for (const row of rows) {
+    const node: Nested<T> = { row, inside: [] }
+    while (open.length > row.depth) open.pop()
+    const parent = open.at(-1)
+    if (parent && row.depth > 0) parent.inside.push(node)
+    else roots.push(node)
+    open.push(node)
+  }
+  return roots
+}
+
+// A live subject's topics as they will stand once the proposed changes
+// apply: a topic moving is shown where it goes (marked, with where it was),
+// new topics where they go (marked new), inside the topic they go in. So
+// "put all four phases under Finance" shows the four inside Finance before
+// approval, not as a list of operations.
+export interface TopicRow {
+  key: string; id: string | null; name: string; depth: number; kind: string | null
+  state: 'same' | 'added' | 'moved' | 'removed'
+  renamed: string | null
+  // The topic it sits inside once the changes apply (null: at the top), and,
+  // for one moving, where it was.
+  under: string | null; was: string | null
+  // Topics sit inside it.
+  holds: boolean
+}
+export function topicOutline(subject: Pick<WorkspaceDetail['subjects'][number], 'id' | 'topics'>, set: ChangeSet | null): TopicRow[] {
+  type Node = { id: string; parent: string | null; name: string; kind: string | null; state: TopicRow['state']; renamed: string | null; was: string | null }
+  const list: Node[] = subject.topics.map(t => ({ id: t.id, parent: t.parentId ?? null, name: t.name, kind: t.kind ?? null, state: 'same', renamed: null, was: null }))
+  const byId = (id: string) => list.find(n => n.id === id)
+  const nameOf = (id: string | null) => (id ? byId(id)?.name ?? null : null)
+  const target = (to: { parentId?: string | null; parentKey?: string | null }) => (to.parentKey ? `+${to.parentKey}` : to.parentId ?? null)
+  for (const o of set?.ops ?? []) {
+    if (o.op === 'add_topics' && o.subjectId === subject.id) {
+      o.names.forEach((name, i) => list.push({ id: `+${o.keys?.[i] ?? `${name}`}`, parent: target(o), name, kind: o.kind ?? null, state: 'added', renamed: null, was: null }))
+    } else if (o.op === 'move_topic') {
+      const n = byId(o.topicId)
+      if (!n) continue
+      const was = n.parent
+      n.parent = target(o)
+      if (n.state === 'same') n.state = 'moved'
+      n.was = nameOf(was) ?? 'the top'
+      // Its place among those it now sits beside.
+      list.splice(list.indexOf(n), 1)
+      const beside = list.filter(x => x.parent === n.parent)
+      const at = typeof o.index === 'number' && o.index < beside.length ? list.indexOf(beside[Math.max(0, o.index)]!) : list.length
+      list.splice(at, 0, n)
+    } else if (o.op === 'order_topics') {
+      const nodes = o.topicIds.map(byId).filter((n): n is Node => Boolean(n))
+      const slots = nodes.map(n => list.indexOf(n)).sort((a, b) => a - b)
+      slots.forEach((slot, i) => { list[slot] = nodes[i]! })
+    } else if (o.op === 'rename_topic') {
+      const n = byId(o.topicId)
+      if (n) n.renamed = o.name
+    } else if (o.op === 'remove_topic') {
+      const n = byId(o.topicId)
+      if (n) n.state = 'removed'
+    }
+  }
+  const holds = new Set(list.map(n => n.parent).filter(Boolean))
+  return treeOrder(list).map(({ item: n, depth }) => ({
+    key: n.id, id: n.id.startsWith('+') ? null : n.id, name: n.name, depth, kind: n.kind, state: n.state, renamed: n.renamed,
+    under: n.parent ? list.find(x => x.id === n.parent)?.name ?? null : null, was: n.state === 'moved' ? n.was : null, holds: holds.has(n.id),
+  }))
+}

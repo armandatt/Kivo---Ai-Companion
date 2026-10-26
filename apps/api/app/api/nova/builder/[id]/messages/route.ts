@@ -12,7 +12,9 @@ export const dynamic = "force-dynamic"
 // under the web host's 4.5 MB request limit.
 const BODY_MAX = 4_300_000
 
-// POST /api/nova/builder/[id]/messages  { text?, files? } | { resume: true }
+// POST /api/nova/builder/[id]/messages  { text?, files?, action? } | { resume: true }
+// action: a choice pressed under Nova's last message (build, own_plan,
+// explore, tasks), sent with its words; it counts only where it was offered.
 // files: PDFs or photos as [{ name, data (base64) }], up to 3 and 3 MB at a
 // time, kept with the conversation so Nova can read them on later messages.
 // A message to Nova in this conversation (or, with resume, an answer to the
@@ -27,7 +29,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (!read.ok) return builderFail(read.reason === "too_large" ? 413 : 400, "invalid", read.reason === "too_large" ? "Those files are too large together. Up to 3 MB at a time." : "That message couldn't be read.")
     const refused = await spendForTurn(access.platformChatId)
     if (refused) return refused
-    const claimed = await postMessage(access.platformChatId, (await ctx.params).id, (read.body ?? {}) as { text?: unknown; resume?: unknown; files?: unknown })
+    const claimed = await postMessage(access.platformChatId, (await ctx.params).id, (read.body ?? {}) as { text?: unknown; resume?: unknown; files?: unknown; action?: unknown })
     if (!claimed.ok) return builderFail(statusFor(claimed.error), claimed.error, claimed.message, claimed.draft ? { draft: claimed.draft } : {})
     startJob(access.platformChatId, claimed.job)
     return NextResponse.json({ ok: true, draft: claimed.draft }, { headers: { "cache-control": "no-store" } })

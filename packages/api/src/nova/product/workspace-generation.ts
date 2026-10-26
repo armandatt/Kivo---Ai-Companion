@@ -23,6 +23,8 @@ import type { LlmAttachment } from "../../services/llmProviders";
 import { PLAN_LIMITS, checkWorkspacePlan, type PlanCheck, type WorkspacePlan } from "./workspace-plan";
 import { isOverPriceTier, isTruncated } from "../../services/llmProviders";
 import { treeOrder } from "./task-tree";
+import { filterPlanTasks } from "./task-consent";
+import type { TaskConsent } from "./builder.types";
 import { parseCreationIntent, type CreationIntent } from "./workspace-routing";
 import { CATEGORY_INFO, type StudyTemplate, type TemplateCategory } from "./templates";
 
@@ -266,6 +268,8 @@ const BUILDER_RULES = [
   "When the learner wants everything under one name (\"all milestones under one main topic called Kivo\", \"put all five under Semester Five\"): with one subject, name that subject so; with several, add that name as a subject with no topics and set each grouped subject's parent to it. Never add it as one more topic beside the others.",
   "Priorities the learner set are theirs: Kivo keeps them whatever you write. Suggest one only as the rules above say.",
   "When EXISTING WORKSPACE is given, propose only what to add to it. Do not repeat what it already has; never remove or rename what is there.",
+  "TASKS decides whether the plan has tasks, over every rule above that mentions them: none asked for means \"tasks\": [] and the plan is its subjects, topics and milestones (practice and revision are said in a topic's explanation or a milestone's exercises instead); only for named parts means tasks filed under those parts and nothing else. Kivo removes any other task.",
+  "A phase, stage, unit, module or chapter of a subject is a topic inside it (a milestone for a stage of work), never a subject of its own; when the learner says parts go under a name (\"Finance has four phases\"), those parts sit inside it.",
 ].join("\n");
 
 export interface BuilderPlanRequest {
@@ -282,6 +286,8 @@ export interface BuilderPlanRequest {
   existing:     { title: string; subjects: string[]; tasks: string[]; notes: string[] } | null;
   // PDFs and photos shared in the conversation, attached for the model to read.
   files?:       LlmAttachment[];
+  // Which tasks the learner asked for (task-consent.ts). Absent: none.
+  tasks?:       TaskConsent;
 }
 
 export function builderPlanPrompt(p: BuilderPlanRequest): string {
@@ -298,6 +304,7 @@ export function builderPlanPrompt(p: BuilderPlanRequest): string {
       : "EXISTING WORKSPACE: none; this is a new workspace.",
     `CONVERSATION:\n${p.conversation.map(m => `${m.role === "user" ? "LEARNER" : "NOVA"}: ${m.text}`).join("\n")}`,
     `FILES: ${p.files?.length ? p.files.map(f => `${f.name} (${f.mimeType})`).join(", ") : "none"}`,
+    `TASKS: ${!p.tasks || p.tasks.mode === "none" ? "none asked for: \"tasks\": []" : p.tasks.mode === "all" ? "asked for, across the whole plan" : `asked for only in ${p.tasks.scope.join(", ")} (and what is inside them): no other tasks`}`,
   ].join("\n\n");
 }
 
@@ -328,7 +335,14 @@ export async function writeBuilderPlan(p: BuilderPlanRequest, generate: Generate
   const checked = withNoResearch(checkWorkspacePlan({ ...parsed, kind: "custom", templateId: null, templateVersion: null }, { today: p.today, files: (p.files ?? []).map(f => f.name), userText: p.learnerText, nova: true }));
   // The plan's structure is the model's and the learner's, as checked: no
   // kind of work rewrites it (26 Oct). What the check changed is in dropped.
-  return withSyllabusNote(checked, p);
+  // Tasks only as far as the learner asked for them, whatever the reply held.
+  return withSyllabusNote(withAskedTasks(checked, p.tasks), p);
+}
+
+function withAskedTasks(checked: PlanCheck, consent: TaskConsent | undefined): PlanCheck {
+  if (!checked.ok) return checked;
+  const kept = filterPlanTasks(checked.plan, consent ?? { mode: "none", scope: [] });
+  return kept.dropped.length ? { ...checked, plan: kept.plan, dropped: [...checked.dropped, ...kept.dropped] } : checked;
 }
 
 // The priorities the learner set survive a new version Nova writes: a task
@@ -386,6 +400,8 @@ const CHANGES_SYSTEM = [
   "- Waits: add or change after only when one task truly needs what another produces, never on its own steps or the task it is a step of.",
   "- Never remove or rename something unless asked. When the learner wants a subject gone (\"delete Prompt Engineering\", \"it belongs to another semester\"), use remove_subject; remove_topic only for a topic and what is inside it. Additions must not repeat what is already there.",
   "- Priority is the learner's: set or change one only when CHANGE ASKED is about priority (Kivo drops it otherwise).",
+  "- add_task only as TASKS ALLOWED says: none asked for means no add_task at all, whatever the change; only for named parts means tasks filed under those parts (topicName one of them or inside them) and nowhere else. Kivo drops any other. Never turn a topic into a task or a task into a topic, and never remove a task to restructure topics.",
+  "- \"Put X under Y\": Y is the parent, by its id in CURRENT RECORDS. Things that exist move there (move_topic or move_subject with Y's id); new ones are added with Y as parentId. A phase or stage under a subject is a topic (or milestone) inside it, never a subject of its own beside it; inside a topic, never a subject.",
   "- A new deadline: update_date for the date, then update_task for each open task whose due day no longer fits before it; nothing else.",
   "- New topics are specific, in learning order after what is there, never what a topic there already covers, never a placeholder (\"Introduction\", \"Advanced concepts\", \"Practice questions\"); practice and revision are tasks. Note bodies use \"# \" headings and \"- \" lists.",
   "- When CHANGES PROPOSED SO FAR is given, return the whole new set: the earlier changes that still apply, with CHANGE ASKED applied to them.",
@@ -406,6 +422,8 @@ export interface ChangesRequest {
   change:       string;
   conversation: Array<{ role: "user" | "nova"; text: string }>;
   files?:       LlmAttachment[];
+  // Which tasks the learner asked for (task-consent.ts). Absent: none.
+  tasks?:       TaskConsent;
 }
 
 export function changesPrompt(p: ChangesRequest): string {
@@ -424,6 +442,7 @@ export function changesPrompt(p: ChangesRequest): string {
     `Notes:\n${c.notes.slice(0, 30).map(n => `- note ${n.id} "${n.title}"`).join("\n") || "- none"}`,
     p.proposed?.length ? `CHANGES PROPOSED SO FAR (JSON):\n${JSON.stringify(p.proposed).slice(0, 12_000)}` : "CHANGES PROPOSED SO FAR: none",
     `CHANGE ASKED: ${p.change}`,
+    `TASKS ALLOWED: ${!p.tasks || p.tasks.mode === "none" ? "none asked for" : p.tasks.mode === "all" ? "yes" : `only in ${p.tasks.scope.join(", ")} (and what is inside them)`}`,
     `CONVERSATION:\n${p.conversation.map(m => `${m.role === "user" ? "LEARNER" : "NOVA"}: ${m.text}`).join("\n")}`,
     `FILES: ${p.files?.length ? p.files.map(f => `${f.name} (${f.mimeType})`).join(", ") : "none"}`,
   ].join("\n\n");

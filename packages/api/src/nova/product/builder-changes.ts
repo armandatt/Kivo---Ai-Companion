@@ -682,6 +682,45 @@ export function withinAsk(set: ChangeSet, touches: readonly ChangeKind[], curren
   return { ops: kept, dropped: [...set.dropped, ...left].slice(0, 12) };
 }
 
+// "Put all four phases under Finance": the learner named a parent that is
+// there (brief.under), so nothing new the change adds lands beside it at the
+// top. A new subject left on its own goes inside it (inside a topic, it is
+// a topic there: a subject never sits inside a topic), and new topics at the
+// top of that topic's subject go inside that topic. Applied to the model's
+// operations before they are checked, so the check sees what is proposed.
+// touches: the kinds of record the request now includes (a subject made a
+// topic is about topics).
+export function placeUnder(ops: unknown[], under: string | null | undefined, current: Pick<WorkspaceDetail, "subjects">): { ops: unknown[]; touches: ChangeKind[] } {
+  const name = under ? normName(under) : "";
+  if (!name) return { ops, touches: [] };
+  const rec = (o: unknown) => (o && typeof o === "object" && !Array.isArray(o) ? o as Record<string, unknown> : null);
+  const subject = current.subjects.find(s => normName(s.name) === name);
+  const topic = subject ? null : current.subjects.flatMap(s => s.topics.map(t => ({ id: t.id, subjectId: s.id, name: t.name }))).find(t => normName(t.name) === name) ?? null;
+  const addedKey = !subject && !topic ? ops.map(rec).find(o => o?.op === "add_subject" && typeof o.name === "string" && normName(o.name) === name && typeof o.key === "string")?.key as string | undefined : undefined;
+  if (!subject && !topic && !addedKey) return { ops, touches: [] };
+  const free = (o: Record<string, unknown>) => !o.parentId && !o.parentKey;
+  const touches = new Set<ChangeKind>();
+  const out = ops.flatMap((raw, i): unknown[] => {
+    const o = rec(raw);
+    if (!o || !free(o)) return [raw];
+    if (o.op === "add_subject" && typeof o.name === "string" && normName(o.name) !== name) {
+      if (subject || addedKey) { touches.add("subjects"); return [{ ...o, ...(subject ? { parentId: subject.id } : { parentKey: addedKey }) }]; }
+      const key = typeof o.key === "string" && o.key ? o.key : `under-${i}`;
+      const inside = Array.isArray(o.topics) ? o.topics.filter((t): t is string => typeof t === "string") : [];
+      touches.add("topics");
+      return [
+        { op: "add_topics", subjectId: topic!.subjectId, names: [o.name], keys: [key], parentId: topic!.id, why: o.why ?? null },
+        ...(inside.length ? [{ op: "add_topics", subjectId: topic!.subjectId, names: inside, parentKey: key, why: o.why ?? null }] : []),
+      ];
+    }
+    if (o.op === "add_topics" && topic && o.subjectId === topic.subjectId) { touches.add("topics"); return [{ ...o, parentId: topic.id }]; }
+    return [raw];
+  });
+  return { ops: out, touches: [...touches] };
+}
+
+const normName = (s: string) => s.toLocaleLowerCase().split(" ").filter(Boolean).join(" ").trim();
+
 // Operations with any priority taken out: what Nova may propose when the
 // learner's request is not about priorities (their priorities are theirs).
 export function withoutPriorities(ops: unknown[]): unknown[] {

@@ -45,15 +45,17 @@ import { checkFiles, writeBuilderChanges, writeBuilderPlan } from "./workspace-g
 import type { LlmAttachment } from "../../services/llmProviders";
 import { readBuilderTurn } from "./builder-conversation";
 import { changeResource, deleteResource, deletionScope, workspacePlanOf, createWorkspace, recentWorkspaceTitles, resourceCandidates, resourceDetail, similarWorkspaces, studiedTopicIds, workspaceDetail, workspaceSummaries } from "./workspaces";
-import { withoutPriorities, bareOps, changeCounts, checkChanges, decideResource, matchResources, readChangeSet, withinAsk } from "./builder-changes";
+import { withoutPriorities, bareOps, changeCounts, checkChanges, decideResource, matchResources, placeUnder, readChangeSet, withinAsk } from "./builder-changes";
+import { filterPlanTasks, filterTaskOps } from "./task-consent";
 import { changesToReach, listVersions, readProposal, readSnapshot, recordVersion, snapshotOf, snapshotOfPlan, versionById, type VersionItem } from "./builder-history";
 import { treeOrder } from "./task-tree";
-import { builderOpening, startingQuestion } from "./greetings";
+import { builderOpening, planQuestion, startingQuestion } from "./greetings";
 import {
-  DECLINE_REPLY, MESSAGE_MAX, OPENING_QUESTION, STARTING_QUESTION, TALKING, canMove, decideStep, type Step, describeChanges, emptyBrief, isPendingLive, learnerWords, message,
+  DECLINE_REPLY, MESSAGE_MAX, OPENING_QUESTION, PLAN_QUESTION, STARTING_QUESTION, TALKING, planningTurns, pressed, taskConsent, canMove, decideStep, type Step, describeChanges, emptyBrief, isPendingLive, learnerWords, message,
   needsReply, nextBrief, planChanges, changedNothing, readBrief, readMessages, readPending, replyWithQuestion, spoken, withMessages, holdsLine,
 } from "./builder-state";
-import type { BriefFact, BuilderBrief, BuilderMessage, BuilderResponse, ChangeSet, DeletionScope, DraftFailure, DraftFile, DraftListView, DraftStatus, DraftView, PendingJob, ResourceRef } from "./builder.types";
+import { BUILDER_ACTIONS } from "./builder.types";
+import type { BriefFact, BuilderAction, BuilderBrief, BuilderMessage, BuilderResponse, ChangeSet, DeletionScope, DraftFailure, DraftFile, DraftListView, DraftStatus, DraftView, PendingJob, ResourceRef } from "./builder.types";
 import type { WorkspaceCounts } from "./workspaces.types";
 
 export const OPEN_DRAFTS_MAX = 50;
@@ -381,7 +383,10 @@ export type ClaimResult =
 
 // The learner said something (or opened a draft that waits for Nova's
 // answer: `resume`). Claims the draft's one job; the route runs it.
-export async function postMessage(platformChatId: string, id: unknown, body: { text?: unknown; resume?: unknown; files?: unknown }, now = new Date()): Promise<ClaimResult> {
+// action: a choice pressed under Nova's last message (builder.types.ts
+// BuilderOffer), sent with its words; honoured only when that message
+// offered it (builder-state.ts pressed).
+export async function postMessage(platformChatId: string, id: unknown, body: { text?: unknown; resume?: unknown; files?: unknown; action?: unknown }, now = new Date()): Promise<ClaimResult> {
   const profile = await profileOf(platformChatId);
   const row = profile ? await rowOf(profile.id, id) : null;
   if (!row) return { ok: false, error: "not_found", message: "That conversation isn't one of yours." };
@@ -395,7 +400,8 @@ export async function postMessage(platformChatId: string, id: unknown, body: { t
   const shared = await checkShared(body.files, row.id);
   if (!shared.ok) return { ok: false, error: "invalid", message: shared.message, draft: await viewOf(row, now) };
   if (!text && shared.files.length === 0 && !(body.resume === true && needsReply(messages, null, now))) return { ok: false, error: "invalid", message: "Say something first." };
-  const said = text || shared.files.length ? [message("user", text, now, shared.files.length ? { files: shared.files.map(f => ({ name: f.name, pages: f.pages })) } : {})] : [];
+  const action: BuilderAction | null = BUILDER_ACTIONS.find(a => a === body.action) ?? null;
+  const said = text || shared.files.length ? [message("user", text, now, { ...(shared.files.length ? { files: shared.files.map(f => ({ name: f.name, pages: f.pages })) } : {}), ...(action ? { action } : {}) })] : [];
   return claim(row, now, { kind: "reply", change: null }, said, shared.files);
 }
 
@@ -543,8 +549,25 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
   const today = dayKey(now, resolveTimezone(profile.timezone));
   const existing = await outlineOf(platformChatId, profile.id, ref);
   const shared = await filesForModel(row.id);
+  const turns = planningTurns(messages);
+
+  // A choice they pressed is theirs, said by the button: no model reads it.
+  const act = pressed(messages);
+  if (act === "own_plan" || act === "explore") before.stance = act;
+  if (act === "build" && !plan && !ref && !changes && (before.facts.length > 0 || shared.files.length > 0)) {
+    const brief = { ...before, known, consent: true, stance: "help" as const, question: null, choices: [] as string[] };
+    await beginWriting(platformChatId, profile, row, job, { messages, brief, title: row.title ?? brief.title, intro: BUILD_NOW_INTRO, notes: [], ref: null, found: null, change: null }, deps, now);
+    return;
+  }
+  if (act === "tasks" && (plan || ref)) {
+    const brief = { ...before, known, tasks: { mode: "all" as const, scope: [] }, touches: ["tasks" as const], removes: false, under: null, choices: [] as string[] };
+    await beginWriting(platformChatId, profile, row, job, { messages, brief, title: row.title ?? brief.title, intro: TASKS_INTRO, notes: [], ref, found: null, change: TASKS_CHANGE }, deps, now);
+    return;
+  }
+
   const reading = await (deps.read ?? readBuilderTurn)({
     today, messages: spoken(messages), brief: before, known, files: shared.files, pages: shared.pages, language,
+    consent: before.consent === true, tasks: taskConsent(before), stance: before.stance ?? null, turns,
     proposal: plan && !ref ? { version: row.version, title: plan.title, ...proposalSummary(plan) } : null,
     existing: existing ? { title: existing.title, subjects: existing.subjects, tasks: existing.tasks } : null,
     changes: changes ? changes.ops.map(o => o.says) : null,
@@ -627,7 +650,7 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
   }
 
   // Found and asked to change: propose the change against what is there.
-  const step: Step = found ? { type: "draft", reason: "ready" } : decideStep({ plan: ref ? null : plan, brief: before, improving: Boolean(ref), changes: Boolean(changes) }, reading);
+  const step: Step = found ? { type: "draft", reason: "improving" } : decideStep({ plan: ref ? null : plan, brief: before, improving: Boolean(ref), changes: Boolean(changes), turns, files: shared.files.length > 0 }, reading);
   const brief = { ...nextBrief(before, reading, step), known, choices: [] as string[], touches: reading.touches, removes: reading.removes ?? null, ...(found ? { title: found.title } : {}) };
   const title = found?.title ?? row.title ?? reading.title ?? brief.title;
   const notes = note ? [message("nova", note, new Date(), { kind: "notice" })] : [];
@@ -635,34 +658,56 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
   if (step.type === "ask" || step.type === "chat") {
     // Asked once: in the model's words, or as code settled on it when the reply asks nothing.
     // Code's own questions are in the language they chose (greetings.ts).
-    const asked = step.type === "ask" ? (step.question === STARTING_QUESTION ? startingQuestion(language) : step.question === OPENING_QUESTION ? builderOpening(language).question : step.question) : "";
+    const asked = step.type === "ask" ? (step.question === STARTING_QUESTION ? startingQuestion(language) : step.question === PLAN_QUESTION ? planQuestion(language) : step.question === OPENING_QUESTION ? builderOpening(language).question : step.question) : "";
     const text = step.type === "ask" ? (step.overruled ? asked : replyWithQuestion(reading.reply, asked)) : reading.reply;
-    await settle(row.id, job.jobId, { brief, title, failure: null, add: [message("nova", text, new Date(), { kind: step.type === "ask" ? "question" : "chat" }), ...notes] });
+    const offer = step.type === "ask" && step.offer ? { offer: step.offer } : {};
+    await settle(row.id, job.jobId, { brief, title, failure: null, add: [message("nova", text, new Date(), { kind: step.type === "ask" ? "question" : "chat", ...offer }), ...notes] });
     return;
   }
 
   // Draft or revise: say what Nova will do, mark the job's stage, then write.
   const intro = found
     ? `I found ${found.title} in your Kivo. I'll propose the changes on the right, against what's there now; nothing changes until you approve them.`
-    : step.type === "draft" && step.reason === "enough_questions" && !plan
-      ? "I have enough to sketch a first version. I'll put it on the right; correct anything that's off."
-      : reading.reply;
+    // Built on consent given before, while the model only asked: its words would be a question.
+    : step.type === "draft" && step.reason === "consented" && reading.next !== "draft" && reading.next !== "revise" ? BUILD_NOW_INTRO
+    : reading.reply;
+  await beginWriting(platformChatId, profile, row, job, {
+    messages, brief, title, intro, notes, ref, found,
+    change: step.type === "revise" ? step.change : ref ? (reading.change ?? null) : null,
+  }, deps, now);
+}
+
+// Said by code when the learner pressed a choice.
+const BUILD_NOW_INTRO = "I'll build a first draft with what we have so far. Whatever I had to assume is listed with it, so you can correct it before anything is created.";
+const TASKS_INTRO = "I'll add tasks across the plan, each under the topic or milestone it belongs to. Nothing else changes, and nothing is created until you approve it.";
+const TASKS_CHANGE = "Add actionable tasks across the whole plan, each filed under the topic or milestone it belongs to. Keep every subject, topic, milestone, task, note and date as it is.";
+// Said under a proposal with no tasks, when none were asked for.
+const NO_TASKS_YET = "It has no tasks: I add those only when you ask. Want them for all of it, or for one part?";
+
+// The job moves to writing: Nova says what it will do, then the proposal
+// (or the change) is written. ref: what of theirs it changes, if anything.
+async function beginWriting(platformChatId: string, profile: { id: string; timezone: string | null; goals: string[] }, row: Row, job: BuilderJob, w: {
+  messages: BuilderMessage[]; brief: BuilderBrief; title: string | null; intro: string; notes: BuilderMessage[];
+  ref: Pick<ResourceRef, "workspaceId" | "subjectIds"> | null; found: ResourceRef | null; change: string | null;
+}, deps: BuilderDeps, now: Date) {
+  const plan = planOf(row.plan);
+  const changes = readChangeSet(row.changes);
   const moved = await prisma.novaWorkspaceDraft.updateMany({
     where: { id: row.id, jobId: job.jobId },
     data: {
-      status: "drafting", brief: json(brief), title,
-      messages: json(withMessages(messages, message("nova", intro, new Date(), { kind: "chat" }), ...notes)),
+      status: "drafting", brief: json(w.brief), title: w.title,
+      messages: json(withMessages(w.messages, message("nova", w.intro, new Date(), { kind: "chat" }), ...w.notes)),
       // The version the learner's message was sent on, not the one now:
       // an edit made since then is newer than anything this job writes.
       pending: json({ kind: plan || changes ? "revise" : "draft", stage: "writing", startedAt: now.toISOString(), baseVersion: readPending(row.pending)?.baseVersion ?? row.version } satisfies PendingJob),
-      ...(found ? { targetWorkspaceId: found.workspaceId, targetSubjectIds: found.workspaceId ? [] : found.subjectIds } : {}),
+      ...(w.found ? { targetWorkspaceId: w.found.workspaceId, targetSubjectIds: w.found.workspaceId ? [] : w.found.subjectIds } : {}),
     },
   });
   if (moved.count !== 1) return;
   const fresh = await rowOf(profile.id, row.id);
   if (!fresh || fresh.jobId !== job.jobId) return;
-  if (ref) await runChanges(platformChatId, profile, fresh, job, step.type === "revise" ? step.change : (reading.change ?? lastLearnerText(fresh)), deps, now);
-  else await runDraft(platformChatId, profile, fresh, job, step.type === "revise" ? step.change : null, deps, now);
+  if (w.ref) await runChanges(platformChatId, profile, fresh, job, w.change ?? lastLearnerText(fresh), deps, now);
+  else await runDraft(platformChatId, profile, fresh, job, w.change, deps, now);
 }
 
 // A change set to what the conversation works on: operations on its records
@@ -690,7 +735,7 @@ async function runChanges(platformChatId: string, profile: { id: string; timezon
       tasks: current.tasks.map(t => ({ id: t.id, title: t.title, status: t.status, dueDay: t.dueDay, priority: t.priority, topicName: t.topicName, parentId: t.parentId, estimatedMinutes: t.estimatedMinutes, after: t.after ?? [] })),
       dates: current.dates.map(d => ({ id: d.id, title: d.title, day: d.day })), notes: current.notes.map(n => ({ id: n.id, title: n.title })),
     },
-    proposed: before ? bareOps(before) : null, change,
+    proposed: before ? bareOps(before) : null, change, tasks: taskConsent(brief),
     conversation: messages.slice(-CONVERSATION_FOR_PLAN).map(m => ({ role: m.role, text: m.text })),
     files: (await filesForModel(row.id)).files,
   });
@@ -699,11 +744,14 @@ async function runChanges(platformChatId: string, profile: { id: string; timezon
     return;
   }
   // A priority is the learner's: Nova changes one only when they asked about priorities.
-  const asked = brief.touches ?? [];
-  const ops = asked.includes("priorities") ? written.ops : withoutPriorities(written.ops);
-  // Only the kinds of record the request is about: "add two topics" brings no tasks, notes or dates.
+  // Inside the parent they named, then only the kinds of record the request
+  // is about ("add two topics" brings no tasks, notes or dates), and only
+  // the tasks they asked for.
+  const placed = placeUnder(written.ops, brief.under, current);
+  const asked = [...new Set([...(brief.touches ?? []), ...placed.touches])];
+  const ops = asked.includes("priorities") ? placed.ops : withoutPriorities(placed.ops);
   const checked = checkChanges(ops, current, { today, studied });
-  const set = withinAsk(checked, brief.touches ?? [], current, { removes: brief.removes ?? null });
+  const set = filterTaskOps(withinAsk(checked, brief.touches?.length ? asked : [], current, { removes: brief.removes ?? null }), taskConsent(brief), current);
   if (set.ops.length === 0) {
     const text = `I couldn't turn that into a change to ${current.title}${set.dropped.length ? `: ${set.dropped.slice(0, 3).join("; ")}` : ""}. Nothing is proposed; could you say it another way?`;
     await settle(row.id, job.jobId, { status: fallback, failure: null, brief: { ...brief, dropped: set.dropped }, add: [message("nova", text, new Date(), { kind: "chat" })] });
@@ -741,7 +789,7 @@ async function runDraft(platformChatId: string, profile: { id: string; timezone:
     today, kind: brief.kind, facts: brief.facts, known: brief.known, assumptions: brief.assumptions, suggestions: brief.suggestions,
     conversation: messages.slice(-CONVERSATION_FOR_PLAN).map(m => ({ role: m.role, text: m.text })),
     learnerText: learnerWords(messages),
-    existing,
+    existing, tasks: taskConsent(brief),
     files: (await filesForModel(row.id)).files,
   });
   if (!written.ok) {
@@ -752,16 +800,21 @@ async function runDraft(platformChatId: string, profile: { id: string; timezone:
     return;
   }
 
-  const plan = written.plan;
+  // Only the tasks they asked for, whichever writer wrote it.
+  const kept = filterPlanTasks(written.plan, taskConsent(brief));
+  const plan = kept.plan;
+  const dropped = [...written.dropped, ...kept.dropped];
   const version = baseVersion + 1;
   const counts = planCounts(plan);
   const target = existing ? ` It adds to ${existing.title}: nothing there is changed or removed.` : "";
-  const left = written.dropped.length ? ` Left out or adjusted: ${written.dropped.slice(0, 3).join("; ")}${written.dropped.length > 3 ? ` and ${written.dropped.length - 3} more` : ""}.` : "";
-  const text = `Here's a first proposal: ${plan.title}. ${holdsLine(brief.kind, counts)}.${target}${left} Nothing is created until you approve it. Edit anything on the right, or tell me what's off.`;
+  const left = dropped.length ? ` Left out or adjusted: ${dropped.slice(0, 3).join("; ")}${dropped.length > 3 ? ` and ${dropped.length - 3} more` : ""}.` : "";
+  // No tasks because none were asked for: said, with the choice to add them.
+  const taskless = plan.tasks.length === 0 && taskConsent(brief).mode === "none";
+  const text = `Here's a first proposal: ${plan.title}. ${holdsLine(brief.kind, counts)}.${target}${left} Nothing is created until you approve it. Edit anything on the right, or tell me what's off.${taskless ? `\n\n${NO_TASKS_YET}` : ""}`;
   const result = await settle(row.id, job.jobId, {
     status: "awaiting_approval", failure: null, title: plan.title,
-    brief: { ...brief, dropped: written.dropped, title: plan.title },
-    add: [message("nova", text, new Date(), { kind: "proposal", version })],
+    brief: { ...brief, dropped, title: plan.title },
+    add: [message("nova", text, new Date(), { kind: "proposal", version, ...(taskless ? { offer: "tasks" as const } : {}) })],
     plan: { plan, version, baseVersion },
   });
   if (result === "applied") await recordVersion({ draftId: row.id, profileId: profile.id, version, kind: "proposal", author: "nova", summary: `First proposal: ${holdsLine(brief.kind, counts)}.`, content: plan });
@@ -784,7 +837,7 @@ async function runRevision(profile: { id: string; timezone: string | null }, row
   const written = await (deps.writeChanges ?? writeBuilderChanges)({
     today, kind: brief.kind, facts: brief.facts, proposal: true,
     current: { title: detail.title, subjects: detail.subjects, tasks: detail.tasks, dates: detail.dates.map(d => ({ id: d.id, title: d.title, day: d.day })), notes: detail.notes.map(n => ({ id: n.id, title: n.title })) },
-    proposed: null, change,
+    proposed: null, change, tasks: taskConsent(brief),
     conversation: messages.slice(-CONVERSATION_FOR_PLAN).map(m => ({ role: m.role, text: m.text })),
     files: shared.files,
   });
@@ -793,9 +846,10 @@ async function runRevision(profile: { id: string; timezone: string | null }, row
     return;
   }
   // A priority is the learner's: Nova changes one only when they asked about priorities.
-  const asked = brief.touches ?? [];
-  const ops = asked.includes("priorities") ? written.ops : withoutPriorities(written.ops);
-  const set = withinAsk(checkChanges(ops, detail, { today, studied: new Set() }), asked, detail, { removes: brief.removes ?? null });
+  const placed = placeUnder(written.ops, brief.under, detail);
+  const asked = [...new Set([...(brief.touches ?? []), ...placed.touches])];
+  const ops = asked.includes("priorities") ? placed.ops : withoutPriorities(placed.ops);
+  const set = filterTaskOps(withinAsk(checkChanges(ops, detail, { today, studied: new Set() }), brief.touches?.length ? asked : [], detail, { removes: brief.removes ?? null }), taskConsent(brief), detail);
   if (set.ops.length === 0) {
     const text = `I couldn't turn that into a change to the proposal${set.dropped.length ? `: ${set.dropped.slice(0, 3).join("; ")}` : ""}. Nothing changed; could you say it another way?`;
     await settle(row.id, job.jobId, { status: "awaiting_approval", failure: null, brief: { ...brief, dropped: set.dropped }, add: [message("nova", text, new Date(), { kind: "chat" })] });

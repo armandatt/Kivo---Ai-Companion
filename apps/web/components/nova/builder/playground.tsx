@@ -6,7 +6,7 @@ import type { BriefFact, DraftView } from '@repo/api/nova/product/builder.types'
 import { planCounts, topicRows, type PlanTask, type WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
 import type { Feasibility } from '@repo/api/nova/product/plan-feasibility'
 import { cn } from '@/lib/utils'
-import { diffSummary, hintFor, ids, planDiff, planSubjects, wordsFor, type Hint, type PlanDiff, type Words } from './builder-view'
+import { diffSummary, hintFor, ids, nestRows, planDiff, planSubjects, wordsFor, type Hint, type Nested, type PlanDiff, type Words } from './builder-view'
 import * as edit from './plan-edit'
 import type { PlaygroundView } from './plan-edit'
 import { ProposalActions, workingLabel } from './proposal-actions'
@@ -214,14 +214,9 @@ function Overview({ plan, draft, editable, set, words, onView }: ViewProps & { d
       ) : plan.subjects.length > 0 && (
         <section aria-labelledby="pg-outline">
           <div className="flex items-baseline justify-between"><h3 id="pg-outline" className={H}>{words.areas}</h3><button type="button" onClick={() => onView('topics')} className="text-xs font-medium text-foreground/60 hover:text-foreground">Open</button></div>
-          <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
-            {planSubjects(plan).map(({ index, depth, inside }) => {
-              const s = plan.subjects[index]!
-              const m = mark(ids.subject(s.name))
-              // A subject inside another is listed under it, indented, across the whole row.
-              const nested = plan.subjects.some(x => x.parent)
-              return <li key={s.name} className={cn(CARD, 'flex items-center justify-between gap-2 px-3 py-2', nested && 'sm:col-span-2', m.className)} style={{ ...m.style, ...(depth ? { marginLeft: depth * 18 } : {}) }} data-subject-depth={depth}><span className="min-w-0 truncate text-sm font-medium text-foreground">{s.name}</span><span className="shrink-0 text-xs text-subtle">{inside ? `${inside} ${inside === 1 ? words.area : `${words.area}s`}${s.topics.length ? ' · ' : ''}` : ''}{inside && !s.topics.length ? '' : `${s.topics.length} ${s.topics.length === 1 ? words.topic : `${words.topic}s`}`}</span></li>
-            })}
+          {/* A subject inside another is drawn inside it, joined to it by a line. */}
+          <ul className={cn('mt-2 gap-1.5', plan.subjects.some(x => x.parent) ? 'flex flex-col' : 'grid sm:grid-cols-2')}>
+            {nestRows(planSubjects(plan)).map(node => <SubjectLine key={node.row.index} node={node} plan={plan} words={words} />)}
           </ul>
         </section>
       )}
@@ -258,6 +253,27 @@ function Overview({ plan, draft, editable, set, words, onView }: ViewProps & { d
         </details>
       )}
     </div>
+  )
+}
+
+// A subject in the overview, with the subjects inside it listed within it.
+function SubjectLine({ node, plan, words }: { node: Nested<{ index: number; depth: number; inside: number }>; plan: WorkspacePlan; words: Words }) {
+  const mark = useMarker()
+  const s = plan.subjects[node.row.index]!
+  const m = mark(ids.subject(s.name))
+  const { inside, depth } = node.row
+  return (
+    <li className={cn(depth === 0 && CARD, depth === 0 ? 'px-3 py-2' : 'py-1', m.className)} style={m.style} data-subject-depth={depth}>
+      <div className="flex items-center justify-between gap-2">
+        <span className={cn('min-w-0 truncate text-sm text-foreground', inside > 0 || depth === 0 ? 'font-medium' : 'text-foreground/85')}>{s.name}</span>
+        <span className="shrink-0 text-xs text-subtle">{inside ? `${inside} ${inside === 1 ? words.area : `${words.area}s`}${s.topics.length ? ' · ' : ''}` : ''}{inside && !s.topics.length ? '' : `${s.topics.length} ${s.topics.length === 1 ? words.topic : `${words.topic}s`}`}</span>
+      </div>
+      {node.inside.length > 0 && (
+        <ul className="mt-1.5 space-y-0.5 border-l-2 border-nova/25 pl-3" aria-label={`Inside ${s.name}`} data-subject-children>
+          {node.inside.map(c => <SubjectLine key={c.row.index} node={c} plan={plan} words={words} />)}
+        </ul>
+      )}
+    </li>
   )
 }
 
@@ -455,6 +471,13 @@ function Board(props: ViewProps) {
   )
 }
 
+// One line per level a row sits inside, so what is inside what reads at a
+// glance (the lines of a parent's children join up row to row).
+export function TreeGuides({ depth, step = 16 }: { depth: number; step?: number }) {
+  if (depth === 0) return null
+  return <>{Array.from({ length: depth }, (_, d) => <span key={d} aria-hidden className="pointer-events-none absolute -bottom-0.5 -top-0.5 border-l border-white/12" style={{ left: d * step + 11 }} />)}</>
+}
+
 // A subject's topics as arranged: units, their topics, their subtopics, in
 // order. Each can be renamed, moved up or down beside its siblings, put
 // inside another, given topics of its own, or removed with what is inside it.
@@ -475,7 +498,8 @@ function TopicTree({ plan, subjectIndex: i, editable, set, words }: ViewProps & 
         const inside = parents.has(t.name.toLowerCase())
         const choices = editable ? edit.topicParentChoices(plan, i, k) : []
         return (
-          <li key={t.name} className={cn('rounded-lg py-0.5', tm.className)} style={{ ...tm.style, paddingLeft: depth * 16 }} data-topic={t.name} data-topic-depth={depth}>
+          <li key={t.name} className={cn('relative rounded-lg py-0.5', tm.className)} style={{ ...tm.style, paddingLeft: depth * 16 }} data-topic={t.name} data-topic-depth={depth}>
+            <TreeGuides depth={depth} />
             <div className="group flex items-center gap-1">
               {inside
                 ? <button type="button" onClick={() => setFolded(f => { const n = new Set(f); const key = t.name.toLowerCase(); if (n.has(key)) n.delete(key); else n.add(key); return n })} aria-expanded={!folded.has(t.name.toLowerCase())} aria-label={`${folded.has(t.name.toLowerCase()) ? 'Show' : 'Hide'} what is inside ${t.name}`} className="grid size-6 shrink-0 place-items-center rounded-md text-foreground/60 hover:bg-white/6"><ChevronRight aria-hidden className={cn('size-3.5 transition-transform', !folded.has(t.name.toLowerCase()) && 'rotate-90')} /></button>
@@ -504,37 +528,48 @@ function TopicTree({ plan, subjectIndex: i, editable, set, words }: ViewProps & 
 }
 
 function Topics({ plan, editable, set, words }: ViewProps) {
-  const mark = useMarker()
   return (
     <div className="space-y-3">
-      {planSubjects(plan).map(({ index: i, depth }) => {
-        const s = plan.subjects[i]!
-        const m = mark(ids.subject(s.name))
-        const choices = editable ? edit.parentChoices(plan, i) : []
-        return (
-          <section key={i} className={cn(CARD, 'p-3', m.className)} style={{ ...m.style, ...(depth ? { marginLeft: depth * 18 } : {}) }} data-subject={i} data-subject-depth={depth}>
-            <div className="flex items-center gap-2">
-              <input aria-label={`${words.area} ${i + 1} name`} value={s.name} disabled={!editable} maxLength={80} onChange={e => set(edit.renameSubject(plan, i, e.target.value))} className={cn(FIELD, 'font-medium')} data-editable />
-              <span className="shrink-0 text-xs text-subtle">{s.topics.length}</span>
-              {editable && <IconButton label={`Remove ${s.name}`} onClick={() => set(edit.removeSubject(plan, i))}><X aria-hidden className="size-3.5" /></IconButton>}
-            </div>
-            {(s.parent || choices.length > 0) && (
-              // Where it sits on the Knowledge Map: on its own, or inside another of these.
-              <label className="mt-1.5 flex items-center gap-2 text-xs text-subtle">
-                Inside
-                <select value={s.parent ?? ''} disabled={!editable} onChange={e => set(edit.setSubjectParent(plan, i, e.target.value || null))} className="h-7 rounded-md border border-white/10 bg-transparent px-1.5 text-xs text-foreground/85" data-subject-parent>
-                  <option value="">nothing (on its own)</option>
-                  {[...new Set([...(s.parent ? [s.parent] : []), ...choices])].map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
-              </label>
-            )}
-            <TopicTree plan={plan} subjectIndex={i} editable={editable} set={set} words={words} />
-            {editable && <div className="mt-2"><AddRow label={`Add a ${words.topic} to ${s.name}`} placeholder={`Add a ${words.topic}`} onAdd={name => set(edit.addTopic(plan, i, name))} /></div>}
-          </section>
-        )
-      })}
+      {nestRows(planSubjects(plan)).map(node => <SubjectCard key={node.row.index} node={node} plan={plan} editable={editable} set={set} words={words} />)}
       <AddRow label={`Add ${words.area === 'area' ? 'an area' : `a ${words.area}`}`} placeholder={`Add ${words.area === 'area' ? 'an area' : `a ${words.area}`}`} disabled={!editable} onAdd={name => set(edit.addSubject(plan, name))} />
     </div>
+  )
+}
+
+// A subject with its topic tree, and the subjects inside it drawn within it
+// (on the Knowledge Map they are inside it too), so what sits where is plain.
+function SubjectCard({ node, plan, editable, set, words }: ViewProps & { node: Nested<{ index: number; depth: number; inside: number }> }) {
+  const mark = useMarker()
+  const i = node.row.index, depth = node.row.depth
+  const s = plan.subjects[i]!
+  const m = mark(ids.subject(s.name))
+  const choices = editable ? edit.parentChoices(plan, i) : []
+  return (
+    <section className={cn(depth === 0 ? cn(CARD, 'p-3') : 'rounded-lg border border-white/8 bg-background/40 p-2.5', m.className)} style={m.style} data-subject={i} data-subject-depth={depth} aria-label={s.name}>
+      <div className="flex items-center gap-2">
+        <input aria-label={`${words.area} ${i + 1} name`} value={s.name} disabled={!editable} maxLength={80} onChange={e => set(edit.renameSubject(plan, i, e.target.value))} className={cn(FIELD, 'font-medium')} data-editable />
+        <span className="shrink-0 text-xs text-subtle">{s.topics.length}</span>
+        {editable && <IconButton label={`Remove ${s.name}`} onClick={() => set(edit.removeSubject(plan, i))}><X aria-hidden className="size-3.5" /></IconButton>}
+      </div>
+      {(s.parent || choices.length > 0) && (
+        // Where it sits on the Knowledge Map: on its own, or inside another of these.
+        <label className="mt-1.5 flex items-center gap-2 text-xs text-subtle">
+          Inside
+          <select value={s.parent ?? ''} disabled={!editable} onChange={e => set(edit.setSubjectParent(plan, i, e.target.value || null))} className="h-7 rounded-md border border-white/10 bg-transparent px-1.5 text-xs text-foreground/85" data-subject-parent>
+            <option value="">nothing (on its own)</option>
+            {[...new Set([...(s.parent ? [s.parent] : []), ...choices])].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+      )}
+      <TopicTree plan={plan} subjectIndex={i} editable={editable} set={set} words={words} />
+      {editable && <div className="mt-2"><AddRow label={`Add a ${words.topic} to ${s.name}`} placeholder={`Add a ${words.topic}`} onAdd={name => set(edit.addTopic(plan, i, name))} /></div>}
+      {node.inside.length > 0 && (
+        <div className="mt-3 space-y-2 border-l-2 border-nova/25 pl-3" data-subject-children>
+          <p className={H}>Inside {s.name}</p>
+          {node.inside.map(c => <SubjectCard key={c.row.index} node={c} plan={plan} editable={editable} set={set} words={words} />)}
+        </div>
+      )}
+    </section>
   )
 }
 

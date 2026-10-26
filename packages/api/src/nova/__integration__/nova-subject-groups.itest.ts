@@ -46,8 +46,17 @@ async function learner() {
   return { id, profileId: (await ensureSetupProfile(id))!.profileId };
 }
 const key = () => `grp-${STAMP}-${n++}-abcdef`;
-const reader = (raw: Record<string, unknown>): NonNullable<BuilderDeps["read"]> => async input =>
-  readTurn({ reply: "OK.", facts: [], assumptions: [], suggestions: [], question: null, ...raw }, input.messages.filter(m => m.role === "user").map(m => m.text).join("\n"), []);
+// "latest" in a quote stands for the learner's latest words, quoted as a
+// model quotes a request to build or for tasks.
+const reader = (raw: Record<string, unknown>): NonNullable<BuilderDeps["read"]> => async input => {
+  const said = input.messages.filter(m => m.role === "user");
+  const latest = said.at(-1)?.text ?? "";
+  const quote = (v: unknown) => (v && typeof v === "object" && (v as { quote?: unknown }).quote === "latest" ? { ...v, quote: latest } : v);
+  return readTurn({ reply: "OK.", facts: [], assumptions: [], suggestions: [], question: null, ...raw, build: quote(raw.build), tasks: quote(raw.tasks) }, said.map(m => m.text).join("\n"), [], latest);
+};
+// The learner asked for the plan, and for tasks: these tests are about
+// other rules (task-consent and consent have their own, nova-builder-consent).
+const ASKED = { build: { quote: "latest" }, tasks: { want: "all", quote: "latest" } };
 const changer = (ops: (req: ChangesRequest) => unknown[]): NonNullable<BuilderDeps["writeChanges"]> => async req => ({ ok: true, summary: null, ops: ops(req) });
 const noWrite: NonNullable<BuilderDeps["write"]> = async () => { throw new Error("a new plan was written"); };
 const noModel: NonNullable<BuilderDeps["writeChanges"]> = async () => { throw new Error("the model wrote it"); };
@@ -79,7 +88,7 @@ test("Semester Five: regrouping removes nothing, puts each subject inside the gr
   const started = await builder.startDraft(me.id, { clientKey: key(), text: "i have my semester exam for the five subjects in december first week" });
   assert.ok(started.ok && started.job);
   await builder.runJob(me.id, started.job!, {
-    read: reader({ next: "draft", kind: "semester", facts: [{ label: "Exams", value: "December first week", quote: "december first week" }, { label: "Subjects", value: "five", quote: "five subjects" }] }),
+    read: reader({ ...ASKED, next: "draft", kind: "semester", facts: [{ label: "Exams", value: "December first week", quote: "december first week" }, { label: "Subjects", value: "five", quote: "five subjects" }] }),
     write: async req => checkWorkspacePlan({
       kind: "custom", title: "Semester Exams Preparation", summary: "Five semester exams",
       subjects: NAMES.map(name => ({ name, topics: [`${name} basics`, `${name} problems`] })),
@@ -95,7 +104,7 @@ test("Semester Five: regrouping removes nothing, puts each subject inside the gr
   // v2, as the model wrote it: every subject removed, the group added with their names as its topics.
   // The learner asked to remove nothing, so no removal is kept.
   draft = await say(me.id, draft.id, "no dont remove it i mean keep everything same just make sure they all come under one main topic that is sem five", {
-    read: reader({ next: "revise", change: "Put all five subjects under Semester Five", touches: ["subjects"], removes: false }), write: noWrite,
+    read: reader({ ...ASKED, next: "revise", change: "Put all five subjects under Semester Five", touches: ["subjects"], removes: false }), write: noWrite,
     writeChanges: changer(req => [
       { op: "add_subject", name: "Semester Five", topics: NAMES },
       ...req.current.subjects.map(s => ({ op: "remove_subject", subjectId: s.id })),
@@ -128,7 +137,7 @@ test("Semester Five: regrouping removes nothing, puts each subject inside the gr
   assert.equal(structure.subjects.filter(s => s.parentId === group.id).length, 5);
 
   // "Revert the changes": History brings the subjects back out and the group goes.
-  draft = await say(me.id, draft.id, "no, revert the changes", { read: reader({ next: "revise", undo: true }), write: noWrite, writeChanges: noModel });
+  draft = await say(me.id, draft.id, "no, revert the changes", { read: reader({ ...ASKED, next: "revise", undo: true }), write: noWrite, writeChanges: noModel });
   assert.deepEqual(draft.changes!.ops.map(o => o.says).sort(), [
     ...NAMES.map(name => `Take "${name}" out of "Semester Five", on its own`),
     'Remove subject "Semester Five" (its notes and tasks stay, unfiled)',
@@ -142,7 +151,7 @@ test("Semester Five: regrouping removes nothing, puts each subject inside the gr
 
   // Grouped again, the clean way (the group added with a key, each subject moved in).
   draft = await say(me.id, draft.id, "put them all under Semester Five", {
-    read: reader({ next: "revise", change: "Group under Semester Five", touches: ["subjects"], removes: false }), write: noWrite,
+    read: reader({ ...ASKED, next: "revise", change: "Group under Semester Five", touches: ["subjects"], removes: false }), write: noWrite,
     writeChanges: changer(req => [
       { op: "add_subject", key: "sem5", name: "Semester Five", topics: [] },
       ...req.current.subjects.map(s => ({ op: "move_subject", subjectId: s.id, parentKey: "sem5" })),
@@ -151,7 +160,7 @@ test("Semester Five: regrouping removes nothing, puts each subject inside the gr
   assert.ok((await builder.approveDraft(me.id, draft.id, { version: draft.version })).ok);
 
   // Deleting it from everywhere: the group Nova made goes with the rest of what Nova made.
-  draft = await say(me.id, draft.id, "delete this from everywhere", { read: reader({ next: "revise", deleteAll: true }), write: noWrite, writeChanges: noModel });
+  draft = await say(me.id, draft.id, "delete this from everywhere", { read: reader({ ...ASKED, next: "revise", deleteAll: true }), write: noWrite, writeChanges: noModel });
   const scope = draft.brief.deletion!;
   assert.ok(scope.removes.subjects.some(s => s.name === "Semester Five"));
   assert.ok((await builder.confirmDeletion(me.id, draft.id, { fingerprint: scope.fingerprint })).ok);
@@ -165,7 +174,7 @@ test("a plan can make a group; building it never moves a subject they already ha
   const started = await builder.startDraft(me.id, { clientKey: key(), text: "Semester five: Automata and NLP, all under Semester Five, exams in December" });
   assert.ok(started.ok && started.job);
   await builder.runJob(me.id, started.job!, {
-    read: reader({ next: "draft", kind: "semester", facts: [{ label: "Semester", value: "five", quote: "Semester five" }, { label: "Exams", value: "December", quote: "exams in December" }] }),
+    read: reader({ ...ASKED, next: "draft", kind: "semester", facts: [{ label: "Semester", value: "five", quote: "Semester five" }, { label: "Exams", value: "December", quote: "exams in December" }] }),
     write: async req => checkWorkspacePlan({ kind: "custom", title: "Semester Five", summary: "Exams",
       subjects: [{ name: "Semester Five", topics: [] }, { name: "Automata", topics: ["Regular languages"], parent: "Semester Five" }, { name: "NLP", topics: ["Parsing"], parent: "Semester Five" }],
     }, { today: req.today, userText: req.learnerText, nova: true }),
