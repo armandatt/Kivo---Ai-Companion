@@ -88,15 +88,24 @@ test("a step can't hang under another learner's task", async () => {
   assert.equal(!moved.ok && moved.error, "bad_parent");
 });
 
-const reader = (raw: Record<string, unknown>): NonNullable<BuilderDeps["read"]> => async input =>
-  readTurn({ reply: "OK.", facts: [], assumptions: [], suggestions: [], question: null, ...raw }, input.messages.filter(m => m.role === "user").map(m => m.text).join("\n"), []);
+// "latest" in a quote stands for the learner's latest words, quoted as a
+// model quotes a request to build or for tasks.
+const reader = (raw: Record<string, unknown>): NonNullable<BuilderDeps["read"]> => async input => {
+  const said = input.messages.filter(m => m.role === "user");
+  const latest = said.at(-1)?.text ?? "";
+  const quote = (v: unknown) => (v && typeof v === "object" && (v as { quote?: unknown }).quote === "latest" ? { ...v, quote: latest } : v);
+  return readTurn({ reply: "OK.", facts: [], assumptions: [], suggestions: [], question: null, ...raw, build: quote(raw.build), tasks: quote(raw.tasks) }, said.map(m => m.text).join("\n"), [], latest);
+};
+// The learner asked for the plan, and for tasks: these tests are about
+// other rules (task-consent and consent have their own, nova-builder-consent).
+const ASKED = { build: { quote: "latest" }, tasks: { want: "all", quote: "latest" } };
 
 test("a built plan writes its steps under their tasks and no priority Nova gave; a change adds and moves steps", async () => {
   const me = await learner();
   const started = await builder.startDraft(me.id, { clientKey: `tree-${STAMP}-abcdef`, text: "Plan TrackerX: the API and its auth, launching in a month." });
   assert.ok(started.ok && started.job);
   await builder.runJob(me.id, started.job!, {
-    read: reader({ next: "draft", kind: "project", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "in a month", quote: "in a month" }] }),
+    read: reader({ ...ASKED, next: "draft", kind: "project", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "in a month", quote: "in a month" }] }),
     write: async req => checkWorkspacePlan({ kind: "custom", title: "TrackerX", summary: "Ship TrackerX",
       subjects: [{ name: "TrackerX", topics: ["Backend"] }], phases: [{ name: "Backend", subject: "TrackerX" }],
       tasks: [
@@ -125,7 +134,7 @@ test("a built plan writes its steps under their tasks and no priority Nova gave;
   const claimed = await builder.postMessage(me.id, draft.id, { text: "Break the JWT work down, and make the tests a task of their own" });
   assert.ok(claimed.ok);
   await builder.runJob(me.id, claimed.job, {
-    read: reader({ next: "draft", change: "Break JWT down; tests on their own", touches: ["tasks"] }),
+    read: reader({ ...ASKED, next: "draft", change: "Break JWT down; tests on their own", touches: ["tasks"] }),
     write: async () => { throw new Error("a new plan was written"); },
     writeChanges: async req => {
       const jwtTask = req.current.tasks.find(t => t.title === "Issue and verify JWTs")!;

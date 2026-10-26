@@ -35,7 +35,26 @@ export interface BuilderMessage {
   // Files the learner shared with this message (names only; the bytes are
   // kept apart, in NovaWorkspaceDraftFile).
   files?: Array<{ name: string; pages: number | null }>;
+  // On a Nova message: the choices the page shows under it, while it is the
+  // last one (builder-state.ts offerFor). On a learner message: the choice
+  // they pressed, honoured only when the message before offered it.
+  offer?: BuilderOffer;
+  action?: BuilderAction;
 }
+
+// build: on a question, once the learner has said enough (BUILD_OFFER_AFTER
+// messages): keep answering, or build a draft with what Nova has.
+// plan: Nova asks whether they have a plan already or want one built.
+// tasks: a proposal holds no tasks: add them for the whole plan, or say which part.
+export type BuilderOffer = "build" | "plan" | "tasks";
+export type BuilderAction = "build" | "own_plan" | "explore" | "tasks";
+export const BUILDER_ACTIONS: readonly BuilderAction[] = ["build", "own_plan", "explore", "tasks"];
+
+// Which tasks the learner has asked Nova for. Topics, phases and milestones
+// are structure; a task is work they will be held to, so Nova writes one only
+// when they asked: none (the default), all, or only within the named parts
+// (subjects, topics or milestones, with what is inside them).
+export interface TaskConsent { mode: "none" | "all" | "scoped"; scope: string[] }
 
 // Something the learner said, in their words. A fact the model reports is
 // kept as one only when its quote is in what the learner wrote; otherwise it
@@ -78,6 +97,18 @@ export interface BuilderBrief {
   // A deletion they asked for, worked out and waiting for their
   // confirmation on the page. Nothing is deleted from a message.
   deletion?:   DeletionScope | null;
+  // Whether the learner has asked for a new plan to be built (a button, or
+  // their own words, quoted). Until then Nova asks; it never drafts one
+  // because it thinks it knows enough.
+  consent?:    boolean;
+  // What they said about a plan of their own: they have one, want one
+  // built, or are only exploring. null: not said.
+  stance?:     "own_plan" | "help" | "explore" | null;
+  // Which tasks they asked for. Absent: none.
+  tasks?:      TaskConsent;
+  // The existing subject, topic or milestone their last change request
+  // puts things inside ("put all four phases under Finance"), by name.
+  under?:      string | null;
 }
 
 

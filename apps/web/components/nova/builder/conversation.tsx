@@ -6,7 +6,8 @@ import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, Check, CircleSlash, File
 import { FILE_TYPES, FILES_MAX, FILES_TOTAL_BYTES, encodeFile } from '@/components/nova/templates/templates-api'
 import { SHRINK_OVER_BYTES, imagesOnClipboard, pastedName, shrunkSize } from './paste'
 import { builderOpening } from '@repo/api/nova/product/greetings'
-import type { BuilderMessage, DraftListItem, DraftView } from '@repo/api/nova/product/builder.types'
+import { ACTION_WORDS } from '@repo/api/nova/product/builder-state'
+import type { BuilderAction, BuilderMessage, BuilderOffer, DraftListItem, DraftView } from '@repo/api/nova/product/builder.types'
 import type { WorkspaceSummary } from '@repo/api/nova/product/workspaces.types'
 import { KivoMark } from '@/components/brand/kivo-brand'
 import { BUTTON_QUIET } from '@/components/nova/workspace/ui'
@@ -362,10 +363,10 @@ export function Conversation({ state, header, seed, onReview }: {
   const lastNova = draft ? [...draft.messages].reverse().find(m => m.role === 'nova') : undefined
   const reviewable = draft && draft.plan && (draft.status === 'awaiting_approval' || draft.status === 'ready' || draft.status === 'building')
 
-  const send = async (text: string, files: Upload[]) => {
+  const send = async (text: string, files: Upload[], action?: BuilderAction) => {
     setOutgoing({ text, files })
     toEnd()
-    const ok = await state.send(text, files)
+    const ok = await state.send(text, files, action)
     setOutgoing(null)
     return ok
   }
@@ -384,6 +385,10 @@ export function Conversation({ state, header, seed, onReview }: {
           <ul className="flex flex-wrap gap-1.5 pl-10" aria-label="Which one" data-choices>
             {draft.brief.choices.map(c => <li key={c}><button type="button" onClick={() => void send(c, [])} className="rounded-full border border-nova/35 px-3 py-1 text-xs text-foreground/85 transition-colors hover:bg-nova/8">{c}</button></li>)}
           </ul>
+        )}
+        {/* Under Nova's last message only: an older offer is never left on screen. */}
+        {draft?.messages.at(-1)?.role === 'nova' && draft.messages.at(-1)!.offer && !state.working && !outgoing && (
+          <Offer offer={draft.messages.at(-1)!.offer!} onPick={action => void send(ACTION_WORDS[action], [], action)} />
         )}
         {draft && <Working draft={draft} />}
       </div>
@@ -409,6 +414,42 @@ export function Conversation({ state, header, seed, onReview }: {
         {state.actionError && (state.errorOf === 'send' || state.errorOf === 'retry') && <p role="alert" className="text-sm text-red-400">{state.actionError}</p>}
         {talking && <Composer onSend={send} disabled={state.working || state.busy === 'approve'} placeholder={placeholder} seed={seed} />}
       </div>
+    </div>
+  )
+}
+
+// The choices under Nova's last message. Pressing one sends its words, and
+// the server takes it as the learner's choice only where it was offered.
+// Being shown is never consent: nothing is built until one is pressed.
+// "Answer this question" sends nothing; it puts the caret in the box.
+const OFFER_PICK = 'rounded-full border px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring'
+function Offer({ offer, onPick }: { offer: BuilderOffer; onPick: (action: BuilderAction) => void }) {
+  const answer = () => document.getElementById('builder-composer')?.focus()
+  const quiet = cn(OFFER_PICK, 'border-white/12 text-foreground/80 hover:bg-white/6')
+  const go = cn(OFFER_PICK, 'border-nova/40 bg-nova/8 text-foreground hover:bg-nova/14')
+  return (
+    <div className="ml-10 rounded-xl border border-white/8 bg-card/50 px-3 py-2.5" data-offer={offer}>
+      {offer === 'build' && <>
+        <p className="text-xs text-foreground/75">Want to keep refining the details, or should I build a draft with what we have?</p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <button type="button" onClick={answer} className={quiet}>Answer this question</button>
+          <button type="button" onClick={() => onPick('build')} className={go}>Build with current context</button>
+        </div>
+      </>}
+      {offer === 'plan' && (
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Do you have a plan?">
+          <button type="button" onClick={() => onPick('build')} className={go}>Help me build one</button>
+          <button type="button" onClick={() => onPick('own_plan')} className={quiet}>I already have a plan</button>
+          <button type="button" onClick={() => onPick('explore')} className={quiet}>Just exploring for now</button>
+        </div>
+      )}
+      {offer === 'tasks' && <>
+        <p className="text-xs text-foreground/75">No tasks yet. Add them for all of it, or tell me which part.</p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <button type="button" onClick={() => onPick('tasks')} className={go}>Create tasks for the whole plan</button>
+          <button type="button" onClick={answer} className={quiet}>Just one part</button>
+        </div>
+      </>}
     </div>
   )
 }

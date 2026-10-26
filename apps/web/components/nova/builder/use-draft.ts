@@ -12,7 +12,7 @@
 //   - Approval names the server's version, only once every edit is saved.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DraftView } from '@repo/api/nova/product/builder.types'
+import type { BuilderAction, DraftView } from '@repo/api/nova/product/builder.types'
 import type { WorkspacePlan } from '@repo/api/nova/product/workspace-plan'
 import * as api from './builder-api'
 
@@ -153,10 +153,10 @@ export function useDraft(draftId: string | null) {
     return false
   }, [adopt])
 
-  const send = useCallback(async (text: string, files: Array<{ name: string; data: string }> = []) => {
+  const send = useCallback(async (text: string, files: Array<{ name: string; data: string }> = [], action?: BuilderAction) => {
     if (!draftId) return false
     await flush()
-    return run('send', () => api.sendMessage(draftId, text, files.map(f => ({ name: f.name, data: f.data }))))
+    return run('send', () => api.sendMessage(draftId, text, files.map(f => ({ name: f.name, data: f.data })), action))
   }, [draftId, flush, run])
 
   const approve = useCallback(async (opts: { addTo?: string; confirmAnother?: boolean } = {}) => {

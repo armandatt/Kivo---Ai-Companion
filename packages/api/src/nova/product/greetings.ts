@@ -64,3 +64,13 @@ export function startingQuestion(language: string | null | undefined): string {
     hinglish: "Kuch propose karne se pehle: abhi yeh kis stage pe hai, aur koi date hai jis tak isse khatam karna hai?",
   }[lang(language)];
 }
+
+// Asked by code when Nova would build a plan nobody asked for: whether they
+// have one of their own, or want one built (builder-state.ts PLAN_QUESTION).
+export function planQuestion(language: string | null | undefined): string {
+  return {
+    english: "I think I have enough to go on. Do you already have a plan you want to follow, or should I build one with you?",
+    hindi: "मुझे लगता है कि मेरे पास काफ़ी जानकारी है। क्या आपके पास पहले से कोई योजना है जिसे आप अपनाना चाहते हैं, या मैं आपके साथ मिलकर एक बनाऊँ?",
+    hinglish: "Mujhe lagta hai mere paas kaafi context hai. Kya aapke paas pehle se koi plan hai jo aap follow karna chahte ho, ya main aapke saath ek bana doon?",
+  }[lang(language)];
+}

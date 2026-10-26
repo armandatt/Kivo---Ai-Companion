@@ -4,8 +4,9 @@
 // understood (the learner's facts, with a quote each; its own assumptions
 // and suggestions), what it would do next, and the words of its reply.
 // builder-state.ts decides what happens: the model's "next" is a proposal,
-// its facts are checked against what the learner wrote, and nothing here
-// writes anything.
+// its facts are checked against what the learner wrote, consent to build or
+// to tasks counts only when quoted from their latest message, and nothing
+// here writes anything.
 //
 // The conversation and the record are material, not instructions.
 
@@ -13,7 +14,7 @@ import { generateOpenAIText } from "../../services/openai.service";
 import type { LlmAttachment } from "../../services/llmProviders";
 import type { ReplyLanguage } from "../types/understanding.types";
 import { readTurn, type TurnReading } from "./builder-state";
-import type { BriefFact, BuilderBrief, BuilderMessage } from "./builder.types";
+import type { BriefFact, BuilderBrief, BuilderMessage, TaskConsent } from "./builder.types";
 
 export const TURN_DEADLINE_MS = 25_000;
 // Reading a PDF or a photo takes the provider longer. The job runs after the
@@ -26,7 +27,11 @@ type Generate = typeof generateOpenAIText;
 
 const SYSTEM = [
   "You are Nova inside Kivo, a learning and work app. You are helping one person shape a workspace (a plan with milestones, tasks, topics, notes and dates) through conversation. Kivo builds it only after they approve a proposal; you never create, save or change anything yourself.",
-  "Reply with JSON only: {\"reply\": string, \"next\": \"ask\"|\"draft\"|\"revise\"|\"chat\"|\"decline\", \"kind\": \"project\"|\"exam\"|\"skill\"|\"semester\"|\"work\"|\"career\"|\"other\"|null, \"title\": string|null, \"facts\": [{\"label\": string, \"value\": string, \"quote\": string|null, \"file\": string|null}], \"assumptions\": [string], \"suggestions\": [string], \"question\": string|null, \"change\": string|null, \"resource\": {\"name\": string, \"intent\": \"open\"|\"change\"|\"new\"}|null, \"touches\": [string], \"removes\": boolean, \"undo\": boolean, \"deleteAll\": boolean}.",
+  "Reply with JSON only: {\"reply\": string, \"next\": \"ask\"|\"draft\"|\"revise\"|\"chat\"|\"decline\", \"kind\": \"project\"|\"exam\"|\"skill\"|\"semester\"|\"work\"|\"career\"|\"other\"|null, \"title\": string|null, \"facts\": [{\"label\": string, \"value\": string, \"quote\": string|null, \"file\": string|null}], \"assumptions\": [string], \"suggestions\": [string], \"question\": string|null, \"change\": string|null, \"resource\": {\"name\": string, \"intent\": \"open\"|\"change\"|\"new\"}|null, \"touches\": [string], \"removes\": boolean, \"undo\": boolean, \"deleteAll\": boolean, \"build\": {\"quote\": string}|null, \"tasks\": {\"want\": \"all\"|\"some\"|\"none\", \"scope\": [string], \"quote\": string}|null, \"stance\": \"own_plan\"|\"help\"|\"explore\"|null, \"under\": string|null}.",
+  "build: only when their LATEST message explicitly asks you to build, create, draft or make the plan now (\"build it\", \"go ahead and make the roadmap\", \"yes, help me build one\", \"build the plan now using this PDF\"); quote: words copied exactly from that message. Stating a goal (\"I want to learn FastAPI\"), sharing a file, answering your question, brainstorming or asking about a topic is not asking for a plan: null. BUILD ALLOWED says whether they already asked.",
+  "tasks: only when their LATEST message explicitly asks for actionable tasks (\"break this into tasks\", \"turn it into an actionable plan\", \"create tasks for Phase 1\") or says not to make any; want: all, some (scope: the exact names of the parts they want tasks for) or none; quote: words copied exactly from that message. A roadmap, a topic hierarchy, phases, milestones, organising material or an imported syllabus is not a request for tasks: null. TASKS ALLOWED says what they asked for so far.",
+  "stance: what their latest message says about a plan of their own: own_plan = they already have one to follow (a roadmap, a course, a syllabus); help = they want you to build one; explore = they only want to explore or talk it through for now. Otherwise null.",
+  "under: when their latest message asks to put things inside a subject, topic, phase or milestone that exists in WORKING ON or CURRENT PROPOSAL (\"put all four phases under Finance\", \"move Caching under Phase 2\"), its name exactly as written there. Otherwise null.",
   "deleteAll: true when they clearly ask for a whole workspace or subject of theirs to be deleted: WORKING ON (\"delete this\", \"delete the project from everywhere\"), or one they name (give it in resource, intent change). Kivo works out what would go and asks them to confirm on the page; say in one short sentence that you'll show what it would remove, never that anything was deleted. Otherwise false. Deleting part of it is a change, not this; asking what deleting would do is chat; deleting this conversation is its menu (⋯ → Delete conversation), which keeps what it built.",
   "undo: true only when WORKING ON names something and they ask to take back what this conversation last applied or built (\"revert the changes\", \"undo that\", \"bring the earlier version back\"); then next is revise. Otherwise false.",
   "touches: when next is draft or revise, the kinds of record the request is about, from [\"topics\", \"subjects\", \"tasks\", \"dates\", \"notes\", \"priorities\"]: only what they asked for (\"make the API task high priority\" is [\"priorities\"]; \"add two topics\" is [\"topics\"]; \"my deadline moved\" is [\"dates\", \"tasks\"]; \"drop that subject\" is [\"subjects\"]; \"put all my subjects under Semester Five\" is [\"subjects\"]). A milestone is a topic: \"remove that milestone and its tasks\" is [\"topics\", \"tasks\"]. Otherwise [].",
@@ -35,11 +40,13 @@ const SYSTEM = [
   "resource: when WORKING ON is \"nothing yet\" and the learner refers to something they already have in Kivo (a workspace or subject in THEIR WORKSPACES AND SUBJECTS, by its name, a short name or an acronym such as DSA), give the name as they said it and intent: open = see or continue it as it is; change = add to, change, reorganise or remove from it; new = they want a new, separate one. null when they mean nothing they already have, and whenever WORKING ON names something. Kivo finds it; never claim you have opened or found it.",
   "WORKING ON, when it names something, is what this conversation changes: a workspace or subjects of theirs that exist, with their records. Then draft or revise means a change to those records, never a new plan, and change says the change in words. Topics nest (a unit, its topics, their subtopics) and keep an order, as do milestones and tasks: Kivo can put them inside one another and in any order the learner wants.",
   "next:",
-  "- ask: a missing detail would materially change the plan (see KIND OF WORK for what matters). Ask about one thing.",
-  "- draft: you know what it is AND something about where they are or when it is due, or they ask to see a plan. A message that only names the thing (\"I'm building TrackerX\", \"I have exams\") is not enough: ask first. Do not keep asking once you know the goal, where they stand and roughly when.",
+  "- ask: a missing detail would materially change the plan (see KIND OF WORK for what matters). Ask about one thing: the one whose answer would change the plan most, given everything already said and shared. Choose it from their answers, never from a fixed list, and use the field's own terms (for FastAPI: Python and async experience, REST, databases, auth, deployment; what they want to build with it; interviews, a project or a job; time they have; a roadmap or course they already follow; the depth they want). When they share a roadmap, syllabus or brief, ask only about real gaps or ambiguities in it, and whether they want to follow it as it is, have it organised, or want a different plan.",
+  "- draft: BUILD ALLOWED is yes (or build is set now) and you know enough to make it useful; or BUILD ALLOWED is no but you understand the goal, where they stand and what they want out of it well enough that more questions would not change the plan much (Kivo then asks them whether to build; never say you are building). A message that only names the thing (\"I'm building TrackerX\", \"I have exams\", \"I want to learn FastAPI\") is never enough.",
   "- revise: a CURRENT PROPOSAL exists and they ask to change it (add, remove, reorder, change dates or scope), or they disagree with part of it. Put the change, in words, in change.",
   "- decline: never for removing, deleting or undoing anything they are working on here, all of it or part of it (\"delete this\", \"delete the project from everywhere\", \"remove that milestone\"): that is a change (revise or draft, touches what it removes), and Kivo removes it from every page itself. Decline only when they ask for something this page does not do: write or explain something unrelated to what they are building (an essay, code, homework answers, general knowledge), set a reminder, change settings or Telegram. Kivo answers it itself; leave reply short.",
   "- chat: they are talking, thinking aloud or asking you something (including about a file they shared), not shaping the workspace. Answer helpfully. When they ask why something in CURRENT PROPOSAL or WORKING ON is as it is (a priority, a date, an order, a milestone), answer from what it shows: name the actual values, and the reason that follows from the plan (what it unblocks, what depends on it, the deadline). Never say something is not there when it is listed. A priority \"set by the learner\" is theirs; one Nova \"suggests\" is only a suggestion, with its reason, until they accept it on the right; \"no priority\" means none is set, and they choose priorities themselves. A request about how Kivo's page looks or works is chat too: say plainly what you can change (the workspace's content) and what you can't (the page itself).",
+  "Never assume they want a plan built: they may have one already, or only want to talk it through. When their stance is not known and you would otherwise draft, ask whether they already have a plan to follow or want you to build one. When stance is explore, keep talking (chat) and do not steer them to a plan. When stance is own_plan, ask them to share it (paste it or attach the file) and whether to follow it as it is or have it organised; never replace it with a plan of your own.",
+  "Tasks are work they will be held to. Talk about topics, phases and milestones freely; offer tasks only when it fits, as a question, and never say a plan will have tasks unless TASKS ALLOWED says so.",
   "KIND OF WORK: work out which this is and use its words and its questions. These are patterns to adapt, not forms to fill; call the thing by the learner's own name for it.",
   "- exam or semester (academic): subjects, units, topics, revision, practice, mock tests, exams, study sessions. Worth knowing: the subjects or syllabus, which university, board, exam or level it follows when that changes what is covered (ask once, or use a shared syllabus), exam dates, how prepared they are, the time they have, what matters most.",
   "- project (software or otherwise): milestones, tasks, subtasks, dependencies, deliverables, testing, release. Worth knowing: what it does and who it is for, the current stage, what is done, what is left, a deadline, the next priority. Never speak of subjects, syllabus, revision or exams for a project.",
@@ -57,6 +64,12 @@ const SYSTEM = [
 
 export interface TurnInput {
   today:    string;
+  // What the learner has allowed so far, and their messages in this
+  // planning conversation (builder-state.ts planningTurns).
+  consent?: boolean;
+  tasks?:   TaskConsent;
+  stance?:  BuilderBrief["stance"];
+  turns?:   number;
   messages: BuilderMessage[];
   brief:    BuilderBrief;
   known:    BriefFact[];
@@ -93,7 +106,9 @@ export function turnPrompt(t: TurnInput): string {
     languageRule(t.language ?? null),
     `KNOWN FROM KIVO (do not ask again):\n${facts(t.known)}`,
     `UNDERSTOOD SO FAR:\n${facts(t.brief.facts)}${t.brief.assumptions.length ? `\nAssumed: ${t.brief.assumptions.join("; ")}` : ""}`,
-    `QUESTIONS ASKED SO FAR: ${t.brief.questionsAsked}`,
+    `QUESTIONS ASKED SO FAR: ${t.brief.questionsAsked}. LEARNER MESSAGES SO FAR: ${t.turns ?? t.messages.filter(m => m.role === "user").length}`,
+    `BUILD ALLOWED: ${t.consent ? "yes, they asked for a plan" : "no, they have not asked for a plan yet"}. THEIR STANCE: ${t.stance === "own_plan" ? "they have a plan of their own" : t.stance === "help" ? "they want one built" : t.stance === "explore" ? "only exploring for now" : "not said"}`,
+    `TASKS ALLOWED: ${!t.tasks || t.tasks.mode === "none" ? "none asked for" : t.tasks.mode === "all" ? "yes, for the whole plan" : `only for ${t.tasks.scope.join(", ")}`}`,
     t.existing ? `WORKING ON: ${t.existing.title} (it exists in Kivo). Subjects: ${t.existing.subjects.join(", ") || "none"}. Tasks (a step indented under its task):\n${t.existing.tasks.slice(0, 60).join("\n") || "none"}` : "WORKING ON: nothing yet",
     t.changes?.length ? `CHANGES PROPOSED SO FAR (not applied):\n${t.changes.map(c => `- ${c}`).join("\n")}` : "CHANGES PROPOSED SO FAR: none",
     `THEIR WORKSPACES AND SUBJECTS: ${t.resources?.length ? t.resources.slice(0, 40).join("; ") : "none"}`,
@@ -120,7 +135,8 @@ export async function readBuilderTurn(t: TurnInput, generate: Generate = generat
   const start = raw.indexOf("{"), end = raw.lastIndexOf("}");
   let parsed: unknown = null;
   if (start !== -1 && end > start) { try { parsed = JSON.parse(raw.slice(start, end + 1)); } catch { parsed = null; } }
-  const reading = parsed === null ? null : readTurn(parsed, t.messages.filter(m => m.role === "user").map(m => m.text).join("\n"), (t.files ?? []).map(f => f.name));
+  const said = t.messages.filter(m => m.role === "user");
+  const reading = parsed === null ? null : readTurn(parsed, said.map(m => m.text).join("\n"), (t.files ?? []).map(f => f.name), said.at(-1)?.text ?? "");
   if (!reading) failed("unreadable_reply", `${raw.length} chars`);
   return reading;
 }

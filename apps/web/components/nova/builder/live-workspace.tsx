@@ -3,13 +3,13 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, ArrowRight, Sparkles } from 'lucide-react'
-import type { ProposedChange, WorkspaceDetail } from '@repo/api/nova/product/builder.types'
+import type { ChangeSet, ProposedChange, WorkspaceDetail } from '@repo/api/nova/product/builder.types'
 import { treeOrder } from '@repo/api/nova/product/task-tree'
 import { cn } from '@/lib/utils'
 import { patchTask } from './builder-api'
-import { changeMarks, hintFor, subjectOutline, wordsFor, type ChangeMarks } from './builder-view'
+import { changeMarks, hintFor, nestRows, subjectOutline, topicOutline, wordsFor, type ChangeMarks, type Nested, type SubjectRow, type Words } from './builder-view'
 import type { PlaygroundView } from './plan-edit'
-import { NovaHint, PlaygroundHeader, TITLE_AREA, ViewTabs } from './playground'
+import { NovaHint, PlaygroundHeader, TITLE_AREA, TreeGuides, ViewTabs } from './playground'
 import { ProposalActions } from './proposal-actions'
 import type { DraftState } from './use-draft'
 
@@ -106,6 +106,74 @@ function LiveTaskRow({ t, depth, marks, onChange }: { t: Task; depth: number; ma
   )
 }
 
+// A subject in the overview, with what sits inside it within it.
+function OutlineLine({ node, words }: { node: Nested<SubjectRow>; words: Words }) {
+  const r = node.row
+  return (
+    <li className={cn(r.depth === 0 ? cn(CARD, 'px-3 py-2') : 'py-1', r.proposed && cn(PROPOSED, 'rounded-lg px-2'), r.removed && 'opacity-60')} data-subject-depth={r.depth}>
+      <div className="flex items-center justify-between gap-2">
+        <span className={cn('min-w-0 truncate text-sm font-medium text-foreground', r.removed && 'line-through')}>{r.proposed ? '+ ' : ''}{r.name}{r.renamed && <span className="text-nova-ink"> → {r.renamed}</span>}{r.proposed && <Proposed>new</Proposed>}{r.moved && <Proposed>{r.under ? `moves inside ${r.under}` : 'moves out, on its own'}</Proposed>}{r.removed && <Proposed>to be removed</Proposed>}</span>
+        <span className="shrink-0 text-xs text-subtle">{r.inside ? `${r.inside} ${r.inside === 1 ? words.area : `${words.area}s`}${r.topics ? ' · ' : ''}` : ''}{r.inside && !r.topics ? '' : `${r.topics}${r.addedTopics ? ` + ${r.addedTopics}` : ''} ${words.topic}s`}</span>
+      </div>
+      {node.inside.length > 0 && (
+        <ul className="mt-1.5 space-y-0.5 border-l-2 border-nova/25 pl-3" aria-label={`Inside ${r.renamed ?? r.name}`} data-subject-children>
+          {node.inside.map(c => <OutlineLine key={c.row.key} node={c} words={words} />)}
+        </ul>
+      )}
+    </li>
+  )
+}
+
+// A live subject with its topics as they will stand once the proposed changes
+// apply (topicOutline): new ones and moved ones drawn where they go, marked;
+// the subjects inside it drawn within it.
+function LiveSubject({ node, detail, marks, changes, words }: { node: Nested<SubjectRow>; detail: WorkspaceDetail; marks: ChangeMarks; changes: ChangeSet | null; words: Words }) {
+  const r = node.row
+  const s = r.id ? detail.subjects.find(x => x.id === r.id) : undefined
+  const added = !s ? marks.addedSubjects.find(a => `+${a.key ?? a.name}` === r.key) : undefined
+  const inside = node.inside.length > 0 && (
+    <div className="mt-3 space-y-2 border-l-2 border-nova/25 pl-3" data-subject-children>
+      <p className={H}>Inside {r.renamed ?? r.name}</p>
+      {node.inside.map(c => <LiveSubject key={c.row.key} node={c} detail={detail} marks={marks} changes={changes} words={words} />)}
+    </div>
+  )
+  const box = r.depth === 0 ? cn(CARD, 'p-3') : 'rounded-lg border border-white/8 bg-background/40 p-2.5'
+  if (added) return (
+    <section className={cn(box, PROPOSED)} data-subject-depth={r.depth} aria-label={added.name}>
+      <h3 className="text-sm font-medium text-foreground">+ {added.name}<Proposed>{r.under ? `new, inside ${r.under}` : 'new'}</Proposed></h3>
+      {added.topics.length > 0 && <ul className="mt-2 flex flex-wrap gap-1.5">{added.topics.map(t => <li key={t} className="rounded-full border border-dashed border-nova/40 px-2.5 py-0.5 text-xs text-foreground/80">{t}</li>)}</ul>}
+      {inside}
+    </section>
+  )
+  if (!s) return null
+  const rows = topicOutline(s, changes)
+  return (
+    <section className={cn(box, marks.removedSubjects.has(s.id) && 'border-red-400/40 opacity-60')} data-subject-depth={r.depth} aria-label={s.name}>
+      <div className="flex items-center justify-between gap-2"><h3 className={cn('text-sm font-medium text-foreground', marks.removedSubjects.has(s.id) && 'line-through')}>{s.name}{r.renamed && <span className="text-nova-ink"> → {r.renamed}</span>}{r.moved && <Proposed>{r.under ? `moves inside ${r.under}` : 'moves out, on its own'}</Proposed>}{marks.removedSubjects.has(s.id) && <Proposed>to be removed</Proposed>}</h3><Link href={`/map?focus=${encodeURIComponent(`subject:${s.id}`)}`} className="text-xs font-medium text-foreground/60 hover:text-foreground">On the map</Link></div>
+      {rows.length > 0 && (
+        <ol className="mt-2" data-topic-tree>
+          {rows.map(t => (
+            <li key={t.key} className={cn('relative py-0.5', t.state === 'added' && 'rounded-md bg-nova/6', t.state === 'moved' && 'rounded-md bg-amber-300/6')} style={{ paddingLeft: t.depth * 16 }} data-topic-depth={t.depth} data-topic-state={t.state}>
+              <TreeGuides depth={t.depth} />
+              <span className="relative">
+                {t.id
+                  ? <Link href={`/knowledge?topic=${t.id}`} className={cn('text-sm hover:underline', t.holds || t.kind === 'milestone' ? 'font-medium text-foreground' : 'text-foreground/85', t.state === 'removed' && 'line-through opacity-60')}>{t.kind === 'milestone' && <span className="mr-1 text-[10px] uppercase tracking-wide text-nova-ink">{words.phase}</span>}{t.name}</Link>
+                  : <span className={cn('text-sm', t.holds || t.kind === 'milestone' ? 'font-medium text-foreground' : 'text-foreground/85')}>+ {t.kind === 'milestone' && <span className="mr-1 text-[10px] uppercase tracking-wide text-nova-ink">{words.phase}</span>}{t.name}</span>}
+                {t.renamed && <span className="text-sm text-nova-ink"> → {t.renamed}</span>}
+                {t.state === 'added' && <Proposed>new</Proposed>}
+                {t.state === 'moved' && <Proposed>moved here from {t.was}</Proposed>}
+                {t.state === 'removed' && <Proposed>to be removed</Proposed>}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {r.inside > 0 && rows.length === 0 && node.inside.length === 0 && <p className="mt-1 text-xs text-subtle">{r.inside} {r.inside === 1 ? words.area : `${words.area}s`} inside it</p>}
+      {inside}
+    </section>
+  )
+}
+
 export function LiveWorkspace({ view, onView, state, onAsk }: {
   view: PlaygroundView; onView: (v: PlaygroundView) => void; state: DraftState; onAsk: (text: string) => void
 }) {
@@ -175,13 +243,9 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
             ) : (
               <section aria-labelledby="live-outline">
                 <div className="flex items-baseline justify-between"><h3 id="live-outline" className={H}>{words.areas}</h3><button type="button" onClick={() => onView('topics')} className="text-xs font-medium text-foreground/60 hover:text-foreground">Open</button></div>
+                {/* A subject inside another is drawn inside it, as it will be once the changes apply. */}
                 <ul className={cn('mt-2 gap-1.5', nested ? 'flex flex-col' : 'grid sm:grid-cols-2')}>
-                  {outline.map(r => (
-                    <li key={r.key} className={cn(CARD, 'flex items-center justify-between gap-2 px-3 py-2', r.proposed && PROPOSED, r.removed && 'border-red-400/40 opacity-60')} style={r.depth ? { marginLeft: r.depth * 18 } : undefined} data-subject-depth={r.depth}>
-                      <span className={cn('min-w-0 truncate text-sm font-medium text-foreground', r.removed && 'line-through')}>{r.proposed ? '+ ' : ''}{r.name}{r.renamed && <span className="text-nova-ink"> → {r.renamed}</span>}{r.proposed && <Proposed>proposed</Proposed>}{r.moved && <Proposed>{r.under ? `moves inside ${r.under}` : 'moves out, on its own'}</Proposed>}{r.removed && <Proposed>to be removed</Proposed>}</span>
-                      <span className="shrink-0 text-xs text-subtle">{r.inside ? `${r.inside} ${r.inside === 1 ? words.area : `${words.area}s`}${r.topics ? ' · ' : ''}` : ''}{r.inside && !r.topics ? '' : `${r.topics}${r.addedTopics ? ` + ${r.addedTopics}` : ''} ${words.topic}s`}</span>
-                    </li>
-                  ))}
+                  {nestRows(outline).map(node => <OutlineLine key={node.row.key} node={node} words={words} />)}
                 </ul>
               </section>
             )}
@@ -239,41 +303,7 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
         )}
         {shown === 'topics' && (
           <div className="space-y-3">
-            {outline.map(r => {
-              const s = r.id ? detail.subjects.find(x => x.id === r.id) : undefined
-              const added = !s ? marks.addedSubjects.find(a => `+${a.key ?? a.name}` === r.key) : undefined
-              const indent = r.depth ? { marginLeft: r.depth * 18 } : undefined
-              if (added) return (
-                <section key={r.key} className={cn(CARD, PROPOSED, 'p-3')} style={indent} data-subject-depth={r.depth}><h3 className="text-sm font-medium text-foreground">+ {added.name}<Proposed>{r.under ? `proposed, inside ${r.under}` : 'proposed'}</Proposed></h3>
-                  {added.topics.length > 0 && <ul className="mt-2 flex flex-wrap gap-1.5">{added.topics.map(t => <li key={t} className="rounded-full border border-dashed border-nova/40 px-2.5 py-0.5 text-xs text-foreground/80">{t}</li>)}</ul>}</section>
-              )
-              if (!s) return null
-              // How deep each topic sits: under the topic it is inside, in saved order.
-              const depthOf = (id: string | null | undefined): number => { let d = 0; for (let at = id; at && d < 8; d++) at = s.topics.find(x => x.id === at)?.parentId ?? null; return d }
-              const holds = new Set(s.topics.filter(t => t.parentId).map(t => t.parentId!))
-              return (
-                <section key={s.id} className={cn(CARD, 'p-3', marks.removedSubjects.has(s.id) && 'border-red-400/40 opacity-60')} style={indent} data-subject-depth={r.depth}>
-                  <div className="flex items-center justify-between gap-2"><h3 className={cn('text-sm font-medium text-foreground', marks.removedSubjects.has(s.id) && 'line-through')}>{s.name}{r.renamed && <span className="text-nova-ink"> → {r.renamed}</span>}{r.moved && <Proposed>{r.under ? `moves inside ${r.under}` : 'moves out, on its own'}</Proposed>}{marks.removedSubjects.has(s.id) && <Proposed>to be removed</Proposed>}</h3><Link href={`/map?focus=${encodeURIComponent(`subject:${s.id}`)}`} className="text-xs font-medium text-foreground/60 hover:text-foreground">On the map</Link></div>
-                  {r.inside > 0 && s.topics.length === 0 && !marks.addedTopics.get(s.id) && <p className="mt-1 text-xs text-subtle">{r.inside} {r.inside === 1 ? words.area : `${words.area}s`} inside it</p>}
-                  <ol className="mt-2 space-y-0.5" data-topic-tree>
-                    {s.topics.map(t => {
-                      const renamed = marks.renamedTopics.get(t.id)
-                      const removed = marks.removedTopics.has(t.id)
-                      const depth = depthOf(t.parentId)
-                      return (
-                        <li key={t.id} className="py-0.5" style={{ paddingLeft: depth * 16 }} data-topic-depth={depth}>
-                          <Link href={`/knowledge?topic=${t.id}`} className={cn('text-sm hover:underline', holds.has(t.id) || t.kind === 'milestone' ? 'font-medium text-foreground' : 'text-foreground/85', removed && 'line-through opacity-60')} title={t.details?.explanation ?? undefined}>
-                            {t.kind === 'milestone' && <span className="mr-1 text-[10px] uppercase tracking-wide text-nova-ink">{words.phase}</span>}{t.name}
-                          </Link>
-                          {renamed && <span className="text-sm text-nova-ink"> → {renamed}</span>}{removed && <Proposed>to be removed</Proposed>}
-                        </li>
-                      )
-                    })}
-                    {(marks.addedTopics.get(s.id) ?? []).map(name => <li key={name} className={cn('rounded-lg border px-2.5 py-1 text-sm text-foreground/85', PROPOSED)} data-proposed-topic>+ {name}</li>)}
-                  </ol>
-                </section>
-              )
-            })}
+            {nestRows(outline).map(node => <LiveSubject key={node.row.key} node={node} detail={detail} marks={marks} changes={state.draft?.changes ?? null} words={words} />)}
             {detail.subjects.length === 0 && <p className="text-sm text-foreground/65">Its subjects were removed in Knowledge.</p>}
           </div>
         )}

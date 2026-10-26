@@ -57,8 +57,17 @@ async function records(profileId: string) {
   return { subjects, topics, tasks, notes, exams, workspaces };
 }
 
-const reader = (raw: Record<string, unknown>): NonNullable<BuilderDeps["read"]> => async input =>
-  readTurn({ reply: "OK.", facts: [], assumptions: [], suggestions: [], question: null, ...raw }, input.messages.filter(m => m.role === "user").map(m => m.text).join("\n"), []);
+// "latest" in a quote stands for the learner's latest words, quoted as a
+// model quotes a request to build or for tasks.
+const reader = (raw: Record<string, unknown>): NonNullable<BuilderDeps["read"]> => async input => {
+  const said = input.messages.filter(m => m.role === "user");
+  const latest = said.at(-1)?.text ?? "";
+  const quote = (v: unknown) => (v && typeof v === "object" && (v as { quote?: unknown }).quote === "latest" ? { ...v, quote: latest } : v);
+  return readTurn({ reply: "OK.", facts: [], assumptions: [], suggestions: [], question: null, ...raw, build: quote(raw.build), tasks: quote(raw.tasks) }, said.map(m => m.text).join("\n"), [], latest);
+};
+// The learner asked for the plan, and for tasks: these tests are about
+// other rules (task-consent and consent have their own, nova-builder-consent).
+const ASKED = { build: { quote: "latest" }, tasks: { want: "all", quote: "latest" } };
 const changer = (ops: (req: ChangesRequest) => unknown[], seen?: ChangesRequest[]): NonNullable<BuilderDeps["writeChanges"]> => async req => {
   seen?.push(req);
   return { ok: true, summary: null, ops: ops(req) };
@@ -105,7 +114,7 @@ test("a new chat naming their DSA plan opens that subject and proposes changes t
   const before = await records(profileId);
   const seen: ChangesRequest[] = [];
   const draft = await begin(me.id, "Open my existing DSA plan and add dynamic programming topics", {
-    read: reader({ next: "draft", change: "Add dynamic programming topics", resource: { name: "DSA plan", intent: "change" } }),
+    read: reader({ ...ASKED, next: "draft", change: "Add dynamic programming topics", resource: { name: "DSA plan", intent: "change" } }),
     write: noWrite,
     writeChanges: changer(req => [
       { op: "add_topics", subjectId: req.current.subjects[0]!.id, names: ["Memoization and tabulation", "Knapsack problems", "Introduction", "Trees"], why: "DP builds on recursion" },
@@ -171,7 +180,7 @@ test("a name that could be several asks which; the answer opens that one; a name
   assert.ok((await applyStudyEdits(profileId, { version: s.version, edits: [{ op: "add_subject", name: "DSA Lab", topics: ["Sorting lab"] }, { op: "add_subject", name: "DSA Theory", topics: ["Recurrences"] }] })).ok);
   const before = await records(profileId);
 
-  let draft = await begin(me.id, "Add graphs to my DSA plan", { read: reader({ next: "draft", resource: { name: "DSA", intent: "change" } }), write: noWrite });
+  let draft = await begin(me.id, "Add graphs to my DSA plan", { read: reader({ ...ASKED, next: "draft", resource: { name: "DSA", intent: "change" } }), write: noWrite });
   assert.equal(draft.resource, null);
   assert.equal(draft.changes, null);
   assert.deepEqual(draft.brief.choices, ["DSA Lab", "DSA Theory"]);
@@ -179,13 +188,13 @@ test("a name that could be several asks which; the answer opens that one; a name
   assert.deepEqual(await records(profileId), before);
 
   draft = await say(me.id, draft.id, "DSA Theory", {
-    read: reader({ next: "draft", change: "Add graphs", resource: { name: "DSA Theory", intent: "change" } }), write: noWrite,
+    read: reader({ ...ASKED, next: "draft", change: "Add graphs", resource: { name: "DSA Theory", intent: "change" } }), write: noWrite,
     writeChanges: changer(req => [{ op: "add_topics", subjectId: req.current.subjects[0]!.id, names: ["Graph traversal (BFS and DFS)"] }]),
   });
   assert.equal(draft.resource?.title, "DSA Theory");
   assert.equal(draft.changes!.ops.length, 1);
 
-  const other = await begin(me.id, "Add a chapter to my Quantum Physics plan", { read: reader({ next: "draft", resource: { name: "Quantum Physics", intent: "change" } }), write: noWrite });
+  const other = await begin(me.id, "Add a chapter to my Quantum Physics plan", { read: reader({ ...ASKED, next: "draft", resource: { name: "Quantum Physics", intent: "change" } }), write: noWrite });
   assert.equal(other.resource, null);
   assert.ok(other.messages.at(-1)!.text.includes(`I couldn't find "Quantum Physics"`));
   assert.deepEqual(await records(profileId), before);
@@ -201,7 +210,7 @@ test("an old conversation goes on: it changes what it built, in place, and keeps
     dates: [{ title: "TrackerX launch", subject: "TrackerX", kind: "project", day: inDays(30) }],
   });
   const first = await begin(me.id, "Plan TrackerX, launching in a month.", {
-    read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "in a month", quote: "in a month" }] }),
+    read: reader({ ...ASKED, next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "in a month", quote: "in a month" }] }),
     write: async req => checkWorkspacePlan({ ...plan(), kind: "custom" }, { today: req.today, userText: req.learnerText }),
   });
   const built = await builder.approveDraft(me.id, first.id, { version: first.version });
@@ -217,7 +226,7 @@ test("an old conversation goes on: it changes what it built, in place, and keeps
 
   // The same conversation, reopened later: its workspace is what it changes.
   const draft = await say(me.id, first.id, "The launch moved two weeks later. Update the plan, and put notifications before the API work.", {
-    read: reader({ next: "draft", change: "Move the launch two weeks later; notifications first" }), write: noWrite,
+    read: reader({ ...ASKED, next: "draft", change: "Move the launch two weeks later; notifications first" }), write: noWrite,
     writeChanges: changer(req => {
       const launch = req.current.dates.find(d => d.title === "TrackerX launch")!;
       const notify = req.current.tasks.find(t => t.title === "Send reminders")!;
@@ -256,7 +265,7 @@ test("a change set that no longer fits what is there is refused whole, and propo
   const { profileId, taskId } = await withDsa(me);
   await prisma.novaTask.update({ where: { id: taskId }, data: { status: "todo" } });
   const draft = await begin(me.id, "Drop the tree problems task from my DSA plan and add a heap task", {
-    read: reader({ next: "draft", resource: { name: "DSA", intent: "change" } }), write: noWrite,
+    read: reader({ ...ASKED, next: "draft", resource: { name: "DSA", intent: "change" } }), write: noWrite,
     writeChanges: changer(req => [
       { op: "remove_task", taskId: req.current.tasks[0]!.id },
       { op: "add_task", key: "heap", title: "Implement a binary heap" },
@@ -277,7 +286,7 @@ test("deleting a conversation removes only the conversation: what it built stays
   const me = await learner();
   const { profileId } = await withDsa(me);
   const draft = await begin(me.id, "Add heaps to my DSA plan", {
-    read: reader({ next: "draft", resource: { name: "DSA", intent: "change" } }), write: noWrite,
+    read: reader({ ...ASKED, next: "draft", resource: { name: "DSA", intent: "change" } }), write: noWrite,
     writeChanges: changer(req => [{ op: "add_topics", subjectId: req.current.subjects[0]!.id, names: ["Binary heaps"] }]),
   });
   assert.ok((await builder.approveDraft(me.id, draft.id, { version: draft.version })).ok);
@@ -302,14 +311,14 @@ test("one learner can neither find nor change another's records", async () => {
   const before = await records(ownerProfile);
   const other = await learner();
   // Their DSA is not this learner's: the name finds nothing of theirs.
-  const draft = await begin(other.id, "Add DP to my DSA plan", { read: reader({ next: "draft", resource: { name: "DSA", intent: "change" } }), write: noWrite });
+  const draft = await begin(other.id, "Add DP to my DSA plan", { read: reader({ ...ASKED, next: "draft", resource: { name: "DSA", intent: "change" } }), write: noWrite });
   assert.equal(draft.resource, null);
   assert.ok(draft.messages.at(-1)!.text.includes("I couldn't find"));
 
   // And ids of another learner's records, proposed for one's own, are left out.
   const mine = await withDsa(other);
   const proposed = await begin(other.id, "Add DP to my DSA plan", {
-    read: reader({ next: "draft", resource: { name: "DSA", intent: "change" } }), write: noWrite,
+    read: reader({ ...ASKED, next: "draft", resource: { name: "DSA", intent: "change" } }), write: noWrite,
     writeChanges: changer(() => [{ op: "add_topics", subjectId: dsa.id, names: ["Dynamic programming"] }, { op: "remove_topic", topicId: dsa.topics[0]!.id }]),
   });
   assert.equal(proposed.changes, null);
@@ -322,7 +331,7 @@ test("a subject inside a bigger workspace opens as that subject alone, and chang
   const me = await learner();
   const profileId = await me.profileId();
   const first = await begin(me.id, "Plan my semester 5 exams: DSA and OS, exams in early December.", {
-    read: reader({ next: "draft", facts: [{ label: "Subjects", value: "DSA and OS", quote: "DSA and OS" }, { label: "Exams", value: "early December", quote: "early December" }] }),
+    read: reader({ ...ASKED, next: "draft", facts: [{ label: "Subjects", value: "DSA and OS", quote: "DSA and OS" }, { label: "Exams", value: "early December", quote: "early December" }] }),
     write: async req => checkWorkspacePlan({ kind: "custom", title: "B.Tech CSE Semester 5 Exam Preparation",
       subjects: [{ name: "DSA", topics: [{ name: "Hashing", unit: "Unit 1", subtopics: ["Open addressing", "Chaining"] }, "Trees"] }, { name: "OS", topics: ["Scheduling", "Deadlocks"] }],
       tasks: [{ key: "os", title: "OS past paper", subject: "OS" }, { key: "dsa", title: "DSA tree problems", subject: "DSA" }] }, { today: req.today, userText: req.learnerText }),
@@ -343,7 +352,7 @@ test("a subject inside a bigger workspace opens as that subject alone, and chang
   assert.deepEqual(outline.map(t => [t.name, parentOf(t.name)]), [["Unit 1", null], ["Hashing", "Unit 1"], ["Open addressing", "Hashing"], ["Chaining", "Hashing"], ["Trees", null]]);
 
   const changed = await say(me.id, draft.id, "Add graphs to it", {
-    read: reader({ next: "draft", change: "Add graphs" }), write: noWrite,
+    read: reader({ ...ASKED, next: "draft", change: "Add graphs" }), write: noWrite,
     writeChanges: changer(req => {
       assert.deepEqual(req.current.subjects.map(s => s.name), ["DSA"]);
       return [{ op: "add_topics", subjectId: req.current.subjects[0]!.id, names: ["Graph traversal (BFS and DFS)"] }];
@@ -364,7 +373,7 @@ test("a subject that belongs elsewhere is removed from the workspace with its to
   const me = await learner();
   const profileId = await me.profileId();
   const first = await begin(me.id, "Plan my semester 5 exams: DSA and Prompt Engineering, exams in early December.", {
-    read: reader({ next: "draft", facts: [{ label: "Subjects", value: "DSA and Prompt Engineering", quote: "DSA and Prompt Engineering" }, { label: "Exams", value: "early December", quote: "early December" }] }),
+    read: reader({ ...ASKED, next: "draft", facts: [{ label: "Subjects", value: "DSA and Prompt Engineering", quote: "DSA and Prompt Engineering" }, { label: "Exams", value: "early December", quote: "early December" }] }),
     write: async req => checkWorkspacePlan({ kind: "custom", title: "Semester 5",
       subjects: [{ name: "DSA", topics: ["Hashing"] }, { name: "Prompt Engineering", topics: ["Few-shot prompting", "Guardrails"] }],
       tasks: [{ key: "pe", title: "Write 10 prompts", subject: "Prompt Engineering" }] }, { today: req.today, userText: req.learnerText }),
@@ -374,12 +383,12 @@ test("a subject that belongs elsewhere is removed from the workspace with its to
 
   // As in the report: first the topics, then "remove prompt engineering from subject too".
   let draft = await say(me.id, first.id, "delete prompt engineering topics, it is in sem 6", {
-    read: reader({ next: "draft", change: "Remove Prompt Engineering topics" }), write: noWrite,
+    read: reader({ ...ASKED, next: "draft", change: "Remove Prompt Engineering topics" }), write: noWrite,
     writeChanges: changer(req => req.current.subjects.find(x => x.name === "Prompt Engineering")!.topics.map(t => ({ op: "remove_topic", topicId: t.id }))),
   });
   assert.ok((await builder.approveDraft(me.id, draft.id, { version: draft.version })).ok);
   draft = await say(me.id, first.id, "remove prompt engineering from subject too", {
-    read: reader({ next: "draft", change: "Remove the Prompt Engineering subject" }), write: noWrite,
+    read: reader({ ...ASKED, next: "draft", change: "Remove the Prompt Engineering subject" }), write: noWrite,
     writeChanges: changer(req => [{ op: "remove_subject", subjectId: req.current.subjects.find(x => x.name === "Prompt Engineering")!.id }]),
   });
   assert.deepEqual(draft.changes!.ops.map(o => o.op), ["remove_subject"]);
@@ -392,7 +401,7 @@ test("a subject that belongs elsewhere is removed from the workspace with its to
   assert.equal(task.subjectId, null);
 
   // In one step: a subject asked away goes with its topics.
-  const again = await begin(me.id, "Add a subject Compilers to my DSA plan", { read: reader({ next: "draft", resource: { name: "DSA", intent: "change" } }), write: noWrite,
+  const again = await begin(me.id, "Add a subject Compilers to my DSA plan", { read: reader({ ...ASKED, next: "draft", resource: { name: "DSA", intent: "change" } }), write: noWrite,
     writeChanges: changer(() => [{ op: "add_subject", name: "Compilers", topics: ["Lexing"] }]) });
   assert.ok((await builder.approveDraft(me.id, again.id, { version: again.version })).ok);
 });
@@ -415,7 +424,7 @@ test("Build with Nova keeps to its job: an unrelated request changes nothing, an
 
   // Asked for topics; the writer also slips in a task, a note and a date.
   const draft = await begin(me.id, "Add two topics to my DSA plan: heaps and tries", {
-    read: reader({ next: "draft", touches: ["topics"], resource: { name: "DSA", intent: "change" } }), write: noWrite,
+    read: reader({ ...ASKED, next: "draft", touches: ["topics"], resource: { name: "DSA", intent: "change" } }), write: noWrite,
     writeChanges: changer(req => [
       { op: "add_topics", subjectId: req.current.subjects[0]!.id, names: ["Heaps", "Tries"] },
       { op: "add_task", key: "x", title: "Practise heaps daily" },
@@ -438,7 +447,7 @@ test("what a conversation applied can be taken back, and a project can be delete
   const me = await learner();
   const profileId = await me.profileId();
   const first = await begin(me.id, "Plan Kivo v1, done in four days.", {
-    read: reader({ next: "draft", facts: [{ label: "Project", value: "Kivo v1", quote: "Kivo v1" }, { label: "Deadline", value: "four days", quote: "four days" }] }),
+    read: reader({ ...ASKED, next: "draft", facts: [{ label: "Project", value: "Kivo v1", quote: "Kivo v1" }, { label: "Deadline", value: "four days", quote: "four days" }] }),
     write: async req => checkWorkspacePlan({ kind: "custom", title: "Kivo v1", summary: "Finish Kivo v1",
       subjects: [{ name: "Kivo", topics: ["Home page", "Final polish"] }],
       phases: [{ name: "Home page", subject: "Kivo" }, { name: "Final polish", subject: "Kivo" }],
@@ -452,7 +461,7 @@ test("what a conversation applied can be taken back, and a project can be delete
 
   // A change set: a topic and a task removed, a task's priority changed.
   let draft = await say(me.id, first.id, "remove the final polish milestone and make the UI low priority", {
-    read: reader({ next: "draft", change: "Remove Final polish; UI low priority", touches: ["topics", "tasks", "priorities"] }), write: noWrite,
+    read: reader({ ...ASKED, next: "draft", change: "Remove Final polish; UI low priority", touches: ["topics", "tasks", "priorities"] }), write: noWrite,
     writeChanges: changer(req => [
       { op: "remove_topic", topicId: req.current.subjects[0]!.topics.find(t => t.name === "Final polish")!.id },
       { op: "remove_task", taskId: req.current.tasks.find(t => t.title === "Fix the last bugs")!.id },
@@ -467,7 +476,7 @@ test("what a conversation applied can be taken back, and a project can be delete
 
   // "Revert the changes": the version built before, brought back through the history; nothing changes before approval.
   const noModel: NonNullable<BuilderDeps["writeChanges"]> = async () => { throw new Error("the model wrote the undo"); };
-  draft = await say(me.id, first.id, "no, revert the changes", { read: reader({ next: "revise", undo: true }), write: noWrite, writeChanges: noModel });
+  draft = await say(me.id, first.id, "no, revert the changes", { read: reader({ ...ASKED, next: "revise", undo: true }), write: noWrite, writeChanges: noModel });
   assert.equal(draft.status, "awaiting_approval");
   assert.deepEqual(draft.changes!.ops.map(o => o.says).sort(), [
     'Add milestone to Kivo: Final polish',
@@ -551,7 +560,7 @@ test("a subject with a date is removed with that date, listed; a past date is ke
   await prisma.novaExam.create({ data: { profileId, subjectId: dsa.id, title: "DSA mid-term", examType: "exam", scheduledAt: new Date(`${inDays(10)}T12:00:00.000Z`) } });
   await prisma.novaExam.create({ data: { profileId, subjectId: dsa.id, title: "DSA quiz 1", examType: "exam", scheduledAt: new Date(`${inDays(-20)}T12:00:00.000Z`) } });
   const draft = await begin(me.id, "Delete my DSA subject", {
-    read: reader({ next: "draft", resource: { name: "DSA", intent: "change" }, touches: ["subjects"] }), write: noWrite,
+    read: reader({ ...ASKED, next: "draft", resource: { name: "DSA", intent: "change" }, touches: ["subjects"] }), write: noWrite,
     writeChanges: changer(req => [{ op: "remove_subject", subjectId: req.current.subjects[0]!.id }]),
   });
   assert.ok(draft.changes!.ops.some(o => o.says === `Remove date "DSA mid-term" (${inDays(10)})`));
@@ -565,9 +574,9 @@ test("a subject with a date is removed with that date, listed; a past date is ke
 test("History: every version is kept; restoring an old proposal makes a new version and loses none", async () => {
   const me = await learner();
   const v = (title: string) => async (req: { today: string; learnerText: string }) => checkWorkspacePlan({ kind: "custom", title, subjects: [{ name: title, topics: ["Build"] }], tasks: [{ key: "a", title: `Do ${title}` }] }, { today: req.today, userText: req.learnerText });
-  const first = await begin(me.id, "Plan Alpha, due in a month.", { read: reader({ next: "draft", facts: [{ label: "Project", value: "Alpha", quote: "Alpha" }, { label: "Deadline", value: "a month", quote: "a month" }] }), write: v("Alpha") });
+  const first = await begin(me.id, "Plan Alpha, due in a month.", { read: reader({ ...ASKED, next: "draft", facts: [{ label: "Project", value: "Alpha", quote: "Alpha" }, { label: "Deadline", value: "a month", quote: "a month" }] }), write: v("Alpha") });
   // A revision is an operation on the proposal: here, its new name.
-  const second = await say(me.id, first.id, "Call it Beta instead", { read: reader({ next: "revise", change: "Rename to Beta" }), write: v("Beta"), writeChanges: async () => ({ ok: true, summary: null, ops: [{ op: "rename", title: "Beta" }] }) });
+  const second = await say(me.id, first.id, "Call it Beta instead", { read: reader({ ...ASKED, next: "revise", change: "Rename to Beta" }), write: v("Beta"), writeChanges: async () => ({ ok: true, summary: null, ops: [{ op: "rename", title: "Beta" }] }) });
   assert.equal(second.plan!.title, "Beta");
   const listed = await builder.draftVersions(me.id, first.id);
   assert.ok(listed.ok);

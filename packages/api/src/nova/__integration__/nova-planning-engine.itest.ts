@@ -46,8 +46,17 @@ async function learner() {
   await prisma.messengerUser.create({ data: { platform: "web", platformChatId: id, persona: "nova", displayName: "Asha" } });
   return { id, profileId: (await ensureSetupProfile(id))!.profileId };
 }
-const reader = (raw: Record<string, unknown>): NonNullable<BuilderDeps["read"]> => async input =>
-  readTurn({ reply: "OK.", facts: [], assumptions: [], suggestions: [], question: null, ...raw }, input.messages.filter(m => m.role === "user").map(m => m.text).join("\n"), []);
+// "latest" in a quote stands for the learner's latest words, quoted as a
+// model quotes a request to build or for tasks.
+const reader = (raw: Record<string, unknown>): NonNullable<BuilderDeps["read"]> => async input => {
+  const said = input.messages.filter(m => m.role === "user");
+  const latest = said.at(-1)?.text ?? "";
+  const quote = (v: unknown) => (v && typeof v === "object" && (v as { quote?: unknown }).quote === "latest" ? { ...v, quote: latest } : v);
+  return readTurn({ reply: "OK.", facts: [], assumptions: [], suggestions: [], question: null, ...raw, build: quote(raw.build), tasks: quote(raw.tasks) }, said.map(m => m.text).join("\n"), [], latest);
+};
+// The learner asked for the plan, and for tasks: these tests are about
+// other rules (task-consent and consent have their own, nova-builder-consent).
+const ASKED = { build: { quote: "latest" }, tasks: { want: "all", quote: "latest" } };
 const writer = (raw: Record<string, unknown>): NonNullable<BuilderDeps["write"]> => async req => checkWorkspacePlan({ ...raw, kind: "custom" }, { today: req.today, userText: req.learnerText, nova: true });
 const noWrite: NonNullable<BuilderDeps["write"]> = async () => { throw new Error("a new plan was written"); };
 
@@ -87,7 +96,7 @@ const SEMESTER = {
 test("an approved semester is its tree in rows, in order, once each, and the map draws that tree for the workspace by default", async () => {
   const me = await learner();
   const draft = await begin(me.id, "Plan my semester 5: DSA and OS, exam in a month.", {
-    read: reader({ next: "draft", kind: "semester", facts: [{ label: "Subjects", value: "DSA and OS", quote: "DSA and OS" }, { label: "Exam", value: "in a month", quote: "exam in a month" }] }),
+    read: reader({ ...ASKED, next: "draft", kind: "semester", facts: [{ label: "Subjects", value: "DSA and OS", quote: "DSA and OS" }, { label: "Exam", value: "in a month", quote: "exam in a month" }] }),
     write: writer(SEMESTER),
   });
   assert.equal(draft.status, "awaiting_approval");
@@ -194,7 +203,7 @@ test("progress survives a topic gaining and losing topics inside it; it leaves t
 test("waits are rows: drawn as edges, changed by an approved change, gone with their task; a plan that contradicts itself isn't built", async () => {
   const me = await learner();
   const bad = await begin(me.id, "Plan the DSA exam.", {
-    read: reader({ next: "draft", kind: "exam", facts: [{ label: "Exam", value: "DSA", quote: "DSA exam" }, { label: "Goal", value: "plan", quote: "Plan" }] }),
+    read: reader({ ...ASKED, next: "draft", kind: "exam", facts: [{ label: "Exam", value: "DSA", quote: "DSA exam" }, { label: "Goal", value: "plan", quote: "Plan" }] }),
     write: writer({ ...SEMESTER, tasks: [...SEMESTER.tasks, { key: "late", title: "Revise trees after the exam", subject: "DSA", dueDay: inDays(40) }] }),
   });
   assert.deepEqual(bad.feasibility?.errors.map(e => e.code), ["after_deadline"]);
@@ -214,7 +223,7 @@ test("waits are rows: drawn as edges, changed by an approved change, gone with t
 
   // A change to the workspace: the scheduling task now waits on Big-O; the heap waits on nothing.
   const change = await say(me.id, bad.id, "The scheduling work should wait for the Big-O problems, and the heap shouldn't wait on anything.", {
-    read: reader({ next: "revise", change: "Scheduling waits on Big-O; heap waits on nothing", touches: ["tasks"] }), write: noWrite,
+    read: reader({ ...ASKED, next: "revise", change: "Scheduling waits on Big-O; heap waits on nothing", touches: ["tasks"] }), write: noWrite,
     writeChanges: async req => ({ ok: true, summary: null, ops: [
       { op: "update_task", taskId: req.current.tasks.find(t => t.title === "Simulate round-robin scheduling")!.id, after: [req.current.tasks.find(t => t.title === "Solve 10 Big-O problems")!.id] },
       { op: "update_task", taskId: req.current.tasks.find(t => t.title === "Implement a heap")!.id, after: [] },
@@ -236,11 +245,11 @@ test("waits are rows: drawn as edges, changed by an approved change, gone with t
 test("a proposal is revised by operations: a nesting-only change is a new version, and nothing else moves", async () => {
   const me = await learner();
   const first = await begin(me.id, "Plan my semester 5", {
-    read: reader({ next: "draft", kind: "semester", facts: [{ label: "Semester", value: "5", quote: "semester 5" }, { label: "Goal", value: "plan", quote: "Plan" }] }), write: writer(SEMESTER),
+    read: reader({ ...ASKED, next: "draft", kind: "semester", facts: [{ label: "Semester", value: "5", quote: "semester 5" }, { label: "Goal", value: "plan", quote: "Plan" }] }), write: writer(SEMESTER),
   });
   const v = first.version;
   const second = await say(me.id, first.id, "Make writing delete a step of writing insert.", {
-    read: reader({ next: "revise", change: "Write delete under Write insert", touches: ["tasks"] }), write: noWrite,
+    read: reader({ ...ASKED, next: "revise", change: "Write delete under Write insert", touches: ["tasks"] }), write: noWrite,
     writeChanges: async () => ({ ok: true, summary: null, ops: [{ op: "update_task", taskId: "bst-del", parentId: "bst-ins" }] }),
   });
   assert.equal(second.version, v + 1);

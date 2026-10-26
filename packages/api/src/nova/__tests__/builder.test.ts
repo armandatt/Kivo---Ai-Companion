@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  MAX_QUESTIONS, OPENING_QUESTION, PENDING_STALE_MS, TRANSITIONS, canMove, decideStep, describeChanges, emptyBrief,
+  BUILD_OFFER_AFTER, PLAN_QUESTION, planningTurns, pressed, OPENING_QUESTION, PENDING_STALE_MS, TRANSITIONS, canMove, decideStep, describeChanges, emptyBrief,
   isPendingLive, needsReply, nextBrief, normalized, planChanges, readTurn, withMessages, changedNothing, message, MESSAGES_KEPT, replyWithQuestion, MIN_FACTS_TO_DRAFT, STARTING_QUESTION, holdsLine,
 } from "../product/builder-state";
 import { languageRule, readBuilderTurn, turnPrompt, type TurnInput } from "../product/builder-conversation";
@@ -74,31 +74,99 @@ describe("what a turn may do (code decides, not the model)", () => {
     expect(ask).toEqual({ type: "ask", question: "What does TrackerX help people do, and who is it for?" });
   });
 
-  it("a clear request moves to a proposal without more questions", () => {
+  it("a clear request is not consent: Nova asks whether to build, and builds only when asked (Scenario A)", () => {
     const facts = [{ label: "Goal", value: "learn FastAPI", quote: "learn FastAPI" }, { label: "Time available", value: "5 hours a week", quote: "5 hours a week" }];
-    const step = decideStep({ plan: null, brief: brief() }, r({ next: "draft", facts }, "I need a roadmap to learn FastAPI, 5 hours a week"));
-    expect(step).toEqual({ type: "draft", reason: "ready" });
+    const words = "I want to learn FastAPI, 5 hours a week";
+    // The model thinks it knows enough: code asks whether they have a plan or want one, with the choices.
+    expect(decideStep({ plan: null, brief: brief() }, r({ next: "draft", facts }, words))).toEqual({ type: "ask", question: PLAN_QUESTION, overruled: true, offer: "plan" });
+    // Asked in their latest words (quoted from it): built at once.
+    const asked = readTurn(reply({ next: "draft", facts, build: { quote: "build me the roadmap now" } }), `${words}\nOK, build me the roadmap now`, [], "OK, build me the roadmap now")!;
+    expect(asked.build).toBe(true);
+    expect(decideStep({ plan: null, brief: brief() }, asked)).toEqual({ type: "draft", reason: "consented" });
+    // Consent given before (a button, or earlier words) holds for the next turn.
+    expect(decideStep({ plan: null, brief: brief({ facts, consent: true }) }, r({ next: "ask", question: "Which framework?" }, words))).toEqual({ type: "draft", reason: "consented" });
+  });
+
+  it("consent is quoted from the latest message only: a goal, an answer or an earlier message is not consent", () => {
+    // The quote is not in the latest message: no consent, whatever the model says.
+    const old = readTurn(reply({ next: "draft", build: { quote: "build it" } }), "build it\nI know Python already", [], "I know Python already")!;
+    expect(old.build).toBe(false);
+    // Too short to be a quote of anything.
+    expect(readTurn(reply({ next: "draft", build: { quote: "ok" } }), "ok", [], "ok")!.build).toBe(false);
+    expect(readTurn(reply({ next: "draft", build: null }), "I want to learn FastAPI")!.build).toBe(false);
+  });
+
+  it("an explicit build with enough context is not held back by questions (Scenario F)", () => {
+    const facts = [{ label: "Goal", value: "learn FastAPI", quote: "learn FastAPI" }];
+    const now = readTurn(reply({ next: "draft", facts, build: { quote: "Build the roadmap now using this PDF" } }), "Build the roadmap now using this PDF to learn FastAPI", ["roadmap.pdf"], "Build the roadmap now using this PDF to learn FastAPI")!;
+    // First message, one fact, a file: built, no question first.
+    expect(decideStep({ plan: null, brief: brief(), files: true, turns: 1 }, now)).toEqual({ type: "draft", reason: "consented" });
+    // Nothing at all to build from: still one question.
+    const empty = readTurn(reply({ next: "draft", facts: [], build: { quote: "build it now" } }), "build it now")!;
+    expect(decideStep({ plan: null, brief: brief() }, empty)).toEqual({ type: "ask", question: OPENING_QUESTION });
+  });
+
+  it("a shared roadmap is material, not consent: Nova asks about it first (Scenario B)", () => {
+    const shared = r({ next: "draft", facts: [{ label: "Roadmap", value: "the PDF", file: "fastapi.pdf" }] }, "");
+    const step = decideStep({ plan: null, brief: brief({ questionsAsked: 1 }), files: true, turns: 1 }, shared);
+    expect(step).toEqual({ type: "ask", question: PLAN_QUESTION, overruled: true, offer: "plan" });
   });
 
   it("a first message that only names the thing gets a question, not a generic proposal", () => {
     // "I'm building TrackerX": the model wants to draft; code asks where they are first, in its own words.
     const named = r({ next: "draft", reply: "Great, I'll put together a plan for TrackerX.", facts: [{ label: "Project", value: "TrackerX", quote: "building TrackerX" }] });
     expect(decideStep({ plan: null, brief: brief() }, named)).toEqual({ type: "ask", question: STARTING_QUESTION, overruled: true });
-    // Once a question has been asked, the model's "draft" is trusted (they may just want to see one).
+    // Once a question has been asked, a "draft" reading asks whether to build, never builds.
     const later = brief({ facts: [{ label: "Project", value: "TrackerX" }], questionsAsked: 1 });
-    expect(decideStep({ plan: null, brief: later }, r({ next: "draft" }))).toEqual({ type: "draft", reason: "ready" });
+    expect(decideStep({ plan: null, brief: later }, r({ next: "draft" }))).toEqual({ type: "ask", question: PLAN_QUESTION, overruled: true, offer: "plan" });
     expect(MIN_FACTS_TO_DRAFT).toBe(2);
     // Adding to a workspace they have: the workspace is the context, so one specific ask is enough.
     const add = r({ next: "draft", facts: [{ label: "Add", value: "a beta programme", quote: "beta programme" }] }, "Add a beta programme");
-    expect(decideStep({ plan: null, brief: brief(), improving: true }, add)).toEqual({ type: "draft", reason: "ready" });
+    expect(decideStep({ plan: null, brief: brief(), improving: true }, add)).toEqual({ type: "draft", reason: "improving" });
     // Opened something of theirs, then "Add graphs to it": no fact needed (seen 22 Oct: asked what they were working on).
-    expect(decideStep({ plan: null, brief: brief(), improving: true }, r({ next: "draft", facts: [] }))).toEqual({ type: "draft", reason: "ready" });
+    expect(decideStep({ plan: null, brief: brief(), improving: true }, r({ next: "draft", facts: [] }))).toEqual({ type: "draft", reason: "improving" });
   });
 
-  it(`proposes after ${MAX_QUESTIONS} questions rather than asking forever`, () => {
+  it("there is no question count after which Nova builds; the build shortcut appears from the third message", () => {
     const facts = [{ label: "Project", value: "TrackerX" }];
-    expect(decideStep({ plan: null, brief: brief({ facts, questionsAsked: MAX_QUESTIONS - 1 }) }, r({ next: "ask", question: "Anything else?" })).type).toBe("ask");
-    expect(decideStep({ plan: null, brief: brief({ facts, questionsAsked: MAX_QUESTIONS }) }, r({ next: "ask", question: "Anything else?" }))).toEqual({ type: "draft", reason: "enough_questions" });
+    const ask = r({ next: "ask", question: "Anything else?" });
+    // However many questions: still a question, never a draft.
+    expect(decideStep({ plan: null, brief: brief({ facts, questionsAsked: 12 }), turns: 1 }, ask)).toEqual({ type: "ask", question: "Anything else?" });
+    expect(BUILD_OFFER_AFTER).toBe(3);
+    expect(decideStep({ plan: null, brief: brief({ facts, questionsAsked: 2 }), turns: 2 }, ask)).toEqual({ type: "ask", question: "Anything else?" });
+    expect(decideStep({ plan: null, brief: brief({ facts, questionsAsked: 2 }), turns: 3 }, ask)).toEqual({ type: "ask", question: "Anything else?", offer: "build" });
+    // Never under a proposal's questions, or when working on something of theirs.
+    expect(decideStep({ plan: plan(), brief: brief({ facts }), turns: 9 }, ask)).toEqual({ type: "ask", question: "Anything else?" });
+    expect(decideStep({ plan: null, brief: brief({ facts }), improving: true, turns: 9 }, ask)).toEqual({ type: "ask", question: "Anything else?" });
+  });
+
+  it("learner messages are counted from what is stored, in this planning conversation only", () => {
+    const at = (role: "user" | "nova", text: string, extra: Partial<BuilderMessage> = {}): BuilderMessage => ({ ...message(role, text, NOW), ...extra });
+    const list = [at("user", "I want to learn FastAPI"), at("nova", "What do you know?", { kind: "question" }), at("nova", "Kivo couldn't answer", { kind: "error" }), at("user", "Python"), at("nova", "A notice", { kind: "notice" })];
+    expect(planningTurns(list)).toBe(2);
+    // A built conversation going on is a new plan: counted from what it built.
+    expect(planningTurns([...list, at("nova", "Built", { kind: "built" }), at("user", "Now add Phase 5")])).toBe(1);
+  });
+
+  it("a pressed choice counts only under the message that offered it", () => {
+    const at = (role: "user" | "nova", text: string, extra: Partial<BuilderMessage> = {}): BuilderMessage => ({ ...message(role, text, NOW), ...extra });
+    expect(pressed([at("nova", "Which framework?", { kind: "question", offer: "build" }), at("user", "Build a draft with what we have.", { action: "build" })])).toBe("build");
+    expect(pressed([at("nova", "Plan?", { kind: "question", offer: "plan" }), at("user", "I already have a plan.", { action: "own_plan" })])).toBe("own_plan");
+    // Not offered there (a stale button, or a forged request): only words.
+    expect(pressed([at("nova", "Which framework?", { kind: "question" }), at("user", "Build a draft with what we have.", { action: "build" })])).toBeNull();
+    expect(pressed([at("nova", "Here's a proposal", { kind: "proposal", offer: "tasks" }), at("user", "Build", { action: "build" })])).toBeNull();
+  });
+
+  it("consent and the tasks asked for are kept in the brief across turns", () => {
+    const first = readTurn(reply({ next: "ask", tasks: { want: "some", scope: ["Phase 1"], quote: "tasks only for Phase 1" } }), "Make tasks only for Phase 1", [], "Make tasks only for Phase 1")!;
+    const b1 = nextBrief(emptyBrief(), first, { type: "chat" });
+    expect(b1.tasks).toEqual({ mode: "scoped", scope: ["Phase 1"] });
+    // A later turn that says nothing about tasks keeps what was asked.
+    const b2 = nextBrief({ ...b1, consent: true }, readTurn(reply({ next: "chat" }), "thanks")!, { type: "chat" });
+    expect(b2.tasks).toEqual({ mode: "scoped", scope: ["Phase 1"] });
+    expect(b2.consent).toBe(true);
+    // A tasks request not quoted from the latest message is not taken.
+    expect(readTurn(reply({ next: "ask", tasks: { want: "all", quote: "make tasks" } }), "make tasks\nno wait", [], "no wait")!.tasks).toBeNull();
   });
 
   it("talk is talk: a chat reading changes nothing, with or without a proposal", () => {
@@ -267,7 +335,10 @@ describe("what the model is given", () => {
     expect(system).toContain("- project (software or otherwise): milestones, tasks, subtasks, dependencies");
     expect(system).toContain("Never speak of subjects, syllabus, revision or exams for a project.");
     expect(system).toContain("- exam or semester (academic): subjects, units, topics, revision");
-    expect(system).toContain("is not enough: ask first");
+    expect(system).toContain("is never enough");
+    // Consent is the learner's: never assumed from a goal, a file or an answer.
+    expect(system).toContain("Never assume they want a plan built");
+    expect(system).toContain("is not a request for tasks");
   });
   it("a first version gets the facts and assumptions; a proposal is never sent back to be rewritten (revisions are operations)", () => {
     const req: BuilderPlanRequest = {

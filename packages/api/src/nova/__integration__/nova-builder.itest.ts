@@ -62,11 +62,18 @@ async function records(profileId: string) {
 }
 const NOTHING = { subjects: 0, tasks: 0, notes: 0, exams: 0, workspaces: 0 };
 
-// A stand-in reader: the given reply, read through the real fact check.
+// A stand-in reader: the given reply, read through the real fact and consent
+// checks. "latest" in a quote stands for the learner's latest words, quoted
+// as a model quotes a request to build or for tasks.
 const reader = (raw: Record<string, unknown>, seen?: TurnInput[]): NonNullable<BuilderDeps["read"]> => async input => {
   seen?.push(input);
-  return readTurn({ reply: "OK.", facts: [], assumptions: [], suggestions: [], question: null, ...raw }, input.messages.filter(m => m.role === "user").map(m => m.text).join("\n"), (input.files ?? []).map(f => f.name));
+  const said = input.messages.filter(m => m.role === "user");
+  const latest = said.at(-1)?.text ?? "";
+  const quote = (v: unknown) => (v && typeof v === "object" && (v as { quote?: unknown }).quote === "latest" ? { ...v, quote: latest } : v);
+  return readTurn({ reply: "OK.", facts: [], assumptions: [], suggestions: [], question: null, ...raw, build: quote(raw.build), tasks: quote(raw.tasks) }, said.map(m => m.text).join("\n"), (input.files ?? []).map(f => f.name), latest);
 };
+// The learner asked for the plan, tasks and all ("Plan TrackerX, launching on 30 November").
+const ASKED = { build: { quote: "latest" }, tasks: { want: "all", quote: "latest" } };
 
 function trackerPlan(extra: Record<string, unknown> = {}) {
   return {
@@ -152,11 +159,11 @@ test("the conversation goes question by question, uses what Kivo knows, and does
   assert.deepEqual(await records(profileId), { ...NOTHING, subjects: 1 });
 });
 
-test("a clear request becomes a proposal without more questions, and still writes nothing", async () => {
+test("a clear request to build becomes a proposal without more questions, and still writes nothing (Scenario F)", async () => {
   const me = await learner();
   const asked: BuilderPlanRequest[] = [];
   const draft = await begin(me.id, "Authentication is done, the dashboard is half done, API integration is next. Plan TrackerX for me.", {
-    read: reader({ next: "draft", facts: [{ label: "Done so far", value: "authentication", quote: "Authentication is done" }, { label: "Next step", value: "API integration", quote: "API integration is next" }] }),
+    read: reader({ ...ASKED, next: "draft", facts: [{ label: "Done so far", value: "authentication", quote: "Authentication is done" }, { label: "Next step", value: "API integration", quote: "API integration is next" }] }),
     write: writer(trackerPlan, asked),
   });
   assert.equal(draft.status, "awaiting_approval");
@@ -171,7 +178,7 @@ test("a clear request becomes a proposal without more questions, and still write
 test("a correction is a new version; only the current version is approved; approving twice builds once", async () => {
   const me = await learner();
   let draft = await begin(me.id, "Plan TrackerX: dashboard, then APIs, then testing, launching on 30 November.", {
-    read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan),
+    read: reader({ ...ASKED, next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan),
   });
   assert.equal(draft.version, 1);
 
@@ -237,7 +244,7 @@ test("a correction is a new version; only the current version is approved; appro
 
 test("the learner's edits are saved against their version, and win over a slower Nova", async () => {
   const me = await learner();
-  let draft = await begin(me.id, "Plan TrackerX, launching on 30 November.", { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan) });
+  let draft = await begin(me.id, "Plan TrackerX, launching on 30 November.", { read: reader({ ...ASKED, next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan) });
 
   // An edit: renamed and a task removed. Saved as version 2.
   const mine = { ...draft.plan!, title: "TrackerX v1 launch", tasks: draft.plan!.tasks.filter(t => t.key !== "e2e") };
@@ -268,7 +275,7 @@ test("the learner's edits are saved against their version, and win over a slower
 
 test("an existing workspace is improved by changes to its own records: nothing else is touched", async () => {
   const me = await learner();
-  const first = await begin(me.id, "Plan TrackerX, launching on 30 November.", { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan) });
+  const first = await begin(me.id, "Plan TrackerX, launching on 30 November.", { read: reader({ ...ASKED, next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan) });
   const built = await builder.approveDraft(me.id, first.id, { version: 1 });
   assert.ok(built.ok && built.draft.workspace);
   const workspaceId = built.ok ? built.draft.workspace!.id : "";
@@ -282,7 +289,7 @@ test("an existing workspace is improved by changes to its own records: nothing e
   const started = await builder.startDraft(me.id, { clientKey: key(), text: "Add a beta programme", targetWorkspaceId: workspaceId });
   assert.ok(started.ok && started.draft.target?.id === workspaceId);
   await builder.runJob(me.id, started.job!, {
-    read: reader({ next: "draft", facts: [{ label: "Add", value: "a beta programme", quote: "beta programme" }] }, seen),
+    read: reader({ ...ASKED, next: "draft", facts: [{ label: "Add", value: "a beta programme", quote: "beta programme" }] }, seen),
     writeChanges: async req => ({ ok: true, summary: null, ops: [
       { op: "add_topics", subjectId: req.current.subjects[0]!.id, names: ["Beta programme"] },
       { op: "add_task", key: "beta", title: "Recruit ten beta teams", subjectId: req.current.subjects[0]!.id },
@@ -310,7 +317,7 @@ test("an existing workspace is improved by changes to its own records: nothing e
 
 test("failures are said and can be retried; a failed build leaves nothing", async () => {
   const me = await learner();
-  const down: BuilderDeps = { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: async () => ({ ok: false, unavailable: true, message: "Nova couldn't write the proposal just now. Nothing was lost; try again." }) };
+  const down: BuilderDeps = { read: reader({ ...ASKED, next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: async () => ({ ok: false, unavailable: true, message: "Nova couldn't write the proposal just now. Nothing was lost; try again." }) };
   let draft = await begin(me.id, "Plan TrackerX, launching on 30 November.", down);
   assert.equal(draft.status, "failed");
   assert.equal(draft.failure!.stage, "drafting");
@@ -350,7 +357,7 @@ test("cancelling stops a running job: it writes nothing", async () => {
   assert.ok(started.ok && started.job);
   const cancelled = await builder.cancelDraft(me.id, started.draft.id);
   assert.ok(cancelled.ok && cancelled.draft.status === "cancelled");
-  await builder.runJob(me.id, started.job!, { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan) });
+  await builder.runJob(me.id, started.job!, { read: reader({ ...ASKED, next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan) });
   const draft = (await builder.getDraft(me.id, started.draft.id))!;
   assert.equal(draft.status, "cancelled");
   assert.equal(draft.plan, null);
@@ -392,7 +399,7 @@ test("a chat message opens one draft, answered when it is opened on the web", as
 test("one learner can neither see nor touch another's draft or workspace", async () => {
   const owner = await learner();
   const other = await learner();
-  const draft = await begin(owner.id, "Plan TrackerX, launching on 30 November.", { read: reader({ next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan) });
+  const draft = await begin(owner.id, "Plan TrackerX, launching on 30 November.", { read: reader({ ...ASKED, next: "draft", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }, { label: "Deadline", value: "30 November", quote: "30 November" }] }), write: writer(trackerPlan) });
   await builder.startDraft(other.id, { clientKey: key() });
   assert.equal(await builder.getDraft(other.id, draft.id), null);
   const job: BuilderJob = { draftId: draft.id, jobId: "x", kind: "reply", change: null };
@@ -441,7 +448,7 @@ test("a PDF or photo shared in the conversation is read on every turn, used for 
   // The proposal is written with them, and keeps page references to them only.
   const asked: BuilderPlanRequest[] = [];
   draft = await say(me.id, draft.id, "Exam is in six weeks. Make the plan.", {
-    read: reader({ next: "draft", facts: [{ label: "Exam", value: "in six weeks", quote: "six weeks" }] }),
+    read: reader({ ...ASKED, next: "draft", facts: [{ label: "Exam", value: "in six weeks", quote: "six weeks" }] }),
     write: async req => { asked.push(req); return checkWorkspacePlan({ kind: "custom", title: "OS exam", subjects: [{ name: "Operating Systems", topics: [{ name: "Deadlocks", sources: [{ file: "syllabus.pdf", page: 2 }, { file: "other.pdf", page: 1 }] }] }], sources: [{ file: "syllabus.pdf", read: true, pages: 3 }] }, { today: req.today, files: (req.files ?? []).map(f => f.name), userText: req.learnerText }); },
   });
   assert.deepEqual(asked[0]!.files!.map(f => f.name), ["syllabus.pdf", "plan.png"]);
