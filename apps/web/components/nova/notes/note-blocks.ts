@@ -17,14 +17,19 @@
 
 export type CalloutType = 'note' | 'quote' | 'idea' | 'question' | 'warning' | 'summary' | 'example' | 'definition'
 
-export type Block =
+// at, to: where a top-level block is in the note's text, [at, to), so a
+// passage Nova refers to (note-outline.ts NoteRef) is found on the page.
+// Blocks inside a callout have none: the callout is what is found.
+type Span = { at?: number; to?: number }
+export type Block = Span & (
   | { kind: 'heading'; level: 1 | 2 | 3; text: string; id: string }
   | { kind: 'para'; lines: string[] }
   | { kind: 'list'; ordered: boolean; items: string[] }
   | { kind: 'code'; text: string }
   | { kind: 'quote'; lines: string[] }
   | { kind: 'rule' }
-  | { kind: 'callout'; type: CalloutType; title: string; fold: 'open' | 'closed' | null; body: Block[] }
+  | { kind: 'table'; head: string[]; rows: string[][] }
+  | { kind: 'callout'; type: CalloutType; title: string; fold: 'open' | 'closed' | null; body: Block[] })
 
 // What a learner may write between [! and ], and the callout it is drawn as.
 const CALLOUT_ALIASES: Record<string, CalloutType> = {
@@ -60,6 +65,16 @@ export function calloutHeader(text: string): { type: CalloutType; fold: 'open' |
   return { type, fold, title }
 }
 
+// "| a | b |" → ["a", "b"].
+function cells(line: string): string[] {
+  let t = line.trim()
+  if (t.startsWith('|')) t = t.slice(1)
+  if (t.endsWith('|')) t = t.slice(0, -1)
+  return t.split('|').map(c => c.trim())
+}
+// The line under a table's head: "| --- | :-: |".
+const isTableRule = (line: string | undefined) => line !== undefined && line.trim().startsWith('|') && cells(line).every(c => c.length > 0 && [...c].every(ch => ch === '-' || ch === ':'))
+
 // A quote line's text, without the > and one space after it.
 const unquote = (trimmed: string) => trimmed.startsWith('> ') ? trimmed.slice(2) : trimmed.slice(1)
 
@@ -86,70 +101,96 @@ export function parseBlocks(body: string): Block[] {
     ids.set(base, n + 1)
     return n === 0 ? base : `${base}-${n + 1}`
   }
-  return parseLines(body.split('\n'), uniqueId)
+  const lines = body.split('\n')
+  const starts: number[] = []
+  let at = 0
+  for (const l of lines) { starts.push(at); at += l.length + 1 }
+  return parseLines(lines, uniqueId, starts)
 }
 
-function parseLines(lines: string[], uniqueId: (text: string) => string): Block[] {
+// starts: where each line begins in the text, for the top level only.
+function parseLines(lines: string[], uniqueId: (text: string) => string, starts?: number[]): Block[] {
   const blocks: Block[] = []
   let para: string[] = []
   let list: { ordered: boolean; items: string[] } | null = null
+  let paraFrom = 0, listFrom = 0
+  // The span of lines [from, to] (inclusive), when the line starts are known.
+  const span = (from: number, to: number): Span => (starts ? { at: starts[from]!, to: starts[to]! + lines[to]!.length } : {})
 
-  const flushPara = () => { if (para.length) { blocks.push({ kind: 'para', lines: para }); para = [] } }
-  const flushList = () => { if (list) { blocks.push({ kind: 'list', ...list }); list = null } }
-  const flush = () => { flushPara(); flushList() }
+  const flushPara = (end: number) => { if (para.length) { blocks.push({ kind: 'para', lines: para, ...span(paraFrom, end) }); para = [] } }
+  const flushList = (end: number) => { if (list) { blocks.push({ kind: 'list', ...list, ...span(listFrom, end) }); list = null } }
+  // What was open ends on the line before i (blank lines inside are trimmed by lastText).
+  const lastText = (i: number) => { let j = i - 1; while (j > 0 && !lines[j]!.trim()) j--; return Math.max(j, 0) }
+  const flush = (i: number) => { flushPara(lastText(i)); flushList(lastText(i)) }
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]!
     const trimmed = raw.trimStart()
 
     if (trimmed.startsWith('```')) {
-      flush()
+      flush(i)
       const code: string[] = []
+      const from = i
       i++
       while (i < lines.length && !lines[i]!.trimStart().startsWith('```')) code.push(lines[i++]!)
-      blocks.push({ kind: 'code', text: code.join('\n') })
+      blocks.push({ kind: 'code', text: code.join('\n'), ...span(from, Math.min(i, lines.length - 1)) })
       continue
     }
-    if (!trimmed.trim()) { flush(); continue }
+    if (!trimmed.trim()) { flush(i); continue }
 
     if (trimmed.startsWith('>')) {
-      flush()
+      flush(i)
       // Every > line that follows belongs to this quote or callout.
       const inner: string[] = []
+      const from = i
       while (i < lines.length && lines[i]!.trimStart().startsWith('>')) inner.push(unquote(lines[i++]!.trimStart()))
       i--
       const header = calloutHeader(inner[0]!.trim())
-      if (header) blocks.push({ kind: 'callout', ...header, body: parseLines(inner.slice(1), uniqueId) })
-      else blocks.push({ kind: 'quote', lines: inner })
+      if (header) blocks.push({ kind: 'callout', ...header, body: parseLines(inner.slice(1), uniqueId), ...span(from, i) })
+      else blocks.push({ kind: 'quote', lines: inner, ...span(from, i) })
+      continue
+    }
+
+    // A table: a head row, its rule, then rows, each starting with |.
+    if (trimmed.startsWith('|') && isTableRule(lines[i + 1])) {
+      flush(i)
+      const from = i
+      const head = cells(raw)
+      const rows: string[][] = []
+      i += 2
+      while (i < lines.length && lines[i]!.trimStart().startsWith('|')) rows.push(cells(lines[i++]!))
+      i--
+      blocks.push({ kind: 'table', head, rows: rows.map(r => head.map((_, c) => r[c] ?? '')), ...span(from, i) })
       continue
     }
 
     const heading = trimmed.startsWith('### ') ? 3 : trimmed.startsWith('## ') ? 2 : trimmed.startsWith('# ') ? 1 : 0
     if (heading) {
-      flush()
+      flush(i)
       const text = trimmed.slice(heading + 1).trim()
-      blocks.push({ kind: 'heading', level: heading, text, id: uniqueId(text) })
+      blocks.push({ kind: 'heading', level: heading, text, id: uniqueId(text), ...span(i, i) })
       continue
     }
 
     const t = trimmed.trimEnd()
-    if (t.length >= 3 && [...t].every(ch => ch === '-')) { flush(); blocks.push({ kind: 'rule' }); continue }
+    if (t.length >= 3 && [...t].every(ch => ch === '-')) { flush(i); blocks.push({ kind: 'rule', ...span(i, i) }); continue }
 
     const bullet = trimmed.startsWith('- ') || trimmed.startsWith('* ')
     let numbered = 0
     while (isDigit(trimmed[numbered])) numbered++
     const ordered = numbered > 0 && trimmed.startsWith('. ', numbered)
     if (bullet || ordered) {
-      flushPara()
-      if (list && list.ordered !== ordered) flushList()
-      if (!list) list = { ordered, items: [] }
+      flushPara(lastText(i))
+      if (list && list.ordered !== ordered) flushList(lastText(i))
+      if (!list) { list = { ordered, items: [] }; listFrom = i }
       list.items.push(bullet ? trimmed.slice(2) : trimmed.slice(numbered + 2))
       continue
     }
-    flushList()
+    flushList(lastText(i))
+    if (!para.length) paraFrom = i
     para.push(raw)
   }
-  flush()
+  flush(lines.length)
   return blocks
 }
 

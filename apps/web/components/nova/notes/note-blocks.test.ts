@@ -3,9 +3,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { NoteSummary } from '@repo/api/nova/product/notes.types'
-import { calloutHeader, inlineTokens, outline, parseBlocks, sourceOf, tagsOf, wordCount } from './note-blocks'
+import { calloutHeader, inlineTokens, outline, parseBlocks as parseWithSpans, sourceOf, tagsOf, wordCount, type Block } from './note-blocks'
 import { callout, divider, noteLink, prefixLines, tag, wrap } from './note-format'
 import { filterNotes, groupNotes } from './notes-tree-data'
+
+// The blocks' shape, without where each sits in the text (tested on its own below).
+const bare = (b: Block): Block => { const rest = { ...b }; delete rest.at; delete rest.to; return rest.kind === 'callout' ? { ...rest, body: rest.body.map(bare) } : rest }
+const parseBlocks = (body: string) => parseWithSpans(body).map(bare)
 
 test('a callout: its type, its title and its > lines as its body', () => {
   const blocks = parseBlocks('> [!quote] Vaswani et al.\n> The dominant sequence transduction models\n> are based on RNNs.\n\nMy take: attention replaces recurrence.')
@@ -145,4 +149,19 @@ test('finding a note: every word, in its title, subject or topic', () => {
   assert.deepEqual(filterNotes(notes, 'deep trans').map(n => n.id), ['a'])
   assert.deepEqual(filterNotes(notes, 'paging').map(n => n.id), ['b'])
   assert.equal(filterNotes(notes, '  ').length, 2)
+})
+
+test('each top-level block knows where it is in the text, so a passage Nova cites is found on the page', () => {
+  const body = '# Title\n\nFirst para\nsecond line\n\n- a\n- b\n\n> [!idea] Hm\n> inside\n\n```\ncode\n```'
+  const blocks = parseWithSpans(body)
+  assert.deepEqual(blocks.map(b => body.slice(b.at, b.to)), ['# Title', 'First para\nsecond line', '- a\n- b', '> [!idea] Hm\n> inside', '```\ncode\n```'])
+  // Inside a callout: none (the callout is what is found).
+  const c = blocks[3]!
+  assert.ok(c.kind === 'callout' && c.body.every(x => x.at === undefined))
+})
+
+test('a table: its head and rows; a line of pipes without a rule under the head stays text', () => {
+  const [t] = parseBlocks('| Algorithm | Greedy |\n| --- | :-: |\n| Dijkstra | yes |\n| Bellman-Ford | no |')
+  assert.deepEqual(t, { kind: 'table', head: ['Algorithm', 'Greedy'], rows: [['Dijkstra', 'yes'], ['Bellman-Ford', 'no']] })
+  assert.equal(parseBlocks('| not | a table |')[0]!.kind, 'para')
 })

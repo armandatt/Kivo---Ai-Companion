@@ -11,7 +11,7 @@ jest.mock("@repo/db/client", () => ({ prisma: {} }));
 jest.mock("../../services/openai.service", () => ({ generateOpenAIText: jest.fn() }));
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { locatePassage, noteWindow, parseTutorRequest, readTutorReply, tutorOnNote, tutorPrompt } = require("../product/note-tutor") as typeof import("../product/note-tutor");
+const { locatePassage, markedNote, noteWindow, parseTutorRequest, readTutorReply, tutorOnNote, tutorPrompt, withoutMarkers } = require("../product/note-tutor") as typeof import("../product/note-tutor");
 import type { NoteSources } from "../product/notes";
 
 const BODY = [
@@ -169,7 +169,9 @@ describe("the call", () => {
     expect(load).toHaveBeenCalledWith("p1", "n1", { bodyMax: 50_000 });
     expect(out.ok && out.noteVersion).toBe("2026-10-26T10:00:00.000Z");
     expect(out.ok && out.versionDiffers).toBe(true);
-    expect(out.ok && out.passage).toEqual({ text: "hold and wait", heading: "Deadlocks", found: true });
+    expect(out.ok && out.passage).toMatchObject({ text: "hold and wait", heading: "Deadlocks", found: true });
+    // The block it was found in, so an addition about it can go right after it.
+    expect(out.ok && out.passage?.ref?.block).toBe("b2");
     expect(out.ok && out.sources.map(s => s.id)).toEqual(["S1", "S2"]);
     expect(generate.mock.calls[0][0]).toMatchObject({ model: "gpt-4o", json: true });
   });
@@ -196,5 +198,45 @@ describe("the call", () => {
     expect(src.includes("prisma")).toBe(false);
     for (const banned of ["consolidat", "orchestrator", "/brains/", "updateTopicMastery", "conversation-adapter", "novaNote"]) expect([banned, src.includes(banned)]).toEqual([banned, false]);
     expect(src).toContain('import { noteSources, type NoteSources } from "./notes";');
+  });
+});
+
+describe("passages a reply rests on", () => {
+  const NOTE = "# Graphs\n\n## Dijkstra's Algorithm\n\nPick the unvisited node with the smallest tentative distance.\n\n## Bellman-Ford\n\nRelaxes every edge.";
+  const src = [{ id: "S1", kind: "note" as const, recordId: "n1", title: "Graphs", domain: null, url: null }];
+  const given = markedNote(NOTE, null);
+  it("the model reads the note in marked blocks", () => {
+    expect(given.text).toContain("[b3] Pick the unvisited node");
+    expect(given.blocks.map(b => b.id)).toEqual(["b1", "b2", "b3", "b4", "b5"]);
+  });
+  it("keeps refs to blocks it was given, on parts from the notes only; markers never reach the text", () => {
+    const out = readTutorReply(JSON.stringify({ sections: [
+      { basis: "notes", heading: "Why greedy", text: "It always takes the closest node [b3] [S1].", refs: ["b3", "b3", "b99"] },
+      { basis: "nova", heading: null, text: "An analogy of my own.", refs: ["b5"] },
+    ], place: "dijkstra's algorithm" }), "explain", src, given.blocks)!;
+    expect(out.sections[0]!.refs!.map(r => r.block)).toEqual(["b3"]);
+    expect(out.sections[0]!.refs![0]!.heading).toBe("Dijkstra's Algorithm");
+    expect(out.sections[0]!.text).toBe("It always takes the closest node [S1].");
+    expect(out.sections[1]!.refs).toEqual([]);
+    // A suggested place is kept only as a heading of the note, as written there.
+    expect(out.place).toBe("Dijkstra's Algorithm");
+  });
+  it("a part with valid passages counts as from the notes; an invented place is dropped", () => {
+    const out = readTutorReply(JSON.stringify({ sections: [{ basis: "notes", heading: null, text: "Takes the closest node.", refs: ["b3"] }], place: "Kubernetes" }), "explain", src, given.blocks)!;
+    expect(out.sections[0]!.basis).toBe("notes");
+    expect(out.place).toBeNull();
+    const none = readTutorReply(JSON.stringify({ sections: [{ basis: "notes", heading: null, text: "Takes the closest node.", refs: ["b42"] }] }), "explain", src, given.blocks)!;
+    expect(none.sections[0]!.basis).toBe("nova");
+  });
+  it("markers are taken out wherever the model wrote them", () => {
+    expect(withoutMarkers("As [b2] says, see [b10].")).toBe("As says, see .");
+    expect(withoutMarkers("[brackets] stay")).toBe("[brackets] stay");
+  });
+  it("a note of one long paragraph is still given around the passage, with no passages to point at", () => {
+    const long = `${"intro line\n".repeat(3000)}TARGET passage here\n${"outro line\n".repeat(3000)}`;
+    const w = markedNote(long, locatePassage(long, "TARGET passage").offset, 4000);
+    expect(w.partial).toBe(true);
+    expect(w.text).toContain("TARGET passage");
+    expect(w.blocks).toEqual([]);
   });
 });

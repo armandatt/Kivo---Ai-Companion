@@ -3,6 +3,7 @@
 // directly. Rules: product/note-tutor.ts.
 
 import type { NoteAssistSource } from "./note-assist.types";
+import type { NoteRef } from "./note-outline";
 
 // What the learner asked for. Each is one model call on the learner's request.
 //   explain     explain the note, the passage or their question, intuition first
@@ -64,7 +65,10 @@ export interface TutorRequest {
 // A part of an explanation. "notes" means what the learner's sources say,
 // with the [S#] it rests on; a part with no citation of a given source is
 // shown as Nova's own, whatever the model called it.
-export interface TutorSection { basis: TutorBasis; heading: string | null; text: string }
+// refs: the passages of the note (S1) it rests on, checked to be blocks of
+// the note Nova was given (note-outline.ts); the page finds each in the note
+// as it is now and shows it. Only a part with basis "notes" has any.
+export interface TutorSection { basis: TutorBasis; heading: string | null; text: string; refs?: NoteRef[] }
 // A stage of a walk-through. `prompt` is what the learner may try before it
 // is shown.
 export interface TutorStep { title: string; text: string; prompt: string | null }
@@ -93,7 +97,11 @@ export interface TutorReply {
   versionDiffers: boolean;
   // The passage discussed, and the heading it sits under in the note. found:
   // false when the note as saved does not contain it.
-  passage:      { text: string; heading: string | null; found: boolean } | null;
+  // ref: the block it was found in, so an addition about it can go after it.
+  passage:      { text: string; heading: string | null; found: boolean; ref?: NoteRef | null } | null;
+  // A heading of the note an addition from this reply belongs under, as
+  // Nova suggested it and found in the note. null: none suggested or found.
+  place?:       string | null;
   // Only part of a long note was given.
   partial:      boolean;
   sections:     TutorSection[];
