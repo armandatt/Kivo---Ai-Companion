@@ -364,7 +364,8 @@ export async function openStudySession(
   subjects:  Array<{ id: string; name: string }>,
   now:       Date,
   // Known when the session starts from a plan block rather than a sentence.
-  planned:   { subjectId?: string | null; durationMinutes?: number | null } = {},
+  // label: what a session with no topic is on (a task's title); kept as its focus.
+  planned:   { subjectId?: string | null; durationMinutes?: number | null; label?: string | null } = {},
 ): Promise<void> {
   // A session that starts from a plan block or a Knowledge topic arrives
   // with its subject, and that subject is the authority. Only a start with
@@ -388,6 +389,7 @@ export async function openStudySession(
         // The topic's existing spelling when it is one the student already has.
         topicName:       topic ? (match?.resolvedName ?? normalizeTopicName(topic)) : null,
         plannedDurationMinutes: planned.durationMinutes ?? null,
+        currentFocus:    planned.label ?? null,
         durationMinutes: 0,
         activityType:    "active",
         status:          "in_progress",
@@ -395,6 +397,14 @@ export async function openStudySession(
       },
     });
   }).catch(err => console.error("[nova:session] start failed", err));
+}
+
+// A running session's length, changed by the learner: longer, shorter, or 0
+// for no time limit. Guarded on it still being open, so a session ended a
+// moment ago is not changed. Its study time is untouched.
+export async function setSessionLength(sessionId: string, minutes: number): Promise<boolean> {
+  const done = await prisma.novaStudySession.updateMany({ where: { id: sessionId, status: { in: OPEN_STATUSES } }, data: { plannedDurationMinutes: minutes } });
+  return done.count === 1;
 }
 
 // ── Sessions nobody came back to ──────────────────────────────────────────────

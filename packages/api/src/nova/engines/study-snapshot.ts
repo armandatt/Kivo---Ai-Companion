@@ -18,6 +18,8 @@ export interface ActiveSessionInfo {
   status:                 string;    // "in_progress" | "paused"
   currentFocus:           string | null;
   plannedDurationMinutes: number;
+  // Started with no time limit, by choice (stored as 0; null is "none given").
+  untimed?:               boolean;
   confusionPoints:        string[];
   topicsCompleted:        string[];
   pauseCount:             number;
@@ -224,6 +226,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
         status:                 inProgressSession.status,
         currentFocus:           inProgressSession.currentFocus,
         plannedDurationMinutes: inProgressSession.plannedDurationMinutes ?? 0,
+        untimed:                inProgressSession.plannedDurationMinutes === 0,
         confusionPoints:        inProgressSession.confusionPoints,
         topicsCompleted:        inProgressSession.topicsCompleted,
         pauseCount:             inProgressSession.pauseCount,

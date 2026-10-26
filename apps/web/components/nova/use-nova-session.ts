@@ -67,10 +67,17 @@ export function useNovaSession() {
     setPending(null)
   }, [apply])
 
+  // A running session's length, changed: longer, or 0 for no time limit.
+  const setLength = useCallback(async (minutes: number) => {
+    setPending('resume')
+    apply(await sendSessionCommand({ action: 'set_length', minutes }))
+    setPending(null)
+  }, [apply])
+
   const session = synced?.session ?? null
   const elapsedSeconds = session
     ? session.elapsedSeconds + (running && synced ? Math.max(0, (now - synced.at) / 1000) : 0)
     : 0
 
-  return { loading: synced === null && !blocked && !error, session, elapsedSeconds, ended, pending, error, blocked, command, end, retry: sync }
+  return { loading: synced === null && !blocked && !error, session, elapsedSeconds, ended, pending, error, blocked, command, end, setLength, retry: sync }
 }

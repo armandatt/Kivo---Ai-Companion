@@ -260,7 +260,7 @@ export function FocusSession() {
 
       <p className="text-sm font-medium uppercase tracking-[0.22em] text-white/60">{session.subjectName ?? 'Focus'}</p>
       <h1 className="mt-2 max-w-3xl text-balance text-2xl font-semibold leading-tight tracking-tight text-white/95 sm:text-3xl">
-        {session.topicName ?? 'Study session'}
+        {session.topicName ?? session.label ?? 'Study session'}
       </h1>
 
       <button type="button" onClick={() => setPrefs({ countDown: !prefs.countDown })} disabled={planned === 0}
@@ -278,7 +278,7 @@ export function FocusSession() {
       )}
       <p className="mt-3 text-sm text-white/65">
         {paused ? 'Paused'
-          : planned === 0 ? 'Open session, no planned length'
+          : planned === 0 ? (session.untimed ? 'No time limit · time focused so far' : 'Open session, no planned length')
           : over ? `${clock(elapsedSeconds - planned)} past your ${minutesLabel(session.plannedDurationMinutes)}`
           : countDown ? `left of ${minutesLabel(session.plannedDurationMinutes)}`
           : `studied of ${minutesLabel(session.plannedDurationMinutes)}`}

@@ -76,8 +76,12 @@ export function NotesList() {
 
   // A subject named in the address (from a note's breadcrumb) is the filter.
   useEffect(() => {
-    const id = new URLSearchParams(window.location.search).get('subjectId')
+    const params = new URLSearchParams(window.location.search)
+    const id = params.get('subjectId')
     if (id) setSubjectId(id)
+    // From Today: the notes on what is being worked on.
+    const q = params.get('q')
+    if (q) setSearch(q.slice(0, 200))
   }, [])
 
   // Search as the learner types, without a request per keystroke.

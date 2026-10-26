@@ -195,6 +195,10 @@ export interface NovaSessionView {
   startedAt:              string;
   pausedAt:               string | null;
   plannedDurationMinutes: number;      // 0 = no planned length
+  // Started with no time limit, by choice (no countdown; nothing is due).
+  untimed?:               boolean;
+  // What is being worked on when it is not a topic (a task's title).
+  label?:                 string | null;
   // Study time so far as of serverNow, pauses excluded. The page counts up
   // from this value; it never keeps a clock of its own.
   elapsedSeconds:         number;
@@ -204,7 +208,13 @@ export interface NovaSessionView {
 }
 
 export type NovaSessionCommand =
-  | { action: "start"; topicName: string; subjectName: string | null; plannedMinutes: number | null }
+  // plannedMinutes: the length for this session; 0 = no time limit, chosen;
+  // null = none given. topicName null: a session on a task or focus item
+  // with no topic, named by label; it records no topic and moves no mastery.
+  | { action: "start"; topicName: string | null; subjectName: string | null; plannedMinutes: number | null; label?: string | null }
+  // A running session's length changed: longer, shorter, or 0 = no time limit.
+  // Its record of study time is untouched.
+  | { action: "set_length"; minutes: number }
   | { action: "pause" }
   | { action: "resume" }
   // outcome: the learner's one-tap answer to "How did it go?". Without it

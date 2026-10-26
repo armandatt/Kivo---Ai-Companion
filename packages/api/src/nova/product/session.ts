@@ -13,6 +13,7 @@ import {
   pauseStudySession,
   persistSessionEnd,
   resumeStudySession,
+  setSessionLength,
   abandonIfStale,
   saveSessionNote,
 } from "../persistence/nova-persistence";
@@ -87,7 +88,10 @@ export async function runNovaSessionCommand(
     await openStudySession(profileId, command.topicName, snapshot.subjects, now, {
       subjectId:       subject?.id ?? null,
       durationMinutes: command.plannedMinutes,
+      label:           command.label ?? null,
     });
+  } else if (active && command.action === "set_length") {
+    await setSessionLength(active.id, command.minutes);
   } else if (active && command.action === "pause") {
     await pauseStudySession(active.id, now);
   } else if (active && command.action === "resume") {
@@ -126,6 +130,7 @@ export async function runNovaSessionCommand(
     command.action === "start"  ? session !== null
     : command.action === "pause"  ? session?.status === "paused"
     : command.action === "resume" ? session?.status === "in_progress"
+    : command.action === "set_length" ? session !== null && session.plannedDurationMinutes === command.minutes
     : session === null || session.id !== active?.id;
 
   if (!applied) return { ok: false, error: "failed", message: "That didn't save. Try again." };

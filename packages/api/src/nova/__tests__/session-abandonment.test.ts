@@ -47,7 +47,8 @@ describe("a session started with no length", () => {
   });
 
   it("a planned length that is not a usable number is treated the same way", () => {
-    for (const planned of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    // 0 is not among them: it is "no time limit", chosen on Today (day-copilot.test.ts).
+    for (const planned of [-5, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(abandonmentPlanMinutes(planned)).toBe(60);
       expect(sessionAbandonment(running(planned), at(89))).toBeNull();
       expect(sessionAbandonment(running(planned), at(90))?.countedMinutes).toBe(60);

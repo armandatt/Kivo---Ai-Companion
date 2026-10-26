@@ -40,7 +40,10 @@ export function sessionElapsedSeconds(session: SessionClock, now: Date): number 
 //   paused    one pause lasts ABANDON_PAUSED_MINUTES, however little was studied
 //
 // A session started with no length is judged against the fallback. That is a
-// limit for cleaning up, not a claim that anyone studied for that long.
+// limit for cleaning up, not a claim that anyone studied for that long. One
+// started with no time limit by choice (planned 0, Today's "No time limit")
+// is held to ABANDON_UNTIMED_MINUTES: the learner asked not to be timed, and
+// only a session nobody has touched for that long is a forgotten one.
 //
 // The limits are for sessions nobody is attending. They are not a maximum: a
 // learner who ends a session themselves, while it is still open, ends it as a
@@ -49,6 +52,7 @@ export function sessionElapsedSeconds(session: SessionClock, now: Date): number 
 export const ABANDON_GRACE_MINUTES            = 30;
 export const ABANDON_FALLBACK_PLANNED_MINUTES = 60;
 export const ABANDON_PAUSED_MINUTES           = 120;
+export const ABANDON_UNTIMED_MINUTES          = 360;
 export const ABANDONED_STATUS                 = "abandoned";
 
 export interface Abandonment {
@@ -60,6 +64,7 @@ export interface Abandonment {
 
 // The length a session is held to. A missing or unusable plan is the fallback.
 export function abandonmentPlanMinutes(plannedDurationMinutes: number | null | undefined): number {
+  if (plannedDurationMinutes === 0) return ABANDON_UNTIMED_MINUTES;
   return typeof plannedDurationMinutes === "number" && Number.isFinite(plannedDurationMinutes) && plannedDurationMinutes > 0
     ? plannedDurationMinutes
     : ABANDON_FALLBACK_PLANNED_MINUTES;
