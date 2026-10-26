@@ -102,6 +102,10 @@ export function parseTaskInput(raw: unknown, creating: boolean): Parsed {
     if (typeof input.waitFor !== "string" || !input.waitFor || input.waitFor.length > 64) return reject("bad_wait", "That task isn't one of yours.");
     changes.waitFor = input.waitFor;
   }
+  if (!creating && input.stopWaitingFor !== undefined) {
+    if (typeof input.stopWaitingFor !== "string" || !input.stopWaitingFor || input.stopWaitingFor.length > 64) return reject("bad_wait", "That task isn't one of yours.");
+    changes.stopWaitingFor = input.stopWaitingFor;
+  }
   if (creating && input.clientKey !== undefined) {
     if (typeof input.clientKey !== "string" || !input.clientKey.trim() || input.clientKey.length > TASK_KEY_MAX) return reject("invalid", "That is not a task.");
     changes.clientKey = input.clientKey.trim();
@@ -533,6 +537,8 @@ export async function updateTask(profileId: string, taskId: string, raw: unknown
     await prisma.$transaction(async tx => {
       if (Object.keys(data).length > 0) await tx.novaTask.updateMany({ where: { id: taskId, profileId }, data });
       if (changes.waitFor) await addWaitsIn(tx, profileId, [{ taskId, after: [changes.waitFor] }]);
+      // Only the wait itself goes, and only on the learner's own task.
+      if (changes.stopWaitingFor) await tx.novaTaskDependency.deleteMany({ where: { taskId, dependsOnId: changes.stopWaitingFor, task: { profileId } } });
     });
   } catch (err) {
     if (err instanceof TaskChanged) return { ok: false, error: "bad_wait", message: "That would make tasks wait for each other in a circle, or the task isn't one of yours." };

@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useStartSession } from '../use-start-session'
-import { ArrowUpRight, ChevronsDownUp, ChevronsUpDown, Focus, Info, Keyboard, Layers, Link2, Maximize2, Minus, PanelRightOpen, Plus, RotateCcw, Search, SlidersHorizontal, Trash2, Waypoints, X } from 'lucide-react'
-import type { MapEdgeKind, MapNode, MapNodeType, NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
+import { ArrowUpRight, ChevronsDownUp, ChevronsUpDown, Focus, Info, Keyboard, Layers, Link2, Maximize2, Minus, PanelRightOpen, Plus, RotateCcw, Search, SlidersHorizontal, Trash2, Unlink, Waypoints, X } from 'lucide-react'
+import type { MapEdge, MapEdgeKind, MapNode, MapNodeType, NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
 import { MAP_LAYOUT_COORD_MAX } from '@repo/api/nova/product/map-layout.types'
 import { treeOrder } from '@repo/api/nova/product/task-tree'
 import { cn } from '@/lib/utils'
@@ -19,6 +19,8 @@ import { START, back, canExplore, crossLinks, current, enter, insideOf, keepLeve
 import { enterAction, enterTarget, isMacPlatform, isTypingTarget, navigate, shortcutFor } from './map-shortcuts'
 import { OUTLINE_QUERY, browserStore, chooseOrientation, chosenOrientation, forgetViews, pictureKey, recallView, rememberView, type Orientation } from './view-memory'
 import { NEW_SUBJECT } from './map-structure'
+import { disconnectPlan } from './map-disconnect'
+import { sendDisconnect } from './map-structure-api'
 import { AddDialog, Breadcrumbs, DeleteDialog, Legend, ShortcutsHelp } from './map-panels'
 
 const TYPES: Array<{ type: MapNodeType; label: string; plural: string }> = [
@@ -255,8 +257,41 @@ function FileEditor({ node, view, onChanged }: { node: MapNode; view: NovaKnowle
   )
 }
 
-function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onChanged, inside, collapsed, onCollapse, onExplore, onAdd, onDelete }: {
-  node: MapNode; neighbours: Array<{ node: MapNode; relation: string }>; onPick: (id: string) => void; onClose: () => void
+// Removing one connection from the details panel: what it means first, then
+// the one request. No card is deleted.
+function Disconnect({ edge, view, onDone, onCancel }: { edge: MapEdge; view: NovaKnowledgeMapReady; onDone: (said: string, stale: boolean) => void; onCancel: () => void }) {
+  const byId = useMemo(() => new Map(view.nodes.map(n => [n.id, n])), [view.nodes])
+  const plan = disconnectPlan(edge, byId, { workspace: !!view.workspaceId })
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const go = async () => {
+    if (!plan.ok || busy) return
+    setBusy(true); setError(null)
+    const out = await sendDisconnect(plan.request, byId.get(edge.from)?.label ?? '')
+    setBusy(false)
+    if (out.ok) { onDone(out.said[0] ?? 'Connection removed. Nothing was deleted.', false); return }
+    setError(out.message)
+    if (out.stale) onDone(out.message, true)
+  }
+  return (
+    <div role="group" aria-label="Remove this connection" className="mx-2 mb-2 rounded-xl border border-white/10 bg-white/3 p-3 text-xs leading-relaxed" data-disconnect
+      onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); onCancel() } }}>
+      {plan.ok ? <>
+        <p className="font-medium text-foreground">{plan.label}</p>
+        <p className="mt-1 text-foreground/75">{plan.detail}</p>
+      </> : <p className="text-foreground/80" data-disconnect-blocked>{plan.why}</p>}
+      {error && <p role="alert" className="mt-2 text-red-400">{error}</p>}
+      <div className="mt-2 flex justify-end gap-2">
+        <button type="button" onClick={onCancel} disabled={busy} className={cn(BUTTON_QUIET, 'h-7')} autoFocus={!plan.ok}>Cancel</button>
+        {plan.ok && <button type="button" onClick={() => void go()} disabled={busy} className={cn(BUTTON_PRIMARY, 'h-7 px-3 text-xs')} autoFocus data-disconnect-confirm>{busy ? 'Removing…' : 'Remove connection'}</button>}
+      </div>
+    </div>
+  )
+}
+
+function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onChanged, inside, collapsed, onCollapse, onExplore, onAdd, onDelete, onDisconnected }: {
+  node: MapNode; neighbours: Array<{ node: MapNode; relation: string; edge: MapEdge }>; onPick: (id: string) => void; onClose: () => void
+  onDisconnected: (said: string, stale: boolean) => void
   onScope: (() => void) | null; scoped: boolean; view: NovaKnowledgeMapReady; onChanged: () => void
   // How many cards hang from it, and whether they are folded away.
   inside: number; collapsed: boolean; onCollapse: () => void
@@ -264,6 +299,8 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
   onExplore: (() => void) | null; onAdd: (() => void) | null; onDelete: (() => void) | null
 }) {
   const { start, starting, error: startError } = useStartSession()
+  // The connection being removed, by edge id.
+  const [removing, setRemoving] = useState<string | null>(null)
   const facts: Array<[string, string]> = []
   if (node.type === 'subject') {
     const parent = node.parentId ? view.nodes.find(n => n.id === `subject:${node.parentId}`) : undefined
@@ -408,9 +445,10 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
           </p>
         ) : (
           <ul className="mt-2 space-y-0.5">
-            {neighbours.map(({ node: n, relation }) => (
-              <li key={`${n.id}:${relation}`}>
-                <button type="button" onClick={() => onPick(n.id)} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-foreground/85 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+            {neighbours.map(({ node: n, relation, edge }) => (
+              <li key={`${n.id}:${relation}`} className="group/row">
+                <div className="flex items-center">
+                <button type="button" onClick={() => onPick(n.id)} className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-foreground/85 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
                   <span className={cn('inline-block size-2 shrink-0', relation === RELATION.links_to![0] || relation === RELATION.links_to![1] ? 'rounded-full ring-1 ring-[var(--nova)]' : 'rounded-full')} style={{ background: FILL[n.type] }} />
                   <span className="min-w-0">
                     <span className="block truncate">{n.label}</span>
@@ -418,6 +456,13 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
                   </span>
                   <span className="ml-auto shrink-0 text-[11px] text-subtle">{TYPE_LABEL[n.type]}</span>
                 </button>
+                <button type="button" onClick={() => setRemoving(r => (r === edge.id ? null : edge.id))} aria-expanded={removing === edge.id}
+                  aria-label={`Remove the connection with ${n.label}`} title="Remove this connection (no card is deleted)" data-disconnect-open={n.label}
+                  className="ml-1 shrink-0 rounded-lg p-1.5 text-subtle opacity-60 transition-opacity hover:bg-white/5 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-ring group-hover/row:opacity-100">
+                  <Unlink aria-hidden className="size-3.5" />
+                </button>
+                </div>
+                {removing === edge.id && <Disconnect edge={edge} view={view} onCancel={() => setRemoving(null)} onDone={(said, stale) => { setRemoving(null); onDisconnected(said, stale) }} />}
               </li>
             ))}
           </ul>
@@ -910,11 +955,11 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
 
   const neighbours = useMemo(() => {
     if (!picked) return []
-    const out: Array<{ node: MapNode; relation: string }> = []
+    const out: Array<{ node: MapNode; relation: string; edge: MapEdge }> = []
     for (const e of view.edges) {
       const outgoing = e.from === picked.id, incoming = e.to === picked.id
       const node = outgoing ? byId.get(e.to) : incoming ? byId.get(e.from) : null
-      if (node) out.push({ node, relation: RELATION[e.kind]![outgoing ? 0 : 1] })
+      if (node) out.push({ node, relation: RELATION[e.kind]![outgoing ? 0 : 1], edge: e })
     }
     return out
   }, [picked, view.edges, byId])
@@ -1531,7 +1576,9 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
             inside={insideCount(picked.id)} collapsed={collapsed.has(picked.id)} onCollapse={() => toggleFold(picked.id)}
             onExplore={canExplore(tree, picked.id) && focus !== picked.id ? () => explore(picked.id) : null}
             onAdd={ADDABLE.has(picked.type) ? () => openAdd(picked) : null}
-            onDelete={canDelete(picked) ? () => openDelete(picked) : null} />
+            onDelete={canDelete(picked) ? () => openDelete(picked) : null}
+          // Read again either way: a stale view is refreshed, a removal shown.
+          onDisconnected={said => { say(said); onChanged() }} />
         )}
         {notice && (
           <p key={notice.n} className="pointer-events-none absolute left-1/2 top-3 z-20 max-w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 rounded-full border border-white/10 bg-popover/95 px-3.5 py-1.5 text-center text-xs text-foreground/85 shadow-soft" data-map-notice>{notice.text}</p>

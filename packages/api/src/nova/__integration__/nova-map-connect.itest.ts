@@ -8,7 +8,9 @@
  * subject with its history and what is filed under it, a task made a step,
  * a wait added once (repeats change nothing); and that a loop, a wait round a
  * circle, a wait on itself and another learner's task are refused with
- * nothing written. Each persists across a reload of the map.
+ * nothing written. Each persists across a reload of the map. Removing one
+ * connection (the web's own disconnect planner) takes off that line and
+ * nothing else: every card stays, a wait or a [[link]] goes alone.
  *
  *   NOVA_TEST_DATABASE_URL=postgresql://... npx tsx --test src/nova/__integration__/nova-map-connect.itest.ts
  */
@@ -28,6 +30,11 @@ const { loadNovaKnowledgeMap } = await import("../product/knowledge-map.js");
 const { createTask, updateTask } = await import("../product/tasks.js");
 const { createNote } = await import("../product/notes.js");
 const connect = await import("../../../../../apps/web/components/nova/knowledge-map/map-connect.js");
+const { disconnectPlan } = await import("../../../../../apps/web/components/nova/knowledge-map/map-disconnect.js");
+const { removeLink } = await import("../../../../../apps/web/components/nova/knowledge-map/map-edit.js");
+const { updateNote, getNote } = await import("../product/notes.js");
+const { recordLearningEvent, fileSavedResource } = await import("../product/learning-events.js");
+const { randomUUID } = await import("node:crypto");
 
 import type { MapNode, NovaKnowledgeMapReady } from "../product/knowledge-map.types.js";
 
@@ -164,4 +171,73 @@ test("tasks: a step, then waits; a repeat, a circle, itself and another learner'
   assert.equal(m.nodes.filter(x => x.label === "Train a model").length, 1);
   const loop = await updateTask(s.profileId, s.a, { parentId: s.b });
   assert.ok(!loop.ok && loop.error === "bad_parent", "a task can't become a step of its own step");
+});
+
+test("removing one connection takes off that line only: every card stays, with what is inside it", async () => {
+  const s = await seed();
+  const other = await learner();
+  let m = await map(s.id);
+  const card = (label: string) => named(m, label).id;
+  const edgeOf = (from: string, to: string) => m.edges.find(e => e.from === card(from) && e.to === card(to))!;
+  const byId = () => new Map(m.nodes.map(x => [x.id, x]));
+  const countAll = async () => ({
+    subjects: await prisma.novaSubject.count({ where: { profileId: s.profileId } }),
+    topics: await prisma.novaTopicMastery.count({ where: { subject: { profileId: s.profileId } } }),
+    tasks: await prisma.novaTask.count({ where: { profileId: s.profileId } }),
+    notes: await prisma.novaNote.count({ where: { profileId: s.profileId } }),
+  });
+
+  // Set up the connections: AI inside Finance, Ethics inside Models, a step, a wait, a [[link]], a filed page.
+  const ver = async () => (await loadStudyStructure(s.profileId)).version;
+  const fin = named(m, "Finance").subjectId!, ai = named(m, "AI").subjectId!;
+  assert.ok((await applyStudyEdits(s.profileId, { version: await ver(), edits: [{ op: "move_subject", subjectId: ai, parentId: fin }, { op: "move_topic", topicId: card("Ethics").slice(6), parentId: s.modelsId }] })).ok);
+  assert.ok((await updateTask(s.profileId, s.b, { parentId: s.a })).ok);
+  const third = await createTask(s.profileId, { title: "Ship it", subjectId: fin });
+  assert.ok(third.ok && (await updateTask(s.profileId, third.task.id, { waitFor: s.a })).ok);
+  const linking = await createNote(s.profileId, { title: "Reading list", body: "Start with [[Models|the models topic]], then more.", subjectId: fin });
+  assert.ok(linking.ok);
+  const page = await recordLearningEvent(s.profileId, { eventType: "resource_saved", clientEventId: randomUUID(), url: `https://example.com/p/${randomUUID()}`, title: "A paper", subjectId: ai }, { source: "web" });
+  assert.ok("success" in page && page.success);
+  m = await map(s.id);
+  const before = await countAll();
+
+  const take = async (from: string, to: string) => {
+    const p = disconnectPlan(edgeOf(from, to), byId(), { workspace: false });
+    assert.ok(p.ok, `${from} → ${to}: ${p.ok ? "" : p.why}`);
+    const r = p.request;
+    if (r.route === "study") assert.ok((await applyStudyEdits(s.profileId, { version: await ver(), edits: r.edits })).ok);
+    else if (r.route === "task") assert.ok((await updateTask(s.profileId, r.taskId, r.patch)).ok);
+    else if (r.route === "unfile" && r.kind === "resource") assert.ok((await fileSavedResource(s.profileId, r.id, { kind: "unfile" })).ok);
+    else if (r.route === "unlink") {
+      const note = (await getNote(s.profileId, r.noteId))!;
+      const body = removeLink(note.body, r.title);
+      assert.ok(body !== null && (await updateNote(s.profileId, r.noteId, { body, baseUpdatedAt: note.updatedAt })).ok);
+    } else throw new Error(`not played here: ${r.route}`);
+    m = await map(s.id);
+  };
+
+  await take("Finance", "AI");
+  assert.ok(!m.edges.some(e => e.kind === "contains"), "AI is a subject of its own again");
+  assert.equal(treeOf(m).parent.get(card("Models")), card("AI"), "with its topics");
+  await take("Models", "Ethics");
+  assert.equal(treeOf(m).parent.get(card("Ethics")), card("AI"), "Ethics is back at the top of AI");
+  await take("Budget review", "Train a model");
+  assert.ok(named(m, "Train a model").type === "task" && !(named(m, "Train a model") as { parentId?: string }).parentId, "a task of its own");
+  await take("Ship it", "Budget review");
+  assert.ok(!m.edges.some(e => e.kind === "depends_on"), "the wait went, alone");
+  await take("Reading list", "Models");
+  assert.ok(!m.edges.some(e => e.kind === "links_to"));
+  const note = (await getNote(s.profileId, linking.note.id))!;
+  assert.equal(note.body, "Start with the models topic, then more.", "the link's words stay");
+  await take("AI", "A paper");
+  assert.equal(treeOf(m).parent.get(card("A paper")), undefined, "the page is filed under nothing, and still saved");
+
+  assert.deepEqual(await countAll(), before, "no card was deleted");
+  // A topic always belongs to a subject: explained, never removed.
+  assert.ok(!disconnectPlan(edgeOf("AI", "Models"), byId(), { workspace: false }).ok);
+  // Another learner can't take a wait off these tasks.
+  assert.ok((await updateTask(s.profileId, third.task.id, { waitFor: s.a })).ok);
+  const foreign = await updateTask(other.profileId, third.task.id, { stopWaitingFor: s.a });
+  assert.ok(!foreign.ok && foreign.error === "not_found");
+  assert.equal(await prisma.novaTaskDependency.count({ where: { taskId: third.task.id } }), 1);
 });

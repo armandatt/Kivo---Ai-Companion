@@ -9,6 +9,10 @@ import type { TaskInput, TaskResponse } from '@repo/api/nova/product/tasks.types
 import type { AddRequest, DeleteRequest } from './map-structure'
 import type { ConnectRequest } from './map-connect'
 import { addNoteLink, fileItem } from './map-actions'
+import type { DisconnectRequest } from './map-disconnect'
+import { removeLink } from './map-edit'
+import { fetchNote, updateNote } from '../notes/notes-api'
+import { linkKey } from '@repo/api/nova/product/note-links'
 
 const OFFLINE = 'Could not reach the server. Check your connection and try again.'
 
@@ -120,3 +124,46 @@ export async function sendConnect(req: ConnectRequest, label: string): Promise<O
     return { ok: true, value: undefined, said: [] }
   } catch { return { ok: false, message: OFFLINE } }
 }
+
+// Removing one connection: one request, checked against what it asked for.
+export async function sendDisconnect(req: DisconnectRequest, label: string): Promise<Outcome> {
+  if (req.route === 'study') {
+    const now = await loadStructure()
+    if (!now.ok) return now
+    const done = await studyBatch(now.value.version, req.edits)
+    return done.ok ? { ok: true, value: undefined, said: [] } : done
+  }
+  if (req.route === 'file') {
+    const out = await fileItem(req.kind, req.id, { subjectId: req.subjectId, topicName: null }, req.version, label)
+    return out.kind === 'done' ? { ok: true, value: undefined, said: [] } : { ok: false, message: out.message, stale: out.kind === 'conflict' }
+  }
+  try {
+    if (req.route === 'unfile') {
+      if (req.kind === 'note') {
+        const saved = await updateNote(req.id, { subjectId: null, topicName: null, ...(req.version ? { baseUpdatedAt: req.version } : {}) })
+        if (saved.ok) return { ok: true, value: undefined, said: [] }
+        return { ok: false, message: saved.error === 'conflict' ? CONFLICT : saved.message, stale: saved.error === 'conflict' }
+      }
+      const { json } = await call<{ ok: boolean; message?: string; resource?: { subjectId: string | null } }>(`/api/nova/learning-events/${encodeURIComponent(req.id)}`, 'PATCH', { unfile: true })
+      if (json?.ok && json.resource?.subjectId === null) return { ok: true, value: undefined, said: [] }
+      return { ok: false, message: json?.ok ? 'The page wasn’t unfiled: the server doesn’t support it from the map yet.' : json?.message ?? 'Nothing was changed. Try again.' }
+    }
+    if (req.route === 'unlink') {
+      // From the note as the server has it now, guarded on that version.
+      const opened = await fetchNote(req.noteId)
+      if (!opened.ok) return { ok: false, message: opened.message }
+      const body = removeLink(opened.note.body, req.title)
+      if (body === null) return { ok: true, value: undefined, said: ['The note no longer links there.'] }
+      const saved = await updateNote(req.noteId, { body, baseUpdatedAt: opened.note.updatedAt })
+      if (!saved.ok) return { ok: false, message: saved.error === 'conflict' ? CONFLICT : saved.message, stale: saved.error === 'conflict' }
+      if (saved.note.links.outgoing.some(l => linkKey(l.title) === linkKey(req.title))) return { ok: false, message: 'The note still links there. Open it to remove the link.' }
+      return { ok: true, value: undefined, said: [] }
+    }
+    const { status, json } = await call<TaskResponse>(`/api/nova/tasks/${encodeURIComponent(req.taskId)}`, 'PATCH', req.patch)
+    if (!json?.ok) return { ok: false, message: (json && !json.ok && json.message) || (status === 404 ? 'That task no longer exists. The map has been reloaded.' : 'Nothing was changed. Try again.'), stale: status === 404 }
+    if (req.patch.stopWaitingFor && (json.task.after ?? []).includes(req.patch.stopWaitingFor)) return { ok: false, message: 'The wait wasn’t removed: the server doesn’t support it from the map yet.' }
+    return { ok: true, value: undefined, said: [] }
+  } catch { return { ok: false, message: OFFLINE } }
+}
+
+const CONFLICT = 'The note changed somewhere else after the map loaded. Nothing was overwritten. The map has been reloaded: try again.'

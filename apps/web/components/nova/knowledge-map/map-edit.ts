@@ -1,5 +1,5 @@
 import type { MapEdge, MapNode } from '@repo/api/nova/product/knowledge-map.types'
-import { NOTE_LINK_TITLE_MAX, linkKey, linkedTitles } from '@repo/api/nova/product/note-links'
+import { NOTE_LINK_TITLE_MAX, linkKey, linkedTitles, tokenizeLine } from '@repo/api/nova/product/note-links'
 
 // What the map may change, and only through what already exists:
 //   - a link from a note to a note or topic is the text [[Title]] in the
@@ -92,4 +92,39 @@ export function placementLabel(p: Placement | null, nodes: MapNode[]): string {
   if (!p) return 'Not filed'
   const subject = nodes.find(n => n.type === 'subject' && n.subjectId === p.subjectId)?.label ?? 'a subject'
   return p.topicName ? `${subject} › ${p.topicName}` : subject
+}
+
+// The body without its [[links]] to `title`: each becomes the words it showed
+// ([[Paging|page tables]] → "page tables"), so nothing written is lost. Read
+// the way the server reads links (note-links.ts): one line at a time, a
+// fenced code block left exactly as it is. Every other character is kept.
+// null: the body has no such link.
+export function removeLink(body: string, title: string): string | null {
+  const want = linkKey(title)
+  let inCode = false, removed = false
+  const lines = body.split('\n').map(line => {
+    if (line.trimStart().startsWith('```')) { inCode = !inCode; return line }
+    if (inCode) return line
+    let out = '', i = 0
+    while (i < line.length) {
+      if (line[i] === '[' && line[i + 1] === '[') {
+        const close = line.indexOf(']]', i + 2)
+        if (close !== -1) {
+          const inner = line.slice(i + 2, close)
+          const raw = line.slice(i, close + 2)
+          // The same token the server reads; anything it would not read as a link stays as written.
+          const [token] = tokenizeLine(raw)
+          if (token?.kind === 'link' && token.target && token.text !== undefined && !inner.includes('[[')) {
+            if (linkKey(token.target) === want) { out += token.text; removed = true } else out += raw
+            i = close + 2
+            continue
+          }
+        }
+      }
+      out += line[i]
+      i++
+    }
+    return out
+  })
+  return removed ? lines.join('\n') : null
 }
