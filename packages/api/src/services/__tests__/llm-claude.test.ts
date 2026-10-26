@@ -4,6 +4,12 @@ import {
   CLAUDE_DEFAULT_MAIN,
   CLAUDE_FALLBACK_BETA,
   CLAUDE_JSON_INSTRUCTION,
+  CLAUDE_PROMPT_TOKENS_MAX,
+  OVER_PRICE_TIER,
+  claudePromptLimit,
+  isOverPriceTier,
+  needsExactCount,
+  roughClaudeInputTokens,
   CLAUDE_THINKING_HEADROOM,
   TRUNCATED,
   buildClaudeRequest,
@@ -26,17 +32,17 @@ describe("provider selection with an Anthropic key", () => {
 });
 
 describe("tiers", () => {
-  it("the fast tier is Haiku at low effort, the main tier Opus at medium; both overridable", () => {
+  it("both tiers are Haiku 5.5 at low effort by default; each is overridable", () => {
     expect(claudeModelFor("gpt-4o-mini", env({}))).toBe(CLAUDE_DEFAULT_FAST);
     expect(claudeModelFor("gpt-4o", env({}))).toBe(CLAUDE_DEFAULT_MAIN);
     expect(claudeModelFor(undefined, env({}))).toBe(CLAUDE_DEFAULT_MAIN);
-    expect([CLAUDE_DEFAULT_FAST, CLAUDE_DEFAULT_MAIN]).toEqual(["claude-haiku-5-5", "claude-opus-5-5"]);
+    expect([CLAUDE_DEFAULT_FAST, CLAUDE_DEFAULT_MAIN]).toEqual(["claude-haiku-5-5", "claude-haiku-5-5"]);
     expect(claudeModelFor("gpt-4o", env({ ANTHROPIC_MODEL_MAIN: "claude-sonnet-5-5" }))).toBe("claude-sonnet-5-5");
     expect(claudeModelFor("claude-haiku-5-5", env({}))).toBe("claude-haiku-5-5");
     expect(claudeEffortFor("gpt-4o-mini", env({}))).toBe("low");
-    expect(claudeEffortFor("gpt-4o", env({}))).toBe("medium");
+    expect(claudeEffortFor("gpt-4o", env({}))).toBe("low");
     expect(claudeEffortFor("gpt-4o", env({ ANTHROPIC_EFFORT_MAIN: "HIGH" }))).toBe("high");
-    expect(claudeEffortFor("gpt-4o", env({ ANTHROPIC_EFFORT_MAIN: "ultra" }))).toBe("medium");
+    expect(claudeEffortFor("gpt-4o", env({ ANTHROPIC_EFFORT_MAIN: "ultra" }))).toBe("low");
   });
 });
 
@@ -83,5 +89,23 @@ describe("the reply", () => {
     expect(() => readClaudeMessage(msg([], "end_turn"))).toThrow("no text");
     // Plain text cut at its limit is still returned: callers without JSON accept it.
     expect(readClaudeMessage(msg([{ type: "text", text: "partial" }], "max_tokens"))).toBe("partial");
+  });
+});
+
+describe("the cheaper price tier", () => {
+  it("the limit is 100,000 input tokens unless set", () => {
+    expect(CLAUDE_PROMPT_TOKENS_MAX).toBe(100_000);
+    expect(claudePromptLimit(env({}))).toBe(100_000);
+    expect(claudePromptLimit(env({ ANTHROPIC_PROMPT_TOKENS_MAX: "80000" }))).toBe(80_000);
+    expect(claudePromptLimit(env({ ANTHROPIC_PROMPT_TOKENS_MAX: "lots" }))).toBe(100_000);
+  });
+
+  it("text is guessed cautiously; files, and text near the limit, are counted exactly", () => {
+    expect(roughClaudeInputTokens({ prompt: "x".repeat(3000), systemInstruction: "y".repeat(300) })).toBe(1100);
+    expect(needsExactCount({ prompt: "short" }, 100_000)).toBe(false);
+    expect(needsExactCount({ prompt: "x".repeat(160_000) }, 100_000)).toBe(true);
+    expect(needsExactCount({ prompt: "short", attachments: [{ name: "a.pdf", mimeType: "application/pdf", data: "UERG" }] }, 100_000)).toBe(true);
+    expect(isOverPriceTier(new Error(`Claude: ${OVER_PRICE_TIER} (120000 tokens > 100000)`))).toBe(true);
+    expect(isOverPriceTier(new Error("Claude: something else"))).toBe(false);
   });
 });

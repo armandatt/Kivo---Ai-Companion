@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 import {
   anthropicKey,
   buildClaudeRequest,
+  claudePromptLimit,
+  needsExactCount,
+  OVER_PRICE_TIER,
+  roughClaudeInputTokens,
   claudeEffortFor,
   claudeModelFor,
   readClaudeMessage,
@@ -227,6 +231,26 @@ async function generateWithClaude(input: LlmRequest, apiKey: string): Promise<st
     ? { timeout: Math.min(input.attemptMs ?? input.deadlineMs, input.deadlineMs), maxRetries: 2, signal: AbortSignal.timeout(input.deadlineMs) }
     : { timeout: input.attemptMs ?? 10 * 60_000, maxRetries: 2 };
   const started = Date.now();
+  // Inside the cheaper price tier, or not sent at all. Text is guessed
+  // cautiously; files and long text are counted by the API first (free).
+  const limit = claudePromptLimit(process.env);
+  let inputTokens = roughClaudeInputTokens(input);
+  if (needsExactCount(input, limit)) {
+    try {
+      const counted = await claudeClient(apiKey).beta.messages.countTokens(
+        { model, messages: params.messages, ...(params.system ? { system: params.system } : {}) },
+        { ...options, maxRetries: 1 },
+      );
+      inputTokens = counted.input_tokens;
+    } catch (err) {
+      // Counting is a safeguard, not a gate on the work: without it the guess stands.
+      console.error("[llm:claude] count_tokens failed:", (err as Error).message.split("\n")[0]);
+    }
+  }
+  if (inputTokens > limit) {
+    console.error(`[llm:claude] not sent: ${inputTokens} input tokens > ${limit} (model ${model})`);
+    throw new Error(`Claude: ${OVER_PRICE_TIER} (${inputTokens} tokens > ${limit}). Send fewer or shorter files.`);
+  }
   try {
     const msg = await claudeClient(apiKey).beta.messages.stream(params, options).finalMessage();
     reportLlmUsage({ provider: "anthropic", model: msg.model, inputTokens: msg.usage.input_tokens, outputTokens: msg.usage.output_tokens });

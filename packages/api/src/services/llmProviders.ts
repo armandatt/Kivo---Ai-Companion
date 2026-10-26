@@ -99,11 +99,12 @@ export function selectProvider(env: NodeJS.ProcessEnv): LlmProvider {
 
 // ── Anthropic (Claude) ────────────────────────────────────────────────────────
 
-// The fast tier (classification, short wording) is Claude Haiku 5.5; the main
-// tier (replies, tutoring, plans, transcription) Claude Opus 5.5. Override with
-// ANTHROPIC_MODEL_FAST / ANTHROPIC_MODEL_MAIN.
+// Both tiers are Claude Haiku 5.5 (the owner's choice, 26 Oct: fast and
+// cheap: $0.10 / $0.50 per million input / output tokens for a prompt of up
+// to 100,000 tokens). ANTHROPIC_MODEL_FAST / ANTHROPIC_MODEL_MAIN override,
+// e.g. claude-sonnet-5-5 or claude-opus-5-5 for the main tier.
 export const CLAUDE_DEFAULT_FAST = "claude-haiku-5-5";
-export const CLAUDE_DEFAULT_MAIN = "claude-opus-5-5";
+export const CLAUDE_DEFAULT_MAIN = "claude-haiku-5-5";
 
 export function claudeModelFor(requestedModel: string | undefined, env: NodeJS.ProcessEnv): string {
   // A caller (or env) that already names a Claude model is taken literally.
@@ -113,18 +114,45 @@ export function claudeModelFor(requestedModel: string | undefined, env: NodeJS.P
     : (env.ANTHROPIC_MODEL_MAIN || CLAUDE_DEFAULT_MAIN);
 }
 
-// Both models think adaptively and cannot be switched to plain completion in
-// a way that suits every call, so how much they think is set by effort: low
-// on the fast tier (latency-bound calls with deadlines of a few seconds),
-// medium on the main tier. ANTHROPIC_EFFORT_FAST / ANTHROPIC_EFFORT_MAIN
-// override (low | medium | high | xhigh | max).
+// Thinking stays adaptive and how much the model thinks is set by effort:
+// low on both tiers (the owner's choice: cheapest and fastest; on simple
+// requests the model may skip thinking entirely). ANTHROPIC_EFFORT_FAST /
+// ANTHROPIC_EFFORT_MAIN override (low | medium | high | xhigh | max).
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type ClaudeEffort = (typeof EFFORTS)[number];
 export function claudeEffortFor(requestedModel: string | undefined, env: NodeJS.ProcessEnv): ClaudeEffort {
   const fast = tierFor(requestedModel) === "fast";
   const raw = (fast ? env.ANTHROPIC_EFFORT_FAST : env.ANTHROPIC_EFFORT_MAIN)?.toLowerCase().trim();
-  return (EFFORTS as readonly string[]).includes(raw ?? "") ? raw as ClaudeEffort : fast ? "low" : "medium";
+  return (EFFORTS as readonly string[]).includes(raw ?? "") ? raw as ClaudeEffort : "low";
 }
+
+// ── Staying inside the cheaper price tier ─────────────────────────────────────
+// Claude Haiku 5.5 has two rate cards chosen by prompt length: up to 100,000
+// input tokens $0.10 / $0.50 per million; above, $0.50 / $2.50 (five times).
+// A request is never sent above the limit: it fails with a plain error that
+// says so, and the caller's own failure path answers (nothing is cut down to
+// fit, so nothing is answered from half the material). Only files and very
+// long text get near it; ANTHROPIC_PROMPT_TOKENS_MAX moves the limit.
+export const CLAUDE_PROMPT_TOKENS_MAX = 100_000;
+export const OVER_PRICE_TIER = "the request is over the prompt-size limit";
+export const isOverPriceTier = (err: unknown): boolean => err instanceof Error && err.message.includes(OVER_PRICE_TIER);
+
+export function claudePromptLimit(env: NodeJS.ProcessEnv): number {
+  const n = Number(env.ANTHROPIC_PROMPT_TOKENS_MAX);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : CLAUDE_PROMPT_TOKENS_MAX;
+}
+
+// A cautious guess from text length (about 3 characters a token, so it
+// overestimates English). Files are not guessed: a request with files is
+// counted by the API (count_tokens, free) before it is sent.
+export function roughClaudeInputTokens(req: Pick<LlmRequest, "prompt" | "systemInstruction">): number {
+  return Math.ceil(((req.prompt?.length ?? 0) + (req.systemInstruction?.length ?? 0)) / 3);
+}
+
+// Whether a request must be counted exactly before it is sent: it carries
+// files, or its text alone could be more than half the limit.
+export const needsExactCount = (req: Pick<LlmRequest, "prompt" | "systemInstruction" | "attachments">, limit: number): boolean =>
+  (req.attachments?.length ?? 0) > 0 || roughClaudeInputTokens(req) > limit / 2;
 
 // Thinking counts toward max_tokens. Callers size their caps for the answer
 // alone (some as small as a few tokens), so the cap sent always leaves room.
