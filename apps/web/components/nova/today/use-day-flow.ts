@@ -6,7 +6,7 @@
 // elsewhere a moment ago) shows the flow as it now stands.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DayFlowResponse, FlowOp, NovaDayView } from '@repo/api/nova/product/day-flow.types'
+import type { DayFlowResponse, FlowOp, NovaDayView, PendingChange } from '@repo/api/nova/product/day-flow.types'
 import { fetchDay, sendDay } from './day-api'
 
 export type FlowNotice = { text: string; tone: 'done' | 'error' | 'info'; undo: boolean; at: number }
@@ -28,11 +28,12 @@ export function useDayFlow() {
   }, [setFlow])
   useEffect(() => { void load() }, [load])
 
-  // One change at a time, each against the version the last answer gave.
+  // One change at a time, each against the version the last answer gave
+  // (an approval names its proposal's own version instead).
   const act = useCallback((body: Record<string, unknown>, opts: { quiet?: boolean } = {}): Promise<DayFlowResponse & { started?: boolean }> => {
     const run = queue.current.then(async () => {
       setBusy(true)
-      const res = await sendDay({ ...body, version: flowRef.current?.version ?? 0 }) as DayFlowResponse & { started?: boolean; touched?: string[] }
+      const res = await sendDay({ version: flowRef.current?.version ?? 0, ...body }) as DayFlowResponse & { started?: boolean; touched?: string[] }
       setBusy(false)
       if (res.ok) {
         setFlow(res.flow)
@@ -50,6 +51,13 @@ export function useDayFlow() {
 
   const ops = useCallback((list: FlowOp[], opts?: { quiet?: boolean }) => act({ action: 'ops', ops: list }, opts), [act])
   const undo = useCallback(() => act({ action: 'undo' }), [act])
+  // The learner's yes to one of Nova's proposals: the server applies exactly
+  // it (keep: only those of its operations) against the version it was made
+  // on, or refuses it as stale. Never retried against a newer flow.
+  const approve = useCallback(async (p: PendingChange, keep: number[] | null) => {
+    const res = await act({ action: 'approve', version: p.version, pendingId: p.id, ops: p.ops, ...(keep ? { keep } : {}) })
+    return res.ok ? { ok: true as const, flow: res.flow } : { ok: false as const, stale: res.error === 'stale', message: res.message }
+  }, [act])
   // From the copilot: its answer already holds the flow as written.
   const adopt = useCallback((f: NovaDayView, changed: string[], ids: string[]) => {
     setFlow(f); setTouched(ids)
@@ -59,5 +67,5 @@ export function useDayFlow() {
   useEffect(() => { if (!touched.length) return; const t = window.setTimeout(() => setTouched([]), 2800); return () => window.clearTimeout(t) }, [touched])
   useEffect(() => { if (!notice) return; const t = window.setTimeout(() => setNotice(null), notice.undo ? 12_000 : 6_000); return () => window.clearTimeout(t) }, [notice])
 
-  return { flow, loadError, busy, notice, setNotice, touched, load, act, ops, undo, adopt }
+  return { flow, loadError, busy, notice, setNotice, touched, load, act, ops, undo, approve, adopt }
 }

@@ -237,6 +237,23 @@ export async function changeDayFlow(input: Changing & { ops: unknown; by: "learn
   return { ok: true, flow, changed: applied.changed, message: applied.changed.join(" "), touched: applied.touched };
 }
 
+// What operations would do to today's flow, worked out by the same rules and
+// reference checks as changeDayFlow, written nowhere: how Nova's proposal is
+// shown before the learner says yes. The ids of added items are the
+// preview's own; applying makes new ones.
+export async function previewDayFlow(input: Changing & { ops: unknown; by: "learner" | "nova" }): Promise<
+  | { ok: true; before: FlowItem[]; after: FlowItem[]; changed: string[]; touched: string[]; budgetMinutes: number | null; intention: string | null }
+  | Refusal
+> {
+  if (!Array.isArray(input.ops) || input.ops.length === 0 || input.ops.length > FLOW_OPS_MAX) return refuse("invalid", "That isn't a change Today can make.");
+  const b = await begin(input);
+  if (b.stale) return stale(input.profileId, b.ctx, b.clock, b.now);
+  const state: FlowState = { items: readItems(b.row?.items), intention: b.row?.intention ?? null };
+  const applied = applyFlowOps(state, input.ops as FlowOp[], { resolve: resolver(b.ctx), newId, by: input.by });
+  if (!applied.ok) return refuse("invalid", applied.message);
+  return { ok: true, before: ordered(state.items), after: ordered(applied.state.items), changed: applied.changed, touched: applied.touched, budgetMinutes: b.ctx.budget, intention: applied.state.intention };
+}
+
 // Nova's draft, taken as the day's flow: only when today has no flow saved,
 // and only the draft the learner saw (its fingerprint).
 export async function acceptDraft(input: Changing & { draftId: unknown }): Promise<DayFlowResponse> {

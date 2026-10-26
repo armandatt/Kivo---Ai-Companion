@@ -6,24 +6,26 @@ import { cn } from '@/lib/utils'
 import { relativeDay } from './format'
 import { toneStyle } from './subject-color'
 
-// Which subject today is for. "All subjects" is Nova's plan across
-// everything; a subject is the same plan worked out for that subject alone,
-// continuing from where the learner left off in it. The server plans; this
-// only says which one to ask for, and shows how far through each one they
-// are, from the record.
-export function SubjectSwitcher({ progress, focus, onChoose, busy }: {
+// The learner's subjects as cards, each in its own colour, with how far
+// through it they are, from the record. Choosing one shows what is in it and
+// lets the planner's suggestions follow it; today's flow can still hold any
+// mix of subjects, projects and goals. The server plans; this only says
+// which one to look at.
+export function SubjectSwitcher({ progress, focus, onChoose, busy, inToday }: {
   progress: TodaySubjectProgress[]
   focus:    string | null
   onChoose: (subject: string | null) => void
   // A choice is being planned.
   busy:     boolean
+  // How many of today's items are in each subject (by name), when known.
+  inToday?: (subjectName: string | null) => number
 }) {
-  if (progress.length < 2 && focus === null) return null
+  if (progress.length < 1 && focus === null) return null
   const card = 'subject-tone group relative flex min-w-[11.5rem] max-w-[15rem] shrink-0 snap-start flex-col gap-1.5 overflow-hidden rounded-xl border px-3.5 py-3 text-left transition-[border-color,box-shadow,transform] hover:-translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-wait'
   return (
     <section aria-labelledby="today-subject" data-section="subject-switcher" className="mt-6">
       <div className="flex items-center justify-between gap-3">
-        <h2 id="today-subject" className="text-xs font-semibold text-foreground/70">What do you want to work on today?</h2>
+        <h2 id="today-subject" className="text-xs font-semibold text-foreground/70">Your subjects</h2>
         {busy && <span role="status" className="inline-flex items-center gap-1.5 text-xs text-foreground/55"><Loader2 aria-hidden className="size-3 animate-spin" />Planning…</span>}
       </div>
       <div role="group" aria-label="Subjects" className="-mx-1 mt-2 flex snap-x gap-2 overflow-x-auto px-1 pb-2">
@@ -33,7 +35,8 @@ export function SubjectSwitcher({ progress, focus, onChoose, busy }: {
             <Layers aria-hidden className="size-3.5 text-foreground/60" />All subjects
             {focus === null && <Check aria-hidden className="ml-auto size-3.5 text-action-ink" />}
           </span>
-          <span className="text-xs leading-snug text-foreground/60">Nova&apos;s pick across everything: reviews first, then what&apos;s next.</span>
+          <span className="text-xs leading-snug text-foreground/60">Everything, across subjects and projects.</span>
+          {inToday && <span className="text-xs tabular-nums text-foreground/55">{inToday(null) || 'Nothing'} in today</span>}
         </button>
         {progress.map(p => {
           const on = focus !== null && focus.toLowerCase() === p.subjectName.toLowerCase()
@@ -52,6 +55,7 @@ export function SubjectSwitcher({ progress, focus, onChoose, busy }: {
               </span>
               <span className="text-xs tabular-nums text-foreground/60">
                 {p.topicsTotal === 0 ? 'No topics yet' : `${p.topicsStarted} of ${p.topicsTotal} topics started`}
+                {inToday && inToday(p.subjectName) > 0 && <span className="ml-1.5 rounded-full bg-[var(--sc-soft)] px-1.5 py-px font-semibold text-[var(--sc-ink)]">{inToday(p.subjectName)} today</span>}
               </span>
               <span className="truncate text-xs text-foreground/55">
                 {p.lastTopic ? <>Last: {p.lastTopic}{p.lastStudiedAt ? `, ${relativeDay(p.lastStudiedAt)}` : ''}</> : p.nextTopic ? <>Start with {p.nextTopic}</> : <>&nbsp;</>}

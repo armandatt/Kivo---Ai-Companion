@@ -26,7 +26,7 @@ describe("Today keeps what it already did, a step away", () => {
   it("still shows the shortfall and the recovery card, in sections that open", () => {
     expect(home).toContain("<ShortfallNote shortfall={view.plan.shortfall}");
     expect(home).toContain("<RecoveryCard");
-    expect(home).toContain("<details className=\"group border-t border-white/8 py-3\"");
+    expect(home).toContain("<details className=\"group rounded-2xl");
   });
   it("still starts a focus session from a task on the board", () => {
     expect(home).toContain("onStart={sessionRunning ? undefined : task => start({ topicName: task.topicName!, subjectName: task.subjectName!, durationMinutes: TASK_SESSION_MINUTES }, `task:${task.id}`)}");

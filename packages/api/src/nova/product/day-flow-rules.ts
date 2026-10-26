@@ -14,12 +14,14 @@
 //   draftFrom      Nova's proposal for a day with no flow: tasks due today or
 //                  overdue, then the planner's blocks, inside the day's time.
 //   scheduleOf     the flow as time blocks from now, for the schedule view.
+//   previewOf      what a proposal would do, item by item, for the learner
+//                  to read before saying yes.
 //
 // No regex (SKILL.md; the no-regex guard).
 
 import {
   FLOW_INTENTION_MAX, FLOW_ITEMS_MAX, FLOW_MINUTES_MAX, FLOW_MINUTES_MIN, FLOW_TITLE_MAX,
-  type FlowDraft, type FlowItem, type FlowItemStatus, type FlowOp, type NewFlowItem,
+  type FlowDraft, type FlowItem, type FlowItemStatus, type FlowOp, type NewFlowItem, type PreviewItem,
 } from "./day-flow.types";
 
 export interface FlowState { items: FlowItem[]; intention: string | null }
@@ -307,4 +309,31 @@ export function scheduleOf(items: FlowItem[], from: number): Array<{ id: string;
     at = start + length;
     return { id: i.id, start, end: at, fixed: fixed !== null, estimated: i.minutes === null };
   });
+}
+
+// A proposal, read against the flow it would change: the open and "if
+// there's time" items as they would stand, each marked added, moved (its
+// place among the open items changed) or changed (its time or state), what
+// would leave the day, and the minutes it adds up to. Done items are left out:
+// a proposal does not reopen the day's finished work unless it says so.
+export function previewOf(before: FlowItem[], after: FlowItem[]): { items: PreviewItem[]; removed: Array<Pick<FlowItem, "title" | "kind">>; plannedMinutes: number } {
+  const was = new Map(before.map(i => [i.id, i]));
+  const openOf = (list: FlowItem[]) => list.filter(i => i.status === "planned" || i.status === "active").map(i => i.id);
+  const placeBefore = openOf(before), placeAfter = openOf(after);
+  // Moved: its place among the items that were there before and still are.
+  const kept = (ids: string[], other: string[]) => ids.filter(id => other.includes(id));
+  const relBefore = kept(placeBefore, placeAfter), relAfter = kept(placeAfter, placeBefore);
+  const items: PreviewItem[] = after.filter(i => i.status !== "done").map(i => {
+    const old = was.get(i.id);
+    const change: PreviewItem["change"] = !old ? "added"
+      : old.minutes !== i.minutes || old.status !== i.status || old.at !== i.at ? "changed"
+      : relBefore.indexOf(i.id) !== relAfter.indexOf(i.id) ? "moved" : "same";
+    return { id: i.id, title: i.title, kind: i.kind, subjectName: i.subjectName, minutes: i.minutes, status: i.status, change };
+  });
+  const now = new Set(after.map(i => i.id));
+  return {
+    items,
+    removed: before.filter(i => !now.has(i.id)).map(i => ({ title: i.title, kind: i.kind })),
+    plannedMinutes: after.filter(i => i.status === "planned" || i.status === "active").reduce((sum, i) => sum + (i.minutes ?? 0), 0),
+  };
 }

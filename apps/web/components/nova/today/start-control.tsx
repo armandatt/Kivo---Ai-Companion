@@ -31,13 +31,16 @@ export function quickLengths(suggested: number): number[] {
 
 const label = (m: number) => (m >= 60 && m % 60 === 0 ? `${m / 60} h` : m > 60 ? `${Math.floor(m / 60)} h ${m % 60}` : `${m} min`)
 
-export function StartControl({ item, onStart, disabled, busy }: {
+export function StartControl({ item, onStart, disabled, busy, size = 'sm' }: {
   item: { id: string; title: string; minutes: number | null; ref: { minutes: number | null } | null }
   // minutes: this session's length; 0: no time limit.
   onStart: (minutes: number) => void
   disabled?: boolean
   busy?: boolean
+  // lg: the next-focus card's own button.
+  size?: 'sm' | 'lg'
 }) {
+  const lg = size === 'lg'
   const s = suggestedFor(item)
   const [open, setOpen] = useState(false)
   const [custom, setCustom] = useState('')
@@ -60,19 +63,20 @@ export function StartControl({ item, onStart, disabled, busy }: {
   return (
     <div className="relative inline-flex shrink-0" data-start-control={item.id}>
       <button type="button" disabled={disabled} onClick={() => start(s.minutes)}
-        className="inline-flex h-8 items-center gap-1.5 rounded-l-lg bg-action pl-2.5 pr-2 text-xs font-semibold text-action-foreground transition-colors hover:bg-action-hover disabled:opacity-50"
+        className={cn('inline-flex items-center gap-1.5 rounded-l-lg bg-action font-semibold text-action-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.16)] transition-colors hover:bg-action-hover disabled:opacity-50',
+          lg ? 'h-11 gap-2 rounded-l-xl pl-4 pr-3.5 text-[15px]' : 'h-8 pl-2.5 pr-2 text-xs')}
         title={`Start ${item.title} for ${label(s.minutes)}`} data-start-suggested>
-        {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />} Start · {label(s.minutes)}
+        {busy ? <Loader2 className={lg ? 'size-4 animate-spin' : 'size-3.5 animate-spin'} /> : <Play className={lg ? 'size-4 fill-current' : 'size-3.5'} />} {lg ? `Start ${label(s.minutes)} focus` : `Start · ${label(s.minutes)}`}
       </button>
       <button ref={toggle} type="button" disabled={disabled} onClick={() => setOpen(o => !o)} aria-haspopup="dialog" aria-expanded={open} aria-controls={id}
-        className="inline-flex h-8 items-center rounded-r-lg border-l border-action-foreground/20 bg-action px-1.5 text-action-foreground transition-colors hover:bg-action-hover disabled:opacity-50"
+        className={cn('inline-flex items-center border-l border-action-foreground/20 bg-action text-action-foreground transition-colors hover:bg-action-hover disabled:opacity-50', lg ? 'h-11 rounded-r-xl px-2.5' : 'h-8 rounded-r-lg px-1.5')}
         aria-label={`Choose how long to focus on ${item.title}`} data-start-options>
         <ChevronDown className="size-3.5" />
       </button>
       {open && (
         <div ref={panel} id={id} role="dialog" aria-label={`How long for ${item.title}`}
           onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); setOpen(false); toggle.current?.focus() } }}
-          className="absolute right-0 top-9 z-30 w-64 rounded-xl border border-white/10 bg-card p-3 text-sm shadow-float" data-start-panel>
+          className={cn('absolute z-30 w-64 rounded-xl border border-white/10 bg-card p-3 text-sm shadow-float', lg ? 'left-0 top-12' : 'right-0 top-9')} data-start-panel>
           <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">This session</p>
           <button type="button" onClick={() => start(s.minutes)} className="mt-2 flex w-full items-center justify-between rounded-lg bg-nova/10 px-2.5 py-2 text-left hover:bg-nova/15" data-duration="suggested">
             <span className="font-medium text-foreground">Suggested: {label(s.minutes)}</span>
