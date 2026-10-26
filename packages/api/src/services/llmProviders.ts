@@ -7,7 +7,9 @@
 // "gpt-4o"). Those are treated as a TIER, not a literal model, so the same
 // call sites work on any provider.
 
-export type LlmProvider = "openai" | "gemini";
+import type Anthropic from "@anthropic-ai/sdk";
+
+export type LlmProvider = "openai" | "gemini" | "anthropic";
 
 export interface LlmRequest {
   prompt:             string;
@@ -81,11 +83,89 @@ export function openaiKey(env: NodeJS.ProcessEnv): string | undefined {
   return env.OPENAI_API_KEY || env.OPEN_API_KEY || undefined;
 }
 
-// LLM_PROVIDER wins when set. Otherwise: Gemini if it has a key, else OpenAI.
+export function anthropicKey(env: NodeJS.ProcessEnv): string | undefined {
+  return env.ANTHROPIC_API_KEY || env.CLAUDE_API_KEY || undefined;
+}
+
+// LLM_PROVIDER wins when set ("anthropic" or "claude", "gemini", "openai").
+// Otherwise the first provider with a key: Anthropic, then Gemini, then OpenAI.
 export function selectProvider(env: NodeJS.ProcessEnv): LlmProvider {
   const explicit = (env.LLM_PROVIDER ?? "").toLowerCase().trim();
-  if (explicit === "gemini" || explicit === "openai") return explicit;
+  if (explicit === "gemini" || explicit === "openai" || explicit === "anthropic") return explicit;
+  if (explicit === "claude") return "anthropic";
+  if (anthropicKey(env)) return "anthropic";
   return geminiKey(env) ? "gemini" : "openai";
+}
+
+// ── Anthropic (Claude) ────────────────────────────────────────────────────────
+
+// The fast tier (classification, short wording) is Claude Haiku 5.5; the main
+// tier (replies, tutoring, plans, transcription) Claude Opus 5.5. Override with
+// ANTHROPIC_MODEL_FAST / ANTHROPIC_MODEL_MAIN.
+export const CLAUDE_DEFAULT_FAST = "claude-haiku-5-5";
+export const CLAUDE_DEFAULT_MAIN = "claude-opus-5-5";
+
+export function claudeModelFor(requestedModel: string | undefined, env: NodeJS.ProcessEnv): string {
+  // A caller (or env) that already names a Claude model is taken literally.
+  if (requestedModel && requestedModel.toLowerCase().startsWith("claude-")) return requestedModel;
+  return tierFor(requestedModel) === "fast"
+    ? (env.ANTHROPIC_MODEL_FAST || CLAUDE_DEFAULT_FAST)
+    : (env.ANTHROPIC_MODEL_MAIN || CLAUDE_DEFAULT_MAIN);
+}
+
+// Both models think adaptively and cannot be switched to plain completion in
+// a way that suits every call, so how much they think is set by effort: low
+// on the fast tier (latency-bound calls with deadlines of a few seconds),
+// medium on the main tier. ANTHROPIC_EFFORT_FAST / ANTHROPIC_EFFORT_MAIN
+// override (low | medium | high | xhigh | max).
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type ClaudeEffort = (typeof EFFORTS)[number];
+export function claudeEffortFor(requestedModel: string | undefined, env: NodeJS.ProcessEnv): ClaudeEffort {
+  const fast = tierFor(requestedModel) === "fast";
+  const raw = (fast ? env.ANTHROPIC_EFFORT_FAST : env.ANTHROPIC_EFFORT_MAIN)?.toLowerCase().trim();
+  return (EFFORTS as readonly string[]).includes(raw ?? "") ? raw as ClaudeEffort : fast ? "low" : "medium";
+}
+
+// Thinking counts toward max_tokens. Callers size their caps for the answer
+// alone (some as small as a few tokens), so the cap sent always leaves room.
+export const CLAUDE_THINKING_HEADROOM = 4096;
+export const CLAUDE_DEFAULT_MAX_TOKENS = 16000;
+
+// Claude has no "any JSON object" mode without a schema, and prefill is not
+// accepted; callers already describe the object they want, so this says it
+// once more and the reply is unwrapped from a fence if one comes back.
+export const CLAUDE_JSON_INSTRUCTION = "Reply with one JSON object only: no prose before or after it, no Markdown code fences.";
+
+// Claude Opus 5.5's safety classifiers can decline a request; "default"
+// re-runs a declined request server-side on the model Anthropic recommends
+// for that kind of refusal. Haiku has no server-side fallback.
+export const CLAUDE_FALLBACK_BETA = "server-side-fallback-2026-07-01";
+const takesServerFallback = (model: string) => model.startsWith("claude-opus-") || model.startsWith("claude-fable-") || model === "claude-sonnet-5-5";
+
+export function buildClaudeRequest(req: LlmRequest, model: string, effort: ClaudeEffort): Anthropic.Beta.Messages.MessageCreateParamsNonStreaming {
+  const system = [req.systemInstruction, req.json ? CLAUDE_JSON_INSTRUCTION : null].filter(Boolean).join("\n\n");
+  // Files first, then the instruction that refers to them.
+  const files: Anthropic.Beta.Messages.BetaContentBlockParam[] = (req.attachments ?? []).map(a => a.mimeType === "application/pdf"
+    ? { type: "document" as const, source: { type: "base64" as const, media_type: "application/pdf" as const, data: a.data }, title: a.name }
+    : { type: "image" as const, source: { type: "base64" as const, media_type: a.mimeType as "image/png" | "image/jpeg" | "image/webp", data: a.data } });
+  return {
+    model,
+    max_tokens: (req.maxOutputTokens ?? CLAUDE_DEFAULT_MAX_TOKENS) + CLAUDE_THINKING_HEADROOM,
+    ...(system ? { system } : {}),
+    output_config: { effort },
+    messages: [{ role: "user", content: [...files, { type: "text", text: req.prompt }] }],
+    ...(takesServerFallback(model) ? { betas: [CLAUDE_FALLBACK_BETA], fallbacks: "default" as const } : {}),
+  };
+}
+
+// The text of a reply, or why there is none. A refusal (after any fallback)
+// and a JSON reply cut off at its limit are errors, never half an answer.
+export function readClaudeMessage(msg: Pick<Anthropic.Beta.Messages.BetaMessage, "content" | "stop_reason" | "model">, opts: { json?: boolean } = {}): string {
+  if (msg.stop_reason === "refusal") throw new Error(`Claude declined the request (model: ${msg.model})`);
+  const text = msg.content.flatMap(b => (b.type === "text" ? [b.text] : [])).join("").trim();
+  if (msg.stop_reason === "max_tokens" && (opts.json || !text)) throw new Error(`Claude: ${TRUNCATED} (model: ${msg.model})`);
+  if (!text) throw new Error(`Claude returned no text (stop_reason: ${msg.stop_reason ?? "unknown"}, model: ${msg.model})`);
+  return opts.json ? unwrapSingleFence(text) : text;
 }
 
 // ── Gemini ────────────────────────────────────────────────────────────────────

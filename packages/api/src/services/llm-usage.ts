@@ -7,7 +7,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 export interface LlmUsage {
-  provider:      "gemini" | "openai";
+  provider:      "gemini" | "openai" | "anthropic";
   model:         string;
   inputTokens:   number | null;
   outputTokens:  number | null;

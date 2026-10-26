@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
+import Anthropic from "@anthropic-ai/sdk";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  anthropicKey,
+  buildClaudeRequest,
+  claudeEffortFor,
+  claudeModelFor,
+  readClaudeMessage,
   buildGeminiRequest,
   geminiKey,
   geminiModelFor,
@@ -203,6 +209,37 @@ async function generateWithOpenAI(input: LlmRequest, apiKey: string): Promise<st
   return text;
 }
 
+// One client per key, made on first use.
+let claude: { key: string; client: Anthropic } | null = null;
+function claudeClient(apiKey: string): Anthropic {
+  if (!claude || claude.key !== apiKey) claude = { key: apiKey, client: new Anthropic({ apiKey }) };
+  return claude.client;
+}
+
+async function generateWithClaude(input: LlmRequest, apiKey: string): Promise<string> {
+  const model = claudeModelFor(input.model, process.env);
+  const params = buildClaudeRequest(input, model, claudeEffortFor(input.model, process.env));
+  // A caller with a deadline gets its answer, or its failure, inside it: the
+  // SDK's own retries (429, 5xx, connection) run until the deadline cuts them
+  // off. Without one, an attempt may take as long as long work needs.
+  // Streamed and collected whole: large caps would otherwise hit HTTP timeouts.
+  const options = input.deadlineMs !== undefined
+    ? { timeout: Math.min(input.attemptMs ?? input.deadlineMs, input.deadlineMs), maxRetries: 2, signal: AbortSignal.timeout(input.deadlineMs) }
+    : { timeout: input.attemptMs ?? 10 * 60_000, maxRetries: 2 };
+  const started = Date.now();
+  try {
+    const msg = await claudeClient(apiKey).beta.messages.stream(params, options).finalMessage();
+    reportLlmUsage({ provider: "anthropic", model: msg.model, inputTokens: msg.usage.input_tokens, outputTokens: msg.usage.output_tokens });
+    return readClaudeMessage(msg, { json: input.json });
+  } catch (err) {
+    if (err instanceof Anthropic.APIError) {
+      const status = err.status ?? (input.deadlineMs !== undefined && Date.now() - started >= input.deadlineMs ? "out of time" : "no response");
+      throw new Error(`Claude request failed (model ${model}: ${status} ${(err.message ?? "").split("\n")[0]})`);
+    }
+    throw err;
+  }
+}
+
 export async function generateOpenAIText(input: {
   prompt: string;
   systemInstruction?: string;
@@ -215,6 +252,12 @@ export async function generateOpenAIText(input: {
 }) {
   loadPackageEnv();
   const provider = selectProvider(process.env);
+
+  if (provider === "anthropic") {
+    const apiKey = anthropicKey(process.env);
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
+    return generateWithClaude(input, apiKey);
+  }
 
   if (provider === "gemini") {
     const apiKey = geminiKey(process.env);
