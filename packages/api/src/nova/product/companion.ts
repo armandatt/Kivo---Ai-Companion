@@ -50,7 +50,7 @@ export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
 export const NOVA_LINKED_ROUTES: readonly string[] = ["/templates"];
 
 // Shared account pages, the same for both companions.
-const SHARED_ROUTES = ["/settings"];
+const SHARED_ROUTES = ["/settings", "/profile"];
 
 // Pages that exist only for Nova.
 const NOVA_ONLY_ROUTES = ["/focus", "/knowledge", "/map", "/notes", "/saved", "/learning-dna", "/templates", "/build"];

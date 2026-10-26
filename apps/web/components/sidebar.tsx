@@ -17,6 +17,7 @@ import {
   LogOut,
   Map,
   Settings,
+  UserRound,
   Sparkles,
   Target,
   Timer,
@@ -323,6 +324,17 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
 
         {/* Settings */}
         <div className={cn('space-y-1 border-t border-sidebar-border p-4', rail && 'lg:px-2')}>
+          <Link
+            href="/profile"
+            onClick={close}
+            title={rail ? 'Profile' : undefined}
+            aria-current={isActive('/profile') ? 'page' : undefined}
+            className={cn(row, isActive('/profile') ? CURRENT : 'text-sidebar-foreground hover:bg-sidebar-accent')}
+            data-nav-profile
+          >
+            <UserRound aria-hidden className="w-5 h-5 shrink-0" />
+            <span className={label}>Profile</span>
+          </Link>
           <Link
             href="/settings"
             onClick={close}
