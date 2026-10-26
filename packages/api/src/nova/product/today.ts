@@ -53,17 +53,31 @@ export interface TodayInputs {
 
 const sameName = (a: string | null, b: string | null) => a !== null && b !== null && a.trim().toLowerCase() === b.trim().toLowerCase();
 
-// Each subject, in the order on record, with how far through it the learner
-// is and where they left off. Topics come in the Knowledge Engine's order,
-// which keeps not-started topics in the order they were given.
-export function subjectProgress(subjects: Array<{ name: string }>, topics: TopicMasteryState[]): TodaySubjectProgress[] {
-  return subjects.map(subject => {
-    const own     = topics.filter(t => sameName(t.subjectName, subject.name));
+// The learner's top-level subjects, in the order on record, each with how far
+// through it the learner is and where they left off. A subject inside another
+// (NovaSubject.parentId, the Knowledge Map's own hierarchy) is never a card of
+// its own: its topics count toward the top-level subject it sits in. A parent
+// that is not among the learner's subjects (or a loop) leaves a subject at the
+// top. Topics come in the Knowledge Engine's order, which keeps not-started
+// topics in the order they were given.
+export function subjectProgress(subjects: Array<{ id?: string; name: string; parentId?: string | null }>, topics: TopicMasteryState[]): TodaySubjectProgress[] {
+  const byId = new Map(subjects.filter(s => s.id).map(s => [s.id!, s]));
+  const rootOf = (s: { id?: string; parentId?: string | null }) => {
+    let at = s; const seen = new Set<string>();
+    while (at.parentId && byId.has(at.parentId) && !seen.has(at.parentId)) { seen.add(at.parentId); at = byId.get(at.parentId)!; }
+    return at;
+  };
+  const roots = subjects.filter(s => rootOf(s) === s);
+  return roots.map(subject => {
+    const members = subjects.filter(s => rootOf(s) === subject);
+    const own     = topics.filter(t => members.some(m => sameName(t.subjectName, m.name)));
     const studied = own.filter(t => t.lastStudied !== null)
       .sort((a, b) => b.lastStudied!.getTime() - a.lastStudied!.getTime());
     const next    = own.find(t => t.reviewCount === 0 && t.lastStudied === null);
     return {
+      ...(subject.id ? { subjectId: subject.id } : {}),
       subjectName:   subject.name,
+      innerSubjects: members.length - 1,
       topicsTotal:   own.length,
       topicsStarted: own.filter(t => t.reviewCount > 0).length,
       lastTopic:     studied[0]?.topicName ?? null,

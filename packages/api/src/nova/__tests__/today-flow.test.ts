@@ -233,8 +233,21 @@ describe("each subject's progress, for the switcher", () => {
   it("counts started topics, names the last one studied and the next one", () => {
     const progress = subjectProgress([{ name: "DSA" }, { name: "Operating Systems" }], [ARRAYS_AFTER, ...DSA.slice(1), ...OS]);
     expect(progress).toEqual([
-      { subjectName: "DSA", topicsTotal: 5, topicsStarted: 1, lastTopic: "Arrays", lastStudiedAt: ARRAYS_AFTER.lastStudied!.toISOString(), nextTopic: "Linked lists" },
-      { subjectName: "Operating Systems", topicsTotal: 3, topicsStarted: 0, lastTopic: null, lastStudiedAt: null, nextTopic: "Processes" },
+      { subjectName: "DSA", innerSubjects: 0, topicsTotal: 5, topicsStarted: 1, lastTopic: "Arrays", lastStudiedAt: ARRAYS_AFTER.lastStudied!.toISOString(), nextTopic: "Linked lists" },
+      { subjectName: "Operating Systems", innerSubjects: 0, topicsTotal: 3, topicsStarted: 0, lastTopic: null, lastStudiedAt: null, nextTopic: "Processes" },
+    ]);
+  });
+  it("only top-level subjects get a card; a subject inside another counts toward it, by the stored parent, never by its name", () => {
+    const topic = (name: string, subjectName: string) => ({ ...OS[0]!, topicName: name, subjectName, reviewCount: 0, lastStudied: null });
+    const subjects = [
+      { id: "fin", name: "Finance" }, { id: "basic", name: "Basic Finance", parentId: "fin" }, { id: "tvm", name: "Valuation", parentId: "basic" },
+      { id: "acc", name: "Accounting", parentId: "fin" }, { id: "fin2", name: "Finance II" },
+      // A parent that is not theirs leaves a subject at the top; a loop (setup refuses one) loses no subject.
+      { id: "lost", name: "Trading", parentId: "someone-else" }, { id: "a", name: "Loop A", parentId: "b" }, { id: "b", name: "Loop B", parentId: "a" },
+    ];
+    const progress = subjectProgress(subjects, [topic("Time value of money", "Valuation"), topic("Ledgers", "Accounting"), topic("Risk", "Basic Finance"), topic("Options", "Finance II")]);
+    expect(progress.map(p => [p.subjectId, p.subjectName, p.innerSubjects, p.topicsTotal])).toEqual([
+      ["fin", "Finance", 3, 3], ["fin2", "Finance II", 0, 1], ["lost", "Trading", 0, 0], ["a", "Loop A", 0, 0], ["b", "Loop B", 0, 0],
     ]);
   });
 });

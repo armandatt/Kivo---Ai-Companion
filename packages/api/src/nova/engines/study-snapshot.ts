@@ -54,6 +54,8 @@ export interface StudySnapshotResult {
     id:   string;
     name: string;
     code: string | null;
+    // The subject it sits inside (NovaSubject.parentId); null at the top.
+    parentId?: string | null;
   }>;
 
   // Recent study sessions (last 90 days)
@@ -142,7 +144,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
         semesterStartDate: true, semesterEndDate: true,
         preferredStudyHoursPerDay: true,
         dailyStudyMinutes:         true,
-        subjects: { select: { id: true, name: true, code: true } },
+        subjects: { select: { id: true, name: true, code: true, parentId: true } },
         studySessions: {
           where: { sessionDate: { gte: ninetyDaysAgo } },
           select: {

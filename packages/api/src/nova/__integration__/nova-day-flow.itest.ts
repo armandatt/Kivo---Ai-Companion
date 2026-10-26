@@ -13,7 +13,7 @@
  * nothing: "plan my day" alone is a question; a change is a proposal shown
  * from the real rules; rejecting it leaves the flow; approving it applies
  * exactly it as Nova; a proposal the learner's own change has overtaken, or
- * one code did not make, writes nothing; task changes stay proposals.
+ * one code did not make, writes nothing; Nova has no operation on a task.
  *
  *   NOVA_TEST_DATABASE_URL=postgresql://... npx tsx --test src/nova/__integration__/nova-day-flow.itest.ts
  */
@@ -172,24 +172,23 @@ test("the copilot proposes and the learner decides: nothing is written until the
   const say = (reply: unknown) => (async () => JSON.stringify(reply)) as never;
 
   // "Plan my day" alone is a question, even when the model drafts a day.
-  const plan = await askCopilot(L.profileId, L.id, { message: "Plan my day", mode: "plan", version: v }, say({ intent: "propose", reply: "Here's your day", ops: [{ op: "add", ref: "c1" }, { op: "add", ref: "c2" }] }));
+  const plan = await askCopilot(L.profileId, L.id, { message: "Plan my day", version: v }, say({ intent: "propose", reply: "Here's your day", ops: [{ op: "add", ref: "c1" }, { op: "add", ref: "c2" }] }));
   assert.ok(plan.ok);
   assert.equal(plan.question, PLAN_QUESTION);
   assert.equal(plan.pending, null);
   assert.deepEqual(await stored(), ["Assignment 3", "Read the FastAPI docs"]);
 
   // A clear change is a proposal, worked out by the real rules, and not written.
-  const asked = await askCopilot(L.profileId, L.id, { message: "Move the docs to the top and push the assignment to Friday", mode: "plan", version: v },
-    say({ intent: "propose", reply: "Docs first? Moving the due day needs your yes.", ops: [{ op: "move", item: "i2", to: 0 }], proposals: [{ kind: "task_due", ref: "i1", dueDay: "2026-10-30" }] }));
+  const asked = await askCopilot(L.profileId, L.id, { message: "Move the docs to the top", version: v },
+    say({ intent: "propose", reply: "Docs first?", ops: [{ op: "move", item: "i2", to: 0 }] }));
   assert.ok(asked.ok && asked.pending);
   assert.deepEqual(asked.pending.changed, ["Moved Read the FastAPI docs to first."]);
   assert.deepEqual(asked.pending.items.map(i => [i.title, i.change]), [["Read the FastAPI docs", "moved"], ["Assignment 3", "moved"]]);
-  assert.equal(asked.proposals[0]?.taskId, L.taskId);
   assert.deepEqual(await stored(), ["Assignment 3", "Read the FastAPI docs"], "a proposal writes nothing");
   assert.equal((await loadDayFlow(L.profileId, L.id)).version, v);
 
   // Saying no leaves it as it was.
-  const no = await askCopilot(L.profileId, L.id, { message: "no, keep my plan", mode: "plan", version: v, open: asked.pending }, say({ intent: "decline", reply: "Okay, keeping it." }));
+  const no = await askCopilot(L.profileId, L.id, { message: "no, keep my plan", version: v, open: asked.pending }, say({ intent: "decline", reply: "Okay, keeping it." }));
   assert.ok(no.ok && no.closed === "declined");
   assert.deepEqual(await stored(), ["Assignment 3", "Read the FastAPI docs"]);
 
@@ -204,14 +203,14 @@ test("the copilot proposes and the learner decides: nothing is written until the
   assert.deepEqual(yes.flow.items.map(i => i.title), ["Read the FastAPI docs", "Assignment 3"]);
   assert.deepEqual(await stored(), ["Read the FastAPI docs", "Assignment 3"]);
   const task = (await listTasks(L.profileId)).tasks.find(t => t.id === L.taskId)!;
-  assert.equal(task.dueDay, new Date().toISOString().slice(0, 10), "the due day is unchanged until the learner confirms it on its own");
+  assert.equal(task.dueDay, new Date().toISOString().slice(0, 10), "nothing about the task changed");
 
   // A second approval of the same proposal is stale: the flow moved on.
   const again = await approvePending(L.profileId, L.id, { pendingId: asked.pending.id, version: asked.pending.version, ops: asked.pending.ops });
   assert.ok(!again.ok && again.error === "stale");
 
   // A proposal the learner's own change overtook is refused; their change stands.
-  const next = await askCopilot(L.profileId, L.id, { message: "Take the docs out", mode: "plan", version: yes.flow.version }, say({ intent: "propose", reply: "Take them out of today?", ops: [{ op: "remove", item: "i1" }] }));
+  const next = await askCopilot(L.profileId, L.id, { message: "Take the docs out", version: yes.flow.version }, say({ intent: "propose", reply: "Take them out of today?", ops: [{ op: "remove", item: "i1" }] }));
   assert.ok(next.ok && next.pending);
   const mine = await changeDayFlow({ ...base, version: yes.flow.version, by: "learner", ops: [{ op: "set_minutes", id: yes.flow.items[0]!.id, minutes: 40 }] });
   assert.ok(mine.ok);

@@ -37,7 +37,7 @@ export function StartControl({ item, onStart, disabled, busy, size = 'sm' }: {
   onStart: (minutes: number) => void
   disabled?: boolean
   busy?: boolean
-  // lg: the next-focus card's own button.
+  // lg: a larger button, for a card of its own.
   size?: 'sm' | 'lg'
 }) {
   const lg = size === 'lg'
