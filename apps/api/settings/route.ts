@@ -15,6 +15,7 @@ import { checkCreatureName, checkNickname, DEFAULT_CREATURE_NAME } from "@repo/a
 import { OBSTACLES, OBSTACLE_LABELS, WORKING_ON, WORKING_ON_LABELS, checkMultiAnswer, checkWeeklyHours, withoutNotSure } from "@repo/api/nova/product/onboarding-options"
 import { accountabilityOfTone, isTone } from "@repo/api/nova/product/tone"
 import { REPLY_LANGUAGES } from "@repo/api/nova/types/understanding.types"
+import { PROFILE_KEY, checkProfessionalProfile, profileIn } from "@repo/api/nova/product/professional-profile"
 
 const COMPANIONS = new Set(["nova", "rex", "zen"])
 
@@ -26,7 +27,7 @@ export async function GET() {
     const [user, profile, googleAccount] = await Promise.all([
       prisma.user.findUnique({
         where: { id: session.userId },
-        select: { email: true, name: true },
+        select: { email: true, name: true, image: true },
       }),
       prisma.userProfile.findUnique({
         where: { userId: session.userId },
@@ -41,6 +42,7 @@ export async function GET() {
           emailDigest: true,
           creatureName: true,
           onboardingAnswers: true,
+          createdAt: true,
         },
       }),
       prisma.account.findFirst({
@@ -52,7 +54,13 @@ export async function GET() {
     return NextResponse.json({
       email: user?.email ?? "",
       name: user?.name ?? "",
+      // The photo Google gave the account, if any (only an https address is shown).
+      image: user?.image && user.image.startsWith("https://") ? user.image : null,
       isGoogleOAuth: !!googleAccount,
+      // When this account set up Kivo (the profile row's creation), for "Member since".
+      memberSince: profile?.createdAt?.toISOString() ?? null,
+      // What they say about themselves professionally (product/professional-profile.ts).
+      professional: profileIn(profile?.onboardingAnswers),
       persona: profile?.primaryPersona ?? null,
       checkInTime: profile?.preferredCheckInTime ?? null,
       accountabilityStyle: profile?.accountabilityStyle ?? null,
@@ -95,7 +103,7 @@ export async function PATCH(req: NextRequest) {
     if (!account) return NextResponse.json({ error: "Unauthenticated" }, { status: 401 })
 
     const body = await req.json()
-    const { persona, checkInTime, accountabilityStyle, timezone, name, learningContexts, firstFocus, workingOn, weeklyHours, obstacles, language, tone, nickname } = body
+    const { persona, checkInTime, accountabilityStyle, timezone, name, learningContexts, firstFocus, workingOn, weeklyHours, obstacles, language, tone, nickname, professional } = body
     // companionName is the older name of the same field, from a page loaded
     // before the creature was named apart from Nova.
     const creatureName = body.creatureName !== undefined ? body.creatureName : body.companionName
@@ -196,6 +204,13 @@ export async function PATCH(req: NextRequest) {
       if (!checked.ok) return NextResponse.json({ error: checked.message }, { status: 400 })
       answerUpdates[ANSWER_KEYS.nickname] = checked.nickname
     }
+    // Their professional profile, checked whole: a saved one replaces the one
+    // before, null clears it, and nothing is cut to fit.
+    if (professional !== undefined) {
+      const checked = checkProfessionalProfile(professional)
+      if (!checked.ok) return NextResponse.json({ error: checked.message, field: checked.field }, { status: 400 })
+      answerUpdates[PROFILE_KEY] = checked.profile
+    }
     if (Object.keys(answerUpdates).length > 0) {
       const current = await prisma.userProfile.findUnique({ where: { userId: session.userId }, select: { onboardingAnswers: true } })
       const answers = current?.onboardingAnswers && typeof current.onboardingAnswers === "object" && !Array.isArray(current.onboardingAnswers)
@@ -213,10 +228,12 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (name !== undefined && typeof name === "string" && name.trim()) {
+      if (name.trim().length > 80) return NextResponse.json({ error: "Keep your name under 80 characters.", field: "name" }, { status: 400 })
       await prisma.user.update({
         where: { id: session.userId },
         data: { name: name.trim() },
       })
+      saved.push("name")
     }
 
     return NextResponse.json({ ok: true, saved })

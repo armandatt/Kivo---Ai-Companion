@@ -644,6 +644,14 @@ Held by `onboarding-v3.test.ts` and `nova-onboarding-v3.itest.ts` (v2, still acc
 - **Every answer is changed in Settings → How Nova helps you** (`components/nova/help-preferences.tsx` → `PATCH /api/settings { workingOn, weeklyHours, obstacles, language, tone, creatureName }`, each checked as onboarding checks it). The response lists what it stored (`saved`), and the page says "Saved" only for that. Saving `workingOn` clears the older first-focus answer. The tone picker moved there from Check-ins. A changed weekly time does not move the planner's usual day (that is on the study page).
 - **Finishing goes to `/build` (Build with Nova; `/home` for an account that had finished before) on the same host**, never an absolute URL, so the session cookie stays with the browser. Which host that is depends on where sign-in happened: see `NEXT_PUBLIC_APP_URL` and `GOOGLE_REDIRECT_URI`.
 
+## Profile
+
+Held by `professional-profile.test.ts`. `/profile` (`components/profile/profile-page.tsx`), shared by both companions like Settings (`SHARED_ROUTES`), linked from the sidebar above Settings.
+
+- **Who they are, in their own words**: name (`User.name`), and a professional profile (`product/professional-profile.ts`, pure, shared with the page): headline, where they work or study, location, bio, up to 12 skills and 4 links. Kept in `UserProfile.onboardingAnswers.professionalProfile` (no column, like `learningContexts`), read through `profileIn` and saved by `PATCH /api/settings { name, professional }`, checked whole by `checkProfessionalProfile`: too long is refused with its `field`, never cut; a saved profile replaces the one before; an empty one clears it.
+- **Links** are http or https only, no credentials, labelled by site (`linkLabel`), never fetched, opened with `rel="noopener noreferrer nofollow"`. `GET /api/settings` adds `professional`, `memberSince` (`UserProfile.createdAt`) and `image` (the account's Google photo, https only).
+- **The rest of the page is read, not stored**: what they are learning for (onboarding answers), their record from Progress's `overview` (Nova only), and what is connected. Only the learner sees it; no engine, brain, plan or prompt reads the profile.
+
 ## Calendar and reminders
 
 Held by `calendar-rules.test.ts`, `calendar-grid.test.ts` (web) and `nova-calendar.itest.ts`. `product/calendar.ts` (only reader and writer of `NovaCalendarEvent`), `product/calendar-rules.ts` (pure), `product/calendar.types.ts` (contract, no imports), `proactive/event-reminders.ts`, routes `GET`/`POST /api/nova/calendar`, `PATCH`/`DELETE /api/nova/calendar/[id]`, `POST /api/nova/exams`; UI `/calendar`, `apps/web/components/nova/calendar/`.
