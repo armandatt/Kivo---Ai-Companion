@@ -217,7 +217,7 @@ export async function listNotes(profileId: string, filters: NoteFilters = {}): P
     prisma.novaSubject.findMany({
       where:   { profileId },
       orderBy: { name: "asc" },
-      select:  { id: true, name: true, topics: { where: { archivedAt: null }, select: { name: true } } },
+      select:  { id: true, name: true, parentId: true, topics: { where: { archivedAt: null }, select: { id: true, name: true, parentId: true } } },
     }),
     prisma.novaNote.findMany({
       where:    { profileId, subjectId: { not: null }, topicName: { not: null } },
@@ -238,7 +238,12 @@ export async function listNotes(profileId: string, filters: NoteFilters = {}): P
     for (const n of noteTopics) {
       if (n.subjectId === s.id && n.topicName && !names.has(n.topicName.toLowerCase())) names.set(n.topicName.toLowerCase(), n.topicName);
     }
-    return { id: s.id, name: s.name, topics: [...names.values()].sort((a, b) => a.localeCompare(b)) };
+    // Where each topic sits (its parent topic's name), for a picker that shows
+    // the whole path; a topic only notes use has none.
+    const byId = new Map(s.topics.map(t => [t.id, t.name] as const));
+    const topicParents: Record<string, string | null> = {};
+    for (const t of s.topics) topicParents[t.name] = t.parentId ? byId.get(t.parentId) ?? null : null;
+    return { id: s.id, name: s.name, parentId: s.parentId ?? null, topics: [...names.values()].sort((a, b) => a.localeCompare(b)), topicParents };
   });
 
   return {
@@ -248,6 +253,14 @@ export async function listNotes(profileId: string, filters: NoteFilters = {}): P
     total,
     activeSession: active ? { topicName: active.topicName } : null,
   };
+}
+
+// The learner's most recent note holding these exact words (an imported
+// paper's key line: product/paper-import.ts), so the same paper is not
+// imported twice. Their own notes only.
+export async function findNoteContaining(profileId: string, words: string): Promise<{ id: string; title: string } | null> {
+  if (!words.trim()) return null;
+  return prisma.novaNote.findFirst({ where: { profileId, body: { contains: likeLiteral(words) } }, orderBy: { updatedAt: "desc" }, select: { id: true, title: true } });
 }
 
 export async function getNote(profileId: string, noteId: string): Promise<NoteDetail | null> {

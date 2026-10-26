@@ -19,7 +19,8 @@
 import { generateOpenAIText } from "../../services/openai.service";
 import { noteSources, type NoteSources } from "./notes";
 import { locatePassage, markedNote } from "./note-tutor";
-import { alreadyIn, blockAt, fingerprint, type EditChange, type NoteBlock } from "./note-outline";
+import { alreadyIn, blockAt, fingerprint, squash, type EditChange, type NoteBlock } from "./note-outline";
+import { MY_NOTES, PAPER_NOTE_WINDOW, paperRegion, readPaperCard } from "./paper-source";
 import { EDIT_INSTRUCTION_MAX, EDIT_KINDS, EDIT_MATERIAL_MAX, type EditKind, type EditProposal, type EditResponse } from "./note-edit.types";
 import { TUTOR_SELECTION_MAX } from "./note-tutor.types";
 
@@ -86,9 +87,26 @@ const TASK: Record<EditKind, string> = {
   custom: "Do what the learner asks, as targeted changes.",
 };
 
-export function editPrompt(request: ParsedEdit, note: { title: string; text: string; partial: boolean }, passage: { text: string; heading: string | null; blocks: string[] } | null): string {
+// A note holding an imported paper: which blocks are the paper's own text
+// (never changed by the editor) and which block starts the learner's notes.
+export interface PaperScope { title: string; sourceBlocks: string[]; notesBlock: string | null }
+
+export function paperScope(body: string, blocks: NoteBlock[]): PaperScope | null {
+  const region = paperRegion(body);
+  const card = readPaperCard(body);
+  if (!region || !card) return null;
+  return {
+    title: card.card.title,
+    sourceBlocks: blocks.filter(b => b.start < region.end).map(b => b.id),
+    notesBlock: region.notesAt !== null ? blocks.find(b => b.start === region.notesAt)?.id ?? null : null,
+  };
+}
+
+export function editPrompt(request: ParsedEdit, note: { title: string; text: string; partial: boolean }, passage: { text: string; heading: string | null; blocks: string[] } | null, paper: PaperScope | null = null): string {
+  const first = paper?.sourceBlocks[0], last = paper?.sourceBlocks[paper.sourceBlocks.length - 1];
   return [
     `Task: ${TASK[request.kind]}`,
+    paper ? `This note holds an imported research paper, "${paper.title}". Blocks ${first}${last && last !== first ? ` to ${last}` : ""} are the paper's own text, as imported: never change, move or delete them, and insert nothing among them. The learner's study notes are under the heading "${MY_NOTES}"${paper.notesBlock ? ` (${paper.notesBlock})` : " (missing: add it at the end of the note first)"}: put everything you add there, as ### subsections named after the paper's sections they are about, after the last block of "${MY_NOTES}". Quote the paper only as a short "> " line, and keep apart what the paper says from your own explanation.` : null,
     request.instruction ? `The learner says: ${request.instruction}` : null,
     passage ? `PASSAGE the learner chose${passage.heading ? ` (under "${passage.heading}")` : ""}${passage.blocks.length ? `, in blocks ${passage.blocks.join(", ")}` : ""}:\n"""\n${passage.text}\n"""` : null,
     request.material ? `MATERIAL to work in (from Nova's tutor, or the proposal so far to be changed as the learner says):\n"""\n${request.material}\n"""` : null,
@@ -103,7 +121,10 @@ const REWORDING: readonly EditKind[] = ["rewrite", "grammar", "expand"];
 // Asked about a passage: these change only its blocks.
 const SCOPED: readonly EditKind[] = ["rewrite", "grammar", "expand", "examples", "dedupe", "custom"];
 
-export function readEditReply(raw: string, request: ParsedEdit, body: string, given: NoteBlock[], scope: Set<string> | null): Omit<EditProposal, "ok" | "noteVersion" | "partial"> | null {
+// source: the blocks of an imported paper's own text (paperScope), which no
+// change may touch: a replacement or removal of one, or an insertion among
+// them, is dropped and said.
+export function readEditReply(raw: string, request: ParsedEdit, body: string, given: NoteBlock[], scope: Set<string> | null, source: Set<string> | null = null): Omit<EditProposal, "ok" | "noteVersion" | "partial"> | null {
   const start = raw.indexOf("{"), end = raw.lastIndexOf("}");
   if (start === -1 || end <= start) return null;
   let p: Record<string, unknown>;
@@ -125,6 +146,11 @@ export function readEditReply(raw: string, request: ParsedEdit, body: string, gi
       const after = c.after === "start" ? null : typeof c.after === "string" && index.has(c.after) ? given[index.get(c.after)!]! : undefined;
       if (!text || after === undefined) { say("an addition at a place that isn't in the note"); continue; }
       if (scope && after && !scope.has(after.id)) { say("an addition outside the passage you chose"); continue; }
+      // Inside the paper: at the top or after any of its blocks. The one
+      // exception: the "My notes" heading itself, added at the end of a note
+      // whose learner removed it.
+      const addsNotesHeading = after !== null && after === given[given.length - 1] && squash(text).startsWith(squash(`## ${MY_NOTES}`));
+      if (source && (after === null || source.has(after.id)) && !addsNotesHeading) { say("an addition inside the imported paper's text (your notes go under My notes)"); continue; }
       if (alreadyIn(body, text)) { say("an addition the note already has"); continue; }
       const at = after ? after.end : 0;
       changes.push({ id: `e${changes.length + 1}`, op: "insert", start: at, end: at, before: "", after: text, anchor: after ? fingerprint(after.text) : null, section: after?.heading ?? null, why });
@@ -137,6 +163,7 @@ export function readEditReply(raw: string, request: ParsedEdit, body: string, gi
     if (!ids.length || at.some(i => i === undefined) || at.some((i, k) => k > 0 && i !== at[k - 1]! + 1)) { say("a change to text that isn't one passage of the note"); continue; }
     if (ids.some(id => used.has(id))) { say("two changes to the same passage"); continue; }
     if (SCOPED.includes(request.kind) && !inScope(ids)) { say("a change outside the passage you chose"); continue; }
+    if (source && ids.some(id => source.has(id))) { say("a change to the imported paper's own text (Nova doesn't rewrite the source)"); continue; }
     if (c.op === "delete" && REWORDING.includes(request.kind)) { say("a removal (rewording keeps everything you wrote)"); continue; }
     const first = given[at[0]!]!, last = given[at[at.length - 1]!]!;
     const before = body.slice(first.start, last.end);
@@ -174,7 +201,12 @@ export async function proposeEdit(
   if (!body.trim() && request.kind !== "integrate" && request.kind !== "custom") return refuse("empty", "This note has no text yet. Write or paste something first.");
 
   const located = request.selection ? locatePassage(body, request.selection) : null;
-  const window = markedNote(body, located?.found ? located.offset : null);
+  // A paper is read almost whole, from the end (its "My notes", where the
+  // editor writes) back; any other note around the passage chosen.
+  const region = paperRegion(body);
+  const window = region
+    ? markedNote(body, located?.found ? located.offset : region.notesAt ?? body.length, PAPER_NOTE_WINDOW)
+    : markedNote(body, located?.found ? located.offset : null);
   // The blocks of the passage: from where it starts, as far as its text reaches.
   let scope: Set<string> | null = null;
   if (located?.found) {
@@ -183,14 +215,15 @@ export async function proposeEdit(
     scope = new Set(window.blocks.filter(b => first && b.start >= first.start && (b.start <= reach || b.id === first.id)).map(b => b.id));
   }
   const passage = request.selection ? { text: request.selection, heading: located?.heading ?? null, blocks: scope ? [...scope] : [] } : null;
+  const paper = paperScope(body, window.blocks);
 
   try {
     const reply = await generate({
       model: "gpt-4o", systemInstruction: SYSTEM,
-      prompt: editPrompt(request, { title: material.note.title, text: window.text, partial: window.partial }, passage),
+      prompt: editPrompt(request, { title: material.note.title, text: window.text, partial: window.partial }, passage, paper),
       maxOutputTokens: request.kind === "structure" ? 8_000 : 4_000, deadlineMs: EDIT_DEADLINE_MS, json: true,
     });
-    const read = readEditReply(typeof reply === "string" ? reply : "", request, body, window.blocks, scope && SCOPED.includes(request.kind) ? scope : null);
+    const read = readEditReply(typeof reply === "string" ? reply : "", request, body, window.blocks, scope && SCOPED.includes(request.kind) ? scope : null, paper ? new Set(paper.sourceBlocks) : null);
     if (!read) return refuse("unavailable", "Nova didn't come back with a change it could show. Try again, or say it another way.");
     return { ok: true, ...read, noteVersion: material.note.updatedAt, partial: window.partial };
   } catch (err) {

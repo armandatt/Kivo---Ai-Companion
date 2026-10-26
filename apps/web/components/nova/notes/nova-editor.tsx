@@ -38,12 +38,15 @@ const EDIT_WORK: Record<EditKind, string> = {
 }
 
 export interface EditAsk { kind: EditKind; instruction?: string; passage?: string; material?: string; label?: string }
+// applying: being applied and saved; applied: in the note and saved;
+// unsaved: in the note on screen, but the save did not go through.
 type Entry =
-  | { id: string; ask: EditAsk; state: 'proposed' | 'applied' | 'discarded' | 'conflict'; proposal: EditProposal; skip: string[]; note?: string }
+  | { id: string; ask: EditAsk; state: 'proposed' | 'applying' | 'applied' | 'unsaved' | 'discarded' | 'conflict'; proposal: EditProposal; skip: string[]; note?: string }
   | { id: string; ask: EditAsk; state: 'error'; message: string }
 type Pending = { ask: EditAsk; stage: 'saving' | 'drafting'; controller: AbortController }
 
-export type ApplyResult = { ok: true } | { ok: false; conflicts: string[]; message: string }
+// saved: the note was saved with the changes. already: they were in it.
+export type ApplyResult = { ok: true; saved: boolean; already?: boolean } | { ok: false; conflicts: string[]; message: string }
 
 const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
 const chip = 'rounded-full border border-white/12 px-2.5 py-1 text-xs text-foreground/80 transition-colors hover:border-nova/50 hover:text-foreground disabled:opacity-40'
@@ -73,18 +76,21 @@ function ChangeView({ c, on, onToggle, onShow, disabled }: { c: EditChange; on: 
   )
 }
 
-export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version, onApply, onShow, seed, onSeedUsed, header }: {
+export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version, onApply, onRetrySave, onShow, seed, onSeedUsed, header }: {
   note: NoteDetail | null
   passage: Passage | null
   onClearPassage: () => void
   ensureSaved: () => Promise<boolean>
   version: () => string | null
-  // Applies the kept changes to the note on screen; refused whole when any no longer fits.
-  onApply: (changes: EditChange[], label: string) => ApplyResult
+  // Applies the kept changes to the note and saves it; refused whole when any no longer fits.
+  onApply: (changes: EditChange[], label: string) => Promise<ApplyResult>
+  // Saves the note again after a failed save.
+  onRetrySave: () => Promise<boolean>
   // Shows where a change goes in the note.
   onShow: (change: EditChange) => void
-  // Material sent from the tutor to work into the note.
-  seed: { material: string; label: string } | null
+  // A request handed over from the tutor: what it wrote to work in, a
+  // structure for the note, or an edit the learner asked the tutor for.
+  seed: EditAsk | null
   onSeedUsed: () => void
   header: (status: React.ReactNode, working: boolean) => React.ReactNode
 }) {
@@ -98,6 +104,8 @@ export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version
   const [refining, setRefining] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  // One apply at a time: a second click while one is saving does nothing.
+  const applying = useRef(false)
 
   useEffect(() => { setEntries([]); setChecked({}) }, [noteId])
   useEffect(() => () => pending?.controller.abort(), [noteId]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -135,7 +143,7 @@ export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version
   useEffect(() => {
     if (!seed || !noteId || pending) return
     onSeedUsed()
-    void send({ kind: 'integrate', material: seed.material, label: `Work in: ${seed.label}` })
+    void send(seed)
   }, [seed, noteId, pending, send, onSeedUsed])
 
   function submit() {
@@ -158,24 +166,47 @@ export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version
   const update = (id: string, change: (e: Proposed) => Partial<Proposed>) =>
     setEntries(list => list.map(x => (x.id === id && x.state !== 'error' ? { ...x, ...change(x) } : x)))
 
-  function apply(e: Proposed) {
+  async function apply(e: Proposed) {
     const kept = e.proposal.changes.filter(c => !e.skip.includes(c.id))
-    if (!kept.length) return
-    const result = onApply(kept, e.ask.label ?? EDIT_LABEL[e.ask.kind])
-    if (result.ok) {
-      update(e.id, () => ({ state: 'applied' }))
-      setAnnounce(`Applied ${kept.length} change${kept.length === 1 ? '' : 's'}. It saves in a moment.`)
-    } else {
-      update(e.id, () => ({ state: 'conflict', note: result.message }))
-      setAnnounce(result.message)
-    }
+    if (!kept.length || applying.current) return
+    applying.current = true
+    update(e.id, () => ({ state: 'applying' }))
+    setAnnounce('Applying and saving…')
+    try {
+      const result = await onApply(kept, e.ask.label ?? EDIT_LABEL[e.ask.kind])
+      if (!result.ok) {
+        update(e.id, () => ({ state: 'conflict', note: result.message }))
+        setAnnounce(result.message)
+      } else if (result.already) {
+        update(e.id, () => ({ state: result.saved ? 'applied' : 'unsaved', note: 'These changes were already in your note, so nothing was added twice.' }))
+        setAnnounce('Those changes were already in your note.')
+      } else if (result.saved) {
+        update(e.id, () => ({ state: 'applied' }))
+        setAnnounce(`Applied ${kept.length} change${kept.length === 1 ? '' : 's'} and saved the note.`)
+      } else {
+        update(e.id, () => ({ state: 'unsaved' }))
+        setAnnounce('Applied to the note on screen, but it didn’t save.')
+      }
+    } finally { applying.current = false }
+  }
+  async function retrySave(e: Proposed) {
+    if (applying.current) return
+    applying.current = true
+    update(e.id, () => ({ state: 'applying' }))
+    try {
+      const ok = await onRetrySave()
+      update(e.id, () => ({ state: ok ? 'applied' : 'unsaved' }))
+      setAnnounce(ok ? 'Saved.' : 'It still didn’t save.')
+    } finally { applying.current = false }
   }
 
   const open = entries.find(e => e.state === 'proposed')
   const status = pending
     ? (pending.stage === 'saving' ? 'Saving your latest edits' : `Reading the note · ${EDIT_WORK[pending.ask.kind]}`)
     : open && open.state === 'proposed' ? (open.proposal.changes.length ? 'Preview ready · waiting for you' : 'Waiting for your answer')
-    : entries.at(-1)?.state === 'applied' ? 'Applied'
+    : entries.some(e => e.state === 'applying') ? 'Applying and saving'
+    : entries.at(-1)?.state === 'applied' ? 'Applied and saved'
+    : entries.at(-1)?.state === 'unsaved' ? 'Applied on screen · not saved'
     : entries.at(-1)?.state === 'error' || entries.at(-1)?.state === 'conflict' ? 'That didn’t work'
     : 'Ready when you are'
   const empty = !note?.body.trim()
@@ -210,14 +241,25 @@ export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version
               <div>
                 <p className="text-sm leading-relaxed text-foreground/85">{e.proposal.question ?? e.proposal.summary}</p>
                 {e.proposal.partial && <p className="mt-1 text-xs text-subtle">This note is long: Nova worked on the part around what you asked about.</p>}
-                {e.proposal.changes.length > 0 && (
-                  <ul className="mt-2 divide-y divide-white/6 border-y border-white/6" data-edit-changes>
-                    {e.proposal.changes.map(c => (
-                      <ChangeView key={c.id} c={c} on={!e.skip.includes(c.id)} disabled={e.state !== 'proposed'} onShow={() => onShow(c)}
-                        onToggle={() => update(e.id, x => ({ skip: x.skip.includes(c.id) ? x.skip.filter(id => id !== c.id) : [...x.skip, c.id] }))} />
-                    ))}
-                  </ul>
-                )}
+                {e.proposal.changes.length > 0 && (() => {
+                  const list = (
+                    <ul className="mt-2 divide-y divide-white/6 border-y border-white/6" data-edit-changes>
+                      {e.proposal.changes.map(c => (
+                        <ChangeView key={c.id} c={c} on={!e.skip.includes(c.id)} disabled={e.state !== 'proposed'} onShow={() => onShow(c)}
+                          onToggle={() => update(e.id, x => ({ skip: x.skip.includes(c.id) ? x.skip.filter(id => id !== c.id) : [...x.skip, c.id] }))} />
+                      ))}
+                    </ul>
+                  )
+                  // Only a proposal waiting for the learner shows its changes
+                  // in full; once applied or set aside, they fold away so no
+                  // stale version of the text stays on screen beside the note.
+                  return e.state === 'proposed' || e.state === 'conflict' ? list : (
+                    <details className="mt-2 text-xs" data-edit-folded>
+                      <summary className="cursor-pointer text-subtle hover:text-foreground">{e.state === 'discarded' ? 'What was proposed' : 'What changed'}</summary>
+                      {list}
+                    </details>
+                  )
+                })()}
                 {e.proposal.dropped.length > 0 && <p className="mt-1.5 text-[11px] text-subtle">Left out: {e.proposal.dropped.join('; ')}.</p>}
                 {e.state === 'proposed' && e.proposal.changes.length > 0 && (
                   <div className="mt-3 space-y-2">
@@ -238,7 +280,14 @@ export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version
                     </div>
                   </div>
                 )}
-                {e.state === 'applied' && <p className="mt-2 flex items-center gap-1.5 text-xs text-foreground/65" data-edit-applied><Check className="size-3.5 text-keppel-300" /> Applied to your note. Undo is at the bottom of the note.</p>}
+                {e.state === 'applying' && <p className="mt-2 flex items-center gap-1.5 text-xs text-foreground/65" data-edit-applying><Loader2 className="size-3.5 animate-spin" /> Applying to your note and saving…</p>}
+                {e.state === 'applied' && <p className="mt-2 flex items-center gap-1.5 text-xs text-foreground/65" role="status" data-edit-applied><Check className="size-3.5 text-keppel-300" /> {e.note ?? 'Applied to your note and saved. Undo is at the bottom of the note.'}</p>}
+                {e.state === 'unsaved' && (
+                  <div role="alert" className="mt-2 text-xs text-amber-200" data-edit-unsaved>
+                    <p>{e.note ? `${e.note} ` : ''}The change is in your note on screen and kept in this browser, but it isn&apos;t saved yet.</p>
+                    <button type="button" onClick={() => void retrySave(e)} className="mt-1 inline-flex items-center gap-1.5 font-medium text-nova-ink hover:underline"><RotateCcw className="size-3.5" /> Save again</button>
+                  </div>
+                )}
                 {e.state === 'discarded' && <p className="mt-2 text-xs text-subtle">Not applied.</p>}
                 {e.state === 'conflict' && (
                   <div role="alert" className="mt-2 text-xs text-amber-200" data-edit-conflict>

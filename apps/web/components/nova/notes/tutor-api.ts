@@ -7,7 +7,7 @@ import type { EditRequest, EditResponse } from '@repo/api/nova/product/note-edit
 
 const FAILED = 'Could not reach the server. Check your connection and try again.'
 
-async function post<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T | { ok: false; error: 'failed' | 'unauthenticated' | 'aborted'; message: string }> {
+export async function post<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T | { ok: false; error: 'failed' | 'unauthenticated' | 'aborted'; message: string }> {
   try {
     const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), cache: 'no-store', signal })
     if (res.status === 401) { window.location.href = '/signin'; return { ok: false, error: 'unauthenticated', message: 'Sign in again.' } }

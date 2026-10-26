@@ -1,13 +1,15 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { FileText, LayoutGrid, Plus, Rows3, Search, Upload } from 'lucide-react'
 import type { NovaNotesReady, NovaNotesView, NoteSummary } from '@repo/api/nova/product/notes.types'
 import { relativeDay } from '../format'
 import { subjectColor } from '../subject-color'
 import { useNovaView } from '../use-nova-view'
-import { notesUrl } from './notes-api'
+import { fetchNotes, notesUrl } from './notes-api'
+import { useNotesCommands } from './notes-commands'
+import { modLabel } from './notes-shortcuts'
 import { groupNotes } from './notes-tree-data'
 import { PageAction, PageFrame, PageHeader, PageLoading, PageNotice, RetryButton } from '@/components/dashboard/page-states'
 
@@ -117,11 +119,11 @@ export function NotesList() {
   if (view.status === 'not_connected') return <Notice title="Connect Nova first" body="Nova has no learner linked to this account yet. Connect it on Today." />
   if (view.status === 'onboarding_incomplete') return <Notice title="Finish setting up with Nova" body="Your notebook opens once Nova knows what you are studying. Finish the short setup conversation on Today." />
 
-  return <Ready view={view} search={search} onSearch={setSearch} subjectId={subjectId} onSubject={id => { setSubjectId(id); setTopic('') }} topic={topic} onTopic={setTopic} filtered={Boolean(q || subjectId || topic)} busy={refreshing} stale={error} />
+  return <Ready view={view} onReload={refresh} search={search} onSearch={setSearch} subjectId={subjectId} onSubject={id => { setSubjectId(id); setTopic('') }} topic={topic} onTopic={setTopic} filtered={Boolean(q || subjectId || topic)} busy={refreshing} stale={error} />
 }
 
-function Ready({ view, search, onSearch, subjectId, onSubject, topic, onTopic, filtered, busy, stale }: {
-  view: NovaNotesReady; search: string; onSearch: (v: string) => void
+function Ready({ view, onReload, search, onSearch, subjectId, onSubject, topic, onTopic, filtered, busy, stale }: {
+  view: NovaNotesReady; onReload: () => unknown; search: string; onSearch: (v: string) => void
   subjectId: string; onSubject: (v: string) => void; topic: string; onTopic: (v: string) => void
   filtered: boolean; busy: boolean; stale: boolean
 }) {
@@ -131,6 +133,13 @@ function Ready({ view, search, onSearch, subjectId, onSubject, topic, onTopic, f
     return [...new Map(names.map(n => [n.toLowerCase(), n])).values()].sort((a, b) => a.localeCompare(b))
   }, [view.subjects, subjectId])
   const groups = useMemo(() => groupNotes(view.notes), [view.notes])
+  // ⌘P imports a paper, ⌘K finds a note or runs a command, ? lists the keys.
+  const reloadSubjects = useCallback(async () => {
+    const next = await fetchNotes()
+    void onReload()
+    return next?.status === 'ready' ? next.subjects : null
+  }, [onReload])
+  const commands = useNotesCommands({ notes: view.notes, subjects: view.subjects, reloadSubjects, here: { subjectId: subjectId || null, topicName: topic || null }, onImported: () => void onReload() })
 
   // Cards by subject, or one list: this browser's choice, kept if it can be.
   const [layout, setLayout] = useState<'cards' | 'list'>('cards')
@@ -143,6 +152,11 @@ function Ready({ view, search, onSearch, subjectId, onSubject, topic, onTopic, f
         title="Notes"
         description="Your learning notebook"
         actions={<>
+          <button type="button" onClick={commands.openImport} title={`Import a research paper (${modLabel(commands.mac)}P)`} aria-keyshortcuts={commands.mac ? 'Meta+P' : 'Control+P'}
+            className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/80 transition-colors hover:bg-white/5" data-notes-import-paper>
+            <FileText aria-hidden className="size-4" /> Import paper
+            <kbd className="ml-1 hidden rounded border border-white/10 px-1 font-sans text-[10px] text-subtle sm:inline">{modLabel(commands.mac)}P</kbd>
+          </button>
           <Link href="/notes/capture" className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/80 transition-colors hover:bg-white/5" data-notes-capture>
             <Upload aria-hidden className="size-4" /> Capture or import
           </Link>
@@ -232,6 +246,7 @@ function Ready({ view, search, onSearch, subjectId, onSubject, topic, onTopic, f
           </>
         )}
       </div>
+      {commands.element}
     </Frame>
   )
 }

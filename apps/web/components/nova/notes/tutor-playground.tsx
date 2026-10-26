@@ -16,6 +16,7 @@ import type { NoteAssistSource } from '@repo/api/nova/product/note-assist.types'
 import type { TutorBasis, TutorMode, TutorReply } from '@repo/api/nova/product/note-tutor.types'
 import type { NoteRef } from '@repo/api/nova/product/note-outline'
 import { NoteBody } from './note-body'
+import type { EditAsk } from './nova-editor'
 import { MODE_LABEL, insertFor, refsOf, type InsertPart, type TutorAsk, type TutorWork } from './tutor-session'
 
 // from: the reply and the part being added, so the page can work out where
@@ -80,8 +81,9 @@ export function ReplyView({ reply, work, fresh, busy, onWork, onAsk, onInsert, o
   onInsert: Insert
   onUseTitle: (title: string) => void
   onReveal: Reveal
-  // Hands what Nova wrote to the editor, to be worked into the note.
-  onEditor?: (material: string, label: string) => void
+  // Hands a request to the editor: what Nova wrote to work into the note,
+  // or a structure for it.
+  onEditor?: (ask: EditAsk) => void
 }) {
   const [copied, setCopied] = useState(false)
   const insert = (part: InsertPart, label: string, index = 0) => {
@@ -122,7 +124,15 @@ export function ReplyView({ reply, work, fresh, busy, onWork, onAsk, onInsert, o
       {reply.quiz.length > 0 && <Reveal i={n++} fresh={fresh}><Quiz reply={reply} work={work} onWork={onWork} onAsk={onAsk} busy={busy} /></Reveal>}
       {reply.ideas.length > 0 && <Reveal i={n++} fresh={fresh}><Ideas reply={reply} work={work} onWork={onWork} onAdd={() => insert('ideas', 'Ideas')} /></Reveal>}
       {reply.cards.length > 0 && <Reveal i={n++} fresh={fresh}><Cards reply={reply} work={work} onWork={onWork} /></Reveal>}
-      {reply.organize && <Reveal i={n++} fresh={fresh}><Organize reply={reply} onUseTitle={onUseTitle} insert={insert} /></Reveal>}
+      {reply.editRequest && (
+        <Reveal i={n++} fresh={fresh}>
+          <p className="flex items-start gap-2 rounded-lg bg-nova/[0.06] px-2.5 py-2 text-xs leading-relaxed text-foreground/75" data-tutor-handed-to-editor>
+            <PenLine className="mt-0.5 size-3.5 shrink-0 text-nova-ink" aria-hidden />
+            <span>That&apos;s a change to your note. The tutor doesn&apos;t edit, so Nova Editor is drafting it: you&apos;ll see each change where it goes before anything is applied.</span>
+          </p>
+        </Reveal>
+      )}
+      {reply.organize && <Reveal i={n++} fresh={fresh}><Organize reply={reply} onUseTitle={onUseTitle} insert={insert} onRestructure={onEditor ? () => onEditor({ kind: 'structure', label: 'Organise this note' }) : undefined} /></Reveal>}
 
       {reply.related.length > 0 && (
         <Reveal i={n++} fresh={fresh}>
@@ -153,7 +163,7 @@ export function ReplyView({ reply, work, fresh, busy, onWork, onAsk, onInsert, o
             <FilePlus2 className="size-3.5" /> Add to note
           </button>
           {onEditor && (
-            <button type="button" className={small} disabled={busy} onClick={() => onEditor(whole, MODE_LABEL[reply.mode])} title="Nova's editor works it into your note where it fits, for you to approve" data-tutor-to-editor>
+            <button type="button" className={small} disabled={busy} onClick={() => onEditor({ kind: 'integrate', material: whole, label: `Work in: ${MODE_LABEL[reply.mode]}` })} title="Nova's editor works it into your note where it fits, for you to approve" data-tutor-to-editor>
               <PenLine className="size-3.5" /> Work into note
             </button>
           )}
@@ -338,7 +348,10 @@ function Cards({ reply, work, onWork }: { reply: TutorReply; work: TutorWork; on
   )
 }
 
-function Organize({ reply, onUseTitle, insert }: { reply: TutorReply; onUseTitle: (t: string) => void; insert: (part: InsertPart, label: string) => void }) {
+// The organised version is not added beside the note (that would be the
+// note twice): the editor restructures the note itself, as changes to
+// approve.
+function Organize({ reply, onUseTitle, insert, onRestructure }: { reply: TutorReply; onUseTitle: (t: string) => void; insert: (part: InsertPart, label: string) => void; onRestructure?: () => void }) {
   const o = reply.organize!
   const row = (label: string, body: ReactNode, action: ReactNode) => (
     <div className="border-t border-white/6 py-2.5 first:border-t-0 first:pt-0">
@@ -359,7 +372,7 @@ function Organize({ reply, onUseTitle, insert }: { reply: TutorReply; onUseTitle
           <summary className="cursor-pointer text-xs text-nova-ink">Preview the organised version</summary>
           <div className="mt-2 max-h-72 overflow-y-auto rounded-lg border border-white/6 px-3 py-2"><NoteBody body={o.outline} links={[]} compact /></div>
         </details>
-      ), <button type="button" className={small} onClick={() => insert('outline', 'Organised version')}><FilePlus2 className="size-3.5" /> Add below</button>)}
+      ), onRestructure ? <button type="button" className={small} onClick={onRestructure} data-tutor-restructure><PenLine className="size-3.5" /> Restructure my note</button> : null)}
     </div>
   )
 }

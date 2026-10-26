@@ -165,3 +165,20 @@ test('a table: its head and rows; a line of pipes without a rule under the head 
   assert.deepEqual(t, { kind: 'table', head: ['Algorithm', 'Greedy'], rows: [['Dijkstra', 'yes'], ['Bellman-Ford', 'no']] })
   assert.equal(parseBlocks('| not | a table |')[0]!.kind, 'para')
 })
+
+test('maths: $$ blocks with their number, $inline$, and prices left as written', () => {
+  const blocks = parseBlocks('$$\n\\mathrm{softmax}(QK^T)V\n$$ (1)\n\nOne line: $$E=mc^2$$\n\nCosts $5 and $10, while $h_{t}$ depends on $h_{t-1}$.')
+  assert.deepEqual(blocks[0], { kind: 'math', tex: '\\mathrm{softmax}(QK^T)V', tag: '(1)' })
+  assert.equal(blocks[1]!.kind, 'para')
+  const tokens = inlineTokens('Costs $5 and $10, while $h_{t}$ depends on $h_{t-1}$.')
+  assert.deepEqual(tokens.filter(t => t.kind === 'math').map(t => t.text), ['h_{t}', 'h_{t-1}'])
+  assert.ok(tokens.some(t => t.kind === 'text' && t.text.includes('$5 and $10')))
+})
+
+test('a paper card is a paper callout, and its Source line opens beside the note', () => {
+  const body = '> [!paper] Attention Is All You Need\n> **Authors:** A, B\n> **Source:** https://arxiv.org/abs/1706.03762\n\n## Abstract\n\nText.'
+  const [card] = parseBlocks(body)
+  assert.equal(card!.kind === 'callout' && card.type, 'paper')
+  assert.deepEqual(sourceOf(body), { url: 'https://arxiv.org/abs/1706.03762', view: 'https://arxiv.org/pdf/1706.03762', label: 'arxiv.org', pdf: true })
+  assert.equal(calloutHeader('[!takeaways] Key points')?.type, 'takeaway')
+})
