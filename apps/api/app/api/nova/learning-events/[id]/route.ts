@@ -30,6 +30,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 //   { subjectId, topicName? }   file it there (often a place Nova suggested)
 //   { keep: true }              keep a link Nova made
 //   { undo: true }              undo a link Nova made
+//   { unfile: true }            filed under nothing (the page stays saved)
 //   { dismiss: { subjectId, topicName } }   take one suggestion off the list
 // Response: ResourceUpdateResponse. It files a page and nothing else: no
 // topic is created and nothing is recorded about what the learner knows.
@@ -45,6 +46,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (!body) return NextResponse.json({ ok: false, error: "invalid", message: "That isn't something Nova can do." }, { status: 400 })
     const { id } = await params
     const change = body.keep === true ? { kind: "keep" as const }
+      : body.unfile === true ? { kind: "unfile" as const }
       : body.undo === true ? { kind: "undo" as const }
       : body.dismiss && typeof body.dismiss === "object" ? { kind: "dismiss" as const, subjectId: (body.dismiss as Record<string, unknown>).subjectId, topicName: (body.dismiss as Record<string, unknown>).topicName }
       : { kind: "file" as const, subjectId: body.subjectId, topicName: body.topicName }

@@ -394,7 +394,7 @@ export async function recordLearningEvent(
 // undoing it. Guarded on the learner's profile; someone else's id is not found.
 export async function fileSavedResource(
   profileId: string, id: string,
-  change: { kind: "file"; subjectId: unknown; topicName: unknown } | { kind: "keep" } | { kind: "undo" } | { kind: "dismiss"; subjectId: unknown; topicName: unknown },
+  change: { kind: "file"; subjectId: unknown; topicName: unknown } | { kind: "keep" } | { kind: "undo" } | { kind: "unfile" } | { kind: "dismiss"; subjectId: unknown; topicName: unknown },
 ): Promise<ResourceUpdateResponse> {
   const missing = { ok: false as const, error: "not_found" as const, message: "Nova doesn't have that page." };
   if (typeof id !== "string" || id.length > 64) return missing;
@@ -411,6 +411,13 @@ export async function fileSavedResource(
     if (kept.length !== found.suggestions.length) {
       await prisma.novaLearningEvent.updateMany({ where: { id, profileId }, data: { connections: { ...found, suggestions: kept } as unknown as object } });
     }
+    const row = await prisma.novaLearningEvent.findFirst({ where: { id, profileId }, select: SELECT });
+    return row ? { ok: true, resource: toResource(row) } : missing;
+  }
+
+  // Filed under nothing, by the learner's choice: the page itself is kept.
+  if (change.kind === "unfile") {
+    await prisma.novaLearningEvent.updateMany({ where: { id, profileId }, data: { subjectId: null, topicName: null, filedBy: null } });
     const row = await prisma.novaLearningEvent.findFirst({ where: { id, profileId }, select: SELECT });
     return row ? { ok: true, resource: toResource(row) } : missing;
   }

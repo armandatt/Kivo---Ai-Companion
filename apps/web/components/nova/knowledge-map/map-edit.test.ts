@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { MapEdge, MapNode } from '@repo/api/nova/product/knowledge-map.types'
-import { appendLink, filingChoices, placementLabel, placementOf, planLink, samePlacement } from './map-edit'
+import { removeLink, appendLink, filingChoices, placementLabel, placementOf, planLink, samePlacement } from './map-edit'
 
 const subject = (id: string, label: string): MapNode => ({ id: `subject:${id}`, type: 'subject', label, href: null, subjectId: id, topics: 0, notes: 0, resources: 0 })
 const topic = (id: string, label: string, s: string, sName: string): MapNode => ({ id: `topic:${id}`, type: 'topic', label, href: null, subjectId: s, subjectName: sName, sessions: 0, level: null, masteryPercent: null, notes: 0, resources: 0 })
@@ -67,4 +67,12 @@ test('filing offers only subjects and topics on the map, and knows where an item
   assert.equal(samePlacement(null, { subjectId: 'os', topicName: null }), false)
   assert.equal(placementLabel({ subjectId: 'os', topicName: 'Deadlocks' }, nodes), 'OS › Deadlocks')
   assert.equal(placementLabel(null, nodes), 'Not filed')
+})
+
+test('removing a [[link]] keeps its words and everything else exactly as written', () => {
+  const body = 'See [[Paging]] and [[paging|page tables]].\n```\n[[Paging]] in code\n```\nAlso [[ Other  Note |x]] and [[Paging ]].'
+  assert.equal(removeLink(body, 'Paging'), 'See Paging and page tables.\n```\n[[Paging]] in code\n```\nAlso [[ Other  Note |x]] and Paging.')
+  assert.equal(removeLink('No links here, or [[unclosed', 'Paging'), null, 'nothing to remove')
+  assert.equal(removeLink('[[Other]]', 'Paging'), null)
+  assert.equal(removeLink('a [[b [[Paging]] c', 'Paging'), 'a [[b Paging c', 'read the way the server reads it')
 })

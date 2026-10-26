@@ -84,6 +84,8 @@ export interface TaskInput {
   // NovaTaskDependency row). Never on itself or round a circle; a wait that
   // is already there changes nothing.
   waitFor?:   string;
+  // Update only: this task no longer waits for that one. Nothing else changes.
+  stopWaitingFor?: string;
 }
 
 export type TaskError =
