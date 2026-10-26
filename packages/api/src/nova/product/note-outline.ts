@@ -363,9 +363,27 @@ export interface EditChange {
   why:     string | null;
 }
 
+// already: changes whose result is in the text already (an apply sent twice,
+// or the learner made the change by hand): skipped, never made twice.
 export type EditResult =
-  | { ok: true; body: string; applied: string[] }
+  | { ok: true; body: string; applied: string[]; already: string[] }
   | { ok: false; conflicts: string[] };
+
+// Whether a change's result already stands in the text: its words are there
+// (an insertion; a replacement whose new words are there once, with the old
+// ones nowhere outside them, as when an expansion keeps the sentence it
+// expands), or the words a deletion removes are not there any more.
+export function isApplied(body: string, c: EditChange): boolean {
+  if (c.op === "insert") return alreadyIn(body, c.after);
+  const after = c.after.trim();
+  const at = after ? body.indexOf(after) : -1;
+  const once = at !== -1 && body.indexOf(after, at + 1) === -1;
+  let i = c.before ? body.indexOf(c.before) : -1;
+  if (i === -1) return c.op === "delete" || once;
+  if (c.op === "delete" || !once) return false;
+  for (; i !== -1; i = body.indexOf(c.before, i + 1)) if (i < at || i + c.before.length > at + after.length) return false;
+  return true;
+}
 
 // The changes, each found again in the text as it is now: in place, or the
 // same words found once elsewhere (an insertion: after the same block). If
@@ -386,8 +404,9 @@ export function locateChange(body: string, c: EditChange, blocks: NoteBlock[] = 
 export function applyEdits(body: string, changes: EditChange[]): EditResult {
   const blocks = noteBlocks(body);
   const placed: Array<{ c: EditChange; start: number; end: number }> = [];
-  const conflicts: string[] = [];
+  const conflicts: string[] = [], already: string[] = [];
   for (const c of changes) {
+    if (isApplied(body, c)) { already.push(c.id); continue; }
     const at = locateChange(body, c, blocks);
     if (at) placed.push({ c, ...at });
     else conflicts.push(c.id);
@@ -406,5 +425,5 @@ export function applyEdits(body: string, changes: EditChange[]): EditResult {
       else out = `${head}${replacement}${tail}`;
     }
   }
-  return { ok: true, body: out, applied: changes.map(c => c.id) };
+  return { ok: true, body: out, applied: placed.map(p => p.c.id), already };
 }

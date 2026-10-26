@@ -12,10 +12,13 @@
 //                         [!definition], [!note]. A + or - after ] makes it
 //                         foldable (- starts folded).
 //   ```                   a block of code
+//   $$ … $$               maths on lines of its own (LaTeX), kept as written;
+//                         text after the closing $$ is its number, "(1)"
+//   > [!paper] Title      an imported research paper's card (paper-source.ts)
 // Inside a line (inlineTokens): **bold**, *italic*, ==highlight==, `code`,
-// #tag and bare web addresses. [[Links]] are read first, by note-links.ts.
+// #tag, $maths$ and bare web addresses. [[Links]] are read first, by note-links.ts.
 
-export type CalloutType = 'note' | 'quote' | 'idea' | 'question' | 'warning' | 'summary' | 'example' | 'definition'
+export type CalloutType = 'note' | 'quote' | 'idea' | 'question' | 'warning' | 'summary' | 'example' | 'definition' | 'takeaway' | 'paper'
 
 // at, to: where a top-level block is in the note's text, [at, to), so a
 // passage Nova refers to (note-outline.ts NoteRef) is found on the page.
@@ -26,6 +29,7 @@ export type Block = Span & (
   | { kind: 'para'; lines: string[] }
   | { kind: 'list'; ordered: boolean; items: string[] }
   | { kind: 'code'; text: string }
+  | { kind: 'math'; tex: string; tag: string | null }
   | { kind: 'quote'; lines: string[] }
   | { kind: 'rule' }
   | { kind: 'table'; head: string[]; rows: string[][] }
@@ -41,11 +45,14 @@ const CALLOUT_ALIASES: Record<string, CalloutType> = {
   summary: 'summary', abstract: 'summary', tldr: 'summary', recap: 'summary',
   example: 'example',
   definition: 'definition', def: 'definition', term: 'definition',
+  takeaway: 'takeaway', takeaways: 'takeaway', key: 'takeaway', keypoint: 'takeaway',
+  paper: 'paper',
 }
 
 export const CALLOUT_LABEL: Record<CalloutType, string> = {
   note: 'Note', quote: 'From the source', idea: 'Idea', question: 'Question',
   warning: 'Watch out', summary: 'Summary', example: 'Example', definition: 'Definition',
+  takeaway: 'Key takeaway', paper: 'Research paper',
 }
 
 // "> [!quote]- Attention" → { type: 'quote', fold: 'closed', title: 'Attention' }.
@@ -138,6 +145,24 @@ function parseLines(lines: string[], uniqueId: (text: string) => string, starts?
     }
     if (!trimmed.trim()) { flush(i); continue }
 
+    // Maths on lines of its own: "$$", the LaTeX, then "$$" (and its number).
+    if (trimmed.startsWith('$$')) {
+      flush(i)
+      const from = i
+      const first = trimmed.trimEnd().slice(2)
+      const closeOnLine = first.indexOf('$$')
+      if (closeOnLine !== -1) {
+        blocks.push({ kind: 'math', tex: first.slice(0, closeOnLine).trim(), tag: first.slice(closeOnLine + 2).trim() || null, ...span(i, i) })
+        continue
+      }
+      const tex: string[] = first.trim() ? [first.trim()] : []
+      i++
+      while (i < lines.length && !lines[i]!.trimStart().startsWith('$$')) tex.push(lines[i++]!)
+      const close = i < lines.length ? lines[i]!.trim().slice(2).trim() : ''
+      blocks.push({ kind: 'math', tex: tex.join('\n').trim(), tag: close || null, ...span(from, Math.min(i, lines.length - 1)) })
+      continue
+    }
+
     if (trimmed.startsWith('>')) {
       flush(i)
       // Every > line that follows belongs to this quote or callout.
@@ -202,7 +227,7 @@ export function outline(blocks: Block[]): Array<{ level: 1 | 2 | 3; text: string
 // ── Inside a line ────────────────────────────────────────────────────────────
 
 export type InlineToken =
-  | { kind: 'text' | 'bold' | 'italic' | 'highlight' | 'code' | 'tag'; text: string }
+  | { kind: 'text' | 'bold' | 'italic' | 'highlight' | 'code' | 'tag' | 'math'; text: string }
   | { kind: 'url'; text: string; href: string }
 
 function safeUrl(raw: string): string | null {
@@ -243,6 +268,13 @@ export function inlineTokens(text: string): InlineToken[] {
       end = text.indexOf('`', i + 1)
       if (end > i + 1) { push({ kind: 'code', text: text.slice(i + 1, end) }, end + 1); continue }
     }
+    // $maths$: the marks hug the maths, and a closing $ before a digit is a
+    // price ("$5 and $10" stays as written). \$ is a dollar sign.
+    if (text[i] === '$' && text[i - 1] !== '\\' && text[i + 1] !== '$' && text[i + 1] !== ' ' && text[i + 1] !== undefined) {
+      end = text.indexOf('$', i + 1)
+      while (end !== -1 && text[end - 1] === '\\') end = text.indexOf('$', end + 1)
+      if (end > i + 1 && text[end - 1] !== ' ' && !isDigit(text[end + 1])) { push({ kind: 'math', text: text.slice(i + 1, end) }, end + 1); continue }
+    }
     // #tag: at the start of a word, a letter first. "C#" and "#1" stay text.
     if (text[i] === '#' && (i === 0 || text[i - 1] === ' ' || text[i - 1] === '(') && isWordChar(text[i + 1]) && !isDigit(text[i + 1])) {
       end = i + 1
@@ -276,7 +308,10 @@ export function inlineTokens(text: string): InlineToken[] {
 export interface NoteSource { url: string; view: string; label: string; pdf: boolean }
 export function sourceOf(body: string): NoteSource | null {
   for (const line of body.split('\n')) {
-    const t = line.trim()
+    // "Source: …", or a paper card's "> **Source:** …" (paper-source.ts).
+    let t = line.trim()
+    if (t.startsWith('>')) t = t.slice(1).trim()
+    if (t.startsWith('**Source:**')) t = `Source:${t.slice(11)}`
     if (!t.toLowerCase().startsWith('source:')) continue
     const token = inlineTokens(t.slice(7).trim()).find(x => x.kind === 'url')
     if (!token || token.kind !== 'url') continue

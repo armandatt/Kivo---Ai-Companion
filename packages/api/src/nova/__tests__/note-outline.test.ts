@@ -186,3 +186,24 @@ describe("edits are applied only where their words still are", () => {
     expect(applyEdits(FASTAPI, [change({}), change({ id: "e2" })]).ok).toBe(false);
   });
 });
+
+describe("an apply sent twice changes the note once", () => {
+  const blocks = noteBlocks(FASTAPI);
+  const dep = blocks.find(b => b.text.startsWith("Depends"))!;
+  const mid = blocks.find(b => b.text.startsWith("Code that"))!;
+  const expand: EditChange = { id: "e1", op: "replace", start: dep.start, end: dep.end, before: dep.text, after: `${dep.text} It is resolved once per request and can depend on other dependencies.`, anchor: null, section: "Dependency Injection", why: null };
+  const ins: EditChange = { id: "e2", op: "insert", start: mid.end, end: mid.end, before: "", after: "Middleware can also time every request it wraps.", anchor: fingerprint(mid.text), section: "Middleware", why: null };
+
+  it("an expansion that keeps its sentence, and an addition, applied again: nothing more is changed, and both are said to be in already", () => {
+    const once = applyEdits(FASTAPI, [expand, ins]);
+    if (!once.ok) throw new Error("refused");
+    expect(once.applied).toEqual(["e1", "e2"]);
+    const twice = applyEdits(once.body, [expand, ins]);
+    expect(twice).toEqual({ ok: true, body: once.body, applied: [], already: ["e1", "e2"] });
+  });
+  it("a deletion whose words are gone is in already; a replacement whose words the learner changed is still refused", () => {
+    const gone = FASTAPI.replace(`${dep.text}\n`, "");
+    expect(applyEdits(gone, [{ ...expand, op: "delete", after: "" }])).toMatchObject({ ok: true, applied: [], already: ["e1"] });
+    expect(applyEdits(FASTAPI.replace("declares what", "says what"), [expand])).toEqual({ ok: false, conflicts: ["e1"] });
+  });
+});

@@ -123,6 +123,22 @@
   --nova-ink: oklch(79.68% 0.09 178.36);
   /* The legibility floor (below): muted text never lighter than this. */
   --subtle: oklch(68% 0.015 295);
+  /* Meaning in a note (callouts, a paper, Nova's changes): a tone for edges
+     and tints, and an ink for text on the page. Never meaning by colour
+     alone: each role also has its icon and its label. */
+  --sem-definition: oklch(70% 0.11 268);
+  --sem-definition-ink: oklch(82% 0.08 268);
+  --sem-takeaway: oklch(70.64% 0.1 179.4);
+  --sem-takeaway-ink: oklch(79.68% 0.09 178.36);
+  --sem-example: oklch(74% 0.11 60);
+  --sem-example-ink: oklch(83% 0.09 65);
+  --sem-question: oklch(70% 0.12 305);
+  --sem-question-ink: oklch(81% 0.09 305);
+  --sem-warning: oklch(78% 0.13 85);
+  --sem-warning-ink: oklch(86% 0.11 88);
+  --sem-source: oklch(74% 0.1 232);
+  --sem-source-ink: oklch(83% 0.08 232);
+  --sem-removed: oklch(68% 0.16 25);
   background: var(--background);
   color: var(--foreground);
 }
@@ -169,6 +185,19 @@ html[data-kivo-theme="light"] .kivo-app {
   --nova: oklch(52% 0.1 180);
   --nova-ink: oklch(46% 0.08 181);
   --subtle: #535C6E;
+  --sem-definition: oklch(52% 0.14 268);
+  --sem-definition-ink: oklch(43% 0.13 268);
+  --sem-takeaway: oklch(52% 0.1 180);
+  --sem-takeaway-ink: oklch(44% 0.08 181);
+  --sem-example: oklch(58% 0.13 55);
+  --sem-example-ink: oklch(46% 0.12 50);
+  --sem-question: oklch(52% 0.15 305);
+  --sem-question-ink: oklch(44% 0.14 305);
+  --sem-warning: oklch(62% 0.13 75);
+  --sem-warning-ink: oklch(45% 0.11 70);
+  --sem-source: oklch(52% 0.11 238);
+  --sem-source-ink: oklch(43% 0.1 240);
+  --sem-removed: oklch(52% 0.17 25);
   /* Accent and status text that was pale-on-dark, darkened to read on paper. */
   --color-keppel-200: oklch(46% 0.08 181);
   --color-keppel-300: oklch(60% 0.105 179.6);
@@ -230,6 +259,22 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   --primary: var(--action);
   --primary-foreground: var(--action-foreground);
   --subtle: oklch(68% 0.015 295);
+  /* Meaning in a note (callouts, a paper, Nova's changes): a tone for edges
+     and tints, and an ink for text on the page. Never meaning by colour
+     alone: each role also has its icon and its label. */
+  --sem-definition: oklch(70% 0.11 268);
+  --sem-definition-ink: oklch(82% 0.08 268);
+  --sem-takeaway: oklch(70.64% 0.1 179.4);
+  --sem-takeaway-ink: oklch(79.68% 0.09 178.36);
+  --sem-example: oklch(74% 0.11 60);
+  --sem-example-ink: oklch(83% 0.09 65);
+  --sem-question: oklch(70% 0.12 305);
+  --sem-question-ink: oklch(81% 0.09 305);
+  --sem-warning: oklch(78% 0.13 85);
+  --sem-warning-ink: oklch(86% 0.11 88);
+  --sem-source: oklch(74% 0.1 232);
+  --sem-source-ink: oklch(83% 0.08 232);
+  --sem-removed: oklch(68% 0.16 25);
   color: var(--foreground);
 }
 
@@ -560,6 +605,23 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   100% { background-color: transparent; box-shadow: 0 0 0 4px transparent; }
 }
 .note-flash { border-radius: 6px; animation: note-flash 4.2s ease-out both; }
+/* A role in a note: .sem-<role> sets the tone, .sem-frame draws a callout's
+   edge and tint from it, .sem-ink its title. */
+.sem-definition { --sem: var(--sem-definition); --sem-i: var(--sem-definition-ink); }
+.sem-takeaway { --sem: var(--sem-takeaway); --sem-i: var(--sem-takeaway-ink); }
+.sem-example { --sem: var(--sem-example); --sem-i: var(--sem-example-ink); }
+.sem-question { --sem: var(--sem-question); --sem-i: var(--sem-question-ink); }
+.sem-warning { --sem: var(--sem-warning); --sem-i: var(--sem-warning-ink); }
+.sem-source { --sem: var(--sem-source); --sem-i: var(--sem-source-ink); }
+.sem-plain { --sem: var(--foreground); --sem-i: var(--foreground); }
+.sem-frame { border-color: color-mix(in oklch, var(--sem) 65%, transparent); background-color: color-mix(in oklch, var(--sem) 7%, transparent); }
+.sem-ink { color: var(--sem-i); }
+.sem-chip { color: var(--sem-i); background-color: color-mix(in oklch, var(--sem) 12%, transparent); }
+/* Maths, kept as its LaTeX: set apart from the prose and never reflowed. */
+.note-math { font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 0.88em; }
+.note-math-block { overflow-x: auto; white-space: pre; border-radius: 0.5rem; padding: 0.6rem 0.9rem; background-color: color-mix(in oklch, var(--sem-definition) 6%, transparent); border: 1px solid color-mix(in oklch, var(--sem-definition) 22%, transparent); }
+/* An imported paper's own text: a rule in the source colour down its edge. */
+.paper-text { border-left: 2px solid color-mix(in oklch, var(--sem-source) 40%, transparent); padding-left: 1.1rem; }
 /* Switching Nova between Tutor and Editor. */
 @keyframes nova-pane-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 .nova-pane-in { animation: nova-pane-in 0.2s ease-out both; }

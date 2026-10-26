@@ -56,6 +56,11 @@ export interface NoteSubjectOption {
   id:     string;
   name:   string;
   topics: string[];
+  // The subject it sits inside (subjects inside subjects), and each topic's
+  // parent topic by name, so a picker can show the whole path. Optional: an
+  // older API leaves them out.
+  parentId?:     string | null;
+  topicParents?: Record<string, string | null>;
 }
 
 export interface NovaNotesReady {
