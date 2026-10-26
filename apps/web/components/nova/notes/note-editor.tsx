@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
-  ArrowLeft, ArrowRight, Bold, Check, ChevronLeft, ChevronRight, Code, Columns2, ExternalLink, Hash, Heading1, Heading2,
+  ArrowLeft, ArrowRight, Bold, Check, ChevronLeft, ChevronRight, Code, Columns2, ExternalLink, FileText, Hash, Heading1, Heading2,
   HelpCircle, Highlighter, Italic, Lightbulb, Link2, List, ListOrdered, ListTree, Loader2, Minus, PanelLeft, Pencil,
   Quote, Sparkles, Trash2, Type, Undo2, X,
 } from 'lucide-react'
@@ -20,7 +20,7 @@ import { useStartSession } from '../use-start-session'
 import { NoteBody, linkHref } from './note-body'
 import { InsertPreview, type InsertWhere, type PendingInsert } from './insert-preview'
 import { NovaTutor, type Passage } from './nova-tutor'
-import { NovaEditor, type ApplyResult } from './nova-editor'
+import { NovaEditor, type ApplyResult, type EditAsk } from './nova-editor'
 import { Identity, ModeSwitch, type NovaMode } from './nova-modes'
 import { placeInto, placementHint, type InsertPart } from './tutor-session'
 import type { TutorReply } from '@repo/api/nova/product/note-tutor.types'
@@ -28,6 +28,9 @@ import { alreadyIn, applyEdits, insertAt, locateChange, placementFor, resolvePla
 import { outline, parseBlocks, sourceOf, tagsOf, wordCount } from './note-blocks'
 import { callout, divider, noteLink, prefixLines, tag, wrap, type Edited } from './note-format'
 import { NotesTree } from './notes-tree'
+import { novaModeCommands, useNotesCommands } from './notes-commands'
+import { modLabel } from './notes-shortcuts'
+import { paperPlacement } from '@repo/api/nova/product/paper-source'
 import { createNote, deleteNote, fetchNote, fetchNotes, updateNote } from './notes-api'
 
 // Unsaved text is kept in this browser while it is typed, so a crash, a
@@ -148,11 +151,28 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const caret = useRef<number | null>(null)
   const previewRef = useRef<HTMLDivElement>(null)
   // What the tutor hands the editor to work into the note.
-  const [editorSeed, setEditorSeed] = useState<{ material: string; label: string } | null>(null)
+  const [editorSeed, setEditorSeed] = useState<EditAsk | null>(null)
   const [live, setLive] = useState('')
 
   const setPrefs = useCallback((change: Partial<Prefs>) => setPrefsState(p => { const n = { ...p, ...change }; writePrefs(n); return n }), [])
   useEffect(() => { setPrefsState(readPrefs()) }, [])
+
+  // ⌘P imports a paper, ⌘K finds a note or switches Nova, ? lists the keys.
+  const reloadSubjects = useCallback(async () => {
+    const list = await fetchNotes()
+    if (list?.status !== 'ready') return null
+    setSubjects(list.subjects); setNotes(list.notes)
+    return list.subjects
+  }, [])
+  const modeCommands = useMemo(() => novaModeCommands(m => {
+    setPrefs({ nova: m, tutor: true })
+    if (!window.matchMedia('(min-width: 1024px)').matches) setTutorOnPhone(true)
+  }), [setPrefs])
+  const commands = useNotesCommands({
+    notes, subjects, reloadSubjects, extra: modeCommands,
+    here: { subjectId: note?.subjectId ?? null, topicName: note?.topicName ?? null },
+    onImported: () => void reloadSubjects(),
+  })
 
   const dirty = editing && !same(draft, saved)
   // The latest of each, for saves started from a timer or from Nova's panel.
@@ -347,7 +367,9 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const offerInsert = useCallback((markdown: string, label: string, from?: { reply: TutorReply; part: InsertPart; index?: number }) => {
     const body = currentBody()
     if (alreadyIn(body, markdown)) { setNotice('That is already in your note.'); return }
-    const place = placementFor(body, from ? placementHint(from.reply, body, from.part, from.index ?? 0) : { kind: 'other', title: label })
+    // In a note holding a paper, never into the paper's own text: the same
+    // place in the learner's "My notes" (paper-source.ts paperPlacement).
+    const place = paperPlacement(body, placementFor(body, from ? placementHint(from.reply, body, from.part, from.index ?? 0) : { kind: 'other', title: label }))
     setPendingInsert({ markdown, label, place })
   }, [currentBody])
   const offerTitle  = useCallback((to: string) => setPendingInsert({ markdown: '', label: 'Title', title: { from: draftRef.current.title, to: to.slice(0, NOTE_TITLE_MAX) } }), [])
@@ -370,7 +392,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       // Found again in the note as it is now: a section changed or gone
       // since the preview opened is chosen again, never guessed.
       const at = resolvePlacement(before, where)
-      if (at === null) { setPendingInsert({ ...p, place: placementFor(before, { kind: 'other', title: p.label }), moved: true }); return }
+      if (at === null) { setPendingInsert({ ...p, place: paperPlacement(before, placementFor(before, { kind: 'other', title: p.label })), moved: true }); return }
       const put = insertAt(before, at, p.markdown, where.how === 'newSection' ? where.heading : null)
       after = put.body; range = { start: put.start, end: put.end }
     }
@@ -383,33 +405,51 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   }
 
   // ── Nova's editor ────────────────────────────────────────────────────────
-  // The changes the learner kept, applied to the note on screen, each where
-  // its words still are (note-outline.ts applyEdits). If any no longer fits,
-  // nothing is applied. Undo puts the note back as it was.
-  const applyEditChanges = useCallback((changes: EditChange[], label: string): ApplyResult => {
+  // The changes the learner kept, applied to the note itself: the draft is
+  // the one copy the editor, the preview and the reader all draw, so every
+  // view shows the change at once. Each change goes where its words still
+  // are (note-outline.ts applyEdits); if any no longer fits, nothing is
+  // applied, and one already made is not made twice. The note is then saved
+  // straight away through its guarded save, and the result says whether it
+  // was: "applied" is only said of a saved note. Undo puts it back.
+  const saveNow = useCallback(async (): Promise<boolean> => {
+    if (inFlight.current) await inFlight.current
+    const n = noteRef.current
+    if (!n || !draftRef.current.title.trim()) return false
+    return save(n.updatedAt, { stay: true })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const applyEditChanges = useCallback(async (changes: EditChange[], label: string): Promise<ApplyResult> => {
     const n = noteRef.current
     if (!n) return { ok: false, conflicts: [], message: 'Save the note first.' }
+    if (inFlight.current) await inFlight.current
     const before = currentBody()
     const r = applyEdits(before, changes)
     if (!r.ok) return { ok: false, conflicts: r.conflicts, message: `Your note has changed where ${r.conflicts.length === 1 ? 'one of these changes goes' : `${r.conflicts.length} of these changes go`}, so nothing was applied.` }
+    if (r.applied.length === 0) return { ok: true, saved: !dirtyRef.current, already: true }
     if (r.body.length > NOTE_BODY_MAX) return { ok: false, conflicts: [], message: 'That would make the note longer than a note can be. Nothing was applied.' }
-    if (!editingRef.current) setDraft(draftOf(n))
-    setDraft(d => ({ ...d, body: r.body })); setEditing(true)
+    // The draft the save reads is set here, not after the next render.
+    const next = { ...(editingRef.current ? draftRef.current : draftOf(n)), body: r.body }
+    draftRef.current = next
+    setDraft(next); setEditing(true)
     // Undo is what the toast shows now, whatever it said before.
     setUndo({ before, after: r.body, label }); setNotice(null)
-    const first = changes[0]
-    const at = first && first.after ? r.body.indexOf(first.after.trim()) : -1
+    const first = changes.find(c => r.applied.includes(c.id) && c.after)
+    const at = first ? r.body.indexOf(first.after.trim()) : -1
     if (at !== -1) window.setTimeout(() => revealRange(at, at + first!.after.trim().length), 120)
-    return { ok: true }
-  }, [currentBody, revealRange])
+    const saved = await saveNow()
+    return { ok: true, saved }
+  }, [currentBody, revealRange, saveNow])
   const showChange = useCallback((c: EditChange) => {
     const at = locateChange(currentBody(), c)
     if (!at) { setNotice('That part of your note has changed since Nova proposed this.'); return }
     if (!wide) setTutorOnPhone(false)
     window.setTimeout(() => { revealRange(c.op === 'insert' ? Math.max(0, at.start - 1) : at.start, c.op === 'insert' ? at.start : at.end) }, wide ? 0 : 80)
   }, [currentBody, revealRange, wide])
-  const toEditor = useCallback((material: string, label: string) => {
-    setEditorSeed({ material: material.slice(0, 6_000), label }); setPrefs({ nova: 'editor' })
+  // The tutor hands a request to the editor (its text to work in, a
+  // structure, or an edit the learner asked the tutor for): the panel
+  // switches to the editor, which sends it.
+  const toEditor = useCallback((ask: EditAsk) => {
+    setEditorSeed({ ...ask, material: ask.material?.slice(0, 6_000) }); setPrefs({ nova: 'editor' })
   }, [setPrefs])
 
   function undoInsert() {
@@ -665,6 +705,9 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
           <Pencil className="size-3.5" /> Edit
         </button>
       )}
+      <button type="button" onClick={commands.openImport} className={`${iconButton()} max-sm:hidden`} title={`Import a research paper (${modLabel(commands.mac)}P)`} aria-label="Import a research paper" aria-keyshortcuts={commands.mac ? 'Meta+P' : 'Control+P'} data-note-import-paper>
+        <FileText className="size-4" />
+      </button>
       <button type="button" onClick={() => (wide ? setPrefs({ tutor: !prefs.tutor }) : setTutorOnPhone(true))} aria-pressed={wide ? prefs.tutor : tutorOnPhone}
         className={`ml-1 inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-colors ${(wide ? prefs.tutor : tutorOnPhone) ? 'bg-nova/15 text-nova-ink' : 'border border-nova/30 text-nova-ink hover:bg-nova/10'}`}
         title={wide && prefs.tutor ? 'Hide Nova' : 'Study this note with Nova'} data-tutor-toggle>
@@ -785,7 +828,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       <div className={prefs.nova === 'editor' ? 'nova-pane-in flex min-h-0 flex-1 flex-col' : 'hidden'} data-nova-pane="editor">
         <NovaEditor
           note={note} passage={passage} onClearPassage={() => setPassage(null)}
-          ensureSaved={ensureSaved} version={version} onApply={applyEditChanges} onShow={showChange}
+          ensureSaved={ensureSaved} version={version} onApply={applyEditChanges} onRetrySave={saveNow} onShow={showChange}
           seed={editorSeed} onSeedUsed={() => setEditorSeed(null)} header={novaHeader(onClose)}
         />
       </div>
@@ -859,6 +902,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
           <Sparkles className="size-3.5" /> {selChip.tooLong ? `Select under ${TUTOR_SELECTION_MAX.toLocaleString()} characters to ask Nova` : 'Ask Nova'}
         </button>
       )}
+      {commands.element}
       {pendingInsert && (
         <InsertPreview pending={pendingInsert} canPlaceAtCursor={editing && caret.current !== null} onConfirm={confirmInsert} onCancel={() => setPendingInsert(null)} />
       )}
@@ -907,7 +951,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     )
     const preview = (
       <div ref={previewRef} className="min-h-[24rem] px-1 py-2" data-note-preview>
-        {draft.body.trim() ? <NoteBody body={draft.body} links={note?.links.outgoing ?? []} serif={prefs.serif} /> : <p className="py-3 text-sm text-foreground/35">Nothing to preview yet.</p>}
+        {draft.body.trim() ? <NoteBody body={draft.body} links={note?.links.outgoing ?? []} serif={prefs.serif} title={draft.title} /> : <p className="py-3 text-sm text-foreground/35">Nothing to preview yet.</p>}
       </div>
     )
 
@@ -990,8 +1034,15 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
               : layout === 'split' ? (
                 // Below lg there is no room for two panes: the editor alone.
                 <div className="mt-3 grid gap-6 lg:grid-cols-2">
-                  <div className="flex flex-col lg:border-r lg:border-white/6 lg:pr-6">{editor}</div>
-                  <div className="hidden lg:block">{preview}</div>
+                  {/* Which side is typed into and which is drawn from it: one text, two views. */}
+                  <div className="flex flex-col lg:border-r lg:border-white/6 lg:pr-6">
+                    <p className="mb-1 hidden items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-subtle lg:flex" data-pane="write"><Pencil className="size-3" aria-hidden /> Markdown · you type here</p>
+                    {editor}
+                  </div>
+                  <div className="hidden lg:block">
+                    <p className="mb-1 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-subtle" data-pane="preview">Preview · drawn from the text, as saved notes look</p>
+                    {preview}
+                  </div>
                 </div>
               )
               : <div className="mt-3 flex flex-col">{editor}</div>}
@@ -1040,7 +1091,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
         {justSaved && <p role="status" className="mt-4 flex items-center gap-1.5 text-sm text-foreground/70" data-note-saved><Check className="size-4 text-keppel-300" /> Saved</p>}
 
         <div className="mt-8">
-          {note.body ? <NoteBody body={note.body} links={note.links.outgoing} serif={prefs.serif} /> : (
+          {note.body ? <NoteBody body={note.body} links={note.links.outgoing} serif={prefs.serif} title={note.title} /> : (
             <button type="button" onClick={() => setEditing(true)} className="w-full rounded-2xl border border-dashed border-white/10 px-6 py-10 text-center text-sm text-foreground/45 transition-colors hover:border-keppel-400/40 hover:text-foreground/70">
               This note is empty. Press E or click here to write it.
             </button>

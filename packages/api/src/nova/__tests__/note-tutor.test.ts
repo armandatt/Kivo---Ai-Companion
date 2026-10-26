@@ -240,3 +240,27 @@ describe("passages a reply rests on", () => {
     expect(w.blocks).toEqual([]);
   });
 });
+
+describe("a request to change the note, asked of the tutor", () => {
+  it("is handed to the editor: kept only from a typed question, with nothing else to add", () => {
+    const raw = reply({ editRequest: true, sections: [{ basis: "nova", heading: null, text: "Nova's editor will draft that change." }], followUps: ["x"], ideas: [{ title: "i", text: "t", basis: "nova" }] });
+    const out = readTutorReply(raw, "explain", sources)!;
+    expect(out.editRequest).toBe(true);
+    expect(out.sections).toHaveLength(1);
+    expect(out.followUps).toEqual([]);
+    expect(readTutorReply(raw, "quiz", sources)).toBeNull();
+    expect(readTutorReply(reply({ sections: [{ basis: "nova", heading: null, text: "An answer." }] }), "explain", sources)!.editRequest).toBe(false);
+  });
+});
+
+describe("a note holding an imported paper", () => {
+  it("the tutor is told what was imported and where the learner's notes start, and not to claim more", () => {
+    const { paperLine } = require("../product/note-tutor") as typeof import("../product/note-tutor");
+    const card = { title: "Attention Is All You Need", authors: ["A", "B", "C", "D"], published: "2017-06-12", venue: null, arxivId: "1706.03762", doi: null, pmid: null, pmcid: null, openreviewId: null, sourceUrl: "u", pdfUrl: null, status: "abstract" as const, from: null, importedOn: "2026-10-27", key: "arxiv:1706.03762" };
+    const line = paperLine(card);
+    expect(line).toContain('"Attention Is All You Need" by A, B, C and others (2017)');
+    expect(line).toContain("only its abstract and details, not its text");
+    expect(line).toContain('before the heading "My notes" is the paper\'s own text');
+    expect(line).toContain("Never state a result, number, equation, dataset, claim or citation of the paper that is not in S1");
+  });
+});

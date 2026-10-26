@@ -20,6 +20,7 @@ import type { NoteDetail } from '@repo/api/nova/product/notes.types'
 import type { TutorMode, TutorReply } from '@repo/api/nova/product/note-tutor.types'
 import { TUTOR_MESSAGE_MAX } from '@repo/api/nova/product/note-tutor.types'
 import { askTutor } from './tutor-api'
+import type { EditAsk } from './nova-editor'
 import { ReplyView, type Insert, type Reveal } from './tutor-playground'
 import {
   MODE_LABEL, MODE_WORK, askLine, historyOf, loadConversation, nextActions, openExercise, resultsOf, saveConversation,
@@ -52,8 +53,10 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
   onUseTitle: (title: string) => void
   // Shows a passage a reply rests on in the note.
   onReveal: Reveal
-  // Hands what Nova wrote to the editor, to be worked into the note.
-  onEditor?: (material: string, label: string) => void
+  // Hands a request to the editor: what Nova wrote, to be worked into the
+  // note, or a change the learner asked the tutor for (the tutor never
+  // changes the note, so it passes such a request on).
+  onEditor?: (ask: EditAsk) => void
   // The panel's header (note-editor.tsx: Nova's mark, Tutor or Editor, close),
   // given what Nova is doing now; clear: start a new conversation, when there is one.
   header: (status: React.ReactNode, working: boolean, clear: (() => void) | null) => React.ReactNode
@@ -119,8 +122,15 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
       ...list.map(e => (e.id === evaluating && e.role === 'nova' ? { ...e, work: { ...e.work, checked: true } } : e)),
       { id, role: 'nova', reply: res as TutorReply, work: {}, at: Date.now() },
     ])
+    // The learner asked for a change to the note: the editor drafts it, as
+    // changes to the sections concerned, for them to approve.
+    if ((res as TutorReply).editRequest && ask.message && onEditor) {
+      onEditor({ kind: 'custom', instruction: ask.message, passage: ask.passage, label: ask.message })
+      setAnnounce('That is a change to your note. Nova Editor is drafting it.')
+      return
+    }
     setAnnounce(`Nova answered: ${MODE_LABEL[ask.mode]}.`)
-  }, [noteId, pending, ensureSaved, version])
+  }, [noteId, pending, ensureSaved, version, onEditor])
 
   // The capture page's "Organise with Nova": once, when the note is open.
   const autoRan = useRef(false)

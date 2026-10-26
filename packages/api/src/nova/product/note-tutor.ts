@@ -20,6 +20,7 @@
 //     is not evidence, and no mastery moves (the session and its "How did it
 //     go?" answer remain the only evidence).
 
+import { MY_NOTES, PAPER_NOTE_WINDOW, readPaperCard, type PaperCard, type PaperTextStatus } from "./paper-source";
 import { generateOpenAIText } from "../../services/openai.service";
 import { noteSources, type NoteSources } from "./notes";
 import { listResourceSources } from "./learning-events";
@@ -220,6 +221,7 @@ const SYSTEM = [
   "place: when what you write would belong under one heading of S1 if the learner added it to the note (an explanation or example of that section's idea), that heading's words exactly as written in S1; else null.",
   "Write text in plain Markdown: short paragraphs, '- ' lists, **bold** for key terms, `code`, and $...$ for maths when needed. No HTML.",
   "Say nothing about the learner's progress, mastery, grades or history: you are not given any. Do not say you saved, added, linked, scheduled or changed anything: you cannot. Do not claim to have read a page or file you were not given.",
+  "editRequest: true only when the learner's message asks for their note itself to be changed (add, insert, rewrite, reorganise, move, fix, shorten or remove something in it). You cannot change the note; Nova's editor does that, for the learner to approve. Then reply with editRequest true, one short section with basis \"nova\" saying the editor will draft that change, and everything else empty. A question about the note, or a request to explain, quiz or summarise it here, is not an edit: editRequest false.",
   "followUps are up to three short things the learner might ask next, in their voice (\"Why does … ?\"), each under 70 characters.",
   "Reply with one JSON object only, with every key present (empty when it does not apply):",
   `{"sections": [{"basis": "notes"|"nova", "heading": string|null, "text": string, "refs": ["b3"]}],
@@ -233,6 +235,7 @@ const SYSTEM = [
  "organize": {"title": string|null, "overview": string|null, "outline": string|null, "concepts": [string], "questions": [string], "tags": [string]} | null,
  "related": [{"source": "S2", "why": string}],
  "followUps": [string],
+ "editRequest": boolean,
  "notInSources": boolean}`,
 ].join("\n");
 
@@ -255,11 +258,28 @@ const TASK: Record<TutorMode, string> = {
 
 export const tutorSourceLabel = (i: number) => `S${i + 1}`;
 
+// What the tutor is told about a note holding an imported paper: what it is,
+// how much of it was imported, and where the learner's own notes start.
+// Code reads this from the paper card; the model is told not to claim more.
+const IMPORTED: Record<PaperTextStatus, string> = {
+  full: "its full text",
+  partial: "part of its text (the import stops part-way; the rest is not in S1)",
+  abstract: "only its abstract and details, not its text",
+  details: "only its details (title, authors, where it was published), not its abstract or text",
+};
+export function paperLine(card: PaperCard): string {
+  return [
+    `S1 holds an imported research paper: "${card.title}"${card.authors.length ? ` by ${card.authors.slice(0, 3).join(", ")}${card.authors.length > 3 ? " and others" : ""}` : ""}${card.published ? ` (${card.published.slice(0, 4)})` : ""}. What was imported: ${IMPORTED[card.status]}${card.from ? `, from ${card.from}` : ""}.`,
+    `Everything in S1 before the heading "${MY_NOTES}" is the paper's own text; what is under "${MY_NOTES}" is the learner's notes. Say "the paper says" only for what the paper's text in S1 says, with [S1] and its blocks in refs; your explanation, background, intuition and comparisons are basis "nova", and a comparison with another paper is from your general knowledge unless that paper is a source given here.`,
+    "Never state a result, number, equation, dataset, claim or citation of the paper that is not in S1. If they ask about a part that was not imported, set notInSources, say what was imported, and say they can bring in the full text by uploading the paper's PDF.",
+  ].join(" ");
+}
+
 export function tutorPrompt(
   request: ParsedTutor,
   sources: NoteAssistSource[],
   texts: string[],
-  context: { subjectName: string | null; topicName: string | null; partial: boolean; passage: { text: string; heading: string | null; found: boolean } | null },
+  context: { subjectName: string | null; topicName: string | null; partial: boolean; passage: { text: string; heading: string | null; found: boolean } | null; paper?: PaperCard | null },
 ): string {
   const pace = request.results.length === 0 ? null
     : `Their last answers in this conversation: ${request.results.join(", ")}. ${request.results.slice(-2).every(r => r === "incorrect") ? "Go slower and simpler." : request.results.slice(-2).every(r => r === "correct") ? "They are ready for more depth." : ""}`.trim();
@@ -267,6 +287,7 @@ export function tutorPrompt(
     `Task: ${TASK[request.mode]}`,
     context.subjectName ? `The note is filed under: ${[context.subjectName, context.topicName].filter(Boolean).join(" › ")}` : null,
     context.partial ? "The note is long: S1 is the part of it around what is being discussed." : null,
+    context.paper ? paperLine(context.paper) : null,
     context.passage ? `The passage the learner chose${context.passage.heading ? ` (under the heading "${context.passage.heading}")` : ""}${context.passage.found ? "" : " (not found in the saved note: they may have just typed it)"}:\n"""\n${context.passage.text}\n"""` : null,
     request.history.length ? `The conversation so far, as the page recorded it:\n${request.history.map(t => `${t.role === "learner" ? "Learner" : "Nova"}: ${t.text}`).join("\n")}` : null,
     pace,
@@ -304,12 +325,13 @@ const EMPTY_PARTS = {
   ideas: [] as TutorIdea[], cards: [] as TutorCard[], verdict: null as TutorVerdict | null, organize: null as TutorOrganize | null,
   related: [] as Array<{ sourceId: string; why: string }>, followUps: [] as string[], notInSources: false,
   place: null as string | null,
+  editRequest: false,
 };
 type Parts = typeof EMPTY_PARTS;
 
 // Which parts each mode may return. Anything else the model sent is dropped.
 const KEEP: Record<TutorMode, Array<keyof Parts>> = {
-  explain:    ["sections", "related", "followUps", "notInSources"],
+  explain:    ["sections", "related", "followUps", "notInSources", "editRequest"],
   simpler:    ["sections", "followUps", "notInSources"],
   example:    ["sections", "steps", "followUps", "notInSources"],
   steps:      ["sections", "steps", "followUps", "notInSources"],
@@ -407,10 +429,14 @@ export function readTutorReply(raw: string, mode: TutorMode, sources: NoteAssist
     followUps: strings(p.followUps, 3, 90),
     notInSources: p.notInSources === true,
     place,
+    editRequest: p.editRequest === true,
   };
 
   const kept: Parts = { ...EMPTY_PARTS, place };
   for (const key of KEEP[mode]) (kept as Record<string, unknown>)[key] = all[key];
+  // A request to change the note is handed to the editor: nothing else of
+  // the reply is offered to add.
+  if (kept.editRequest) return { ...EMPTY_PARTS, editRequest: true, sections: kept.sections.filter(s => s.basis === "nova").slice(0, 1) };
   const anything = kept.sections.length || kept.steps.length || kept.exercise || kept.quiz.length || kept.ideas.length
     || kept.cards.length || kept.verdict || kept.organize || kept.related.length;
   if (!anything) return null;
@@ -444,7 +470,9 @@ export async function tutorOnNote(
   }
 
   const located = request.selection ? locatePassage(material.note.body, request.selection) : null;
-  const window = markedNote(material.note.body, located?.found ? located.offset : null);
+  // A paper is read nearly whole (it is the material being taught).
+  const paper = readPaperCard(material.note.body)?.card ?? null;
+  const window = markedNote(material.note.body, located?.found ? located.offset : null, paper ? PAPER_NOTE_WINDOW : undefined);
   const chosen = located?.found ? blockAt(window.blocks, located.offset) : null;
   const passage = request.selection ? { text: request.selection, heading: located!.heading, found: located!.found, ref: chosen ? refOf(chosen) : null } : null;
 
@@ -467,7 +495,7 @@ export async function tutorOnNote(
   try {
     const reply = await generate({
       model: "gpt-4o", systemInstruction: SYSTEM,
-      prompt: tutorPrompt(request, sources, texts, { subjectName: material.note.subjectName, topicName: material.note.topicName, partial: window.partial, passage }),
+      prompt: tutorPrompt(request, sources, texts, { subjectName: material.note.subjectName, topicName: material.note.topicName, partial: window.partial, passage, paper }),
       maxOutputTokens: request.mode === "organize" ? 3_000 : 1_800, deadlineMs: TUTOR_DEADLINE_MS, json: true,
     });
     const parts = readTutorReply(typeof reply === "string" ? reply : "", request.mode, sources, window.blocks);

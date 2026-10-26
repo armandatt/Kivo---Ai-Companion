@@ -117,6 +117,9 @@ export interface TutorReply {
   followUps:    string[];
   // The sources do not contain what was asked.
   notInSources: boolean;
+  // The learner asked for the note to be changed: the tutor does not edit,
+  // so the page hands the request to Nova's editor (note-edit.ts).
+  editRequest?: boolean;
 }
 
 export type TutorError =
