@@ -257,7 +257,7 @@ function FileEditor({ node, view, onChanged }: { node: MapNode; view: NovaKnowle
   )
 }
 
-// Removing one connection from the details panel: what it means first, then
+// Unlinking one connection from the details panel: what it means first, then
 // the one request. No card is deleted.
 function Disconnect({ edge, view, onDone, onCancel }: { edge: MapEdge; view: NovaKnowledgeMapReady; onDone: (said: string, stale: boolean) => void; onCancel: () => void }) {
   const byId = useMemo(() => new Map(view.nodes.map(n => [n.id, n])), [view.nodes])
@@ -269,12 +269,12 @@ function Disconnect({ edge, view, onDone, onCancel }: { edge: MapEdge; view: Nov
     setBusy(true); setError(null)
     const out = await sendDisconnect(plan.request, byId.get(edge.from)?.label ?? '')
     setBusy(false)
-    if (out.ok) { onDone(out.said[0] ?? 'Connection removed. Nothing was deleted.', false); return }
+    if (out.ok) { onDone(out.said[0] ?? 'Unlinked. Nothing was deleted.', false); return }
     setError(out.message)
     if (out.stale) onDone(out.message, true)
   }
   return (
-    <div role="group" aria-label="Remove this connection" className="mx-2 mb-2 rounded-xl border border-white/10 bg-white/3 p-3 text-xs leading-relaxed" data-disconnect
+    <div role="group" aria-label="Unlink" className="mx-2 mb-2 rounded-xl border border-white/10 bg-white/3 p-3 text-xs leading-relaxed" data-disconnect
       onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); onCancel() } }}>
       {plan.ok ? <>
         <p className="font-medium text-foreground">{plan.label}</p>
@@ -283,7 +283,7 @@ function Disconnect({ edge, view, onDone, onCancel }: { edge: MapEdge; view: Nov
       {error && <p role="alert" className="mt-2 text-red-400">{error}</p>}
       <div className="mt-2 flex justify-end gap-2">
         <button type="button" onClick={onCancel} disabled={busy} className={cn(BUTTON_QUIET, 'h-7')} autoFocus={!plan.ok}>Cancel</button>
-        {plan.ok && <button type="button" onClick={() => void go()} disabled={busy} className={cn(BUTTON_PRIMARY, 'h-7 px-3 text-xs')} autoFocus data-disconnect-confirm>{busy ? 'Removing…' : 'Remove connection'}</button>}
+        {plan.ok && <button type="button" onClick={() => void go()} disabled={busy} className={cn(BUTTON_PRIMARY, 'h-7 px-3 text-xs')} autoFocus data-disconnect-confirm>{busy ? 'Unlinking…' : 'Unlink'}</button>}
       </div>
     </div>
   )
@@ -457,9 +457,9 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
                   <span className="ml-auto shrink-0 text-[11px] text-subtle">{TYPE_LABEL[n.type]}</span>
                 </button>
                 <button type="button" onClick={() => setRemoving(r => (r === edge.id ? null : edge.id))} aria-expanded={removing === edge.id}
-                  aria-label={`Remove the connection with ${n.label}`} title="Remove this connection (no card is deleted)" data-disconnect-open={n.label}
+                  aria-label={`Unlink ${n.label}`} title="Unlink (no card is deleted)" data-disconnect-open={n.label}
                   className="ml-1 inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/10 px-2 py-1 text-[11px] font-medium text-foreground/70 transition-colors hover:border-white/20 hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring aria-expanded:border-white/20 aria-expanded:text-foreground">
-                  <Unlink aria-hidden className="size-3.5" /> Remove
+                  <Unlink aria-hidden className="size-3.5" /> Unlink
                 </button>
                 </div>
                 {removing === edge.id && <Disconnect edge={edge} view={view} onCancel={() => setRemoving(null)} onDone={(said, stale) => { setRemoving(null); onDisconnected(said, stale) }} />}
