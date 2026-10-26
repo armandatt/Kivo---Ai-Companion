@@ -21,7 +21,7 @@
 import { generateOpenAIText } from "../../services/openai.service";
 import type { LlmAttachment } from "../../services/llmProviders";
 import { PLAN_LIMITS, checkWorkspacePlan, type PlanCheck, type WorkspacePlan } from "./workspace-plan";
-import { isTruncated } from "../../services/llmProviders";
+import { isOverPriceTier, isTruncated } from "../../services/llmProviders";
 import { treeOrder } from "./task-tree";
 import { parseCreationIntent, type CreationIntent } from "./workspace-routing";
 import { CATEGORY_INFO, type StudyTemplate, type TemplateCategory } from "./templates";
@@ -35,6 +35,10 @@ export const REQUEST_MAX = 2000;
 export const PLAN_OUTPUT_TOKENS = 16_000;
 export const CHANGES_OUTPUT_TOKENS = 8_000;
 // Said, not guessed at, when a reply stopped at its length limit.
+// The model client sends nothing over its prompt-size limit (llmProviders
+// CLAUDE_PROMPT_TOKENS_MAX); files are what get there, so the learner is told
+// to send less, not to try again.
+export const FILES_TOO_BIG = "Those files are more than Nova reads in one go (roughly 30 to 40 PDF pages in all). Nothing was lost: share fewer pages, or the part that matters, and ask again.";
 export const TOO_LONG = "That plan came out longer than Nova can write in one go, so nothing was kept. Ask for it in parts (one subject or workstream first), and add the rest as changes.";
 
 export const NO_RESEARCH =
@@ -237,6 +241,7 @@ export async function writeWorkspacePlan(p: PlanRequest, generate: Generate = ge
     });
   } catch (err) {
     if (isTruncated(err)) return { ok: false, message: TOO_LONG };
+    if (isOverPriceTier(err)) return { ok: false, message: FILES_TOO_BIG };
     return { ok: false, unavailable: true, message: "Nova couldn't write the plan just now. Your request is still here; try again." };
   }
   const parsed = parsePlanReply(raw);
@@ -301,10 +306,10 @@ export function builderPlanPrompt(p: BuilderPlanRequest): string {
 // JSON output mode is asked for too). One cut off at its length limit is not
 // asked again: it would be cut off again.
 export const UNREADABLE_TRIES = 2;
-async function readableReply(ask: () => Promise<string>): Promise<Record<string, unknown> | null | "failed" | "too_long"> {
+async function readableReply(ask: () => Promise<string>): Promise<Record<string, unknown> | null | "failed" | "too_long" | "too_big"> {
   for (let i = 0; i < UNREADABLE_TRIES; i++) {
     let raw: string;
-    try { raw = await ask(); } catch (err) { return isTruncated(err) ? "too_long" : "failed"; }
+    try { raw = await ask(); } catch (err) { return isTruncated(err) ? "too_long" : isOverPriceTier(err) ? "too_big" : "failed"; }
     const parsed = parsePlanReply(raw);
     if (parsed) return parsed;
   }
@@ -317,6 +322,7 @@ export async function writeBuilderPlan(p: BuilderPlanRequest, generate: Generate
     deadlineMs: PLAN_DEADLINE_MS, attemptMs: PLAN_ATTEMPT_MS, json: true, ...(p.files?.length ? { attachments: p.files } : {}),
   }));
   if (parsed === "too_long") return { ok: false, message: TOO_LONG };
+  if (parsed === "too_big") return { ok: false, message: FILES_TOO_BIG };
   if (parsed === "failed") return { ok: false, unavailable: true, message: "Nova couldn't write the proposal just now. Nothing was lost; try again." };
   if (!parsed) return { ok: false, message: "Nova's proposal came back in a form Kivo couldn't use. Try again." };
   const checked = withNoResearch(checkWorkspacePlan({ ...parsed, kind: "custom", templateId: null, templateVersion: null }, { today: p.today, files: (p.files ?? []).map(f => f.name), userText: p.learnerText, nova: true }));
@@ -431,6 +437,7 @@ export async function writeBuilderChanges(p: ChangesRequest, generate: Generate 
     deadlineMs: PLAN_DEADLINE_MS, attemptMs: PLAN_ATTEMPT_MS, json: true, ...(p.files?.length ? { attachments: p.files } : {}),
   }));
   if (parsed === "too_long") return { ok: false, message: "Those changes came out longer than Nova can write in one go. Nothing was changed; ask for them a few at a time." };
+  if (parsed === "too_big") return { ok: false, message: FILES_TOO_BIG };
   if (parsed === "failed") return { ok: false, message: "Nova couldn't work out the changes just now. Nothing was changed; try again." };
   if (!parsed || !Array.isArray(parsed.ops)) return { ok: false, message: "Nova's changes came back in a form Kivo couldn't use. Nothing was changed; try again." };
   return { ok: true, ops: parsed.ops, summary: typeof parsed.summary === "string" ? parsed.summary.slice(0, 600) : null };

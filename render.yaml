@@ -42,8 +42,10 @@ services:
         sync: false
 
       # ── Secrets ─────────────────────────────────────────────────────────────
-      # LLM provider: Gemini is used whenever GEMINI_API_KEY has a value.
-      # OPENAI_API_KEY is only read when it does not (or LLM_PROVIDER=openai).
+      # LLM provider: Claude is used whenever ANTHROPIC_API_KEY has a value;
+      # then Gemini (GEMINI_API_KEY), then OpenAI. LLM_PROVIDER forces one.
+      - key: ANTHROPIC_API_KEY
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: OPENAI_API_KEY
