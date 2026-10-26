@@ -12,7 +12,7 @@ type Context = { params: Promise<{ id: string }> }
 // another learner's task is "not found", whether it exists or not.
 const NOT_FOUND = () => taskFail(404, "not_found", "That task doesn't exist.")
 
-// PATCH /api/nova/tasks/:id  { title?, status?, priority?, subjectId?, topicName?, dueDay? }
+// PATCH /api/nova/tasks/:id  { title?, status?, priority?, subjectId?, topicName?, dueDay?, parentId?, waitFor? }
 // Moving a card on the board is this, with a status. Response: TaskResponse.
 export async function PATCH(req: Request, { params }: Context) {
   try {

@@ -80,11 +80,15 @@ export interface TaskInput {
   // The task it is a step of; null makes it a task of its own.
   parentId?:  string | null;
   clientKey?: string;              // create only
+  // Update only: this task also waits for that one of theirs (a
+  // NovaTaskDependency row). Never on itself or round a circle; a wait that
+  // is already there changes nothing.
+  waitFor?:   string;
 }
 
 export type TaskError =
   | "invalid" | "title_required" | "title_too_long" | "topic_too_long"
-  | "unknown_status" | "unknown_priority" | "bad_due_day" | "unknown_subject" | "bad_minutes" | "changed" | "bad_parent"
+  | "unknown_status" | "unknown_priority" | "bad_due_day" | "unknown_subject" | "bad_minutes" | "changed" | "bad_parent" | "bad_wait"
   | "too_many" | "not_found" | "failed";
 
 export type TaskResponse =

@@ -18,6 +18,11 @@ export interface MapLayout {
   bounds: { minX: number; minY: number; maxX: number; maxY: number }
   // Top-left of the block of items filed under nothing. null: there are none.
   loose:  { x: number; y: number; width: number } | null
+  // How the line to a card in a wrapped column (after the first) runs: out
+  // to a trunk beside the first column, along the gap above its row, then
+  // into it, so it never crosses the cards before it. Kept with the card's
+  // own place (x, y): once the learner moves the card, its line is straight.
+  lanes?: Map<string, { trunkX: number; laneY: number; x: number; y: number }>
 }
 
 // The size of each kind of card, centred on its position.
@@ -34,7 +39,19 @@ export const TREE_EDGES: ReadonlySet<MapEdge['kind']> = new Set(['contains', 'ha
 
 const COL       = 250   // one level deeper, to the right
 const ROW_GAP   = 14    // between cards one under another
-const BRANCH_GAP = 30   // between two subjects' trees
+const GROUP_GAP = 24    // around a card with cards hanging from it, so branches read apart
+const BRANCH_GAP = 36   // between two subjects' trees
+// A run of this many cards with nothing inside them, side by side in a
+// branch, wraps into up to WRAP_COLS short columns instead of one long one.
+const WRAP      = 8
+const WRAP_ROWS = 6
+const WRAP_COLS = 3
+const WRAP_GAP  = 22    // between the wrapped columns
+// Subjects' trees are packed into columns toward this shape (width to
+// height), not stacked into one strip. A constant, not the window's shape,
+// so resizing never moves anything.
+const ASPECT    = 1.6
+const TREE_GAP  = 90    // between two columns of subjects' trees
 const INDENT    = 34    // a level in the portrait outline
 const LOOSE_COLS = 5    // in portrait, 2
 const LOOSE_DX  = 184
@@ -76,6 +93,7 @@ export function treeOf(nodes: MapNode[], edges: MapEdge[]): { children: Map<stri
 // portrait: the map is drawn for a frame taller than it is wide (a phone).
 export function layoutMap(nodes: MapNode[], edges: MapEdge[], { portrait = false }: { portrait?: boolean } = {}): MapLayout {
   const at = new Map<string, Placed>()
+  const lanes = new Map<string, { trunkX: number; laneY: number; x: number; y: number }>()
   const type = new Map(nodes.map(n => [n.id, n.type]))
   const { children, roots, parent } = treeOf(nodes, edges)
   const h = (id: string) => CARD[type.get(id) ?? 'note'].h
@@ -95,8 +113,28 @@ export function layoutMap(nodes: MapNode[], edges: MapEdge[], { portrait = false
     // what hangs from it, and never over the card above it. `placed` lists
     // cards in the order they were placed, so a branch is one stretch of it.
     const placed: string[] = []
+    const kidsOf = (id: string) => (children.get(id) ?? []).filter(c => !at.has(c))
+    const leaf = (id: string) => kidsOf(id).length === 0
+    const w = (id: string) => CARD[type.get(id) ?? 'note'].w
+    // A long run of leaves: short columns, each read top to bottom, in order.
+    const grid = (run: string[], depth: number, top: number): number => {
+      const cols = Math.min(WRAP_COLS, Math.ceil(run.length / WRAP_ROWS))
+      const rows = Math.ceil(run.length / cols)
+      const rowH = Math.max(...run.map(h)) + ROW_GAP
+      const colW = Math.max(...run.map(w)) + WRAP_GAP
+      const x0 = depth * COL
+      const trunkX = x0 - Math.max(...run.map(w)) / 2 - WRAP_GAP / 2
+      run.forEach((id, i) => {
+        const c = Math.floor(i / rows), r = i % rows
+        const p = { id, x: x0 + c * colW, y: top + r * rowH + h(id) / 2 }
+        at.set(id, p)
+        placed.push(id)
+        if (c > 0) lanes.set(id, { trunkX, laneY: top + r * rowH - ROW_GAP / 2, x: p.x, y: p.y })
+      })
+      return top + rows * rowH - ROW_GAP
+    }
     const place = (id: string, depth: number, top: number): number => {
-      const kids = (children.get(id) ?? []).filter(c => !at.has(c))
+      const kids = kidsOf(id)
       const x = depth * COL
       if (kids.length === 0) {
         at.set(id, { id, x, y: top + h(id) / 2 })
@@ -107,21 +145,74 @@ export function layoutMap(nodes: MapNode[], edges: MapEdge[], { portrait = false
       placed.push(id)
       let bottom = top
       const from = placed.length
-      for (const c of kids) bottom = place(c, depth + 1, bottom === top ? top : bottom + ROW_GAP)
+      const direct: string[] = []
+      for (let i = 0; i < kids.length;) {
+        const c = kids[i]!
+        // A card with cards inside it gets a little more room around it.
+        const gap = bottom === top ? 0 : leaf(c) && (i === 0 || leaf(kids[i - 1]!)) ? ROW_GAP : GROUP_GAP
+        let j = i
+        while (j < kids.length && leaf(kids[j]!)) j++
+        if (j - i >= WRAP) {
+          const run = kids.slice(i, j)
+          bottom = grid(run, depth + 1, bottom + gap)
+          direct.push(...run)
+          i = j
+          continue
+        }
+        bottom = place(c, depth + 1, bottom + gap)
+        direct.push(c)
+        i++
+      }
       const below = placed.slice(from)
-      const first = at.get(kids[0]!)!.y, last = at.get(kids[kids.length - 1]!)!.y
-      let y = (first + last) / 2
+      const ys = direct.map(k => at.get(k)!.y)
+      let y = (Math.min(...ys) + Math.max(...ys)) / 2
       // Taller than what hangs from it: the whole branch moves down.
       if (y - h(id) / 2 < top) {
         const by = top - (y - h(id) / 2)
-        for (const k of below) { const p = at.get(k)!; at.set(k, { ...p, y: p.y + by }) }
+        for (const k of below) {
+          const p = at.get(k)!
+          at.set(k, { ...p, y: p.y + by })
+          const l = lanes.get(k)
+          if (l) lanes.set(k, { ...l, laneY: l.laneY + by, y: l.y + by })
+        }
         y += by; bottom += by
       }
       at.set(id, { id, x, y })
       return Math.max(bottom, y + h(id) / 2)
     }
-    let top = 0
-    for (const r of roots) if (!at.has(r)) top = place(r, 0, top) + BRANCH_GAP
+    // Each subject's tree on its own, then packed into columns in their
+    // order: down one column until it is as tall as the shape asks, then the next.
+    const trees: Array<{ ids: string[]; minX: number; minY: number; maxX: number; maxY: number }> = []
+    for (const r of roots) {
+      if (at.has(r)) continue
+      const from = placed.length
+      place(r, 0, 0)
+      const ids = placed.slice(from)
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+      for (const id of ids) {
+        const p = at.get(id)!
+        minX = Math.min(minX, p.x - w(id) / 2); maxX = Math.max(maxX, p.x + w(id) / 2)
+        minY = Math.min(minY, p.y - h(id) / 2); maxY = Math.max(maxY, p.y + h(id) / 2)
+      }
+      trees.push({ ids, minX, minY, maxX, maxY })
+    }
+    const area = trees.reduce((a, t) => a + (t.maxX - t.minX + TREE_GAP) * (t.maxY - t.minY + BRANCH_GAP), 0)
+    const tall = Math.max(0, ...trees.map(t => t.maxY - t.minY))
+    const columnH = Math.max(tall, Math.sqrt(area / ASPECT))
+    let cx = 0, cy = 0, colW = 0
+    for (const t of trees) {
+      const tw = t.maxX - t.minX, th = t.maxY - t.minY
+      if (cy > 0 && cy + th > columnH) { cx += colW + TREE_GAP; cy = 0; colW = 0 }
+      const dx = cx - t.minX, dy = cy - t.minY
+      for (const id of t.ids) {
+        const p = at.get(id)!
+        at.set(id, { id, x: p.x + dx, y: p.y + dy })
+        const l = lanes.get(id)
+        if (l) lanes.set(id, { trunkX: l.trunkX + dx, laneY: l.laneY + dy, x: l.x + dx, y: l.y + dy })
+      }
+      cy += th + BRANCH_GAP
+      colW = Math.max(colW, tw)
+    }
   }
 
   const centres = () => {
@@ -149,7 +240,7 @@ export function layoutMap(nodes: MapNode[], edges: MapEdge[], { portrait = false
     rest.forEach((n, i) => at.set(n.id, { id: n.id, x: b.minX + (i % LOOSE_COLS) * LOOSE_DX, y: b.maxY + 120 + Math.floor(i / LOOSE_COLS) * LOOSE_DY }))
   }
 
-  return { at, bounds: boundsOf(at, type), loose }
+  return { at, bounds: boundsOf(at, type), loose, lanes }
 }
 
 // The box around every card, with room at the bottom for the caption that
@@ -174,5 +265,5 @@ export function withPositions(layout: MapLayout, nodes: MapNode[], positions: Re
     const p = positions.get(n.id)
     if (p && at.has(n.id)) at.set(n.id, { id: n.id, x: p.x, y: p.y })
   }
-  return { at, bounds: boundsOf(at, new Map(nodes.map(n => [n.id, n.type]))), loose: layout.loose }
+  return { at, bounds: boundsOf(at, new Map(nodes.map(n => [n.id, n.type]))), loose: layout.loose, lanes: layout.lanes }
 }

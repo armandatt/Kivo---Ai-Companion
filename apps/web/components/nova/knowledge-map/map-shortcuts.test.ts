@@ -2,12 +2,12 @@
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { SHORTCUTS, isMacPlatform, isTypingTarget, keyLabel, navigate, shortcutFor } from './map-shortcuts'
+import { SHORTCUTS, enterAction, enterTarget, isMacPlatform, isTypingTarget, keyLabel, navigate, shortcutFor } from './map-shortcuts'
 
 test('each listed key does what the help panel says', () => {
   const cases: Array<[Parameters<typeof shortcutFor>[0], string]> = [
     [{ key: '/' }, 'search'], [{ key: 'k', metaKey: true }, 'search'], [{ key: 'K', ctrlKey: true }, 'search'],
-    [{ key: 'Enter' }, 'open'], [{ key: 'Enter', shiftKey: true }, 'explore'], [{ key: ' ' }, 'fold'],
+    [{ key: 'Enter' }, 'explore'], [{ key: 'Enter', shiftKey: true }, 'open'], [{ key: ' ' }, 'fold'],
     [{ key: 'Escape' }, 'escape'], [{ key: '+' }, 'zoom_in'], [{ key: '=' }, 'zoom_in'], [{ key: '-' }, 'zoom_out'],
     [{ key: '0' }, 'actual_size'], [{ key: 'f' }, 'fit'], [{ key: 'F', shiftKey: true }, 'fit'], [{ key: 'n' }, 'add'],
     [{ key: 'u' }, 'up'], [{ key: 'Delete' }, 'delete'], [{ key: 'Backspace' }, 'delete'], [{ key: '?', shiftKey: true }, 'help'],
@@ -86,4 +86,25 @@ test('in the outline, up and down go row by row', () => {
   assert.deepEqual(navigate('b', 'up', tree, all, { outline: true, rows }), { to: 'a2' })
   assert.deepEqual(navigate('a1', 'left', tree, all, { outline: true, rows }), { to: 'a' })
   assert.equal(navigate('loose', 'down', tree, all, { outline: true, rows }).to, null)
+})
+
+test('Enter acts on the card chosen last, never a stale one', () => {
+  const onMap = new Set(['a', 'b', 'c', 'd'])
+  // Search picked b; then arrows to c, then d; focus is still catching up on c.
+  assert.equal(enterTarget({ chosen: 'd', focused: 'c', selected: 'd', onMap }), 'd')
+  // Tab reached c without selecting it: c is chosen.
+  assert.equal(enterTarget({ chosen: 'c', focused: 'c', selected: 'a', onMap }), 'c')
+  // Nothing chosen this visit: the focused card, then the selection.
+  assert.equal(enterTarget({ chosen: null, focused: 'b', selected: 'a', onMap }), 'b')
+  assert.equal(enterTarget({ chosen: null, focused: null, selected: 'a', onMap }), 'a')
+  // A card deleted since is never acted on.
+  assert.equal(enterTarget({ chosen: 'gone', focused: null, selected: 'gone', onMap }), null)
+})
+
+test('Enter explores; a card with nothing inside opens details; the explored card does nothing twice', () => {
+  const explorable = (id: string) => id === 'unit'
+  assert.equal(enterAction('unit', { exploring: null, explorable }), 'explore')
+  assert.equal(enterAction('leaf', { exploring: null, explorable }), 'details')
+  assert.equal(enterAction('unit', { exploring: 'unit', explorable }), 'already')
+  assert.equal(enterAction(null, { exploring: null, explorable }), 'none')
 })

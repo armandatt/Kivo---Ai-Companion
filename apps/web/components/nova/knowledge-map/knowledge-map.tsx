@@ -16,7 +16,7 @@ import { filingChoices, placementLabel, placementOf, planLink, samePlacement, ty
 import { addNoteLink, fileItem, type EditOutcome } from './map-actions'
 import { fitKey, focusToApply, keepValid } from './view-state'
 import { START, back, canExplore, crossLinks, current, enter, insideOf, keepLevels, MARKER_R, pathTo, placeOutside, reach, up, type Level, type View } from './explore'
-import { isMacPlatform, isTypingTarget, navigate, shortcutFor } from './map-shortcuts'
+import { enterAction, enterTarget, isMacPlatform, isTypingTarget, navigate, shortcutFor } from './map-shortcuts'
 import { OUTLINE_QUERY, browserStore, chooseOrientation, chosenOrientation, forgetViews, pictureKey, recallView, rememberView, type Orientation } from './view-memory'
 import { NEW_SUBJECT } from './map-structure'
 import { AddDialog, Breadcrumbs, DeleteDialog, Legend, ShortcutsHelp } from './map-panels'
@@ -366,7 +366,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
       {startError && <p role="alert" className="mt-3 text-sm text-red-400">{startError}</p>}
 
       <div className="mt-4 flex flex-wrap gap-2" data-node-actions>
-        {onExplore && <button type="button" onClick={onExplore} className={action} data-explore title="Explore inside (Shift+Enter)"><Layers aria-hidden className="size-3.5" /> Explore inside</button>}
+        {onExplore && <button type="button" onClick={onExplore} className={action} data-explore title="Explore inside (Enter)"><Layers aria-hidden className="size-3.5" /> Explore inside</button>}
         {onScope && !scoped && <button type="button" onClick={onScope} className={action} data-scope-here><Focus aria-hidden className="size-3.5" /> Show what is around it</button>}
         {inside > 0 && <button type="button" onClick={onCollapse} className={action} data-collapse aria-pressed={collapsed} title="Space">{collapsed ? <ChevronsUpDown aria-hidden className="size-3.5" /> : <ChevronsDownUp aria-hidden className="size-3.5" />} {collapsed ? `Show the ${inside} inside` : `Fold the ${inside} inside`}</button>}
         {onAdd && <button type="button" onClick={onAdd} className={action} data-add-open title="N"><Plus aria-hidden className="size-3.5" /> Add…</button>}
@@ -578,6 +578,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   const swallowClick = useRef(false)
   // A card to select once the map has it (after an add, or a jump to a card outside).
   const pendingSelect = useRef<string | null>(null)
+  // The card the learner chose last: selected (a click, a search result, an
+  // arrow key) or reached with Tab. Set at once, so Enter right after an
+  // arrow key acts on the new card, not the one focus has not left yet.
+  const lastChosen = useRef<string | null>(null)
   const layout = useMapLayout()
 
   useEffect(() => { setMac(isMac()) }, [])
@@ -816,6 +820,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   // Shows the card's details, keeping it selected.
   const select = useCallback((id: string | null, opts: { centre?: boolean; focusCard?: boolean } = {}) => {
     setSelected(id)
+    lastChosen.current = id
     if (!id) return
     setDetailOpen(true)
     if (opts.centre) centreOn(id)
@@ -834,6 +839,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     setCollapsed(c => (c.has(id) ? new Set([...c].filter(x => x !== id)) : c))
     setStack(s => enter(s, id, tNow.current))
     setSelected(id)
+    lastChosen.current = id
     setScope(null)
   }, [tree, say])
   const goBack = useCallback(() => setStack(s => back(s)), [])
@@ -961,6 +967,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   onKey.current = (e: KeyboardEvent) => {
     const r = root.current
     if (!r || e.defaultPrevented || isTypingTarget(e.target)) return
+    // A held key repeats; Enter acts once per press.
+    if (e.repeat && e.key === 'Enter') { e.preventDefault(); return }
     const active = document.activeElement
     const onCanvas = !active || active === document.body || active === frame.current
     if (!onCanvas && !r.contains(active)) return
@@ -970,7 +978,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     // Enter, Space, the arrows and Delete keep their own meaning on a button or link.
     const ownKeys = !onCanvas && !card && active instanceof HTMLElement && active.matches('button, a[href], select, summary, [role="button"], [role="radio"], [role="checkbox"]')
     if (ownKeys && ['open', 'explore', 'fold', 'navigate', 'pan', 'delete', 'nudge', 'escape'].includes(k.action)) return
-    const target = card ?? selected
+    // The card chosen last wins over a focus that has not caught up with it.
+    const target = enterTarget({ chosen: lastChosen.current, focused: card, selected, onMap: allIds })
     const node = target ? byId.get(target) ?? null : null
     const act = () => e.preventDefault()
     switch (k.action) {
@@ -978,7 +987,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
       case 'help': act(); setPanel(p => (p?.kind === 'help' ? null : { kind: 'help' })); return
       case 'escape':
         if (panel) { act(); setPanel(null); return }
-        if (selected) { act(); setSelected(null); frame.current?.focus({ preventScroll: true }) }
+        if (selected) { act(); setSelected(null); lastChosen.current = null; frame.current?.focus({ preventScroll: true }) }
         return
       case 'zoom_in': act(); zoomAt(1.25); return
       case 'zoom_out': act(); zoomAt(0.8); return
@@ -1027,10 +1036,14 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
         act(); select(target)
         return
       case 'explore':
+        if (!target) { if (onCanvas) { act(); say('Select a card first: find it with / or move to it with the arrow keys.') } return }
         act()
-        if (!target) { say('Select a card to explore inside.'); return }
-        explore(target)
-        return
+        switch (enterAction(target, { exploring: focus, explorable: id => canExplore(tree, id) })) {
+          case 'already': say(`You are exploring ${byId.get(target)?.label ?? 'this card'}. U goes up a level.`); return
+          // Nothing inside: no empty map. Its details instead, and why.
+          case 'details': select(target); say(`Nothing is inside ${byId.get(target)?.label ?? 'this card'} to explore; its details are open.`); return
+          default: explore(target); return
+        }
       case 'fold':
         if (!target) return
         act()
@@ -1089,6 +1102,15 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
           stroke={lit ? 'var(--action)' : 'var(--map-line-strong)'} strokeWidth={lit ? 1.6 : 1.1} vectorEffect="non-scaling-stroke" opacity={dim ? 0.25 : 1} />
       )
     }
+    // Into a wrapped column: along the gaps, never across the cards before it.
+    const lane = placed.lanes?.get(e.to)
+    if (lane && lane.x === b.x && lane.y === b.y && !markers.has(e.to)) {
+      return (
+        <path key={e.id} d={`M ${a.x} ${a.y} H ${lane.trunkX} V ${lane.laneY} H ${b.x} V ${b.y}`} fill="none" data-edge={e.kind} data-lane
+          stroke={lit ? 'var(--action)' : 'var(--map-line)'} strokeWidth={lit ? 2.2 : 1.3} strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke" opacity={dim ? 0.25 : 1} />
+      )
+    }
     return (
       <line key={e.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
         stroke={lit ? 'var(--action)' : 'var(--map-line)'}
@@ -1097,7 +1119,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
         vectorEffect="non-scaling-stroke" data-edge={e.kind}
         opacity={dim ? 0.25 : 1} />
     )
-  }), [allLines, pointOf, focusId])
+  }), [allLines, pointOf, focusId, placed.lanes, markers])
 
   // The rings of [[links]], over the cards: one where each link arrives.
   const ringLayer = useMemo(() => allLines.filter(e => e.kind === 'links_to').map(e => {
@@ -1151,10 +1173,12 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
         onClick={() => {
           if (swallowClick.current) { swallowClick.current = false; return }
           pendingSelect.current = null
+          lastChosen.current = n.id
           if (on) { setDetailOpen(o => !o); return }
           select(n.id)
         }}
         onDoubleClick={() => { if (kids) explore(n.id) }}
+        onFocus={() => { lastChosen.current = n.id }}
         onPointerEnter={() => setHover(n.id)} onPointerLeave={() => setHover(null)}
       >
         {(on || dragging) && <rect x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="color-mix(in oklch, var(--action) 9%, transparent)" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
@@ -1411,7 +1435,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
           setT(v => ({ ...v, x: v.x + dx, y: v.y + dy }))
         }}
         // A press on the background that did not pan clears the selection.
-        onPointerUp={e => { pinch.current.delete(e.pointerId); const dd = drag.current; drag.current = null; if (dd && !dd.moved && pinch.current.size === 0) { setSelected(null); setPanel(p => (p?.kind === 'filters' || p?.kind === 'legend' ? null : p)) } }}
+        onPointerUp={e => { pinch.current.delete(e.pointerId); const dd = drag.current; drag.current = null; if (dd && !dd.moved && pinch.current.size === 0) { setSelected(null); lastChosen.current = null; setPanel(p => (p?.kind === 'filters' || p?.kind === 'legend' ? null : p)) } }}
         onPointerCancel={e => { pinch.current.delete(e.pointerId); drag.current = null }}
       >
         {drawn.length === 0 ? (
@@ -1449,16 +1473,18 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
             <div data-map-overlay data-node-bar role="toolbar" aria-label={`Actions for ${picked.label}`} onPointerDown={e => e.stopPropagation()}
               className="absolute z-10 flex -translate-x-1/2 -translate-y-full items-center gap-0.5 rounded-full border border-white/10 bg-popover/95 p-0.5 shadow-soft backdrop-blur"
               style={{ left: Math.max(90, Math.min(sx, el.clientWidth - 90)), top: sy - 8 }}>
-              {kids && <button type="button" onClick={() => explore(picked.id)} className={cn(bar, 'w-auto gap-1.5 px-3 text-xs font-medium')} title="Explore inside (Shift+Enter)" data-bar-explore><Layers aria-hidden className="size-3.5" /> Explore</button>}
+              {kids && <button type="button" onClick={() => explore(picked.id)} className={cn(bar, 'w-auto gap-1.5 px-3 text-xs font-medium')} title="Explore inside (Enter)" data-bar-explore><Layers aria-hidden className="size-3.5" /> Explore</button>}
               {ADDABLE.has(picked.type) && <button type="button" onClick={() => openAdd(picked)} className={bar} aria-label="Add" title="Add (N)"><Plus className="size-4" /></button>}
               {kids && <button type="button" onClick={() => toggleFold(picked.id)} className={bar} aria-label={collapsed.has(picked.id) ? 'Show what is inside' : 'Fold what is inside'} title="Fold (Space)">{collapsed.has(picked.id) ? <ChevronsUpDown className="size-4" /> : <ChevronsDownUp className="size-4" />}</button>}
-              {!detailOpen && <button type="button" onClick={() => setDetailOpen(true)} className={bar} aria-label="Show details" title="Details (Enter)"><PanelRightOpen className="size-4" /></button>}
+              {!detailOpen && <button type="button" onClick={() => setDetailOpen(true)} className={bar} aria-label="Show details" title="Details (Shift+Enter)"><PanelRightOpen className="size-4" /></button>}
               {canDelete(picked) && <button type="button" onClick={() => openDelete(picked)} className={cn(bar, 'hover:text-red-400')} aria-label="Delete" title="Delete"><Trash2 className="size-4" /></button>}
             </div>
           )
         })()}
 
-        {panel?.kind === 'add' && <AddDialog key={`add-${panel.node?.id ?? 'subject'}`} node={panel.node} nodes={view.nodes} choices={panel.node ? undefined : [NEW_SUBJECT]} style={anchor(panel.node?.id ?? null)} onClose={closePanel} onAdded={a => afterEdit(a.said, a.select)} />}
+        {panel?.kind === 'add' && <AddDialog key={`add-${panel.node?.id ?? 'subject'}`} node={panel.node} nodes={view.nodes} edges={view.edges} workspace={view.workspaceId ?? null}
+          choices={panel.node ? undefined : [NEW_SUBJECT]} style={anchor(panel.node?.id ?? null)} onClose={closePanel}
+          onAdded={a => { if (a.stale) { say(a.said); onChanged(); return } afterEdit(a.said, a.select) }} />}
         {panel?.kind === 'delete' && (
           <DeleteDialog key={`del-${panel.node.id}`} node={panel.node} edges={view.edges} tree={tree} style={anchor(panel.node.id)} onClose={closePanel}
             onDeleted={said => { if (selected === panel.node.id) setSelected(null); afterEdit(said, null) }} onStale={onChanged} />

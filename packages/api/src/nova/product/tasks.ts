@@ -98,6 +98,10 @@ export function parseTaskInput(raw: unknown, creating: boolean): Parsed {
     else if (typeof input.parentId === "string" && input.parentId.length <= 64) changes.parentId = input.parentId;
     else return reject("bad_parent", "That task isn't one of yours.");
   }
+  if (!creating && input.waitFor !== undefined) {
+    if (typeof input.waitFor !== "string" || !input.waitFor || input.waitFor.length > 64) return reject("bad_wait", "That task isn't one of yours.");
+    changes.waitFor = input.waitFor;
+  }
   if (creating && input.clientKey !== undefined) {
     if (typeof input.clientKey !== "string" || !input.clientKey.trim() || input.clientKey.length > TASK_KEY_MAX) return reject("invalid", "That is not a task.");
     changes.clientKey = input.clientKey.trim();
@@ -522,8 +526,18 @@ export async function updateTask(profileId: string, taskId: string, raw: unknown
     data.completedAt = changes.status === "done" ? now : null;
   }
 
-  // Scoped to the learner again: the id alone writes nothing.
-  await prisma.novaTask.updateMany({ where: { id: taskId, profileId }, data });
+  // Scoped to the learner again: the id alone writes nothing. A wait goes in
+  // the same transaction, through the one writer of waits.
+  if (changes.waitFor === taskId) return { ok: false, error: "bad_wait", message: "A task can't wait for itself." };
+  try {
+    await prisma.$transaction(async tx => {
+      if (Object.keys(data).length > 0) await tx.novaTask.updateMany({ where: { id: taskId, profileId }, data });
+      if (changes.waitFor) await addWaitsIn(tx, profileId, [{ taskId, after: [changes.waitFor] }]);
+    });
+  } catch (err) {
+    if (err instanceof TaskChanged) return { ok: false, error: "bad_wait", message: "That would make tasks wait for each other in a circle, or the task isn't one of yours." };
+    throw err;
+  }
   const [row, today] = await Promise.all([
     prisma.novaTask.findFirst({ where: { id: taskId, profileId }, select: ROW }),
     todayOf(profileId, now),
