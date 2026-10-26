@@ -553,6 +553,16 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 }
 .nova-changed { animation: nova-changed 2.6s ease-out both; animation-delay: calc(var(--i, 0) * 45ms); }
 .nova-reveal.nova-changed { animation: nova-reveal 0.38s cubic-bezier(0.2, 0.7, 0.2, 1) both, nova-changed 2.6s ease-out both; animation-delay: calc(var(--i, 0) * 45ms); }
+/* A passage of a note Nova points at: brought into view and lit for a
+   moment, then faded, long enough to read where it is. */
+@keyframes note-flash {
+  0%, 60% { background-color: color-mix(in oklch, var(--nova) 15%, transparent); box-shadow: 0 0 0 4px color-mix(in oklch, var(--nova) 15%, transparent); }
+  100% { background-color: transparent; box-shadow: 0 0 0 4px transparent; }
+}
+.note-flash { border-radius: 6px; animation: note-flash 4.2s ease-out both; }
+/* Switching Nova between Tutor and Editor. */
+@keyframes nova-pane-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.nova-pane-in { animation: nova-pane-in 0.2s ease-out both; }
 /* An indeterminate bar while Nova writes. */
 @keyframes nova-progress { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 .nova-progress { animation: nova-progress 1.4s ease-in-out infinite; }
@@ -572,6 +582,9 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   /* Shown at once, not after their place in the queue; a change is still
      marked, without the fade. */
   .kivo-app .nova-reveal { animation: none !important; }
+  /* Without motion the passage is lit, still, until the page clears it. */
+  .kivo-app .note-flash { animation: none !important; background-color: color-mix(in oklch, var(--nova) 14%, transparent); box-shadow: 0 0 0 4px color-mix(in oklch, var(--nova) 14%, transparent); }
+  .kivo-app .nova-pane-in { animation: none !important; }
   .kivo-app .nova-changed { animation: none !important; box-shadow: 0 0 0 1px color-mix(in oklch, var(--nova) 45%, transparent); }
   .kivo-app .nova-progress { animation: none !important; transform: none; width: 100% !important; opacity: 0.5; }
 }

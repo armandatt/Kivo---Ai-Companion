@@ -18,9 +18,13 @@ import { minutesLabel, relativeDay } from '../format'
 import { subjectColor } from '../subject-color'
 import { useStartSession } from '../use-start-session'
 import { NoteBody, linkHref } from './note-body'
-import { InsertPreview, type PendingInsert } from './insert-preview'
+import { InsertPreview, type InsertWhere, type PendingInsert } from './insert-preview'
 import { NovaTutor, type Passage } from './nova-tutor'
-import { placeInto } from './tutor-session'
+import { NovaEditor, type ApplyResult } from './nova-editor'
+import { Identity, ModeSwitch, type NovaMode } from './nova-modes'
+import { placeInto, placementHint, type InsertPart } from './tutor-session'
+import type { TutorReply } from '@repo/api/nova/product/note-tutor.types'
+import { alreadyIn, applyEdits, insertAt, locateChange, placementFor, resolvePlacement, resolveRef, type EditChange, type NoteRef } from '@repo/api/nova/product/note-outline'
 import { outline, parseBlocks, sourceOf, tagsOf, wordCount } from './note-blocks'
 import { callout, divider, noteLink, prefixLines, tag, wrap, type Edited } from './note-format'
 import { NotesTree } from './notes-tree'
@@ -43,9 +47,12 @@ function writeDraft(id: string | null, value: StoredDraft | null) {
 // storage the defaults below are used.
 type Layout = 'write' | 'split' | 'preview'
 // tutor: Nova's panel beside the note on a wide screen, at tutorWidth pixels.
-type Prefs = { tree: boolean; outline: boolean; serif: boolean; layout: Layout; tutor: boolean; tutorWidth: number }
+// nova: which of Nova's two jobs the panel is on (nova-modes.tsx).
+type Prefs = { tree: boolean; outline: boolean; serif: boolean; layout: Layout; tutor: boolean; tutorWidth: number; nova: NovaMode }
 const PREFS_KEY = 'kivo-notes-layout'
-const DEFAULT_PREFS: Prefs = { tree: true, outline: true, serif: true, layout: 'split', tutor: true, tutorWidth: 400 }
+const DEFAULT_PREFS: Prefs = { tree: true, outline: true, serif: true, layout: 'split', tutor: true, tutorWidth: 420, nova: 'tutor' }
+// How long a passage Nova points at stays highlighted in the note.
+const FLASH_MS = 4500
 const TUTOR_MIN = 320, TUTOR_MAX = 720
 const clampTutor = (w: number) => Math.round(Math.min(Math.max(w, TUTOR_MIN), typeof window === 'undefined' ? TUTOR_MAX : Math.min(TUTOR_MAX, window.innerWidth * 0.55)))
 
@@ -139,6 +146,10 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const [autoError, setAutoError] = useState<{ message: string; at: number } | null>(null)
   const [dragWidth, setDragWidth] = useState<number | null>(null)
   const caret = useRef<number | null>(null)
+  const previewRef = useRef<HTMLDivElement>(null)
+  // What the tutor hands the editor to work into the note.
+  const [editorSeed, setEditorSeed] = useState<{ material: string; label: string } | null>(null)
+  const [live, setLive] = useState('')
 
   const setPrefs = useCallback((change: Partial<Prefs>) => setPrefsState(p => { const n = { ...p, ...change }; writePrefs(n); return n }), [])
   useEffect(() => { setPrefsState(readPrefs()) }, [])
@@ -148,6 +159,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const draftRef = useRef(draft); draftRef.current = draft
   const noteRef  = useRef(note);  noteRef.current = note
   const dirtyRef = useRef(dirty); dirtyRef.current = dirty
+  const editingRef = useRef(editing); editingRef.current = editing
   const inFlight = useRef<Promise<boolean> | null>(null)
 
   useEffect(() => {
@@ -280,11 +292,66 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const version = useCallback(() => noteRef.current?.updatedAt ?? null, [])
 
-  // From Nova: shown first (InsertPreview), then added on lines of its own,
-  // in the editor, where autosave keeps it. Nothing is replaced.
-  const offerInsert = useCallback((markdown: string, label: string) => setPendingInsert({ markdown, label }), [])
+  // The note's text as it is on screen: what is being typed, else what is saved.
+  const currentBody = useCallback(() => (editingRef.current ? draftRef.current.body : noteRef.current?.body ?? ''), [])
+
+  // ── Showing a passage in the note ────────────────────────────────────────
+  // A range of the text on screen, brought into view and highlighted for a
+  // moment: in the rendered note (reading, or the preview beside the
+  // editor), by the blocks that hold it (note-body.tsx data-at); in the
+  // editor alone, by selecting it there. Nothing in the note changes.
+  const flashed = useRef<{ els: Element[]; timer: number } | null>(null)
+  const revealRange = useCallback((start: number, end: number) => {
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    const rendered = editingRef.current ? previewRef.current : articleRef.current
+    const blocks = rendered ? [...rendered.querySelectorAll('[data-at]')].filter(el => {
+      // Only the note's own top-level blocks, not Nova's or a callout's inside.
+      const at = Number(el.getAttribute('data-at')), to = Number(el.getAttribute('data-to'))
+      return el.parentElement?.closest('[data-at]') === null && at < Math.max(end, start + 1) && to > start
+    }) : []
+    if (blocks.length && rendered && rendered.offsetParent !== null) {
+      if (flashed.current) { window.clearTimeout(flashed.current.timer); flashed.current.els.forEach(el => el.classList.remove('note-flash')) }
+      blocks[0]!.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' })
+      // Restarted, so a second press on the same passage shows it again.
+      for (const el of blocks) { el.classList.remove('note-flash'); void (el as HTMLElement).offsetWidth; el.classList.add('note-flash') }
+      flashed.current = { els: blocks, timer: window.setTimeout(() => { blocks.forEach(el => el.classList.remove('note-flash')); flashed.current = null }, FLASH_MS) }
+      setLive('Showing the passage in your note.')
+      return true
+    }
+    const el = bodyRef.current
+    if (editingRef.current && el) {
+      // The editor alone is on screen: the passage is selected there.
+      const lines = el.value.slice(0, start).split('\n').length - 1, all = el.value.split('\n').length
+      el.focus({ preventScroll: true })
+      el.setSelectionRange(start, end)
+      el.scrollTop = Math.max(0, (lines / Math.max(all, 1)) * el.scrollHeight - el.clientHeight / 3)
+      el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' })
+      setLive('The passage is selected in the editor.')
+      return true
+    }
+    return false
+  }, [])
+  // A passage a tutor reply rests on, found in the note as it is now. One
+  // that changed since is said to have changed; nothing else is highlighted.
+  const revealPassage = useCallback((ref: NoteRef) => {
+    const found = resolveRef(currentBody(), ref)
+    if (found.status === 'stale') { setNotice('That passage has changed in your note since Nova answered, so it can’t be shown.'); return }
+    if (!wide) setTutorOnPhone(false)
+    window.setTimeout(() => { if (!revealRange(found.start, found.end)) setNotice('Open the note to see that passage.') }, wide ? 0 : 80)
+  }, [currentBody, revealRange, wide])
+
+  // ── Adding from Nova ─────────────────────────────────────────────────────
+  // Shown first (InsertPreview) with where it will go, worked out from the
+  // note's structure (note-outline.ts placementFor), then added on lines of
+  // its own, in the editor, where autosave keeps it. Nothing is replaced.
+  const offerInsert = useCallback((markdown: string, label: string, from?: { reply: TutorReply; part: InsertPart; index?: number }) => {
+    const body = currentBody()
+    if (alreadyIn(body, markdown)) { setNotice('That is already in your note.'); return }
+    const place = placementFor(body, from ? placementHint(from.reply, body, from.part, from.index ?? 0) : { kind: 'other', title: label })
+    setPendingInsert({ markdown, label, place })
+  }, [currentBody])
   const offerTitle  = useCallback((to: string) => setPendingInsert({ markdown: '', label: 'Title', title: { from: draftRef.current.title, to: to.slice(0, NOTE_TITLE_MAX) } }), [])
-  function confirmInsert(where: 'end' | 'cursor') {
+  function confirmInsert(where: InsertWhere) {
     const p = pendingInsert
     setPendingInsert(null)
     if (!p || !note) return
@@ -296,14 +363,55 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       setNotice('Title changed. It saves in a moment.')
       return
     }
-    const before = editing ? draftRef.current.body : note.body
-    const after = placeInto(before, p.markdown, where === 'cursor' ? caret.current : null)
+    const before = currentBody()
+    let after: string, range: { start: number; end: number } | null = null
+    if (where === 'cursor') after = placeInto(before, p.markdown, caret.current)
+    else {
+      // Found again in the note as it is now: a section changed or gone
+      // since the preview opened is chosen again, never guessed.
+      const at = resolvePlacement(before, where)
+      if (at === null) { setPendingInsert({ ...p, place: placementFor(before, { kind: 'other', title: p.label }), moved: true }); return }
+      const put = insertAt(before, at, p.markdown, where.how === 'newSection' ? where.heading : null)
+      after = put.body; range = { start: put.start, end: put.end }
+    }
     if (after.length > NOTE_BODY_MAX) { setNotice('That would make the note longer than a note can be. Nothing was added.'); return }
     if (!editing) setDraft(draftOf(note))
     setDraft(d => ({ ...d, body: after })); setEditing(true)
     setUndo({ before, after, label: p.label })
     setNotice(null)
+    if (range) { const r = range; window.setTimeout(() => revealRange(r.start, r.end), 120) }
   }
+
+  // ── Nova's editor ────────────────────────────────────────────────────────
+  // The changes the learner kept, applied to the note on screen, each where
+  // its words still are (note-outline.ts applyEdits). If any no longer fits,
+  // nothing is applied. Undo puts the note back as it was.
+  const applyEditChanges = useCallback((changes: EditChange[], label: string): ApplyResult => {
+    const n = noteRef.current
+    if (!n) return { ok: false, conflicts: [], message: 'Save the note first.' }
+    const before = currentBody()
+    const r = applyEdits(before, changes)
+    if (!r.ok) return { ok: false, conflicts: r.conflicts, message: `Your note has changed where ${r.conflicts.length === 1 ? 'one of these changes goes' : `${r.conflicts.length} of these changes go`}, so nothing was applied.` }
+    if (r.body.length > NOTE_BODY_MAX) return { ok: false, conflicts: [], message: 'That would make the note longer than a note can be. Nothing was applied.' }
+    if (!editingRef.current) setDraft(draftOf(n))
+    setDraft(d => ({ ...d, body: r.body })); setEditing(true)
+    // Undo is what the toast shows now, whatever it said before.
+    setUndo({ before, after: r.body, label }); setNotice(null)
+    const first = changes[0]
+    const at = first && first.after ? r.body.indexOf(first.after.trim()) : -1
+    if (at !== -1) window.setTimeout(() => revealRange(at, at + first!.after.trim().length), 120)
+    return { ok: true }
+  }, [currentBody, revealRange])
+  const showChange = useCallback((c: EditChange) => {
+    const at = locateChange(currentBody(), c)
+    if (!at) { setNotice('That part of your note has changed since Nova proposed this.'); return }
+    if (!wide) setTutorOnPhone(false)
+    window.setTimeout(() => { revealRange(c.op === 'insert' ? Math.max(0, at.start - 1) : at.start, c.op === 'insert' ? at.start : at.end) }, wide ? 0 : 80)
+  }, [currentBody, revealRange, wide])
+  const toEditor = useCallback((material: string, label: string) => {
+    setEditorSeed({ material: material.slice(0, 6_000), label }); setPrefs({ nova: 'editor' })
+  }, [setPrefs])
+
   function undoInsert() {
     if (!undo) return
     if (draftRef.current.body !== undo.after) { setNotice('The note has changed since that was added, so it can’t be undone in one step. Remove it by hand.'); setUndo(null); return }
@@ -647,13 +755,41 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   // phone or a narrow tablet. One is mounted at a time, so the conversation
   // is one conversation.
   const tutorWidth = dragWidth ?? clampTutor(prefs.tutorWidth)
+  // Nova's two jobs in one panel: both mounted, one shown, so switching keeps
+  // each conversation and both read the same note.
+  const novaHeader = (onClose?: () => void) => function NovaHeader(status: React.ReactNode, working: boolean, clear: (() => void) | null = null) {
+  return (
+    <header className="shrink-0 border-b border-white/6 px-3.5 pb-2 pt-2.5">
+      <div className="flex items-center gap-2">
+        <Identity working={working} />
+        <ModeSwitch mode={prefs.nova} onMode={m => setPrefs({ nova: m })} />
+        <span className="flex-1" />
+        {clear && <button type="button" onClick={clear} className="inline-flex size-8 items-center justify-center rounded-lg text-subtle hover:bg-white/6 hover:text-foreground" title="New conversation" aria-label="New conversation"><Trash2 className="size-4" /></button>}
+        {onClose && <button type="button" onClick={onClose} className="inline-flex size-8 items-center justify-center rounded-lg text-subtle hover:bg-white/6 hover:text-foreground" title="Close Nova" aria-label="Close Nova"><X className="size-4" /></button>}
+      </div>
+      <p className="mt-1 flex items-center gap-1.5 truncate pl-9 text-[11px] text-subtle" role="status" data-nova-status>{status}</p>
+    </header>
+  )
+  }
   const tutor = (onClose?: () => void) => (
-    <NovaTutor
-      note={note} passage={passage} onClearPassage={() => setPassage(null)}
-      ensureSaved={ensureSaved} version={version} onInsert={offerInsert} onUseTitle={offerTitle}
-      onClose={onClose} autoAsk={autoAsk} onAutoAsked={() => { setAutoAsk(null); router.replace(`/notes/${note?.id ?? ''}`) }}
-      inputRef={tutorInput}
-    />
+    <>
+      <div className={prefs.nova === 'tutor' ? 'nova-pane-in flex min-h-0 flex-1 flex-col' : 'hidden'} data-nova-pane="tutor">
+        <NovaTutor
+          note={note} passage={passage} onClearPassage={() => setPassage(null)}
+          ensureSaved={ensureSaved} version={version} onInsert={offerInsert} onUseTitle={offerTitle}
+          onReveal={revealPassage} onEditor={toEditor} header={novaHeader(onClose)}
+          autoAsk={autoAsk} onAutoAsked={() => { setAutoAsk(null); router.replace(`/notes/${note?.id ?? ''}`) }}
+          inputRef={tutorInput}
+        />
+      </div>
+      <div className={prefs.nova === 'editor' ? 'nova-pane-in flex min-h-0 flex-1 flex-col' : 'hidden'} data-nova-pane="editor">
+        <NovaEditor
+          note={note} passage={passage} onClearPassage={() => setPassage(null)}
+          ensureSaved={ensureSaved} version={version} onApply={applyEditChanges} onShow={showChange}
+          seed={editorSeed} onSeedUsed={() => setEditorSeed(null)} header={novaHeader(onClose)}
+        />
+      </div>
+    </>
   )
   const splitter = (
     <div role="separator" aria-orientation="vertical" aria-label="Resize Nova's panel" tabIndex={0}
@@ -697,6 +833,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
               <aside className="flex min-h-0 shrink-0 flex-col" style={{ width: tutorWidth }} data-tutor-panel>{tutor(() => setPrefs({ tutor: false }))}</aside>
             </>
           )}
+          <p className="sr-only" aria-live="polite">{live}</p>
           {(undo || notice) && (
             <div role="status" style={{ left: tutorDocked ? `calc((100% - ${tutorWidth}px) / 2)` : '50%' }} className="absolute bottom-20 z-30 flex w-max max-w-[92vw] -translate-x-1/2 items-center gap-3 rounded-xl border border-white/10 bg-background px-4 py-2.5 text-sm text-foreground/85 shadow-float" data-insert-toast>
               <span>{notice ?? `Added to your note: ${undo!.label}. ${saving ? 'Saving…' : dirty ? 'Saves in a moment.' : 'Saved.'}`}</span>
@@ -769,7 +906,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       />
     )
     const preview = (
-      <div className="min-h-[24rem] px-1 py-2" data-note-preview>
+      <div ref={previewRef} className="min-h-[24rem] px-1 py-2" data-note-preview>
         {draft.body.trim() ? <NoteBody body={draft.body} links={note?.links.outgoing ?? []} serif={prefs.serif} /> : <p className="py-3 text-sm text-foreground/35">Nothing to preview yet.</p>}
       </div>
     )

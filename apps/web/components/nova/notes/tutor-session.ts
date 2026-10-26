@@ -15,6 +15,7 @@ import type {
   TutorExercise, TutorMode, TutorReply, TutorResult, TutorSection, TutorTurn,
 } from '@repo/api/nova/product/note-tutor.types'
 import { TUTOR_HISTORY_MAX, TUTOR_TURN_MAX } from '@repo/api/nova/product/note-tutor.types'
+import { resolveRef, type AdditionKind, type NoteRef, type PlacementHint } from '@repo/api/nova/product/note-outline'
 
 // What the learner sends. passage: the text chosen in the note.
 export interface TutorAsk {
@@ -194,6 +195,42 @@ export function insertFor(r: TutorReply, work: TutorWork, part: InsertPart = 'al
     for (const p of ['overview', 'concepts', 'questions', 'outline', 'tags'] as const) { const b = insertFor(r, work, p); if (b) blocks.push(b) }
   }
   return blocks.length ? blocks.join('\n\n') : null
+}
+
+// ── Where it goes in the note ─────────────────────────────────────────────────
+
+// What a reply adds, by what was asked: so a summary goes where a summary
+// belongs and an example beside what it illustrates (note-outline.ts placementFor).
+export const ADDITION_KIND: Record<TutorMode, AdditionKind> = {
+  explain: 'explanation', simpler: 'explanation', steps: 'explanation', compare: 'explanation', evaluate: 'explanation', check: 'explanation',
+  example: 'example', practice: 'example',
+  summary: 'summary', organize: 'summary',
+  quiz: 'other', flashcards: 'other', brainstorm: 'other', connect: 'other',
+}
+
+// The heading of a new section made for what a reply adds.
+const SECTION_TITLE: Partial<Record<TutorMode, string>> = { quiz: 'Practice questions', flashcards: 'Flashcards', brainstorm: 'Ideas', connect: 'Connections', organize: 'Organised version' }
+
+// The passages a reply rests on, in order, each once.
+export function refsOf(r: TutorReply, index: number | null = null): NoteRef[] {
+  const out: NoteRef[] = []
+  r.sections.forEach((s, i) => { if (index === null || i === index) for (const ref of s.refs ?? []) if (!out.some(x => x.hash === ref.hash)) out.push(ref) })
+  return out
+}
+
+// Where an addition from this reply belongs in the note as it is now: the
+// heading Nova suggested, the passage the learner chose, or the passages it
+// rests on, in that order of weight (note-outline.ts decides among them).
+export function placementHint(r: TutorReply, body: string, part: InsertPart = 'all', index = 0): PlacementHint {
+  const chosen = r.passage?.ref ? resolveRef(body, r.passage.ref) : null
+  const kind: AdditionKind = part === 'overview' ? 'summary' : part === 'ideas' || part === 'questions' || part === 'concepts' || part === 'tags' ? 'other' : r.mode === 'organize' && part === 'outline' ? 'other' : ADDITION_KIND[r.mode]
+  return {
+    kind,
+    heading: r.place ?? null,
+    passage: chosen && chosen.status !== 'stale' && kind !== 'summary' ? chosen.start : null,
+    refs: refsOf(r, part === 'section' ? index : null),
+    title: kind === 'other' ? SECTION_TITLE[r.mode] ?? 'From Nova' : r.mode === 'summary' ? 'Summary' : null,
+  }
 }
 
 // Adds text to a note's text: at the end, or at a place in it (the editor's

@@ -3,6 +3,7 @@
 
 import type { TutorRequest, TutorResponse } from '@repo/api/nova/product/note-tutor.types'
 import type { NoteImportResponse } from '@repo/api/nova/product/note-import'
+import type { EditRequest, EditResponse } from '@repo/api/nova/product/note-edit.types'
 
 const FAILED = 'Could not reach the server. Check your connection and try again.'
 
@@ -24,6 +25,11 @@ async function post<T>(url: string, body: unknown, signal?: AbortSignal): Promis
 
 export const askTutor = (noteId: string, request: TutorRequest, signal?: AbortSignal) =>
   post<TutorResponse>(`/api/nova/notes/${encodeURIComponent(noteId)}/tutor`, request, signal)
+
+// Nova's editor: a proposal of changes to the note. Nothing changes until
+// the learner applies it on the page.
+export const proposeEdit = (noteId: string, request: EditRequest, signal?: AbortSignal) =>
+  post<EditResponse>(`/api/nova/notes/${encodeURIComponent(noteId)}/edit`, request, signal)
 
 // The file is sent as base64 inside the JSON, as Create with Nova sends files.
 export async function transcribeFile(file: File, signal?: AbortSignal) {

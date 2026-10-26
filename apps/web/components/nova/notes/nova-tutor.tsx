@@ -15,13 +15,12 @@
 // through onInsert, which previews it and asks.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react'
+import { Loader2, RotateCcw, Send, Square, X } from 'lucide-react'
 import type { NoteDetail } from '@repo/api/nova/product/notes.types'
 import type { TutorMode, TutorReply } from '@repo/api/nova/product/note-tutor.types'
 import { TUTOR_MESSAGE_MAX } from '@repo/api/nova/product/note-tutor.types'
-import { KivoMark } from '@/components/brand/kivo-brand'
 import { askTutor } from './tutor-api'
-import { ReplyView, type Insert } from './tutor-playground'
+import { ReplyView, type Insert, type Reveal } from './tutor-playground'
 import {
   MODE_LABEL, MODE_WORK, askLine, historyOf, loadConversation, nextActions, openExercise, resultsOf, saveConversation,
   type TutorAsk, type TutorEntry, type TutorWork,
@@ -40,17 +39,7 @@ function Elapsed({ since }: { since: number }) {
   return <span className="tabular-nums">{Math.max(0, Math.round((now - since) / 1000))}s</span>
 }
 
-// Nova's mark: still when idle, a slow ring while working.
-function Identity({ working }: { working: boolean }) {
-  return (
-    <span aria-hidden className="relative grid size-8 shrink-0 place-items-center rounded-full bg-nova/12 ring-1 ring-nova/30">
-      {working && <span className="absolute inset-0 rounded-full ring-2 ring-nova/40 kivo-node-pulse" />}
-      <KivoMark size={16} className="text-nova-ink" />
-    </span>
-  )
-}
-
-export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version, onInsert, onUseTitle, onClose, autoAsk, onAutoAsked, inputRef }: {
+export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version, onInsert, onUseTitle, onReveal, onEditor, header, autoAsk, onAutoAsked, inputRef }: {
   note: NoteDetail | null
   passage: Passage | null
   onClearPassage: () => void
@@ -61,7 +50,13 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
   version: () => string | null
   onInsert: Insert
   onUseTitle: (title: string) => void
-  onClose?: () => void
+  // Shows a passage a reply rests on in the note.
+  onReveal: Reveal
+  // Hands what Nova wrote to the editor, to be worked into the note.
+  onEditor?: (material: string, label: string) => void
+  // The panel's header (note-editor.tsx: Nova's mark, Tutor or Editor, close),
+  // given what Nova is doing now; clear: start a new conversation, when there is one.
+  header: (status: React.ReactNode, working: boolean, clear: (() => void) | null) => React.ReactNode
   // A mode to run once on open (the capture page's "Organise with Nova").
   autoAsk?: TutorMode | null
   onAutoAsked?: () => void
@@ -160,29 +155,13 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-background" aria-label="Nova, your tutor" data-tutor data-tutor-state={pending ? pending.stage : waiting ? 'waiting' : 'idle'}>
-      <header className="flex shrink-0 items-center gap-2.5 border-b border-white/6 px-3.5 py-2.5">
-        <Identity working={!!pending} />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-foreground">Nova <span className="font-normal text-subtle">· your tutor</span></p>
-          <p className="flex items-center gap-1.5 truncate text-[11px] text-subtle" data-tutor-status>
-            {pending && <Loader2 className="size-3 animate-spin" aria-hidden />}
-            {status}{pending && <> · <Elapsed since={pending.since} /></>}
-          </p>
-        </div>
-        {entries.length > 0 && !pending && (
-          <button type="button" onClick={() => { if (window.confirm('Start a new conversation? This one is cleared from this tab.')) { setEntries([]); setFresh(null) } }}
-            className="inline-flex size-8 items-center justify-center rounded-lg text-subtle hover:bg-white/6 hover:text-foreground" title="New conversation" aria-label="New conversation">
-            <Trash2 className="size-4" />
-          </button>
-        )}
-        {onClose && (
-          <button type="button" onClick={onClose} className="inline-flex size-8 items-center justify-center rounded-lg text-subtle hover:bg-white/6 hover:text-foreground" title="Close Nova" aria-label="Close Nova">
-            <X className="size-4" />
-          </button>
-        )}
-      </header>
+      {header(
+        <>{pending && <Loader2 className="size-3 animate-spin" aria-hidden />}{status}{pending && <> · <Elapsed since={pending.since} /></>}</>,
+        !!pending,
+        entries.length > 0 && !pending ? () => { if (window.confirm('Start a new conversation? This one is cleared from this tab.')) { setEntries([]); setFresh(null) } } : null,
+      )}
 
-      <div ref={listRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3.5 py-4" data-tutor-log>
+      <div ref={listRef} className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 py-5" data-tutor-log>
         {!note ? (
           <p className="text-sm leading-relaxed text-foreground/60">Save this note first. Then Nova can teach you from it.</p>
         ) : entries.length === 0 && !pending ? (
@@ -196,18 +175,18 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
 
         {entries.map(e => {
           if (e.role === 'learner') return (
-            <div key={e.id} className="ml-8 rounded-2xl rounded-br-md bg-white/6 px-3 py-2 text-sm text-foreground" data-tutor-ask={e.ask.mode}>
+            <div key={e.id} className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-white/[0.06] px-3 py-2 text-sm text-foreground" data-tutor-ask={e.ask.mode}>
               {e.ask.passage && <p className="mb-1 line-clamp-2 border-l-2 border-nova/40 pl-2 text-xs italic text-foreground/60">{e.ask.passage}</p>}
               {askLine(e.ask)}
             </div>
           )
           if (e.role === 'nova') return (
             <ReplyView key={e.id} reply={e.reply} work={e.work} fresh={fresh === e.id} busy={!!pending}
-              onWork={c => work(e.id, c)} onAsk={a => void send(a)} onInsert={onInsert} onUseTitle={onUseTitle} />
+              onWork={c => work(e.id, c)} onAsk={a => void send(a)} onInsert={onInsert} onUseTitle={onUseTitle} onReveal={onReveal} onEditor={onEditor} />
           )
           if (e.role === 'stopped') return <p key={e.id} className="text-xs text-subtle">Stopped. Nothing was changed.</p>
           return (
-            <div key={e.id} role="alert" className="rounded-xl border border-red-400/25 bg-red-400/[0.05] px-3 py-2.5 text-sm text-foreground/80" data-tutor-error>
+            <div key={e.id} role="alert" className="border-l-2 border-red-400/50 pl-3 text-sm text-foreground/80" data-tutor-error>
               <p>{e.message}</p>
               <button type="button" disabled={!!pending} onClick={() => { setEntries(list => list.filter(x => x.id !== e.id)); void send(e.ask) }}
                 className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-nova-ink hover:underline disabled:opacity-50" data-tutor-retry>
@@ -227,7 +206,7 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
 
       <div className="shrink-0 border-t border-white/6 px-3.5 pb-3 pt-2.5">
         {passage && (
-          <div className="mb-2 flex items-start gap-2 rounded-xl border border-nova/25 bg-nova/[0.05] px-2.5 py-1.5" data-tutor-passage>
+          <div className="mb-2 flex items-start gap-2 rounded-lg bg-nova/[0.06] px-2.5 py-1.5" data-tutor-passage>
             <div className="min-w-0 flex-1">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-nova-ink">Discussing{last?.reply.passage?.text === passage.text && last.reply.passage.heading ? ` · ${last.reply.passage.heading}` : ''}</p>
               <p className="line-clamp-2 text-xs text-foreground/75">{passage.text}</p>

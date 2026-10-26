@@ -106,7 +106,11 @@ test("the tutor reads the note as saved: the passage found under its heading, th
     mode: "explain", selection: "The banker's algorithm grants a request only if the state stays safe.", noteVersion: note.note.updatedAt,
   }, generate as never);
   assert.ok(out.ok);
-  assert.deepEqual(out.passage, { text: "The banker's algorithm grants a request only if the state stays safe.", heading: "Avoidance", found: true });
+  const { ref, ...passage } = out.passage!;
+  assert.deepEqual(passage, { text: "The banker's algorithm grants a request only if the state stays safe.", heading: "Avoidance", found: true });
+  // The block it is in (here the captured callout), named by its own words, not its "[!quote]" line.
+  assert.ok(ref && note.note.body.slice(ref.start, ref.end).includes("The banker's algorithm"));
+  assert.ok(ref!.excerpt.startsWith("deadlocks a deadlock needs four conditions"), ref!.excerpt);
   assert.equal(out.versionDiffers, false);
   assert.equal(out.sections[0]!.basis, "notes");
   assert.deepEqual(out.sources.map(s => s.title), ["Deadlocks", "Banker's algorithm"], "the linked note of theirs, never Ravi's");

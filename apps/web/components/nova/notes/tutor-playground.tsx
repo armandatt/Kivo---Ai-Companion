@@ -10,15 +10,21 @@
 
 import type { ReactNode } from 'react'
 import Link from 'next/link'
-import { Check, ChevronDown, Eye, FilePlus2, Link2, Lightbulb, RotateCcw, X } from 'lucide-react'
+import { useState } from 'react'
+import { BookMarked, Check, Copy, Eye, FilePlus2, Link2, Lightbulb, PenLine, RotateCcw, X } from 'lucide-react'
 import type { NoteAssistSource } from '@repo/api/nova/product/note-assist.types'
 import type { TutorBasis, TutorMode, TutorReply } from '@repo/api/nova/product/note-tutor.types'
+import type { NoteRef } from '@repo/api/nova/product/note-outline'
 import { NoteBody } from './note-body'
-import { MODE_LABEL, insertFor, type InsertPart, type TutorAsk, type TutorWork } from './tutor-session'
+import { MODE_LABEL, insertFor, refsOf, type InsertPart, type TutorAsk, type TutorWork } from './tutor-session'
 
-export type Insert = (markdown: string, label: string, opts?: { title?: string }) => void
+// from: the reply and the part being added, so the page can work out where
+// in the note it belongs (tutor-session.ts placementHint).
+export type Insert = (markdown: string, label: string, from?: { reply: TutorReply; part: InsertPart; index?: number }) => void
+// A passage of the note a reply rests on: shown in the note, highlighted.
+export type Reveal = (ref: NoteRef) => void
 
-const chip = 'inline-flex items-center gap-1.5 rounded-full border border-white/12 px-3 py-1.5 text-xs text-foreground/80 transition-colors hover:border-nova/50 hover:text-foreground disabled:opacity-50'
+const chip = 'inline-flex items-center gap-1.5 rounded-full border border-white/10 px-2.5 py-1 text-xs text-foreground/70 transition-colors hover:border-nova/50 hover:text-foreground disabled:opacity-50'
 const small = 'inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-nova-ink transition-colors hover:bg-nova/10 disabled:opacity-50'
 const field = 'w-full rounded-xl border border-white/10 bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-foreground/35 focus:border-nova/60 focus:outline-none'
 
@@ -30,12 +36,33 @@ function Basis({ basis }: { basis: TutorBasis }) {
     : <span className="rounded-full bg-white/6 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-subtle" data-basis="nova">Nova&apos;s own</span>
 }
 
+// [S1] is this note: its passages are shown under the part instead (Sources),
+// so the mark is taken out. Another note or page is a small link to it.
 function Text({ text, sources }: { text: string; sources: NoteAssistSource[] }) {
   const cite = (label: string, key: string) => {
     const s = sources.find(x => x.id === label)
-    return s ? <Link key={key} href={sourceHref(s)} title={s.title} className="mx-0.5 rounded bg-nova/15 px-1 align-[0.1em] font-sans text-[10px] font-semibold text-nova-ink no-underline hover:bg-nova/25">{s.id === 'S1' ? 'note' : s.title.slice(0, 24)}</Link> : null
+    if (!s) return null
+    return <Link key={key} href={sourceHref(s)} title={s.title} className="mx-0.5 rounded bg-nova/12 px-1 align-[0.1em] font-sans text-[10px] font-semibold text-nova-ink no-underline hover:bg-nova/20">{s.title.slice(0, 24)}</Link>
   }
-  return <NoteBody body={text} links={[]} cite={cite} compact />
+  // The note's own mark goes with the space before it ("revisits it [S1]." → "revisits it.").
+  return <NoteBody body={text.split(' [S1]').join('').split('[S1]').join('')} links={[]} cite={cite} compact />
+}
+
+// The passages of the note a part rests on: "From your notes · Dijkstra's
+// Algorithm". Pressing one shows it in the note, highlighted.
+function Sources({ refs, onReveal }: { refs: NoteRef[]; onReveal: Reveal }) {
+  if (!refs.length) return null
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1" data-tutor-sources>
+      {refs.map(r => (
+        <button key={r.hash} type="button" onClick={() => onReveal(r)} title={`Show in your note: “${r.excerpt}”`}
+          className="inline-flex max-w-full items-center gap-1 rounded text-[11px] font-medium text-nova-ink/90 underline-offset-2 transition-colors hover:text-nova-ink hover:underline focus-visible:outline-2 focus-visible:outline-ring" data-source-ref={r.block}>
+          <BookMarked className="size-3 shrink-0" aria-hidden />
+          <span className="truncate">From your notes · {r.heading ?? r.excerpt}</span>
+        </button>
+      ))}
+    </div>
+  )
 }
 
 // A block that came in with a fresh reply eases in after the one before it.
@@ -43,7 +70,7 @@ function Reveal({ i, fresh, children }: { i: number; fresh: boolean; children: R
   return <div className={fresh ? 'nova-reveal' : ''} style={fresh ? { ['--i' as string]: Math.min(i, 8) } : undefined}>{children}</div>
 }
 
-export function ReplyView({ reply, work, fresh, busy, onWork, onAsk, onInsert, onUseTitle }: {
+export function ReplyView({ reply, work, fresh, busy, onWork, onAsk, onInsert, onUseTitle, onReveal, onEditor }: {
   reply: TutorReply
   work: TutorWork
   fresh: boolean
@@ -52,18 +79,22 @@ export function ReplyView({ reply, work, fresh, busy, onWork, onAsk, onInsert, o
   onAsk: (ask: TutorAsk) => void
   onInsert: Insert
   onUseTitle: (title: string) => void
+  onReveal: Reveal
+  // Hands what Nova wrote to the editor, to be worked into the note.
+  onEditor?: (material: string, label: string) => void
 }) {
+  const [copied, setCopied] = useState(false)
   const insert = (part: InsertPart, label: string, index = 0) => {
     const md = insertFor(reply, work, part, index)
-    if (md) onInsert(md, label)
+    if (md) onInsert(md, label, { reply, part, index })
   }
   const whole = insertFor(reply, work, 'all')
   let n = 0
 
   return (
-    <div className="space-y-3" data-tutor-reply={reply.mode}>
+    <div className="space-y-3.5" data-tutor-reply={reply.mode} data-tutor-refs={refsOf(reply).length}>
       {(reply.notInSources || reply.partial || reply.versionDiffers || (reply.passage && !reply.passage.found)) && (
-        <div className="space-y-1.5 rounded-xl border border-amber-300/20 bg-amber-300/[0.04] px-3 py-2 text-xs leading-relaxed text-foreground/70" data-tutor-notices>
+        <div className="space-y-1 border-l-2 border-amber-300/40 pl-2.5 text-xs leading-relaxed text-foreground/65" data-tutor-notices>
           {reply.notInSources && <p data-not-in-sources>Your notes don&apos;t cover this. What Nova says here is its own knowledge, labelled as such.</p>}
           {reply.partial && <p>This note is long: Nova read the part around what you asked about, not all of it.</p>}
           {reply.versionDiffers && <p>Nova read the saved version of this note, which differs from the one on screen.</p>}
@@ -71,19 +102,17 @@ export function ReplyView({ reply, work, fresh, busy, onWork, onAsk, onInsert, o
         </div>
       )}
 
+      {/* Each part reads as a short section: its heading, its text, and the
+          passages of the note it rests on. What Nova adds beyond the note is
+          said so, once, above it. */}
       {reply.sections.map((s, i) => (
         <Reveal key={`s${i}`} i={n++} fresh={fresh}>
-          <details open className="group rounded-xl border border-white/6 bg-white/[0.02] px-3 py-2.5" data-tutor-section={s.basis}>
-            <summary className="flex cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
-              <Basis basis={s.basis} />
-              {s.heading && <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">{s.heading}</span>}
-              <ChevronDown className="ml-auto size-3.5 shrink-0 text-subtle transition-transform group-open:rotate-180" aria-hidden />
-            </summary>
-            <div className="mt-2"><Text text={s.text} sources={reply.sources} /></div>
-            {reply.sections.length > 1 && (
-              <button type="button" className={`${small} mt-1`} onClick={() => insert('section', s.heading ?? 'This part', i)}><FilePlus2 className="size-3.5" /> Add this part</button>
-            )}
-          </details>
+          <section data-tutor-section={s.basis}>
+            {s.basis === 'nova' && <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-subtle" data-basis="nova">Beyond your notes</p>}
+            {s.heading && <h4 className="mb-1 text-[13.5px] font-semibold text-foreground">{s.heading}</h4>}
+            <Text text={s.text} sources={reply.sources} />
+            <Sources refs={s.refs ?? []} onReveal={onReveal} />
+          </section>
         </Reveal>
       ))}
 
@@ -117,16 +146,29 @@ export function ReplyView({ reply, work, fresh, busy, onWork, onAsk, onInsert, o
         </Reveal>
       )}
 
-      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-        {whole && !reply.organize && reply.mode !== 'evaluate' && (
-          <button type="button" className={chip} onClick={() => onInsert(whole, MODE_LABEL[reply.mode])} data-tutor-insert>
+      {/* What to do with it: one quiet row, there on touch and keyboard too. */}
+      {whole && !reply.organize && reply.mode !== 'evaluate' && (
+        <div className="flex flex-wrap items-center gap-0.5 pt-0.5" data-tutor-reply-actions>
+          <button type="button" className={small} onClick={() => onInsert(whole, MODE_LABEL[reply.mode], { reply, part: 'all' })} data-tutor-insert>
             <FilePlus2 className="size-3.5" /> Add to note
           </button>
-        )}
-        {reply.followUps.map(f => (
-          <button key={f} type="button" className={chip} disabled={busy} onClick={() => onAsk({ mode: 'explain', message: f, passage: reply.passage?.text })} data-follow-up>{f}</button>
-        ))}
-      </div>
+          {onEditor && (
+            <button type="button" className={small} disabled={busy} onClick={() => onEditor(whole, MODE_LABEL[reply.mode])} title="Nova's editor works it into your note where it fits, for you to approve" data-tutor-to-editor>
+              <PenLine className="size-3.5" /> Work into note
+            </button>
+          )}
+          <button type="button" className={`${small} text-subtle`} onClick={() => { void navigator.clipboard?.writeText(whole).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500) }).catch(() => {}) }} data-tutor-copy>
+            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />} {copied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
+      )}
+      {reply.followUps.length > 0 && (
+        <div className="flex flex-wrap gap-1.5" data-tutor-follow-ups>
+          {reply.followUps.map(f => (
+            <button key={f} type="button" className={chip} disabled={busy} onClick={() => onAsk({ mode: 'explain', message: f, passage: reply.passage?.text })} data-follow-up>{f}</button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

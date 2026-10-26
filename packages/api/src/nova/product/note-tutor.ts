@@ -24,6 +24,7 @@ import { generateOpenAIText } from "../../services/openai.service";
 import { noteSources, type NoteSources } from "./notes";
 import { listResourceSources } from "./learning-events";
 import { keepGivenCitations } from "./note-assist";
+import { blockAt, noteBlocks, noteSections, refOf, squash as words, type NoteBlock, type NoteRef } from "./note-outline";
 import type { NoteAssistSource } from "./note-assist.types";
 import type {
   TutorBasis, TutorCard, TutorExercise, TutorIdea, TutorMode, TutorOrganize, TutorQuizItem, TutorReply, TutorRequest,
@@ -171,6 +172,41 @@ export function noteWindow(body: string, around: number | null, max = TUTOR_NOTE
   return { text: `${lineStart > 0 ? "(…the note continues above)\n" : ""}${body.slice(lineStart, lineStart + max)}${lineStart + max < body.length ? "\n(the note continues below…)" : ""}`, partial: true };
 }
 
+// The note as the model reads it: its blocks (note-outline.ts), each after
+// its marker ([b3]), so a reply can say which passages it rests on. A long
+// note is the blocks around the passage (or its start), as noteWindow.
+export function markedNote(body: string, around: number | null, max = TUTOR_NOTE_WINDOW): { text: string; partial: boolean; blocks: NoteBlock[] } {
+  const all = noteBlocks(body);
+  let given = all;
+  if (body.length > max) {
+    const start = around === null ? 0 : Math.max(0, Math.min(body.length - max, around - Math.floor(max / 3)));
+    given = all.filter(b => b.start >= start && b.end <= start + max);
+    // One block longer than the window (a note of one long paragraph): its
+    // text around the passage, with no passages to point at.
+    if (given.length === 0) return { ...noteWindow(body, around, max), blocks: [] };
+  }
+  const partial = given.length < all.length;
+  const text = given.map(b => `[${b.id}] ${b.text}`).join("\n\n");
+  return {
+    text: `${partial && given[0] !== all[0] ? "(…the note continues above)\n" : ""}${text}${partial && given.at(-1) !== all.at(-1) ? "\n(the note continues below…)" : ""}`,
+    partial, blocks: given,
+  };
+}
+
+// "[b3]" markers the model wrote into its text anyway: taken out.
+export function withoutMarkers(text: string): string {
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "[" && text[i + 1] === "b") {
+      let j = i + 2;
+      while (j < text.length && text[j]! >= "0" && text[j]! <= "9") j++;
+      if (j > i + 2 && text[j] === "]") { i = j; if (out.endsWith(" ") && text[i + 1] === " ") i++; continue; }
+    }
+    out += text[i];
+  }
+  return out;
+}
+
 // ── The call ──────────────────────────────────────────────────────────────────
 
 const SYSTEM = [
@@ -180,11 +216,14 @@ const SYSTEM = [
   "Keep apart what the sources say and what you add. A section with basis \"notes\" says only what the sources say, with the label of each source it rests on in square brackets, like [S1]. Anything from your own knowledge (an analogy, background, a correction, an example not in the notes) has basis \"nova\". Never attribute to the notes something they do not say. Never invent a quotation, a source, an address, or something the learner did.",
   "If the sources do not cover what was asked, set notInSources to true, say so plainly, and then help from your own knowledge with basis \"nova\" if that is useful, or ask one question that would let you help.",
   "Teach well: start from intuition, then be precise; break hard ideas into steps; use an example, an equation or a little code when the subject calls for it; name a common misconception when there is one. Use the learner's own terms from the note. Match the depth to their recent answers and the conversation. When the note is work material (a plan, a decision, a spec, meeting notes), reason with them about it as a colleague would, without a classroom tone.",
+  "S1 is given in blocks, each starting with its marker, like [b3]. In each section with basis \"notes\", list in refs the markers of the blocks of S1 it rests on (one to three, the ones that actually say it). Never write the markers in text. A section with basis \"nova\" has refs [].",
+  "place: when what you write would belong under one heading of S1 if the learner added it to the note (an explanation or example of that section's idea), that heading's words exactly as written in S1; else null.",
   "Write text in plain Markdown: short paragraphs, '- ' lists, **bold** for key terms, `code`, and $...$ for maths when needed. No HTML.",
   "Say nothing about the learner's progress, mastery, grades or history: you are not given any. Do not say you saved, added, linked, scheduled or changed anything: you cannot. Do not claim to have read a page or file you were not given.",
   "followUps are up to three short things the learner might ask next, in their voice (\"Why does … ?\"), each under 70 characters.",
   "Reply with one JSON object only, with every key present (empty when it does not apply):",
-  `{"sections": [{"basis": "notes"|"nova", "heading": string|null, "text": string}],
+  `{"sections": [{"basis": "notes"|"nova", "heading": string|null, "text": string, "refs": ["b3"]}],
+ "place": string|null,
  "steps": [{"title": string, "text": string, "prompt": string|null}],
  "exercise": {"question": string, "kind": "open"|"choice", "choices": [string], "answer": string, "hint": string|null, "basis": "notes"|"nova"} | null,
  "quiz": [{"question": string, "choices": [string], "answer": number, "why": string, "basis": "notes"|"nova"}],
@@ -264,6 +303,7 @@ const EMPTY_PARTS = {
   sections: [] as TutorSection[], steps: [] as TutorStep[], exercise: null as TutorExercise | null, quiz: [] as TutorQuizItem[],
   ideas: [] as TutorIdea[], cards: [] as TutorCard[], verdict: null as TutorVerdict | null, organize: null as TutorOrganize | null,
   related: [] as Array<{ sourceId: string; why: string }>, followUps: [] as string[], notInSources: false,
+  place: null as string | null,
 };
 type Parts = typeof EMPTY_PARTS;
 
@@ -285,14 +325,22 @@ const KEEP: Record<TutorMode, Array<keyof Parts>> = {
   organize:   ["sections", "organize", "related", "notInSources"],
 };
 
-export function readTutorReply(raw: string, mode: TutorMode, sources: NoteAssistSource[]): Parts | null {
+// given: the blocks of the note the model was shown. A part's refs keep only
+// those; place keeps only a heading of the note, as written there.
+export function readTutorReply(raw: string, mode: TutorMode, sources: NoteAssistSource[], given: NoteBlock[] = []): Parts | null {
   const start = raw.indexOf("{"), end = raw.lastIndexOf("}");
   if (start === -1 || end <= start) return null;
   let p: Record<string, unknown>;
   try { p = JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>; } catch { return null; }
-  const given = new Set(sources.map(s => s.id));
-  const text = (v: unknown, max = TEXT_MAX) => keepGivenCitations(clean(v, max), given);
+  const ids = new Set(sources.map(s => s.id));
+  const text = (v: unknown, max = TEXT_MAX) => withoutMarkers(keepGivenCitations(clean(v, max), ids));
   const cites = (t: string) => sources.some(s => t.includes(`[${s.id}]`));
+  const blocks = new Map(given.map(b => [b.id, b]));
+  const refsOf = (v: unknown): NoteRef[] => list(v)
+    .flatMap(x => (typeof x === "string" && blocks.has(x.trim()) ? [blocks.get(x.trim())!] : []))
+    .filter((b, i, all) => all.findIndex(y => y.id === b.id) === i).slice(0, 3).map(refOf);
+  const headings = noteSections(given.map(b => b.text).join("\n\n")).map(h => h.title);
+  const place = typeof p.place === "string" ? headings.find(h => words(h) === words(p.place as string)) ?? null : null;
 
   const all: Parts = {
     // A part said to be from the notes keeps that label only with a citation
@@ -301,8 +349,11 @@ export function readTutorReply(raw: string, mode: TutorMode, sources: NoteAssist
       const s = x as Record<string, unknown> | null;
       const body = s ? text(s.text) : "";
       if (!body) return [];
-      const basis = basisOf(s!.basis) === "notes" && cites(body) ? "notes" : "nova";
-      return [{ basis, heading: clean(s!.heading, 120) || null, text: body } as TutorSection];
+      // A part from the notes cites one (a source, or passages of the note);
+      // only such a part keeps passages.
+      const refs = refsOf(s!.refs);
+      const basis = basisOf(s!.basis) === "notes" && (cites(body) || refs.length > 0) ? "notes" : "nova";
+      return [{ basis, heading: clean(s!.heading, 120) || null, text: body, refs: basis === "notes" ? refs : [] } as TutorSection];
     }).slice(0, 6),
     steps: list(p.steps).flatMap(x => {
       const s = x as Record<string, unknown> | null;
@@ -355,9 +406,10 @@ export function readTutorReply(raw: string, mode: TutorMode, sources: NoteAssist
     }).filter((l, i, all) => all.findIndex(x => x.sourceId === l.sourceId) === i),
     followUps: strings(p.followUps, 3, 90),
     notInSources: p.notInSources === true,
+    place,
   };
 
-  const kept: Parts = { ...EMPTY_PARTS };
+  const kept: Parts = { ...EMPTY_PARTS, place };
   for (const key of KEEP[mode]) (kept as Record<string, unknown>)[key] = all[key];
   const anything = kept.sections.length || kept.steps.length || kept.exercise || kept.quiz.length || kept.ideas.length
     || kept.cards.length || kept.verdict || kept.organize || kept.related.length;
@@ -392,8 +444,9 @@ export async function tutorOnNote(
   }
 
   const located = request.selection ? locatePassage(material.note.body, request.selection) : null;
-  const passage = request.selection ? { text: request.selection, heading: located!.heading, found: located!.found } : null;
-  const window = noteWindow(material.note.body, located?.found ? located.offset : null);
+  const window = markedNote(material.note.body, located?.found ? located.offset : null);
+  const chosen = located?.found ? blockAt(window.blocks, located.offset) : null;
+  const passage = request.selection ? { text: request.selection, heading: located!.heading, found: located!.found, ref: chosen ? refOf(chosen) : null } : null;
 
   const resources = material.note.subjectId && WITH_PAGES.includes(request.mode)
     ? await loadResources(profileId, material.note.subjectId, material.note.topicName, RESOURCE_SOURCE_MAX)
@@ -417,7 +470,7 @@ export async function tutorOnNote(
       prompt: tutorPrompt(request, sources, texts, { subjectName: material.note.subjectName, topicName: material.note.topicName, partial: window.partial, passage }),
       maxOutputTokens: request.mode === "organize" ? 3_000 : 1_800, deadlineMs: TUTOR_DEADLINE_MS, json: true,
     });
-    const parts = readTutorReply(typeof reply === "string" ? reply : "", request.mode, sources);
+    const parts = readTutorReply(typeof reply === "string" ? reply : "", request.mode, sources, window.blocks);
     if (!parts) return refuse("unavailable", "Nova didn't come back with anything usable. Try again in a moment.");
     const out: TutorReply = {
       ok: true, mode: request.mode, sources, noteVersion: material.note.updatedAt,

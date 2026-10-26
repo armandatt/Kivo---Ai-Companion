@@ -6,9 +6,10 @@ import { test } from 'node:test'
 import type { TutorReply } from '@repo/api/nova/product/note-tutor.types'
 import { NOTE_BODY_MAX } from '@repo/api/nova/product/notes.types'
 import {
-  citationsAsLinks, historyOf, insertFor, loadConversation, nextActions, openExercise, placeInto, resultsOf, saveConversation,
+  citationsAsLinks, historyOf, insertFor, loadConversation, nextActions, openExercise, placeInto, placementHint, refsOf, resultsOf, saveConversation,
   type TutorEntry,
 } from './tutor-session'
+import { insertAt, noteBlocks, placementFor, refOf, resolvePlacement } from '@repo/api/nova/product/note-outline'
 import { hasParkedNoteCapture, parkNoteCapture, takeNoteCapture } from './pending-note-capture'
 
 const sources: TutorReply['sources'] = [
@@ -124,4 +125,37 @@ test('a capture survives sign-in for ten minutes, once; a Saved capture is left 
   parkNoteCapture('#save=https%3A%2F%2Fexample.edu&title=x', s, 0)
   assert.equal(hasParkedNoteCapture(s, 1), false)
   assert.deepEqual(takeNoteCapture('#text=from%20the%20address', s, 0)?.text, 'from the address')
+})
+
+// ── Where a reply goes in the note ───────────────────────────────────────────
+
+const NOTE = '# Graphs\n\n## Dijkstra\n\nPick the closest unvisited node.\n\n## Bellman-Ford\n\nRelax every edge.'
+const pick = noteBlocks(NOTE).find(b => b.text.startsWith('Pick'))!
+
+test('an explanation resting on a passage is added in that passage\'s section, not at the end (Example A)', () => {
+  const r = reply({ sections: [{ basis: 'notes', heading: null, text: 'It is greedy because… [S1]', refs: [refOf(pick)] }] })
+  assert.deepEqual(refsOf(r).map(x => x.block), [pick.id])
+  const { best } = placementFor(NOTE, placementHint(r, NOTE))
+  assert.equal(best.label, 'Add under: Dijkstra')
+  const out = insertAt(NOTE, resolvePlacement(NOTE, best)!, insertFor(r, {})!).body
+  assert.ok(out.indexOf('greedy') < out.indexOf('## Bellman-Ford'))
+  assert.ok(out.indexOf('greedy') > out.indexOf('Pick the closest'))
+})
+
+test('a heading Nova suggested wins; a summary goes where a summary belongs; a passage they chose is followed', () => {
+  assert.equal(placementFor(NOTE, placementHint(reply({ place: 'Bellman-Ford' }), NOTE)).best.label, 'Add under: Bellman-Ford')
+  assert.equal(placementFor(NOTE, placementHint(reply({ mode: 'summary' }), NOTE)).best.how, 'newSection')
+  const chosen = reply({ passage: { text: 'Pick the closest', heading: 'Dijkstra', found: true, ref: refOf(pick) } })
+  assert.equal(placementFor(NOTE, placementHint(chosen, NOTE)).best.label, 'Insert after the passage you chose, in Dijkstra')
+  // The passage changed since: not used; the reply has nothing else to go by, so the learner is asked.
+  const changed = NOTE.replace('Pick the closest unvisited node.', 'Something else.')
+  const fallback = placementFor(changed, placementHint(chosen, changed))
+  assert.equal(fallback.clear, false)
+})
+
+test('flashcards or a quiz on nothing in particular: offered as a new section, the learner chooses (Example E)', () => {
+  const p = placementFor(NOTE, placementHint(reply({ mode: 'quiz' }), NOTE))
+  assert.equal(p.clear, false)
+  assert.equal(p.best.label, 'New section: Practice questions, at the end')
+  assert.ok(p.options.some(o => o.label === 'Add under: Dijkstra'))
 })

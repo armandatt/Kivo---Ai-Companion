@@ -98,7 +98,12 @@ function line(text: string, key: string, resolve: Resolve): ReactNode[] {
 const lines = (ls: string[], key: string, resolve: Resolve) =>
   ls.flatMap((l, j) => [...(j ? [<br key={`${key}br${j}`} />] : []), ...line(l, `${key}-${j}`, resolve)])
 
-function Callout({ block, k, resolve }: { block: Extract<Block, { kind: 'callout' }>; k: string; resolve: Resolve }) {
+// Where a top-level block is in the note's text, for finding a passage Nova
+// cites (note-editor.tsx revealPassage).
+type SpanAttrs = { 'data-at'?: number; 'data-to'?: number }
+const spanOf = (b: Block): SpanAttrs => (b.at !== undefined ? { 'data-at': b.at, 'data-to': b.to } : {})
+
+function Callout({ block, k, resolve, span }: { block: Extract<Block, { kind: 'callout' }>; k: string; resolve: Resolve; span: SpanAttrs }) {
   const style = CALLOUT[block.type]
   const Icon = style.icon
   const head = (
@@ -112,13 +117,13 @@ function Callout({ block, k, resolve }: { block: Extract<Block, { kind: 'callout
   const frame = `my-4 rounded-r-xl border-l-[3px] px-4 py-3 ${style.edge} ${style.fill}`
   if (block.fold) {
     return (
-      <details className={`group ${frame}`} open={block.fold === 'open'} data-callout={block.type}>
+      <details className={`group ${frame}`} open={block.fold === 'open'} data-callout={block.type} {...span}>
         <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">{head}</summary>
         {body}
       </details>
     )
   }
-  return <aside className={frame} data-callout={block.type}>{head}{body}</aside>
+  return <aside className={frame} data-callout={block.type} {...span}>{head}{body}</aside>
 }
 
 function render(blocks: Block[], key: string, resolve: Resolve, nested = false): ReactNode[] {
@@ -126,23 +131,32 @@ function render(blocks: Block[], key: string, resolve: Resolve, nested = false):
     const k = `${key}${n}`
     // Inside a callout the first and last blocks sit flush with its edges.
     const edge = nested ? 'first:mt-0 last:mb-0' : ''
+    const span = spanOf(b)
     switch (b.kind) {
-      case 'para': return <p key={k} className={`my-3 ${edge}`}>{lines(b.lines, k, resolve)}</p>
+      case 'para': return <p key={k} className={`my-3 ${edge}`} {...span}>{lines(b.lines, k, resolve)}</p>
       case 'list': {
         const items = b.items.map((it, j) => <li key={`${k}-${j}`} className="my-1 pl-1">{line(it, `${k}-${j}`, resolve)}</li>)
         return b.ordered
-          ? <ol key={k} className={`my-3 list-decimal space-y-0.5 pl-6 marker:text-foreground/40 ${edge}`}>{items}</ol>
-          : <ul key={k} className={`my-3 list-disc space-y-0.5 pl-6 marker:text-keppel-400/60 ${edge}`}>{items}</ul>
+          ? <ol key={k} className={`my-3 list-decimal space-y-0.5 pl-6 marker:text-foreground/40 ${edge}`} {...span}>{items}</ol>
+          : <ul key={k} className={`my-3 list-disc space-y-0.5 pl-6 marker:text-keppel-400/60 ${edge}`} {...span}>{items}</ul>
       }
-      case 'code': return <pre key={k} className={`my-4 overflow-x-auto rounded-xl border border-white/8 bg-white/4 p-3.5 font-mono text-[13px] leading-relaxed ${edge}`}><code>{b.text}</code></pre>
-      case 'quote': return <blockquote key={k} className={`my-4 border-l-2 border-foreground/20 pl-4 italic text-foreground/70 ${edge}`}>{lines(b.lines, k, resolve)}</blockquote>
-      case 'rule': return <hr key={k} className="my-8 border-white/10" />
-      case 'callout': return <Callout key={k} block={b} k={k} resolve={resolve} />
+      case 'code': return <pre key={k} className={`my-4 overflow-x-auto rounded-lg border border-white/6 bg-white/[0.03] px-4 py-3 font-mono text-[13px] leading-relaxed text-foreground/85 ${edge}`} {...span}><code>{b.text}</code></pre>
+      case 'quote': return <blockquote key={k} className={`my-4 border-l-2 border-foreground/20 pl-4 italic text-foreground/70 ${edge}`} {...span}>{lines(b.lines, k, resolve)}</blockquote>
+      case 'rule': return <hr key={k} className="my-8 border-white/10" {...span} />
+      case 'callout': return <Callout key={k} block={b} k={k} resolve={resolve} span={span} />
+      case 'table': return (
+        <div key={k} className={`my-4 overflow-x-auto rounded-lg border border-white/8 ${edge}`} {...span}>
+          <table className="w-full border-collapse text-[0.92em]">
+            <thead><tr>{b.head.map((h, j) => <th key={j} className="border-b border-white/10 bg-white/[0.03] px-3 py-2 text-left font-semibold text-foreground">{line(h, `${k}h${j}`, resolve)}</th>)}</tr></thead>
+            <tbody>{b.rows.map((r, j) => <tr key={j} className="border-t border-white/6 first:border-t-0">{r.map((c, x) => <td key={x} className="px-3 py-2 align-top">{line(c, `${k}r${j}c${x}`, resolve)}</td>)}</tr>)}</tbody>
+          </table>
+        </div>
+      )
       case 'heading': {
         const content = line(b.text, k, resolve)
-        if (b.level === 1) return <h2 key={k} id={b.id} className={`mb-3 mt-10 scroll-mt-24 font-serif text-[1.75em] font-semibold leading-tight tracking-tight text-keppel-200 ${edge}`}>{content}</h2>
-        if (b.level === 2) return <h3 key={k} id={b.id} className={`mb-2 mt-8 scroll-mt-24 font-serif text-[1.35em] font-semibold leading-snug text-foreground ${edge}`}>{content}</h3>
-        return <h4 key={k} id={b.id} className={`mb-1.5 mt-6 scroll-mt-24 text-[1.08em] font-semibold text-foreground/90 ${edge}`}>{content}</h4>
+        if (b.level === 1) return <h2 key={k} id={b.id} {...span} className={`mb-3 mt-10 scroll-mt-24 font-serif text-[1.75em] font-semibold leading-tight tracking-tight text-keppel-200 ${edge}`}>{content}</h2>
+        if (b.level === 2) return <h3 key={k} id={b.id} {...span} className={`mb-2 mt-8 scroll-mt-24 font-serif text-[1.35em] font-semibold leading-snug text-foreground ${edge}`}>{content}</h3>
+        return <h4 key={k} id={b.id} {...span} className={`mb-1.5 mt-6 scroll-mt-24 text-[1.08em] font-semibold text-foreground/90 ${edge}`}>{content}</h4>
       }
     }
   })
