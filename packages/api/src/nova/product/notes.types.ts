@@ -89,6 +89,9 @@ export interface NoteInput {
   // conflict and the note as it now stands comes back. Left out: last write
   // wins, as before.
   baseUpdatedAt?: string;
+  // Creating only: a capture or import that may be sent twice. The same title
+  // and text saved in the last ten minutes is returned instead of a second note.
+  once?: boolean;
 }
 
 export type NoteError =

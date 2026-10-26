@@ -270,12 +270,26 @@ async function subjectIsLearners(profileId: string, subjectId: string): Promise<
 const UNKNOWN_SUBJECT = { ok: false as const, error: "unknown_subject" as const, message: "That subject is not one of yours." };
 const NOT_FOUND       = { ok: false as const, error: "not_found" as const, message: "That note doesn't exist." };
 
+export const CREATE_ONCE_MS = 10 * 60_000;
+
 export async function createNote(profileId: string, raw: unknown): Promise<WriteResult> {
   const parsed = parseNoteInput(raw, true);
   if (!parsed.ok) return parsed;
   const { title, body, subjectId, topicName } = parsed.changes;
 
   if (subjectId && !(await subjectIsLearners(profileId, subjectId))) return UNKNOWN_SUBJECT;
+
+  // A capture or import may be sent again when its answer was lost. With
+  // `once`, the same title and text saved by this learner in the last few
+  // minutes is that note, returned as it now is, and nothing is created.
+  if ((raw as { once?: unknown }).once === true) {
+    const since = new Date(Date.now() - CREATE_ONCE_MS);
+    const earlier = await prisma.novaNote.findFirst({
+      where: { profileId, title: title!, body: body ?? "", createdAt: { gte: since } },
+      orderBy: { createdAt: "desc" }, select: NOTE_SELECT,
+    });
+    if (earlier) return { ok: true, note: toDetail(earlier, await linksOf(profileId, earlier)) };
+  }
 
   const row = await prisma.novaNote.create({
     data:   { profileId, title: title!, body: body ?? "", subjectId: subjectId ?? null, topicName: topicName ?? null },
@@ -403,11 +417,14 @@ export const RELATED_SOURCE_MAX     = 6;
 export const RELATED_SOURCE_BODY_MAX = 1_200;
 
 export interface NoteSources {
-  note:    { id: string; title: string; body: string; subjectId: string | null; subjectName: string | null; topicName: string | null };
+  // updatedAt: the version read, so a caller can say which version it used.
+  // bodyLength: the whole body's length, when body is cut to bodyMax.
+  note:    { id: string; title: string; body: string; subjectId: string | null; subjectName: string | null; topicName: string | null; updatedAt: string; bodyLength: number };
   related: Array<{ id: string; title: string; body: string; why: "links_to" | "linked_from" | "same_topic" | "same_subject" }>;
 }
 
-export async function noteSources(profileId: string, noteId: string): Promise<NoteSources | null> {
+export async function noteSources(profileId: string, noteId: string, options: { bodyMax?: number } = {}): Promise<NoteSources | null> {
+  const bodyMax = Math.min(Math.max(options.bodyMax ?? NOTE_SOURCE_BODY_MAX, 1), NOTE_BODY_MAX);
   const row = await prisma.novaNote.findFirst({ where: { id: noteId, profileId }, select: NOTE_SELECT });
   if (!row) return null;
   const links = await linksOf(profileId, row);
@@ -432,8 +449,9 @@ export async function noteSources(profileId: string, noteId: string): Promise<No
   const byId = new Map(bodies.map(b => [b.id, b]));
   return {
     note: {
-      id: row.id, title: row.title, body: row.body.slice(0, NOTE_SOURCE_BODY_MAX),
+      id: row.id, title: row.title, body: row.body.slice(0, bodyMax),
       subjectId: row.subjectId, subjectName: row.subject?.name ?? null, topicName: row.topicName,
+      updatedAt: row.updatedAt.toISOString(), bodyLength: row.body.length,
     },
     related: wanted.flatMap(w => {
       const b = byId.get(w.id);

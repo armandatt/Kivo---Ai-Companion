@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { parkCapture } from '@/components/nova/saved/pending-capture'
+import { parkNoteCapture } from '@/components/nova/notes/pending-note-capture'
 import {
   AuthError,
   AuthMethodChoice,
@@ -46,8 +47,9 @@ function SigninForm() {
   const [isRetrying, setIsRetrying] = useState(false)
 
   // Sent here by the Save to Kivo bookmark while signed out: keep the page
-  // it was bringing, so Saved still has it after sign-in.
-  useEffect(() => { parkCapture() }, [])
+  // it was bringing, so Saved still has it after sign-in. Likewise a passage
+  // on its way to Notes (the extension's or the bookmarklet's capture).
+  useEffect(() => { parkCapture(); parkNoteCapture() }, [])
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()

@@ -6,18 +6,21 @@ import { useRouter } from 'next/navigation'
 import {
   ArrowLeft, ArrowRight, Bold, Check, ChevronLeft, ChevronRight, Code, Columns2, ExternalLink, Hash, Heading1, Heading2,
   HelpCircle, Highlighter, Italic, Lightbulb, Link2, List, ListOrdered, ListTree, Loader2, Minus, PanelLeft, Pencil,
-  Quote, Trash2, Type, X,
+  Quote, Sparkles, Trash2, Type, Undo2, X,
 } from 'lucide-react'
 import type { NoteDetail, NoteSubjectOption, NoteSummary } from '@repo/api/nova/product/notes.types'
 import { NOTE_BODY_MAX, NOTE_TITLE_MAX, NOTE_TOPIC_MAX } from '@repo/api/nova/product/notes.types'
 import { TASK_TITLE_MAX } from '@repo/api/nova/product/tasks.types'
+import { TUTOR_MODES, TUTOR_SELECTION_MAX, type TutorMode } from '@repo/api/nova/product/note-tutor.types'
 import { noteTemplatesFor, type NoteTemplate } from '@repo/api/nova/product/templates'
 import { normalizeLearningContexts } from '@repo/api/nova/product/learning-context'
 import { minutesLabel, relativeDay } from '../format'
 import { subjectColor } from '../subject-color'
 import { useStartSession } from '../use-start-session'
 import { NoteBody, linkHref } from './note-body'
-import { NoteAssistPanel } from './note-assist-panel'
+import { InsertPreview, type PendingInsert } from './insert-preview'
+import { NovaTutor, type Passage } from './nova-tutor'
+import { placeInto } from './tutor-session'
 import { outline, parseBlocks, sourceOf, tagsOf, wordCount } from './note-blocks'
 import { callout, divider, noteLink, prefixLines, tag, wrap, type Edited } from './note-format'
 import { NotesTree } from './notes-tree'
@@ -39,9 +42,30 @@ function writeDraft(id: string | null, value: StoredDraft | null) {
 // How this browser likes the notebook laid out. A convenience only: without
 // storage the defaults below are used.
 type Layout = 'write' | 'split' | 'preview'
-type Prefs = { tree: boolean; outline: boolean; serif: boolean; layout: Layout }
+// tutor: Nova's panel beside the note on a wide screen, at tutorWidth pixels.
+type Prefs = { tree: boolean; outline: boolean; serif: boolean; layout: Layout; tutor: boolean; tutorWidth: number }
 const PREFS_KEY = 'kivo-notes-layout'
-const DEFAULT_PREFS: Prefs = { tree: true, outline: true, serif: true, layout: 'split' }
+const DEFAULT_PREFS: Prefs = { tree: true, outline: true, serif: true, layout: 'split', tutor: true, tutorWidth: 400 }
+const TUTOR_MIN = 320, TUTOR_MAX = 720
+const clampTutor = (w: number) => Math.round(Math.min(Math.max(w, TUTOR_MIN), typeof window === 'undefined' ? TUTOR_MAX : Math.min(TUTOR_MAX, window.innerWidth * 0.55)))
+
+// Typing stops, then the note is saved a moment later, guarded on the version
+// it was opened at like any other save. A failed save is tried again.
+const AUTOSAVE_MS = 1500
+const AUTOSAVE_RETRY_MS = 8000
+
+// Whether the screen is wide enough for the note and Nova side by side
+// (1024px), and for the notebook and a split editor beside them too (1600px).
+function useWide(query = '(min-width: 1024px)'): boolean {
+  const [wide, setWide] = useState(false)
+  useEffect(() => {
+    const q = window.matchMedia(query)
+    const on = () => setWide(q.matches)
+    on(); q.addEventListener('change', on)
+    return () => q.removeEventListener('change', on)
+  }, [query])
+  return wide
+}
 function readPrefs(): Prefs {
   try { const raw = window.localStorage.getItem(PREFS_KEY); return raw ? { ...DEFAULT_PREFS, ...JSON.parse(raw) as Partial<Prefs> } : DEFAULT_PREFS } catch { return DEFAULT_PREFS }
 }
@@ -98,11 +122,33 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const [sourceOpen, setSourceOpen] = useState(false)
   const [treeOnPhone, setTreeOnPhone] = useState(false)
   const bodyRef = useRef<HTMLTextAreaElement>(null)
+  const articleRef = useRef<HTMLElement>(null)
+  const tutorInput = useRef<HTMLTextAreaElement>(null)
+  const wide = useWide()
+  const roomy = useWide('(min-width: 1600px)')
+
+  // Nova beside the note: the passage being discussed, what it offers to add
+  // (shown and confirmed first), and the last addition, which can be undone.
+  const [passage, setPassage] = useState<Passage | null>(null)
+  const [tutorOnPhone, setTutorOnPhone] = useState(false)
+  const [pendingInsert, setPendingInsert] = useState<PendingInsert | null>(null)
+  const [undo, setUndo] = useState<{ before: string; after: string; label: string } | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [selChip, setSelChip] = useState<{ text: string; x: number; y: number; tooLong: boolean } | null>(null)
+  const [autoAsk, setAutoAsk] = useState<TutorMode | null>(null)
+  const [autoError, setAutoError] = useState<{ message: string; at: number } | null>(null)
+  const [dragWidth, setDragWidth] = useState<number | null>(null)
+  const caret = useRef<number | null>(null)
 
   const setPrefs = useCallback((change: Partial<Prefs>) => setPrefsState(p => { const n = { ...p, ...change }; writePrefs(n); return n }), [])
   useEffect(() => { setPrefsState(readPrefs()) }, [])
 
   const dirty = editing && !same(draft, saved)
+  // The latest of each, for saves started from a timer or from Nova's panel.
+  const draftRef = useRef(draft); draftRef.current = draft
+  const noteRef  = useRef(note);  noteRef.current = note
+  const dirtyRef = useRef(dirty); dirtyRef.current = dirty
+  const inFlight = useRef<Promise<boolean> | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -115,7 +161,11 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       if (noteId) {
         if (loaded?.ok) {
           setNote(loaded.note); setDraft(draftOf(loaded.note)); setSaved(draftOf(loaded.note))
-          if (new URLSearchParams(window.location.search).get('saved') === '1') setJustSaved(true)
+          const params = new URLSearchParams(window.location.search)
+          if (params.get('saved') === '1') setJustSaved(true)
+          // From the capture page: "Organise with Nova" opens Nova and asks once.
+          const ask = params.get('tutor')
+          if (ask && (TUTOR_MODES as readonly string[]).includes(ask)) { setAutoAsk(ask as TutorMode); setPrefsState(p => ({ ...p, tutor: true })) }
           const kept = readDraft(noteId)
           if (kept && !same(kept.draft, draftOf(loaded.note))) setRecovered(kept)
           else if (kept) writeDraft(noteId, null)
@@ -170,32 +220,134 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
 
   // base: the version this edit started from. A save over a newer version is
   // refused by the server, and both texts stay on screen.
-  async function save(base: string | null = note?.updatedAt ?? null) {
-    if (saving || !draft.title.trim()) return
-    setSaving(true)
-    setError(null)
-    const input = {
-      title: draft.title, body: draft.body, subjectId: draft.subjectId || null, topicName: draft.topicName.trim() || null,
-      ...(note && base ? { baseUpdatedAt: base } : {}),
-    }
-    const res = note ? await updateNote(note.id, input) : await createNote(input)
-    setSaving(false)
-    if (!res.ok) {
-      if (res.error === 'conflict' && res.current) { setConflict(res.current); return }
-      setError(`${res.message} Your text is still here and kept in this browser.`)
+  // stay: an autosave (or a save before Nova reads the note): editing goes on,
+  // and what was typed while it was on its way is kept as typed.
+  function save(base: string | null = noteRef.current?.updatedAt ?? null, opts: { stay?: boolean } = {}): Promise<boolean> {
+    if (inFlight.current) return inFlight.current.then(() => false)
+    const sent = draftRef.current
+    const current = noteRef.current
+    if (!sent.title.trim()) return Promise.resolve(false)
+    const run = (async () => {
+      setSaving(true)
+      if (!opts.stay) setError(null)
+      const input = {
+        title: sent.title, body: sent.body, subjectId: sent.subjectId || null, topicName: sent.topicName.trim() || null,
+        ...(current && base ? { baseUpdatedAt: base } : {}),
+      }
+      const res = current ? await updateNote(current.id, input) : await createNote(input)
+      setSaving(false)
+      if (!res.ok) {
+        if (res.error === 'conflict' && res.current) { setConflict(res.current); return false }
+        if (opts.stay) setAutoError({ message: res.message, at: Date.now() })
+        else setError(`${res.message} Your text is still here and kept in this browser.`)
+        return false
+      }
+      setAutoError(null); setConflict(null); setRecovered(null)
+      setNote(res.note)
+      setNotes(list => [res.note, ...list.filter(n => n.id !== res.note.id)])
+      if (opts.stay && current) {
+        // What was sent is what is saved; anything typed since stays unsaved.
+        setSaved(sent)
+        if (same(draftRef.current, sent)) writeDraft(current.id, null)
+        return true
+      }
+      writeDraft(current?.id ?? null, null)
+      setDraft(draftOf(res.note)); setSaved(draftOf(res.note)); setEditing(false)
+      setJustSaved(true)
+      // A new note moves to its own address; it says it was saved there too.
+      if (!current) router.replace(`/notes/${res.note.id}?saved=1`)
+      return true
+    })()
+    inFlight.current = run
+    void run.finally(() => { inFlight.current = null })
+    return run
+  }
+
+  // Autosave: a moment after typing stops, while editing a note that exists.
+  // Not over a conflict (the learner chooses), and not without a title.
+  useEffect(() => {
+    if (!editing || !note || !dirty || conflict || !draft.title.trim()) return
+    const timer = window.setTimeout(() => { void save(note.updatedAt, { stay: true }) }, autoError ? AUTOSAVE_RETRY_MS : AUTOSAVE_MS)
+    return () => window.clearTimeout(timer)
+  }, [draft, editing, note, dirty, conflict, autoError]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Before Nova reads the note: what is on screen is saved first.
+  const ensureSaved = useCallback(async (): Promise<boolean> => {
+    if (inFlight.current) await inFlight.current
+    if (!dirtyRef.current) return true
+    if (!noteRef.current || !draftRef.current.title.trim()) return false
+    return save(noteRef.current.updatedAt, { stay: true })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const version = useCallback(() => noteRef.current?.updatedAt ?? null, [])
+
+  // From Nova: shown first (InsertPreview), then added on lines of its own,
+  // in the editor, where autosave keeps it. Nothing is replaced.
+  const offerInsert = useCallback((markdown: string, label: string) => setPendingInsert({ markdown, label }), [])
+  const offerTitle  = useCallback((to: string) => setPendingInsert({ markdown: '', label: 'Title', title: { from: draftRef.current.title, to: to.slice(0, NOTE_TITLE_MAX) } }), [])
+  function confirmInsert(where: 'end' | 'cursor') {
+    const p = pendingInsert
+    setPendingInsert(null)
+    if (!p || !note) return
+    // On a narrow screen Nova's drawer covers the note: close it to show
+    // what was added (and its Undo).
+    if (!wide) setTutorOnPhone(false)
+    if (p.title) {
+      setDraft(d => ({ ...d, title: p.title!.to })); setEditing(true)
+      setNotice('Title changed. It saves in a moment.')
       return
     }
-    writeDraft(note?.id ?? null, null)
-    setConflict(null); setRecovered(null)
-    setNote(res.note); setDraft(draftOf(res.note)); setSaved(draftOf(res.note)); setEditing(false)
-    setNotes(list => [res.note, ...list.filter(n => n.id !== res.note.id)])
-    setJustSaved(true)
-    // A new note moves to its own address; it says it was saved there too.
-    if (!note) router.replace(`/notes/${res.note.id}?saved=1`)
+    const before = editing ? draftRef.current.body : note.body
+    const after = placeInto(before, p.markdown, where === 'cursor' ? caret.current : null)
+    if (after.length > NOTE_BODY_MAX) { setNotice('That would make the note longer than a note can be. Nothing was added.'); return }
+    if (!editing) setDraft(draftOf(note))
+    setDraft(d => ({ ...d, body: after })); setEditing(true)
+    setUndo({ before, after, label: p.label })
+    setNotice(null)
+  }
+  function undoInsert() {
+    if (!undo) return
+    if (draftRef.current.body !== undo.after) { setNotice('The note has changed since that was added, so it can’t be undone in one step. Remove it by hand.'); setUndo(null); return }
+    setDraft(d => ({ ...d, body: undo.before })); setUndo(null)
+    setNotice('Removed. Your note is as it was.')
+  }
+  useEffect(() => { if (!notice) return; const t = window.setTimeout(() => setNotice(null), 6000); return () => window.clearTimeout(t) }, [notice])
+  useEffect(() => { if (!undo) return; const t = window.setTimeout(() => setUndo(null), 20_000); return () => window.clearTimeout(t) }, [undo])
+
+  // Asking Nova about a passage: chosen while reading (the floating button)
+  // or while writing (the toolbar). The passage stays until it is cleared, so
+  // follow-up questions are about it too.
+  const openTutor = useCallback(() => {
+    if (wide) setPrefsState(p => { const n = { ...p, tutor: true }; writePrefs(n); return n })
+    else setTutorOnPhone(true)
+    window.setTimeout(() => tutorInput.current?.focus(), 60)
+  }, [wide])
+  const askAbout = useCallback((text: string) => {
+    setPassage({ text: text.trim() }); setSelChip(null); openTutor()
+  }, [openTutor])
+  useEffect(() => {
+    if (editing) { setSelChip(null); return }
+    let timer = 0
+    const read = () => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        const sel = window.getSelection()
+        const text = sel?.toString().trim() ?? ''
+        const inNote = !!sel && sel.rangeCount > 0 && !!articleRef.current?.contains(sel.anchorNode) && !!articleRef.current?.contains(sel.focusNode)
+        if (!text || !inNote) { setSelChip(null); return }
+        const rect = sel!.getRangeAt(0).getBoundingClientRect()
+        setSelChip({ text, x: Math.min(Math.max(rect.left + rect.width / 2, 80), window.innerWidth - 80), y: Math.max(rect.top - 44, 8), tooLong: text.length > TUTOR_SELECTION_MAX })
+      }, 160)
+    }
+    document.addEventListener('selectionchange', read)
+    return () => { document.removeEventListener('selectionchange', read); window.clearTimeout(timer) }
+  }, [editing])
+  const editorSelection = () => {
+    const el = bodyRef.current
+    return el ? draft.body.slice(el.selectionStart, el.selectionEnd).trim() : ''
   }
 
   function cancel() {
-    if (dirty && !window.confirm('Discard your changes?')) return
+    if (dirty && !window.confirm('Discard the changes that are not saved yet?')) return
     writeDraft(note?.id ?? null, null)
     if (!note) { router.push('/notes'); return }
     setDraft(saved); setEditing(false); setError(null)
@@ -354,6 +506,13 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const showSource  = sourceOpen && source !== null
   const showOutline = prefs.outline && !showSource
 
+  // With Nova docked on a screen under 1600px, the note keeps the room: the
+  // notebook opens over it instead of beside it, and the editor shows one
+  // pane (Write or Preview), not both.
+  const tutorDocked = wide && prefs.tutor
+  const treeDocked = prefs.tree && !showSource && (roomy || !tutorDocked)
+  const splitFits = roomy || !tutorDocked
+
   const crumbs = (
     <nav aria-label="Where this note is" className="flex min-w-0 items-center gap-1.5 text-[13px]" data-note-breadcrumb>
       <Link href="/notes" onClick={leave} className="shrink-0 text-keppel-300/80 hover:text-keppel-200">Notes</Link>
@@ -369,7 +528,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
 
   const topBar = (
     <header className="flex h-12 shrink-0 items-center gap-1 border-b border-white/6 pl-14 pr-3 lg:pl-3">
-      <button type="button" onClick={() => setPrefs({ tree: !prefs.tree })} className={`${iconButton(prefs.tree)} max-lg:hidden`} title={prefs.tree ? 'Hide the notebook' : 'Show the notebook'} aria-pressed={prefs.tree}>
+      <button type="button" onClick={() => (roomy || !tutorDocked ? setPrefs({ tree: !prefs.tree }) : setTreeOnPhone(true))} className={`${iconButton(treeDocked)} max-lg:hidden`} title={treeDocked ? 'Hide the notebook' : 'Show the notebook'} aria-pressed={treeDocked}>
         <PanelLeft className="size-4" />
       </button>
       <button type="button" onClick={() => setTreeOnPhone(true)} className={`${iconButton()} lg:hidden`} title="Show the notebook">
@@ -398,6 +557,11 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
           <Pencil className="size-3.5" /> Edit
         </button>
       )}
+      <button type="button" onClick={() => (wide ? setPrefs({ tutor: !prefs.tutor }) : setTutorOnPhone(true))} aria-pressed={wide ? prefs.tutor : tutorOnPhone}
+        className={`ml-1 inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-colors ${(wide ? prefs.tutor : tutorOnPhone) ? 'bg-nova/15 text-nova-ink' : 'border border-nova/30 text-nova-ink hover:bg-nova/10'}`}
+        title={wide && prefs.tutor ? 'Hide Nova' : 'Study this note with Nova'} data-tutor-toggle>
+        <Sparkles className="size-3.5" /> Nova
+      </button>
     </header>
   )
 
@@ -408,7 +572,9 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       <span className="shrink-0">{words.toLocaleString()} word{words === 1 ? '' : 's'}</span>
       {tags.length > 0 && <span className="hidden shrink-0 sm:inline">{tags.length} tag{tags.length === 1 ? '' : 's'}</span>}
       <span className="ml-auto shrink-0">
-        {editing ? (saving ? 'Saving…' : dirty ? 'Not saved · kept in this browser' : 'No changes') : note ? `Updated ${relativeDay(note.updatedAt)}` : ''}
+        {editing
+          ? (saving ? 'Saving…' : conflict ? 'Not saved · changed elsewhere' : autoError ? 'Not saved · trying again' : dirty ? (note ? 'Editing · saves as you pause' : 'Not saved yet · kept in this browser') : note ? `Saved ${relativeDay(note.updatedAt)}` : 'No changes')
+          : note ? `Updated ${relativeDay(note.updatedAt)}` : ''}
       </span>
     </footer>
   )
@@ -477,30 +643,94 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     </section>
   )
 
+  // Nova beside the note: a resizable panel on a wide screen, a drawer on a
+  // phone or a narrow tablet. One is mounted at a time, so the conversation
+  // is one conversation.
+  const tutorWidth = dragWidth ?? clampTutor(prefs.tutorWidth)
+  const tutor = (onClose?: () => void) => (
+    <NovaTutor
+      note={note} passage={passage} onClearPassage={() => setPassage(null)}
+      ensureSaved={ensureSaved} version={version} onInsert={offerInsert} onUseTitle={offerTitle}
+      onClose={onClose} autoAsk={autoAsk} onAutoAsked={() => { setAutoAsk(null); router.replace(`/notes/${note?.id ?? ''}`) }}
+      inputRef={tutorInput}
+    />
+  )
+  const splitter = (
+    <div role="separator" aria-orientation="vertical" aria-label="Resize Nova's panel" tabIndex={0}
+      aria-valuemin={TUTOR_MIN} aria-valuemax={TUTOR_MAX} aria-valuenow={tutorWidth}
+      onKeyDown={e => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); setPrefs({ tutorWidth: clampTutor(tutorWidth + (e.key === 'ArrowLeft' ? 24 : -24)) }) }
+      }}
+      onPointerDown={e => {
+        e.preventDefault()
+        const startX = e.clientX, startW = tutorWidth
+        const move = (ev: PointerEvent) => setDragWidth(clampTutor(startW + (startX - ev.clientX)))
+        const up = (ev: PointerEvent) => {
+          window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up)
+          setDragWidth(null); setPrefs({ tutorWidth: clampTutor(startW + (startX - ev.clientX)) })
+        }
+        window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
+      }}
+      className="group relative w-1.5 shrink-0 cursor-col-resize bg-transparent outline-none focus-visible:bg-nova/40" data-tutor-splitter>
+      <span aria-hidden className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/8 transition-colors group-hover:bg-nova/50" />
+    </div>
+  )
+
   const workspace = (main: React.ReactNode) => (
     <div className="-m-6 flex h-[calc(100%+3rem)] min-h-0" data-note-workspace>
-      {prefs.tree && !showSource && <div className="hidden w-64 shrink-0 border-r border-white/6 py-3 lg:block">{tree}</div>}
+      {treeDocked && <div className="hidden w-64 shrink-0 border-r border-white/6 py-3 lg:block">{tree}</div>}
       {treeOnPhone && (
-        <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-label="Your notebook">
+        <div className={`fixed inset-0 z-40 ${tutorDocked && !roomy ? '' : 'lg:hidden'}`} role="dialog" aria-label="Your notebook">
           <button type="button" className="absolute inset-0 bg-black/50" aria-label="Close the notebook" onClick={() => setTreeOnPhone(false)} />
           <div className="absolute inset-y-0 left-0 w-72 max-w-[85vw] border-r border-white/8 bg-background py-3 shadow-float">{tree}</div>
         </div>
       )}
       <div className="flex min-w-0 flex-1 flex-col">
         {topBar}
-        <div className="flex min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1">
           {showSource && sourcePane}
           {main}
-          {showOutline && outlinePanel}
+          {showOutline && !(wide && prefs.tutor) && outlinePanel}
+          {wide && prefs.tutor && (
+            <>
+              {splitter}
+              <aside className="flex min-h-0 shrink-0 flex-col" style={{ width: tutorWidth }} data-tutor-panel>{tutor(() => setPrefs({ tutor: false }))}</aside>
+            </>
+          )}
+          {(undo || notice) && (
+            <div role="status" style={{ left: tutorDocked ? `calc((100% - ${tutorWidth}px) / 2)` : '50%' }} className="absolute bottom-20 z-30 flex w-max max-w-[92vw] -translate-x-1/2 items-center gap-3 rounded-xl border border-white/10 bg-background px-4 py-2.5 text-sm text-foreground/85 shadow-float" data-insert-toast>
+              <span>{notice ?? `Added to your note: ${undo!.label}. ${saving ? 'Saving…' : dirty ? 'Saves in a moment.' : 'Saved.'}`}</span>
+              {undo && !notice && <button type="button" onClick={undoInsert} className="inline-flex items-center gap-1 font-medium text-nova-ink hover:underline" data-insert-undo><Undo2 className="size-3.5" /> Undo</button>}
+            </div>
+          )}
         </div>
         {statusBar}
       </div>
+      {!wide && tutorOnPhone && (
+        <div className="fixed inset-0 z-40" role="dialog" aria-modal="true" aria-label="Nova, your tutor" data-tutor-drawer>
+          <button type="button" className="absolute inset-0 bg-black/50" aria-label="Close Nova" onClick={() => setTutorOnPhone(false)} />
+          <div className="absolute inset-x-0 bottom-0 top-[8vh] overflow-hidden rounded-t-2xl border-t border-white/10 shadow-float sm:inset-y-0 sm:left-auto sm:right-0 sm:top-0 sm:w-[min(28rem,92vw)] sm:rounded-none sm:border-l sm:border-t-0">
+            {tutor(() => setTutorOnPhone(false))}
+          </div>
+        </div>
+      )}
+      {selChip && !editing && (
+        <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => !selChip.tooLong && askAbout(selChip.text)} disabled={selChip.tooLong}
+          style={{ left: selChip.x, top: selChip.y }}
+          className="fixed z-30 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-action px-3 py-1.5 text-xs font-semibold text-action-foreground shadow-float transition-colors hover:bg-action-hover disabled:bg-white/15 disabled:text-foreground/70"
+          data-ask-selection>
+          <Sparkles className="size-3.5" /> {selChip.tooLong ? `Select under ${TUTOR_SELECTION_MAX.toLocaleString()} characters to ask Nova` : 'Ask Nova'}
+        </button>
+      )}
+      {pendingInsert && (
+        <InsertPreview pending={pendingInsert} canPlaceAtCursor={editing && caret.current !== null} onConfirm={confirmInsert} onCancel={() => setPendingInsert(null)} />
+      )}
     </div>
   )
 
   // ── Editing ────────────────────────────────────────────────────────────────
   if (editing) {
-    const layout: Layout = prefs.layout
+    const layout: Layout = prefs.layout === 'split' && !splitFits ? 'write' : prefs.layout
     const tools: Array<{ label: string; icon: typeof Bold; run: () => void; keys?: string } | 'gap'> = [
       { label: 'Heading', icon: Heading1, run: () => format((t, s, x) => prefixLines(t, s, x, '# ')) },
       { label: 'Subheading', icon: Heading2, run: () => format((t, s, x) => prefixLines(t, s, x, '## ')) },
@@ -519,11 +749,19 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       { label: 'Link a note', icon: Link2, run: () => format(noteLink) },
       { label: 'Tag', icon: Hash, run: () => format(tag) },
       { label: 'Divider', icon: Minus, run: () => format((t, s) => divider(t, s)) },
+      'gap',
+      { label: 'Ask Nova about the selection', icon: Sparkles, run: () => {
+        const text = editorSelection()
+        if (!text) { setNotice('Select some text in the note first, then ask Nova about it.'); return }
+        if (text.length > TUTOR_SELECTION_MAX) { setNotice(`Select less: Nova takes up to ${TUTOR_SELECTION_MAX.toLocaleString()} characters at a time.`); return }
+        askAbout(text)
+      } },
     ]
     const editor = (
       <textarea
         id="note-body" ref={bodyRef} value={draft.body} maxLength={NOTE_BODY_MAX}
-        onChange={e => setDraft(d => ({ ...d, body: e.target.value }))}
+        onChange={e => { caret.current = e.target.selectionStart; setDraft(d => ({ ...d, body: e.target.value })) }}
+        onSelect={e => { caret.current = e.currentTarget.selectionEnd }}
         onKeyDown={onBodyKey}
         placeholder={'Write what you\'re learning, in your own words.\n\nPaste a passage from what you\'re reading, select it and press the quote button: it becomes a callout, and your own thoughts go under it.'}
         className="min-h-[24rem] w-full flex-1 resize-none bg-transparent px-1 py-2 font-mono text-[14px] leading-[1.7] text-foreground/90 placeholder:font-sans placeholder:text-foreground/30 focus:outline-none"
@@ -603,7 +841,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
               <div role="tablist" aria-label="Write or preview" className="ml-auto inline-flex rounded-lg border border-white/10 p-0.5 text-xs">
                 {(['write', 'split', 'preview'] as const).map(l => (
                   <button key={l} type="button" role="tab" aria-selected={layout === l} onClick={() => setPrefs({ layout: l })}
-                    className={`rounded-md px-2.5 py-1 ${l === 'split' ? 'max-lg:hidden' : ''} ${layout === l || (l === 'write' && layout === 'split') ? `${layout === l ? '' : 'lg:bg-transparent lg:text-foreground/55'} bg-white/10 text-foreground` : 'text-foreground/55 hover:text-foreground'}`}>
+                    className={`rounded-md px-2.5 py-1 ${l === 'split' ? (splitFits ? 'max-lg:hidden' : 'hidden') : ''} ${layout === l || (l === 'write' && layout === 'split') ? `${layout === l ? '' : 'lg:bg-transparent lg:text-foreground/55'} bg-white/10 text-foreground` : 'text-foreground/55 hover:text-foreground'}`}>
                     {l === 'write' ? 'Write' : l === 'split' ? 'Split' : 'Preview'}
                   </button>
                 ))}
@@ -635,7 +873,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
             <span className="sr-only" role="status" data-save-state={saving ? 'saving' : dirty ? 'unsaved' : 'clean'}>
               {saving ? 'Saving…' : dirty ? 'Not saved · kept in this browser' : ''}
             </span>
-            <button type="button" onClick={cancel} disabled={saving} className={quiet}>Cancel</button>
+            <button type="button" onClick={cancel} disabled={saving} className={quiet}>{dirty || !note ? 'Cancel' : 'Done'}</button>
             <button type="submit" disabled={saving || !draft.title.trim()} className={`${primary} flex-1 sm:flex-none`} title="Save (Ctrl or Cmd + S)">
               {saving ? <><Loader2 className="size-4 animate-spin" /> Saving…</> : 'Save'}
             </button>
@@ -650,8 +888,8 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const context = [note.subjectName, note.topicName].filter(Boolean).join(' · ')
 
   return workspace(
-    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto" data-note-scroll>
-      <article className="mx-auto w-full max-w-3xl px-5 pb-20 pt-8 sm:px-10" data-note-view={note.id}>
+    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto" onScroll={() => setSelChip(null)} data-note-scroll>
+      <article ref={articleRef} className="mx-auto w-full max-w-3xl px-5 pb-20 pt-8 sm:px-10" data-note-view={note.id}>
         {banners}
         <p className={`flex items-center gap-1.5 text-xs ${note.subjectName ? color.text : ''}`} data-note-context>
           {note.subjectName && <span className={`size-1.5 rounded-full ${color.dot}`} aria-hidden />}
@@ -713,14 +951,6 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
             {taskState === 'failed' && <span role="alert" className="text-xs text-red-300">That task didn&apos;t save. Try again.</span>}
           </div>
         </section>
-
-        {note.body.trim() && (
-          <NoteAssistPanel
-            note={note}
-            onNoteSaved={n => { setNote(n); setDraft(draftOf(n)); setSaved(draftOf(n)) }}
-            onUseDraft={body => { setDraft(d => ({ ...d, body })); setEditing(true); setPrefsState(p => p.layout === 'write' ? { ...p, layout: 'split' } : p) }}
-          />
-        )}
 
         <section id="note-connections" aria-labelledby="note-links-heading" className="mt-10 scroll-mt-6 rounded-2xl border border-white/8 bg-card/40 p-4 sm:p-5" data-note-links>
           <div className="flex items-center justify-between gap-3">
