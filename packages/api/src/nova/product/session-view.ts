@@ -12,6 +12,7 @@ export { sessionElapsedSeconds };
 export const MIN_PLANNED_MINUTES = 5;
 export const MAX_PLANNED_MINUTES = 240;
 const MAX_TOPIC_LENGTH = 120;
+const MAX_LABEL_LENGTH = 160;
 
 export function toSessionView(session: ActiveSessionInfo, now: Date): NovaSessionView {
   return {
@@ -22,6 +23,8 @@ export function toSessionView(session: ActiveSessionInfo, now: Date): NovaSessio
     startedAt:              session.startedAt.toISOString(),
     pausedAt:               session.pausedAt?.toISOString() ?? null,
     plannedDurationMinutes: session.plannedDurationMinutes,
+    untimed:                session.untimed === true,
+    label:                  session.currentFocus ?? null,
     elapsedSeconds:         sessionElapsedSeconds(session, now),
     serverNow:              now.toISOString(),
     pauseCount:             session.pauseCount,
@@ -35,6 +38,11 @@ export function parseSessionCommand(body: unknown): NovaSessionCommand | null {
   const b = body as Record<string, unknown>;
 
   if (b.action === "pause" || b.action === "resume") return { action: b.action };
+  if (b.action === "set_length") {
+    const m = b.minutes;
+    if (m === 0) return { action: "set_length", minutes: 0 };
+    return typeof m === "number" && Number.isInteger(m) && m >= MIN_PLANNED_MINUTES && m <= MAX_PLANNED_MINUTES ? { action: "set_length", minutes: m } : null;
+  }
   if (b.action === "end") {
     // Anything that is not one of the four answers is "no answer".
     const outcome = SESSION_OUTCOMES.find(o => o === b.outcome) ?? null;
@@ -43,14 +51,18 @@ export function parseSessionCommand(body: unknown): NovaSessionCommand | null {
   if (b.action !== "start") return null;
 
   const topicName = typeof b.topicName === "string" ? b.topicName.trim().slice(0, MAX_TOPIC_LENGTH) : "";
-  if (!topicName) return null;
+  // A session on something that is not a topic carries its words as a label.
+  const label = typeof b.label === "string" ? b.label.trim().slice(0, MAX_LABEL_LENGTH) : "";
+  if (!topicName && !label) return null;
 
   const subject = typeof b.subjectName === "string" ? b.subjectName.trim().slice(0, MAX_TOPIC_LENGTH) : "";
-  const minutes = typeof b.plannedMinutes === "number" && Number.isFinite(b.plannedMinutes)
+  // No time limit, chosen: 0. A length given: within the bounds.
+  const minutes = b.untimed === true || b.plannedMinutes === 0 ? 0
+    : typeof b.plannedMinutes === "number" && Number.isFinite(b.plannedMinutes)
     ? Math.min(MAX_PLANNED_MINUTES, Math.max(MIN_PLANNED_MINUTES, Math.round(b.plannedMinutes)))
     : null;
 
-  return { action: "start", topicName, subjectName: subject || null, plannedMinutes: minutes };
+  return { action: "start", topicName: topicName || null, subjectName: topicName && subject ? subject : null, plannedMinutes: minutes, label: label || null };
 }
 
 export type SessionCommandCheck =
@@ -74,5 +86,6 @@ export function checkSessionCommand(
   const paused = active.status === "paused";
   if (command.action === "pause")  return paused ? { verdict: "noop" } : { verdict: "apply" };
   if (command.action === "resume") return paused ? { verdict: "apply" } : { verdict: "noop" };
+  if (command.action === "set_length") return { verdict: "apply" };
   return { verdict: "apply" };   // end: valid whether running or paused
 }

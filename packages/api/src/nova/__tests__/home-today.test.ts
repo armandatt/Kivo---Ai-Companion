@@ -21,18 +21,18 @@ describe("the links drawn around today's topic", () => {
   });
 });
 
-describe("Today keeps what it already did", () => {
+describe("Today keeps what it already did, a step away", () => {
   const home = web("components/nova/nova-home.tsx");
-  it("still shows the shortfall, the recovery card and the learner's context for the topic", () => {
+  it("still shows the shortfall and the recovery card, in sections that open", () => {
     expect(home).toContain("<ShortfallNote shortfall={view.plan.shortfall}");
     expect(home).toContain("<RecoveryCard");
-    expect(home).toContain("useFocusContext(rec ?");
+    expect(home).toContain("<details className=\"group border-t border-white/8 py-3\"");
   });
-  it("still starts a focus session from a task", () => {
-    expect(home).toContain("onStart={active ? undefined : task => start({ topicName: task.topicName!, subjectName: task.subjectName!, durationMinutes: TASK_SESSION_MINUTES }, `task:${task.id}`)}");
+  it("still starts a focus session from a task on the board", () => {
+    expect(home).toContain("onStart={sessionRunning ? undefined : task => start({ topicName: task.topicName!, subjectName: task.subjectName!, durationMinutes: TASK_SESSION_MINUTES }, `task:${task.id}`)}");
   });
-  it("does not wait for the map: the plan, with the block to do now, renders whatever the map request does", () => {
-    expect(home.indexOf("<TodayPlan")).toBeLessThan(home.indexOf("<LinkedToTopic"));
+  it("starts an item of the flow through the day's own route, and does not wait for the map", () => {
+    expect(home).toContain("day.act({ action: 'start', itemId: item.id, minutes }");
     expect(home).not.toMatch(/map\.(loading|error)/);
   });
 });
@@ -44,9 +44,10 @@ describe("today's plan", () => {
     expect(sections).toContain("const blocks = recommendation ? [recommendation, ...alternatives] : alternatives");
     expect(sections).not.toContain(".sort(");
   });
-  it("starts a block the way it always has, and starts nothing while a session runs", () => {
+  it("starts a block the way it always has; on Today the planner's blocks are suggestions to add, never the flow itself", () => {
     expect(sections).toContain("onClick={() => onStart(action)}");
-    expect(home).toContain("onStart={active ? undefined : start} disabled={starting !== null}");
+    expect(home).not.toContain("<TodayPlan");
+    expect(home).toContain("Its blocks appear in Add to today as suggestions; it never fills your flow by itself.");
   });
   it("says when the day has more blocks than Today carries", () => {
     expect(sections).toContain("const more = blockCount > blocks.length");

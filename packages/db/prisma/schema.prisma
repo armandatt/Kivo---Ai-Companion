@@ -743,6 +743,7 @@ model NovaAcademicProfile {
   learningEvents    NovaLearningEvent[]
   tasks             NovaTask[]
   planOverrides     NovaPlanOverride[]
+  dayFlows          NovaDayFlow[]
   mapLayout         NovaMapLayout[]
   calendarEvents    NovaCalendarEvent[]
   workspaces        NovaWorkspace[]
@@ -1392,6 +1393,36 @@ model NovaCalendarEvent {
 // that day ("skip"), keep it in ("pin"), or put it at a place ("order", with
 // position). The Planning Engine still works the day out; these are applied
 // to its result for that calendar day only. Never written by a model.
+// The learner's own list for one calendar day (product/day-flow.ts, its only
+// reader and writer): what they chose to do today, in their order, with
+// today's time for each, and Nova's draft for a day that has none yet, kept
+// apart until they take it. Items name tasks and topics by id; nothing here
+// changes a task, a topic or the roadmap. Additive: one row per learner per day.
+model NovaDayFlow {
+  id         String   @id @default(cuid())
+  profileId  String
+  // The learner's calendar day (YYYY-MM-DD).
+  day        String
+  intention  String?
+  // FlowItem[] (day-flow.types.ts). Empty and saved=false: no flow made yet.
+  items      Json
+  saved      Boolean  @default(false)
+  // FlowDraft or null.
+  draft      Json?
+  // "list" | "schedule".
+  view       String   @default("list")
+  // Earlier states for Undo, newest last (FLOW_UNDO_MAX).
+  history    Json?
+  // Every change is made only against the version it was read at.
+  version    Int      @default(1)
+  profile    NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([profileId, day])
+}
+
 model NovaPlanOverride {
   id        String   @id @default(cuid())
   profileId String

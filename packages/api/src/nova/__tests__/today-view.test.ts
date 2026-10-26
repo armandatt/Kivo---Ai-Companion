@@ -187,7 +187,7 @@ describe("session view", () => {
 describe("session commands", () => {
   it("parses a start command and clamps the planned length", () => {
     expect(parseSessionCommand({ action: "start", topicName: "  Deadlocks ", subjectName: "Operating Systems", plannedMinutes: 40 }))
-      .toEqual({ action: "start", topicName: "Deadlocks", subjectName: "Operating Systems", plannedMinutes: 40 });
+      .toEqual({ action: "start", topicName: "Deadlocks", subjectName: "Operating Systems", plannedMinutes: 40, label: null });
     expect(parseSessionCommand({ action: "start", topicName: "x", plannedMinutes: 9999 }))
       .toMatchObject({ plannedMinutes: 240, subjectName: null });
     expect(parseSessionCommand({ action: "start", topicName: "x", plannedMinutes: 1 })).toMatchObject({ plannedMinutes: 5 });
