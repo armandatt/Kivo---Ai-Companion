@@ -458,8 +458,8 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
                 </button>
                 <button type="button" onClick={() => setRemoving(r => (r === edge.id ? null : edge.id))} aria-expanded={removing === edge.id}
                   aria-label={`Remove the connection with ${n.label}`} title="Remove this connection (no card is deleted)" data-disconnect-open={n.label}
-                  className="ml-1 shrink-0 rounded-lg p-1.5 text-subtle opacity-60 transition-opacity hover:bg-white/5 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-ring group-hover/row:opacity-100">
-                  <Unlink aria-hidden className="size-3.5" />
+                  className="ml-1 inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/10 px-2 py-1 text-[11px] font-medium text-foreground/70 transition-colors hover:border-white/20 hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring aria-expanded:border-white/20 aria-expanded:text-foreground">
+                  <Unlink aria-hidden className="size-3.5" /> Remove
                 </button>
                 </div>
                 {removing === edge.id && <Disconnect edge={edge} view={view} onCancel={() => setRemoving(null)} onDone={(said, stale) => { setRemoving(null); onDisconnected(said, stale) }} />}
