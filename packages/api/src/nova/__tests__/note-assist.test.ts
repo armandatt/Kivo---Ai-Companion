@@ -14,7 +14,7 @@ const { assistWithNote, keepGivenCitations, noteAssistPrompt, parseNoteAssist, r
 import type { NoteSources } from "../product/notes";
 
 const material = (body = "Deadlocks need four conditions: mutual exclusion, hold and wait, no preemption, circular wait."): NoteSources => ({
-  note: { id: "n1", title: "Deadlocks", body, subjectId: "os", subjectName: "Operating Systems", topicName: "Deadlocks" },
+  note: { id: "n1", title: "Deadlocks", body, subjectId: "os", subjectName: "Operating Systems", topicName: "Deadlocks", updatedAt: "2026-10-26T10:00:00.000Z", bodyLength: body.length },
   related: [{ id: "n2", title: "Banker's algorithm", body: "Avoids deadlock by checking safe states.", why: "links_to" }],
 });
 const resources = async () => [{ id: "r1", title: "OS book ch. 7", domain: "example.edu", url: "https://example.edu/ch7", excerpt: "A safe state is one where…", onTopic: true }];

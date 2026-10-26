@@ -176,6 +176,17 @@ function renderReady(page, context, probe = NO_PROBE) {
         probe.tooLong ? `That selection is longer than Nova keeps (${context.limits.excerpt.toLocaleString()} characters). Select less, then open Nova again.`
           : probe.available ? 'To save a passage, select it on the page, then open Nova.'
           : "Nova can't read a selection on this page. You can still save the page.")
+  // Add to notes: opens Nova's capture page with the page and the selection
+  // in the address's fragment (never sent to a server). The learner reviews
+  // and saves it there, signed in as usual; this sends nothing itself.
+  const toNotes = el('button', { class: 'wide', type: 'button', dataset: { toNotes: '' }, onclick: () => {
+    const p = new URLSearchParams()
+    p.set('url', page.url)
+    p.set('title', title.value)
+    if (probe.selection) p.set('text', probe.selection)
+    p.set('via', 'extension')
+    openNova(`/notes/capture#${p.toString()}`)
+  } }, probe.selection ? 'Add selection to notes' : 'Add to notes')
   const buttons = () => [save, study, saveSelection].filter(Boolean)
 
   async function send(eventType, button, busy) {
@@ -245,6 +256,7 @@ function renderReady(page, context, probe = NO_PROBE) {
     running ? el('p', { class: 'small', dataset: { running: '' } }, `You have a session running${running.topicName ? ` on ${running.topicName}` : ''}. One at a time.`) : null,
     el('div', { class: 'row' }, save, study),
     selection,
+    toNotes,
     errors, ask, footer(), privacy(),
   )
 }

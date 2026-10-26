@@ -83,6 +83,16 @@ test('the selection is sent only by its own button, and never with a page save o
   assert.equal((popup.match(/'selection_saved'/g) ?? []).length, 2, 'named where it is sent and where its result is shown')
 })
 
+test('Add to notes opens Nova\'s capture page with the page and selection in the fragment, and sends nothing itself', () => {
+  const popup = code(src('popup.js'))
+  const at = popup.indexOf('const toNotes')
+  assert.ok(at !== -1)
+  const handler = popup.slice(at, popup.indexOf('const buttons', at))
+  assert.match(handler, /openNova\(`\/notes\/capture#\$\{p\.toString\(\)\}`\)/)
+  assert.doesNotMatch(handler, /client\.|fetch\(|sendEvent/, 'no request: the web page saves it, signed in as usual')
+  assert.match(handler, /p\.set\('via', 'extension'\)/)
+})
+
 test('it keeps nothing in page-readable storage, writes no markup and runs nothing on a timer', () => {
   const all = sources.map(s => code(s.text)).join('\n')
   assert.ok(!all.match(/chrome\.history|chrome\.cookies|chrome\.webRequest|chrome\.webNavigation|chrome\.runtime\.onMessage|captureVisibleTab|chrome\.tabs\.(onUpdated|onActivated|sendMessage|get\b)/), 'no way into a page, its history or its traffic')

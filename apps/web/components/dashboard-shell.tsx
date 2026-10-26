@@ -7,6 +7,7 @@ import { routeAccess, type Companion } from '@repo/api/nova/product/companion'
 import { Sidebar, SIDEBAR_ID } from '@/components/sidebar'
 import { NovaUnavailable } from '@/components/nova/nova-unavailable'
 import { hasParkedCapture } from '@/components/nova/saved/pending-capture'
+import { hasParkedNoteCapture } from '@/components/nova/notes/pending-note-capture'
 import { LoadingMark, PageNotice, RetryButton } from '@/components/dashboard/page-states'
 
 // A page both companions have (the Guide) reads which one it is showing for
@@ -74,6 +75,7 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
   // whichever page sign-in landed on, take them to Saved to review it.
   useEffect(() => {
     if (companion === 'nova' && pathname !== '/saved' && hasParkedCapture()) router.replace('/saved')
+    else if (companion === 'nova' && pathname !== '/notes/capture' && hasParkedNoteCapture()) router.replace('/notes/capture')
   }, [companion, pathname, router])
 
   // On Creature, closing the navigation (Escape, the backdrop, its close

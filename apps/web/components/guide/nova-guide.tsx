@@ -54,6 +54,7 @@ const EXTENSION_STEPS = [
 const EXTENSION_FACTS = [
   'It sees a page only when you click its icon on that page.',
   'Select text before you click, and you can save that passage. It is sent only if you press Save selection.',
+  'Add to notes opens Kivo\'s capture page with the page and your selection, for you to check and save as a note. The extension itself sends nothing for it.',
   'It reads the address, the title and the text you have selected. Never the rest of the page, forms, passwords or cookies.',
   'It cannot see your other tabs or your history.',
   'It does nothing while the popup is closed.',
@@ -171,7 +172,7 @@ const TOPICS: Topic[] = [
   { id: 'focus',     label: 'Focus room',       icon: Timer,       group: 'Plan',         keywords: 'session timer pomodoro pause end scenes sound music rain lofi spotify apple music youtube playlist fullscreen' },
   { id: 'knowledge', label: 'Knowledge',        icon: BookOpen,    group: 'Knowledge',    keywords: 'subjects topics level review due board subject studio archive' },
   { id: 'map',       label: 'Knowledge Map',    icon: Waypoints,   group: 'Knowledge',    keywords: 'graph links pan zoom filter layout drag' },
-  { id: 'notes',     label: 'Notes',            icon: NotebookPen, group: 'Knowledge',    keywords: 'editor callout highlight tag link source pdf template ask nova summarise' },
+  { id: 'notes',     label: 'Notes',            icon: NotebookPen, group: 'Knowledge',    keywords: 'editor callout highlight tag link source pdf template ask nova summarise tutor explain quiz practice flashcards brainstorm capture import ipad goodnotes notability' },
   { id: 'saved',     label: 'Saved pages',      icon: Bookmark,    group: 'Knowledge',    keywords: 'links bookmark save to kivo study this' },
   { id: 'progress',  label: 'Progress & DNA',   icon: TrendingUp,  group: 'Growth',       keywords: 'progress learning dna streak weeks signals insights' },
   { id: 'creature',  label: 'Your creature',    icon: Gamepad2,    group: 'Growth',       keywords: 'world level places arrow keys unlock days in a row' },
@@ -512,14 +513,18 @@ export function NovaGuide() {
                 Your notebook by subject and topic on the left, the note in the middle, its outline, tags and backlinks on the right, and a status line with links and words. A note with a <code className="rounded bg-white/8 px-1">Source:</code> line can open that page or PDF beside it, so you read and write side by side.
               </Feature>
               <Feature title="Writing">
-                A toolbar for headings, bold, italic, highlight, code, lists, note links, tags and dividers; Write, Split (live preview beside the text) and Preview. Unsaved text is kept in your browser until you save, and a save never overwrites a newer version.
+                A toolbar for headings, bold, italic, highlight, code, lists, note links, tags and dividers; Write, Split (live preview beside the text) and Preview. While you edit, the note saves itself a moment after you pause, and a save never overwrites a newer version: if the note changed elsewhere, you choose which to keep.
               </Feature>
               <Feature title="Callouts for what you read">
                 Paste a passage, select it and press the quote button: it becomes a callout, and the cursor waits under it for your own words. Callouts can also be ideas, questions, warnings, summaries, examples and definitions, and can fold.
                 <ul><li><code className="rounded bg-white/8 px-1">&gt; [!quote] Title</code> starts one</li><li><code className="rounded bg-white/8 px-1">==text==</code> highlights, <code className="rounded bg-white/8 px-1">#tag</code> tags, <code className="rounded bg-white/8 px-1">[[Title]]</code> links a note</li></ul>
               </Feature>
-              <Feature title="Ask Nova about a note">
-                Summarise, Suggest a structure, Key concepts, Suggest connections, or ask your own question. Nova reads the note and a few related notes and saved pages; it changes nothing unless you choose to use what it wrote.
+              <Feature title="Study it with Nova, beside the note">
+                Nova sits beside the note (a panel you can resize, or a drawer on a phone or tablet). Select a passage and press Ask Nova, or just ask. It explains from what you wrote, gives examples, walks you through step by step, sets a practice question and checks your answer, quizzes you, brainstorms, makes flashcards, or suggests how to organise raw notes. What comes from your notes is labelled apart from Nova&apos;s own knowledge, and Nova says when your notes don&apos;t cover something.
+                <ul><li>Nothing goes into your note until you press Add and confirm the preview; it is added on its own lines, marked as Nova&apos;s, and can be undone.</li><li>The conversation stays in this tab; Nova stores none of it.</li></ul>
+              </Feature>
+              <Feature title="Capture and import">
+                Capture or import (on Notes) brings in what you wrote or read elsewhere: paste text, send a passage with the extension&apos;s Add to notes or the Send to Kivo Notes bookmarklet (it works in Safari on iPad), or import a Markdown, text, PDF or photo file. Text files are kept exactly; a PDF or photo is transcribed by Nova for you to check, and the note says so. From Goodnotes, Notability or Apple Notes, export the page as a PDF and import it. It becomes a new note or is added to the end of one you have; a note with the same source or title is offered first, never merged by itself.
               </Feature>
               <Feature title="Templates">
                 Concept, Source notes, Class notes, Chapter summary, Doubts and mistakes, Decision and Learning log, offered when you start a new note.

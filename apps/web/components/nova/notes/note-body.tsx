@@ -15,7 +15,9 @@ import { linkKey, tokenizeLine } from '@repo/api/nova/product/note-links'
 import type { NoteLinkRef } from '@repo/api/nova/product/notes.types'
 import { inlineTokens, parseBlocks, type Block, type CalloutType } from './note-blocks'
 
-type Resolve = (title: string) => NoteLinkRef | undefined
+// cite: Nova's text (the tutor) marks what a claim rests on with [S1], [S2]…;
+// given, each such mark is drawn by it. A note has none and passes nothing.
+type Resolve = ((title: string) => NoteLinkRef | undefined) & { cite?: (label: string, key: string) => ReactNode | null }
 
 // Where a [[link]] goes: the note with that title, else the topic, else a
 // new note with that title (the learner sees it is not written yet).
@@ -57,9 +59,28 @@ function inline(text: string, key: string): ReactNode[] {
   })
 }
 
+const isLabel = (t: string) => t.length >= 2 && t.length <= 4 && t[0] === 'S' && [...t.slice(1)].every(c => c >= '0' && c <= '9')
+
+// Text with its [S#] marks drawn by cite; the rest as ordinary inline text.
+function cited(text: string, key: string, cite: NonNullable<Resolve['cite']>): ReactNode[] {
+  const out: ReactNode[] = []
+  let plain = '', n = 0
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '[' && text[i + 1] === 'S') {
+      const close = text.indexOf(']', i)
+      const label = close === -1 ? '' : text.slice(i + 1, close)
+      const mark = isLabel(label) ? cite(label, `${key}c${n}`) : null
+      if (mark) { if (plain) out.push(...inline(plain, `${key}p${n}`)); plain = ''; out.push(mark); n++; i = close; continue }
+    }
+    plain += text[i]
+  }
+  if (plain) out.push(...inline(plain, `${key}p${n}`))
+  return out
+}
+
 function line(text: string, key: string, resolve: Resolve): ReactNode[] {
   return tokenizeLine(text).flatMap<ReactNode>((t, j) => {
-    if (t.kind === 'text') return inline(t.text, `${key}t${j}`)
+    if (t.kind === 'text') return resolve.cite ? cited(t.text, `${key}t${j}`, resolve.cite) : inline(t.text, `${key}t${j}`)
     const ref = resolve(t.target!)
     const { href, missing } = linkHref(ref, t.target!)
     return [
@@ -127,12 +148,17 @@ function render(blocks: Block[], key: string, resolve: Resolve, nested = false):
   })
 }
 
-export function NoteBody({ body, links, serif = false }: { body: string; links: NoteLinkRef[]; serif?: boolean }) {
+export function NoteBody({ body, links, serif = false, cite, compact = false }: {
+  body: string; links: NoteLinkRef[]; serif?: boolean
+  cite?: (label: string, key: string) => ReactNode | null
+  // Smaller type, for Nova's panel beside the note.
+  compact?: boolean
+}) {
   const byKey = new Map(links.map(l => [linkKey(l.title), l] as const))
-  const resolve: Resolve = title => byKey.get(linkKey(title))
+  const resolve: Resolve = Object.assign((title: string) => byKey.get(linkKey(title)), { cite })
   return (
     <div
-      className={`break-words text-foreground/85 [&>*:first-child]:mt-0 ${serif ? 'font-serif text-[17px] leading-[1.8]' : 'text-[15px] leading-relaxed'}`}
+      className={`break-words text-foreground/85 [&>*:first-child]:mt-0 ${compact ? '[&>*:last-child]:mb-0 text-[14px] leading-relaxed [&_h2]:mt-5 [&_h2]:text-[1.2em] [&_h3]:mt-4 [&_h3]:text-[1.08em] [&_p]:my-2' : serif ? 'font-serif text-[17px] leading-[1.8]' : 'text-[15px] leading-relaxed'}`}
       data-note-body
     >
       {render(parseBlocks(body), 'n', resolve)}

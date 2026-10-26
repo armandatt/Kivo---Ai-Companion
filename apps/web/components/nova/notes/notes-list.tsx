@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { FileText, LayoutGrid, Plus, Rows3, Search } from 'lucide-react'
+import { FileText, LayoutGrid, Plus, Rows3, Search, Upload } from 'lucide-react'
 import type { NovaNotesReady, NovaNotesView, NoteSummary } from '@repo/api/nova/product/notes.types'
 import { relativeDay } from '../format'
 import { subjectColor } from '../subject-color'
@@ -138,7 +138,12 @@ function Ready({ view, search, onSearch, subjectId, onSubject, topic, onTopic, f
       <PageHeader
         title="Notes"
         description="Your learning notebook"
-        actions={<PageAction href="/notes/new"><Plus aria-hidden className="size-4" /> New note</PageAction>}
+        actions={<>
+          <Link href="/notes/capture" className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/80 transition-colors hover:bg-white/5" data-notes-capture>
+            <Upload aria-hidden className="size-4" /> Capture or import
+          </Link>
+          <PageAction href="/notes/new"><Plus aria-hidden className="size-4" /> New note</PageAction>
+        </>}
       />
 
       {view.total > 0 && (
