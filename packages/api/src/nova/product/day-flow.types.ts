@@ -140,6 +140,10 @@ export type DayFlowResponse =
   | { ok: false; error: DayFlowError; message: string; flow?: NovaDayView };
 
 // ── Nova's copilot on Today ───────────────────────────────────────────────────
+// Nova proposes; the learner decides. Nothing Nova reads from a message is
+// written until the learner approves that exact proposal (PendingChange),
+// and the server checks the approval names what was shown (its id is keyed
+// with the server secret over the learner, the version and the operations).
 
 export type CopilotMode = "plan" | "focus";
 
@@ -150,6 +154,39 @@ export interface CopilotRequest {
   // The item being worked on, for focus mode.
   focusItemId?: string | null;
   history?: Array<{ role: "learner" | "nova"; text: string }>;
+  // The proposal open in the panel, so "yes, do it" can approve it in words.
+  open?:   { id: string; version: number; ops: FlowOp[] } | null;
+  // The learner asked to skip questions and see a draft from what is known.
+  draftNow?: boolean;
+}
+
+// One line of a proposed day: what it is and what the proposal does to it.
+export interface PreviewItem {
+  id:          string;
+  title:       string;
+  kind:        FlowItemKind;
+  subjectName: string | null;
+  minutes:     number | null;
+  status:      FlowItemStatus;
+  change:      "added" | "moved" | "changed" | "same";
+}
+
+// A change to today's flow that Nova proposes and has not made. Approving
+// sends id, version and ops back; the server checks the id and applies them
+// against that version (a newer flow refuses it as stale), all or none.
+export interface PendingChange {
+  id:       string;
+  version:  number;
+  ops:      FlowOp[];
+  // What applying does, in short lines, one per operation where it can.
+  changed:  string[];
+  // The flow as it would stand: open items in order, then "if there's time".
+  items:    PreviewItem[];
+  removed:  Array<{ title: string; kind: FlowItemKind }>;
+  plannedMinutes: number;
+  budgetMinutes:  number | null;
+  // small: one or two lines (a compact preview); plan: a day being built.
+  size:     "small" | "plan";
 }
 
 // A change outside today's flow that Nova may only propose: the page shows it
@@ -158,6 +195,8 @@ export interface CopilotProposal {
   kind:    "task_due" | "task_title" | "task_status" | "task_delete" | "create_task";
   taskId:  string | null;
   label:   string;
+  // Details shown before it is confirmed ("Due 2026-10-30", "About 45 min").
+  details?: string[];
   // What the owning route is sent on confirmation.
   change:  Record<string, unknown>;
 }
@@ -168,15 +207,21 @@ export type CopilotResponse =
       mode:     CopilotMode;
       // What Nova says, in its words.
       reply:    string;
-      // The flow after the changes applied (scope A), when there were any.
-      flow:     NovaDayView | null;
-      // What changed, in short lines ("Moved FastAPI to first").
-      changed:  string[];
-      // Items the change touched, to light on the page.
-      touched:  string[];
-      // Proposals that need the learner's yes (scope B, C).
-      proposals: CopilotProposal[];
-      // Nova could not tell what was meant and asks.
+      // Nova asks before going on (the reply is the question).
       question: string | null;
+      // Quick replies the learner can tap instead of typing.
+      choices:  string[];
+      // A change to today's flow waiting for the learner's yes.
+      pending:  PendingChange | null;
+      // Set only when the learner approved in words and the server wrote it.
+      flow:     NovaDayView | null;
+      changed:  string[];
+      touched:  string[];
+      // The open proposal was declined or approved: the panel closes it.
+      closed:   "approved" | "declined" | null;
+      // Proposals that change a task itself, each run on its own confirmation.
+      proposals: CopilotProposal[];
+      // A place that does what was asked (a note's Nova Editor).
+      link:     { href: string; label: string } | null;
     }
   | { ok: false; error: DayFlowError; message: string; flow?: NovaDayView };

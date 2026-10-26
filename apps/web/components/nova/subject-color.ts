@@ -36,7 +36,10 @@ export function subjectColor(subjectName: string | null | undefined): SubjectCol
 }
 
 // The subject's hue as a style, for an element with the .subject-tone class.
+// Nothing filed under a subject keeps the class's own neutral hue (Nova's
+// teal), so it never borrows a subject's colour.
 export function toneStyle(subjectName: string | null | undefined): React.CSSProperties {
+  if (!subjectName || !subjectName.trim()) return {}
   return { '--sh': subjectColor(subjectName).hue } as React.CSSProperties
 }
 

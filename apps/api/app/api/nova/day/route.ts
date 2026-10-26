@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 //@ts-ignore
 import { acceptDraft, changeDayFlow, loadDayFlow, setDayView, startFocus, undoDayFlow } from "@repo/api/nova/product/day-flow"
+//@ts-ignore
+import { approvePending } from "@repo/api/nova/product/day-copilot"
 import { dayFail, requireDayLearner } from "../../../../lib/nova/day-access"
 import { allowAttempt, readSmallJson } from "../../../../lib/nova/extension-access"
 
@@ -27,6 +29,10 @@ export async function GET() {
 //   { action: "undo", version }                   back one change
 //   { action: "view", version, view }             list or schedule
 //   { action: "start", version, itemId, minutes } a focus session on an item (minutes 0: no time limit)
+//   { action: "approve", version, pendingId, ops, keep? }
+//                                                 the learner's yes to one proposal of Nova's: applied
+//                                                 only if the server made it for them on that version
+//                                                 (pendingId), and only the operations kept
 // Response: DayFlowResponse (409 stale with the flow as it now stands).
 export async function POST(req: Request) {
   try {
@@ -42,6 +48,7 @@ export async function POST(req: Request) {
       : body?.action === "accept" ? await acceptDraft({ ...base, draftId: body.draftId })
       : body?.action === "undo" ? await undoDayFlow(base)
       : body?.action === "view" ? await setDayView({ ...base, view: body.view })
+      : body?.action === "approve" ? await approvePending(access.profileId, access.platformChatId, body)
       : body?.action === "start" ? await startFocus({ ...base, itemId: body.itemId, minutes: body.minutes })
       : null
     if (!result) return dayFail(400, "invalid", "That isn't a change Today can make.")

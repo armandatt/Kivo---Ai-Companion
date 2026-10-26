@@ -10,9 +10,10 @@ export const dynamic = "force-dynamic"
 export const maxDuration = 40
 
 // POST /api/nova/day/copilot  CopilotRequest
-// Nova on Today: one model call reads the message; code applies only changes
-// to today's flow, checked like the page's own, and returns anything that
-// would change a task as a proposal for the learner's yes
+// Nova on Today: one model call reads the message; code asks, or returns a
+// proposal (checked like the page's own changes, written nowhere) that is
+// applied only on the learner's yes (POST /api/nova/day { action: "approve" }),
+// and anything that would change a task as a proposal for the task routes
 // (product/day-copilot.ts). Response: CopilotResponse.
 export async function POST(req: Request) {
   try {

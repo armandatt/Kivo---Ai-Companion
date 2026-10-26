@@ -13,6 +13,7 @@ import { Check, ChevronDown, ChevronUp, Clock, GripVertical, Map as MapIcon, Mor
 import type { FlowItemView, FlowOp, NovaDayView } from '@repo/api/nova/product/day-flow.types'
 import { clockLabel, scheduleOf } from '@repo/api/nova/product/day-flow-rules'
 import { cn } from '@/lib/utils'
+import { toneStyle } from '../subject-color'
 import { StartControl } from './start-control'
 
 const minutesLabel = (m: number) => (m >= 60 && m % 60 === 0 ? `${m / 60} h` : m > 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`)
@@ -55,8 +56,10 @@ function Minutes({ item, onSet, disabled }: { item: FlowItemView; onSet: (m: num
 
 type MenuAction = { icon: typeof X; label: string; run?: () => void; href?: string }
 
-function Row({ item, index, count, active, busy, touched, onOps, onStart, startBusy, dragging, onDrag }: {
+function Row({ item, index, count, active, busy, touched, dim, onOps, onStart, startBusy, dragging, onDrag }: {
   item: FlowItemView; index: number; count: number; active: boolean; busy: boolean; touched: boolean
+  // Another subject is chosen above: this row stays, quieter.
+  dim: boolean
   onOps: (ops: FlowOp[]) => void; onStart: (minutes: number) => void; startBusy: boolean
   dragging: { id: string | null; set: (id: string | null) => void }; onDrag: (to: number) => void
 }) {
@@ -64,18 +67,20 @@ function Row({ item, index, count, active, busy, touched, onOps, onStart, startB
   const due = item.ref && 'dueInDays' in item.ref ? dueWord(item.ref.dueInDays) : null
   const done = item.status === 'done'
   const running = item.status === 'active' && !item.sessionEnded
-  const context = [item.kind === 'topic' ? null : item.subjectName, item.kind === 'task' && item.topicName ? item.topicName : null].filter(Boolean).join(' › ')
+  const context = item.kind === 'task' && item.topicName ? item.topicName : null
   return (
     <li draggable={!busy} onDragStart={e => { dragging.set(item.id); e.dataTransfer.effectAllowed = 'move' }} onDragEnd={() => dragging.set(null)}
       onDragOver={e => { if (dragging.id && dragging.id !== item.id) e.preventDefault() }} onDrop={e => { e.preventDefault(); onDrag(index) }}
       onKeyDown={e => { if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); const to = index + (e.key === 'ArrowUp' ? -1 : 1); if (to >= 0 && to < count) onOps([{ op: 'move', id: item.id, to }]) } }}
-      className={cn('group relative flex flex-wrap items-center gap-2 border-b sm:flex-nowrap border-white/6 py-2.5 pl-1 pr-1 transition-colors last:border-b-0', touched && 'nova-changed rounded-lg', running && 'rounded-lg bg-nova/[0.06]', dragging.id === item.id && 'opacity-50')}
+      style={toneStyle(item.subjectName)}
+      className={cn('subject-tone group relative flex flex-wrap items-center gap-2 rounded-xl py-2.5 pl-3 pr-1.5 transition-[background-color,opacity] hover:bg-white/[0.03] sm:flex-nowrap', touched && 'nova-changed', running && 'bg-[var(--sc-faint)]', dragging.id === item.id && 'opacity-50', dim && !touched && 'opacity-45 hover:opacity-100')}
       data-flow-item={item.id} data-flow-status={item.status} data-flow-kind={item.kind}>
-      <span aria-hidden className="hidden cursor-grab text-foreground/25 group-hover:text-foreground/50 sm:inline"><GripVertical className="size-4" /></span>
+      <span aria-hidden className={cn('absolute inset-y-2 left-0 w-1 rounded-full bg-[var(--sc)]', done || item.status === 'later' ? 'opacity-35' : 'opacity-85')} />
+      <span aria-hidden className="hidden w-4 cursor-grab text-foreground/20 group-hover:text-foreground/50 sm:inline"><GripVertical className="size-4" /></span>
       <button type="button" disabled={busy} onClick={() => onOps([{ op: 'set_status', id: item.id, status: done ? 'planned' : 'done' }])}
         aria-pressed={done} aria-label={done ? `${item.title}: back to today's flow` : `${item.title}: done for today`}
         title={done ? 'Back to today’s flow' : item.kind === 'task' ? 'Done for today (the task itself stays as it is on your board)' : 'Done for today'}
-        className={cn('grid size-5 shrink-0 place-items-center rounded-full border transition-colors', done ? 'border-nova bg-nova text-background' : 'border-foreground/30 hover:border-nova')} data-item-done>
+        className={cn('grid size-5 shrink-0 place-items-center rounded-full border-2 transition-colors', done ? 'border-[var(--sc)] bg-[var(--sc)] text-[oklch(20%_0.03_var(--sh))]' : 'border-[var(--sc-edge)] hover:border-[var(--sc)] hover:bg-[var(--sc-soft)]')} data-item-done>
         {done && <Check className="size-3" strokeWidth={3} />}
       </button>
       {/* On a phone the title has the row; the controls go under it. */}
@@ -84,10 +89,10 @@ function Row({ item, index, count, active, busy, touched, onOps, onStart, startB
           {item.title}
           {item.ref?.gone && <span className="ml-2 text-xs text-amber-200">{item.kind === 'task' ? 'task deleted' : 'topic archived'}</span>}
         </p>
-        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-subtle">
+        <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-subtle">
+          {item.subjectName && <span className="inline-flex max-w-[14rem] items-center gap-1 truncate rounded-full bg-[var(--sc-soft)] px-2 py-px font-medium text-[var(--sc-ink)]">{item.subjectName}</span>}
           <span>{KIND_WORD[item.kind]}</span>
           {context && <span className="truncate">{context}</span>}
-          {item.kind === 'topic' && item.subjectName && <span className="truncate">{item.subjectName}</span>}
           {due && <span className={due.urgent ? 'font-medium text-[color:var(--sem-warning-ink,#f5c26b)]' : ''}>{due.text}</span>}
           {item.ref?.status === 'done' && <span>task done on your board</span>}
           {item.spentMinutes !== null && item.spentMinutes > 0 && <span>{minutesLabel(item.spentMinutes)} focused today</span>}
@@ -127,8 +132,10 @@ function Row({ item, index, count, active, busy, touched, onOps, onStart, startB
   )
 }
 
-export function FlowList({ flow, busy, touched, onOps, onStart, starting, sessionRunning }: {
+export function FlowList({ flow, busy, touched, onOps, onStart, starting, sessionRunning, subject = null }: {
   flow: NovaDayView; busy: boolean; touched: string[]
+  // A subject chosen above: rows in other subjects are drawn quieter.
+  subject?: string | null
   onOps: (ops: FlowOp[]) => void
   onStart: (item: FlowItemView, minutes: number) => void
   starting: string | null
@@ -143,24 +150,25 @@ export function FlowList({ flow, busy, touched, onOps, onStart, starting, sessio
     const index = flow.items.indexOf(item)
     return (
       <Row key={item.id} item={item} index={index} count={flow.items.length} active={sessionRunning} busy={busy} touched={touched.includes(item.id)}
+        dim={subject !== null && (item.subjectName ?? '').toLowerCase() !== subject.toLowerCase()}
         onOps={onOps} onStart={m => onStart(item, m)} startBusy={starting === item.id}
         dragging={{ id: drag, set: setDrag }} onDrag={to => { if (drag) onOps([{ op: 'move', id: drag, to }]); setDrag(null) }} />
     )
   }
   return (
     <div data-flow-list>
-      {open.length > 0 && <ol aria-label="Today's flow, in your order" className="">{open.map(row)}</ol>}
+      {open.length > 0 && <ol aria-label="Today's flow, in your order" className="space-y-0.5">{open.map(row)}</ol>}
       {open.length === 0 && all.length > 0 && <p className="py-3 text-sm text-subtle">Nothing left in the day’s main flow. Bring something back from below, or add more.</p>}
       {later.length > 0 && (
         <section className="mt-5" aria-label="If there's time" data-flow-later>
-          <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">If there’s time · kept, not dropped</p>
-          <ol>{later.map(row)}</ol>
+          <p className="px-3 text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">If there’s time · kept, not dropped</p>
+          <ol className="mt-1 space-y-0.5">{later.map(row)}</ol>
         </section>
       )}
       {done.length > 0 && (
         <details className="mt-5" data-flow-done>
-          <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">Done today · {done.length}</summary>
-          <ol>{done.map(row)}</ol>
+          <summary className="cursor-pointer px-3 text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">Done today · {done.length}</summary>
+          <ol className="mt-1 space-y-0.5">{done.map(row)}</ol>
         </details>
       )}
     </div>
@@ -182,11 +190,11 @@ export function FlowSchedule({ flow, busy, onOps, touched }: { flow: NovaDayView
           {blocks.map(b => {
             const item = byId.get(b.id)!
             return (
-              <li key={b.id} className={cn('relative py-2.5', touched.includes(b.id) && 'nova-changed rounded-lg')} data-schedule-block={b.id}>
-                <span aria-hidden className={cn('absolute -left-[21px] top-4 size-2.5 rounded-full border-2', item.status === 'active' ? 'border-nova bg-nova' : 'border-foreground/40 bg-background')} />
+              <li key={b.id} style={toneStyle(item.subjectName)} className={cn('subject-tone relative py-2.5', touched.includes(b.id) && 'nova-changed rounded-lg')} data-schedule-block={b.id}>
+                <span aria-hidden className={cn('absolute -left-[21px] top-4 size-2.5 rounded-full border-2 border-[var(--sc)]', item.status === 'active' ? 'bg-[var(--sc)]' : 'bg-background')} />
                 <div className="flex items-baseline gap-3">
                   <span className="w-24 shrink-0 font-mono text-xs tabular-nums text-subtle">{clockLabel(b.start)}–{clockLabel(b.end)}</span>
-                  <span className="min-w-0 flex-1 truncate text-[15px] text-foreground">{item.title}</span>
+                  <span className="min-w-0 flex-1 truncate text-[15px] text-foreground">{item.title}{item.subjectName && <span className="ml-2 text-xs text-[var(--sc-ink)]">{item.subjectName}</span>}</span>
                   <label className="inline-flex items-center gap-1 text-[11px] text-subtle">
                     <span className="sr-only">Fixed time for {item.title}</span>
                     <input type="time" value={item.at ?? ''} disabled={busy} onChange={e => onOps([{ op: 'set_time', id: item.id, at: e.target.value || null }])}
