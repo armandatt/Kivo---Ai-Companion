@@ -8,7 +8,10 @@ import type { StudyStructure } from '@repo/api/nova/product/setup-edit.types'
 import { cn } from '@/lib/utils'
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '../workspace/ui'
 import { addChoices, addRequest, checkName, cleanName, deletePlan, deleteRequest, EXPLANATION_MAX, madeSubject, madeTopic, type AddChoice, type DeleteMode } from './map-structure'
-import { archiveTopic, describeTopic, loadStructure, sendAdd, sendDelete } from './map-structure-api'
+import { archiveTopic, describeTopic, loadStructure, sendAdd, sendConnect, sendDelete } from './map-structure-api'
+import { canConnectFrom, connectCandidates, connectOptions, type ConnectOption } from './map-connect'
+import { treeOf } from './layout'
+import type { NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
 import { SHORTCUTS, keyLabel } from './map-shortcuts'
 
 // A panel that gives focus back to what had it when it closes, and closes on
@@ -43,12 +46,43 @@ function Header({ title, onClose }: { title: ReactNode; onClose: () => void }) {
 
 // ── Adding ───────────────────────────────────────────────────────────────────
 
-export interface Added { select: string | null; said: string }
+export interface Added { select: string | null; said: string; stale?: boolean }
 
-export function AddDialog({ node, nodes, choices: given, style, onClose, onAdded }: {
+// Two things the + does, kept apart: make a new card, or connect one that exists.
+export function AddDialog({ node, nodes, edges, workspace, choices, style, onClose, onAdded }: {
   // null: a subject of its own, from the toolbar.
-  node: MapNode | null; nodes: readonly MapNode[]; choices?: AddChoice[]
+  node: MapNode | null; nodes: readonly MapNode[]; edges?: readonly MapEdge[]
+  // The workspace the map shows (null: everything), for searching beyond it.
+  workspace?: string | null
+  choices?: AddChoice[]
   style?: CSSProperties; onClose: () => void; onAdded: (a: Added) => void
+}) {
+  const [mode, setMode] = useState<'create' | 'connect'>('create')
+  const panel = usePanel(onClose)
+  const id = useId()
+  const connectable = !!node && !!edges && canConnectFrom(node)
+  const tab = (m: typeof mode, label: string) => (
+    <button type="button" role="tab" aria-selected={mode === m} onClick={() => setMode(m)} data-add-mode={m}
+      className={cn('flex-1 rounded-full px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring', mode === m ? 'bg-white/10 text-foreground' : 'text-subtle hover:text-foreground')}>{label}</button>
+  )
+  return (
+    <div ref={panel.ref} onKeyDown={panel.onKeyDown} role="dialog" aria-modal="false" aria-labelledby={`${id}-t`} data-add-dialog
+      className={cn(PANEL, 'absolute z-30 w-[min(24rem,calc(100%-1.5rem))] p-4')} style={style} onPointerDown={e => e.stopPropagation()}>
+      <Header title={<span id={`${id}-t`}>{node ? <>Add to “{node.label}”</> : 'New subject'}</span>} onClose={onClose} />
+      {connectable && (
+        <div role="tablist" aria-label="Add a card" className="mt-3 flex gap-1 rounded-full border border-white/10 p-0.5">
+          {tab('create', 'Create new')}{tab('connect', 'Connect existing')}
+        </div>
+      )}
+      {mode === 'connect' && connectable
+        ? <ConnectPane source={node!} nodes={nodes} edges={edges!} workspace={workspace ?? null} onClose={onClose} onDone={onAdded} />
+        : <CreatePane node={node} nodes={nodes} choices={choices} onClose={onClose} onAdded={onAdded} />}
+    </div>
+  )
+}
+
+function CreatePane({ node, nodes, choices: given, onClose, onAdded }: {
+  node: MapNode | null; nodes: readonly MapNode[]; choices?: AddChoice[]; onClose: () => void; onAdded: (a: Added) => void
 }) {
   const choices = useMemo(() => given ?? (node ? addChoices(node, nodes) : []), [given, node, nodes])
   const [kind, setKind] = useState(choices[0]?.kind)
@@ -58,7 +92,6 @@ export function AddDialog({ node, nodes, choices: given, style, onClose, onAdded
   const [error, setError] = useState<string | null>(null)
   // One key for this dialog: a double click or a retry makes one task.
   const [clientKey] = useState(() => `map:${crypto.randomUUID()}`)
-  const panel = usePanel(onClose)
   const id = useId()
   const choice = choices.find(c => c.kind === kind) ?? choices[0]
   if (!choice) return null
@@ -96,9 +129,6 @@ export function AddDialog({ node, nodes, choices: given, style, onClose, onAdded
   }
 
   return (
-    <div ref={panel.ref} onKeyDown={panel.onKeyDown} role="dialog" aria-modal="false" aria-labelledby={`${id}-t`} data-add-dialog
-      className={cn(PANEL, 'absolute z-30 w-[min(22rem,calc(100%-1.5rem))] p-4')} style={style} onPointerDown={e => e.stopPropagation()}>
-      <Header title={<span id={`${id}-t`}>{node ? <>Add to “{node.label}”</> : 'New subject'}</span>} onClose={onClose} />
       <form onSubmit={e => void submit(e)} className="mt-3 space-y-3">
         {choices.length > 1 && (
           <fieldset>
@@ -118,7 +148,7 @@ export function AddDialog({ node, nodes, choices: given, style, onClose, onAdded
         {choice.note && <p className="rounded-lg bg-amber-400/10 px-2.5 py-2 text-xs leading-relaxed text-foreground/80">{choice.note}</p>}
         <div>
           <label htmlFor={`${id}-name`} className="text-xs font-medium text-foreground/75">{choice.makes === 'task' ? 'Title' : 'Name'}</label>
-          <input id={`${id}-name`} data-autofocus value={name} onChange={e => { setName(e.target.value); setError(null) }} autoComplete="off"
+          <input id={`${id}-name`} data-autofocus autoFocus value={name} onChange={e => { setName(e.target.value); setError(null) }} autoComplete="off"
             placeholder={choice.makes === 'task' ? 'What needs doing' : choice.makes === 'topic' ? 'e.g. Recursion trees' : 'e.g. Operating Systems'} className={cn(FIELD, 'mt-1')} />
         </div>
         {choice.makes === 'topic' && (
@@ -134,6 +164,120 @@ export function AddDialog({ node, nodes, choices: given, style, onClose, onAdded
           <button type="submit" disabled={busy} className={cn(BUTTON_PRIMARY, 'h-8 px-3 text-xs')} data-add-confirm>{busy ? 'Adding…' : `Add ${choice.makes}`}</button>
         </div>
       </form>
+  )
+}
+
+// Find a card that exists, see how it would connect, and confirm. The card
+// is the same row afterwards: nothing is copied.
+function ConnectPane({ source, nodes, edges, workspace, onClose, onDone }: {
+  source: MapNode; nodes: readonly MapNode[]; edges: readonly MapEdge[]; workspace: string | null; onClose: () => void; onDone: (a: Added) => void
+}) {
+  const [scope, setScope] = useState<{ nodes: readonly MapNode[]; edges: readonly MapEdge[]; all: boolean }>({ nodes, edges, all: workspace === null })
+  const [loading, setLoading] = useState(false)
+  const [query, setQuery] = useState('')
+  const [active, setActive] = useState(0)
+  const [target, setTarget] = useState<MapNode | null>(null)
+  const [key, setKey] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const id = useId()
+  const here = useMemo(() => new Set(nodes.map(n => n.id)), [nodes])
+  const tree = useMemo(() => treeOf([...scope.nodes], [...scope.edges]), [scope])
+  const found = useMemo(() => connectCandidates(source, scope.nodes, tree, query), [source, scope.nodes, tree, query])
+  const options = useMemo(() => (target ? connectOptions(source, target, { nodes: scope.nodes, edges: scope.edges, tree }) : []), [source, target, scope, tree])
+  const option: ConnectOption | undefined = options.find(o => o.key === key) ?? options.find(o => !o.blocked) ?? options[0]
+
+  // Beyond this workspace: the same map read for everything the learner has.
+  const widen = async () => {
+    setLoading(true); setError(null)
+    try {
+      const res = await fetch('/api/nova/knowledge-map?workspace=all', { cache: 'no-store' })
+      const v = await res.json() as NovaKnowledgeMapView
+      if (v.status === 'ready') setScope({ nodes: v.nodes, edges: v.edges, all: true })
+      else setError("Couldn't load everything you have.")
+    } catch { setError('Could not reach the server. Check your connection and try again.') }
+    setLoading(false)
+  }
+  const pick = (n: MapNode) => { setTarget(n); setKey(null); setError(null) }
+  const confirm = async () => {
+    if (!option?.request || option.blocked || busy) return
+    setBusy(true); setError(null)
+    const out = await sendConnect(option.request, option.request.route === 'file' ? source.label : target!.label)
+    setBusy(false)
+    if (out.ok) { onDone({ select: target!.id, said: `Connected “${target!.label}” to “${source.label}”.` }); return }
+    setError(out.message)
+    if (out.stale) onDone({ select: null, said: out.message, stale: true })
+  }
+
+  if (!target) {
+    return (
+      <div className="mt-3 space-y-2" data-connect-pick>
+        <label htmlFor={`${id}-q`} className="sr-only">Find a card to connect</label>
+        <input id={`${id}-q`} data-autofocus autoFocus value={query} autoComplete="off" placeholder="Find a card by name or where it is"
+          role="combobox" aria-expanded aria-controls={`${id}-list`} aria-activedescendant={found[active] ? `${id}-o${active}` : undefined}
+          onChange={e => { setQuery(e.target.value); setActive(0) }}
+          onKeyDown={e => {
+            if (e.key === 'ArrowDown' && found.length) { e.preventDefault(); setActive(i => (i + 1) % found.length) }
+            else if (e.key === 'ArrowUp' && found.length) { e.preventDefault(); setActive(i => (i - 1 + found.length) % found.length) }
+            else if (e.key === 'Enter' && found[active]) { e.preventDefault(); pick(found[active]!.node) }
+          }}
+          className={FIELD} />
+        <ul id={`${id}-list`} role="listbox" aria-label="Cards that can be connected" className="max-h-60 space-y-0.5 overflow-y-auto">
+          {found.length === 0 && <li className="px-2 py-2 text-xs leading-relaxed text-subtle" data-connect-empty>{query.trim() ? `No card that can go with “${source.label}” matches “${query.trim()}”.` : `Nothing here can be connected to “${source.label}”.`}</li>}
+          {found.map(({ node: n, context }, i) => {
+            const linked = tree.parent.get(n.id) === source.id
+            return (
+              <li key={n.id} id={`${id}-o${i}`} role="option" aria-selected={i === active}>
+                <button type="button" tabIndex={-1} onClick={() => pick(n)} onPointerEnter={() => setActive(i)} data-connect-option={n.label}
+                  className={cn('flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors', i === active ? 'bg-white/6 text-foreground' : 'text-foreground/85')}>
+                  <span aria-hidden className="mt-1.5 inline-block size-2 shrink-0 rounded-full" style={{ background: n.type === 'subject' ? 'var(--nova)' : `var(--map-${n.type})` }} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{n.label}</span>
+                    <span className="block truncate text-[11px] text-subtle">{n.type[0]!.toUpperCase() + n.type.slice(1)} · {context}{scope.all && !here.has(n.id) ? ' · not on this map' : ''}</span>
+                  </span>
+                  {linked && <span className="shrink-0 text-[11px] text-subtle">Already inside</span>}
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+        {error && <p role="alert" className="text-xs text-red-400">{error}</p>}
+        <div className="flex items-center justify-between gap-2">
+          {!scope.all ? <button type="button" onClick={() => void widen()} disabled={loading} className="text-xs font-medium text-foreground/70 underline-offset-4 hover:text-foreground hover:underline" data-connect-all>{loading ? 'Loading…' : 'Search everything you have'}</button> : <span />}
+          <button type="button" onClick={onClose} className={cn(BUTTON_QUIET, 'h-8')}>Cancel</button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-3 space-y-3 text-sm" data-connect-confirm>
+      {options.length === 0
+        ? <p className="text-xs leading-relaxed text-foreground/80">“{target.label}” can’t be connected to “{source.label}”.</p>
+        : (
+          <fieldset className="space-y-1.5">
+            <legend className="mb-1 text-xs text-foreground/75">Connect “{target.label}” to “{source.label}”:</legend>
+            {options.map(o => (
+              <label key={o.key} className={cn('flex cursor-pointer gap-2.5 rounded-xl border p-2.5 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-ring',
+                option?.key === o.key ? 'border-white/20 bg-white/5' : 'border-white/8 hover:border-white/14', o.blocked && 'cursor-not-allowed opacity-75')}>
+                <input type="radio" name={`${id}-rel`} checked={option?.key === o.key} disabled={!!o.blocked} onChange={() => setKey(o.key)} className="mt-1 accent-[var(--action)]" data-connect-relation={o.key} data-autofocus={option?.key === o.key || undefined} />
+                <span className="min-w-0">
+                  <span className="block font-medium text-foreground">{o.label} <span className="ml-1 rounded-full border border-white/10 px-1.5 text-[10px] font-normal text-subtle">{o.relation === 'link' ? 'link' : 'moves it'}</span></span>
+                  <span className="block text-xs leading-relaxed text-foreground/70">{o.blocked ?? o.detail}</span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        )}
+      {option && !option.blocked && option.moves && <p className="rounded-lg bg-amber-400/10 px-2.5 py-2 text-xs leading-relaxed text-foreground/85" data-connect-moves>{option.moves} A card sits in one place at a time.</p>}
+      {error && <p role="alert" className="text-xs leading-relaxed text-red-400">{error}</p>}
+      <div className="flex justify-between gap-2">
+        <button type="button" onClick={() => setTarget(null)} disabled={busy} className={cn(BUTTON_QUIET, 'h-8')}>Back</button>
+        <span className="flex gap-2">
+          <button type="button" onClick={onClose} disabled={busy} className={cn(BUTTON_QUIET, 'h-8')}>Cancel</button>
+          <button type="button" onClick={() => void confirm()} disabled={!option || !!option.blocked || busy} className={cn(BUTTON_PRIMARY, 'h-8 px-3 text-xs')} data-connect-save>{busy ? 'Connecting…' : 'Connect'}</button>
+        </span>
+      </div>
     </div>
   )
 }

@@ -17,8 +17,8 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { action: 'search',      keys: ['/', 'Mod+K'],          label: 'Find on the map', group: 'Find and move' },
   { action: 'navigate',    keys: ['←', '→', '↑', '↓'],    label: 'Move between connected cards: right into a card, left to the card it is inside, up and down beside it. With nothing selected, the arrows move the view', group: 'Find and move' },
   { action: 'pan',         keys: ['Shift+←→↑↓'],          label: 'Move the view', group: 'Find and move' },
-  { action: 'open',        keys: ['Enter'],               label: 'Select the focused card and show its details', group: 'Find and move' },
-  { action: 'explore',     keys: ['Shift+Enter'],         label: 'Explore inside the selected card', group: 'Find and move' },
+  { action: 'explore',     keys: ['Enter'],               label: 'Explore inside the selected card (a card with nothing inside shows its details)', group: 'Find and move' },
+  { action: 'open',        keys: ['Shift+Enter'],         label: 'Show the selected card’s details', group: 'Find and move' },
   { action: 'up',          keys: ['U'],                   label: 'Up one level, out of an explored card', group: 'Find and move' },
   { action: 'escape',      keys: ['Esc'],                 label: 'Close a menu or panel, then clear the selection', group: 'Find and move' },
   { action: 'fold',        keys: ['Space'],               label: 'Fold or show what is inside the selected card', group: 'View' },
@@ -66,7 +66,7 @@ export function shortcutFor(e: KeyLike): KeyResult | null {
   switch (e.key) {
     case '/': return { action: 'search' }
     case '?': return { action: 'help' }
-    case 'Enter': return { action: e.shiftKey ? 'explore' : 'open' }
+    case 'Enter': return { action: e.shiftKey ? 'open' : 'explore' }
     case 'Escape': return { action: 'escape' }
     case ' ': case 'Spacebar': return { action: 'fold' }
     case '+': case '=': return { action: 'zoom_in' }
@@ -120,3 +120,19 @@ export function navigate(from: string, arrow: Arrow, tree: NavTree, shown: Reado
   const to = i < 0 ? undefined : siblings[i + (arrow === 'down' ? 1 : -1)]
   return to ? { to } : { to: null, why: arrow === 'down' ? 'That is the last card here.' : 'That is the first card here.' }
 }
+
+// ── Enter ────────────────────────────────────────────────────────────────────
+// Which card Enter acts on: the one the learner chose last (a click, a search
+// result, an arrow key, Tab), recorded the moment they chose it. Keyboard focus
+// follows a frame later, so the focused card is only a fallback; a card no
+// longer on the map is never acted on.
+export function enterTarget(s: { chosen: string | null; focused: string | null; selected: string | null; onMap: ReadonlySet<string> }): string | null {
+  for (const id of [s.chosen, s.focused, s.selected]) if (id && s.onMap.has(id)) return id
+  return null
+}
+
+// What Enter does to it: explore inside it; for a card with nothing inside,
+// show its details (no empty map); nothing for the card already explored.
+export type EnterAction = 'explore' | 'details' | 'already' | 'none'
+export const enterAction = (target: string | null, s: { exploring: string | null; explorable: (id: string) => boolean }): EnterAction =>
+  !target ? 'none' : target === s.exploring ? 'already' : s.explorable(target) ? 'explore' : 'details'

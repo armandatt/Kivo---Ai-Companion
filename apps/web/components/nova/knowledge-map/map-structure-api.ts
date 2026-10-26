@@ -7,6 +7,8 @@
 import type { StudyEditResponse, StudyStructure, StudyStructureView, StudyEdit } from '@repo/api/nova/product/setup-edit.types'
 import type { TaskInput, TaskResponse } from '@repo/api/nova/product/tasks.types'
 import type { AddRequest, DeleteRequest } from './map-structure'
+import type { ConnectRequest } from './map-connect'
+import { addNoteLink, fileItem } from './map-actions'
 
 const OFFLINE = 'Could not reach the server. Check your connection and try again.'
 
@@ -88,5 +90,33 @@ export async function archiveTopic(topicId: string): Promise<Outcome> {
   try {
     const { json } = await call<{ ok: boolean; message?: string }>('/api/nova/topics/archive', 'POST', { topicId, archived: true })
     return json?.ok ? { ok: true, value: undefined, said: ['Archived. Its history stays; restore it in Subject Studio on Knowledge.'] } : { ok: false, message: json?.message ?? 'Nothing was changed. Try again.' }
+  } catch { return { ok: false, message: OFFLINE } }
+}
+
+// A connection: one request, so it lands whole or not at all. A move of a
+// subject or topic is a Subject Studio batch against the structure as it now
+// is; a task's move or wait is one guarded update; filing and [[links]] go
+// through the note and saved-page routes the map already uses.
+export async function sendConnect(req: ConnectRequest, label: string): Promise<Outcome> {
+  if (req.route === 'study') {
+    const now = await loadStructure()
+    if (!now.ok) return now
+    const done = await studyBatch(now.value.version, req.edits)
+    return done.ok ? { ok: true, value: undefined, said: done.said } : done
+  }
+  if (req.route === 'file') {
+    const out = await fileItem(req.kind, req.id, req.to, req.version, label)
+    return out.kind === 'done' ? { ok: true, value: undefined, said: [out.message] } : { ok: false, message: out.message, stale: out.kind === 'conflict' }
+  }
+  if (req.route === 'link') {
+    const out = await addNoteLink(req.noteId, req.plan)
+    return out.kind === 'done' ? { ok: true, value: undefined, said: [out.message] } : { ok: false, message: out.message, stale: out.kind === 'conflict' }
+  }
+  try {
+    const { status, json } = await call<TaskResponse>(`/api/nova/tasks/${encodeURIComponent(req.taskId)}`, 'PATCH', req.patch)
+    if (!json?.ok) return { ok: false, message: (json && !json.ok && json.message) || (status === 404 ? 'That task no longer exists. The map has been reloaded.' : 'Nothing was changed. Try again.'), stale: status === 404 }
+    // A server that does not know waits yet would answer ok and add none: check.
+    if (req.patch.waitFor && !(json.task.after ?? []).includes(req.patch.waitFor)) return { ok: false, message: 'The wait wasn’t saved: the server doesn’t support waits from the map yet.' }
+    return { ok: true, value: undefined, said: [] }
   } catch { return { ok: false, message: OFFLINE } }
 }
