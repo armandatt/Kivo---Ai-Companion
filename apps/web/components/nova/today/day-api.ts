@@ -21,14 +21,3 @@ async function call<T>(url: string, init?: RequestInit): Promise<T | { ok: false
 export const fetchDay = () => call<NovaDayView | { ok: false; error: string; message: string }>('/api/nova/day')
 export const sendDay = (body: Record<string, unknown>) => call<DayFlowResponse>('/api/nova/day', { method: 'POST', body: JSON.stringify(body) })
 export const askCopilot = (body: CopilotRequest) => call<CopilotResponse>('/api/nova/day/copilot', { method: 'POST', body: JSON.stringify(body) })
-
-// A change Nova proposed to a task itself, sent to the task routes on the
-// learner's yes. A new task carries a key, so a second press makes one.
-export async function runTaskProposal(p: { kind: string; taskId: string | null; change: Record<string, unknown> }, key: string): Promise<{ ok: boolean; message?: string }> {
-  const path = p.taskId ? `/api/nova/tasks/${encodeURIComponent(p.taskId)}` : '/api/nova/tasks'
-  const init: RequestInit = p.kind === 'task_delete' ? { method: 'DELETE' }
-    : p.kind === 'create_task' ? { method: 'POST', body: JSON.stringify({ ...p.change, clientKey: key }) }
-    : { method: 'PATCH', body: JSON.stringify(p.change) }
-  const res = await call<{ ok: boolean; message?: string }>(path, init)
-  return { ok: res.ok === true, message: 'message' in res ? res.message : undefined }
-}

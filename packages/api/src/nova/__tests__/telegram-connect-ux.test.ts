@@ -87,9 +87,9 @@ describe("the Home card", () => {
     expect(ui).toContain("window.sessionStorage.setItem(DISMISSED, '1')");
     expect(ui.match(/fetch\(/g)).toBeNull();
   });
-  it("sits below the plan and replaces nothing on the page", () => {
-    expect(home.indexOf("<TelegramCard")).toBeGreaterThan(home.indexOf("<RecommendationCard"));
-    expect(home).not.toMatch(/connection|telegramConnected/);
+  it("is not on a Nova learner's Today, which is for planning the day; connecting stays in Settings", () => {
+    expect(home).not.toContain("<TelegramCard");
+    expect(home).not.toMatch(/telegramConnected/);
   });
 });
 

@@ -99,8 +99,14 @@ export interface TodayPlanChangesView {
 
 // One of the learner's subjects as Today's subject switcher shows it: how far
 // through it they are and where they left off. Counts from the record only.
+// One of the learner's top-level subjects (one inside no other subject on
+// record). Subjects inside it are counted with it, never shown on their own.
 export interface TodaySubjectProgress {
+  // Absent from an older API.
+  subjectId?:    string;
   subjectName:   string;
+  // How many subjects sit inside it, at any depth.
+  innerSubjects?: number;
   topicsTotal:   number;
   topicsStarted: number;            // topics with at least one finished session behind them
   // The topic they studied last in it, and when; null with none.

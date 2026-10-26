@@ -74,7 +74,7 @@ function Row({ item, index, count, active, busy, touched, dim, onOps, onStart, s
       onKeyDown={e => { if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); const to = index + (e.key === 'ArrowUp' ? -1 : 1); if (to >= 0 && to < count) onOps([{ op: 'move', id: item.id, to }]) } }}
       style={toneStyle(item.subjectName)}
       className={cn('subject-tone group relative flex flex-wrap items-center gap-2 rounded-xl py-2.5 pl-3 pr-1.5 transition-[background-color,opacity] hover:bg-white/[0.03] sm:flex-nowrap', touched && 'nova-changed', running && 'bg-[var(--sc-faint)]', dragging.id === item.id && 'opacity-50', dim && !touched && 'opacity-45 hover:opacity-100')}
-      data-flow-item={item.id} data-flow-status={item.status} data-flow-kind={item.kind}>
+      data-flow-item={item.id} data-flip={item.id} data-flow-status={item.status} data-flow-kind={item.kind}>
       <span aria-hidden className={cn('absolute inset-y-2 left-0 w-1 rounded-full bg-[var(--sc)]', done || item.status === 'later' ? 'opacity-35' : 'opacity-85')} />
       <span aria-hidden className="hidden w-4 cursor-grab text-foreground/20 group-hover:text-foreground/50 sm:inline"><GripVertical className="size-4" /></span>
       <button type="button" disabled={busy} onClick={() => onOps([{ op: 'set_status', id: item.id, status: done ? 'planned' : 'done' }])}

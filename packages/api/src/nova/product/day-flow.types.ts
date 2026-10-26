@@ -145,19 +145,16 @@ export type DayFlowResponse =
 // and the server checks the approval names what was shown (its id is keyed
 // with the server secret over the learner, the version and the operations).
 
-export type CopilotMode = "plan" | "focus";
-
 export interface CopilotRequest {
   message: string;
-  mode:    CopilotMode;
   version: number;
-  // The item being worked on, for focus mode.
-  focusItemId?: string | null;
   history?: Array<{ role: "learner" | "nova"; text: string }>;
-  // The proposal open in the panel, so "yes, do it" can approve it in words.
+  // The proposal open on the page, so "yes, do it" can approve it in words.
   open?:   { id: string; version: number; ops: FlowOp[] } | null;
   // The learner asked to skip questions and see a draft from what is known.
   draftNow?: boolean;
+  // The top-level subject selected on the page: context only, never a request.
+  subjectId?: string | null;
 }
 
 // One line of a proposed day: what it is and what the proposal does to it.
@@ -189,22 +186,9 @@ export interface PendingChange {
   size:     "small" | "plan";
 }
 
-// A change outside today's flow that Nova may only propose: the page shows it
-// and the learner's confirmation runs it through the route that owns it.
-export interface CopilotProposal {
-  kind:    "task_due" | "task_title" | "task_status" | "task_delete" | "create_task";
-  taskId:  string | null;
-  label:   string;
-  // Details shown before it is confirmed ("Due 2026-10-30", "About 45 min").
-  details?: string[];
-  // What the owning route is sent on confirmation.
-  change:  Record<string, unknown>;
-}
-
 export type CopilotResponse =
   | {
       ok: true;
-      mode:     CopilotMode;
       // What Nova says, in its words.
       reply:    string;
       // Nova asks before going on (the reply is the question).
@@ -219,9 +203,7 @@ export type CopilotResponse =
       touched:  string[];
       // The open proposal was declined or approved: the panel closes it.
       closed:   "approved" | "declined" | null;
-      // Proposals that change a task itself, each run on its own confirmation.
-      proposals: CopilotProposal[];
-      // A place that does what was asked (a note's Nova Editor).
+      // A place in Kivo that does what was asked.
       link:     { href: string; label: string } | null;
     }
   | { ok: false; error: DayFlowError; message: string; flow?: NovaDayView };

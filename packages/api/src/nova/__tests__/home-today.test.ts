@@ -28,8 +28,9 @@ describe("Today keeps what it already did, a step away", () => {
     expect(home).toContain("<RecoveryCard");
     expect(home).toContain("<details className=\"group rounded-2xl");
   });
-  it("still starts a focus session from a task on the board", () => {
-    expect(home).toContain("onStart={sessionRunning ? undefined : task => start({ topicName: task.topicName!, subjectName: task.subjectName!, durationMinutes: TASK_SESSION_MINUTES }, `task:${task.id}`)}");
+  it("keeps the task board one link away instead of listing every task on Today", () => {
+    expect(home).toContain('href="/planner?view=board"');
+    expect(home).not.toContain("<TodayTasks");
   });
   it("starts an item of the flow through the day's own route, and does not wait for the map", () => {
     expect(home).toContain("day.act({ action: 'start', itemId: item.id, minutes }");
@@ -110,10 +111,9 @@ describe("Today's side column", () => {
     expect(panels).toContain("kind: e.kindLabel");
     expect(panels).toContain("href={EXAMS_HREF}");
   });
-  it("keeps the goals, the constraints, the companion and Telegram", () => {
-    for (const part of ["<WorkingToward goals={view.goals} />", "<AccountingFor constraints={view.constraints} />", "<CompanionCard", "<TelegramCard />"]) {
-      expect(home).toContain(part);
-    }
+  it("keeps the planner's constraints a step away; the week, goals, companion and Telegram have their own pages", () => {
+    expect(home).toContain("<AccountingFor constraints={view.constraints} />");
+    for (const gone of ["<WorkingToward", "<CompanionCard", "<TelegramCard", "<WeekSoFar", "<KnowledgeBoard"]) expect(home).not.toContain(gone);
   });
 });
 
