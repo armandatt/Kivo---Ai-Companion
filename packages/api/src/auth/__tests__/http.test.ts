@@ -3,6 +3,7 @@
 // whole of what a request meets on its way to a service.
 
 import { errorLabel } from "../error-label";
+import { PRIVACY_VERSION, TERMS_VERSION } from "../legal";
 import { callerOf, createCallerLimits, handleAuthRequest, type AuthRoute } from "../http";
 import { LOGIN_ATTEMPTS_PER_WINDOW } from "../login.service";
 import { PROXY_CLIENT_IP_HEADER, PROXY_PROOF_HEADER } from "../proxy-headers";
@@ -242,7 +243,7 @@ describe("what the routes return", () => {
 
   it("starting a signup grants no session; verifying it with the token does", async () => {
     const { auth, send } = setup();
-    const started = await send("signup", { email: "new@gmail.com", password: PASSWORD });
+    const started = await send("signup", { legal: { terms: TERMS_VERSION, privacy: PRIVACY_VERSION }, email: "new@gmail.com", password: PASSWORD });
 
     expect(started.status).toBe(200);
     expect(started.sessionUser).toBeUndefined();

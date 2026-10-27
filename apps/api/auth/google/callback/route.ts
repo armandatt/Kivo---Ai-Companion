@@ -3,6 +3,7 @@ import { cookies } from "next/headers"
 import { errorLabel } from "@repo/api/auth/error-label"
 import { readGoogleClaims, resolveGoogleSignIn } from "@repo/api/auth/google-signin.service"
 import { safeEqual } from "@repo/api/auth/secrets"
+import { consentFromToken } from "@repo/api/auth/legal"
 import { createSession, SESSION_COOKIE_NAME, SESSION_COOKIE_OPTIONS } from "../../../lib/auth/session"
 import {
   appUrl,
@@ -37,7 +38,7 @@ export async function GET(req: Request) {
 
     // The state must be the one this browser was sent to Google with.
     const cookieStore = await cookies()
-    const [expectedState, expectedNonce] = (cookieStore.get(OAUTH_COOKIE_NAME)?.value ?? "").split(".")
+    const [expectedState, expectedNonce, agreed] = (cookieStore.get(OAUTH_COOKIE_NAME)?.value ?? "").split(".")
     if (!state || !expectedState || !expectedNonce || !safeEqual(state, expectedState)) {
       return finish("/signin?error=google_state")
     }
@@ -59,14 +60,16 @@ export async function GET(req: Request) {
     const claims = readGoogleClaims(payload, expectedNonce)
     if (!claims.ok) return finish("/signin?error=google_token")
 
-    const result = await resolveGoogleSignIn(claims.identity)
+    const result = await resolveGoogleSignIn(claims.identity, { consent: consentFromToken(agreed) })
     if (!result.ok) {
       const error = {
         password_reset_required: "google_link",
         email_not_authoritative: "google_manual",
         email_unverified: "google_unverified",
+        consent_required: "google_consent",
       }[result.reason]
-      return finish(`/signin?error=${error}`)
+      // A new account needs the agreement, which is given on the sign-up page.
+      return finish(result.reason === "consent_required" ? "/signup?error=google_consent" : `/signin?error=${error}`)
     }
 
     const { user } = result

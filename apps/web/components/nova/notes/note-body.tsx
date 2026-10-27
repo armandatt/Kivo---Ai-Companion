@@ -9,7 +9,7 @@
 import Link from 'next/link'
 import { useState, type ReactNode } from 'react'
 import {
-  AlertTriangle, BookOpen, ChevronRight, ExternalLink, FileText, FlaskConical, HelpCircle, KeyRound, Lightbulb, ListChecks, NotebookPen, Quote,
+  AlertTriangle, BookOpen, BookOpenText, ChevronRight, ExternalLink, FileText, FlaskConical, HelpCircle, KeyRound, Lightbulb, ListChecks, NotebookPen, Quote,
 } from 'lucide-react'
 import { linkKey, tokenizeLine } from '@repo/api/nova/product/note-links'
 import type { NoteLinkRef } from '@repo/api/nova/product/notes.types'
@@ -219,7 +219,9 @@ function PaperNav({ targets }: { targets: Array<{ id: string; text: string; mine
   )
 }
 
-function PaperHeader({ card, title, nav, span }: { card: PaperCard; title?: string; nav: ReactNode; span: SpanAttrs }) {
+// onRead: open the paper's PDF in the reader beside the note (note-editor.tsx);
+// without it (Nova's panel) the PDF link opens a new tab as before.
+function PaperHeader({ card, title, nav, span, onRead }: { card: PaperCard; title?: string; nav: ReactNode; span: SpanAttrs; onRead?: (url: string) => void }) {
   const ids = [card.arxivId && `arXiv ${card.arxivId}`, card.doi && `DOI ${card.doi}`, card.pmid && `PMID ${card.pmid}`, card.pmcid && card.pmcid].filter(Boolean)
   return (
     <header className="sem-source sem-frame my-2 rounded-2xl border px-5 py-4 font-sans" {...span} data-paper-card data-paper-status={card.status}>
@@ -232,7 +234,9 @@ function PaperHeader({ card, title, nav, span }: { card: PaperCard; title?: stri
       {(card.published || card.venue || ids.length > 0) && <p className="mt-1 text-xs text-subtle">{[card.published, card.venue, ...ids].filter(Boolean).join(' · ')}</p>}
       <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
         {card.sourceUrl && <a href={card.sourceUrl} target="_blank" rel="noopener noreferrer" className="sem-ink inline-flex items-center gap-1 underline decoration-current/40 underline-offset-2 hover:decoration-current"><ExternalLink className="size-3" aria-hidden /> Original source</a>}
-        {card.pdfUrl && <a href={card.pdfUrl} target="_blank" rel="noopener noreferrer" className="sem-ink inline-flex items-center gap-1 underline decoration-current/40 underline-offset-2 hover:decoration-current"><ExternalLink className="size-3" aria-hidden /> PDF</a>}
+        {card.pdfUrl && (onRead
+          ? <button type="button" onClick={() => onRead(card.pdfUrl!)} className="sem-ink inline-flex items-center gap-1 font-semibold underline decoration-current/40 underline-offset-2 hover:decoration-current" data-paper-read-pdf><BookOpenText className="size-3" aria-hidden /> Read the PDF here</button>
+          : <a href={card.pdfUrl} target="_blank" rel="noopener noreferrer" className="sem-ink inline-flex items-center gap-1 underline decoration-current/40 underline-offset-2 hover:decoration-current"><ExternalLink className="size-3" aria-hidden /> PDF</a>)}
         <span className="text-subtle">{card.from ? `Text from ${card.from}` : 'No text of the paper was imported'}{card.importedOn ? ` · ${card.importedOn}` : ''}</span>
       </p>
       {nav}
@@ -240,8 +244,10 @@ function PaperHeader({ card, title, nav, span }: { card: PaperCard; title?: stri
   )
 }
 
-export function NoteBody({ body, links, serif = false, cite, compact = false, title }: {
+export function NoteBody({ body, links, serif = false, cite, compact = false, title, onReadPdf }: {
   body: string; links: NoteLinkRef[]; serif?: boolean
+  // Opens a paper's PDF beside the note instead of in a new tab.
+  onReadPdf?: (url: string) => void
   cite?: (label: string, key: string) => ReactNode | null
   // Smaller type, for Nova's panel beside the note.
   compact?: boolean
@@ -264,7 +270,7 @@ export function NoteBody({ body, links, serif = false, cite, compact = false, ti
       ...mine.flatMap(b => (b.kind === 'heading' && b.at === region.notesAt ? [{ id: b.id, text: b.text, mine: true }] : [])),
     ]
     content = [
-      <PaperHeader key="card" card={card} title={title} span={spanOf(first)} nav={<PaperNav targets={targets} />} />,
+      <PaperHeader key="card" card={card} title={title} span={spanOf(first)} nav={<PaperNav targets={targets} />} onRead={onReadPdf} />,
       <section key="paper" className="paper-text mt-6" aria-label="The paper, as imported" data-paper-text>
         <p className="sem-source sem-ink mb-1 font-sans text-[11px] font-semibold uppercase tracking-[0.12em]">The paper, as imported{card.status === 'full' ? '' : ` · ${PAPER_STATUS_WORDS[card.status]}`}</p>
         {render(paper, 'p', resolve)}

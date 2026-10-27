@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { randomUrlToken } from "@repo/api/auth/secrets"
+import { consentFromToken, consentToken } from "@repo/api/auth/legal"
 import {
   appUrl,
   googleAuthorizationUrl,
@@ -32,7 +33,10 @@ export async function GET(req: Request) {
   const response = NextResponse.redirect(
     googleAuthorizationUrl(config.clientId, config.redirectUri, state, nonce)
   )
-  response.cookies.set(OAUTH_COOKIE_NAME, `${state}.${nonce}`, OAUTH_COOKIE_OPTIONS)
+  // The sign-up page sends the versions the learner agreed to (?consent=);
+  // only current ones are kept. The callback needs them to create an account.
+  const consent = consentFromToken(new URL(req.url).searchParams.get("consent"))
+  response.cookies.set(OAUTH_COOKIE_NAME, `${state}.${nonce}${consent ? `.${consentToken(consent)}` : ""}`, OAUTH_COOKIE_OPTIONS)
   return response
 }
 

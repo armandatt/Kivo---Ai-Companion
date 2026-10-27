@@ -167,22 +167,21 @@ type Topic = { id: string; label: string; icon: typeof Home; group: string; keyw
 const TOPICS: Topic[] = [
   { id: 'start',     label: 'Getting started',  icon: Rocket,      group: 'Basics',       keywords: 'setup quiz onboarding subjects exams first day account' },
   { id: 'loop',      label: 'The daily loop',   icon: Sparkles,    group: 'Basics',       keywords: 'how it works plan focus outcome progress' },
-  { id: 'today',     label: 'Today',            icon: Home,        group: 'Plan',         keywords: 'home plan day flow nova proposal apply discard approve undo new chat close subject focus board tasks kanban deadlines week ahead planner untimed custom' },
+  { id: 'today',     label: 'Today',            icon: Home,        group: 'Plan',         keywords: 'home plan day flow nova proposal apply discard approve undo new chat close subject focus board tasks kanban deadlines week ahead planner untimed custom keyboard shortcuts keys' },
   { id: 'build',     label: 'Build with Nova',  icon: Sparkles,    group: 'Plan',         keywords: 'workspace create project exam skill templates syllabus pdf photo milestones tasks versions approve recovery missed days' },
   { id: 'calendar',  label: 'Calendar',         icon: CalendarDays, group: 'Plan',        keywords: 'events classes meetings month week agenda reminders deadlines dates schedule repeat recurring weekly daily monthly' },
-  { id: 'focus',     label: 'Focus room',       icon: Timer,       group: 'Plan',         keywords: 'session timer pomodoro pause end scenes sound music rain lofi spotify apple music youtube playlist fullscreen' },
-  { id: 'knowledge', label: 'Knowledge',        icon: BookOpen,    group: 'Knowledge',    keywords: 'subjects topics level review due board subject studio archive' },
-  { id: 'map',       label: 'Knowledge Map',    icon: Waypoints,   group: 'Knowledge',    keywords: 'graph links pan zoom filter layout drag explore inside nested subjects topics connect unlink add delete fold' },
-  { id: 'notes',     label: 'Notes',            icon: NotebookPen, group: 'Knowledge',    keywords: 'editor callout highlight tag link source pdf template ask nova summarise tutor explain quiz practice flashcards brainstorm capture import ipad goodnotes notability research paper arxiv doi pubmed' },
+  { id: 'focus',     label: 'Focus room',       icon: Timer,       group: 'Plan',         keywords: 'session timer pomodoro pause end scenes sound music rain lofi spotify apple music youtube playlist fullscreen keyboard shortcuts keys' },
+  { id: 'knowledge', label: 'Knowledge',        icon: BookOpen,    group: 'Knowledge',    keywords: 'subjects topics level review due board subject studio archive keyboard shortcuts keys' },
+  { id: 'map',       label: 'Knowledge Map',    icon: Waypoints,   group: 'Knowledge',    keywords: 'graph links pan zoom filter layout drag explore inside nested subjects topics connect unlink add delete fold keyboard shortcuts keys' },
+  { id: 'notes',     label: 'Notes',            icon: NotebookPen, group: 'Knowledge',    keywords: 'editor callout highlight tag link source pdf template ask nova summarise tutor explain quiz practice flashcards brainstorm capture import ipad goodnotes notability research paper arxiv doi pubmed keyboard shortcuts keys' },
   { id: 'saved',     label: 'Saved pages',      icon: Bookmark,    group: 'Knowledge',    keywords: 'links bookmark save to kivo study this browser extension' },
   { id: 'progress',  label: 'Progress & DNA',   icon: TrendingUp,  group: 'Growth',       keywords: 'progress learning dna streak weeks signals insights' },
-  { id: 'creature',  label: 'Your creature',    icon: Gamepad2,    group: 'Growth',       keywords: 'world level places arrow keys unlock days in a row' },
+  { id: 'creature',  label: 'Your creature',    icon: Gamepad2,    group: 'Growth',       keywords: 'world level places arrow keys unlock days in a row keyboard shortcuts keys' },
   { id: 'telegram',  label: 'Nova on Telegram', icon: Send,        group: 'Nova',         keywords: 'commands chat hinglish hindi nudges check-in language' },
   { id: 'extension', label: 'Browser Extension',icon: Puzzle,      group: 'Nova',         keywords: 'chrome edge brave arc save page selection code connect install' },
   { id: 'counts',    label: 'What counts',      icon: Check,       group: 'Nova',         keywords: 'record ten minutes rules honest' },
   { id: 'plans',     label: 'Plans',            icon: CreditCard,  group: 'Account',      keywords: 'free pro price trial billing upgrade rupees' },
-  { id: 'shortcuts', label: 'Shortcuts',        icon: Keyboard,    group: 'Account',      keywords: 'keyboard cmd ctrl k p space f m e enter map notes' },
-  { id: 'privacy',   label: 'Your data',        icon: ShieldCheck, group: 'Account',      keywords: 'privacy delete account export settings theme' },
+  { id: 'privacy',   label: 'Your data',        icon: ShieldCheck, group: 'Account',      keywords: 'privacy delete account export settings theme password reset email verified profile terms' },
   { id: 'faq',       label: 'Questions',        icon: CircleHelp,  group: 'Account',      keywords: 'faq help problems troubleshooting not applied stale disconnected planner missing' },
 ]
 
@@ -233,31 +232,94 @@ function OpenLink({ href, children }: { href: string; children: React.ReactNode 
   )
 }
 
-const SHORTCUTS: Array<{ keys: string[]; where: string; what: string }> = [
-  { keys: ['⌘', 'K'],  where: 'Knowledge',           what: 'Search: any page, subject, topic, note, saved page or task' },
-  { keys: ['Enter'],   where: 'Nova on Today',       what: 'Send (Shift Enter for a new line)' },
-  { keys: ['⌥', '↑/↓'], where: 'Today’s flow',      what: 'Move the focused item up or down (Alt on Windows)' },
-  { keys: ['Space'],   where: 'Focus',               what: 'Pause or resume the session' },
-  { keys: ['F'],       where: 'Focus',               what: 'Fullscreen' },
-  { keys: ['S'],       where: 'Focus',               what: 'Open the sound panel' },
-  { keys: ['M'],       where: 'Focus',               what: 'Mute or unmute' },
-  { keys: ['⌘', 'P'],  where: 'Notes',               what: 'Import a research paper' },
-  { keys: ['⌘', 'K'],  where: 'Notes',               what: 'Commands and search: notes, subjects, Nova' },
-  { keys: ['?'],       where: 'Notes, Knowledge Map', what: 'Show that page’s shortcuts (not while typing)' },
-  { keys: ['E'],       where: 'A note',              what: 'Edit it' },
-  { keys: ['⌘', 'S'],  where: 'Editing a note',      what: 'Save' },
-  { keys: ['⌘', 'B'],  where: 'Editing a note',      what: 'Bold' },
-  { keys: ['⌘', 'I'],  where: 'Editing a note',      what: 'Italic' },
-  { keys: ['⌘', '⇧', 'E'], where: 'Editing a note',  what: 'Highlight' },
-  { keys: ['Esc'],     where: 'A note with its source open', what: 'Close the source' },
-  { keys: ['/'],       where: 'Knowledge Map',       what: 'Find on the map (or ⌘ K)' },
-  { keys: ['Enter'],   where: 'Knowledge Map',       what: 'Explore inside the selected card; U goes back up a level' },
-  { keys: ['N'],       where: 'Knowledge Map',       what: 'Add a card inside or beside the selected one' },
-  { keys: ['Space'],   where: 'Knowledge Map',       what: 'Fold or show what is inside the selected card' },
-  { keys: ['F'],       where: 'Knowledge Map',       what: 'Fit the map on screen (0 zooms to 100%)' },
-  { keys: ['←', '↑', '→', '↓'], where: 'Creature',   what: 'Walk to the nearest open place that way' },
-  { keys: ['⇧', '←/→'], where: 'Creature',           what: 'Turn the camera (or Q and E)' },
+// Keyboard shortcuts, each list under the feature it belongs to. Every key
+// here is one the page's own handler answers (focus-session.tsx,
+// knowledge-map/map-shortcuts.ts, notes/notes-shortcuts.ts, the command
+// palette, today/flow-list.tsx and copilot-panel.tsx, the creature page).
+// `pc` is given only where Windows and Linux differ from the Mac.
+type Shortcut = { mac: string[]; pc?: string[]; what: string }
+
+const TODAY_KEYS: Shortcut[] = [
+  { mac: ['Enter'], what: 'Send your message to Nova (Shift Enter for a new line)' },
+  { mac: ['⌥', '↑ / ↓'], pc: ['Alt', '↑ / ↓'], what: 'Move the focused item in your flow up or down' },
+  { mac: ['Esc'], what: 'Close Nova’s drawer on a phone or tablet' },
 ]
+const FOCUS_KEYS: Shortcut[] = [
+  { mac: ['Space'], what: 'Pause or resume the session' },
+  { mac: ['F'], what: 'Fullscreen' },
+  { mac: ['S'], what: 'Open or close the sound panel' },
+  { mac: ['M'], what: 'Mute or unmute' },
+  { mac: ['Esc'], what: 'Close the sound panel' },
+]
+const KNOWLEDGE_KEYS: Shortcut[] = [
+  { mac: ['⌘', 'K'], pc: ['Ctrl', 'K'], what: 'Search any page, subject, topic, note, saved page or task' },
+]
+const MAP_KEYS: Shortcut[] = [
+  { mac: ['/'], what: 'Find a card (⌘ K or Ctrl K works too)' },
+  { mac: ['← → ↑ ↓'], what: 'Move between connected cards; with nothing selected, move the view' },
+  { mac: ['⇧', '← → ↑ ↓'], pc: ['Shift', '← → ↑ ↓'], what: 'Move the view' },
+  { mac: ['⌥', '← → ↑ ↓'], pc: ['Alt', '← → ↑ ↓'], what: 'Move the selected card (with Shift, further)' },
+  { mac: ['Enter'], what: 'Explore inside the selected card' },
+  { mac: ['⇧', 'Enter'], pc: ['Shift', 'Enter'], what: 'Show the selected card’s details' },
+  { mac: ['U'], what: 'Up one level' },
+  { mac: ['Space'], what: 'Fold or show what is inside the selected card' },
+  { mac: ['+ / −'], what: 'Zoom in or out' },
+  { mac: ['F'], what: 'Fit the map (or the explored card) on screen' },
+  { mac: ['0'], what: 'Zoom to 100%, centred on the selected card' },
+  { mac: ['N'], what: 'Add a card inside or beside the selected one' },
+  { mac: ['Delete'], what: 'Delete the selected card (Backspace too); you always confirm first' },
+  { mac: ['Esc'], what: 'Close a menu or panel, then clear the selection' },
+  { mac: ['?'], what: 'Show these shortcuts on the map' },
+]
+const NOTES_KEYS: Shortcut[] = [
+  { mac: ['⌘', 'P'], pc: ['Ctrl', 'P'], what: 'Import a research paper (on Notes pages only; Print elsewhere)' },
+  { mac: ['⌘', 'K'], pc: ['Ctrl', 'K'], what: 'Commands and search: notes, subjects, Nova' },
+  { mac: ['E'], what: 'Edit the note you are reading' },
+  { mac: ['⌘', 'S'], pc: ['Ctrl', 'S'], what: 'Save now (notes also save as you pause)' },
+  { mac: ['⌘', 'B'], pc: ['Ctrl', 'B'], what: 'Bold' },
+  { mac: ['⌘', 'I'], pc: ['Ctrl', 'I'], what: 'Italic' },
+  { mac: ['⌘', '⇧', 'E'], pc: ['Ctrl', 'Shift', 'E'], what: 'Highlight' },
+  { mac: ['Enter'], what: 'Send to Nova (Shift Enter for a new line)' },
+  { mac: ['Esc'], what: 'Close a dialog, the source or the PDF; stop Nova' },
+  { mac: ['?'], what: 'Show the Notes shortcuts (when not typing)' },
+]
+const CREATURE_KEYS: Shortcut[] = [
+  { mac: ['← → ↑ ↓'], what: 'Walk to the nearest open place that way' },
+  { mac: ['⇧', '← / →'], pc: ['Shift', '← / →'], what: 'Turn the camera (Q and E too)' },
+]
+
+function KeyCombo({ keys }: { keys: string[] }) {
+  return <span className="flex flex-wrap gap-1">{keys.map(k => <kbd key={k} className={KBD}>{k}</kbd>)}</span>
+}
+
+// A short "Keyboard shortcuts" list inside a feature's section. Where Windows
+// and Linux use other keys, both are shown.
+function Shortcuts({ items }: { items: Shortcut[] }) {
+  const differs = items.some(i => i.pc)
+  return (
+    <div className={`${CARD} overflow-hidden`} data-guide-shortcuts>
+      <p className={`${SUB} px-5 pt-4`}><Keyboard aria-hidden className="mr-2 inline size-4 align-[-2px] text-keppel-300" />Keyboard shortcuts</p>
+      <table className="mt-2 w-full text-left text-sm">
+        <thead className="border-b border-white/8 text-[11px] uppercase tracking-[0.14em] text-foreground/45">
+          <tr>{differs ? <><th className="px-5 py-2 font-medium">Mac</th><th className="px-5 py-2 font-medium">Windows and Linux</th></> : <th className="px-5 py-2 font-medium">Keys</th>}<th className="px-5 py-2 font-medium">What it does</th></tr>
+        </thead>
+        <tbody className="divide-y divide-white/6">
+          {items.map(i => (
+            <tr key={i.what}>
+              {differs && !i.pc
+                ? <td colSpan={2} className="whitespace-nowrap px-5 py-2.5"><KeyCombo keys={i.mac} /></td>
+                : <>
+                    <td className="whitespace-nowrap px-5 py-2.5"><KeyCombo keys={i.mac} /></td>
+                    {differs && <td className="whitespace-nowrap px-5 py-2.5"><KeyCombo keys={i.pc!} /></td>}
+                  </>}
+              <td className="px-5 py-2.5 text-foreground/80">{i.what}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
 
 const FAQ = [
   { q: 'I closed the tab mid-session. Is it lost?', a: 'No. Sessions are timed on Kivo’s server, not in the page. Open Focus again, here or on another device, and the clock is where it should be. Telegram sees the same session.' },
@@ -266,6 +328,8 @@ const FAQ = [
   { q: 'A proposal says “Not applied · your flow had changed”.', a: 'Your flow changed after Nova made the proposal (you edited it, or another tab did), so it was not applied. Your flow is as you left it; ask Nova again and it proposes from the flow as it is now.' },
   { q: 'Where did the Planner go?', a: 'Daily planning is on Today, and your task board opens there with Board. Old Planner links open Today, with the board open if the link was to the board. The week ahead and why the day is sized as it is are under More for today.' },
   { q: 'Will New chat or closing Nova change my plan?', a: 'No. Closing only hides Nova; the conversation is there when you open it again. New chat clears the conversation and nothing else. If a proposal is still waiting, it asks first, because starting over discards that proposal.' },
+  { q: 'A paper’s PDF shows a message instead of the paper.', a: 'Some sources (PubMed Central, for one) don’t allow their PDF to be shown inside another site, and some ask for a sign-in or a check first. Kivo says which, and Open the original opens it in a new tab. Your note stays open.' },
+  { q: 'I didn’t get the password-reset email.', a: 'Check spam, and that Profile shows the address you expect. A link works once, for an hour, and asking again makes the earlier one stop working. After a few requests in an hour, wait before asking again.' },
   { q: 'I can’t find the extension in the Chrome Web Store.', a: 'It isn’t listed there yet. Until it is, the Save to Kivo bookmark on the Browser Extension page saves any page from any browser, phones and Safari included.' },
   { q: 'The extension says it was disconnected.', a: 'Its connection ends if you disconnect it or leave it unused for thirty days. Open the Browser Extension page, press Connect a browser and type the new code into the extension.' },
   { q: 'Can Nova remind me at a set time?', a: 'Not yet. It checks in around the time you picked on days you haven’t studied, and messages first only when something is due, at most twice a day. It says so plainly if you ask for a reminder.' },
@@ -427,6 +491,7 @@ export function NovaGuide() {
                 Exams and dated tasks coming up, work that slipped after missed days (Nova offers to spread it over the coming days; nothing moves until you say so), the week ahead and why today is sized as it is.
               </Feature>
             </Grid>
+            <Shortcuts items={TODAY_KEYS} />
             <div className="flex flex-wrap gap-2"><OpenLink href="/home">Open Today</OpenLink></div>
           </Section>
 
@@ -490,6 +555,7 @@ export function NovaGuide() {
                 A session of ten minutes or more, with your answer to How did it go?, updates the topic and when to revisit it. Shorter ones are logged and move nothing.
               </Feature>
             </Grid>
+            <Shortcuts items={FOCUS_KEYS} />
             <div className="flex flex-wrap gap-2"><OpenLink href="/focus">Open Focus</OpenLink></div>
           </Section>
 
@@ -508,6 +574,7 @@ export function NovaGuide() {
                 Every topic row can start a 25-minute session, show what it is connected to, and open its related topics.
               </Feature>
             </Grid>
+            <Shortcuts items={KNOWLEDGE_KEYS} />
           </Section>
 
           <Section topic={topic('map')} hidden={hide('map')} lead="Your subjects, topics, tasks, notes and saved pages as one map, with each card inside the one it belongs to.">
@@ -525,13 +592,14 @@ export function NovaGuide() {
                 Drag cards where you want them; Kivo remembers each position for you, and anything you have not moved is placed for you. Press ? on the map for every shortcut.
               </Feature>
             </Grid>
+            <Shortcuts items={MAP_KEYS} />
             <div className="flex flex-wrap gap-2"><OpenLink href="/map">Open Knowledge Map</OpenLink></div>
           </Section>
 
           <Section topic={topic('notes')} hidden={hide('notes')} lead="A notebook that reads like a good book: your own notes, filed under a subject and topic, linked to each other.">
             <Grid>
               <Feature title="The workspace">
-                Your notebook by subject and topic on the left, the note in the middle, its outline, tags and backlinks on the right, and a status line with links and words. A note with a <code className="rounded bg-white/8 px-1">Source:</code> line can open that page or PDF beside it, so you read and write side by side.
+                Your notebook by subject and topic on the left, the note in the middle, its outline, tags and backlinks on the right, and a status line with links and words. A note with a <code className="rounded bg-white/8 px-1">Source:</code> line can open that page or PDF beside it (Source, or Paper, in the note’s bar), so you read and write side by side.
               </Feature>
               <Feature title="Writing">
                 A toolbar for headings, bold, italic, highlight, code, lists, note links, tags and dividers; Write, Split (live preview beside the text) and Preview. While you edit, the note saves itself a moment after you pause, and a save never overwrites a newer version: if the note changed elsewhere, you choose which to keep.
@@ -549,6 +617,7 @@ export function NovaGuide() {
               </Feature>
               <Feature title="Research papers">
                 Press <kbd className={KBD}>⌘</kbd> <kbd className={KBD}>P</kbd> (Ctrl P) on Notes and paste a paper&apos;s link: arXiv, a DOI, Semantic Scholar, OpenReview, PubMed or PubMed Central, or a PDF link. Kivo brings in its details, the abstract and any text the source shares openly, as one note with My notes at the end for your own. The note says how much of the paper it holds.
+                <ul><li>Read the PDF here, on the paper’s card, opens the PDF beside your note in your browser’s own viewer: scroll, zoom and move between pages there. Drag the edge between them to resize, or use the widen button. On a phone it fills the screen.</li><li>Close it (Esc) and open it again with Paper: it is where you left it, while the note stays open.</li><li>Some sources don’t allow their PDF to be shown inside another site. Kivo checks first and says so, with a button to open the original in a new tab.</li></ul>
               </Feature>
               <Feature title="Capture and import">
                 Capture or import (on Notes) brings in what you wrote or read elsewhere: paste text, send a passage with the extension&apos;s Add to notes or the Send to Kivo Notes bookmarklet (it works in Safari on iPad), or import a Markdown, text, PDF or photo file. Text files are kept exactly; a PDF or photo is transcribed by Nova for you to check, and the note says so. From Goodnotes, Notability or Apple Notes, export the page as a PDF and import it. It becomes a new note or is added to the end of one you have; a note with the same source or title is offered first, never merged by itself.
@@ -560,6 +629,7 @@ export function NovaGuide() {
                 Study this starts a session on the note&apos;s topic; Make a review task puts it on your board. The note itself never counts as study.
               </Feature>
             </Grid>
+            <Shortcuts items={NOTES_KEYS} />
             <div className="flex flex-wrap gap-2"><OpenLink href="/notes">Open Notes</OpenLink></div>
           </Section>
 
@@ -596,6 +666,7 @@ export function NovaGuide() {
                 </ul>
               </Feature>
             </Grid>
+            <Shortcuts items={CREATURE_KEYS} />
             <div className="flex flex-wrap gap-2"><OpenLink href="/creature">Visit your world</OpenLink></div>
           </Section>
 
@@ -694,32 +765,13 @@ export function NovaGuide() {
             <p className={BODY}>Your notes, Knowledge, saved pages and history are yours on every plan; nothing is deleted when a trial or a subscription ends.</p>
           </Section>
 
-          <Section topic={topic('shortcuts')} hidden={hide('shortcuts')} lead="The keys that save you a click. On Windows and Linux, Ctrl stands in for ⌘.">
-            <div className={`${CARD} overflow-hidden`}>
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-white/8 text-[11px] uppercase tracking-[0.14em] text-foreground/45">
-                  <tr><th className="px-5 py-3 font-medium">Keys</th><th className="px-5 py-3 font-medium">Where</th><th className="px-5 py-3 font-medium">What it does</th></tr>
-                </thead>
-                <tbody className="divide-y divide-white/6">
-                  {SHORTCUTS.map(s => (
-                    <tr key={`${s.where}-${s.what}`}>
-                      <td className="whitespace-nowrap px-5 py-3"><span className="flex flex-wrap gap-1">{s.keys.map(k => <kbd key={k} className={KBD}>{k}</kbd>)}</span></td>
-                      <td className="px-5 py-3 text-foreground/55">{s.where}</td>
-                      <td className="px-5 py-3 text-foreground/80">{s.what}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Section>
-
           <Section topic={topic('privacy')} hidden={hide('privacy')} lead="What Kivo keeps, and how you stay in charge of it.">
             <Grid>
               <Feature title="Yours, and only yours">
                 Your notes, subjects, sessions and saved pages belong to your account and no one else sees them. Nova reads them to plan and to answer you; it never posts or shares anything.
               </Feature>
               <Feature title="Settings">
-                Light, dark or match your device; your check-in time and timezone; your Telegram connection. Connected browsers are on the Browser Extension page. Deleting your account removes it and everything in it.
+                Light, dark or match your device; your check-in time and timezone; your Telegram connection. Connected browsers are on the Browser Extension page. Your Profile shows the email address your account uses and whether it is verified, and Email me a reset link sends a password-reset link to it (an account that signs in only with Google has no Kivo password). Deleting your account removes it and everything in it.
               </Feature>
             </Grid>
             <div className="flex flex-wrap gap-2"><OpenLink href="/settings"><Settings className="size-4" /> Settings</OpenLink><OpenLink href="/privacy">Privacy</OpenLink></div>

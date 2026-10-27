@@ -34,6 +34,7 @@ import { isValidSignupEmail, normalizeEmail, normalizeName, passwordProblem } fr
 import type { RateLimitResult } from "./rate-limiter";
 import { generateOtp, generateToken, hashOtp, hashToken, isOtpShaped, isTokenShaped, safeEqual } from "./secrets";
 import { consumeThrottle, type ThrottleRule } from "./throttle";
+import { checkLegalConsent, consentRecord, LEGAL_OUTDATED_MESSAGE } from "./legal";
 
 const MINUTE = 60 * 1000;
 
@@ -60,6 +61,7 @@ const SEND_DAILY: ThrottleRule = {
 };
 
 export const INVALID_EMAIL_MESSAGE = "Enter a valid email address";
+export const CONSENT_MISSING_MESSAGE = "Start your sign-up again, and agree to the Terms of Service and the Privacy Policy.";
 export const CODE_REJECTED_MESSAGE =
   "That code is invalid or has expired. Request a new one, or start again.";
 const SEND_FAILED_MESSAGE = "We couldn't send the verification email. Please try again shortly.";
@@ -79,10 +81,15 @@ async function takeSend(deps: AuthDeps, email: string, now: Date): Promise<RateL
 export type SignupStartResult = { ok: true; email: string; signupToken: string } | AuthFailure;
 
 export async function startSignup(
-  input: { email?: unknown; password?: unknown; name?: unknown },
+  input: { email?: unknown; password?: unknown; name?: unknown; legal?: unknown },
   options: SignupOptions = {},
 ): Promise<SignupStartResult> {
   const { deps = defaultAuthDeps, now = new Date() } = options;
+
+  // The learner's agreement to the current Terms and Privacy Policy, checked
+  // here and not only on the page (auth/legal.ts). Nothing is sent without it.
+  const legal = checkLegalConsent(input.legal);
+  if (!legal.ok) return fail(400, legal.message);
 
   // Any address that mail can be delivered to; the code proves it is theirs.
   const email = normalizeEmail(input.email);
@@ -113,6 +120,9 @@ export async function startSignup(
       tokenHash,
       codeHash: hashOtp(email, code),
       codeExpiresAt: new Date(now.getTime() + OTP_TTL_MS),
+      termsVersion: legal.consent.terms,
+      privacyVersion: legal.consent.privacy,
+      consentedAt: now,
       createdAt: now,
     },
   });
@@ -218,6 +228,10 @@ export async function verifySignup(
 
   if (!safeEqual(hashOtp(email, input.code), attempt.codeHash)) return rejected;
 
+  // An attempt started before agreement was asked for cannot become an account.
+  const consent = checkLegalConsent({ terms: attempt.termsVersion, privacy: attempt.privacyVersion });
+  if (!consent.ok || !attempt.consentedAt) return fail(400, !consent.ok && consent.message === LEGAL_OUTDATED_MESSAGE ? consent.message : CONSENT_MISSING_MESSAGE);
+
   try {
     const user = await deps.db.$transaction(async (tx) => {
       // Consuming the row is what makes the code single-use: of two requests
@@ -227,7 +241,7 @@ export async function verifySignup(
       });
       if (consumed.count !== 1) throw new SignupConflict();
 
-      return tx.user.create({
+      const created = await tx.user.create({
         data: {
           email,
           name: attempt.name,
@@ -236,6 +250,9 @@ export async function verifySignup(
         },
         select: { id: true, email: true, name: true, image: true },
       });
+      // The agreement given when the attempt started, recorded with the account.
+      await tx.legalConsent.create({ data: consentRecord(created.id, consent.consent, attempt.consentedAt!, "email_signup") });
+      return created;
     });
 
     // The address has its account: every other attempt for it is now moot.

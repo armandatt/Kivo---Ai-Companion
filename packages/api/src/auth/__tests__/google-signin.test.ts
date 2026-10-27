@@ -1,6 +1,10 @@
 import { readGoogleClaims, resolveGoogleSignIn, type GoogleIdentity } from "../google-signin.service";
 import { completePasswordReset, requestPasswordReset } from "../password-reset.service";
 import { fakeAuth } from "./fake-auth";
+import { PRIVACY_VERSION, TERMS_VERSION } from "../legal";
+
+// The agreement a sign-up sends with a new Google account (auth/legal.ts).
+const CONSENT = { terms: TERMS_VERSION, privacy: PRIVACY_VERSION };
 
 const NONCE = "nonce-from-the-cookie";
 
@@ -57,7 +61,7 @@ describe("reading a verified Google ID token", () => {
 describe("Google sign-in", () => {
   it("creates a verified account, with no password, for a new person", async () => {
     const auth = fakeAuth();
-    const result = await resolveGoogleSignIn(identity, { deps: auth.deps, now: auth.clock.now });
+    const result = await resolveGoogleSignIn(identity, { deps: auth.deps, consent: CONSENT, now: auth.clock.now });
 
     expect(result).toMatchObject({ ok: true, outcome: "created", user: { email: "asha@gmail.com", name: "Asha Rao" } });
     expect(auth.users).toHaveLength(1);
@@ -69,15 +73,15 @@ describe("Google sign-in", () => {
 
   it("stores the link only, never Google's tokens", async () => {
     const auth = fakeAuth();
-    await resolveGoogleSignIn(identity, { deps: auth.deps });
+    await resolveGoogleSignIn(identity, { deps: auth.deps, consent: CONSENT });
 
     expect(Object.keys(auth.accounts[0]!).sort()).toEqual(["id", "provider", "providerAccountId", "type", "userId"]);
   });
 
   it("signs the same person in again without creating anything", async () => {
     const auth = fakeAuth();
-    const first = await resolveGoogleSignIn(identity, { deps: auth.deps });
-    const second = await resolveGoogleSignIn(identity, { deps: auth.deps });
+    const first = await resolveGoogleSignIn(identity, { deps: auth.deps, consent: CONSENT });
+    const second = await resolveGoogleSignIn(identity, { deps: auth.deps, consent: CONSENT });
 
     expect(second).toMatchObject({ ok: true, outcome: "existing" });
     expect(second.ok && first.ok && second.user.id).toBe(first.ok && first.user.id);
@@ -91,7 +95,7 @@ describe("Google sign-in", () => {
       accounts: [{ id: "acc1", userId: "u1", provider: "google", providerAccountId: "google-sub-1" }],
     });
 
-    const result = await resolveGoogleSignIn({ ...identity, email: "asha.new@gmail.com" }, { deps: auth.deps });
+    const result = await resolveGoogleSignIn({ ...identity, email: "asha.new@gmail.com" }, { deps: auth.deps, consent: CONSENT });
 
     expect(result).toMatchObject({ ok: true, outcome: "existing", user: { id: "u1", email: "asha@gmail.com" } });
     expect(auth.users).toHaveLength(1);
@@ -107,7 +111,7 @@ describe("linking Google to an existing account", () => {
       users: [{ id: "u1", email: "asha@gmail.com", name: "Asha", password: "hashed(pw)", emailVerified: verifiedAt, userProfile: profile }],
     });
 
-    const result = await resolveGoogleSignIn(identity, { deps: auth.deps, now: auth.clock.now });
+    const result = await resolveGoogleSignIn(identity, { deps: auth.deps, consent: CONSENT, now: auth.clock.now });
 
     expect(result).toMatchObject({ ok: true, outcome: "linked", user: { id: "u1" } });
     expect(auth.users).toHaveLength(1);
@@ -124,7 +128,7 @@ describe("linking Google to an existing account", () => {
 
   it("links to an account that has no password", async () => {
     const auth = fakeAuth({ users: [{ id: "u1", email: "asha@gmail.com", password: null, emailVerified: null }] });
-    const result = await resolveGoogleSignIn(identity, { deps: auth.deps, now: auth.clock.now });
+    const result = await resolveGoogleSignIn(identity, { deps: auth.deps, consent: CONSENT, now: auth.clock.now });
 
     expect(result).toMatchObject({ ok: true, outcome: "linked", user: { id: "u1" } });
     expect(auth.users[0]!.emailVerified).toEqual(auth.clock.now);
@@ -137,7 +141,7 @@ describe("linking Google to an existing account", () => {
     });
     const before = structuredClone(auth.users[0]);
 
-    const result = await resolveGoogleSignIn(identity, { deps: auth.deps });
+    const result = await resolveGoogleSignIn(identity, { deps: auth.deps, consent: CONSENT });
 
     expect(result).toEqual({ ok: false, reason: "password_reset_required" });
     expect(auth.accounts).toHaveLength(0);
@@ -146,11 +150,11 @@ describe("linking Google to an existing account", () => {
 
   it("links that account once the owner has reset the password", async () => {
     const auth = fakeAuth({ users: [{ id: "u1", email: "asha@gmail.com", password: "hashed(someone's)", emailVerified: null }] });
-    const options = { deps: auth.deps, now: auth.clock.now };
+    const options = { deps: auth.deps, consent: CONSENT, now: auth.clock.now };
 
     await requestPasswordReset({ email: "asha@gmail.com" }, options);
     await completePasswordReset({ token: auth.lastResetToken(), password: "the owner's pass 1" }, options);
-    const result = await resolveGoogleSignIn(identity, { deps: auth.deps });
+    const result = await resolveGoogleSignIn(identity, { deps: auth.deps, consent: CONSENT });
 
     expect(result).toMatchObject({ ok: true, outcome: "linked", user: { id: "u1" } });
     expect(auth.users[0]!.password).toBe("hashed(the owner's pass 1)");
@@ -171,7 +175,7 @@ describe("linking Google to an existing account", () => {
     const auth = fakeAuth({ users: [{ id: "u1", email: "asha@gmail.com", password: null }] });
     const claims = readGoogleClaims({ ...payload, email: "ASHA@GMAIL.COM" }, NONCE);
 
-    const result = claims.ok ? await resolveGoogleSignIn(claims.identity, { deps: auth.deps }) : null;
+    const result = claims.ok ? await resolveGoogleSignIn(claims.identity, { deps: auth.deps, consent: CONSENT }) : null;
 
     expect(result).toMatchObject({ ok: true, outcome: "linked", user: { id: "u1" } });
     expect(auth.users).toHaveLength(1);
@@ -223,12 +227,12 @@ describe("linking by email depends on who Google is authoritative for", () => {
 
   it("links a Gmail identity to a verified account with the same address", async () => {
     const auth = fakeAuth({ users: [{ id: "u1", email: "asha@gmail.com", password: "hashed(pw)", emailVerified: verifiedAt }] });
-    expect(await resolveGoogleSignIn(gmail, { deps: auth.deps })).toMatchObject({ ok: true, outcome: "linked", user: { id: "u1" } });
+    expect(await resolveGoogleSignIn(gmail, { deps: auth.deps, consent: CONSENT })).toMatchObject({ ok: true, outcome: "linked", user: { id: "u1" } });
   });
 
   it("links a Workspace identity to a verified account with the same address", async () => {
     const auth = fakeAuth({ users: [{ id: "u1", email: "asha@school.edu", password: "hashed(pw)", emailVerified: verifiedAt }] });
-    expect(await resolveGoogleSignIn(workspace, { deps: auth.deps })).toMatchObject({ ok: true, outcome: "linked", user: { id: "u1" } });
+    expect(await resolveGoogleSignIn(workspace, { deps: auth.deps, consent: CONSENT })).toMatchObject({ ok: true, outcome: "linked", user: { id: "u1" } });
   });
 
   it.each([
@@ -239,7 +243,7 @@ describe("linking by email depends on who Google is authoritative for", () => {
     const auth = fakeAuth({ users: [{ id: "u1", email: "asha@yahoo.com", name: "Asha", userProfile: { onboardingComplete: true }, ...fields }] });
     const before = structuredClone(auth.users[0]);
 
-    const result = await resolveGoogleSignIn(elsewhere, { deps: auth.deps });
+    const result = await resolveGoogleSignIn(elsewhere, { deps: auth.deps, consent: CONSENT });
 
     expect(result).toEqual({ ok: false, reason: "email_not_authoritative" });
     expect(auth.accounts).toHaveLength(0);
@@ -251,7 +255,7 @@ describe("linking by email depends on who Google is authoritative for", () => {
       const auth = fakeAuth({ users: [{ id: "u1", email, password: "hashed(someone's)", emailVerified: null }] });
       const before = structuredClone(auth.users[0]);
 
-      expect(await resolveGoogleSignIn(who, { deps: auth.deps })).toEqual({ ok: false, reason: "password_reset_required" });
+      expect(await resolveGoogleSignIn(who, { deps: auth.deps, consent: CONSENT })).toEqual({ ok: false, reason: "password_reset_required" });
       expect(auth.accounts).toHaveLength(0);
       expect(auth.users).toEqual([before]);
     }
@@ -259,7 +263,7 @@ describe("linking by email depends on who Google is authoritative for", () => {
 
   it("creates a new account for an address Google does not host, without calling its email verified", async () => {
     const auth = fakeAuth();
-    const result = await resolveGoogleSignIn(elsewhere, { deps: auth.deps, now: auth.clock.now });
+    const result = await resolveGoogleSignIn(elsewhere, { deps: auth.deps, consent: CONSENT, now: auth.clock.now });
 
     expect(result).toMatchObject({ ok: true, outcome: "created" });
     expect(auth.users[0]).toMatchObject({ email: "asha@yahoo.com", emailVerified: null, password: null });
@@ -267,8 +271,8 @@ describe("linking by email depends on who Google is authoritative for", () => {
 
   it("recognises that account by Google's id next time, without the email mattering", async () => {
     const auth = fakeAuth();
-    const first = await resolveGoogleSignIn(elsewhere, { deps: auth.deps });
-    const second = await resolveGoogleSignIn(elsewhere, { deps: auth.deps });
+    const first = await resolveGoogleSignIn(elsewhere, { deps: auth.deps, consent: CONSENT });
+    const second = await resolveGoogleSignIn(elsewhere, { deps: auth.deps, consent: CONSENT });
 
     expect(second).toMatchObject({ ok: true, outcome: "existing" });
     expect(second.ok && first.ok && second.user.id === first.user.id).toBe(true);

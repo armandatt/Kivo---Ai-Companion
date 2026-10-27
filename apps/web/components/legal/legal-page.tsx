@@ -29,8 +29,11 @@ export function Section({ id, title, children }: { id: string; title: string; ch
   )
 }
 
-export function LegalPage({ title, summary, sections, children }: {
-  title: string; summary: ReactNode; sections: Array<{ id: string; title: string }>; children: ReactNode
+// updated: the version's date (auth/legal.ts), the day this text last changed.
+const longDate = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
+
+export function LegalPage({ title, summary, sections, updated, children }: {
+  title: string; summary: ReactNode; sections: Array<{ id: string; title: string }>; updated: string; children: ReactNode
 }) {
   return (
     <div className="kivo-app min-h-screen bg-background text-foreground">
@@ -43,13 +46,15 @@ export function LegalPage({ title, summary, sections, children }: {
           <nav aria-label="Legal" className="flex items-center gap-4 text-sm">
             <Link href="/privacy" className="text-foreground/70 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">Privacy</Link>
             <Link href="/terms" className="text-foreground/70 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">Terms</Link>
+            <Link href="/home" className="rounded-lg border border-white/12 px-3 py-1.5 text-foreground/85 hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-ring" data-legal-back>Back to Kivo</Link>
           </nav>
         </div>
       </header>
 
       <main className="mx-auto max-w-3xl px-4 pb-24 pt-10 sm:px-6 sm:pt-14">
         <h1 className="text-[2.1rem] font-semibold leading-[1.05] tracking-[-0.03em] sm:text-[2.8rem]">{title}</h1>
-        <p className="mt-3 text-sm text-subtle">Takes effect: <Confirm id="effectiveDate" /></p>
+        <p className="mt-3 text-sm text-subtle" data-legal-updated>Last updated: <time dateTime={updated}>{longDate(updated)}</time></p>
+        <p className="mt-1 text-sm text-subtle">Takes effect: <Confirm id="effectiveDate" /></p>
 
         <div role="note" className="mt-6 rounded-xl border border-amber-500/40 bg-amber-400/8 p-4 text-sm leading-relaxed text-foreground/85">
           <strong className="font-semibold text-foreground">Draft.</strong> This page was written from how Kivo works today and has not had legal review.

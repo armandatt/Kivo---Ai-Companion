@@ -4,6 +4,7 @@ import { type FormEvent, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { isValidSignupEmail, normalizeEmail, passwordProblem } from '@repo/api/auth/email-rules'
+import { LEGAL_REQUIRED_MESSAGE, PRIVACY_VERSION, TERMS_VERSION, consentToken } from '@repo/api/auth/legal'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp'
@@ -22,6 +23,30 @@ const RESEND_WAIT_SECONDS = 60
 
 type Step = 'choose' | 'email' | 'verify'
 
+const CONSENT = { terms: TERMS_VERSION, privacy: PRIVACY_VERSION }
+
+// The agreement every new account needs (auth/legal.ts): an unticked box, the
+// two documents a click away in a new tab (so nothing typed here is lost), and
+// the server checks it again. It asks for nothing else: no marketing consent.
+function LegalConsent({ checked, onChange, invalid }: { checked: boolean; onChange: (v: boolean) => void; invalid: boolean }) {
+  return (
+    <div className="mt-5" data-signup-consent>
+      <label htmlFor="signup-legal" className="flex items-start gap-3 text-sm leading-relaxed text-ink-200">
+        <input id="signup-legal" type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)}
+          aria-invalid={invalid || undefined} aria-describedby={invalid ? 'signup-legal-error' : undefined}
+          className="mt-0.5 size-4 shrink-0 cursor-pointer rounded border-ink-600 accent-keppel-400" data-signup-consent-box />
+        <span>
+          I agree to the{' '}
+          <a href="/terms" target="_blank" rel="noopener" className="font-medium text-keppel-300 underline underline-offset-4 hover:text-keppel-200">Terms of Service<span className="sr-only"> (opens in a new tab)</span></a>
+          {' '}and acknowledge the{' '}
+          <a href="/privacy" target="_blank" rel="noopener" className="font-medium text-keppel-300 underline underline-offset-4 hover:text-keppel-200">Privacy Policy<span className="sr-only"> (opens in a new tab)</span></a>.
+        </span>
+      </label>
+      {invalid && <p id="signup-legal-error" role="alert" className="mt-2 text-xs text-red-300" data-signup-consent-error>{LEGAL_REQUIRED_MESSAGE}</p>}
+    </div>
+  )
+}
+
 export default function SignupPage() {
   const router = useRouter()
   const [step, setStep] = useState<Step>('choose')
@@ -37,6 +62,14 @@ export default function SignupPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [isRetrying, setIsRetrying] = useState(false)
   const [resendIn, setResendIn] = useState(0)
+  const [agreed, setAgreed] = useState(false)
+  const [consentMissing, setConsentMissing] = useState(false)
+  // Back from Google without an agreement (a new account needs one).
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('error') === 'google_consent') setConsentMissing(true)
+  }, [])
+  const agree = (v: boolean) => { setAgreed(v); if (v) setConsentMissing(false) }
+  const needConsent = () => { setConsentMissing(true); document.getElementById('signup-legal')?.focus() }
 
   // Counts down to when another code may be requested.
   useEffect(() => {
@@ -45,7 +78,7 @@ export default function SignupPage() {
     return () => clearTimeout(timer)
   }, [resendIn])
 
-  const post = (path: string, body: Record<string, string>) =>
+  const post = (path: string, body: Record<string, unknown>) =>
     fetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -58,6 +91,7 @@ export default function SignupPage() {
     setNotice('')
 
     // The same checks the server makes, so a typo is caught before a round trip.
+    if (!agreed) { needConsent(); return }
     const normalized = normalizeEmail(email)
     if (!normalized || !isValidSignupEmail(normalized)) {
       setError('Enter a valid email address')
@@ -76,7 +110,7 @@ export default function SignupPage() {
     setIsLoading(true)
     setIsRetrying(false)
 
-    const attempt = () => post('/api/signup', { email: normalized, password })
+    const attempt = () => post('/api/signup', { email: normalized, password, legal: CONSENT })
 
     try {
       let res = await attempt()
@@ -233,7 +267,12 @@ export default function SignupPage() {
       subtitle="Create your AI companion today"
     >
       {step === 'choose' ? (
-        <AuthMethodChoice onEmail={() => setStep('email')} />
+        <>
+          <AuthMethodChoice onEmail={() => setStep('email')}
+            googleHref={`/api/auth/google?consent=${encodeURIComponent(consentToken(CONSENT))}`}
+            onGoogle={e => { if (!agreed) { e.preventDefault(); needConsent() } }} />
+          <LegalConsent checked={agreed} onChange={agree} invalid={consentMissing} />
+        </>
       ) : (
         <>
           <form onSubmit={handleStart} className="space-y-4" noValidate>
@@ -285,6 +324,8 @@ export default function SignupPage() {
                 required
               />
             </div>
+
+            <LegalConsent checked={agreed} onChange={agree} invalid={consentMissing} />
 
             {error && <AuthError>{error}</AuthError>}
 

@@ -40,7 +40,9 @@ export function movedTo(req: Request, redirectUri: string): string | null {
   let callback: URL
   try { callback = new URL(redirectUri) } catch { return null }
   if (!browserHost || browserHost === callback.host.toLowerCase()) return null
-  return `${callback.origin}/api/auth/google?moved=1`
+  // The sign-up page's agreement (auth/legal.ts) travels with the move.
+  const consent = url.searchParams.get("consent")
+  return `${callback.origin}/api/auth/google?moved=1${consent ? `&consent=${encodeURIComponent(consent)}` : ""}`
 }
 
 export function googleAuthorizationUrl(clientId: string, redirectUri: string, state: string, nonce: string) {

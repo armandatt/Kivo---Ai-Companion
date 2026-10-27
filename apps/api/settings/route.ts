@@ -27,7 +27,7 @@ export async function GET() {
     const [user, profile, googleAccount] = await Promise.all([
       prisma.user.findUnique({
         where: { id: session.userId },
-        select: { email: true, name: true, image: true },
+        select: { email: true, name: true, image: true, emailVerified: true, password: true },
       }),
       prisma.userProfile.findUnique({
         where: { userId: session.userId },
@@ -57,6 +57,10 @@ export async function GET() {
       // The photo Google gave the account, if any (only an https address is shown).
       image: user?.image && user.image.startsWith("https://") ? user.image : null,
       isGoogleOAuth: !!googleAccount,
+      // Whether the address was confirmed (a sign-up code, a reset, or Google's
+      // word) and whether there is a password to reset. Never the password.
+      emailVerified: !!user?.emailVerified,
+      hasPassword: !!user?.password,
       // When this account set up Kivo (the profile row's creation), for "Member since".
       memberSince: profile?.createdAt?.toISOString() ?? null,
       // What they say about themselves professionally (product/professional-profile.ts).

@@ -1,5 +1,7 @@
 import type { Metadata } from "next"
 import Link from "next/link"
+import { PLANS, formatPrice } from "@repo/api/billing/plans"
+import { TERMS_VERSION } from "@repo/api/auth/legal"
 import { Confirm, LegalPage, Section } from "@/components/legal/legal-page"
 
 // Plain terms for the service as it exists today. Business and legal facts
@@ -19,6 +21,7 @@ const SECTIONS = [
   { id: "account", title: "Your account" },
   { id: "content", title: "Your content" },
   { id: "ai", title: "AI and study guidance" },
+  { id: "plans", title: "Plans and payment" },
   { id: "use", title: "Using Kivo fairly" },
   { id: "others", title: "Other services" },
   { id: "availability", title: "Changes to Kivo" },
@@ -32,15 +35,16 @@ export default function TermsPage() {
   return (
     <LegalPage
       title="Terms of Service"
+      updated={TERMS_VERSION}
       sections={SECTIONS}
       summary={<p>Use Kivo to plan and track your own studying. What you write stays yours. Nova’s replies come from AI and can be wrong, so treat them as help, not as instructions you must follow. You can delete your account at any time from Settings.</p>}
     >
       <Section id="agreement" title="These terms">
-        <p>These terms are an agreement between you and <Confirm id="entity" /> (“Kivo”, “we”). By creating an account or using Kivo, you agree to them. Our <Link href="/privacy">Privacy Policy</Link> explains what we collect and how it is used.</p>
+        <p>These terms are an agreement between you and <Confirm id="entity" /> (“Kivo”, “we”). When you create an account you are asked to agree to them, and you cannot create one without doing so; using Kivo means you continue to agree. Our <Link href="/privacy">Privacy Policy</Link> explains what we collect and how it is used.</p>
       </Section>
 
       <Section id="service" title="What Kivo is">
-        <p>Kivo is a study companion. Its companion, Nova, plans your day from your subjects, dates and time, times your study sessions, schedules reviews and shows your progress. You can use it in your browser, on Telegram if you connect it, and through the browser extension. Kivo is currently free to use.</p>
+        <p>Kivo is a study companion. Its companion, Nova, plans your day from your subjects, dates and time, times your study sessions, schedules reviews and shows your progress. You can use it in your browser, on Telegram if you connect it, and through the browser extension.</p>
       </Section>
 
       <Section id="eligibility" title="Who can use Kivo">
@@ -64,8 +68,13 @@ export default function TermsPage() {
           <li>Nova’s replies are written by an AI model. They can be wrong, incomplete or out of date. Check anything important against your own course materials.</li>
           <li>Plans, review dates and topic estimates are worked out from what you record and how you say your sessions went. They are estimates, not test results or grades.</li>
           <li>Kivo is not medical, mental-health, legal or professional advice, and it does not replace your teachers or your institution’s rules.</li>
-          <li>Kivo changes your records only when you act or confirm. An AI reply alone never changes them.</li>
+          <li>Kivo changes your records only when you act or confirm. An AI reply alone never changes them: Nova’s plans for your day and the workspaces it proposes are applied only when you approve them.</li>
         </ul>
+      </Section>
+
+      <Section id="plans" title="Plans and payment">
+        <p>Kivo has a free plan. Pro, at {formatPrice(PLANS.pro_monthly)} a {PLANS.pro_monthly.interval}{PLANS.pro_monthly.trialDays ? ` after a ${PLANS.pro_monthly.trialDays}-day trial` : ""}, raises how much you can ask Nova each day. Payment is taken by Polar. Whatever plan you are on, what you have written and recorded stays yours, and nothing is deleted when a trial or a subscription ends.</p>
+        <p><Confirm id="billing" /></p>
       </Section>
 
       <Section id="use" title="Using Kivo fairly">
@@ -79,7 +88,8 @@ export default function TermsPage() {
       </Section>
 
       <Section id="others" title="Other services">
-        <p>Telegram, Google sign-in and your web browser are provided by other companies under their own terms. We are not responsible for them, and they may change or stop independently of Kivo.</p>
+        <p>Telegram, Google sign-in, Polar and your web browser are provided by other companies under their own terms. We are not responsible for them, and they may change or stop independently of Kivo.</p>
+        <p>Research papers and pages you import or open beside a note belong to their authors and publishers. Kivo brings in only what a source shares openly and shows a source inside Notes only where that source allows it; otherwise it opens in its own tab. Respect each source’s own terms.</p>
       </Section>
 
       <Section id="availability" title="Changes to Kivo">

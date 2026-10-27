@@ -6,7 +6,6 @@ import { usePathname } from 'next/navigation'
 import {
   BarChart3,
   BookOpen,
-  FileText,
   Puzzle,
   Waypoints,
   Calendar,
@@ -58,7 +57,7 @@ const navItems = [
 ]
 
 // Nova's pages, from the one list that also decides route access.
-const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/build': Sparkles, '/calendar': CalendarDays, '/focus': Timer, '/knowledge': BookOpen, '/map': Waypoints, '/notes': NotebookPen, '/saved': Puzzle, '/progress': TrendingUp, '/learning-dna': Dna, '/creature': Map, '/guide': FileText }
+const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/build': Sparkles, '/calendar': CalendarDays, '/focus': Timer, '/knowledge': BookOpen, '/map': Waypoints, '/notes': NotebookPen, '/saved': Puzzle, '/progress': TrendingUp, '/learning-dna': Dna, '/creature': Map, '/guide': Compass }
 // Docs sits with Settings at the foot of the sidebar, not among the pages.
 const NOVA_DOCS = '/guide'
 const novaNavItems = NOVA_ROUTES.filter(r => r.path !== NOVA_DOCS).map(r => ({ href: r.path, label: r.label, icon: NOVA_ICONS[r.path] ?? Home }))
@@ -337,7 +336,7 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
               className={cn(row, isActive(NOVA_DOCS) ? CURRENT : 'text-sidebar-foreground hover:bg-sidebar-accent')}
               data-nav-docs
             >
-              <FileText aria-hidden className="w-5 h-5 shrink-0" />
+              <Compass aria-hidden className="w-5 h-5 shrink-0" />
               <span className={label}>Docs</span>
             </Link>
           )}

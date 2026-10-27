@@ -110,6 +110,10 @@ const nextConfig = {
         destination: `${apiUrl}/api/settings/notifications`,
       },
       {
+        source: "/api/settings/password-reset",
+        destination: `${apiUrl}/api/settings/password-reset`,
+      },
+      {
         source: "/api/usage",
         destination: `${apiUrl}/api/usage`,
       },
