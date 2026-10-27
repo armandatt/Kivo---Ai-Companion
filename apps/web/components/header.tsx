@@ -4,7 +4,8 @@ import { useState, useEffect } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Lightning, SignOut, SquaresFour } from "@phosphor-icons/react/dist/ssr"
+import { ArrowRight, CaretDown, GearSix, Lightning, SignOut, SquaresFour } from "@phosphor-icons/react/dist/ssr"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { KivoLogo } from "@/components/KivoLogo"
 import { KivoWordmark } from "@/components/brand/kivo-brand"
 
@@ -40,6 +41,8 @@ export function Header() {
   const initials = user?.name
     ? user.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
     : user?.email?.[0]?.toUpperCase() ?? "?"
+  // A name saved in capitals reads as shouting; the menu shows it in title case.
+  const displayName = (user?.name ?? user?.email?.split("@")[0] ?? "").toLowerCase()
 
   return (
     <>
@@ -80,63 +83,69 @@ export function Header() {
           {/* Actions */}
           <div className="flex items-center gap-3">
             {user ? (
-              <>
-                {/* Dashboard button */}
-                <Button
-                  asChild
-                  className={`
-                    flex items-center gap-1.5 rounded-full
-                    px-4 py-2 h-auto text-sm font-semibold
-                    transition-all duration-500
-                    ${scrolled ? "opacity-0 pointer-events-none" : "opacity-100"}
-                  `}
-                  style={{
-                    background: "rgba(0,229,160,0.1)",
-                    border: "1px solid rgba(0,229,160,0.2)",
-                    color: "#00E5A0",
-                  }}
+              // One capsule: the way back into the app, and the account behind the avatar.
+              <div
+                className={`
+                  flex items-center gap-1 rounded-full border border-white/[0.08] bg-[var(--color-baltic-sea-900)]/70 p-1
+                  shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_8px_24px_-12px_rgba(0,0,0,0.6)] backdrop-blur-md
+                  transition-all duration-500
+                  ${scrolled ? "opacity-0 pointer-events-none" : "opacity-100"}
+                `}
+              >
+                <Link
+                  href="/home"
+                  className="group inline-flex h-9 items-center gap-2 rounded-full bg-[#00E5A0] pl-3.5 pr-4 text-sm font-semibold text-[#04140e] shadow-[0_0_0_1px_rgba(0,229,160,0.35),0_6px_20px_-6px_rgba(0,229,160,0.55)] transition-[background-color,box-shadow] hover:bg-[#33ebb3] hover:shadow-[0_0_0_1px_rgba(0,229,160,0.5),0_8px_28px_-6px_rgba(0,229,160,0.7)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00E5A0]"
                 >
-                  <Link href="/home">
-                    <SquaresFour weight="bold" className="h-4 w-4" />
-                    Dashboard
-                  </Link>
-                </Button>
+                  <SquaresFour weight="bold" className="h-4 w-4" />
+                  Dashboard
+                  <ArrowRight weight="bold" className="h-3.5 w-3.5 -ml-0.5 transition-transform group-hover:translate-x-0.5" />
+                </Link>
 
-                {/* Avatar */}
-                <div
-                  className={`
-                    hidden md:flex items-center gap-2
-                    transition-all duration-500
-                    ${scrolled ? "opacity-0 pointer-events-none" : "opacity-100"}
-                  `}
-                >
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-keppel-400)]/40 bg-[var(--color-baltic-sea-800)] text-xs font-semibold text-[var(--color-keppel-400)]">
-                    {initials}
-                  </div>
-                  {/* The address only where there is room beside the centred nav. */}
-                  <span className="hidden 2xl:inline text-sm text-[var(--color-baltic-sea-300)] max-w-[120px] truncate">
-                    {user.name ?? user.email}
-                  </span>
-                </div>
-
-                {/* Sign out button */}
-                <Button
-                  onClick={handleLogout}
-                  disabled={loggingOut}
-                  variant="ghost"
-                  aria-label="Sign out"
-                  className={`
-                    flex items-center gap-1.5 rounded-full border border-[var(--color-baltic-sea-700)]
-                    px-4 py-2 h-auto text-sm text-[var(--color-baltic-sea-300)]
-                    hover:border-[var(--color-baltic-sea-500)] hover:text-white hover:bg-[var(--color-baltic-sea-800)]
-                    transition-all duration-500
-                    ${scrolled ? "opacity-0 pointer-events-none" : "opacity-100"}
-                  `}
-                >
-                  <SignOut weight="bold" className="h-4 w-4" />
-                  <span className="hidden sm:inline lg:hidden xl:inline">{loggingOut ? "Signing out…" : "Sign out"}</span>
-                </Button>
-              </>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    aria-label="Your account"
+                    className="group flex h-9 items-center gap-1 rounded-full pl-1 pr-2 text-[var(--color-baltic-sea-400)] outline-none transition-colors hover:bg-white/[0.05] hover:text-[var(--color-baltic-sea-100)] focus-visible:ring-2 focus-visible:ring-[#00E5A0]/70 data-[state=open]:bg-white/[0.06]"
+                  >
+                    <span className="rounded-full bg-gradient-to-br from-[#00E5A0] via-[#00E5A0]/40 to-transparent p-px">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-baltic-sea-900)] text-[11px] font-semibold tracking-wide text-[#7ef5cf]">
+                        {initials}
+                      </span>
+                    </span>
+                    <CaretDown weight="bold" className="h-3 w-3 transition-transform group-data-[state=open]:rotate-180" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    sideOffset={10}
+                    className="w-64 rounded-2xl border border-white/[0.08] bg-[#0b0f17]/95 p-1.5 text-[var(--color-baltic-sea-100)] shadow-[0_24px_48px_-16px_rgba(0,0,0,0.8)] backdrop-blur-xl"
+                  >
+                    <div className="flex items-center gap-3 px-2.5 py-2.5">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#00E5A0]/12 text-xs font-semibold text-[#7ef5cf] ring-1 ring-[#00E5A0]/30">
+                        {initials}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium capitalize text-white">{displayName}</span>
+                        <span className="block truncate text-xs text-[var(--color-baltic-sea-400)]">{user.email}</span>
+                      </span>
+                    </div>
+                    <DropdownMenuSeparator className="my-1 bg-white/[0.06]" />
+                    <DropdownMenuItem asChild className="cursor-pointer rounded-lg px-2.5 py-2 text-sm text-[var(--color-baltic-sea-200)] focus:bg-white/[0.06] focus:text-white">
+                      <Link href="/home"><SquaresFour weight="bold" className="mr-2 h-4 w-4 text-[#7ef5cf]" />Dashboard</Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild className="cursor-pointer rounded-lg px-2.5 py-2 text-sm text-[var(--color-baltic-sea-200)] focus:bg-white/[0.06] focus:text-white">
+                      <Link href="/settings"><GearSix weight="bold" className="mr-2 h-4 w-4 text-[var(--color-baltic-sea-400)]" />Settings</Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator className="my-1 bg-white/[0.06]" />
+                    <DropdownMenuItem
+                      onSelect={(e) => { e.preventDefault(); handleLogout() }}
+                      disabled={loggingOut}
+                      className="cursor-pointer rounded-lg px-2.5 py-2 text-sm text-[var(--color-baltic-sea-200)] focus:bg-rose-500/10 focus:text-rose-300"
+                    >
+                      <SignOut weight="bold" className="mr-2 h-4 w-4" />
+                      {loggingOut ? "Signing out…" : "Sign out"}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             ) : (
               <>
                 <a
@@ -177,20 +186,14 @@ export function Header() {
         `}
       >
         {user ? (
-          <Button
-            asChild
-            className="rounded-full px-6 py-3 h-auto text-sm font-semibold shadow-lg"
-            style={{
-              background: "rgba(0,229,160,0.12)",
-              border: "1px solid rgba(0,229,160,0.25)",
-              color: "#00E5A0",
-            }}
+          <Link
+            href="/home"
+            className="group inline-flex h-11 items-center gap-2 rounded-full bg-[#00E5A0] px-5 text-sm font-semibold text-[#04140e] shadow-[0_0_0_1px_rgba(0,229,160,0.35),0_10px_30px_-8px_rgba(0,229,160,0.6)] transition-colors hover:bg-[#33ebb3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00E5A0]"
           >
-            <Link href="/home">
-              <SquaresFour weight="bold" className="mr-1.5 h-4 w-4" />
-              Dashboard
-            </Link>
-          </Button>
+            <SquaresFour weight="bold" className="h-4 w-4" />
+            Dashboard
+            <ArrowRight weight="bold" className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+          </Link>
         ) : (
           <Button
             asChild
