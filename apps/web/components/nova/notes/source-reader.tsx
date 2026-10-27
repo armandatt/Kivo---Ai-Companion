@@ -5,7 +5,7 @@
 // Before showing a frame it asks the server whether the source allows one
 // (POST /api/nova/notes/source-frame, product/source-frame.ts): a refused
 // frame stays blank in the browser without saying why, so the pane says it
-// instead and offers the original in a new tab. Kio never fetches and
+// instead and offers the original in a new tab. Kivo never fetches and
 // re-serves a source to get around its rules.
 //
 // The page keeps this mounted while it is hidden, so closing and reopening
@@ -92,12 +92,12 @@ export function SourceReader({ source, wide, onWide, onClose }: {
           <p className="font-medium text-foreground">
             {verdict === 'blocked' ? `${source.label} doesn’t allow its ${kind} to be shown inside another site.`
               : verdict === 'download' ? `${source.label} sends this as a file to download, so it can’t be shown here.`
-              : `Kio couldn’t check whether ${source.label} can be shown here.`}
+              : `Kivo couldn’t check whether ${source.label} can be shown here.`}
           </p>
           <p className="text-xs text-foreground/60">
             {verdict === 'unreachable'
               ? 'The source may need a sign-in, may be checking for robots, or may be unavailable right now.'
-              : 'That is the source’s own setting, and Kio doesn’t get around it.'}
+              : 'That is the source’s own setting, and Kivo doesn’t get around it.'}
             {' '}Your note stays here; the original opens in a new tab.
           </p>
           <div className="flex flex-wrap gap-2">

@@ -26,7 +26,7 @@ export async function POST(req: Request) {
       return noteFail(429, "rate_limited", "That's a lot of papers at once. Give it a minute.")
     }
     const read = await readSmallJson(req, PAPER_BODY_MAX)
-    if (!read.ok) return noteFail(read.reason === "too_large" ? 413 : 400, read.reason === "too_large" ? "too_large" : "invalid", read.reason === "too_large" ? "That's too much to send at once." : "That isn't a paper Kio can import.")
+    if (!read.ok) return noteFail(read.reason === "too_large" ? 413 : 400, read.reason === "too_large" ? "too_large" : "invalid", read.reason === "too_large" ? "That's too much to send at once." : "That isn't a paper Kivo can import.")
     const body = read.body as { transcribe?: unknown }
     let result: Awaited<ReturnType<typeof importPaper>>
     if (body && body.transcribe === true) {

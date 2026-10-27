@@ -147,14 +147,14 @@ export function Understanding({ draft }: { draft: DraftView }) {
     <div className="grid gap-5 sm:grid-cols-2">
       <Facts title="You told Nova" facts={said} tone="yours" />
       <Facts title="From your files" facts={fromFiles} tone="yours" />
-      <Facts title="From your Kio profile" facts={b.known} tone="known" />
+      <Facts title="From your Kivo profile" facts={b.known} tone="known" />
       <Facts title="Nova is assuming" facts={b.assumptions} tone="assumed" />
       <Facts title="Nova suggests" facts={b.suggestions} tone="suggested" />
     </div>
   )
 }
 
-// Whether the proposal can be done, as Kio's own check says (no model):
+// Whether the proposal can be done, as Kivo's own check says (no model):
 // what must change before it can be built, and what is worth a look.
 export function FeasibilityPanel({ feasibility }: { feasibility: Feasibility | null }) {
   if (!feasibility || (feasibility.errors.length === 0 && feasibility.warnings.length === 0)) return null
@@ -248,7 +248,7 @@ function Overview({ plan, draft, editable, set, words, onView }: ViewProps & { d
       )}
       {draft.brief.dropped.length > 0 && (
         <details className="text-xs text-subtle" data-dropped>
-          <summary className="cursor-pointer">Left out or adjusted when Kio checked it ({draft.brief.dropped.length})</summary>
+          <summary className="cursor-pointer">Left out or adjusted when Kivo checked it ({draft.brief.dropped.length})</summary>
           <ul className="mt-1.5 list-disc space-y-0.5 pl-5">{draft.brief.dropped.map((d, i) => <li key={i}>{d}</li>)}</ul>
         </details>
       )}
@@ -670,7 +670,7 @@ export function PlaygroundWaiting({ draft, words }: { draft: DraftView | null; w
       {writing ? (
         <div role="status" aria-label={label ?? 'Writing the proposal'} className="space-y-2.5">
           <p className="flex items-center gap-2 text-sm font-medium text-foreground/85"><Sparkles aria-hidden className="size-4 text-nova-ink" /> {label}…</p>
-          <p className="text-xs text-subtle">It appears here as soon as Kio has checked it, usually within a minute.</p>
+          <p className="text-xs text-subtle">It appears here as soon as Kivo has checked it, usually within a minute.</p>
           {[0, 1, 2].map(i => (
             <div key={i} aria-hidden className={cn(CARD, 'space-y-2 p-3')}>
               <div className="h-3 w-1/3 animate-pulse rounded bg-white/8 motion-reduce:animate-none" />

@@ -3,9 +3,9 @@ import Link from 'next/link'
 import { Mail } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { KioTile, KioWordmark } from '@/components/brand/kio-brand'
+import { KivoTile, KivoWordmark } from '@/components/brand/kivo-brand'
 
-// Sign-in, sign-up and password recovery share one look: Kio ink, the dot
+// Sign-in, sign-up and password recovery share one look: Kivo ink, the dot
 // grid the knowledge canvas uses, the lockup above the card, and the landing page's
 // teal for the one action that moves the person forward.
 
@@ -31,12 +31,12 @@ export function AuthShell({
 }) {
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-ink-950 px-4 py-12 text-paper-50">
-      <div aria-hidden className="kio-dot-grid pointer-events-none absolute inset-0" />
+      <div aria-hidden className="kivo-dot-grid pointer-events-none absolute inset-0" />
 
       <div className="relative z-10 w-full max-w-md">
-        <Link href="/" aria-label="Kio home page" className="mb-8 inline-flex items-center gap-2.5 text-paper-100">
-          <KioTile size={32} />
-          <KioWordmark height={18} />
+        <Link href="/" aria-label="Kivo home page" className="mb-8 inline-flex items-center gap-2.5 text-paper-100">
+          <KivoTile size={32} />
+          <KivoWordmark height={18} />
         </Link>
 
         <Card className="border-ink-700 bg-ink-900/95 text-paper-50 shadow-[0_30px_60px_-30px_rgba(0,0,0,0.8)]">

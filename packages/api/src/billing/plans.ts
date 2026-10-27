@@ -1,4 +1,4 @@
-// ─── Kio's plans ─────────────────────────────────────────────────────────────
+// ─── Kivo's plans ─────────────────────────────────────────────────────────────
 // What each plan is called, costs and includes, in one place: the landing
 // page's pricing, the account's billing page and checkout all read it, so
 // none of them can say something the others do not.

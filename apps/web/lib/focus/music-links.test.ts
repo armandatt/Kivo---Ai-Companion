@@ -65,9 +65,9 @@ test('the saved list keeps only links that still read, once each, with the learn
 
 test('a YouTube player can move to the ordinary host and reports when it is ready', () => {
   const src = 'https://www.youtube-nocookie.com/embed/rFZHOHl-L8A?autoplay=1&rel=0'
-  const own = 'https://www.thekio.in'
-  assert.equal(youtubePlayerSrc(src, 'nocookie', own), 'https://www.youtube-nocookie.com/embed/rFZHOHl-L8A?autoplay=1&rel=0&enablejsapi=1&origin=https%3A%2F%2Fwww.thekio.in')
-  assert.equal(youtubePlayerSrc(src, 'youtube', own), 'https://www.youtube.com/embed/rFZHOHl-L8A?autoplay=1&rel=0&enablejsapi=1&origin=https%3A%2F%2Fwww.thekio.in')
+  const own = 'https://www.thekivo.in'
+  assert.equal(youtubePlayerSrc(src, 'nocookie', own), 'https://www.youtube-nocookie.com/embed/rFZHOHl-L8A?autoplay=1&rel=0&enablejsapi=1&origin=https%3A%2F%2Fwww.thekivo.in')
+  assert.equal(youtubePlayerSrc(src, 'youtube', own), 'https://www.youtube.com/embed/rFZHOHl-L8A?autoplay=1&rel=0&enablejsapi=1&origin=https%3A%2F%2Fwww.thekivo.in')
   const spotify = 'https://open.spotify.com/embed/playlist/37i9dQZF1DWZeKCadgRdKQ?theme=0'
   assert.equal(youtubePlayerSrc(spotify, 'youtube', own), spotify)
   assert.equal(youtubeSignal('https://www.youtube-nocookie.com', '{"event":"onReady","id":1}'), 'ready')

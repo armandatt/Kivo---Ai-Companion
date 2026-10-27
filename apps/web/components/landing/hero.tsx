@@ -1,4 +1,4 @@
-// The top of the landing page: what Kio is, the way in, and the robot.
+// The top of the landing page: what Kivo is, the way in, and the robot.
 // The composition is the original hero's (hero-dual-chat.tsx before Landing
 // 2.0): two columns from md, words on the left, the robot on the right in a
 // 520px stage that floats on `botFloat`, over the hero's sparkles. Only the
@@ -33,7 +33,7 @@ export function LandingHero() {
             </p>
             <div className="hero-in flex flex-col gap-3 pt-1 sm:flex-row" style={{ animationDelay: '240ms' }}>
               <Button asChild size="lg" className="font-bold text-slate-950 transition-transform hover:scale-[1.02]" style={{ background: '#00E5A0', boxShadow: '0 0 24px rgba(0,229,160,0.25)' }}>
-                <AuthAwareLink>Start building with Kio <ArrowRight aria-hidden className="ml-1 size-4" /></AuthAwareLink>
+                <AuthAwareLink>Start building with Kivo <ArrowRight aria-hidden className="ml-1 size-4" /></AuthAwareLink>
               </Button>
               <Button asChild size="lg" variant="outline" className="border-white/15 bg-transparent text-slate-200 hover:bg-white/5 hover:text-white">
                 <a href="#build">Explore how it works</a>

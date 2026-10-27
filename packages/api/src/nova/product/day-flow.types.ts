@@ -203,7 +203,7 @@ export type CopilotResponse =
       touched:  string[];
       // The open proposal was declined or approved: the panel closes it.
       closed:   "approved" | "declined" | null;
-      // A place in Kio that does what was asked.
+      // A place in Kivo that does what was asked.
       link:     { href: string; label: string } | null;
     }
   | { ok: false; error: DayFlowError; message: string; flow?: NovaDayView };

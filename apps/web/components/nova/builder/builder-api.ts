@@ -13,10 +13,10 @@ async function call<T extends { ok: boolean }>(url: string, init: RequestInit = 
     const res = await fetch(url, { cache: 'no-store', ...init, headers: init.body ? { 'Content-Type': 'application/json' } : undefined })
     if (res.status === 401) { window.location.href = `/signin?from=${encodeURIComponent(window.location.pathname + window.location.search)}`; return failure('Signed out.') }
     const data = await res.json().catch(() => null) as (T & { message?: string; error?: string }) | null
-    if (!data || typeof data !== 'object' || typeof data.ok !== 'boolean') return failure("Kio didn't answer. Nothing you typed is lost; try again.")
+    if (!data || typeof data !== 'object' || typeof data.ok !== 'boolean') return failure("Kivo didn't answer. Nothing you typed is lost; try again.")
     return data
   } catch {
-    return failure("Couldn't reach Kio. Check your connection; nothing you typed is lost.")
+    return failure("Couldn't reach Kivo. Check your connection; nothing you typed is lost.")
   }
 }
 
@@ -71,7 +71,7 @@ export async function patchTask(taskId: string, patch: Record<string, unknown>):
     const data = await res.json().catch(() => null) as { message?: string } | null
     return failure(data?.message ?? "That change wasn't saved. Try again.")
   } catch {
-    return failure("Couldn't reach Kio. That change wasn't saved.")
+    return failure("Couldn't reach Kivo. That change wasn't saved.")
   }
 }
 

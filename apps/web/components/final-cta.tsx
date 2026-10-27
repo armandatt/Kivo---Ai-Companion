@@ -37,7 +37,7 @@ export function FinalCTA() {
                   className="bg-[var(--color-keppel-400)] text-[var(--color-keppel-950)] hover:bg-[var(--color-keppel-300)] rounded-full h-12 px-8 font-semibold transition-shadow duration-300 hover:shadow-[0_0_30px_-5px_var(--color-keppel-400)]"
                 >
                   <AuthAwareLink>
-                    Start building with Kio
+                    Start building with Kivo
                     <ArrowRight weight="bold" className="ml-2 h-4 w-4" />
                   </AuthAwareLink>
                 </Button>

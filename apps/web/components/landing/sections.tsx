@@ -101,7 +101,7 @@ export function NotesSection() {
           <Reveal className="space-y-4">
             <h3 className="text-2xl font-bold tracking-tight text-[#e8eaf0] md:text-3xl">Bring a paper in with its link.</h3>
             <p className="text-base leading-relaxed text-slate-400">One note, filed where it belongs, with your own notes kept apart from the paper.</p>
-            <ul className="flex flex-wrap gap-2 text-xs text-slate-300" aria-label="Sources Kio can import from">
+            <ul className="flex flex-wrap gap-2 text-xs text-slate-300" aria-label="Sources Kivo can import from">
               {['arXiv', 'DOI', 'Semantic Scholar', 'OpenReview', 'PubMed', 'PubMed Central', 'A PDF link'].map(s => <li key={s} className="rounded-full border border-white/10 px-2.5 py-1">{s}</li>)}
             </ul>
             <p className="text-sm leading-relaxed text-slate-500">Full text where the source shares it openly (arXiv’s HTML versions, Europe PMC’s open-access set); otherwise the details and abstract.</p>
@@ -144,7 +144,7 @@ const GROUPS: Array<{ title: string; items: Array<{ icon: typeof Compass; title:
     title: 'Wherever you learn',
     items: [
       { icon: Send, title: 'Nova on Telegram', body: 'Start sessions, see your day, or just talk. English, Hinglish or Hindi.' },
-      { icon: Bookmark, title: 'Save what you read', body: 'A bookmark sends any page to Kio, phones included. A browser extension is built, not yet in the Chrome Web Store.' },
+      { icon: Bookmark, title: 'Save what you read', body: 'A bookmark sends any page to Kivo, phones included. A browser extension is built, not yet in the Chrome Web Store.' },
       { icon: Search, title: 'Find anything', body: '⌘K (Ctrl K) on Knowledge finds any subject, topic, note, page or task.' },
     ],
   },
@@ -243,7 +243,7 @@ export function UseCases() {
     <section id="use-cases" aria-labelledby="cases-title" className={SECTION} style={BG}>
       <div className="mx-auto max-w-6xl space-y-12">
         <Intro id="cases" eyebrow="Who it’s for" title="For anyone learning something that matters.">
-          A semester or a skill for work: Kio grows from your own goals.
+          A semester or a skill for work: Kivo grows from your own goals.
         </Intro>
         <Reveal>
           <div className="grid gap-5 md:grid-cols-2">

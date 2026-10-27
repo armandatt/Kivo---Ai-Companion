@@ -62,7 +62,7 @@ describe("the questions, in order", () => {
   it("opens with one inclusive headline, no study-versus-work split", () => {
     const flow = repo("apps/web/components/onboarding-flow.tsx");
     expect(flow).toContain("Let&apos;s build a system that works for you.");
-    expect(flow).toContain("Tell Kio what you&apos;re working on, how you spend your time, and what kind of support helps you make progress.");
+    expect(flow).toContain("Tell Kivo what you&apos;re working on, how you spend your time, and what kind of support helps you make progress.");
     for (const gone of ["Study this", "Work on this", "What best describes you right now?", "help you with first"]) {
       expect([gone, flow.includes(gone)]).toEqual([gone, false]);
     }
@@ -77,7 +77,7 @@ describe("the questions, in order", () => {
 
   it("is always the dark theme, and keeps the Nova reveal before the creature is named", () => {
     const flow = repo("apps/web/components/onboarding-flow.tsx");
-    expect(flow).toContain('<div className="kio-dark min-h-screen bg-background text-foreground">');
+    expect(flow).toContain('<div className="kivo-dark min-h-screen bg-background text-foreground">');
     expect(flow).not.toContain("THEME_SCRIPT");
     expect(flow).toContain("if (STEPS[at + 1] === 'creatureName') { setScene('reveal'); return; }");
     expect(flow).toContain("Name your creature");
@@ -178,7 +178,7 @@ describe("each answer, checked on its own", () => {
     expect(withoutNotSure({ selected: ["not_sure"], custom: ["My phone"] })).toEqual({ selected: [], custom: ["My phone"] });
   });
 
-  it("the creature's name: one line, Kio by default, never more than the limit", () => {
+  it("the creature's name: one line, Kivo by default, never more than the limit", () => {
     expect(checkCreatureName(undefined)).toEqual({ ok: true, name: DEFAULT_CREATURE_NAME });
     expect(checkCreatureName("   ")).toEqual({ ok: true, name: DEFAULT_CREATURE_NAME });
     expect(checkCreatureName(" Pip\nthe\towl ")).toEqual({ ok: true, name: "Pip the owl" });
@@ -435,13 +435,13 @@ describe("the route, Settings and the finish (read from source)", () => {
   it("Telegram: the linking flow appears only after the answers are saved, and 'connected' only when the server says so", () => {
     expect(flow).toContain("{done.telegram === 'yes' && <TelegramStep />}");
     expect(flow).toContain("link.connection.connected ? (");
-    expect(flow).toContain("Kio never asks for your Telegram password or login code.");
+    expect(flow).toContain("Kivo never asks for your Telegram password or login code.");
     for (const asked of ["password\"", "type=\"password\"", "loginCode", "botToken"]) expect([asked, flow.includes(asked)]).toEqual([asked, false]);
   });
 
   it("finishing goes to the app's own pages (Build with Nova, or /home when finished before), on the host the learner signed in on", () => {
     expect(flow).toContain("onEnter={() => router.push(done.alreadyComplete ? '/home' : '/build')}");
-    expect(flow).not.toContain("thekio.in");
+    expect(flow).not.toContain("thekivo.in");
     expect(flow).not.toContain("NEXT_PUBLIC_APP_URL");
     expect(flow).not.toContain("window.location.href = 'http");
   });

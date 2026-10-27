@@ -63,7 +63,7 @@ function ChangeList({ state }: { state: DraftState }) {
           </div>
         )
       })}
-      {set.dropped.length > 0 && <p className="mt-2.5 text-[11px] text-subtle" data-dropped>Left out by Kio: {set.dropped.slice(0, 4).join('; ')}.</p>}
+      {set.dropped.length > 0 && <p className="mt-2.5 text-[11px] text-subtle" data-dropped>Left out by Kivo: {set.dropped.slice(0, 4).join('; ')}.</p>}
     </section>
   )
 }

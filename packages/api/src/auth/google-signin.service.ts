@@ -13,7 +13,7 @@
 //     account, whose domain Google hosts). For any other address Google only
 //     confirmed it once, when the Google account was made, and the mailbox may
 //     have changed hands since.
-//   • The Kio account is proven its owner's: it has no password, or its own
+//   • The Kivo account is proven its owner's: it has no password, or its own
 //     email has been verified. An account with a password and an unverified
 //     email could have been registered by someone who does not own the
 //     address, so it is not linked: the owner resets the password first,
@@ -151,7 +151,7 @@ export async function resolveGoogleSignIn(
 }
 
 // Only the link is stored. Google's access and refresh tokens are not kept:
-// nothing in Kio calls a Google API on the user's behalf.
+// nothing in Kivo calls a Google API on the user's behalf.
 function googleAccount(userId: string, sub: string) {
   return { userId, type: "oauth", provider: "google", providerAccountId: sub };
 }

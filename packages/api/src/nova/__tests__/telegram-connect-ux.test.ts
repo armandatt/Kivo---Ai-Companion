@@ -18,8 +18,8 @@ const generate = repo("apps/api/telegram/generate-token/route.ts");
 
 describe("where the bot is", () => {
   it("is a link only when the bot's name is known", () => {
-    expect(telegramBotUrl("KioNovaBot")).toBe("https://t.me/KioNovaBot");
-    expect(telegramBotUrl("@Kio_Nova_bot")).toBe("https://t.me/Kio_Nova_bot");
+    expect(telegramBotUrl("KivoNovaBot")).toBe("https://t.me/KivoNovaBot");
+    expect(telegramBotUrl("@Kivo_Nova_bot")).toBe("https://t.me/Kivo_Nova_bot");
     for (const unknown of [null, undefined, "", "YourBotName", "bot", "has space", "evil.example/x", "a".repeat(40)]) {
       expect(telegramBotUrl(unknown)).toBeNull();
     }

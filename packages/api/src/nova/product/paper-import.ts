@@ -1,5 +1,5 @@
 // ─── Importing a research paper into a note ───────────────────────────────────
-// The learner pastes a paper's link (Ctrl/Cmd+P on Notes); Kio identifies it
+// The learner pastes a paper's link (Ctrl/Cmd+P on Notes); Kivo identifies it
 // (paper-source.ts), fetches its details and any openly available text from
 // the source's own API (paper-fetch.ts), shows what it found, and, when the
 // learner confirms where it goes, saves it as one note through createNote:
@@ -44,7 +44,7 @@ const refuse = (error: PaperError, message: string): Refusal => ({ ok: false, er
 function failure(err: unknown): Refusal {
   if (err instanceof PaperNotFound) return refuse(err.reason, err.message);
   if (err instanceof FetchRefused) {
-    if (err.reason === "blocked") return refuse("private", "That address isn't on the public internet, so Kio can't import from it.");
+    if (err.reason === "blocked") return refuse("private", "That address isn't on the public internet, so Kivo can't import from it.");
     if (err.reason === "too_large") return refuse("too_large", "That file is too large to import.");
     if (err.reason === "timeout") return refuse("unavailable", "The source took too long to answer. Try again in a moment.");
     return refuse("unavailable", "The source couldn't be reached. Try again in a moment.");
@@ -219,7 +219,7 @@ async function importOnce(profileId: string, url: string, input: Record<string, 
     let pdf: Buffer;
     try {
       const res = await get(found.meta.pdfUrl, { accept: "application/pdf", maxBytes: PDF_MAX_BYTES, timeoutMs: 25_000 });
-      if (res.status === 401 || res.status === 403 || res.status === 402) return refuse("unavailable", "The PDF needs a sign-in or a subscription, so Kio can't open it. If you have access, download it and upload it here.");
+      if (res.status === 401 || res.status === 403 || res.status === 402) return refuse("unavailable", "The PDF needs a sign-in or a subscription, so Kivo can't open it. If you have access, download it and upload it here.");
       if (res.status !== 200 || res.body.subarray(0, 5).toString("latin1") !== "%PDF-") return refuse("unavailable", "That PDF couldn't be downloaded. If you have it, upload it here instead.");
       pdf = res.body;
     } catch (err) {

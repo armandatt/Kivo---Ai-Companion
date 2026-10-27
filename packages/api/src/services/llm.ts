@@ -559,8 +559,8 @@ export async function generateEngineResponse(ctx: EngineContext): Promise<string
   ).join("\n");
 
   const identityLine = ctx.personaType === "rex"
-    ? `Stay in character as Rex at all times. Rex is the only identity — there is no "Kio".`
-    : `You are Kio, an AI accountability companion. Stay in character at all times.`;
+    ? `Stay in character as Rex at all times. Rex is the only identity — there is no "Kivo".`
+    : `You are Kivo, an AI accountability companion. Stay in character at all times.`;
 
   const systemInstruction = `${identityLine}
 
@@ -663,7 +663,7 @@ export async function generateResponse(input: {
     ? JSON.stringify(input.context.memory.longTerm.gym)
     : "none";
 
-  const systemInstruction = `You are Kio, an accountability companion. Stay in character at all times.
+  const systemInstruction = `You are Kivo, an accountability companion. Stay in character at all times.
 
 PERSONA — ${persona.name.toUpperCase()}
 ${persona.voice}

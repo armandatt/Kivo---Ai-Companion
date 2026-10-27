@@ -76,7 +76,7 @@ export async function proposeWorkspace(platformChatId: string, body: ProposeBody
   const request = text(body.request, REQUEST_MAX) || personalize;
   if (!request && files.files.length === 0) return { ok: false, error: "invalid", message: "Say what you want to set up, or add a file." };
 
-  // What Kio knows that may shape the plan.
+  // What Kivo knows that may shape the plan.
   const [contexts, signup] = await Promise.all([loadLearningContexts(platformChatId).catch(() => []), loadSignupAnswers(platformChatId)]);
   const base: Omit<PlanRequest, "intent" | "decision"> = {
     request: request || "Build a workspace from the attached files.", files: files.files, today: who.today,

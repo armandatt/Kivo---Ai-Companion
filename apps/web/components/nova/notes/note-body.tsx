@@ -30,7 +30,7 @@ export function linkHref(ref: NoteLinkRef | undefined, title: string): { href: s
 
 // Each kind of callout: its mark and its role (globals.css .sem-*), one
 // palette for both themes: definitions cool, takeaways and summaries in
-// Kio's teal, examples a soft orange, questions violet, warnings amber,
+// Kivo's teal, examples a soft orange, questions violet, warnings amber,
 // words from a source in the source blue. The icon and the title say the
 // role too, so nothing rests on colour alone.
 const CALLOUT: Record<CalloutType, { icon: typeof Quote; role: string }> = {

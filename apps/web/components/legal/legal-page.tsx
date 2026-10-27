@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react'
 import Link from 'next/link'
-import { KioMark, KioWordmark } from '@/components/brand/kio-brand'
+import { KivoMark, KivoWordmark } from '@/components/brand/kivo-brand'
 import { TO_CONFIRM, type ToConfirm } from './to-confirm'
 
-// The frame the Privacy Policy and the Terms share: Kio's mark, the title in
+// The frame the Privacy Policy and the Terms share: Kivo's mark, the title in
 // the editorial serif, a draft notice while any fact is still to be supplied,
 // and a contents list. Written against the theme tokens, so it works on ink
 // and on paper.
@@ -36,17 +36,17 @@ export function LegalPage({ title, summary, sections, updated, children }: {
   title: string; summary: ReactNode; sections: Array<{ id: string; title: string }>; updated: string; children: ReactNode
 }) {
   return (
-    <div className="kio-app min-h-screen bg-background text-foreground">
+    <div className="kivo-app min-h-screen bg-background text-foreground">
       <header className="border-b border-white/8">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-          <Link href="/" className="flex items-center gap-2.5 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring" aria-label="Kio home">
-            <KioMark size={26} className="text-foreground" />
-            <KioWordmark height={18} className="text-foreground" />
+          <Link href="/" className="flex items-center gap-2.5 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring" aria-label="Kivo home">
+            <KivoMark size={26} className="text-foreground" />
+            <KivoWordmark height={18} className="text-foreground" />
           </Link>
           <nav aria-label="Legal" className="flex items-center gap-4 text-sm">
             <Link href="/privacy" className="text-foreground/70 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">Privacy</Link>
             <Link href="/terms" className="text-foreground/70 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">Terms</Link>
-            <Link href="/home" className="rounded-lg border border-white/12 px-3 py-1.5 text-foreground/85 hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-ring" data-legal-back>Back to Kio</Link>
+            <Link href="/home" className="rounded-lg border border-white/12 px-3 py-1.5 text-foreground/85 hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-ring" data-legal-back>Back to Kivo</Link>
           </nav>
         </div>
       </header>
@@ -57,8 +57,8 @@ export function LegalPage({ title, summary, sections, updated, children }: {
         <p className="mt-1 text-sm text-subtle">Takes effect: <Confirm id="effectiveDate" /></p>
 
         <div role="note" className="mt-6 rounded-xl border border-amber-500/40 bg-amber-400/8 p-4 text-sm leading-relaxed text-foreground/85">
-          <strong className="font-semibold text-foreground">Draft.</strong> This page was written from how Kio works today and has not had legal review.
-          It is not legal advice and does not by itself make Kio compliant with any law. Items marked “To confirm” must be supplied before it is published.
+          <strong className="font-semibold text-foreground">Draft.</strong> This page was written from how Kivo works today and has not had legal review.
+          It is not legal advice and does not by itself make Kivo compliant with any law. Items marked “To confirm” must be supplied before it is published.
         </div>
 
         <div className="mt-8 text-[17px] leading-relaxed text-foreground/85">{summary}</div>

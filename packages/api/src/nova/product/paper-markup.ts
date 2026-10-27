@@ -1,5 +1,5 @@
 // ─── Reading a paper's markup into a note ─────────────────────────────────────
-// Pure, no imports. What the sources Kio imports from send is HTML or XML:
+// Pure, no imports. What the sources Kivo imports from send is HTML or XML:
 // arXiv's API answers in Atom, arXiv's HTML version of a paper is LaTeXML,
 // Europe PMC's open-access full text is JATS, a publisher's page carries its
 // citation_* meta tags. This reads them by characters (no regex, no parser

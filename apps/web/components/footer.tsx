@@ -1,5 +1,5 @@
-import { KioLogo } from "@/components/KioLogo"
-import { KioWordmark } from "@/components/brand/kio-brand"
+import { KivoLogo } from "@/components/KivoLogo"
+import { KivoWordmark } from "@/components/brand/kivo-brand"
 
 export function Footer() {
   return (
@@ -13,8 +13,8 @@ export function Footer() {
           {/* Brand column */}
           <div className="lg:max-w-xs">
             <div className="flex items-center gap-3">
-              <KioLogo size={38} />
-              <KioWordmark height={22} className="text-[var(--color-baltic-sea-100)]" />
+              <KivoLogo size={38} />
+              <KivoWordmark height={22} className="text-[var(--color-baltic-sea-100)]" />
             </div>
             <p className="mt-4 text-sm text-[var(--color-baltic-sea-500)]">
               An AI-powered learning OS: plan it, map it, understand it and build on it, with Nova beside you.
@@ -59,7 +59,7 @@ export function Footer() {
         </div>
 
         <div className="mt-12 pt-8 border-t border-[var(--color-baltic-sea-900)] flex flex-col sm:flex-row items-center justify-between gap-4">
-          <span className="text-xs text-[var(--color-baltic-sea-600)]">© {new Date().getFullYear()} Kio. All rights reserved.</span>
+          <span className="text-xs text-[var(--color-baltic-sea-600)]">© {new Date().getFullYear()} Kivo. All rights reserved.</span>
         </div>
       </div>
     </footer>

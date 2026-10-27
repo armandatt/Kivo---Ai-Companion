@@ -51,7 +51,7 @@ Create a **New → Web Service**, not a Blueprint. `render.yaml` describes produ
 | Setting | Value |
 |---|---|
 | Name | `kivo-api-staging` |
-| Repository | `armandatt/Kio---Ai-Companion`, branch `main` |
+| Repository | `armandatt/Kivo---Ai-Companion`, branch `main` |
 | Root directory | (blank: the repo root) |
 | Runtime | Node |
 | Region | Virginia (US East), the same region as the Neon project |

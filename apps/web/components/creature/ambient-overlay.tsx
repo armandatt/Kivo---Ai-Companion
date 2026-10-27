@@ -183,11 +183,11 @@ export function AmbientOverlay({ currentTime, worldHealth }: AmbientOverlayProps
           style={{
             position: 'absolute', left: `${meteor.x}%`, top: `${meteor.y}%`, width: 120, height: 2, borderRadius: 2,
             background: 'linear-gradient(to left, rgba(255,255,255,0.95), rgba(180,215,255,0.35) 40%, transparent)',
-            transformOrigin: 'right center', animation: 'kio-meteor 1.1s ease-out forwards',
+            transformOrigin: 'right center', animation: 'kivo-meteor 1.1s ease-out forwards',
           }}
         />
       )}
-      <style>{`@keyframes kio-meteor { from { transform: rotate(-24deg) translateX(-60px); opacity: 0 } 15% { opacity: 1 } to { transform: rotate(-24deg) translateX(260px); opacity: 0 } }`}</style>
+      <style>{`@keyframes kivo-meteor { from { transform: rotate(-24deg) translateX(-60px); opacity: 0 } 15% { opacity: 1 } to { transform: rotate(-24deg) translateX(260px); opacity: 0 } }`}</style>
 
       {/* Low world health fog */}
       {worldHealth < 70 && (

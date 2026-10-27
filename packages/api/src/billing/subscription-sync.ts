@@ -7,7 +7,7 @@
 
 import type { PlanKey } from "./plans";
 
-// The fields of the provider's subscription record that Kio uses.
+// The fields of the provider's subscription record that Kivo uses.
 export interface ProviderSubscription {
   id:                   string;
   status:               string;
@@ -57,12 +57,12 @@ export interface SubscriptionData {
 
 export type SyncDecision =
   | { action: "apply"; data: SubscriptionData }
-  | { action: "ignore"; reason: "not_kio_product" | "no_account" | "stale" | "superseded" };
+  | { action: "ignore"; reason: "not_kivo_product" | "no_account" | "stale" | "superseded" };
 
 const date = (s: string | null | undefined) => (s ? new Date(s) : null);
 
-// The Kio account a record belongs to: the external id Kio gave the
-// customer at checkout, else the account id Kio put in the metadata.
+// The Kivo account a record belongs to: the external id Kivo gave the
+// customer at checkout, else the account id Kivo put in the metadata.
 export function accountOf(sub: Pick<ProviderSubscription, "customer" | "metadata">): string | null {
   const external = sub.customer?.external_id;
   if (typeof external === "string" && external) return external;
@@ -73,12 +73,12 @@ export function accountOf(sub: Pick<ProviderSubscription, "customer" | "metadata
 export function decideSync(input: {
   incoming:  ProviderSubscription;
   eventType: string;
-  planKey:   PlanKey | null;            // the plan its product is, from config; null: not Kio's
+  planKey:   PlanKey | null;            // the plan its product is, from config; null: not Kivo's
   stored:    StoredSubscription | null; // the account's row as it stands
   now:       Date;
 }): SyncDecision {
   const { incoming, eventType, planKey, stored, now } = input;
-  if (!planKey) return { action: "ignore", reason: "not_kio_product" };
+  if (!planKey) return { action: "ignore", reason: "not_kivo_product" };
   const userId = accountOf(incoming);
   if (!userId) return { action: "ignore", reason: "no_account" };
 

@@ -136,7 +136,7 @@ export function checkNickname(value: unknown): { ok: true; nickname: string | nu
   if (name.includes("://") || name.includes("www.")) return { ok: false, message: "That looks like a link, not a name." };
   return { ok: true, nickname: name };
 }
-export const DEFAULT_CREATURE_NAME = "Kio";
+export const DEFAULT_CREATURE_NAME = "Kivo";
 export const CREATURE_NAME_MAX = 30;
 
 // Empty means the default; anything else is kept as typed, on one line.

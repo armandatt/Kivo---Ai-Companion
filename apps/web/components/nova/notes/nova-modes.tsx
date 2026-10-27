@@ -7,7 +7,7 @@
 // each conversation where it was, and both read the same note.
 
 import { BookOpen, PenLine } from 'lucide-react'
-import { KioMark } from '@/components/brand/kio-brand'
+import { KivoMark } from '@/components/brand/kivo-brand'
 
 export type NovaMode = 'tutor' | 'editor'
 
@@ -41,8 +41,8 @@ export function ModeSwitch({ mode, onMode }: { mode: NovaMode; onMode: (m: NovaM
 export function Identity({ working }: { working: boolean }) {
   return (
     <span aria-hidden className="relative grid size-7 shrink-0 place-items-center rounded-full bg-nova/12 ring-1 ring-nova/30">
-      {working && <span className="absolute inset-0 rounded-full ring-2 ring-nova/40 kio-node-pulse" />}
-      <KioMark size={14} className="text-nova-ink" />
+      {working && <span className="absolute inset-0 rounded-full ring-2 ring-nova/40 kivo-node-pulse" />}
+      <KivoMark size={14} className="text-nova-ink" />
     </span>
   )
 }

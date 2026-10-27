@@ -3,7 +3,7 @@ import { redirect } from "next/navigation"
 import { jwtVerify } from "jose"
 import { companionOf, type Companion } from "@repo/api/nova/product/companion"
 import { DashboardShell } from "@/components/dashboard-shell"
-import { THEME_SCRIPT } from "@/components/theme/kio-theme"
+import { THEME_SCRIPT } from "@/components/theme/kivo-theme"
 import { dashboardEntry, type DashboardEntry } from "@/lib/auth/dashboard-entry"
 import { sessionSecret } from "@/lib/auth/session-secret"
 

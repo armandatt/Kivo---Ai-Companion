@@ -9,7 +9,7 @@
 //   POLAR_PRODUCT_PRO_MONTHLY   the provider's product id for each plan
 //   POLAR_PRODUCT_PRO_ANNUAL
 //   BILLING_ANNUAL_ENABLED      "true" to sell the yearly plan (off by default)
-//   BILLING_TRIAL_DAYS          days of Kio's free trial (default: the plan's)
+//   BILLING_TRIAL_DAYS          days of Kivo's free trial (default: the plan's)
 //   BILLING_GRACE_DAYS          days a past-due subscription keeps Pro (default 3)
 //   NEXT_PUBLIC_APP_URL         where checkout and the portal send people back
 //
@@ -62,7 +62,7 @@ export function purchasable(plan: PlanKey, config: Pick<ProviderConfig, "product
   return enabled && Boolean(config.products[plan]);
 }
 
-// The plan a provider product is. null: not one of Kio's, so it grants nothing.
+// The plan a provider product is. null: not one of Kivo's, so it grants nothing.
 export function planForProduct(productId: string, config: Pick<ProviderConfig, "products">): PlanKey | null {
   for (const [plan, id] of Object.entries(config.products)) if (id === productId) return plan as PlanKey;
   return null;

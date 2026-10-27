@@ -9,7 +9,7 @@ import { builderOpening } from '@repo/api/nova/product/greetings'
 import { ACTION_WORDS } from '@repo/api/nova/product/builder-state'
 import type { BuilderAction, BuilderMessage, BuilderOffer, DraftListItem, DraftView } from '@repo/api/nova/product/builder.types'
 import type { WorkspaceSummary } from '@repo/api/nova/product/workspaces.types'
-import { KioMark } from '@/components/brand/kio-brand'
+import { KivoMark } from '@/components/brand/kivo-brand'
 import { BUTTON_QUIET } from '@/components/nova/workspace/ui'
 import { cn } from '@/lib/utils'
 import * as api from './builder-api'
@@ -44,7 +44,7 @@ const REVEAL_MAX_MS = 1100
 export function NovaAvatar({ size = 'md' }: { size?: 'sm' | 'md' }) {
   return (
     <span aria-hidden className={cn('grid shrink-0 place-items-center rounded-full bg-nova/12 ring-1 ring-nova/30', size === 'sm' ? 'size-7' : 'size-9')}>
-      <KioMark size={size === 'sm' ? 15 : 18} className="text-nova-ink" />
+      <KivoMark size={size === 'sm' ? 15 : 18} className="text-nova-ink" />
     </span>
   )
 }
@@ -146,7 +146,7 @@ function Working({ draft }: { draft: DraftView }) {
   const p = draft.pending
   const words = wordsFor(draft.brief.kind)
   const steps: Array<{ label: string; done: boolean }> =
-    draft.status === 'building' ? [{ label: 'Creating your workspace in Kio', done: false }]
+    draft.status === 'building' ? [{ label: 'Creating your workspace in Kivo', done: false }]
     : !p ? []
     : p.stage === 'reading' ? [{ label: draft.files.length ? 'Reading your message and files' : 'Reading your message', done: false }]
     : [{ label: 'Read your message', done: true }, { label: p.kind === 'revise' ? words.revising : words.writing, done: false }]

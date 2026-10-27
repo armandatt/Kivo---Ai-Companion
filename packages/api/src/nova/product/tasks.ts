@@ -414,7 +414,7 @@ export async function createTasksIn(
   const have = new Set((await tx.novaTask.findMany({ where: { profileId, clientKey: { in: keys } }, select: { clientKey: true } })).map(t => t.clientKey));
   const fresh = parsed.filter(c => !c.clientKey || !have.has(c.clientKey));
   if (await tx.novaTask.count({ where: { profileId, status: { not: "done" } } }) + fresh.length > TASK_OPEN_MAX) {
-    return { ok: false, message: "That would be more open tasks than Kio keeps. Finish or remove some first." };
+    return { ok: false, message: "That would be more open tasks than Kivo keeps. Finish or remove some first." };
   }
   // Ids by clientKey: those stored already, then each as it is made.
   const parentKeys = parsed.map(c => c.parentKey).filter((k): k is string => typeof k === "string");

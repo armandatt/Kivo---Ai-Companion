@@ -71,7 +71,7 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
     } catch { /* no storage or no Intl: the next visit tries again */ }
   }, [companion])
 
-  // A page the Save to Kio bookmark brought, held while they signed in:
+  // A page the Save to Kivo bookmark brought, held while they signed in:
   // whichever page sign-in landed on, take them to Saved to review it.
   useEffect(() => {
     if (companion === 'nova' && pathname !== '/saved' && hasParkedCapture()) router.replace('/saved')
@@ -107,13 +107,13 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
 
   if (companion === null) {
     return (
-      <div className="kio-app flex h-screen items-center justify-center bg-background p-6" aria-busy={!failed}>
+      <div className="kivo-app flex h-screen items-center justify-center bg-background p-6" aria-busy={!failed}>
         {failed ? (
           <PageNotice tone="error" title="Couldn't load your account" action={<RetryButton onRetry={() => void retry()} />} className="w-full max-w-md">
             The server didn&apos;t answer. Nothing is lost.
           </PageNotice>
         ) : (
-          <LoadingMark label="Opening Kio" />
+          <LoadingMark label="Opening Kivo" />
         )}
       </div>
     )
@@ -121,12 +121,12 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
 
   if (isCreature && access === 'render') {
     return (
-      <div className="kio-app flex h-screen overflow-hidden bg-black">
+      <div className="kivo-app flex h-screen overflow-hidden bg-black">
         {/* Sidebar in overlay mode — always fixed, never pushes the world */}
         <Sidebar open={sidebarOpen} onOpenChange={setOverlayOpen} companion={companion} overlay />
 
         {/* Full-bleed world — no padding, no overflow */}
-        <main className="kio-dark w-full h-screen overflow-hidden">
+        <main className="kivo-dark w-full h-screen overflow-hidden">
           <CompanionContext.Provider value={companion}>{children}</CompanionContext.Provider>
         </main>
 
@@ -149,7 +149,7 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
   }
 
   return (
-    <div className="kio-app flex h-screen bg-background">
+    <div className="kivo-app flex h-screen bg-background">
       <Sidebar open={access === 'render' ? sidebarOpen : true} onOpenChange={setSidebarOpen} companion={companion} />
       <main className="min-w-0 flex-1 overflow-auto">
         <div className="relative h-full p-6">

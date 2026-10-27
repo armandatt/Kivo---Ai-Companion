@@ -5,7 +5,7 @@ import type { WorkspacePlan } from "./workspace-plan";
 
 export interface WorkspaceSummary {
   id:              string;
-  // template: made from a Kio template. custom: designed by Nova.
+  // template: made from a Kivo template. custom: designed by Nova.
   kind:            "template" | "custom";
   templateId:      string | null;
   templateName:    string | null;

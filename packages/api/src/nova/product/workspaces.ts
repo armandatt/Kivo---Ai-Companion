@@ -555,7 +555,7 @@ export async function deleteResource(platformChatId: string, input: { ref: Pick<
   if (!ensured) return { ok: false, error: "not_found", message: "Finish setting up with Nova first." };
   const { profileId } = ensured;
   const scope = await deletionScope(platformChatId, profileId, input.ref, now);
-  if (!scope) return { ok: false, error: "not_found", message: "That isn't in your Kio any more, so there's nothing to delete." };
+  if (!scope) return { ok: false, error: "not_found", message: "That isn't in your Kivo any more, so there's nothing to delete." };
   if (scope.fingerprint !== input.fingerprint) return { ok: false, error: "changed", message: "What this would delete changed since it was shown. Nothing was deleted; here is what it would delete now." };
   const structure = await loadStudyStructure(profileId);
   const going = new Set(scope.removes.subjects.map(s => s.id));

@@ -9,7 +9,7 @@ describe("what an unconnected chat is told", () => {
   const said = notConnectedMessage(null);
 
   it("says the chat is not connected and how to connect it, from the web", () => {
-    expect(said).toContain("isn't connected to a Kio account");
+    expect(said).toContain("isn't connected to a Kivo account");
     expect(said).toContain("Connect Telegram");
     expect(said).toContain("on the web");
   });

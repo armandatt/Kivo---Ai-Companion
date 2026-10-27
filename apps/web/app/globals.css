@@ -85,7 +85,7 @@
    popover), its pale text, and its teal (keppel) as the action colour
    (buttons, the current page, focus). Scoped to the signed-in app, like the
    light theme below, so the landing and sign-in pages keep :root. */
-.kio-app {
+.kivo-app {
   color-scheme: dark;
   --background: hsl(255, 11.11%, 7.06%);
   --foreground: var(--color-baltic-sea-100);
@@ -142,18 +142,18 @@
   background: var(--background);
   color: var(--foreground);
 }
-.kio-app ::selection { background: oklch(70.64% 0.1 179.4 / 0.35); }
+.kivo-app ::selection { background: oklch(70.64% 0.1 179.4 / 0.35); }
 
 /* ── The app's light theme ─────────────────────────────────────────────────────
-   Scoped to the signed-in app (.kio-app), so the landing page keeps its own
+   Scoped to the signed-in app (.kivo-app), so the landing page keeps its own
    look. The app is written against a dark surface: translucent white for
    borders and fills (border-white/8, bg-white/5) and tints of the foreground
    for text. Tailwind resolves those through --color-white and the tokens
    below, so the light theme is this one block: white becomes ink, the
    surfaces become paper, and the pale status colours get versions that read
    on paper. A component needs no light-specific class.
-   html[data-kio-theme] is set before first paint by ThemeScript. */
-html[data-kio-theme="light"] .kio-app {
+   html[data-kivo-theme] is set before first paint by ThemeScript. */
+html[data-kivo-theme="light"] .kivo-app {
   color-scheme: light;
   --color-white: #0A0F1A;
   --background: #F4F1E9;
@@ -229,11 +229,11 @@ html[data-kio-theme="light"] .kio-app {
   background: var(--background);
   color: var(--foreground);
 }
-html[data-kio-theme="light"] .kio-app ::selection { background: oklch(52% 0.1 180 / 0.2); }
+html[data-kivo-theme="light"] .kivo-app ::selection { background: oklch(52% 0.1 180 / 0.2); }
 
 /* A part of the app that is always dark (the Creature world), whatever the
    theme: the tokens above are put back to what :root gives everything else. */
-html[data-kio-theme="light"] .kio-app .kio-dark {
+html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   color-scheme: dark;
   --color-white: #fff;
   --background: hsl(255, 11.11%, 7.06%);
@@ -290,10 +290,10 @@ html[data-kio-theme="light"] .kio-app .kio-dark {
    what the class it replaces does: hover:, group-hover: and the other
    variants still win over it. */
 @layer utilities {
-  :where(.kio-app) :is(.text-foreground\/40, .text-foreground\/45, .text-foreground\/50, .text-foreground\/55, .text-sidebar-foreground\/50, .text-sidebar-foreground\/55) {
+  :where(.kivo-app) :is(.text-foreground\/40, .text-foreground\/45, .text-foreground\/50, .text-foreground\/55, .text-sidebar-foreground\/50, .text-sidebar-foreground\/55) {
     color: var(--subtle);
   }
-  :where(html[data-kio-theme="light"] .kio-app) :is(.text-keppel-300, .text-keppel-400):not(:where(.kio-dark *)) {
+  :where(html[data-kivo-theme="light"] .kivo-app) :is(.text-keppel-300, .text-keppel-400):not(:where(.kivo-dark *)) {
     color: var(--nova-ink);
   }
 }
@@ -373,9 +373,9 @@ html[data-kio-theme="light"] .kio-app .kio-dark {
   --color-keppel-950: var(--color-keppel-950);
 }
 
-/* ── Kio brand palette ─────────────────────────────────────────────────────────
+/* ── Kivo brand palette ─────────────────────────────────────────────────────────
    The identity's colours, the same in both themes (bg-ink-950, text-iris-400…):
-   ink and paper are the surfaces, iris is Kio's own colour (the node in the
+   ink and paper are the surfaces, iris is Kivo's own colour (the node in the
    mark), keppel stays Nova's and growth's, and ember and coral are kept for
    what is urgent. The theme tokens above still decide each page's surfaces. */
 @theme {
@@ -533,7 +533,7 @@ html[data-kio-theme="light"] .kio-app .kio-dark {
    element). From it: the solid tone, an ink that reads as text, and the soft
    fills and edges. Lightness and chroma follow the theme, so one class works on
    ink and on paper. */
-.kio-app {
+.kivo-app {
   --tone-l: 74%;
   --tone-ink: 84%;
   --tone-c: 0.14;
@@ -568,15 +568,15 @@ html[data-kio-theme="light"] .kio-app .kio-dark {
 
 /* The sign-in pages' backdrop: the canvas's dot grid on ink, fading at the
    edges. Static, so there is nothing to turn off for reduced motion. */
-.kio-dot-grid {
+.kivo-dot-grid {
   background-image: radial-gradient(circle at 1px 1px, rgb(244 241 233 / 0.085) 1px, transparent 0);
   background-size: 24px 24px;
   mask-image: radial-gradient(ellipse 70% 65% at 50% 45%, #000 35%, transparent 100%);
 }
 
 /* The loading mark: the node of the K breathes while a page loads. */
-@keyframes kio-node-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-.kio-node-pulse { animation: kio-node-pulse 1.4s ease-in-out infinite; }
+@keyframes kivo-node-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.kivo-node-pulse { animation: kivo-node-pulse 1.4s ease-in-out infinite; }
 
 /* Going into a card on the Knowledge Map: what is inside fades in as the view zooms to it. */
 @keyframes map-enter { from { opacity: 0; } to { opacity: 1; } }
@@ -633,9 +633,9 @@ html[data-kio-theme="light"] .kio-app .kio-dark {
    decoration: no pulsing placeholders, sliding panels or eased rings. The
    state each of those shows is still shown, at once. */
 @media (prefers-reduced-motion: reduce) {
-  .kio-app *,
-  .kio-app *::before,
-  .kio-app *::after {
+  .kivo-app *,
+  .kivo-app *::before,
+  .kivo-app *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
@@ -643,12 +643,12 @@ html[data-kio-theme="light"] .kio-app .kio-dark {
   }
   /* Shown at once, not after their place in the queue; a change is still
      marked, without the fade. */
-  .kio-app .nova-reveal { animation: none !important; }
+  .kivo-app .nova-reveal { animation: none !important; }
   /* Without motion the passage is lit, still, until the page clears it. */
-  .kio-app .note-flash { animation: none !important; background-color: color-mix(in oklch, var(--nova) 14%, transparent); box-shadow: 0 0 0 4px color-mix(in oklch, var(--nova) 14%, transparent); }
-  .kio-app .nova-pane-in { animation: none !important; }
-  .kio-app .nova-changed { animation: none !important; box-shadow: 0 0 0 1px color-mix(in oklch, var(--nova) 45%, transparent); }
-  .kio-app .nova-progress { animation: none !important; transform: none; width: 100% !important; opacity: 0.5; }
+  .kivo-app .note-flash { animation: none !important; background-color: color-mix(in oklch, var(--nova) 14%, transparent); box-shadow: 0 0 0 4px color-mix(in oklch, var(--nova) 14%, transparent); }
+  .kivo-app .nova-pane-in { animation: none !important; }
+  .kivo-app .nova-changed { animation: none !important; box-shadow: 0 0 0 1px color-mix(in oklch, var(--nova) 45%, transparent); }
+  .kivo-app .nova-progress { animation: none !important; transform: none; width: 100% !important; opacity: 0.5; }
 }
 
 /* ── The focus room (components/nova/focus-session.tsx) ──────────────────────
@@ -694,7 +694,7 @@ html[data-kio-theme="light"] .kio-app .kio-dark {
 .studio-pending { outline: 1.5px dashed color-mix(in oklch, var(--nova) 55%, transparent); outline-offset: -1.5px; }
 .studio-breathe { animation: studio-breathe 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
-  .kio-app .studio-drift, .kio-app .studio-breathe, .kio-app .studio-thinking::before { animation: none !important; }
+  .kivo-app .studio-drift, .kivo-app .studio-breathe, .kivo-app .studio-thinking::before { animation: none !important; }
 }
 
 /* Landing hero (components/landing/hero.tsx): the words rise in once, in

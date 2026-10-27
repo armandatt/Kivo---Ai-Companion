@@ -993,10 +993,10 @@ test("S57 a 1,500-character message is cut to 1,000 before it is read, and still
   assert.equal(trace.decision, "show_week:asked_week");
 });
 
-test("S58 commands are read whatever their case or bot suffix (\"/WEEK@KioBot\", \"/Progress\"), with no model", async () => {
+test("S58 commands are read whatever their case or bot suffix (\"/WEEK@KivoBot\", \"/Progress\"), with no model", async () => {
   const l = await seed("Fox");
   const { tg, ai, send } = harness();
-  await send(l, "/WEEK@KioBot");
+  await send(l, "/WEEK@KivoBot");
   assert.ok(tg.last(l.chat).text.startsWith("Next 7 days"));
   await send(l, "/Progress");
   assert.ok(tg.last(l.chat).text.startsWith("No counted study sessions"));

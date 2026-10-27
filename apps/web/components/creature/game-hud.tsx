@@ -33,7 +33,7 @@ export function GameHUD({ playerLevel, currentStreak, worldHealth, currentTime }
 
   return (
     <>
-      {/* ── Top-left: Kio identity card ─────────────────────────────────────── */}
+      {/* ── Top-left: Kivo identity card ─────────────────────────────────────── */}
       <motion.div
         initial={{ opacity: 0, x: -20 }}
         animate={{ opacity: 1, x: 0 }}
@@ -43,7 +43,7 @@ export function GameHUD({ playerLevel, currentStreak, worldHealth, currentTime }
         <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-2xl px-4 py-3 space-y-1 shadow-xl">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399] animate-pulse" />
-            <span className="text-white/90 text-sm font-semibold tracking-wide">Kio</span>
+            <span className="text-white/90 text-sm font-semibold tracking-wide">Kivo</span>
           </div>
           <div className={`text-xs font-medium ${worldColor}`}>{worldTier} World · Lv {playerLevel}</div>
           <div className="w-28 h-1 rounded-full bg-white/10 mt-1">

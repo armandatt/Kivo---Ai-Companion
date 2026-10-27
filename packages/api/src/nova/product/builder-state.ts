@@ -118,7 +118,7 @@ export interface TurnReading {
   touches:     ChangeKind[];
   // For a change: whether it asks for anything to be removed. null: not said.
   removes?:    boolean | null;
-  // Something of theirs already in Kio the learner referred to, by the name
+  // Something of theirs already in Kivo the learner referred to, by the name
   // they used, and what they want with it: see it, change it, or a new one
   // (builder-changes.ts finds it among their own records; the model never
   // names an id).
@@ -307,7 +307,7 @@ export function decideStep(state: { plan: WorkspacePlan | null; brief: BuilderBr
 }
 
 // The learner's messages in this planning conversation: since the last
-// thing it built (a built conversation going on is a new plan), Kio's own
+// thing it built (a built conversation going on is a new plan), Kivo's own
 // notices aside. Stored messages, so a refresh keeps the count; a message
 // sent twice is refused while the first is answered (builder.ts claim).
 export function planningTurns(messages: BuilderMessage[]): number {
@@ -452,7 +452,7 @@ export function message(role: BuilderMessage["role"], text: string, now: Date, e
 // any web address a plan may keep.
 export const learnerWords = (messages: BuilderMessage[]) => messages.filter(m => m.role === "user").map(m => m.text).join("\n");
 
-// The conversation as said: Kio's own notices and error lines are left out
+// The conversation as said: Kivo's own notices and error lines are left out
 // of what the model reads and of what counts as answered.
 export const spoken = (messages: BuilderMessage[]) => messages.filter(m => m.kind !== "error" && m.kind !== "notice");
 

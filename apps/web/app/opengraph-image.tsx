@@ -1,9 +1,9 @@
 import { ImageResponse } from 'next/og'
-import { KIO_INK, KIO_IVORY, KIO_TEAL, KIO_TILE, KioMarkShapes, KioWordmark } from '@/components/brand/kio-brand'
+import { KIVO_INK, KIVO_IVORY, KIVO_TEAL, KIVO_TILE, KivoMarkShapes, KivoWordmark } from '@/components/brand/kivo-brand'
 
 // The picture a shared link shows. Generated at build time from the same
 // geometry as the logo, so it cannot drift from it.
-export const alt = 'Kio, the AI-powered learning OS: turn what you learn into what you know'
+export const alt = 'Kivo, the AI-powered learning OS: turn what you learn into what you know'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
@@ -25,16 +25,16 @@ export default function OpengraphImage() {
           backgroundColor: INK,
           backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(244,241,233,0.09) 1px, transparent 0)',
           backgroundSize: '28px 28px',
-          color: KIO_IVORY,
+          color: KIVO_IVORY,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 22 }}>
           <svg width="72" height="72" viewBox="0 0 32 32">
-            <rect width="32" height="32" rx="8" fill={KIO_TILE} />
+            <rect width="32" height="32" rx="8" fill={KIVO_TILE} />
             {/* Called, not rendered: the image renderer accepts only plain SVG elements in <svg>. */}
-            {KioMarkShapes({ ink: KIO_INK })}
+            {KivoMarkShapes({ ink: KIVO_INK })}
           </svg>
-          <KioWordmark height={50} style={{ color: KIO_IVORY }} />
+          <KivoWordmark height={50} style={{ color: KIVO_IVORY }} />
         </div>
 
         <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 40 }}>
@@ -51,8 +51,8 @@ export default function OpengraphImage() {
             <line x1="40" y1="150" x2="120" y2="60" stroke="rgba(244,241,233,0.35)" strokeWidth="3" />
             <line x1="120" y1="60" x2="185" y2="140" stroke="rgba(244,241,233,0.35)" strokeWidth="3" />
             <line x1="40" y1="150" x2="185" y2="140" stroke="rgba(244,241,233,0.18)" strokeWidth="3" />
-            <circle cx="120" cy="60" r="22" fill={KIO_TEAL} />
-            <circle cx="40" cy="150" r="15" fill={KIO_IVORY} />
+            <circle cx="120" cy="60" r="22" fill={KIVO_TEAL} />
+            <circle cx="40" cy="150" r="15" fill={KIVO_IVORY} />
             <circle cx="185" cy="140" r="12" fill={EMBER} />
           </svg>
         </div>

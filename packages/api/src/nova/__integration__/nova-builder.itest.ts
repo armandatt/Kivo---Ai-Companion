@@ -2,7 +2,7 @@
  * Build with Nova — real Postgres integration test.
  *
  * What it proves, with both models stood in: a vague message gets a
- * question and nothing else; what Kio already knows reaches the model; a
+ * question and nothing else; what Kivo already knows reaches the model; a
  * clear request becomes a proposal; a correction is a new version; nothing
  * the learner has is written before approval; only the current version can
  * be approved, and approving twice (or at once) builds once; the built
@@ -51,7 +51,7 @@ async function learner(): Promise<{ id: string; profileId: () => Promise<string>
 }
 const key = () => `bld-${STAMP}-${n++}-abcdef`;
 
-// What the learner has in Kio, apart from drafts.
+// What the learner has in Kivo, apart from drafts.
 async function records(profileId: string) {
   const [subjects, tasks, notes, exams, workspaces] = await Promise.all([
     prisma.novaSubject.count({ where: { profileId } }), prisma.novaTask.count({ where: { profileId } }),
@@ -129,9 +129,9 @@ test("a vague idea gets a question, and nothing of the learner's is written", as
   assert.deepEqual(await records(await me.profileId()), NOTHING);
 });
 
-test("the conversation goes question by question, uses what Kio knows, and does not ask it again", async () => {
+test("the conversation goes question by question, uses what Kivo knows, and does not ask it again", async () => {
   const me = await learner();
-  // Already in Kio: a goal and a subject.
+  // Already in Kivo: a goal and a subject.
   const profileId = await (async () => { await builder.startDraft(me.id, { clientKey: key() }); return me.profileId(); })();
   await prisma.novaAcademicProfile.update({ where: { id: profileId }, data: { goals: ["Ship my side project"] } });
   await prisma.novaSubject.create({ data: { profileId, name: "Operating Systems" } });
@@ -142,10 +142,10 @@ test("the conversation goes question by question, uses what Kio knows, and does 
   });
   assert.equal(draft.status, "discovery");
   assert.ok(draft.messages.at(-1)!.text.endsWith("What does TrackerX help people do, and who is it for?"));
-  // What Kio knew went to the model, and is shown as known, not as theirs.
+  // What Kivo knew went to the model, and is shown as known, not as theirs.
   const known = seen[0]!.known.map(k => `${k.label}: ${k.value}`);
   assert.ok(known.includes("Goals: Ship my side project"));
-  assert.ok(known.includes("Subjects already in Kio: Operating Systems"));
+  assert.ok(known.includes("Subjects already in Kivo: Operating Systems"));
   assert.deepEqual(draft.brief.facts, [{ label: "Project", value: "TrackerX" }]);
 
   draft = await say(me.id, draft.id, "It's a project tracking app for small teams.", {
@@ -232,7 +232,7 @@ test("a correction is a new version; only the current version is approved; appro
   assert.equal(live!.tasks.length, 4);
   // Milestones first, as the plan has them, then the other topics, in order.
   assert.deepEqual(live!.subjects[0]!.topics.map(t => t.name), ["Finish the dashboard", "Integrate the APIs", "Dashboard", "API integration", "End-to-end testing"]);
-  assert.ok((await builder.builderContextLines(profileId)).some(l => l.startsWith("Workspace they built in Kio: TrackerX")));
+  assert.ok((await builder.builderContextLines(profileId)).some(l => l.startsWith("Workspace they built in Kivo: TrackerX")));
 
   // Built: no more messages to it.
   // A built conversation goes on: about the workspace it built, as it is now.

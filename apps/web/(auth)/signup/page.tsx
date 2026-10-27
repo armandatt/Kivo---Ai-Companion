@@ -30,7 +30,7 @@ export default function SignupPage() {
           {/* Header */}
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-white mb-2">
-              Join <span className="text-[#00D9A3]">Kio</span>
+              Join <span className="text-[#00D9A3]">Kivo</span>
             </h1>
             <p className="text-gray-400">Create your AI companion today</p>
           </div>

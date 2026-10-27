@@ -5,7 +5,7 @@ import { Monitor, Moon, Sun } from 'lucide-react'
 
 // The app's theme: light, dark, or whatever the device is set to. The choice
 // is kept on this device (localStorage), and what it resolves to is written
-// on <html data-kio-theme>, which the styles in globals.css read.
+// on <html data-kivo-theme>, which the styles in globals.css read.
 
 export type ThemeChoice = 'light' | 'dark' | 'system'
 export const THEME_KEY = 'kivo-theme'
@@ -24,9 +24,9 @@ function stored(): ThemeChoice {
 // flash of dark. Kept as a string because it must run before React does.
 // Light (warm paper) is the default for a device that has made no choice;
 // a choice already made, dark included, is kept.
-export const THEME_SCRIPT = `(function(){try{var c=localStorage.getItem('${THEME_KEY}');var t=c==='light'||c==='dark'?c:c==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):'light';document.documentElement.dataset.kioTheme=t}catch(e){document.documentElement.dataset.kioTheme='light'}})()`
+export const THEME_SCRIPT = `(function(){try{var c=localStorage.getItem('${THEME_KEY}');var t=c==='light'||c==='dark'?c:c==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):'light';document.documentElement.dataset.kivoTheme=t}catch(e){document.documentElement.dataset.kivoTheme='light'}})()`
 
-export function useKioTheme() {
+export function useKivoTheme() {
   const [choice, setChoice] = useState<ThemeChoice>('light')
 
   useEffect(() => { setChoice(stored()) }, [])
@@ -35,7 +35,7 @@ export function useKioTheme() {
   useEffect(() => {
     if (choice !== 'system') return
     const media = window.matchMedia('(prefers-color-scheme: light)')
-    const apply = () => { document.documentElement.dataset.kioTheme = resolve('system') }
+    const apply = () => { document.documentElement.dataset.kivoTheme = resolve('system') }
     media.addEventListener('change', apply)
     return () => media.removeEventListener('change', apply)
   }, [choice])
@@ -43,7 +43,7 @@ export function useKioTheme() {
   const choose = useCallback((next: ThemeChoice) => {
     setChoice(next)
     try { window.localStorage.setItem(THEME_KEY, next) } catch { /* private mode: the choice lasts for this visit */ }
-    document.documentElement.dataset.kioTheme = resolve(next)
+    document.documentElement.dataset.kivoTheme = resolve(next)
   }, [])
 
   return { choice, choose }
@@ -58,7 +58,7 @@ const OPTIONS: Array<{ id: ThemeChoice; label: string; icon: typeof Sun }> = [
 // Three choices, and the one in force is marked. `compact` is the sidebar's
 // icon-only version.
 export function ThemePicker({ compact = false }: { compact?: boolean }) {
-  const { choice, choose } = useKioTheme()
+  const { choice, choose } = useKivoTheme()
   return (
     <div role="radiogroup" aria-label="Theme" className={`inline-flex rounded-xl border border-white/10 bg-white/3 p-1 ${compact ? '' : 'flex-wrap'}`}>
       {OPTIONS.map(({ id, label, icon: Icon }) => (

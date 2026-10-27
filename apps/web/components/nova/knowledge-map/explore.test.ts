@@ -11,14 +11,14 @@ const topic = (id: string, s: string, parentId?: string, order = 0): MapNode => 
 const note = (id: string, s: string | null): MapNode => ({ id: `note:${id}`, type: 'note', label: id, href: null, subjectId: s, subjectName: s, topicName: null, topicLinked: false, updatedAt: '2026-10-01T00:00:00Z' })
 const edge = (from: string, to: string, kind: MapEdge['kind']): MapEdge => ({ id: `${from}>${to}`, from, to, kind })
 
-// Kio › Nova Builder › Recursive Tasks › (Steps, Waits); a note inside links out.
+// Kivo › Nova Builder › Recursive Tasks › (Steps, Waits); a note inside links out.
 function world() {
-  const nodes: MapNode[] = [subject('Kio'), topic('Nova Builder', 'Kio'), topic('Recursive Tasks', 'Kio', 'Nova Builder', 0), topic('Steps', 'Kio', 'Recursive Tasks', 0),
-    topic('Waits', 'Kio', 'Recursive Tasks', 1), topic('Billing', 'Kio', undefined, 1), note('design', 'Kio'), note('pricing', 'Kio')]
+  const nodes: MapNode[] = [subject('Kivo'), topic('Nova Builder', 'Kivo'), topic('Recursive Tasks', 'Kivo', 'Nova Builder', 0), topic('Steps', 'Kivo', 'Recursive Tasks', 0),
+    topic('Waits', 'Kivo', 'Recursive Tasks', 1), topic('Billing', 'Kivo', undefined, 1), note('design', 'Kivo'), note('pricing', 'Kivo')]
   const edges: MapEdge[] = [
-    edge('subject:Kio', 'topic:Nova Builder', 'has_topic'), edge('topic:Nova Builder', 'topic:Recursive Tasks', 'subtopic'),
+    edge('subject:Kivo', 'topic:Nova Builder', 'has_topic'), edge('topic:Nova Builder', 'topic:Recursive Tasks', 'subtopic'),
     edge('topic:Recursive Tasks', 'topic:Steps', 'subtopic'), edge('topic:Recursive Tasks', 'topic:Waits', 'subtopic'),
-    edge('subject:Kio', 'topic:Billing', 'has_topic'), edge('topic:Steps', 'note:design', 'about_topic'), edge('topic:Billing', 'note:pricing', 'about_topic'),
+    edge('subject:Kivo', 'topic:Billing', 'has_topic'), edge('topic:Steps', 'note:design', 'about_topic'), edge('topic:Billing', 'note:pricing', 'about_topic'),
     // A [[link]] from inside the branch out to a note elsewhere, and one coming in.
     edge('note:design', 'note:pricing', 'links_to'), edge('note:pricing', 'topic:Waits', 'links_to'),
   ]
@@ -35,7 +35,7 @@ test('a card is explorable only when something is inside it', () => {
 test('an explored card holds every descendant, at any depth, and nothing else', () => {
   const { tree } = world()
   assert.deepEqual([...insideOf(tree, 'topic:Nova Builder')].sort(), ['note:design', 'topic:Nova Builder', 'topic:Recursive Tasks', 'topic:Steps', 'topic:Waits'])
-  assert.deepEqual(pathTo(tree, 'topic:Recursive Tasks'), ['subject:Kio', 'topic:Nova Builder', 'topic:Recursive Tasks'], 'the breadcrumb trail')
+  assert.deepEqual(pathTo(tree, 'topic:Recursive Tasks'), ['subject:Kivo', 'topic:Nova Builder', 'topic:Recursive Tasks'], 'the breadcrumb trail')
 })
 
 test('links that leave the explored card are kept, with their direction, and tree lines are not counted', () => {

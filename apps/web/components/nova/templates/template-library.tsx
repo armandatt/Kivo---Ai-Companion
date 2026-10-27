@@ -36,7 +36,7 @@ function TemplateCard({ t, tab, onOpen }: { t: StudyTemplate; tab: Tab; onOpen: 
       <p className="mt-1 line-clamp-2 text-sm leading-snug text-foreground/70">{t.purpose}</p>
       <p className="mt-3 text-xs text-foreground/55">{outputs(t)}</p>
       <div className="mt-4 flex items-center justify-between gap-2">
-        <span className="text-[11px] text-foreground/50">Kio template</span>
+        <span className="text-[11px] text-foreground/50">Kivo template</span>
         <button type="button" onClick={onOpen} className={BUTTON_QUIET} aria-label={`Use ${t.name}`}>Use template</button>
       </div>
     </li>
@@ -155,7 +155,7 @@ export function TemplateLibrary() {
               <li key={w.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3" data-workspace={w.kind}>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-foreground">{w.title}</p>
-                  <p className="text-xs text-foreground/55">{w.kind === 'template' ? `From ${w.templateName ?? 'a Kio template'}` : 'Designed by Nova'} · {new Date(w.createdAt).toLocaleDateString()}</p>
+                  <p className="text-xs text-foreground/55">{w.kind === 'template' ? `From ${w.templateName ?? 'a Kivo template'}` : 'Designed by Nova'} · {new Date(w.createdAt).toLocaleDateString()}</p>
                 </div>
                 <Link href={`/build?improve=${encodeURIComponent(w.id)}`} className="text-xs font-medium text-foreground/65 hover:text-foreground">Improve with Nova</Link>
                 <div className="flex flex-wrap gap-1.5">

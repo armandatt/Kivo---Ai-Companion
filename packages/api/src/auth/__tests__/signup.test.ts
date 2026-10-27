@@ -56,7 +56,7 @@ describe("email rules", () => {
     (input) => expect(normalizeEmail(input)).toBeNull(),
   );
 
-  it.each(["asha@gmail.com", "asha.rao@gmail.com", "asha+kio@gmail.com", "a1@gmail.com"])(
+  it.each(["asha@gmail.com", "asha.rao@gmail.com", "asha+kivo@gmail.com", "a1@gmail.com"])(
     "accepts %s as a Gmail address",
     (email) => expect(isGmailAddress(email)).toBe(true),
   );
@@ -77,8 +77,8 @@ describe("email rules", () => {
     "asha@gmail.com",
     "asha@yahoo.com",
     "asha.rao@outlook.com",
-    "asha+kio@school.edu.in",
-    "a1@thekio.in",
+    "asha+kivo@school.edu.in",
+    "a1@thekivo.in",
     "o'brien@example.co.uk",
     "asha_rao-2@sub.mail-host.example",
     "asha@xn--mnchen-3ya.de",
@@ -190,14 +190,14 @@ describe("starting a signup", () => {
     },
   );
 
-  it.each(["asha@yahoo.com", "Asha.Rao@Outlook.com", "asha+kio@school.edu.in"])(
+  it.each(["asha@yahoo.com", "Asha.Rao@Outlook.com", "asha+kivo@school.edu.in"])(
     "signs up %s, which is not Gmail, the same way: a code, then a verified account",
     async (typed) => {
       const ctx = setup();
       const email = typed.toLowerCase();
       const { signupToken, code } = await begin(ctx, ctx.t0, PASSWORD, typed);
 
-      expect(ctx.auth.sent[0]).toMatchObject({ to: email, subject: "Your Kio verification code" });
+      expect(ctx.auth.sent[0]).toMatchObject({ to: email, subject: "Your Kivo verification code" });
       expect(ctx.auth.users).toHaveLength(0);
 
       const verified = await verifySignup({ email, code, signupToken }, ctx.at(ctx.t0));

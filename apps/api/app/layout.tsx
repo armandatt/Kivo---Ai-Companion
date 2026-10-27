@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "Kio",
+  title: "Kivo",
   description: "AI accountability companion",
 }
 

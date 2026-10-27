@@ -72,7 +72,7 @@ export function DeletionPanel({ state }: { state: DraftState }) {
           <div role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-body" className="w-full max-w-sm rounded-2xl border border-white/10 bg-card p-5 shadow-2xl">
             <h2 id="delete-title" className="text-base font-semibold text-foreground">Delete {scope.title} permanently?</h2>
             <p id="delete-body" className="mt-2 text-sm leading-relaxed text-foreground/75">
-              {total} item{total === 1 ? '' : 's'} Nova made will be removed everywhere in Kio{scope.workspaceId ? ', with the workspace' : ''}. This can&apos;t be undone.
+              {total} item{total === 1 ? '' : 's'} Nova made will be removed everywhere in Kivo{scope.workspaceId ? ', with the workspace' : ''}. This can&apos;t be undone.
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" onClick={() => setAsking(false)} className="h-10 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/85 hover:bg-white/5">Cancel</button>

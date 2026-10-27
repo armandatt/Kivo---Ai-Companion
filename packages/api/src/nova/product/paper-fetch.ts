@@ -1,5 +1,5 @@
 // ─── Fetching a paper: its details and the text that is openly available ─────
-// Kio asks the sources' own APIs, never a scraper:
+// Kivo asks the sources' own APIs, never a scraper:
 //   arXiv          export.arxiv.org's API (Atom) for the details; the paper's
 //                  HTML version on arxiv.org/html for its text, when arXiv
 //                  has one (most papers since late 2023, and many older ones)
@@ -21,7 +21,7 @@
 // Every address is fetched by `safeGet`: https on port 443 only, the host's
 // addresses looked up first and refused when any is private, loopback,
 // link-local or otherwise not on the public internet (so a pasted link
-// cannot reach Kio's own network), redirects followed by hand and each
+// cannot reach Kivo's own network), redirects followed by hand and each
 // checked the same way, a size cap and a deadline. What comes back is
 // untrusted text: it is only read as data and ends up as note text.
 
@@ -42,7 +42,7 @@ export interface Fetched { status: number; type: string; body: Buffer; url: stri
 export interface GetOptions { accept?: string; maxBytes?: number; timeoutMs?: number; peek?: boolean }
 export type Get = (url: string, options?: GetOptions) => Promise<Fetched>;
 
-const UA = "KioNotes/1.0 (research paper import; +https://www.thekio.in)";
+const UA = "KivoNotes/1.0 (research paper import; +https://kivo.app)";
 const DEFAULT_MAX = 4 * 1024 * 1024;
 const DEFAULT_TIMEOUT = 15_000;
 const MAX_REDIRECTS = 4;
@@ -127,7 +127,7 @@ export const safeGet: Get = async (address, options = {}) => {
   let url: URL;
   try { url = new URL(address); } catch { throw new FetchRefused("bad_url", "That address couldn't be read."); }
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    if (url.protocol !== "https:" || (url.port && url.port !== "443") || url.username || url.password) throw new FetchRefused("blocked", "Kio fetches only public https:// addresses.");
+    if (url.protocol !== "https:" || (url.port && url.port !== "443") || url.username || url.password) throw new FetchRefused("blocked", "Kivo fetches only public https:// addresses.");
     if (isIP(url.hostname.split("[").join("").split("]").join("")) && !isPublicAddress(url.hostname.split("[").join("").split("]").join(""))) throw new FetchRefused("blocked", "That address isn't on the public internet.");
     const { res, body } = await once(url, options);
     const status = res.statusCode ?? 0;
@@ -264,7 +264,7 @@ async function fromEuropePmc(query: string, get: Get, notes: string[], missing: 
   let blocks: PaperBlock[] | null = null;
   if (meta.pmcid && r.isOpenAccess === "Y") { try { blocks = await epmcFullText(meta.pmcid, get); } catch { blocks = null; } }
   if (blocks) notes.push("The text is the open-access full text from Europe PMC. Figures are kept as their captions; images aren't imported.");
-  else notes.push(meta.pmcid ? "This article's full text isn't in the open-access set Kio can import, so only its details and abstract were imported." : "PubMed holds this article's details and abstract, not its text. If you have access to the PDF, you can upload it.");
+  else notes.push(meta.pmcid ? "This article's full text isn't in the open-access set Kivo can import, so only its details and abstract were imported." : "PubMed holds this article's details and abstract, not its text. If you have access to the PDF, you can upload it.");
   return { meta, blocks, status: statusOf(meta, blocks), textFrom: blocks ? "Europe PMC's open-access full text" : null, notes, key: paperKey({ ...meta, url: meta.sourceUrl }) };
 }
 
@@ -324,7 +324,7 @@ async function fromDoi(doi: string, get: Get, notes: string[]): Promise<PaperFou
     }
   } catch { /* Europe PMC is a bonus here: the details stand without it */ }
   if (blocks) notes.push("The text is the open-access full text from Europe PMC. Figures are kept as their captions; images aren't imported.");
-  else notes.push("The publisher's full text isn't openly available to Kio, so only the paper's details" + (meta.abstract ? " and abstract were" : " were") + " imported. If you have access to the PDF, you can upload it.");
+  else notes.push("The publisher's full text isn't openly available to Kivo, so only the paper's details" + (meta.abstract ? " and abstract were" : " were") + " imported. If you have access to the PDF, you can upload it.");
   return { meta, blocks, status: statusOf(meta, blocks), textFrom: blocks ? "Europe PMC's open-access full text" : null, notes, key: paperKey({ ...meta, url: meta.sourceUrl }) };
 }
 
@@ -365,9 +365,9 @@ async function fromOpenReview(id: string, get: Get, notes: string[]): Promise<Pa
   let note: Record<string, unknown> | null = null;
   for (const api of ["https://api2.openreview.net", "https://api.openreview.net"]) {
     const res = await get(`${api}/notes?id=${encodeURIComponent(id)}`, { accept: "application/json", maxBytes: 1024 * 1024 });
-    // OpenReview may ask for a browser check before its API answers. Kio
+    // OpenReview may ask for a browser check before its API answers. Kivo
     // doesn't get round that: it says so.
-    if (res.status === 403 || res.status === 429) throw new PaperNotFound("unavailable", "OpenReview asked for a browser check before it would answer, so Kio can't read this paper automatically. Paste its arXiv link if it has one, or download the PDF and upload it.");
+    if (res.status === 403 || res.status === 429) throw new PaperNotFound("unavailable", "OpenReview asked for a browser check before it would answer, so Kivo can't read this paper automatically. Paste its arXiv link if it has one, or download the PDF and upload it.");
     if (res.status !== 200) continue;
     const list = json(res)?.notes;
     if (Array.isArray(list) && list[0]) { note = list[0] as Record<string, unknown>; break; }
@@ -402,14 +402,14 @@ function fromPdf(url: string, notes: string[]): PaperFound {
   try { name = decodeURIComponent(name); } catch { /* as written */ }
   meta.title = name.toLowerCase().endsWith(".pdf") ? name.slice(0, -4) : name;
   meta.pdfUrl = url;
-  notes.push("This is a PDF with no details Kio can look up. Nova can transcribe it (up to 20 pages and 3 MB); give it a proper title before importing.");
+  notes.push("This is a PDF with no details Kivo can look up. Nova can transcribe it (up to 20 pages and 3 MB); give it a proper title before importing.");
   return { meta, blocks: null, status: "details", textFrom: null, notes, key: paperKey({ url }) };
 }
 
 async function fromPage(url: string, get: Get, notes: string[]): Promise<PaperFound> {
   const res = await get(url, { accept: "text/html,application/xhtml+xml", maxBytes: 3 * 1024 * 1024 });
   if (res.type.includes("application/pdf")) return fromPdf(url, notes);
-  if (res.status === 401 || res.status === 403) throw new PaperNotFound("unavailable", "That site doesn't let Kio read the page. Paste the paper's DOI, or its arXiv or PubMed link, instead.");
+  if (res.status === 401 || res.status === 403) throw new PaperNotFound("unavailable", "That site doesn't let Kivo read the page. Paste the paper's DOI, or its arXiv or PubMed link, instead.");
   if (res.status !== 200 || !res.type.includes("html")) throw new PaperNotFound("not_found", "That page couldn't be read.");
   const tags = readMeta(text(res.body));
   const one = (...names: string[]) => { for (const n of names) { const v = tags.get(n)?.[0]; if (v) return v; } return null; };
@@ -424,7 +424,7 @@ async function fromPage(url: string, get: Get, notes: string[]): Promise<PaperFo
     return found;
   }
   const title = one("citation_title", "dc.title");
-  if (!title) throw new PaperNotFound("not_a_paper", "That page doesn't describe a paper Kio can read. Paste the paper's DOI, or its arXiv, PubMed or OpenReview link.");
+  if (!title) throw new PaperNotFound("not_a_paper", "That page doesn't describe a paper Kivo can read. Paste the paper's DOI, or its arXiv, PubMed or OpenReview link.");
   const meta = emptyMeta(url, "the page's own description");
   meta.title = title.slice(0, 400);
   meta.authors = (tags.get("citation_author") ?? tags.get("dc.creator") ?? []).slice(0, 60);
@@ -433,7 +433,7 @@ async function fromPage(url: string, get: Get, notes: string[]): Promise<PaperFo
   meta.venue = one("citation_journal_title", "citation_conference_title", "citation_publisher");
   meta.pdfUrl = pagePdf?.startsWith("https://") ? pagePdf : null;
   meta.keywords = (tags.get("citation_keywords") ?? []).slice(0, 8);
-  notes.push("The details come from the page's own description of the paper; its text isn't openly available to Kio." + (meta.pdfUrl ? " The PDF it names can be transcribed by Nova if it opens without a sign-in." : ""));
+  notes.push("The details come from the page's own description of the paper; its text isn't openly available to Kivo." + (meta.pdfUrl ? " The PDF it names can be transcribed by Nova if it opens without a sign-in." : ""));
   return { meta, blocks: null, status: statusOf(meta, null), textFrom: null, notes, key: paperKey({ url }) };
 }
 

@@ -21,7 +21,7 @@ export const AUTH_ROUTE_MAX_DURATION_SECONDS = 60
 
 // What the browser is told whenever the API cannot be used, whatever the
 // reason. The reason goes to the log; nothing internal goes to the page.
-export const AUTH_UNAVAILABLE = "Kio couldn't reach its sign-in service. Please try again in a minute."
+export const AUTH_UNAVAILABLE = "Kivo couldn't reach its sign-in service. Please try again in a minute."
 
 type Env = Record<string, string | undefined>
 
@@ -61,7 +61,7 @@ function unavailable(status: 502 | 503 | 504, reason: string) {
   return NextResponse.json({ error: AUTH_UNAVAILABLE }, { status })
 }
 
-// A reply from Kio's API is a JSON object, and every refusal carries an
+// A reply from Kivo's API is a JSON object, and every refusal carries an
 // `error` sentence written for the person. Anything else (a host's own error
 // page, a platform's "application not found") means API_URL does not point at
 // the API, and is not shown to the browser.
@@ -136,7 +136,7 @@ export async function proxyAuth(req: Request, path: string, options: ProxyOption
     return unavailable(502, `The API answered ${path} with ${upstream.status} and no JSON.`)
   }
   if (!isApiReply(upstream.status, data)) {
-    return unavailable(502, `The API answered ${path} with ${upstream.status} in a shape that is not Kio's; check API_URL.`)
+    return unavailable(502, `The API answered ${path} with ${upstream.status} in a shape that is not Kivo's; check API_URL.`)
   }
 
   if (!upstream.ok) {

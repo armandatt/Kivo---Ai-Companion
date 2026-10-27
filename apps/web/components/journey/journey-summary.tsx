@@ -32,7 +32,7 @@ export function JourneySummary({ summary, loading }: Props) {
       <div className="mb-4">
         <p className="text-[11px] font-semibold text-white/30 uppercase tracking-wider">Journey</p>
         <p className="text-base font-bold text-white mt-0.5">
-          {summary.daysWithKivo} day{summary.daysWithKivo !== 1 ? 's' : ''} with Kio
+          {summary.daysWithKivo} day{summary.daysWithKivo !== 1 ? 's' : ''} with Kivo
         </p>
       </div>
 

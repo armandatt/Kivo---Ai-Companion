@@ -88,7 +88,7 @@ function buildGoalsSection(ctx: NovaContext): string {
       ...goals.map(g => `- ${g}`),
     ].join("\n"),
     building.length === 0 ? "" : [
-      `## What they are building in Kio (a record; changes to it are proposed and approved in Build with Nova on the web, never made from chat)`,
+      `## What they are building in Kivo (a record; changes to it are proposed and approved in Build with Nova on the web, never made from chat)`,
       ...building.map(b => `- ${b}`),
     ].join("\n"),
   ].filter(Boolean).join("\n\n");

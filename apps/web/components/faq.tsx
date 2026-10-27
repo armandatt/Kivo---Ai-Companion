@@ -6,7 +6,7 @@ import { CaretDown } from "@phosphor-icons/react/dist/ssr"
 
 const FAQS = [
   {
-    question: "What is Kio?",
+    question: "What is Kivo?",
     answer:
       "A learning workspace with an AI mentor, Nova. You build a structure for what you're learning (subjects and topics, nested as deep as you need), keep notes and research papers inside it, see it all on a Knowledge Map, and plan each day from it. Progress is measured from the focus sessions you actually finish.",
   },
@@ -23,17 +23,17 @@ const FAQS = [
   {
     question: "Which research papers can I import?",
     answer:
-      "Links from arXiv, a DOI, Semantic Scholar, OpenReview, PubMed and PubMed Central, or a direct PDF link. Kio brings in the details and abstract, plus the full text where the source shares it openly (arXiv's HTML versions, Europe PMC's open-access set). It never fetches anything behind a sign-in or paywall; Nova can transcribe a PDF you point to or upload.",
+      "Links from arXiv, a DOI, Semantic Scholar, OpenReview, PubMed and PubMed Central, or a direct PDF link. Kivo brings in the details and abstract, plus the full text where the source shares it openly (arXiv's HTML versions, Europe PMC's open-access set). It never fetches anything behind a sign-in or paywall; Nova can transcribe a PDF you point to or upload.",
   },
   {
     question: "Do I need to download an app?",
     answer:
-      "No. Kio runs in your browser, on a computer, tablet or phone. If you use Telegram, connect it and Nova can start and log sessions there too; it's the same record either way.",
+      "No. Kivo runs in your browser, on a computer, tablet or phone. If you use Telegram, connect it and Nova can start and log sessions there too; it's the same record either way.",
   },
   {
-    question: "Does Kio cost anything?",
+    question: "Does Kivo cost anything?",
     answer:
-      "There's a Free plan with everything in Kio and a daily Nova allowance. Pro gives Nova a much larger daily allowance and starts with seven days free, no card needed. Your notes, knowledge and history stay yours on every plan.",
+      "There's a Free plan with everything in Kivo and a daily Nova allowance. Pro gives Nova a much larger daily allowance and starts with seven days free, no card needed. Your notes, knowledge and history stay yours on every plan.",
   },
 ]
 

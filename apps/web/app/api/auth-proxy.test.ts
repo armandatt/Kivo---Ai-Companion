@@ -9,8 +9,8 @@ import { afterEach, beforeEach, test } from 'node:test'
 import { PROXY_CLIENT_IP_HEADER, PROXY_PROOF_HEADER } from '@repo/api/auth/proxy-headers'
 import { AUTH_ROUTE_MAX_DURATION_SECONDS, AUTH_UNAVAILABLE, UPSTREAM_TIMEOUT_MS, apiBase, proxyAuth } from './auth-proxy'
 
-const SITE = 'https://www.thekio.in'
-const API = 'https://kio-api.example'
+const SITE = 'https://www.thekivo.in'
+const API = 'https://kivo-api.example'
 const BODY = { email: 'asha.rao@example.com', password: 'correct horse 42' }
 const saved = { ...process.env }
 // The shared secret's variable, set and removed by the tests below.
@@ -69,8 +69,8 @@ test('the API base is API_URL without a trailing slash; production has no defaul
   assert.equal(apiBase({ API_URL: `  ${API}  ` }), API)
   assert.equal(apiBase({}), 'http://localhost:3001')
   assert.equal(apiBase({ NODE_ENV: 'production' }), null)
-  assert.equal(apiBase({ API_URL: 'kio-api.example', NODE_ENV: 'production' }), null)
-  assert.equal(apiBase({ API_URL: 'ftp://kio-api.example' }), null)
+  assert.equal(apiBase({ API_URL: 'kivo-api.example', NODE_ENV: 'production' }), null)
+  assert.equal(apiBase({ API_URL: 'ftp://kivo-api.example' }), null)
 })
 
 test('forgot-password is passed on to the API and its reply comes back as it was', async () => {
@@ -102,7 +102,7 @@ test('a missing API_URL in production is a 503 with a short message, and the rea
 
 test('an API_URL that is not an http(s) URL is refused the same way', async () => {
   const api = stub(() => json(200, {}))
-  const response = await proxyAuth(browserRequest('/api/login'), '/api/login', { grantSession: true, fetch: api.fetch, env: env({ API_URL: 'kio-api.example' }) })
+  const response = await proxyAuth(browserRequest('/api/login'), '/api/login', { grantSession: true, fetch: api.fetch, env: env({ API_URL: 'kivo-api.example' }) })
 
   assert.equal(response.status, 503)
   assert.equal(api.calls.length, 0)
@@ -159,7 +159,7 @@ test("a platform's own reply (Railway's 'Application not found') is a 502 that p
 
   assert.equal(response.status, 502)
   assert.deepEqual(await response.json(), { error: AUTH_UNAVAILABLE })
-  assert.match(logged.join('\n'), /not Kio's; check API_URL/)
+  assert.match(logged.join('\n'), /not Kivo's; check API_URL/)
 })
 
 test("the API's own refusals reach the browser with their status, message and Retry-After", async () => {
@@ -208,7 +208,7 @@ test('a request from another site never reaches the API', async () => {
 
 test('the bare domain and www are both this site, so either can send auth requests', async () => {
   const api = stub(() => json(200, { message: 'ok' }))
-  for (const host of ['https://thekio.in', 'https://www.thekio.in']) {
+  for (const host of ['https://thekivo.in', 'https://www.thekivo.in']) {
     const req = new Request(`${host}/api/forgot-password`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', origin: host, 'sec-fetch-site': 'same-origin', host: new URL(host).host },

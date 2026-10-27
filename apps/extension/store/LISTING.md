@@ -6,7 +6,7 @@ Draft text and checklists for the store's forms. Everything here describes what 
 
 The store shows the manifest's `name`. It is currently **Nova**.
 
-- **DECIDE:** "Nova" alone is a common name and says nothing about Kio. Suggested: `Nova by Kio`. Changing it means editing `name` and `action.default_title` in `src/manifest.template.json` and rebuilding; the popup's own heading can stay "Nova".
+- **DECIDE:** "Nova" alone is a common name and says nothing about Kivo. Suggested: `Nova by Kivo`. Changing it means editing `name` and `action.default_title` in `src/manifest.template.json` and rebuilding; the popup's own heading can stay "Nova".
 
 ## Short description (132 characters max)
 
@@ -16,7 +16,7 @@ Used from the manifest's `description` (119 characters):
 
 ## Detailed description
 
-> Nova is the study companion inside Kio. This extension is the quickest way to get a page you are reading into it.
+> Nova is the study companion inside Kivo. This extension is the quickest way to get a page you are reading into it.
 >
 > Click the Nova icon on any web page and choose:
 >
@@ -34,7 +34,7 @@ Used from the manifest's `description` (119 characters):
 >
 > Getting started
 >
-> 1. You need a Kio account with Nova set up.
+> 1. You need a Kivo account with Nova set up.
 > 2. Click the Nova icon and choose "Get a code from Nova". Nova opens on its Saved page.
 > 3. Press "Connect a browser" there and type the one-time code into the extension.
 >
@@ -54,7 +54,7 @@ Nothing here exists yet. The store requires the first three.
 
 | Asset | Size | Status |
 |---|---|---|
-| Store icon | 128×128 PNG | The build draws a plain teal rounded square (`scripts/build.mjs`). It is valid, but it is a placeholder. **DECIDE:** replace with the Kio/Nova mark before listing. |
+| Store icon | 128×128 PNG | The build draws a plain teal rounded square (`scripts/build.mjs`). It is valid, but it is a placeholder. **DECIDE:** replace with the Kivo/Nova mark before listing. |
 | Screenshots (1 to 5) | 1280×800 or 640×400 | **TO DO.** Take them from the real extension against production. Suggested set below. |
 | Small promo tile | 440×280 | **TO DO.** |
 | Marquee promo tile | 1400×560 | Optional. |
@@ -99,11 +99,11 @@ Which boxes to tick is the developer's declaration to Google. This is a reading 
 | Website content | **Yes** | The text the user has selected on the page is read when the popup opens, and sent when the user presses **Save selection** or asks a question. A screenshot of the visible tab is taken only when the user presses **Screenshot** and is sent only with a question. Nothing else from inside a page is read. |
 | User activity, location, health, financial, personal communications | No | Not accessed. |
 
-The three certifications the form asks for: data is not sold or transferred to third parties outside the approved use cases, not used for purposes unrelated to the single purpose, and not used for creditworthiness or lending. **CONFIRM the first one before submitting:** a saved passage, a page title and a question are sent by Kio's server to its AI model provider to suggest topics and to answer the question. Whether that counts as an approved use (providing the extension's single purpose through a service provider) is the developer's judgement, and the privacy policy must say it.
+The three certifications the form asks for: data is not sold or transferred to third parties outside the approved use cases, not used for purposes unrelated to the single purpose, and not used for creditworthiness or lending. **CONFIRM the first one before submitting:** a saved passage, a page title and a question are sent by Kivo's server to its AI model provider to suggest topics and to answer the question. Whether that counts as an approved use (providing the extension's single purpose through a service provider) is the developer's judgement, and the privacy policy must say it.
 
 ### Privacy policy URL
 
-The form requires a public URL. **TO DO:** `PRIVACY.md` in this folder is a draft; it has to be reviewed, completed and published on the Kio site. No privacy page exists in the web app today.
+The form requires a public URL. **TO DO:** `PRIVACY.md` in this folder is a draft; it has to be reviewed, completed and published on the Kivo site. No privacy page exists in the web app today.
 
 ## Distribution
 

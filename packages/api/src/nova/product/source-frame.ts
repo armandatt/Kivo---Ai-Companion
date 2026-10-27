@@ -3,11 +3,11 @@
 // note, in a frame. Whether a frame works is the source's own decision: its
 // X-Frame-Options and Content-Security-Policy frame-ancestors headers. A
 // browser does not tell the page when a frame was refused (the frame just
-// stays blank), so Kio asks the source first, reading only its response
+// stays blank), so Kivo asks the source first, reading only its response
 // headers, and the pane shows the frame or says plainly why it can't.
 //
 // Nothing is got around here: a source that refuses to be framed is opened in
-// its own tab, never fetched and re-served by Kio.
+// its own tab, never fetched and re-served by Kivo.
 //
 //   frameVerdict      pure: what the headers allow
 //   checkSourceFrame  one header-only request through safeGet (https, public
@@ -22,7 +22,7 @@ export type FrameVerdict =
   | "page"          // a web page that may be framed
   | "blocked"       // the source does not allow other sites to frame it
   | "download"      // the source sends a file to save, not to show
-  | "unreachable";  // Kio couldn't ask (refused, timed out, an error status)
+  | "unreachable";  // Kivo couldn't ask (refused, timed out, an error status)
 
 export interface FrameCheck { verdict: FrameVerdict; url: string; host: string }
 

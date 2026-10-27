@@ -85,7 +85,7 @@ describe("when Nova asks and when it proposes", () => {
     expect(step).toMatchObject({ kind: "ask", question: PLAN_QUESTION, overruled: true });
     expect((step as { choices: string[] }).choices).toContain("Just draft something");
   });
-  it("Kio's record is not the learner's answer: a fact counts only when its quote is in their words", () => {
+  it("Kivo's record is not the learner's answer: a fact counts only when its quote is in their words", () => {
     // The model 'heard' a priority that came from the task list, not from them.
     expect(decideStep(day([{ kind: "priority", quote: "Startup deck" }]), { learnerWords: "Plan my day", draftNow: false, hasOpen: false }).kind).toBe("ask");
     expect(decideStep(day([{ kind: "priority", quote: "study DSA" }, { kind: "time", quote: "About an hour" }]), { learnerWords: "Plan my day\nI need to study DSA, but I'm exhausted\nabout an hour. Revision.", draftNow: false, hasOpen: false }).kind).toBe("propose");

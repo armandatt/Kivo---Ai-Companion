@@ -107,7 +107,7 @@ export function MapDemo() {
   const animate = inView && !reduced
 
   return (
-    <AppWindow label="Kio · Knowledge Map" className="h-[34rem] sm:h-[40rem]"
+    <AppWindow label="Kivo · Knowledge Map" className="h-[34rem] sm:h-[40rem]"
       bar={<span className="mr-2 hidden text-[11px] text-foreground/45 sm:inline">Click a card · Enter or double-click to explore · U up · F fit</span>}>
       <div ref={box} className="relative flex h-full flex-col" onKeyDown={onKey} data-map-demo>
         {/* Find, where you are, fit */}

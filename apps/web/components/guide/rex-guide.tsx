@@ -258,7 +258,7 @@ export function RexGuide() {
       )}
 
       <div className="mt-12 pt-6 border-t border-white/5 text-xs text-foreground/20">
-        Kio · Rex Gym Coaching · All data belongs to the user
+        Kivo · Rex Gym Coaching · All data belongs to the user
       </div>
     </motion.div>
   )

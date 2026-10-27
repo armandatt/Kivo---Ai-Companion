@@ -53,7 +53,7 @@ describe("who has Pro", () => {
     expect(access(sub({ planKey: "enterprise" })).plan).toBe("free");
   });
 
-  it("Kio's trial is Pro until it ends, not before it starts, and not after", () => {
+  it("Kivo's trial is Pro until it ends, not before it starts, and not after", () => {
     const trial = { startedAt: at(-2), endsAt: at(5) };
     expect(access(null, trial)).toMatchObject({ plan: "pro", source: "trial", until: at(5) });
     expect(access(null, { startedAt: at(-8), endsAt: at(-1) }).plan).toBe("free");
@@ -84,7 +84,7 @@ const decide = (incoming: ProviderSubscription, stored: { providerSubscriptionId
   decideSync({ incoming, eventType, planKey, stored, now: NOW });
 
 describe("a provider event and the account's row", () => {
-  it("applies a Kio subscription to the account named as the external customer", () => {
+  it("applies a Kivo subscription to the account named as the external customer", () => {
     const d = decide(record());
     expect(d.action).toBe("apply");
     if (d.action === "apply") {
@@ -100,7 +100,7 @@ describe("a provider event and the account's row", () => {
   });
 
   it("ignores another seller's product: it grants nothing", () => {
-    expect(decide(record(), null, "subscription.updated", null)).toEqual({ action: "ignore", reason: "not_kio_product" });
+    expect(decide(record(), null, "subscription.updated", null)).toEqual({ action: "ignore", reason: "not_kivo_product" });
   });
 
   it("a late, older version of the same subscription changes nothing; the same version again is harmless", () => {
@@ -132,17 +132,17 @@ describe("a provider event and the account's row", () => {
 
 // ── Configuration ──
 describe("which plans can be bought", () => {
-  const env = { POLAR_SERVER: "sandbox", POLAR_ACCESS_TOKEN: "tok", POLAR_WEBHOOK_SECRET: "whsec_x", POLAR_PRODUCT_PRO_MONTHLY: "prod_monthly", POLAR_PRODUCT_PRO_ANNUAL: "prod_annual", NEXT_PUBLIC_APP_URL: "https://www.thekio.in/" };
+  const env = { POLAR_SERVER: "sandbox", POLAR_ACCESS_TOKEN: "tok", POLAR_WEBHOOK_SECRET: "whsec_x", POLAR_PRODUCT_PRO_MONTHLY: "prod_monthly", POLAR_PRODUCT_PRO_ANNUAL: "prod_annual", NEXT_PUBLIC_APP_URL: "https://www.thekivo.in/" };
 
   it("reads the provider's settings, and says what is missing", () => {
     const cfg = providerConfig(env);
-    expect(cfg.ok && cfg.config).toMatchObject({ server: "sandbox", appUrl: "https://www.thekio.in", products: { pro_monthly: "prod_monthly", pro_annual: "prod_annual" } });
+    expect(cfg.ok && cfg.config).toMatchObject({ server: "sandbox", appUrl: "https://www.thekivo.in", products: { pro_monthly: "prod_monthly", pro_annual: "prod_annual" } });
     const bad = providerConfig({ POLAR_SERVER: "live" });
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.missing).toEqual(expect.arrayContaining(["POLAR_SERVER (sandbox or production)", "POLAR_ACCESS_TOKEN", "POLAR_WEBHOOK_SECRET", "POLAR_PRODUCT_PRO_MONTHLY"]));
   });
 
-  it("only Kio's paid plans with a product; the yearly plan only when switched on", () => {
+  it("only Kivo's paid plans with a product; the yearly plan only when switched on", () => {
     const cfg = { products: { pro_monthly: "prod_monthly", pro_annual: "prod_annual" } };
     expect(purchasable("pro_monthly", cfg, env)).toBe(true);
     expect(purchasable("pro_annual", cfg, env)).toBe(false);

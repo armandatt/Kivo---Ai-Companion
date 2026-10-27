@@ -37,7 +37,7 @@ async function post(path: string, body: unknown = {}): Promise<{ ok: boolean; ur
     if (res.status === 401) { window.location.href = '/signin?from=/settings/billing'; return { ok: false } }
     return await res.json()
   } catch {
-    return { ok: false, message: 'Could not reach Kio. Check your connection and try again.' }
+    return { ok: false, message: 'Could not reach Kivo. Check your connection and try again.' }
   }
 }
 
@@ -211,7 +211,7 @@ export function BillingPage() {
               )
             })}
           </div>
-          <p className="text-xs leading-relaxed text-foreground/45">Payments are handled by Polar, Kio&apos;s merchant of record; Kio never sees your card. Prices are in Indian rupees. Cancel any time from Manage subscription; Pro stays on until the end of the period you paid for.</p>
+          <p className="text-xs leading-relaxed text-foreground/45">Payments are handled by Polar, Kivo&apos;s merchant of record; Kivo never sees your card. Prices are in Indian rupees. Cancel any time from Manage subscription; Pro stays on until the end of the period you paid for.</p>
         </section>
       )}
     </>,

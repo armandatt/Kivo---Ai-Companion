@@ -157,7 +157,7 @@ export function SaveLink({ subjects, resources, capture, onSaved }: {
 
           <div className="flex flex-wrap items-center gap-2">
             <button type="submit" disabled={saving} className="inline-flex h-11 items-center justify-center rounded-xl bg-keppel-400 px-5 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300 disabled:opacity-60" data-link-save>
-              {saving ? 'Saving…' : error ? 'Try again' : already ? 'Update saved page' : 'Save to Kio'}
+              {saving ? 'Saving…' : error ? 'Try again' : already ? 'Update saved page' : 'Save to Kivo'}
             </button>
             <button type="button" disabled={saving} onClick={() => { setDraft(null); setError(null) }} className="inline-flex h-11 items-center justify-center rounded-xl border border-white/12 px-5 text-sm text-foreground/75 transition-colors hover:bg-white/5 disabled:opacity-60">
               Cancel

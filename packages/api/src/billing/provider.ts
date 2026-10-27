@@ -1,5 +1,5 @@
 // ─── The payment provider, as billing sees it ─────────────────────────────────
-// The few things Kio needs from a payment provider, so the rest of billing
+// The few things Kivo needs from a payment provider, so the rest of billing
 // does not know which one it is. Polar implements it (polar.ts). Adding a
 // provider that takes UPI means a second implementation of this interface;
 // plans, entitlements, trials and the meter stay as they are.

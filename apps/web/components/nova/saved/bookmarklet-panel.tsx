@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { bookmarkletCode } from '@repo/api/nova/product/resource-link'
 
-// The "Save to Kio" bookmark: a browser bookmark whose address is a line of
+// The "Save to Kivo" bookmark: a browser bookmark whose address is a line of
 // script. Pressed on any page, it opens Saved with that page's address and
 // title ready to review. It holds no credential; the page it opens uses the
 // learner's ordinary sign-in.
@@ -38,7 +38,7 @@ export function BookmarkletPanel() {
         className="mt-4 inline-flex h-10 cursor-grab items-center justify-center rounded-xl border border-dashed border-keppel-400/50 bg-keppel-400/8 px-4 text-sm font-semibold text-keppel-300 active:cursor-grabbing"
         data-bookmarklet
       >
-        Save to Kio
+        Save to Kivo
       </a>
       {hint && <p role="status" className="mt-2 text-xs text-foreground/55">Drag this button to your bookmarks bar instead of clicking it.</p>}
 
@@ -54,8 +54,8 @@ export function BookmarkletPanel() {
           <p>Phones cannot drag a bookmark, so it takes a minute to set up:</p>
           <ol className="list-decimal space-y-1.5 pl-4">
             <li>Copy the bookmark&apos;s code with the button below.</li>
-            <li>Bookmark this page, then edit that bookmark: name it “Save to Kio” and replace its address with the code.</li>
-            <li>Safari: open it from your bookmarks. Chrome: type “Save to Kio” in the address bar and pick the bookmark.</li>
+            <li>Bookmark this page, then edit that bookmark: name it “Save to Kivo” and replace its address with the code.</li>
+            <li>Safari: open it from your bookmarks. Chrome: type “Save to Kivo” in the address bar and pick the bookmark.</li>
           </ol>
           <p>Some browsers and in-app browsers do not run bookmarks like this. Copying the page&apos;s link and pasting it into Save a link always works.</p>
         </div>

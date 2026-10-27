@@ -117,12 +117,12 @@ describe("what the bookmark brings", () => {
   });
 });
 
-describe("the Save to Kio bookmark", () => {
-  const code = bookmarkletCode("https://kio.example")!;
+describe("the Save to Kivo bookmark", () => {
+  const code = bookmarkletCode("https://kivo.example")!;
 
-  it("opens this Kio's Saved page with the page's address and title in the fragment", () => {
+  it("opens this Kivo's Saved page with the page's address and title in the fragment", () => {
     expect(code.startsWith("javascript:")).toBe(true);
-    expect(code).toContain('"https://kio.example/saved#save="');
+    expect(code).toContain('"https://kivo.example/saved#save="');
     expect(code).toContain("encodeURIComponent(location.href)");
     expect(code).toContain("encodeURIComponent(document.title)");
   });
@@ -135,14 +135,14 @@ describe("the Save to Kio bookmark", () => {
 
   it("is made only for https, or a local address in development", () => {
     expect(bookmarkletCode("http://localhost:3000")).toContain('"http://localhost:3000/saved#save="');
-    expect(bookmarkletCode("http://kio.example")).toBeNull();
+    expect(bookmarkletCode("http://kivo.example")).toBeNull();
     expect(bookmarkletCode("javascript:alert(1)")).toBeNull();
     expect(bookmarkletCode("not an origin")).toBeNull();
   });
 
   it("cannot be bent by the origin it is given", () => {
-    expect(bookmarkletCode("https://kio.example/path?x=1#y")).toBe(code);
-    expect(bookmarkletCode('https://kio.example";alert(1);//')).toBeNull();
+    expect(bookmarkletCode("https://kivo.example/path?x=1#y")).toBe(code);
+    expect(bookmarkletCode('https://kivo.example";alert(1);//')).toBeNull();
   });
 });
 

@@ -59,7 +59,7 @@ export const sendAuthEmail: SendAuthEmail = async (email) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: `Kio <${from}>`,
+        from: `Kivo <${from}>`,
         to: email.to,
         subject: email.subject,
         html: email.html,
@@ -116,11 +116,11 @@ const BUTTON =
 export function signupCodeEmail(to: string, code: string, minutes: number): AuthEmail {
   return {
     to,
-    subject: "Your Kio verification code",
-    text: `Your Kio verification code is ${code}. It expires in ${minutes} minutes. Enter it on the page where you started signing up. If you didn't ask for it, ignore this email and never share the code.`,
+    subject: "Your Kivo verification code",
+    text: `Your Kivo verification code is ${code}. It expires in ${minutes} minutes. Enter it on the page where you started signing up. If you didn't ask for it, ignore this email and never share the code.`,
     html: layout(
       "Verify your email",
-      `<p ${P}>Enter this code to finish creating your Kio account.</p>
+      `<p ${P}>Enter this code to finish creating your Kivo account.</p>
        <p style="font-size:32px;letter-spacing:6px;font-weight:700;color:#fff;margin-bottom:24px;">${code}</p>
        <p ${SMALL}>This code expires in ${minutes} minutes and only works on the page where you started signing up. If you didn't ask for it, you can safely ignore this email. Never share this code.</p>`,
     ),
@@ -130,11 +130,11 @@ export function signupCodeEmail(to: string, code: string, minutes: number): Auth
 export function existingAccountEmail(to: string, appUrl: string): AuthEmail {
   return {
     to,
-    subject: "You already have a Kio account",
-    text: `Someone tried to create a Kio account with this email, but you already have one. Sign in at ${appUrl}/signin, or reset your password at ${appUrl}/forgot-password. If this wasn't you, ignore this email.`,
+    subject: "You already have a Kivo account",
+    text: `Someone tried to create a Kivo account with this email, but you already have one. Sign in at ${appUrl}/signin, or reset your password at ${appUrl}/forgot-password. If this wasn't you, ignore this email.`,
     html: layout(
       "You already have an account",
-      `<p ${P}>Someone tried to create a Kio account with this email address, but one already exists.</p>
+      `<p ${P}>Someone tried to create a Kivo account with this email address, but one already exists.</p>
        <a href="${appUrl}/signin" ${BUTTON}>Sign in</a>
        <p ${SMALL}>Forgot your password? <a href="${appUrl}/forgot-password" style="color:#00D9A3;">Reset it here</a>. If this wasn't you, you can safely ignore this email.</p>`,
     ),
@@ -145,11 +145,11 @@ export function passwordResetEmail(to: string, name: string | null, resetUrl: st
   const safeName = escapeHtml(name ?? "there");
   return {
     to,
-    subject: "Reset your Kio password",
-    text: `We received a request to reset your Kio password. Open this link to choose a new one: ${resetUrl} It expires in ${minutes} minutes. If you didn't request this, ignore this email.`,
+    subject: "Reset your Kivo password",
+    text: `We received a request to reset your Kivo password. Open this link to choose a new one: ${resetUrl} It expires in ${minutes} minutes. If you didn't request this, ignore this email.`,
     html: layout(
       "Reset your password",
-      `<p ${P}>Hi ${safeName}, we received a request to reset your Kio password.</p>
+      `<p ${P}>Hi ${safeName}, we received a request to reset your Kivo password.</p>
        <a href="${resetUrl}" ${BUTTON}>Reset Password</a>
        <p ${SMALL}>This link expires in ${minutes} minutes and works once. If you didn't request this, you can safely ignore this email.</p>`,
     ),
@@ -159,11 +159,11 @@ export function passwordResetEmail(to: string, name: string | null, resetUrl: st
 export function googleAccountEmail(to: string, appUrl: string): AuthEmail {
   return {
     to,
-    subject: "Sign in to Kio with Google",
-    text: `We received a request to reset your Kio password, but your account signs in with Google and has no password. Go to ${appUrl}/signin and choose Continue with Google. If you didn't request this, ignore this email.`,
+    subject: "Sign in to Kivo with Google",
+    text: `We received a request to reset your Kivo password, but your account signs in with Google and has no password. Go to ${appUrl}/signin and choose Continue with Google. If you didn't request this, ignore this email.`,
     html: layout(
       "Your account uses Google",
-      `<p ${P}>We received a request to reset your Kio password. Your account signs in with Google, so it has no password to reset.</p>
+      `<p ${P}>We received a request to reset your Kivo password. Your account signs in with Google, so it has no password to reset.</p>
        <a href="${appUrl}/signin" ${BUTTON}>Continue with Google</a>
        <p ${SMALL}>If you didn't request this, you can safely ignore this email.</p>`,
     ),

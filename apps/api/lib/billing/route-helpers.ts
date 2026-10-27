@@ -15,7 +15,7 @@ export async function signedInUser(): Promise<{ userId: string } | { denied: Nex
   return { userId: session.userId }
 }
 
-// A change to billing must come as JSON from Kio's own pages: a form on
+// A change to billing must come as JSON from Kivo's own pages: a form on
 // another site cannot send that without the browser asking first.
 export function jsonOnly(req: Request): NextResponse | null {
   const type = req.headers.get("content-type") ?? ""

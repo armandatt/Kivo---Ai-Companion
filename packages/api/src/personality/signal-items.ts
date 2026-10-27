@@ -13,7 +13,7 @@
 // every assessment row so old results stay interpretable.
 export const SIGNAL_VERSION = "kivo-signal-v1";
 
-// Kio's own names for what each statement hints at. Deliberately not the
+// Kivo's own names for what each statement hints at. Deliberately not the
 // psychological trait names.
 export type SignalDimension = "routine" | "sociability" | "composure" | "reflection";
 

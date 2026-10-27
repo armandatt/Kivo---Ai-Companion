@@ -8,7 +8,7 @@
 //                   Nothing is fetched here.
 //   paperNoteBody   an imported paper as one note: a paper card (a [!paper]
 //                   callout holding its details and where it came from), its
-//                   abstract and the text Kio could get, then "## My notes",
+//                   abstract and the text Kivo could get, then "## My notes",
 //                   where the learner's own notes go.
 //   readPaperCard   the card read back, so the reader, the tutor and the
 //                   editor know a note holds a paper and how much of it.
@@ -131,7 +131,7 @@ export function identifyPaper(input: string): PaperIdResult {
   if (u.protocol !== "https:" && u.protocol !== "http:") return { ok: false, reason: "not_https", message: "Only web links (https://) can be imported." };
   if (u.username || u.password) return { ok: false, reason: "not_a_link", message: "That link carries a sign-in. Paste the paper's public address." };
   const host = u.hostname.toLowerCase().startsWith("www.") ? u.hostname.toLowerCase().slice(4) : u.hostname.toLowerCase();
-  if (privateName(host)) return { ok: false, reason: "private", message: "That address isn't a public website, so Kio can't import from it." };
+  if (privateName(host)) return { ok: false, reason: "private", message: "That address isn't a public website, so Kivo can't import from it." };
   const segs = segments(u.pathname);
   const https = `https://${u.host}${u.pathname}${u.search}`;
 
@@ -195,14 +195,14 @@ export function identifyPaper(input: string): PaperIdResult {
     if (doi) return { ok: true, paper: { kind: "doi", id: doi, url: https } };
   }
   // Anything else: fetched only over https.
-  if (u.protocol !== "https:") return { ok: false, reason: "not_https", message: "Kio fetches papers only over https://. Use the https address." };
+  if (u.protocol !== "https:") return { ok: false, reason: "not_https", message: "Kivo fetches papers only over https://. Use the https address." };
   if (u.pathname.toLowerCase().endsWith(".pdf")) return { ok: true, paper: { kind: "pdf", id: https, url: https } };
   return { ok: true, paper: { kind: "page", id: https, url: https } };
 }
 
 // ── What was imported ─────────────────────────────────────────────────────────
 
-// full      the paper's text, all of it Kio could find (figures by caption)
+// full      the paper's text, all of it Kivo could find (figures by caption)
 // partial   some of its text (a long paper cut to fit a note, a PDF read in part)
 // abstract  its abstract and details only
 // details   its title and details only

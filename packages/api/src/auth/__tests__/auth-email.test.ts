@@ -26,7 +26,7 @@ beforeEach(() => {
   jest.spyOn(console, "error").mockImplementation((...args) => { logged.push(args.join(" ")); });
   jest.spyOn(console, "warn").mockImplementation((...args) => { logged.push(args.join(" ")); });
   process.env.RESEND_API_KEY = "re_test_key";
-  process.env.RESEND_FROM_EMAIL = "no-reply@thekio.in";
+  process.env.RESEND_FROM_EMAIL = "no-reply@thekivo.in";
   delete process.env.RESEND_API_BASE;
 });
 
@@ -50,7 +50,7 @@ describe("sending an auth email", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe("https://api.resend.com/emails");
     expect((calls[0]!.init.headers as Record<string, string>).Authorization).toBe("Bearer re_test_key");
-    expect(JSON.parse(String(calls[0]!.init.body))).toMatchObject({ from: "Kio <no-reply@thekio.in>", to: TO, subject: "Your Kio verification code" });
+    expect(JSON.parse(String(calls[0]!.init.body))).toMatchObject({ from: "Kivo <no-reply@thekivo.in>", to: TO, subject: "Your Kivo verification code" });
     expect(calls[0]!.init.signal).toBeDefined();
     expect(logged).toEqual([]);
   });
@@ -111,17 +111,17 @@ describe("sending an auth email", () => {
     stubFetch(() => new Response("{}", { status: 200 }));
 
     expect(await sendAuthEmail(message)).toBe(true);
-    expect(JSON.parse(String(calls[0]!.init.body)).from).toBe("Kio <onboarding@resend.dev>");
+    expect(JSON.parse(String(calls[0]!.init.body)).from).toBe("Kivo <onboarding@resend.dev>");
     expect(logged.join("\n")).toContain("RESEND_FROM_EMAIL is not set");
   });
 });
 
 describe("links in auth emails", () => {
   it("are built on NEXT_PUBLIC_APP_URL, without a trailing slash", () => {
-    process.env.NEXT_PUBLIC_APP_URL = "https://www.thekio.in/";
-    expect(publicAppUrl()).toBe("https://www.thekio.in");
+    process.env.NEXT_PUBLIC_APP_URL = "https://www.thekivo.in/";
+    expect(publicAppUrl()).toBe("https://www.thekivo.in");
     const reset = passwordResetEmail(TO, "Asha", `${publicAppUrl()}/reset-password?token=abc`, 60);
-    expect(reset.text).toContain("https://www.thekio.in/reset-password?token=abc");
+    expect(reset.text).toContain("https://www.thekivo.in/reset-password?token=abc");
     expect(logged).toEqual([]);
   });
 
@@ -136,7 +136,7 @@ describe("links in auth emails", () => {
   });
 
   it("escape the person's name in the reset email", () => {
-    const reset = passwordResetEmail(TO, `<img src=x onerror=alert(1)>`, "https://www.thekio.in/reset-password?token=abc", 60);
+    const reset = passwordResetEmail(TO, `<img src=x onerror=alert(1)>`, "https://www.thekivo.in/reset-password?token=abc", 60);
     expect(reset.html).not.toContain("<img");
     expect(reset.html).toContain("&lt;img");
   });
