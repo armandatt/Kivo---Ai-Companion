@@ -38,10 +38,10 @@ test('there is no background script and no content script: nothing runs while th
   assert.deepEqual(readdirSync(join(root, 'src', 'lib')).sort(), ['api.js', 'browser.js', 'page.js', 'store.js'])
 })
 
-test('the code uses four browser APIs, all in one file: the active tab, opening a tab, extension storage, and one read of that tab', () => {
+test('the code uses five browser APIs, all in one file: the active tab, opening a tab, extension storage, one read of that tab, and its screenshot', () => {
   const used = new Set()
   for (const { text } of sources) for (const m of code(text).matchAll(/chrome\.([a-zA-Z]+)\.([a-zA-Z]+)/g)) used.add(`${m[1]}.${m[2]}`)
-  assert.deepEqual([...used].sort(), ['scripting.executeScript', 'storage.local', 'tabs.create', 'tabs.query'])
+  assert.deepEqual([...used].sort(), ['scripting.executeScript', 'storage.local', 'tabs.captureVisibleTab', 'tabs.create', 'tabs.query'])
   // lib/browser.js is the adapter: no other file names the browser's API.
   for (const { name, text } of sources) if (name !== 'lib/browser.js') assert.ok(!code(text).match(/\bchrome\b/), `${name} goes through lib/browser.js`)
   const all = sources.map(s => code(s.text)).join('\n')
@@ -95,7 +95,7 @@ test('Add to notes opens Nova\'s capture page with the page and selection in the
 
 test('it keeps nothing in page-readable storage, writes no markup and runs nothing on a timer', () => {
   const all = sources.map(s => code(s.text)).join('\n')
-  assert.ok(!all.match(/chrome\.history|chrome\.cookies|chrome\.webRequest|chrome\.webNavigation|chrome\.runtime\.onMessage|captureVisibleTab|chrome\.tabs\.(onUpdated|onActivated|sendMessage|get\b)/), 'no way into a page, its history or its traffic')
+  assert.ok(!all.match(/chrome\.history|chrome\.cookies|chrome\.webRequest|chrome\.webNavigation|chrome\.runtime\.onMessage|chrome\.tabs\.(onUpdated|onActivated|sendMessage|get\b)/), 'no way into a page, its history or its traffic')
   assert.ok(!all.match(/localStorage|sessionStorage|document\.cookie|indexedDB|chrome\.storage\.sync/), 'no page-readable or synced storage')
   assert.ok(!all.match(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function/), 'page titles are set as text, never as markup')
   assert.ok(!all.match(/setInterval|chrome\.alarms|chrome\.idle/), 'nothing runs on a timer')
@@ -122,7 +122,8 @@ test('the popup page loads only its own files', () => {
 
 test('every permission is explained in the popup', () => {
   const popup = src('popup.js')
-  assert.match(popup, /"activeTab" lets Nova read this tab\\'s address and title when you click its icon/)
+  assert.match(popup, /"activeTab" lets Nova read this tab\\'s address and title when you click its icon, and take a screenshot of it when you press Screenshot/)
+  assert.match(popup, /A screenshot of what that tab is showing, only when you press Screenshot\. You see it here first\. It goes to Nova only with a question you ask, and is not kept\./)
   assert.match(popup, /"scripting" lets it read your selected text and the page\\'s own address on that tab, at that moment/)
   assert.match(popup, /"storage" keeps this browser connected/)
   assert.match(popup, /It is sent only if you press Save selection/)
@@ -168,6 +169,36 @@ test('a question about the page carries the question, the address, the title and
   assert.equal((popup.match(/client\.ask\(/g) ?? []).length, 1, 'asked only from the form the learner submits')
   assert.match(popup, /onsubmit: async event => \{\s*event\.preventDefault\(\)\s*if \(!question\.value\.trim\(\)\) return/)
   assert.match(src('popup.js'), /Nova has not read this page: it saw only the title/)
+})
+
+test('a screenshot is taken only by its button, shown before it is sent, and sent only with a question', () => {
+  const adapter = code(src('lib/browser.js'))
+  assert.equal((adapter.match(/captureVisibleTab/g) ?? []).length, 1, 'one way to take one')
+  assert.match(adapter, /chrome\.tabs\.captureVisibleTab\(typeof windowId === 'number' \? windowId : undefined, \{ format: 'jpeg', quality: 90 \}\)/, 'the visible tab of the popup\'s own window')
+  const popup = code(src('popup.js'))
+  assert.equal((popup.match(/browser\.captureTab\(/g) ?? []).length, 1)
+  const handler = popup.slice(popup.indexOf("shotButton.addEventListener('click'"), popup.indexOf('const ask = el('))
+  assert.match(handler, /browser\.captureTab\(tabWindowId\)/, 'taken in the Screenshot button\'s handler and nowhere else')
+  assert.doesNotMatch(handler, /client\.|fetch\(|sendEvent/, 'taking one sends nothing')
+  assert.match(handler, /showShot\(\)/, 'shown to the learner first')
+  assert.ok(!popup.match(/screenshot[^\n]*(store\.|chrome\.storage)/i), 'kept nowhere')
+  // It travels only inside the one question the learner submits.
+  assert.match(popup, /client\.ask\(buildQuestion\(\{ question: question\.value, page, title: title\.value, excerpt: probe\.selection, screenshot \}\)\)/)
+  assert.ok(!popup.match(/sendEvent\([^)]*screenshot/), 'never with a save')
+})
+
+test('a question carries a screenshot only when one was taken, as a JPEG, and waits longer for it', async () => {
+  assert.deepEqual(buildQuestion({ question: 'What is this arrow?', page, excerpt: '', screenshot: '/9j/AAAA' }).screenshot, { mimeType: 'image/jpeg', data: '/9j/AAAA' })
+  for (const screenshot of [undefined, null, '']) assert.ok(!('screenshot' in buildQuestion({ question: 'Why?', page, screenshot })), 'no field at all without one')
+  const timeouts = []
+  const realSetTimeout = globalThis.setTimeout
+  globalThis.setTimeout = (fn, ms) => { timeouts.push(ms); return realSetTimeout(() => {}, 0) }
+  try {
+    const client = createClient({ baseUrl: 'https://kivo.example', getToken: async () => 'tok', fetch: async () => new Response(JSON.stringify({ ok: true, answer: 'A.', basis: 'title' }), { status: 200 }) })
+    await client.ask(buildQuestion({ question: 'Why?', page }))
+    await client.ask(buildQuestion({ question: 'Why?', page, screenshot: '/9j/AAAA' }))
+  } finally { globalThis.setTimeout = realSetTimeout }
+  assert.ok(timeouts[1] > timeouts[0], 'a question with a picture is given longer')
 })
 
 // ── Reading the current page ──────────────────────────────────────────────────
@@ -458,7 +489,7 @@ test('connection status and the privacy disclosure are said in words, not colour
 
 test('the popup stays within its width and moves nothing for reduced motion', () => {
   const css = src('popup.css')
-  assert.match(css, /body \{ width: 360px;/)
+  assert.match(css, /body \{ width: 420px;/)
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/)
   assert.ok(!css.match(/@import|url\(/), 'no outside fonts or images')
 })

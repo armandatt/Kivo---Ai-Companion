@@ -6,13 +6,14 @@ Save the page you are reading to Nova, save a passage you selected on it, or sta
 
 | Permission | Why |
 |---|---|
-| `activeTab` | Read the address and title of the tab you are on, at the moment you click the Nova icon on it. No other tab, and not before you click. |
+| `activeTab` | Read the address and title of the tab you are on, at the moment you click the Nova icon on it, and take a screenshot of that tab if you press **Screenshot** (`chrome.tabs.captureVisibleTab`, which `activeTab` allows for that tab only). No other tab, and not before you click. |
 | `scripting` | On that same tab, at that same moment, read two things: the text you have selected, and the page's canonical link. One function (`probePage` in `src/lib/browser.js`), run once. |
 | `storage` | Keep this browser connected (the extension's own credential, in `chrome.storage.local`). |
 
 That is the whole list. There are no host permissions, no content scripts and no background script, so the extension:
 
-- reads nothing inside a page except your selection and its canonical link (no other text, no forms, passwords or cookies), and sends the selection only when you press **Save selection**;
+- reads nothing inside a page except your selection and its canonical link (no other text, no forms, passwords or cookies), and sends the selection only when you press **Save selection** or ask a question;
+- takes a screenshot of the tab only when you press **Screenshot**, shows it to you first, sends it only with a question you ask (only the part you marked, if you marked one), and keeps it nowhere;
 - cannot see your other tabs or your history;
 - does nothing while its popup is closed;
 - talks to one address only: the Nova web app it was built for.
@@ -91,11 +92,11 @@ Nothing about who you are is in it: Nova knows that from the credential. Saving 
 
 ## Saving a passage
 
-Select text on a page, then click the Nova icon. The popup shows the selection and a **Save selection** button; it goes to Nova as a `selection_saved` event with the page's address and title, and appears on Saved as a quote under the page it came from. Nova keeps up to 2,000 characters; a longer selection is refused with a message, never cut. On a page the browser will not let an extension into, the popup says so and the page can still be saved.
+Select text on a page, then click the Nova icon. The popup shows the selection and a **Save selection** button; it goes to Nova as a `selection_saved` event with the page's address and title, and appears on Saved as a quote under the page it came from. Nova keeps up to 4,000 characters (about 600 words); a longer selection is refused with a message, never cut. On a page the browser will not let an extension into, the popup says so and the page can still be saved.
 
 ## Asking about the page
 
-**Ask Nova** in the popup sends your question with the page's title, its address and your selection, if you made one; the box shows what goes with it before you send. Enter asks, Shift+Enter starts a new line, and a question that fails stays in the box. Nova has not read the page: with no selection it answers from the title and says so. The answer is shown in the popup and not kept.
+**Ask Nova** in the popup sends your question with the page's title, its address, your selection, if you made one, and your screenshot, if you took one; the chips under the box show what goes with it before you send. **Screenshot** captures what the tab is showing and shows it in the popup; drag across it to send only one part (a diagram), or send all of it. It leaves as a JPEG of at most 1600px on its long side and is kept nowhere. Enter asks, Shift+Enter starts a new line, and a question that fails stays in the box. Nova has not read the page: with no selection it answers from the title and says so. The answer is shown in the popup and not kept.
 
 ## One adapter for every browser
 

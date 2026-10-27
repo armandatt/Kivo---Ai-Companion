@@ -7,6 +7,8 @@
 //   chrome.tabs.create               open Nova in a new tab
 //   chrome.scripting.executeScript   read the selected text and the canonical
 //                                    link of that one tab, once, as the popup opens
+//   chrome.tabs.captureVisibleTab    a picture of what that tab is showing, only
+//                                    when the learner presses Screenshot
 //
 // Chrome, Edge, Brave, Arc and Safari all provide these under `chrome`, so
 // there is one adapter and no per-browser branch. A browser that lacks the
@@ -14,7 +16,9 @@
 //
 // There is no content script and no background script. The one function run
 // inside a page is `probePage` below; it runs because the learner clicked the
-// Nova button on that tab (activeTab), and never on any other tab.
+// Nova button on that tab (activeTab), and never on any other tab. The
+// screenshot needs no permission beyond that click either: activeTab is what
+// lets an extension capture the tab it was opened on, and nothing else.
 
 const SELECTION_READ_MAX = 4200   // enough to tell "too long" from "fits"
 const ADDRESS_MAX        = 2048
@@ -65,6 +69,20 @@ export const browser = {
   },
 
   openTab: url => chrome.tabs.create({ url }),
+
+  /**
+   * What the tab in this window is showing, as a JPEG data URL, or null when
+   * the browser will not allow it. The popup is not in the picture.
+   * @param {number | undefined} windowId
+   */
+  async captureTab(windowId) {
+    try {
+      const shot = await chrome.tabs.captureVisibleTab(typeof windowId === 'number' ? windowId : undefined, { format: 'jpeg', quality: 90 })
+      return typeof shot === 'string' && shot.startsWith('data:image/') ? shot : null
+    } catch {
+      return null
+    }
+  },
 
   /**
    * The selection and canonical link of one tab. Never throws: a page the

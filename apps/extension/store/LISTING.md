@@ -81,7 +81,7 @@ Do not show a real person's data: use a test account.
 
 | Permission | Justification |
 |---|---|
-| `activeTab` | When the user clicks the extension's icon, the popup reads the address and title of that one tab so the user can save it. It is the only tab the extension asks about (`chrome.tabs.query({ active: true, currentWindow: true })`), and only after the click. |
+| `activeTab` | When the user clicks the extension's icon, the popup reads the address and title of that one tab so the user can save it. It is the only tab the extension asks about (`chrome.tabs.query({ active: true, currentWindow: true })`), and only after the click. If the user presses **Screenshot**, the popup also captures that tab's visible area (`chrome.tabs.captureVisibleTab`) so they can ask about a diagram; it is shown to them first and sent only with their question. |
 | `scripting` | On that one tab, after that click, the popup runs one small function that returns the text the user has selected and the page's canonical link, so the user can save a passage they highlighted. It reads no other page content, runs once, and is part of the package (no remote code). The selection is sent only if the user presses **Save selection**. |
 | `storage` | Stores the extension's own access credential in `chrome.storage.local` after the user pairs the browser with a one-time code, so they stay connected. Nothing else is stored: no page addresses, no history. |
 
@@ -96,7 +96,7 @@ Which boxes to tick is the developer's declaration to Google. This is a reading 
 | Web history | **Likely yes** | The address and title of a page are sent when the user saves or studies it. It is one page at a time, at the user's request, and not a browsing log, but this is the category that describes page addresses and titles. |
 | Authentication information | **Likely yes** | The extension holds a credential issued by Nova and sends it with its requests. It never sees the user's password. |
 | Personally identifiable information | Likely no | The extension receives the user's first name to show "Connected · Name"; it does not collect or send it. |
-| Website content | **Likely yes** | The text the user has selected on the page is read when the popup opens, and sent when the user presses **Save selection** or asks a question. Nothing else from inside a page is read. |
+| Website content | **Yes** | The text the user has selected on the page is read when the popup opens, and sent when the user presses **Save selection** or asks a question. A screenshot of the visible tab is taken only when the user presses **Screenshot** and is sent only with a question. Nothing else from inside a page is read. |
 | User activity, location, health, financial, personal communications | No | Not accessed. |
 
 The three certifications the form asks for: data is not sold or transferred to third parties outside the approved use cases, not used for purposes unrelated to the single purpose, and not used for creditworthiness or lending. **CONFIRM the first one before submitting:** a saved passage, a page title and a question are sent by Kivo's server to its AI model provider to suggest topics and to answer the question. Whether that counts as an approved use (providing the extension's single purpose through a service provider) is the developer's judgement, and the privacy policy must say it.
