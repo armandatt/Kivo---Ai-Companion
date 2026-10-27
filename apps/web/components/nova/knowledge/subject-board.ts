@@ -1,7 +1,8 @@
 import type { MapEdge, MapNode, NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
 
-// One subject laid out as a board: each of its topics with the notes and
-// saved pages filed under that topic, what is filed under the subject alone,
+// One subject laid out as a board: each of its topics (topics inside topics
+// too, in saved order, each with its depth) with the notes and saved pages
+// filed under that topic, what is filed under the subject alone,
 // and the [[links]] the learner wrote that touch any of it. Read from the
 // Knowledge Map's edges as they are: an item sits under a topic only when an
 // edge says so, and no link is drawn that the map did not return. Map order
@@ -10,7 +11,8 @@ import type { MapEdge, MapNode, NovaKnowledgeMapReady } from '@repo/api/nova/pro
 export type Topic = Extract<MapNode, { type: 'topic' }>
 export type Item  = Extract<MapNode, { type: 'note' | 'resource' }>
 
-export interface BoardTopic { topic: Topic; items: Item[] }
+// depth 0: at the top of the subject; parent: the topic it sits inside.
+export interface BoardTopic { topic: Topic; items: Item[]; depth: number; parent: string | null }
 export interface BoardLink  { id: string; from: MapNode; to: MapNode }
 
 export interface SubjectBoard {
@@ -27,14 +29,25 @@ export function subjectBoard(map: Pick<NovaKnowledgeMapReady, 'nodes' | 'edges'>
   const subjectNode = `subject:${subjectId}`
   const edges = map.edges as MapEdge[]
 
-  const topics: BoardTopic[] = edges
-    .filter(e => e.kind === 'has_topic' && e.from === subjectNode)
+  // Depth first from the subject, following "has_topic" then "subtopic"
+  // edges, so a topic is followed by what is inside it. Map order among
+  // siblings (a topic's saved position first).
+  const childrenOf = (from: string, kind: 'has_topic' | 'subtopic') => edges
+    .filter(e => e.kind === kind && e.from === from)
     .map(e => byId.get(e.to))
     .filter((n): n is Topic => n?.type === 'topic')
-    .map(topic => ({
-      topic,
-      items: edges.filter(e => e.kind === 'about_topic' && e.from === topic.id).map(e => byId.get(e.to)).filter(isItem),
-    }))
+    .map((n, i) => ({ n, i }))
+    .sort((a, b) => (a.n.order ?? Infinity) - (b.n.order ?? Infinity) || a.i - b.i)
+    .map(({ n }) => n)
+  const topics: BoardTopic[] = []
+  const seen = new Set<string>()
+  const walk = (topic: Topic, depth: number, parent: string | null) => {
+    if (seen.has(topic.id)) return
+    seen.add(topic.id)
+    topics.push({ topic, depth, parent, items: edges.filter(e => e.kind === 'about_topic' && e.from === topic.id).map(e => byId.get(e.to)).filter(isItem) })
+    for (const child of childrenOf(topic.id, 'subtopic')) walk(child, depth + 1, topic.id)
+  }
+  for (const top of childrenOf(subjectNode, 'has_topic')) walk(top, 0, null)
 
   const loose = edges
     .filter(e => e.kind === 'filed_under' && e.from === subjectNode)
@@ -70,20 +83,6 @@ export function boardNeighbourhood(board: SubjectBoard, id: string): Set<string>
     if (ends.has(link.to.id)) near.add(link.from.id)
   }
   return near
-}
-
-// The stored links that touch one thing or anything in a set of things (a
-// topic tile and what is filed under it), each with the far end, and whether
-// it leads away from the thing (it wrote the link) or toward it. Board order.
-export function linksTouching(board: SubjectBoard, ids: ReadonlySet<string>): Array<{ link: BoardLink; other: MapNode; outward: boolean }> {
-  const found: Array<{ link: BoardLink; other: MapNode; outward: boolean }> = []
-  for (const link of board.links) {
-    const from = ids.has(link.from.id), to = ids.has(link.to.id)
-    if (from && to) continue   // within the set: nothing beyond it
-    if (from) found.push({ link, other: link.to, outward: true })
-    else if (to) found.push({ link, other: link.from, outward: false })
-  }
-  return found
 }
 
 // The subject a node belongs to, by name: a subject is its own.

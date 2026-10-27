@@ -66,6 +66,9 @@ export interface KnowledgeOutlineRow { id: string; name: string; depth: number; 
 export interface KnowledgeSubject {
   subjectId:   string;
   subjectName: string;
+  // The subject it sits inside (NovaSubject.parentId). Absent: on its own, or
+  // an older server.
+  parentId?:   string;
   // The topics studied on their own (leaves): due first, then weakest first.
   topics:      KnowledgeTopic[];
   // Every active topic as arranged. Absent on an older server.

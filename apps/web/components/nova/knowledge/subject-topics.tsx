@@ -1,23 +1,19 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ChevronDown, History, Loader2, Play } from 'lucide-react'
+import { History, Loader2, Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { KnowledgeSession, KnowledgeSubject, KnowledgeTopic } from '@repo/api/nova/product/knowledge.types'
+import type { KnowledgeSession, KnowledgeTopic } from '@repo/api/nova/product/knowledge.types'
 import type { ArchivedTopic, ArchivedTopicsView } from '@repo/api/nova/product/topic-archive.types'
 import { minutesLabel, relativeDay, sentenceCase } from '../format'
 import type { NoteSummary } from '@repo/api/nova/product/notes.types'
 import { fetchNotes } from '../notes/notes-api'
-import { LEVEL_LABEL, LEVEL_TONE, OUTCOME_LABEL, reviewLabel, sessionsLabel } from './labels'
+import { OUTCOME_LABEL } from './labels'
 import type { NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
 import { BUTTON_PRIMARY, SectionHeading } from '../workspace/ui'
-import { toneStyle } from '../subject-color'
 import { TopicConnections } from './topic-connections'
 
-// The record a link into this page names (?topic=<id> or ?subject=<id>), read
-// from the address once the page is in the browser.
-const linkedId = (name: 'topic' | 'subject'): string | null => new URLSearchParams(window.location.search).get(name)
 
 function SessionLine({ session }: { session: KnowledgeSession }) {
   return (
@@ -34,7 +30,7 @@ function SessionLine({ session }: { session: KnowledgeSession }) {
 // The learner's own notes on a topic, fetched when its panel is opened. They
 // are listed beside the topic's state; they are not part of it and do not
 // feed it.
-function TopicNotes({ subjectId, topicName }: { subjectId: string; topicName: string }) {
+export function TopicNotes({ subjectId, topicName }: { subjectId: string; topicName: string }) {
   const [notes, setNotes] = useState<NoteSummary[] | null>(null)
 
   useEffect(() => {
@@ -91,116 +87,64 @@ export interface TopicActions {
   studying?:    string | null
 }
 
-function TopicRow({ topic, subjectId, focus = 0, actions = {}, onChanged }: { topic: KnowledgeTopic; subjectId: string; focus?: number; actions?: TopicActions; onChanged?: () => void }) {
+// A studied topic's record: where it stands, its sessions and notes, what it
+// is joined to, and what can be done with it. Shown in a topic row's panel and
+// on the topic's own page.
+export function TopicDetails({ topic, subjectId, actions = {}, onChanged }: { topic: KnowledgeTopic; subjectId: string; actions?: TopicActions; onChanged?: () => void }) {
   const [archiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
-  // A link from the Knowledge Map names the topic it is about (?topic=<id>):
-  // that topic is opened and brought into view.
-  const [linked, setLinked] = useState(false)
-  const [open, setOpen] = useState(false)
-  const row = useRef<HTMLLIElement>(null)
-  useEffect(() => {
-    if (linkedId('topic') !== topic.id) return
-    setLinked(true)
-    setOpen(true)
-    row.current?.scrollIntoView({ block: 'center' })
-  }, [topic.id])
-  // Opened from the subject's board on this page: the same, without the address.
-  useEffect(() => {
-    if (!focus) return
-    setOpen(true)
-    row.current?.scrollIntoView({ block: 'center' })
-  }, [focus])
   const verified = topic.level !== 'unverified'
-  const panel = `topic-${topic.id}`
-
   return (
-    <li ref={row} data-topic={topic.topicName} data-level={topic.level} data-review={topic.reviewState} data-linked={linked || undefined}
-      style={toneStyle(topic.subjectName)}
-      className={cn('subject-tone relative transition-colors', (linked || open) && 'bg-[var(--sc-faint)]')}>
-      {/* An open topic is marked in its subject's colour */}
-      <span aria-hidden className={cn('absolute inset-y-0 left-0 w-1 bg-[var(--sc)] transition-opacity', open ? 'opacity-100' : 'opacity-0')} />
-      <button
-        type="button"
-        onClick={() => setOpen(v => !v)}
-        aria-expanded={open}
-        aria-controls={panel}
-        className="flex w-full items-center gap-4 px-4 py-3.5 text-left transition-colors hover:bg-white/3 sm:px-5"
-      >
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline justify-between gap-3">
-            <p className={cn('truncate text-[15px] text-foreground/90', open ? 'font-semibold text-foreground' : 'font-medium')}>{topic.topicName}</p>
-            <p className={cn('shrink-0 text-xs', topic.reviewState === 'due' ? 'font-medium text-amber-300' : 'text-foreground/50')}>
-              {reviewLabel(topic)}
-            </p>
-          </div>
-          {/* The bar is the stored level. With no session behind it there is no level to draw. */}
-          <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/6" aria-hidden>
-            {verified && <div className={cn('h-full rounded-full', LEVEL_TONE[topic.level])} style={{ width: `${topic.masteryPercent}%` }} />}
-          </div>
-          <p className="mt-1.5 flex flex-wrap gap-x-2 text-xs text-foreground/50">
-            <span>{verified ? `${LEVEL_LABEL[topic.level]} · ${topic.masteryPercent}%` : LEVEL_LABEL.unverified}</span>
-            <span aria-hidden className="text-foreground/20">·</span>
-            <span>{sessionsLabel(topic.reviewCount)}</span>
-            {topic.lastStudiedAt && <><span aria-hidden className="text-foreground/20">·</span><span>Last studied {relativeDay(topic.lastStudiedAt)}</span></>}
-          </p>
-        </div>
-        <ChevronDown className={cn('size-4 shrink-0 text-foreground/35 transition-transform', open && 'rotate-180')} />
-      </button>
-
-      {open && (
-        <div id={panel} className="nova-rise border-t border-[var(--sc-edge)] px-4 py-4 sm:px-5" data-topic-detail={topic.topicName}>
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-4">
-            <Fact label="Current level" value={verified ? `${topic.masteryPercent}%` : 'None yet'} />
-            <Fact label="Sessions" value={String(topic.reviewCount)} />
-            <Fact label="Retention now" value={topic.lastStudiedAt ? `about ${topic.retentionPercent}%` : 'Unknown'} />
-            <Fact
-              label="Next review"
-              value={topic.reviewState === 'due' ? (topic.daysOverdue > 0 ? `Due, ${topic.daysOverdue} day${topic.daysOverdue === 1 ? '' : 's'} overdue` : 'Due now')
-                : topic.nextReviewAt ? sentenceCase(relativeDay(topic.nextReviewAt)) : 'Not scheduled'}
-            />
-          </dl>
-          <p className="mt-4 max-w-prose text-xs leading-relaxed text-foreground/45">
-            {verified
-              ? `The level is a running estimate built over ${topic.reviewCount === 1 ? '1 finished session' : `${topic.reviewCount} finished sessions`}, from how you said each one went. A session where you didn't say counts as neutral. It is not a test score. Retention is an estimate from the time since you last studied it.`
-              : 'Nova has only heard about this topic in conversation. It gets a level after your first focused session on it.'}
-          </p>
-          <div className="mt-4">
-            <p className="text-xs font-medium text-foreground/55">Recent sessions</p>
-            {topic.recentSessions.length > 0
-              ? <ul className="mt-2 space-y-1.5">{topic.recentSessions.map(s => <SessionLine key={s.id} session={s} />)}</ul>
-              : <p className="mt-2 text-sm text-foreground/45">None in the last 90 days.</p>}
-          </div>
-          <TopicNotes subjectId={subjectId} topicName={topic.topicName} />
-          {actions.onOpenTopic && (
-            <TopicConnections map={actions.map ?? null} topicId={topic.id} topicName={topic.topicName} onOpenTopic={actions.onOpenTopic} />
-          )}
-          {actions.onStudy && (
-            <button type="button" onClick={() => actions.onStudy!(topic)} disabled={actions.studying != null} className={cn(BUTTON_PRIMARY, 'mt-5 h-9 px-3.5')}>
-              {actions.studying === topic.id
-                ? <><Loader2 aria-hidden className="size-3.5 animate-spin" /> Starting…</>
-                : <><Play aria-hidden className="size-3" /> Study this · 25 min</>}
-            </button>
-          )}
-          {onChanged && (
-            <div className="mt-4 border-t border-white/6 pt-3">
-              <button type="button" disabled={archiving} data-archive-topic
-                onClick={async () => {
-                  if (!window.confirm(`Archive ${topic.topicName}? It leaves your plan and lists. Its level, sessions, notes and history stay, and you can restore it.`)) return
-                  setArchiving(true); setArchiveError(null)
-                  const error = await postArchive(topic.id, true)
-                  setArchiving(false)
-                  if (error) setArchiveError(error); else onChanged()
-                }}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs text-foreground/60 transition-colors hover:bg-white/5 hover:text-foreground disabled:opacity-40">
-                {archiving ? 'Archiving…' : 'Archive this topic'}
-              </button>
-              {archiveError && <p role="alert" className="mt-2 text-xs text-amber-200/90">{archiveError}</p>}
-            </div>
-          )}
+    <>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-4">
+        <Fact label="Current level" value={verified ? `${topic.masteryPercent}%` : 'None yet'} />
+        <Fact label="Sessions" value={String(topic.reviewCount)} />
+        <Fact label="Retention now" value={topic.lastStudiedAt ? `about ${topic.retentionPercent}%` : 'Unknown'} />
+        <Fact
+          label="Next review"
+          value={topic.reviewState === 'due' ? (topic.daysOverdue > 0 ? `Due, ${topic.daysOverdue} day${topic.daysOverdue === 1 ? '' : 's'} overdue` : 'Due now')
+            : topic.nextReviewAt ? sentenceCase(relativeDay(topic.nextReviewAt)) : 'Not scheduled'}
+        />
+      </dl>
+      <p className="mt-4 max-w-prose text-xs leading-relaxed text-foreground/45">
+        {verified
+          ? `The level is a running estimate built over ${topic.reviewCount === 1 ? '1 finished session' : `${topic.reviewCount} finished sessions`}, from how you said each one went. A session where you didn't say counts as neutral. It is not a test score. Retention is an estimate from the time since you last studied it.`
+          : 'Nova has only heard about this topic in conversation. It gets a level after your first focused session on it.'}
+      </p>
+      <div className="mt-4">
+        <p className="text-xs font-medium text-foreground/55">Recent sessions</p>
+        {topic.recentSessions.length > 0
+          ? <ul className="mt-2 space-y-1.5">{topic.recentSessions.map(s => <SessionLine key={s.id} session={s} />)}</ul>
+          : <p className="mt-2 text-sm text-foreground/45">None in the last 90 days.</p>}
+      </div>
+      <TopicNotes subjectId={subjectId} topicName={topic.topicName} />
+      {actions.onOpenTopic && (
+        <TopicConnections map={actions.map ?? null} topicId={topic.id} topicName={topic.topicName} onOpenTopic={actions.onOpenTopic} />
+      )}
+      {actions.onStudy && (
+        <button type="button" onClick={() => actions.onStudy!(topic)} disabled={actions.studying != null} className={cn(BUTTON_PRIMARY, 'mt-5 h-9 px-3.5')}>
+          {actions.studying === topic.id
+            ? <><Loader2 aria-hidden className="size-3.5 animate-spin" /> Starting…</>
+            : <><Play aria-hidden className="size-3" /> Study this · 25 min</>}
+        </button>
+      )}
+      {onChanged && (
+        <div className="mt-4 border-t border-white/6 pt-3">
+          <button type="button" disabled={archiving} data-archive-topic
+            onClick={async () => {
+              if (!window.confirm(`Archive ${topic.topicName}? It leaves your plan and lists. Its level, sessions, notes and history stay, and you can restore it.`)) return
+              setArchiving(true); setArchiveError(null)
+              const error = await postArchive(topic.id, true)
+              setArchiving(false)
+              if (error) setArchiveError(error); else onChanged()
+            }}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs text-foreground/60 transition-colors hover:bg-white/5 hover:text-foreground disabled:opacity-40">
+            {archiving ? 'Archiving…' : 'Archive this topic'}
+          </button>
+          {archiveError && <p role="alert" className="mt-2 text-xs text-amber-200/90">{archiveError}</p>}
         </div>
       )}
-    </li>
+    </>
   )
 }
 
@@ -210,74 +154,6 @@ function Fact({ label, value }: { label: string; value: string }) {
       <dt className="text-[11px] uppercase tracking-[0.14em] text-foreground/40">{label}</dt>
       <dd className="mt-1 text-sm text-foreground/85">{value}</dd>
     </div>
-  )
-}
-
-// A subject and the topics Nova has on record under it. Topics are never
-// made up from the subject's name: a subject with none says so.
-export function SubjectTopics({ subject, focusTopic = null, showHeading = true, actions, onChanged }: {
-  subject:      KnowledgeSubject
-  // A topic to open and bring into view, from elsewhere on the page. `n`
-  // changes each time it is asked for, so asking twice opens it twice.
-  focusTopic?:  { id: string; n: number } | null
-  showHeading?: boolean
-  actions?:     TopicActions
-  // Archive and restore refresh the page through this (Subject Studio's).
-  onChanged?:   () => void
-}) {
-  const { topicCount, dueCount } = subject.summary
-  // Topics inside topics: shown as arranged (units, their topics, their
-  // subtopics, in saved order), with each studied topic in its place; or,
-  // on request, the studied ones due first. Flat subjects keep the list.
-  const nested = (subject.outline ?? []).some(r => r.depth > 0 || !r.studied)
-  const [arranged, setArranged] = useState(true)
-  const byId = new Map(subject.topics.map(t => [t.id, t]))
-  // ?subject=<id>, from the Knowledge Map: this subject is brought into view.
-  const [linked, setLinked] = useState(false)
-  const section = useRef<HTMLElement>(null)
-  useEffect(() => {
-    if (linkedId('subject') !== subject.subjectId) return
-    setLinked(true)
-    section.current?.scrollIntoView({ block: 'start' })
-  }, [subject.subjectId])
-  return (
-    <section ref={section} data-subject={subject.subjectName} aria-label={subject.subjectName} data-linked={linked || undefined} className="scroll-mt-24">
-      {showHeading && (
-        <div className="flex items-baseline justify-between gap-4">
-          <h3 className="text-[15px] font-semibold tracking-tight text-foreground">{subject.subjectName}</h3>
-          <p className="flex items-center gap-2 text-xs text-foreground/55">
-            {topicCount === 0 ? 'No topics yet' : `${topicCount} topic${topicCount === 1 ? '' : 's'} studied${dueCount > 0 ? ` · ${dueCount} due` : ''}`}
-            {nested && topicCount > 0 && (
-              <button type="button" onClick={() => setArranged(a => !a)} className="rounded-full border border-white/10 px-2 py-0.5 text-[11px] text-foreground/70 hover:text-foreground" data-topic-order={arranged ? 'arranged' : 'due'}>
-                {arranged ? 'Due first' : 'As arranged'}
-              </button>
-            )}
-          </p>
-        </div>
-      )}
-      {topicCount === 0 ? (
-        <p className="mt-3 rounded-lg border border-dashed border-white/12 px-4 py-4 text-sm text-foreground/60" data-empty="topics">
-          Nova hasn&apos;t built enough topic evidence here yet. Finish a focused session on something in {subject.subjectName} and it will appear.
-        </p>
-      ) : nested && arranged ? (
-        <ul className="mt-3 divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8" data-topic-outline>
-          {subject.outline!.map(r => {
-            const topic = byId.get(r.id)
-            if (r.studied && topic) return <li key={r.id} style={{ paddingLeft: r.depth * 18 }} className="list-none"><ul><TopicRow topic={topic} subjectId={subject.subjectId} focus={focusTopic?.id === topic.id ? focusTopic.n : 0} actions={actions} onChanged={onChanged} /></ul></li>
-            // A unit, a topic with topics inside it, or a milestone: it organises, and is not studied on its own.
-            return (
-              <li key={r.id} style={{ paddingLeft: 16 + r.depth * 18 }} className="bg-white/[0.02] py-2 pr-4 text-sm font-medium text-foreground/85" data-organiser={r.kind ?? 'topic'}>
-                {r.kind === 'milestone' && <span className="mr-1.5 text-[10px] uppercase tracking-wide text-foreground/50">Milestone</span>}{r.name}
-              </li>
-            )
-          })}
-        </ul>
-      ) : (
-        <ul className="mt-3 divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8">
-          {subject.topics.map(topic => <TopicRow key={topic.id} topic={topic} subjectId={subject.subjectId} focus={focusTopic?.id === topic.id ? focusTopic.n : 0} actions={actions} onChanged={onChanged} />)}
-        </ul>
-      )}
-    </section>
   )
 }
 

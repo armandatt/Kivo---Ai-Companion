@@ -62,6 +62,15 @@ describe("buildKnowledgeView: subjects and topics", () => {
     expect(view.totals).toEqual({ subjectCount: 3, topicCount: 4, dueCount: 2 });
   });
 
+  it("names the subject a subject sits inside, and nothing for one on its own", () => {
+    const view = buildKnowledgeView(inputs({ subjects: SUBJECTS.map(s => (s.name === "DBMS" ? { ...s, parentId: "os" } : { ...s, parentId: null })) }));
+    expect(view.subjects.map(s => [s.subjectName, s.parentId])).toEqual([
+      ["Operating Systems", undefined],
+      ["DBMS", "os"],
+      ["Computer Networks", undefined],
+    ]);
+  });
+
   it("reports each topic's stored state and nothing more", () => {
     const view = buildKnowledgeView(inputs());
     const deadlocks = view.subjects[0]!.topics[0]!;

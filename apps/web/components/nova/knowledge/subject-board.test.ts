@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { MapEdge, MapNode } from '@repo/api/nova/product/knowledge-map.types'
-import { boardNeighbourhood, linksTouching, nodeSubject, subjectBoard } from './subject-board'
+import { boardNeighbourhood, nodeSubject, subjectBoard } from './subject-board'
 
 const subject = (id: string): MapNode => ({ id: `subject:${id}`, type: 'subject', label: id, href: null, subjectId: id, topics: 0, notes: 0, resources: 0 })
 const topic = (id: string, subjectId: string): MapNode => ({ id: `topic:${id}`, type: 'topic', label: id, href: null, subjectId, subjectName: subjectId, sessions: 0, level: null, masteryPercent: null, notes: 0, resources: 0 })
@@ -53,17 +53,27 @@ test('pointing at a topic lights what is filed under it and what its links reach
   assert.deepEqual([...boardNeighbourhood(board, 'note:n-os')].sort(), ['note:n-os', 'topic:deadlocks'])
 })
 
-test('the links around a tile say which way they run, and skip links inside it', () => {
-  const board = subjectBoard({ nodes, edges }, 'os')
-  const around = (ids: string[]) => linksTouching(board, new Set(ids)).map(l => `${l.outward ? 'to' : 'from'} ${l.other.id}`)
-  assert.deepEqual(around(['topic:deadlocks', 'resource:p-deadlocks']), ['from note:n-os'])
-  assert.deepEqual(around(['topic:paging', 'note:n-paging']), ['from note:n-db'])
-  assert.deepEqual(around(['note:n-os']), ['to topic:deadlocks'])
-  assert.deepEqual(around(['note:n-os', 'topic:deadlocks']), [])
-})
-
 test('a node\'s subject is the one it is filed under, and a subject is its own', () => {
   assert.equal(nodeSubject(nodes[0]), 'os')
   assert.equal(nodeSubject(nodes[3]), 'os')
   assert.equal(nodeSubject(nodes[9]), null)
+})
+
+test('topics inside topics follow their parent, in saved order, each with its depth and parent', () => {
+  const at = (id: string, order: number): MapNode => ({ ...topic(id, 'fin'), order } as MapNode)
+  const nested = {
+    nodes: [subject('fin'), at('investing', 0), at('risk', 1), at('bonds', 0), at('ratios', 0), at('basics', 1), note('n-risk', 'fin')],
+    edges: [
+      edge('subject:fin', 'topic:basics', 'has_topic'), edge('subject:fin', 'topic:investing', 'has_topic'),
+      edge('topic:investing', 'topic:risk', 'subtopic'), edge('topic:investing', 'topic:bonds', 'subtopic'),
+      edge('topic:risk', 'topic:ratios', 'subtopic'), edge('topic:risk', 'note:n-risk', 'about_topic'),
+      // A loop in bad data is walked once.
+      edge('topic:ratios', 'topic:investing', 'subtopic'),
+    ],
+  }
+  const board = subjectBoard(nested, 'fin')
+  assert.deepEqual(board.topics.map(t => `${t.depth}:${t.topic.label}<${t.parent ?? '-'}`), [
+    '0:investing<-', '1:bonds<topic:investing', '1:risk<topic:investing', '2:ratios<topic:risk', '0:basics<-',
+  ])
+  assert.deepEqual(board.topics.find(t => t.topic.id === 'topic:risk')!.items.map(i => i.id), ['note:n-risk'])
 })
