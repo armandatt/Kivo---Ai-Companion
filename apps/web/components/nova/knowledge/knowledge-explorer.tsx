@@ -102,7 +102,7 @@ export function KnowledgeExplorer({ roots, selectedKey, open, onToggle, onOpen, 
             if (e.key === 'Enter' && results[0]) { pick(results[0].node); e.preventDefault() }
             if (e.key === 'ArrowDown' && searching) stepResults(e)
           }}
-          className="h-8 w-full rounded-lg border border-white/8 bg-white/[0.03] pl-8 pr-7 text-[13px] text-foreground placeholder:text-foreground/40 focus:border-keppel-400/60 focus:outline-none" />
+          className="h-9 w-full rounded-lg border border-white/8 bg-white/[0.03] pl-8 pr-7 text-[13px] text-foreground placeholder:text-foreground/40 focus:border-keppel-400/60 focus:outline-none" />
         {query && (
           <button type="button" onClick={() => setQuery('')} aria-label="Clear the search" className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-foreground/45 hover:text-foreground">
             <X aria-hidden className="size-3.5" />
@@ -144,9 +144,10 @@ export function KnowledgeExplorer({ roots, selectedKey, open, onToggle, onOpen, 
                   onFocus={e => { if (e.target === e.currentTarget) setFocusKey(node.key) }}
                   onClick={() => { setFocusKey(node.key); onOpen(node) }}
                   data-node={node.key} data-kind={node.kind}
-                  className={cn('group relative flex h-7 cursor-pointer select-none items-center gap-1.5 rounded-md pr-2 text-[13px] outline-none transition-colors',
+                  title={node.name}
+                  className={cn('group relative flex h-[30px] cursor-pointer select-none items-center gap-1.5 rounded-md pr-2 text-[13px] outline-none transition-colors',
                     'focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-keppel-400/70',
-                    selected ? 'bg-white/8 text-foreground' : 'text-foreground/75 hover:bg-white/4 hover:text-foreground',
+                    selected ? 'bg-action/12 text-foreground' : 'text-foreground/75 hover:bg-white/5 hover:text-foreground',
                     opened !== null && node.parentKey === opened && 'tree-in')}
                   style={{ paddingLeft: BASE + (level - 1) * INDENT }}>
                   {/* Guides: one faint line for each level above */}

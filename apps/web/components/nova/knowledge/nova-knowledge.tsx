@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ChevronDown, ChevronRight, Flag, NotebookPen, PencilRuler, Play, Waypoints } from 'lucide-react'
 import type { KnowledgeSubject, KnowledgeTopic, NovaKnowledgeReady } from '@repo/api/nova/product/knowledge.types'
@@ -15,7 +15,7 @@ import { BUTTON_PRIMARY, BUTTON_QUIET, LoadFailed, Skeleton, TEXT_LINK } from '.
 import { subjectColor, toneStyle } from '../subject-color'
 import { DueReviews } from './due-reviews'
 import { LEVEL_LABEL, LEVEL_TONE, reviewLabel } from './labels'
-import { ArchivedTopics, RecentLearning, TopicDetails, TopicNotes, type TopicActions } from './subject-topics'
+import { ArchivedTopics, ArchiveTopic, RecentLearning, StudyButton, TopicMetrics, TopicNotes, TopicSessions, type TopicActions } from './subject-topics'
 import { TopicConnections } from './topic-connections'
 import { SubjectBoardView } from './subject-board-view'
 import { KnowledgeExplorer } from './knowledge-explorer'
@@ -32,6 +32,10 @@ import { buildKnowledgeTree, indexTree, keyOf, pathTo, selectionFrom, selectionH
 const TOPIC_SESSION_MINUTES = 25
 // Which branches are open, per browser: a convenience, not a record.
 const OPEN_KEY = 'kivo-knowledge-tree'
+// The explorer's width, per browser.
+const WIDTH_KEY = 'kivo-knowledge-width'
+const WIDTH = { min: 220, max: 420, initial: 272 }
+const clampWidth = (w: number) => Math.round(Math.min(WIDTH.max, Math.max(WIDTH.min, w)))
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
@@ -59,6 +63,41 @@ function LevelsBar({ topics, className }: { topics: KnowledgeTopic[]; className?
 // Every studied topic at or below a node.
 function studiedBelow(node: TreeNode): KnowledgeTopic[] {
   return [...(node.topic ? [node.topic] : []), ...node.children.flatMap(studiedBelow)]
+}
+
+// A titled block of a page.
+function Section({ title, children, className, id }: { title: string; children: React.ReactNode; className?: string; id?: string }) {
+  const hid = `kn-${id ?? title.toLowerCase().replace(/[^a-z]+/g, '-')}`
+  return (
+    <section aria-labelledby={hid} className={className}>
+      <h2 id={hid} className="mb-3 text-[13px] font-semibold text-foreground/80">{title}</h2>
+      {children}
+    </section>
+  )
+}
+
+// How the studied topics under something stand, counted from their levels.
+function LevelSummary({ topics, due }: { topics: KnowledgeTopic[]; due: number }) {
+  const count = (l: KnowledgeTopic['level']) => topics.filter(t => t.level === l).length
+  const cells = [
+    { label: 'Topics', value: topics.length },
+    { label: 'Due', value: due, due: due > 0 },
+    { label: 'Solid', value: count('solid') },
+    { label: 'Not started', value: count('unverified') },
+  ]
+  return (
+    <div>
+      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-white/8 bg-white/8 sm:grid-cols-4">
+        {cells.map(c => (
+          <div key={c.label} className="min-w-0 bg-card px-3.5 py-3">
+            <dt className="text-[11px] font-medium text-foreground/50">{c.label}</dt>
+            <dd className={cn('mt-0.5 truncate text-base font-semibold tabular-nums tracking-tight', c.due ? 'text-amber-300' : 'text-foreground')}>{c.value}</dd>
+          </div>
+        ))}
+      </dl>
+      <LevelsBar topics={topics} className="mt-3" />
+    </div>
+  )
 }
 
 function Breadcrumbs({ path, onGo }: { path: TreeNode[]; onGo: (s: Selection | null) => void }) {
@@ -92,7 +131,7 @@ function ChildRow({ node, onGo }: { node: TreeNode; onGo: (s: Selection) => void
           : <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', t && t.level !== 'unverified' ? LEVEL_TONE[t.level] : 'border border-foreground/35')} />}
         <span className="min-w-0 flex-1 truncate text-sm text-foreground/90">{node.name}</span>
         <span className={cn('shrink-0 text-xs', node.dueCount > 0 ? 'font-medium text-amber-300' : 'text-foreground/50')}>
-          {t ? (t.reviewState === 'due' ? 'Due' : t.level === 'unverified' ? LEVEL_LABEL.unverified : `${LEVEL_LABEL[t.level]} · ${t.masteryPercent}%`)
+          {t ? (t.reviewState === 'due' ? 'Due' : t.level === 'unverified' ? 'Not started' : `${LEVEL_LABEL[t.level]} · ${t.masteryPercent}%`)
             : node.topicCount > 0 ? `${plural(node.topicCount, 'topic', 'topics')}${node.dueCount ? ` · ${node.dueCount} due` : ''}` : node.children.length ? plural(node.children.length, 'item', 'items') : 'Nothing inside yet'}
         </span>
         <ChevronRight aria-hidden className="size-3.5 shrink-0 text-foreground/30" />
@@ -122,6 +161,10 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
   // ── What is shown: the address ──────────────────────────────────────────
   const [selection, setSelection] = useState<Selection | null>(null)
   const [browse, setBrowse] = useState(false)
+  const [width, setWidth] = useState(WIDTH.initial)
+  useEffect(() => { try { const w = Number(localStorage.getItem(WIDTH_KEY)); if (w) setWidth(clampWidth(w)) } catch { /* private window */ } }, [])
+  const keepWidth = (w: number) => { const next = clampWidth(w); setWidth(next); try { localStorage.setItem(WIDTH_KEY, String(next)) } catch { /* private window */ } }
+  const drag = useRef<{ x: number; w: number } | null>(null)
   useEffect(() => {
     const read = () => setSelection(selectionFrom(window.location.search))
     read()
@@ -183,9 +226,18 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
 
   return (
     <div className="mx-auto w-full max-w-[96rem] pb-20 pt-12 lg:pt-2">
-      <div className="lg:grid lg:grid-cols-[16.5rem_minmax(0,1fr)] lg:gap-8 xl:grid-cols-[17.5rem_minmax(0,1fr)]">
+      <div className="lg:grid lg:grid-cols-[var(--kn-w)_minmax(0,1fr)] lg:gap-8" style={{ '--kn-w': `${width}px` } as React.CSSProperties}>
         {/* ── The explorer ─────────────────────────────────────────────── */}
-        <aside aria-label="Knowledge explorer" className="lg:sticky lg:top-2 lg:flex lg:h-[calc(100dvh-4rem)] lg:flex-col lg:self-start">
+        <aside aria-label="Knowledge explorer" className="relative lg:sticky lg:top-2 lg:flex lg:h-[calc(100dvh-4rem)] lg:flex-col lg:self-start lg:border-r lg:border-white/8 lg:pr-4">
+          {/* Drag (or arrow keys) to resize; kept in this browser */}
+          <div role="separator" aria-orientation="vertical" aria-label="Resize the explorer" tabIndex={0}
+            aria-valuemin={WIDTH.min} aria-valuemax={WIDTH.max} aria-valuenow={width}
+            onPointerDown={e => { drag.current = { x: e.clientX, w: width }; e.currentTarget.setPointerCapture(e.pointerId) }}
+            onPointerMove={e => { if (drag.current) setWidth(clampWidth(drag.current.w + e.clientX - drag.current.x)) }}
+            onPointerUp={e => { if (drag.current) { keepWidth(drag.current.w + e.clientX - drag.current.x); drag.current = null } }}
+            onDoubleClick={() => keepWidth(WIDTH.initial)}
+            onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { keepWidth(width + (e.key === 'ArrowLeft' ? -16 : 16)); e.preventDefault() } }}
+            className="absolute -right-[3px] top-0 z-20 hidden h-full w-1.5 cursor-col-resize rounded-full transition-colors hover:bg-action/40 focus-visible:bg-action/60 focus-visible:outline-none lg:block" data-resize />
           <div className="flex items-center justify-between gap-2 pb-2">
             <button type="button" onClick={() => go(null)} className="rounded text-sm font-semibold text-foreground hover:text-foreground/80 focus-visible:outline-2 focus-visible:outline-keppel-400" data-knowledge-home>Knowledge</button>
             {selection !== null && (
@@ -234,9 +286,9 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
                       : <>{node.topicCount === 0 ? 'No topics yet' : plural(node.topicCount, 'topic', 'topics')}{node.dueCount > 0 && <> · <span className="font-medium text-amber-300">{node.dueCount} due</span></>}</>}
                     {node.milestone && ' · Milestone'}
                   </p>
-                  {!node.topic && <LevelsBar topics={studiedBelow(node)} className="mt-2 w-48" />}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  {node.topic && <StudyButton topic={node.topic} actions={actions} />}
                   <Link href={noteHref} className={BUTTON_QUIET}><NotebookPen aria-hidden className="size-3.5" /> Note</Link>
                   <Link href={`/map?focus=${encodeURIComponent(`${node.kind}:${node.id}`)}`} className={BUTTON_QUIET} aria-label="Open on the Knowledge Map" title="Open on the Knowledge Map"><Waypoints aria-hidden className="size-3.5" /></Link>
                   <Link href={editHref} className={cn(TEXT_LINK, 'ml-1')} data-edit-structure><PencilRuler aria-hidden className="size-3.5" /> Edit learning structure</Link>
@@ -269,29 +321,36 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
                   ))}
                 </div>
               ) : (
-                <div className="mt-5 max-w-3xl space-y-6">
-                  {node.children.length > 0 && (
-                    <section aria-labelledby="topic-inside">
-                      <h2 id="topic-inside" className="text-xs font-semibold text-foreground/60">Inside {node.name}</h2>
-                      <ul className="mt-2 divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8" data-topic-children>
-                        {node.children.map(c => <ChildRow key={c.key} node={c} onGo={go} />)}
-                      </ul>
-                    </section>
-                  )}
-                  {node.topic ? (
-                    <section aria-label="Progress" style={toneStyle(node.topic.subjectName)} className="subject-tone" data-topic-detail={node.name}>
-                      <TopicDetails topic={node.topic} subjectId={node.subjectId} actions={actions} onChanged={onChanged} />
-                      {error && <p role="alert" className="mt-2 text-sm text-red-300">{error}</p>}
-                    </section>
-                  ) : (
-                    <section aria-label="Filed here" data-topic-detail={node.name}>
-                      {node.children.length === 0 && (
-                        <p className="text-sm text-foreground/60">{node.milestone ? 'A milestone with nothing inside it yet.' : 'Nothing inside this topic yet.'}</p>
-                      )}
-                      <TopicNotes subjectId={node.subjectId} topicName={node.name} />
-                      <TopicConnections map={mapReady} topicId={node.id} topicName={node.name} onOpenTopic={id => go({ kind: 'topic', id })} />
-                    </section>
-                  )}
+                <div className="mt-6 grid gap-x-10 gap-y-8 xl:grid-cols-[minmax(0,1fr)_17rem] 2xl:grid-cols-[minmax(0,1fr)_20rem]">
+                  <div className="min-w-0 space-y-8">
+                    {node.topic ? (
+                      <>
+                        <Section title="Where it stands" id="standing"><div data-topic-detail={node.name}><TopicMetrics topic={node.topic} /></div></Section>
+                        {error && <p role="alert" className="-mt-4 text-sm text-red-300">{error}</p>}
+                        <Section title="Recent sessions" id="sessions"><TopicSessions topic={node.topic} /></Section>
+                      </>
+                    ) : (
+                      <>
+                        {node.topicCount > 0 && <Section title="Progress" id="progress"><LevelSummary topics={studiedBelow(node)} due={node.dueCount} /></Section>}
+                        <Section title={node.children.length ? `Inside ${node.name}` : 'Inside'} id="inside">
+                          {node.children.length > 0 ? (
+                            <ul className="divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8 bg-card/40" data-topic-children>
+                              {node.children.map(c => <ChildRow key={c.key} node={c} onGo={go} />)}
+                            </ul>
+                          ) : (
+                            <p className="rounded-xl border border-dashed border-white/12 px-4 py-5 text-sm text-foreground/60" data-topic-detail={node.name}>
+                              {node.milestone ? 'Nothing is in this milestone yet.' : 'Nothing is inside this topic yet.'} Add to it with <Link href={editHref} className="font-medium text-keppel-300 hover:text-keppel-200">Edit learning structure</Link>.
+                            </p>
+                          )}
+                        </Section>
+                      </>
+                    )}
+                  </div>
+                  <aside aria-label={`About ${node.name}`} className="min-w-0 space-y-8 xl:border-l xl:border-white/8 xl:pl-8">
+                    <Section title="Notes" id="notes"><TopicNotes subjectId={node.subjectId} topicName={node.name} /></Section>
+                    <div className="[&>*]:mt-0 [&>*]:border-t-0 [&>*]:pt-0"><TopicConnections map={mapReady} topicId={node.id} topicName={node.name} onOpenTopic={id => go({ kind: 'topic', id })} /></div>
+                    {node.topic && onChanged && <div className="border-t border-white/8 pt-4"><ArchiveTopic topic={node.topic} onChanged={onChanged} /></div>}
+                  </aside>
                 </div>
               )}
             </div>
