@@ -12,6 +12,10 @@ import { loginWithPassword } from "../login.service";
 import { isGmailAddress, isValidSignupEmail, normalizeEmail, passwordProblem } from "../email-rules";
 import { OTP_LENGTH, generateOtp, generateToken, hashOtp, hashToken } from "../secrets";
 import { fakeAuth, minutesAfter, type FakeAuth } from "./fake-auth";
+import { PRIVACY_VERSION, TERMS_VERSION } from "../legal";
+
+// The agreement every new account gives (auth/legal.ts).
+const CONSENT = { terms: TERMS_VERSION, privacy: PRIVACY_VERSION };
 
 const EMAIL = "asha@gmail.com";
 const PASSWORD = "correct horse 42";
@@ -27,7 +31,7 @@ function setup(seed?: Parameters<typeof fakeAuth>[0]) {
 }
 
 async function begin(ctx: ReturnType<typeof setup>, when: Date, password = PASSWORD, email = EMAIL) {
-  const result = await startSignup({ email, password, name: "Asha" }, ctx.at(when));
+  const result = await startSignup({ legal: CONSENT, email, password, name: "Asha" }, ctx.at(when));
   if (!result.ok) throw new Error(`signup did not start: ${result.error}`);
   return { signupToken: result.signupToken, code: ctx.auth.lastCode() };
 }
@@ -159,7 +163,7 @@ describe("starting a signup", () => {
 
   it("normalizes the address before storing it", async () => {
     const ctx = setup();
-    const result = await startSignup({ email: "  Asha@Gmail.COM ", password: PASSWORD }, ctx.at(ctx.t0));
+    const result = await startSignup({ legal: CONSENT, email: "  Asha@Gmail.COM ", password: PASSWORD }, ctx.at(ctx.t0));
 
     expect(result).toMatchObject({ ok: true, email: EMAIL });
     expect(ctx.auth.pending[0]!.email).toBe(EMAIL);
@@ -167,7 +171,7 @@ describe("starting a signup", () => {
 
   it.each(["not-an-email", "asha@", "", null])("refuses the malformed address %p", async (email) => {
     const { auth, at, t0 } = setup();
-    const result = await startSignup({ email, password: PASSWORD }, at(t0));
+    const result = await startSignup({ legal: CONSENT, email, password: PASSWORD }, at(t0));
 
     expect(result).toMatchObject({ ok: false, status: 400, error: "Enter a valid email address" });
     expect(auth.pending).toHaveLength(0);
@@ -178,7 +182,7 @@ describe("starting a signup", () => {
     "refuses the undeliverable address %s without sending anything",
     async (email) => {
       const { auth, at, t0 } = setup();
-      const result = await startSignup({ email, password: PASSWORD }, at(t0));
+      const result = await startSignup({ legal: CONSENT, email, password: PASSWORD }, at(t0));
 
       expect(result).toMatchObject({ ok: false, status: 400, error: INVALID_EMAIL_MESSAGE });
       expect(auth.pending).toHaveLength(0);
@@ -205,7 +209,7 @@ describe("starting a signup", () => {
 
   it("refuses a password that is too short", async () => {
     const { auth, at, t0 } = setup();
-    const result = await startSignup({ email: EMAIL, password: "short" }, at(t0));
+    const result = await startSignup({ legal: CONSENT, email: EMAIL, password: "short" }, at(t0));
 
     expect(result).toMatchObject({ ok: false, status: 400 });
     expect(auth.pending).toHaveLength(0);
@@ -214,7 +218,7 @@ describe("starting a signup", () => {
   it("reports a failed delivery and still creates no account", async () => {
     const { auth, at, t0 } = setup();
     auth.mail.working = false;
-    const result = await startSignup({ email: EMAIL, password: PASSWORD }, at(t0));
+    const result = await startSignup({ legal: CONSENT, email: EMAIL, password: PASSWORD }, at(t0));
 
     expect(result).toMatchObject({ ok: false, status: 503 });
     expect(auth.users).toHaveLength(0);
@@ -223,7 +227,7 @@ describe("starting a signup", () => {
   it("leaves no attempt behind when the code cannot be sent, and a later try works normally", async () => {
     const ctx = setup();
     ctx.auth.mail.working = false;
-    const failed = await startSignup({ email: "asha.rao@outlook.com", password: PASSWORD }, ctx.at(ctx.t0));
+    const failed = await startSignup({ legal: CONSENT, email: "asha.rao@outlook.com", password: PASSWORD }, ctx.at(ctx.t0));
 
     expect(failed).toMatchObject({ ok: false, status: 503 });
     expect(failed).not.toHaveProperty("signupToken");
@@ -343,8 +347,8 @@ describe("an address that already has an account", () => {
     const fresh = setup();
     const taken = setup({ users: [existing] });
 
-    const freshResult = await startSignup({ email: "new@gmail.com", password: PASSWORD }, fresh.at(fresh.t0));
-    const takenResult = await startSignup({ email: EMAIL, password: PASSWORD }, taken.at(taken.t0));
+    const freshResult = await startSignup({ legal: CONSENT, email: "new@gmail.com", password: PASSWORD }, fresh.at(fresh.t0));
+    const takenResult = await startSignup({ legal: CONSENT, email: EMAIL, password: PASSWORD }, taken.at(taken.t0));
 
     expect(takenResult.ok).toBe(true);
     expect(Object.keys(takenResult).sort()).toEqual(Object.keys(freshResult).sort());
@@ -353,7 +357,7 @@ describe("an address that already has an account", () => {
 
   it("is told by email, without a code", async () => {
     const { auth, at, t0 } = setup({ users: [existing] });
-    await startSignup({ email: EMAIL, password: PASSWORD }, at(t0));
+    await startSignup({ legal: CONSENT, email: EMAIL, password: PASSWORD }, at(t0));
 
     expect(auth.sent).toHaveLength(1);
     expect(auth.sent[0]!.subject).toMatch(/already have/i);
@@ -362,7 +366,7 @@ describe("an address that already has an account", () => {
 
   it("is left exactly as it was, whatever is tried with the token", async () => {
     const { auth, at, t0 } = setup({ users: [existing] });
-    const start = await startSignup({ email: "ASHA@gmail.com", password: PASSWORD }, at(t0));
+    const start = await startSignup({ legal: CONSENT, email: "ASHA@gmail.com", password: PASSWORD }, at(t0));
     const signupToken = start.ok ? start.signupToken : "";
 
     for (const code of ["12345678", "00000000", "99999999"]) {
@@ -378,8 +382,8 @@ describe("an address that already has an account", () => {
 
   it("is limited the same way as a new address", async () => {
     const { at, t0 } = setup({ users: [existing] });
-    await startSignup({ email: EMAIL, password: PASSWORD }, at(t0));
-    const second = await startSignup({ email: EMAIL, password: PASSWORD }, at(minutesAfter(t0, 0.5)));
+    await startSignup({ legal: CONSENT, email: EMAIL, password: PASSWORD }, at(t0));
+    const second = await startSignup({ legal: CONSENT, email: EMAIL, password: PASSWORD }, at(minutesAfter(t0, 0.5)));
 
     expect(second).toMatchObject({ ok: false, status: 429, retryAfterSeconds: 30 });
   });
@@ -665,7 +669,7 @@ describe("how many emails one address can be sent", () => {
 
     // A new signup every 13 minutes: under the hourly limit, over the daily one.
     for (let i = 0; i < SIGNUP_SENDS_PER_DAY + 4; i++) {
-      const result = await startSignup({ email: EMAIL, password: PASSWORD }, ctx.at(minutesAfter(ctx.t0, i * 13)));
+      const result = await startSignup({ legal: CONSENT, email: EMAIL, password: PASSWORD }, ctx.at(minutesAfter(ctx.t0, i * 13)));
       if (result.ok) sends++;
       else expect(result).toMatchObject({ status: 429 });
     }
@@ -673,7 +677,7 @@ describe("how many emails one address can be sent", () => {
     expect(sends).toBe(SIGNUP_SENDS_PER_DAY);
     expect(ctx.auth.sent).toHaveLength(SIGNUP_SENDS_PER_DAY);
 
-    const nextDay = await startSignup({ email: EMAIL, password: PASSWORD }, ctx.at(minutesAfter(ctx.t0, 24 * 60 + 1)));
+    const nextDay = await startSignup({ legal: CONSENT, email: EMAIL, password: PASSWORD }, ctx.at(minutesAfter(ctx.t0, 24 * 60 + 1)));
     expect(nextDay.ok).toBe(true);
   });
 
@@ -685,7 +689,7 @@ describe("how many emails one address can be sent", () => {
 
     // A new process has no memory of its own: only the same database.
     const afterRestart = { deps: { ...auth.deps }, now: minutesAfter(t0, 20) };
-    const result = await startSignup({ email: EMAIL, password: PASSWORD }, afterRestart);
+    const result = await startSignup({ legal: CONSENT, email: EMAIL, password: PASSWORD }, afterRestart);
 
     expect(result).toMatchObject({ ok: false, status: 429 });
     expect(auth.throttles.length).toBeGreaterThan(0);

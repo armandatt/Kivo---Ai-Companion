@@ -70,26 +70,29 @@ export function AuthNotice({ children }: { children: ReactNode }) {
 }
 
 /** The two ways in, shown before any form: email, or Google. */
-export function AuthMethodChoice({ onEmail }: { onEmail: () => void }) {
+// googleHref: where Google sign-in starts (sign-up adds the learner's
+// agreement to it). onGoogle may stop the click, as sign-up does until the
+// box is ticked.
+export function AuthMethodChoice({ onEmail, googleHref, onGoogle }: { onEmail: () => void; googleHref?: string; onGoogle?: (e: React.MouseEvent<HTMLAnchorElement>) => void }) {
   return (
     <div className="space-y-3">
       <Button type="button" onClick={onEmail} className={authPrimaryButtonClass}>
         <Mail className="w-5 h-5 mr-2" />
         Continue with email
       </Button>
-      <GoogleButton />
+      <GoogleButton href={googleHref} onClick={onGoogle} />
     </div>
   )
 }
 
-export function GoogleButton() {
+export function GoogleButton({ href = '/api/auth/google', onClick }: { href?: string; onClick?: (e: React.MouseEvent<HTMLAnchorElement>) => void } = {}) {
   return (
     <Button
       asChild
       variant="outline"
       className="h-11 w-full rounded-lg border-ink-700 bg-ink-900 text-paper-50 transition-colors duration-200 hover:bg-ink-800 hover:text-paper-50"
     >
-      <a href="/api/auth/google">
+      <a href={href} onClick={onClick} data-google-signin>
         <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
           <path
             d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"

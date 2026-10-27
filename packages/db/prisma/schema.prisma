@@ -30,6 +30,8 @@ model User {
   sessions Session[]
 
   passwordResetTokens PasswordResetToken[]
+  // Agreement to the Terms and the Privacy Policy, given at sign-up (auth/legal.ts).
+  legalConsents LegalConsent[]
   novaExtensionConnections NovaExtensionConnection[]
 
   userProfile UserProfile?
@@ -437,11 +439,35 @@ model PendingSignup {
   codeHash      String
   codeExpiresAt DateTime
   attempts      Int      @default(0)
+  // The versions agreed to when the attempt started (auth/legal.ts); copied
+  // into LegalConsent when the account is created. Null on an attempt started
+  // before agreement was asked for: it can no longer become an account.
+  termsVersion   String?
+  privacyVersion String?
+  consentedAt    DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@index([email])
   @@index([createdAt])
+}
+
+// One row each time an account agreed to the Terms of Service and acknowledged
+// the Privacy Policy: which versions, when, and how (auth/legal.ts). Written
+// only by sign-up; removed with the account.
+model LegalConsent {
+  id             String   @id @default(cuid())
+  userId         String
+  termsVersion   String
+  privacyVersion String
+  acceptedAt     DateTime
+  // "email_signup" | "google_signup"
+  method         String
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // Counters behind the auth limits that must hold whoever is asking and across

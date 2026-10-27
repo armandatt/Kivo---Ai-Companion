@@ -26,6 +26,9 @@ export interface PendingSignupRow {
   codeHash: string;
   codeExpiresAt: Date;
   attempts: number;
+  termsVersion?: string | null;
+  privacyVersion?: string | null;
+  consentedAt?: Date | null;
   createdAt: Date;
 }
 
@@ -77,6 +80,9 @@ export interface AuthDb {
     findUnique(args: Args): Promise<ResetTokenRow | null>;
     create(args: Args): Promise<ResetTokenRow>;
     updateMany(args: Args): Promise<Count>;
+  };
+  legalConsent: {
+    create(args: Args): Promise<unknown>;
   };
   authThrottle: {
     findUnique(args: Args): Promise<ThrottleRow | null>;

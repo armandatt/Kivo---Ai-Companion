@@ -6,11 +6,13 @@
 // (and /api/nova/progress for a Nova learner) and saves through PATCH
 // /api/settings { name, professional }: the page says "Saved" only when the
 // server lists the profile as saved. Only the learner sees it; Nova does not
-// read it.
+// read it. The Account card shows the account's own address and how it signs
+// in, and asks POST /api/settings/password-reset for a reset link to that
+// address (the server takes the account from the session, not from here).
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ArrowRight, AtSign, BookOpen, Briefcase, CalendarDays, Check, Clock, ExternalLink, Flame, Link2, Loader2, Lock, MapPin, Pencil, Plus, Send, Sparkles, TrendingUp, X } from 'lucide-react'
+import { ArrowRight, AtSign, BookOpen, Briefcase, CalendarDays, Check, CircleAlert, Clock, ExternalLink, Flame, KeyRound, Link2, Loader2, Lock, MapPin, Pencil, Plus, Send, ShieldCheck, Sparkles, TrendingUp, X } from 'lucide-react'
 import {
   BIO_MAX, HEADLINE_MAX, LINKS_MAX, LOCATION_MAX, ORGANISATION_MAX, SKILLS_MAX, SKILL_MAX,
   checkLink, checkProfessionalProfile, initialsOf, type ProfessionalProfile,
@@ -25,6 +27,9 @@ type Settings = {
   email: string
   image: string | null
   isGoogleOAuth: boolean
+  // Absent on an API older than the web app.
+  emailVerified?: boolean
+  hasPassword?: boolean
   memberSince: string | null
   professional: ProfessionalProfile | null
   persona: string | null
@@ -193,15 +198,7 @@ export function ProfilePage() {
               {(!p || p.links.length === 0) && <button type="button" onClick={() => setEditing(true)} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-nova-ink hover:underline"><Plus aria-hidden className="size-3.5" /> Add LinkedIn, GitHub or a portfolio</button>}
             </section>
 
-            <section className={CARD} aria-labelledby="profile-connected">
-              <h2 id="profile-connected" className={EYEBROW}>Connected</h2>
-              <ul className="mt-3 space-y-2.5 text-sm text-foreground/80">
-                <li className="flex items-center justify-between gap-2"><span>Sign-in</span><span className="text-foreground/60">{settings.isGoogleOAuth ? 'Google' : 'Email and password'}</span></li>
-                <li className="flex items-center justify-between gap-2"><span className="inline-flex items-center gap-1.5"><Send aria-hidden className="size-3.5" />Telegram</span>
-                  {settings.platforms?.telegram?.connected ? <span className="inline-flex items-center gap-1 text-nova-ink"><Check aria-hidden className="size-3.5" />Connected</span> : <Link href="/settings" className="text-foreground/60 hover:text-foreground">Connect</Link>}
-                </li>
-              </ul>
-            </section>
+            <AccountCard settings={settings} />
 
             <p className="flex items-start gap-2 px-2 text-xs leading-relaxed text-foreground/50" data-profile-private>
               <Lock aria-hidden className="mt-0.5 size-3.5 shrink-0" />
@@ -318,5 +315,79 @@ function ProfileEditor({ settings, onCancel, onSaved }: { settings: Settings; on
         </button>
       </div>
     </form>
+  )
+}
+
+type ResetState =
+  | { kind: 'idle' } | { kind: 'sending' }
+  | { kind: 'sent'; email: string; accepted: boolean }
+  | { kind: 'limited'; minutes: number } | { kind: 'no_password'; google: boolean } | { kind: 'error' }
+
+// The account itself: the address Kivo knows it by, whether that address is
+// confirmed, how it signs in, and the password. Read from the server's answer
+// only; nothing here is worked out in the browser.
+function AccountCard({ settings }: { settings: Settings }) {
+  const [reset, setReset] = useState<ResetState>({ kind: 'idle' })
+  const hasPassword = settings.hasPassword ?? !settings.isGoogleOAuth
+  const methods = [hasPassword && 'Email and password', settings.isGoogleOAuth && 'Google'].filter(Boolean).join(' · ') || 'Email and password'
+
+  async function sendReset() {
+    setReset({ kind: 'sending' })
+    try {
+      const res = await fetch('/api/settings/password-reset', { method: 'POST' })
+      const body = await res.json().catch(() => ({})) as { email?: string; accepted?: boolean; reason?: string; google?: boolean; retryAfterSeconds?: number }
+      if (res.ok && body.email) setReset({ kind: 'sent', email: body.email, accepted: body.accepted === true })
+      else if (res.status === 429) setReset({ kind: 'limited', minutes: Math.max(1, Math.ceil((body.retryAfterSeconds ?? 3600) / 60)) })
+      else if (res.status === 409) setReset({ kind: 'no_password', google: body.google === true })
+      else setReset({ kind: 'error' })
+    } catch { setReset({ kind: 'error' }) }
+  }
+
+  return (
+    <section className={CARD} aria-labelledby="profile-account" data-profile-account>
+      <h2 id="profile-account" className={EYEBROW}>Account</h2>
+      <dl className="mt-3 space-y-3 text-sm">
+        <div>
+          <dt className="text-xs text-foreground/55">Email</dt>
+          <dd className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-foreground/90">
+            <span className="min-w-0 break-all" data-account-email>{settings.email}</span>
+            {settings.emailVerified !== undefined && (settings.emailVerified
+              ? <span className="inline-flex items-center gap-1 text-xs text-nova-ink" data-account-verified="yes"><ShieldCheck aria-hidden className="size-3.5" />Verified</span>
+              : <span className="inline-flex items-center gap-1 text-xs text-amber-300" data-account-verified="no"><CircleAlert aria-hidden className="size-3.5" />Not verified</span>)}
+          </dd>
+        </div>
+        <div className="flex items-center justify-between gap-2"><dt className="text-xs text-foreground/55">Sign-in</dt><dd className="text-right text-foreground/80" data-account-methods>{methods}</dd></div>
+        <div className="flex items-center justify-between gap-2"><dt className="inline-flex items-center gap-1.5 text-xs text-foreground/55"><Send aria-hidden className="size-3.5" />Telegram</dt>
+          <dd>{settings.platforms?.telegram?.connected ? <span className="inline-flex items-center gap-1 text-nova-ink"><Check aria-hidden className="size-3.5" />Connected</span> : <Link href="/settings" className="text-foreground/60 hover:text-foreground">Connect</Link>}</dd>
+        </div>
+      </dl>
+
+      <div className="mt-5 border-t border-white/8 pt-4" data-account-password>
+        <h3 className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground"><KeyRound aria-hidden className="size-4 text-nova-ink" />Password</h3>
+        {hasPassword && reset.kind !== 'no_password' ? (
+          <>
+            <p className="mt-1 text-xs leading-relaxed text-foreground/60">We email a link to {settings.email}. It works once, for an hour, and lets you choose a new password.</p>
+            {reset.kind !== 'sent' && (
+              <button type="button" onClick={() => void sendReset()} disabled={reset.kind === 'sending'}
+                className="mt-3 inline-flex h-9 items-center gap-2 rounded-xl border border-white/12 px-3.5 text-sm font-medium text-foreground/90 hover:border-nova/50 hover:bg-nova/10 disabled:opacity-60" data-account-reset>
+                {reset.kind === 'sending' ? <Loader2 aria-hidden className="size-4 animate-spin" /> : null} Email me a reset link
+              </button>
+            )}
+            <div role="status" aria-live="polite" className="mt-2 text-xs leading-relaxed" data-account-reset-state={reset.kind}>
+              {reset.kind === 'sent' && (reset.accepted
+                ? <p className="text-foreground/80">Our email service has accepted a reset link for {reset.email}. If it isn’t in your inbox in a few minutes, check spam. Resetting doesn’t sign you out of other browsers.</p>
+                : <p className="text-amber-200">Our email service didn’t accept the message, so no link is on its way. Try again in a few minutes.</p>)}
+              {reset.kind === 'limited' && <p className="text-amber-200">You’ve asked for several links in the last hour. Try again in about {reset.minutes} min, or use the newest link you have.</p>}
+              {reset.kind === 'error' && <p className="text-amber-200">That didn’t go through. Check your connection and try again.</p>}
+            </div>
+          </>
+        ) : (
+          <p className="mt-1 text-xs leading-relaxed text-foreground/60" data-account-google-only>
+            You sign in with Google, so Kivo has no password for this account. Your password is managed by Google:{' '}
+            <a href="https://myaccount.google.com/security" target="_blank" rel="noopener noreferrer" className="font-medium text-nova-ink hover:underline">Google account security</a>.
+          </p>
+        )}
+      </div>
+    </section>
   )
 }

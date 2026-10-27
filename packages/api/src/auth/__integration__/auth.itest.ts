@@ -22,6 +22,10 @@
 import "../../nova/__integration__/test-database.js";
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
+import { PRIVACY_VERSION, TERMS_VERSION } from "../legal";
+
+// The agreement every new account gives (auth/legal.ts).
+const CONSENT = { terms: TERMS_VERSION, privacy: PRIVACY_VERSION };
 
 const { prisma } = await import("@repo/db/client");
 const { defaultAuthDeps } = await import("../auth-deps.js");
@@ -65,7 +69,7 @@ const wrongCode = (right: string) => (right === "00000000" ? "00000001" : "00000
 const sentTo = (to: string) => sent.filter(email => email.to === to).length;
 
 async function begin(email: string, minute: number, password = PASSWORD) {
-  const result = await startSignup({ email, password, name: "Asha" }, at(minute));
+  const result = await startSignup({ legal: CONSENT, email, password, name: "Asha" }, at(minute));
   assert.ok(result.ok, result.ok ? "" : result.error);
   return { signupToken: result.signupToken, code: codeFor(email) };
 }
@@ -108,6 +112,8 @@ test("a legitimate signup: nothing exists until the owner's token and code arriv
   assert.equal(user.userProfile, null, "signup writes no profile; onboarding still does that");
   assert.equal(user.accounts.length, 0);
   assert.equal(await prisma.pendingSignup.count({ where: { email } }), 0);
+  const agreed = await prisma.legalConsent.findMany({ where: { userId: user.id } });
+  assert.deepEqual(agreed.map(c => [c.termsVersion, c.privacyVersion, c.method]), [[CONSENT.terms, CONSENT.privacy, "email_signup"]]);
 
   // The code and the token are both spent.
   assert.equal((await verifySignup({ email, code, signupToken }, at(1))).ok, false);
@@ -233,7 +239,7 @@ test("emails to one address are limited per hour and per day in the database", a
   for (let i = 1; i < SIGNUP_SENDS_PER_HOUR; i++) {
     assert.ok((await resendSignupCode({ email, signupToken }, at(i * 2))).ok);
   }
-  const overHour = await startSignup({ email, password: PASSWORD }, at(20));
+  const overHour = await startSignup({ legal: CONSENT, email, password: PASSWORD }, at(20));
   assert.equal(overHour.ok, false);
   assert.equal(!overHour.ok && overHour.status, 429);
   assert.equal(sentTo(email), SIGNUP_SENDS_PER_HOUR);
@@ -241,10 +247,10 @@ test("emails to one address are limited per hour and per day in the database", a
   // Later hours: spaced so the hourly limit never trips, until the day's does.
   let minute = 61;
   while (sentTo(email) < SIGNUP_SENDS_PER_DAY) {
-    assert.ok((await startSignup({ email, password: PASSWORD }, at(minute))).ok);
+    assert.ok((await startSignup({ legal: CONSENT, email, password: PASSWORD }, at(minute))).ok);
     minute += 13;
   }
-  const overDay = await startSignup({ email, password: PASSWORD }, at(minute));
+  const overDay = await startSignup({ legal: CONSENT, email, password: PASSWORD }, at(minute));
   assert.equal(overDay.ok, false);
   assert.equal(sentTo(email), SIGNUP_SENDS_PER_DAY);
 
@@ -252,7 +258,7 @@ test("emails to one address are limited per hour and per day in the database", a
   assert.equal(row.count, SIGNUP_SENDS_PER_DAY);
   assert.ok(!JSON.stringify(row).includes(email), "the limit's key is a hash, not the address");
 
-  assert.ok((await startSignup({ email, password: PASSWORD }, at(24 * 60 + 5))).ok, "the next day it works again");
+  assert.ok((await startSignup({ legal: CONSENT, email, password: PASSWORD }, at(24 * 60 + 5))).ok, "the next day it works again");
 });
 
 test("an existing account, with its profile, is untouched by a second signup", async () => {
@@ -268,7 +274,7 @@ test("an existing account, with its profile, is untouched by a second signup", a
   });
   const before = sent.length;
 
-  const start = await startSignup({ email, password: PASSWORD }, at(0));
+  const start = await startSignup({ legal: CONSENT, email, password: PASSWORD }, at(0));
   assert.ok(start.ok, "the reply is the same as for a new address");
   assert.match(start.signupToken, /^[0-9a-f]{64}$/);
   assert.match(sent[before]!.subject, /already have/i);
@@ -399,7 +405,7 @@ test("Google sign-in creates, recognises and links accounts by the rules", async
   // A new person with a Gmail address.
   const gmail = fresh("google_new");
   const identity = claims({ sub: `sub_new_${STAMP}`, email: gmail, name: "Asha Rao", picture: "https://example.test/a.png" });
-  const created = await resolveGoogleSignIn(identity, { deps });
+  const created = await resolveGoogleSignIn(identity, { deps, consent: CONSENT });
   assert.ok(created.ok);
   assert.equal(created.outcome, "created");
 
@@ -408,9 +414,12 @@ test("Google sign-in creates, recognises and links accounts by the rules", async
   assert.equal(account.access_token, null);
   assert.equal(account.refresh_token, null);
   assert.equal(account.id_token, null);
+  // The agreement given at sign-up is recorded with the account, and goes with it.
+  const consents = await prisma.legalConsent.findMany({ where: { userId: created.user.id } });
+  assert.deepEqual(consents.map(c => [c.termsVersion, c.privacyVersion, c.method]), [[CONSENT.terms, CONSENT.privacy, "google_signup"]]);
 
   // The same person again.
-  const again = await resolveGoogleSignIn(identity, { deps });
+  const again = await resolveGoogleSignIn(identity, { deps, consent: CONSENT });
   assert.ok(again.ok);
   assert.equal(again.outcome, "existing");
   assert.equal(again.user.id, created.user.id);
@@ -423,7 +432,7 @@ test("Google sign-in creates, recognises and links accounts by the rules", async
     include: { userProfile: true },
   });
   const legacyIdentity = claims({ sub: `sub_legacy_${STAMP}`, email: unverified });
-  assert.deepEqual(await resolveGoogleSignIn(legacyIdentity, { deps }), { ok: false, reason: "password_reset_required" });
+  assert.deepEqual(await resolveGoogleSignIn(legacyIdentity, { deps, consent: CONSENT }), { ok: false, reason: "password_reset_required" });
   assert.equal(await prisma.account.count({ where: { userId: legacy.id } }), 0);
   assert.deepEqual(await prisma.user.findUniqueOrThrow({ where: { email: unverified }, include: { userProfile: true } }), legacy);
 
@@ -432,7 +441,7 @@ test("Google sign-in creates, recognises and links accounts by the rules", async
   await new Promise(resolve => setImmediate(resolve));
   assert.ok((await completePasswordReset({ token: tokenFor(unverified), password: "the owner's pass 1" }, at(1))).ok);
 
-  const linked = await resolveGoogleSignIn(legacyIdentity, { deps });
+  const linked = await resolveGoogleSignIn(legacyIdentity, { deps, consent: CONSENT });
   assert.ok(linked.ok);
   assert.equal(linked.outcome, "linked");
   assert.equal(linked.user.id, legacy.id);
@@ -443,7 +452,7 @@ test("Google sign-in creates, recognises and links accounts by the rules", async
   // A Workspace identity links to a verified account on its own domain.
   const school = `auth_itest_ws_${STAMP}@school.edu`;
   const student = await prisma.user.create({ data: { email: school, password: await deps.hashPassword(PASSWORD), emailVerified: new Date() } });
-  const workspace = await resolveGoogleSignIn(claims({ sub: `sub_ws_${STAMP}`, email: school, hd: "school.edu" }), { deps });
+  const workspace = await resolveGoogleSignIn(claims({ sub: `sub_ws_${STAMP}`, email: school, hd: "school.edu" }), { deps, consent: CONSENT });
   assert.ok(workspace.ok);
   assert.equal(workspace.outcome, "linked");
   assert.equal(workspace.user.id, student.id);
@@ -451,12 +460,12 @@ test("Google sign-in creates, recognises and links accounts by the rules", async
   // An address Google does not host never links by email, even to a verified account.
   const yahoo = `auth_itest_y_${STAMP}@yahoo.com`;
   const outsider = await prisma.user.create({ data: { email: yahoo, password: await deps.hashPassword(PASSWORD), emailVerified: new Date() } });
-  const refused = await resolveGoogleSignIn(claims({ sub: `sub_y_${STAMP}`, email: yahoo }), { deps });
+  const refused = await resolveGoogleSignIn(claims({ sub: `sub_y_${STAMP}`, email: yahoo }), { deps, consent: CONSENT });
   assert.deepEqual(refused, { ok: false, reason: "email_not_authoritative" });
   assert.equal(await prisma.account.count({ where: { userId: outsider.id } }), 0);
   assert.deepEqual(await prisma.user.findUniqueOrThrow({ where: { id: outsider.id } }), outsider);
 
   // An email Google has not verified never links or creates.
-  const never = await resolveGoogleSignIn(claims({ sub: `sub_other_${STAMP}`, email: gmail, email_verified: false }), { deps });
+  const never = await resolveGoogleSignIn(claims({ sub: `sub_other_${STAMP}`, email: gmail, email_verified: false }), { deps, consent: CONSENT });
   assert.deepEqual(never, { ok: false, reason: "email_unverified" });
 });

@@ -36,8 +36,10 @@ export class FetchRefused extends Error {
   constructor(public reason: "blocked" | "too_large" | "timeout" | "network" | "redirects" | "bad_url", message: string) { super(message); }
 }
 
-export interface Fetched { status: number; type: string; body: Buffer; url: string }
-export interface GetOptions { accept?: string; maxBytes?: number; timeoutMs?: number }
+export interface Fetched { status: number; type: string; body: Buffer; url: string; headers?: Record<string, string | string[] | undefined> }
+// peek: answer as soon as the headers arrive, reading none of the body (a
+// source's framing rules, source-frame.ts).
+export interface GetOptions { accept?: string; maxBytes?: number; timeoutMs?: number; peek?: boolean }
 export type Get = (url: string, options?: GetOptions) => Promise<Fetched>;
 
 const UA = "KivoNotes/1.0 (research paper import; +https://kivo.app)";
@@ -102,6 +104,7 @@ function once(url: URL, options: GetOptions): Promise<{ res: IncomingMessage; bo
       headers: { "user-agent": UA, accept: options.accept ?? "*/*", "accept-encoding": "identity" },
       lookup: checkedLookup as never,
     }, res => {
+      if (options.peek) { resolve({ res, body: Buffer.alloc(0) }); req.destroy(); return; }
       const declared = Number(res.headers["content-length"] ?? "0");
       if (declared > max) { req.destroy(); reject(new FetchRefused("too_large", "That file is too large to import.")); return; }
       const chunks: Buffer[] = [];
@@ -133,7 +136,7 @@ export const safeGet: Get = async (address, options = {}) => {
       try { url = new URL(location, url); } catch { throw new FetchRefused("bad_url", "The source redirected somewhere that couldn't be read."); }
       continue;
     }
-    return { status, type: String(res.headers["content-type"] ?? "").toLowerCase(), body, url: url.toString() };
+    return { status, type: String(res.headers["content-type"] ?? "").toLowerCase(), body, url: url.toString(), headers: res.headers };
   }
   throw new FetchRefused("redirects", "The source redirected too many times.");
 };

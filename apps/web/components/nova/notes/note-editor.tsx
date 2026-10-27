@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
-  ArrowLeft, ArrowRight, Bold, Check, ChevronLeft, ChevronRight, Code, Columns2, ExternalLink, FileText, Hash, Heading1, Heading2,
+  ArrowLeft, ArrowRight, Bold, Check, ChevronLeft, ChevronRight, Code, Columns2, FileText, Hash, Heading1, Heading2,
   HelpCircle, Highlighter, Italic, Lightbulb, Link2, List, ListOrdered, ListTree, Loader2, Minus, PanelLeft, Pencil,
   Quote, Sparkles, Trash2, Type, Undo2, X,
 } from 'lucide-react'
@@ -25,7 +25,8 @@ import { Identity, ModeSwitch, type NovaMode } from './nova-modes'
 import { placeInto, placementHint, type InsertPart } from './tutor-session'
 import type { TutorReply } from '@repo/api/nova/product/note-tutor.types'
 import { alreadyIn, applyEdits, insertAt, locateChange, placementFor, resolvePlacement, resolveRef, type EditChange, type NoteRef } from '@repo/api/nova/product/note-outline'
-import { outline, parseBlocks, sourceOf, tagsOf, wordCount } from './note-blocks'
+import { outline, parseBlocks, sourceOf, tagsOf, wordCount, type NoteSource } from './note-blocks'
+import { SourceReader } from './source-reader'
 import { callout, divider, noteLink, prefixLines, tag, wrap, type Edited } from './note-format'
 import { NotesTree } from './notes-tree'
 import { novaModeCommands, useNotesCommands } from './notes-commands'
@@ -52,12 +53,14 @@ function writeDraft(id: string | null, value: StoredDraft | null) {
 type Layout = 'write' | 'split' | 'preview'
 // tutor: Nova's panel beside the note on a wide screen, at tutorWidth pixels.
 // nova: which of Nova's two jobs the panel is on (nova-modes.tsx).
-type Prefs = { tree: boolean; outline: boolean; serif: boolean; layout: Layout; tutor: boolean; tutorWidth: number; nova: NovaMode }
+// readerShare: how much of the row the source reader takes (0.3 to 0.75).
+type Prefs = { tree: boolean; outline: boolean; serif: boolean; layout: Layout; tutor: boolean; tutorWidth: number; nova: NovaMode; readerShare: number }
 const PREFS_KEY = 'kivo-notes-layout'
-const DEFAULT_PREFS: Prefs = { tree: true, outline: true, serif: true, layout: 'split', tutor: true, tutorWidth: 420, nova: 'tutor' }
+const DEFAULT_PREFS: Prefs = { tree: true, outline: true, serif: true, layout: 'split', tutor: true, tutorWidth: 420, nova: 'tutor', readerShare: 0.5 }
 // How long a passage Nova points at stays highlighted in the note.
 const FLASH_MS = 4500
 const TUTOR_MIN = 320, TUTOR_MAX = 720
+const clampShare = (x: number) => Math.min(Math.max(Number.isFinite(x) ? x : 0.5, 0.3), 0.75)
 const clampTutor = (w: number) => Math.round(Math.min(Math.max(w, TUTOR_MIN), typeof window === 'undefined' ? TUTOR_MAX : Math.min(TUTOR_MAX, window.innerWidth * 0.55)))
 
 // Typing stops, then the note is saved a moment later, guarded on the version
@@ -131,12 +134,20 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
 
   const [prefs, setPrefsState]  = useState<Prefs>(DEFAULT_PREFS)
   const [sourceOpen, setSourceOpen] = useState(false)
+  // A PDF the learner opened from a paper's card, shown instead of the note's
+  // Source: line. The reader stays mounted once opened, so closing and
+  // reopening it keeps the place in the paper.
+  const [reader, setReader] = useState<NoteSource | null>(null)
+  const [readerMounted, setReaderMounted] = useState(false)
+  const [dragShare, setDragShare] = useState<number | null>(null)
+  const readerRow = useRef<HTMLDivElement>(null)
   const [treeOnPhone, setTreeOnPhone] = useState(false)
   const bodyRef = useRef<HTMLTextAreaElement>(null)
   const articleRef = useRef<HTMLElement>(null)
   const tutorInput = useRef<HTMLTextAreaElement>(null)
   const wide = useWide()
   const roomy = useWide('(min-width: 1600px)')
+  const mdUp = useWide('(min-width: 768px)')
 
   // Nova beside the note: the passage being discussed, what it offers to add
   // (shown and confirmed first), and the last addition, which can be undone.
@@ -588,7 +599,15 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const source   = useMemo(() => sourceOf(body), [body])
   const tags     = useMemo(() => tagsOf(body), [body])
   const words    = useMemo(() => wordCount(body), [body])
-  useEffect(() => { if (!source) setSourceOpen(false) }, [source])
+  const shown    = reader ?? source
+  useEffect(() => { if (!shown) setSourceOpen(false) }, [shown])
+  // Another note: its own source, from the top.
+  useEffect(() => { setReader(null); setReaderMounted(false); setSourceOpen(false) }, [note?.id])
+  const readPdf = useCallback((url: string) => {
+    let label = url
+    try { label = new URL(url).hostname.replace('www.', '') } catch { /* shown as given */ }
+    setReader({ url, view: url, label, pdf: true }); setSourceOpen(true)
+  }, [])
 
   const banners = (
     <>
@@ -652,7 +671,8 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const topicName   = editing ? (draft.subjectId ? draft.topicName.trim() || null : null) : note?.topicName ?? null
   const title       = (editing ? draft.title : note?.title)?.trim() || 'Untitled'
   const color       = subjectColor(subjectName)
-  const showSource  = sourceOpen && source !== null
+  const showSource  = sourceOpen && shown !== null
+  if (showSource && !readerMounted) setReaderMounted(true)
   const showOutline = prefs.outline && !showSource
 
   // With Nova docked on a screen under 1600px, the note keeps the room: the
@@ -686,11 +706,11 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       <button type="button" onClick={e => { leave(e); if (!e.defaultPrevented) router.back() }} className={`${iconButton()} max-sm:hidden`} title="Back"><ChevronLeft className="size-4" /></button>
       <button type="button" onClick={e => { leave(e); if (!e.defaultPrevented) window.history.forward() }} className={`${iconButton()} max-sm:hidden`} title="Forward"><ChevronRight className="size-4" /></button>
       <div className="ml-1.5 min-w-0 flex-1">{crumbs}</div>
-      {source && (
+      {shown && (
         <button type="button" onClick={() => setSourceOpen(o => !o)} aria-pressed={showSource}
-          className={`hidden h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors md:inline-flex ${showSource ? 'bg-sky-400/15 text-sky-200' : 'text-foreground/60 hover:bg-white/6 hover:text-foreground'}`}
-          title="Open the source beside this note" data-note-source-toggle>
-          <Columns2 className="size-3.5" /> Source
+          className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors ${showSource ? 'bg-sky-400/15 text-sky-200' : 'text-foreground/60 hover:bg-white/6 hover:text-foreground'}`}
+          title={shown.pdf ? 'Read the paper beside this note' : 'Open the source beside this note'} data-note-source-toggle>
+          <Columns2 className="size-3.5" /> <span className="max-sm:sr-only">{shown.pdf ? 'Paper' : 'Source'}</span>
         </button>
       )}
       {!editing && (
@@ -775,30 +795,48 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     </aside>
   )
 
-  const sourcePane = source && (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col border-r border-white/6 bg-white/[0.015]" aria-label="Source" data-note-source>
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-white/6 px-3 text-xs">
-        <Quote className="size-3.5 text-sky-300" />
-        <span className="min-w-0 flex-1 truncate text-foreground/70">{source.label}</span>
-        <a href={source.url} target="_blank" rel="noopener noreferrer" className={iconButton()} title="Open in a new tab"><ExternalLink className="size-3.5" /></a>
-        <button type="button" onClick={() => setSourceOpen(false)} className={iconButton()} title="Close the source (Esc)"><X className="size-3.5" /></button>
-      </div>
-      {/* A web page is sandboxed: it can't navigate this tab or open
-          dialogs. A PDF can't be: the browser's PDF viewer does not run in a
-          sandboxed frame. Either way it is another site's page, which
-          cannot read this one. */}
-      <iframe key={source.view} src={source.view} title={`Source: ${source.label}`} className="min-h-0 w-full flex-1 bg-white"
-        sandbox={source.pdf ? undefined : 'allow-scripts allow-same-origin allow-popups allow-forms'} referrerPolicy="no-referrer" />
-      <p className="shrink-0 border-t border-white/6 px-3 py-1.5 text-[11px] text-foreground/45">
-        Some sites don&apos;t allow being shown inside another page. If this stays blank, <a href={source.url} target="_blank" rel="noopener noreferrer" className="text-keppel-300 underline">open it in a new tab</a>.
-      </p>
+  // The reader beside the note: a share of the row on a tablet or wider,
+  // resizable; the whole screen on a phone.
+  const tutorWidth = dragWidth ?? clampTutor(prefs.tutorWidth)
+  const readerShare = dragShare ?? clampShare(prefs.readerShare)
+  // A share of the room beside Nova's panel, never leaving the note under
+  // 22rem (the two 6px drag handles aside): the note stays readable however
+  // wide the paper is made.
+  const besideNova = wide && prefs.tutor ? `${tutorWidth}px` : '0px'
+  const readerBasis = `min(calc((100% - ${besideNova}) * ${readerShare.toFixed(3)}), calc(100% - ${besideNova} - 22rem - 12px))`
+  const sourcePane = readerMounted && shown && (
+    <section style={mdUp ? { flexBasis: readerBasis } : undefined}
+      className={`${showSource ? 'flex' : 'hidden'} min-h-0 min-w-0 shrink-0 grow-0 flex-col border-r border-white/6 bg-white/[0.015] max-md:fixed max-md:inset-0 max-md:z-50 max-md:bg-background ${dragShare !== null ? '[&_iframe]:pointer-events-none' : ''}`}
+      aria-label={shown.pdf ? 'The paper' : 'Source'} data-note-source data-reader-open={showSource}>
+      <SourceReader source={shown} wide={readerShare >= 0.62} onWide={() => setPrefs({ readerShare: readerShare >= 0.62 ? 0.5 : 0.7 })} onClose={() => setSourceOpen(false)} />
     </section>
+  )
+  const readerSplitter = showSource && (
+    <div role="separator" aria-orientation="vertical" aria-label="Resize the reader" tabIndex={0}
+      aria-valuemin={30} aria-valuemax={75} aria-valuenow={Math.round(readerShare * 100)}
+      onKeyDown={e => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); setPrefs({ readerShare: clampShare(readerShare + (e.key === 'ArrowLeft' ? -0.04 : 0.04)) }) }
+      }}
+      onPointerDown={e => {
+        const row = readerRow.current?.getBoundingClientRect()
+        if (!row) return
+        e.preventDefault()
+        const at = (x: number) => clampShare((x - row.left) / row.width)
+        const move = (ev: PointerEvent) => setDragShare(at(ev.clientX))
+        const up = (ev: PointerEvent) => {
+          window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up)
+          setDragShare(null); setPrefs({ readerShare: at(ev.clientX) })
+        }
+        window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
+      }}
+      className="group relative hidden w-1.5 shrink-0 cursor-col-resize bg-transparent outline-none focus-visible:bg-sky-400/40 md:block" data-reader-splitter>
+      <span aria-hidden className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/8 transition-colors group-hover:bg-sky-400/50" />
+    </div>
   )
 
   // Nova beside the note: a resizable panel on a wide screen, a drawer on a
   // phone or a narrow tablet. One is mounted at a time, so the conversation
   // is one conversation.
-  const tutorWidth = dragWidth ?? clampTutor(prefs.tutorWidth)
   // Nova's two jobs in one panel: both mounted, one shown, so switching keeps
   // each conversation and both read the same note.
   const novaHeader = (onClose?: () => void) => function NovaHeader(status: React.ReactNode, working: boolean, clear: (() => void) | null = null) {
@@ -867,8 +905,9 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       )}
       <div className="flex min-w-0 flex-1 flex-col">
         {topBar}
-        <div className="relative flex min-h-0 flex-1">
-          {showSource && sourcePane}
+        <div ref={readerRow} className="relative flex min-h-0 flex-1">
+          {sourcePane}
+          {readerSplitter}
           {main}
           {showOutline && !(wide && prefs.tutor) && outlinePanel}
           {wide && prefs.tutor && (
@@ -952,7 +991,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     )
     const preview = (
       <div ref={previewRef} className="min-h-[24rem] px-1 py-2" data-note-preview>
-        {draft.body.trim() ? <NoteBody body={draft.body} links={note?.links.outgoing ?? []} serif={prefs.serif} title={draft.title} /> : <p className="py-3 text-sm text-foreground/35">Nothing to preview yet.</p>}
+        {draft.body.trim() ? <NoteBody body={draft.body} links={note?.links.outgoing ?? []} serif={prefs.serif} title={draft.title} onReadPdf={readPdf} /> : <p className="py-3 text-sm text-foreground/35">Nothing to preview yet.</p>}
       </div>
     )
 
@@ -1092,7 +1131,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
         {justSaved && <p role="status" className="mt-4 flex items-center gap-1.5 text-sm text-foreground/70" data-note-saved><Check className="size-4 text-keppel-300" /> Saved</p>}
 
         <div className="mt-8">
-          {note.body ? <NoteBody body={note.body} links={note.links.outgoing} serif={prefs.serif} title={note.title} /> : (
+          {note.body ? <NoteBody body={note.body} links={note.links.outgoing} serif={prefs.serif} title={note.title} onReadPdf={readPdf} /> : (
             <button type="button" onClick={() => setEditing(true)} className="w-full rounded-2xl border border-dashed border-white/10 px-6 py-10 text-center text-sm text-foreground/45 transition-colors hover:border-keppel-400/40 hover:text-foreground/70">
               This note is empty. Press E or click here to write it.
             </button>

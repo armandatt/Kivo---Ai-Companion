@@ -22,6 +22,7 @@
 // When either side fails, nothing is linked and nothing about the existing
 // account changes.
 
+import { consentRecord, type LegalConsentInput } from "./legal";
 import { defaultAuthDeps, toSessionUser, type AuthDeps, type SessionUser } from "./auth-deps";
 import { isGmailAddress, normalizeEmail } from "./email-rules";
 import { safeEqual } from "./secrets";
@@ -72,13 +73,16 @@ export function readGoogleClaims(
 
 export type GoogleSignInResult =
   | { ok: true; user: SessionUser; outcome: "existing" | "linked" | "created" }
-  | { ok: false; reason: "email_unverified" | "email_not_authoritative" | "password_reset_required" };
+  | { ok: false; reason: "email_unverified" | "email_not_authoritative" | "password_reset_required" | "consent_required" };
 
+// consent: the agreement the sign-up page sent with this attempt
+// (auth/legal.ts). Needed only to create an account; signing in to one that
+// exists, or linking Google to it, asks for nothing new.
 export async function resolveGoogleSignIn(
   identity: GoogleIdentity,
-  options: { deps?: AuthDeps; now?: Date } = {},
+  options: { deps?: AuthDeps; now?: Date; consent?: LegalConsentInput | null } = {},
 ): Promise<GoogleSignInResult> {
-  const { deps = defaultAuthDeps, now = new Date() } = options;
+  const { deps = defaultAuthDeps, now = new Date(), consent = null } = options;
   const select = { id: true, email: true, name: true, image: true, password: true, emailVerified: true };
 
   const account = await deps.db.account.findUnique({
@@ -126,6 +130,8 @@ export async function resolveGoogleSignIn(
     return { ok: true, user: toSessionUser(user), outcome: "linked" };
   }
 
+  if (!consent) return { ok: false, reason: "consent_required" };
+
   const user = await deps.db.$transaction(async (tx) => {
     const created = await tx.user.create({
       data: {
@@ -138,6 +144,7 @@ export async function resolveGoogleSignIn(
       select,
     });
     await tx.account.create({ data: googleAccount(created.id, identity.sub) });
+    await tx.legalConsent.create({ data: consentRecord(created.id, consent, now, "google_signup") });
     return created;
   });
   return { ok: true, user: toSessionUser(user), outcome: "created" };

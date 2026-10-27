@@ -38,6 +38,7 @@ export interface FakeAuth {
   pending: Row[];
   resetTokens: Row[];
   throttles: Row[];
+  consents: Row[];
   sent: AuthEmail[];
   /** What the fake database stamps on new rows. */
   clock: { now: Date };
@@ -63,6 +64,7 @@ export function fakeAuth(seed: { users?: Row[]; accounts?: Row[] } = {}): FakeAu
     pending: [] as Row[],
     resetTokens: [] as Row[],
     throttles: [] as Row[],
+    consents: [] as Row[],
   };
   const sent: AuthEmail[] = [];
   const clock = { now: new Date("2026-10-11T10:00:00Z") };
@@ -152,6 +154,13 @@ export function fakeAuth(seed: { users?: Row[]; accounts?: Row[] } = {}): FakeAu
         return { count: rows.length };
       },
     },
+    legalConsent: {
+      async create({ data }) {
+        const row = { id: nextId("c"), createdAt: clock.now, ...(data as Row) };
+        state.consents.push(row);
+        return { ...row };
+      },
+    },
     authThrottle: {
       async findUnique({ where }) {
         const row = state.throttles.find((throttle) => matches(throttle, where as Row));
@@ -213,6 +222,7 @@ export function fakeAuth(seed: { users?: Row[]; accounts?: Row[] } = {}): FakeAu
     get pending() { return state.pending; },
     get resetTokens() { return state.resetTokens; },
     get throttles() { return state.throttles; },
+    get consents() { return state.consents; },
     sent,
     clock,
     mail,

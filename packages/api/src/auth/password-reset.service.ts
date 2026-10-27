@@ -73,25 +73,58 @@ export async function requestPasswordReset(
     return accepted;
   }
 
+  const resetUrl = await issueResetLink(deps, user.id, now);
+  sendInBackground(deps, passwordResetEmail(user.email, user.name, resetUrl, RESET_TTL_MS / 60_000));
+  return accepted;
+}
+
+// A new single-use link for the account; the ones before it stop working.
+async function issueResetLink(deps: AuthDeps, userId: string, now: Date): Promise<string> {
   const token = generateToken();
   await deps.db.$transaction(async (tx) => {
-    // A new link retires the ones before it.
     await tx.passwordResetToken.updateMany({
-      where: { userId: user.id, used: false },
+      where: { userId, used: false },
       data: { used: true },
     });
     await tx.passwordResetToken.create({
       data: {
         token: hashToken(token),
-        userId: user.id,
+        userId,
         expiresAt: new Date(now.getTime() + RESET_TTL_MS),
       },
     });
   });
+  return `${deps.appUrl()}/reset-password?token=${token}`;
+}
 
-  const resetUrl = `${deps.appUrl()}/reset-password?token=${token}`;
-  sendInBackground(deps, passwordResetEmail(user.email, user.name, resetUrl, RESET_TTL_MS / 60_000));
-  return accepted;
+// ── Signed in: a reset link for the account's own address ─────────────────────
+// Profile's "Reset password". The account is the session's, never an address
+// the browser sends, so there is nothing to enumerate and the answer can be
+// plain: no password to reset (a Google-only account), the hourly limit, or
+// whether the email service accepted the message. Accepted is not delivered,
+// and the page says so. The same throttle as the public request counts it.
+
+export type OwnResetResult =
+  | { ok: true; email: string; accepted: boolean }
+  | { ok: false; reason: "no_account" | "no_password" | "limited"; google?: boolean; retryAfterSeconds?: number };
+
+export async function requestOwnPasswordReset(userId: string, options: ResetOptions = {}): Promise<OwnResetResult> {
+  const { deps = defaultAuthDeps, now = new Date() } = options;
+  const user = await deps.db.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, name: true, password: true, accounts: { where: { provider: "google" }, select: { provider: true } } },
+  });
+  if (!user) return { ok: false, reason: "no_account" };
+  if (!user.password) return { ok: false, reason: "no_password", google: (user.accounts?.length ?? 0) > 0 };
+
+  const limit = await consumeThrottle(deps.db, RESET_REQUESTS, user.email, now);
+  if (!limit.allowed) return { ok: false, reason: "limited", retryAfterSeconds: limit.retryAfterSeconds };
+
+  const resetUrl = await issueResetLink(deps, user.id, now);
+  let accepted = false;
+  try { accepted = await deps.sendEmail(passwordResetEmail(user.email, user.name, resetUrl, RESET_TTL_MS / 60_000)); }
+  catch { console.error("[PASSWORD RESET] The email could not be sent."); }
+  return { ok: true, email: user.email, accepted };
 }
 
 // The reply never waits for the email, and never says whether it went: that

@@ -64,6 +64,7 @@
     "./nova/product/paper.types": "./src/nova/product/paper.types.ts",
     "./nova/product/paper-source": "./src/nova/product/paper-source.ts",
     "./nova/product/paper-import": "./src/nova/product/paper-import.ts",
+    "./nova/product/source-frame": "./src/nova/product/source-frame.ts",
     "./nova/product/professional-profile": "./src/nova/product/professional-profile.ts",
     "./nova/product/day-flow": "./src/nova/product/day-flow.ts",
     "./nova/product/day-flow.types": "./src/nova/product/day-flow.types.ts",
