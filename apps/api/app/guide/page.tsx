@@ -101,7 +101,7 @@ export default function GuidePage() {
 
       {/* Header */}
       <div style={S.header}>
-        <p style={S.eyebrow}>Kivo / Rex</p>
+        <p style={S.eyebrow}>Kio / Rex</p>
         <h1 style={S.title}>Feature Guide</h1>
         <p style={S.sub}>Everything Rex can do — commands, natural language, and auto-scheduled messages.</p>
       </div>
@@ -211,7 +211,7 @@ export default function GuidePage() {
       </section>
 
       <footer style={S.footer}>
-        Kivo · Rex Gym Coaching · All data belongs to the user
+        Kio · Rex Gym Coaching · All data belongs to the user
       </footer>
 
     </div>

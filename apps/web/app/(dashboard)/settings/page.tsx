@@ -7,7 +7,7 @@ import { CheckinSettings } from '@/components/nova/checkin-settings'
 import { HelpPreferences } from '@/components/nova/help-preferences'
 import { TelegramSettings } from '@/components/nova/telegram-connect'
 import { DeleteAccountSection } from '@/components/settings/delete-account-section'
-import { ThemePicker } from '@/components/theme/kivo-theme'
+import { ThemePicker } from '@/components/theme/kio-theme'
 import { PageHeader } from '@/components/dashboard/page-states'
 
 // Settings: appearance, study setup, the daily check-in, the Telegram connection

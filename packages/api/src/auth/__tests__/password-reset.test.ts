@@ -37,7 +37,7 @@ describe("asking for a reset", () => {
 
     expect(auth.sent).toHaveLength(1);
     expect(auth.sent[0]!.to).toBe("asha@gmail.com");
-    expect(auth.sent[0]!.text).toContain("https://kivo.test/reset-password?token=");
+    expect(auth.sent[0]!.text).toContain("https://kio.test/reset-password?token=");
   });
 
   it("stores only a hash of the token", async () => {
@@ -107,9 +107,9 @@ describe("asking for a reset", () => {
 
   it("links to the reset page on the configured site, with the token as the only parameter", async () => {
     const { auth, at, t0 } = setup();
-    await requestPasswordReset({ email: "asha@gmail.com" }, { ...at(t0), deps: { ...auth.deps, appUrl: () => "https://www.thekivo.in" } });
+    await requestPasswordReset({ email: "asha@gmail.com" }, { ...at(t0), deps: { ...auth.deps, appUrl: () => "https://www.thekio.in" } });
 
-    expect(auth.sent[0]!.text).toContain(`https://www.thekivo.in/reset-password?token=${auth.lastResetToken()}`);
+    expect(auth.sent[0]!.text).toContain(`https://www.thekio.in/reset-password?token=${auth.lastResetToken()}`);
     expect(auth.lastResetToken()).toMatch(/^[0-9a-f]{64}$/);
   });
 

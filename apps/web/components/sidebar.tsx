@@ -31,8 +31,8 @@ import {
 } from 'lucide-react'
 import { NOVA_ROUTES, type Companion } from '@repo/api/nova/product/companion'
 import { cn } from '@/lib/utils'
-import { ThemePicker } from '@/components/theme/kivo-theme'
-import { KivoTile, KivoWordmark } from '@/components/brand/kivo-brand'
+import { ThemePicker } from '@/components/theme/kio-theme'
+import { KioTile, KioWordmark } from '@/components/brand/kio-brand'
 import { trappedTabTarget } from '@/components/settings/dialog-focus'
 import { sidebarModes } from './sidebar-modes'
 
@@ -64,7 +64,7 @@ const novaNavItems = NOVA_ROUTES.filter(r => r.path !== NOVA_DOCS).map(r => ({ h
 
 type NavItem = typeof navItems[number]
 
-// Nova's pages grouped by what they are for, Kivo's core first: Today, then
+// Nova's pages grouped by what they are for, Kio's core first: Today, then
 // the Knowledge Map right under it. A page not named here (a new one in
 // NOVA_ROUTES) is listed after the groups, so none is ever dropped.
 const NOVA_GROUPS: ReadonlyArray<{ label: string; paths: readonly string[] }> = [
@@ -81,7 +81,7 @@ function groupsOf(items: NavItem[], isNova: boolean): Array<{ label: string | nu
 }
 
 // The shell's Creature button points at the sidebar by this id too.
-export const SIDEBAR_ID = 'kivo-sidebar'
+export const SIDEBAR_ID = 'kio-sidebar'
 const TAB_STOPS = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 // Tailwind's lg: from here up the docked sidebar sits beside the page.
 const DOCKED = '(min-width: 1024px)'
@@ -96,7 +96,7 @@ const isDocked = () => window.matchMedia(DOCKED).matches
 const dockedOnServer = () => true
 
 // The companion's own colour marks whose dashboard this is (the dot under the
-// wordmark). The current page is Kivo's selected state, teal, for both: a soft
+// wordmark). The current page is Kio's selected state, teal, for both: a soft
 // wash, a bar and the icon, with the text left in the theme's foreground so it
 // reads in light and dark alike.
 const ACCENT = {
@@ -257,11 +257,11 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
           mode.ownToggle && 'pl-16 lg:pl-6',
           rail && 'lg:flex-col lg:px-2 lg:py-4',
         )}>
-          {/* Kivo's mark, and the companion this account works with under it */}
+          {/* Kio's mark, and the companion this account works with under it */}
           <Link href="/home" onClick={close} title={rail ? `${isNova ? 'Nova' : 'Rex'} home` : undefined} className="flex min-w-0 items-center gap-3">
-            <KivoTile size={36} className="shrink-0" />
+            <KioTile size={36} className="shrink-0" />
             <span className={cn('flex min-w-0 flex-col gap-1.5', rail && 'lg:sr-only')}>
-              <KivoWordmark height={17} className="text-sidebar-foreground" />
+              <KioWordmark height={17} className="text-sidebar-foreground" />
               <span className="flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium leading-none text-sidebar-foreground/60">
                 <span aria-hidden className={cn('h-1.5 w-1.5 shrink-0 rounded-full', accent.dot)} />
                 {isNova ? 'Nova · Learning mentor' : 'Rex · AI coach'}
@@ -363,11 +363,11 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
           </Link>
           <Link
             href="/"
-            title={rail ? 'Kivo home page' : undefined}
+            title={rail ? 'Kio home page' : undefined}
             className={cn(row, 'text-sidebar-foreground hover:bg-sidebar-accent')}
           >
             <Globe aria-hidden className="w-5 h-5 shrink-0" />
-            <span className={label}>Kivo home page</span>
+            <span className={label}>Kio home page</span>
           </Link>
           {/* In the rail the three theme choices stand in a column */}
           <div className={cn(

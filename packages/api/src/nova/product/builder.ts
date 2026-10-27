@@ -176,7 +176,7 @@ const fileRows = (draftId: string, files: Array<LlmAttachment & { pages: number 
 // Built or cancelled: the files have done their job and are not kept.
 const dropFiles = (draftId: string) => prisma.novaWorkspaceDraftFile.deleteMany({ where: { draftId } });
 
-// ── What Kivo already knows (never asked again) ───────────────────────────────
+// ── What Kio already knows (never asked again) ───────────────────────────────
 
 const CONTEXT_WORDS: Record<LearningContext, string> = { school: "school student", college: "university student", working: "working professional", other: "something else" };
 
@@ -200,8 +200,8 @@ async function signupContext(platformChatId: string, profile: { id: string; goal
   if (working.length) out.push({ label: "Working on (said at sign-up)", value: working.join("; ") });
   if (signup?.weeklyHours) out.push({ label: "Time a week (their sign-up estimate)", value: weeklyHoursLabel(signup.weeklyHours) });
   if (profile.goals.length) out.push({ label: "Goals", value: profile.goals.join("; ") });
-  if (subjects.length) out.push({ label: "Subjects already in Kivo", value: subjects.join(", ") });
-  if (workspaces.length) out.push({ label: "Workspaces already in Kivo", value: workspaces.map(w => w.title).join(", ") });
+  if (subjects.length) out.push({ label: "Subjects already in Kio", value: subjects.join(", ") });
+  if (workspaces.length) out.push({ label: "Workspaces already in Kio", value: workspaces.map(w => w.title).join(", ") });
   return { known: out.slice(0, 8), language: signup?.language ?? null };
 }
 
@@ -291,7 +291,7 @@ export async function builderContextLines(profileId: string): Promise<string[]> 
     recentWorkspaceTitles(profileId, 3),
   ]);
   return [
-    ...workspaces.map(w => `Workspace they built in Kivo: ${w.title}${w.summary ? ` (${w.summary.slice(0, 140)})` : ""}.`),
+    ...workspaces.map(w => `Workspace they built in Kio: ${w.title}${w.summary ? ` (${w.summary.slice(0, 140)})` : ""}.`),
     ...drafts.map(d => `Workspace they are still shaping with Nova on the web (${d.status === "awaiting_approval" ? "a proposal is waiting for their approval" : "not proposed yet"}): ${d.title}. Nothing of it exists until they approve it there.`),
   ];
 }
@@ -603,7 +603,7 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
     }
     const scope = target ? await deletionScope(platformChatId, profile.id, target, now) : null;
     const text = !target ? "Which workspace or subject should I delete? Name it, and I'll show you exactly what would go before anything happens."
-      : !scope ? "That isn't in your Kivo any more, so there's nothing to delete."
+      : !scope ? "That isn't in your Kio any more, so there's nothing to delete."
       : deletionText(scope);
     const brief = { ...nextBrief(before, reading, { type: "chat" }), known, choices: [] as string[], deletion: scope };
     await settle(row.id, job.jobId, { brief, failure: null, add: [message("nova", text, new Date(), { kind: "question" })] });
@@ -639,7 +639,7 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
       ref = { workspaceId: r.ref.workspaceId, subjectIds: r.ref.subjectIds };
       if (r.intent === "open") {
         const brief = { ...nextBrief(before, reading, { type: "chat" }), known, choices: [], title: r.ref.title };
-        const text = `Here's ${r.ref.title} as it is in Kivo now, on the right. Tell me what you'd like to add or change; nothing changes until you approve it.`;
+        const text = `Here's ${r.ref.title} as it is in Kio now, on the right. Tell me what you'd like to add or change; nothing changes until you approve it.`;
         await settle(row.id, job.jobId, { brief, title: r.ref.title, target: ref, failure: null, add: [message("nova", text, new Date(), { kind: "chat" })] });
         return;
       }
@@ -667,7 +667,7 @@ async function runTurn(platformChatId: string, profile: { id: string; timezone: 
 
   // Draft or revise: say what Nova will do, mark the job's stage, then write.
   const intro = found
-    ? `I found ${found.title} in your Kivo. I'll propose the changes on the right, against what's there now; nothing changes until you approve them.`
+    ? `I found ${found.title} in your Kio. I'll propose the changes on the right, against what's there now; nothing changes until you approve them.`
     // Built on consent given before, while the model only asked: its words would be a question.
     : step.type === "draft" && step.reason === "consented" && reading.next !== "draft" && reading.next !== "revise" ? BUILD_NOW_INTRO
     : reading.reply;
@@ -723,7 +723,7 @@ async function runChanges(platformChatId: string, profile: { id: string; timezon
   const fallback: DraftStatus = before ? "awaiting_approval" : "discovery";
   const [current, studied] = await Promise.all([ref ? resourceDetail(platformChatId, profile.id, ref, now) : Promise.resolve(null), studiedTopicIds(profile.id)]);
   if (!current) {
-    const gone = "That isn't in your Kivo any more, so there's nothing to change. Start a new conversation to build it again.";
+    const gone = "That isn't in your Kio any more, so there's nothing to change. Start a new conversation to build it again.";
     await settle(row.id, job.jobId, { status: fallback, failure: null, add: [message("nova", gone, new Date(), { kind: "error" })] });
     return;
   }
@@ -933,10 +933,10 @@ export async function editDraftChanges(platformChatId: string, id: unknown, body
   const ref = refOf(row);
   if (!set || !ref || !["awaiting_approval", "failed"].includes(statusOf(row.status))) return { ok: false, error: "closed", message: "There are no proposed changes to edit.", draft: await viewOf(row, now) };
   if (body.baseVersion !== row.version) return { ok: false, error: "stale", message: "The proposed changes were updated since you opened them. These are the newest.", draft: await viewOf(row, now) };
-  if (!Array.isArray(body.keep) || !body.keep.every(k => typeof k === "string")) return { ok: false, error: "invalid", message: "That isn't a change Kivo can make." };
+  if (!Array.isArray(body.keep) || !body.keep.every(k => typeof k === "string")) return { ok: false, error: "invalid", message: "That isn't a change Kio can make." };
   const keep = new Set(body.keep as string[]);
   const current = await resourceDetail(platformChatId, profile.id, ref, now);
-  if (!current) return { ok: false, error: "not_found", message: "That isn't in your Kivo any more." };
+  if (!current) return { ok: false, error: "not_found", message: "That isn't in your Kio any more." };
   const kept = checkChanges(bareOps({ ops: set.ops.filter(o => keep.has(o.id)), dropped: [] }), current, { today: dayKey(now, resolveTimezone(profile.timezone)), studied: await studiedTopicIds(profile.id) });
   const saved = await prisma.novaWorkspaceDraft.updateMany({
     where: { id: row.id, profileId: profile.id, version: row.version, jobId: null },
@@ -1180,7 +1180,7 @@ export async function restoreVersion(platformChatId: string, id: unknown, body: 
     set = { ops: checked.ops, dropped: [...checked.dropped, ...reach.notes].slice(0, 12) };
   }
   if (set.ops.length === 0) {
-    const fresh = await write({}, `${current.title} already matches ${label}${set.dropped.length ? ` as far as Kivo can bring it back (${set.dropped.slice(0, 2).join("; ")})` : ""}. Nothing to change.`);
+    const fresh = await write({}, `${current.title} already matches ${label}${set.dropped.length ? ` as far as Kio can bring it back (${set.dropped.slice(0, 2).join("; ")})` : ""}. Nothing to change.`);
     return fresh ? { ok: true, draft: await viewOf(fresh, now) } : stale();
   }
   const text = [

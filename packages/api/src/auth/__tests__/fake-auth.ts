@@ -212,7 +212,7 @@ export function fakeAuth(seed: { users?: Row[]; accounts?: Row[] } = {}): FakeAu
       sent.push(email);
       return true;
     },
-    appUrl: () => "https://kivo.test",
+    appUrl: () => "https://kio.test",
   };
 
   return {

@@ -1,4 +1,4 @@
-import { THEME_SCRIPT } from "@/components/theme/kivo-theme"
+import { THEME_SCRIPT } from "@/components/theme/kio-theme"
 import { Footer } from "@/components/footer"
 
 // The Privacy Policy and the Terms. Public pages, drawn in the theme the

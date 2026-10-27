@@ -11,7 +11,7 @@ import { Breakthroughs }      from '@/components/journey/breakthroughs'
 import { MilestoneWall }      from '@/components/journey/milestone-wall'
 import { YearInReview }       from '@/components/journey/year-in-review'
 import { JourneyMemories }    from '@/components/journey/journey-memories'
-import { KivoStory }          from '@/components/journey/kivo-story'
+import { KioStory }          from '@/components/journey/kio-story'
 
 const BOT = process.env.NEXT_PUBLIC_BOT_USERNAME ?? 'kevo_companion_bot'
 
@@ -78,8 +78,8 @@ export default function JourneyPage() {
         loading={loading}
       />
 
-      {/* S10 — Kivo Story (high up — narrative hook) */}
-      <KivoStory story={data?.story ?? { lines: [] }} loading={loading} />
+      {/* S10 — Kio Story (high up — narrative hook) */}
+      <KioStory story={data?.story ?? { lines: [] }} loading={loading} />
 
       {/* S4 — Biggest Wins */}
       <BiggestWins biggestWins={data?.biggestWins ?? []} loading={loading} />

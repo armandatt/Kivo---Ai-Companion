@@ -1227,7 +1227,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   }
   const saveText = saver.status === 'saving' ? 'Saving layout…' : saver.status === 'pending' ? 'Unsaved changes' : saver.status === 'failed' ? 'Layout not saved' : layout.positions.size > 0 ? 'Layout saved' : ''
 
-  // Reset: Kivo's own layout and orientation, fitted. Saved card positions
+  // Reset: Kio's own layout and orientation, fitted. Saved card positions
   // are removed only after the learner confirms it.
   const resetView = () => { forgetViews(store); chooseOrientation(store, null); setChosen(null); requestAnimationFrame(() => fit()) }
   const askReset = () => { if (hasLayout) setPanel({ kind: 'reset' }); else { resetView(); say('The map is in its own layout. View reset.') } }
@@ -1331,7 +1331,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
               <Plus aria-hidden className="size-3.5" /> <span className="hidden sm:inline">New subject</span>
             </button>
           )}
-          <button type="button" onClick={askReset} className={tool} data-reset-layout title="Kivo's own layout, fitted to the screen">
+          <button type="button" onClick={askReset} className={tool} data-reset-layout title="Kio's own layout, fitted to the screen">
             <RotateCcw aria-hidden className="size-3" /> <span className="hidden md:inline">Reset layout</span>
           </button>
           <button type="button" onClick={() => setPanel(p => (p?.kind === 'help' ? null : { kind: 'help' }))} className={cn(tool, 'px-2.5')} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" data-shortcuts-open>
@@ -1440,7 +1440,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
         )}
         {panel?.kind === 'reset' && (
           <div role="alertdialog" aria-label="Reset layout" data-map-overlay className="absolute left-1/2 top-3 z-30 w-[min(26rem,calc(100%-1.5rem))] -translate-x-1/2 rounded-2xl border border-white/10 bg-popover p-4 text-sm shadow-float" onPointerDown={e => e.stopPropagation()}>
-            <p className="leading-relaxed text-foreground/85">Put every card back where Kivo places it, in the device&apos;s own orientation, and fit the map? Your subjects, topics, tasks, notes and links stay as they are.</p>
+            <p className="leading-relaxed text-foreground/85">Put every card back where Kio places it, in the device&apos;s own orientation, and fit the map? Your subjects, topics, tasks, notes and links stay as they are.</p>
             <div className="mt-3 flex justify-end gap-2">
               <button type="button" onClick={closePanel} disabled={layout.reset.busy} className={cn(BUTTON_QUIET, 'h-8')} autoFocus>Cancel</button>
               <button type="button" disabled={layout.reset.busy} data-reset-confirm

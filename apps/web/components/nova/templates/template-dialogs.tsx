@@ -39,7 +39,7 @@ export function Dialog({ title, onClose, children, wide }: { title: string; onCl
   )
 }
 
-// ── A Kivo template ───────────────────────────────────────────────────────────
+// ── A Kio template ───────────────────────────────────────────────────────────
 
 export function TemplatePreview({ template, category, onClose }: { template: StudyTemplate; category: TemplateCategory | null; onClose: () => void }) {
   const fields = templateInputs(template)
@@ -69,7 +69,7 @@ export function TemplatePreview({ template, category, onClose }: { template: Stu
         <PlanReview route={proposed.route} reason={proposed.reason} plan={proposed.plan} dropped={proposed.dropped} similar={proposed.similar} onBack={() => setProposed(null)} />
       ) : (
         <form onSubmit={e => { e.preventDefault(); if (!busy && !missing) void preview() }} className="space-y-5">
-          <p className="text-xs font-medium text-foreground/60">Kivo template · {template.placements.map(p => CATEGORY_INFO[p.category].label).join(', ')}</p>
+          <p className="text-xs font-medium text-foreground/60">Kio template · {template.placements.map(p => CATEGORY_INFO[p.category].label).join(', ')}</p>
           <p className="text-[15px] leading-relaxed text-foreground/80">{template.description}</p>
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-foreground/55">What it creates</p>
@@ -152,7 +152,7 @@ export function CreateWithNova({ initial, category, onClose }: { initial: string
         <PlanReview route={proposed.route} reason={proposed.reason} plan={proposed.plan} dropped={proposed.dropped} similar={proposed.similar} onBack={() => setProposed(null)} />
       ) : (
         <form onSubmit={e => { e.preventDefault(); if (!busy && (request.trim() || files.length)) void generate() }} className="space-y-4" data-create-with-nova>
-          <p className="text-sm leading-relaxed text-foreground/75">Describe what you want to set up. Nova uses a Kivo template when one fits and designs one when none does. You review it before anything is created.</p>
+          <p className="text-sm leading-relaxed text-foreground/75">Describe what you want to set up. Nova uses a Kio template when one fits and designs one when none does. You review it before anything is created.</p>
           <textarea aria-label="What should Nova set up?" rows={5} value={request} maxLength={2000} onChange={e => { setRequest(e.target.value); setNote(null) }}
             placeholder="e.g. A 3-month plan to learn backend development with Node, 8 hours a week. I know basic JavaScript." className={cn(FIELD, 'py-3')} />
           <div>

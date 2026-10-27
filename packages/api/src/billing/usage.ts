@@ -57,7 +57,7 @@ export async function withAiAllowance<T>(
   try {
     spend = await spendAiRequest(ent, now);
   } catch (err) {
-    // The meter could not be read: the learner is not refused for Kivo's fault.
+    // The meter could not be read: the learner is not refused for Kio's fault.
     console.error(`[billing] meter unavailable: ${(err as Error).name}`);
     return { ok: true, value: await work() };
   }

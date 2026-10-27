@@ -61,7 +61,7 @@ export async function GET() {
       // word) and whether there is a password to reset. Never the password.
       emailVerified: !!user?.emailVerified,
       hasPassword: !!user?.password,
-      // When this account set up Kivo (the profile row's creation), for "Member since".
+      // When this account set up Kio (the profile row's creation), for "Member since".
       memberSince: profile?.createdAt?.toISOString() ?? null,
       // What they say about themselves professionally (product/professional-profile.ts).
       professional: profileIn(profile?.onboardingAnswers),

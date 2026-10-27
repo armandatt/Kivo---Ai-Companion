@@ -142,7 +142,7 @@ describe("what a turn may do (code decides, not the model)", () => {
 
   it("learner messages are counted from what is stored, in this planning conversation only", () => {
     const at = (role: "user" | "nova", text: string, extra: Partial<BuilderMessage> = {}): BuilderMessage => ({ ...message(role, text, NOW), ...extra });
-    const list = [at("user", "I want to learn FastAPI"), at("nova", "What do you know?", { kind: "question" }), at("nova", "Kivo couldn't answer", { kind: "error" }), at("user", "Python"), at("nova", "A notice", { kind: "notice" })];
+    const list = [at("user", "I want to learn FastAPI"), at("nova", "What do you know?", { kind: "question" }), at("nova", "Kio couldn't answer", { kind: "error" }), at("user", "Python"), at("nova", "A notice", { kind: "notice" })];
     expect(planningTurns(list)).toBe(2);
     // A built conversation going on is a new plan: counted from what it built.
     expect(planningTurns([...list, at("nova", "Built", { kind: "built" }), at("user", "Now add Phase 5")])).toBe(1);
@@ -260,9 +260,9 @@ describe("a new version says what changed", () => {
   });
   it("a subject renamed is said once, not as every topic added and removed", () => {
     const before = plan();
-    const after = { ...before, subjects: before.subjects.map(s => ({ ...s, name: "Kivo" })) };
+    const after = { ...before, subjects: before.subjects.map(s => ({ ...s, name: "Kio" })) };
     const c = planChanges(before, after);
-    expect(describeChanges(c)).toBe(`Renamed ${before.subjects[0]!.name} to Kivo.`);
+    expect(describeChanges(c)).toBe(`Renamed ${before.subjects[0]!.name} to Kio.`);
     expect(changedNothing(c)).toBe(false);
   });
 });
@@ -308,9 +308,9 @@ describe("what the model is given", () => {
     known: [{ label: "Working on (said at sign-up)", value: "a side project" }, { label: "Time a week (their sign-up estimate)", value: "5–10 hours" }],
     proposal: null, existing: null, ...over,
   });
-  it("tells it what Kivo already knows, so it is not asked again", () => {
+  it("tells it what Kio already knows, so it is not asked again", () => {
     const p = turnPrompt(input());
-    expect(p).toContain("KNOWN FROM KIVO (do not ask again):\n- Working on (said at sign-up): a side project\n- Time a week (their sign-up estimate): 5–10 hours");
+    expect(p).toContain("KNOWN FROM KIO (do not ask again):\n- Working on (said at sign-up): a side project\n- Time a week (their sign-up estimate): 5–10 hours");
     expect(p).toContain("LEARNER: I'm building TrackerX");
   });
   it("is told the language: English by default, Hinglish only when written or chosen (seen 21 Oct: English about GATE got Hinglish)", () => {
@@ -320,7 +320,7 @@ describe("what the model is given", () => {
   it("shows the proposal and the workspace being improved, in short", () => {
     const p = turnPrompt(input({ proposal: { version: 3, title: "TrackerX", milestones: ["Finish the dashboard"], tasks: ["Wire the API"], topics: [], dates: [] }, existing: { title: "TrackerX", subjects: ["TrackerX"], tasks: ["Auth"] } }));
     expect(p).toContain("CURRENT PROPOSAL (version 3): TrackerX. Milestones: Finish the dashboard.");
-    expect(p).toContain("WORKING ON: TrackerX (it exists in Kivo).");
+    expect(p).toContain("WORKING ON: TrackerX (it exists in Kio).");
   });
   it("reads a stub reply, and a failing or garbled model is null (the learner sees the honest error)", async () => {
     const ok = await readBuilderTurn(input(), (async () => JSON.stringify(reply({ next: "ask", question: "Who is it for?", facts: [{ label: "Project", value: "TrackerX", quote: "TrackerX" }] }))) as never);

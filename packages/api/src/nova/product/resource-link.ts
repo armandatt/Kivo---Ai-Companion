@@ -107,7 +107,7 @@ export function titleFromUrl(url: string): string {
 }
 
 // ── The bookmarklet ───────────────────────────────────────────────────────────
-// A bookmark that opens Kivo's Saved page with the current page's address and
+// A bookmark that opens Kio's Saved page with the current page's address and
 // title, for the learner to review and confirm. It carries nothing about who
 // they are: the page it opens uses their ordinary sign-in. The capture rides
 // in the fragment, which browsers do not send to any server.
@@ -130,7 +130,7 @@ export function readCapture(fragment: string): { url: string; title: string } | 
   return { url: address.url, title: title.slice(0, EVENT_TITLE_MAX) };
 }
 
-// The bookmark's address for a Kivo web app at `origin`. null: not an origin
+// The bookmark's address for a Kio web app at `origin`. null: not an origin
 // a bookmarklet should be made for.
 export function bookmarkletCode(origin: string): string | null {
   let app: URL;

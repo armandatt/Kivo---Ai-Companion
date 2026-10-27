@@ -169,7 +169,7 @@ export function NoteCaptureScreen() {
       return
     }
     if (!MODEL_TYPES.includes(ext)) {
-      setFile({ status: 'error', name: f.name, message: 'Kivo can import Markdown or text files, PDFs, and photos (PNG, JPEG, WebP). From Goodnotes, Notability or Apple Notes, export or share the page as a PDF first.' })
+      setFile({ status: 'error', name: f.name, message: 'Kio can import Markdown or text files, PDFs, and photos (PNG, JPEG, WebP). From Goodnotes, Notability or Apple Notes, export or share the page as a PDF first.' })
       return
     }
     if (f.size > MODEL_BYTES_MAX) { setFile({ status: 'error', name: f.name, message: 'That file is over 3 MB. Export fewer pages, or a smaller image.' }); return }
@@ -271,7 +271,7 @@ export function NoteCaptureScreen() {
                   <div>
                     <label htmlFor="capture-url" className="mb-1.5 block text-xs text-foreground/55">Where it came from (optional)</label>
                     <input id="capture-url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://…" inputMode="url" className={`${field} h-10`} aria-invalid={urlBad} />
-                    {urlBad && <p className="mt-1 text-xs text-amber-300">That isn&apos;t a web address Kivo can keep (http or https).</p>}
+                    {urlBad && <p className="mt-1 text-xs text-amber-300">That isn&apos;t a web address Kio can keep (http or https).</p>}
                   </div>
                   <div>
                     <label htmlFor="capture-page" className="mb-1.5 block text-xs text-foreground/55">Its title (optional)</label>
@@ -414,7 +414,7 @@ function FilePicker({ file, busy, onFile, onStop }: { file: FileState; busy: boo
               {file.transcription.quality !== 'clear' && <li className="text-amber-300">Nova was unsure of {file.transcription.quality === 'poor' ? 'much of it' : 'some places'}. Check it against your original.</li>}
               {file.transcription.illegible > 0 && <li>{file.transcription.illegible} place{file.transcription.illegible === 1 ? '' : 's'} marked [illegible].</li>}
               {!file.transcription.complete && <li className="text-amber-300">It stops before the end of the file. Save what is here, then import the rest separately.</li>}
-              <li className="text-subtle">Kivo does not keep the file itself: keep your original.</li>
+              <li className="text-subtle">Kio does not keep the file itself: keep your original.</li>
             </ul>
           )}
         </div>
@@ -439,10 +439,10 @@ function CaptureSetup() {
       <section className="rounded-2xl border border-white/8 bg-card/50 p-5">
         <h2 className="text-sm font-semibold text-foreground">From a web page: the bookmarklet</h2>
         <p className="mt-2 text-sm leading-relaxed text-foreground/65">Select a passage on any page and press this bookmark: it opens this screen with the passage, the page&apos;s address and its title. Nothing to install, and it works in Safari on iPad and iPhone.</p>
-        <a ref={link} href="#" draggable onClick={e => e.preventDefault()} className="mt-4 inline-flex h-10 cursor-grab items-center rounded-xl border border-dashed border-nova/50 bg-nova/8 px-4 text-sm font-semibold text-nova-ink" data-note-bookmarklet>Send to Kivo Notes</a>
+        <a ref={link} href="#" draggable onClick={e => e.preventDefault()} className="mt-4 inline-flex h-10 cursor-grab items-center rounded-xl border border-dashed border-nova/50 bg-nova/8 px-4 text-sm font-semibold text-nova-ink" data-note-bookmarklet>Send to Kio Notes</a>
         <ol className="mt-4 list-decimal space-y-1.5 pl-4 text-sm leading-relaxed text-foreground/60">
           <li>On a computer: drag the button onto your bookmarks bar.</li>
-          <li>On iPad or iPhone: copy the code below, bookmark any page in Safari, then edit that bookmark: name it “Send to Kivo Notes” and paste the code as its address.</li>
+          <li>On iPad or iPhone: copy the code below, bookmark any page in Safari, then edit that bookmark: name it “Send to Kio Notes” and paste the code as its address.</li>
           <li>Then select text on a page and open the bookmark from your bookmarks.</li>
         </ol>
         <button type="button" disabled={!code} onClick={async () => { try { await navigator.clipboard.writeText(code!); setCopied('yes') } catch { setCopied('no') } }} className="mt-3 rounded-lg border border-white/12 px-3 py-1.5 text-xs text-foreground/75 hover:bg-white/5 disabled:opacity-50">{copied === 'yes' ? 'Copied' : 'Copy bookmarklet code'}</button>
@@ -459,12 +459,12 @@ function CaptureSetup() {
       <section className="rounded-2xl border border-white/8 bg-card/50 p-5 lg:col-span-2">
         <h2 className="text-sm font-semibold text-foreground">From Goodnotes, Notability, Apple Notes and other apps</h2>
         <ul className="mt-2 list-disc space-y-1.5 pl-4 text-sm leading-relaxed text-foreground/65">
-          <li><strong>Handwritten or drawn pages</strong>: export or share them as a PDF (Goodnotes: Share › Export › PDF; Notability: Share › PDF; Apple Notes: Share › Send a copy › PDF) and save it to Files. Then come here, choose Import a file, and pick it from Files. Nova transcribes it and marks what it could not read; keep your original, since Kivo does not store the file.</li>
+          <li><strong>Handwritten or drawn pages</strong>: export or share them as a PDF (Goodnotes: Share › Export › PDF; Notability: Share › PDF; Apple Notes: Share › Send a copy › PDF) and save it to Files. Then come here, choose Import a file, and pick it from Files. Nova transcribes it and marks what it could not read; keep your original, since Kio does not store the file.</li>
           <li><strong>Typed notes</strong>: select all, copy, and paste on the first tab. Or export as text or Markdown and import the file: it is kept exactly.</li>
           <li><strong>A photo of a page</strong>: import the photo (PNG or JPEG). Handwriting, diagrams and equations may not transcribe exactly.</li>
           <li><strong>One tap to this screen</strong>: in Safari, open {homeScreen}, then Share › Add to Home Screen.</li>
         </ul>
-        <p className="mt-3 text-xs leading-relaxed text-subtle">Kivo does not appear in the iPad share sheet yet: that needs a Kivo app installed on the device, which does not exist yet. Until then, the routes above are the ones that work.</p>
+        <p className="mt-3 text-xs leading-relaxed text-subtle">Kio does not appear in the iPad share sheet yet: that needs a Kio app installed on the device, which does not exist yet. Until then, the routes above are the ones that work.</p>
       </section>
     </div>
   )

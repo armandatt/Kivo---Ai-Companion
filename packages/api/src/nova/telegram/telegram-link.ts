@@ -161,7 +161,7 @@ export async function linkTelegramChat(
 }
 
 // ── A chat nobody has connected ───────────────────────────────────────────────
-// Kivo is entered from the web: an account is made there, and its connect
+// Kio is entered from the web: an account is made there, and its connect
 // link is what ties a Telegram chat to it. A chat with no such tie has no
 // companion, so the webhook answers it with how to connect and nothing else:
 // no row is made for it, and it is given to neither companion's pipeline.
@@ -188,7 +188,7 @@ export async function isLinkedTelegramChat(chatId: string): Promise<boolean> {
 // What an unconnected chat is told. Names no companion. The address is added
 // only when this deployment knows its own web address; none is made up.
 export function notConnectedMessage(webUrl: string | null | undefined): string {
-  const said = "This chat isn't connected to a Kivo account yet. Sign in to Kivo on the web, choose Connect Telegram on your dashboard, and open the link it gives you. That link is what connects this chat.";
+  const said = "This chat isn't connected to a Kio account yet. Sign in to Kio on the web, choose Connect Telegram on your dashboard, and open the link it gives you. That link is what connects this chat.";
   let base = (webUrl ?? "").trim();
   while (base.endsWith("/")) base = base.slice(0, -1);
   return base.startsWith("https://") || base.startsWith("http://") ? `${said}\n\n${base}` : said;

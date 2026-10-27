@@ -6,7 +6,7 @@ import { checkSourceFrame, frameVerdict } from "../product/source-frame";
 import type { Get } from "../product/paper-fetch";
 import { FetchRefused } from "../product/paper-fetch";
 
-const APP = "https://www.thekivo.in";
+const APP = "https://www.thekio.in";
 const v = (status: number, headers: Record<string, string>) => frameVerdict({ status, headers, appOrigin: APP });
 
 describe("what a source's headers allow", () => {

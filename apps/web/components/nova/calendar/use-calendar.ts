@@ -4,7 +4,7 @@ import { useCallback, useState } from 'react'
 import type { CalendarEventInput, CalendarEventResponse, NovaCalendarView } from '@repo/api/nova/product/calendar.types'
 import { useNovaView } from '../use-nova-view'
 
-const FAILED = 'Could not reach Kivo. Check your connection and try again.'
+const FAILED = 'Could not reach Kio. Check your connection and try again.'
 
 async function send(url: string, method: 'POST' | 'PATCH' | 'DELETE', body?: unknown): Promise<CalendarEventResponse | { ok: true }> {
   try {

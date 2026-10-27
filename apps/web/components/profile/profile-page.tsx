@@ -2,7 +2,7 @@
 
 // The learner's profile: who they are professionally, in their own words
 // (product/professional-profile.ts), what they are learning for, their record
-// on Kivo from Progress, and what is connected. It reads GET /api/settings
+// on Kio from Progress, and what is connected. It reads GET /api/settings
 // (and /api/nova/progress for a Nova learner) and saves through PATCH
 // /api/settings { name, professional }: the page says "Saved" only when the
 // server lists the profile as saved. Only the learner sees it; Nova does not
@@ -120,7 +120,7 @@ export function ProfilePage() {
             {p?.organisation && <span className="inline-flex items-center gap-1.5"><Briefcase aria-hidden className="size-4" />{p.organisation}</span>}
             {p?.location && <span className="inline-flex items-center gap-1.5"><MapPin aria-hidden className="size-4" />{p.location}</span>}
             {audience && <span className="inline-flex items-center gap-1.5 rounded-full bg-nova/10 px-2.5 py-0.5 font-medium text-nova-ink">{AUDIENCE_LABEL[audience].label}</span>}
-            {settings.memberSince && <span className="inline-flex items-center gap-1.5"><CalendarDays aria-hidden className="size-4" />On Kivo since {monthYear(settings.memberSince)}</span>}
+            {settings.memberSince && <span className="inline-flex items-center gap-1.5"><CalendarDays aria-hidden className="size-4" />On Kio since {monthYear(settings.memberSince)}</span>}
           </p>
         </div>
       </section>
@@ -160,7 +160,7 @@ export function ProfilePage() {
             {settings.persona !== 'rex' && (
               <section className={CARD} aria-labelledby="profile-record">
                 <div className="flex items-center justify-between gap-3">
-                  <h2 id="profile-record" className={EYEBROW}>Learning with Kivo</h2>
+                  <h2 id="profile-record" className={EYEBROW}>Learning with Kio</h2>
                   <Link href="/progress" className="inline-flex items-center gap-1 text-xs text-foreground/55 hover:text-foreground">Progress <ArrowRight aria-hidden className="size-3" /></Link>
                 </div>
                 {ready && ready.overview.sessions > 0 ? (
@@ -323,7 +323,7 @@ type ResetState =
   | { kind: 'sent'; email: string; accepted: boolean }
   | { kind: 'limited'; minutes: number } | { kind: 'no_password'; google: boolean } | { kind: 'error' }
 
-// The account itself: the address Kivo knows it by, whether that address is
+// The account itself: the address Kio knows it by, whether that address is
 // confirmed, how it signs in, and the password. Read from the server's answer
 // only; nothing here is worked out in the browser.
 function AccountCard({ settings }: { settings: Settings }) {
@@ -383,7 +383,7 @@ function AccountCard({ settings }: { settings: Settings }) {
           </>
         ) : (
           <p className="mt-1 text-xs leading-relaxed text-foreground/60" data-account-google-only>
-            You sign in with Google, so Kivo has no password for this account. Your password is managed by Google:{' '}
+            You sign in with Google, so Kio has no password for this account. Your password is managed by Google:{' '}
             <a href="https://myaccount.google.com/security" target="_blank" rel="noopener noreferrer" className="font-medium text-nova-ink hover:underline">Google account security</a>.
           </p>
         )}

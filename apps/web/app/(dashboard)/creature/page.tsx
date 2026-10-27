@@ -110,7 +110,7 @@ function CreatureWorld({ world }: { world: World }) {
     const target = PLACES.find(pl => pl.id === id)
     if (!target || !openIds.includes(id)) return
     setHeading(id); setPlace(null)
-    engineApiRef.current?.goTo(id, `Kivo heads to the ${target.name}.`)
+    engineApiRef.current?.goTo(id, `Kio heads to the ${target.name}.`)
   }, [openIds])
 
   const onArrive = useCallback((id: PlaceId) => { setPlace(id); setHeading(null) }, [])
@@ -129,12 +129,12 @@ function CreatureWorld({ world }: { world: World }) {
   useEffect(() => {
     fetch('/api/me')
       .then(r => r.json())
-      .then(d => setCreatureName(d.creatureName || 'Kivo'))
-      .catch(() => setCreatureName('Kivo'))
+      .then(d => setCreatureName(d.creatureName || 'Kio'))
+      .catch(() => setCreatureName('Kio'))
   }, [])
 
-  // Replace hardcoded "Kivo" in activity text with the user's chosen name
-  const displayActivity = activity.replace(/\bKivo\b/g, creatureName)
+  // Replace hardcoded "Kio" in activity text with the user's chosen name
+  const displayActivity = activity.replace(/\bKio\b/g, creatureName)
 
   // Real clock for time
   useEffect(() => {
@@ -261,7 +261,7 @@ function CreatureWorld({ world }: { world: World }) {
                   <li key={pl.id}>
                     <button type="button" disabled={!open} onClick={() => sendTo(pl.id)}
                       aria-current={here ? 'location' : undefined}
-                      title={open ? `Send ${creatureName || 'Kivo'} to the ${pl.name}` : `Opens after ${pl.unlockDays} days in a row`}
+                      title={open ? `Send ${creatureName || 'Kio'} to the ${pl.name}` : `Opens after ${pl.unlockDays} days in a row`}
                       className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${here ? 'bg-white/12 text-white' : open ? 'text-white/70 hover:bg-white/8 hover:text-white' : 'cursor-not-allowed text-white/30'}`}>
                       {open
                         ? <MapPin className={`size-3.5 shrink-0 ${here ? 'text-emerald-300' : going ? 'animate-pulse text-amber-200' : 'text-white/40'}`} />
@@ -293,7 +293,7 @@ function CreatureWorld({ world }: { world: World }) {
           </button>
           {/* Controls */}
           <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-xl px-4 py-2 text-xs text-white/50 space-y-0.5 text-right">
-            <p><span className="text-white/75 font-medium">Arrow keys</span> move {creatureName || 'Kivo'}</p>
+            <p><span className="text-white/75 font-medium">Arrow keys</span> move {creatureName || 'Kio'}</p>
             <p><span className="text-white/75 font-medium">Shift ← →</span> or <span className="text-white/75 font-medium">Q E</span> turn</p>
           </div>
         </div>

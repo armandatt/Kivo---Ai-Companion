@@ -15,7 +15,7 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { BookOpen, BookOpenText, Check, FileText, Pencil, Plus, Sparkles, Trash2, Undo2 } from 'lucide-react'
-import { KivoMark } from '@/components/brand/kivo-brand'
+import { KioMark } from '@/components/brand/kio-brand'
 import { cn } from '@/lib/utils'
 import { AppWindow, ReplayButton, StoryControls, useStory } from './frame'
 
@@ -65,7 +65,7 @@ export function NotesDemo() {
             <motion.button type="button" onClick={() => s.go(2)} data-notes-demo-ask
               initial={reduced ? false : { opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={reduced ? undefined : { opacity: 0 }} transition={{ duration: 0.3 }}
               className="absolute -top-9 left-6 z-10 inline-flex h-8 items-center gap-1.5 rounded-lg bg-popover px-3 text-xs font-semibold text-foreground shadow-float ring-1 ring-white/12 hover:ring-nova/50">
-              <KivoMark size={11} className="text-nova-ink" /> Ask Nova
+              <KioMark size={11} className="text-nova-ink" /> Ask Nova
             </motion.button>
           )}
         </AnimatePresence>
@@ -110,7 +110,7 @@ export function NotesDemo() {
       {step >= 3 && (
         <motion.div {...fade()} className="space-y-3 text-[14px] leading-relaxed text-foreground/85" data-notes-demo-answer>
           <div className="flex gap-2.5">
-            <span aria-hidden className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-lg bg-nova/12 ring-1 ring-nova/25"><KivoMark size={11} className="text-nova-ink" /></span>
+            <span aria-hidden className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-lg bg-nova/12 ring-1 ring-nova/25"><KioMark size={11} className="text-nova-ink" /></span>
             <p>Every process is holding something and waiting for something else, so nobody moves. It only happens when all four conditions in your note hold at once; break one and it can’t.</p>
           </div>
           <button type="button" onClick={() => setFlash(true)} className="ml-8 inline-flex items-center gap-1.5 rounded-full border border-nova/40 bg-nova/[0.07] px-2.5 py-1 text-[12px] text-nova-ink hover:bg-nova/15" data-notes-demo-source>
@@ -148,12 +148,12 @@ export function NotesDemo() {
 
   return (
     <div ref={s.ref} className="space-y-4">
-      <AppWindow label="Kivo · Notes" className="h-[50rem] md:h-[38rem]">
+      <AppWindow label="Kio · Notes" className="h-[50rem] md:h-[38rem]">
         <div className="grid h-full md:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
           <div className="min-h-0 border-white/6 max-md:h-[24rem] max-md:border-b md:border-r">{note}</div>
           <section className="flex min-h-0 flex-col bg-white/[0.015]" aria-label="Nova beside the note">
             <div className="flex shrink-0 items-center gap-2 border-b border-white/6 px-4 py-2.5">
-              <span aria-hidden className="grid size-7 place-items-center rounded-lg bg-nova/12 ring-1 ring-nova/25"><KivoMark size={12} className="text-nova-ink" /></span>
+              <span aria-hidden className="grid size-7 place-items-center rounded-lg bg-nova/12 ring-1 ring-nova/25"><KioMark size={12} className="text-nova-ink" /></span>
               <div role="tablist" aria-label="Nova's two jobs" className="inline-flex rounded-lg border border-white/8 p-0.5">
                 {(['tutor', 'editor'] as const).map(m => (
                   <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => s.go(m === 'tutor' ? 3 : 4)} data-notes-demo-mode={m}
@@ -200,7 +200,7 @@ export function PaperDemo() {
   const find = () => { if (url.trim().replace('http://', 'https://').startsWith('https://arxiv.org/abs/1706.03762')) { setOther(false); setStep('found') } else setOther(true) }
 
   return (
-    <AppWindow label="Kivo · Notes · Import a research paper" className="min-h-[22rem]">
+    <AppWindow label="Kio · Notes · Import a research paper" className="min-h-[22rem]">
       <div className="space-y-4 px-5 py-5" aria-live="polite">
         {step !== 'imported' && (
           <form onSubmit={e => { e.preventDefault(); find() }} className="flex flex-col gap-2 sm:flex-row">
@@ -211,7 +211,7 @@ export function PaperDemo() {
             <button type="submit" className="inline-flex h-10 items-center justify-center rounded-xl bg-action px-4 text-sm font-semibold text-action-foreground hover:bg-action-hover" data-paper-demo-find>Find the paper</button>
           </form>
         )}
-        {other && <p className="text-xs text-amber-200">This preview only has the sample paper. In Kivo, any arXiv, DOI, Semantic Scholar, OpenReview, PubMed or PubMed Central link, or a PDF link, works.</p>}
+        {other && <p className="text-xs text-amber-200">This preview only has the sample paper. In Kio, any arXiv, DOI, Semantic Scholar, OpenReview, PubMed or PubMed Central link, or a PDF link, works.</p>}
         {step === 'found' && (
           <motion.div initial={reduced ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="rounded-2xl border border-white/8 bg-card/60 p-4">
             <p className="font-serif text-lg font-semibold text-foreground">Attention Is All You Need</p>

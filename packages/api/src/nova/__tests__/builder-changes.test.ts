@@ -247,13 +247,13 @@ describe("the conversation knows their records by name, and what it works on", (
       return JSON.stringify({ reply: "On it.", next: "draft", resource: { name: "DSA", intent: "change" } });
     }) as never);
     expect(reading?.resource).toEqual({ name: "DSA", intent: "change" });
-    expect(system).toContain("Kivo finds it; never claim you have opened or found it.");
+    expect(system).toContain("Kio finds it; never claim you have opened or found it.");
     expect(turnPrompt(input({ resources: ["Data Structures and Algorithms [CS201] (subject)"] }))).toContain("THEIR WORKSPACES AND SUBJECTS: Data Structures and Algorithms [CS201] (subject)");
   });
 
   it("working on something of theirs, the changes proposed so far are shown, and an unreadable resource is none", async () => {
     const p = turnPrompt(input({ existing: { title: "DSA", subjects: ["DSA"], tasks: [] }, changes: ['Add to DSA: Heaps'] }));
-    expect(p).toContain("WORKING ON: DSA (it exists in Kivo).");
+    expect(p).toContain("WORKING ON: DSA (it exists in Kio).");
     expect(p).toContain("CHANGES PROPOSED SO FAR (not applied):\n- Add to DSA: Heaps");
     const reading = await readBuilderTurn(input(), (async () => JSON.stringify({ reply: "Hi.", next: "chat", resource: { name: "", intent: "edit" } })) as never);
     expect(reading?.resource).toBeNull();
@@ -299,7 +299,7 @@ describe("Build with Nova keeps to its job", () => {
     }) as never);
     expect(reading?.touches).toEqual(["topics"]);
     expect(system).toContain("Decline only when they ask for something this page does not do");
-    // Seen 25 Oct: "delete the kivo project from everywhere" was declined as off-topic.
+    // Seen 25 Oct: "delete the kio project from everywhere" was declined as off-topic.
     expect(system).toContain("never for removing, deleting or undoing anything they are working on here");
     expect(system).toContain("touches: when next is draft or revise");
   });
@@ -325,17 +325,17 @@ describe("the reading says when they want it taken back", () => {
 
 describe("a plan's structure is the model's and the learner's, never rewritten by its kind (26 Oct)", () => {
   it("a project keeps several workstreams; a milestone also listed as a topic is kept once, and both are said", () => {
-    const checked = checkWorkspacePlan({ kind: "custom", title: "Kivo v1",
-      subjects: [{ name: "Kivo", topics: [{ name: "Kivo", explanation: "everything" }, { name: "Home page" }] }, { name: "Extras", topics: ["Docs"] }],
-      phases: [{ name: "Home page", subject: "Kivo" }, { name: "Final polish", subject: "Extras" }],
+    const checked = checkWorkspacePlan({ kind: "custom", title: "Kio v1",
+      subjects: [{ name: "Kio", topics: [{ name: "Kio", explanation: "everything" }, { name: "Home page" }] }, { name: "Extras", topics: ["Docs"] }],
+      phases: [{ name: "Home page", subject: "Kio" }, { name: "Final polish", subject: "Extras" }],
       tasks: [{ key: "a", title: "Build the UI", topic: "Home page", subject: "Extras" }] }, { today: TODAY });
     assert(checked.ok);
     expect(checked.plan.subjects.map(s => [s.name, s.topics.map(t => `${t.name}${t.kind ? ` (${t.kind})` : ""}`)])).toEqual([
-      ["Kivo", ["Home page (milestone)"]], ["Extras", ["Final polish (milestone)", "Docs"]],
+      ["Kio", ["Home page (milestone)"]], ["Extras", ["Final polish (milestone)", "Docs"]],
     ]);
     // Seen 25 Oct: a topic named after the project beside its milestones. Now dropped by the placeholder rule, and said.
-    expect(checked.dropped.some(d => d.includes('topic "Kivo" in Kivo'))).toBe(true);
-    expect(checked.dropped.some(d => d.includes('topic "Home page" in Kivo kept once, as the milestone'))).toBe(true);
+    expect(checked.dropped.some(d => d.includes('topic "Kio" in Kio'))).toBe(true);
+    expect(checked.dropped.some(d => d.includes('topic "Home page" in Kio kept once, as the milestone'))).toBe(true);
     // A task's topic names a topic of its subject; one that names another subject's is said, and filed where the topic is.
     expect(checked.dropped.some(d => d.includes('the topic of "Build the UI"'))).toBe(true);
   });

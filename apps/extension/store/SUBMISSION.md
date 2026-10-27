@@ -15,7 +15,7 @@ What is ready in this repository, and what only the developer can do. Nothing ha
 
 Each of these needs an account, a decision or a fact that is not in the code.
 
-1. **The production address of the Kivo web app.** It is not in the repository. It is built into the extension, so the ZIP cannot be made without it.
+1. **The production address of the Kio web app.** It is not in the repository. It is built into the extension, so the ZIP cannot be made without it.
 2. **Decisions in `LISTING.md`:** the title, the icon, public or unlisted.
 3. **Graphics:** screenshots and the 440×280 promo tile, taken from the real product.
 4. **The privacy statement:** fill in every CONFIRM in `PRIVACY.md`, have it reviewed, and publish it at a public URL.

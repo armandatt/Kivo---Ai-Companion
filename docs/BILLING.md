@@ -1,6 +1,6 @@
 # Billing
 
-Kivo sells one paid plan, Pro, through Polar (merchant of record). This page is how billing works, how to run it, and what to do when something looks wrong.
+Kio sells one paid plan, Pro, through Polar (merchant of record). This page is how billing works, how to run it, and what to do when something looks wrong.
 
 ## Plans and access
 
@@ -20,13 +20,13 @@ Kivo sells one paid plan, Pro, through Polar (merchant of record). This page is 
 | Cancelled at period end | Pro until the period ends, then Free |
 | `past_due` or `unpaid` | Pro for `BILLING_GRACE_DAYS` (3) after the period end, then Free |
 | `revoked`, `incomplete`, `paused`, unknown, or ended | Free |
-| Kivo trial running | Pro until it ends |
+| Kio trial running | Pro until it ends |
 
 - **Losing Pro changes allowances only.** No user data is deleted on cancellation, expiry, refund or revocation.
 
 ## The trial
 
-Kivo's own trial: 7 days of Pro, no card, no automatic charge.
+Kio's own trial: 7 days of Pro, no card, no automatic charge.
 
 - **One per account, ever.** The `BillingTrial` row is keyed by the user id, so concurrent clicks, new sessions or a changed device clock can't start a second one.
 - **New accounts only.** An account that has ever had a subscription isn't offered it.
@@ -55,7 +55,7 @@ Polar knows the account as the **external customer id** (set at checkout), plus 
   - the extension's page questions;
   - subject proposals.
 - **Not metered yet:** saved-page processing and proactive nudges are background work, governed by `NOVA_RESOURCE_MODEL_DISABLED` and Telegram's response cap.
-- **Faults fail open.** If billing or the meter can't be read, the request runs and the fault is logged. A learner is never refused for Kivo's fault.
+- **Faults fail open.** If billing or the meter can't be read, the request runs and the fault is logged. A learner is never refused for Kio's fault.
 - **Cost per active user:** `usageSummary(fromDay, toDay)` in `billing/usage.ts` returns active users and request and token totals.
 
 ## Webhooks
@@ -90,7 +90,7 @@ A visit to `/settings/billing?checkout=success` grants nothing. The page waits f
 
 1. **Polar sandbox** (`sandbox.polar.sh`):
    1. Create the organization.
-   2. Create a product **Kivo Pro (monthly)**, recurring monthly at ₹199, plus optionally the yearly one. Leave Polar's own trial off.
+   2. Create a product **Kio Pro (monthly)**, recurring monthly at ₹199, plus optionally the yearly one. Leave Polar's own trial off.
    3. Create an organization access token.
 2. **Webhook:** add an endpoint `https://<api-host>/api/billing/webhook` with format **Raw**, subscribed to all `subscription.*`, `order.refunded`, `refund.*` and `order.paid` events. Copy its secret.
 3. **API environment** (Render): set `POLAR_SERVER=sandbox`, `POLAR_ACCESS_TOKEN`, `POLAR_WEBHOOK_SECRET`, `POLAR_PRODUCT_PRO_MONTHLY` (and `_ANNUAL`), and `NEXT_PUBLIC_APP_URL`.

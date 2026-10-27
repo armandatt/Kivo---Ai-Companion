@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import Link from 'next/link'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { KivoMark } from '@/components/brand/kivo-brand'
+import { KioMark } from '@/components/brand/kio-brand'
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '@/components/nova/workspace/ui'
 
 // The states every dashboard page shares: its frame, its title, and what it
@@ -38,11 +38,11 @@ export function PageHeader({ eyebrow, title, description, actions, className }: 
   )
 }
 
-// Kivo's mark with its node breathing, and what is loading, in words.
+// Kio's mark with its node breathing, and what is loading, in words.
 export function LoadingMark({ label, className }: { label: string; className?: string }) {
   return (
     <p className={cn('flex items-center gap-2.5 text-sm text-subtle', className)}>
-      <KivoMark size={20} className="text-foreground/80" nodeClassName="kivo-node-pulse" />
+      <KioMark size={20} className="text-foreground/80" nodeClassName="kio-node-pulse" />
       {label}…
     </p>
   )
@@ -73,7 +73,7 @@ export function PageNotice({ eyebrow, title, children, action, tone = 'info', cl
 }) {
   return (
     <section role={tone === 'error' ? 'alert' : undefined} className={cn('max-w-2xl rounded-2xl border border-white/8 bg-card p-6 shadow-soft sm:p-8', className)}>
-      <KivoMark size={22} className="text-foreground/80" />
+      <KioMark size={22} className="text-foreground/80" />
       {eyebrow && <p className="mt-5 text-xs font-medium text-subtle">{eyebrow}</p>}
       <h1 className={cn(eyebrow ? 'mt-2' : 'mt-5', 'text-2xl font-semibold leading-tight tracking-[-0.02em] text-foreground')}>{title}</h1>
       <div className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/65">{children}</div>

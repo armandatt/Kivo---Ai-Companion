@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react'
 
 // ─── Focus scenes ─────────────────────────────────────────────────────────────
-// The backdrop of a focus session, drawn on a canvas in Kivo's colours:
+// The backdrop of a focus session, drawn on a canvas in Kio's colours:
 // nothing is downloaded and nothing needs a licence. Each scene is a still
 // base (a gradient) with slow life on top (ribbons, rain, stars, embers,
 // fireflies). Drawing stops while the tab is hidden; with reduced motion the

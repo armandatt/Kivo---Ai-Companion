@@ -98,7 +98,7 @@ export function FocusSession() {
   // the clock's ticks instead of being built anew each second.
   const roomView = (children: React.ReactNode, topicPanel?: React.ReactNode) => (
     <div ref={room} onPointerDown={sound.resumeSaved}
-      className="kivo-dark focus-room relative -m-6 h-[calc(100%+3rem)] min-h-136 overflow-hidden bg-black text-white" data-focus-room data-scene={prefs.scene}>
+      className="kio-dark focus-room relative -m-6 h-[calc(100%+3rem)] min-h-136 overflow-hidden bg-black text-white" data-focus-room data-scene={prefs.scene}>
       <FocusScene scene={prefs.scene} />
 
       <div className="absolute inset-x-0 top-0 z-10 flex items-center gap-2 p-4 pl-16 sm:p-5 lg:pl-5">

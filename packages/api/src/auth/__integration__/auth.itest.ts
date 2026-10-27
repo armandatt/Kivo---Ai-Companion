@@ -50,7 +50,7 @@ const sent: AuthEmail[] = [];
 const deps = {
   ...defaultAuthDeps,
   sendEmail: async (email: AuthEmail) => { sent.push(email); return true; },
-  appUrl: () => "https://kivo.test",
+  appUrl: () => "https://kio.test",
 };
 
 const base = Date.now();

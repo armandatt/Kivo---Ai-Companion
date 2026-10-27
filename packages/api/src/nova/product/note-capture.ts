@@ -54,7 +54,7 @@ export function noteCaptureFragment(c: { url?: string | null; title?: string; te
   return `#${p.toString()}`;
 }
 
-// The bookmark's address for a Kivo web app at `origin`: it opens the
+// The bookmark's address for a Kio web app at `origin`: it opens the
 // capture page with the tab's address, title and selected text. It works in
 // any browser that runs bookmarklets, Safari on iPad and iPhone included.
 // null: not an origin a bookmarklet should be made for.
@@ -94,7 +94,7 @@ export function captureTitle(c: { title?: string; text?: string; fileName?: stri
 export function captureBody(c: NoteCapture, day: string): string {
   const lines: string[] = [];
   if (c.url) lines.push(`Source: ${c.title ? `${c.title} ` : ""}${c.url}`);
-  const how = c.via === "extension" ? "with the Nova extension" : c.via === "bookmarklet" ? "with the Kivo bookmarklet" : "by pasting";
+  const how = c.via === "extension" ? "with the Nova extension" : c.via === "bookmarklet" ? "with the Kio bookmarklet" : "by pasting";
   lines.push(`Captured ${day}${c.url ? ` from ${siteOf(c.url)}` : ""} ${how}.`);
   if (c.text) lines.push("", "> [!quote] From the source", quote(c.text));
   else lines.push("", "Only the page's address and title were captured. Select a passage before capturing to bring its text.");
@@ -116,7 +116,7 @@ export function importBody(f: ImportedFile, day: string): string {
   const facts = [t.pages ? `${t.pages} page${t.pages === 1 ? "" : "s"}` : null, quality, t.illegible ? `${t.illegible} place${t.illegible === 1 ? "" : "s"} marked [illegible]` : null].filter(Boolean).join(" · ");
   const head = [
     `> [!note] Transcribed by Nova from ${oneLine(f.fileName)} on ${day}`,
-    `> ${facts}. This is Nova's reading of the file, not the file: check it against your original, especially handwriting, diagrams and equations. Kivo does not keep the file.`,
+    `> ${facts}. This is Nova's reading of the file, not the file: check it against your original, especially handwriting, diagrams and equations. Kio does not keep the file.`,
   ];
   if (!t.complete) head.push("", "> [!warning] Incomplete", "> The transcription stops before the end of the file. Import the rest separately, or add it by hand.");
   return `${head.join("\n")}\n\n${text}`;

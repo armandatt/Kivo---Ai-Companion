@@ -44,7 +44,7 @@ describe("what Nova's proposal keeps", () => {
     expect(r.dropped.map(d => d.reason)).toEqual([
       "What the role asks for has recorded study, so removing it would delete that record. Rename or move it instead.",
       "That topic isn't one of yours.",
-      "It was not a change Kivo can make.",
+      "It was not a change Kio can make.",
       "SDE / AI engineer already has a topic called \"What the role asks for\".",
     ]);
   });

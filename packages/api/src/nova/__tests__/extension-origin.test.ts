@@ -54,7 +54,7 @@ describe("which origins the extension routes answer", () => {
   it("answers no web page, no missing origin and nothing that only looks like an extension", () => {
     const refused = [
       null, "", "null", "*",
-      "https://evil.test", "http://localhost:3000", "https://kivo.example",
+      "https://evil.test", "http://localhost:3000", "https://kio.example",
       "https://safari-web-extension://x", "https://evil.test/safari-web-extension://x",
       "safari-web-extension:evil.test", "safari-web-extension.evil.test", "Safari-Web-Extension://x",
       "safari-extension://x", "moz-extension://x", "chrome://settings", "file://",

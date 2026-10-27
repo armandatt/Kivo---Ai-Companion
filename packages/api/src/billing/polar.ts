@@ -1,6 +1,6 @@
 // ─── Polar ────────────────────────────────────────────────────────────────────
-// Kivo's BillingProvider on Polar's official SDK (@polar-sh/sdk, API version
-// 2026-10). The account is Polar's "external customer": Kivo's user id, set at
+// Kio's BillingProvider on Polar's official SDK (@polar-sh/sdk, API version
+// 2026-10). The account is Polar's "external customer": Kio's user id, set at
 // checkout, so every subscription and portal session is found by it and no
 // email is trusted to say who someone is. Webhooks are verified by the SDK
 // against the raw body (Standard Webhooks: webhook-id, -timestamp,
@@ -26,7 +26,7 @@ export function polarProvider(config: ProviderConfig, client: PolarClient = crea
         customer_ip_address:  req.ip,
         success_url:          req.successUrl,
         return_url:           req.returnUrl,
-        // Kivo runs its own no-card trial; the provider's trial is off.
+        // Kio runs its own no-card trial; the provider's trial is off.
         allow_trial:          false,
         metadata:             { kivo_user_id: req.user.id, kivo_plan: req.plan },
       });

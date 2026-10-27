@@ -15,7 +15,7 @@ import {
 const { readTranscription, transcribeForNote } = require("../product/note-import") as typeof import("../product/note-import");
 
 describe("a capture in the address", () => {
-  it("reads the passage, the page and the way it came, and drops what is not an address Kivo keeps", () => {
+  it("reads the passage, the page and the way it came, and drops what is not an address Kio keeps", () => {
     const frag = noteCaptureFragment({ url: "https://example.edu/ch7?utm_source=x", title: "Chapter 7\n Deadlocks", text: "A safe state is one where…\r\nline two", via: "extension" });
     const c = readNoteCapture(frag)!;
     expect(c.via).toBe("extension");
@@ -29,13 +29,13 @@ describe("a capture in the address", () => {
   });
 
   it("the bookmarklet is made only for this app's own https origin, and carries the selection, the address and the title", () => {
-    const code = noteCaptureBookmarklet("https://kivo.example")!;
+    const code = noteCaptureBookmarklet("https://kio.example")!;
     expect(code.startsWith("javascript:")).toBe(true);
-    expect(code).toContain('"https://kivo.example/notes/capture#"');
+    expect(code).toContain('"https://kio.example/notes/capture#"');
     expect(code).toContain("getSelection()");
     expect(code).toContain("&via=bookmarklet");
     expect(code).toContain(".slice(0,6000)");
-    expect(noteCaptureBookmarklet("http://kivo.example")).toBeNull();
+    expect(noteCaptureBookmarklet("http://kio.example")).toBeNull();
     expect(noteCaptureBookmarklet("http://localhost:3000")).not.toBeNull();
     expect(noteCaptureBookmarklet("https://evil.example\"+alert(1)+\"")).toBeNull();
     expect(noteCaptureBookmarklet("not a url")).toBeNull();
@@ -47,7 +47,7 @@ describe("what the note holds", () => {
     const body = captureBody({ url: "https://example.edu/ch7", title: "Chapter 7", text: "Line one\n\nLine **two**", via: "bookmarklet" }, "2026-10-26");
     expect(body.split("\n")).toEqual([
       "Source: Chapter 7 https://example.edu/ch7",
-      "Captured 2026-10-26 from example.edu with the Kivo bookmarklet.",
+      "Captured 2026-10-26 from example.edu with the Kio bookmarklet.",
       "",
       "> [!quote] From the source",
       "> Line one",
@@ -63,7 +63,7 @@ describe("what the note holds", () => {
     const t = importBody({ fileName: "lecture.pdf", text: "--- Page 1 ---\nNotes", transcription: { pages: 3, quality: "mixed", complete: false, illegible: 2 } }, "2026-10-26");
     expect(t).toContain("> [!note] Transcribed by Nova from lecture.pdf on 2026-10-26");
     expect(t).toContain("3 pages · some places uncertain · 2 places marked [illegible]");
-    expect(t).toContain("Kivo does not keep the file.");
+    expect(t).toContain("Kio does not keep the file.");
     expect(t).toContain("> [!warning] Incomplete");
     expect(t.endsWith("--- Page 1 ---\nNotes")).toBe(true);
   });

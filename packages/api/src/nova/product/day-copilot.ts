@@ -267,7 +267,7 @@ export function readCopilotReply(raw: string, labels: Labels): CopilotReading | 
 
 // What happens next, decided by code from the reading and what the learner
 // actually said (their words in this conversation, any case). A fact counts
-// only when its quote is in their words: Kivo's record is never taken as
+// only when its quote is in their words: Kio's record is never taken as
 // their answer. Exported for the tests.
 export type CopilotStep =
   | { kind: "ask"; question: string; choices: string[]; overruled: boolean }
@@ -410,7 +410,7 @@ export async function askCopilot(
     case "ask":
       return answer({ reply: step.overruled ? "" : read.reply, question: step.question, choices: step.choices });
     case "elsewhere":
-      return answer({ reply: read.reply || "That's done elsewhere in Kivo. Here I help you plan today; I can add time for it to today's flow if you like." });
+      return answer({ reply: read.reply || "That's done elsewhere in Kio. Here I help you plan today; I can add time for it to today's flow if you like." });
     case "approve": {
       const applied = await approvePending(profileId, platformChatId, { pendingId: open!.id, version: open!.version, ops: open!.ops });
       if (!applied.ok) return answer({ reply: applied.message, flow: applied.flow ?? null, closed: "declined" });

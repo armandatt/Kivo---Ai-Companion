@@ -44,7 +44,7 @@ export function consentFromToken(token: string | undefined | null): LegalConsent
 // How a consent was given, for the record.
 export type ConsentMethod = "email_signup" | "google_signup";
 
-// The rows Kivo keeps: who, which versions, when, and how. Nothing about the
+// The rows Kio keeps: who, which versions, when, and how. Nothing about the
 // device or the network.
 export function consentRecord(userId: string, consent: LegalConsentInput, at: Date, method: ConsentMethod) {
   return { userId, termsVersion: consent.terms, privacyVersion: consent.privacy, acceptedAt: at, method };
