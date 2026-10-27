@@ -8,7 +8,7 @@
 // reduced motion. Nothing here sends a request: the previews are local state.
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { MotionConfig, motion, useInView, useReducedMotion } from 'framer-motion'
+import { MotionConfig, useInView, useReducedMotion } from 'framer-motion'
 import { Pause, Play, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -85,14 +85,26 @@ export function NearMount({ children, minHeight, className }: { children: ReactN
   return <div ref={ref} className={className} style={{ minHeight }}>{near ? children : null}</div>
 }
 
-// A section's words, risen into place once as the visitor reaches them.
-// Already in place for reduced motion, and readable without any of it.
+// A section's words, risen into place once as the visitor reaches them. The
+// page is drawn with them in place (so they read without JavaScript, and in
+// search results); only a section still below the screen when the page
+// starts is lowered, out of sight, to rise when it scrolls in. Never for
+// reduced motion.
 export function Reveal({ children, className, delay = 0 }: { children: ReactNode; className?: string; delay?: number }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const reduced = useReducedMotion()
+  const inView = useInView(ref, { once: true, amount: 0.3 })
+  const [state, setState] = useState<'still' | 'waiting' | 'shown'>('still')
+  useEffect(() => {
+    const el = ref.current
+    if (!el || reduced) return
+    if (el.getBoundingClientRect().top > window.innerHeight) setState('waiting')
+  }, [reduced])
+  useEffect(() => { if (inView) setState(s => (s === 'waiting' ? 'shown' : s)) }, [inView])
   return (
-    <MotionConfig reducedMotion="user">
-      <motion.div className={className} initial={{ opacity: 0, y: 18 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.3 }} transition={{ duration: 0.6, delay, ease: [0.22, 1, 0.36, 1] }}>
-        {children}
-      </motion.div>
-    </MotionConfig>
+    <div ref={ref} className={cn(className, state !== 'still' && 'transition-[opacity,transform] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]', state === 'waiting' && 'translate-y-[18px] opacity-0')}
+      style={state === 'shown' && delay ? { transitionDelay: `${delay}s` } : undefined} data-reveal={state}>
+      {children}
+    </div>
   )
 }

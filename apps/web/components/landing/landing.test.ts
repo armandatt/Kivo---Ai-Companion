@@ -59,3 +59,10 @@ test('the hero says what Kivo is and keeps the robot, and nothing promises a sto
   assert.match(hero, /<SplineBot/)
   assert.match(web('components/landing/sections.tsx'), /not yet in the Chrome Web Store/)
 })
+
+test('section words are drawn in place and only hidden after the page starts, so they read without JavaScript', () => {
+  const frame = web('components/landing/frame.tsx')
+  const reveal = frame.slice(frame.indexOf('export function Reveal'))
+  assert.match(reveal, /useState<'still' \| 'waiting' \| 'shown'>\('still'\)/)
+  assert.doesNotMatch(reveal, /initial=\{\{ opacity: 0/)
+})

@@ -109,20 +109,31 @@ function Scene({ step }: { step: number }) {
   )
 }
 
-function useWide() {
+// The robot is a 3D scene from Spline's servers, the heaviest thing on the
+// page: it loads on a wide screen, without reduced motion, and only once the
+// browser is idle after the page has drawn, so the words and the tour come first.
+function useRobot() {
   const [wide, setWide] = useState(false)
+  const [idle, setIdle] = useState(false)
   useEffect(() => {
     const q = window.matchMedia('(min-width: 1024px) and (prefers-reduced-motion: no-preference)')
     const on = () => setWide(q.matches)
     on(); q.addEventListener('change', on)
     return () => q.removeEventListener('change', on)
   }, [])
-  return wide
+  useEffect(() => {
+    if (!wide || idle) return
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void }
+    if (w.requestIdleCallback) { const id = w.requestIdleCallback(() => setIdle(true), { timeout: 2500 }); return () => w.cancelIdleCallback?.(id) }
+    const t = window.setTimeout(() => setIdle(true), 1200)
+    return () => window.clearTimeout(t)
+  }, [wide, idle])
+  return wide && idle
 }
 
 export function LandingHero() {
   const s = useStory(STEPS.length, 3800)
-  const robot = useWide()
+  const robot = useRobot()
   return (
     <section className="relative overflow-hidden px-4 pb-16 pt-28 sm:pt-32" style={{ background: '#060810' }} aria-labelledby="hero-title">
       {!s.reduced && (
