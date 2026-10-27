@@ -21,7 +21,7 @@ function Saved() {
 
   if (loading) {
     return (
-      <PageLoading label="Loading your saved pages">
+      <PageLoading label="Loading the browser extension page">
         <div className="space-y-6">
           <div className="h-8 w-40 animate-pulse rounded-lg bg-white/5" />
           <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
@@ -43,9 +43,9 @@ function Saved() {
     )
   }
 
-  if (view.status === 'not_nova') return <Notice title="Saved pages are part of Nova" body="This account uses a different companion, so there is nothing to show here." />
+  if (view.status === 'not_nova') return <Notice title="The browser extension is part of Nova" body="This account uses a different companion, so there is nothing to show here." />
   if (view.status === 'not_connected') return <Notice title="Connect Nova first" body="Nova has no learner linked to this account yet. Connect it on Today." />
-  if (view.status === 'onboarding_incomplete') return <Notice title="Nova needs to know what you're studying" body="Finish the short setup conversation on Today. Then you can save pages under your subjects." />
+  if (view.status === 'onboarding_incomplete') return <Notice title="Nova needs to know what you're studying" body="Finish the short setup conversation on Today. Then you can connect the extension and save pages under your subjects." />
 
   return (
     <>

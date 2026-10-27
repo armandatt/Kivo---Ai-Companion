@@ -32,6 +32,7 @@ import { novaModeCommands, useNotesCommands } from './notes-commands'
 import { modLabel } from './notes-shortcuts'
 import { paperPlacement } from '@repo/api/nova/product/paper-source'
 import { createNote, deleteNote, fetchNote, fetchNotes, updateNote } from './notes-api'
+import { BOARD_PATH } from '@repo/api/nova/product/companion'
 
 // Unsaved text is kept in this browser while it is typed, so a crash, a
 // closed tab or a failed save loses nothing. One entry per note ("new" for
@@ -1135,7 +1136,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
             <button type="button" onClick={() => void reviewTask()} disabled={taskState === 'adding'} className="text-sm text-keppel-300 hover:underline disabled:opacity-50" data-review-task>
               {taskState === 'adding' ? 'Adding…' : 'Make a review task'}
             </button>
-            {taskState === 'added' && <span role="status" className="text-xs text-foreground/60">On your task board. <Link href="/planner?view=board" className="underline">Open it</Link></span>}
+            {taskState === 'added' && <span role="status" className="text-xs text-foreground/60">On your task board. <Link href={BOARD_PATH} className="underline">Open it</Link></span>}
             {taskState === 'failed' && <span role="alert" className="text-xs text-red-300">That task didn&apos;t save. Try again.</span>}
           </div>
         </section>

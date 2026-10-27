@@ -24,7 +24,7 @@ test('every entry opens a real address; nodes without one and finished tasks are
   assert.ok(entries.every(e => e.href.startsWith('/')))
   assert.equal(entries.find(e => e.id === 'note:n2'), undefined)
   assert.equal(entries.find(e => e.id === 'task:b'), undefined)
-  assert.equal(entries.find(e => e.id === 'task:a')?.href, '/planner?view=board')
+  assert.equal(entries.find(e => e.id === 'task:a')?.href, '/home?board=open')
 })
 
 test('nothing typed lists the pages in the sidebar order', () => {

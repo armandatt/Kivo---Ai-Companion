@@ -187,9 +187,10 @@ function ResourceRow({ resource: initial, onRemoved, onChanged }: { resource: Le
   )
 }
 
-// The learner's inbox of saved pages and passages (pasted here, sent by the
-// bookmark, or sent by the extension), what Nova found each connects to, and
-// the browsers they connected. A saved page is a bookmark with a subject,
+// The Browser Extension page: connecting the extension, and the learner's
+// inbox of saved pages and passages (pasted here, sent by the bookmark, or
+// sent by the extension) with what Nova found each connects to. One page,
+// because what the extension saves lands here; the address stays /saved. A saved page is a bookmark with a subject,
 // nothing more: Nova learns nothing about the learner from it until they study it.
 export function NovaSaved({ view, connect, onChanged }: { view: NovaSavedResourcesReady; connect: boolean; onChanged: () => void }) {
   // A page the bookmark brought, read once when the screen opens.
@@ -205,12 +206,14 @@ export function NovaSaved({ view, connect, onChanged }: { view: NovaSavedResourc
   return (
     <div className="mx-auto w-full max-w-6xl pb-20 pt-10 lg:pt-4" data-saved={view.resources.length > 0 ? 'ready' : 'empty'}>
       <PageHeader
-        title="Saved"
-        description="Pages and passages you want to come back to. Nova looks at each for which of your topics it belongs under. Saving one tells Nova it matters to you, not that you know it."
+        title="Browser Extension"
+        description="Connect the extension to save pages and passages to Nova while you read. What you save is kept below, under the subject and topic it belongs to. Saving a page tells Nova it matters to you, not that you know it."
       />
 
       <div className="mt-8 grid grid-cols-1 gap-x-10 gap-y-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="min-w-0 space-y-6">
+          <ExtensionPanel open={connect} />
+          <h2 className="pt-2 text-lg font-semibold tracking-tight text-foreground" data-saved-heading>Saved pages</h2>
           <SaveLink subjects={view.subjects} resources={view.resources} capture={capture} onSaved={onChanged} />
           {view.resources.length === 0 ? (
             <section className="rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9" data-empty="saved">
@@ -228,7 +231,6 @@ export function NovaSaved({ view, connect, onChanged }: { view: NovaSavedResourc
 
         <aside className="space-y-6">
           <BookmarkletPanel />
-          <ExtensionPanel open={connect} />
           <section className="rounded-2xl border border-white/8 bg-card/50 p-5">
             <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">What Nova keeps</h2>
             <ul className="mt-4 space-y-2.5 text-sm leading-relaxed text-foreground/60">

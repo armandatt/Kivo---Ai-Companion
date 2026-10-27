@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ChevronRight, Columns2, KanbanSquare, Plus, Sparkles, Target, Undo2, X } from 'lucide-react'
+import { ChevronRight, KanbanSquare, Plus, Sparkles, Target, Undo2, X } from 'lucide-react'
 import type { NovaTodayReady } from '@repo/api/nova/product/today.types'
 import type { FlowItemView, FlowOp } from '@repo/api/nova/product/day-flow.types'
 import { greetingFor } from '@repo/api/nova/product/greetings'
@@ -20,6 +20,8 @@ import { AddToToday } from './today/add-to-today'
 import { FocusNow } from './today/focus-now'
 import { Playground, type OpenProposal } from './today/playground'
 import { CopilotPanel, type CopilotHandle } from './today/copilot-panel'
+import { BOARD_ID, TodayBoard } from './today/today-board'
+import { PlannerLook } from './today/planner-look'
 import { cn } from '@/lib/utils'
 
 type Props = {
@@ -42,9 +44,10 @@ const minutesLabel = (m: number) => (m >= 60 && m % 60 === 0 ? `${m / 60} h` : m
 // stand, or an invitation to plan; nothing is put in the day before they
 // choose it. Nova (today/copilot-panel.tsx) asks and proposes; only what the
 // learner approves is written. The subject cards are top-level subjects only
-// and choosing one is context for Nova, nothing more. The planner's view,
-// dates and overdue work are a step away in "More for today"; the board, the
-// week and the rest have their own pages.
+// and choosing one is context for Nova, nothing more. The task board opens
+// under the planning area (?board=open keeps it open across a reload, and is
+// where old Planner links land); dates, overdue work and the week ahead are a
+// step away in "More for today".
 export function NovaHome({ view, refreshing }: Props) {
   const board = useTasks()
   const day = useDayFlow()
@@ -59,11 +62,32 @@ export function NovaHome({ view, refreshing }: Props) {
   const [intention, setIntention] = useState<string | null>(null)
   const [studio, setStudio] = useState<{ thinking: boolean; proposal: OpenProposal | null }>({ thinking: false, proposal: null })
   const [chosen, setChosen] = useState<string | null>(null)
+  const [boardOpen, setBoardOpen] = useState(false)
+  const [boardTask, setBoardTask] = useState<string | null>(null)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const boardToggle = useRef<HTMLButtonElement>(null)
 
   const flow = day.flow
   useEffect(() => { try { setNovaOpen(localStorage.getItem(LAYOUT) !== 'nova-hidden') } catch { /* storage off */ } }, [])
   useEffect(() => { if (!flow) return; try { setChosen(sessionStorage.getItem(SUBJECT(flow.day))) } catch { /* storage off */ } }, [flow?.day]) // eslint-disable-line react-hooks/exhaustive-deps
   const choose = (name: string | null) => { setChosen(name); try { if (flow) { if (name) sessionStorage.setItem(SUBJECT(flow.day), name); else sessionStorage.removeItem(SUBJECT(flow.day)) } } catch { /* storage off */ } }
+  // The board's state is in the address, so a reload or a link keeps it.
+  useEffect(() => {
+    const at = new URLSearchParams(window.location.search)
+    if (at.get('board') === 'open') { setBoardOpen(true); setBoardTask(at.get('task')) }
+  }, [])
+  const motion = (): ScrollBehavior => (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth')
+  const toggleBoard = (open: boolean, from: 'header' | 'board' = 'header') => {
+    setBoardOpen(open)
+    const url = new URL(window.location.href)
+    if (open) url.searchParams.set('board', 'open'); else { url.searchParams.delete('board'); url.searchParams.delete('task') }
+    window.history.replaceState(null, '', url)
+    if (!open) setBoardTask(null)
+    // Opening brings the board into view; closing from inside it goes back to
+    // the button that opens it, so the page is not left scrolled past its end.
+    if (open) window.setTimeout(() => document.getElementById(BOARD_ID)?.scrollIntoView({ block: 'start', behavior: motion() }), 0)
+    else if (from === 'board') { boardToggle.current?.scrollIntoView({ block: 'nearest', behavior: motion() }); boardToggle.current?.focus({ preventScroll: true }) }
+  }
   const showNova = (open: boolean) => { setNovaOpen(open); try { localStorage.setItem(LAYOUT, open ? 'nova-shown' : 'nova-hidden') } catch { /* storage off */ } }
   // A session ending (here or on the focus screen) brings the flow up to date.
   useEffect(() => { if (live.ended) void day.load() }, [live.ended]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -116,8 +140,11 @@ export function NovaHome({ view, refreshing }: Props) {
               </h1>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
-              <Link href="/planner" className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm text-foreground/70 hover:bg-white/5 hover:text-foreground" title="The full planner"><Columns2 className="size-4" /> <span className="max-sm:hidden">Planner</span></Link>
-              <Link href="/planner?view=board" className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm text-foreground/70 hover:bg-white/5 hover:text-foreground" title="Your task board"><KanbanSquare className="size-4" /> <span className="max-sm:hidden">Board</span></Link>
+              <button type="button" ref={boardToggle} onClick={() => toggleBoard(!boardOpen)} aria-expanded={boardOpen} aria-controls={BOARD_ID}
+                className={cn('inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm hover:bg-white/5 hover:text-foreground', boardOpen ? 'bg-white/6 text-foreground' : 'text-foreground/70')}
+                aria-label="Board" title={boardOpen ? 'Close your task board' : 'Open your task board below'} data-today-board-toggle>
+                <KanbanSquare className="size-4" /> <span className="max-sm:hidden">Board</span>
+              </button>
               <button type="button" disabled={!flow} onClick={() => setAdding(true)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/12 px-3 text-sm font-medium text-foreground/85 hover:bg-white/5 disabled:opacity-50" data-today-add>
                 <Plus className="size-4" /> Add myself
               </button>
@@ -175,10 +202,13 @@ export function NovaHome({ view, refreshing }: Props) {
             </label>
           )}
 
-          {/* ── A step away: dates, overdue work, the planner's view ────── */}
-          <details className="group rounded-2xl mt-8 border border-white/8 bg-card/30 transition-colors open:bg-card/60" data-today-more>
+          {/* ── The task board, when the learner opens it ───────────────── */}
+          {boardOpen && <TodayBoard board={board} task={boardTask} onChanged={() => void day.load()} onClose={() => toggleBoard(false, 'board')} />}
+
+          {/* ── A step away: dates, overdue work, the week ahead ────────── */}
+          <details onToggle={e => setMoreOpen(e.currentTarget.open)} className="group rounded-2xl mt-8 border border-white/8 bg-card/30 transition-colors open:bg-card/60" data-today-more>
             <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-foreground/75 hover:text-foreground [&::-webkit-details-marker]:hidden">
-              <span className="flex-1">More for today <span className="font-normal text-foreground/50">· coming up, overdue work, your planner’s view</span></span>
+              <span className="flex-1">More for today <span className="font-normal text-foreground/50">· coming up, overdue work, the week ahead</span></span>
               <ChevronRight aria-hidden className="size-4 text-subtle transition-transform group-open:rotate-90" />
             </summary>
             <div className="grid gap-8 border-t border-white/6 px-4 pb-6 pt-5 lg:grid-cols-2">
@@ -188,11 +218,12 @@ export function NovaHome({ view, refreshing }: Props) {
               </div>
               <div>
                 <h3 className="text-xs font-semibold text-foreground/70">Your planner’s view of today</h3>
-                {view.plan.shortfall && <div className="mt-3"><ShortfallNote shortfall={view.plan.shortfall} timeHref="/planner" /></div>}
+                {view.plan.shortfall && <div className="mt-3"><ShortfallNote shortfall={view.plan.shortfall} /></div>}
                 <p className="mt-2 text-sm text-foreground/70">The planner works out what is most worth studying today from your record. Its blocks appear in Add to today as suggestions; it never fills your flow by itself.</p>
                 <AccountingFor constraints={view.constraints} />
-                <p className="mt-4 text-xs text-foreground/55">Your task board, week and knowledge are on <Link href="/planner?view=board" className="underline">Board</Link>, <Link href="/progress" className="underline">Progress</Link> and <Link href="/knowledge" className="underline">Knowledge</Link>.</p>
+                <p className="mt-4 text-xs text-foreground/55">How you are doing and what you know are on <Link href="/progress" className="underline">Progress</Link> and <Link href="/knowledge" className="underline">Knowledge</Link>.</p>
               </div>
+              {moreOpen && <div className="border-t border-white/6 pt-6 lg:col-span-2"><PlannerLook /></div>}
             </div>
           </details>
           {refreshing && <p className="mt-2 text-xs text-subtle">Refreshing…</p>}

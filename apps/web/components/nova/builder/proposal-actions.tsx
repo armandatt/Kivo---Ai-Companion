@@ -8,6 +8,7 @@ import { planCounts } from '@repo/api/nova/product/workspace-plan'
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '@/components/nova/workspace/ui'
 import { mapDestinations, type Words } from './builder-view'
 import type { DraftState } from './use-draft'
+import { BOARD_PATH } from '@repo/api/nova/product/companion'
 
 // The bottom of the playground: the decisions that are the learner's, kept
 // apart from the workspace above and from the conversation. Shown only when
@@ -50,7 +51,7 @@ export function ProposalActions({ state, words, onEdit, onAsk }: {
           {places.length === 1
             ? <Link href={places[0]!.href} className={BUTTON_PRIMARY} data-map-link><Network aria-hidden className="size-4" /> Open on the Knowledge Map</Link>
             : places.map(p => <Link key={p.href} href={p.href} className={BUTTON_QUIET} data-map-link><Network aria-hidden className="size-3.5" /> {p.label}</Link>)}
-          <Link href="/planner?view=board" className={BUTTON_QUIET}>Planner board</Link>
+          <Link href={BOARD_PATH} className={BUTTON_QUIET}>Board</Link>
           <Link href="/calendar" className={BUTTON_QUIET}>Calendar</Link>
           <button type="button" onClick={() => onAsk('')} className={`${BUTTON_QUIET} sm:ml-auto`}><Sparkles aria-hidden className="size-3.5" /> Keep changing it</button>
         </div>

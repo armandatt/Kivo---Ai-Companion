@@ -20,10 +20,10 @@ export function NovaUnavailable({ pathname }: { pathname: string }) {
           title={<>{title} isn&apos;t available with Nova</>}
           action={<>
             <PageAction href="/home">Go to Today <ArrowRight aria-hidden className="size-4" /></PageAction>
-            <Link href="/planner" className={`${BUTTON_QUIET} h-10 px-4 text-sm`}>Open Planner</Link>
+            <Link href="/map" className={`${BUTTON_QUIET} h-10 px-4 text-sm`}>Open Knowledge Map</Link>
           </>}
         >
-          Nova doesn&apos;t have this page yet. What it knows about your learning is on Today and in the Planner.
+          Nova doesn&apos;t have this page yet. What it knows about your learning is on Today and the Knowledge Map.
         </PageNotice>
       </div>
     </PageFrame>

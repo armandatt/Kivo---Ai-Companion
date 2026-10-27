@@ -350,7 +350,7 @@ test('Disconnect says Nova closed the connection only when Nova did', async () =
     const outcome = disconnectOutcome(result)
     assert.equal(outcome.confirmed, false)
     assert.equal(outcome.message, WORDS.disconnect_unconfirmed)
-    assert.match(outcome.message, /Saved page/)
+    assert.match(outcome.message, /Browser Extension page/)
     assert.doesNotMatch(outcome.message, /can no longer save/)
   }
 })

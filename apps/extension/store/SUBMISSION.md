@@ -28,7 +28,7 @@ Each of these needs an account, a decision or a fact that is not in the code.
 The extension is useless until the server it talks to has these, so check them before building:
 
 - The API is deployed from a commit that includes the extension routes (`/api/nova/extension/*`, `/api/nova/learning-events`), and the database has the `NovaLearningEvent` and `NovaExtensionConnection` tables (`prisma db push`).
-- The web app's Saved page shows **Connect a browser**.
+- The web app's Browser Extension page shows **Connect a browser**.
 
 ### 2. Build the ZIP
 
@@ -44,7 +44,7 @@ It prints the ZIP's path, size and SHA-256. Running it again with the same addre
 ### 3. Try the exact build before uploading
 
 1. Unzip it, open `chrome://extensions`, turn on Developer mode, **Load unpacked**, choose the unzipped folder.
-2. Connect with a code from the production Saved page.
+2. Connect with a code from the production Browser Extension page.
 3. Save a page and check it appears in Saved; select a passage, save it and check it appears as a quote; ask a question with and without a selection; use **Study this** and check Focus opens; disconnect and check the popup returns to "Connect Nova".
 
 This has **not** been done against production. In this repository the extension has only been exercised by its own tests and by server tests, not in a real browser on real sites.

@@ -9,6 +9,7 @@ import type { WorkspaceCounts, WorkspaceSummary } from '@repo/api/nova/product/w
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '@/components/nova/workspace/ui'
 import { cn } from '@/lib/utils'
 import { createWorkspace, newClientKey } from './templates-api'
+import { BOARD_PATH } from '@repo/api/nova/product/companion'
 
 // A proposed workspace, before anything exists: what it will create, where
 // it came from, and what was assumed. The learner trims it (rename, remove)
@@ -237,7 +238,7 @@ function Created({ done }: { done: { status: 'created' | 'updated' | 'exists'; w
       )}
       <div className="flex flex-wrap gap-2">
         {first && <Link href={`/knowledge?subject=${first.id}`} className={BUTTON_PRIMARY}>Open in Knowledge</Link>}
-        <Link href="/planner?view=board" className={BUTTON_QUIET}>Tasks</Link>
+        <Link href={BOARD_PATH} className={BUTTON_QUIET}>Tasks</Link>
         <Link href="/notes" className={BUTTON_QUIET}>Notes</Link>
         <Link href="/home" className={BUTTON_QUIET}>Today&apos;s plan</Link>
       </div>

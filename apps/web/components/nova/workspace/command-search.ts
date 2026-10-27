@@ -1,5 +1,6 @@
 import type { MapNode } from '@repo/api/nova/product/knowledge-map.types'
 import type { NovaTaskItem } from '@repo/api/nova/product/tasks.types'
+import { BOARD_PATH } from '@repo/api/nova/product/companion'
 
 // What the command palette can find, and the order it lists matches in.
 // Every entry opens a place that exists: a page in the sidebar, or a row the
@@ -21,7 +22,7 @@ export const KIND_LABEL: Record<CommandKind, string> = {
   page: 'Page', subject: 'Subject', topic: 'Topic', note: 'Note', resource: 'Saved page', task: 'Task',
 }
 
-const TASK_BOARD = '/planner?view=board'
+const TASK_BOARD = BOARD_PATH
 
 export function commandEntries(sources: {
   pages: ReadonlyArray<{ path: string; label: string }>

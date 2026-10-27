@@ -157,7 +157,7 @@ export function KnowledgeBoard({ map, reviewDue }: { map: Loaded<NovaKnowledgeMa
           {ready.unconnected > 0 && (
             <p>
               {plural(ready.unconnected, 'item on the map is', 'items on the map are')} not filed under anything.{' '}
-              <Link href="/saved" className="underline decoration-white/25 underline-offset-4 hover:text-foreground">File saved pages on Saved</Link>
+              <Link href="/saved" className="underline decoration-white/25 underline-offset-4 hover:text-foreground">File your saved pages</Link>
             </p>
           )}
           {(ready.notShown.notes > 0 || ready.notShown.resources > 0) && (

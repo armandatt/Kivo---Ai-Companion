@@ -9,6 +9,7 @@ import {
   AUDIENCES, checkFirstFocus, firstFocusLine, firstFocusOptions, firstStepFor, focusTemplateIds, goalFromFirstFocus,
   normalizeFirstFocus, audienceOf, FIRST_FOCUS, FIRST_FOCUS_DETAIL_MAX,
 } from "../product/first-focus";
+import { BOARD_PATH } from "../product/companion";
 import { checkCompanionName, checkOnboardingV2, DEFAULT_COMPANION_NAME, COMPANION_NAME_MAX } from "../product/onboarding-answers";
 import { STUDY_TEMPLATES, templatesFor } from "../product/templates";
 import { LEARNING_CONTEXTS } from "../product/learning-context";
@@ -102,7 +103,7 @@ describe("what each answer changes", () => {
       const step = firstStepFor({ id: focus, detail: focus === "other" ? "x" : null });
       if (!step) continue;
       if (step.href.startsWith("#")) expect([step.href, form.includes(`id="${step.href.slice(1)}"`)]).toEqual([step.href, true]);
-      else expect(["/calendar", "/planner?view=board"]).toContain(step.href);
+      else expect(["/calendar", BOARD_PATH]).toContain(step.href);
     }
     expect(firstStepFor(null)).toBeNull();
   });

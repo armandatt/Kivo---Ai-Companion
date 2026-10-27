@@ -12,6 +12,7 @@ import type { PlaygroundView } from './plan-edit'
 import { NovaHint, PlaygroundHeader, TITLE_AREA, TreeGuides, ViewTabs } from './playground'
 import { ProposalActions } from './proposal-actions'
 import type { DraftState } from './use-draft'
+import { BOARD_PATH } from '@repo/api/nova/product/companion'
 
 // What a conversation works on when it is something the learner already
 // has: the real tasks, topics, notes and dates, read back from their owners
@@ -298,7 +299,7 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
                 </ul>
               </section>
             ))}
-            {detail.tasks.length === 0 && marks.addedTasks.length === 0 && <p className="text-sm text-foreground/65">No tasks here. <Link href="/planner?view=board" className="underline underline-offset-4">Open the board</Link></p>}
+            {detail.tasks.length === 0 && marks.addedTasks.length === 0 && <p className="text-sm text-foreground/65">No tasks here. <Link href={BOARD_PATH} className="underline underline-offset-4">Open the board</Link></p>}
           </div>
         )}
         {shown === 'topics' && (

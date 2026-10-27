@@ -26,10 +26,12 @@ describe("Today keeps what it already did, a step away", () => {
   it("still shows the shortfall and the recovery card, in sections that open", () => {
     expect(home).toContain("<ShortfallNote shortfall={view.plan.shortfall}");
     expect(home).toContain("<RecoveryCard");
-    expect(home).toContain("<details className=\"group rounded-2xl");
+    expect(home).toContain("<details onToggle={e => setMoreOpen(e.currentTarget.open)} className=\"group rounded-2xl");
   });
-  it("keeps the task board one link away instead of listing every task on Today", () => {
-    expect(home).toContain('href="/planner?view=board"');
+  it("opens the task board under the day instead of listing every task on Today", () => {
+    expect(home).toContain("aria-expanded={boardOpen} aria-controls={BOARD_ID}");
+    expect(home).toContain("{boardOpen && <TodayBoard board={board}");
+    for (const link of ["'/planner", '"/planner']) expect(home).not.toContain(link);
     expect(home).not.toContain("<TodayTasks");
   });
   it("starts an item of the flow through the day's own route, and does not wait for the map", () => {
@@ -58,7 +60,7 @@ describe("today's plan", () => {
 describe("the task list on Today", () => {
   it("keeps its one link to the board", () => {
     const tasks = web("components/nova/tasks/today-tasks.tsx");
-    expect(tasks).toContain('<Link href="/planner?view=board"');
+    expect(tasks).toContain("<Link href={BOARD_PATH}");
     expect(web("components/nova/today-sections.tsx")).not.toContain("view=board");
   });
 });
@@ -153,5 +155,52 @@ describe("connected knowledge on the page", () => {
   it("reads a session's topic record once, never on a timer", () => {
     expect(focus).toContain("useTopicRecord(");
     expect(record).not.toContain("setInterval");
+  });
+});
+
+describe("the board inside Today", () => {
+  const home  = web("components/nova/nova-home.tsx");
+  const board = web("components/nova/today/today-board.tsx");
+  it("is closed until the learner opens it, and the address keeps it open across a reload", () => {
+    expect(home).toContain("const [boardOpen, setBoardOpen] = useState(false)");
+    expect(home).toContain("if (at.get('board') === 'open')");
+    expect(home).toContain("url.searchParams.set('board', 'open')");
+  });
+  it("is the one task board, fed by the page's own tasks, and reads the flow again after a change", () => {
+    expect(board).toContain("<TaskBoard");
+    expect(board).toContain("board.create(input)");
+    expect(home).toContain("onChanged={() => void day.load()}");
+    // Nothing on the board writes today's flow.
+    expect(board).not.toContain("day.ops");
+    expect(board).not.toContain("/api/nova/day");
+  });
+});
+
+describe("the old Planner address", () => {
+  const page = web("app/(dashboard)/planner/page.tsx");
+  it("sends a Nova learner to Today, on the board when the link was to the board, and keeps Rex's planner", () => {
+    expect(page).toContain("router.replace(at.get('view') === 'board' || task ? `${BOARD_PATH}");
+    expect(page).toContain("useDashboardCompanion() === 'nova' ? <ToToday /> : <RexPlanner />");
+  });
+  it("leaves no Nova link pointing at it", () => {
+    for (const file of ["components/nova/focus-context.tsx", "components/nova/knowledge-map/knowledge-map.tsx", "components/nova/notes/note-editor.tsx",
+      "components/nova/builder/proposal-actions.tsx", "components/nova/builder/live-workspace.tsx", "components/nova/templates/plan-review.tsx",
+      "components/nova/workspace/command-search.ts", "components/nova/nova-unavailable.tsx"]) expect([file, web(file).includes("/planner?") || web(file).includes('"/planner"')]).toEqual([file, false]);
+  });
+});
+
+describe("Nova's conversation on Today", () => {
+  const panel = web("components/nova/today/copilot-panel.tsx");
+  it("starts a new chat without touching the flow, and asks first when a proposal is still waiting", () => {
+    expect(panel).toContain("if (unapplied) setConfirmNew(true); else startOver()");
+    expect(panel).toContain("const startOver = () => { setConfirmNew(false); setTurns([]); setInput('')");
+    expect(panel).toContain("onClick={() => { discard(); startOver() }}");
+    const reset = panel.slice(panel.indexOf("const startOver"), panel.indexOf("const newChat"));
+    for (const write of ["onApprove", "onAdopt", "askCopilot", "fetch("]) expect([write, reset.includes(write)]).toEqual([write, false]);
+  });
+  it("keeps today's conversation in the tab only, and a new day starts a new one", () => {
+    expect(panel).toContain("if (turnsDay !== flow.day) return");
+    expect(panel).toContain("k?.startsWith(PREFIX) && k !== store(flow.day)");
+    expect(panel).not.toContain("localStorage");
   });
 });

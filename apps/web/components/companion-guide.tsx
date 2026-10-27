@@ -473,11 +473,11 @@ export default function CompanionGuide({
               )}
               {!ctaLabel && (
                 <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', marginTop: '14px' }}>
-                  This guide lives at{' '}
+                  Find it again any time in{' '}
                   <a href="/guide" style={{ color: accent, textDecoration: 'none', opacity: 0.8 }}>
-                    /guide
+                    Docs
                   </a>
-                  {' '}— come back any time.
+                  .
                 </p>
               )}
             </motion.div>

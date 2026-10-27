@@ -27,27 +27,33 @@ export function companionOf(account: {
 // omission.
 
 export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
+  // Today is where the day is planned and done, the task board included.
   { path: "/home",    label: "Today" },
+  { path: "/map",     label: "Knowledge Map" },
   // The conversation with Nova that builds a workspace (product/builder.ts).
   { path: "/build",   label: "Build with Nova" },
-  { path: "/planner", label: "Planner" },
+  { path: "/notes",   label: "Notes" },
+  // Connecting the browser extension, and the pages saved with it.
+  { path: "/saved",   label: "Browser Extension" },
   { path: "/calendar", label: "Calendar" },
   { path: "/focus",   label: "Focus" },
   { path: "/knowledge", label: "Knowledge" },
-  { path: "/map",     label: "Knowledge Map" },
-  { path: "/notes",   label: "Notes" },
-  { path: "/saved",   label: "Saved" },
   { path: "/progress", label: "Progress" },
   { path: "/learning-dna", label: "Learning DNA" },
   // The same world page Rex has, fed by Nova's own numbers (product/creature.ts).
   { path: "/creature", label: "Creature" },
   // Rex has a guide at the same address; the page shows each companion its own.
-  { path: "/guide",   label: "Guide" },
+  { path: "/guide",   label: "Docs" },
 ];
 
 // Nova's pages that are reached from another page, not from the sidebar: the
-// template library is an optional shortcut from Build with Nova.
-export const NOVA_LINKED_ROUTES: readonly string[] = ["/templates"];
+// template library is an optional shortcut from Build with Nova, and the old
+// Planner address sends a Nova learner to Today (its board is there now).
+export const NOVA_LINKED_ROUTES: readonly string[] = ["/templates", "/planner"];
+
+// Where a Nova learner's task board is: on Today, opened. `task` scrolls to one.
+export const BOARD_PATH = "/home?board=open";
+export const boardHref = (taskId?: string | null) => (taskId ? `${BOARD_PATH}&task=${encodeURIComponent(taskId)}` : BOARD_PATH);
 
 // Shared account pages, the same for both companions.
 const SHARED_ROUTES = ["/settings", "/profile"];

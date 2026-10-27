@@ -122,7 +122,7 @@ async function disconnect() {
   // open there until they close it on Saved.
   const outcome = disconnectOutcome(await client.disconnect())
   await store.clear()
-  renderConnect(outcome.message, outcome.confirmed ? null : { label: "Open Nova's Saved page", path: '/saved' })
+  renderConnect(outcome.message, outcome.confirmed ? null : { label: "Open Nova's Browser Extension page", path: '/saved' })
 }
 
 function renderReady(page, context, probe = NO_PROBE) {
@@ -274,7 +274,7 @@ function renderSaved(result, page, context, probe) {
     !already && !filed ? el('p', { class: 'small', dataset: { looking: '' } }, 'Nova will look at which of your topics it belongs under. You will see that on Saved.') : null,
     el('div', { class: 'page' }, el('div', {}, result.resource.title), el('div', { class: 'filed', dataset: { filed: '' } }, filed || 'Not filed under a subject')),
     el('div', { class: 'row' },
-      el('button', { class: 'primary', type: 'button', dataset: { openSaved: '' }, onclick: () => openNova('/saved') }, 'Open Saved'),
+      el('button', { class: 'primary', type: 'button', dataset: { openSaved: '' }, onclick: () => openNova('/saved') }, 'Open saved pages'),
       el('button', { type: 'button', dataset: { back: '' }, onclick: () => renderReady(page, context, probe) }, 'Back')),
     footer(),
   )
