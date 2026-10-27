@@ -15,6 +15,7 @@ import { linkKey, tokenizeLine } from '@repo/api/nova/product/note-links'
 import type { NoteLinkRef } from '@repo/api/nova/product/notes.types'
 import { PAPER_STATUS_WORDS, paperRegion, readPaperCard, type PaperCard } from '@repo/api/nova/product/paper-source'
 import { inlineTokens, parseBlocks, type Block, type CalloutType } from './note-blocks'
+import { Tex } from './tex'
 
 // cite: Nova's text (the tutor) marks what a claim rests on with [S1], [S2]…;
 // given, each such mark is drawn by it. A note has none and passes nothing.
@@ -55,7 +56,7 @@ function inline(text: string, key: string): ReactNode[] {
       case 'italic':    return <em key={k} className="italic">{t.text}</em>
       case 'highlight': return <mark key={k} className="rounded-[3px] bg-yellow-300/25 px-0.5 text-inherit [box-decoration-break:clone]" data-note-highlight>{t.text}</mark>
       case 'code':      return <code key={k} className="rounded bg-white/8 px-1 py-0.5 font-mono text-[0.86em]">{t.text}</code>
-      case 'math':      return <span key={k} className="note-math sem-definition sem-ink" title="Maths (LaTeX)" data-note-math>{t.text}</span>
+      case 'math':      return t.display ? <span key={k} className="my-2 block"><Tex tex={t.text} display /></span> : <Tex key={k} tex={t.text} />
       case 'tag':       return <span key={k} className="mx-0.5 inline-block rounded-full bg-orange-400/15 px-2 py-px align-[0.08em] font-sans text-[0.8em] font-medium text-orange-300" data-note-tag={t.text}>#{t.text}</span>
       case 'url':       return <a key={k} href={t.href} target="_blank" rel="noopener noreferrer" className="break-all text-keppel-300 underline decoration-keppel-300/40 underline-offset-2 hover:decoration-keppel-300">{t.text}</a>
     }
@@ -145,9 +146,17 @@ function render(blocks: Block[], key: string, resolve: Resolve, nested = false):
       }
       case 'math': return (
         <div key={k} className={`my-4 flex items-start gap-3 ${edge}`} {...span} data-note-math-block>
-          <pre className="note-math note-math-block min-w-0 flex-1 text-foreground/90" aria-label="Equation (LaTeX)">{b.tex}</pre>
+          <div className="min-w-0 flex-1 text-foreground/90" role="math" aria-label={`Equation: ${b.tex}`}><Tex tex={b.tex} display /></div>
           {b.tag && <span className="pt-2 font-mono text-xs text-subtle">{b.tag}</span>}
         </div>
+      )
+      case 'image': return (
+        <figure key={k} className={`my-5 ${edge}`} {...span} data-note-image={b.id}>
+          {/* eslint-disable-next-line @next/next/no-img-element -- the learner's own capture, served to them only */}
+          <img src={`/api/nova/notes/images/${encodeURIComponent(b.id)}`} alt={b.alt || 'Image in this note'} loading="lazy"
+            className="max-h-[36rem] w-auto max-w-full rounded-lg border border-white/8 bg-white" />
+          {b.alt && <figcaption className="mt-1.5 font-sans text-xs text-subtle">{b.alt}</figcaption>}
+        </figure>
       )
       case 'code': return <pre key={k} className={`my-4 overflow-x-auto rounded-lg border border-white/6 bg-white/[0.03] px-4 py-3 font-mono text-[13px] leading-relaxed text-foreground/85 ${edge}`} {...span}><code>{b.text}</code></pre>
       case 'quote': return <blockquote key={k} className={`my-4 border-l-2 border-foreground/20 pl-4 italic text-foreground/70 ${edge}`} {...span}>{lines(b.lines, k, resolve)}</blockquote>

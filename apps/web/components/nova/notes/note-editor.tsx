@@ -27,6 +27,10 @@ import type { TutorReply } from '@repo/api/nova/product/note-tutor.types'
 import { alreadyIn, applyEdits, insertAt, locateChange, placementFor, resolvePlacement, resolveRef, type EditChange, type NoteRef } from '@repo/api/nova/product/note-outline'
 import { outline, parseBlocks, sourceOf, tagsOf, wordCount, type NoteSource } from './note-blocks'
 import { SourceReader } from './source-reader'
+import type { Taken } from './pdf-reader'
+import { ReaderSendDialog, type AddToCurrent } from './reader-send-dialog'
+import { addInto } from './reader-send'
+import { NoteCreate, type StartChoice } from './note-create'
 import { callout, divider, noteLink, prefixLines, tag, wrap, type Edited } from './note-format'
 import { NotesTree } from './notes-tree'
 import { novaModeCommands, useNotesCommands } from './notes-commands'
@@ -119,6 +123,12 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const [missing, setMissing]   = useState<string | null>(null)
 
   const [editing, setEditing]   = useState(noteId === null)
+  // A new note starts on the create screen (note-create.tsx): written at once,
+  // or set up first by Nova's editor. Not for a note arriving with its text
+  // (a saved page's source) or unsaved text kept from before.
+  const [creatingNew, setCreatingNew] = useState(noteId === null)
+  // A passage or capture taken from the PDF beside the note, on its way to a note.
+  const [taken, setTaken] = useState<Taken | null>(null)
   const [draft, setDraft]       = useState<Draft>(EMPTY)
   const [saved, setSaved]       = useState<Draft>(EMPTY)
   const [saving, setSaving]     = useState(false)
@@ -207,6 +217,8 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
           setNote(loaded.note); setDraft(draftOf(loaded.note)); setSaved(draftOf(loaded.note))
           const params = new URLSearchParams(window.location.search)
           if (params.get('saved') === '1') setJustSaved(true)
+          // Just created from the create screen: straight into writing it.
+          if (params.get('edit') === '1') { setEditing(true); router.replace(`/notes/${loaded.note.id}`) }
           // From the capture page: "Organise with Nova" opens Nova and asks once.
           const ask = params.get('tutor')
           if (ask && (TUTOR_MODES as readonly string[]).includes(ask)) { setAutoAsk(ask as TutorMode); setPrefsState(p => ({ ...p, tutor: true })) }
@@ -232,11 +244,12 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
         setDraft(initial); setSaved({ ...initial, body: sourceUrl ? '' : initial.body })
         const kept = readDraft(null)
         if (kept && (kept.draft.title || kept.draft.body)) setRecovered(kept)
+        if (sourceUrl || (kept && (kept.draft.title || kept.draft.body))) setCreatingNew(false)
       }
       setLoading(false)
     })()
     return () => { cancelled = true }
-  }, [noteId])
+  }, [noteId, router])
 
   // Closing the tab or reloading with unsaved changes asks first.
   useEffect(() => {
@@ -451,6 +464,23 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     const saved = await saveNow()
     return { ok: true, saved }
   }, [currentBody, revealRange, saveNow])
+  // A passage or capture from the PDF beside the note, added to this note
+  // where it belongs (under My notes in a paper's note), then saved at once
+  // through the note's guarded save. Said saved only when the save came back.
+  const addFromReader = useCallback<AddToCurrent>(async (markdown, label) => {
+    const n = noteRef.current
+    if (!n) return { ok: false, message: 'Save this note first.' }
+    if (inFlight.current) await inFlight.current
+    const before = currentBody()
+    const r = addInto(before, markdown, label)
+    if ('already' in r) return { ok: true, saved: !dirtyRef.current, already: true }
+    if ('tooLong' in r) return { ok: false, message: 'That would make the note longer than a note can be. Nothing was added.' }
+    const next = { ...(editingRef.current ? draftRef.current : draftOf(n)), body: r.body }
+    draftRef.current = next
+    setDraft(next); setEditing(true)
+    setUndo({ before, after: r.body, label }); setNotice(null)
+    return { ok: true, saved: await saveNow() }
+  }, [currentBody, saveNow])
   const showChange = useCallback((c: EditChange) => {
     const at = locateChange(currentBody(), c)
     if (!at) { setNotice('That part of your note has changed since Nova proposed this.'); return }
@@ -666,6 +696,15 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     )
   }
 
+  if (creatingNew && !note) {
+    return (
+      <NoteCreate subjects={subjects} initial={{ title: draft.title, subjectId: draft.subjectId, topicName: draft.topicName }}
+        reloadSubjects={reloadSubjects}
+        onBlank={(c: StartChoice) => { setDraft(d => ({ ...d, ...c })); setEditing(true); setCreatingNew(false) }}
+        onCreated={id => { writeDraft(null, null); router.replace(`/notes/${id}?edit=1`) }} />
+    )
+  }
+
   // ── The workspace ──────────────────────────────────────────────────────────
   const subjectName = editing ? subjects.find(s => s.id === draft.subjectId)?.name ?? null : note?.subjectName ?? null
   const topicName   = editing ? (draft.subjectId ? draft.topicName.trim() || null : null) : note?.topicName ?? null
@@ -678,7 +717,10 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   // With Nova docked on a screen under 1600px, the note keeps the room: the
   // notebook opens over it instead of beside it, and the editor shows one
   // pane (Write or Preview), not both.
-  const tutorDocked = wide && prefs.tutor
+  // Nova beside a note needs the note: a new one is set up on the create
+  // screen, by Nova's editor there, and gets the Tutor and Editor once saved.
+  const novaHere = !!note
+  const tutorDocked = wide && prefs.tutor && novaHere
   const treeDocked = prefs.tree && !showSource && (roomy || !tutorDocked)
   const splitFits = roomy || !tutorDocked
 
@@ -729,11 +771,11 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       <button type="button" onClick={commands.openImport} className={`${iconButton()} max-sm:hidden`} title={`Import a research paper (${modLabel(commands.mac)}P)`} aria-label="Import a research paper" aria-keyshortcuts={commands.mac ? 'Meta+P' : 'Control+P'} data-note-import-paper>
         <FileText className="size-4" />
       </button>
-      <button type="button" onClick={() => (wide ? setPrefs({ tutor: !prefs.tutor }) : setTutorOnPhone(true))} aria-pressed={wide ? prefs.tutor : tutorOnPhone}
+      {novaHere && <button type="button" onClick={() => (wide ? setPrefs({ tutor: !prefs.tutor }) : setTutorOnPhone(true))} aria-pressed={wide ? prefs.tutor : tutorOnPhone}
         className={`ml-1 inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-colors ${(wide ? prefs.tutor : tutorOnPhone) ? 'bg-nova/15 text-nova-ink' : 'border border-nova/30 text-nova-ink hover:bg-nova/10'}`}
         title={wide && prefs.tutor ? 'Hide Nova' : 'Study this note with Nova'} data-tutor-toggle>
         <Sparkles className="size-3.5" /> Nova
-      </button>
+      </button>}
     </header>
   )
 
@@ -802,13 +844,13 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   // A share of the room beside Nova's panel, never leaving the note under
   // 22rem (the two 6px drag handles aside): the note stays readable however
   // wide the paper is made.
-  const besideNova = wide && prefs.tutor ? `${tutorWidth}px` : '0px'
+  const besideNova = tutorDocked ? `${tutorWidth}px` : '0px'
   const readerBasis = `min(calc((100% - ${besideNova}) * ${readerShare.toFixed(3)}), calc(100% - ${besideNova} - 22rem - 12px))`
   const sourcePane = readerMounted && shown && (
     <section style={mdUp ? { flexBasis: readerBasis } : undefined}
       className={`${showSource ? 'flex' : 'hidden'} min-h-0 min-w-0 shrink-0 grow-0 flex-col border-r border-white/6 bg-white/[0.015] max-md:fixed max-md:inset-0 max-md:z-50 max-md:bg-background ${dragShare !== null ? '[&_iframe]:pointer-events-none' : ''}`}
       aria-label={shown.pdf ? 'The paper' : 'Source'} data-note-source data-reader-open={showSource}>
-      <SourceReader source={shown} wide={readerShare >= 0.62} onWide={() => setPrefs({ readerShare: readerShare >= 0.62 ? 0.5 : 0.7 })} onClose={() => setSourceOpen(false)} />
+      <SourceReader source={shown} wide={readerShare >= 0.62} onWide={() => setPrefs({ readerShare: readerShare >= 0.62 ? 0.5 : 0.7 })} onClose={() => setSourceOpen(false)} onTake={setTaken} />
     </section>
   )
   const readerSplitter = showSource && (
@@ -909,8 +951,8 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
           {sourcePane}
           {readerSplitter}
           {main}
-          {showOutline && !(wide && prefs.tutor) && outlinePanel}
-          {wide && prefs.tutor && (
+          {showOutline && !tutorDocked && outlinePanel}
+          {tutorDocked && (
             <>
               {splitter}
               <aside className="flex min-h-0 shrink-0 flex-col" style={{ width: tutorWidth }} data-tutor-panel>{tutor(() => setPrefs({ tutor: false }))}</aside>
@@ -926,7 +968,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
         </div>
         {statusBar}
       </div>
-      {!wide && tutorOnPhone && (
+      {!wide && tutorOnPhone && novaHere && (
         <div className="fixed inset-0 z-40" role="dialog" aria-modal="true" aria-label="Nova, your tutor" data-tutor-drawer>
           <button type="button" className="absolute inset-0 bg-black/50" aria-label="Close Nova" onClick={() => setTutorOnPhone(false)} />
           <div className="absolute inset-x-0 bottom-0 top-[8vh] overflow-hidden rounded-t-2xl border-t border-white/10 shadow-float sm:inset-y-0 sm:left-auto sm:right-0 sm:top-0 sm:w-[min(28rem,92vw)] sm:rounded-none sm:border-l sm:border-t-0">
@@ -943,6 +985,11 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
         </button>
       )}
       {commands.element}
+      {taken && shown && (
+        <ReaderSendDialog taken={taken} notes={notes} onAddToCurrent={addFromReader} onClose={() => setTaken(null)}
+          doc={{ title: (note?.title ?? draft.title).trim() || shown.label, url: shown.view }}
+          current={note ? { id: note.id, title: note.title } : null} />
+      )}
       {pendingInsert && (
         <InsertPreview pending={pendingInsert} canPlaceAtCursor={editing && caret.current !== null} onConfirm={confirmInsert} onCancel={() => setPendingInsert(null)} />
       )}

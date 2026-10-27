@@ -263,6 +263,13 @@ export async function findNoteContaining(profileId: string, words: string): Prom
   return prisma.novaNote.findFirst({ where: { profileId, body: { contains: likeLiteral(words) } }, orderBy: { updatedAt: "desc" }, select: { id: true, title: true } });
 }
 
+// Whether a note is the learner's own, for what hangs off a note (its images,
+// note-images.ts) without that module reading notes itself.
+export async function ownsNote(profileId: string, noteId: string): Promise<boolean> {
+  if (typeof noteId !== "string" || !noteId || noteId.length > 40) return false;
+  return (await prisma.novaNote.count({ where: { profileId, id: noteId } })) > 0;
+}
+
 export async function getNote(profileId: string, noteId: string): Promise<NoteDetail | null> {
   // findFirst with the profile in the filter, not findUnique by id: another
   // learner's note is simply not found.

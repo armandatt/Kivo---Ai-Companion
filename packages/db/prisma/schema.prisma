@@ -763,6 +763,8 @@ model NovaAcademicProfile {
   learningDNA       NovaLearningDNA?
   proactiveMessages NovaProactiveMessage[]
   notes             NovaNote[]
+  pdfHighlights     NovaPdfHighlight[]
+  noteImages        NovaNoteImage[]
   masterySnapshots  NovaTopicMasterySnapshot[]
   telegramChannel   NovaTelegramChannel?
   telegramPrompts   NovaTelegramPrompt[]
@@ -959,12 +961,61 @@ model NovaNote {
 
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   subject NovaSubject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  images  NovaNoteImage[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([profileId, updatedAt])
   @@index([profileId, subjectId])
+}
+
+// A highlight the learner made on a PDF in the reader beside a note. Keyed by
+// the document's address (normalised), never by a copy of the file: Kivo
+// stores no PDF. rects are fractions of the page (0..1), so they sit on the
+// same words at any zoom. Only product/pdf-highlights.ts reads or writes it.
+model NovaPdfHighlight {
+  id        String   @id @default(cuid())
+  profileId String
+  docUrl    String
+  page      Int
+  rects     Json
+  text      String   @db.Text
+  color     String   @default("yellow")
+  // Made once per click however often it is sent (a retry, a double click).
+  clientKey String
+  createdAt DateTime @default(now())
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, clientKey])
+  @@index([profileId, docUrl])
+}
+
+// An image the learner put in a note: a page or a region captured from a PDF
+// in the reader. The note's text holds ![caption](kivo-image:<id>); the bytes
+// live here, served only to their owner. It goes with the note it was made
+// for. Only product/note-images.ts reads or writes it.
+model NovaNoteImage {
+  id        String   @id @default(cuid())
+  profileId String
+  noteId    String
+  mimeType  String
+  bytes     Bytes
+  width     Int
+  height    Int
+  // Where it came from: the document's address and title, and its page.
+  sourceUrl   String?
+  sourceTitle String?
+  page        Int?
+  clientKey String
+  createdAt DateTime @default(now())
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  note    NovaNote            @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, clientKey])
+  @@index([noteId])
 }
 
 model NovaCognitiveState {
