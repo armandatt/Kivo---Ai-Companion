@@ -426,3 +426,39 @@ test('the extension and its package.json agree on the version, and the descripti
   assert.ok(manifest.description.length <= 132)
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/)
 })
+
+// ── How the popup behaves ─────────────────────────────────────────────────────
+
+test('Ask Nova: Enter asks and Shift+Enter is a new line; a failed question stays in the box', () => {
+  const popup = code(src('popup.js'))
+  assert.match(popup, /if \(event\.key !== 'Enter' \|\| event\.shiftKey \|\| event\.isComposing\) return/)
+  assert.match(popup, /question\.form\.requestSubmit\(\)/, 'Enter goes through the same form submit, so the one ask path holds')
+  const handler = popup.slice(popup.indexOf("el('form', {\n      onsubmit: async event => {\n        event.preventDefault()\n        if (!question.value.trim()) return"))
+  const failed = handler.indexOf("return thread.replaceChildren(alertBox(")
+  const cleared = handler.indexOf("question.value = ''")
+  assert.ok(failed > 0 && cleared > failed, 'the box is cleared only after an answer arrived')
+  assert.match(handler, /if \(askButton\.getAttribute\('aria-busy'\)\) return/, 'a second submit while asking sends nothing')
+})
+
+test('an action on its way blocks the others, so a double click saves once', () => {
+  const send = code(src('popup.js')).match(/async function send\(eventType, button, words\) \{[\s\S]*?\n  \}/)[0]
+  assert.match(send, /if \(buttons\(\)\.some\(b => b\.getAttribute\('aria-busy'\)\)\) return null/)
+  assert.match(send, /for \(const b of buttons\(\)\) b\.disabled = true/)
+})
+
+test('connection status and the privacy disclosure are said in words, not colour alone', () => {
+  const popup = src('popup.js')
+  for (const words of ["setStatus('disconnected', 'Not connected')", "setStatus('error', 'Offline')", "setStatus('loading', 'Checking…')"]) assert.ok(popup.includes(words), words)
+  assert.match(popup, /toggle\.setAttribute\('aria-expanded', String\(opening\)\)/)
+  assert.match(popup, /toggle\.setAttribute\('aria-controls', 'privacy'\)/)
+  // A wrong code is explained under the field, which is marked, and kept to fix.
+  assert.match(popup, /code\.setAttribute\('aria-invalid', 'true'\)/)
+  assert.match(popup, /code\.setAttribute\('aria-describedby', 'code-error'\)/)
+})
+
+test('the popup stays within its width and moves nothing for reduced motion', () => {
+  const css = src('popup.css')
+  assert.match(css, /body \{ width: 360px;/)
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/)
+  assert.ok(!css.match(/@import|url\(/), 'no outside fonts or images')
+})

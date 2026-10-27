@@ -38,22 +38,35 @@ export function ExtensionPanel({ open }: { open: boolean }) {
     else setError("That browser didn't disconnect. Try again.")
   }
 
+  const state = connections === null ? 'checking' : known > 0 ? 'connected' : 'none'
   return (
-    <section className="rounded-2xl border border-white/8 bg-card/50 p-5" data-section="extension" data-open={open}>
-      <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Connect the extension</h2>
-      <p className="mt-3 text-sm leading-relaxed text-foreground/65">
+    <section className="rounded-2xl border border-white/8 bg-card/50 p-5 sm:p-6" data-section="extension" data-open={open} aria-labelledby="extension-heading">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 id="extension-heading" className="text-base font-semibold tracking-tight text-foreground">Browser extension</h2>
+        {/* Said in words as well as colour. */}
+        <span role="status" data-connection-state={state}
+          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs ${state === 'connected' ? 'border-keppel-400/35 bg-keppel-400/10 text-keppel-300' : 'border-white/12 text-foreground/55'}`}>
+          <span aria-hidden className={`size-1.5 rounded-full ${state === 'connected' ? 'bg-keppel-400' : 'border border-current'}`} />
+          {state === 'checking' ? 'Checking…' : state === 'connected' ? `Connected · ${known} ${known === 1 ? 'browser' : 'browsers'}` : 'Not connected'}
+        </span>
+      </div>
+      <p className="mt-2 max-w-prose text-sm leading-relaxed text-foreground/60">
         Save a page to Nova, or study it, from wherever you are reading. Nova sees a page only when you click its button on that page.
       </p>
 
       {connections && connections.length > 0 && (
-        <ul className="mt-4 space-y-2.5" data-connections>
+        <ul className="mt-5 divide-y divide-white/6 rounded-xl border border-white/8" data-connections>
           {connections.map(c => (
-            <li key={c.id} data-connection={c.id} className="flex items-center justify-between gap-3 text-sm">
-              <span className="min-w-0">
-                <span className="block truncate text-foreground/85">{c.label ?? 'A browser'}</span>
-                <span className="block text-xs text-foreground/45">Connected {relativeDay(c.connectedAt)}</span>
+            <li key={c.id} data-connection={c.id} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
+              <span className="flex min-w-0 items-center gap-3">
+                <span aria-hidden className="size-2 shrink-0 rounded-full bg-keppel-400" />
+                <span className="min-w-0">
+                  <span className="block truncate font-medium text-foreground/90">{c.label ?? 'A browser'}</span>
+                  <span className="block text-xs text-foreground/50">Connected {relativeDay(c.connectedAt)}</span>
+                </span>
               </span>
-              <button type="button" onClick={() => void disconnect(c.id)} className="shrink-0 rounded-lg border border-white/12 px-3 py-1.5 text-xs text-foreground/75 transition-colors hover:bg-white/5">
+              <button type="button" onClick={() => void disconnect(c.id)} aria-label={`Disconnect ${c.label ?? 'this browser'}`}
+                className="shrink-0 rounded-lg px-2.5 py-1.5 text-xs text-foreground/60 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-keppel-400">
                 Disconnect
               </button>
             </li>
@@ -62,13 +75,16 @@ export function ExtensionPanel({ open }: { open: boolean }) {
       )}
 
       {code ? (
-        <div className="mt-4 rounded-xl border border-keppel-400/25 bg-keppel-400/5 p-4" data-pairing>
-          <p className="text-xs text-foreground/60">Type this into the Nova extension:</p>
-          <p className="mt-1.5 font-mono text-2xl font-semibold tracking-[0.12em] text-foreground" data-pairing-code>{code.code}</p>
+        <div className="mt-5 rounded-xl border border-keppel-400/25 bg-keppel-400/5 p-4 sm:p-5" data-pairing>
+          <p className="text-sm text-foreground/70">Open the Nova extension and type this code:</p>
+          <p className="mt-2 select-all font-mono text-2xl font-semibold tracking-[0.14em] text-foreground" data-pairing-code>{code.code}</p>
+          <p className="mt-3 flex items-center gap-2 text-xs text-foreground/55" role="status">
+            <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-keppel-400 motion-reduce:animate-none" /> Waiting for the extension…
+          </p>
           <p className="mt-2 text-xs leading-relaxed text-foreground/45">It works once and stops working in ten minutes. Don&apos;t share it: whoever enters it can save pages to your Nova.</p>
         </div>
       ) : (
-        <button type="button" onClick={() => void getCode()} disabled={busy} className="mt-4 inline-flex h-10 items-center justify-center rounded-xl bg-keppel-400 px-4 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300 disabled:opacity-60" data-get-code>
+        <button type="button" onClick={() => void getCode()} disabled={busy} className="mt-5 inline-flex h-10 items-center justify-center rounded-xl bg-keppel-400 px-4 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-keppel-400 disabled:opacity-60" data-get-code>
           {busy ? 'One moment…' : known > 0 ? 'Connect another browser' : 'Connect a browser'}
         </button>
       )}

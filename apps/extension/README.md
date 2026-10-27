@@ -95,7 +95,7 @@ Select text on a page, then click the Nova icon. The popup shows the selection a
 
 ## Asking about the page
 
-**Ask Nova about this page** in the popup sends your question with the page's title, its address and your selection, if you made one. Nova has not read the page: with no selection it answers from the title and says so. The answer is shown in the popup and not kept.
+**Ask Nova** in the popup sends your question with the page's title, its address and your selection, if you made one; the box shows what goes with it before you send. Enter asks, Shift+Enter starts a new line, and a question that fails stays in the box. Nova has not read the page: with no selection it answers from the title and says so. The answer is shown in the popup and not kept.
 
 ## One adapter for every browser
 
