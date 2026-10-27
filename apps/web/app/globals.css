@@ -696,3 +696,16 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 @media (prefers-reduced-motion: reduce) {
   .kivo-app .studio-drift, .kivo-app .studio-breathe, .kivo-app .studio-thinking::before { animation: none !important; }
 }
+
+/* Landing hero (components/landing/hero.tsx): the words rise in once, in
+   order, and the robot fades in and floats as the original hero's did
+   (botFloat, 7s). CSS only, so the page reads before JavaScript runs;
+   nothing moves under reduced motion. */
+@keyframes hero-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes hero-robot-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes botFloat { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-10px); } }
+.hero-in { animation: hero-in 0.8s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.hero-robot { animation: hero-robot-in 1.2s ease-out 0.3s both, botFloat 7s ease-in-out 1.5s infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .hero-in, .hero-robot { animation: none; }
+}

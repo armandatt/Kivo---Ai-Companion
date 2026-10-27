@@ -9,7 +9,7 @@ import { insideOf } from '../nova/knowledge-map/explore'
 import { DEMO_EDGES, DEMO_NODES } from './demo-map-data'
 
 const web = (file: string) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8')
-const DEMOS = ['hero', 'map-demo', 'build-demo', 'notes-demo', 'today-demo', 'frame', 'demos'].map(f => [f, web(`components/landing/${f}.tsx`)] as const)
+const DEMOS = ['hero', 'hero-sparkles', 'map-demo', 'build-demo', 'notes-demo', 'today-demo', 'frame', 'demos'].map(f => [f, web(`components/landing/${f}.tsx`)] as const)
 
 test('the sample map is laid out by the real map engine: every card placed, a tree under each subject', () => {
   const layout = layoutMap(DEMO_NODES, DEMO_EDGES.filter(e => TREE_EDGES.has(e.kind)))
@@ -53,11 +53,36 @@ test('the paper sources the page names are the ones the importer recognises', ()
   }
 })
 
-test('the hero says what Kivo is and keeps the robot, and nothing promises a store listing that does not exist', () => {
+test('the hero says what Kivo is, and nothing promises a store listing that does not exist', () => {
   const hero = web('components/landing/hero.tsx')
-  assert.match(hero, /Turn what you learn into/)
-  assert.match(hero, /<SplineBot/)
+  assert.match(hero, /Turn what you learn/)
+  assert.match(hero, /what you know\./)
   assert.match(web('components/landing/sections.tsx'), /not yet in the Chrome Web Store/)
+})
+
+test('the robot stands where the original hero had it: its own column, a 520px stage, floating on botFloat', () => {
+  const hero = web('components/landing/hero.tsx')
+  assert.match(hero, /grid items-center gap-12 md:grid-cols-2 lg:gap-16/)
+  assert.match(hero, /style=\{\{ minHeight: '520px' \}\}/)
+  assert.match(hero, /hero-robot relative h-\[520px\] w-full">\s*<SplineBot className="h-full w-full" \/>/)
+  assert.match(web('app/globals.css'), /\.hero-robot \{[^}]*botFloat 7s ease-in-out/)
+  assert.match(web('app/globals.css'), /@keyframes botFloat \{ 0%, 100% \{ transform: translateY\(0px\); \} 50% \{ transform: translateY\(-10px\); \} \}/)
+  // Nova's walkthrough is its own section below, not a window in the hero.
+  assert.doesNotMatch(hero, /AppWindow/)
+  const page = web('app/page.tsx')
+  assert.ok(page.indexOf('<LandingHero />') < page.indexOf('<BuildSection />') && page.indexOf('<BuildSection />') < page.indexOf('<MapSection />'))
+})
+
+test('the Knowledge Map is marketed as the AI-powered Second Brain, without renaming the app', () => {
+  assert.match(web('components/landing/sections.tsx'), /eyebrow="AI-powered Second Brain"/)
+})
+
+test('pricing, FAQ and the last call to action are readable without JavaScript: no hidden first state', () => {
+  for (const f of ['components/pricing.tsx', 'components/faq.tsx', 'components/final-cta.tsx']) {
+    const src = web(f)
+    assert.doesNotMatch(src, /isVisible/, f)
+    assert.doesNotMatch(src, /"opacity-0/, f)
+  }
 })
 
 test('section words are drawn in place and only hidden after the page starts, so they read without JavaScript', () => {
