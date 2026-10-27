@@ -146,7 +146,7 @@ export function MapDemo() {
         {/* On a phone the map is the real map's outline layout, drawn at its
             width and scrolled, so the cards stay readable. */}
         <div className={cn('relative min-h-0 flex-1', portrait && 'overflow-y-auto')} style={{ background: 'radial-gradient(70% 60% at 50% 40%, oklch(70.64% 0.1 179.4 / 0.06), transparent 70%)' }} data-map-demo-canvas>
-          <motion.svg className={portrait ? 'block h-auto w-full' : 'absolute inset-0 h-full w-full'} initial={false} animate={{ viewBox } as never} transition={{ duration: reduced ? 0 : 0.7, ease: [0.22, 1, 0.36, 1] }}
+          <motion.svg className={portrait ? 'block h-auto w-full' : 'absolute inset-0 h-full w-full'} initial={false} animate={{ viewBox } as never} transition={{ duration: reduced ? 0 : 0.35, ease: [0.22, 1, 0.36, 1] }}
             viewBox={viewBox} preserveAspectRatio={portrait ? 'xMidYMin meet' : 'xMidYMid meet'} role="group" aria-label={focus ? `Inside ${byId.get(focus)?.label}` : 'The whole sample map'} data-map-demo-svg>
             <g>
               {edges.map((e, i) => {
@@ -166,7 +166,7 @@ export function MapDemo() {
                     strokeDasharray={e.kind === 'filed_under' ? '5 4' : undefined} strokeLinejoin="round" vectorEffect="non-scaling-stroke"
                     initial={animate ? { pathLength: 0, opacity: 0 } : false}
                     animate={inView ? { pathLength: 1, opacity: dim ? 0.25 : 1 } : undefined}
-                    transition={{ duration: reduced ? 0 : 0.8, delay: reduced ? 0 : 0.25 + (i % 12) * 0.04 }} />
+                    transition={{ duration: reduced ? 0 : 0.3, delay: reduced ? 0 : 0.05 + (i % 12) * 0.015 }} />
                 )
               })}
               {DEMO_NODES.filter(n => shown.has(n.id)).map(n => {
@@ -189,7 +189,7 @@ export function MapDemo() {
                     }}>
                     <motion.g initial={animate ? { opacity: 0, scale: 0.92 } : false}
                       animate={inView ? { opacity: dim ? 0.38 : 1, scale: 1 } : undefined}
-                      transition={{ duration: reduced ? 0 : 0.45, delay: reduced ? 0 : Math.min(depth(n.id), 4) * 0.12 }}>
+                      transition={{ duration: reduced ? 0 : 0.22, delay: reduced ? 0 : Math.min(depth(n.id), 4) * 0.04 }}>
                     {on && <rect x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="color-mix(in oklch, var(--action) 9%, transparent)" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
                     <rect className="map-focus opacity-0" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--ring)" strokeWidth={2.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" />
                     <CardFace n={n} detail={2} />

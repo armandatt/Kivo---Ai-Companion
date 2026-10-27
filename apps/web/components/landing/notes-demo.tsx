@@ -31,7 +31,7 @@ const CONDITIONS = [
 const EASE = [0.22, 1, 0.36, 1] as const
 
 export function NotesDemo() {
-  const s = useStory(LABELS.length, 3800)
+  const s = useStory(LABELS.length, 2800)
   const reduced = useReducedMotion()
   const step = s.step
   const [flash, setFlash] = useState(false)
@@ -43,7 +43,7 @@ export function NotesDemo() {
   const selected = step >= 1 && step <= 3
   const listLit = step === 3 || flash
   const applied = step >= 5
-  const fade = (y = 8) => (reduced ? { initial: false as const } : { initial: { opacity: 0, y }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.45, ease: EASE } })
+  const fade = (y = 8) => (reduced ? { initial: false as const } : { initial: { opacity: 0, y }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.25, ease: EASE } })
 
   const note = (
     <article className="h-full overflow-y-auto px-6 py-6 sm:px-9 sm:py-8" aria-label="The note: Deadlocks">
@@ -51,7 +51,7 @@ export function NotesDemo() {
       <h3 className="mt-1.5 font-serif text-[1.75rem] font-semibold leading-tight tracking-tight text-foreground">Deadlocks</h3>
       <AnimatePresence initial={false}>
         {applied && (
-          <motion.div initial={reduced ? false : { opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={reduced ? undefined : { opacity: 0, height: 0 }} transition={{ duration: 0.5, ease: EASE }}
+          <motion.div initial={reduced ? false : { opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={reduced ? undefined : { opacity: 0, height: 0 }} transition={{ duration: 0.25, ease: EASE }}
             className="overflow-hidden" data-notes-demo-summary>
             <div className="mt-4 rounded-lg border-l-2 border-nova/60 bg-nova/[0.07] px-3.5 py-2.5 text-[14px] leading-relaxed text-foreground/90">
               <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-[0.12em] text-nova-ink">Summary</span>{SUMMARY}
@@ -63,18 +63,18 @@ export function NotesDemo() {
         <AnimatePresence>
           {step === 1 && (
             <motion.button type="button" onClick={() => s.go(2)} data-notes-demo-ask
-              initial={reduced ? false : { opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={reduced ? undefined : { opacity: 0 }} transition={{ duration: 0.3 }}
+              initial={reduced ? false : { opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={reduced ? undefined : { opacity: 0 }} transition={{ duration: 0.18 }}
               className="absolute -top-9 left-6 z-10 inline-flex h-8 items-center gap-1.5 rounded-lg bg-popover px-3 text-xs font-semibold text-foreground shadow-float ring-1 ring-white/12 hover:ring-nova/50">
               <KivoMark size={11} className="text-nova-ink" /> Ask Nova
             </motion.button>
           )}
         </AnimatePresence>
-        <p className={cn('rounded-md text-[15px] leading-[1.75] text-foreground/85 transition-[background-color,box-shadow] duration-500', selected && 'bg-sky-400/15 ring-1 ring-sky-400/40')} data-notes-demo-passage data-selected={selected || undefined}>
+        <p className={cn('rounded-md text-[15px] leading-[1.75] text-foreground/85 transition-[background-color,box-shadow] duration-200', selected && 'bg-sky-400/15 ring-1 ring-sky-400/40')} data-notes-demo-passage data-selected={selected || undefined}>
           {PASSAGE}
         </p>
       </div>
       <h4 className="mt-6 text-[15px] font-semibold text-foreground">Four conditions</h4>
-      <ul className={cn('-mx-2 mt-2 space-y-1.5 rounded-lg px-2 py-1.5 text-[15px] leading-relaxed text-foreground/80 transition-[background-color,box-shadow] duration-500', listLit && 'bg-nova/10 ring-1 ring-nova/45')} data-notes-demo-conditions>
+      <ul className={cn('-mx-2 mt-2 space-y-1.5 rounded-lg px-2 py-1.5 text-[15px] leading-relaxed text-foreground/80 transition-[background-color,box-shadow] duration-200', listLit && 'bg-nova/10 ring-1 ring-nova/45')} data-notes-demo-conditions>
         {CONDITIONS.map(([t, d]) => <li key={t} className="flex gap-2"><span aria-hidden className="mt-[0.7em] size-1 shrink-0 rounded-full bg-foreground/40" /><span><strong className="font-semibold text-foreground/90">{t}</strong>: {d}</span></li>)}
       </ul>
       <h4 className="mt-6 text-[15px] font-semibold text-foreground">Handling it</h4>
@@ -158,7 +158,7 @@ export function NotesDemo() {
                 {(['tutor', 'editor'] as const).map(m => (
                   <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => s.go(m === 'tutor' ? 3 : 4)} data-notes-demo-mode={m}
                     className={cn('relative inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors', mode === m ? 'text-foreground' : 'text-foreground/55 hover:text-foreground')}>
-                    {mode === m && <motion.span layoutId="notes-demo-tab" aria-hidden className="absolute inset-0 rounded-md bg-white/10" transition={{ duration: reduced ? 0 : 0.3, ease: EASE }} />}
+                    {mode === m && <motion.span layoutId="notes-demo-tab" aria-hidden className="absolute inset-0 rounded-md bg-white/10" transition={{ duration: reduced ? 0 : 0.18, ease: EASE }} />}
                     <span className="relative inline-flex items-center gap-1.5">{m === 'tutor' ? <BookOpen aria-hidden className="size-3.5" /> : <Pencil aria-hidden className="size-3.5" />}{m === 'tutor' ? 'Tutor' : 'Editor'}</span>
                   </button>
                 ))}
@@ -166,7 +166,7 @@ export function NotesDemo() {
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5" aria-live="polite">
               <AnimatePresence mode="wait" initial={false}>
-                <motion.div key={mode} initial={reduced ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={reduced ? undefined : { opacity: 0 }} transition={{ duration: 0.25 }}>
+                <motion.div key={mode} initial={reduced ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={reduced ? undefined : { opacity: 0 }} transition={{ duration: 0.18 }}>
                   {mode === 'tutor' ? tutor : editor}
                 </motion.div>
               </AnimatePresence>

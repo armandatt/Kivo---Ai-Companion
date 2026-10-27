@@ -70,7 +70,7 @@ export function Header() {
               absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2
             `}
           >
-            {[["#build", "Product"], ["#how-it-works", "How it works"], ["#pricing", "Pricing"], ["#faq", "FAQ"]].map(([href, label]) => (
+            {[["#workspace", "Product"], ["#how-it-works", "How it works"], ["#pricing", "Pricing"], ["#faq", "FAQ"]].map(([href, label]) => (
               <a key={href} href={href} className="px-4 py-1.5 text-sm text-[var(--color-baltic-sea-400)] rounded-full hover:bg-[var(--color-baltic-sea-800)] hover:text-[var(--color-baltic-sea-100)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-keppel-400)]">
                 {label}
               </a>

@@ -35,7 +35,7 @@ const V1: Milestone[] = [
 const V2: Milestone[] = V1.map(m => ({ ...m, topics: [...m.topics, { name: 'Mock interview', added: true }] }))
 
 export function BuildDemo() {
-  const s = useStory(LABELS.length, 3600)
+  const s = useStory(LABELS.length, 2600)
   const step = s.step
   const turns = TURNS.slice(0, step + 1).flat()
   const version = step >= 4 ? 2 : step >= 3 ? 1 : 0
@@ -54,7 +54,7 @@ export function BuildDemo() {
             <div className="flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-hidden px-5 py-5" aria-live="polite">
               <AnimatePresence initial={false}>
                 {turns.map((t, i) => (
-                  <motion.div key={i} layout={!s.reduced} initial={s.reduced ? false : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                  <motion.div key={i} layout={!s.reduced} initial={s.reduced ? false : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
                     className={cn('flex gap-2.5', t.who === 'you' && 'justify-end')}>
                     {t.who === 'nova' && <span aria-hidden className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-lg bg-nova/12 ring-1 ring-nova/25"><KivoMark size={11} className="text-nova-ink" /></span>}
                     <div className={cn('max-w-[85%] text-[14px] leading-relaxed', t.who === 'you' ? 'rounded-2xl rounded-br-md bg-action/15 px-3 py-2 text-foreground ring-1 ring-action/20' : 'text-foreground/85')}>
@@ -88,15 +88,15 @@ export function BuildDemo() {
                 Nova asks what it needs first. It drafts when you ask it to, and the draft appears here, not in your account.
               </div>
             ) : (
-              <motion.div initial={s.reduced ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }} className="subject-tone mt-4 rounded-2xl border border-white/8 bg-card/60 p-4" style={{ ['--sh' as string]: 237 }}>
+              <motion.div initial={s.reduced ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }} className="subject-tone mt-4 rounded-2xl border border-white/8 bg-card/60 p-4" style={{ ['--sh' as string]: 237 }}>
                 <p className="flex items-center gap-2 text-sm font-semibold text-foreground"><span aria-hidden className="size-2.5 rounded-full bg-[var(--sc)]" /> Data Science Internship <span className="font-normal text-subtle">· 8 h a week</span></p>
                 <ol className="mt-3 space-y-2.5">
                   {plan.map((m, i) => (
-                    <motion.li key={m.name} initial={s.reduced ? false : { opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: s.reduced ? 0 : 0.1 + i * 0.12 }}>
+                    <motion.li key={m.name} initial={s.reduced ? false : { opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.22, delay: s.reduced ? 0 : 0.03 + i * 0.04 }}>
                       <p className="flex items-center gap-2 text-[14px] font-medium text-foreground/90"><Flag aria-hidden className="size-3.5 text-nova" />{m.name}<span className="text-[11px] font-normal text-subtle">≈ {m.weeks}</span></p>
                       <ul className="ml-5 mt-1 flex flex-wrap gap-1.5">
                         {m.topics.map(t => (
-                          <motion.li key={t.name} initial={t.added && !s.reduced ? { opacity: 0, scale: 0.9 } : false} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4, delay: t.added ? 0.15 + i * 0.12 : 0 }}
+                          <motion.li key={t.name} initial={t.added && !s.reduced ? { opacity: 0, scale: 0.9 } : false} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.22, delay: t.added ? 0.05 + i * 0.04 : 0 }}
                             className={cn('rounded-lg border px-2 py-0.5 text-[12px]', t.added ? 'border-nova/50 bg-nova/10 text-nova-ink' : 'border-white/10 text-foreground/70')}>
                             {t.added && <span className="sr-only">Added in version 2: </span>}{t.name}
                           </motion.li>
