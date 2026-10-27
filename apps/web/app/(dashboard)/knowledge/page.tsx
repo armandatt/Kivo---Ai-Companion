@@ -20,19 +20,15 @@ export default function KnowledgePage() {
   if (loading) {
     return (
       <PageLoading label="Loading your knowledge" width="wide">
-        <div>
-          <div className="space-y-3 border-b border-white/8 pb-5">
-            <div className="h-3 w-28 animate-pulse rounded bg-white/5" />
-            <div className="h-7 w-72 max-w-full animate-pulse rounded-md bg-white/6" />
-            <div className="h-4 w-96 max-w-full animate-pulse rounded bg-white/4" />
+        <div className="lg:grid lg:grid-cols-[16.5rem_minmax(0,1fr)] lg:gap-8">
+          <div className="space-y-1.5">
+            <div className="mb-3 h-8 animate-pulse rounded-lg bg-white/4" />
+            {[0, 1, 2, 3, 4, 5].map(i => <div key={i} className="h-6 animate-pulse rounded-md bg-white/3" style={{ marginLeft: i % 3 === 0 ? 0 : 14 }} />)}
           </div>
-          <div className="mt-6 grid grid-cols-1 gap-x-8 gap-y-6 lg:grid-cols-[15rem_minmax(0,1fr)] xl:grid-cols-[16rem_minmax(0,1fr)_17rem]">
-            <div className="space-y-2">{[0, 1, 2, 3].map(i => <div key={i} className="h-11 animate-pulse rounded-lg bg-white/3" />)}</div>
-            <div className="space-y-3">
-              <div className="h-24 animate-pulse rounded-xl bg-white/3" />
-              <div className="h-64 animate-pulse rounded-xl bg-white/3" />
-            </div>
-            <div className="hidden h-48 animate-pulse rounded-xl bg-white/3 xl:block" />
+          <div className="mt-6 space-y-4 lg:mt-0">
+            <div className="h-3 w-40 animate-pulse rounded bg-white/5" />
+            <div className="h-7 w-64 max-w-full animate-pulse rounded-md bg-white/6" />
+            <div className="h-64 animate-pulse rounded-2xl bg-white/3" />
           </div>
         </div>
       </PageLoading>

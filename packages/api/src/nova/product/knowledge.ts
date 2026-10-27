@@ -39,7 +39,7 @@ export interface SessionRecord {
 }
 
 export interface KnowledgeInputs {
-  subjects: Array<{ id: string; name: string }>;
+  subjects: Array<{ id: string; name: string; parentId?: string | null }>;
   topics:   TopicMasteryState[];
   sessions: SessionRecord[];          // completed only
   activeSession: { topicName: string | null; subjectName: string | null } | null;
@@ -124,6 +124,7 @@ export function buildKnowledgeView(input: KnowledgeInputs): NovaKnowledgeReady {
     return {
       subjectId:   s.id,
       subjectName: s.name,
+      ...(s.parentId ? { parentId: s.parentId } : {}),
       topics:      own,
       ...(tree.length ? { outline: topicOutline(tree).map(({ item: t, depth }) => ({ id: t.id, name: t.name, depth, kind: topicKindOf(t.kind), studied: studied.has(t.id) })) } : {}),
       summary:     { topicCount: own.length, dueCount: own.filter(t => t.reviewState === "due").length },
@@ -156,7 +157,7 @@ export async function loadNovaKnowledge(
       novaAcademicProfile: {
         select: {
           id: true, onboardingComplete: true,
-          subjects: { select: { id: true, name: true, topics: { where: { archivedAt: null }, select: { id: true, name: true, parentId: true, position: true, kind: true, createdAt: true } } }, orderBy: { name: "asc" } },
+          subjects: { select: { id: true, name: true, parentId: true, topics: { where: { archivedAt: null }, select: { id: true, name: true, parentId: true, position: true, kind: true, createdAt: true } } }, orderBy: { name: "asc" } },
         },
       },
     },
@@ -183,7 +184,7 @@ export async function loadNovaKnowledge(
   ]);
 
   return buildKnowledgeView({
-    subjects: profile.subjects.map(s => ({ id: s.id, name: s.name })),
+    subjects: profile.subjects.map(s => ({ id: s.id, name: s.name, parentId: s.parentId })),
     trees: profile.subjects.map(s => ({ subjectId: s.id, topics: s.topics })),
     topics,
     sessions,
