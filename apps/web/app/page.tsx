@@ -7,9 +7,9 @@ import { FinalCTA } from "@/components/final-cta"
 import { Footer } from "@/components/footer"
 
 // The landing page tells one story: Kivo is a learning OS with an AI-powered
-// second brain. See it whole (one topic mapped, understood and planned), then how
-// Nova helps build it, the map itself, learning from notes and papers, then
-// the rest. The sections share one background, lit down the page. Each product section has a working sample
+// second brain. Nova builds it with you, the map is the second brain itself, then
+// one topic seen whole (mapped, understood and planned), learning from notes and
+// papers, then the rest. The sections share one background, lit down the page. Each product section has a working sample
 // preview (components/landing); they run in the browser and save nothing.
 export default function Home() {
   return (
@@ -21,9 +21,9 @@ export default function Home() {
           <div className="absolute left-0 top-[45%] h-[50rem] w-[50rem] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,rgba(99,102,241,0.05),transparent)]" />
         </div>
         <LandingHero />
-        <WorkspaceSection />
         <BuildSection />
         <MapSection />
+        <WorkspaceSection />
         <NotesSection />
         <Capabilities />
         <UseCases />

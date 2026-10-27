@@ -35,7 +35,7 @@ const V1: Milestone[] = [
 const V2: Milestone[] = V1.map(m => ({ ...m, topics: [...m.topics, { name: 'Mock interview', added: true }] }))
 
 export function BuildDemo() {
-  const s = useStory(LABELS.length, 2600)
+  const s = useStory(LABELS.length, 2000)
   const step = s.step
   const turns = TURNS.slice(0, step + 1).flat()
   const version = step >= 4 ? 2 : step >= 3 ? 1 : 0
@@ -43,7 +43,7 @@ export function BuildDemo() {
   const state: 'none' | 'proposal' | 'building' | 'saved' = step === 5 ? 'building' : step >= 6 ? 'saved' : version ? 'proposal' : 'none'
   // Building takes a moment in the app too; then the workspace is there.
   const { go } = s
-  useEffect(() => { if (step !== 5) return; const t = window.setTimeout(() => go(6), 1400); return () => window.clearTimeout(t) }, [step, go])
+  useEffect(() => { if (step !== 5) return; const t = window.setTimeout(() => go(6), 900); return () => window.clearTimeout(t) }, [step, go])
 
   return (
     <div ref={s.ref} className="space-y-4">

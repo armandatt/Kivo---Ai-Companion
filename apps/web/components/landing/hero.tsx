@@ -36,7 +36,7 @@ export function LandingHero() {
                 <AuthAwareLink>Build your second brain <ArrowRight aria-hidden className="ml-1 size-4" /></AuthAwareLink>
               </Button>
               <Button asChild size="lg" variant="outline" className="border-white/15 bg-transparent text-slate-200 hover:bg-white/5 hover:text-white">
-                <a href="#workspace">See it work</a>
+                <a href="#build">See it work</a>
               </Button>
             </div>
             <ul className="hero-in flex flex-wrap gap-x-6 gap-y-2 pt-1 text-sm text-slate-500" style={{ animationDelay: '160ms' }}>

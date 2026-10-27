@@ -6,12 +6,14 @@
 // chosen in one view is the topic in the others, so the visitor sees one
 // record, not three tools. Everything is local sample state: no request, no
 // storage, no model. Nova's lines are written here and labelled as a preview.
+// It plays itself (TOUR, one step every STEP_MS while in view): the tabs change
+// and Nova's words type in. Any click hands it to the visitor; Reset plays again.
 
-import { useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowRight, BookOpen, Brain, CalendarCheck, Check, ChevronRight, FileText, Flag, Quote, RotateCcw, Sparkles } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { ArrowRight, BookOpen, Brain, CalendarCheck, Check, ChevronRight, FileText, Flag, Pause, Play, Quote, RotateCcw, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { AppWindow } from './frame'
+import { AppWindow, useStory } from './frame'
 
 type Tab = 'brain' | 'notes' | 'today'
 type Level = 'solid' | 'developing' | 'weak' | null
@@ -53,6 +55,40 @@ const QUICK = [
 
 const fast = { duration: 0.18, ease: [0.22, 1, 0.36, 1] as const }
 
+// The tour: what the window shows at each step, as a visitor would click it.
+type Answer = typeof QUICK[number]['id']
+const TOUR: Array<{ tab: Tab; topic: string; passage?: number; answer?: Answer; applied?: boolean }> = [
+  { tab: 'brain', topic: 'backprop' },
+  { tab: 'brain', topic: 'reg' },
+  { tab: 'notes', topic: 'backprop', passage: 0 },
+  { tab: 'notes', topic: 'backprop', passage: 2 },
+  { tab: 'today', topic: 'backprop' },
+  { tab: 'today', topic: 'backprop', answer: 'exam' },
+  { tab: 'today', topic: 'backprop', answer: 'exam', applied: true },
+]
+const STEP_MS = 2200
+const WORD_MS = 28
+
+// Words typed in one after another; the rest hold their place so nothing jumps.
+// Read whole by screen readers, and shown at once under reduced motion.
+function Typed({ text }: { text: string }) {
+  const reduced = useReducedMotion()
+  const words = text.split(' ')
+  const [shown, setShown] = useState(reduced ? words.length : 0)
+  useEffect(() => {
+    if (reduced) { setShown(words.length); return }
+    setShown(0)
+    const t = window.setInterval(() => setShown(n => { if (n >= words.length) { window.clearInterval(t); return n } return n + 1 }), WORD_MS)
+    return () => window.clearInterval(t)
+  }, [text, reduced, words.length])
+  return (
+    <>
+      <span className="sr-only">{text}</span>
+      <span aria-hidden>{words.map((w, i) => <span key={i} className={cn('transition-opacity duration-150', i < shown ? 'opacity-100' : 'opacity-0')}>{w}{i < words.length - 1 ? ' ' : ''}</span>)}</span>
+    </>
+  )
+}
+
 function Dot({ topic }: { topic: Topic }) {
   if (topic.milestone) return <Flag aria-hidden className="size-3 shrink-0 text-foreground/45" />
   if (!topic.level) return <span aria-hidden className="size-1.5 shrink-0 rounded-full border border-foreground/35" />
@@ -60,18 +96,32 @@ function Dot({ topic }: { topic: Topic }) {
 }
 
 export function WorkspaceDemo() {
-  const [tab, setTab] = useState<Tab>('brain')
+  const s = useStory(TOUR.length, STEP_MS)
+  const [tab, setTabState] = useState<Tab>('brain')
   const [topicId, setTopicId] = useState('backprop')
-  const [passage, setPassage] = useState<number | null>(null)
-  const [answer, setAnswer] = useState<typeof QUICK[number]['id'] | null>(null)
-  const [applied, setApplied] = useState(false)
+  const [passage, setPassageState] = useState<number | null>(null)
+  const [answer, setAnswerState] = useState<Answer | null>(null)
+  const [applied, setAppliedState] = useState(false)
+  // While the tour plays, each step sets the window as the visitor would.
+  const { step, playing } = s
+  useEffect(() => {
+    if (!playing) return
+    const at = TOUR[step]
+    setTabState(at.tab); setTopicId(at.topic); setPassageState(at.passage ?? null); setAnswerState(at.answer ?? null); setAppliedState(!!at.applied)
+  }, [step, playing])
+  // The visitor's own click stops the tour where it is.
+  const take = () => { if (playing) s.go(step) }
+  const setTab = (t: Tab) => { take(); setTabState(t) }
+  const setPassage = (i: number) => { take(); setPassageState(i) }
+  const setAnswer = (a: Answer | null) => { take(); setAnswerState(a) }
+  const setApplied = (v: boolean) => { take(); setAppliedState(v) }
   const topic = byId.get(topicId)!
   const note = topic.note ?? byId.get('backprop')!.note!
   const noteTopic = topic.note ? topic : byId.get('backprop')!
   const path = [SUBJECT, ...(topic.parent ? [byId.get(topic.parent)!.name] : []), topic.name]
 
-  const pick = (id: string) => { setTopicId(id); setPassage(null); setAnswer(null); setApplied(false) }
-  const reset = () => { setTab('brain'); pick('backprop') }
+  const pick = (id: string) => { take(); setTopicId(id); setPassageState(null); setAnswerState(null); setAppliedState(false) }
+  const reset = () => { setTabState('brain'); setTopicId('backprop'); setPassageState(null); setAnswerState(null); setAppliedState(false); s.restart() }
   const minutes = QUICK.find(q => q.id === answer)?.minutes ?? 0
   const plan = answer === null ? [] : [
     { what: `Review ${noteTopic.name}`, why: 'Due today, developing', min: answer === 'exam' ? 25 : 15, from: noteTopic.name },
@@ -86,7 +136,7 @@ export function WorkspaceDemo() {
   ]
 
   return (
-    <div data-workspace-demo>
+    <div ref={s.ref} data-workspace-demo data-playing={playing ? 'true' : 'false'}>
       <div role="tablist" aria-label="Product views" className="mx-auto mb-4 flex w-fit max-w-full flex-wrap justify-center gap-1 rounded-full border border-white/10 bg-white/[0.03] p-1">
         {TABS.map(t => (
           <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} aria-controls="workspace-panel" id={`ws-tab-${t.id}`} onClick={() => setTab(t.id)} data-tab={t.id}
@@ -97,9 +147,26 @@ export function WorkspaceDemo() {
           </button>
         ))}
       </div>
+      {/* How far the tour is: one segment a step, the current one filling */}
+      {!s.reduced && (
+        <div aria-hidden className="mx-auto -mt-2 mb-4 flex w-48 gap-1">
+          {TOUR.map((_, i) => (
+            <span key={i} className="h-0.5 flex-1 overflow-hidden rounded-full bg-white/10">
+              <span className={cn('block h-full bg-[#00E5A0]', i < step ? 'w-full' : 'w-0', i === step && playing && 'tour-fill')} style={i === step && playing ? { animationDuration: `${STEP_MS}ms` } : undefined} key={i === step ? `${step}:${playing}` : undefined} />
+            </span>
+          ))}
+        </div>
+      )}
 
       <AppWindow label={`${SUBJECT} · product preview`}
-        bar={<button type="button" onClick={reset} className="mr-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] text-foreground/55 hover:text-foreground" data-reset><RotateCcw aria-hidden className="size-3" /> Reset</button>}>
+        bar={<span className="mr-2 flex items-center gap-1">
+          {!s.reduced && (
+            <button type="button" onClick={s.toggle} aria-pressed={!s.paused} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] text-foreground/55 hover:text-foreground" data-tour>
+              {s.paused ? <><Play aria-hidden className="size-3" /> Play tour</> : <><Pause aria-hidden className="size-3" /> Pause</>}
+            </button>
+          )}
+          <button type="button" onClick={reset} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] text-foreground/55 hover:text-foreground" data-reset><RotateCcw aria-hidden className="size-3" /> Reset</button>
+        </span>}>
         <div className="grid min-h-[30rem] md:grid-cols-[14rem_minmax(0,1fr)]">
           {/* The explorer, the same in every view: the chosen topic travels with the visitor */}
           <nav aria-label="Sample subject" className="border-b border-white/6 p-3 md:border-b-0 md:border-r">
@@ -129,7 +196,7 @@ export function WorkspaceDemo() {
                   <div data-view="brain">
                     <h3 className="text-2xl font-semibold tracking-tight text-foreground">{topic.name}</h3>
                     <p className="mt-1 text-[13px] text-foreground/55">
-                      {topic.milestone ? 'Milestone · the topics it covers are planned toward it' : topic.level ? `${LEVEL[topic.level].label}${topic.due ? ' · due for review today' : ''}` : 'Groups the topics inside it'}
+                      <Typed text={topic.milestone ? 'Milestone · the topics it covers are planned toward it' : topic.level ? `${LEVEL[topic.level].label}${topic.due ? ' · due for review today' : ''}` : 'Groups the topics inside it'} />
                     </p>
                     {topic.level && <div className="mt-3 h-1.5 w-56 overflow-hidden rounded-full bg-white/8"><motion.div className={cn('h-full rounded-full', LEVEL[topic.level].dot)} initial={{ width: 0 }} animate={{ width: LEVEL[topic.level].width }} transition={{ duration: 0.3 }} /></div>}
                     <div className="mt-6 grid gap-3 sm:grid-cols-2">
@@ -180,8 +247,8 @@ export function WorkspaceDemo() {
                       ) : (
                         <motion.div key={passage} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={fast} className="mt-2 space-y-3 text-[13px] leading-relaxed">
                           <p className="flex gap-2 rounded-lg bg-sky-400/[0.06] p-2.5 text-foreground/75"><Quote aria-hidden className="mt-0.5 size-3 shrink-0 text-sky-300" /><span><span className="block text-[11px] font-semibold text-sky-300">From your note</span>{note.passages[passage].text}</span></p>
-                          <p className="text-foreground/90"><span className="block text-[11px] font-semibold text-[#7ef5cf]">Nova’s explanation</span>{note.passages[passage].explain}</p>
-                          <p className="rounded-lg border border-white/8 p-2.5 text-foreground/80"><span className="block text-[11px] font-semibold text-foreground/55">Check yourself</span>{note.passages[passage].check}</p>
+                          <p className="text-foreground/90"><span className="block text-[11px] font-semibold text-[#7ef5cf]">Nova’s explanation</span><Typed text={note.passages[passage].explain} /></p>
+                          <p className="rounded-lg border border-white/8 p-2.5 text-foreground/80"><span className="block text-[11px] font-semibold text-foreground/55">Check yourself</span><Typed text={note.passages[passage].check} /></p>
                         </motion.div>
                       )}
                     </aside>
@@ -190,7 +257,7 @@ export function WorkspaceDemo() {
 
                 {tab === 'today' && (
                   <div data-view="today" className="max-w-2xl space-y-3">
-                    <Bubble who="nova">Let’s plan {noteTopic.name} into today. How much time do you have, and is it for the midterm or to understand it?</Bubble>
+                    <Bubble who="nova"><Typed text={`Let’s plan ${noteTopic.name} into today. How much time do you have, and is it for the midterm or to understand it?`} /></Bubble>
                     {answer === null ? (
                       <div className="flex flex-wrap gap-2 pl-9">
                         {QUICK.map(q => <button key={q.id} type="button" onClick={() => setAnswer(q.id)} data-answer={q.id} className="h-8 rounded-full border border-[#00E5A0]/35 px-3 text-[13px] text-[#7ef5cf] transition-colors duration-150 hover:bg-[#00E5A0]/10">{q.label}</button>)}
@@ -198,7 +265,7 @@ export function WorkspaceDemo() {
                     ) : (
                       <>
                         <Bubble who="you">{QUICK.find(q => q.id === answer)!.label}</Bubble>
-                        <Bubble who="nova">{applied ? 'Applied. It’s your day now; change anything on Today.' : `Here’s a ${minutes}-minute flow from your map and your note. Nothing changes until you apply it.`}</Bubble>
+                        <Bubble who="nova"><Typed text={applied ? 'Applied. It’s your day now; change anything on Today.' : `Here’s a ${minutes}-minute flow from your map and your note. Nothing changes until you apply it.`} /></Bubble>
                         <ol className={cn('ml-9 overflow-hidden rounded-xl border', applied ? 'border-[#00E5A0]/40' : 'border-dashed border-white/15')} data-plan-list>
                           {plan.map((p, i) => (
                             <motion.li key={p.what} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ ...fast, delay: i * 0.04 }}
