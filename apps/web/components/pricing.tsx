@@ -48,10 +48,10 @@ export function Pricing() {
         >
           <span className="text-sm font-medium text-[var(--color-keppel-400)] uppercase tracking-wider">Pricing</span>
           <h2 className="mt-3 text-3xl font-bold text-[var(--color-baltic-sea-100)] md:text-4xl text-balance">
-            Your creature is waiting
+            Start free. Add Pro when Nova is part of every day.
           </h2>
           <p className="mt-4 text-lg text-[var(--color-baltic-sea-400)]">
-            Start free. Try Pro for seven days when you want more of Nova.
+            The Free plan has all of Kivo, with a daily Nova allowance. Pro raises that allowance.
           </p>
         </div>
 
