@@ -12,7 +12,6 @@ import { fetchNotes } from '../notes/notes-api'
 import { OUTCOME_LABEL } from './labels'
 import type { NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
 import { BUTTON_PRIMARY, SectionHeading } from '../workspace/ui'
-import { TopicConnections } from './topic-connections'
 
 
 function SessionLine({ session }: { session: KnowledgeSession }) {
@@ -43,16 +42,15 @@ export function TopicNotes({ subjectId, topicName }: { subjectId: string; topicN
 
   const newNote = `/notes/new?subjectId=${encodeURIComponent(subjectId)}&topic=${encodeURIComponent(topicName)}`
   return (
-    <div className="mt-4" data-topic-notes={topicName}>
-      <p className="text-xs font-medium text-foreground/55">Your notes</p>
+    <div data-topic-notes={topicName}>
       {notes === null ? (
-        <p className="mt-2 text-sm text-foreground/35">Loading…</p>
+        <p className="text-sm text-foreground/40">Loading…</p>
       ) : notes.length === 0 ? (
-        <p className="mt-2 text-sm text-foreground/45">
-          None on this topic yet. <Link href={newNote} className="text-keppel-300 hover:text-keppel-200">Write one</Link>
+        <p className="text-sm text-foreground/55">
+          No notes filed under this topic yet. <Link href={newNote} className="font-medium text-keppel-300 hover:text-keppel-200">Write one</Link>
         </p>
       ) : (
-        <ul className="mt-2 space-y-1.5">
+        <ul className="space-y-1.5">
           {notes.map(n => (
             <li key={n.id}>
               <Link href={`/notes/${n.id}`} className="text-sm text-foreground/80 underline-offset-4 hover:text-keppel-200 hover:underline">{n.title}</Link>
@@ -87,72 +85,74 @@ export interface TopicActions {
   studying?:    string | null
 }
 
-// A studied topic's record: where it stands, its sessions and notes, what it
-// is joined to, and what can be done with it. Shown in a topic row's panel and
-// on the topic's own page.
-export function TopicDetails({ topic, subjectId, actions = {}, onChanged }: { topic: KnowledgeTopic; subjectId: string; actions?: TopicActions; onChanged?: () => void }) {
-  const [archiving, setArchiving] = useState(false)
-  const [archiveError, setArchiveError] = useState<string | null>(null)
+// A studied topic's record, in parts the topic page lays out: where it
+// stands, its sessions, the session to start, and archiving. All read from
+// the Knowledge view; nothing here computes a level or a date.
+
+export function TopicMetrics({ topic }: { topic: KnowledgeTopic }) {
   const verified = topic.level !== 'unverified'
   return (
-    <>
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-4">
-        <Fact label="Current level" value={verified ? `${topic.masteryPercent}%` : 'None yet'} />
+    <div>
+      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-white/8 bg-white/8 sm:grid-cols-4">
+        <Fact label="Level" value={verified ? `${topic.masteryPercent}%` : 'None yet'} />
         <Fact label="Sessions" value={String(topic.reviewCount)} />
-        <Fact label="Retention now" value={topic.lastStudiedAt ? `about ${topic.retentionPercent}%` : 'Unknown'} />
-        <Fact
-          label="Next review"
-          value={topic.reviewState === 'due' ? (topic.daysOverdue > 0 ? `Due, ${topic.daysOverdue} day${topic.daysOverdue === 1 ? '' : 's'} overdue` : 'Due now')
-            : topic.nextReviewAt ? sentenceCase(relativeDay(topic.nextReviewAt)) : 'Not scheduled'}
-        />
+        <Fact label="Retention" value={topic.lastStudiedAt ? `~${topic.retentionPercent}%` : 'Unknown'} />
+        <Fact label="Next review" tone={topic.reviewState === 'due' ? 'due' : undefined}
+          value={topic.reviewState === 'due' ? (topic.daysOverdue > 0 ? `${topic.daysOverdue} day${topic.daysOverdue === 1 ? '' : 's'} overdue` : 'Due now')
+            : topic.nextReviewAt ? sentenceCase(relativeDay(topic.nextReviewAt)) : 'Not scheduled'} />
       </dl>
-      <p className="mt-4 max-w-prose text-xs leading-relaxed text-foreground/45">
+      <p className="mt-2.5 max-w-prose text-xs leading-relaxed text-foreground/50">
         {verified
-          ? `The level is a running estimate built over ${topic.reviewCount === 1 ? '1 finished session' : `${topic.reviewCount} finished sessions`}, from how you said each one went. A session where you didn't say counts as neutral. It is not a test score. Retention is an estimate from the time since you last studied it.`
-          : 'Nova has only heard about this topic in conversation. It gets a level after your first focused session on it.'}
+          ? `An estimate from how you said each of ${topic.reviewCount === 1 ? 'your 1 finished session' : `your ${topic.reviewCount} finished sessions`} went, not a test score. Retention is estimated from the time since you last studied it.`
+          : 'No focused session on this topic yet. It gets a level after the first one.'}
       </p>
-      <div className="mt-4">
-        <p className="text-xs font-medium text-foreground/55">Recent sessions</p>
-        {topic.recentSessions.length > 0
-          ? <ul className="mt-2 space-y-1.5">{topic.recentSessions.map(s => <SessionLine key={s.id} session={s} />)}</ul>
-          : <p className="mt-2 text-sm text-foreground/45">None in the last 90 days.</p>}
-      </div>
-      <TopicNotes subjectId={subjectId} topicName={topic.topicName} />
-      {actions.onOpenTopic && (
-        <TopicConnections map={actions.map ?? null} topicId={topic.id} topicName={topic.topicName} onOpenTopic={actions.onOpenTopic} />
-      )}
-      {actions.onStudy && (
-        <button type="button" onClick={() => actions.onStudy!(topic)} disabled={actions.studying != null} className={cn(BUTTON_PRIMARY, 'mt-5 h-9 px-3.5')}>
-          {actions.studying === topic.id
-            ? <><Loader2 aria-hidden className="size-3.5 animate-spin" /> Starting…</>
-            : <><Play aria-hidden className="size-3" /> Study this · 25 min</>}
-        </button>
-      )}
-      {onChanged && (
-        <div className="mt-4 border-t border-white/6 pt-3">
-          <button type="button" disabled={archiving} data-archive-topic
-            onClick={async () => {
-              if (!window.confirm(`Archive ${topic.topicName}? It leaves your plan and lists. Its level, sessions, notes and history stay, and you can restore it.`)) return
-              setArchiving(true); setArchiveError(null)
-              const error = await postArchive(topic.id, true)
-              setArchiving(false)
-              if (error) setArchiveError(error); else onChanged()
-            }}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs text-foreground/60 transition-colors hover:bg-white/5 hover:text-foreground disabled:opacity-40">
-            {archiving ? 'Archiving…' : 'Archive this topic'}
-          </button>
-          {archiveError && <p role="alert" className="mt-2 text-xs text-amber-200/90">{archiveError}</p>}
-        </div>
-      )}
-    </>
+    </div>
   )
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+export function TopicSessions({ topic }: { topic: KnowledgeTopic }) {
+  return topic.recentSessions.length > 0
+    ? <ul className="space-y-2">{topic.recentSessions.map(s => <SessionLine key={s.id} session={s} />)}</ul>
+    : <p className="text-sm text-foreground/55">No sessions in the last 90 days. Start one and it is recorded here, with how you said it went.</p>
+}
+
+export function StudyButton({ topic, actions }: { topic: KnowledgeTopic; actions: TopicActions }) {
+  if (!actions.onStudy) return null
+  return (
+    <button type="button" onClick={() => actions.onStudy!(topic)} disabled={actions.studying != null} className={cn(BUTTON_PRIMARY, 'h-9 px-3.5')} data-study-topic>
+      {actions.studying === topic.id
+        ? <><Loader2 aria-hidden className="size-3.5 animate-spin" /> Starting…</>
+        : <><Play aria-hidden className="size-3" /> Study · 25 min</>}
+    </button>
+  )
+}
+
+export function ArchiveTopic({ topic, onChanged }: { topic: KnowledgeTopic; onChanged: () => void }) {
+  const [archiving, setArchiving] = useState(false)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-[0.14em] text-foreground/40">{label}</dt>
-      <dd className="mt-1 text-sm text-foreground/85">{value}</dd>
+      <button type="button" disabled={archiving} data-archive-topic
+        onClick={async () => {
+          if (!window.confirm(`Archive ${topic.topicName}? It leaves your plan and lists. Its level, sessions, notes and history stay, and you can restore it.`)) return
+          setArchiving(true); setArchiveError(null)
+          const error = await postArchive(topic.id, true)
+          setArchiving(false)
+          if (error) setArchiveError(error); else onChanged()
+        }}
+        className="text-xs text-foreground/50 underline-offset-4 transition-colors hover:text-foreground hover:underline disabled:opacity-40">
+        {archiving ? 'Archiving…' : 'Archive this topic'}
+      </button>
+      {archiveError && <p role="alert" className="mt-1.5 text-xs text-amber-200/90">{archiveError}</p>}
+    </div>
+  )
+}
+
+function Fact({ label, value, tone }: { label: string; value: string; tone?: 'due' }) {
+  return (
+    <div className="min-w-0 bg-card px-3.5 py-3">
+      <dt className="text-[11px] font-medium text-foreground/50">{label}</dt>
+      <dd className={cn('mt-0.5 truncate text-base font-semibold tabular-nums tracking-tight', tone === 'due' ? 'text-amber-300' : 'text-foreground')}>{value}</dd>
     </div>
   )
 }
