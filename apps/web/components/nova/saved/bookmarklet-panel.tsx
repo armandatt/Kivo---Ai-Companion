@@ -28,8 +28,8 @@ export function BookmarkletPanel() {
 
   return (
     <section className="rounded-2xl border border-white/8 bg-card/50 p-5" data-section="bookmarklet">
-      <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Save from any page</h2>
-      <p className="mt-3 text-sm leading-relaxed text-foreground/65">
+      <h2 className="text-sm font-semibold text-foreground">Save from any page</h2>
+      <p className="mt-2 text-sm leading-relaxed text-foreground/65">
         A bookmark that sends the page you are on to this screen, ready to review. Nothing to install.
       </p>
 
@@ -42,7 +42,7 @@ export function BookmarkletPanel() {
       </a>
       {hint && <p role="status" className="mt-2 text-xs text-foreground/55">Drag this button to your bookmarks bar instead of clicking it.</p>}
 
-      <ol className="mt-4 list-decimal space-y-1.5 pl-4 text-sm leading-relaxed text-foreground/60">
+      <ol className="mt-4 list-decimal space-y-1 pl-4 text-sm leading-relaxed text-foreground/60 marker:text-foreground/35">
         <li>Show your bookmarks bar (Ctrl+Shift+B, or ⌘⇧B on a Mac).</li>
         <li>Drag the button above onto it.</li>
         <li>On any page, click the bookmark, then confirm here.</li>

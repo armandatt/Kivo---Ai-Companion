@@ -82,6 +82,7 @@ function Connections({ resource, busy, act }: {
   )
 }
 
+const SECONDARY = 'inline-flex h-9 items-center justify-center rounded-lg border border-white/12 px-3 text-xs text-foreground/75 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-keppel-400 disabled:opacity-50'
 const CHIP = 'rounded-md border border-white/12 px-2 py-1 text-xs text-foreground/75 transition-colors hover:bg-white/5 disabled:opacity-50'
 
 function ResourceRow({ resource: initial, onRemoved, onChanged }: { resource: LearningResource; onRemoved: () => void; onChanged: () => void }) {
@@ -142,14 +143,14 @@ function ResourceRow({ resource: initial, onRemoved, onChanged }: { resource: Le
 
   return (
     <li ref={row} data-resource={resource.id} data-resource-title={resource.title} data-resource-kind={passage ? 'passage' : 'page'} data-linked={linked || undefined}
-      className={`px-4 py-4 sm:px-5 ${linked ? 'bg-keppel-400/5' : ''}`}>
+      className={`px-4 py-5 sm:px-6 ${linked ? 'bg-keppel-400/5' : ''}`}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0">
           <a href={resource.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-full items-center gap-1.5 text-[15px] font-medium text-foreground/90 underline-offset-4 hover:text-keppel-200 hover:underline">
             <span className="truncate">{resource.title}</span>
             <ExternalLink className="size-3.5 shrink-0 text-foreground/35" aria-hidden />
           </a>
-          <p className="mt-1 flex flex-wrap gap-x-2 text-xs text-foreground/50">
+          <p className="mt-1.5 flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-foreground/50">
             <span>{passage ? `Passage from ${resource.domain}` : resource.domain}</span>
             <span aria-hidden className="text-foreground/20">·</span>
             <span data-filed>{filed || 'Not filed under a subject'}</span>
@@ -164,21 +165,23 @@ function ResourceRow({ resource: initial, onRemoved, onChanged }: { resource: Le
           <Connections resource={resource} busy={busy} act={act} />
           {notice && <p className="mt-2 text-xs text-foreground/60" role="status" data-notice>{notice}</p>}
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <Link href={`/focus?study=${encodeURIComponent(resource.id)}`} className="inline-flex h-9 items-center justify-center rounded-lg bg-keppel-400 px-3 text-xs font-semibold text-keppel-950 transition-colors hover:bg-keppel-300" data-study>
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5 sm:justify-end">
+          <Link href={`/focus?study=${encodeURIComponent(resource.id)}`} className="inline-flex h-9 items-center justify-center rounded-lg bg-keppel-400 px-3.5 text-xs font-semibold text-keppel-950 transition-colors hover:bg-keppel-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-keppel-400" data-study>
             Study this
           </Link>
           {/* A new note on this page, filed where the page is and naming it as its source. Nothing is saved until the note is. */}
           <Link href={`/notes/new?${new URLSearchParams({
             title: resource.title.slice(0, 200), source: resource.url, sourceTitle: resource.title,
             ...(resource.subjectId ? { subjectId: resource.subjectId } : {}), ...(resource.subjectId && resource.topicName ? { topic: resource.topicName } : {}),
-          }).toString()}`} className="inline-flex h-9 items-center justify-center rounded-lg border border-white/12 px-3 text-xs text-foreground/65 transition-colors hover:bg-white/5" data-write-note>
+          }).toString()}`} className={SECONDARY} data-write-note>
             Write a note
           </Link>
-          <button type="button" onClick={() => void addTask()} disabled={busy} className="h-9 rounded-lg border border-white/12 px-3 text-xs text-foreground/65 transition-colors hover:bg-white/5 disabled:opacity-50" data-add-task>
+          <button type="button" onClick={() => void addTask()} disabled={busy} className={SECONDARY} data-add-task>
             Add task
           </button>
-          <button type="button" onClick={() => void remove()} disabled={removing} className="h-9 rounded-lg border border-white/12 px-3 text-xs text-foreground/65 transition-colors hover:bg-white/5 disabled:opacity-50" data-remove>
+          {/* Removing is the quiet one: kept apart and asked about first. */}
+          <span aria-hidden className="mx-0.5 hidden h-5 w-px bg-white/10 sm:block" />
+          <button type="button" onClick={() => void remove()} disabled={removing} aria-label={`Remove ${resource.title}`} className="inline-flex h-9 items-center justify-center rounded-lg px-2.5 text-xs text-foreground/50 transition-colors hover:bg-red-400/10 hover:text-red-300 focus-visible:outline-2 focus-visible:outline-keppel-400 disabled:opacity-50" data-remove>
             Remove
           </button>
         </div>
@@ -207,13 +210,17 @@ export function NovaSaved({ view, connect, onChanged }: { view: NovaSavedResourc
     <div className="mx-auto w-full max-w-6xl pb-20 pt-10 lg:pt-4" data-saved={view.resources.length > 0 ? 'ready' : 'empty'}>
       <PageHeader
         title="Browser Extension"
-        description="Connect the extension to save pages and passages to Nova while you read. What you save is kept below, under the subject and topic it belongs to. Saving a page tells Nova it matters to you, not that you know it."
+        description="Save pages and passages to Nova while you read, then study them from here. Saving tells Nova a page matters to you, not that you know it."
       />
 
       <div className="mt-8 grid grid-cols-1 gap-x-10 gap-y-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="min-w-0 space-y-6">
+        <div className="min-w-0 space-y-10">
           <ExtensionPanel open={connect} />
-          <h2 className="pt-2 text-lg font-semibold tracking-tight text-foreground" data-saved-heading>Saved pages</h2>
+          <section className="space-y-5" aria-labelledby="saved-heading">
+          <div className="flex items-baseline justify-between gap-3 border-t border-white/6 pt-8">
+            <h2 id="saved-heading" className="text-lg font-semibold tracking-tight text-foreground" data-saved-heading>Saved pages</h2>
+            {view.resources.length > 0 && <span className="text-sm text-foreground/50" data-saved-count>{view.resources.length} saved</span>}
+          </div>
           <SaveLink subjects={view.subjects} resources={view.resources} capture={capture} onSaved={onChanged} />
           {view.resources.length === 0 ? (
             <section className="rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9" data-empty="saved">
@@ -227,13 +234,14 @@ export function NovaSaved({ view, connect, onChanged }: { view: NovaSavedResourc
               {view.resources.map(r => <ResourceRow key={r.id} resource={r} onRemoved={onChanged} onChanged={onChanged} />)}
             </ul>
           )}
+          </section>
         </div>
 
         <aside className="space-y-6">
           <BookmarkletPanel />
           <section className="rounded-2xl border border-white/8 bg-card/50 p-5">
-            <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">What Nova keeps</h2>
-            <ul className="mt-4 space-y-2.5 text-sm leading-relaxed text-foreground/60">
+            <h2 className="text-sm font-semibold text-foreground">What Nova keeps</h2>
+            <ul className="mt-3 list-disc space-y-2 pl-4 text-sm leading-relaxed text-foreground/60 marker:text-foreground/30">
               <li>The page&apos;s address and title, and the subject and topic you filed it under. From the page itself, only a passage you selected and chose to save.</li>
               <li>To suggest where a page belongs, Nova reads its title and your selected passage alongside the names of your subjects and topics. It never opens the page.</li>
               <li>Only pages you save or ask to study. Nova does not see your other tabs or your history.</li>
