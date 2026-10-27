@@ -63,14 +63,14 @@ export function Header() {
           {/* Nav */}
           <nav
             className={`
-              hidden md:flex items-center gap-1 rounded-full border border-[var(--color-baltic-sea-800)]
+              hidden lg:flex items-center gap-1 rounded-full border border-[var(--color-baltic-sea-800)]
               bg-[var(--color-baltic-sea-900)]/80 backdrop-blur-md px-2 py-1.5
               transition-all duration-500 ease-out
               ${scrolled ? "opacity-0 pointer-events-none" : "opacity-100"}
               absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2
             `}
           >
-            {[["#map", "Product"], ["#how-it-works", "How it works"], ["#pricing", "Pricing"], ["#faq", "FAQ"]].map(([href, label]) => (
+            {[["#build", "Product"], ["#how-it-works", "How it works"], ["#pricing", "Pricing"], ["#faq", "FAQ"]].map(([href, label]) => (
               <a key={href} href={href} className="px-4 py-1.5 text-sm text-[var(--color-baltic-sea-400)] rounded-full hover:bg-[var(--color-baltic-sea-800)] hover:text-[var(--color-baltic-sea-100)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-keppel-400)]">
                 {label}
               </a>
@@ -113,7 +113,8 @@ export function Header() {
                   <div className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-keppel-400)]/40 bg-[var(--color-baltic-sea-800)] text-xs font-semibold text-[var(--color-keppel-400)]">
                     {initials}
                   </div>
-                  <span className="text-sm text-[var(--color-baltic-sea-300)] max-w-[120px] truncate">
+                  {/* The address only where there is room beside the centred nav. */}
+                  <span className="hidden 2xl:inline text-sm text-[var(--color-baltic-sea-300)] max-w-[120px] truncate">
                     {user.name ?? user.email}
                   </span>
                 </div>
@@ -133,7 +134,7 @@ export function Header() {
                   `}
                 >
                   <SignOut weight="bold" className="h-4 w-4" />
-                  <span className="hidden sm:inline">{loggingOut ? "Signing out…" : "Sign out"}</span>
+                  <span className="hidden sm:inline lg:hidden xl:inline">{loggingOut ? "Signing out…" : "Sign out"}</span>
                 </Button>
               </>
             ) : (

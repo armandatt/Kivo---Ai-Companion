@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useState } from "react"
+import { Reveal } from "@/components/landing/frame"
 import { CaretDown } from "@phosphor-icons/react/dist/ssr"
 
 const FAQS = [
@@ -41,24 +42,15 @@ function FAQItem({
   answer,
   isOpen,
   onClick,
-  delay,
-  isVisible,
 }: {
   question: string
   answer: string
   isOpen: boolean
   onClick: () => void
-  delay: number
-  isVisible: boolean
 }) {
   return (
-    <div
-      className={`border-b border-[var(--color-baltic-sea-800)] transition-all duration-500 ${
-        isVisible ? "opacity-100 translate-x-0" : `opacity-0 ${delay % 2 === 0 ? "-translate-x-8" : "translate-x-8"}`
-      }`}
-      style={{ transitionDelay: `${delay * 75 + 200}ms` }}
-    >
-      <button onClick={onClick} className="w-full flex items-center justify-between py-5 text-left group">
+    <div className="border-b border-[var(--color-baltic-sea-800)]">
+      <button onClick={onClick} aria-expanded={isOpen} className="w-full flex items-center justify-between py-5 text-left group">
         <span className="font-medium text-[var(--color-baltic-sea-200)] group-hover:text-[var(--color-keppel-400)] transition-colors">
           {question}
         </span>
@@ -80,41 +72,21 @@ function FAQItem({
 
 export function FAQ() {
   const [openIndex, setOpenIndex] = useState<number | null>(0)
-  const [isVisible, setIsVisible] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry && entry.isIntersecting) {
-          setIsVisible(true)
-          observer.disconnect()
-        }
-      },
-      { threshold: 0.1 },
-    )
-    if (ref.current) observer.observe(ref.current)
-    return () => observer.disconnect()
-  }, [])
-
   return (
     <section
       id="faq"
-      ref={ref}
-      className="scroll-mt-20 py-24 border-t border-[var(--color-baltic-sea-900)] overflow-hidden"
+      className="scroll-mt-20 py-24 sm:py-32 border-t border-[var(--color-baltic-sea-900)] overflow-hidden"
       style={{ background: '#060810' }}
     >
       <div className="mx-auto max-w-[800px] px-2.5 sm:px-6 lg:px-12">
-        <div
-          className={`text-center max-w-2xl mx-auto mb-16 transition-all duration-700 ${isVisible ? "opacity-100 translate-y-0 blur-0" : "opacity-0 translate-y-12 blur-sm"}`}
-        >
+        <Reveal className="text-center max-w-2xl mx-auto mb-16">
           <span className="text-sm font-medium text-[var(--color-keppel-400)] uppercase tracking-wider">FAQ</span>
           <h2 className="mt-3 text-3xl font-bold text-[var(--color-baltic-sea-100)] md:text-4xl">
             Common questions
           </h2>
-        </div>
+        </Reveal>
 
-        <div>
+        <Reveal>
           {FAQS.map((faq, i) => (
             <FAQItem
               key={faq.question}
@@ -122,11 +94,9 @@ export function FAQ() {
               answer={faq.answer}
               isOpen={openIndex === i}
               onClick={() => setOpenIndex(openIndex === i ? null : i)}
-              delay={i}
-              isVisible={isVisible}
             />
           ))}
-        </div>
+        </Reveal>
       </div>
     </section>
   )

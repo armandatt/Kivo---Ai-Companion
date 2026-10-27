@@ -45,7 +45,9 @@ export function useStory(count: number, ms: number, { start = 0, loop = true }: 
   }, [auto, step, count, ms, loop])
   useEffect(() => { if (reduced) setPlaying(false) }, [reduced])
   const go = useCallback((n: number) => { setStep(Math.max(0, Math.min(count - 1, n))); setPlaying(false) }, [count])
-  return { ref, step, go, playing: auto, paused: !playing, toggle: () => setPlaying(p => !p), reduced: !!reduced, inView }
+  // Back to the first step, playing again (still never under reduced motion).
+  const restart = useCallback(() => { setStep(0); setPlaying(true) }, [])
+  return { ref, step, go, restart, playing: auto, paused: !playing, toggle: () => setPlaying(p => !p), reduced: !!reduced, inView }
 }
 
 export function StoryControls({ count, step, go, paused, toggle, labels, className }: {
