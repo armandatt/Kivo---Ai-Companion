@@ -41,7 +41,7 @@ export function crossSiteProblem(headers: HeaderReader, allowedOrigins: Array<st
     return { status: 415, error: "Requests must be sent as application/json." };
   }
 
-  const refused: OriginProblem = { status: 403, error: "This request did not come from Kivo." };
+  const refused: OriginProblem = { status: 403, error: "This request did not come from Kio." };
 
   const origin = headers.get("origin");
   if (origin !== null) {

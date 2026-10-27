@@ -6,7 +6,7 @@ import type { JourneyPageData } from './use-journey-data'
 
 type Props = { story: JourneyPageData['story']; loading: boolean }
 
-export function KivoStory({ story, loading }: Props) {
+export function KioStory({ story, loading }: Props) {
   if (loading) {
     return <div className="h-28 rounded-2xl border border-white/5 bg-white/3 animate-pulse" />
   }
@@ -22,7 +22,7 @@ export function KivoStory({ story, loading }: Props) {
         </div>
         <div className="flex-1">
           <p className="text-[11px] font-semibold text-white/30 uppercase tracking-wider mb-3">
-            Kivo&apos;s Story
+            Kio&apos;s Story
           </p>
           <div className="space-y-2">
             {story.lines.map((line, i) => (

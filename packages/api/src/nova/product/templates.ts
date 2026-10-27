@@ -137,7 +137,7 @@ export const STUDY_TEMPLATES: StudyTemplate[] = [
     namePrompt: "What are you learning?",
     asksExamDate: false,
     tasks: [
-      { key: "resource", title: "Pick one main resource and save it to Kivo", priority: "high" },
+      { key: "resource", title: "Pick one main resource and save it to Kio", priority: "high" },
       { key: "weekly-slot", title: "Choose the days and time you will study each week", priority: "medium" },
       { key: "project", title: "Decide on one small project to build", priority: "medium" },
       { key: "weekly-note", title: "Write a note on what you learned this week", priority: "low" },

@@ -17,7 +17,7 @@ export type StudyProposalResponse =
       // Changes that passed the same check a hand-made edit gets, in order.
       // Nothing is applied until the learner approves.
       changes:   Array<{ edit: Edit; why: string; sentence: string }>;
-      // Changes the model suggested that Kivo will not make, and why.
+      // Changes the model suggested that Kio will not make, and why.
       dropped:   Array<{ what: string; reason: string }>;
       // When the request was unclear.
       questions: string[];

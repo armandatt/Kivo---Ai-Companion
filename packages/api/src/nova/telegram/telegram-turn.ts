@@ -182,7 +182,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
   let budgetDay: string | null = null;
   // The account's plan, read once per turn and only when a model is about to
   // be used. If billing cannot be read, the chat gets Free's allowance: a
-  // learner is never refused because of a fault on Kivo's side.
+  // learner is never refused because of a fault on Kio's side.
   let plan: Promise<Pick<Entitlement, "allowance" | "usageKey" | "plan">> | null = null;
   const entitled = () => (plan ??= (deps.entitlement ?? entitlementForLearner)(event.chatId)
     .catch(() => ({ plan: "free" as const, allowance: allowanceFor("free"), usageKey: `learner:${event.chatId}` })));

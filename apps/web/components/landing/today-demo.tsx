@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { ArrowDown, ArrowUp, Check, Clock, List, Minus, Play, Plus, Sparkles, Square, Timer } from 'lucide-react'
-import { KivoMark } from '@/components/brand/kivo-brand'
+import { KioMark } from '@/components/brand/kio-brand'
 import { subjectColor } from '@/components/nova/subject-color'
 import { cn } from '@/lib/utils'
 import { AppWindow, ReplayButton } from './frame'
@@ -75,7 +75,7 @@ export function TodayDemo() {
   const nova = (
     <section aria-label="Nova" className="flex h-full min-h-0 flex-col bg-gradient-to-b from-nova/[0.05] to-transparent">
       <div className="flex items-center gap-2.5 border-b border-white/6 px-4 py-3">
-        <span aria-hidden className="grid size-8 place-items-center rounded-xl bg-nova/15 ring-1 ring-nova/30"><KivoMark size={14} className="text-nova-ink" /></span>
+        <span aria-hidden className="grid size-8 place-items-center rounded-xl bg-nova/15 ring-1 ring-nova/30"><KioMark size={14} className="text-nova-ink" /></span>
         <div><p className="text-sm font-semibold text-foreground">Nova</p><p className="text-[11px] text-foreground/55">Plans today with you · nothing changes without your yes</p></div>
       </div>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4 text-[13px] leading-relaxed" aria-live="polite">
@@ -162,7 +162,7 @@ export function TodayDemo() {
   let at = 16 * 60
   return (
     <div className="space-y-4">
-      <AppWindow label="Kivo · Today" className="h-[46rem] lg:h-[34rem]">
+      <AppWindow label="Kio · Today" className="h-[46rem] lg:h-[34rem]">
         <div className="grid h-full lg:grid-cols-[minmax(0,1fr)_20rem]">
           <div className="min-h-0 overflow-y-auto px-4 py-4 sm:px-6">
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-subtle">Tuesday</p>

@@ -157,7 +157,7 @@ export function PaperImportDialog({ subjects, initial, onClose, onSubjectsChange
                 </button>
               </div>
               {hint && <p role="alert" className="mt-1.5 text-xs text-amber-200" data-paper-hint>{hint}</p>}
-              {stage.at === 'url' && !hint && <p className="mt-1.5 text-[11px] text-subtle">arXiv, DOI links and publisher pages, Semantic Scholar, OpenReview, PubMed and PubMed Central, or a direct PDF. Kivo brings in what is openly available, and says what that is.</p>}
+              {stage.at === 'url' && !hint && <p className="mt-1.5 text-[11px] text-subtle">arXiv, DOI links and publisher pages, Semantic Scholar, OpenReview, PubMed and PubMed Central, or a direct PDF. Kio brings in what is openly available, and says what that is.</p>}
             </form>
           )}
 

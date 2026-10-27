@@ -24,7 +24,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import Link from 'next/link'
 import { ArrowRight, Check, Loader2, MessageSquarePlus, Send, Undo2, X } from 'lucide-react'
 import type { NovaDayView, PendingChange } from '@repo/api/nova/product/day-flow.types'
-import { KivoMark } from '@/components/brand/kivo-brand'
+import { KioMark } from '@/components/brand/kio-brand'
 import { cn } from '@/lib/utils'
 import { askCopilot } from './day-api'
 import type { OpenProposal, ProposalState } from './playground'
@@ -158,8 +158,8 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
     <section className="flex h-full min-h-0 flex-col" aria-label="Nova, planning today with you" data-copilot>
       <header className="flex shrink-0 items-center gap-3 border-b border-white/6 px-5 py-4">
         <span aria-hidden className="relative grid size-10 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-nova/35 via-nova/15 to-transparent ring-1 ring-nova/35">
-          {pending && <span className="absolute inset-0 rounded-2xl ring-2 ring-nova/50 kivo-node-pulse" />}
-          <KivoMark size={18} className="text-nova-ink" />
+          {pending && <span className="absolute inset-0 rounded-2xl ring-2 ring-nova/50 kio-node-pulse" />}
+          <KioMark size={18} className="text-nova-ink" />
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-[15px] font-semibold leading-tight text-foreground">Nova</p>
@@ -204,7 +204,7 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
           <div key={t.id} className="nova-reveal ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-action/15 px-4 py-2.5 text-[15px] leading-relaxed text-foreground ring-1 ring-action/20" data-copilot-turn="learner">{t.text}</div>
         ) : (
           <div key={t.id} className="nova-reveal flex gap-3" data-copilot-turn="nova">
-            <span aria-hidden className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-xl bg-nova/12 ring-1 ring-nova/25"><KivoMark size={12} className="text-nova-ink" /></span>
+            <span aria-hidden className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-xl bg-nova/12 ring-1 ring-nova/25"><KioMark size={12} className="text-nova-ink" /></span>
             <div className="min-w-0 flex-1 space-y-2.5 text-[15px] leading-relaxed text-foreground/85">
               {t.text && <p className={cn('whitespace-pre-wrap', t.error && 'text-amber-200')}>{t.text}</p>}
               {t.question && <p className="whitespace-pre-wrap font-medium text-foreground" data-copilot-question>{t.question}</p>}
@@ -241,7 +241,7 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
         ))}
         {pending && (
           <div className="flex items-center gap-3" aria-hidden>
-            <span className="grid size-7 place-items-center rounded-xl bg-nova/12 ring-1 ring-nova/25"><KivoMark size={12} className="text-nova-ink" /></span>
+            <span className="grid size-7 place-items-center rounded-xl bg-nova/12 ring-1 ring-nova/25"><KioMark size={12} className="text-nova-ink" /></span>
             <span className="flex gap-1"><span className="size-1.5 animate-bounce rounded-full bg-nova/70 [animation-delay:-0.2s]" /><span className="size-1.5 animate-bounce rounded-full bg-nova/70 [animation-delay:-0.1s]" /><span className="size-1.5 animate-bounce rounded-full bg-nova/70" /></span>
           </div>
         )}

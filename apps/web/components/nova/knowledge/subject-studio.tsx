@@ -320,7 +320,7 @@ function AskNova({ structure, onApply, busy }: { structure: StudyStructure; onAp
           )}
           {draft.dropped.length > 0 && (
             <details className="text-xs text-foreground/50">
-              <summary className="cursor-pointer">{draft.dropped.length} suggestion{draft.dropped.length === 1 ? '' : 's'} Kivo won&apos;t make</summary>
+              <summary className="cursor-pointer">{draft.dropped.length} suggestion{draft.dropped.length === 1 ? '' : 's'} Kio won&apos;t make</summary>
               <ul className="mt-1.5 list-disc space-y-0.5 pl-5">{draft.dropped.map((d, i) => <li key={i}>{d.what}: {d.reason}</li>)}</ul>
             </details>
           )}

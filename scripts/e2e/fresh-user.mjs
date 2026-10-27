@@ -190,7 +190,7 @@ const profileBefore = sql(`select p.id from "NovaAcademicProfile" p join "Messen
 // 7.1–7.4. A chat nobody has connected. It is told how to connect, by whatever
 // it sends, and nothing is made for it: no row, no Rex setup, no conversation.
 const stranger = chat + 1;
-const UNCONNECTED = /isn't connected to a Kivo account/;
+const UNCONNECTED = /isn't connected to a Kio account/;
 const left = id => sql(`select (select count(*) from "MessengerUser" where "platformChatId" like '${id}%')||'|'||(select count(*) from "UserProfile" where "telegramChatId"='${id}')||'|'||(select count(*) from "CompanionMessage" c join "MessengerUser" m on m.id=c."userId" where m."platformChatId" like '${id}%')||'|'||(select count(*) from "MemoryFact" f join "MessengerUser" m on m.id=f."userId" where m."platformChatId" like '${id}%')`);
 for (const [n, text] of [[7.1, "/start"], [7.2, "hey, can you help me with my exams?"], [7.3, "/log bench press 80kg 5x5"]]) {
   const before = sentTo(stranger).length;

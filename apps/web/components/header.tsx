@@ -5,8 +5,8 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Lightning, SignOut, SquaresFour } from "@phosphor-icons/react/dist/ssr"
-import { KivoLogo } from "@/components/KivoLogo"
-import { KivoWordmark } from "@/components/brand/kivo-brand"
+import { KioLogo } from "@/components/KioLogo"
+import { KioWordmark } from "@/components/brand/kio-brand"
 
 export function Header() {
   const router = useRouter()
@@ -48,7 +48,7 @@ export function Header() {
 
           {/* Logo */}
           <div className="flex items-center gap-3">
-            <KivoLogo size={38} />
+            <KioLogo size={38} />
             <span
               className={`
                 text-xl font-semibold tracking-tight text-[var(--color-baltic-sea-50)]
@@ -56,7 +56,7 @@ export function Header() {
                 ${scrolled ? "max-w-0 opacity-0" : "max-w-[100px] opacity-100"}
               `}
             >
-              <KivoWordmark height={22} className="block" />
+              <KioWordmark height={22} className="block" />
             </span>
           </div>
 
@@ -159,7 +159,7 @@ export function Header() {
                 >
                   <Link href="/signup">
                     <Lightning weight="fill" className="mr-1.5 h-4 w-4" />
-                    Start with Kivo
+                    Start with Kio
                   </Link>
                 </Button>
               </>
@@ -199,7 +199,7 @@ export function Header() {
           >
             <Link href="/signup">
               <Lightning weight="fill" className="mr-1.5 h-4 w-4" />
-              Start with Kivo
+              Start with Kio
             </Link>
           </Button>
         )}

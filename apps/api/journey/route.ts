@@ -105,7 +105,7 @@ export type JourneyPageData = {
     weight: number
   }[]
 
-  // S10 — Kivo Story (deterministic narrative)
+  // S10 — Kio Story (deterministic narrative)
   story: { lines: string[] }
 }
 
@@ -337,7 +337,7 @@ function buildTimeline(
   const events: JourneyPageData["timeline"] = []
 
   // Joined
-  events.push({ date: isoDate(joinedDate), type: "joined",       title: "Joined Kivo",          detail: "Connected Rex and started the journey." })
+  events.push({ date: isoDate(joinedDate), type: "joined",       title: "Joined Kio",          detail: "Connected Rex and started the journey." })
 
   // First workout
   if (sortedCompletedDates.length > 0) {
@@ -517,7 +517,7 @@ function buildStory(
 ): string[] {
   const lines: string[] = []
 
-  lines.push(`You joined Kivo ${daysWithKivo} day${daysWithKivo !== 1 ? "s" : ""} ago.`)
+  lines.push(`You joined Kio ${daysWithKivo} day${daysWithKivo !== 1 ? "s" : ""} ago.`)
 
   if (sessionsCompleted > 0) {
     lines.push(`Since then you've completed ${sessionsCompleted} workout session${sessionsCompleted !== 1 ? "s" : ""}.`)
@@ -614,7 +614,7 @@ export async function GET() {
 
     const messengerId    = messenger.id
     const platformChatId = profile.telegramChatId
-    const joinedDate     = messenger.createdAt   // when they first connected Kivo
+    const joinedDate     = messenger.createdAt   // when they first connected Kio
 
     const cutoff30d  = daysBefore(now, 30)
     const cutoff90d  = daysBefore(now, 90)

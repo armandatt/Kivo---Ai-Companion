@@ -17,8 +17,8 @@ import { BOARD_PATH } from '@repo/api/nova/product/companion'
 // Nothing here is saved until then.
 
 export const ROUTE_LABEL: Record<'use' | 'adapt' | 'custom', string> = {
-  use:    'Kivo template',
-  adapt:  'Kivo template, personalised by Nova',
+  use:    'Kio template',
+  adapt:  'Kio template, personalised by Nova',
   custom: 'Designed by Nova',
 }
 
@@ -183,7 +183,7 @@ export function PlanReview({ route, reason, plan: proposed, dropped, similar: si
       {(plan.assumptions.length > 0 || dropped.length > 0) && (
         <div className={cn(SECTION, 'space-y-1.5 text-xs leading-relaxed text-foreground/65')}>
           {plan.assumptions.map(a => <p key={a}>{a}</p>)}
-          {dropped.length > 0 && <p data-dropped>Left out because it didn&apos;t fit Kivo&apos;s limits: {dropped.slice(0, 4).join('; ')}{dropped.length > 4 ? ` and ${dropped.length - 4} more` : ''}.</p>}
+          {dropped.length > 0 && <p data-dropped>Left out because it didn&apos;t fit Kio&apos;s limits: {dropped.slice(0, 4).join('; ')}{dropped.length > 4 ? ` and ${dropped.length - 4} more` : ''}.</p>}
         </div>
       )}
 

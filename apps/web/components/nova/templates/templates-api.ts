@@ -13,12 +13,12 @@ async function send<T>(url: string, body: unknown, signal?: AbortSignal): Promis
     const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal })
     if (res.status === 401) { window.location.href = '/signin?from=/templates'; return failure('Signed out.') }
     const data = await res.json().catch(() => null) as (T & { ok?: boolean; message?: string }) | null
-    if (!data || typeof data !== 'object') return failure("Kivo didn't answer. Your inputs are still here; try again.")
+    if (!data || typeof data !== 'object') return failure("Kio didn't answer. Your inputs are still here; try again.")
     if (res.status === 429 && !('route' in data)) return failure(data.message ?? 'That is a lot at once. Give it a minute.', 'rate_limited')
     return data
   } catch (err) {
     if ((err as Error).name === 'AbortError') return failure('Cancelled.', 'cancelled')
-    return failure("Couldn't reach Kivo. Check your connection; your inputs are still here.")
+    return failure("Couldn't reach Kio. Check your connection; your inputs are still here.")
   }
 }
 

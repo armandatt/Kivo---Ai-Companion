@@ -6,7 +6,7 @@
 //      (workspace-routing.ts). A template used as it is needs no more.
 //   2. writeWorkspacePlan (main tier): the plan, with the files attached
 //      for the model to read (PDFs, scanned ones included, and photos; the
-//      provider reads them, Kivo has no OCR of its own). Adapted from a
+//      provider reads them, Kio has no OCR of its own). Adapted from a
 //      template when one fits the kind of work; from nothing when none does.
 //
 // Code decides what reaches the learner: the reply is checked by
@@ -15,7 +15,7 @@
 // material, not instructions: the system prompt says so and the check does
 // not depend on the model listening.
 //
-// Kivo has no web search. Every plan says so in its assumptions, and a
+// Kio has no web search. Every plan says so in its assumptions, and a
 // resource Nova names is marked as its suggestion, unchecked.
 
 import { generateOpenAIText } from "../../services/openai.service";
@@ -145,7 +145,7 @@ export async function readCreationIntent(input: { request: string; fileNames: st
 // ── 2. Writing the plan ───────────────────────────────────────────────────────
 
 const PLAN_SYSTEM = [
-  "You design a workspace in Kivo, a learning and work app: subjects, each with a tree of topics, dated items, tasks and notes the learner will use to study or work. Kivo creates them only after the learner reviews them.",
+  "You design a workspace in Kio, a learning and work app: subjects, each with a tree of topics, dated items, tasks and notes the learner will use to study or work. Kio creates them only after the learner reviews them.",
   "Reply with one JSON object only, in this shape (leave out what does not apply; use [] for empty lists):",
   `{"title": string, "summary": string, "category": "college"|"professional"|"competitive",
  "prerequisites": [string],
@@ -191,7 +191,7 @@ export interface PlanRequest {
   decision:     { action: "adapt"; template: StudyTemplate; reason: string } | { action: "custom"; reason: string };
   files:        LlmAttachment[];
   today:        string;
-  // What Kivo knows that may shape the plan.
+  // What Kio knows that may shape the plan.
   learningFor:  string[];
   weeklyHours:  number | null;
   subjectsHeld: string[];
@@ -206,7 +206,7 @@ export function planPrompt(p: PlanRequest): string {
     `CATEGORY: ${p.category ? CATEGORY_INFO[p.category].label : "choose the fitting one"}`,
     `TIME: ${p.intent.hoursPerWeek ? `${p.intent.hoursPerWeek} hours a week (from the request)` : p.weeklyHours ? `about ${p.weeklyHours} hours a week (their estimate at sign-up)` : "not said"}`,
     `EXPERIENCE: ${p.intent.experience ?? "not said"}`,
-    `THEIR SUBJECTS ALREADY IN KIVO: ${p.subjectsHeld.length ? p.subjectsHeld.slice(0, 20).join(", ") : "none"}`,
+    `THEIR SUBJECTS ALREADY IN KIO: ${p.subjectsHeld.length ? p.subjectsHeld.slice(0, 20).join(", ") : "none"}`,
     t
       ? `TEMPLATE (keep its structure and tasks, fill and adapt it to the request): ${t.name}. ${t.description}\nIts subjects: ${t.subjects.map(s => `${s.name || "(named by the learner)"}: ${s.topics.join(", ") || "(topics to fill)"}`).join(" | ")}\nIts tasks: ${t.tasks.map(k => k.title).join(" | ")}${t.notes?.length ? `\nIts notes: ${t.notes.map(n => n.title).join(" | ")}` : ""}`
       : "TEMPLATE: none fits; design it from the request.",
@@ -247,7 +247,7 @@ export async function writeWorkspacePlan(p: PlanRequest, generate: Generate = ge
     return { ok: false, unavailable: true, message: "Nova couldn't write the plan just now. Your request is still here; try again." };
   }
   const parsed = parsePlanReply(raw);
-  if (!parsed) return { ok: false, message: "Nova's plan came back in a form Kivo couldn't use. Try again." };
+  if (!parsed) return { ok: false, message: "Nova's plan came back in a form Kio couldn't use. Try again." };
   const t = p.decision.action === "adapt" ? p.decision.template : null;
   return withNoResearch(checkWorkspacePlan({
     ...parsed,
@@ -258,17 +258,17 @@ export async function writeWorkspacePlan(p: PlanRequest, generate: Generate = ge
 
 // ── 3. A plan from a conversation (Build with Nova) ───────────────────────────
 // The same plan shape and the same check. What it is built from is what the
-// learner said (their facts, kept apart from Nova's assumptions), what Kivo
+// learner said (their facts, kept apart from Nova's assumptions), what Kio
 // already knows about them, and, for a revision, the proposal as it now
 // stands (with the learner's own edits) and the change asked for.
 
 const BUILDER_RULES = [
   "This plan comes from a conversation with the learner. FACTS are theirs: build on them as given. ASSUMPTIONS are Nova's: rely on them only where needed and keep them in assumptions.",
   "Choose the structure the work needs, not a fixed template, and use the kind's own words in every title, task and note. The learner decides how their workspace is arranged: keep any structure they described (their grouping, their names, their order).",
-  "When the learner wants everything under one name (\"all milestones under one main topic called Kivo\", \"put all five under Semester Five\"): with one subject, name that subject so; with several, add that name as a subject with no topics and set each grouped subject's parent to it. Never add it as one more topic beside the others.",
-  "Priorities the learner set are theirs: Kivo keeps them whatever you write. Suggest one only as the rules above say.",
+  "When the learner wants everything under one name (\"all milestones under one main topic called Kio\", \"put all five under Semester Five\"): with one subject, name that subject so; with several, add that name as a subject with no topics and set each grouped subject's parent to it. Never add it as one more topic beside the others.",
+  "Priorities the learner set are theirs: Kio keeps them whatever you write. Suggest one only as the rules above say.",
   "When EXISTING WORKSPACE is given, propose only what to add to it. Do not repeat what it already has; never remove or rename what is there.",
-  "TASKS decides whether the plan has tasks, over every rule above that mentions them: none asked for means \"tasks\": [] and the plan is its subjects, topics and milestones (practice and revision are said in a topic's explanation or a milestone's exercises instead); only for named parts means tasks filed under those parts and nothing else. Kivo removes any other task.",
+  "TASKS decides whether the plan has tasks, over every rule above that mentions them: none asked for means \"tasks\": [] and the plan is its subjects, topics and milestones (practice and revision are said in a topic's explanation or a milestone's exercises instead); only for named parts means tasks filed under those parts and nothing else. Kio removes any other task.",
   "A phase, stage, unit, module or chapter of a subject is a topic inside it (a milestone for a stage of work), never a subject of its own; when the learner says parts go under a name (\"Finance has four phases\"), those parts sit inside it.",
 ].join("\n");
 
@@ -296,7 +296,7 @@ export function builderPlanPrompt(p: BuilderPlanRequest): string {
     `TODAY: ${p.today}`,
     `KIND OF WORK: ${p.kind ?? "work it out from the conversation"}`,
     `FACTS (the learner's own):\n${lines(p.facts)}`,
-    `KNOWN FROM KIVO (their record):\n${lines(p.known)}`,
+    `KNOWN FROM KIO (their record):\n${lines(p.known)}`,
     `ASSUMPTIONS (Nova's):\n${p.assumptions.length ? p.assumptions.map(a => `- ${a}`).join("\n") : "- none"}`,
     `SUGGESTIONS NOVA MADE:\n${p.suggestions.length ? p.suggestions.map(a => `- ${a}`).join("\n") : "- none"}`,
     p.existing
@@ -331,7 +331,7 @@ export async function writeBuilderPlan(p: BuilderPlanRequest, generate: Generate
   if (parsed === "too_long") return { ok: false, message: TOO_LONG };
   if (parsed === "too_big") return { ok: false, message: FILES_TOO_BIG };
   if (parsed === "failed") return { ok: false, unavailable: true, message: "Nova couldn't write the proposal just now. Nothing was lost; try again." };
-  if (!parsed) return { ok: false, message: "Nova's proposal came back in a form Kivo couldn't use. Try again." };
+  if (!parsed) return { ok: false, message: "Nova's proposal came back in a form Kio couldn't use. Try again." };
   const checked = withNoResearch(checkWorkspacePlan({ ...parsed, kind: "custom", templateId: null, templateVersion: null }, { today: p.today, files: (p.files ?? []).map(f => f.name), userText: p.learnerText, nova: true }));
   // The plan's structure is the model's and the learner's, as checked: no
   // kind of work rewrites it (26 Oct). What the check changed is in dropped.
@@ -377,7 +377,7 @@ function withSyllabusNote(checked: PlanCheck, p: Pick<BuilderPlanRequest, "kind"
 // (and again on approval), and nothing is written here.
 
 const CHANGES_SYSTEM = [
-  "You propose changes to a learner's workspace in Kivo, a learning and work app: one they have, or a proposal not yet built (CURRENT RECORDS says which). Kivo applies them only after the learner approves.",
+  "You propose changes to a learner's workspace in Kio, a learning and work app: one they have, or a proposal not yet built (CURRENT RECORDS says which). Kio applies them only after the learner approves.",
   "Reply with one JSON object only: {\"ops\": [operation], \"summary\": string}. Each operation has \"why\" (one short line) and is one of:",
   `{"op":"rename","title":string}  (the workspace's own name, as CURRENT RECORDS gives it; not a subject's)
 {"op":"add_subject","key":string,"name":string,"topics":[string],"parentId":ID|null,"parentKey":string|null}  (parentId: inside that subject; parentKey: inside another add_subject of this set, by its key)
@@ -393,14 +393,14 @@ const CHANGES_SYSTEM = [
 {"op":"add_date","title":string,"day":"YYYY-MM-DD","subjectId":ID|null,"kind":"exam"|"assignment"|"project"|"interview"|"certification"|"other"}  {"op":"update_date","dateId":ID,"title"?:string,"day"?:"YYYY-MM-DD"}  {"op":"remove_date","dateId":ID}
 {"op":"add_note","title":string,"body":string,"subjectId":ID|null,"topicName":string|null}  {"op":"remove_note","noteId":ID}`,
   "Rules:",
-  "- Propose exactly what CHANGE ASKED asks for and nothing else: everything you do not name stays exactly as it is (Kivo also drops changes of kinds the request is not about). Never touch anything outside CURRENT RECORDS. Use only ids shown there, exactly.",
+  "- Propose exactly what CHANGE ASKED asks for and nothing else: everything you do not name stays exactly as it is (Kio also drops changes of kinds the request is not about). Never touch anything outside CURRENT RECORDS. Use only ids shown there, exactly.",
   "- The learner decides how it is arranged. Regrouping is moving: to put subjects under one name, add_subject the group (no topics) with a key, then move_subject each into it with parentKey; to put topics under a unit or a milestone, add_topics it (or use the one there) and move_topic each into it. Moving keeps every topic, task, note and date where it is: never remove and re-add to regroup, and never list subjects as topics of another.",
   "- A unit, chapter, module, stage or section of a subject is a topic of that subject (add_topics with keys, then add_topics with parentKey for what goes inside it), never a subject of its own; add_subject only for a new course, workstream or area.",
   "- Topics nest (CURRENT RECORDS shows each inside the one above it, indented) and keep an order: to put one first, move_topic with index 0, or order_topics. Tasks nest too (a step is indented under its task): to break a task down, add_task with parentId (or parentKey for a task added in this set); to regroup, update_task with parentId. Titles start with a verb and name a concrete outcome.",
   "- Waits: add or change after only when one task truly needs what another produces, never on its own steps or the task it is a step of.",
   "- Never remove or rename something unless asked. When the learner wants a subject gone (\"delete Prompt Engineering\", \"it belongs to another semester\"), use remove_subject; remove_topic only for a topic and what is inside it. Additions must not repeat what is already there.",
-  "- Priority is the learner's: set or change one only when CHANGE ASKED is about priority (Kivo drops it otherwise).",
-  "- add_task only as TASKS ALLOWED says: none asked for means no add_task at all, whatever the change; only for named parts means tasks filed under those parts (topicName one of them or inside them) and nowhere else. Kivo drops any other. Never turn a topic into a task or a task into a topic, and never remove a task to restructure topics.",
+  "- Priority is the learner's: set or change one only when CHANGE ASKED is about priority (Kio drops it otherwise).",
+  "- add_task only as TASKS ALLOWED says: none asked for means no add_task at all, whatever the change; only for named parts means tasks filed under those parts (topicName one of them or inside them) and nowhere else. Kio drops any other. Never turn a topic into a task or a task into a topic, and never remove a task to restructure topics.",
   "- \"Put X under Y\": Y is the parent, by its id in CURRENT RECORDS. Things that exist move there (move_topic or move_subject with Y's id); new ones are added with Y as parentId. A phase or stage under a subject is a topic (or milestone) inside it, never a subject of its own beside it; inside a topic, never a subject.",
   "- A new deadline: update_date for the date, then update_task for each open task whose due day no longer fits before it; nothing else.",
   "- New topics are specific, in learning order after what is there, never what a topic there already covers, never a placeholder (\"Introduction\", \"Advanced concepts\", \"Practice questions\"); practice and revision are tasks. Note bodies use \"# \" headings and \"- \" lists.",
@@ -458,6 +458,6 @@ export async function writeBuilderChanges(p: ChangesRequest, generate: Generate 
   if (parsed === "too_long") return { ok: false, message: "Those changes came out longer than Nova can write in one go. Nothing was changed; ask for them a few at a time." };
   if (parsed === "too_big") return { ok: false, message: FILES_TOO_BIG };
   if (parsed === "failed") return { ok: false, message: "Nova couldn't work out the changes just now. Nothing was changed; try again." };
-  if (!parsed || !Array.isArray(parsed.ops)) return { ok: false, message: "Nova's changes came back in a form Kivo couldn't use. Nothing was changed; try again." };
+  if (!parsed || !Array.isArray(parsed.ops)) return { ok: false, message: "Nova's changes came back in a form Kio couldn't use. Nothing was changed; try again." };
   return { ok: true, ops: parsed.ops, summary: typeof parsed.summary === "string" ? parsed.summary.slice(0, 600) : null };
 }

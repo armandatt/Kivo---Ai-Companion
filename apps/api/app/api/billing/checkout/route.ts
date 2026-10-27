@@ -5,7 +5,7 @@ import { billingFail, clientIp, jsonOnly, signedInUser, statusFor } from "../../
 
 export const runtime = "nodejs"
 
-// POST /api/billing/checkout { plan }: a checkout for one of Kivo's plans,
+// POST /api/billing/checkout { plan }: a checkout for one of Kio's plans,
 // for the signed-in account. The plan is a key; its product and price are
 // the server's. Returns the provider's checkout address to go to.
 export async function POST(req: Request) {

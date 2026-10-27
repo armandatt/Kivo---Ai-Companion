@@ -53,7 +53,7 @@ test('the paper sources the page names are the ones the importer recognises', ()
   }
 })
 
-test('the hero says what Kivo is, and nothing promises a store listing that does not exist', () => {
+test('the hero says what Kio is, and nothing promises a store listing that does not exist', () => {
   const hero = web('components/landing/hero.tsx')
   assert.match(hero, /Turn what you learn/)
   assert.match(hero, /what you know\./)

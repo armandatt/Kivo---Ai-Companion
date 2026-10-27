@@ -9,7 +9,7 @@
 import { useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Check, CircleDot, Flag, Loader2, Sparkles } from 'lucide-react'
-import { KivoMark } from '@/components/brand/kivo-brand'
+import { KioMark } from '@/components/brand/kio-brand'
 import { cn } from '@/lib/utils'
 import { AppWindow, StoryControls, useStory } from './frame'
 
@@ -47,7 +47,7 @@ export function BuildDemo() {
 
   return (
     <div ref={s.ref} className="space-y-4">
-      <AppWindow label="Kivo · Build with Nova" className="h-[42rem] md:h-[34rem]">
+      <AppWindow label="Kio · Build with Nova" className="h-[42rem] md:h-[34rem]">
         <div className="grid h-full md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
           {/* The conversation */}
           <section aria-label="The conversation" className="flex min-h-0 flex-col border-white/6 max-md:h-[17rem] md:border-r">
@@ -56,7 +56,7 @@ export function BuildDemo() {
                 {turns.map((t, i) => (
                   <motion.div key={i} layout={!s.reduced} initial={s.reduced ? false : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
                     className={cn('flex gap-2.5', t.who === 'you' && 'justify-end')}>
-                    {t.who === 'nova' && <span aria-hidden className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-lg bg-nova/12 ring-1 ring-nova/25"><KivoMark size={11} className="text-nova-ink" /></span>}
+                    {t.who === 'nova' && <span aria-hidden className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-lg bg-nova/12 ring-1 ring-nova/25"><KioMark size={11} className="text-nova-ink" /></span>}
                     <div className={cn('max-w-[85%] text-[14px] leading-relaxed', t.who === 'you' ? 'rounded-2xl rounded-br-md bg-action/15 px-3 py-2 text-foreground ring-1 ring-action/20' : 'text-foreground/85')}>
                       <span className="sr-only">{t.who === 'you' ? 'You: ' : 'Nova: '}</span>{t.text}
                       {t.choices && (

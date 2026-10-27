@@ -13,7 +13,7 @@ import {
 } from '@repo/api/nova/product/onboarding-options';
 import { TONE_OPTIONS, accountabilityOfTone, type Tone } from '@repo/api/nova/product/tone';
 import type { ReplyLanguage } from '@repo/api/nova/types/understanding.types';
-import { KivoMark } from '@/components/brand/kivo-brand';
+import { KioMark } from '@/components/brand/kio-brand';
 import { Choice, CustomEntries, MultiChoice, Question } from '@/components/onboarding/answer-controls';
 import { ConnectAction } from '@/components/nova/telegram-connect';
 import { useTelegramLink } from '@/components/nova/use-telegram-link';
@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils';
 // this page only collects them, and shows that they were saved only once the
 // server says so. Finishing twice changes nothing.
 //
-// Always the dark theme: the page sits in a .kivo-dark region, whatever the
+// Always the dark theme: the page sits in a .kio-dark region, whatever the
 // learner chose for the dashboard.
 
 type Multi<Id extends string> = { selected: Id[]; custom: string[] };
@@ -61,14 +61,14 @@ const NOVA_TAGLINE = 'Steady. Structured. Always here.';
 const REVEAL_BUTTON_MS = 2000;
 const NAMING_MS = 1500;
 const SCENE_CSS = `
-@keyframes kivo-scene-fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes kivo-step-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-.kivo-reveal-name { animation: kivo-scene-fade 0.8s ease-out; font-size: clamp(4rem, 12vw, 8rem); line-height: 1; }
-.kivo-reveal-desc { animation: kivo-scene-fade 1.2s ease-out 0.3s both; }
-.kivo-reveal-button { animation: kivo-scene-fade 0.6s ease-out both; }
-.kivo-naming { animation: kivo-scene-fade 0.6s ease-out; font-size: clamp(3rem, 10vw, 7rem); line-height: 1.05; }
-.kivo-step { animation: kivo-step-in 0.25s ease-out; }
-@media (prefers-reduced-motion: reduce) { .kivo-step, .kivo-reveal-name, .kivo-reveal-desc, .kivo-reveal-button, .kivo-naming { animation: none; } }
+@keyframes kio-scene-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes kio-step-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.kio-reveal-name { animation: kio-scene-fade 0.8s ease-out; font-size: clamp(4rem, 12vw, 8rem); line-height: 1; }
+.kio-reveal-desc { animation: kio-scene-fade 1.2s ease-out 0.3s both; }
+.kio-reveal-button { animation: kio-scene-fade 0.6s ease-out both; }
+.kio-naming { animation: kio-scene-fade 0.6s ease-out; font-size: clamp(3rem, 10vw, 7rem); line-height: 1.05; }
+.kio-step { animation: kio-step-in 0.25s ease-out; }
+@media (prefers-reduced-motion: reduce) { .kio-step, .kio-reveal-name, .kio-reveal-desc, .kio-reveal-button, .kio-naming { animation: none; } }
 `;
 
 function prefersLessMotion(): boolean {
@@ -93,7 +93,7 @@ const LANGUAGES: ReadonlyArray<{ value: ReplyLanguage; label: string; hint: stri
 
 const TELEGRAM: ReadonlyArray<{ value: TelegramAnswer; label: string; hint: string }> = [
   { value: 'yes', label: 'Yes', hint: 'After you finish, you can connect it in one step.' },
-  { value: 'no',  label: 'No',  hint: 'Everything in Kivo works without it.' },
+  { value: 'no',  label: 'No',  hint: 'Everything in Kio works without it.' },
 ];
 
 function readDraft(): { draft: Draft; at: number } | null {
@@ -243,7 +243,7 @@ function OnboardingFlowContent() {
       await moment;
       setDone({ alreadyComplete: result.alreadyComplete === true, telegram: checked.answers.telegram, creature: checked.answers.creatureName });
     } catch {
-      setError("Couldn't reach Kivo. Check your connection; your answers are still here.");
+      setError("Couldn't reach Kio. Check your connection; your answers are still here.");
     } finally {
       setScene(null);
       setSaving(false);
@@ -268,20 +268,20 @@ function OnboardingFlowContent() {
   const questionNumber = step === 'welcome' ? 0 : QUESTIONS.indexOf(step) + 1;
 
   return (
-    <div className="kivo-app">
+    <div className="kio-app">
       <style>{SCENE_CSS}</style>
-      <div className="kivo-dark min-h-screen bg-background text-foreground">
+      <div className="kio-dark min-h-screen bg-background text-foreground">
 
         {scene === 'reveal' && (
           <section className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background px-6 text-center" aria-labelledby="nova-reveal">
             <div ref={sceneRef} tabIndex={-1} className="focus:outline-none">
-              <h1 id="nova-reveal" className="kivo-reveal-name font-black text-foreground" style={{ letterSpacing: '0.1em' }}>NOVA</h1>
-              <p className="kivo-reveal-desc mx-auto mt-6 max-w-md text-lg text-foreground/75">{NOVA_TAGLINE}</p>
+              <h1 id="nova-reveal" className="kio-reveal-name font-black text-foreground" style={{ letterSpacing: '0.1em' }}>NOVA</h1>
+              <p className="kio-reveal-desc mx-auto mt-6 max-w-md text-lg text-foreground/75">{NOVA_TAGLINE}</p>
             </div>
             <div className="mt-12 h-12">
               {revealReady && (
                 <button type="button" onClick={leaveReveal}
-                  className="kivo-reveal-button group inline-flex h-12 items-center gap-2 rounded-full bg-action px-8 font-semibold text-action-foreground transition-[background-color,transform] duration-300 hover:scale-105 hover:bg-action-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+                  className="kio-reveal-button group inline-flex h-12 items-center gap-2 rounded-full bg-action px-8 font-semibold text-action-foreground transition-[background-color,transform] duration-300 hover:scale-105 hover:bg-action-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
                   Name your creature <ArrowRight aria-hidden className="size-5 transition-transform group-hover:translate-x-1" />
                 </button>
               )}
@@ -292,7 +292,7 @@ function OnboardingFlowContent() {
         {scene === 'naming' && (
           <section className="fixed inset-0 z-50 flex items-center justify-center bg-background px-6 text-center" role="status" aria-live="polite">
             <div ref={sceneRef} tabIndex={-1} className="focus:outline-none">
-              <h1 className="kivo-naming wrap-break-word font-black text-foreground" style={{ letterSpacing: '0.1em' }}>{creature}</h1>
+              <h1 className="kio-naming wrap-break-word font-black text-foreground" style={{ letterSpacing: '0.1em' }}>{creature}</h1>
               <span className="sr-only">Saving your answers…</span>
             </div>
           </section>
@@ -300,7 +300,7 @@ function OnboardingFlowContent() {
 
         <div className="mx-auto flex min-h-screen w-full max-w-xl flex-col px-4 pb-8 pt-6 sm:px-6 sm:pt-10">
           <header className="flex items-center justify-between gap-3">
-            <KivoMark size={24} className="text-foreground/85" />
+            <KioMark size={24} className="text-foreground/85" />
             {!done && questionNumber > 0 && (
               <p className="text-xs font-medium text-foreground/70" aria-live="polite">
                 Question {questionNumber} of {QUESTIONS.length} · {PART[step as OnboardingFieldV3]}
@@ -320,14 +320,14 @@ function OnboardingFlowContent() {
             <Finished done={done} onEnter={() => router.push(done.alreadyComplete ? '/home' : '/build')} headingRef={headingRef} />
           ) : (
             <form onSubmit={next} className="flex flex-1 flex-col pt-10 sm:pt-14" aria-busy={!restored} data-step={step}>
-              <div ref={headingRef} tabIndex={-1} key={step} className="kivo-step focus:outline-none">
+              <div ref={headingRef} tabIndex={-1} key={step} className="kio-step focus:outline-none">
                 {step === 'welcome' && (
                   <div className="pt-6 sm:pt-12">
                     <h1 className="text-[2.1rem] font-semibold leading-[1.1] tracking-[-0.025em] text-foreground sm:text-[2.75rem]">
                       Let&apos;s build a system that works for you.
                     </h1>
                     <p className="mt-4 max-w-lg text-[17px] leading-relaxed text-foreground/75">
-                      Tell Kivo what you&apos;re working on, how you spend your time, and what kind of support helps you make progress.
+                      Tell Kio what you&apos;re working on, how you spend your time, and what kind of support helps you make progress.
                     </p>
                     <p className="mt-6 text-sm text-foreground/60">Nine short questions. You can change every answer later in Settings.</p>
                   </div>
@@ -349,7 +349,7 @@ function OnboardingFlowContent() {
                 )}
 
                 {step === 'audience' && (
-                  <Question legend="What do you currently do?" hint="Kivo uses this for its examples and suggestions. Every feature is open to everyone.">
+                  <Question legend="What do you currently do?" hint="Kio uses this for its examples and suggestions. Every feature is open to everyone.">
                     {AUDIENCES.map(a => (
                       <Choice key={a} name="audience" value={a} checked={draft.audience === a}
                         onSelect={() => set({ audience: a })} label={AUDIENCE_LABEL[a].label} />
@@ -448,7 +448,7 @@ function OnboardingFlowContent() {
                     {draft.telegram === 'yes' && (
                       <p className="mt-1 flex gap-2.5 rounded-2xl border border-white/12 bg-card px-4 py-3 text-sm leading-relaxed text-foreground/75">
                         <Send aria-hidden className="mt-0.5 size-4 shrink-0 text-action-ink" />
-                        When you finish, Kivo gives you a link that opens Nova in Telegram. Press Start there and your Telegram connects to this account. Kivo never asks for your Telegram password or login code.
+                        When you finish, Kio gives you a link that opens Nova in Telegram. Press Start there and your Telegram connects to this account. Kio never asks for your Telegram password or login code.
                       </p>
                     )}
                   </Question>
@@ -529,7 +529,7 @@ function Finished({ done, onEnter, headingRef }: {
       {done.telegram === 'yes' && <TelegramStep />}
       <button type="button" onClick={onEnter}
         className="mt-8 inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-action px-6 text-[15px] font-semibold text-action-foreground transition-colors hover:bg-action-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
-        {done.alreadyComplete ? 'Go to Kivo' : 'Build my first workspace with Nova'} <ArrowRight aria-hidden className="size-4" />
+        {done.alreadyComplete ? 'Go to Kio' : 'Build my first workspace with Nova'} <ArrowRight aria-hidden className="size-4" />
       </button>
     </section>
   );

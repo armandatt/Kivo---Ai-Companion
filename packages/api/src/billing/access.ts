@@ -11,7 +11,7 @@
 //                                      period ended, then Free
 //   revoked, incomplete, expired,
 //   paused, or anything unknown         Free
-//   Kivo's own trial, not yet over     Pro until it ends
+//   Kio's own trial, not yet over     Pro until it ends
 //   none of the above                  Free
 //
 // Losing Pro changes allowances only: nothing a learner made is touched.

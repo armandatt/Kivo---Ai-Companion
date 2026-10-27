@@ -1,5 +1,5 @@
-// ─── Kivo's identity ──────────────────────────────────────────────────────────
-// The orbit mark and the "Kivo" wordmark, the same on the landing page, the
+// ─── Kio's identity ──────────────────────────────────────────────────────────
+// The orbit mark and the "Kio" wordmark, the same on the landing page, the
 // sign-in pages and the app. The mark is a centre (the learner), two arcs of
 // an orbit (what they are working through) and a small body on it (the next
 // step): a white tile with dark ink, or the bare mark in the surrounding text
@@ -11,17 +11,17 @@
 
 import type { CSSProperties } from 'react'
 
-export const KIVO_INK = '#0D1117'
-export const KIVO_TILE = '#FFFFFF'
-export const KIVO_IVORY = '#F4F1E9'
+export const KIO_INK = '#0D1117'
+export const KIO_TILE = '#FFFFFF'
+export const KIO_IVORY = '#F4F1E9'
 // The teal of the landing page's actions (keppel-400), for places that need a
 // literal colour (the share image).
-export const KIVO_TEAL = '#3FB6A8'
+export const KIO_TEAL = '#3FB6A8'
 // Kept for callers that still name it; the identity no longer uses violet.
-export const KIVO_IRIS = KIVO_TEAL
+export const KIO_IRIS = KIO_TEAL
 
 /** The mark's shapes on a 32-unit grid, centred in it. `node` colours the small body on the orbit. */
-export function KivoMarkShapes({ ink = 'currentColor', node, nodeClassName }: { ink?: string; node?: string; nodeClassName?: string }) {
+export function KioMarkShapes({ ink = 'currentColor', node, nodeClassName }: { ink?: string; node?: string; nodeClassName?: string }) {
   return (
     <g>
       <circle cx="16" cy="16" r="4" fill={ink} />
@@ -36,12 +36,12 @@ type MarkProps = {
   size?: number
   className?: string
   style?: CSSProperties
-  /** Set when the mark is the only thing naming Kivo; otherwise it is decoration. */
+  /** Set when the mark is the only thing naming Kio; otherwise it is decoration. */
   title?: string
 }
 
 /** The bare mark, in the surrounding text colour. */
-export function KivoMark({ size = 24, className, style, title, nodeClassName }: MarkProps & { nodeClassName?: string }) {
+export function KioMark({ size = 24, className, style, title, nodeClassName }: MarkProps & { nodeClassName?: string }) {
   return (
     <svg
       width={size}
@@ -54,13 +54,13 @@ export function KivoMark({ size = 24, className, style, title, nodeClassName }: 
       aria-hidden={title ? undefined : true}
       focusable="false"
     >
-      <KivoMarkShapes nodeClassName={nodeClassName} />
+      <KioMarkShapes nodeClassName={nodeClassName} />
     </svg>
   )
 }
 
 /** The app icon: the mark in ink on a white tile. A faint edge keeps it apart from a light page. */
-export function KivoTile({ size = 32, className, style, title }: MarkProps) {
+export function KioTile({ size = 32, className, style, title }: MarkProps) {
   return (
     <svg
       width={size}
@@ -73,32 +73,32 @@ export function KivoTile({ size = 32, className, style, title }: MarkProps) {
       aria-hidden={title ? undefined : true}
       focusable="false"
     >
-      <rect width="32" height="32" rx="8" fill={KIVO_TILE} />
+      <rect width="32" height="32" rx="8" fill={KIO_TILE} />
       <rect x="0.5" y="0.5" width="31" height="31" rx="7.5" fill="none" stroke="#000000" strokeOpacity="0.08" />
-      <KivoMarkShapes ink={KIVO_INK} />
+      <KioMarkShapes ink={KIO_INK} />
     </svg>
   )
 }
 
-/** "Kivo" in the app's face. Height is the size of the type; the width follows the word. */
-export function KivoWordmark({ height = 20, className, style, title = 'Kivo' }: { height?: number; node?: string } & Omit<MarkProps, 'size'>) {
+/** "Kio" in the app's face. Height is the size of the type; the width follows the word. */
+export function KioWordmark({ height = 20, className, style, title = 'Kio' }: { height?: number; node?: string } & Omit<MarkProps, 'size'>) {
   return (
     <span
       className={className}
       style={{ fontSize: height, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1, ...style }}
-      aria-label={title === 'Kivo' ? undefined : title}
+      aria-label={title === 'Kio' ? undefined : title}
     >
-      Kivo
+      Kio
     </span>
   )
 }
 
 /** The tile and the wordmark side by side: the name wherever there is room for it. */
-export function KivoLockup({ size = 28, className }: { size?: number; className?: string }) {
+export function KioLockup({ size = 28, className }: { size?: number; className?: string }) {
   return (
     <span className={['inline-flex items-center gap-2.5', className].filter(Boolean).join(' ')}>
-      <KivoTile size={size} />
-      <KivoWordmark height={Math.round(size * 0.62)} />
+      <KioTile size={size} />
+      <KioWordmark height={Math.round(size * 0.62)} />
     </span>
   )
 }

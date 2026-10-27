@@ -128,7 +128,7 @@ export function checkEvent(raw: unknown, base: EventDraft | null, defaultZone: s
 
   // Timezone: the one given, else the event's own, else the learner's.
   const rawZone = pick("timezone", defaultZone);
-  if (typeof rawZone !== "string" || rawZone.length > 64 || !isValidTimezone(rawZone)) return fail("bad_timezone", "That timezone isn't one Kivo knows.");
+  if (typeof rawZone !== "string" || rawZone.length > 64 || !isValidTimezone(rawZone)) return fail("bad_timezone", "That timezone isn't one Kio knows.");
   const timezone = currentZoneName(rawZone);
 
   // Days

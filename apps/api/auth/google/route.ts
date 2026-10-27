@@ -18,7 +18,7 @@ export async function GET(req: Request) {
   }
 
   // The state cookie is set on the host the browser is on, and only the
-  // callback's host can read it back. Started anywhere else (thekivo.in
+  // callback's host can read it back. Started anywhere else (thekio.in
   // when Google returns to the vercel.app address), the first attempt always
   // came back "expired" and the second, now on the callback's host, worked.
   // So the browser is first sent to start on the callback's host, once.

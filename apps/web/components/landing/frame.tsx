@@ -1,7 +1,7 @@
 'use client'
 
 // The pieces every product preview on the landing page shares: a window in
-// the app's own dark theme (.kivo-app, with .kivo-dark so a visitor who
+// the app's own dark theme (.kio-app, with .kio-dark so a visitor who
 // chose the light app theme still sees the page's dark previews), a label
 // that says it is a sample, and a story player that steps through a preview
 // on its own while it is on screen and never while the visitor asked for
@@ -14,8 +14,8 @@ import { cn } from '@/lib/utils'
 
 export function AppWindow({ label, sample = true, className, children, bar }: { label: string; sample?: boolean; className?: string; children: ReactNode; bar?: ReactNode }) {
   return (
-    <div className={cn('kivo-app overflow-hidden rounded-[1.4rem] border border-white/10 bg-[#0b0c12] shadow-[0_40px_120px_-40px_rgba(0,229,160,0.25),0_0_0_1px_rgba(255,255,255,0.02)]', className)}>
-      <div className="kivo-dark flex h-full flex-col bg-background text-foreground">
+    <div className={cn('kio-app overflow-hidden rounded-[1.4rem] border border-white/10 bg-[#0b0c12] shadow-[0_40px_120px_-40px_rgba(0,229,160,0.25),0_0_0_1px_rgba(255,255,255,0.02)]', className)}>
+      <div className="kio-dark flex h-full flex-col bg-background text-foreground">
         <div className="flex h-10 shrink-0 items-center gap-2 border-b border-white/6 px-4">
           <span aria-hidden className="flex gap-1.5"><span className="size-2.5 rounded-full bg-white/12" /><span className="size-2.5 rounded-full bg-white/12" /><span className="size-2.5 rounded-full bg-white/12" /></span>
           <span className="ml-2 min-w-0 truncate text-[12px] font-medium text-foreground/70">{label}</span>

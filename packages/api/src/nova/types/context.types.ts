@@ -19,7 +19,7 @@ export interface NovaUserProfile {
   // What they said they are working toward, in their words. A statement of
   // intent: never evidence of anything studied.
   goals:                    string[];
-  // What they built in Kivo with Nova, or are shaping there (product/builder.ts,
+  // What they built in Kio with Nova, or are shaping there (product/builder.ts,
   // titles only). A record of what exists, never a plan Nova may act on.
   building?:                string[];
   // Academic details. Each is null unless the learner gave it.

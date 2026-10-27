@@ -1,6 +1,6 @@
 // ─── Importing a PDF or a photo into a note ───────────────────────────────────
 // A learner brings in notes they already have: a PDF exported from Goodnotes,
-// Notability or Apple Notes, lecture slides, a scan, a photo of a page. Kivo
+// Notability or Apple Notes, lecture slides, a scan, a photo of a page. Kio
 // has no OCR of its own; the one LLM client reads PDFs and images natively
 // (the same attachments Create with Nova uses). This asks it to transcribe the
 // file as it is and returns the text to the page. Nothing is stored here: the
@@ -9,7 +9,7 @@
 //
 // What the page is told, and shows:
 //   - the transcription is Nova's reading of the file, not the file; the
-//     learner keeps the original (Kivo does not store it);
+//     learner keeps the original (Kio does not store it);
 //   - how readable the file was (`quality`), as the model judged it, and how
 //     many places it could not read ([illegible]);
 //   - whether the transcription is complete: the model ends with a marker, and

@@ -74,10 +74,10 @@ async function patch(body: Record<string, unknown>, keys: string[]): Promise<Not
     const res = await fetch('/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     const data = await res.json().catch(() => null) as { error?: string; saved?: string[] } | null
     if (!res.ok) return { ok: false, text: data?.error ?? "That didn't save. Try again." }
-    if (!Array.isArray(data?.saved) || !keys.every(k => data!.saved!.includes(k))) return { ok: false, text: "Kivo's server hasn't been updated for this yet, so it didn't save. Try again later." }
+    if (!Array.isArray(data?.saved) || !keys.every(k => data!.saved!.includes(k))) return { ok: false, text: "Kio's server hasn't been updated for this yet, so it didn't save. Try again later." }
     return { ok: true, text: 'Saved. Nova uses this from your next message.' }
   } catch {
-    return { ok: false, text: "Couldn't reach Kivo. Try again." }
+    return { ok: false, text: "Couldn't reach Kio. Try again." }
   }
 }
 
@@ -141,7 +141,7 @@ export function HelpPreferences() {
       const res = await fetch('/api/personality', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ style: draft!.style }) })
       note('style', res.ok ? { ok: true, text: 'Saved. Nova uses this from your next message.' } : { ok: false, text: "That didn't save. Try again." })
     } catch {
-      note('style', { ok: false, text: "Couldn't reach Kivo. Try again." })
+      note('style', { ok: false, text: "Couldn't reach Kio. Try again." })
     } finally {
       setBusy(null)
     }

@@ -5,7 +5,7 @@ import { billingFail, jsonOnly, signedInUser, statusFor } from "../../../../lib/
 
 export const runtime = "nodejs"
 
-// POST /api/billing/trial: starts Kivo's free trial for the signed-in
+// POST /api/billing/trial: starts Kio's free trial for the signed-in
 // account, once. Starting it again returns the same trial.
 export async function POST(req: Request) {
   const bad = jsonOnly(req)

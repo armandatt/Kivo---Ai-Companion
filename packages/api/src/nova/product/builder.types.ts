@@ -29,7 +29,7 @@ export interface BuilderMessage {
   at:   string;
   // What a Nova message is: a question, ordinary talk, a proposal or a
   // revision of one (with the version it made), the result of building, or
-  // a notice from Kivo (written by code, not by the model).
+  // a notice from Kio (written by code, not by the model).
   kind?: "question" | "chat" | "proposal" | "revision" | "built" | "notice" | "error";
   version?: number;
   // Files the learner shared with this message (names only; the bytes are
@@ -74,7 +74,7 @@ export interface BuilderBrief {
   title:       string | null;
   // From the learner, in this conversation.
   facts:       BriefFact[];
-  // From their Kivo record (sign-up answers, subjects, goals): not asked again.
+  // From their Kio record (sign-up answers, subjects, goals): not asked again.
   known:       BriefFact[];
   // What Nova is taking as given without being told.
   assumptions: string[];
@@ -277,7 +277,7 @@ export interface PlanChangeSummary {
   renamed: number;
   // Kept but different (a task's date or priority, a milestone's details), by kind.
   changed?: { tasks: number; milestones: number; topics: number; notes: number };
-  // "Kivo version 1 to Kivo": a subject renamed in place.
+  // "Kio version 1 to Kio": a subject renamed in place.
   renamedSubjects?: string[];
   // "Automata inside Semester Five": a subject kept, now inside another (or "… on its own").
   movedSubjects?: string[];

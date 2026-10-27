@@ -46,7 +46,7 @@ function SigninForm() {
   const [isLoading, setIsLoading] = useState(false)
   const [isRetrying, setIsRetrying] = useState(false)
 
-  // Sent here by the Save to Kivo bookmark while signed out: keep the page
+  // Sent here by the Save to Kio bookmark while signed out: keep the page
   // it was bringing, so Saved still has it after sign-in. Likewise a passage
   // on its way to Notes (the extension's or the bookmarklet's capture).
   useEffect(() => { parkCapture(); parkNoteCapture() }, [])

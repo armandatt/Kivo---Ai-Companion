@@ -29,7 +29,7 @@ export function Pricing() {
             Start free. Add Pro when Nova is part of every day.
           </h2>
           <p className="mt-4 text-lg text-[var(--color-baltic-sea-400)]">
-            Everything in Kivo is free, with a daily Nova allowance. Pro raises it.
+            Everything in Kio is free, with a daily Nova allowance. Pro raises it.
           </p>
         </Reveal>
 

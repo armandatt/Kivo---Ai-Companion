@@ -1,5 +1,5 @@
 /**
- * Which Telegram chats are connected to Kivo — real Postgres integration test.
+ * Which Telegram chats are connected to Kio — real Postgres integration test.
  *
  * The webhook asks isLinkedTelegramChat before it writes anything for a chat
  * or hands it to a companion. A chat that is not connected is told how to
@@ -45,7 +45,7 @@ after(async () => {
   await prisma.$disconnect();
 });
 
-test("a chat Kivo has never heard of is not connected, and asking leaves nothing behind", async () => {
+test("a chat Kio has never heard of is not connected, and asking leaves nothing behind", async () => {
   const chat = chatId();
   for (let i = 0; i < 3; i++) assert.equal(await isLinkedTelegramChat(chat), false);
   assert.deepEqual(await rowsFor(chat), []);

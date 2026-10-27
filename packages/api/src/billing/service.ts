@@ -3,7 +3,7 @@
 // provider's webhooks. The account is always the signed-in user, passed in by
 // the route from the session; no id from a request body is ever used to
 // decide whose plan something is. Pro is granted only by a verified provider
-// event (or Kivo's own trial), never by a visit to a success page.
+// event (or Kio's own trial), never by a visit to a success page.
 
 import { prisma } from "@repo/db/client";
 import { PLANS, PAID_PLANS, type PlanKey } from "./plans";
@@ -64,7 +64,7 @@ export async function billingView(userId: string, now = new Date(), env = proces
   };
 }
 
-// ── Kivo's free trial ──
+// ── Kio's free trial ──
 // Once per account. Two requests at once make one trial: the second meets
 // the first's row (the account id is the key) and gets it back.
 export async function startTrial(userId: string, now = new Date(), env = process.env): Promise<Result<{ endsAt: string; created: boolean }>> {
@@ -89,13 +89,13 @@ export async function startTrial(userId: string, now = new Date(), env = process
 }
 
 // ── Checkout ──
-// Only Kivo's own plans, by key: the product id comes from the server's
+// Only Kio's own plans, by key: the product id comes from the server's
 // config, never from the browser, and so does the price.
 export async function startCheckout(input: {
   userId: string; plan: unknown; ip: string | null; now?: Date
   provider?: { provider: BillingProvider; config: ProviderConfig } | null
 }): Promise<Result<{ url: string }>> {
-  if (typeof input.plan !== "string" || !PAID_PLANS.includes(input.plan as PlanKey)) return fail("invalid_plan", "That isn't one of Kivo's plans.");
+  if (typeof input.plan !== "string" || !PAID_PLANS.includes(input.plan as PlanKey)) return fail("invalid_plan", "That isn't one of Kio's plans.");
   const plan = input.plan as PlanKey;
   const p = input.provider === undefined ? defaultProvider() : input.provider;
   if (!p) return fail("not_configured", "Payments aren't set up yet. Please try again later.");

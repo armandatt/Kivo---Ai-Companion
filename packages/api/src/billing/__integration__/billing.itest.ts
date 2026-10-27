@@ -5,7 +5,7 @@
  * allowance holds under concurrent requests; webhooks are verified by the
  * real Polar SDK, forged ones refused, repeats applied once, and late or
  * out-of-order deliveries cannot undo newer state; a refund is read from the
- * provider's own record; checkout sells only Kivo's enabled plans to someone
+ * provider's own record; checkout sells only Kio's enabled plans to someone
  * not already paying; a Telegram learner gets their linked account's plan;
  * and losing Pro deletes nothing the learner made.
  *
@@ -55,7 +55,7 @@ after(async () => {
 const SECRET_BYTES = randomBytes(24);
 const config = {
   server: "sandbox" as const, accessToken: "test-token", webhookSecret: `whsec_${SECRET_BYTES.toString("base64")}`,
-  products: { pro_monthly: "prod_monthly", pro_annual: "prod_annual" }, appUrl: "https://kivo.test",
+  products: { pro_monthly: "prod_monthly", pro_annual: "prod_annual" }, appUrl: "https://kio.test",
 };
 const calls: Array<{ kind: string; body: unknown }> = [];
 const remote = new Map<string, Record<string, unknown>>();   // the provider's own subscription records
@@ -243,7 +243,7 @@ test("a refund is read from the provider's own record of the subscription", asyn
   assert.equal((await entitlementForUser(u.id)).plan, "free");
 });
 
-test("an event for another seller's product, or for no Kivo account, grants nothing", async () => {
+test("an event for another seller's product, or for no Kio account, grants nothing", async () => {
   const u = await account();
   assert.equal((await deliver("subscription.active", subscriptionRecord(u.id, { product_id: "prod_not_ours" }))).body.outcome, "ignored");
   assert.equal((await deliver("subscription.active", subscriptionRecord("user_does_not_exist"))).body.outcome, "ignored");
@@ -252,7 +252,7 @@ test("an event for another seller's product, or for no Kivo account, grants noth
 
 // ── Checkout and portal ──
 
-test("checkout: only Kivo's enabled plans, the server's product, the signed-in account; never for someone paying already", async () => {
+test("checkout: only Kio's enabled plans, the server's product, the signed-in account; never for someone paying already", async () => {
   const u = await account();
   calls.length = 0;
   const bad = await startCheckout({ userId: u.id, plan: "free", ip: null, provider });

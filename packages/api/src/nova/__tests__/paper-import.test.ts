@@ -170,7 +170,7 @@ describe("what each source gives", () => {
   });
 });
 
-describe("the addresses Kivo fetches", () => {
+describe("the addresses Kio fetches", () => {
   it("public addresses only: private, loopback, link-local (cloud metadata), CGNAT, documentation and mapped ranges refused", () => {
     for (const ip of ["10.0.0.1", "127.0.0.1", "169.254.169.254", "172.16.5.4", "192.168.1.1", "100.64.0.1", "0.0.0.0", "224.0.0.1", "::1", "fc00::1", "fe80::1", "::ffff:10.0.0.1", "::ffff:7f00:1", "2001:db8::1"]) expect(isPublicAddress(ip)).toBe(false);
     for (const ip of ["93.184.216.34", "151.101.1.69", "2606:4700::6810:84e5"]) expect(isPublicAddress(ip)).toBe(true);

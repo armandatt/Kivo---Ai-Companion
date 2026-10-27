@@ -11,7 +11,7 @@ import { crossSiteProblem, originOf, requestOrigin } from "../request-origin";
 import { proxyProof, serverSecret } from "../secrets";
 import { fakeAuth, minutesAfter } from "./fake-auth";
 
-const APP = "https://kivo.test"; // fakeAuth's appUrl
+const APP = "https://kio.test"; // fakeAuth's appUrl
 const PASSWORD = "correct horse 42";
 const user = { id: "u1", email: "asha@gmail.com", name: "Asha", password: `hashed(${PASSWORD})`, emailVerified: new Date() };
 
@@ -68,9 +68,9 @@ describe("a request from our own pages", () => {
 describe("a request from another site", () => {
   it.each([
     ["another site", "https://evil.test"],
-    ["a lookalike host", "https://kivo.test.evil.test"],
-    ["the same host over http", "http://kivo.test"],
-    ["the same host on another port", "https://kivo.test:8443"],
+    ["a lookalike host", "https://kio.test.evil.test"],
+    ["the same host over http", "http://kio.test"],
+    ["the same host on another port", "https://kio.test:8443"],
     ["a sandboxed page", "null"],
   ])("is refused when the Origin is %s", async (_label, origin) => {
     const { auth, send } = setup();
@@ -113,20 +113,20 @@ describe("the origin check itself", () => {
   const json = { "content-type": "application/json" };
 
   it("allows any of the origins it is given, and ignores ones that are not set", () => {
-    const allowed = [originOf("https://kivo.test/some/path"), originOf(undefined), "https://preview.kivo.test"];
+    const allowed = [originOf("https://kio.test/some/path"), originOf(undefined), "https://preview.kio.test"];
 
-    expect(crossSiteProblem(headers({ ...json, origin: "https://kivo.test" }), allowed)).toBeNull();
-    expect(crossSiteProblem(headers({ ...json, origin: "https://preview.kivo.test" }), allowed)).toBeNull();
+    expect(crossSiteProblem(headers({ ...json, origin: "https://kio.test" }), allowed)).toBeNull();
+    expect(crossSiteProblem(headers({ ...json, origin: "https://preview.kio.test" }), allowed)).toBeNull();
     expect(crossSiteProblem(headers({ ...json, origin: "https://evil.test" }), allowed)).toMatchObject({ status: 403 });
   });
 
   it("refuses every Origin when it has none to allow", () => {
-    expect(crossSiteProblem(headers({ ...json, origin: "https://kivo.test" }), [null])).toMatchObject({ status: 403 });
+    expect(crossSiteProblem(headers({ ...json, origin: "https://kio.test" }), [null])).toMatchObject({ status: 403 });
   });
 
   it("names the origin a request was addressed to from the host the browser used", () => {
-    expect(requestOrigin(headers({ host: "kivo.test", "x-forwarded-proto": "https" }), "http://127.0.0.1:3000/api/login")).toBe("https://kivo.test");
-    expect(requestOrigin(headers({ "x-forwarded-host": "www.kivo.test", host: "internal", "x-forwarded-proto": "https" }), "http://internal/api/login")).toBe("https://www.kivo.test");
+    expect(requestOrigin(headers({ host: "kio.test", "x-forwarded-proto": "https" }), "http://127.0.0.1:3000/api/login")).toBe("https://kio.test");
+    expect(requestOrigin(headers({ "x-forwarded-host": "www.kio.test", host: "internal", "x-forwarded-proto": "https" }), "http://internal/api/login")).toBe("https://www.kio.test");
     expect(requestOrigin(headers({ host: "localhost:3000" }), "http://localhost:3000/api/login")).toBe("http://localhost:3000");
   });
 });

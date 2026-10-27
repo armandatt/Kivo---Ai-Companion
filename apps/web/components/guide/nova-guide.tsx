@@ -10,7 +10,7 @@ import { PLANS, formatPrice } from '@repo/api/billing/plans'
 import { NOVA_ROUTES } from '@repo/api/nova/product/companion'
 import { PLACES } from '@/lib/creature/places'
 
-// Kivo's Docs: every page and every feature, in one place. Everything
+// Kio's Docs: every page and every feature, in one place. Everything
 // here describes behaviour that exists: the commands are the ones the
 // Telegram bot answers, the extension facts are the ones its README and tests
 // hold it to, the plans and the creature's places come from the same lists
@@ -48,14 +48,14 @@ const CHAT = [
 
 const EXTENSION_STEPS = [
   { title: 'Open the popup',   body: 'Click the Nova icon in your browser toolbar and choose Get a code from Nova.' },
-  { title: 'Get a code',       body: 'Kivo opens its Browser Extension page. Connect a browser shows a one-time code, good for ten minutes.' },
+  { title: 'Get a code',       body: 'Kio opens its Browser Extension page. Connect a browser shows a one-time code, good for ten minutes.' },
   { title: 'Type it in',       body: 'Enter the code in the popup. That browser is now connected until you disconnect it or leave it unused for thirty days.' },
 ]
 
 const EXTENSION_FACTS = [
   'It sees a page only when you click its icon on that page.',
   'Select text before you click, and you can save that passage. It is sent only if you press Save selection.',
-  'Add to notes opens Kivo\'s capture page with the page and your selection, for you to check and save as a note. The extension itself sends nothing for it.',
+  'Add to notes opens Kio\'s capture page with the page and your selection, for you to check and save as a note. The extension itself sends nothing for it.',
   'It reads the address, the title and the text you have selected. Never the rest of the page, forms, passwords or cookies.',
   'It cannot see your other tabs or your history.',
   'It does nothing while the popup is closed.',
@@ -174,7 +174,7 @@ const TOPICS: Topic[] = [
   { id: 'knowledge', label: 'Knowledge',        icon: BookOpen,    group: 'Knowledge',    keywords: 'subjects topics level review due board subject studio archive keyboard shortcuts keys' },
   { id: 'map',       label: 'Knowledge Map',    icon: Waypoints,   group: 'Knowledge',    keywords: 'graph links pan zoom filter layout drag explore inside nested subjects topics connect unlink add delete fold keyboard shortcuts keys' },
   { id: 'notes',     label: 'Notes',            icon: NotebookPen, group: 'Knowledge',    keywords: 'editor callout highlight tag link source pdf template ask nova summarise tutor explain quiz practice flashcards brainstorm capture import ipad goodnotes notability research paper arxiv doi pubmed keyboard shortcuts keys' },
-  { id: 'saved',     label: 'Saved pages',      icon: Bookmark,    group: 'Knowledge',    keywords: 'links bookmark save to kivo study this browser extension' },
+  { id: 'saved',     label: 'Saved pages',      icon: Bookmark,    group: 'Knowledge',    keywords: 'links bookmark save to kio study this browser extension' },
   { id: 'progress',  label: 'Progress & DNA',   icon: TrendingUp,  group: 'Growth',       keywords: 'progress learning dna streak weeks signals insights' },
   { id: 'creature',  label: 'Your creature',    icon: Gamepad2,    group: 'Growth',       keywords: 'world level places arrow keys unlock days in a row keyboard shortcuts keys' },
   { id: 'telegram',  label: 'Nova on Telegram', icon: Send,        group: 'Nova',         keywords: 'commands chat hinglish hindi nudges check-in language' },
@@ -322,15 +322,15 @@ function Shortcuts({ items }: { items: Shortcut[] }) {
 }
 
 const FAQ = [
-  { q: 'I closed the tab mid-session. Is it lost?', a: 'No. Sessions are timed on Kivo’s server, not in the page. Open Focus again, here or on another device, and the clock is where it should be. Telegram sees the same session.' },
+  { q: 'I closed the tab mid-session. Is it lost?', a: 'No. Sessions are timed on Kio’s server, not in the page. Open Focus again, here or on another device, and the clock is where it should be. Telegram sees the same session.' },
   { q: 'Why did a session not change my Knowledge?', a: 'Sessions under ten minutes are kept but move nothing, and a session on a topic that isn’t filed under one of your subjects can’t be tied to Knowledge yet. Finish ten minutes or more, on a topic of a subject, and say how it went.' },
   { q: 'Nova proposed a day I don’t want.', a: 'Nothing is changed until you apply it. Press Discard and your plan stays as it was, or Change something and say what to change. To keep only part of a proposal, use Edit flow.' },
   { q: 'A proposal says “Not applied · your flow had changed”.', a: 'Your flow changed after Nova made the proposal (you edited it, or another tab did), so it was not applied. Your flow is as you left it; ask Nova again and it proposes from the flow as it is now.' },
   { q: 'Where did the Planner go?', a: 'Daily planning is on Today, and your task board opens there with Board. Old Planner links open Today, with the board open if the link was to the board. The week ahead and why the day is sized as it is are under More for today.' },
   { q: 'Will New chat or closing Nova change my plan?', a: 'No. Closing only hides Nova; the conversation is there when you open it again. New chat clears the conversation and nothing else. If a proposal is still waiting, it asks first, because starting over discards that proposal.' },
-  { q: 'A paper’s PDF shows a message instead of the paper.', a: 'Some sources (PubMed Central, for one) don’t allow their PDF to be shown inside another site, and some ask for a sign-in or a check first. Kivo says which, and Open the original opens it in a new tab. Your note stays open.' },
+  { q: 'A paper’s PDF shows a message instead of the paper.', a: 'Some sources (PubMed Central, for one) don’t allow their PDF to be shown inside another site, and some ask for a sign-in or a check first. Kio says which, and Open the original opens it in a new tab. Your note stays open.' },
   { q: 'I didn’t get the password-reset email.', a: 'Check spam, and that Profile shows the address you expect. A link works once, for an hour, and asking again makes the earlier one stop working. After a few requests in an hour, wait before asking again.' },
-  { q: 'I can’t find the extension in the Chrome Web Store.', a: 'It isn’t listed there yet. Until it is, the Save to Kivo bookmark on the Browser Extension page saves any page from any browser, phones and Safari included.' },
+  { q: 'I can’t find the extension in the Chrome Web Store.', a: 'It isn’t listed there yet. Until it is, the Save to Kio bookmark on the Browser Extension page saves any page from any browser, phones and Safari included.' },
   { q: 'The extension says it was disconnected.', a: 'Its connection ends if you disconnect it or leave it unused for thirty days. Open the Browser Extension page, press Connect a browser and type the new code into the extension.' },
   { q: 'Can Nova remind me at a set time?', a: 'Not yet. It checks in around the time you picked on days you haven’t studied, and messages first only when something is due, at most twice a day. It says so plainly if you ask for a reminder.' },
   { q: 'Does saving a page or ticking a task count as studying?', a: 'No. Only finished, timed sessions move the record. Saved pages and tasks are how you organise; sessions are how you learn.' },
@@ -374,12 +374,12 @@ export function NovaGuide() {
         <div aria-hidden="true" className="pointer-events-none absolute -bottom-40 left-1/4 size-80 rounded-full bg-keppel-400/8 blur-3xl" />
         <div className="relative grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-end">
           <div>
-            <p className={EYEBROW}>Kivo Docs</p>
+            <p className={EYEBROW}>Kio Docs</p>
             <h1 className="mt-3 max-w-2xl text-3xl font-semibold tracking-tight text-foreground sm:text-5xl sm:leading-[1.08]">
-              Everything Kivo does, and how to get the most from it.
+              Everything Kio does, and how to get the most from it.
             </h1>
             <p className="mt-4 max-w-prose text-[15px] leading-relaxed text-foreground/60">
-              Kivo is one learning environment in three places: this web app, Nova in a Telegram chat, and a browser extension. They share one record, so what you do in one shows up in the others. These docs cover every page and every feature.
+              Kio is one learning environment in three places: this web app, Nova in a Telegram chat, and a browser extension. They share one record, so what you do in one shows up in the others. These docs cover every page and every feature.
             </p>
           </div>
           <dl className="grid grid-cols-3 gap-3 text-center lg:grid-cols-1 lg:text-left">
@@ -439,7 +439,7 @@ export function NovaGuide() {
 
           <Section topic={topic('start')} hidden={hide('start')} lead="Five minutes to set up, and Nova has what it needs to plan your days.">
             <Steps steps={[
-              { title: 'Make your account', body: 'Sign up with email (Kivo sends an eight-digit code to confirm it) or continue with Google.' },
+              { title: 'Make your account', body: 'Sign up with email (Kio sends an eight-digit code to confirm it) or continue with Google.' },
               { title: 'Answer nine short questions', body: 'What Nova should call you, what you do, what you’re working on, how much time you have each week, what usually gets in the way, the language and tone Nova should use, whether you use Telegram, and a name for your creature. They set Nova’s words, tone, language and your usual daily time; they create no tasks or reminders, and you can change every answer in Settings.' },
               { title: 'Tell Nova your subjects', body: 'Name your subjects and their topics, your exam dates and how long you usually have. Or start from a template, like a computer science semester, and edit it.' },
               { title: 'Connect Telegram', body: 'Optional, and worth it: from Today or Settings. Nova can then plan, start sessions and log them from a chat.' },
@@ -454,10 +454,10 @@ export function NovaGuide() {
             </Grid>
           </Section>
 
-          <Section topic={topic('loop')} hidden={hide('loop')} lead="Kivo is built around one loop. Every page is a way into it, or a view of what it has recorded.">
+          <Section topic={topic('loop')} hidden={hide('loop')} lead="Kio is built around one loop. Every page is a way into it, or a view of what it has recorded.">
             <Steps steps={[
               { title: 'Plan the day', body: 'On Today, tell Nova what you want the day to be about and how long you have. It proposes a flow from your own subjects and tasks; you apply it, change it or plan it yourself.' },
-              { title: 'Focus on it', body: 'Start a session. Kivo times it on its server, so you can close the tab or switch to Telegram and it keeps running.' },
+              { title: 'Focus on it', body: 'Start a session. Kio times it on its server, so you can close the tab or switch to Telegram and it keeps running.' },
               { title: 'Say how it went', body: 'Struggled, Okay, Good or Crushed it. That answer, with the minutes, is what moves a topic forward and sets when to revisit it.' },
               { title: 'Watch it add up', body: 'Knowledge, Progress, Learning DNA and your creature all read the same record. Nothing is estimated from a quiz or a guess.' },
             ]} />
@@ -485,7 +485,7 @@ export function NovaGuide() {
                 Start uses the suggested length: today’s time for the item, the task’s estimate, or a standard block. The arrow beside it offers shorter and longer lengths, your own number of minutes, or No time limit, a session that counts up until you end it.
               </Feature>
               <Feature title="The Board">
-                Press Board in the header and your task board opens below the day: To do, In progress and Done. Drag a card to move it, open one to edit it or tick it. It is the same list of tasks as everywhere else in Kivo. Opening the board adds nothing to today, and taking an item out of today leaves the task on the board.
+                Press Board in the header and your task board opens below the day: To do, In progress and Done. Drag a card to move it, open one to edit it or tick it. It is the same list of tasks as everywhere else in Kio. Opening the board adds nothing to today, and taking an item out of today leaves the task on the board.
               </Feature>
               <Feature title="More for today">
                 Exams and dated tasks coming up, work that slipped after missed days (Nova offers to spread it over the coming days; nothing moves until you say so), the week ahead and why today is sized as it is.
@@ -540,10 +540,10 @@ export function NovaGuide() {
                 A large clock that counts down the length you chose; tap it to show time studied instead. A session with no time limit counts up instead. Pause and resume as often as you need (breaks are counted), then End session and say how it went.
               </Feature>
               <Feature title="Scenes">
-                Five backdrops drawn live in Kivo&apos;s colours: Aurora, Rain, Night sky, Embers and Forest. They pause when the tab is hidden and stay still if your device asks for reduced motion.
+                Five backdrops drawn live in Kio&apos;s colours: Aurora, Rain, Night sky, Embers and Forest. They pause when the tab is hidden and stay still if your device asks for reduced motion.
               </Feature>
               <Feature title="Soundscapes">
-                Rain, forest, ocean, fireplace, café, brown noise and white noise, made in your browser, so nothing downloads. Turn on several and set each one&apos;s volume; Kivo remembers your mix on this device.
+                Rain, forest, ocean, fireplace, café, brown noise and white noise, made in your browser, so nothing downloads. Turn on several and set each one&apos;s volume; Kio remembers your mix on this device.
               </Feature>
               <Feature title="Playlists">
                 Lo-fi in YouTube&apos;s, Spotify&apos;s or Apple Music&apos;s own player: Lofi Girl&apos;s lofi hip hop radio and synthwave radio (YouTube live), Lofi Girl&apos;s playlist on Spotify and on Apple Music, Deep Focus, lofi beats and Peaceful Piano. If YouTube&apos;s player stays empty, the network may be blocking YouTube (many college and office Wi-Fi networks do): the panel says so and offers Lofi Girl on Spotify or Apple Music. Or paste a link to your own Spotify, Apple Music or YouTube playlist, album or song: it is kept in that browser under Your music. Music keeps playing when you close the sound panel, alongside any soundscapes. Spotify and Apple Music play whole songs when you are signed in to them in that browser, otherwise short previews.
@@ -589,7 +589,7 @@ export function NovaGuide() {
                 N adds a card inside or beside the selected one. Connect existing joins a card you already have: filing it moves it (it has one place), a link leaves it where it is. Removing a connection deletes no card. Deleting a card always asks first.
               </Feature>
               <Feature title="Arrange it your way">
-                Drag cards where you want them; Kivo remembers each position for you, and anything you have not moved is placed for you. Press ? on the map for every shortcut.
+                Drag cards where you want them; Kio remembers each position for you, and anything you have not moved is placed for you. Press ? on the map for every shortcut.
               </Feature>
             </Grid>
             <Shortcuts items={MAP_KEYS} />
@@ -616,11 +616,11 @@ export function NovaGuide() {
                 Ask Nova to structure a note, clarify it, fill out an explanation, remove repetition, add a summary or examples. It shows each change it suggests, with what would go struck through, and you apply the ones you want. Nothing changes until you do.
               </Feature>
               <Feature title="Research papers">
-                Press <kbd className={KBD}>⌘</kbd> <kbd className={KBD}>P</kbd> (Ctrl P) on Notes and paste a paper&apos;s link: arXiv, a DOI, Semantic Scholar, OpenReview, PubMed or PubMed Central, or a PDF link. Kivo brings in its details, the abstract and any text the source shares openly, as one note with My notes at the end for your own. The note says how much of the paper it holds.
-                <ul><li>Read the PDF here, on the paper’s card, opens the PDF beside your note in your browser’s own viewer: scroll, zoom and move between pages there. Drag the edge between them to resize, or use the widen button. On a phone it fills the screen.</li><li>Close it (Esc) and open it again with Paper: it is where you left it, while the note stays open.</li><li>Some sources don’t allow their PDF to be shown inside another site. Kivo checks first and says so, with a button to open the original in a new tab.</li></ul>
+                Press <kbd className={KBD}>⌘</kbd> <kbd className={KBD}>P</kbd> (Ctrl P) on Notes and paste a paper&apos;s link: arXiv, a DOI, Semantic Scholar, OpenReview, PubMed or PubMed Central, or a PDF link. Kio brings in its details, the abstract and any text the source shares openly, as one note with My notes at the end for your own. The note says how much of the paper it holds.
+                <ul><li>Read the PDF here, on the paper’s card, opens the PDF beside your note in your browser’s own viewer: scroll, zoom and move between pages there. Drag the edge between them to resize, or use the widen button. On a phone it fills the screen.</li><li>Close it (Esc) and open it again with Paper: it is where you left it, while the note stays open.</li><li>Some sources don’t allow their PDF to be shown inside another site. Kio checks first and says so, with a button to open the original in a new tab.</li></ul>
               </Feature>
               <Feature title="Capture and import">
-                Capture or import (on Notes) brings in what you wrote or read elsewhere: paste text, send a passage with the extension&apos;s Add to notes or the Send to Kivo Notes bookmarklet (it works in Safari on iPad), or import a Markdown, text, PDF or photo file. Text files are kept exactly; a PDF or photo is transcribed by Nova for you to check, and the note says so. From Goodnotes, Notability or Apple Notes, export the page as a PDF and import it. It becomes a new note or is added to the end of one you have; a note with the same source or title is offered first, never merged by itself.
+                Capture or import (on Notes) brings in what you wrote or read elsewhere: paste text, send a passage with the extension&apos;s Add to notes or the Send to Kio Notes bookmarklet (it works in Safari on iPad), or import a Markdown, text, PDF or photo file. Text files are kept exactly; a PDF or photo is transcribed by Nova for you to check, and the note says so. From Goodnotes, Notability or Apple Notes, export the page as a PDF and import it. It becomes a new note or is added to the end of one you have; a note with the same source or title is offered first, never merged by itself.
               </Feature>
               <Feature title="Templates">
                 Concept, Source notes, Class notes, Chapter summary, Doubts and mistakes, Decision and Learning log, offered when you start a new note.
@@ -636,7 +636,7 @@ export function NovaGuide() {
           <Section topic={topic('saved')} hidden={hide('saved')} lead="Pages you want to come back to, kept with the subject and topic they belong to.">
             <Grid>
               <Feature title="Three ways to save">
-                Paste a link on the Browser Extension page, add the Save to Kivo bookmark to your browser and send any page with one click (works on phones and Safari too), or use the browser extension.
+                Paste a link on the Browser Extension page, add the Save to Kio bookmark to your browser and send any page with one click (works on phones and Safari too), or use the browser extension.
               </Feature>
               <Feature title="Study from what you saved">
                 A saved page can start a session on its topic, or open a new note with the page already named as its source.
@@ -698,7 +698,7 @@ export function NovaGuide() {
             </Grid>
           </Section>
 
-          <Section topic={topic('extension')} hidden={hide('extension')} lead="On any page, click the Kivo icon to save it under a subject or start a study session on it. Works in Chrome, Edge, Brave and Arc. It isn’t listed in the Chrome Web Store yet, and Safari is not supported yet; the Save to Kivo bookmark works everywhere meanwhile.">
+          <Section topic={topic('extension')} hidden={hide('extension')} lead="On any page, click the Kio icon to save it under a subject or start a study session on it. Works in Chrome, Edge, Brave and Arc. It isn’t listed in the Chrome Web Store yet, and Safari is not supported yet; the Save to Kio bookmark works everywhere meanwhile.">
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] lg:items-center">
               <div>
                 <ol className="space-y-4">
@@ -730,7 +730,7 @@ export function NovaGuide() {
             </div>
           </Section>
 
-          <Section topic={topic('counts')} hidden={hide('counts')} lead="Kivo would rather show you nothing than something made up. This is the whole rule.">
+          <Section topic={topic('counts')} hidden={hide('counts')} lead="Kio would rather show you nothing than something made up. This is the whole rule.">
             <div className={`${CARD} p-6 sm:p-8`}>
               <ul className="space-y-4">
                 {COUNTS.map(row => (
@@ -747,7 +747,7 @@ export function NovaGuide() {
             </div>
           </Section>
 
-          <Section topic={topic('plans')} hidden={hide('plans')} lead="Kivo is free to use. Pro is for when you lean on Nova every day.">
+          <Section topic={topic('plans')} hidden={hide('plans')} lead="Kio is free to use. Pro is for when you lean on Nova every day.">
             <Grid>
               {[PLANS.free, pro].map(plan => (
                 <div key={plan.key} className={`${CARD} p-6 ${plan.key === pro.key ? 'border-keppel-400/30' : ''}`}>
@@ -765,13 +765,13 @@ export function NovaGuide() {
             <p className={BODY}>Your notes, Knowledge, saved pages and history are yours on every plan; nothing is deleted when a trial or a subscription ends.</p>
           </Section>
 
-          <Section topic={topic('privacy')} hidden={hide('privacy')} lead="What Kivo keeps, and how you stay in charge of it.">
+          <Section topic={topic('privacy')} hidden={hide('privacy')} lead="What Kio keeps, and how you stay in charge of it.">
             <Grid>
               <Feature title="Yours, and only yours">
                 Your notes, subjects, sessions and saved pages belong to your account and no one else sees them. Nova reads them to plan and to answer you; it never posts or shares anything.
               </Feature>
               <Feature title="Settings">
-                Light, dark or match your device; your check-in time and timezone; your Telegram connection. Connected browsers are on the Browser Extension page. Your Profile shows the email address your account uses and whether it is verified, and Email me a reset link sends a password-reset link to it (an account that signs in only with Google has no Kivo password). Deleting your account removes it and everything in it.
+                Light, dark or match your device; your check-in time and timezone; your Telegram connection. Connected browsers are on the Browser Extension page. Your Profile shows the email address your account uses and whether it is verified, and Email me a reset link sends a password-reset link to it (an account that signs in only with Google has no Kio password). Deleting your account removes it and everything in it.
               </Feature>
             </Grid>
             <div className="flex flex-wrap gap-2"><OpenLink href="/settings"><Settings className="size-4" /> Settings</OpenLink><OpenLink href="/privacy">Privacy</OpenLink></div>

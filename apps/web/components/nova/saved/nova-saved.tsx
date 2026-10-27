@@ -226,7 +226,7 @@ export function NovaSaved({ view, connect, onChanged }: { view: NovaSavedResourc
             <section className="rounded-3xl border border-white/8 bg-card/70 p-6 sm:p-9" data-empty="saved">
               <h2 className="text-xl font-semibold tracking-tight text-foreground">Nothing saved yet</h2>
               <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/60">
-                Paste a link above, or add the Save to Kivo bookmark and send pages here as you read. They will be waiting when you want to study them.
+                Paste a link above, or add the Save to Kio bookmark and send pages here as you read. They will be waiting when you want to study them.
               </p>
             </section>
           ) : (

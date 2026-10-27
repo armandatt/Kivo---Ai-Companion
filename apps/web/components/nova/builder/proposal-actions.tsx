@@ -35,7 +35,7 @@ export function ProposalActions({ state, words, onEdit, onAsk }: {
   if (draft.status === 'building' || busy === 'approve') {
     return (
       <div className={BAR} role="status" data-actions="building">
-        <p className="flex items-center gap-2 text-sm font-medium text-foreground"><Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none" /> {draft.changes ? `Applying the changes to ${draft.current?.title ?? 'it'}…` : `Creating version ${draft.version} in Kivo…`}</p>
+        <p className="flex items-center gap-2 text-sm font-medium text-foreground"><Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none" /> {draft.changes ? `Applying the changes to ${draft.current?.title ?? 'it'}…` : `Creating version ${draft.version} in Kio…`}</p>
         <p className="mt-1 text-xs text-subtle">{draft.changes ? 'All of them together, or none; everything else stays as it is.' : `Its tasks, ${words.areas.toLowerCase()}, notes and dates are written together, or not at all.`}</p>
       </div>
     )
@@ -45,7 +45,7 @@ export function ProposalActions({ state, words, onEdit, onAsk }: {
     const places = mapDestinations(draft)
     return (
       <div className={BAR} role="status" data-actions="ready" data-built>
-        <p className="flex items-center gap-2 text-sm font-semibold text-foreground"><Check aria-hidden className="size-4 text-action-ink" /> {draft.current.title} is in Kivo</p>
+        <p className="flex items-center gap-2 text-sm font-semibold text-foreground"><Check aria-hidden className="size-4 text-action-ink" /> {draft.current.title} is in Kio</p>
         {places.length > 1 && <p className="mt-1 text-xs text-subtle">See it on the Knowledge Map, one subject at a time:</p>}
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {places.length === 1
@@ -135,7 +135,7 @@ export function ProposalActions({ state, words, onEdit, onAsk }: {
 // The status line a draft's playground shows above the plan while Nova
 // works on it: the job's real stage, never a step the server has not reached.
 export function workingLabel(draft: DraftView, words: Words): string | null {
-  if (draft.status === 'building') return 'Creating your workspace in Kivo'
+  if (draft.status === 'building') return 'Creating your workspace in Kio'
   const p = draft.pending
   if (!p) return null
   if (p.stage === 'reading') return draft.files.length ? 'Reading your message and files' : 'Reading your message'

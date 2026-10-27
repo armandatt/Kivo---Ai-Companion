@@ -53,7 +53,7 @@ describe("reduced motion", () => {
   it("is honoured across the app", () => {
     const css = web("app/globals.css");
     const rule = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"));
-    expect(rule).toContain(".kivo-app *,");
+    expect(rule).toContain(".kio-app *,");
     expect(rule).toContain("animation-duration: 0.01ms !important;");
     expect(rule).toContain("transition-duration: 0.01ms !important;");
   });

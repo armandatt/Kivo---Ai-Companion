@@ -150,11 +150,11 @@ test('a build for real use refuses a missing, local or insecure Nova address', (
   delete clean.NOVA_URL
   const run = env => execFileSync('node', [join(root, 'scripts', 'build.mjs')], { env: { ...clean, NOVA_EXTENSION_OUT: out, NOVA_RELEASE: '1', ...env }, stdio: 'pipe' }).toString()
   // The address a failure check uses, the development default, and plain http.
-  for (const env of [{}, { NOVA_URL: 'http://127.0.0.1:9' }, { NOVA_URL: 'https://127.0.0.1:9' }, { NOVA_URL: 'http://localhost:3000' }, { NOVA_URL: 'http://kivo.example' }, { NOVA_URL: 'https://user:pw@kivo.example' }, { NOVA_URL: 'https://nova.local' }]) {
+  for (const env of [{}, { NOVA_URL: 'http://127.0.0.1:9' }, { NOVA_URL: 'https://127.0.0.1:9' }, { NOVA_URL: 'http://localhost:3000' }, { NOVA_URL: 'http://kio.example' }, { NOVA_URL: 'https://user:pw@kio.example' }, { NOVA_URL: 'https://nova.local' }]) {
     assert.throws(() => run(env), /Bad NOVA_URL/, JSON.stringify(env))
   }
-  run({ NOVA_URL: 'https://kivo.example' })
-  assert.equal(readFileSync(join(out, 'config.js'), 'utf8').match(/NOVA_URL = "(.*)"/)[1], 'https://kivo.example')
+  run({ NOVA_URL: 'https://kio.example' })
+  assert.equal(readFileSync(join(out, 'config.js'), 'utf8').match(/NOVA_URL = "(.*)"/)[1], 'https://kio.example')
   // Without the flag, development still builds against this machine.
   execFileSync('node', [join(root, 'scripts', 'build.mjs')], { env: { ...clean, NOVA_EXTENSION_OUT: out }, stdio: 'pipe' })
   assert.equal(readFileSync(join(out, 'config.js'), 'utf8').match(/NOVA_URL = "(.*)"/)[1], 'http://localhost:3000')
@@ -194,7 +194,7 @@ test('a question carries a screenshot only when one was taken, as a JPEG, and wa
   const realSetTimeout = globalThis.setTimeout
   globalThis.setTimeout = (fn, ms) => { timeouts.push(ms); return realSetTimeout(() => {}, 0) }
   try {
-    const client = createClient({ baseUrl: 'https://kivo.example', getToken: async () => 'tok', fetch: async () => new Response(JSON.stringify({ ok: true, answer: 'A.', basis: 'title' }), { status: 200 }) })
+    const client = createClient({ baseUrl: 'https://kio.example', getToken: async () => 'tok', fetch: async () => new Response(JSON.stringify({ ok: true, answer: 'A.', basis: 'title' }), { status: 200 }) })
     await client.ask(buildQuestion({ question: 'Why?', page }))
     await client.ask(buildQuestion({ question: 'Why?', page, screenshot: '/9j/AAAA' }))
   } finally { globalThis.setTimeout = realSetTimeout }
@@ -369,8 +369,8 @@ test('disconnecting forgets the credential completely', async () => {
 })
 
 test('Disconnect says Nova closed the connection only when Nova did', async () => {
-  const answer = (status, body = {}) => createClient({ baseUrl: 'https://kivo.example', getToken: async () => 'nvx_abc', fetch: async () => new Response(JSON.stringify(body), { status }) }).disconnect()
-  const down   = createClient({ baseUrl: 'https://kivo.example', getToken: async () => 'nvx_abc', fetch: async () => { throw new TypeError('Load failed') } }).disconnect()
+  const answer = (status, body = {}) => createClient({ baseUrl: 'https://kio.example', getToken: async () => 'nvx_abc', fetch: async () => new Response(JSON.stringify(body), { status }) }).disconnect()
+  const down   = createClient({ baseUrl: 'https://kio.example', getToken: async () => 'nvx_abc', fetch: async () => { throw new TypeError('Load failed') } }).disconnect()
 
   // Nova said so, or no longer knows the credential: closed either way.
   assert.deepEqual(disconnectOutcome(await answer(200, { ok: true })), { confirmed: true, message: WORDS.disconnected })
@@ -431,22 +431,22 @@ function zipNames(buf) {
 }
 
 test('a release is refused without an https address that is somewhere else', () => {
-  for (const env of [{}, { NOVA_URL: 'http://kivo.example' }, { NOVA_URL: 'https://localhost:3000' }, { NOVA_URL: 'https://127.0.0.1' }, { NOVA_URL: 'https://user:pw@kivo.example' }, { NOVA_URL: 'nonsense' }]) {
+  for (const env of [{}, { NOVA_URL: 'http://kio.example' }, { NOVA_URL: 'https://localhost:3000' }, { NOVA_URL: 'https://127.0.0.1' }, { NOVA_URL: 'https://user:pw@kio.example' }, { NOVA_URL: 'nonsense' }]) {
     assert.throws(() => packageWith(env), /Cannot package/, JSON.stringify(env))
   }
 })
 
 test('the release ZIP holds the built extension and nothing else', () => {
-  const { zip, name, out } = packageWith({ NOVA_URL: 'https://kivo.example/some/path' })
+  const { zip, name, out } = packageWith({ NOVA_URL: 'https://kio.example/some/path' })
   assert.equal(name, `nova-extension-${JSON.parse(src('manifest.template.json')).version}.zip`)
   assert.deepEqual(zipNames(zip), ['config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/api.js', 'lib/browser.js', 'lib/page.js', 'lib/store.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js'])
   assert.match(out, /sha256 [0-9a-f]{64}/)
-  assert.match(out, /for https:\/\/kivo\.example\n/)
+  assert.match(out, /for https:\/\/kio\.example\n/)
 })
 
 test('the same sources and address give the same ZIP, byte for byte', () => {
-  const first = packageWith({ NOVA_URL: 'https://kivo.example' }).zip
-  const again = packageWith({ NOVA_URL: 'https://kivo.example' }).zip
+  const first = packageWith({ NOVA_URL: 'https://kio.example' }).zip
+  const again = packageWith({ NOVA_URL: 'https://kio.example' }).zip
   assert.ok(first.equals(again))
   assert.ok(!first.equals(packageWith({ NOVA_URL: 'https://other.example' }).zip), 'the address is part of what is shipped')
 })
