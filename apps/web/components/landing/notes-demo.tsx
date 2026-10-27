@@ -31,13 +31,13 @@ const CONDITIONS = [
 const EASE = [0.22, 1, 0.36, 1] as const
 
 export function NotesDemo() {
-  const s = useStory(LABELS.length, 2800)
+  const s = useStory(LABELS.length, 2100)
   const reduced = useReducedMotion()
   const step = s.step
   const [flash, setFlash] = useState(false)
   const [discarded, setDiscarded] = useState(false)
   useEffect(() => { setDiscarded(false) }, [step])
-  useEffect(() => { if (!flash) return; const t = window.setTimeout(() => setFlash(false), 1600); return () => window.clearTimeout(t) }, [flash])
+  useEffect(() => { if (!flash) return; const t = window.setTimeout(() => setFlash(false), 1200); return () => window.clearTimeout(t) }, [flash])
 
   const mode = step >= 4 ? 'editor' : 'tutor'
   const selected = step >= 1 && step <= 3

@@ -57,7 +57,7 @@ test('the hero says Kivo is a learning OS with a second brain, and nothing promi
   const hero = web('components/landing/hero.tsx')
   assert.match(hero, /AI-powered second brain/)
   assert.match(hero, /Your learning OS, <\/span><span[^>]*>with a second brain\./)
-  assert.match(hero, /href="#workspace"/)
+  assert.match(hero, /href="#build"/)
   assert.match(web('components/landing/sections.tsx'), /not yet in the Chrome Web Store/)
 })
 
@@ -72,7 +72,7 @@ test('the robot stands where the original hero had it: its own column, a 520px s
   assert.doesNotMatch(hero, /AppWindow/)
   const page = web('app/page.tsx')
   const at = (s: string) => page.indexOf(s)
-  assert.ok(at('<LandingHero />') < at('<WorkspaceSection />') && at('<WorkspaceSection />') < at('<BuildSection />') && at('<BuildSection />') < at('<MapSection />'))
+  assert.ok(at('<LandingHero />') < at('<BuildSection />') && at('<BuildSection />') < at('<MapSection />') && at('<MapSection />') < at('<WorkspaceSection />') && at('<WorkspaceSection />') < at('<NotesSection />'))
 })
 
 test('the Knowledge Map is marketed as the AI-powered Second Brain, without renaming the app', () => {
@@ -114,4 +114,9 @@ test('the workspace preview is one sample subject in three views, said to be a p
   assert.match(demo, /no AI is running/)
   assert.match(demo, /From your note/)
   assert.match(demo, /Nothing changes until you apply it/)
+  // It plays itself, and the visitor's click takes it over.
+  assert.match(demo, /useStory\(TOUR\.length, STEP_MS\)/)
+  assert.match(demo, /const STEP_MS = (\d+)/)
+  assert.ok(Number(/const STEP_MS = (\d+)/.exec(demo)![1]) <= 2500)
+  assert.match(demo, /if \(playing\) s\.go\(step\)/)
 })
