@@ -95,7 +95,7 @@ export function NearMount({ children, minHeight, className }: { children: ReactN
 export function Reveal({ children, className, delay = 0 }: { children: ReactNode; className?: string; delay?: number }) {
   const ref = useRef<HTMLDivElement>(null)
   const reduced = useReducedMotion()
-  const inView = useInView(ref, { once: true, amount: 0.3 })
+  const inView = useInView(ref, { once: true, amount: 0.15 })
   const [state, setState] = useState<'still' | 'waiting' | 'shown'>('still')
   useEffect(() => {
     const el = ref.current
@@ -104,7 +104,7 @@ export function Reveal({ children, className, delay = 0 }: { children: ReactNode
   }, [reduced])
   useEffect(() => { if (inView) setState(s => (s === 'waiting' ? 'shown' : s)) }, [inView])
   return (
-    <div ref={ref} className={cn(className, state !== 'still' && 'transition-[opacity,transform] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]', state === 'waiting' && 'translate-y-[18px] opacity-0')}
+    <div ref={ref} className={cn(className, state !== 'still' && 'transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]', state === 'waiting' && 'translate-y-[10px] opacity-0')}
       style={state === 'shown' && delay ? { transitionDelay: `${delay}s` } : undefined} data-reveal={state}>
       {children}
     </div>

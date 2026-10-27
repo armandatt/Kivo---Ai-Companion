@@ -26,7 +26,7 @@ export function Footer() {
             <div>
               <h4 className="text-sm font-medium text-[var(--color-baltic-sea-200)]">Product</h4>
               <ul className="mt-4 space-y-3">
-                {[{ label: "Knowledge Map", href: "/#map" }, { label: "Build with Nova", href: "/#build" }, { label: "Notes", href: "/#notes" }, { label: "Today", href: "/#today" }, { label: "Pricing", href: "/#pricing" }].map((item) => (
+                {[{ label: "Knowledge Map", href: "/#map" }, { label: "Build with Nova", href: "/#build" }, { label: "Notes", href: "/#notes" }, { label: "Today", href: "/#workspace" }, { label: "Pricing", href: "/#pricing" }].map((item) => (
                   <li key={item.href}>
                     <a href={item.href} className="text-sm text-[var(--color-baltic-sea-500)] hover:text-[var(--color-keppel-400)] transition-colors">{item.label}</a>
                   </li>

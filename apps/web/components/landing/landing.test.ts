@@ -9,7 +9,7 @@ import { insideOf } from '../nova/knowledge-map/explore'
 import { DEMO_EDGES, DEMO_NODES } from './demo-map-data'
 
 const web = (file: string) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8')
-const DEMOS = ['hero', 'hero-sparkles', 'map-demo', 'build-demo', 'notes-demo', 'today-demo', 'frame', 'demos'].map(f => [f, web(`components/landing/${f}.tsx`)] as const)
+const DEMOS = ['hero', 'hero-sparkles', 'map-demo', 'build-demo', 'notes-demo', 'workspace-demo', 'frame', 'demos'].map(f => [f, web(`components/landing/${f}.tsx`)] as const)
 
 test('the sample map is laid out by the real map engine: every card placed, a tree under each subject', () => {
   const layout = layoutMap(DEMO_NODES, DEMO_EDGES.filter(e => TREE_EDGES.has(e.kind)))
@@ -53,10 +53,11 @@ test('the paper sources the page names are the ones the importer recognises', ()
   }
 })
 
-test('the hero says what Kivo is, and nothing promises a store listing that does not exist', () => {
+test('the hero says Kivo is a learning OS with a second brain, and nothing promises a store listing that does not exist', () => {
   const hero = web('components/landing/hero.tsx')
-  assert.match(hero, /Turn what you learn/)
-  assert.match(hero, /what you know\./)
+  assert.match(hero, /AI-powered second brain/)
+  assert.match(hero, /Your learning OS, <\/span><span[^>]*>with a second brain\./)
+  assert.match(hero, /href="#workspace"/)
   assert.match(web('components/landing/sections.tsx'), /not yet in the Chrome Web Store/)
 })
 
@@ -70,7 +71,8 @@ test('the robot stands where the original hero had it: its own column, a 520px s
   // Nova's walkthrough is its own section below, not a window in the hero.
   assert.doesNotMatch(hero, /AppWindow/)
   const page = web('app/page.tsx')
-  assert.ok(page.indexOf('<LandingHero />') < page.indexOf('<BuildSection />') && page.indexOf('<BuildSection />') < page.indexOf('<MapSection />'))
+  const at = (s: string) => page.indexOf(s)
+  assert.ok(at('<LandingHero />') < at('<WorkspaceSection />') && at('<WorkspaceSection />') < at('<BuildSection />') && at('<BuildSection />') < at('<MapSection />'))
 })
 
 test('the Knowledge Map is marketed as the AI-powered Second Brain, without renaming the app', () => {
@@ -90,4 +92,26 @@ test('section words are drawn in place and only hidden after the page starts, so
   const reveal = frame.slice(frame.indexOf('export function Reveal'))
   assert.match(reveal, /useState<'still' \| 'waiting' \| 'shown'>\('still'\)/)
   assert.doesNotMatch(reveal, /initial=\{\{ opacity: 0/)
+})
+
+test('motion is quick: the hero settles in well under half a second, reveals in 300 ms, demos step every three seconds or less', () => {
+  const css = web('app/globals.css')
+  assert.match(css, /\.hero-in \{ animation: hero-in 0\.32s/)
+  assert.match(css, /\.hero-robot \{ animation: hero-robot-in 0\.45s ease-out both, botFloat 7s ease-in-out 0\.45s infinite; \}/)
+  const delays = [...web('components/landing/hero.tsx').matchAll(/animationDelay: '(\d+)ms'/g)].map(m => Number(m[1]))
+  assert.ok(Math.max(...delays) <= 200, `hero delays ${delays}`)
+  assert.match(web('components/landing/frame.tsx'), /duration-300 ease/)
+  for (const f of ['build-demo', 'notes-demo', 'map-demo', 'workspace-demo']) {
+    const src = web(`components/landing/${f}.tsx`)
+    for (const m of src.matchAll(/useStory\([^,]+, (\d+)\)/g)) assert.ok(Number(m[1]) <= 3000, `${f} steps every ${m[1]} ms`)
+    for (const m of src.matchAll(/duration: (?:reduced \? 0 : )?(\d*\.?\d+)/g)) assert.ok(Number(m[1]) <= 0.35, `${f} has a ${m[1]} s transition`)
+  }
+})
+
+test('the workspace preview is one sample subject in three views, said to be a preview, with nothing live', () => {
+  const demo = web('components/landing/workspace-demo.tsx')
+  for (const tab of ['Second Brain', 'Notes & Tutor', 'Today’s Learning']) assert.ok(demo.includes(`'${tab}'`), tab)
+  assert.match(demo, /no AI is running/)
+  assert.match(demo, /From your note/)
+  assert.match(demo, /Nothing changes until you apply it/)
 })

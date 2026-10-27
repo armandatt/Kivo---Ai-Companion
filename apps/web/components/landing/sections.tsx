@@ -11,14 +11,17 @@ import type { ReactNode } from 'react'
 import { ArrowRight, BookOpen, Bookmark, Brain, CalendarDays, Compass, Dna, FileText, GraduationCap, KanbanSquare, KeyRound, LayoutTemplate, Map as MapIcon, Search, Send, Sparkles, Sprout, Target, Timer, TrendingUp, Briefcase } from 'lucide-react'
 import { AuthAwareLink } from '@/components/auth-aware-link'
 import { Reveal } from './frame'
-import { LazyBuildDemo, LazyMapDemo, LazyNotesDemo, LazyPaperDemo, LazyTodayDemo } from './demos'
+import { LazyBuildDemo, LazyMapDemo, LazyNotesDemo, LazyPaperDemo, LazyWorkspaceDemo } from './demos'
 
-const SECTION = 'relative scroll-mt-20 border-t border-[var(--color-baltic-sea-900)] px-4 py-24 sm:py-32'
-const BG = { background: '#060810' }
+// One continuous page: sections share the page's background (page.tsx draws
+// the light that runs down it), with no rule between them; each opens with a
+// short line leading into its words.
+const SECTION = 'relative scroll-mt-20 px-4 py-20 sm:py-24'
 
 function Intro({ eyebrow, title, children, id }: { eyebrow: string; title: string; children: ReactNode; id: string }) {
   return (
     <Reveal className="mx-auto max-w-3xl text-center">
+      <span aria-hidden className="mx-auto mb-5 block h-10 w-px bg-gradient-to-b from-transparent to-[#00E5A0]/50" />
       <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#00E5A0]">{eyebrow}</p>
       <h2 id={`${id}-title`} className="mt-3 text-balance text-4xl font-bold tracking-tight text-[#e8eaf0] md:text-5xl md:leading-[1.08]">{title}</h2>
       <p className="mx-auto mt-5 max-w-xl text-pretty text-lg leading-relaxed text-slate-400">{children}</p>
@@ -53,7 +56,7 @@ function SectionCta({ children }: { children: ReactNode }) {
 
 export function BuildSection() {
   return (
-    <section id="build" aria-labelledby="build-title" className={SECTION} style={BG}>
+    <section id="build" aria-labelledby="build-title" className={SECTION}>
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[28rem] bg-[radial-gradient(50%_60%_at_50%_0%,rgba(0,229,160,0.08),transparent)]" />
       <div className="relative mx-auto max-w-6xl space-y-14">
         <Intro id="build" eyebrow="Build with Nova" title="Your goals. Your structure. Nova’s help.">
@@ -72,10 +75,10 @@ export function BuildSection() {
 
 export function MapSection() {
   return (
-    <section id="map" aria-labelledby="map-title" className={SECTION} style={BG}>
+    <section id="map" aria-labelledby="map-title" className={SECTION}>
       <div className="mx-auto max-w-6xl space-y-14">
-        <Intro id="map" eyebrow="AI-powered Second Brain" title="An AI-powered second brain.">
-          See how your ideas connect. Explore the knowledge you’ve built.
+        <Intro id="map" eyebrow="AI-powered Second Brain" title="Your AI-powered second brain.">
+          Subjects inside subjects, topics inside topics, and the notes and papers that connect them. Open any card to go deeper.
         </Intro>
         <Reveal><LazyMapDemo /></Reveal>
         <Points items={[
@@ -91,10 +94,10 @@ export function MapSection() {
 
 export function NotesSection() {
   return (
-    <section id="notes" aria-labelledby="notes-title" className={SECTION} style={BG}>
+    <section id="notes" aria-labelledby="notes-title" className={SECTION}>
       <div className="mx-auto max-w-6xl space-y-14">
-        <Intro id="notes" eyebrow="Notes and research" title="Read less passively. Understand more.">
-          Bring your notes and research into one place, then learn directly from them.
+        <Intro id="notes" eyebrow="Notes and research" title="Learn from what you’ve already written.">
+          Your notes and papers sit beside the Tutor. Choose a passage; it explains from your own words and keeps its additions apart from yours.
         </Intro>
         <Reveal><LazyNotesDemo /></Reveal>
         <div className="grid items-center gap-10 pt-6 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
@@ -106,26 +109,22 @@ export function NotesSection() {
             </ul>
             <p className="text-sm leading-relaxed text-slate-500">Full text where the source shares it openly (arXiv’s HTML versions, Europe PMC’s open-access set); otherwise the details and abstract.</p>
           </Reveal>
-          <Reveal delay={0.1}><LazyPaperDemo /></Reveal>
+          <Reveal><LazyPaperDemo /></Reveal>
         </div>
       </div>
     </section>
   )
 }
 
-export function TodaySection() {
+export function WorkspaceSection() {
   return (
-    <section id="today" aria-labelledby="today-title" className={SECTION} style={BG}>
-      <div className="mx-auto max-w-6xl space-y-14">
-        <Intro id="today" eyebrow="Today" title="Make today yours.">
-          Choose what matters, shape your flow, and get to work.
+    <section id="workspace" aria-labelledby="workspace-title" className={SECTION}>
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[28rem] bg-[radial-gradient(50%_60%_at_50%_0%,rgba(0,229,160,0.07),transparent)]" />
+      <div className="relative mx-auto max-w-6xl space-y-12">
+        <Intro id="workspace" eyebrow="One connected workspace" title="Map it. Understand it. Plan it.">
+          One topic, three views: where it sits in your second brain, your note with the Tutor beside it, and the day Nova helps you plan from both.
         </Intro>
-        <Reveal><LazyTodayDemo /></Reveal>
-        <Points items={[
-          { title: 'Your call', body: 'Nova proposes a flow. Nothing changes until you apply it.' },
-          { title: 'List or schedule', body: 'See the day as a list, or laid out in time.' },
-          { title: 'Focus your way', body: 'The suggested length, your own, or no time limit.' },
-        ]} />
+        <Reveal><LazyWorkspaceDemo /></Reveal>
       </div>
     </section>
   )
@@ -169,7 +168,7 @@ const GROUPS: Array<{ title: string; items: Array<{ icon: typeof Compass; title:
 
 export function Capabilities() {
   return (
-    <section id="features" aria-labelledby="features-title" className={SECTION} style={BG}>
+    <section id="features" aria-labelledby="features-title" className={SECTION}>
       <div className="mx-auto max-w-6xl space-y-14">
         <Intro id="features" eyebrow="Everything else" title="The rest of your workspace.">
           Small tools that keep the plan moving.
@@ -201,15 +200,15 @@ const JOURNEY = [
   { icon: Compass, title: 'Set it up with Nova', body: 'Share a goal; approve the structure.', href: '#build' },
   { icon: MapIcon, title: 'Connect it', body: 'Subjects and topics on your second brain.', href: '#map' },
   { icon: FileText, title: 'Understand it', body: 'Notes and papers, with the Tutor.', href: '#notes' },
-  { icon: Target, title: 'Shape your day', body: 'Choose what matters today.', href: '#today' },
+  { icon: Target, title: 'Shape your day', body: 'Plan today from what you know.', href: '#workspace' },
   { icon: BookOpen, title: 'Make progress', body: 'Every finished session counts.', href: '#features' },
 ]
 
 export function Journey() {
   return (
-    <section id="how-it-works" aria-labelledby="how-title" className={SECTION} style={BG}>
+    <section id="how-it-works" aria-labelledby="how-title" className={SECTION}>
       <div className="mx-auto max-w-6xl space-y-12">
-        <Intro id="how" eyebrow="How it fits together" title="One loop, from a goal to what you know.">
+        <Intro id="how" eyebrow="How it fits together" title="One second brain, from a goal to what you know.">
           Each step opens its preview above.
         </Intro>
         <Reveal>
@@ -240,7 +239,7 @@ export function UseCases() {
     { icon: Briefcase, who: 'Working professionals', lines: ['A roadmap for a skill, a certification or interviews.', 'A project’s reading, notes and tasks on one map.', 'Learning that fits a working day.'] },
   ]
   return (
-    <section id="use-cases" aria-labelledby="cases-title" className={SECTION} style={BG}>
+    <section id="use-cases" aria-labelledby="cases-title" className={SECTION}>
       <div className="mx-auto max-w-6xl space-y-12">
         <Intro id="cases" eyebrow="Who it’s for" title="For anyone learning something that matters.">
           A semester or a skill for work: Kivo grows from your own goals.
