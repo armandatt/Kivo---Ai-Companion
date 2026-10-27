@@ -6,7 +6,8 @@ import { usePathname } from 'next/navigation'
 import {
   BarChart3,
   BookOpen,
-  Bookmark,
+  FileText,
+  Puzzle,
   Waypoints,
   Calendar,
   CalendarDays,
@@ -53,20 +54,23 @@ const navItems = [
   { href: '/progress', label: 'Progress', icon: BarChart3 },
   { href: '/goals',    label: 'Goals',    icon: Target },
   { href: '/creature', label: 'Creature', icon: Map },
-  { href: '/guide',    label: 'Guide',    icon: BookOpen },
+  { href: '/guide',    label: 'Docs',     icon: BookOpen },
 ]
 
 // Nova's pages, from the one list that also decides route access.
-const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/build': Sparkles, '/planner': Calendar, '/calendar': CalendarDays, '/focus': Timer, '/knowledge': BookOpen, '/map': Waypoints, '/notes': NotebookPen, '/saved': Bookmark, '/progress': TrendingUp, '/learning-dna': Dna, '/creature': Map, '/guide': Compass }
-const novaNavItems = NOVA_ROUTES.map(r => ({ href: r.path, label: r.label, icon: NOVA_ICONS[r.path] ?? Home }))
+const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/build': Sparkles, '/calendar': CalendarDays, '/focus': Timer, '/knowledge': BookOpen, '/map': Waypoints, '/notes': NotebookPen, '/saved': Puzzle, '/progress': TrendingUp, '/learning-dna': Dna, '/creature': Map, '/guide': FileText }
+// Docs sits with Settings at the foot of the sidebar, not among the pages.
+const NOVA_DOCS = '/guide'
+const novaNavItems = NOVA_ROUTES.filter(r => r.path !== NOVA_DOCS).map(r => ({ href: r.path, label: r.label, icon: NOVA_ICONS[r.path] ?? Home }))
 
 type NavItem = typeof navItems[number]
 
-// Nova's pages grouped by what they are for. A page not named here (a new one
-// in NOVA_ROUTES) is listed after the groups, so none is ever dropped.
+// Nova's pages grouped by what they are for, Kivo's core first: Today, then
+// the Knowledge Map right under it. A page not named here (a new one in
+// NOVA_ROUTES) is listed after the groups, so none is ever dropped.
 const NOVA_GROUPS: ReadonlyArray<{ label: string; paths: readonly string[] }> = [
-  { label: 'Plan',      paths: ['/home', '/build', '/planner', '/calendar', '/focus'] },
-  { label: 'Knowledge', paths: ['/knowledge', '/map', '/notes', '/saved'] },
+  { label: 'Workspace', paths: ['/home', '/map', '/build', '/notes', '/saved'] },
+  { label: 'Study',     paths: ['/calendar', '/focus', '/knowledge'] },
   { label: 'Growth',    paths: ['/progress', '/learning-dna', '/creature'] },
 ]
 
@@ -324,6 +328,19 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
 
         {/* Settings */}
         <div className={cn('space-y-1 border-t border-sidebar-border p-4', rail && 'lg:px-2')}>
+          {isNova && (
+            <Link
+              href={NOVA_DOCS}
+              onClick={close}
+              title={rail ? 'Docs' : undefined}
+              aria-current={isActive(NOVA_DOCS) ? 'page' : undefined}
+              className={cn(row, isActive(NOVA_DOCS) ? CURRENT : 'text-sidebar-foreground hover:bg-sidebar-accent')}
+              data-nav-docs
+            >
+              <FileText aria-hidden className="w-5 h-5 shrink-0" />
+              <span className={label}>Docs</span>
+            </Link>
+          )}
           <Link
             href="/profile"
             onClick={close}

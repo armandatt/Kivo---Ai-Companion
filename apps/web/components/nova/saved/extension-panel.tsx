@@ -40,7 +40,7 @@ export function ExtensionPanel({ open }: { open: boolean }) {
 
   return (
     <section className="rounded-2xl border border-white/8 bg-card/50 p-5" data-section="extension" data-open={open}>
-      <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Browser extension</h2>
+      <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Connect the extension</h2>
       <p className="mt-3 text-sm leading-relaxed text-foreground/65">
         Save a page to Nova, or study it, from wherever you are reading. Nova sees a page only when you click its button on that page.
       </p>

@@ -37,7 +37,7 @@ export function StudyRequest({ id }: { id: string }) {
       <div className="mt-16 text-center" data-study-request="missing">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Nova can&apos;t find that page</h1>
         <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-foreground/60">It may have been removed, or it was saved to a different account.</p>
-        <Link href="/saved" className="mt-8 inline-flex h-11 items-center justify-center rounded-xl border border-white/12 px-6 text-sm font-medium text-foreground transition-colors hover:bg-white/5">Open Saved</Link>
+        <Link href="/saved" className="mt-8 inline-flex h-11 items-center justify-center rounded-xl border border-white/12 px-6 text-sm font-medium text-foreground transition-colors hover:bg-white/5">Open saved pages</Link>
       </div>
     )
   }

@@ -15,7 +15,10 @@
 // firstFocus; there is no column. adapters/account-preferences-adapter.ts is
 // the one reader in Nova; onboarding and Settings are the only writers.
 //
-// Pure, no imports, so the web app reads it directly.
+// Pure, and imports only companion.ts (itself pure), so the web app reads it
+// directly.
+
+import { BOARD_PATH } from "./companion";
 
 export const FIRST_FOCUS = ["understand", "exam", "habit", "skill", "assignments", "organize", "other"] as const;
 export type FirstFocusId = (typeof FIRST_FOCUS)[number];
@@ -163,7 +166,7 @@ export function firstStepFor(focus: FirstFocus | null): FirstStep | null {
     case "organize":
       return { title: "Start with your calendar", body: "Put your deadlines and classes on the calendar. Tasks with a due day and exam dates show up there too.", href: "/calendar", action: "Open the calendar" };
     case "assignments":
-      return { title: "Start with the work itself", body: "Add the subject and its parts below, then break the assignment into tasks on the Planner's board.", href: "/planner?view=board", action: "Open the board" };
+      return { title: "Start with the work itself", body: "Add the subject and its parts below, then break the assignment into tasks on the Board in Today.", href: BOARD_PATH, action: "Open the board" };
     case "habit":
       return { title: "Start small", body: "Add one subject and the time you usually have. Nova keeps each day's plan inside that time.", href: "#setup-routine", action: "Set your usual time" };
     case "skill":

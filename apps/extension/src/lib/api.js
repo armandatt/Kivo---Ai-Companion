@@ -14,7 +14,7 @@ export const WORDS = {
   rate_limited:    "That's a lot at once. Give it a minute.",
   failed:          "That didn't work. Try again in a moment.",
   disconnected:    'Disconnected. This browser can no longer save to Nova.',
-  disconnect_unconfirmed: "This browser has forgotten its connection, but Nova couldn't be told. To be sure it is closed, disconnect this browser on Nova's Saved page.",
+  disconnect_unconfirmed: "This browser has forgotten its connection, but Nova couldn't be told. To be sure it is closed, disconnect this browser on Nova's Browser Extension page.",
 }
 
 /**

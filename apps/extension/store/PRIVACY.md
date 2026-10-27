@@ -54,8 +54,8 @@ One item, in the extension's own storage (`chrome.storage.local`): its credentia
 
 ## Keeping and deleting
 
-- A credential stops working when you disconnect that browser (from the popup or from Kivo's Saved page), or after 30 days without use. An account keeps at most five connected browsers; connecting a sixth closes the oldest.
-- You can remove any saved page from the Saved page.
+- A credential stops working when you disconnect that browser (from the popup or from Kivo's Browser Extension page), or after 30 days without use. An account keeps at most five connected browsers; connecting a sixth closes the oldest.
+- You can remove any saved page from the Browser Extension page, where saved pages are listed.
 - Deleting your Kivo account deletes your saved pages and connected browsers.
 - **CONFIRM:** how long backups are kept, and how a user asks for deletion if they cannot sign in.
 

@@ -9,6 +9,7 @@ import { BUTTON_QUIET, ROW, SectionHeading, Skeleton, TEXT_LINK } from '../works
 import { TASK_GROUP_LABEL, dueLabel, groupTasks, isOverdue, localDayKey, nextDay } from './task-format'
 import { TaskEditor } from './task-editor'
 import { subjectColor } from '../subject-color'
+import { BOARD_PATH } from '@repo/api/nova/product/companion'
 
 type Props = {
   // null: still loading.
@@ -123,7 +124,7 @@ export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, 
           {tasks && list.length > 0 && (
             <span>{list.length} open{late > 0 && <> · <span className="font-medium text-rose-300">{late} overdue</span></>}</span>
           )}
-          <Link href="/planner?view=board" className={TEXT_LINK}>Board <ArrowRight aria-hidden className="size-3" /></Link>
+          <Link href={BOARD_PATH} className={TEXT_LINK}>Board <ArrowRight aria-hidden className="size-3" /></Link>
         </>
       }>
         Your tasks

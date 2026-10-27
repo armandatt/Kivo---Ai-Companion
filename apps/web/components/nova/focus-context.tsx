@@ -6,6 +6,7 @@ import { Bookmark, CalendarDays, ListChecks, NotebookPen } from 'lucide-react'
 import type { NovaFocusContextReady, NovaFocusContextView } from '@repo/api/nova/product/focus-context.types'
 import { cn } from '@/lib/utils'
 import { inDays, relativeDay } from './format'
+import { BOARD_PATH } from '@repo/api/nova/product/companion'
 
 // What the learner has filed under the topic in front of them: their open
 // tasks, their saved pages, the subject's next exam and the note they left
@@ -80,7 +81,7 @@ export function FocusContext({ view, className }: { view: NovaFocusContextReady;
               </li>
             ))}
           </ul>
-          <Link href="/planner?view=board" className="mt-2 inline-block text-xs text-foreground/50 underline decoration-white/20 underline-offset-4 hover:text-foreground">Open the board</Link>
+          <Link href={BOARD_PATH} className="mt-2 inline-block text-xs text-foreground/50 underline decoration-white/20 underline-offset-4 hover:text-foreground">Open the board</Link>
         </div>
       )}
 

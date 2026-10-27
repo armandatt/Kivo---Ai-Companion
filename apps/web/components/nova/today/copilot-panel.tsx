@@ -12,13 +12,17 @@
 //                the server says so.
 //
 // The page drives the same proposal from the playground through the handle
-// (apply, discard, fill, send). The conversation and each proposal's state
-// are kept in this tab; the panel stays mounted while hidden, so closing it
-// loses nothing.
+// (apply, discard, fill, send). The conversation is temporary and the flow is
+// not: the conversation and each proposal's state are kept in this tab for
+// today only (sessionStorage, keyed by the day, so a new day starts a new
+// chat); the flow is the server's. The panel stays mounted while hidden, so
+// closing it loses nothing. New chat clears the conversation and nothing
+// else; with a proposal still waiting it asks first, because starting over
+// discards that proposal (the saved flow stays as it is).
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowRight, Check, Loader2, Send, Undo2, X } from 'lucide-react'
+import { ArrowRight, Check, Loader2, MessageSquarePlus, Send, Undo2, X } from 'lucide-react'
 import type { NovaDayView, PendingChange } from '@repo/api/nova/product/day-flow.types'
 import { KivoMark } from '@/components/brand/kivo-brand'
 import { cn } from '@/lib/utils'
@@ -36,7 +40,8 @@ type Turn =
     }
 type NovaTurn = Extract<Turn, { role: 'nova' }>
 
-const store = (day: string) => `kivo-today-studio:${day}`
+const PREFIX = 'kivo-today-studio:'
+const store = (day: string) => `${PREFIX}${day}`
 const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
 
 export type ApproveResult = { ok: true; flow: NovaDayView } | { ok: false; stale: boolean; message: string }
@@ -69,14 +74,26 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
   inputRef?: React.RefObject<HTMLTextAreaElement | null>
 }>(function CopilotPanel({ flow, subject, onAdopt, onApprove, onUndo, onClose, onState, inputRef }, ref) {
   const [turns, setTurns] = useState<Turn[]>([])
+  // The day these turns belong to: they are saved under that day only.
+  const [turnsDay, setTurnsDay] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [pending, setPending] = useState(false)
+  const [confirmNew, setConfirmNew] = useState(false)
   const own = useRef<HTMLTextAreaElement>(null)
   const box = inputRef ?? own
   const log = useRef<HTMLDivElement>(null)
 
-  useEffect(() => { try { const raw = sessionStorage.getItem(store(flow.day)); if (raw) setTurns(JSON.parse(raw) as Turn[]) } catch { /* storage off */ } }, [flow.day])
-  useEffect(() => { try { sessionStorage.setItem(store(flow.day), JSON.stringify(turns.slice(-40))) } catch { /* storage off */ } }, [turns, flow.day])
+  // Today's conversation, if this tab has one; an earlier day's is let go.
+  useEffect(() => {
+    let saved: Turn[] = []
+    try {
+      const raw = sessionStorage.getItem(store(flow.day))
+      if (raw) saved = JSON.parse(raw) as Turn[]
+      for (let i = sessionStorage.length - 1; i >= 0; i--) { const k = sessionStorage.key(i); if (k?.startsWith(PREFIX) && k !== store(flow.day)) sessionStorage.removeItem(k) }
+    } catch { /* storage off */ }
+    setTurns(saved); setTurnsDay(flow.day); setConfirmNew(false)
+  }, [flow.day])
+  useEffect(() => { if (turnsDay !== flow.day) return; try { if (turns.length) sessionStorage.setItem(store(flow.day), JSON.stringify(turns.slice(-40))); else sessionStorage.removeItem(store(flow.day)) } catch { /* storage off */ } }, [turns, turnsDay, flow.day])
   useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight, behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }) }, [turns.length, pending])
 
   // The latest proposal, whatever became of it.
@@ -125,6 +142,11 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
     else patch(turn.id, res.stale ? 'stale' : 'failed', res.message)
   }
   const discard = () => { if (lastProposal?.pending?.state === 'open') patch(lastProposal.id, 'declined') }
+  // A proposal not yet applied or discarded, current or not.
+  const unapplied = lastProposal?.pending?.state === 'open' || lastProposal?.pending?.state === 'applying'
+  const applying = lastProposal?.pending?.state === 'applying'
+  const startOver = () => { setConfirmNew(false); setTurns([]); setInput(''); box.current?.focus() }
+  const newChat = () => { if (pending || applying) return; if (unapplied) setConfirmNew(true); else startOver() }
   const fill = (text: string) => { setInput(text); window.setTimeout(() => { box.current?.focus(); box.current?.setSelectionRange(text.length, text.length) }, 0) }
   useImperativeHandle(ref, () => ({ send: (t, o) => void send(t, o), apply: k => void apply(k), discard, fill }))
 
@@ -145,8 +167,26 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
             {pending ? 'Thinking…' : open ? 'Waiting for your answer on the proposal' : 'Plans today with you · nothing changes without your yes'}
           </p>
         </div>
+        {turns.length > 0 && (
+          <button type="button" onClick={newChat} disabled={pending || applying}
+            className="inline-flex h-9 items-center gap-1.5 rounded-xl px-2.5 text-xs font-medium text-foreground/70 hover:bg-white/6 hover:text-foreground disabled:opacity-40"
+            title="Start a new conversation. Your saved flow stays as it is." data-copilot-new>
+            <MessageSquarePlus aria-hidden className="size-4" /> New chat
+          </button>
+        )}
         {onClose && <button type="button" onClick={onClose} className="inline-flex size-9 items-center justify-center rounded-xl text-subtle hover:bg-white/6 hover:text-foreground" aria-label="Hide Nova" data-copilot-close><X className="size-4" /></button>}
       </header>
+      {confirmNew && (
+        <div role="alertdialog" aria-labelledby="copilot-new-title" className="mx-5 mt-3 shrink-0 rounded-xl border border-amber-300/30 bg-amber-300/[0.06] px-3.5 py-3 text-sm"
+          onKeyDown={e => { if (e.key === 'Escape') setConfirmNew(false) }} data-copilot-confirm-new>
+          <p id="copilot-new-title" className="font-medium text-foreground">Discard Nova’s proposal and start a new chat?</p>
+          <p className="mt-1 text-xs leading-relaxed text-foreground/65">It hasn’t been applied. Your saved flow, tasks and sessions stay as they are.</p>
+          <div className="mt-2.5 flex flex-wrap gap-2">
+            <button type="button" autoFocus onClick={() => { discard(); startOver() }} className="rounded-lg bg-action px-3 py-1.5 text-xs font-semibold text-action-foreground hover:bg-action-hover" data-copilot-new-confirm>Discard and start new</button>
+            <button type="button" onClick={() => setConfirmNew(false)} className="rounded-lg border border-white/12 px-3 py-1.5 text-xs text-foreground/80 hover:bg-white/5" data-copilot-new-cancel>Keep it</button>
+          </div>
+        </div>
+      )}
       {subject && (
         <p className="mx-5 mt-3 inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full bg-nova/10 px-3 py-1 text-xs text-nova-ink" data-copilot-subject>
           Context: {subject.name}

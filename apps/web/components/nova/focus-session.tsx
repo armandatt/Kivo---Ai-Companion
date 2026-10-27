@@ -254,7 +254,7 @@ export function FocusSession() {
     roomView(<>
       {studyId && (
         <p role="status" className="focus-glass mb-6 max-w-md rounded-xl px-4 py-3 text-xs leading-relaxed text-white/75" data-study-waiting>
-          You already have a session running. Finish this one first; the page you picked is in <Link href="/saved" className="text-keppel-200 underline">Saved</Link>.
+          You already have a session running. Finish this one first; the page you picked is in your <Link href="/saved" className="text-keppel-200 underline">saved pages</Link>.
         </p>
       )}
 

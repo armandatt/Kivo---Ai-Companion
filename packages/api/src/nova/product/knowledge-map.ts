@@ -39,6 +39,7 @@ import {
   MAP_NOTES_MAX, MAP_RESOURCES_MAX,
   type MapEdge, type MapNode, type MapNodeType, type MapSuggestion, type MapTask, type MapWorkspace, type NovaKnowledgeMapReady, type NovaKnowledgeMapView,
 } from "./knowledge-map.types";
+import { boardHref } from "./companion";
 
 export interface MapInputs {
   subjects:  Array<{ id: string; name: string; parentId?: string | null }>;
@@ -197,7 +198,7 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
     const order = stepOrder.get(k) ?? 0;
     stepOrder.set(k, order + 1);
     return {
-      id, type: "task", label: t.title, href: `/planner?view=board&task=${encodeURIComponent(t.id)}`, subjectId: subject,
+      id, type: "task", label: t.title, href: boardHref(t.id), subjectId: subject,
       subjectName: subject ? subjectName.get(subject)! : null, topicName: root.topicName,
       status: t.status, priority: t.priority ?? null, dueDay: t.dueDay ?? null, estimatedMinutes: t.estimatedMinutes ?? null,
       ...(parent ? { parentId: parent } : {}), order, waitsOn: (t.after ?? []).filter(a => taskIds.has(a)).length,

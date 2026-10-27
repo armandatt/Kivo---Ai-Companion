@@ -3,13 +3,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
-  ArrowUpRight, BookOpen, Bookmark, Calendar, CalendarDays, Check, CircleHelp, Copy, CreditCard, Gamepad2, Home, Keyboard,
+  ArrowUpRight, BookOpen, Bookmark, CalendarDays, Check, CircleHelp, Copy, CreditCard, Gamepad2, Home, Keyboard,
   NotebookPen, Puzzle, Rocket, Search, Send, Settings, ShieldCheck, Sparkles, Timer, TrendingUp, Waypoints, X,
 } from 'lucide-react'
 import { PLANS, formatPrice } from '@repo/api/billing/plans'
+import { NOVA_ROUTES } from '@repo/api/nova/product/companion'
 import { PLACES } from '@/lib/creature/places'
 
-// The Kivo handbook: every page and every feature, in one place. Everything
+// Kivo's Docs: every page and every feature, in one place. Everything
 // here describes behaviour that exists: the commands are the ones the
 // Telegram bot answers, the extension facts are the ones its README and tests
 // hold it to, the plans and the creature's places come from the same lists
@@ -47,7 +48,7 @@ const CHAT = [
 
 const EXTENSION_STEPS = [
   { title: 'Open the popup',   body: 'Click the Nova icon in your browser toolbar and choose Get a code from Nova.' },
-  { title: 'Get a code',       body: 'Nova opens on Saved. Connect a browser shows a one-time code, good for ten minutes.' },
+  { title: 'Get a code',       body: 'Kivo opens its Browser Extension page. Connect a browser shows a one-time code, good for ten minutes.' },
   { title: 'Type it in',       body: 'Enter the code in the popup. That browser is now connected until you disconnect it or leave it unused for thirty days.' },
 ]
 
@@ -166,23 +167,23 @@ type Topic = { id: string; label: string; icon: typeof Home; group: string; keyw
 const TOPICS: Topic[] = [
   { id: 'start',     label: 'Getting started',  icon: Rocket,      group: 'Basics',       keywords: 'setup quiz onboarding subjects exams first day account' },
   { id: 'loop',      label: 'The daily loop',   icon: Sparkles,    group: 'Basics',       keywords: 'how it works plan focus outcome progress' },
-  { id: 'today',     label: 'Today',            icon: Home,        group: 'Plan',         keywords: 'home next up plan time available choose another subject focus done today tasks deadlines week goals search new' },
-  { id: 'planner',   label: 'Planner & tasks',  icon: Calendar,    group: 'Plan',         keywords: 'days ahead board kanban tasks skip plan change recovery missed days templates workspace create with nova syllabus pdf' },
+  { id: 'today',     label: 'Today',            icon: Home,        group: 'Plan',         keywords: 'home plan day flow nova proposal apply discard approve undo new chat close subject focus board tasks kanban deadlines week ahead planner untimed custom' },
+  { id: 'build',     label: 'Build with Nova',  icon: Sparkles,    group: 'Plan',         keywords: 'workspace create project exam skill templates syllabus pdf photo milestones tasks versions approve recovery missed days' },
   { id: 'calendar',  label: 'Calendar',         icon: CalendarDays, group: 'Plan',        keywords: 'events classes meetings month week agenda reminders deadlines dates schedule repeat recurring weekly daily monthly' },
   { id: 'focus',     label: 'Focus room',       icon: Timer,       group: 'Plan',         keywords: 'session timer pomodoro pause end scenes sound music rain lofi spotify apple music youtube playlist fullscreen' },
   { id: 'knowledge', label: 'Knowledge',        icon: BookOpen,    group: 'Knowledge',    keywords: 'subjects topics level review due board subject studio archive' },
-  { id: 'map',       label: 'Knowledge Map',    icon: Waypoints,   group: 'Knowledge',    keywords: 'graph links pan zoom filter layout drag' },
-  { id: 'notes',     label: 'Notes',            icon: NotebookPen, group: 'Knowledge',    keywords: 'editor callout highlight tag link source pdf template ask nova summarise tutor explain quiz practice flashcards brainstorm capture import ipad goodnotes notability' },
-  { id: 'saved',     label: 'Saved pages',      icon: Bookmark,    group: 'Knowledge',    keywords: 'links bookmark save to kivo study this' },
+  { id: 'map',       label: 'Knowledge Map',    icon: Waypoints,   group: 'Knowledge',    keywords: 'graph links pan zoom filter layout drag explore inside nested subjects topics connect unlink add delete fold' },
+  { id: 'notes',     label: 'Notes',            icon: NotebookPen, group: 'Knowledge',    keywords: 'editor callout highlight tag link source pdf template ask nova summarise tutor explain quiz practice flashcards brainstorm capture import ipad goodnotes notability research paper arxiv doi pubmed' },
+  { id: 'saved',     label: 'Saved pages',      icon: Bookmark,    group: 'Knowledge',    keywords: 'links bookmark save to kivo study this browser extension' },
   { id: 'progress',  label: 'Progress & DNA',   icon: TrendingUp,  group: 'Growth',       keywords: 'progress learning dna streak weeks signals insights' },
   { id: 'creature',  label: 'Your creature',    icon: Gamepad2,    group: 'Growth',       keywords: 'world level places arrow keys unlock days in a row' },
   { id: 'telegram',  label: 'Nova on Telegram', icon: Send,        group: 'Nova',         keywords: 'commands chat hinglish hindi nudges check-in language' },
-  { id: 'extension', label: 'Browser extension',icon: Puzzle,      group: 'Nova',         keywords: 'chrome edge brave arc save page selection code' },
+  { id: 'extension', label: 'Browser Extension',icon: Puzzle,      group: 'Nova',         keywords: 'chrome edge brave arc save page selection code connect install' },
   { id: 'counts',    label: 'What counts',      icon: Check,       group: 'Nova',         keywords: 'record ten minutes rules honest' },
   { id: 'plans',     label: 'Plans',            icon: CreditCard,  group: 'Account',      keywords: 'free pro price trial billing upgrade rupees' },
-  { id: 'shortcuts', label: 'Shortcuts',        icon: Keyboard,    group: 'Account',      keywords: 'keyboard cmd k space f m e' },
+  { id: 'shortcuts', label: 'Shortcuts',        icon: Keyboard,    group: 'Account',      keywords: 'keyboard cmd ctrl k p space f m e enter map notes' },
   { id: 'privacy',   label: 'Your data',        icon: ShieldCheck, group: 'Account',      keywords: 'privacy delete account export settings theme' },
-  { id: 'faq',       label: 'Questions',        icon: CircleHelp,  group: 'Account',      keywords: 'faq help problems' },
+  { id: 'faq',       label: 'Questions',        icon: CircleHelp,  group: 'Account',      keywords: 'faq help problems troubleshooting not applied stale disconnected planner missing' },
 ]
 
 function Section({ topic, lead, children, hidden }: { topic: Topic; lead: string; children: React.ReactNode; hidden: boolean }) {
@@ -233,17 +234,27 @@ function OpenLink({ href, children }: { href: string; children: React.ReactNode 
 }
 
 const SHORTCUTS: Array<{ keys: string[]; where: string; what: string }> = [
-  { keys: ['⌘', 'K'],  where: 'Anywhere in the app', what: 'Search: any page, subject, topic, note, saved page or task' },
+  { keys: ['⌘', 'K'],  where: 'Knowledge',           what: 'Search: any page, subject, topic, note, saved page or task' },
+  { keys: ['Enter'],   where: 'Nova on Today',       what: 'Send (Shift Enter for a new line)' },
+  { keys: ['⌥', '↑/↓'], where: 'Today’s flow',      what: 'Move the focused item up or down (Alt on Windows)' },
   { keys: ['Space'],   where: 'Focus',               what: 'Pause or resume the session' },
   { keys: ['F'],       where: 'Focus',               what: 'Fullscreen' },
   { keys: ['S'],       where: 'Focus',               what: 'Open the sound panel' },
   { keys: ['M'],       where: 'Focus',               what: 'Mute or unmute' },
+  { keys: ['⌘', 'P'],  where: 'Notes',               what: 'Import a research paper' },
+  { keys: ['⌘', 'K'],  where: 'Notes',               what: 'Commands and search: notes, subjects, Nova' },
+  { keys: ['?'],       where: 'Notes, Knowledge Map', what: 'Show that page’s shortcuts (not while typing)' },
   { keys: ['E'],       where: 'A note',              what: 'Edit it' },
   { keys: ['⌘', 'S'],  where: 'Editing a note',      what: 'Save' },
   { keys: ['⌘', 'B'],  where: 'Editing a note',      what: 'Bold' },
   { keys: ['⌘', 'I'],  where: 'Editing a note',      what: 'Italic' },
   { keys: ['⌘', '⇧', 'E'], where: 'Editing a note',  what: 'Highlight' },
   { keys: ['Esc'],     where: 'A note with its source open', what: 'Close the source' },
+  { keys: ['/'],       where: 'Knowledge Map',       what: 'Find on the map (or ⌘ K)' },
+  { keys: ['Enter'],   where: 'Knowledge Map',       what: 'Explore inside the selected card; U goes back up a level' },
+  { keys: ['N'],       where: 'Knowledge Map',       what: 'Add a card inside or beside the selected one' },
+  { keys: ['Space'],   where: 'Knowledge Map',       what: 'Fold or show what is inside the selected card' },
+  { keys: ['F'],       where: 'Knowledge Map',       what: 'Fit the map on screen (0 zooms to 100%)' },
   { keys: ['←', '↑', '→', '↓'], where: 'Creature',   what: 'Walk to the nearest open place that way' },
   { keys: ['⇧', '←/→'], where: 'Creature',           what: 'Turn the camera (or Q and E)' },
 ]
@@ -251,7 +262,12 @@ const SHORTCUTS: Array<{ keys: string[]; where: string; what: string }> = [
 const FAQ = [
   { q: 'I closed the tab mid-session. Is it lost?', a: 'No. Sessions are timed on Kivo’s server, not in the page. Open Focus again, here or on another device, and the clock is where it should be. Telegram sees the same session.' },
   { q: 'Why did a session not change my Knowledge?', a: 'Sessions under ten minutes are kept but move nothing, and a session on a topic that isn’t filed under one of your subjects can’t be tied to Knowledge yet. Finish ten minutes or more, on a topic of a subject, and say how it went.' },
-  { q: 'Nova picked a topic I don’t want today.', a: 'Use Choose another on Today, start a different block from the plan, or tell Nova on Telegram (“something on deep learning instead”). Skipping a topic for the day is a plan change you can undo.' },
+  { q: 'Nova proposed a day I don’t want.', a: 'Nothing is changed until you apply it. Press Discard and your plan stays as it was, or Change something and say what to change. To keep only part of a proposal, use Edit flow.' },
+  { q: 'A proposal says “Not applied · your flow had changed”.', a: 'Your flow changed after Nova made the proposal (you edited it, or another tab did), so it was not applied. Your flow is as you left it; ask Nova again and it proposes from the flow as it is now.' },
+  { q: 'Where did the Planner go?', a: 'Daily planning is on Today, and your task board opens there with Board. Old Planner links open Today, with the board open if the link was to the board. The week ahead and why the day is sized as it is are under More for today.' },
+  { q: 'Will New chat or closing Nova change my plan?', a: 'No. Closing only hides Nova; the conversation is there when you open it again. New chat clears the conversation and nothing else. If a proposal is still waiting, it asks first, because starting over discards that proposal.' },
+  { q: 'I can’t find the extension in the Chrome Web Store.', a: 'It isn’t listed there yet. Until it is, the Save to Kivo bookmark on the Browser Extension page saves any page from any browser, phones and Safari included.' },
+  { q: 'The extension says it was disconnected.', a: 'Its connection ends if you disconnect it or leave it unused for thirty days. Open the Browser Extension page, press Connect a browser and type the new code into the extension.' },
   { q: 'Can Nova remind me at a set time?', a: 'Not yet. It checks in around the time you picked on days you haven’t studied, and messages first only when something is due, at most twice a day. It says so plainly if you ask for a reminder.' },
   { q: 'Does saving a page or ticking a task count as studying?', a: 'No. Only finished, timed sessions move the record. Saved pages and tasks are how you organise; sessions are how you learn.' },
   { q: 'What happens to my notes if I stop paying for Pro?', a: 'Nothing. Your notes, Knowledge, saved pages and history stay yours on every plan. Pro changes how much you can ask Nova each day, not what you own.' },
@@ -294,16 +310,16 @@ export function NovaGuide() {
         <div aria-hidden="true" className="pointer-events-none absolute -bottom-40 left-1/4 size-80 rounded-full bg-keppel-400/8 blur-3xl" />
         <div className="relative grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-end">
           <div>
-            <p className={EYEBROW}>The Kivo handbook</p>
+            <p className={EYEBROW}>Kivo Docs</p>
             <h1 className="mt-3 max-w-2xl text-3xl font-semibold tracking-tight text-foreground sm:text-5xl sm:leading-[1.08]">
               Everything Kivo does, and how to get the most from it.
             </h1>
             <p className="mt-4 max-w-prose text-[15px] leading-relaxed text-foreground/60">
-              Kivo is one learning environment in three places: this web app, Nova in a Telegram chat, and a browser extension. They share one record, so what you do in one shows up in the others. This handbook covers every page and every feature.
+              Kivo is one learning environment in three places: this web app, Nova in a Telegram chat, and a browser extension. They share one record, so what you do in one shows up in the others. These docs cover every page and every feature.
             </p>
           </div>
           <dl className="grid grid-cols-3 gap-3 text-center lg:grid-cols-1 lg:text-left">
-            {[['Pages', '11'], ['Telegram commands', String(COMMANDS.length)], ['Rule that matters', 'Only real study counts']].map(([k, v]) => (
+            {[['Pages', String(NOVA_ROUTES.length)], ['Telegram commands', String(COMMANDS.length)], ['Rule that matters', 'Only real study counts']].map(([k, v]) => (
               <div key={k} className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
                 <dt className="text-[11px] text-foreground/50">{k}</dt>
                 <dd className="mt-0.5 text-sm font-semibold text-foreground">{v}</dd>
@@ -315,11 +331,11 @@ export function NovaGuide() {
 
       <div className="mt-10 grid gap-10 lg:grid-cols-[14rem_minmax(0,1fr)]">
         {/* Contents */}
-        <nav aria-label="Handbook contents" className="lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
+        <nav aria-label="Docs contents" className="lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
           <label className="relative block">
-            <span className="sr-only">Search the handbook</span>
+            <span className="sr-only">Search the docs</span>
             <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground/40" />
-            <input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search the handbook"
+            <input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search the docs"
               className="h-10 w-full rounded-xl border border-white/10 bg-transparent pl-9 pr-8 text-sm text-foreground placeholder:text-foreground/40 focus:border-keppel-400/60 focus:outline-none" />
             {query && (
               <button type="button" onClick={() => setQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-foreground/50 hover:text-foreground" aria-label="Clear search"><X className="size-3.5" /></button>
@@ -355,12 +371,12 @@ export function NovaGuide() {
         </nav>
 
         <div className="min-w-0 space-y-12">
-          {shown.size === 0 && <p className="rounded-2xl border border-dashed border-white/12 px-5 py-8 text-sm text-foreground/60">Nothing in the handbook matches “{query}”. Try a page name, like Focus or Notes.</p>}
+          {shown.size === 0 && <p className="rounded-2xl border border-dashed border-white/12 px-5 py-8 text-sm text-foreground/60">Nothing in the docs matches “{query}”. Try a page name, like Focus or Notes.</p>}
 
           <Section topic={topic('start')} hidden={hide('start')} lead="Five minutes to set up, and Nova has what it needs to plan your days.">
             <Steps steps={[
               { title: 'Make your account', body: 'Sign up with email (Kivo sends an eight-digit code to confirm it) or continue with Google.' },
-              { title: 'Answer eight short questions', body: 'What you do, what you’re working on, how much time you have each week, what usually gets in the way, the language and tone Nova should use, whether you use Telegram, and a name for your creature. They set Nova’s words, tone, language and your usual daily time; they create no tasks or reminders, and you can change every answer in Settings.' },
+              { title: 'Answer nine short questions', body: 'What Nova should call you, what you do, what you’re working on, how much time you have each week, what usually gets in the way, the language and tone Nova should use, whether you use Telegram, and a name for your creature. They set Nova’s words, tone, language and your usual daily time; they create no tasks or reminders, and you can change every answer in Settings.' },
               { title: 'Tell Nova your subjects', body: 'Name your subjects and their topics, your exam dates and how long you usually have. Or start from a template, like a computer science semester, and edit it.' },
               { title: 'Connect Telegram', body: 'Optional, and worth it: from Today or Settings. Nova can then plan, start sessions and log them from a chat.' },
             ]} />
@@ -376,63 +392,61 @@ export function NovaGuide() {
 
           <Section topic={topic('loop')} hidden={hide('loop')} lead="Kivo is built around one loop. Every page is a way into it, or a view of what it has recorded.">
             <Steps steps={[
-              { title: 'Ask what is next', body: 'Today picks one topic from your subjects, exam dates and what you have studied least. Tell it how long you have and the plan fits the time.' },
+              { title: 'Plan the day', body: 'On Today, tell Nova what you want the day to be about and how long you have. It proposes a flow from your own subjects and tasks; you apply it, change it or plan it yourself.' },
               { title: 'Focus on it', body: 'Start a session. Kivo times it on its server, so you can close the tab or switch to Telegram and it keeps running.' },
               { title: 'Say how it went', body: 'Struggled, Okay, Good or Crushed it. That answer, with the minutes, is what moves a topic forward and sets when to revisit it.' },
               { title: 'Watch it add up', body: 'Knowledge, Progress, Learning DNA and your creature all read the same record. Nothing is estimated from a quiz or a guess.' },
             ]} />
           </Section>
 
-          <Section topic={topic('today')} hidden={hide('today')} lead="Your working page for the day: what to do now, what comes after, and what is on your plate.">
+          <Section topic={topic('today')} hidden={hide('today')} lead="Where you plan the day with Nova and work through it. Nothing goes into your day until you choose it.">
+            <Steps steps={[
+              { title: 'Tell Nova', body: 'Say what you want today to be about, or tap a starter. Nova asks a question or two and suggests topics from your own Knowledge Map.' },
+              { title: 'See the proposal', body: 'The flow appears in the middle, marked Not applied yet: what is new, moved or removed, and the minutes it adds up to.' },
+              { title: 'Apply or change it', body: 'Apply plan saves it. Edit flow keeps only the changes you tick, Change something tells Nova what to change, and Discard leaves your plan as it was.' },
+              { title: 'Work through it', body: 'Start an item to focus on it, tick it done, or reorder it. Undo takes back the last change.' },
+            ]} />
             <Grid>
-              <Feature title="Next up">
-                The one block to do now, with its subject, length and why Nova chose it (open Why this?). Start runs a session of that length on that topic. While a session runs, the card shows it instead, with a way back to Focus.
+              <Feature title="Your saved flow">
+                The day you applied stays as it is: reload, come back later or open another device, and it is the same. Nothing rebuilds it for you. A new day starts empty. Add myself puts a task, topic or anything else in the day without Nova; drag an item to reorder it, switch between List and Schedule, and use Time left today? to fit what is open into the time you have.
               </Feature>
-              <Feature title="Today's flow and your time">
-                The day as a strip of blocks, each as long as its minutes, against your daily budget. What you finished today comes first, marked done: the plan is the rest of the day, so a topic you just studied is not handed back and the next block moves up. Tell Nova how long you have (20 minutes to an hour and a half) and the plan is refitted on the server to that time.
+              <Feature title="Nova on Today">
+                Nova plans today and nothing else. Ask it to explain a topic or change a note and it points you to Focus or Notes. Tasks, deadlines and your map are changed on their own pages, never from this chat.
+                <ul><li>Close hides Nova. Open it again and the conversation is where you left it.</li><li>New chat starts a fresh conversation and keeps your saved flow. If a proposal is still waiting, Nova asks before discarding it.</li><li>The conversation is kept in this browser tab for today only. There is no chat history to manage.</li></ul>
               </Feature>
-              <Feature title="Which subject today">
-                Pick a subject under the greeting and the whole day is planned for it alone, carrying on from where you left off in it: each card shows how many of its topics you have started and the last one you studied. All subjects goes back to Nova&apos;s pick across everything. The choice holds for the rest of the day, here and on the Planner.
+              <Feature title="Subjects">
+                The cards under the greeting are your top-level subjects; a subject inside one counts toward it. Picking one tells Nova what you have in mind. It adds nothing to the day by itself.
               </Feature>
-              <Feature title="Then, and Choose another">
-                The rest of the plan in order, each with Start instead. Choose another offers other topics that fit right now, without changing the plan.
+              <Feature title="How long to focus">
+                Start uses the suggested length: today’s time for the item, the task’s estimate, or a standard block. The arrow beside it offers shorter and longer lengths, your own number of minutes, or No time limit, a session that counts up until you end it.
               </Feature>
-              <Feature title="Linked to this topic">
-                The notes and saved pages you filed under the topic you are about to study, and where it sits on the Knowledge Map, so what you need is one click away.
+              <Feature title="The Board">
+                Press Board in the header and your task board opens below the day: To do, In progress and Done. Drag a card to move it, open one to edit it or tick it. It is the same list of tasks as everywhere else in Kivo. Opening the board adds nothing to today, and taking an item out of today leaves the task on the board.
               </Feature>
-              <Feature title="Your tasks">
-                Your own to-do list, by when it is due: add a task with a date, a priority and a topic, edit it, tick it, or start a session on its topic with Focus. Tasks never count as study.
-              </Feature>
-              <Feature title="The margin">
-                Deadlines (exams and dated tasks), this week beside the eight before it, where you left off, what you are working toward, your creature and the Telegram connection.
+              <Feature title="More for today">
+                Exams and dated tasks coming up, work that slipped after missed days (Nova offers to spread it over the coming days; nothing moves until you say so), the week ahead and why today is sized as it is.
               </Feature>
             </Grid>
-            <Feature title="Search and New">
-              Search (<kbd className={KBD}>⌘</kbd> <kbd className={KBD}>K</kbd>, or Ctrl K) jumps to any page, subject, topic, note, saved page or task, and can make a task from what you typed. New adds a task, a note, a link to save or a session.
-            </Feature>
+            <div className="flex flex-wrap gap-2"><OpenLink href="/home">Open Today</OpenLink></div>
           </Section>
 
-          <Section topic={topic('planner')} hidden={hide('planner')} lead="The days ahead, and the board where your tasks live.">
+          <Section topic={topic('build')} hidden={hide('build')} lead="A conversation with Nova that sets up something bigger than a day: a project, an exam, a skill or a semester.">
             <Grid>
-              <Feature title="The plan for the coming days">
-                What Nova plans for each day ahead, block by block, against the time you have each day. Change the time for today and the plan follows; the Planner explains what set the length of a day.
+              <Feature title="Talk it through">
+                Say what you&apos;re working on in your own words. Nova asks what it needs, one question at a time. Attach a PDF or a photo (a syllabus, your notes, a picture of a plan) and Nova reads it; files stay with that conversation until it&apos;s built or cancelled.
               </Feature>
-              <Feature title="Build with Nova">
-                Build with Nova (in the sidebar) is a conversation: say what you&apos;re working on in your own words, a project, an exam, a skill, your semester or something at work. Nova asks only what it needs, one question at a time, and proposes a workspace on the right: milestones, tasks, topics, notes and dates. Attach a PDF or a photo (a syllabus, your notes, a picture of a plan) and Nova reads it; ask about it whenever you like, and the proposal is built from it. Files stay with that conversation until it&apos;s built or cancelled. Edit any of it there, or tell Nova what to change; each change is a new version. Nothing is created until you approve a version, and then it&apos;s real: tasks on your Planner board, subjects in Knowledge, notes in Notes, dates on the calendar. You can come back to the conversation later, or improve a workspace you already have (Nova only adds; nothing there is changed or removed). Ask Nova on Telegram to set something up and it sends you a link to the same conversation. Nova doesn&apos;t search the web, so the resources it names are suggestions.
+              <Feature title="You decide what gets made">
+                Nova drafts a workspace only when you ask it to, and adds tasks only when you ask for them. The proposal on the right holds milestones, topics, notes and dates; edit any of it there, or tell Nova what to change. Each change is a new version.
+              </Feature>
+              <Feature title="Approve, then it's real">
+                Nothing is created until you approve a version. Then tasks go to your Board, subjects and topics to Knowledge and the Knowledge Map, notes to Notes and dates to the calendar. Come back to improve a workspace later; Nova removes something only when you ask it to.
               </Feature>
               <Feature title="Templates">
                 Ready-made starting points for college, work or a competitive exam, linked from Build with Nova. &ldquo;Start from a document&rdquo; there reads a syllabus PDF or a photo and proposes a workspace from it. You see and trim everything before it is created.
               </Feature>
-              <Feature title="Plan changes you can undo">
-                Skip a topic for today from the plan or on Telegram (“skip deadlocks today”): Nova asks first, writes one change, and Undo takes it back. Skipped topics come back tomorrow.
-              </Feature>
-              <Feature title="The task board">
-                Your tasks as cards in To do, In progress and Done. Drag a card to move it; the order you leave is the order you get back.
-              </Feature>
-              <Feature title="Back on track after missed days">
-                After a few days away, Today offers to spread what slipped over the coming days. Nothing moves unless you say yes.
-              </Feature>
             </Grid>
+            <p className={BODY}>Ask Nova on Telegram to set something up and it sends you a link to the same conversation. Nova doesn&apos;t search the web, so the resources it names are suggestions.</p>
+            <div className="flex flex-wrap gap-2"><OpenLink href="/build">Open Build with Nova</OpenLink></div>
           </Section>
 
           <Section topic={topic('calendar')} hidden={hide('calendar')} lead="Your events, the tasks due each day and your dates, in one place.">
@@ -458,7 +472,7 @@ export function NovaGuide() {
           <Section topic={topic('focus')} hidden={hide('focus')} lead="A room to study in. The session is Nova's, timed on the server; the scene and the sound are yours.">
             <Grid cols={3}>
               <Feature title="The clock">
-                A large clock that counts down your planned block; tap it to show time studied instead. Pause and resume as often as you need (breaks are counted), then End session and say how it went.
+                A large clock that counts down the length you chose; tap it to show time studied instead. A session with no time limit counts up instead. Pause and resume as often as you need (breaks are counted), then End session and say how it went.
               </Feature>
               <Feature title="Scenes">
                 Five backdrops drawn live in Kivo&apos;s colours: Aurora, Rain, Night sky, Embers and Forest. They pause when the tab is hidden and stay still if your device asks for reduced motion.
@@ -496,15 +510,22 @@ export function NovaGuide() {
             </Grid>
           </Section>
 
-          <Section topic={topic('map')} hidden={hide('map')} lead="Your subjects, topics, notes and saved pages as one graph.">
+          <Section topic={topic('map')} hidden={hide('map')} lead="Your subjects, topics, tasks, notes and saved pages as one map, with each card inside the one it belongs to.">
             <Grid>
               <Feature title="Find your way">
-                Pan, zoom and filter by kind. Select anything to see what it links to and open it. Links come from what you wrote: a note that writes [[Deadlocks]] is joined to Deadlocks.
+                Pan, zoom and filter by kind. Select a card to see its details and what it links to. Links come from what you wrote: a note that writes [[Deadlocks]] is joined to Deadlocks. Press <kbd className={KBD}>/</kbd> to find a card by name.
+              </Feature>
+              <Feature title="Explore inside">
+                Subjects can sit inside subjects, and topics inside topics. Double-click a card or press Enter to explore what is inside it; U or the path at the top takes you back up. Space folds a card to tidy the view.
+              </Feature>
+              <Feature title="Add, connect and remove">
+                N adds a card inside or beside the selected one. Connect existing joins a card you already have: filing it moves it (it has one place), a link leaves it where it is. Removing a connection deletes no card. Deleting a card always asks first.
               </Feature>
               <Feature title="Arrange it your way">
-                Drag items where you want them; Kivo remembers each position for you, and anything you have not moved is placed for you.
+                Drag cards where you want them; Kivo remembers each position for you, and anything you have not moved is placed for you. Press ? on the map for every shortcut.
               </Feature>
             </Grid>
+            <div className="flex flex-wrap gap-2"><OpenLink href="/map">Open Knowledge Map</OpenLink></div>
           </Section>
 
           <Section topic={topic('notes')} hidden={hide('notes')} lead="A notebook that reads like a good book: your own notes, filed under a subject and topic, linked to each other.">
@@ -523,6 +544,12 @@ export function NovaGuide() {
                 Nova sits beside the note (a panel you can resize, or a drawer on a phone or tablet). Select a passage and press Ask Nova, or just ask. It explains from what you wrote, gives examples, walks you through step by step, sets a practice question and checks your answer, quizzes you, brainstorms, makes flashcards, or suggests how to organise raw notes. What comes from your notes is labelled apart from Nova&apos;s own knowledge, and Nova says when your notes don&apos;t cover something.
                 <ul><li>Nothing goes into your note until you press Add and confirm the preview; it is added on its own lines, marked as Nova&apos;s, and can be undone.</li><li>The conversation stays in this tab; Nova stores none of it.</li></ul>
               </Feature>
+              <Feature title="Nova as your editor">
+                Ask Nova to structure a note, clarify it, fill out an explanation, remove repetition, add a summary or examples. It shows each change it suggests, with what would go struck through, and you apply the ones you want. Nothing changes until you do.
+              </Feature>
+              <Feature title="Research papers">
+                Press <kbd className={KBD}>⌘</kbd> <kbd className={KBD}>P</kbd> (Ctrl P) on Notes and paste a paper&apos;s link: arXiv, a DOI, Semantic Scholar, OpenReview, PubMed or PubMed Central, or a PDF link. Kivo brings in its details, the abstract and any text the source shares openly, as one note with My notes at the end for your own. The note says how much of the paper it holds.
+              </Feature>
               <Feature title="Capture and import">
                 Capture or import (on Notes) brings in what you wrote or read elsewhere: paste text, send a passage with the extension&apos;s Add to notes or the Send to Kivo Notes bookmarklet (it works in Safari on iPad), or import a Markdown, text, PDF or photo file. Text files are kept exactly; a PDF or photo is transcribed by Nova for you to check, and the note says so. From Goodnotes, Notability or Apple Notes, export the page as a PDF and import it. It becomes a new note or is added to the end of one you have; a note with the same source or title is offered first, never merged by itself.
               </Feature>
@@ -539,7 +566,7 @@ export function NovaGuide() {
           <Section topic={topic('saved')} hidden={hide('saved')} lead="Pages you want to come back to, kept with the subject and topic they belong to.">
             <Grid>
               <Feature title="Three ways to save">
-                Paste a link on Saved, add the Save to Kivo bookmark to your browser and send any page with one click (works on phones and Safari too), or use the browser extension.
+                Paste a link on the Browser Extension page, add the Save to Kivo bookmark to your browser and send any page with one click (works on phones and Safari too), or use the browser extension.
               </Feature>
               <Feature title="Study from what you saved">
                 A saved page can start a session on its topic, or open a new note with the page already named as its source.
@@ -600,7 +627,7 @@ export function NovaGuide() {
             </Grid>
           </Section>
 
-          <Section topic={topic('extension')} hidden={hide('extension')} lead="On any page, click the Kivo icon to save it under a subject or start a study session on it. Works in Chrome, Edge, Brave and Arc. Safari is not supported yet.">
+          <Section topic={topic('extension')} hidden={hide('extension')} lead="On any page, click the Kivo icon to save it under a subject or start a study session on it. Works in Chrome, Edge, Brave and Arc. It isn’t listed in the Chrome Web Store yet, and Safari is not supported yet; the Save to Kivo bookmark works everywhere meanwhile.">
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] lg:items-center">
               <div>
                 <ol className="space-y-4">
@@ -692,7 +719,7 @@ export function NovaGuide() {
                 Your notes, subjects, sessions and saved pages belong to your account and no one else sees them. Nova reads them to plan and to answer you; it never posts or shares anything.
               </Feature>
               <Feature title="Settings">
-                Light, dark or match your device; your check-in time and timezone; your Telegram connection and connected browsers. Deleting your account removes it and everything in it.
+                Light, dark or match your device; your check-in time and timezone; your Telegram connection. Connected browsers are on the Browser Extension page. Deleting your account removes it and everything in it.
               </Feature>
             </Grid>
             <div className="flex flex-wrap gap-2"><OpenLink href="/settings"><Settings className="size-4" /> Settings</OpenLink><OpenLink href="/privacy">Privacy</OpenLink></div>

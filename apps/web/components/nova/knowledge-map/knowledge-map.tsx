@@ -22,6 +22,7 @@ import { NEW_SUBJECT } from './map-structure'
 import { disconnectPlan } from './map-disconnect'
 import { sendDisconnect } from './map-structure-api'
 import { AddDialog, Breadcrumbs, DeleteDialog, Legend, ShortcutsHelp } from './map-panels'
+import { BOARD_PATH } from '@repo/api/nova/product/companion'
 
 const TYPES: Array<{ type: MapNodeType; label: string; plural: string }> = [
   { type: 'subject',  label: 'Subject',    plural: 'Subjects' },
@@ -342,7 +343,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
     facts.push(['Site', node.domain])
     facts.push(['Subject', node.subjectName ?? 'Not filed under a subject'])
     if (node.topicName) facts.push(['Topic', node.topicLinked ? node.topicName : `${node.topicName} (not one of that subject's topics yet)`])
-    if (node.filedBy === 'nova') facts.push(['Filed by', 'Nova, from a name match. Keep or undo it on Saved.'])
+    if (node.filedBy === 'nova') facts.push(['Filed by', 'Nova, from a name match. Keep or undo it under Saved pages on Browser Extension.'])
     facts.push([node.kind === 'study_requested' ? 'Asked to study' : 'Saved', day(node.savedAt)])
   }
   const open = node.type === 'note' ? 'Open note' : node.type === 'resource' ? 'Open in Saved' : node.type === 'topic' ? 'Open this topic' : node.type === 'task' ? 'Open on the board' : 'Open this subject'
@@ -431,7 +432,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
               </li>
             ))}
           </ul>
-          <Link href="/planner?view=board" className="mt-2 inline-block text-xs font-medium text-foreground/60 underline-offset-4 hover:text-foreground hover:underline">Open on the board</Link>
+          <Link href={BOARD_PATH} className="mt-2 inline-block text-xs font-medium text-foreground/60 underline-offset-4 hover:text-foreground hover:underline">Open on the board</Link>
         </div>
       )}
 
