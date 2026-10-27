@@ -15,29 +15,29 @@ const geistMono = localFont({
 
 const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || "https://www.thekivo.in"
 const DESCRIPTION =
-  "Kivo plans your study day with you, keeps your notes, topics and saved pages connected, and shows how you are actually progressing. Nova, your learning mentor, works on the web and on Telegram."
+  "Kivo is an AI-powered learning OS. Build your learning system with Nova, connect subjects and topics on a Knowledge Map, study your notes and research papers with a Tutor, and shape each day on your terms."
 
 // The icons are files in this folder (icon.svg, apple-icon.png, favicon.ico)
 // and the share picture is opengraph-image.tsx: Next.js links them itself.
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: "Kivo: plan, learn and grow with Nova",
+    default: "Kivo: the AI-powered learning OS",
     template: "%s · Kivo",
   },
   description: DESCRIPTION,
   applicationName: "Kivo",
-  keywords: ["study planner", "learning mentor", "connected notes", "knowledge map", "focus sessions", "exam preparation", "Kivo", "Nova"],
+  keywords: ["learning OS", "knowledge map", "AI tutor", "research paper notes", "study planner", "focus sessions", "exam preparation", "Kivo", "Nova"],
   openGraph: {
     type: "website",
     siteName: "Kivo",
     url: "/",
-    title: "Kivo: plan, learn and grow with Nova",
+    title: "Kivo: turn what you learn into what you know",
     description: DESCRIPTION,
   },
   twitter: {
     card: "summary_large_image",
-    title: "Kivo: plan, learn and grow with Nova",
+    title: "Kivo: turn what you learn into what you know",
     description: DESCRIPTION,
   },
 }

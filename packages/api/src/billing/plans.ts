@@ -27,7 +27,7 @@ export interface PlanDefinition {
 }
 
 const FREE_FEATURES = [
-  "Today's plan, the Planner and your task board",
+  "Today with Nova, your daily flow and your task board",
   "Focus sessions, with reviews when they are due",
   "Notes, Knowledge and the Knowledge Map",
   "Progress and Learning DNA",

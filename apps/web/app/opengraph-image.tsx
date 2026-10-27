@@ -3,7 +3,7 @@ import { KIVO_INK, KIVO_IVORY, KIVO_TEAL, KIVO_TILE, KivoMarkShapes, KivoWordmar
 
 // The picture a shared link shows. Generated at build time from the same
 // geometry as the logo, so it cannot drift from it.
-export const alt = 'Kivo: plan your day, keep your notes connected and see your progress, with Nova'
+export const alt = 'Kivo, the AI-powered learning OS: turn what you learn into what you know'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
@@ -40,10 +40,10 @@ export default function OpengraphImage() {
         <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 40 }}>
           <div style={{ display: 'flex', flexDirection: 'column', maxWidth: 760 }}>
             <div style={{ fontSize: 64, lineHeight: 1.05, letterSpacing: '-0.03em' }}>
-              Your plan, your notes and your progress, connected.
+              Turn what you learn into what you know.
             </div>
             <div style={{ marginTop: 26, fontSize: 28, lineHeight: 1.35, color: 'rgba(244,241,233,0.66)' }}>
-              Kivo plans each day with you, links what you learn, and shows how you are changing. With Nova, your learning mentor.
+              Build your learning system, connect your knowledge, study your sources and shape your day, with Nova.
             </div>
           </div>
           {/* Three notes and the links between them: the idea of the node in the mark. */}

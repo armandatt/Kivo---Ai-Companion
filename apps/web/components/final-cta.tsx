@@ -85,7 +85,7 @@ export function FinalCTA() {
               }`}
               style={{ transitionDelay: "400ms" }}
             >
-              Ready to meet your companion?
+              Start building your learning system.
             </h2>
 
             {/* Subtext */}
@@ -95,7 +95,7 @@ export function FinalCTA() {
               }`}
               style={{ transitionDelay: "500ms" }}
             >
-              Plan your day around the time you really have, keep your notes connected, and see how you are actually progressing.
+              Set up a workspace with Nova, connect what you know, and shape today around what matters. Free to start; your notes and record stay yours on every plan.
             </p>
 
             {/* CTAs */}
@@ -114,7 +114,7 @@ export function FinalCTA() {
                 style={{ transitionDelay: "700ms" }}
               >
                 <AuthAwareLink>
-                  Start with Kivo
+                  Start building with Kivo
                   <ArrowRight weight="bold" className="ml-2 h-4 w-4" />
                 </AuthAwareLink>
               </Button>
@@ -127,7 +127,7 @@ export function FinalCTA() {
               }`}
               style={{ transitionDelay: "800ms" }}
             >
-              Works in your browser · Telegram if you want it · Free to use
+              Works in your browser · Nova on Telegram if you want it · Free plan, Pro when you need more of Nova
             </p>
           </div>
         </div>

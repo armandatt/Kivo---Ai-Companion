@@ -9,6 +9,15 @@ type AuthAwareLinkProps = Omit<ComponentPropsWithoutRef<typeof Link>, "href"> & 
   loggedInHref?: string
 }
 
+// One sign-in check for the links rendered together (the landing page has
+// several), asked again a few seconds later, so signing in or out and then
+// coming back is seen.
+let checked: { at: number; yes: Promise<boolean> } | null = null
+const signedIn = () => {
+  if (!checked || Date.now() - checked.at > 5_000) checked = { at: Date.now(), yes: fetch("/api/me").then((res) => res.ok, () => false) }
+  return checked.yes
+}
+
 export function AuthAwareLink({
   children,
   loggedOutHref = "/signup",
@@ -18,11 +27,9 @@ export function AuthAwareLink({
   const [href, setHref] = useState(loggedOutHref)
 
   useEffect(() => {
-    fetch("/api/me")
-      .then((res) => {
-        setHref(res.ok ? loggedInHref : loggedOutHref)
-      })
-      .catch(() => setHref(loggedOutHref))
+    let live = true
+    void signedIn().then((yes) => { if (live) setHref(yes ? loggedInHref : loggedOutHref) })
+    return () => { live = false }
   }, [loggedOutHref, loggedInHref])
 
   return (

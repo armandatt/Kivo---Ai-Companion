@@ -5,34 +5,34 @@ import { CaretDown } from "@phosphor-icons/react/dist/ssr"
 
 const FAQS = [
   {
+    question: "What is Kivo?",
+    answer:
+      "A learning workspace with an AI mentor, Nova. You build a structure for what you're learning (subjects and topics, nested as deep as you need), keep notes and research papers inside it, see it all on a Knowledge Map, and plan each day from it. Progress is measured from the focus sessions you actually finish.",
+  },
+  {
+    question: "Does Nova decide what I study?",
+    answer:
+      "No. Nova asks questions, suggests and proposes. A plan for your day, a new workspace or a change to a note waits as a proposal until you apply it, and you can reorder, edit or discard it. What you approve is saved; nothing else is.",
+  },
+  {
+    question: "Can I try it before signing up?",
+    answer:
+      "The previews on this page are samples that run in your browser: explore the map, step through Build with Nova, try the Tutor and Editor, and plan a sample day. They save nothing. To build your own, sign up; the Free plan needs no card.",
+  },
+  {
+    question: "Which research papers can I import?",
+    answer:
+      "Links from arXiv, a DOI, Semantic Scholar, OpenReview, PubMed and PubMed Central, or a direct PDF link. Kivo brings in the details and abstract, plus the full text where the source shares it openly (arXiv's HTML versions, Europe PMC's open-access set). It never fetches anything behind a sign-in or paywall; Nova can transcribe a PDF you point to or upload.",
+  },
+  {
     question: "Do I need to download an app?",
     answer:
-      "No. Kivo runs in your browser: sign up, answer a few questions, and you are on your Today page. If you use Telegram, you can connect it from the dashboard and Nova will message you there as well. Your plan and sessions are the same in both places.",
-  },
-  {
-    question: "Who is Nova?",
-    answer:
-      "Nova is Kivo's learning mentor, and every new account works with Nova. It plans your day, runs your focus sessions, keeps track of what is due for review and talks things through with you, in English or Hinglish.",
-  },
-  {
-    question: "How does Nova decide what I should study?",
-    answer:
-      "From what is on record: your subjects and topics, your exam and deadline dates, which topics are due for review, and the time you say you have. It never stretches your day past that time, and when exam work will not fit, it tells you so instead of pretending it does.",
-  },
-  {
-    question: "What does Nova know about me?",
-    answer:
-      "What you have done in Kivo: your sessions and how you said they went, your topics, tasks and dates. Your notes are yours; Nova reads one only when you ask it to help with that note. What it concludes about how you study is on your Learning DNA page, with how much evidence stands behind it.",
-  },
-  {
-    question: "How does the creature work?",
-    answer:
-      "Your creature goes up a level for every five days you study, and its world stays clear: a week away, or a week ill, never brings fog. It is a picture of your study days, not a score to keep up.",
+      "No. Kivo runs in your browser, on a computer, tablet or phone. If you use Telegram, connect it and Nova can start and log sessions there too; it's the same record either way.",
   },
   {
     question: "Does Kivo cost anything?",
     answer:
-      "Kivo is free to use. There are no paid plans today, so there is nothing to upgrade and no card to enter.",
+      "There's a Free plan with everything in Kivo and a daily Nova allowance. Pro gives Nova a much larger daily allowance and starts with seven days free, no card needed. Your notes, knowledge and history stay yours on every plan.",
   },
 ]
 
@@ -99,8 +99,9 @@ export function FAQ() {
 
   return (
     <section
+      id="faq"
       ref={ref}
-      className="py-24 border-t border-[var(--color-baltic-sea-900)] overflow-hidden"
+      className="scroll-mt-20 py-24 border-t border-[var(--color-baltic-sea-900)] overflow-hidden"
       style={{ background: '#060810' }}
     >
       <div className="mx-auto max-w-[800px] px-2.5 sm:px-6 lg:px-12">
