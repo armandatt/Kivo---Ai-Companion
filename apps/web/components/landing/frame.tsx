@@ -110,3 +110,25 @@ export function Reveal({ children, className, delay = 0 }: { children: ReactNode
     </div>
   )
 }
+
+const WORD_MS = 28
+
+// Words typed in one after another; the rest hold their place so nothing jumps.
+// Read whole by screen readers, and shown at once under reduced motion.
+export function Typed({ text }: { text: string }) {
+  const reduced = useReducedMotion()
+  const words = text.split(' ')
+  const [shown, setShown] = useState(reduced ? words.length : 0)
+  useEffect(() => {
+    if (reduced) { setShown(words.length); return }
+    setShown(0)
+    const t = window.setInterval(() => setShown(n => { if (n >= words.length) { window.clearInterval(t); return n } return n + 1 }), WORD_MS)
+    return () => window.clearInterval(t)
+  }, [text, reduced, words.length])
+  return (
+    <>
+      <span className="sr-only">{text}</span>
+      <span aria-hidden>{words.map((w, i) => <span key={i} className={cn('transition-opacity duration-150', i < shown ? 'opacity-100' : 'opacity-0')}>{w}{i < words.length - 1 ? ' ' : ''}</span>)}</span>
+    </>
+  )
+}

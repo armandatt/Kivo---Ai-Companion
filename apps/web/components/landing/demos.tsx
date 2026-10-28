@@ -12,6 +12,9 @@ const MapDemo = dynamic(() => import('./map-demo').then(m => m.MapDemo), { ssr: 
 const BuildDemo = dynamic(() => import('./build-demo').then(m => m.BuildDemo), { ssr: false, loading: () => <Placeholder h={544} /> })
 const NotesDemo = dynamic(() => import('./notes-demo').then(m => m.NotesDemo), { ssr: false, loading: () => <Placeholder h={656} /> })
 const PaperDemo = dynamic(() => import('./notes-demo').then(m => m.PaperDemo), { ssr: false, loading: () => <Placeholder h={352} /> })
+const TelegramDemo = dynamic(() => import('./telegram-demo').then(m => m.TelegramDemo), { ssr: false, loading: () => <Placeholder h={600} /> })
+const FocusDemo = dynamic(() => import('./focus-demo').then(m => m.FocusDemo), { ssr: false, loading: () => <Placeholder h={544} /> })
+const CreatureDemo = dynamic(() => import('./creature-demo').then(m => m.CreatureDemo), { ssr: false, loading: () => <Placeholder h={544} /> })
 const WorkspaceDemo = dynamic(() => import('./workspace-demo').then(m => m.WorkspaceDemo), { ssr: false, loading: () => <Placeholder h={560} /> })
 
 export const LazyMapDemo = () => <NearMount minHeight={560}><MapDemo /></NearMount>
@@ -19,3 +22,6 @@ export const LazyBuildDemo = () => <NearMount minHeight={600}><BuildDemo /></Nea
 export const LazyNotesDemo = () => <NearMount minHeight={656}><NotesDemo /></NearMount>
 export const LazyPaperDemo = () => <NearMount minHeight={352}><PaperDemo /></NearMount>
 export const LazyWorkspaceDemo = () => <NearMount minHeight={560}><WorkspaceDemo /></NearMount>
+export const LazyTelegramDemo = () => <NearMount minHeight={600}><TelegramDemo /></NearMount>
+export const LazyFocusDemo = () => <NearMount minHeight={544}><FocusDemo /></NearMount>
+export const LazyCreatureDemo = () => <NearMount minHeight={544}><CreatureDemo /></NearMount>

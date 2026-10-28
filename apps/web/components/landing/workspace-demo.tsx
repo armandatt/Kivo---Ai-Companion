@@ -10,10 +10,10 @@
 // and Nova's words type in. Any click hands it to the visitor; Reset plays again.
 
 import { useEffect, useState } from 'react'
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowRight, BookOpen, Brain, CalendarCheck, Check, ChevronRight, FileText, Flag, Pause, Play, Quote, RotateCcw, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { AppWindow, useStory } from './frame'
+import { AppWindow, Typed, useStory } from './frame'
 
 type Tab = 'brain' | 'notes' | 'today'
 type Level = 'solid' | 'developing' | 'weak' | null
@@ -67,28 +67,6 @@ const TOUR: Array<{ tab: Tab; topic: string; passage?: number; answer?: Answer; 
   { tab: 'today', topic: 'backprop', answer: 'exam', applied: true },
 ]
 const STEP_MS = 2200
-const WORD_MS = 28
-
-// Words typed in one after another; the rest hold their place so nothing jumps.
-// Read whole by screen readers, and shown at once under reduced motion.
-function Typed({ text }: { text: string }) {
-  const reduced = useReducedMotion()
-  const words = text.split(' ')
-  const [shown, setShown] = useState(reduced ? words.length : 0)
-  useEffect(() => {
-    if (reduced) { setShown(words.length); return }
-    setShown(0)
-    const t = window.setInterval(() => setShown(n => { if (n >= words.length) { window.clearInterval(t); return n } return n + 1 }), WORD_MS)
-    return () => window.clearInterval(t)
-  }, [text, reduced, words.length])
-  return (
-    <>
-      <span className="sr-only">{text}</span>
-      <span aria-hidden>{words.map((w, i) => <span key={i} className={cn('transition-opacity duration-150', i < shown ? 'opacity-100' : 'opacity-0')}>{w}{i < words.length - 1 ? ' ' : ''}</span>)}</span>
-    </>
-  )
-}
-
 function Dot({ topic }: { topic: Topic }) {
   if (topic.milestone) return <Flag aria-hidden className="size-3 shrink-0 text-foreground/45" />
   if (!topic.level) return <span aria-hidden className="size-1.5 shrink-0 rounded-full border border-foreground/35" />

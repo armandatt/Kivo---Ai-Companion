@@ -9,7 +9,7 @@ import { insideOf } from '../nova/knowledge-map/explore'
 import { DEMO_EDGES, DEMO_NODES } from './demo-map-data'
 
 const web = (file: string) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8')
-const DEMOS = ['hero', 'hero-sparkles', 'map-demo', 'build-demo', 'notes-demo', 'workspace-demo', 'frame', 'demos'].map(f => [f, web(`components/landing/${f}.tsx`)] as const)
+const DEMOS = ['hero', 'hero-sparkles', 'map-demo', 'build-demo', 'notes-demo', 'workspace-demo', 'telegram-demo', 'focus-demo', 'creature-demo', 'frame', 'demos'].map(f => [f, web(`components/landing/${f}.tsx`)] as const)
 
 test('the sample map is laid out by the real map engine: every card placed, a tree under each subject', () => {
   const layout = layoutMap(DEMO_NODES, DEMO_EDGES.filter(e => TREE_EDGES.has(e.kind)))
@@ -72,7 +72,8 @@ test('the robot stands where the original hero had it: its own column, a 520px s
   assert.doesNotMatch(hero, /AppWindow/)
   const page = web('app/page.tsx')
   const at = (s: string) => page.indexOf(s)
-  assert.ok(at('<LandingHero />') < at('<BuildSection />') && at('<BuildSection />') < at('<MapSection />') && at('<MapSection />') < at('<WorkspaceSection />') && at('<WorkspaceSection />') < at('<NotesSection />'))
+  const order = ['<LandingHero />', '<BuildSection />', '<MapSection />', '<WorkspaceSection />', '<NotesSection />', '<MentorSection />', '<FocusSection />', '<CreatureSection />', '<Capabilities />']
+  for (let i = 1; i < order.length; i++) assert.ok(at(order[i - 1]!) >= 0 && at(order[i - 1]!) < at(order[i]!), `${order[i - 1]} before ${order[i]}`)
 })
 
 test('the Knowledge Map is marketed as the AI-powered Second Brain, without renaming the app', () => {
@@ -101,7 +102,7 @@ test('motion is quick: the hero settles in well under half a second, reveals in 
   const delays = [...web('components/landing/hero.tsx').matchAll(/animationDelay: '(\d+)ms'/g)].map(m => Number(m[1]))
   assert.ok(Math.max(...delays) <= 200, `hero delays ${delays}`)
   assert.match(web('components/landing/frame.tsx'), /duration-300 ease/)
-  for (const f of ['build-demo', 'notes-demo', 'map-demo', 'workspace-demo']) {
+  for (const f of ['build-demo', 'notes-demo', 'map-demo', 'workspace-demo', 'telegram-demo', 'focus-demo', 'creature-demo']) {
     const src = web(`components/landing/${f}.tsx`)
     for (const m of src.matchAll(/useStory\([^,]+, (\d+)\)/g)) assert.ok(Number(m[1]) <= 3000, `${f} steps every ${m[1]} ms`)
     for (const m of src.matchAll(/duration: (?:reduced \? 0 : )?(\d*\.?\d+)/g)) assert.ok(Number(m[1]) <= 0.35, `${f} has a ${m[1]} s transition`)
@@ -119,4 +120,30 @@ test('the workspace preview is one sample subject in three views, said to be a p
   assert.match(demo, /const STEP_MS = (\d+)/)
   assert.ok(Number(/const STEP_MS = (\d+)/.exec(demo)![1]) <= 2500)
   assert.match(demo, /if \(playing\) s\.go\(step\)/)
+})
+
+test('the Telegram preview uses the bot’s own buttons and lines, in English and Hinglish, and steps quickly', async () => {
+  const demo = web('components/landing/telegram-demo.tsx')
+  const bot = readFileSync(new URL('../../../../packages/api/src/nova/telegram/telegram-replies.ts', import.meta.url), 'utf8')
+  for (const label of ['"Later"', '"Not today"', '"Pause"', '"End"', '"Open Nova"']) assert.ok(bot.includes(`label: ${label}`), label)
+  for (const label of ['Later', 'Not today', 'Pause', 'End', 'Open Nova', 'Struggled', 'Okay', 'Good', 'Crushed it']) assert.ok(demo.includes(`'${label}'`), label)
+  assert.match(bot, /How did it go\?/)
+  assert.match(bot, /Logged: \$\{ended\.minutes\} min\$\{what\}/)
+  assert.match(demo, /How did it go\?/)
+  assert.match(demo, /Logged: 25 min on Gradient descent\. Good\./)
+  assert.match(demo, /en: \{/)
+  assert.match(demo, /hi: \{/)
+  assert.match(demo, /'Hinglish'/)
+  assert.ok(Number(/const STEP_MS = (\d+)/.exec(demo)![1]) <= 3000)
+})
+
+test('the focus room and creature previews draw from the app’s own scenes, sounds and village', () => {
+  const focus = web('components/landing/focus-demo.tsx')
+  assert.match(focus, /from '@\/components\/nova\/focus\/focus-scene'/)
+  assert.match(focus, /from '@\/lib\/focus\/soundscapes'/)
+  assert.doesNotMatch(focus, /new SoundEngine/)
+  const creature = web('components/landing/creature-demo.tsx')
+  assert.match(creature, /from '@\/lib\/creature\/places'/)
+  assert.match(creature, /CREATURE_DAYS_PER_LEVEL/)
+  assert.match(creature, /the real world is 3D/)
 })
