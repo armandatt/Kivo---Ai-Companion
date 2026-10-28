@@ -8,7 +8,8 @@
 // "Passage saved."), and so is what it keeps: the passage and the page, never
 // the answer (shown in the popup, kept nowhere), which is why the takeaway
 // goes in a note ("Add to notes" opens Kivo's capture with the passage). The article is fictional, in the style of a blogging site,
-// with no real site's name. Version 1.0.0. Local state only.
+// with no real site's name, drawn in a blog's dark reading mode so it sits
+// in the page's own theme. Version 1.0.0. Local state only.
 
 import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowLeft, ArrowRight, Bookmark, Check, ChevronDown, Copy, FileText, Hand, Lock, MessageCircle, MousePointer2, Puzzle, RotateCw, Share, X } from 'lucide-react'
@@ -25,7 +26,7 @@ const OLD_WAY = ['Copy', 'New tab', 'Paste', 'Explain the context again', 'Lost 
 
 const pop = { initial: { opacity: 0, y: -6, scale: 0.98 }, animate: { opacity: 1, y: 0, scale: 1 }, exit: { opacity: 0, y: -4, scale: 0.98 }, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] as const } }
 const rise = { initial: { opacity: 0, y: 20 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: 10 }, transition: { duration: 0.3, ease: [0.22, 1, 0.36, 1] as const } }
-const card = 'kivo-dark rounded-2xl border border-white/10 bg-[#0e1017] text-white shadow-[0_30px_80px_-20px_rgba(0,0,0,0.55)]'
+const card = 'kivo-dark rounded-2xl border border-[#00E5A0]/25 bg-[#0b0d13] text-white shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8),0_0_40px_-12px_rgba(0,229,160,0.25)]'
 
 function Chip({ on, children }: { on?: boolean; children: string }) {
   return <span className={cn('rounded-full border px-2 py-0.5 text-[10px]', on ? 'border-[#00E5A0]/50 bg-[#00E5A0]/12 text-[#7ef5cf]' : 'border-white/10 text-white/50')}>{children}</span>
@@ -56,25 +57,25 @@ export function ExtensionDemo() {
           <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-white/50">Sample</span>
         </div>
 
-        <div className="relative h-[36rem] overflow-hidden bg-white md:h-[33rem]">
-          {/* The article, in a blog's reading layout */}
-          <article className="max-w-[40rem] px-6 py-7 text-[#242424] sm:px-10 md:mr-[22rem] lg:ml-8">
+        <div className="relative h-[36rem] overflow-hidden bg-[#121318] md:h-[33rem]">
+          {/* The article, in a blog's dark reading mode */}
+          <article className="max-w-[40rem] px-6 py-7 text-[#e8e8ea] sm:px-10 md:mr-[22rem] lg:ml-8">
             <h3 className="font-serif text-[1.65rem] font-bold leading-[1.15] tracking-tight sm:text-[2rem]">Attention finally makes sense</h3>
-            <p className="mt-2 font-serif text-[15px] text-[#6b6b6b]">What the “scaled” in scaled dot-product attention is for.</p>
+            <p className="mt-2 font-serif text-[15px] text-[#9a9ba3]">What the “scaled” in scaled dot-product attention is for.</p>
             <div className="mt-4 flex items-center gap-3 text-[13px]">
-              <span aria-hidden className="size-8 rounded-full bg-gradient-to-br from-[#f2c4a0] to-[#c97b63]" />
-              <span><span className="font-medium">Priya R.</span> <span className="text-[#1a8917]">· Follow</span><span className="block text-[#6b6b6b]">8 min read · 3 days ago</span></span>
+              <span aria-hidden className="size-8 rounded-full bg-gradient-to-br from-[#e8b48f] to-[#a8604c]" />
+              <span><span className="font-medium">Priya R.</span> <span className="text-[#5fd39a]">· Follow</span><span className="block text-[#8b8c94]">8 min read · 3 days ago</span></span>
             </div>
-            <div aria-hidden className="mt-4 flex items-center gap-4 border-y border-[#f0f0f0] py-2 text-[#6b6b6b]">
+            <div aria-hidden className="mt-4 flex items-center gap-4 border-y border-white/8 py-2 text-[#8b8c94]">
               <span className="flex items-center gap-1 text-[12px]"><Hand className="size-4" />2.1K</span>
               <span className="flex items-center gap-1 text-[12px]"><MessageCircle className="size-4" />48</span>
               <span className="flex-1" /><Bookmark className="size-4" /><Share className="size-4" />
             </div>
-            <p className="mt-5 font-serif text-[16px] leading-[1.7] text-[#242424]">Every query is compared with every key, and the scores become weights through a softmax.{' '}
-              <span className={cn('bg-[linear-gradient(rgba(0,229,160,0.32),rgba(0,229,160,0.32))] bg-no-repeat transition-[background-size] duration-700 ease-out', marked ? '[background-size:100%_100%]' : '[background-size:0%_100%]')}>{PASSAGE}</span>
+            <p className="mt-5 font-serif text-[16px] leading-[1.7] text-[#d4d5da]">Every query is compared with every key, and the scores become weights through a softmax.{' '}
+              <span className={cn('bg-[linear-gradient(rgba(0,229,160,0.26),rgba(0,229,160,0.26))] bg-no-repeat transition-[background-size] duration-700 ease-out', marked ? '[background-size:100%_100%]' : '[background-size:0%_100%]')}>{PASSAGE}</span>
               {' '}That one line is the whole trick.
             </p>
-            <p className="mt-4 font-serif text-[16px] leading-[1.7] text-[#242424] max-sm:hidden">Without it, bigger models would need ever smaller learning rates just to keep attention from collapsing.</p>
+            <p className="mt-4 font-serif text-[16px] leading-[1.7] text-[#d4d5da] max-sm:hidden">Without it, bigger models would need ever smaller learning rates just to keep attention from collapsing.</p>
           </article>
 
           {/* The old way, crossed out */}
@@ -113,7 +114,7 @@ export function ExtensionDemo() {
                 ) : (
                   <>
                     <div className="flex items-center gap-2.5">
-                      <span className="grid size-7 place-items-center rounded-lg bg-[#f4f1ea] text-[12px] font-bold text-[#242424]">D</span>
+                      <span className="grid size-7 place-items-center rounded-lg bg-white/90 text-[12px] font-bold text-[#121318]">D</span>
                       <span className="min-w-0"><span className="block text-[10px] text-white/45">deep-reads.example</span><span className="block truncate text-[12px] font-medium">Attention finally makes sense</span></span>
                     </div>
                     <div className="mt-2.5 grid grid-cols-2 gap-2 text-[11px]">
