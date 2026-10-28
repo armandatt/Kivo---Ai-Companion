@@ -1,17 +1,19 @@
 // The landing page's product story, in the order a visitor meets it: Nova
 // helps build the workspace, the AI-powered Second Brain (the Knowledge Map,
 // by its marketing name) shows it connected, notes and papers become
-// something to learn from, Today turns it into a day, then the rest. The
+// something to learn from, Today turns it into a day; then the loop that
+// keeps it going: Nova writes first on Telegram, the focus room holds the
+// session, and the creature's world grows with the days; then the rest. The
 // words render on the server; each preview is a client island that loads as
 // the visitor nears it (demos.tsx). Every claim is about something the app
 // does today; where something is not finished (the extension's store
 // listing), it says so.
 
 import type { ReactNode } from 'react'
-import { ArrowRight, BookOpen, Bookmark, Brain, CalendarDays, Compass, Dna, FileText, GraduationCap, KanbanSquare, KeyRound, LayoutTemplate, Map as MapIcon, Search, Send, Sparkles, Sprout, Target, Timer, TrendingUp, Briefcase } from 'lucide-react'
+import { ArrowRight, Bookmark, Brain, CalendarDays, Compass, Dna, FileText, GraduationCap, KanbanSquare, KeyRound, LayoutTemplate, Map as MapIcon, Search, Send, Sparkles, Sprout, Target, Timer, TrendingUp, Briefcase } from 'lucide-react'
 import { AuthAwareLink } from '@/components/auth-aware-link'
 import { Reveal } from './frame'
-import { LazyBuildDemo, LazyMapDemo, LazyNotesDemo, LazyPaperDemo, LazyWorkspaceDemo } from './demos'
+import { LazyBuildDemo, LazyCreatureDemo, LazyFocusDemo, LazyMapDemo, LazyNotesDemo, LazyPaperDemo, LazyTelegramDemo, LazyWorkspaceDemo } from './demos'
 
 // One continuous page: sections share the page's background (page.tsx draws
 // the light that runs down it), with no rule between them; each opens with a
@@ -130,19 +132,90 @@ export function WorkspaceSection() {
   )
 }
 
+// The loop that keeps the plan going, told as one evening: Nova writes, you
+// focus, your world grows. A thin line joins the three (StoryThread).
+function StoryThread({ from, to }: { from: string; to: string }) {
+  return (
+    <Reveal className="mx-auto flex max-w-xs items-center justify-center gap-3 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500" >
+      <span>{from}</span>
+      <span aria-hidden className="relative h-px w-16 overflow-hidden bg-white/10"><span className="story-thread absolute inset-y-0 w-6 bg-gradient-to-r from-transparent via-[#00E5A0] to-transparent" /></span>
+      <span className="text-[#7ef5cf]">{to}</span>
+    </Reveal>
+  )
+}
+
+export function MentorSection() {
+  return (
+    <section id="mentor" aria-labelledby="mentor-title" className={SECTION}>
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[30rem] bg-[radial-gradient(45%_55%_at_50%_0%,rgba(42,171,238,0.07),transparent)]" />
+      <div className="relative mx-auto max-w-6xl space-y-14">
+        <Intro id="mentor" eyebrow="Proactive mentoring · on Telegram" title="A mentor that reaches out first.">
+          Nova writes when it matters: today’s first block, a review that’s due, an exam close. Tap to start, or reply in your own words, in English or Hinglish.
+        </Intro>
+        <Reveal><LazyTelegramDemo /></Reveal>
+        <Points items={[
+          { title: 'One tap, real sessions', body: 'Start, pause and end from the chat. It’s the same session the web app shows.' },
+          { title: 'Your tone, your language', body: 'Gentle to no-mercy coach. English, Hinglish or Hindi, following how you write.' },
+          { title: 'Quiet when it should be', body: 'Not at night, not mid-session, at most twice a day. “Not today” pauses it to midnight.' },
+        ]} />
+        <p className="text-center text-sm text-slate-500">Telegram is optional: everything works on the web, and connect it while you set up, or later in Settings.</p>
+      </div>
+    </section>
+  )
+}
+
+export function FocusSection() {
+  return (
+    <section id="focus" aria-labelledby="focus-title" className={SECTION}>
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[30rem] bg-[radial-gradient(50%_60%_at_50%_0%,rgba(63,182,168,0.08),transparent)]" />
+      <div className="relative mx-auto max-w-6xl space-y-14">
+        <StoryThread from="Nova writes" to="You focus" />
+        <Intro id="focus" eyebrow="Focus room" title="A room to think in.">
+          A scene behind you, a sound you mixed, the clock in front, and everything you filed under the topic one click away.
+        </Intro>
+        <Reveal><LazyFocusDemo /></Reveal>
+        <Points items={[
+          { title: 'Five living scenes', body: 'Aurora, Rain, Night sky, Embers and Forest, drawn as you watch. Nothing to download.' },
+          { title: 'Sound you mix', body: 'Rain, café, fireplace, brown noise and more at their own volumes, or your own playlist.' },
+          { title: 'Every session counts honestly', body: 'Timed or untimed. Sessions of ten minutes or more move your progress.' },
+        ]} />
+      </div>
+    </section>
+  )
+}
+
+export function CreatureSection() {
+  return (
+    <section id="creature" aria-labelledby="creature-title" className={SECTION}>
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[30rem] bg-[radial-gradient(50%_60%_at_50%_0%,rgba(255,177,92,0.06),transparent)]" />
+      <div className="relative mx-auto max-w-6xl space-y-14">
+        <StoryThread from="You focus" to="It grows" />
+        <Intro id="creature" eyebrow="Your creature" title="A world that grows with you.">
+          Every day you study, your creature’s world grows. Days in a row open new places in its village, and every five days of study is a new level.
+        </Intro>
+        <Reveal><LazyCreatureDemo /></Reveal>
+        <Points items={[
+          { title: 'Yours alone', body: 'Your terrain grows from a seed of your own, so no two worlds are the same.' },
+          { title: 'Kind about time off', body: 'A missed week takes away some sparkle. It never brings fog.' },
+          { title: 'Never a nag', body: 'Nova doesn’t bring it up in chat. It’s there when you want to visit.' },
+        ]} />
+        <SectionCta>Start your world</SectionCta>
+      </div>
+    </section>
+  )
+}
+
 const GROUPS: Array<{ title: string; items: Array<{ icon: typeof Compass; title: string; body: string }> }> = [
   {
     title: 'Getting work done',
     items: [
       { icon: KanbanSquare, title: 'A board inside Today', body: 'To do, In progress, Done. A task joins today only when you add it.' },
       { icon: CalendarDays, title: 'Calendar', body: 'Classes, deadlines and study blocks, with repeats and Telegram reminders.' },
-      { icon: Timer, title: 'A focus room', body: 'Scenes, soundscapes and playlists, with the topic’s notes a click away.' },
     ],
   },
   {
     title: 'Wherever you learn',
     items: [
-      { icon: Send, title: 'Nova on Telegram', body: 'Start sessions, see your day, or just talk. English, Hinglish or Hindi.' },
       { icon: Bookmark, title: 'Save what you read', body: 'A bookmark sends any page to Kivo, phones included. A browser extension is built, not yet in the Chrome Web Store.' },
       { icon: Search, title: 'Find anything', body: '⌘K (Ctrl K) on Knowledge finds any subject, topic, note, page or task.' },
     ],
@@ -153,7 +226,6 @@ const GROUPS: Array<{ title: string; items: Array<{ icon: typeof Compass; title:
       { icon: TrendingUp, title: 'Progress', body: 'Built only from focus sessions of ten minutes or more.' },
       { icon: Brain, title: 'Reviews on time', body: 'How a session went sets when its topic comes back.' },
       { icon: Dna, title: 'Learning DNA', body: 'What works for you, shown once there’s enough to go on.' },
-      { icon: Sprout, title: 'Your creature', body: 'A small world that grows with the days you study.' },
     ],
   },
   {
@@ -178,7 +250,7 @@ export function Capabilities() {
             <Reveal key={g.title}>
               <div className="grid gap-5 lg:grid-cols-[12rem_minmax(0,1fr)]">
                 <h3 className="pt-1 text-sm font-semibold uppercase tracking-[0.14em] text-slate-400">{g.title}</h3>
-                <ul className={`grid gap-4 sm:grid-cols-2 ${g.items.length === 4 ? 'xl:grid-cols-4' : 'xl:grid-cols-3'}`}>
+                <ul className={`grid gap-4 sm:grid-cols-2 ${g.items.length === 2 ? '' : 'xl:grid-cols-3'}`}>
                   {g.items.map(it => (
                     <li key={it.title} className="rounded-2xl border border-white/8 bg-white/[0.02] p-5 transition-colors hover:border-[#00E5A0]/30 hover:bg-[#00E5A0]/[0.03]">
                       <it.icon aria-hidden className="size-5 text-[#00E5A0]" />
@@ -201,7 +273,9 @@ const JOURNEY = [
   { icon: MapIcon, title: 'Connect it', body: 'Subjects and topics on your second brain.', href: '#map' },
   { icon: FileText, title: 'Understand it', body: 'Notes and papers, with the Tutor.', href: '#notes' },
   { icon: Target, title: 'Shape your day', body: 'Plan today from what you know.', href: '#workspace' },
-  { icon: BookOpen, title: 'Make progress', body: 'Every finished session counts.', href: '#features' },
+  { icon: Send, title: 'Hear from Nova', body: 'A nudge when it matters, on Telegram.', href: '#mentor' },
+  { icon: Timer, title: 'Focus', body: 'A room for the session.', href: '#focus' },
+  { icon: Sprout, title: 'Watch it grow', body: 'Every day you study counts.', href: '#creature' },
 ]
 
 export function Journey() {
@@ -212,8 +286,8 @@ export function Journey() {
           Each step opens its preview above.
         </Intro>
         <Reveal>
-          <ol className="relative grid gap-4 md:grid-cols-5">
-            <span aria-hidden className="absolute left-0 right-0 top-7 hidden h-px bg-gradient-to-r from-transparent via-[#00E5A0]/30 to-transparent md:block" />
+          <ol className="relative grid gap-4 sm:grid-cols-2 md:grid-cols-4">
+            
             {JOURNEY.map((j, i) => (
               <li key={j.title} className="relative">
                 <a href={j.href} className="group block h-full rounded-2xl border border-white/8 bg-[#090c14] p-5 transition-colors hover:border-[#00E5A0]/35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00E5A0]">
