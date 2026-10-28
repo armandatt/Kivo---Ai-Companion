@@ -141,14 +141,14 @@ export function ExtensionSection() {
     <section id="extension" aria-labelledby="extension-title" className={SECTION}>
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[28rem] bg-[radial-gradient(50%_60%_at_50%_0%,rgba(0,229,160,0.07),transparent)]" />
       <div className="relative mx-auto max-w-6xl space-y-14">
-        <Intro id="extension" eyebrow="Nova for Chrome" title="Save what you read, in one click.">
-          Nova sits in your toolbar. Keep a page or a passage under the right subject and topic, ask about what you’re reading, or start studying it straight away.
+        <Intro id="extension" eyebrow="Nova for Chrome" title="A doubt mid-article? Ask it right there.">
+          No copying into a chatbot tab and losing the answer in its history. Select the line, ask Nova, keep the passage under its topic, and write down what clicked in your own notes.
         </Intro>
         <Reveal><LazyExtensionDemo /></Reveal>
         <Points items={[
-          { title: 'Only when you click', body: 'It sees the page’s address, its title and what you selected, and only when you press a button. Nothing runs in the background.' },
-          { title: 'Filed where it belongs', body: 'Pick a subject and a topic, and it waits for you in Saved and in the focus room.' },
-          { title: 'Study this', body: 'Saves the page and opens Focus, ready for a session on it.' },
+          { title: 'Ask where you read', body: 'Nova answers from the passage you selected, in a popup on the page. No new tab, no explaining the context again.' },
+          { title: 'Kept where you’ll look', body: 'The passage and its page go under your subject and topic, and come up in the focus room when you study it.' },
+          { title: 'Only when you click', body: 'It sees the address, the title and your selection, and only when you press a button. Nothing runs in the background.' },
         ]} />
         <div className="flex flex-col items-center gap-3">
           {CHROME_STORE_URL ? (

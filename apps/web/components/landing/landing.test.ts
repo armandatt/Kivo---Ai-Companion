@@ -148,14 +148,20 @@ test('the focus room and creature previews draw from the app’s own scenes, sou
   assert.match(creature, /the real world is 3D/)
 })
 
-test('the extension preview uses the popup’s own words and shows only what version 1.0.0 does', () => {
+test('the extension preview uses the popup’s own words, keeps only what it really keeps, and shows only version 1.0.0', () => {
   const demo = web('components/landing/extension-demo.tsx')
   const popup = readFileSync(new URL('../../../extension/src/popup.js', import.meta.url), 'utf8')
-  for (const words of ['Save to Nova', 'Study this', 'Save selection', 'Ask Nova', 'Passage saved.']) {
+  for (const words of ['Your selection', 'Save selection', 'Add to notes', 'Ask Nova', 'Passage saved.', 'Open saved pages', 'What do you want to know?']) {
     assert.ok(popup.includes(`'${words}'`), `the popup doesn't say ${words}`)
     assert.ok(demo.includes(words), `the preview doesn't say ${words}`)
   }
   assert.doesNotMatch(demo, /[Ss]creenshot/)
+  // The answer is shown in the popup and kept nowhere, so the takeaway goes in a note.
+  assert.match(popup, /the answer is shown here and kept nowhere/)
+  assert.match(demo, /Sent from the Nova extension\. Check it, then save\./)
+  assert.match(web('components/nova/notes/note-capture.tsx'), /Sent \{via === 'extension' \? 'from the Nova extension'/)
+  assert.match(popup, /'It is on your Saved list in Nova, with the page it came from\.'/)
+  assert.ok(demo.includes('It is on your Saved list in Nova, with the page it came from.'))
   // An outside link only to the store, opened safely.
   const sections = web('components/landing/sections.tsx')
   assert.match(sections, /const CHROME_STORE_URL: string \| null = (null|'https:\/\/chromewebstore\.google\.com\/detail\/[^']+')/)
