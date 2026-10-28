@@ -1,7 +1,8 @@
 // The landing page's product story, in the order a visitor meets it: Nova
 // helps build the workspace, the AI-powered Second Brain (the Knowledge Map,
 // by its marketing name) shows it connected, notes and papers become
-// something to learn from, Today turns it into a day; then the loop that
+// something to learn from, anything read on the web is a click away (Nova
+// for Chrome), Today turns it into a day; then the loop that
 // keeps it going: Nova writes first on Telegram, the focus room holds the
 // session, and the creature's world grows with the days; then the rest. The
 // words render on the server; each preview is a client island that loads as
@@ -10,10 +11,10 @@
 // listing), it says so.
 
 import type { ReactNode } from 'react'
-import { ArrowRight, Bookmark, Brain, CalendarDays, Compass, Dna, FileText, GraduationCap, KanbanSquare, KeyRound, LayoutTemplate, Map as MapIcon, Search, Send, Sparkles, Sprout, Target, Timer, TrendingUp, Briefcase } from 'lucide-react'
+import { ArrowRight, Bookmark, Brain, CalendarDays, Compass, Dna, FileText, GraduationCap, KanbanSquare, KeyRound, LayoutTemplate, Map as MapIcon, Puzzle, Search, Send, Sparkles, Sprout, Target, Timer, TrendingUp, Briefcase } from 'lucide-react'
 import { AuthAwareLink } from '@/components/auth-aware-link'
 import { Reveal } from './frame'
-import { LazyBuildDemo, LazyCreatureDemo, LazyFocusDemo, LazyMapDemo, LazyNotesDemo, LazyPaperDemo, LazyTelegramDemo, LazyWorkspaceDemo } from './demos'
+import { LazyBuildDemo, LazyCreatureDemo, LazyExtensionDemo, LazyFocusDemo, LazyMapDemo, LazyNotesDemo, LazyPaperDemo, LazyTelegramDemo, LazyWorkspaceDemo } from './demos'
 
 // One continuous page: sections share the page's background (page.tsx draws
 // the light that runs down it), with no rule between them; each opens with a
@@ -132,6 +133,37 @@ export function WorkspaceSection() {
   )
 }
 
+// Nova for Chrome's listing. Until it is set, the button leads to sign-up.
+const CHROME_STORE_URL: string | null = null
+
+export function ExtensionSection() {
+  return (
+    <section id="extension" aria-labelledby="extension-title" className={SECTION}>
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[28rem] bg-[radial-gradient(50%_60%_at_50%_0%,rgba(0,229,160,0.07),transparent)]" />
+      <div className="relative mx-auto max-w-6xl space-y-14">
+        <Intro id="extension" eyebrow="Nova for Chrome" title="Save what you read, in one click.">
+          Nova sits in your toolbar. Keep a page or a passage under the right subject and topic, ask about what you’re reading, or start studying it straight away.
+        </Intro>
+        <Reveal><LazyExtensionDemo /></Reveal>
+        <Points items={[
+          { title: 'Only when you click', body: 'It sees the page’s address, its title and what you selected, and only when you press a button. Nothing runs in the background.' },
+          { title: 'Filed where it belongs', body: 'Pick a subject and a topic, and it waits for you in Saved and in the focus room.' },
+          { title: 'Study this', body: 'Saves the page and opens Focus, ready for a session on it.' },
+        ]} />
+        <div className="flex flex-col items-center gap-3">
+          {CHROME_STORE_URL ? (
+            <a href={CHROME_STORE_URL} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-full bg-[#00E5A0] px-5 py-2.5 text-sm font-semibold text-[#04130e] transition-colors hover:bg-[#33ebb3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00E5A0]">
+              Add Nova to Chrome <ArrowRight aria-hidden className="size-4" />
+            </a>
+          ) : <SectionCta>Get Nova for Chrome</SectionCta>}
+          <p className="text-sm text-slate-500">Free on the Chrome Web Store. Connect it with a code from your Kivo account. On a phone, a bookmark saves any page too.</p>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 // The loop that keeps the plan going, told as one evening: Nova writes, you
 // focus, your world grows. A thin line joins the three (StoryThread).
 function StoryThread({ from, to }: { from: string; to: string }) {
@@ -216,7 +248,7 @@ const GROUPS: Array<{ title: string; items: Array<{ icon: typeof Compass; title:
   {
     title: 'Wherever you learn',
     items: [
-      { icon: Bookmark, title: 'Save what you read', body: 'A bookmark sends any page to Kivo, phones included. A browser extension is built, not yet in the Chrome Web Store.' },
+      { icon: Bookmark, title: 'Save from your phone', body: 'A bookmark sends any page to Kivo from any browser, phones included.' },
       { icon: Search, title: 'Find anything', body: '⌘K (Ctrl K) on Knowledge finds any subject, topic, note, page or task.' },
     ],
   },
@@ -272,6 +304,7 @@ const JOURNEY = [
   { icon: Compass, title: 'Set it up with Nova', body: 'Share a goal; approve the structure.', href: '#build' },
   { icon: MapIcon, title: 'Connect it', body: 'Subjects and topics on your second brain.', href: '#map' },
   { icon: FileText, title: 'Understand it', body: 'Notes and papers, with the Tutor.', href: '#notes' },
+  { icon: Puzzle, title: 'Save as you read', body: 'One click from any page, with Nova for Chrome.', href: '#extension' },
   { icon: Target, title: 'Shape your day', body: 'Plan today from what you know.', href: '#workspace' },
   { icon: Send, title: 'Hear from Nova', body: 'A nudge when it matters, on Telegram.', href: '#mentor' },
   { icon: Timer, title: 'Focus', body: 'A room for the session.', href: '#focus' },

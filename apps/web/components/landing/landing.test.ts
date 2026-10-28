@@ -9,7 +9,7 @@ import { insideOf } from '../nova/knowledge-map/explore'
 import { DEMO_EDGES, DEMO_NODES } from './demo-map-data'
 
 const web = (file: string) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8')
-const DEMOS = ['hero', 'hero-sparkles', 'map-demo', 'build-demo', 'notes-demo', 'workspace-demo', 'telegram-demo', 'focus-demo', 'creature-demo', 'frame', 'demos'].map(f => [f, web(`components/landing/${f}.tsx`)] as const)
+const DEMOS = ['hero', 'hero-sparkles', 'map-demo', 'build-demo', 'notes-demo', 'workspace-demo', 'telegram-demo', 'focus-demo', 'creature-demo', 'extension-demo', 'frame', 'demos'].map(f => [f, web(`components/landing/${f}.tsx`)] as const)
 
 test('the sample map is laid out by the real map engine: every card placed, a tree under each subject', () => {
   const layout = layoutMap(DEMO_NODES, DEMO_EDGES.filter(e => TREE_EDGES.has(e.kind)))
@@ -53,12 +53,12 @@ test('the paper sources the page names are the ones the importer recognises', ()
   }
 })
 
-test('the hero says Kivo is a learning OS with a second brain, and nothing promises a store listing that does not exist', () => {
+test('the hero says Kivo is a learning OS with a second brain, and the extension is no longer called unlisted', () => {
   const hero = web('components/landing/hero.tsx')
   assert.match(hero, /AI-powered second brain/)
   assert.match(hero, /Your learning OS, <\/span><span[^>]*>with a second brain\./)
   assert.match(hero, /href="#build"/)
-  assert.match(web('components/landing/sections.tsx'), /not yet in the Chrome Web Store/)
+  assert.doesNotMatch(web('components/landing/sections.tsx'), /not yet in the Chrome Web Store/)
 })
 
 test('the robot stands where the original hero had it: its own column, a 520px stage, floating on botFloat', () => {
@@ -72,7 +72,7 @@ test('the robot stands where the original hero had it: its own column, a 520px s
   assert.doesNotMatch(hero, /AppWindow/)
   const page = web('app/page.tsx')
   const at = (s: string) => page.indexOf(s)
-  const order = ['<LandingHero />', '<BuildSection />', '<MapSection />', '<WorkspaceSection />', '<NotesSection />', '<MentorSection />', '<FocusSection />', '<CreatureSection />', '<Capabilities />']
+  const order = ['<LandingHero />', '<BuildSection />', '<MapSection />', '<WorkspaceSection />', '<NotesSection />', '<ExtensionSection />', '<MentorSection />', '<FocusSection />', '<CreatureSection />', '<Capabilities />']
   for (let i = 1; i < order.length; i++) assert.ok(at(order[i - 1]!) >= 0 && at(order[i - 1]!) < at(order[i]!), `${order[i - 1]} before ${order[i]}`)
 })
 
@@ -102,7 +102,7 @@ test('motion is quick: the hero settles in well under half a second, reveals in 
   const delays = [...web('components/landing/hero.tsx').matchAll(/animationDelay: '(\d+)ms'/g)].map(m => Number(m[1]))
   assert.ok(Math.max(...delays) <= 200, `hero delays ${delays}`)
   assert.match(web('components/landing/frame.tsx'), /duration-300 ease/)
-  for (const f of ['build-demo', 'notes-demo', 'map-demo', 'workspace-demo', 'telegram-demo', 'focus-demo', 'creature-demo']) {
+  for (const f of ['build-demo', 'notes-demo', 'map-demo', 'workspace-demo', 'telegram-demo', 'focus-demo', 'creature-demo', 'extension-demo']) {
     const src = web(`components/landing/${f}.tsx`)
     for (const m of src.matchAll(/useStory\([^,]+, (\d+)\)/g)) assert.ok(Number(m[1]) <= 3000, `${f} steps every ${m[1]} ms`)
     for (const m of src.matchAll(/duration: (?:reduced \? 0 : )?(\d*\.?\d+)/g)) assert.ok(Number(m[1]) <= 0.35, `${f} has a ${m[1]} s transition`)
@@ -146,4 +146,18 @@ test('the focus room and creature previews draw from the app’s own scenes, sou
   assert.match(creature, /from '@\/lib\/creature\/places'/)
   assert.match(creature, /CREATURE_DAYS_PER_LEVEL/)
   assert.match(creature, /the real world is 3D/)
+})
+
+test('the extension preview uses the popup’s own words and shows only what version 1.0.0 does', () => {
+  const demo = web('components/landing/extension-demo.tsx')
+  const popup = readFileSync(new URL('../../../extension/src/popup.js', import.meta.url), 'utf8')
+  for (const words of ['Save to Nova', 'Study this', 'Save selection', 'Ask Nova', 'Passage saved.']) {
+    assert.ok(popup.includes(`'${words}'`), `the popup doesn't say ${words}`)
+    assert.ok(demo.includes(words), `the preview doesn't say ${words}`)
+  }
+  assert.doesNotMatch(demo, /[Ss]creenshot/)
+  // An outside link only to the store, opened safely.
+  const sections = web('components/landing/sections.tsx')
+  assert.match(sections, /const CHROME_STORE_URL: string \| null = (null|'https:\/\/chromewebstore\.google\.com\/detail\/[^']+')/)
+  assert.match(sections, /href=\{CHROME_STORE_URL\} target="_blank" rel="noopener noreferrer"/)
 })
