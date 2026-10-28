@@ -1,6 +1,6 @@
 import { Header } from "@/components/header"
 import { LandingHero } from "@/components/landing/hero"
-import { BuildSection, Capabilities, CreatureSection, FocusSection, Journey, MapSection, MentorSection, NotesSection, UseCases, WorkspaceSection } from "@/components/landing/sections"
+import { BuildSection, Capabilities, CreatureSection, ExtensionSection, FocusSection, Journey, MapSection, MentorSection, NotesSection, UseCases, WorkspaceSection } from "@/components/landing/sections"
 import { Pricing } from "@/components/pricing"
 import { FAQ } from "@/components/faq"
 import { FinalCTA } from "@/components/final-cta"
@@ -9,7 +9,7 @@ import { Footer } from "@/components/footer"
 // The landing page tells one story: Kivo is a learning OS with an AI-powered
 // second brain. Nova builds it with you, the map is the second brain itself, then
 // one topic seen whole (mapped, understood and planned), learning from notes and
-// papers, then the loop that keeps it going (Nova writes first on Telegram,
+// papers, saving what you read (Nova for Chrome), then the loop that keeps it going (Nova writes first on Telegram,
 // the focus room, the creature's world), then the rest. The sections share one background, lit down the page. Each product section has a working sample
 // preview (components/landing); they run in the browser and save nothing.
 export default function Home() {
@@ -27,6 +27,7 @@ export default function Home() {
         <MapSection />
         <WorkspaceSection />
         <NotesSection />
+        <ExtensionSection />
         <MentorSection />
         <FocusSection />
         <CreatureSection />
