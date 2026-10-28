@@ -12,11 +12,13 @@
 //                         [!definition], [!note]. A + or - after ] makes it
 //                         foldable (- starts folded).
 //   ```                   a block of code
-//   $$ … $$               maths on lines of its own (LaTeX), kept as written;
+//   $$ … $$  or  \[ … \]  maths on lines of its own (LaTeX), kept as written;
 //                         text after the closing $$ is its number, "(1)"
+//   ![caption](kivo-image:id)  an image in the note (a capture from a PDF),
+//                         on a line of its own; only Kivo's own images are drawn
 //   > [!paper] Title      an imported research paper's card (paper-source.ts)
 // Inside a line (inlineTokens): **bold**, *italic*, ==highlight==, `code`,
-// #tag, $maths$ and bare web addresses. [[Links]] are read first, by note-links.ts.
+// #tag, $maths$, \(maths\), $$maths$$ (shown as a display) and bare web addresses. [[Links]] are read first, by note-links.ts.
 
 export type CalloutType = 'note' | 'quote' | 'idea' | 'question' | 'warning' | 'summary' | 'example' | 'definition' | 'takeaway' | 'paper'
 
@@ -30,6 +32,7 @@ export type Block = Span & (
   | { kind: 'list'; ordered: boolean; items: string[] }
   | { kind: 'code'; text: string }
   | { kind: 'math'; tex: string; tag: string | null }
+  | { kind: 'image'; alt: string; id: string }
   | { kind: 'quote'; lines: string[] }
   | { kind: 'rule' }
   | { kind: 'table'; head: string[]; rows: string[][] }
@@ -163,6 +166,28 @@ function parseLines(lines: string[], uniqueId: (text: string) => string, starts?
       continue
     }
 
+    // \[ … \]: the same, in LaTeX's own brackets.
+    if (trimmed.startsWith('\\[')) {
+      flush(i)
+      const from = i
+      const first = trimmed.trimEnd().slice(2)
+      const closeOnLine = first.indexOf('\\]')
+      if (closeOnLine !== -1) {
+        blocks.push({ kind: 'math', tex: first.slice(0, closeOnLine).trim(), tag: first.slice(closeOnLine + 2).trim() || null, ...span(i, i) })
+        continue
+      }
+      const tex: string[] = first.trim() ? [first.trim()] : []
+      i++
+      while (i < lines.length && !lines[i]!.trimStart().startsWith('\\]')) tex.push(lines[i++]!)
+      const close = i < lines.length ? lines[i]!.trim().slice(2).trim() : ''
+      blocks.push({ kind: 'math', tex: tex.join('\n').trim(), tag: close || null, ...span(from, Math.min(i, lines.length - 1)) })
+      continue
+    }
+
+    // An image of the learner's own, on a line of its own.
+    const image = imageLine(trimmed)
+    if (image) { flush(i); blocks.push({ kind: 'image', ...image, ...span(i, i) }); continue }
+
     if (trimmed.startsWith('>')) {
       flush(i)
       // Every > line that follows belongs to this quote or callout.
@@ -224,10 +249,26 @@ export function outline(blocks: Block[]): Array<{ level: 1 | 2 | 3; text: string
   return blocks.flatMap(b => b.kind === 'heading' ? [{ level: b.level, text: b.text, id: b.id }] : [])
 }
 
+// "![Figure 2 · p. 4](kivo-image:abc123)" → { alt, id }. Any other image
+// address stays text: a note never loads an image from another site.
+export const IMAGE_SCHEME = 'kivo-image:'
+export function imageLine(line: string): { alt: string; id: string } | null {
+  const t = line.trim()
+  if (!t.startsWith('![') || !t.endsWith(')')) return null
+  const mid = t.indexOf('](')
+  if (mid === -1) return null
+  const ref = t.slice(mid + 2, -1).trim()
+  if (!ref.startsWith(IMAGE_SCHEME)) return null
+  const id = ref.slice(IMAGE_SCHEME.length)
+  return /^[a-z0-9]{8,40}$/i.test(id) ? { alt: t.slice(2, mid).trim(), id } : null
+}
+export const imageMarkdown = (alt: string, id: string) => `![${alt.split(']').join(')').split('\n').join(' ').trim()}](${IMAGE_SCHEME}${id})`
+
 // ── Inside a line ────────────────────────────────────────────────────────────
 
 export type InlineToken =
-  | { kind: 'text' | 'bold' | 'italic' | 'highlight' | 'code' | 'tag' | 'math'; text: string }
+  | { kind: 'text' | 'bold' | 'italic' | 'highlight' | 'code' | 'tag'; text: string }
+  | { kind: 'math'; text: string; display?: boolean }
   | { kind: 'url'; text: string; href: string }
 
 function safeUrl(raw: string): string | null {
@@ -268,12 +309,23 @@ export function inlineTokens(text: string): InlineToken[] {
       end = text.indexOf('`', i + 1)
       if (end > i + 1) { push({ kind: 'code', text: text.slice(i + 1, end) }, end + 1); continue }
     }
+    // $$maths$$ inside a line: drawn as a display, where it is.
+    if (text.startsWith('$$', i) && text[i - 1] !== '\\') {
+      end = text.indexOf('$$', i + 2)
+      if (end > i + 2) { push({ kind: 'math', text: text.slice(i + 2, end).trim(), display: true }, end + 2); continue }
+    }
+    // \(maths\): LaTeX's own inline brackets.
+    if (text.startsWith('\\(', i)) {
+      end = text.indexOf('\\)', i + 2)
+      if (end > i + 2) { push({ kind: 'math', text: text.slice(i + 2, end).trim() }, end + 2); continue }
+    }
     // $maths$: the marks hug the maths, and a closing $ before a digit is a
     // price ("$5 and $10" stays as written). \$ is a dollar sign.
     if (text[i] === '$' && text[i - 1] !== '\\' && text[i + 1] !== '$' && text[i + 1] !== ' ' && text[i + 1] !== undefined) {
       end = text.indexOf('$', i + 1)
       while (end !== -1 && text[end - 1] === '\\') end = text.indexOf('$', end + 1)
-      if (end > i + 1 && text[end - 1] !== ' ' && !isDigit(text[end + 1])) { push({ kind: 'math', text: text.slice(i + 1, end) }, end + 1); continue }
+      // Never across a `code` span: "$10, and `$x$`" is a price and some code.
+      if (end > i + 1 && text[end - 1] !== ' ' && !isDigit(text[end + 1]) && !text.slice(i, end).includes('`')) { push({ kind: 'math', text: text.slice(i + 1, end) }, end + 1); continue }
     }
     // #tag: at the start of a word, a letter first. "C#" and "#1" stay text.
     if (text[i] === '#' && (i === 0 || text[i - 1] === ' ' || text[i - 1] === '(') && isWordChar(text[i + 1]) && !isDigit(text[i + 1])) {

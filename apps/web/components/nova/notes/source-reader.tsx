@@ -1,7 +1,9 @@
 'use client'
 
-// The source beside a note: a paper's PDF in the browser's own PDF viewer
-// (its toolbar zooms and moves between pages), or the page the note names.
+// The source beside a note: a paper's PDF in Kivo's own reader
+// (pdf-reader.tsx: its own zoom and pages, selection, highlights and
+// captures), or, when the file's site doesn't let it be read that way, in the
+// browser's own PDF viewer; or the page the note names.
 // Before showing a frame it asks the server whether the source allows one
 // (POST /api/nova/notes/source-frame, product/source-frame.ts): a refused
 // frame stays blank in the browser without saying why, so the pane says it
@@ -11,9 +13,10 @@
 // The page keeps this mounted while it is hidden, so closing and reopening
 // the pane comes back to the same place in the paper.
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ExternalLink, FileText, Loader2, Maximize2, Minimize2, Quote, X } from 'lucide-react'
 import type { NoteSource } from './note-blocks'
+import { PdfReader, type Taken } from './pdf-reader'
 
 type Verdict = 'pdf' | 'page' | 'blocked' | 'download' | 'unreachable'
 
@@ -34,23 +37,32 @@ async function check(url: string): Promise<Verdict> {
 
 const btn = 'inline-flex size-8 items-center justify-center rounded-lg text-subtle transition-colors hover:bg-white/6 hover:text-foreground'
 
-export function SourceReader({ source, wide, onWide, onClose }: {
+export function SourceReader({ source, wide, onWide, onClose, onTake }: {
   source: NoteSource
   wide: boolean
   onWide: () => void
   onClose: () => void
+  // A passage or capture taken from the PDF, for a note.
+  onTake?: (t: Taken) => void
 }) {
   const [verdict, setVerdict] = useState<Verdict | null>(null)
   const [anyway, setAnyway] = useState(false)
+  // Why Kivo's reader couldn't open the file, when it couldn't.
+  const [readerFailed, setReaderFailed] = useState<string | null>(null)
+  const fail = useCallback((why: string) => setReaderFailed(why), [])
   useEffect(() => {
     let live = true
-    setVerdict(null); setAnyway(false)
+    setVerdict(null); setAnyway(false); setReaderFailed(null)
     if (!source.view.startsWith('https://')) { setVerdict('unreachable'); return }
     void check(source.view).then(v => { if (live) setVerdict(v) })
     return () => { live = false }
   }, [source.view])
 
   const pdf = verdict === 'pdf' || (verdict !== 'page' && source.pdf)
+  // Kivo's reader first, for any PDF over https: it needs the file's site to
+  // allow the browser to read it, which is its own permission, apart from
+  // whether it may be framed.
+  const ownReader = !!onTake && source.view.startsWith('https://') && (source.pdf || verdict === 'pdf') && verdict !== 'page' && !readerFailed
   const showFrame = verdict === 'pdf' || verdict === 'page' || (verdict === 'unreachable' && anyway)
   const Icon = pdf ? FileText : Quote
   const kind = pdf ? 'PDF' : 'page'
@@ -67,13 +79,21 @@ export function SourceReader({ source, wide, onWide, onClose }: {
         <button type="button" onClick={onClose} className={btn} title="Close (Esc). It stays where you left it." aria-label="Close the reader" data-reader-close><X className="size-3.5" /></button>
       </div>
 
-      {verdict === null && (
+      {ownReader && <PdfReader url={source.view} docKey={source.view} onTake={onTake!} onFail={fail} />}
+
+      {!ownReader && readerFailed && (
+        <p className="shrink-0 border-b border-amber-300/20 bg-amber-300/[0.05] px-3 py-1.5 text-[11px] leading-relaxed text-amber-100/85" role="status" data-reader-fallback>
+          {readerFailed} Shown in the browser&apos;s own viewer instead: selecting into notes, highlights and captures aren&apos;t available there.
+        </p>
+      )}
+
+      {!ownReader && verdict === null && (
         <div className="grid flex-1 place-items-center text-xs text-subtle" role="status" data-reader-state="checking">
           <span className="inline-flex items-center gap-2"><Loader2 aria-hidden className="size-4 animate-spin" /> Opening the {kind}…</span>
         </div>
       )}
 
-      {showFrame && (
+      {!ownReader && showFrame && (
         <>
           {/* A web page is sandboxed: it can't navigate this tab or open
               dialogs. A PDF can't be: the browser's PDF viewer does not run in
@@ -87,7 +107,7 @@ export function SourceReader({ source, wide, onWide, onClose }: {
         </>
       )}
 
-      {verdict !== null && !showFrame && (
+      {!ownReader && verdict !== null && !showFrame && (
         <div className="flex flex-1 flex-col items-start gap-3 overflow-y-auto px-5 py-6 text-sm leading-relaxed text-foreground/75" role="status" data-reader-state={verdict}>
           <p className="font-medium text-foreground">
             {verdict === 'blocked' ? `${source.label} doesn’t allow its ${kind} to be shown inside another site.`

@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { NoteSummary } from '@repo/api/nova/product/notes.types'
-import { calloutHeader, inlineTokens, outline, parseBlocks as parseWithSpans, sourceOf, tagsOf, wordCount, type Block } from './note-blocks'
+import { calloutHeader, imageLine, imageMarkdown, inlineTokens, outline, parseBlocks as parseWithSpans, sourceOf, tagsOf, wordCount, type Block } from './note-blocks'
+import { drawTex } from './math'
 import { callout, divider, noteLink, prefixLines, tag, wrap } from './note-format'
 import { filterNotes, groupNotes } from './notes-tree-data'
 
@@ -181,4 +182,46 @@ test('a paper card is a paper callout, and its Source line opens beside the note
   assert.equal(card!.kind === 'callout' && card.type, 'paper')
   assert.deepEqual(sourceOf(body), { url: 'https://arxiv.org/abs/1706.03762', view: 'https://arxiv.org/pdf/1706.03762', label: 'arxiv.org', pdf: true })
   assert.equal(calloutHeader('[!takeaways] Key points')?.type, 'takeaway')
+})
+
+test('maths in LaTeX brackets (square for a block, round inline), and $$ … $$ inside a line drawn as a display', () => {
+  const [b] = parseBlocks('\\[\n\\begin{aligned} a &= b + c \\\\ &= d \\end{aligned}\n\\]')
+  assert.deepEqual(b, { kind: 'math', tex: '\\begin{aligned} a &= b + c \\\\ &= d \\end{aligned}', tag: null })
+  assert.deepEqual(parseBlocks('\\[ x^2 \\] (2)')[0], { kind: 'math', tex: 'x^2', tag: '(2)' })
+  const t = inlineTokens('Energy \\(E = mc^2\\) and $$\\int_0^1 x\\,dx$$ here, code `$x$` stays code.')
+  assert.deepEqual(t.filter(x => x.kind === 'math'), [{ kind: 'math', text: 'E = mc^2' }, { kind: 'math', text: '\\int_0^1 x\\,dx', display: true }])
+  assert.ok(t.some(x => x.kind === 'code' && x.text === '$x$'))
+  // Ordinary prose and prices are untouched, also before some code.
+  assert.ok(inlineTokens('It costs $5 (or $10).').every(x => x.kind === 'text'))
+  const priced = inlineTokens('A price of $5 and $10, and `$x$` in code.')
+  assert.ok(!priced.some(x => x.kind === 'math') && priced.some(x => x.kind === 'code' && x.text === '$x$'))
+})
+
+test('equations are drawn: fractions, roots, sub/superscripts, Greek, matrices, aligned lines, vectors and units', () => {
+  for (const tex of ['\\frac{a}{b} + \\sqrt[3]{x}', 'x_i^{2} + \\alpha\\beta\\gamma \\le \\sum_{n=1}^{\\infty} \\frac{1}{n^2}',
+    '\\begin{pmatrix} 1 & 0 \\\\ 0 & 1 \\end{pmatrix}', '\\begin{aligned} F &= ma \\\\ &= m\\frac{dv}{dt} \\end{aligned}',
+    '\\vec{F} = q(\\vec{E} + \\vec{v} \\times \\vec{B})', '\\pu{9.81 m/s^2}', '\\ce{2H2 + O2 -> 2H2O}', '\\hbar \\nabla^2 \\psi']) {
+    const d = drawTex(tex, true)
+    assert.ok(d.ok, `${tex}: ${d.ok ? '' : d.error}`)
+    assert.match(d.ok ? d.html : '', /class="katex/)
+  }
+})
+
+test('LaTeX that cannot be drawn keeps its source and says why; nothing in it becomes a link or markup', () => {
+  const bad = drawTex('\\frac{a', false)
+  assert.equal(bad.ok, false)
+  assert.ok(!bad.ok && bad.error.length > 0)
+  const link = drawTex('\\href{javascript:alert(1)}{x}', false)
+  assert.ok(!link.ok || !/<a\b|href=/.test(link.html))
+  const html = drawTex('<script>alert(1)</script>', false)
+  assert.ok(!html.ok || !/<script/.test(html.html))
+})
+
+test('an image line is drawn only for Kivo\'s own images; any other address stays text', () => {
+  assert.deepEqual(imageLine('![Figure 2 · p. 4](kivo-image:ckabc12345)'), { alt: 'Figure 2 · p. 4', id: 'ckabc12345' })
+  assert.equal(imageLine('![x](https://evil.example/pixel.png)'), null)
+  assert.equal(imageLine('![x](kivo-image:../../etc)'), null)
+  assert.equal(parseBlocks('Text\n\n![Fig](kivo-image:ckabc12345)\n\nMore')[1]!.kind, 'image')
+  assert.equal(parseBlocks('![x](https://evil.example/a.png)')[0]!.kind, 'para')
+  assert.equal(imageMarkdown('A ] tricky\ncaption', 'ckabc12345'), '![A ) tricky caption](kivo-image:ckabc12345)')
 })

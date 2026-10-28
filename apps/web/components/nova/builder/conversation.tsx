@@ -2,9 +2,8 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, Check, CircleSlash, FileText, LayoutTemplate, Loader2, MoreHorizontal, Paperclip, RotateCcw, Trash2, X } from 'lucide-react'
-import { FILE_TYPES, FILES_MAX, FILES_TOTAL_BYTES, encodeFile } from '@/components/nova/templates/templates-api'
-import { SHRINK_OVER_BYTES, imagesOnClipboard, pastedName, shrunkSize } from './paste'
+import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, Check, CircleSlash, FileText, LayoutTemplate, Loader2, MoreHorizontal, Paperclip, RotateCcw, Trash2 } from 'lucide-react'
+import { ACCEPT, AttachmentTray, useAttachments, useDropZone, type Upload } from '../attachments'
 import { builderOpening } from '@repo/api/nova/product/greetings'
 import { ACTION_WORDS } from '@repo/api/nova/product/builder-state'
 import type { BuilderAction, BuilderMessage, BuilderOffer, DraftListItem, DraftView } from '@repo/api/nova/product/builder.types'
@@ -100,19 +99,26 @@ function RevealText({ text }: { text: string }) {
   return <div aria-hidden={shown < words.current.length}><FormattedText text={words.current.slice(0, shown).join(' ')} /></div>
 }
 
-function Files({ files }: { files: NonNullable<BuilderMessage['files']> }) {
+// What was sent with a message. A message on its way shows its images; a
+// stored one names its files (Kivo keeps no copy to show).
+type Shared = NonNullable<BuilderMessage['files']>[number] & { preview?: string }
+function Files({ files }: { files: Shared[] }) {
   return (
     <ul className="flex max-w-[85%] flex-wrap justify-end gap-1.5" aria-label="Shared files">
       {files.map(f => (
-        <li key={f.name} className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-card px-2 py-1 text-xs text-foreground/85" data-shared={f.name}>
-          <FileText aria-hidden className="size-3.5 text-action-ink" /><span className="max-w-56 truncate">{f.name}</span>{f.pages ? <span className="text-subtle">{f.pages} pages</span> : null}
+        <li key={f.name} className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-card py-1 pl-1 pr-2 text-xs text-foreground/85" data-shared={f.name}>
+          {f.preview
+            // eslint-disable-next-line @next/next/no-img-element -- the learner's own image, on its way, never fetched
+            ? <img src={f.preview} alt="" className="size-8 rounded object-cover" />
+            : <span className="grid size-6 place-items-center"><FileText aria-hidden className="size-3.5 text-action-ink" /></span>}
+          <span className="max-w-56 truncate">{f.name}</span>{f.pages ? <span className="text-subtle">{f.pages} pages</span> : null}
         </li>
       ))}
     </ul>
   )
 }
 
-function UserMessage({ text, files, sending }: { text: string; files?: BuilderMessage['files']; sending?: boolean }) {
+function UserMessage({ text, files, sending }: { text: string; files?: Shared[]; sending?: boolean }) {
   return (
     <div className={cn('flex flex-col items-end gap-1.5', sending && 'opacity-70')} data-role="user">
       {files && files.length > 0 && <Files files={files} />}
@@ -185,44 +191,24 @@ function FailureCard({ state }: { state: DraftState }) {
 
 // ── The composer ──────────────────────────────────────────────────────────────
 
-// A file chosen in the composer, encoded for the request.
-export type Upload = { name: string; data: string; size: number; type: string }
+// A file chosen in the composer, encoded for the request (attachments.tsx).
+export type { Upload } from '../attachments'
 
-// A PNG, JPEG or WebP larger than SHRINK_OVER_BYTES, scaled to fit and sent
-// as a JPEG; anything else, or a browser that can't, as it is.
-async function shrinkImage(file: File): Promise<File> {
-  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size <= SHRINK_OVER_BYTES || typeof createImageBitmap !== 'function') return file
-  try {
-    const bitmap = await createImageBitmap(file)
-    const size = shrunkSize(bitmap.width, bitmap.height)
-    const canvas = document.createElement('canvas')
-    canvas.width = size.width; canvas.height = size.height
-    canvas.getContext('2d')?.drawImage(bitmap, 0, 0, size.width, size.height)
-    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85))
-    if (!blob || blob.size >= file.size) return file
-    const base = file.name.includes('.') ? file.name.slice(0, file.name.lastIndexOf('.')) : file.name
-    return new File([blob], `${base}.jpg`, { type: 'image/jpeg' })
-  } catch {
-    return file
-  }
-}
 // Text put in the message box from elsewhere on the page (a hint, an
 // example, a suggestion); n changes each time, so the same text can be put twice.
 export type Seed = { text: string; n: number }
-
-const ACCEPT = 'application/pdf,image/png,image/jpeg,image/webp,.pdf,.png,.jpg,.jpeg,.webp'
-const kb = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`)
 
 export function Composer({ onSend, disabled, placeholder, seed, hint }: {
   onSend: (text: string, files: Upload[]) => Promise<boolean>; disabled: boolean; placeholder: string; seed?: Seed | null; hint?: React.ReactNode
 }) {
   const [text, setText] = useState('')
-  const [files, setFiles] = useState<Upload[]>([])
-  const [fileError, setFileError] = useState<string | null>(null)
-  const [dragging, setDragging] = useState(false)
+  const files = useAttachments()
   const [sending, setSending] = useState(false)
   const ref = useRef<HTMLTextAreaElement>(null)
+  const form = useRef<HTMLFormElement>(null)
   const picker = useRef<HTMLInputElement>(null)
+  // A file dropped anywhere on the conversation is attached.
+  const drop = useDropZone(form, list => files.add(list), !disabled)
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
@@ -240,79 +226,47 @@ export function Composer({ onSend, disabled, placeholder, seed, hint }: {
     requestAnimationFrame(() => { const n = el.value.length; el.setSelectionRange(n, n) })
   }, [seed])
 
-  // Checked here only to save a wasted upload; the server checks the bytes.
-  // A big photo is made smaller first, so a screenshot fits what a message takes.
-  async function add(list: FileList | File[]) {
-    setFileError(null)
-    const next = [...files]
-    for (const raw of Array.from(list)) {
-      const f = await shrinkImage(raw)
-      if (!FILE_TYPES.includes(f.type)) { setFileError(`${f.name} isn't a PDF or a PNG, JPEG or WebP image.`); continue }
-      if (next.length >= FILES_MAX) { setFileError(`Up to ${FILES_MAX} files with one message.`); break }
-      if (next.reduce((n, x) => n + x.size, 0) + f.size > FILES_TOTAL_BYTES) { setFileError('Files with one message can add up to 3 MB.'); continue }
-      const encoded = await encodeFile(f)
-      next.push({ ...encoded, size: f.size, type: f.type })
-    }
-    setFiles(next)
-  }
-
+  // Sent only when every file is ready: one still being prepared, or one that
+  // went wrong, is waited for or removed first, so nothing goes half-attached.
+  const waiting = files.preparing || files.blocked
   async function submit() {
     const t = text.trim()
-    if ((!t && files.length === 0) || disabled || sending) return
+    const ready = files.uploads()
+    if ((!t && ready.length === 0) || disabled || sending || waiting) return
     setSending(true)
-    const sent = files
-    setText(''); setFiles([])
-    const ok = await onSend(t, sent)
+    const back = files.take()
+    setText('')
+    const ok = await onSend(t, ready)
     setSending(false)
     // Not sent: their words and files come back.
-    if (!ok) { setText(t); setFiles(sent) }
+    if (!ok) { setText(t); files.restore(back) }
   }
   return (
-    <form onSubmit={e => { e.preventDefault(); void submit() }}
-      onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true) } }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={e => { if (e.dataTransfer.files.length) { e.preventDefault(); setDragging(false); void add(e.dataTransfer.files) } }}
-      className={cn('rounded-2xl border bg-background/70 p-1.5 shadow-soft transition-colors focus-within:border-action/60', dragging ? 'border-dashed border-action' : 'border-white/12')} data-composer>
-      {files.length > 0 && (
-        <ul className="mb-1.5 flex flex-wrap gap-1.5 px-1.5 pt-1" aria-label="Files to send">
-          {files.map((f, i) => (
-            <li key={`${f.name}-${i}`} className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/4 py-1 pl-2 pr-1 text-xs text-foreground/85" data-upload={f.name}>
-              {f.type === 'application/pdf'
-                ? <FileText aria-hidden className="size-3.5 text-action-ink" />
-                // eslint-disable-next-line @next/next/no-img-element -- a local preview of the learner's own image, never fetched
-                : <img src={`data:${f.type};base64,${f.data}`} alt="" className="size-9 rounded object-cover" data-preview />}
-              <span className="max-w-48 truncate">{f.name}</span><span className="text-subtle">{kb(f.size)}</span>
-              <button type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`} className="grid size-5 place-items-center rounded text-foreground/55 hover:bg-white/8 hover:text-foreground"><X aria-hidden className="size-3" /></button>
-            </li>
-          ))}
-        </ul>
-      )}
+    <form ref={form} onSubmit={e => { e.preventDefault(); void submit() }}
+      className="rounded-2xl border border-white/12 bg-background/70 p-1.5 shadow-soft transition-colors focus-within:border-action/60" data-composer>
+      {drop.overlay}
+      <AttachmentTray items={files.items} onRemove={files.remove} onRetry={files.retry} className="mb-1.5 px-1.5 pt-1" />
       <label htmlFor="builder-composer" className="sr-only">Message Nova</label>
-      <textarea id="builder-composer" ref={ref} value={text} rows={1} maxLength={2000} placeholder={files.length ? 'Say what to do with it, or just send' : placeholder}
+      <textarea id="builder-composer" ref={ref} value={text} rows={1} maxLength={2000} placeholder={files.items.length ? 'Say what to do with it, or just send' : placeholder}
         onChange={e => setText(e.target.value)}
         // A screenshot pasted (Cmd+V / Ctrl+V) is attached; pasted text stays text.
-        onPaste={e => {
-          const images = imagesOnClipboard(e.clipboardData.items)
-          if (images.length === 0) return
-          if (!e.clipboardData.getData('text/plain')) e.preventDefault()
-          const taken = files.map(f => f.name)
-          void add(images.map(img => { const name = pastedName(taken, img.type); taken.push(name); return new File([img], name, { type: img.type }) }))
-        }}
+        onPaste={files.onPaste}
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit() } }}
         className="block max-h-44 min-h-11 w-full resize-none bg-transparent px-2.5 py-2 text-[14px] leading-relaxed text-foreground outline-none placeholder:text-subtle" />
       <div className="flex items-center gap-1">
-        <input ref={picker} type="file" accept={ACCEPT} multiple hidden onChange={e => { if (e.target.files) void add(e.target.files); e.target.value = '' }} data-file-input />
-        <button type="button" onClick={() => picker.current?.click()} disabled={disabled || sending} aria-label="Attach a PDF or photo" title="Attach a PDF or photo"
+        <input ref={picker} type="file" accept={ACCEPT} multiple hidden onChange={e => { if (e.target.files) files.add(e.target.files); e.target.value = '' }} data-file-input />
+        <button type="button" onClick={() => picker.current?.click()} disabled={disabled || sending} aria-label="Attach a PDF or photo" title="Attach a PDF or photo (or drop it here, or paste a screenshot)"
           className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs text-foreground/60 transition-colors hover:bg-white/6 hover:text-foreground disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-ring">
-          <Paperclip aria-hidden className="size-4" /><span className="hidden sm:inline">PDF, photo or paste</span>
+          <Paperclip aria-hidden className="size-4" /><span className="hidden sm:inline">Attach</span>
         </button>
-        <span className="hidden min-w-0 flex-1 truncate text-[11px] text-subtle sm:block">{hint ?? 'Enter to send · Shift+Enter for a new line'}</span>
-        <button type="submit" disabled={disabled || sending || (!text.trim() && files.length === 0)} aria-label="Send"
+        <span className="hidden min-w-0 flex-1 truncate text-[11px] text-subtle sm:block">
+          {files.preparing ? 'Preparing your files…' : files.blocked ? 'Remove the file that couldn’t be used to send' : hint ?? 'Drop or paste a PDF or image · Enter to send'}
+        </span>
+        <button type="submit" disabled={disabled || sending || waiting || (!text.trim() && files.items.length === 0)} aria-label="Send"
           className="ml-auto grid size-8 shrink-0 place-items-center rounded-lg bg-action text-action-foreground transition-colors hover:bg-action-hover disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
-          {sending ? <Loader2 aria-hidden className="size-4 animate-spin" /> : <ArrowUp aria-hidden className="size-4" />}
+          {sending || files.preparing ? <Loader2 aria-hidden className="size-4 animate-spin" /> : <ArrowUp aria-hidden className="size-4" />}
         </button>
       </div>
-      {fileError && <p role="alert" className="px-2 pb-1 pt-1 text-xs text-red-400">{fileError}</p>}
     </form>
   )
 }
@@ -372,14 +326,14 @@ export function Conversation({ state, header, seed, onReview }: {
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
+    <div className="relative flex h-full min-h-0 flex-col" data-drop-zone>
       {header}
       <div ref={box} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-5" aria-label="Conversation with Nova">
         {draft && draft.messages.length === 0 && !draft.pending && (
           <div className="flex items-start gap-3"><NovaAvatar size="sm" /><div className="pt-0.5 text-[14px] leading-relaxed text-foreground/85"><p className="mb-1 text-xs font-semibold text-foreground/80">Nova</p>{draft.target ? builderOpening(draft.language).addTo(draft.target.title) : builderOpening(draft.language).question}</div></div>
         )}
         {draft?.messages.map(m => <Message key={m.id} m={m} fresh={m.role === 'nova' && !seen.current?.has(m.id)} />)}
-        {outgoing && <UserMessage text={outgoing.text} files={outgoing.files.map(f => ({ name: f.name, pages: null }))} sending />}
+        {outgoing && <UserMessage text={outgoing.text} files={outgoing.files.map(f => ({ name: f.name, pages: null, preview: f.type.startsWith('image/') ? `data:${f.type};base64,${f.data}` : undefined }))} sending />}
         {/* More than one of theirs fits what they said: each is a reply away. */}
         {draft?.brief.choices && draft.brief.choices.length > 0 && !state.working && !outgoing && draft.messages.at(-1)?.role === 'nova' && (
           <ul className="flex flex-wrap gap-1.5 pl-10" aria-label="Which one" data-choices>
@@ -472,7 +426,7 @@ export function NewConversation({ header, onStart, busy, error, seed, onExample,
     return ok
   }
   return (
-    <div className="flex h-full min-h-0 flex-col" data-build-start>
+    <div className="relative flex h-full min-h-0 flex-col" data-build-start data-drop-zone>
       {header}
       <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 py-6 sm:px-5">
         <div className="flex items-start gap-3">
