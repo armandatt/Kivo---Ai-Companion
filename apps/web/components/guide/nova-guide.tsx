@@ -180,7 +180,7 @@ const TOPICS: Topic[] = [
   { id: 'telegram',  label: 'Nova on Telegram', icon: Send,        group: 'Nova',         keywords: 'commands chat hinglish hindi nudges check-in language' },
   { id: 'extension', label: 'Browser Extension',icon: Puzzle,      group: 'Nova',         keywords: 'chrome edge brave arc save page selection code connect install' },
   { id: 'counts',    label: 'What counts',      icon: Check,       group: 'Nova',         keywords: 'record ten minutes rules honest' },
-  { id: 'plans',     label: 'Plans',            icon: CreditCard,  group: 'Account',      keywords: 'free pro price trial billing upgrade rupees' },
+  { id: 'plans',     label: 'Plans',            icon: CreditCard,  group: 'Account',      keywords: 'free pro price trial billing upgrade dollars' },
   { id: 'privacy',   label: 'Your data',        icon: ShieldCheck, group: 'Account',      keywords: 'privacy delete account export settings theme password reset email verified profile terms' },
   { id: 'faq',       label: 'Questions',        icon: CircleHelp,  group: 'Account',      keywords: 'faq help problems troubleshooting not applied stale disconnected planner missing' },
 ]

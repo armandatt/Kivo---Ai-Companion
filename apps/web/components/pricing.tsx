@@ -64,8 +64,8 @@ export function Pricing() {
                   )}
                 </div>
                 <div className="mt-4 flex items-baseline gap-1">
-                  <span className="text-4xl font-bold text-[var(--color-baltic-sea-100)]">{formatPrice(plan)}</span>
-                  <span className="text-[var(--color-baltic-sea-500)]">{intervalLabel(plan)}</span>
+                  <span className="text-4xl font-bold text-[var(--color-baltic-sea-100)]">{plan.enabled ? formatPrice(plan) : "Soon"}</span>
+                  {plan.enabled && <span className="text-[var(--color-baltic-sea-500)]">{intervalLabel(plan)}</span>}
                 </div>
                 <p className="mt-2 text-sm text-[var(--color-baltic-sea-400)]">{plan.tagline}</p>
 
@@ -104,7 +104,7 @@ export function Pricing() {
         </Reveal>
 
         <p className="text-center text-sm text-[var(--color-baltic-sea-500)] mt-10">
-          No card needed for the trial · Prices in Indian rupees · Your notes stay yours on every plan
+          No card needed for the trial · Prices in US dollars · Your notes stay yours on every plan
         </p>
       </div>
     </section>

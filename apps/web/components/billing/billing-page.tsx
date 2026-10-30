@@ -211,7 +211,7 @@ export function BillingPage() {
               )
             })}
           </div>
-          <p className="text-xs leading-relaxed text-foreground/45">Payments are handled by Polar, Kivo&apos;s merchant of record; Kivo never sees your card. Prices are in Indian rupees. Cancel any time from Manage subscription; Pro stays on until the end of the period you paid for.</p>
+          <p className="text-xs leading-relaxed text-foreground/45">Payments are handled by Polar, Kivo&apos;s merchant of record; Kivo never sees your card. Prices are in US dollars. Cancel any time from Manage subscription; Pro stays on until the end of the period you paid for.</p>
         </section>
       )}
     </>,
