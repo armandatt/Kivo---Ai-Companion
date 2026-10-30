@@ -14,9 +14,9 @@ export type BillingInterval = "month" | "year";
 export interface PlanDefinition {
   key:         PlanKey;
   name:        string;
-  // In the currency's smallest unit (paise for INR). 0 for Free.
+  // In the currency's smallest unit (cents for USD). 0 for Free.
   priceMinor:  number;
-  currency:    "INR";
+  currency:    "USD";
   interval:    BillingInterval | null;
   // Days of Pro an eligible new account gets before paying; 0 for none.
   trialDays:   number;
@@ -36,12 +36,12 @@ const FREE_FEATURES = [
 
 export const PLANS: Record<PlanKey, PlanDefinition> = {
   free: {
-    key: "free", name: "Free", priceMinor: 0, currency: "INR", interval: null, trialDays: 0, enabled: true,
+    key: "free", name: "Free", priceMinor: 0, currency: "USD", interval: null, trialDays: 0, enabled: true,
     tagline: "Everything you need to plan, study and keep notes.",
     features: FREE_FEATURES,
   },
   pro_monthly: {
-    key: "pro_monthly", name: "Pro", priceMinor: 19_900, currency: "INR", interval: "month", trialDays: 7, enabled: true,
+    key: "pro_monthly", name: "Pro", priceMinor: 1_000, currency: "USD", interval: "month", trialDays: 7, enabled: true,
     tagline: "For students who lean on Nova every day.",
     features: [
       "Everything in Free",
@@ -50,8 +50,10 @@ export const PLANS: Record<PlanKey, PlanDefinition> = {
       "Seven days of Pro free to start, with no card needed",
     ],
   },
+  // Not on sale, and its price is not shown while it is not (components/pricing.tsx).
+  // 7_500 keeps the old discount against the monthly price; no one has set it yet.
   pro_annual: {
-    key: "pro_annual", name: "Pro yearly", priceMinor: 149_900, currency: "INR", interval: "year", trialDays: 7, enabled: false,
+    key: "pro_annual", name: "Pro yearly", priceMinor: 7_500, currency: "USD", interval: "year", trialDays: 7, enabled: false,
     tagline: "Pro for the whole year, for less.",
     features: [
       "Everything in Pro",
@@ -62,11 +64,10 @@ export const PLANS: Record<PlanKey, PlanDefinition> = {
 
 export const PAID_PLANS: PlanKey[] = ["pro_monthly", "pro_annual"];
 
-// "₹199" / "₹1,499": whole rupees, Indian digit grouping.
+// "$10" / "$1,000": whole dollars, or cents only when there are some.
 export function formatPrice(plan: Pick<PlanDefinition, "priceMinor" | "currency">): string {
-  if (plan.priceMinor === 0) return "₹0";
-  const rupees = plan.priceMinor / 100;
-  return `₹${rupees.toLocaleString("en-IN", { maximumFractionDigits: rupees % 1 === 0 ? 0 : 2 })}`;
+  const dollars = plan.priceMinor / 100;
+  return `$${dollars.toLocaleString("en-US", dollars % 1 === 0 ? { maximumFractionDigits: 0 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function intervalLabel(plan: Pick<PlanDefinition, "interval">): string {

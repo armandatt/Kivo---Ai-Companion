@@ -75,7 +75,7 @@ describe("who has Pro", () => {
 // ── Provider events → the subscription row ──
 const record = (over: Partial<ProviderSubscription> = {}): ProviderSubscription => ({
   id: "sub_1", status: "active", created_at: "2026-11-01T00:00:00Z", modified_at: "2026-11-05T00:00:00Z",
-  product_id: "prod_monthly", customer_id: "cus_1", currency: "inr", recurring_interval: "month",
+  product_id: "prod_monthly", customer_id: "cus_1", currency: "usd", recurring_interval: "month",
   current_period_start: "2026-11-01T00:00:00Z", current_period_end: "2026-12-01T00:00:00Z",
   cancel_at_period_end: false, canceled_at: null, ended_at: null, customer: { external_id: "user_1" }, metadata: {},
   ...over,
@@ -175,10 +175,11 @@ describe("allowances and prices", () => {
     expect(allowanceFor("free", { BILLING_FREE_DAILY_AI: "nonsense" }).dailyRequests).toBe(150);
   });
 
-  it("prices read as rupees", () => {
-    expect(formatPrice(PLANS.free)).toBe("₹0");
-    expect(formatPrice(PLANS.pro_monthly)).toBe("₹199");
-    expect(formatPrice(PLANS.pro_annual)).toBe("₹1,499");
+  it("prices read as dollars", () => {
+    expect(formatPrice(PLANS.free)).toBe("$0");
+    expect(formatPrice(PLANS.pro_monthly)).toBe("$10");
+    expect(formatPrice(PLANS.pro_annual)).toBe("$75");
+    expect(formatPrice({ priceMinor: 1_050, currency: "USD" })).toBe("$10.50");
     expect(intervalLabel(PLANS.pro_monthly)).toBe("/month");
     expect(PLANS.pro_annual.enabled).toBe(false);
   });

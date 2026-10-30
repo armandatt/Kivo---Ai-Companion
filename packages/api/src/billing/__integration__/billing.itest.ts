@@ -77,7 +77,7 @@ function signed(type: string, data: Record<string, unknown>, opts: { id?: string
 
 const subscriptionRecord = (userId: string, over: Record<string, unknown> = {}) => ({
   id: `sub_${userId}`, status: "active", created_at: "2026-11-01T00:00:00Z", modified_at: "2026-11-05T00:00:00Z",
-  product_id: "prod_monthly", customer_id: `cus_${userId}`, currency: "inr", recurring_interval: "month",
+  product_id: "prod_monthly", customer_id: `cus_${userId}`, currency: "usd", recurring_interval: "month",
   current_period_start: new Date(Date.now() - 2 * 86_400_000).toISOString(), current_period_end: new Date(Date.now() + 28 * 86_400_000).toISOString(),
   cancel_at_period_end: false, canceled_at: null, ended_at: null, customer: { external_id: userId }, metadata: { kivo_user_id: userId },
   ...over,
