@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ChevronDown, ChevronRight, Flag, NotebookPen, PencilRuler, Play, Waypoints } from 'lucide-react'
+import { ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronRight, Flag, NotebookPen, PencilRuler, Play, Waypoints } from 'lucide-react'
 import type { KnowledgeSubject, KnowledgeTopic, NovaKnowledgeReady } from '@repo/api/nova/product/knowledge.types'
 import type { NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
 import type { WorkspacesView } from '@repo/api/nova/product/workspaces.types'
@@ -119,20 +119,25 @@ function Breadcrumbs({ path, onGo }: { path: TreeNode[]; onGo: (s: Selection | n
 }
 
 // A child of a subject or topic, as a row that opens it.
+// A phase or topic inside this one: a card on the canvas.
+const allBranches = (nodes: TreeNode[]): string[] => nodes.flatMap(n => (n.children.length ? [n.key, ...allBranches(n.children)] : []))
+
 function ChildRow({ node, onGo }: { node: TreeNode; onGo: (s: Selection) => void }) {
   const t = node.topic
   return (
-    <li>
-      <button type="button" onClick={() => onGo({ kind: node.kind, id: node.id })} data-child={node.name}
-        className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-white/3 focus-visible:bg-white/4 focus-visible:outline-none">
+    <li className="kn-card min-w-0 rounded-xl border border-white/8 bg-card/80">
+      <button type="button" onClick={() => onGo({ kind: node.kind, id: node.id })} data-child={node.name} title={node.name}
+        className="flex min-h-14 w-full items-center gap-3 rounded-xl px-4 py-3 text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-keppel-400">
         {node.kind === 'subject'
           ? <span aria-hidden className={cn('size-2.5 shrink-0 rounded-[3px]', subjectColor(node.name).dot)} />
           : node.milestone ? <Flag aria-hidden className="size-3 shrink-0 text-foreground/45" />
           : <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', t && t.level !== 'unverified' ? LEVEL_TONE[t.level] : 'border border-foreground/35')} />}
-        <span className="min-w-0 flex-1 truncate text-sm text-foreground/90">{node.name}</span>
-        <span className={cn('shrink-0 text-xs', node.dueCount > 0 ? 'font-medium text-amber-300' : 'text-foreground/50')}>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-foreground/90">{node.name}</span>
+          <span className={cn('block truncate text-xs', node.dueCount > 0 ? 'font-medium text-amber-300' : 'text-foreground/50')}>
           {t ? (t.reviewState === 'due' ? 'Due' : t.level === 'unverified' ? 'Not started' : `${LEVEL_LABEL[t.level]} · ${t.masteryPercent}%`)
             : node.topicCount > 0 ? `${plural(node.topicCount, 'topic', 'topics')}${node.dueCount ? ` · ${node.dueCount} due` : ''}` : node.children.length ? plural(node.children.length, 'item', 'items') : 'Nothing inside yet'}
+          </span>
         </span>
         <ChevronRight aria-hidden className="size-3.5 shrink-0 text-foreground/30" />
       </button>
@@ -238,8 +243,14 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
             onDoubleClick={() => keepWidth(WIDTH.initial)}
             onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { keepWidth(width + (e.key === 'ArrowLeft' ? -16 : 16)); e.preventDefault() } }}
             className="absolute -right-[3px] top-0 z-20 hidden h-full w-1.5 cursor-col-resize rounded-full transition-colors hover:bg-action/40 focus-visible:bg-action/60 focus-visible:outline-none lg:block" data-resize />
-          <div className="flex items-center justify-between gap-2 pb-2">
+          <div className="flex items-center gap-2 pb-2">
             <button type="button" onClick={() => go(null)} className="rounded text-sm font-semibold text-foreground hover:text-foreground/80 focus-visible:outline-2 focus-visible:outline-keppel-400" data-knowledge-home>Knowledge</button>
+            {!noSubjects && (
+              <span className="ml-auto hidden items-center gap-0.5 lg:inline-flex" data-tree-tools>
+                <button type="button" onClick={() => setOpen(new Set(allBranches(roots)))} className="grid size-6 place-items-center rounded text-foreground/50 hover:bg-white/6 hover:text-foreground" aria-label="Open every branch" title="Open every branch"><ChevronsUpDown aria-hidden className="size-3.5" /></button>
+                <button type="button" onClick={() => setOpen(new Set(path.filter(n => n.children.length > 0).map(n => n.key)))} className="grid size-6 place-items-center rounded text-foreground/50 hover:bg-white/6 hover:text-foreground" aria-label="Close every branch" title="Close every branch"><ChevronsDownUp aria-hidden className="size-3.5" /></button>
+              </span>
+            )}
             {selection !== null && (
               <button type="button" onClick={() => setBrowse(b => !b)} aria-expanded={browse} className={cn(TEXT_LINK, 'lg:hidden')}>
                 Browse <ChevronDown aria-hidden className={cn('size-3.5 transition-transform', browse && 'rotate-180')} />
@@ -249,7 +260,7 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
           {noSubjects ? (
             <p className="text-xs leading-relaxed text-foreground/55">No subjects yet.</p>
           ) : (
-            <KnowledgeExplorer roots={roots} selectedKey={node?.key ?? null} open={open} onToggle={toggle}
+            <KnowledgeExplorer roots={roots} selectedKey={node?.key ?? null} pathKeys={path.map(n => n.key)} open={open} onToggle={toggle}
               onOpen={n => go({ kind: n.kind, id: n.id })}
               className={cn('max-h-[60vh] lg:max-h-none lg:min-h-0 lg:flex-1', explorerShown ? 'flex' : 'hidden lg:flex')} />
           )}
@@ -321,8 +332,8 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
                   ))}
                 </div>
               ) : (
-                <div className="mt-6 grid gap-x-10 gap-y-8 xl:grid-cols-[minmax(0,1fr)_17rem] 2xl:grid-cols-[minmax(0,1fr)_20rem]">
-                  <div className="min-w-0 space-y-8">
+                <div className="mt-5 grid gap-x-8 gap-y-8 xl:grid-cols-[minmax(0,1fr)_17rem] 2xl:grid-cols-[minmax(0,1fr)_20rem]">
+                  <div className="nova-canvas kn-canvas min-w-0 space-y-8 p-3 sm:p-5" style={toneStyle(path[0]?.name ?? node.name)} data-topic-canvas>
                     {node.topic ? (
                       <>
                         <Section title="Where it stands" id="standing"><div data-topic-detail={node.name}><TopicMetrics topic={node.topic} /></div></Section>
@@ -334,11 +345,11 @@ export function NovaKnowledge({ view, onChanged }: { view: NovaKnowledgeReady; o
                         {node.topicCount > 0 && <Section title="Progress" id="progress"><LevelSummary topics={studiedBelow(node)} due={node.dueCount} /></Section>}
                         <Section title={node.children.length ? `Inside ${node.name}` : 'Inside'} id="inside">
                           {node.children.length > 0 ? (
-                            <ul className="divide-y divide-white/6 overflow-hidden rounded-xl border border-white/8 bg-card/40" data-topic-children>
+                            <ul className="grid gap-3 sm:grid-cols-2" data-topic-children>
                               {node.children.map(c => <ChildRow key={c.key} node={c} onGo={go} />)}
                             </ul>
                           ) : (
-                            <p className="rounded-xl border border-dashed border-white/12 px-4 py-5 text-sm text-foreground/60" data-topic-detail={node.name}>
+                            <p className="rounded-xl border border-dashed border-white/12 bg-card/60 px-4 py-5 text-sm text-foreground/60" data-topic-detail={node.name}>
                               {node.milestone ? 'Nothing is in this milestone yet.' : 'Nothing is inside this topic yet.'} Add to it with <Link href={editHref} className="font-medium text-keppel-300 hover:text-keppel-200">Edit learning structure</Link>.
                             </p>
                           )}

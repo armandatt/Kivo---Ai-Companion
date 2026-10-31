@@ -14,11 +14,12 @@ import { searchTree, visibleRows, type TreeNode } from './knowledge-tree'
 // out, Home and End, Enter or Space opens. The filter above it lists every
 // match with the names above it.
 
-const INDENT = 14   // px per level
+const INDENT = 16   // px per level
 const BASE   = 8
 
 function Marker({ node }: { node: TreeNode }) {
-  if (node.kind === 'subject') return <span aria-hidden className={cn('size-2.5 shrink-0 rounded-[3px]', subjectColor(node.name).dot)} />
+  // A subject is a coloured square, a subject inside one a smaller square.
+  if (node.kind === 'subject') return <span aria-hidden className={cn('shrink-0', node.parentKey ? 'size-2 rounded-[2px]' : 'size-2.5 rounded-[3px]', subjectColor(node.name).dot)} />
   if (node.milestone) return <Flag aria-hidden className="size-3 shrink-0 text-foreground/45" />
   // A studied topic shows its level; one with no session behind it is hollow.
   const level = node.topic?.level
@@ -31,9 +32,11 @@ function Due({ n }: { n: number }) {
   return <span className="ml-auto shrink-0 rounded-full bg-amber-300/12 px-1.5 text-[10px] font-semibold tabular-nums leading-4 text-amber-300" title={`${n} due to revisit`}>{n}<span className="sr-only"> due</span></span>
 }
 
-export function KnowledgeExplorer({ roots, selectedKey, open, onToggle, onOpen, className }: {
+export function KnowledgeExplorer({ roots, selectedKey, pathKeys = [], open, onToggle, onOpen, className }: {
   roots:       TreeNode[]
   selectedKey: string | null
+  // The branches above the chosen row: drawn a little brighter, so where you are reads at a glance.
+  pathKeys?:   readonly string[]
   open:        ReadonlySet<string>
   onToggle:    (key: string, to?: boolean) => void
   onOpen:      (node: TreeNode) => void
@@ -54,6 +57,11 @@ export function KnowledgeExplorer({ roots, selectedKey, open, onToggle, onOpen, 
     byKeyboard.current = false
     items.current.get(focusKey)?.focus()
   }, [focusKey, rows])
+
+  // The chosen row stays in view when it was chosen from elsewhere (a link, the board).
+  useEffect(() => {
+    if (selectedKey) items.current.get(selectedKey)?.scrollIntoView({ block: 'nearest' })
+  }, [selectedKey])
 
   // A branch just opened eases its rows in.
   const [opened, setOpened] = useState<string | null>(null)
@@ -136,6 +144,8 @@ export function KnowledgeExplorer({ roots, selectedKey, open, onToggle, onOpen, 
               const hasChildren = node.children.length > 0
               const isOpen = open.has(node.key)
               const selected = node.key === selectedKey
+              const onPath = !selected && pathKeys.includes(node.key)
+              const inside = node.children.length
               return (
                 <li key={node.key} role="treeitem" aria-level={level} aria-selected={selected} aria-expanded={hasChildren ? isOpen : undefined}
                   tabIndex={node.key === tabKey ? 0 : -1}
@@ -145,9 +155,10 @@ export function KnowledgeExplorer({ roots, selectedKey, open, onToggle, onOpen, 
                   onClick={() => { setFocusKey(node.key); onOpen(node) }}
                   data-node={node.key} data-kind={node.kind}
                   title={node.name}
-                  className={cn('group relative flex h-[30px] cursor-pointer select-none items-center gap-1.5 rounded-md pr-2 text-[13px] outline-none transition-colors',
+                  className={cn('group relative flex h-8 cursor-pointer select-none items-center gap-1.5 rounded-md pr-2 text-[13px] outline-none transition-colors',
+                    level === 1 && at > 0 && 'mt-1',
                     'focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-keppel-400/70',
-                    selected ? 'bg-action/12 text-foreground' : 'text-foreground/75 hover:bg-white/5 hover:text-foreground',
+                    selected ? 'bg-action/14 text-foreground' : onPath ? 'text-foreground hover:bg-white/5' : 'text-foreground/70 hover:bg-white/5 hover:text-foreground',
                     opened !== null && node.parentKey === opened && 'tree-in')}
                   style={{ paddingLeft: BASE + (level - 1) * INDENT }}>
                   {/* Guides: one faint line for each level above */}
@@ -158,12 +169,14 @@ export function KnowledgeExplorer({ roots, selectedKey, open, onToggle, onOpen, 
                   {hasChildren ? (
                     <span role="button" aria-label={isOpen ? `Close ${node.name}` : `Open ${node.name}`} tabIndex={-1}
                       onClick={e => { e.stopPropagation(); toggle(node.key) }}
-                      className="-ml-0.5 flex size-4 shrink-0 items-center justify-center rounded text-foreground/45 hover:bg-white/8 hover:text-foreground">
+                      className="-ml-1 flex size-5 shrink-0 items-center justify-center rounded text-foreground/45 hover:bg-white/10 hover:text-foreground">
                       <ChevronRight aria-hidden className={cn('size-3.5 transition-transform duration-150', isOpen && 'rotate-90')} />
                     </span>
-                  ) : <span aria-hidden className="w-3.5 shrink-0" />}
+                  ) : <span aria-hidden className="w-4 shrink-0" />}
                   <Marker node={node} />
-                  <span className={cn('min-w-0 truncate', node.kind === 'subject' && 'font-medium', selected && 'font-medium')}>{node.name}</span>
+                  <span className={cn('min-w-0 flex-1 truncate', (node.kind === 'subject' || selected) && 'font-medium')}>{node.name}</span>
+                  {/* What a closed branch holds, so it reads without opening it. */}
+                  {hasChildren && !isOpen && node.dueCount === 0 && <span aria-hidden className="shrink-0 text-[10px] tabular-nums text-foreground/40">{inside}</span>}
                   <Due n={node.dueCount} />
                 </li>
               )

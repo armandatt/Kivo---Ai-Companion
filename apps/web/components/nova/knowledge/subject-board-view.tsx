@@ -161,11 +161,11 @@ export function SubjectBoardView({ map, subject, onOpenTopic }: {
     )
   }
 
-  const CARD = 'relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-white/8 bg-card/70 transition-colors duration-150 hover:border-white/16 hover:bg-card'
+  const CARD = 'kn-card relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-white/8 bg-card/80'
 
   return (
     <div data-board={subject.subjectName}>
-      <div ref={canvas} className="relative" style={toneStyle(subject.subjectName)} onPointerLeave={() => setHovered(null)}>
+      <div ref={canvas} className="nova-canvas kn-canvas relative p-3 sm:p-5" style={toneStyle(subject.subjectName)} onPointerLeave={() => setHovered(null)} data-board-canvas>
         {/* The links, drawn over the cards; they take no clicks. Only their opacity follows the pointer. */}
         <svg aria-hidden className="pointer-events-none absolute inset-0 z-10 hidden size-full overflow-visible sm:block">
           <defs>

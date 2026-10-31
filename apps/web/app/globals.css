@@ -566,6 +566,36 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   background-size: 20px 20px;
 }
 
+/* Knowledge's workspace: the same dot grid, as the surface a subject's or a
+   topic's cards sit on. A card lifts by its shadow and edge, never by moving,
+   so a pointer on its edge can't make it flicker. */
+.kn-canvas { border-radius: 1rem; border: 1px solid color-mix(in oklch, var(--foreground) 7%, transparent); background-color: color-mix(in oklch, var(--foreground) 1.5%, transparent); }
+.kn-card { transition: border-color 0.16s ease, background-color 0.16s ease, box-shadow 0.2s ease; box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
+.kn-card:hover, .kn-card:focus-within { border-color: color-mix(in oklch, var(--sc, var(--foreground)) 45%, transparent); background-color: var(--card); box-shadow: 0 12px 28px -14px rgb(0 0 0 / 0.55), 0 2px 6px -2px rgb(0 0 0 / 0.25); }
+
+/* Nova at work: three dots and a line of text with a light passing over it.
+   Each runs only while a request is in flight. */
+.nova-dots { display: inline-flex; align-items: center; gap: 4px; }
+.nova-dots > span { width: 6px; height: 6px; border-radius: 9999px; background: var(--nova, currentColor); opacity: 0.35; animation: nova-dot 1.15s ease-in-out infinite; }
+.nova-dots > span:nth-child(2) { animation-delay: 0.16s; }
+.nova-dots > span:nth-child(3) { animation-delay: 0.32s; }
+@keyframes nova-dot { 0%, 70%, 100% { opacity: 0.35; transform: none; } 35% { opacity: 1; transform: translateY(-3px); } }
+.nova-shimmer {
+  color: transparent;
+  background: linear-gradient(90deg, color-mix(in oklch, var(--foreground) 50%, transparent) 30%, var(--foreground) 50%, color-mix(in oklch, var(--foreground) 50%, transparent) 70%);
+  background-size: 220% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: nova-shimmer 2.2s linear infinite;
+}
+@keyframes nova-shimmer { from { background-position: 110% 0; } to { background-position: -110% 0; } }
+.nova-caret { display: inline-block; width: 2px; height: 1em; margin-left: 2px; vertical-align: -0.15em; background: var(--nova, currentColor); animation: nova-caret 1s steps(2, start) infinite; }
+@keyframes nova-caret { to { visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) {
+  .nova-dots > span, .nova-caret { animation: none; opacity: 0.7; }
+  .nova-shimmer { animation: none; background: none; color: color-mix(in oklch, var(--foreground) 65%, transparent); }
+}
+
 /* The sign-in pages' backdrop: the canvas's dot grid on ink, fading at the
    edges. Static, so there is nothing to turn off for reduced motion. */
 .kivo-dot-grid {
