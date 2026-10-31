@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { ExternalLink } from 'lucide-react'
 import type { LearningResource, NovaSavedResourcesReady, ResourceConnection, ResourceUpdateResponse } from '@repo/api/nova/product/learning-events.types'
 import { relativeDay, sentenceCase } from '../format'
+import { AddToNote } from './add-to-note'
 import { BookmarkletPanel } from './bookmarklet-panel'
 import { ExtensionPanel } from './extension-panel'
 import { takeCapture, type Capture } from './pending-capture'
@@ -95,6 +96,7 @@ function ResourceRow({ resource: initial, onRemoved, onChanged }: { resource: Le
   const [notice, setNotice]     = useState<string | null>(null)
   const filed = [resource.subjectName, resource.topicName].filter(Boolean).join(' · ')
   const passage = resource.eventType === 'selection_saved'
+  const [addingToNote, setAddingToNote] = useState(false)
   // A link from the Knowledge Map names this page (?page=<id>): its row is
   // brought into view and marked.
   const [linked, setLinked] = useState(false)
@@ -163,6 +165,7 @@ function ResourceRow({ resource: initial, onRemoved, onChanged }: { resource: Le
             </blockquote>
           )}
           <Connections resource={resource} busy={busy} act={act} />
+          {addingToNote && <AddToNote resource={resource} onClose={() => setAddingToNote(false)} onDone={onChanged} />}
           {notice && <p className="mt-2 text-xs text-foreground/60" role="status" data-notice>{notice}</p>}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1.5 sm:justify-end">
@@ -176,6 +179,11 @@ function ResourceRow({ resource: initial, onRemoved, onChanged }: { resource: Le
           }).toString()}`} className={SECONDARY} data-write-note>
             Write a note
           </Link>
+          {passage && resource.excerpt && (
+            <button type="button" onClick={() => setAddingToNote(open => !open)} aria-expanded={addingToNote} className={SECONDARY} data-add-to-note>
+              Add to a note
+            </button>
+          )}
           <button type="button" onClick={() => void addTask()} disabled={busy} className={SECONDARY} data-add-task>
             Add task
           </button>

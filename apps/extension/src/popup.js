@@ -1,6 +1,8 @@
-// The popup: everything the extension does happens here, when the learner
-// opens it. There is no background script and no content script, so the
-// extension does nothing at all while the popup is closed.
+// The popup: nearly everything the extension does happens here, when the
+// learner opens it. There is no content script. The one thing outside it is
+// selecting an area of a page: the selector is drawn on that tab when they ask,
+// and background.js takes the picture. Otherwise the extension does nothing at
+// all while the popup is closed.
 //
 // It asks the browser for the current tab's address and title, and for the
 // text selected on it (granted by the click that opened it, for this tab
@@ -14,9 +16,10 @@
 // Every browser call goes through lib/browser.js.
 
 import { NOVA_URL } from './config.js'
-import { buildEvent, buildQuestion, createClient, disconnectOutcome, newActionId } from './lib/api.js'
+import { buildEvent, buildNoteSave, buildQuestion, createClient, disconnectOutcome, newActionId } from './lib/api.js'
 import { NO_PROBE, browser } from './lib/browser.js'
 import { describePage } from './lib/page.js'
+import { chosenWords, nestedSubjects, subjectLabel } from './lib/note-picker.js'
 import { createStore } from './lib/store.js'
 
 const store  = createStore(browser.storage())
@@ -71,9 +74,9 @@ const privacyText = () => [
   el('ul', {},
     el('li', {}, 'The address and title of the page you are on, and only when you open this popup on it.'),
     el('li', {}, 'The text you have selected on that page, shown here so you can save it. It is sent only if you press Save selection.'),
-    el('li', {}, 'A screenshot of what that tab is showing, only when you press Screenshot. You see it here first. It goes to Nova only with a question you ask, and is not kept.'),
+    el('li', {}, 'A screenshot of what that tab is showing, only when you press Screenshot or capture an area you selected. You see it here first. It goes to Nova only with a question you ask, and is not kept.'),
     el('li', {}, 'Nothing else inside the page: no other text, no forms, no passwords.'),
-    el('li', {}, 'Not your other tabs, and not your history. Nova does nothing while this popup is closed.'),
+    el('li', {}, 'Not your other tabs, and not your history. Nova does nothing while this popup is closed, except take the picture of an area you selected.'),
     el('li', {}, 'It sends a page to Nova only when you press Save, Study or Ask. A question you ask is answered and not kept.'),
   ),
   el('p', { class: 'small' }, 'Permissions: "activeTab" lets Nova read this tab\'s address and title when you click its icon, and take a screenshot of it when you press Screenshot. "scripting" lets it read your selected text and the page\'s own address on that tab, at that moment. "storage" keeps this browser connected. It has no standing access to any website.'),
@@ -221,7 +224,7 @@ function placeMark(node, mark) {
 
 const toastOf = flash => (flash ? el('p', { class: 'toast', role: 'status', dataset: { connected: '' } }, flash) : null)
 
-function renderReady(page, context, probe = NO_PROBE, flash = null) {
+function renderReady(page, context, probe = NO_PROBE, flash = null, { regionShot = null, keptQuestion = '' } = {}) {
   setStatus('connected', context.learner.name ? `Connected · ${context.learner.name.split(' ')[0]}` : 'Connected')
 
   if (!page.supported) {
@@ -303,10 +306,9 @@ function renderReady(page, context, probe = NO_PROBE, flash = null) {
     const result = await send('resource_saved', save, 'Saving…')
     if (result) renderSaved(result, page, context, probe)
   })
-  if (saveSelection) saveSelection.addEventListener('click', async () => {
-    const result = await send('selection_saved', saveSelection, 'Saving…')
-    if (result) renderSaved(result, page, context, probe)
-  })
+  // Where the passage goes is asked next: a note they have, a new one, or
+  // just Saved pages.
+  if (saveSelection) saveSelection.addEventListener('click', () => renderDestination(page, context, probe, { title: title.value, subjectId: subject.value, topicName: topic.value }))
   if (!running) study.addEventListener('click', async () => {
     const result = await send('study_requested', study, 'Opening…')
     // Nova's Focus screen takes it from here: the session starts there, on the learner's say-so.
@@ -320,6 +322,7 @@ function renderReady(page, context, probe = NO_PROBE, flash = null) {
   const question  = el('textarea', { id: 'question', rows: 2, placeholder: 'What do you want to know?', maxLength: 500, autocomplete: 'off' })
   const askButton = el('button', { class: 'primary', type: 'submit', disabled: true, dataset: { askSubmit: '' } }, 'Ask')
   const shotButton = el('button', { class: 'quiet shot-take', type: 'button', dataset: { screenshot: '' } }, 'Screenshot')
+  const regionButton = el('button', { class: 'quiet', type: 'button', dataset: { screenshotRegion: '' }, title: 'Drag over one part of the page' }, 'Select area')
   const shotBox   = el('div', { dataset: { shotArea: '' } })
   const shotErrors = el('div')
   const chips     = el('div', { class: 'context' })
@@ -385,6 +388,30 @@ function renderReady(page, context, probe = NO_PROBE, flash = null) {
     question.focus()
   })
 
+  // Selecting an area happens on the page itself, so the popup steps aside. It
+  // opens again with the picture attached (start() hands it to renderReady).
+  regionButton.addEventListener('click', async () => {
+    if (regionButton.getAttribute('aria-busy') || askButton.getAttribute('aria-busy')) return
+    busy(regionButton, 'Opening…'); shotErrors.replaceChildren()
+    if (question.value.trim()) await browser.keepQuestion(question.value)
+    const started = await browser.startRegion(page.tabId)
+    idle(regionButton)
+    if (!started) return shotErrors.replaceChildren(alertBox("Nova can't select an area on this page. Some browser pages don't allow it. Use Screenshot, or select the text."))
+    window.close()
+  })
+
+  // An area just selected on the page arrives attached, ready for a question.
+  if (regionShot) {
+    void (async () => {
+      const img = await loadPicture(regionShot.src).catch(() => null)
+      if (!img) return shotErrors.replaceChildren(alertBox("That area couldn't be read. Select it again."))
+      shot = { src: regionShot.src, img, mark: null, region: true }
+      showShot(); showSent()
+      question.focus()
+    })()
+  }
+  if (keptQuestion) { question.value = keptQuestion; askButton.disabled = false; requestAnimationFrame(fit) }
+
   const ask = el('section', { class: 'section', dataset: { ask: '' }, ariaLabel: 'Ask Nova about this page' },
     el('h2', {}, 'Ask Nova'),
     el('p', { class: 'small lede' }, probe.selection
@@ -421,7 +448,7 @@ function renderReady(page, context, probe = NO_PROBE, flash = null) {
     el('div', { class: 'ask-box' },
       sr('Your question about this page', { htmlFor: 'question' }),
       question,
-      el('div', { class: 'ask-bar' }, shotButton, askButton))),
+      el('div', { class: 'ask-bar' }, shotButton, regionButton, askButton))),
     shotErrors,
     chips,
     thread)
@@ -452,6 +479,188 @@ function renderReady(page, context, probe = NO_PROBE, flash = null) {
       ask,
       footer()),
   )
+}
+
+// ── Save selection: where it goes ─────────────────────────────────────────────
+// Step one asks which of the two; adding to a note then finds the note, shows
+// what it is, and asks once more. One id per passage and destination kind: a
+// retry repeats it, and Nova adds nothing the second time.
+
+function renderDestination(page, context, probe, filed) {
+  const back = () => renderReady(page, context, probe)
+  const quote = el('blockquote', { class: 'quote short', tabIndex: 0, ariaLabel: 'Selected text' }, probe.selection)
+  const keepId = newActionId()
+  const errors = el('div', { class: 'errors' })
+  const keep = el('button', { class: 'link', type: 'button', dataset: { saveSelection: '' }, onclick: async () => {
+    if (keep.getAttribute('aria-busy')) return
+    busy(keep, 'Saving…'); errors.replaceChildren()
+    const res = await client.sendEvent(buildEvent({ eventType: 'selection_saved', clientEventId: keepId, page, title: filed.title, subjectId: filed.subjectId, topicName: filed.topicName, excerpt: probe.selection }))
+    idle(keep)
+    if (res.ok && res.data.success) return renderSaved(res.data, page, context, probe)
+    if (!res.ok && res.kind === 'unauthenticated') { await store.clear(); return renderConnect(res.message) }
+    errors.replaceChildren(alertBox(res.ok ? "That didn't work. Try again in a moment." : res.message))
+  } }, 'Just keep it in saved pages')
+  const option = (key, heading, words, onclick) => el('button', { class: 'choice', type: 'button', dataset: { destination: key }, onclick },
+    el('span', { class: 'choice-title' }, heading), el('span', { class: 'small' }, words))
+
+  show('destination',
+    el('div', { class: 'stack' },
+      el('button', { class: 'link', type: 'button', dataset: { back: '' }, onclick: back }, '← Back'),
+      el('div', {}, el('h1', {}, 'Where should this go?'), el('p', { class: 'lede' }, 'Your selection, with where it came from.')),
+      quote,
+      el('div', { class: 'choices' },
+        option('existing', 'Add to an existing note', 'A new section at the end. What is already there stays as it is.', () => renderNotePicker(page, context, probe, filed)),
+        option('new', 'Create a new note', 'A note of its own, under a subject and topic.', () => renderNewNote(page, context, probe, filed))),
+      errors,
+      el('div', { class: 'foot' }, keep)))
+}
+
+function subjectSelect(context, id, emptyWords) {
+  return el('select', { id }, el('option', { value: '' }, emptyWords), nestedSubjects(context.subjects).map(s => el('option', { value: s.id }, subjectLabel(s))))
+}
+
+function renderNotePicker(page, context, probe, filed) {
+  const back = () => renderDestination(page, context, probe, filed)
+  const search = el('input', { id: 'note-search', type: 'search', placeholder: 'Search your notes by title', autocomplete: 'off', dataset: { noteSearch: '' } })
+  const subject = subjectSelect(context, 'note-subject', 'All subjects')
+  const topic = el('select', { id: 'note-topic', disabled: true }, el('option', { value: '' }, 'All topics'))
+  const list = el('ul', { class: 'note-list', dataset: { noteList: '' }, ariaLabel: 'Your notes' })
+  const count = el('p', { class: 'small', role: 'status', dataset: { noteCount: '' } }, 'Finding your notes…')
+  const more = el('button', { class: 'link', type: 'button', hidden: true, dataset: { noteMore: '' } }, 'Show more')
+  let latest = 0, shown = 0, timer = null
+
+  const row = note => el('li', {}, el('button', { class: 'note-row', type: 'button', dataset: { noteChoice: note.id }, title: note.title, onclick: () => confirmNote(note.id) },
+    el('span', { class: 'note-title' }, note.title),
+    el('span', { class: 'small' }, note.path || 'Not filed under a subject')))
+
+  async function load(fresh) {
+    const asked = ++latest
+    if (fresh) { shown = 0 }
+    const res = await client.noteChoices({ q: search.value, subjectId: subject.value, topic: topic.value, skip: shown })
+    if (asked !== latest) return
+    if (!res.ok && res.kind === 'unauthenticated') { await store.clear(); return renderConnect(res.message) }
+    if (!res.ok) {
+      more.hidden = true
+      count.replaceChildren(alertBox(res.message), el('button', { class: 'link', type: 'button', dataset: { noteRetry: '' }, onclick: () => load(fresh) }, 'Try again'))
+      return
+    }
+    if (fresh) list.replaceChildren()
+    list.append(...res.data.notes.map(row))
+    shown += res.data.notes.length
+    more.hidden = !res.data.hasMore
+    const filtering = search.value.trim() || subject.value
+    count.textContent = res.data.total === 0
+      ? (filtering ? 'No notes match. Try fewer words, or create a new note.' : 'You have no notes yet. Create a new one instead.')
+      : `${res.data.total.toLocaleString()} note${res.data.total === 1 ? '' : 's'}${filtering ? ' match' : ''}`
+  }
+  const soon = () => { clearTimeout(timer); timer = setTimeout(() => load(true), 220) }
+  search.addEventListener('input', soon)
+  subject.addEventListener('change', () => {
+    const chosen = context.subjects.find(s => s.id === subject.value)
+    topic.disabled = !chosen?.topics?.length
+    topic.replaceChildren(el('option', { value: '' }, 'All topics'), ...(chosen?.topics ?? []).map(name => el('option', { value: name }, name)))
+    void load(true)
+  })
+  topic.addEventListener('change', () => load(true))
+  more.addEventListener('click', () => load(false))
+
+  // The note chosen: its name and context, then one more press.
+  async function confirmNote(id) {
+    const clientEventId = newActionId()
+    show('note-confirm', el('div', { class: 'stack' }, el('p', { class: 'thinking', role: 'status' }, 'Opening that note…')))
+    const res = await client.notePreview(id)
+    if (!res.ok && res.kind === 'unauthenticated') { await store.clear(); return renderConnect(res.message) }
+    if (!res.ok) return show('note-confirm', el('div', { class: 'stack' }, alertBox(res.message), el('button', { class: 'link', type: 'button', dataset: { back: '' }, onclick: () => renderNotePicker(page, context, probe, filed) }, '← Choose another')))
+    const note = res.data.note
+    const errors = el('div', { class: 'errors' })
+    const add = el('button', { class: 'primary wide', type: 'button', dataset: { noteConfirm: '' }, onclick: async () => {
+      if (add.getAttribute('aria-busy')) return
+      add.disabled = true; busy(add, 'Adding…'); errors.replaceChildren()
+      const saved = await client.saveToNote(buildNoteSave({ clientEventId, page, title: filed.title, excerpt: probe.selection, noteId: note.id }))
+      idle(add); add.disabled = false
+      if (saved.ok && saved.data.success) return renderNoteDone(saved.data, page, context, probe)
+      if (!saved.ok && saved.kind === 'unauthenticated') { await store.clear(); return renderConnect(saved.message) }
+      // The same id goes again on Try again, so nothing can be added twice.
+      add.textContent = 'Try again'
+      errors.replaceChildren(alertBox(saved.ok ? "That didn't work. Nothing was added." : saved.message))
+    } }, 'Add to this note')
+    show('note-confirm', el('div', { class: 'stack' },
+      el('button', { class: 'link', type: 'button', dataset: { back: '' }, onclick: () => renderNotePicker(page, context, probe, filed) }, '← Choose another'),
+      el('div', {}, el('h1', { dataset: { noteConfirmTitle: '' } }, note.title), el('p', { class: 'small' }, [note.path || 'Not filed under a subject', `${note.length.toLocaleString()} characters`].join(' · '))),
+      note.headings.length ? el('div', { class: 'note' }, el('div', { class: 'small' }, 'In this note'), el('ul', { class: 'heading-list' }, note.headings.map(h => el('li', {}, h)))) : null,
+      el('p', { class: 'small' }, 'Your selection goes at the end as a new section, with the page it came from. You can edit it like the rest of the note.'),
+      el('blockquote', { class: 'quote short', tabIndex: 0, ariaLabel: 'Selected text' }, probe.selection),
+      add, errors))
+    add.focus()
+  }
+
+  show('note-picker', el('div', { class: 'stack' },
+    el('button', { class: 'link', type: 'button', dataset: { back: '' }, onclick: back }, '← Back'),
+    el('h1', {}, 'Which note?'),
+    el('div', { class: 'field' }, sr('Search your notes', { htmlFor: 'note-search' }), search),
+    el('div', { class: 'fields' },
+      el('div', { class: 'field' }, el('label', { htmlFor: 'note-subject' }, 'Subject'), subject),
+      el('div', { class: 'field' }, el('label', { htmlFor: 'note-topic' }, 'Topic'), topic)),
+    count, list, more))
+  search.focus()
+  void load(true)
+}
+
+function renderNewNote(page, context, probe, filed) {
+  const clientEventId = newActionId()
+  const title = el('input', { id: 'new-title', value: filed.title, maxLength: 200, dataset: { newNoteTitle: '' } })
+  const subject = subjectSelect(context, 'new-subject', context.subjects.length ? 'No subject' : 'No subjects in Nova yet')
+  subject.value = filed.subjectId
+  const topics = el('datalist', { id: 'new-topics' })
+  const topic = el('input', { id: 'new-topic', value: filed.topicName, placeholder: 'After a subject', maxLength: context.limits.topic, autocomplete: 'off', disabled: !filed.subjectId })
+  topic.setAttribute('list', 'new-topics')
+  const offerTopics = () => {
+    const chosen = context.subjects.find(s => s.id === subject.value)
+    topic.disabled = !chosen
+    topic.placeholder = chosen ? 'Optional' : 'After a subject'
+    if (!chosen) topic.value = ''
+    topics.replaceChildren(...(chosen?.topics ?? []).map(name => el('option', { value: name })))
+  }
+  subject.addEventListener('change', offerTopics)
+  offerTopics()
+  const errors = el('div', { class: 'errors' })
+  const make = el('button', { class: 'primary wide', type: 'button', dataset: { newNoteCreate: '' }, onclick: async () => {
+    if (make.getAttribute('aria-busy')) return
+    if (!title.value.trim()) return errors.replaceChildren(alertBox('Give the note a title.'))
+    make.disabled = true; busy(make, 'Creating…'); errors.replaceChildren()
+    const res = await client.saveToNote(buildNoteSave({ clientEventId, page, title: filed.title, excerpt: probe.selection, newNote: { title: title.value }, subjectId: subject.value, topicName: topic.value }))
+    idle(make); make.disabled = false
+    if (res.ok && res.data.success) return renderNoteDone(res.data, page, context, probe)
+    if (!res.ok && res.kind === 'unauthenticated') { await store.clear(); return renderConnect(res.message) }
+    errors.replaceChildren(alertBox(res.ok ? "That didn't work. Nothing was created." : res.message))
+  } }, 'Create note')
+  show('new-note', el('div', { class: 'stack' },
+    el('button', { class: 'link', type: 'button', dataset: { back: '' }, onclick: () => renderDestination(page, context, probe, filed) }, '← Back'),
+    el('h1', {}, 'New note from your selection'),
+    el('div', { class: 'field' }, el('label', { htmlFor: 'new-title' }, 'Title'), title),
+    el('div', { class: 'fields' },
+      el('div', { class: 'field' }, el('label', { htmlFor: 'new-subject' }, 'Subject'), subject),
+      el('div', { class: 'field' }, el('label', { htmlFor: 'new-topic' }, 'Topic'), topic, topics)),
+    el('blockquote', { class: 'quote short', tabIndex: 0, ariaLabel: 'Selected text' }, probe.selection),
+    make, errors))
+}
+
+function renderNoteDone(result, page, context, probe) {
+  const words = chosenWords(result)
+  show('note-done',
+    el('div', { class: 'stack' },
+      el('div', { class: 'page' },
+        el('span', { class: 'done-mark', ariaHidden: 'true' }),
+        el('div', {},
+          el('h1', { class: 'done', role: 'status', dataset: { noteDone: result.action } }, words.heading),
+          el('p', { class: 'lede' }, words.body))),
+      el('div', { class: 'note' },
+        el('div', { style: 'color: var(--text); font-weight: 500' }, result.note.title),
+        el('div', { class: 'small', dataset: { filed: '' } }, result.note.path || 'Not filed under a subject')),
+      el('div', { class: 'actions' },
+        el('button', { class: 'primary ext', type: 'button', dataset: { openNote: result.note.id }, onclick: () => openNova(`/notes/${encodeURIComponent(result.note.id)}`) }, 'Open the note'),
+        el('button', { type: 'button', dataset: { back: '' }, onclick: () => renderReady(page, context, probe) }, 'Back')),
+      footer()))
 }
 
 function renderSaved(result, page, context, probe) {
@@ -517,7 +726,8 @@ async function start(flash = null) {
   const page  = describePage(tab)
   const limit = typeof context.data.limits?.excerpt === 'number' ? context.data.limits.excerpt : 4000
   const probe = page.supported ? await browser.readPage(tab?.id, limit) : NO_PROBE
-  renderReady(page, { ...context.data, limits: { ...context.data.limits, excerpt: limit } }, probe, flash)
+  const [regionShot, keptQuestion] = page.supported ? await Promise.all([browser.takeRegionShot(tab?.id), browser.takeQuestion()]) : [null, '']
+  renderReady({ ...page, tabId: tab?.id }, { ...context.data, limits: { ...context.data.limits, excerpt: limit } }, probe, flash, { regionShot, keptQuestion })
 }
 
 void start()

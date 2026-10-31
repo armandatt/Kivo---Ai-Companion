@@ -55,7 +55,7 @@ export function parseNoteInput(raw: unknown, creating: boolean): Parsed {
     // The body is stored exactly as written. Only line endings are unified.
     const body = (typeof input.body === "string" ? input.body : "").replace(/\r\n?/g, "\n");
     if (body.length > NOTE_BODY_MAX) {
-      return reject("body_too_long", `That note is too long. The limit is ${NOTE_BODY_MAX.toLocaleString("en-US")} characters.`);
+      return reject("body_too_long", `That note is ${body.length.toLocaleString("en-US")} characters, over the ${NOTE_BODY_MAX.toLocaleString("en-US")} a note can hold. Nothing was saved; your text is still here. Move part of it into a second note.`);
     }
     changes.body = body;
   }
@@ -479,6 +479,40 @@ export async function noteSources(profileId: string, noteId: string, options: { 
     }),
   };
 }
+
+// ── Choosing a note, and adding to one (product/note-append.ts) ───────────────
+export interface NoteChoiceRow { id: string; title: string; subjectId: string | null; topicName: string | null; updatedAt: Date }
+const NOTE_CHOICE_COLUMNS = { id: true, title: true, subjectId: true, topicName: true, updatedAt: true } as const;
+
+// By title and where it is filed, newest first. No note's text leaves here.
+export async function listNoteRows(
+  profileId: string,
+  filters: { query: string; subjectIds: string[] | null; topicName: string; skip: number; take: number },
+): Promise<{ rows: NoteChoiceRow[]; total: number }> {
+  const where = {
+    profileId,
+    ...(filters.query ? { title: { contains: likeLiteral(filters.query), mode: "insensitive" as const } } : {}),
+    ...(filters.subjectIds ? { subjectId: { in: filters.subjectIds } } : {}),
+    ...(filters.topicName ? { topicName: { equals: likeLiteral(filters.topicName), mode: "insensitive" as const } } : {}),
+  };
+  const [rows, total] = await Promise.all([
+    prisma.novaNote.findMany({ where, orderBy: { updatedAt: "desc" }, skip: filters.skip, take: filters.take, select: NOTE_CHOICE_COLUMNS }),
+    prisma.novaNote.count({ where }),
+  ]);
+  return { rows, total };
+}
+
+export const noteRowWithBody = (profileId: string, noteId: string) =>
+  prisma.novaNote.findFirst({ where: { id: noteId, profileId }, select: { ...NOTE_CHOICE_COLUMNS, body: true } });
+
+// The learner's own note gets this body, only if it is still the version read:
+// false means it changed in between, and nothing was written.
+export async function replaceBodyIn(tx: Pick<typeof prisma, "novaNote">, profileId: string, noteId: string, version: Date, body: string): Promise<boolean> {
+  return (await tx.novaNote.updateMany({ where: { id: noteId, profileId, updatedAt: version }, data: { body } })).count === 1;
+}
+
+export const noteRowIn = (tx: Pick<typeof prisma, "novaNote">, profileId: string, noteId: string) =>
+  tx.novaNote.findFirst({ where: { id: noteId, profileId }, select: NOTE_CHOICE_COLUMNS });
 
 // ── Study setup edits (product/setup-edit.ts) ─────────────────────────────────
 // When the learner renames, moves or removes a topic, the notes filed under it

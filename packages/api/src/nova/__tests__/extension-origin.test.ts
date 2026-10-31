@@ -98,6 +98,7 @@ describe("which routes give those headers", () => {
       "apps/api/app/api/nova/extension/connect/route.ts",
       "apps/api/app/api/nova/extension/context/route.ts",
       "apps/api/app/api/nova/extension/disconnect/route.ts",
+      "apps/api/app/api/nova/extension/notes/route.ts",
       "apps/api/app/api/nova/learning-events/route.ts",
     ]);
   });

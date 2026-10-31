@@ -217,13 +217,13 @@ export async function resolveEventLearner(platformChatId: string): Promise<Learn
   return { status: "ready", profileId: profile.id };
 }
 
-async function subjectsWithTopics(profileId: string) {
+async function subjectsWithTopics(profileId: string): Promise<Array<{ id: string; name: string; parentId?: string | null; topics: string[] }>> {
   const subjects = await prisma.novaSubject.findMany({
     where:   { profileId },
     orderBy: { name: "asc" },
-    select:  { id: true, name: true, topics: { where: { archivedAt: null }, select: { name: true }, orderBy: { name: "asc" } } },
+    select:  { id: true, name: true, parentId: true, topics: { where: { archivedAt: null }, select: { name: true }, orderBy: { name: "asc" } } },
   });
-  return subjects.map(s => ({ id: s.id, name: s.name, topics: s.topics.map(t => t.name) }));
+  return subjects.map(s => ({ id: s.id, name: s.name, parentId: s.parentId, topics: s.topics.map(t => t.name) }));
 }
 
 const activeSessionOf = async (profileId: string) => {
@@ -386,6 +386,34 @@ export async function recordLearningEvent(
     }
     throw err;
   }
+}
+
+// ── A passage that also went into a note (product/note-append.ts) ─────────────
+// In the caller's transaction, with the note's own write. The same passage of
+// a page is one saved entry however it was saved; a passage new to Saved pages
+// is filed where the note is, or looked at by Nova when the note is filed nowhere.
+export const passageSeen = async (profileId: string, clientEventId: string): Promise<boolean> =>
+  (await prisma.novaLearningEvent.count({ where: { profileId, clientEventId } })) > 0;
+
+export const eventsLastMinute = (profileId: string, now: Date): Promise<number> =>
+  prisma.novaLearningEvent.count({ where: { profileId, createdAt: { gt: new Date(now.getTime() - 60_000) } } });
+
+export async function recordPassageIn(
+  tx: Pick<typeof prisma, "novaLearningEvent">,
+  profileId: string,
+  event: ParsedLearningEvent,
+  filed: { subjectId: string | null; topicName: string | null },
+  source: LearningEventSource,
+): Promise<void> {
+  const known = await tx.novaLearningEvent.findFirst({ where: { profileId, eventType: "selection_saved", url: event.url, excerpt: event.excerpt }, select: { id: true } });
+  if (known) return;
+  await tx.novaLearningEvent.create({
+    data: {
+      profileId, eventType: "selection_saved", source, clientEventId: event.clientEventId, url: event.url, domain: event.domain, title: event.title,
+      subjectId: filed.subjectId, topicName: filed.topicName, occurredAt: event.occurredAt, canonicalUrl: event.canonicalUrl, excerpt: event.excerpt,
+      filedBy: filed.subjectId ? "learner" : null, processingStatus: filed.subjectId ? "none" : "pending",
+    },
+  });
 }
 
 // ── Filing a saved page afterwards ────────────────────────────────────────────

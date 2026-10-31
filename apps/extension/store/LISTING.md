@@ -29,7 +29,7 @@ Used from the manifest's `description` (119 characters):
 >
 > • It does not read the page. It sees the address, the title and the text you have selected, and sends them only when you press a button. With no selection, Nova answers a question from the title alone and says so.
 > • It does not see your other tabs or your browsing history.
-> • It does nothing in the background. There is no background script and no content script; when the popup is closed, the extension is not running.
+> • It does nothing in the background. There is no content script. A small background worker wakes only to take the picture of an area you selected.
 > • Saving a page does not count as studying it. Your progress in Nova changes only when you finish a study session.
 >
 > Getting started

@@ -10,12 +10,12 @@ Save the page you are reading to Nova, save a passage you selected on it, or sta
 | `scripting` | On that same tab, at that same moment, read two things: the text you have selected, and the page's canonical link. One function (`probePage` in `src/lib/browser.js`), run once. |
 | `storage` | Keep this browser connected (the extension's own credential, in `chrome.storage.local`). |
 
-That is the whole list. There are no host permissions, no content scripts and no background script, so the extension:
+That is the whole list. There are no host permissions and no content scripts, and one small background worker with one job (taking the picture of an area you selected, once the popup has closed), so the extension:
 
 - reads nothing inside a page except your selection and its canonical link (no other text, no forms, passwords or cookies), and sends the selection only when you press **Save selection** or ask a question;
 - takes a screenshot of the tab only when you press **Screenshot**, shows it to you first, sends it only with a question you ask (only the part you marked, if you marked one), and keeps it nowhere;
 - cannot see your other tabs or your history;
-- does nothing while its popup is closed;
+- does nothing while its popup is closed, except take that picture;
 - talks to one address only: the Nova web app it was built for.
 
 `test/extension.test.mjs` fails if any of this stops being true.

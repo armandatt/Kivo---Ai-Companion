@@ -11,13 +11,15 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 
 import { ADAPTERS, describePage } from '../src/lib/page.js'
-import { WORDS, buildEvent, buildQuestion, createClient, disconnectOutcome, newActionId } from '../src/lib/api.js'
+import { WORDS, buildEvent, buildNoteSave, buildQuestion, createClient, disconnectOutcome, newActionId } from '../src/lib/api.js'
 import { createStore } from '../src/lib/store.js'
 import { NO_PROBE, probePage, readProbe } from '../src/lib/browser.js'
+import { REGION_SHOT_KEEP_MS, cropArea, freshShot } from '../src/lib/region.js'
+import { nestedSubjects, subjectLabel } from '../src/lib/note-picker.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const src  = name => readFileSync(join(root, 'src', name), 'utf8')
-const sources = ['popup.js', 'lib/api.js', 'lib/browser.js', 'lib/page.js', 'lib/store.js'].map(name => ({ name, text: src(name) }))
+const sources = ['popup.js', 'background.js', 'region-overlay.js', 'lib/api.js', 'lib/browser.js', 'lib/note-picker.js', 'lib/page.js', 'lib/region.js', 'lib/store.js'].map(name => ({ name, text: src(name) }))
 const code = text => text.split('\n').filter(line => !line.trim().startsWith('//') && !line.trim().startsWith('*') && !line.trim().startsWith('/*')).join('\n')
 
 // ── What the extension is allowed to do ───────────────────────────────────────
@@ -26,24 +28,78 @@ test('manifest: activeTab, scripting and storage, and nothing else', () => {
   const manifest = JSON.parse(src('manifest.template.json'))
   assert.equal(manifest.manifest_version, 3)
   assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage'])
-  for (const key of ['host_permissions', 'optional_permissions', 'optional_host_permissions', 'content_scripts', 'background', 'web_accessible_resources', 'externally_connectable', 'content_security_policy', 'chrome_url_overrides', 'devtools_page', 'side_panel', 'omnibox', 'commands']) {
+  for (const key of ['host_permissions', 'optional_permissions', 'optional_host_permissions', 'content_scripts', 'web_accessible_resources', 'externally_connectable', 'content_security_policy', 'chrome_url_overrides', 'devtools_page', 'side_panel', 'omnibox', 'commands']) {
     assert.equal(manifest[key], undefined, `${key} is not declared`)
   }
   assert.ok(!JSON.stringify(manifest).match(/<all_urls>|\*:\/\/|history|tabs"|webRequest|cookies|bookmarks|clipboard|downloads|webNavigation|debugger/))
   assert.deepEqual(Object.keys(manifest.action).sort(), ['default_icon', 'default_popup', 'default_title'])
 })
 
-test('there is no background script and no content script: nothing runs while the popup is closed', () => {
-  assert.deepEqual(readdirSync(join(root, 'src')).sort(), ['lib', 'manifest.template.json', 'popup.css', 'popup.html', 'popup.js'])
-  assert.deepEqual(readdirSync(join(root, 'src', 'lib')).sort(), ['api.js', 'browser.js', 'page.js', 'store.js'])
+test('no content script, and one worker with one job: while the popup is closed nothing runs but the picture of an area the learner selected', () => {
+  assert.deepEqual(readdirSync(join(root, 'src')).sort(), ['background.js', 'lib', 'manifest.template.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js'])
+  assert.deepEqual(readdirSync(join(root, 'src', 'lib')).sort(), ['api.js', 'browser.js', 'note-picker.js', 'page.js', 'region.js', 'store.js'])
+  assert.deepEqual(JSON.parse(src('manifest.template.json')).background, { service_worker: 'background.js', type: 'module' })
+  const worker = code(src('background.js'))
+  assert.equal((worker.match(/\.addListener\(/g) ?? []).length, 1, 'it listens for one thing')
+  assert.match(worker, /chrome\.runtime\.onMessage\.addListener/)
+  assert.match(worker, /sender\.id !== chrome\.runtime\.id/, 'only its own overlay')
+  assert.ok(!worker.match(/executeScript|tabs\.query|tabs\.get|onUpdated|onActivated|alarms|fetch\(/), 'it reads no tab and calls no server')
+})
+
+test('the area selector reads nothing from the page and is off the page before the picture', () => {
+  const overlay = code(src('region-overlay.js'))
+  assert.ok(!overlay.match(/innerText|document\.body|querySelector|forms|cookie|localStorage|fetch\(|XMLHttpRequest|getSelection/), 'it reads nothing')
+  const capture = overlay.slice(overlay.indexOf('captureButton.addEventListener'))
+  assert.ok(capture.indexOf('close()') !== -1 && capture.indexOf('close()') < capture.indexOf("type: 'nova-region'"), 'taken off the page first')
+  assert.match(capture, /requestAnimationFrame\(\(\) => requestAnimationFrame/, 'and the page drawn without it')
+  assert.match(overlay, /event\.key !== 'Escape'/)
+})
+
+test('a selected area is cropped by the picture\'s own scale: display density, zoom and scroll play no part', () => {
+  const rect = { x: 100, y: 50, w: 200, h: 100 }, viewport = { w: 1000, h: 500 }
+  assert.deepEqual(cropArea(rect, viewport, { width: 1000, height: 500 }), { sx: 100, sy: 50, sw: 200, sh: 100 })
+  assert.deepEqual(cropArea(rect, viewport, { width: 2000, height: 1000 }), { sx: 200, sy: 100, sw: 400, sh: 200 }, 'retina')
+  assert.deepEqual(cropArea(rect, viewport, { width: 1500, height: 750 }), { sx: 150, sy: 75, sw: 300, sh: 150 }, 'a zoom of 150%')
+  assert.deepEqual(cropArea({ x: 900, y: 450, w: 500, h: 500 }, viewport, { width: 1000, height: 500 }), { sx: 900, sy: 450, sw: 100, sh: 50 }, 'held to the picture')
+  assert.equal(cropArea({ x: 2000, y: 0, w: 10, h: 10 }, viewport, { width: 1000, height: 500 }), null)
+  assert.equal(cropArea({ x: NaN, y: 0, w: 10, h: 10 }, viewport, { width: 1000, height: 500 }), null)
+})
+
+test('a captured area is handed only to its own tab, and not for long', () => {
+  const stored = { src: 'data:image/jpeg;base64,AAAA', tabId: 7, at: 1000 }
+  assert.equal(freshShot(stored, 7, 2000), stored)
+  assert.equal(freshShot(stored, 8, 2000), null, 'another tab')
+  assert.equal(freshShot(stored, 7, 1000 + REGION_SHOT_KEEP_MS + 1), null, 'too old')
+  assert.equal(freshShot({ ...stored, src: 'https://x/y.png' }, 7, 2000), null, 'not a picture')
+  assert.equal(freshShot(null, 7, 2000), null)
+})
+
+test('subjects are listed in their tree, and none is lost to a loop', () => {
+  const subjects = [{ id: 'b', name: 'Inner', parentId: 'a' }, { id: 'a', name: 'Outer', parentId: null }, { id: 'c', name: 'Deep', parentId: 'b' }, { id: 'x', name: 'Orphan', parentId: 'gone' }, { id: 'l1', name: 'L1', parentId: 'l2' }, { id: 'l2', name: 'L2', parentId: 'l1' }]
+  const out = nestedSubjects(subjects)
+  assert.deepEqual(out.slice(0, 4).map(s => [s.id, s.depth]), [['a', 0], ['b', 1], ['c', 2], ['x', 0]])
+  assert.equal(out.length, subjects.length)
+  assert.equal(subjectLabel(out[0]), 'Outer')
+  assert.ok(subjectLabel(out[1]).endsWith('↳ Inner'))
+})
+
+test('a passage for a note carries the note, not a subject: the note is filed where it is', () => {
+  const now = new Date(2026, 10, 1, 9)
+  const to = buildNoteSave({ clientEventId: 'id', page, title: 'T', excerpt: 'A passage.', noteId: 'n1', subjectId: 's1', topicName: 'x', now })
+  assert.equal(to.noteId, 'n1'); assert.equal(to.subjectId, null); assert.equal(to.topicName, null); assert.equal(to.excerpt, 'A passage.'); assert.equal(to.day, '2026-11-01')
+  assert.ok(!('newNote' in to))
+  const fresh = buildNoteSave({ clientEventId: 'id', page, title: 'T', excerpt: 'A passage.', newNote: { title: 'New' }, subjectId: 's1', topicName: 'x', now })
+  assert.deepEqual(fresh.newNote, { title: 'New' }); assert.equal(fresh.subjectId, 's1'); assert.equal(fresh.topicName, 'x')
+  const popup = code(src('popup.js'))
+  assert.ok(popup.indexOf('const clientEventId = newActionId()', popup.indexOf('async function confirmNote')) !== -1, 'one id for the note chosen, so Try again repeats it')
 })
 
 test('the code uses five browser APIs, all in one file: the active tab, opening a tab, extension storage, one read of that tab, and its screenshot', () => {
   const used = new Set()
   for (const { text } of sources) for (const m of code(text).matchAll(/chrome\.([a-zA-Z]+)\.([a-zA-Z]+)/g)) used.add(`${m[1]}.${m[2]}`)
-  assert.deepEqual([...used].sort(), ['scripting.executeScript', 'storage.local', 'tabs.captureVisibleTab', 'tabs.create', 'tabs.query'])
-  // lib/browser.js is the adapter: no other file names the browser's API.
-  for (const { name, text } of sources) if (name !== 'lib/browser.js') assert.ok(!code(text).match(/\bchrome\b/), `${name} goes through lib/browser.js`)
+  assert.deepEqual([...used].sort(), ['action.openPopup', 'action.setBadgeBackgroundColor', 'action.setBadgeText', 'runtime.id', 'runtime.onMessage', 'runtime.sendMessage', 'scripting.executeScript', 'storage.local', 'storage.session', 'tabs.captureVisibleTab', 'tabs.create', 'tabs.query'])
+  // lib/browser.js is the adapter; the worker and the overlay run where it can't.
+  for (const { name, text } of sources) if (!['lib/browser.js', 'background.js', 'region-overlay.js'].includes(name)) assert.ok(!code(text).match(/\bchrome\b/), `${name} goes through lib/browser.js`)
   const all = sources.map(s => code(s.text)).join('\n')
   assert.match(all, /chrome\.tabs\.query\(\{ active: true, currentWindow: true \}\)/)
   assert.equal((all.match(/chrome\.tabs\.query/g) ?? []).length, 1, 'the active tab is the only tab ever asked about')
@@ -51,7 +107,8 @@ test('the code uses five browser APIs, all in one file: the active tab, opening 
 
 test('inside a page it reads the selection and the canonical link, once, and nothing else', () => {
   const adapter = code(src('lib/browser.js'))
-  assert.equal((adapter.match(/executeScript/g) ?? []).length, 1, 'one way into a page')
+  assert.equal((adapter.match(/chrome\.scripting\.executeScript/g) ?? []).length, 2, 'two ways into a page: the probe, and the area selector when asked')
+  assert.match(adapter, /executeScript\(\{ target: \{ tabId \}, files: \['region-overlay\.js'\] \}\)/, 'that one tab, that one file')
   assert.match(adapter, /chrome\.scripting\.executeScript\(\{ target: \{ tabId \}, func: probePage \}\)/, 'that one tab, that one function, no files and no all-frames')
   const probe = adapter.match(/export function probePage\(\) \{[\s\S]*?\n\}/)[0]
   assert.match(probe, /window\.getSelection/)
@@ -79,7 +136,8 @@ test('the selection is sent only by its own button, and never with a page save o
     assert.ok(!('excerpt' in buildEvent({ eventType, clientEventId: 'x', page, excerpt: 'A passage.' })), `${eventType} carries no passage`)
   }
   const popup = code(src('popup.js'))
-  assert.match(popup, /send\('selection_saved', saveSelection, /)
+  assert.match(popup, /saveSelection\.addEventListener\('click', \(\) => renderDestination\(/, 'its button only asks where it goes')
+  assert.match(popup, /buildEvent\(\{ eventType: 'selection_saved', clientEventId: keepId/, 'Saved pages stays one of the answers')
   assert.equal((popup.match(/'selection_saved'/g) ?? []).length, 2, 'named where it is sent and where its result is shown')
 })
 
@@ -95,7 +153,8 @@ test('Add to notes opens Nova\'s capture page with the page and selection in the
 
 test('it keeps nothing in page-readable storage, writes no markup and runs nothing on a timer', () => {
   const all = sources.map(s => code(s.text)).join('\n')
-  assert.ok(!all.match(/chrome\.history|chrome\.cookies|chrome\.webRequest|chrome\.webNavigation|chrome\.runtime\.onMessage|chrome\.tabs\.(onUpdated|onActivated|sendMessage|get\b)/), 'no way into a page, its history or its traffic')
+  assert.ok(!sources.filter(s => s.name !== 'background.js').map(s => code(s.text)).join('\n').match(/chrome\.runtime\.onMessage/), 'only the worker listens')
+  assert.ok(!all.match(/chrome\.history|chrome\.cookies|chrome\.webRequest|chrome\.webNavigation|chrome\.tabs\.(onUpdated|onActivated|sendMessage|get\b)/), 'no way into a page, its history or its traffic')
   assert.ok(!all.match(/localStorage|sessionStorage|document\.cookie|indexedDB|chrome\.storage\.sync/), 'no page-readable or synced storage')
   assert.ok(!all.match(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function/), 'page titles are set as text, never as markup')
   assert.ok(!all.match(/setInterval|chrome\.alarms|chrome\.idle/), 'nothing runs on a timer')
@@ -110,7 +169,7 @@ test('the only address it talks to is Nova, fixed at build time', () => {
   assert.match(code(src('lib/api.js')), /credentials: 'omit'/)
   assert.ok(!all.match(/openai|anthropic|gemini|\/api\/nova\/message/i), 'no LLM call and no chat route')
   const paths = [...code(src('lib/api.js')).matchAll(/call\('([^']+)'/g)].map(m => m[1]).sort()
-  assert.deepEqual(paths, ['/api/nova/extension/ask', '/api/nova/extension/connect', '/api/nova/extension/context', '/api/nova/extension/disconnect', '/api/nova/learning-events'])
+  assert.deepEqual(paths, ['/api/nova/extension/ask', '/api/nova/extension/connect', '/api/nova/extension/context', '/api/nova/extension/disconnect', '/api/nova/extension/notes', '/api/nova/learning-events'])
 })
 
 test('the popup page loads only its own files', () => {
@@ -123,7 +182,7 @@ test('the popup page loads only its own files', () => {
 test('every permission is explained in the popup', () => {
   const popup = src('popup.js')
   assert.match(popup, /"activeTab" lets Nova read this tab\\'s address and title when you click its icon, and take a screenshot of it when you press Screenshot/)
-  assert.match(popup, /A screenshot of what that tab is showing, only when you press Screenshot\. You see it here first\. It goes to Nova only with a question you ask, and is not kept\./)
+  assert.match(popup, /A screenshot of what that tab is showing, only when you press Screenshot or capture an area you selected\. You see it here first\. It goes to Nova only with a question you ask, and is not kept\./)
   assert.match(popup, /"scripting" lets it read your selected text and the page\\'s own address on that tab, at that moment/)
   assert.match(popup, /"storage" keeps this browser connected/)
   assert.match(popup, /It is sent only if you press Save selection/)
@@ -439,7 +498,7 @@ test('a release is refused without an https address that is somewhere else', () 
 test('the release ZIP holds the built extension and nothing else', () => {
   const { zip, name, out } = packageWith({ NOVA_URL: 'https://kivo.example/some/path' })
   assert.equal(name, `nova-extension-${JSON.parse(src('manifest.template.json')).version}.zip`)
-  assert.deepEqual(zipNames(zip), ['config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/api.js', 'lib/browser.js', 'lib/page.js', 'lib/store.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js'])
+  assert.deepEqual(zipNames(zip), ['background.js', 'config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/api.js', 'lib/browser.js', 'lib/note-picker.js', 'lib/page.js', 'lib/region.js', 'lib/store.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js'])
   assert.match(out, /sha256 [0-9a-f]{64}/)
   assert.match(out, /for https:\/\/kivo\.example\n/)
 })

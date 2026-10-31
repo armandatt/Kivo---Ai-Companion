@@ -7,18 +7,27 @@
 //   chrome.tabs.create               open Nova in a new tab
 //   chrome.scripting.executeScript   read the selected text and the canonical
 //                                    link of that one tab, once, as the popup opens
+//   chrome.scripting.executeScript   also draws the area selector (region-overlay.js)
+//                                    on that tab, when they press Select area
 //   chrome.tabs.captureVisibleTab    a picture of what that tab is showing, only
 //                                    when the learner presses Screenshot
+//   chrome.storage.session           the area they selected, until this popup takes it
+//   chrome.action.setBadgeText       clears the mark on the icon when it is taken
+//
+// background.js is the only other file that calls it, for one job: taking the
+// picture of a selected area once the popup has closed.
 //
 // Chrome, Edge, Brave, Arc and Safari all provide these under `chrome`, so
 // there is one adapter and no per-browser branch. A browser that lacks the
 // scripting call simply has no selection to offer: saving a page still works.
 //
-// There is no content script and no background script. The one function run
-// inside a page is `probePage` below; it runs because the learner clicked the
-// Nova button on that tab (activeTab), and never on any other tab. The
+// There is no content script. Two things ever run inside a page, both because
+// the learner clicked the Nova button on that tab (activeTab), never on any
+// other tab: `probePage` below, and the area selector when they ask for it. The
 // screenshot needs no permission beyond that click either: activeTab is what
 // lets an extension capture the tab it was opened on, and nothing else.
+
+import { REGION_SHOT_KEY, freshShot } from './region.js'
 
 const SELECTION_READ_MAX = 4200   // enough to tell "too long" from "fits"
 const ADDRESS_MAX        = 2048
@@ -79,6 +88,50 @@ export const browser = {
     try {
       const shot = await chrome.tabs.captureVisibleTab(typeof windowId === 'number' ? windowId : undefined, { format: 'jpeg', quality: 90 })
       return typeof shot === 'string' && shot.startsWith('data:image/') ? shot : null
+    } catch {
+      return null
+    }
+  },
+
+  /**
+   * Draws the area selector on the tab. false: the browser won't allow it here.
+   * @param {number | undefined} tabId
+   */
+  async startRegion(tabId) {
+    if (typeof tabId !== 'number' || !globalThis.chrome?.scripting) return false
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['region-overlay.js'] })
+      return true
+    } catch {
+      return false
+    }
+  },
+
+  // What they had typed when they stepped aside to select an area.
+  async keepQuestion(text) {
+    try { await chrome.storage.session.set({ novaRegionQuestion: text }) } catch { /* it is only typing */ }
+  },
+  async takeQuestion() {
+    try {
+      const { novaRegionQuestion: text } = await chrome.storage.session.get('novaRegionQuestion')
+      if (text) await chrome.storage.session.remove('novaRegionQuestion')
+      return typeof text === 'string' ? text : ''
+    } catch {
+      return ''
+    }
+  },
+
+  /**
+   * The area selected on this tab, if one is waiting. Taking it removes it.
+   * @param {number | undefined} tabId
+   */
+  async takeRegionShot(tabId) {
+    if (!globalThis.chrome?.storage?.session) return null
+    try {
+      const { [REGION_SHOT_KEY]: stored } = await chrome.storage.session.get(REGION_SHOT_KEY)
+      if (stored) await chrome.storage.session.remove(REGION_SHOT_KEY)
+      if (typeof tabId === 'number') void chrome.action?.setBadgeText?.({ tabId, text: '' })
+      return freshShot(stored, tabId)
     } catch {
       return null
     }

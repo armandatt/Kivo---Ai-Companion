@@ -15,7 +15,7 @@ The Nova extension lets you save the web page you are reading to your Nova study
 - **A screenshot of that tab, only if you press Screenshot.** It shows what the tab is displaying at that moment, and appears in the popup first. You can drag across it to keep only one part, such as a diagram. It leaves your browser only with a question you ask, and only the part you marked. It is not stored, in the browser or by Kivo.
 - **Nothing else inside the page.** It does not read other text, forms, passwords or cookies. It has no content script and no standing permission for any website.
 - **No other tabs, and no browsing history.**
-- It does nothing while its popup is closed. There is no background script.
+- It does nothing while its popup is closed, with one exception you start yourself: after you press Select area and Capture, a small background worker takes the picture of that area and holds it in memory until the popup opens. It does nothing else, and listens for nothing else.
 
 ## What is sent to Kivo, and when
 

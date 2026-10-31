@@ -48,7 +48,7 @@ walk(stage)
 const entries = files.map(path => ({ name: relative(stage, path).split(sep).join('/'), data: readFileSync(path) })).sort((a, b) => (a.name < b.name ? -1 : 1))
 
 // ── Check what is about to be shipped ─────────────────────────────────────────
-const EXPECTED = ['config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/api.js', 'lib/browser.js', 'lib/page.js', 'lib/store.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js']
+const EXPECTED = ['background.js', 'config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/api.js', 'lib/browser.js', 'lib/note-picker.js', 'lib/page.js', 'lib/region.js', 'lib/store.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js']
 const names = entries.map(e => e.name)
 if (JSON.stringify(names) !== JSON.stringify(EXPECTED)) fail(`unexpected files in the build: ${names.join(', ')}`)
 
@@ -58,9 +58,11 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 if (manifest.manifest_version !== 3) fail('the manifest is not version 3')
 if (manifest.version !== pkg.version) fail(`manifest version ${manifest.version} is not package.json version ${pkg.version}`)
 if (JSON.stringify(manifest.permissions) !== JSON.stringify(['activeTab', 'scripting', 'storage'])) fail(`permissions are ${JSON.stringify(manifest.permissions)}`)
-for (const key of ['host_permissions', 'optional_permissions', 'optional_host_permissions', 'content_scripts', 'background', 'web_accessible_resources', 'externally_connectable']) {
+for (const key of ['host_permissions', 'optional_permissions', 'optional_host_permissions', 'content_scripts', 'web_accessible_resources', 'externally_connectable']) {
   if (manifest[key] !== undefined) fail(`the manifest declares ${key}`)
 }
+// One worker, for one job (background.js), and no page can reach it.
+if (JSON.stringify(manifest.background) !== JSON.stringify({ service_worker: 'background.js', type: 'module' })) fail(`the background is ${JSON.stringify(manifest.background)}`)
 if ((manifest.description ?? '').length > 132) fail('the manifest description is over the store limit of 132 characters')
 if (text('config.js').trim().split('\n').pop() !== `export const NOVA_URL = ${JSON.stringify(origin)}`) fail('config.js does not hold the release address')
 

@@ -1,6 +1,7 @@
-// The extension's calls to Nova. Four of them, all to Nova's own address:
-// redeem a pairing code, read the learner's subjects, send one learning
-// event (a page saved, a passage saved, a page to study), disconnect. The credential travels as a bearer header and nowhere
+// The extension's calls to Nova, all to Nova's own address: redeem a pairing
+// code, read the learner's subjects, send one learning event (a page saved, a
+// passage saved, a page to study), find a note and put a passage into it,
+// ask about the page, disconnect. The credential travels as a bearer header and nowhere
 // else; cookies are never sent.
 //
 // Every failure comes back as { ok: false, kind, message } with words a
@@ -73,6 +74,19 @@ export function createClient({ baseUrl, fetch: doFetch, getToken }) {
     disconnect: () => call('/api/nova/extension/disconnect', { method: 'POST' }),
     // One explicit action. `event.clientEventId` is what makes a retry safe.
     sendEvent:  event => call('/api/nova/learning-events', { method: 'POST', body: event }),
+    // The learner's notes to choose from: titles and where they are filed, no text.
+    noteChoices: ({ q = '', subjectId = '', topic = '', skip = 0 } = {}) => {
+      const p = new URLSearchParams()
+      if (q.trim()) p.set('q', q.trim())
+      if (subjectId) p.set('subjectId', subjectId)
+      if (subjectId && topic) p.set('topic', topic)
+      if (skip) p.set('skip', String(skip))
+      const query = p.toString()
+      return call(`/api/nova/extension/notes${query ? `?${query}` : ''}`)
+    },
+    notePreview: id => call(`/api/nova/extension/notes?preview=${encodeURIComponent(id)}`),
+    // A passage into a note, or into a new one. A retry repeats the id, and adds nothing.
+    saveToNote: body => call('/api/nova/extension/notes', { method: 'POST', body }),
     // A question about the page. Answered and not kept, screenshot included.
     ask:        question => call('/api/nova/extension/ask', { method: 'POST', body: question, timeoutMs: question.screenshot ? SCREENSHOT_TIMEOUT_MS : TIMEOUT_MS }),
   }
@@ -97,6 +111,16 @@ export function buildEvent({ eventType, clientEventId, page, title, subjectId, t
   // The selected passage travels only with the action that is about it.
   if (eventType === 'selection_saved') event.excerpt = typeof excerpt === 'string' ? excerpt : ''
   return event
+}
+
+/**
+ * A passage for a note: the passage's own event fields, and where it goes.
+ * @param {{ clientEventId: string, page: object, title?: string, excerpt: string, noteId?: string, newNote?: { title: string }, subjectId?: string, topicName?: string, now?: Date }} input
+ */
+export function buildNoteSave({ clientEventId, page, title, excerpt, noteId, newNote, subjectId, topicName, now = new Date() }) {
+  const event = buildEvent({ eventType: 'selection_saved', clientEventId, page, title, subjectId: noteId ? '' : subjectId, topicName: noteId ? '' : topicName, excerpt, now })
+  const pad = n => String(n).padStart(2, '0')
+  return { ...event, day: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`, ...(noteId ? { noteId } : { newNote }) }
 }
 
 /**

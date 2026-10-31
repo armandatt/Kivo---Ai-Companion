@@ -151,7 +151,8 @@ export type ExtensionContext =
   | {
       status:   "ready";
       learner:  { name: string | null };
-      subjects: Array<{ id: string; name: string; topics: string[] }>;
+      // parentId: the subject it sits inside. Absent from an older API.
+      subjects: Array<{ id: string; name: string; parentId?: string | null; topics: string[] }>;
       activeSession: { topicName: string | null } | null;
       limits:   { title: number; topic: number; excerpt: number };
     }
