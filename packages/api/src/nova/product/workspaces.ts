@@ -24,6 +24,7 @@ import { prisma } from "@repo/db/client";
 import { dayKey, resolveTimezone } from "../engines/learner-calendar";
 import { checkWorkspacePlan, planWrites, readStoredPlan, type WorkspacePlan } from "./workspace-plan";
 import { templateById } from "./templates";
+import { subjectsWithArchivedTopics } from "./topic-archive";
 import { declareWorkspaceSubjectsIn, ensureSetupProfile } from "./setup";
 import { addDatesIn } from "./exams";
 import { createTasksIn } from "./tasks";
@@ -465,7 +466,12 @@ function madeBy(plan: unknown): { subjects: Set<string>; topics: Set<string>; no
   };
 }
 
-export async function deletionScope(platformChatId: string, profileId: string, ref: Pick<ResourceRef, "workspaceId" | "subjectIds">, now = new Date()): Promise<DeletionScope | null> {
+// whole: the learner chose to delete a whole map from the Knowledge Map, so its
+// subjects, topics and dates go whoever made them. What is never taken with it:
+// a topic with recorded study (and so the subject holding it), and notes and
+// tasks they wrote, which stay, filed under nothing.
+export async function deletionScope(platformChatId: string, profileId: string, ref: Pick<ResourceRef, "workspaceId" | "subjectIds">, now = new Date(), opts: { whole?: boolean } = {}): Promise<DeletionScope | null> {
+  const whole = opts.whole === true;
   const row = ref.workspaceId ? await prisma.novaWorkspace.findFirst({ where: { id: ref.workspaceId, profileId }, select: { id: true, title: true, clientKey: true, plan: true, subjectIds: true } }) : null;
   if (ref.workspaceId && !row) return null;
   const detail = await resourceDetail(platformChatId, profileId, ref, now);
@@ -475,6 +481,8 @@ export async function deletionScope(platformChatId: string, profileId: string, r
     prisma.novaWorkspace.findMany({ where: { profileId, ...(row ? { id: { not: row.id } } : {}) }, select: { title: true, subjectIds: true } }),
   ]);
   const keeps: string[] = [];
+  // An archived topic keeps its history, and a subject can't go from under it.
+  const withArchived = await subjectsWithArchivedTopics(detail.subjects.map(s => s.id));
 
   let tasks: DeletionScope["removes"]["tasks"] = [], notes: DeletionScope["removes"]["notes"] = [], dates: DeletionScope["removes"]["dates"] = [], topics: DeletionScope["removes"]["topics"] = [];
   let made: ReturnType<typeof madeBy> | null = null;
@@ -489,8 +497,8 @@ export async function deletionScope(platformChatId: string, profileId: string, r
     tasks = under.filter(t => t.made).map(t => ({ id: t.id, name: t.title, done: t.status === "done", step: t.parentId !== null }));
     if (yours.length) keeps.push(`${yours.length} step${yours.length === 1 ? "" : "s"} you added under its tasks, as tasks of your own`);
     notes = (await untouchedNotesIn(profileId, detail.subjects.map(s => s.id), [...made.notes])).map(n => ({ id: n.id, name: n.title }));
-    dates = detail.dates.filter(d => made!.dates.has(low(d.title))).map(d => ({ id: d.id, name: `${d.title} (${d.day})` }));
-    topics = detail.subjects.flatMap(s => s.topics.filter(t => made!.topics.has(`${low(s.name)}\n${low(t.name)}`) && !studied.has(t.id)).map(t => ({ id: t.id, name: t.name })));
+    dates = detail.dates.filter(d => whole || made!.dates.has(low(d.title))).map(d => ({ id: d.id, name: `${d.title} (${d.day})` }));
+    topics = detail.subjects.flatMap(s => s.topics.filter(t => (whole || made!.topics.has(`${low(s.name)}\n${low(t.name)}`)) && !studied.has(t.id)).map(t => ({ id: t.id, name: t.name })));
   } else {
     // Subjects of theirs, asked away: the subjects with their unstudied topics and their dates.
     dates = detail.dates.map(d => ({ id: d.id, name: `${d.title} (${d.day})` }));
@@ -521,16 +529,17 @@ export async function deletionScope(platformChatId: string, profileId: string, r
     const notesLeft = detail.notes.filter(n => n.subjectId === s.id && !goingNotes.has(n.id));
     const datesLeft = detail.dates.filter(d => d.subjectId === s.id && !goingDates.has(d.id));
     if (studiedHere.length) keeps.push(`${s.name}, because you've studied ${studiedHere.slice(0, 2).map(t => t.name).join(", ")}`);
-    else if (elsewhere) keeps.push(`${s.name}, which ${elsewhere.title} also uses`);
-    else if (row && !made!.subjects.has(low(s.name))) keeps.push(`${s.name}: it was yours before this workspace`);
-    else if (row && (topicsLeft.length || tasksLeft.length || notesLeft.length || datesLeft.length)) {
+    else if (withArchived.has(s.id)) keeps.push(`${s.name}, because it holds archived topics and their history`);
+    else if (elsewhere && !whole) keeps.push(`${s.name}, which ${elsewhere.title} also uses`);
+    else if (row && !whole && !made!.subjects.has(low(s.name))) keeps.push(`${s.name}: it was yours before this workspace`);
+    else if (row && !whole && (topicsLeft.length || tasksLeft.length || notesLeft.length || datesLeft.length)) {
       keeps.push(`${s.name}, with what you added to it yourself (${[topicsLeft.length && `${topicsLeft.length} topic${topicsLeft.length === 1 ? "" : "s"}`, tasksLeft.length && `${tasksLeft.length} task${tasksLeft.length === 1 ? "" : "s"}`, notesLeft.length && `${notesLeft.length} note${notesLeft.length === 1 ? "" : "s"}`].filter(Boolean).join(", ") || "its dates"})`);
     } else {
       subjects.push({ id: s.id, name: s.name });
-      if (!row && (tasksLeft.length || notesLeft.length)) keeps.push(`Your ${[tasksLeft.length && `${tasksLeft.length} task${tasksLeft.length === 1 ? "" : "s"}`, notesLeft.length && `${notesLeft.length} note${notesLeft.length === 1 ? "" : "s"}`].filter(Boolean).join(" and ")} in ${s.name}, unfiled`);
+      if ((!row || whole) && (tasksLeft.length || notesLeft.length)) keeps.push(`Your ${[tasksLeft.length && `${tasksLeft.length} task${tasksLeft.length === 1 ? "" : "s"}`, notesLeft.length && `${notesLeft.length} note${notesLeft.length === 1 ? "" : "s"}`].filter(Boolean).join(" and ")} in ${s.name}, unfiled`);
     }
   }
-  if (row) {
+  if (row && !whole) {
     const yourNotes = detail.notes.filter(n => !goingNotes.has(n.id)).length;
     if (yourNotes) keeps.push(`${yourNotes} note${yourNotes === 1 ? "" : "s"} you wrote or edited`);
   }
@@ -550,11 +559,11 @@ export type DeleteResult =
   | { ok: true; scope: DeletionScope }
   | { ok: false; error: "not_found" | "changed"; message: string };
 
-export async function deleteResource(platformChatId: string, input: { ref: Pick<ResourceRef, "workspaceId" | "subjectIds">; fingerprint: string }, now = new Date()): Promise<DeleteResult> {
+export async function deleteResource(platformChatId: string, input: { ref: Pick<ResourceRef, "workspaceId" | "subjectIds">; fingerprint: string; whole?: boolean }, now = new Date()): Promise<DeleteResult> {
   const ensured = await ensureSetupProfile(platformChatId);
   if (!ensured) return { ok: false, error: "not_found", message: "Finish setting up with Nova first." };
   const { profileId } = ensured;
-  const scope = await deletionScope(platformChatId, profileId, input.ref, now);
+  const scope = await deletionScope(platformChatId, profileId, input.ref, now, { whole: input.whole });
   if (!scope) return { ok: false, error: "not_found", message: "That isn't in your Kivo any more, so there's nothing to delete." };
   if (scope.fingerprint !== input.fingerprint) return { ok: false, error: "changed", message: "What this would delete changed since it was shown. Nothing was deleted; here is what it would delete now." };
   const structure = await loadStudyStructure(profileId);
@@ -583,6 +592,33 @@ export async function deleteResource(platformChatId: string, input: { ref: Pick<
     throw err;
   }
   return { ok: true, scope };
+}
+
+// ── Deleting a whole map, from the Knowledge Map ──────────────────────────────
+// A workspace's map, or one subject with the subjects inside it, in one go
+// instead of card by card. The same scope and the same one transaction as above:
+// the page shows what goes (preview), and the server deletes exactly that, or
+// nothing (its fingerprint). Ids are used only with the learner's own profile.
+export type MapTarget = { workspaceId: string } | { subjectId: string };
+
+async function refOfMap(profileId: string, target: MapTarget): Promise<Pick<ResourceRef, "workspaceId" | "subjectIds"> | null> {
+  if ("workspaceId" in target) return { workspaceId: target.workspaceId, subjectIds: [] };
+  const all = await prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, parentId: true } });
+  if (!all.some(s => s.id === target.subjectId)) return null;
+  const ids = [target.subjectId];
+  for (let i = 0; i < ids.length; i++) for (const s of all) if (s.parentId === ids[i] && !ids.includes(s.id)) ids.push(s.id);
+  return { workspaceId: null, subjectIds: ids };
+}
+
+export async function previewMapDeletion(platformChatId: string, profileId: string, target: MapTarget): Promise<DeletionScope | null> {
+  const ref = await refOfMap(profileId, target);
+  return ref ? deletionScope(platformChatId, profileId, ref, new Date(), { whole: true }) : null;
+}
+
+export async function deleteMap(platformChatId: string, profileId: string, target: MapTarget, fingerprint: string): Promise<DeleteResult> {
+  const ref = await refOfMap(profileId, target);
+  if (!ref) return { ok: false, error: "not_found", message: "That isn't in your Kivo any more, so there's nothing to delete." };
+  return deleteResource(platformChatId, { ref, fingerprint, whole: true });
 }
 
 // What Nova added to a workspace through an approved change, recorded on

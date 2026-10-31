@@ -52,13 +52,18 @@ const EXTENSION_STEPS = [
   { title: 'Type it in',       body: 'Enter the code in the popup. That browser is now connected until you disconnect it or leave it unused for thirty days.' },
 ]
 
+const EXTENSION_USE = [
+  { title: 'Save a selection', body: 'Select text, open the popup and press Save selection, then choose: add it to a note you already have (search by title, or go by subject and topic; it becomes a new section at the end, with its source, and what is there stays), create a new note, or just keep it in saved pages.' },
+  { title: 'Ask about what you can see', body: 'Screenshot takes what the tab is showing. Select area lets you drag over one part of the page, then Capture, Retry or Cancel (Esc). Either way you see the picture first, and it goes to Nova only with your question. A screenshot sees the visible part of the page, not all of it.' },
+]
+
 const EXTENSION_FACTS = [
   'It sees a page only when you click its icon on that page.',
   'Select text before you click, and you can save that passage. It is sent only if you press Save selection.',
   'Add to notes opens Kivo\'s capture page with the page and your selection, for you to check and save as a note. The extension itself sends nothing for it.',
   'It reads the address, the title and the text you have selected. Never the rest of the page, forms, passwords or cookies.',
   'It cannot see your other tabs or your history.',
-  'It does nothing while the popup is closed.',
+  'It does nothing while the popup is closed, except take the picture of an area you selected and pressed Capture on.',
 ]
 
 const COUNTS = [
@@ -178,7 +183,7 @@ const TOPICS: Topic[] = [
   { id: 'progress',  label: 'Progress & DNA',   icon: TrendingUp,  group: 'Growth',       keywords: 'progress learning dna streak weeks signals insights' },
   { id: 'creature',  label: 'Your creature',    icon: Gamepad2,    group: 'Growth',       keywords: 'world level places arrow keys unlock days in a row keyboard shortcuts keys' },
   { id: 'telegram',  label: 'Nova on Telegram', icon: Send,        group: 'Nova',         keywords: 'commands chat hinglish hindi nudges check-in language' },
-  { id: 'extension', label: 'Browser Extension',icon: Puzzle,      group: 'Nova',         keywords: 'chrome edge brave arc save page selection code connect install' },
+  { id: 'extension', label: 'Browser Extension',icon: Puzzle,      group: 'Nova',         keywords: 'chrome edge brave arc save page selection code connect install screenshot select area region ask existing note' },
   { id: 'counts',    label: 'What counts',      icon: Check,       group: 'Nova',         keywords: 'record ten minutes rules honest' },
   { id: 'plans',     label: 'Plans',            icon: CreditCard,  group: 'Account',      keywords: 'free pro price trial billing upgrade dollars' },
   { id: 'privacy',   label: 'Your data',        icon: ShieldCheck, group: 'Account',      keywords: 'privacy delete account export settings theme password reset email verified profile terms' },
@@ -330,6 +335,8 @@ const FAQ = [
   { q: 'Will New chat or closing Nova change my plan?', a: 'No. Closing only hides Nova; the conversation is there when you open it again. New chat clears the conversation and nothing else. If a proposal is still waiting, it asks first, because starting over discards that proposal.' },
   { q: 'A paper’s PDF shows a message instead of the paper.', a: 'Some sources (PubMed Central, for one) don’t allow their PDF to be shown inside another site, and some ask for a sign-in or a check first. Kivo says which, and Open the original opens it in a new tab. Your note stays open.' },
   { q: 'I didn’t get the password-reset email.', a: 'Check spam, and that Profile shows the address you expect. A link works once, for an hour, and asking again makes the earlier one stop working. After a few requests in an hour, wait before asking again.' },
+  { q: 'A note says it can’t be saved because it is too long.', a: 'A note holds up to 1,000,000 characters. Your text stays on screen and in this browser, nothing is cut: move part of it into a second note, then save.' },
+  { q: 'Select area or Screenshot doesn’t work on a page.', a: 'Browsers don’t let extensions into their own pages (settings, the Web Store, new tabs). Open an ordinary web page. If the page still refuses, select the text and ask about that.' },
   { q: 'I can’t find the extension in the Chrome Web Store.', a: 'It isn’t listed there yet. Until it is, the Save to Kivo bookmark on the Browser Extension page saves any page from any browser, phones and Safari included.' },
   { q: 'The extension says it was disconnected.', a: 'Its connection ends if you disconnect it or leave it unused for thirty days. Open the Browser Extension page, press Connect a browser and type the new code into the extension.' },
   { q: 'Can Nova remind me at a set time?', a: 'Not yet. It checks in around the time you picked on days you haven’t studied, and messages first only when something is due, at most twice a day. It says so plainly if you ask for a reminder.' },
@@ -476,7 +483,7 @@ export function NovaGuide() {
               </Feature>
               <Feature title="Nova on Today">
                 Nova plans today and nothing else. Ask it to explain a topic or change a note and it points you to Focus or Notes. Tasks, deadlines and your map are changed on their own pages, never from this chat.
-                <ul><li>Close hides Nova. Open it again and the conversation is where you left it.</li><li>New chat starts a fresh conversation and keeps your saved flow. If a proposal is still waiting, Nova asks before discarding it.</li><li>The conversation is kept in this browser tab for today only. There is no chat history to manage.</li></ul>
+                <ul><li>Close hides Nova. Open it again and the conversation is where you left it.</li><li>New chat starts a fresh conversation and keeps your saved flow. If a proposal is still waiting, Nova asks before discarding it.</li><li>The conversation is kept in this browser tab for today only. There is no chat history to manage.</li><li>Paste a screenshot (⌘ V or Ctrl V), drop it in or attach it: a timetable, say. Nova reads it for that one message and doesn&apos;t keep it.</li></ul>
               </Feature>
               <Feature title="Subjects">
                 The cards under the greeting are your top-level subjects; a subject inside one counts toward it. Picking one tells Nova what you have in mind. It adds nothing to the day by itself.
@@ -586,7 +593,7 @@ export function NovaGuide() {
                 Subjects can sit inside subjects, and topics inside topics. Double-click a card or press Enter to explore what is inside it; U or the path at the top takes you back up. Space folds a card to tidy the view.
               </Feature>
               <Feature title="Add, connect and remove">
-                N adds a card inside or beside the selected one. Connect existing joins a card you already have: filing it moves it (it has one place), a link leaves it where it is. Removing a connection deletes no card. Deleting a card always asks first.
+                N adds a card inside or beside the selected one. Connect existing joins a card you already have: filing it moves it (it has one place), a link leaves it where it is. Removing a connection deletes no card. Deleting a card always asks first. Deleting a subject takes everything inside it in one step, and Delete map (beside the workspace menu) does the same for a workspace&apos;s whole map; you see what goes first. Topics you&apos;ve studied, and notes and tasks you made yourself, stay.
               </Feature>
               <Feature title="Arrange it your way">
                 Drag cards where you want them; Kivo remembers each position for you, and anything you have not moved is placed for you. Press ? on the map for every shortcut.
@@ -610,7 +617,7 @@ export function NovaGuide() {
               </Feature>
               <Feature title="Study it with Nova, beside the note">
                 Nova sits beside the note (a panel you can resize, or a drawer on a phone or tablet). Select a passage and press Ask Nova, or just ask. It explains from what you wrote, gives examples, walks you through step by step, sets a practice question and checks your answer, quizzes you, brainstorms, makes flashcards, or suggests how to organise raw notes. What comes from your notes is labelled apart from Nova&apos;s own knowledge, and Nova says when your notes don&apos;t cover something.
-                <ul><li>Nothing goes into your note until you press Add and confirm the preview; it is added on its own lines, marked as Nova&apos;s, and can be undone.</li><li>The conversation stays in this tab; Nova stores none of it.</li></ul>
+                <ul><li>Paste a screenshot (⌘ V or Ctrl V), drop it in or attach it, and ask about it. Nova reads it for that one message and doesn&apos;t keep it.</li><li>Nova&apos;s words appear as it writes them; Stop or Esc ends it, and nothing is changed.</li><li>Nothing goes into your note until you press Add and confirm the preview; it is added on its own lines, marked as Nova&apos;s, and can be undone.</li><li>The conversation stays in this tab; Nova stores none of it.</li></ul>
               </Feature>
               <Feature title="Nova as your editor">
                 Ask Nova to structure a note, clarify it, fill out an explanation, remove repetition, add a summary or examples. It shows each change it suggests, with what would go struck through, and you apply the ones you want. Nothing changes until you do.
@@ -718,6 +725,9 @@ export function NovaGuide() {
               </div>
               <PopupMock />
             </div>
+            <Grid>
+              {EXTENSION_USE.map(u => <Feature key={u.title} title={u.title}>{u.body}</Feature>)}
+            </Grid>
             <div className={`${CARD} p-6 sm:p-8`}>
               <p className={SUB}>What the extension can see</p>
               <ul className="mt-4 grid gap-3 sm:grid-cols-2">

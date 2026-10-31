@@ -6,6 +6,7 @@
 
 import type { StudyEditResponse, StudyStructure, StudyStructureView, StudyEdit } from '@repo/api/nova/product/setup-edit.types'
 import type { TaskInput, TaskResponse } from '@repo/api/nova/product/tasks.types'
+import type { DeletionScope } from '@repo/api/nova/product/builder.types'
 import type { AddRequest, DeleteRequest } from './map-structure'
 import type { ConnectRequest } from './map-connect'
 import { addNoteLink, fileItem } from './map-actions'
@@ -167,3 +168,23 @@ export async function sendDisconnect(req: DisconnectRequest, label: string): Pro
 }
 
 const CONFLICT = 'The note changed somewhere else after the map loaded. Nothing was overwritten. The map has been reloaded: try again.'
+
+// A whole map in one go: a workspace's, or one subject with the subjects inside
+// it (POST /api/nova/knowledge-map/delete). What goes is read from the server
+// first, and the server deletes exactly that, or nothing.
+export type MapDeleteTarget = { workspaceId: string } | { subjectId: string }
+export type MapDeleteScope = Omit<DeletionScope, 'lifts'>
+
+export async function previewMapDelete(target: MapDeleteTarget): Promise<Outcome<MapDeleteScope>> {
+  try {
+    const { json } = await call<{ ok: boolean; scope?: MapDeleteScope; message?: string }>('/api/nova/knowledge-map/delete', 'POST', { ...target, action: 'preview' })
+    return json?.ok && json.scope ? { ok: true, value: json.scope, said: [] } : { ok: false, message: json?.message ?? 'That couldn’t be read. Try again.' }
+  } catch { return { ok: false, message: OFFLINE } }
+}
+
+export async function sendMapDelete(target: MapDeleteTarget, fingerprint: string): Promise<Outcome<MapDeleteScope>> {
+  try {
+    const { json } = await call<{ ok: boolean; scope?: MapDeleteScope; message?: string; error?: string }>('/api/nova/knowledge-map/delete', 'POST', { ...target, action: 'delete', fingerprint })
+    return json?.ok && json.scope ? { ok: true, value: json.scope, said: [] } : { ok: false, message: json?.message ?? 'Nothing was deleted. Try again.', stale: json?.error === 'changed' }
+  } catch { return { ok: false, message: `${OFFLINE} Nothing was deleted.` } }
+}

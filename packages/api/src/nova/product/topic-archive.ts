@@ -36,3 +36,9 @@ export async function archiveTopic(profileId: string, raw: unknown, now = new Da
   const changed = await setTopicArchived(profileId, input.topicId, input.archived, now);
   return { ok: true, archived: input.archived, changed };
 }
+
+// Which of these subjects hold an archived topic (its history keeps the subject).
+export async function subjectsWithArchivedTopics(subjectIds: string[]): Promise<Set<string>> {
+  const rows = await prisma.novaTopicMastery.findMany({ where: { subjectId: { in: subjectIds }, archivedAt: { not: null } }, select: { subjectId: true } });
+  return new Set(rows.map(t => t.subjectId));
+}

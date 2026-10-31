@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import Link from 'next/link'
 import { ChevronLeft, ChevronRight, CornerLeftUp, X } from 'lucide-react'
 import type { MapEdge, MapNode } from '@repo/api/nova/product/knowledge-map.types'
@@ -8,7 +8,7 @@ import type { StudyStructure } from '@repo/api/nova/product/setup-edit.types'
 import { cn } from '@/lib/utils'
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '../workspace/ui'
 import { addChoices, addRequest, checkName, cleanName, deletePlan, deleteRequest, EXPLANATION_MAX, madeSubject, madeTopic, type AddChoice, type DeleteMode } from './map-structure'
-import { archiveTopic, describeTopic, loadStructure, sendAdd, sendConnect, sendDelete } from './map-structure-api'
+import { archiveTopic, describeTopic, loadStructure, previewMapDelete, sendAdd, sendConnect, sendDelete, sendMapDelete, type MapDeleteScope, type MapDeleteTarget } from './map-structure-api'
 import { canConnectFrom, connectCandidates, connectOptions, type ConnectOption } from './map-connect'
 import { treeOf } from './layout'
 import type { NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
@@ -283,6 +283,89 @@ function ConnectPane({ source, nodes, edges, workspace, onClose, onDone }: {
 }
 
 // ── Deleting ─────────────────────────────────────────────────────────────────
+
+// A whole map, in one go: what goes and what stays, one tick, one press. The
+// server deletes exactly what was shown, or nothing.
+const count = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`
+
+export function DeleteWholeDialog({ target, title, style, onClose, onDeleted }: {
+  target: MapDeleteTarget; title: string; style?: CSSProperties; onClose: () => void; onDeleted: (said: string, workspaceGone: boolean) => void
+}) {
+  const [scope, setScope] = useState<MapDeleteScope | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [ticked, setTicked] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const panel = usePanel(onClose)
+  const id = useId()
+  const key = JSON.stringify(target)
+  const read = useCallback(async () => {
+    const out = await previewMapDelete(JSON.parse(key) as MapDeleteTarget)
+    if (out.ok) setScope(out.value); else setError(out.message)
+  }, [key])
+  useEffect(() => { void read() }, [read])
+
+  const goes = scope ? [
+    [scope.removes.subjects.length, 'subject'], [scope.removes.topics.length, 'topic'], [scope.removes.dates.length, 'date'],
+    [scope.removes.tasks.length, 'task Nova made'], [scope.removes.notes.length, 'note Nova wrote'],
+  ].flatMap(([n, word]) => (n ? [count(n as number, word as string)] : [])) : []
+  const nothing = scope !== null && goes.length === 0 && !scope.workspaceId
+
+  const confirm = async () => {
+    if (!scope || !ticked || busy) return
+    setBusy(true); setError(null)
+    const out = await sendMapDelete(JSON.parse(key) as MapDeleteTarget, scope.fingerprint)
+    setBusy(false)
+    if (out.ok) {
+      const kept = out.value.keeps.length ? ' Some of it stays, as the list said.' : ''
+      onDeleted(`Deleted “${title}”.${kept}`, !!out.value.workspaceId)
+      return
+    }
+    setError(out.message); setTicked(false)
+    if (out.stale) void read()
+  }
+
+  return (
+    <div ref={panel.ref} onKeyDown={panel.onKeyDown} role="alertdialog" aria-labelledby={`${id}-t`} aria-describedby={`${id}-d`} data-delete-whole
+      className={cn(PANEL, 'absolute z-30 w-[min(26rem,calc(100%-1.5rem))] p-4')} style={style} onPointerDown={e => e.stopPropagation()}>
+      <Header title={<span id={`${id}-t`}>Delete all of “{title}”?</span>} onClose={onClose} />
+      <div id={`${id}-d`} className="mt-3 space-y-3 text-sm">
+        {!scope && !error && <p className="text-xs text-subtle" role="status">Checking what it holds…</p>}
+        {scope && !nothing && (
+          <div data-delete-goes>
+            <p className="font-medium text-foreground">Goes in one step: {goes.join(', ') || 'the map itself'}</p>
+            {scope.removes.topics.length > 0 && <p className="mt-1 line-clamp-2 text-xs text-foreground/60">{scope.removes.topics.slice(0, 6).map(t => t.name).join(', ')}{scope.removes.topics.length > 6 ? '…' : ''}</p>}
+          </div>
+        )}
+        {nothing && <p className="text-foreground/85" data-delete-nothing>Everything here has recorded study, so nothing can go. Archive topics to take them off the map.</p>}
+        {scope && (
+          <div className="rounded-xl border border-white/8 px-3 py-2 text-xs leading-relaxed text-foreground/70" data-delete-stays>
+            <p className="font-medium text-foreground/85">Stays</p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-4">
+              {scope.keeps.map(k => <li key={k}>{k}</li>)}
+              <li>Notes, tasks and saved pages you made yourself, filed under nothing.</li>
+              <li>Topics with recorded study, and your progress.</li>
+            </ul>
+          </div>
+        )}
+        {scope && !nothing && (
+          <label className="flex items-start gap-2 text-xs text-foreground/85">
+            <input type="checkbox" checked={ticked} onChange={e => setTicked(e.target.checked)} className="mt-0.5 accent-[var(--action)]" data-delete-whole-tick />
+            I understand this can’t be undone.
+          </label>
+        )}
+        {error && <p role="alert" className="text-xs text-red-400" data-delete-error>{error}</p>}
+        <div className="flex flex-wrap justify-end gap-2">
+          <button type="button" onClick={onClose} className={cn(BUTTON_QUIET, 'h-8')} data-autofocus>Cancel</button>
+          {scope && !nothing && (
+            <button type="button" onClick={() => void confirm()} disabled={!ticked || busy} className="inline-flex h-8 items-center rounded-lg bg-red-500 px-3 text-xs font-semibold text-white hover:bg-red-400 disabled:opacity-50" data-delete-whole-confirm>
+              {busy ? 'Deleting…' : 'Delete all of it'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export function DeleteDialog({ node, edges, tree, style, onClose, onDeleted, onStale }: {
   node: MapNode; edges: readonly MapEdge[]; tree: { children: ReadonlyMap<string, readonly string[]> }

@@ -22,7 +22,7 @@ import { OUTLINE_QUERY, browserStore, chooseOrientation, chosenOrientation, forg
 import { NEW_SUBJECT } from './map-structure'
 import { disconnectPlan } from './map-disconnect'
 import { sendDisconnect } from './map-structure-api'
-import { AddDialog, Breadcrumbs, DeleteDialog, Legend, ShortcutsHelp } from './map-panels'
+import { AddDialog, Breadcrumbs, DeleteDialog, DeleteWholeDialog, Legend, ShortcutsHelp } from './map-panels'
 import { BOARD_PATH } from '@repo/api/nova/product/companion'
 
 const TYPES: Array<{ type: MapNodeType; label: string; plural: string }> = [
@@ -475,6 +475,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
 type Panel =
   | { kind: 'add'; node: MapNode | null }
   | { kind: 'delete'; node: MapNode }
+  | { kind: 'delete_map'; workspaceId: string; title: string }
   | { kind: 'help' } | { kind: 'legend' } | { kind: 'filters' } | { kind: 'reset' }
 
 const ADDABLE: ReadonlySet<MapNodeType> = new Set(['subject', 'topic', 'task'])
@@ -1247,6 +1248,12 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
             <option value="all">Everything you have</option>
           </select>
         )}
+        {view.workspaceId && (
+          <button type="button" onClick={() => setPanel({ kind: 'delete_map', workspaceId: view.workspaceId!, title: view.workspaces?.find(w => w.id === view.workspaceId)?.title ?? 'this map' })}
+            className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/12 px-2.5 text-xs text-foreground/70 hover:border-red-400/50 hover:text-red-400" title="Delete this whole map in one step" data-delete-map>
+            <Trash2 aria-hidden className="size-3.5" /> <span className="max-sm:sr-only">Delete map</span>
+          </button>
+        )}
         <Breadcrumbs trail={trail} canBack={stack.length > 1} onBack={goBack} onUp={goUp} onGo={goTo} />
         <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 max-sm:w-full">
           <div className="relative order-last w-full sm:order-none sm:w-44 xl:w-56">
@@ -1434,9 +1441,16 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
         {panel?.kind === 'add' && <AddDialog key={`add-${panel.node?.id ?? 'subject'}`} node={panel.node} nodes={view.nodes} edges={view.edges} workspace={view.workspaceId ?? null}
           choices={panel.node ? undefined : [NEW_SUBJECT]} style={anchor(panel.node?.id ?? null)} onClose={closePanel}
           onAdded={a => { if (a.stale) { say(a.said); onChanged(); return } afterEdit(a.said, a.select) }} />}
-        {panel?.kind === 'delete' && (
-          <DeleteDialog key={`del-${panel.node.id}`} node={panel.node} edges={view.edges} tree={tree} style={anchor(panel.node.id)} onClose={closePanel}
-            onDeleted={said => { if (selected === panel.node.id) setSelected(null); afterEdit(said, null) }} onStale={onChanged} />
+        {panel?.kind === 'delete' && (panel.node.type === 'subject'
+          // A subject goes with everything inside it, in one step: no clearing it card by card first.
+          ? <DeleteWholeDialog key={`del-${panel.node.id}`} target={{ subjectId: panel.node.subjectId ?? panel.node.id.slice('subject:'.length) }} title={panel.node.label} style={anchor(panel.node.id)} onClose={closePanel}
+              onDeleted={said => { setSelected(null); goTo(null); afterEdit(said, null) }} />
+          : <DeleteDialog key={`del-${panel.node.id}`} node={panel.node} edges={view.edges} tree={tree} style={anchor(panel.node.id)} onClose={closePanel}
+              onDeleted={said => { if (selected === panel.node.id) setSelected(null); afterEdit(said, null) }} onStale={onChanged} />
+        )}
+        {panel?.kind === 'delete_map' && (
+          <DeleteWholeDialog target={{ workspaceId: panel.workspaceId }} title={panel.title} style={{ left: '50%', top: 12, transform: 'translateX(-50%)' }} onClose={closePanel}
+            onDeleted={said => { setSelected(null); goTo(null); setPanel(null); say(said); if (onWorkspace) onWorkspace('all'); else onChanged() }} />
         )}
         {panel?.kind === 'reset' && (
           <div role="alertdialog" aria-label="Reset layout" data-map-overlay className="absolute left-1/2 top-3 z-30 w-[min(26rem,calc(100%-1.5rem))] -translate-x-1/2 rounded-2xl border border-white/10 bg-popover p-4 text-sm shadow-float" onPointerDown={e => e.stopPropagation()}>
