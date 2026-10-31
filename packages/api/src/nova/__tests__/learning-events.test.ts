@@ -171,8 +171,8 @@ describe("what a learning event may carry", () => {
   });
 
   it("has sensible limits", () => {
-    expect(EVENT_BODY_MAX_BYTES).toBe(16384);
-    expect(EVENT_EXCERPT_MAX).toBe(2000);
+    expect(EVENT_BODY_MAX_BYTES).toBe(32768);
+    expect(EVENT_EXCERPT_MAX).toBe(4000);
     // The largest passage, in the widest characters, with everything else, still fits one request.
     expect(Buffer.byteLength("\u{1F600}".repeat(EVENT_EXCERPT_MAX), "utf8") + 4096).toBeLessThan(EVENT_BODY_MAX_BYTES);
     expect(EVENTS_PER_MINUTE).toBe(20);

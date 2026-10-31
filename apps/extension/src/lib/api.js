@@ -7,6 +7,8 @@
 // person can read. The popup never shows a status code or a URL.
 
 const TIMEOUT_MS = 12_000
+// A question with a screenshot: the model takes longer to read a picture.
+const SCREENSHOT_TIMEOUT_MS = 30_000
 
 export const WORDS = {
   offline:         "Can't reach Nova right now. Check your connection and try again.",
@@ -33,7 +35,7 @@ export function disconnectOutcome(result) {
  * @param {{ baseUrl: string, fetch: typeof fetch, getToken: () => Promise<string | null> }} deps
  */
 export function createClient({ baseUrl, fetch: doFetch, getToken }) {
-  async function call(path, { method = 'GET', body, auth = true } = {}) {
+  async function call(path, { method = 'GET', body, auth = true, timeoutMs = TIMEOUT_MS } = {}) {
     const headers = {}
     if (body !== undefined) headers['content-type'] = 'application/json'
     if (auth) {
@@ -42,7 +44,7 @@ export function createClient({ baseUrl, fetch: doFetch, getToken }) {
       headers.authorization = `Bearer ${token}`
     }
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
     let res
     try {
       res = await doFetch(`${baseUrl}${path}`, {
@@ -71,8 +73,8 @@ export function createClient({ baseUrl, fetch: doFetch, getToken }) {
     disconnect: () => call('/api/nova/extension/disconnect', { method: 'POST' }),
     // One explicit action. `event.clientEventId` is what makes a retry safe.
     sendEvent:  event => call('/api/nova/learning-events', { method: 'POST', body: event }),
-    // A question about the page. Answered and not kept.
-    ask:        question => call('/api/nova/extension/ask', { method: 'POST', body: question }),
+    // A question about the page. Answered and not kept, screenshot included.
+    ask:        question => call('/api/nova/extension/ask', { method: 'POST', body: question, timeoutMs: question.screenshot ? SCREENSHOT_TIMEOUT_MS : TIMEOUT_MS }),
   }
 }
 
@@ -99,15 +101,20 @@ export function buildEvent({ eventType, clientEventId, page, title, subjectId, t
 
 /**
  * What a question about the page carries: the question, the page's address
- * and title, and the selected passage if there is one. Never the page itself.
+ * and title, the selected passage if there is one, and the screenshot the
+ * learner took and saw, if they took one. Never the page itself.
+ * @param {{ question: string, page: { url: string, title: string }, title?: string, excerpt?: string, screenshot?: string | null }} input
+ *   screenshot: a JPEG as plain base64
  */
-export function buildQuestion({ question, page, title, excerpt }) {
-  return {
+export function buildQuestion({ question, page, title, excerpt, screenshot }) {
+  const asked = {
     question: question.trim(),
     url: page.url,
     title: (title ?? page.title).trim(),
     excerpt: typeof excerpt === 'string' && excerpt ? excerpt : null,
   }
+  if (typeof screenshot === 'string' && screenshot) asked.screenshot = { mimeType: 'image/jpeg', data: screenshot }
+  return asked
 }
 
 export const newActionId = () => crypto.randomUUID()

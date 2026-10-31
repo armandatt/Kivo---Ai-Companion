@@ -7,6 +7,8 @@
 // only). It offers to save the page, save the selected passage, or study the
 // page, and sends one small event when the learner presses a button. The
 // selection stays in this popup unless they press Save selection.
+// A screenshot of the tab is taken only when they press Screenshot, shown
+// here first, and sent only with a question they ask.
 // It decides nothing about the learner: no mastery, no plan, no pattern.
 //
 // Every browser call goes through lib/browser.js.
@@ -21,6 +23,8 @@ const store  = createStore(browser.storage())
 const client = createClient({ baseUrl: NOVA_URL, fetch: (...args) => fetch(...args), getToken: () => store.token() })
 const view   = document.getElementById('view')
 const status = document.getElementById('status')
+// The window of the tab the popup was opened on: the one a screenshot is of.
+let tabWindowId
 
 // ── Small DOM helpers. Text is always set as text, never as markup. ───────────
 
@@ -67,11 +71,12 @@ const privacyText = () => [
   el('ul', {},
     el('li', {}, 'The address and title of the page you are on, and only when you open this popup on it.'),
     el('li', {}, 'The text you have selected on that page, shown here so you can save it. It is sent only if you press Save selection.'),
+    el('li', {}, 'A screenshot of what that tab is showing, only when you press Screenshot. You see it here first. It goes to Nova only with a question you ask, and is not kept.'),
     el('li', {}, 'Nothing else inside the page: no other text, no forms, no passwords.'),
     el('li', {}, 'Not your other tabs, and not your history. Nova does nothing while this popup is closed.'),
     el('li', {}, 'It sends a page to Nova only when you press Save, Study or Ask. A question you ask is answered and not kept.'),
   ),
-  el('p', { class: 'small' }, 'Permissions: "activeTab" lets Nova read this tab\'s address and title when you click its icon. "scripting" lets it read your selected text and the page\'s own address on that tab, at that moment. "storage" keeps this browser connected. It has no standing access to any website.'),
+  el('p', { class: 'small' }, 'Permissions: "activeTab" lets Nova read this tab\'s address and title when you click its icon, and take a screenshot of it when you press Screenshot. "scripting" lets it read your selected text and the page\'s own address on that tab, at that moment. "storage" keeps this browser connected. It has no standing access to any website.'),
 ]
 
 // ── Not connected ─────────────────────────────────────────────────────────────
@@ -174,6 +179,46 @@ function siteInitial(domain) {
   return parts[at].charAt(0)
 }
 
+// ── Screenshots ───────────────────────────────────────────────────────────────
+// Taken only when the learner presses Screenshot, shown before anything is
+// sent, and sent only with a question. They can drag across it to send only
+// the part they mean (a diagram). It leaves as a JPEG no larger than
+// SHOT_MAX_SIDE on its long side, and is kept nowhere: not here, not in Nova.
+
+const SHOT_MAX_SIDE   = 1600
+const SHOT_MAX_BASE64 = 1_400_000   // the server takes up to 1,500,000
+
+async function loadPicture(src) {
+  const img = new Image()
+  img.src = src
+  await img.decode()
+  return img
+}
+
+// The picture, or the part of it the learner marked (as fractions of its
+// size), as plain base64, or null if it cannot be made small enough.
+function encodeShot(img, mark) {
+  const area = mark ?? { x: 0, y: 0, w: 1, h: 1 }
+  const sx = Math.round(area.x * img.naturalWidth), sy = Math.round(area.y * img.naturalHeight)
+  const sw = Math.max(1, Math.round(area.w * img.naturalWidth)), sh = Math.max(1, Math.round(area.h * img.naturalHeight))
+  const scale  = Math.min(1, SHOT_MAX_SIDE / Math.max(sw, sh))
+  const canvas = el('canvas', { width: Math.max(1, Math.round(sw * scale)), height: Math.max(1, Math.round(sh * scale)) })
+  canvas.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height)
+  for (const quality of [0.85, 0.7, 0.55]) {
+    const url  = canvas.toDataURL('image/jpeg', quality)
+    const data = url.slice(url.indexOf(',') + 1)
+    if (data.length <= SHOT_MAX_BASE64) return data
+  }
+  return null
+}
+
+const clamp = n => Math.min(1, Math.max(0, n))
+const markBetween = (a, b) => ({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) })
+function placeMark(node, mark) {
+  node.hidden = !mark
+  if (mark) Object.assign(node.style, { left: `${mark.x * 100}%`, top: `${mark.y * 100}%`, width: `${mark.w * 100}%`, height: `${mark.h * 100}%` })
+}
+
 const toastOf = flash => (flash ? el('p', { class: 'toast', role: 'status', dataset: { connected: '' } }, flash) : null)
 
 function renderReady(page, context, probe = NO_PROBE, flash = null) {
@@ -274,7 +319,14 @@ function renderReady(page, context, probe = NO_PROBE, flash = null) {
   // the box; it is cleared only once Nova has answered it.
   const question  = el('textarea', { id: 'question', rows: 2, placeholder: 'What do you want to know?', maxLength: 500, autocomplete: 'off' })
   const askButton = el('button', { class: 'primary', type: 'submit', disabled: true, dataset: { askSubmit: '' } }, 'Ask')
+  const shotButton = el('button', { class: 'quiet shot-take', type: 'button', dataset: { screenshot: '' } }, 'Screenshot')
+  const shotBox   = el('div', { dataset: { shotArea: '' } })
+  const shotErrors = el('div')
+  const chips     = el('div', { class: 'context' })
   const thread    = el('div', { class: 'thread', dataset: { answer: '' } })
+  // The screenshot waiting to go with the next question: the picture, and the
+  // part of it the learner marked, if they marked one.
+  let shot = null
   thread.setAttribute('aria-live', 'polite')
   const fit = () => { question.style.height = 'auto'; question.style.height = `${Math.min(question.scrollHeight + 2, 140)}px` }
   question.addEventListener('input', () => { askButton.disabled = !question.value.trim() || askButton.getAttribute('aria-busy') === 'true'; fit() })
@@ -283,41 +335,97 @@ function renderReady(page, context, probe = NO_PROBE, flash = null) {
     event.preventDefault()
     if (!askButton.disabled) question.form.requestSubmit()
   })
-  const sent = probe.selection ? ['Title', 'Address', 'Your selection'] : ['Title', 'Address']
+  function showSent() {
+    const sent = ['Title', 'Address', probe.selection ? 'Your selection' : null, shot ? (shot.mark ? 'Marked area' : 'Screenshot') : null].filter(Boolean)
+    chips.ariaLabel = `Sent with your question: ${sent.join(', ')}`
+    chips.replaceChildren(...sent.map(s => el('span', { class: s === 'Title' || s === 'Address' ? 'chip' : 'chip on', ariaHidden: 'true' }, s)))
+  }
+
+  // The screenshot as the learner sees it before sending: drag across it to
+  // mark a part; the rest is dimmed and not sent.
+  function showShot() {
+    showSent()
+    shotButton.textContent = shot ? 'Retake' : 'Screenshot'
+    if (!shot) return shotBox.replaceChildren()
+    const mark  = el('div', { class: 'shot-mark', ariaHidden: 'true' })
+    const frame = el('div', { class: 'shot-frame', dataset: { shot: '' } },
+      el('img', { src: shot.src, alt: shot.mark ? 'Your screenshot, with the part you marked' : 'Your screenshot of this page', draggable: false }), mark)
+    placeMark(mark, shot.mark)
+    let from = null
+    const at = event => { const r = frame.getBoundingClientRect(); return { x: clamp((event.clientX - r.left) / r.width), y: clamp((event.clientY - r.top) / r.height) } }
+    frame.addEventListener('pointerdown', event => { if (askButton.getAttribute('aria-busy')) return; from = at(event); frame.setPointerCapture(event.pointerId); event.preventDefault() })
+    frame.addEventListener('pointermove', event => { if (from) placeMark(mark, markBetween(from, at(event))) })
+    frame.addEventListener('pointercancel', () => { from = null; placeMark(mark, shot.mark) })
+    frame.addEventListener('pointerup', event => {
+      if (!from) return
+      const marked = markBetween(from, at(event))
+      from = null
+      // A click, or a sliver, is not a mark.
+      shot.mark = marked.w > 0.03 && marked.h > 0.03 ? marked : null
+      showShot()
+    })
+    shotBox.replaceChildren(el('div', { class: 'shot' },
+      frame,
+      el('div', { class: 'shot-bar' },
+        el('p', { class: 'small', dataset: { shotNote: shot.mark ? 'marked' : 'whole' } }, shot.mark ? 'Nova gets only the part you marked.' : 'Drag across the diagram to send only that part.'),
+        el('div', { class: 'shot-tools' },
+          shot.mark ? el('button', { class: 'link', type: 'button', dataset: { shotWhole: '' }, onclick: () => { shot.mark = null; showShot() } }, 'Use all of it') : null,
+          el('button', { class: 'link', type: 'button', dataset: { shotRemove: '' }, onclick: () => { shot = null; showShot(); shotButton.focus() } }, 'Remove')))))
+  }
+
+  shotButton.addEventListener('click', async () => {
+    if (shotButton.getAttribute('aria-busy') || askButton.getAttribute('aria-busy')) return
+    busy(shotButton, 'Taking…'); shotErrors.replaceChildren()
+    const src = await browser.captureTab(tabWindowId)
+    const img = src ? await loadPicture(src).catch(() => null) : null
+    idle(shotButton)
+    if (!img) return shotErrors.replaceChildren(alertBox("Nova couldn't take a screenshot of this page. Some pages don't allow it. Select the text instead."))
+    shot = { src, img, mark: null }
+    showShot()
+    question.focus()
+  })
+
   const ask = el('section', { class: 'section', dataset: { ask: '' }, ariaLabel: 'Ask Nova about this page' },
     el('h2', {}, 'Ask Nova'),
     el('p', { class: 'small lede' }, probe.selection
-      ? 'Nova gets the page title, its address and your selection. Not the rest of the page.'
-      : 'Nova gets the page title and its address. Select text first if your question is about a particular part.'),
+      ? 'Nova gets the page title, its address and your selection, not the rest of the page. Asking about a diagram? Add a screenshot.'
+      : 'Nova gets the page title and its address, not the page. Select text, or add a screenshot of a diagram, to ask about one part.'),
     el('form', {
       onsubmit: async event => {
         event.preventDefault()
         if (!question.value.trim()) return
         if (askButton.getAttribute('aria-busy')) return
         const asked = question.value.trim()
-        askButton.disabled = true; busy(askButton, 'Asking'); question.readOnly = true
-        thread.replaceChildren(el('p', { class: 'asked' }, 'You asked ', el('strong', {}, asked)), el('p', { class: 'thinking', role: 'status' }, 'Nova is thinking…'))
-        const res = await client.ask(buildQuestion({ question: question.value, page, title: title.value, excerpt: probe.selection }))
-        idle(askButton); question.readOnly = false; askButton.disabled = false
+        const screenshot = shot ? encodeShot(shot.img, shot.mark) : null
+        if (shot && !screenshot) return thread.replaceChildren(alertBox('That screenshot is too large to send. Drag across the part you mean, then ask again.'))
+        askButton.disabled = true; busy(askButton, 'Asking'); question.readOnly = true; shotButton.disabled = true
+        const youAsked = () => el('p', { class: 'asked' }, 'You asked ', el('strong', {}, asked), screenshot ? ' about your screenshot' : '')
+        thread.replaceChildren(youAsked(), el('p', { class: 'thinking', role: 'status' }, screenshot ? 'Nova is looking at your screenshot…' : 'Nova is thinking…'))
+        const res = await client.ask(buildQuestion({ question: question.value, page, title: title.value, excerpt: probe.selection, screenshot }))
+        idle(askButton); question.readOnly = false; askButton.disabled = false; shotButton.disabled = false
         if (!res.ok && res.kind === 'unauthenticated') { await store.clear(); return renderConnect(res.message) }
         if (!res.ok || typeof res.data.answer !== 'string') { question.focus(); return thread.replaceChildren(alertBox(res.ok ? "That didn't work. Try again in a moment." : res.message)) }
         question.value = ''; fit(); askButton.disabled = true
+        // The screenshot stays attached, for a follow-up about the same diagram.
         thread.replaceChildren(
-          el('p', { class: 'asked' }, 'You asked ', el('strong', {}, asked)),
+          youAsked(),
           el('p', { class: 'answer', dataset: { basis: res.data.basis } }, res.data.answer),
-          el('p', { class: 'small' }, res.data.basis === 'selection'
+          el('p', { class: 'small' }, res.data.basis === 'screenshot'
+            ? 'Answered from your screenshot and what Nova knows of the subject. Nova saw only what was in the picture.'
+            : res.data.basis === 'selection'
             ? 'Answered from your selection and what Nova knows of the subject. Nova has not read the rest of the page.'
-            : 'Nova has not read this page: it saw only the title. Select the part you mean and ask again for an answer about it.'))
+            : 'Nova has not read this page: it saw only the title. Select the part you mean, or add a screenshot, and ask again.'))
       },
     },
+    shotBox,
     el('div', { class: 'ask-box' },
       sr('Your question about this page', { htmlFor: 'question' }),
       question,
-      el('div', { class: 'ask-bar' },
-        el('span', { class: 'context', ariaLabel: `Sent with your question: ${sent.join(', ')}` },
-          sent.map(s => el('span', { class: s === 'Your selection' ? 'chip on' : 'chip', ariaHidden: 'true' }, s))),
-        askButton))),
+      el('div', { class: 'ask-bar' }, shotButton, askButton))),
+    shotErrors,
+    chips,
     thread)
+  showSent()
 
   show('ready',
     el('div', { class: 'stack' },
@@ -387,6 +495,7 @@ async function start(flash = null) {
   show('loading', skeleton())
   view.setAttribute('aria-busy', 'true')
   const [tab, context] = await Promise.all([browser.activeTab(), client.context()])
+  tabWindowId = tab?.windowId
 
   if (!context.ok) {
     if (context.kind === 'unauthenticated') { await store.clear(); return renderConnect(context.message) }
@@ -406,7 +515,7 @@ async function start(flash = null) {
   // The selection is read only now that there is a connected learner to
   // offer it to, and only on a page Nova can save.
   const page  = describePage(tab)
-  const limit = typeof context.data.limits?.excerpt === 'number' ? context.data.limits.excerpt : 2000
+  const limit = typeof context.data.limits?.excerpt === 'number' ? context.data.limits.excerpt : 4000
   const probe = page.supported ? await browser.readPage(tab?.id, limit) : NO_PROBE
   renderReady(page, { ...context.data, limits: { ...context.data.limits, excerpt: limit } }, probe, flash)
 }

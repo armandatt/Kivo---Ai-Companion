@@ -1,19 +1,19 @@
 import { NextResponse } from "next/server"
 import { metered } from "../../../../../lib/billing/metered"
 //@ts-ignore
-import { answerPageQuestion, PAGE_QUESTIONS_PER_MINUTE } from "@repo/api/nova/product/page-question"
-//@ts-ignore
-import { EVENT_BODY_MAX_BYTES } from "@repo/api/nova/product/learning-events.types"
+import { answerPageQuestion, PAGE_QUESTION_BODY_MAX_BYTES, PAGE_QUESTIONS_PER_MINUTE } from "@repo/api/nova/product/page-question"
 import { allowAttempt, eventFail, readSmallJson, resolveExtensionCaller, preflight, withCors } from "../../../../../lib/nova/extension-access"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-// POST /api/nova/extension/ask   { question, url, title, excerpt? }
+// POST /api/nova/extension/ask   { question, url, title, excerpt?, screenshot? }
 // The extension's "Ask Nova about this page". One model call, given the
-// page's title and site and the passage the learner selected, if any. Nova
-// has not read the page and the server does not fetch it.
-// It answers and nothing else: nothing is stored, and the question does not
+// page's title and site, the passage the learner selected, if any, and the
+// screenshot they took in the popup, if any. Nova has not read the page and
+// the server does not fetch it.
+// It answers and nothing else: nothing is stored (the screenshot included: it
+// is read for this one answer and dropped), and the question does not
 // enter the chat pipeline (see product/page-question.ts).
 // The learner is the credential's own. Response: PageAnswer.
 export async function POST(req: Request) {
@@ -33,10 +33,10 @@ async function handlePOST(req: Request): Promise<NextResponse> {
     if (!allowAttempt(`ask:${caller.connectionId}`, PAGE_QUESTIONS_PER_MINUTE, 60_000)) {
       return eventFail(429, "rate_limited", "That's a lot of questions at once. Give it a minute.")
     }
-    const read = await readSmallJson(req, EVENT_BODY_MAX_BYTES)
+    const read = await readSmallJson(req, PAGE_QUESTION_BODY_MAX_BYTES)
     if (!read.ok) {
       return read.reason === "too_large"
-        ? eventFail(413, "too_large", "That's more than Nova reads at once. Select a shorter passage.")
+        ? eventFail(413, "too_large", "That's more than Nova reads at once. Select a shorter passage, or mark a smaller part of the screenshot.")
         : eventFail(400, "invalid", "That isn't a question Nova can answer.")
     }
     const run = await metered(caller.platformChatId, () => answerPageQuestion(read.body))

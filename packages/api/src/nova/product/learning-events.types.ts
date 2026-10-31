@@ -21,11 +21,12 @@ export type LearningEventSource = "browser_extension" | "web";
 export const EVENT_URL_MAX   = 2048;
 export const EVENT_TITLE_MAX = 300;
 export const EVENT_TOPIC_MAX = 120;
-// The whole request. Anything larger is refused unread.
-export const EVENT_BODY_MAX_BYTES = 16 * 1024;
-// A selected passage. Longer selections are refused, not cut: the learner
-// should know what was kept.
-export const EVENT_EXCERPT_MAX = 2000;
+// The whole request. Anything larger is refused unread. Room for a full
+// passage in a script that takes three bytes a character, escaped as JSON.
+export const EVENT_BODY_MAX_BYTES = 32 * 1024;
+// A selected passage: about 600 words. Longer selections are refused, not
+// cut: the learner should know what was kept.
+export const EVENT_EXCERPT_MAX = 4000;
 export const EVENT_ID_MIN    = 16;
 export const EVENT_ID_MAX    = 64;
 export const EVENTS_PER_MINUTE = 20;
