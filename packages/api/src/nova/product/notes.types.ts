@@ -4,7 +4,10 @@
 // writes it. No imports, so the web app can import the types directly.
 
 export const NOTE_TITLE_MAX = 200;
-export const NOTE_BODY_MAX  = 50_000;   // characters
+// A note is a Text column, so this is not about storage: it keeps one save
+// inside what the hosts in front of the API accept (3 bytes a character at
+// worst, inside the 4.5 MB a request may be). About 170,000 words: a long book.
+export const NOTE_BODY_MAX  = 1_000_000;   // characters
 export const NOTE_TOPIC_MAX = 120;
 export const NOTE_PREVIEW_LENGTH = 180;
 
@@ -111,3 +114,15 @@ export type NoteResponse =
 export type NoteDeleteResponse =
   | { ok: true }
   | { ok: false; error: NoteError; message: string };
+
+// Where a note is, as words: the subjects above its subject, the subject, its topic.
+export function notePath(subjectId: string | null, topicName: string | null, subjects: ReadonlyArray<{ id: string; name: string; parentId: string | null }>): string {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (let at = subjects.find(s => s.id === subjectId); at && !seen.has(at.id); at = subjects.find(s => s.id === at!.parentId)) {
+    seen.add(at.id);
+    names.unshift(at.name);
+  }
+  if (topicName) names.push(topicName);
+  return names.join(" › ");
+}

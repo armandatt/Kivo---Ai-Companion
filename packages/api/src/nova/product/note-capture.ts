@@ -21,7 +21,7 @@ export const CAPTURE_TEXT_MAX = 20_000;
 // What a bookmarklet sends in an address: Safari on an iPad copes with this.
 export const BOOKMARKLET_TEXT_MAX = 6_000;
 const TITLE_MAX = 200;
-const BODY_MAX = 50_000;   // NOTE_BODY_MAX
+const BODY_MAX = 1_000_000;   // NOTE_BODY_MAX
 
 export type CaptureVia = "extension" | "bookmarklet" | "paste" | "file";
 
@@ -129,3 +129,23 @@ export function appendToBody(existing: string, addition: string, day: string): s
   const next = before ? `${before}\n\n---\n\n*Added ${day}*\n\n${addition}` : addition;
   return next.length > BODY_MAX ? null : next;
 }
+
+// A passage from a page, as a section of a note that already exists. A
+// section of its own, in the note's own Markdown, editable like the rest.
+// The source line is "*Source:*" and not "Source:": that one names the
+// note's own source (note-blocks.ts sourceOf), which this does not change.
+export function selectionSection(s: { title: string; url: string | null; text: string; day: string; via: NoteCapture["via"] }): string {
+  const title = oneLine(s.title).slice(0, 120);
+  const how = s.via === "extension" ? "with the Nova extension" : s.via === "bookmarklet" ? "with the Kivo bookmarklet" : "from your saved pages";
+  return [
+    `### Research excerpt${title ? `: ${title}` : ""}`,
+    "",
+    quote(s.text),
+    "",
+    `*Source:* ${[title, s.url].filter(Boolean).join(" ")}`,
+    `*Captured ${s.day} ${how}.*`,
+  ].join("\n");
+}
+
+// Whether this passage is already in the note, as a section like the above.
+export const hasSelection = (body: string, text: string): boolean => unifyLines(body).includes(quote(text));

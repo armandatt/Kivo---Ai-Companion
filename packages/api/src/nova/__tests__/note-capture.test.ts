@@ -71,7 +71,7 @@ describe("what the note holds", () => {
   it("adding to a note keeps everything in it and goes after a divider; too long is refused, not cut", () => {
     expect(appendToBody("Mine.\n\n", "New part", "2026-10-26")).toBe("Mine.\n\n---\n\n*Added 2026-10-26*\n\nNew part");
     expect(appendToBody("", "New part", "2026-10-26")).toBe("New part");
-    expect(appendToBody("x".repeat(49_990), "more text here", "2026-10-26")).toBeNull();
+    expect(appendToBody("x".repeat(999_990), "more text here", "2026-10-26")).toBeNull();
   });
 
   it("a title comes from the page, else the text, else the file", () => {

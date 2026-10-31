@@ -23,6 +23,7 @@ import { alreadyIn, blockAt, fingerprint, squash, type EditChange, type NoteBloc
 import { MY_NOTES, PAPER_NOTE_WINDOW, paperRegion, readPaperCard } from "./paper-source";
 import { EDIT_INSTRUCTION_MAX, EDIT_KINDS, EDIT_MATERIAL_MAX, type EditKind, type EditProposal, type EditResponse } from "./note-edit.types";
 import { TUTOR_SELECTION_MAX } from "./note-tutor.types";
+import { NOTE_BODY_MAX } from "./notes.types";
 
 export const EDIT_DEADLINE_MS = 45_000;
 export const EDIT_REQUESTS_PER_MINUTE = 10;
@@ -195,7 +196,7 @@ export async function proposeEdit(
   const parsed = parseEditRequest(raw);
   if (!parsed.ok) return parsed.refusal;
   const request = parsed.request;
-  const material = await load(profileId, noteId, { bodyMax: 50_000 });
+  const material = await load(profileId, noteId, { bodyMax: NOTE_BODY_MAX });
   if (!material) return refuse("not_found", "That note doesn't exist.");
   const body = material.note.body;
   if (!body.trim() && request.kind !== "integrate" && request.kind !== "custom") return refuse("empty", "This note has no text yet. Write or paste something first.");

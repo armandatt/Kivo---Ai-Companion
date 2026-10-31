@@ -323,7 +323,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   // Autosave: a moment after typing stops, while editing a note that exists.
   // Not over a conflict (the learner chooses), and not without a title.
   useEffect(() => {
-    if (!editing || !note || !dirty || conflict || !draft.title.trim()) return
+    if (!editing || !note || !dirty || conflict || !draft.title.trim() || draft.body.length > NOTE_BODY_MAX) return
     const timer = window.setTimeout(() => { void save(note.updatedAt, { stay: true }) }, autoError ? AUTOSAVE_RETRY_MS : AUTOSAVE_MS)
     return () => window.clearTimeout(timer)
   }, [draft, editing, note, dirty, conflict, autoError]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -1027,7 +1027,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     ]
     const editor = (
       <textarea
-        id="note-body" ref={bodyRef} value={draft.body} maxLength={NOTE_BODY_MAX}
+        id="note-body" ref={bodyRef} value={draft.body}
         onChange={e => { caret.current = e.target.selectionStart; setDraft(d => ({ ...d, body: e.target.value })) }}
         onSelect={e => { caret.current = e.currentTarget.selectionEnd }}
         onKeyDown={onBodyKey}
@@ -1133,8 +1133,13 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
                 </div>
               )
               : <div className="mt-3 flex flex-col">{editor}</div>}
+            {/* Never cut as it is pasted: the text stays, and the save says why it can't go. */}
             {draft.body.length > NOTE_BODY_MAX * 0.9 && (
-              <p className="mt-1 text-xs text-amber-300/80">{(NOTE_BODY_MAX - draft.body.length).toLocaleString()} characters left</p>
+              <p role={draft.body.length > NOTE_BODY_MAX ? 'alert' : undefined} className="mt-1 text-xs text-amber-300/80" data-body-limit>
+                {draft.body.length > NOTE_BODY_MAX
+                  ? `${(draft.body.length - NOTE_BODY_MAX).toLocaleString()} characters over what a note can hold, so this can't be saved yet. All of it is still here: move part of it into a second note.`
+                  : `${(NOTE_BODY_MAX - draft.body.length).toLocaleString()} characters left`}
+              </p>
             )}
             <p className="mt-3 text-[11px] leading-relaxed text-foreground/40">
               # heading · **bold** · ==highlight== · [[Title]] links a note · #tag · &gt; [!quote] starts a callout ([!idea], [!question], [!warning], [!summary], [!definition])

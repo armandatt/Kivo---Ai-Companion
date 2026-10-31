@@ -202,7 +202,7 @@ describe("the note an import makes", () => {
   });
 
   it("a paper longer than a note: cut at a section, said on the card and in the notes, never over the limit", () => {
-    const a = assemblePaperNote(found(30), { today: "2026-10-27" });
+    const a = assemblePaperNote(found(600), { today: "2026-10-27" });
     expect(a.body.length).toBeLessThanOrEqual(NOTE_BODY_MAX);
     expect(a.status).toBe("partial");
     expect(readPaperCard(a.body)?.card.status).toBe("partial");
