@@ -166,7 +166,7 @@ describe("the call", () => {
     const generate = jest.fn().mockResolvedValue(reply({ sections: [{ basis: "notes", heading: null, text: "Four [S1]." }], followUps: ["Why four?"] }));
     const load = jest.fn().mockResolvedValue(material());
     const out = await tutorOnNote("p1", "n1", { mode: "explain", selection: "hold and wait", noteVersion: "2026-10-25T00:00:00.000Z" }, generate, load, jest.fn().mockResolvedValue([]));
-    expect(load).toHaveBeenCalledWith("p1", "n1", { bodyMax: 50_000 });
+    expect(load).toHaveBeenCalledWith("p1", "n1", { bodyMax: 1_000_000 });
     expect(out.ok && out.noteVersion).toBe("2026-10-26T10:00:00.000Z");
     expect(out.ok && out.versionDiffers).toBe(true);
     expect(out.ok && out.passage).toMatchObject({ text: "hold and wait", heading: "Deadlocks", found: true });

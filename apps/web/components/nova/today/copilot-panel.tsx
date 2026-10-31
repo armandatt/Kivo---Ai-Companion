@@ -18,27 +18,41 @@
 // chat); the flow is the server's. The panel stays mounted while hidden, so
 // closing it loses nothing. New chat clears the conversation and nothing
 // else; with a proposal still waiting it asks first, because starting over
-// discards that proposal (the saved flow stays as it is).
+// discards that proposal (the saved flow stays as it is). A screenshot pasted,
+// dropped or chosen goes with one message and is not kept; Nova's words show
+// as they are written, and only the finished, checked reply is kept.
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowRight, Check, Loader2, MessageSquarePlus, Send, Undo2, X } from 'lucide-react'
+import { ArrowRight, Check, Loader2, MessageSquarePlus, Paperclip, RotateCcw, Send, Square, Undo2, X } from 'lucide-react'
 import type { NovaDayView, PendingChange } from '@repo/api/nova/product/day-flow.types'
 import { KivoMark } from '@/components/brand/kivo-brand'
 import { cn } from '@/lib/utils'
 import { askCopilot } from './day-api'
+import { ACCEPT, AttachmentTray, useAttachments, useDropZone } from '../attachments'
+import { LiveText, ThinkingDots, useFollowBottom } from '../chat-ui'
 import type { OpenProposal, ProposalState } from './playground'
 
 type Turn =
-  | { id: string; role: 'learner'; text: string }
+  | { id: string; role: 'learner'; text: string; attached?: string[]; previews?: string[] }
   | {
       id: string; role: 'nova'; text: string; question: string | null; choices: string[]
       pending: (PendingChange & { state: ProposalState; note?: string }) | null
       changed: string[]
       link: { href: string; label: string } | null
       error?: boolean
+      // What to send again; not kept with the conversation.
+      retry?: { text: string; draftNow?: boolean; files?: SentFile[] }
     }
 type NovaTurn = Extract<Turn, { role: 'nova' }>
+type SentFile = { name: string; data: string }
+// Files and their previews last as long as the page; only names are kept.
+const forStorage = (t: Turn): Turn => {
+  const kept = { ...t }
+  if (kept.role === 'learner') delete kept.previews
+  else delete kept.retry
+  return kept
+}
 
 const PREFIX = 'kivo-today-studio:'
 const store = (day: string) => `${PREFIX}${day}`
@@ -82,6 +96,14 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
   const own = useRef<HTMLTextAreaElement>(null)
   const box = inputRef ?? own
   const log = useRef<HTMLDivElement>(null)
+  const panel = useRef<HTMLElement>(null)
+  const filePicker = useRef<HTMLInputElement>(null)
+  const files = useAttachments()
+  const drop = useDropZone(panel, list => files.add(list))
+  const [live, setLive] = useState('')
+  const inFlight = useRef<AbortController | null>(null)
+  const previews = useRef<string[]>([])
+  useEffect(() => () => { inFlight.current?.abort(); for (const url of previews.current) URL.revokeObjectURL(url) }, [])
 
   // Today's conversation, if this tab has one; an earlier day's is let go.
   useEffect(() => {
@@ -93,8 +115,8 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
     } catch { /* storage off */ }
     setTurns(saved); setTurnsDay(flow.day); setConfirmNew(false)
   }, [flow.day])
-  useEffect(() => { if (turnsDay !== flow.day) return; try { if (turns.length) sessionStorage.setItem(store(flow.day), JSON.stringify(turns.slice(-40))); else sessionStorage.removeItem(store(flow.day)) } catch { /* storage off */ } }, [turns, turnsDay, flow.day])
-  useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight, behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }) }, [turns.length, pending])
+  useEffect(() => { if (turnsDay !== flow.day) return; try { if (turns.length) sessionStorage.setItem(store(flow.day), JSON.stringify(turns.slice(-40).map(forStorage))); else sessionStorage.removeItem(store(flow.day)) } catch { /* storage off */ } }, [turns, turnsDay, flow.day])
+  const followBottom = useFollowBottom(log, [turns.length, pending, live.length])
 
   // The latest proposal, whatever became of it.
   const lastProposal = [...turns].reverse().find((t): t is NovaTurn => t.role === 'nova' && t.pending !== null) ?? null
@@ -108,20 +130,27 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
   const patch = (turnId: string, state: ProposalState, note?: string) =>
     setTurns(list => list.map(t => (t.id === turnId && t.role === 'nova' && t.pending ? { ...t, pending: { ...t.pending, state, note } } : t)))
 
-  async function send(text: string, opts: { draftNow?: boolean } = {}) {
-    const message = text.trim()
+  async function send(text: string, opts: { draftNow?: boolean; files?: SentFile[]; shown?: string[] } = {}) {
+    const message = text.trim() || (opts.files?.length ? 'Look at what I attached.' : '')
     if (!message || pending) return
     setInput('')
+    setLive('')
+    followBottom()
     const history = turns.slice(-12).map(t => ({ role: t.role, text: t.role === 'learner' ? t.text : [t.question ? `${t.text} ${t.question}`.trim() : t.text, t.pending ? `[Proposal, ${OUTCOME[t.pending.state]}: ${t.pending.changed.join(' ')}]` : ''].filter(Boolean).join(' ') }))
     const openNow = open ? { id: open.id, version: open.version, ops: open.ops } : null
     const openTurn = open ? lastProposal : null
-    setTurns(list => [...list, { id: newId(), role: 'learner', text: message }])
+    setTurns(list => [...list, { id: newId(), role: 'learner', text: message, ...(opts.files?.length ? { attached: opts.files.map(f => f.name), previews: opts.shown } : {}) }])
     setPending(true)
-    const res = await askCopilot({ message, version: flow.version, history, open: openNow, draftNow: opts.draftNow, subjectId: subject?.id ?? null })
+    const controller = new AbortController()
+    inFlight.current = controller
+    const res = await askCopilot({ message, version: flow.version, history, open: openNow, draftNow: opts.draftNow, subjectId: subject?.id ?? null, ...(opts.files?.length ? { files: opts.files } : {}) }, controller.signal, setLive)
+    inFlight.current = null
     setPending(false)
+    setLive('')
     if (!res.ok) {
+      if (res.error === 'aborted') { setTurns(list => [...list, { id: newId(), role: 'nova', text: 'Stopped. Nothing changed.', question: null, choices: [], pending: null, changed: [], link: null }]); return }
       if ('flow' in res && res.flow) onAdopt(res.flow, [], [])
-      setTurns(list => [...list, { id: newId(), role: 'nova', text: res.message, question: null, choices: [], pending: null, changed: [], link: null, error: true }])
+      setTurns(list => [...list, { id: newId(), role: 'nova', text: res.message, question: null, choices: [], pending: null, changed: [], link: null, error: true, retry: { text: message, draftNow: opts.draftNow, files: opts.files } }])
       return
     }
     // A new proposal replaces the open one; a yes or a no in words closes it.
@@ -145,9 +174,18 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
   // A proposal not yet applied or discarded, current or not.
   const unapplied = lastProposal?.pending?.state === 'open' || lastProposal?.pending?.state === 'applying'
   const applying = lastProposal?.pending?.state === 'applying'
-  const startOver = () => { setConfirmNew(false); setTurns([]); setInput(''); box.current?.focus() }
+  const startOver = () => { setConfirmNew(false); setTurns([]); setInput(''); files.clear(); box.current?.focus() }
   const newChat = () => { if (pending || applying) return; if (unapplied) setConfirmNew(true); else startOver() }
   const fill = (text: string) => { setInput(text); window.setTimeout(() => { box.current?.focus(); box.current?.setSelectionRange(text.length, text.length) }, 0) }
+  const stop = () => inFlight.current?.abort()
+  const submit = () => {
+    if (pending || files.preparing || files.blocked) return
+    const uploads = files.uploads()
+    if (!input.trim() && uploads.length === 0) return
+    const shown = files.take().flatMap(a => (a.preview ? [a.preview] : []))
+    previews.current.push(...shown)
+    void send(input, uploads.length ? { files: uploads.map(u => ({ name: u.name, data: u.data })), shown } : {})
+  }
   useImperativeHandle(ref, () => ({ send: (t, o) => void send(t, o), apply: k => void apply(k), discard, fill }))
 
   const starters = subject
@@ -155,7 +193,7 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
     : ['Plan my day', 'I want to learn something new', 'I have about an hour']
 
   return (
-    <section className="flex h-full min-h-0 flex-col" aria-label="Nova, planning today with you" data-copilot>
+    <section ref={panel} className="relative flex h-full min-h-0 flex-col" aria-label="Nova, planning today with you" data-copilot>
       <header className="flex shrink-0 items-center gap-3 border-b border-white/6 px-5 py-4">
         <span aria-hidden className="relative grid size-10 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-nova/35 via-nova/15 to-transparent ring-1 ring-nova/35">
           {pending && <span className="absolute inset-0 rounded-2xl ring-2 ring-nova/50 kivo-node-pulse" />}
@@ -201,12 +239,26 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
           </div>
         )}
         {turns.map(t => t.role === 'learner' ? (
-          <div key={t.id} className="nova-reveal ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-action/15 px-4 py-2.5 text-[15px] leading-relaxed text-foreground ring-1 ring-action/20" data-copilot-turn="learner">{t.text}</div>
+          <div key={t.id} className="nova-reveal ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-action/15 px-4 py-2.5 text-[15px] leading-relaxed text-foreground ring-1 ring-action/20" data-copilot-turn="learner">
+            {t.previews?.length ? (
+              <span className="mb-1.5 flex flex-wrap gap-1.5" data-copilot-sent-images>
+                {/* eslint-disable-next-line @next/next/no-img-element -- the learner's own image, from this browser */}
+                {t.previews.map(url => <img key={url} src={url} alt="" className="max-h-40 max-w-full rounded-lg object-contain" />)}
+              </span>
+            ) : t.attached?.length ? <span className="mb-1 block text-xs text-foreground/55">Attached: {t.attached.join(', ')}</span> : null}
+            {t.text}
+          </div>
         ) : (
           <div key={t.id} className="nova-reveal flex gap-3" data-copilot-turn="nova">
             <span aria-hidden className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-xl bg-nova/12 ring-1 ring-nova/25"><KivoMark size={12} className="text-nova-ink" /></span>
             <div className="min-w-0 flex-1 space-y-2.5 text-[15px] leading-relaxed text-foreground/85">
               {t.text && <p className={cn('whitespace-pre-wrap', t.error && 'text-amber-200')}>{t.text}</p>}
+              {t.error && t.retry && t === lastNova && !pending && (
+                <button type="button" onClick={() => { const r = t.retry!; setTurns(list => list.filter(x => x.id !== t.id)); void send(r.text, { draftNow: r.draftNow, files: r.files }) }}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-nova-ink hover:underline" data-copilot-retry>
+                  <RotateCcw className="size-3.5" /> Try again
+                </button>
+              )}
               {t.question && <p className="whitespace-pre-wrap font-medium text-foreground" data-copilot-question>{t.question}</p>}
               {t.pending && (
                 <div className={cn('flex items-center gap-2 rounded-xl border px-3 py-2 text-xs', t.pending.state === 'open' ? 'border-nova/35 bg-nova/[0.06] text-foreground/85' : t.pending.state === 'applied' ? 'border-nova/25 text-nova-ink' : 'border-white/8 text-foreground/55')} data-copilot-pending={t.pending.state}>
@@ -240,9 +292,9 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
           </div>
         ))}
         {pending && (
-          <div className="flex items-center gap-3" aria-hidden>
-            <span className="grid size-7 place-items-center rounded-xl bg-nova/12 ring-1 ring-nova/25"><KivoMark size={12} className="text-nova-ink" /></span>
-            <span className="flex gap-1"><span className="size-1.5 animate-bounce rounded-full bg-nova/70 [animation-delay:-0.2s]" /><span className="size-1.5 animate-bounce rounded-full bg-nova/70 [animation-delay:-0.1s]" /><span className="size-1.5 animate-bounce rounded-full bg-nova/70" /></span>
+          <div className="nova-reveal flex gap-3" data-copilot-working>
+            <span aria-hidden className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-xl bg-nova/12 ring-1 ring-nova/25"><KivoMark size={12} className="text-nova-ink" /></span>
+            {live ? <LiveText text={live} className="min-w-0 flex-1 text-[15px] leading-relaxed text-foreground/85" /> : <ThinkingDots label="Thinking about your day" className="pt-1" />}
           </div>
         )}
       </div>
@@ -253,18 +305,31 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
             {starters.map(c => <button key={c} type="button" disabled={pending} onClick={() => void send(c)} className="rounded-full border border-white/12 px-3 py-1.5 text-[13px] text-foreground/80 transition-colors hover:border-nova/50 hover:text-foreground disabled:opacity-40" data-copilot-chip>{c}</button>)}
           </div>
         )}
-        <form onSubmit={e => { e.preventDefault(); void send(input) }} className="flex items-end gap-2 rounded-2xl border border-white/10 bg-background/60 p-2 shadow-soft transition-colors focus-within:border-nova/50">
+        <AttachmentTray items={files.items} onRemove={files.remove} onRetry={files.retry} className="mb-2" />
+        <input ref={filePicker} type="file" accept={ACCEPT} multiple hidden onChange={e => { if (e.target.files?.length) files.add(e.target.files); e.target.value = '' }} data-copilot-file />
+        <form onSubmit={e => { e.preventDefault(); submit() }} className="flex items-end gap-2 rounded-2xl border border-white/10 bg-background/60 p-2 shadow-soft transition-colors focus-within:border-nova/50">
+          <button type="button" onClick={() => filePicker.current?.click()} className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl text-foreground/60 hover:bg-white/5 hover:text-foreground" aria-label="Attach a screenshot or PDF" title="Attach a screenshot or PDF, or paste one" data-copilot-attach>
+            <Paperclip className="size-4" />
+          </button>
           <label htmlFor="copilot-input" className="sr-only">Tell Nova</label>
           <textarea id="copilot-input" ref={box} rows={2} value={input} maxLength={800} onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(input) } }}
+            onPaste={files.onPaste}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() } if (e.key === 'Escape' && pending) stop() }}
             placeholder={open ? 'Say yes, or what to change…' : 'What do you want to do today?'}
             className="max-h-40 min-h-12 flex-1 resize-none bg-transparent px-2 py-1.5 text-[15px] leading-relaxed text-foreground placeholder:text-foreground/40 focus:outline-none" data-copilot-input />
-          <button type="submit" disabled={!input.trim() || pending} className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-action text-action-foreground transition-colors hover:bg-action-hover disabled:opacity-40" aria-label="Send">
-            {pending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-          </button>
+          {pending ? (
+            <button type="button" onClick={stop} className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl border border-white/12 text-foreground/80 hover:bg-white/5" aria-label="Stop" title="Stop (Esc)" data-copilot-stop>
+              <Square className="size-3.5" />
+            </button>
+          ) : (
+            <button type="submit" disabled={(!input.trim() && files.uploads().length === 0) || files.preparing || files.blocked} className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-action text-action-foreground transition-colors hover:bg-action-hover disabled:opacity-40" aria-label="Send">
+              <Send className="size-4" />
+            </button>
+          )}
         </form>
         <p className="mt-2 px-1 text-[11px] text-foreground/45">Nova plans today only. Notes, tasks and your map are changed on their own pages.</p>
       </div>
+      {drop.overlay}
     </section>
   )
 })

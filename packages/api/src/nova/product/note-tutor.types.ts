@@ -31,7 +31,8 @@ export const TUTOR_SELECTION_MAX = 2_000;
 export const TUTOR_ANSWER_MAX    = 2_000;
 export const TUTOR_HISTORY_MAX   = 8;       // turns the page sends back
 export const TUTOR_TURN_MAX      = 1_500;   // characters of each turn
-export const TUTOR_BODY_MAX      = 24 * 1024;
+// A request with files in it: up to 3 MB of them, as base64 in the JSON.
+export const TUTOR_BODY_MAX      = 4_300_000;
 
 export type TutorBasis = "notes" | "nova";
 export type TutorResult = "correct" | "partly" | "incorrect";
@@ -60,6 +61,9 @@ export interface TutorRequest {
   results?:     TutorResult[];  // how their last answers went, newest last
   exercise?:    TutorExercise;  // evaluate only
   answer?:      string;         // evaluate only
+  // A screenshot, photo or PDF for this one message (workspace-generation's
+  // checkFiles). Read for this answer and not kept; later turns do not have it.
+  files?:       Array<{ name: string; data: string }>;
 }
 
 // A part of an explanation. "notes" means what the learner's sources say,

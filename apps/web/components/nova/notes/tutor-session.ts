@@ -24,6 +24,11 @@ export interface TutorAsk {
   passage?:  string
   exercise?: TutorExercise
   answer?:   string
+  // What was attached to this message, as the composer prepared it. The base64
+  // and the preview live only as long as the page; attached (the names) is kept.
+  files?:    Array<{ name: string; data: string }>
+  previews?: string[]
+  attached?: string[]
 }
 
 // The state of what a reply set the learner to do, kept with the reply.
@@ -64,7 +69,7 @@ export const MODE_WORK: Record<TutorMode, string> = {
 // What the learner's own bubble says.
 export function askLine(ask: TutorAsk): string {
   if (ask.mode === 'evaluate') return ask.answer ?? MODE_LABEL.evaluate
-  return ask.message?.trim() || MODE_LABEL[ask.mode]
+  return ask.message?.trim() || (ask.attached?.length ? '' : MODE_LABEL[ask.mode])
 }
 
 const cut = (s: string) => (s.length > TUTOR_TURN_MAX ? `${s.slice(0, TUTOR_TURN_MAX - 1)}…` : s)
@@ -87,7 +92,8 @@ export function replyText(r: TutorReply): string {
 export function historyOf(entries: TutorEntry[]): TutorTurn[] {
   const turns: TutorTurn[] = []
   for (const e of entries) {
-    if (e.role === 'learner') turns.push({ role: 'learner', text: cut(e.ask.passage ? `${askLine(e.ask)} (about: "${e.ask.passage.slice(0, 300)}")` : askLine(e.ask)) })
+    if (e.role === 'learner' && e.ask.attached?.length) turns.push({ role: 'learner', text: cut(`${askLine(e.ask)} (attached ${e.ask.attached.join(', ')}, which you no longer have)`) })
+    else if (e.role === 'learner') turns.push({ role: 'learner', text: cut(e.ask.passage ? `${askLine(e.ask)} (about: "${e.ask.passage.slice(0, 300)}")` : askLine(e.ask)) })
     else if (e.role === 'nova') { const t = replyText(e.reply); if (t) turns.push({ role: 'nova', text: cut(t) }) }
   }
   return turns.slice(-TUTOR_HISTORY_MAX)
@@ -262,9 +268,23 @@ export function loadConversation(store: Store | null, noteId: string): TutorEntr
   } catch { return [] }
 }
 
+// A file is never written to the tab's storage, and a preview means nothing
+// after a reload: only their names stay with the conversation.
+export function withoutFiles(e: TutorEntry): TutorEntry {
+  if (e.role !== 'learner' && e.role !== 'error') return e
+  if (!e.ask.files && !e.ask.previews) return e
+  const ask = { ...e.ask }
+  delete ask.files
+  delete ask.previews
+  return { ...e, ask }
+}
+
+// A message whose file is gone (the page was reloaded) can't be sent again as it was.
+export const canRetry = (ask: TutorAsk) => !ask.attached?.length || !!ask.files?.length
+
 export function saveConversation(store: Store | null, noteId: string, entries: TutorEntry[]): void {
   try {
     if (entries.length === 0) store?.removeItem(KEY(noteId))
-    else store?.setItem(KEY(noteId), JSON.stringify(entries.slice(-KEEP)))
+    else store?.setItem(KEY(noteId), JSON.stringify(entries.slice(-KEEP).map(withoutFiles)))
   } catch { /* storage full or refused: the conversation lasts as long as the page */ }
 }

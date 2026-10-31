@@ -32,6 +32,10 @@ export interface LlmRequest {
   // asked for (OpenAI response_format, Gemini responseMimeType), and a reply
   // cut off at its length limit is an error (TRUNCATED), never half an object.
   json?:              boolean;
+  // Told each piece of the reply's text as it is written, for a page that
+  // shows it as it comes. Only Claude's client gives pieces; on the others this
+  // is never called. The returned text is still the answer.
+  onText?:            (delta: string) => void;
 }
 
 // Said in the error when a reply stopped at its length limit, so a caller

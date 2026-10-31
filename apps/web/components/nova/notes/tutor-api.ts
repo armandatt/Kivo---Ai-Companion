@@ -4,6 +4,7 @@
 import type { TutorRequest, TutorResponse } from '@repo/api/nova/product/note-tutor.types'
 import type { NoteImportResponse } from '@repo/api/nova/product/note-import'
 import type { EditRequest, EditResponse } from '@repo/api/nova/product/note-edit.types'
+import { streamPost } from '../stream-post'
 
 const FAILED = 'Could not reach the server. Check your connection and try again.'
 
@@ -23,8 +24,8 @@ export async function post<T>(url: string, body: unknown, signal?: AbortSignal):
   }
 }
 
-export const askTutor = (noteId: string, request: TutorRequest, signal?: AbortSignal) =>
-  post<TutorResponse>(`/api/nova/notes/${encodeURIComponent(noteId)}/tutor`, request, signal)
+export const askTutor = (noteId: string, request: TutorRequest, signal?: AbortSignal, onText?: (text: string) => void) =>
+  streamPost<TutorResponse>(`/api/nova/notes/${encodeURIComponent(noteId)}/tutor`, request, { signal, onText })
 
 // Nova's editor: a proposal of changes to the note. Nothing changes until
 // the learner applies it on the page.

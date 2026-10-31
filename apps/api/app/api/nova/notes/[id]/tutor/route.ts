@@ -6,17 +6,25 @@ import { tutorOnNote, TUTOR_REQUESTS_PER_MINUTE } from "@repo/api/nova/product/n
 import { TUTOR_BODY_MAX } from "@repo/api/nova/product/note-tutor.types"
 import { noteFail, requireNoteLearner } from "../../../../../../lib/nova/note-access"
 import { allowAttempt, readSmallJson } from "../../../../../../lib/nova/extension-access"
+import { answerLive } from "../../../../../../lib/nova/stream-answer"
+//@ts-ignore
+import { TUTOR_LIVE_KEYS } from "@repo/api/nova/product/reply-stream"
+//@ts-ignore
+import { liveGenerate } from "@repo/api/nova/product/reply-live"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
+export const maxDuration = 60
 
 type Context = { params: Promise<{ id: string }> }
 
 // POST /api/nova/notes/:id/tutor  TutorRequest
 // Nova tutoring the learner from one of their own notes: one model call,
 // given that note (and, for some modes, a few related notes and saved
-// pages). The conversation travels with the request; nothing is stored, and
-// nothing enters the chat pipeline (product/note-tutor.ts).
+// pages), and the screenshot or file the learner attached to this message.
+// The conversation travels with the request; nothing is stored, and nothing
+// enters the chat pipeline (product/note-tutor.ts). With Accept:
+// application/x-ndjson the reply's words come as they are written (stream-answer.ts).
 // Response: TutorResponse.
 export async function POST(req: Request, { params }: Context) {
   try {
@@ -29,12 +37,14 @@ export async function POST(req: Request, { params }: Context) {
     const read = await readSmallJson(req, TUTOR_BODY_MAX)
     if (!read.ok) return noteFail(read.reason === "too_large" ? 413 : 400, read.reason === "too_large" ? "too_long" : "invalid", read.reason === "too_large" ? "That's too much to send at once. Select a shorter passage." : "That isn't something Nova can do with a note.")
     const noteId = (await params).id
-    const run = await metered(access.platformChatId, () => tutorOnNote(access.profileId, noteId, read.body))
-    if (!run.ok) return run.response
-    const result = run.value as Awaited<ReturnType<typeof tutorOnNote>>
-    if (result.ok) return NextResponse.json(result, { headers: { "cache-control": "no-store" } })
-    const status = result.error === "not_found" ? 404 : result.error === "unavailable" ? 503 : 400
-    return NextResponse.json(result, { status })
+    return await answerLive(req, async onLive => {
+      const run = await metered(access.platformChatId, () => onLive ? tutorOnNote(access.profileId, noteId, read.body, liveGenerate(onLive, TUTOR_LIVE_KEYS)) : tutorOnNote(access.profileId, noteId, read.body))
+      if (!run.ok) return run.response
+      const result = run.value as Awaited<ReturnType<typeof tutorOnNote>>
+      if (result.ok) return NextResponse.json(result, { headers: { "cache-control": "no-store" } })
+      const status = result.error === "not_found" ? 404 : result.error === "unavailable" ? 503 : 400
+      return NextResponse.json(result, { status })
+    }, () => noteFail(500, "failed", "That didn't work. Try again."))
   } catch (err) {
     console.error("[nova/notes/:id/tutor]", err)
     return noteFail(500, "failed", "That didn't work. Try again.")

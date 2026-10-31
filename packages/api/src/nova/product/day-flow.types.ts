@@ -155,6 +155,8 @@ export interface CopilotRequest {
   draftNow?: boolean;
   // The top-level subject selected on the page: context only, never a request.
   subjectId?: string | null;
+  // A screenshot, photo or PDF for this one message. Read for this answer and not kept.
+  files?: Array<{ name: string; data: string }>;
 }
 
 // One line of a proposed day: what it is and what the proposal does to it.

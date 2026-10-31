@@ -252,7 +252,9 @@ async function generateWithClaude(input: LlmRequest, apiKey: string): Promise<st
     throw new Error(`Claude: ${OVER_PRICE_TIER} (${inputTokens} tokens > ${limit}). Send fewer or shorter files.`);
   }
   try {
-    const msg = await claudeClient(apiKey).beta.messages.stream(params, options).finalMessage();
+    const stream = claudeClient(apiKey).beta.messages.stream(params, options);
+    if (input.onText) stream.on("text", input.onText);
+    const msg = await stream.finalMessage();
     reportLlmUsage({ provider: "anthropic", model: msg.model, inputTokens: msg.usage.input_tokens, outputTokens: msg.usage.output_tokens });
     return readClaudeMessage(msg, { json: input.json });
   } catch (err) {
@@ -273,6 +275,7 @@ export async function generateOpenAIText(input: {
   attemptMs?: number;         // one attempt's limit, for long work (see LlmRequest)
   attachments?: LlmRequest["attachments"];
   json?: boolean;             // one JSON object back (see LlmRequest)
+  onText?: LlmRequest["onText"];  // the reply's text as it is written (see LlmRequest)
 }) {
   loadPackageEnv();
   const provider = selectProvider(process.env);
@@ -293,3 +296,7 @@ export async function generateOpenAIText(input: {
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
   return generateWithOpenAI(input, apiKey);
 }
+
+// The same call, told the reply's text as it is written (see LlmRequest onText).
+export const withTextStream = (onText: NonNullable<LlmRequest["onText"]>): typeof generateOpenAIText =>
+  input => generateOpenAIText({ ...input, onText });

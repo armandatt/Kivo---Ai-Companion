@@ -9,21 +9,26 @@
 // What the panel says it is doing is what is happening: saving the latest
 // edits first (so Nova reads the note as it is on screen), then one request
 // in flight, named by what was asked; "waiting for your answer" only while
-// an exercise is open. Nothing is streamed: a reply arrives whole and eases
-// in part by part (at once with reduced motion). Stop abandons the request;
+// an exercise is open. A reply's words show as the model writes them, when the
+// provider gives them; the checked reply then replaces them, with its
+// formatting, and eases in part by part (at once with reduced motion). A
+// screenshot pasted, dropped or chosen goes with one message, through the same
+// files check as Build with Nova, and is not kept. Stop abandons the request;
 // nothing is changed either way. Anything that goes into the note goes
 // through onInsert, which previews it and asks.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, RotateCcw, Send, Square, X } from 'lucide-react'
+import { Loader2, Paperclip, RotateCcw, Send, Square, X } from 'lucide-react'
 import type { NoteDetail } from '@repo/api/nova/product/notes.types'
 import type { TutorMode, TutorReply } from '@repo/api/nova/product/note-tutor.types'
 import { TUTOR_MESSAGE_MAX } from '@repo/api/nova/product/note-tutor.types'
 import { askTutor } from './tutor-api'
+import { ACCEPT, AttachmentTray, useAttachments, useDropZone } from '../attachments'
+import { LiveText, ThinkingDots, useFollowBottom } from '../chat-ui'
 import type { EditAsk } from './nova-editor'
 import { ReplyView, type Insert, type Reveal } from './tutor-playground'
 import {
-  MODE_LABEL, MODE_WORK, askLine, historyOf, loadConversation, nextActions, openExercise, resultsOf, saveConversation,
+  MODE_LABEL, MODE_WORK, askLine, canRetry, historyOf, loadConversation, nextActions, openExercise, resultsOf, saveConversation,
   type TutorAsk, type TutorEntry, type TutorWork,
 } from './tutor-session'
 
@@ -76,6 +81,14 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
   const box = inputRef ?? ownInput
   const entriesRef = useRef(entries)
   entriesRef.current = entries
+  const files = useAttachments()
+  const panel = useRef<HTMLElement>(null)
+  const filePicker = useRef<HTMLInputElement>(null)
+  const drop = useDropZone(panel, list => files.add(list), !!note)
+  const [live, setLive] = useState('')
+  // Previews of what was sent are let go with the panel.
+  const previews = useRef<string[]>([])
+  useEffect(() => () => { for (const url of previews.current) URL.revokeObjectURL(url) }, [])
 
   // Each note has its own conversation, kept in this tab.
   useEffect(() => { setEntries(noteId ? loadConversation(tabStore(), noteId) : []); setFresh(null) }, [noteId])
@@ -83,16 +96,15 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
   // A request still running for the note that was left is abandoned.
   useEffect(() => () => pending?.controller.abort(), [noteId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    const el = listRef.current
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
-  }, [entries.length, pending?.stage])
+  const followBottom = useFollowBottom(listRef, [entries.length, pending?.stage, live.length])
 
   const send = useCallback(async (ask: TutorAsk) => {
     if (!noteId || pending) return
     const before = entriesRef.current
     const evaluating = ask.mode === 'evaluate' ? openExercise(before)?.entry.id ?? null : null
     const controller = new AbortController()
+    followBottom()
+    setLive('')
     setEntries(list => [...list, { id: newId(), role: 'learner', ask, at: Date.now() }])
     setPending({ ask, stage: 'saving', since: Date.now(), controller })
     setAnnounce('')
@@ -108,8 +120,10 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
     const res = await askTutor(noteId, {
       mode: ask.mode, message: ask.message, selection: ask.passage, noteVersion: version() ?? undefined,
       history: historyOf(before), results: resultsOf(before), exercise: ask.exercise, answer: ask.answer,
-    }, controller.signal)
+      ...(ask.files?.length ? { files: ask.files } : {}),
+    }, controller.signal, setLive)
     setPending(null)
+    setLive('')
     if (!res.ok) {
       if (res.error === 'aborted') { setEntries(list => [...list, { id: newId(), role: 'stopped', ask, at: Date.now() }]); return }
       setEntries(list => [...list, { id: newId(), role: 'error', ask, at: Date.now(), message: res.message }])
@@ -130,7 +144,7 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
       return
     }
     setAnnounce(`Nova answered: ${MODE_LABEL[ask.mode]}.`)
-  }, [noteId, pending, ensureSaved, version, onEditor])
+  }, [noteId, pending, ensureSaved, version, onEditor, followBottom])
 
   // The capture page's "Organise with Nova": once, when the note is open.
   const autoRan = useRef(false)
@@ -141,13 +155,20 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
     void send({ mode: autoAsk })
   }, [autoAsk, noteId, send, onAutoAsked])
 
-  function stop() { pending?.controller.abort(); setPending(null) }
+  function stop() { pending?.controller.abort(); setPending(null); setLive('') }
 
   function submit() {
     const text = input.trim()
-    if (!text || pending) return
+    if ((!text && files.uploads().length === 0) || pending || files.preparing || files.blocked) return
+    const uploads = files.uploads()
+    const taken = files.take()
+    const shown = taken.flatMap(a => (a.preview ? [a.preview] : []))
+    previews.current.push(...shown)
     setInput('')
-    void send({ mode: 'explain', message: text.slice(0, TUTOR_MESSAGE_MAX), passage: passage?.text })
+    void send({
+      mode: 'explain', message: (text || 'Look at what I attached and tell me what matters here.').slice(0, TUTOR_MESSAGE_MAX), passage: passage?.text,
+      ...(uploads.length ? { files: uploads.map(u => ({ name: u.name, data: u.data })), previews: shown, attached: uploads.map(u => u.name) } : {}),
+    })
   }
 
   const work = (id: string, change: Partial<TutorWork>) =>
@@ -164,7 +185,7 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
     : last ? 'Done' : 'Ready when you are'
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-background" aria-label="Nova, your tutor" data-tutor data-tutor-state={pending ? pending.stage : waiting ? 'waiting' : 'idle'}>
+    <section ref={panel} className="relative flex h-full min-h-0 flex-col bg-background" aria-label="Nova, your tutor" data-tutor data-tutor-state={pending ? pending.stage : waiting ? 'waiting' : 'idle'}>
       {header(
         <>{pending && <Loader2 className="size-3 animate-spin" aria-hidden />}{status}{pending && <> · <Elapsed since={pending.since} /></>}</>,
         !!pending,
@@ -187,6 +208,12 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
           if (e.role === 'learner') return (
             <div key={e.id} className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-white/[0.06] px-3 py-2 text-sm text-foreground" data-tutor-ask={e.ask.mode}>
               {e.ask.passage && <p className="mb-1 line-clamp-2 border-l-2 border-nova/40 pl-2 text-xs italic text-foreground/60">{e.ask.passage}</p>}
+              {e.ask.previews?.length ? (
+                <span className="mb-1.5 flex flex-wrap gap-1.5" data-tutor-sent-images>
+                  {/* eslint-disable-next-line @next/next/no-img-element -- the learner's own image, from this browser */}
+                  {e.ask.previews.map(url => <img key={url} src={url} alt="" className="max-h-40 max-w-full rounded-lg object-contain" />)}
+                </span>
+              ) : e.ask.attached?.length ? <span className="mb-1 block text-xs text-foreground/55">Attached: {e.ask.attached.join(', ')}</span> : null}
               {askLine(e.ask)}
             </div>
           )
@@ -198,18 +225,20 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
           return (
             <div key={e.id} role="alert" className="border-l-2 border-red-400/50 pl-3 text-sm text-foreground/80" data-tutor-error>
               <p>{e.message}</p>
-              <button type="button" disabled={!!pending} onClick={() => { setEntries(list => list.filter(x => x.id !== e.id)); void send(e.ask) }}
-                className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-nova-ink hover:underline disabled:opacity-50" data-tutor-retry>
-                <RotateCcw className="size-3.5" /> Try again
-              </button>
+              {canRetry(e.ask) ? (
+                <button type="button" disabled={!!pending} onClick={() => { setEntries(list => list.filter(x => x.id !== e.id)); void send(e.ask) }}
+                  className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-nova-ink hover:underline disabled:opacity-50" data-tutor-retry>
+                  <RotateCcw className="size-3.5" /> Try again
+                </button>
+              ) : <p className="mt-1 text-xs text-subtle">Attach it again to ask once more.</p>}
             </div>
           )
         })}
 
         {pending && (
-          <div className="space-y-2" aria-hidden data-tutor-working>
-            <div className="h-3 w-3/4 animate-pulse rounded bg-white/6" />
-            <div className="h-3 w-1/2 animate-pulse rounded bg-white/5" />
+          <div className="nova-reveal space-y-2" data-tutor-working>
+            {live && <LiveText text={live} className="text-sm leading-relaxed text-foreground/85" />}
+            {!live && <ThinkingDots label={pending.stage === 'saving' ? 'Saving your latest edits' : MODE_WORK[pending.ask.mode]} />}
           </div>
         )}
       </div>
@@ -234,10 +263,16 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
             ))}
           </div>
         )}
+        <AttachmentTray items={files.items} onRemove={files.remove} onRetry={files.retry} className="mb-2" />
+        <input ref={filePicker} type="file" accept={ACCEPT} multiple hidden onChange={e => { if (e.target.files?.length) files.add(e.target.files); e.target.value = '' }} data-tutor-file />
         <form onSubmit={e => { e.preventDefault(); submit() }} className="flex items-end gap-2">
+          <button type="button" disabled={!note} onClick={() => filePicker.current?.click()} className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl text-foreground/60 hover:bg-white/5 hover:text-foreground disabled:opacity-40" aria-label="Attach a screenshot or PDF" title="Attach a screenshot or PDF, or paste one" data-tutor-attach>
+            <Paperclip className="size-4" />
+          </button>
           <label htmlFor="tutor-input" className="sr-only">Ask Nova</label>
           <textarea id="tutor-input" ref={box} rows={1} value={input} maxLength={TUTOR_MESSAGE_MAX} disabled={!note}
             onChange={e => setInput(e.target.value)}
+            onPaste={files.onPaste}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() } if (e.key === 'Escape' && pending) stop() }}
             placeholder={passage ? 'Ask about this passage…' : 'Ask Nova about this note…'}
             className="max-h-32 min-h-10 flex-1 resize-none rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-sm text-foreground placeholder:text-foreground/35 focus:border-nova/60 focus:outline-none disabled:opacity-50"
@@ -247,12 +282,13 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
               <Square className="size-3.5" />
             </button>
           ) : (
-            <button type="submit" disabled={!input.trim() || !note} className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-action text-action-foreground transition-colors hover:bg-action-hover disabled:opacity-40" title="Send (Enter)" aria-label="Send">
+            <button type="submit" disabled={(!input.trim() && files.uploads().length === 0) || files.preparing || files.blocked || !note} className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-action text-action-foreground transition-colors hover:bg-action-hover disabled:opacity-40" title="Send (Enter)" aria-label="Send">
               <Send className="size-4" />
             </button>
           )}
         </form>
       </div>
+      {drop.overlay}
       <p className="sr-only" role="status" aria-live="polite">{announce}</p>
     </section>
   )

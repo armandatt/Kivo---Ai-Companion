@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Check, Eye, Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react'
+import { ThinkingDots } from '../chat-ui'
 import type { NoteDetail } from '@repo/api/nova/product/notes.types'
 import type { EditChange } from '@repo/api/nova/product/note-outline'
 import type { EditKind, EditProposal } from '@repo/api/nova/product/note-edit.types'
@@ -301,9 +302,8 @@ export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version
         ))}
 
         {pending && (
-          <div className="space-y-2" aria-hidden data-editor-working>
-            <div className="h-3 w-3/4 animate-pulse rounded bg-white/6" />
-            <div className="h-3 w-1/2 animate-pulse rounded bg-white/5" />
+          <div className="nova-reveal" data-editor-working>
+            <ThinkingDots label={pending.stage === 'saving' ? 'Saving your latest edits' : EDIT_WORK[pending.ask.kind]} />
           </div>
         )}
       </div>
