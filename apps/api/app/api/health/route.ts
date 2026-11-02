@@ -1,16 +1,19 @@
 import { schedulerStatus, startInternalCheckinScheduler } from "../../../lib/internal-checkin-scheduler";
+//@ts-ignore
+import { describeLlmSelection } from "@repo/api/services/llmProviders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Liveness, and whether this process is the one running the scheduled jobs.
 // No secrets and no learner data: the build's commit, the scheduler's state
-// and its last tick.
+// and its last tick, and which model provider and models this process calls
+// (names only; whether a key is set, never the key).
 export async function GET() {
   startInternalCheckinScheduler();
   // Which commit this process was built from (Render sets RENDER_GIT_COMMIT).
-  // The web app deploys by itself on every merge and this API does not, so
-  // this is how to tell whether the API is behind.
+  // Render deploys main by itself, a few minutes after the web app, so this
+  // is how to tell whether the API is behind.
   const commit = (process.env.RENDER_GIT_COMMIT ?? "").slice(0, 12) || null;
-  return Response.json({ ok: true, commit, scheduler: schedulerStatus() });
+  return Response.json({ ok: true, commit, scheduler: schedulerStatus(), llm: describeLlmSelection(process.env) });
 }

@@ -13,6 +13,7 @@ import {
   retryDelayMs,
   shouldDisableThinking,
   selectProvider,
+  describeLlmSelection,
   tierFor,
   unwrapSingleFence,
 } from "../llmProviders";
@@ -31,6 +32,26 @@ describe("provider selection", () => {
     expect(selectProvider(env({ LLM_PROVIDER: "openai", GEMINI_API_KEY: "g" }))).toBe("openai");
     expect(selectProvider(env({ LLM_PROVIDER: "GEMINI" }))).toBe("gemini");
     expect(selectProvider(env({ LLM_PROVIDER: "something-else", GEMINI_API_KEY: "g" }))).toBe("gemini");
+  });
+});
+
+describe("what /api/health says this process calls", () => {
+  it("names the provider and the model of each tier, and never a key", () => {
+    const claude = describeLlmSelection(env({ ANTHROPIC_API_KEY: "sk-ant-secret", GEMINI_API_KEY: "g-secret" }));
+    expect(claude).toEqual({
+      provider: "anthropic", keyPresent: true, fast: "claude-haiku-5-5", main: "claude-haiku-5-5",
+      effort: { fast: "low", main: "low" }, promptTokensMax: 100_000,
+    });
+    expect(JSON.stringify(claude)).not.toMatch(/secret/);
+    expect(describeLlmSelection(env({ GEMINI_API_KEY: "g-secret" }))).toEqual({ provider: "gemini", keyPresent: true, fast: GEMINI_DEFAULT_FAST, main: GEMINI_DEFAULT_MAIN });
+  });
+
+  it("follows the overrides, and says when the chosen provider has no key", () => {
+    const overridden = describeLlmSelection(env({ ANTHROPIC_API_KEY: "k", ANTHROPIC_MODEL_MAIN: "claude-sonnet-5-5", ANTHROPIC_EFFORT_MAIN: "high" }));
+    expect(overridden.main).toBe("claude-sonnet-5-5");
+    expect(overridden.effort?.main).toBe("high");
+    expect(describeLlmSelection(env({ LLM_PROVIDER: "claude" }))).toMatchObject({ provider: "anthropic", keyPresent: false });
+    expect(describeLlmSelection(env({}))).toMatchObject({ provider: "openai", keyPresent: false });
   });
 });
 

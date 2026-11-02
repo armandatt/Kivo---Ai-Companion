@@ -101,6 +101,30 @@ export function selectProvider(env: NodeJS.ProcessEnv): LlmProvider {
   return geminiKey(env) ? "gemini" : "openai";
 }
 
+// What this process will call, by name only, for GET /api/health: the
+// provider, whether that provider's key is set (never the key), and the
+// model each tier maps to. OpenAI is sent the caller's own model name, so its
+// tiers name the names Kivo's callers pass.
+export interface LlmSelection {
+  provider:   LlmProvider;
+  keyPresent: boolean;
+  fast:       string;
+  main:       string;
+  effort?:    { fast: ClaudeEffort; main: ClaudeEffort };
+  promptTokensMax?: number;
+}
+export function describeLlmSelection(env: NodeJS.ProcessEnv): LlmSelection {
+  const provider = selectProvider(env);
+  if (provider === "anthropic") return {
+    provider, keyPresent: Boolean(anthropicKey(env)),
+    fast: claudeModelFor("gpt-4o-mini", env), main: claudeModelFor("gpt-4o", env),
+    effort: { fast: claudeEffortFor("gpt-4o-mini", env), main: claudeEffortFor("gpt-4o", env) },
+    promptTokensMax: claudePromptLimit(env),
+  };
+  if (provider === "gemini") return { provider, keyPresent: Boolean(geminiKey(env)), fast: geminiModelFor("gpt-4o-mini", env), main: geminiModelFor("gpt-4o", env) };
+  return { provider, keyPresent: Boolean(openaiKey(env)), fast: "gpt-4o-mini", main: "gpt-4o" };
+}
+
 // ── Anthropic (Claude) ────────────────────────────────────────────────────────
 
 // Both tiers are Claude Haiku 5.5 (the owner's choice, 26 Oct: fast and

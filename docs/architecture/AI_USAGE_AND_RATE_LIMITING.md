@@ -1,6 +1,8 @@
 # AI usage, rate limiting and token economics
 
-Status: **proposal, for review.** Nothing in this document has changed any limit, deduction or entitlement. The audit is of `main` at `32ae05f` plus the branch `feature/production-readiness`. Production data was not read; every usage figure below marked *assumption* must be replaced by real numbers from `AiUsageDay` before any limit is set (the query is in §19).
+Status: **proposal, for review.** Nothing in this document has changed any limit, deduction or entitlement. The audit is of `main` at `32ae05f` plus the branch `feature/production-readiness`. Production data was not read for this document; every usage figure below marked *assumption* must be replaced by real numbers before any limit is set.
+
+Update 2026-11-03: production was read (read-only) in `AI_USAGE_ANALYTICS_REPORT.md`. Its measured averages replace §18–19's assumptions: 5,335 input and 1,084 output tokens per metered request ($0.00108), and $0.0125 per active account-day. The phased plan that supersedes the milestones below is `AI_USAGE_NEXT_PHASE_PLAN.md`.
 
 ---
 
