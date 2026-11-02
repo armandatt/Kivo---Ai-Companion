@@ -573,6 +573,19 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 .kn-card { transition: border-color 0.16s ease, background-color 0.16s ease, box-shadow 0.2s ease; box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
 .kn-card:hover, .kn-card:focus-within { border-color: color-mix(in oklch, var(--sc, var(--foreground)) 45%, transparent); background-color: var(--card); box-shadow: 0 12px 28px -14px rgb(0 0 0 / 0.55), 0 2px 6px -2px rgb(0 0 0 / 0.25); }
 
+/* Native selects inside the app. Chrome draws a select's option list from
+   the page's styles: a transparent, pale-text select gave pale text on
+   Chrome's white list. The options get the theme's popover colours, so they
+   read in Chrome, Edge and Firefox, in both themes. Safari uses the system
+   menu and is unaffected. */
+.kivo-app select option, .kivo-app select optgroup { background-color: var(--popover); color: var(--popover-foreground); }
+.kivo-app select:disabled option { color: color-mix(in oklch, var(--popover-foreground) 55%, transparent); }
+
+/* The subject selector's list opens with a short fade and lift. */
+@keyframes subject-pop { from { opacity: 0; transform: translateY(-4px) scale(0.985); } to { opacity: 1; transform: none; } }
+.subject-pop { animation: subject-pop 0.14s ease-out both; transform-origin: top; }
+@media (prefers-reduced-motion: reduce) { .subject-pop { animation: none; } }
+
 /* Nova at work: three dots and a line of text with a light passing over it.
    Each runs only while a request is in flight. */
 .nova-dots { display: inline-flex; align-items: center; gap: 4px; }

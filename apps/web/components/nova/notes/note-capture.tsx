@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { AlertTriangle, ArrowLeft, Check, ClipboardPaste, FileText, Loader2, Smartphone, Sparkles, Square, Upload } from 'lucide-react'
 import type { NoteDetail, NoteSubjectOption, NoteSummary } from '@repo/api/nova/product/notes.types'
+import { SubjectSelect } from '../subject-select'
 import { NOTE_BODY_MAX, NOTE_TITLE_MAX, NOTE_TOPIC_MAX } from '@repo/api/nova/product/notes.types'
 import {
   CAPTURE_TEXT_MAX, appendToBody, captureBody, captureTitle, importBody, noteCaptureBookmarklet, type CaptureVia,
@@ -300,10 +301,8 @@ export function NoteCaptureScreen() {
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div>
                       <label htmlFor="capture-subject" className="mb-1.5 block text-xs text-foreground/55">Subject</label>
-                      <select id="capture-subject" value={subjectId} onChange={e => { setSubjectId(e.target.value); if (!e.target.value) setTopicName('') }} className={`${field} h-10`}>
-                        <option value="">No subject</option>
-                        {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
+                      <SubjectSelect id="capture-subject" subjects={subjects} value={subjectId}
+                        onChange={v => { setSubjectId(v); if (!v) setTopicName('') }} />
                     </div>
                     <div>
                       <label htmlFor="capture-topic" className="mb-1.5 block text-xs text-foreground/55">Topic</label>
