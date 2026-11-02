@@ -775,6 +775,7 @@ model NovaAcademicProfile {
   mapLayout         NovaMapLayout[]
   calendarEvents    NovaCalendarEvent[]
   workspaces        NovaWorkspace[]
+  knowledgeTrash    NovaKnowledgeTrash[]
   workspaceDrafts   NovaWorkspaceDraft[]
 
   user MessengerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1760,4 +1761,27 @@ model NovaWorkspaceDraftFile {
   draft NovaWorkspaceDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
 
   @@index([draftId])
+}
+
+// A part of the Knowledge Map the learner deleted, kept so they can bring it
+// back (product/knowledge-trash.ts, the only reader and writer). The rows
+// themselves are deleted from the active tables, so nothing that reads
+// knowledge (Nova's context, the plan, the map) can see them; this holds a
+// copy of what went, and where what stayed was filed, until they restore it.
+// Additive: nothing else changes shape.
+model NovaKnowledgeTrash {
+  id         String    @id @default(cuid())
+  profileId  String
+  kind       String    // "subject" | "workspace"
+  title      String
+  // { subjects, topics, dates, workspaces, filings }: the rows as they were.
+  snapshot   Json
+  deletedAt  DateTime  @default(now())
+  // Past this it is no longer offered back.
+  expiresAt  DateTime
+  restoredAt DateTime?
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, deletedAt])
 }

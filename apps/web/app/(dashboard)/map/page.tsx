@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { History } from 'lucide-react'
+import { RecentlyDeleted } from '@/components/nova/knowledge-map/recently-deleted'
 import type { NovaKnowledgeMapView } from '@repo/api/nova/product/knowledge-map.types'
 import { KnowledgeMap } from '@/components/nova/knowledge-map/knowledge-map'
 import { useNovaView } from '@/components/nova/use-nova-view'
@@ -23,7 +25,15 @@ function Frame({ children, actions }: { children: React.ReactNode; actions?: boo
 }
 
 function Actions() {
+  const [trash, setTrash] = useState(false)
+  const [said, setSaid] = useState<string | null>(null)
   return <>
+    {/* Recently deleted: maps and subjects deleted here, kept 30 days. */}
+    <span className="relative">
+      <button type="button" onClick={() => setTrash(o => !o)} aria-expanded={trash} className={cn(BUTTON_QUIET, 'h-9')} data-open-trash><History aria-hidden className="size-3.5" /> <span className="max-sm:sr-only">Recently deleted</span></button>
+      {trash && <RecentlyDeleted className="absolute right-0 top-11 z-40" onClose={() => setTrash(false)} onRestored={text => { setSaid(text); setTrash(false); window.setTimeout(() => window.location.reload(), 900) }} />}
+    </span>
+    {said && <span role="status" className="text-xs text-foreground/70" data-trash-said>{said}</span>}
     <PageAction href="/notes/new">New note</PageAction>
     {/* On a phone, the map comes first: these are in the navigation. */}
     <Link href="/saved" className={cn(BUTTON_QUIET, 'hidden h-9 md:inline-flex')}>Saved pages</Link>
@@ -91,10 +101,19 @@ export default function KnowledgeMapPage() {
     )
   }
   if (view.nodes.length === 0) {
+    // An empty map never strands anyone: other maps stay one click away, and
+    // what was deleted is in Recently deleted (in the header).
+    const others = (view.workspaces ?? []).filter(w => w.id !== view.workspaceId)
     return (
       <Frame actions>
-        <PageNotice title="Your map is empty" action={<PageAction href="/settings/study">Add subjects and topics</PageAction>}>
-          Add a subject and its topics, write a note, or save a page from your browser. Each one becomes a card here, joined to the subject you file it under.
+        <PageNotice title={view.workspaceId ? 'This map is empty' : 'Your map is empty'} action={<PageAction href="/settings/study">Add subjects and topics</PageAction>}>
+          Add a subject and its topics, write a note, or save a page from your browser. Each one becomes a card here, joined to the subject you file it under. Deleted something by mistake? Open Recently deleted above.
+          {(view.workspaceId || others.length > 0) && (
+            <span className="mt-4 flex flex-wrap gap-2" data-empty-switch>
+              {view.workspaceId && <button type="button" onClick={() => choose('all')} className={cn(BUTTON_QUIET, 'h-9')}>Show everything you have</button>}
+              {others.slice(0, 4).map(w => <button key={w.id} type="button" onClick={() => choose(w.id)} className={cn(BUTTON_QUIET, 'h-9')}>{w.title}</button>)}
+            </span>
+          )}
         </PageNotice>
       </Frame>
     )

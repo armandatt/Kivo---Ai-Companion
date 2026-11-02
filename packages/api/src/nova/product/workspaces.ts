@@ -25,6 +25,7 @@ import { dayKey, resolveTimezone } from "../engines/learner-calendar";
 import { checkWorkspacePlan, planWrites, readStoredPlan, type WorkspacePlan } from "./workspace-plan";
 import { templateById } from "./templates";
 import { subjectsWithArchivedTopics } from "./topic-archive";
+import { TrashGone, claimIn, listTrash, putBackIn, snapshotIn, trashIn, type TrashItem, type TrashSnapshot } from "./knowledge-trash";
 import { declareWorkspaceSubjectsIn, ensureSetupProfile } from "./setup";
 import { addDatesIn } from "./exams";
 import { createTasksIn } from "./tasks";
@@ -44,6 +45,22 @@ const KEY_MIN = 8, KEY_MAX = 64;
 const SUMMARY_SELECT = { id: true, kind: true, templateId: true, title: true, summary: true, createdAt: true, subjectIds: true } as const;
 type Row = { id: string; kind: string; templateId: string | null; title: string; summary: string | null; createdAt: Date; subjectIds: string[] };
 
+// ── Only workspaces that still hold something ────────────────────────────────
+// A workspace is a record of what Nova built; its subjects are the knowledge.
+// When those subjects are deleted (from the map, from Knowledge, before the
+// trash existed), the record must not go on telling Nova, the map or Today
+// that it is there. Every listing reads its subjectIds against the subjects
+// that exist, and a workspace with none left is not listed.
+async function liveSubjectIds(profileId: string): Promise<Set<string>> {
+  return new Set((await prisma.novaSubject.findMany({ where: { profileId }, select: { id: true } })).map(s => s.id));
+}
+function liveRows<T extends { subjectIds: string[] }>(rows: T[], live: Set<string>): T[] {
+  return rows.flatMap(r => {
+    const subjectIds = r.subjectIds.filter(id => live.has(id));
+    return subjectIds.length ? [{ ...r, subjectIds }] : [];
+  });
+}
+
 async function summaries(profileId: string, rows: Row[]): Promise<WorkspaceSummary[]> {
   const ids = [...new Set(rows.flatMap(r => r.subjectIds))];
   const subjects = ids.length ? await prisma.novaSubject.findMany({ where: { profileId, id: { in: ids } }, select: { id: true, name: true } }) : [];
@@ -56,8 +73,11 @@ async function summaries(profileId: string, rows: Row[]): Promise<WorkspaceSumma
 }
 
 export async function listWorkspaces(profileId: string): Promise<WorkspacesView> {
-  const rows = await prisma.novaWorkspace.findMany({ where: { profileId }, select: SUMMARY_SELECT, orderBy: { createdAt: "desc" }, take: WORKSPACES_MAX });
-  return { status: "ready", workspaces: await summaries(profileId, rows) };
+  const [rows, live] = await Promise.all([
+    prisma.novaWorkspace.findMany({ where: { profileId }, select: SUMMARY_SELECT, orderBy: { createdAt: "desc" }, take: WORKSPACES_MAX }),
+    liveSubjectIds(profileId),
+  ]);
+  return { status: "ready", workspaces: await summaries(profileId, liveRows(rows, live)) };
 }
 
 // Workspaces of theirs a plan would repeat: made from the same template, or
@@ -67,7 +87,7 @@ export async function similarWorkspaces(profileId: string, plan: Pick<WorkspaceP
     where: { profileId, OR: [...(plan.templateId ? [{ templateId: plan.templateId }] : []), { title: { equals: plan.title, mode: "insensitive" as const } }] },
     select: SUMMARY_SELECT, orderBy: { createdAt: "desc" }, take: 5,
   });
-  return summaries(profileId, rows);
+  return summaries(profileId, liveRows(rows, await liveSubjectIds(profileId)));
 }
 
 export interface CreateInput {
@@ -182,20 +202,28 @@ class NoteChanged extends Error {}
 // Their workspaces, the one they worked on last first: what the Knowledge
 // Map draws one of (its subjects, and the tasks it made by its key).
 export async function workspaceScopes(profileId: string): Promise<Array<{ id: string; title: string; subjectIds: string[]; clientKey: string }>> {
-  return prisma.novaWorkspace.findMany({ where: { profileId }, select: { id: true, title: true, subjectIds: true, clientKey: true }, orderBy: { updatedAt: "desc" }, take: WORKSPACES_MAX });
+  const [rows, live] = await Promise.all([
+    prisma.novaWorkspace.findMany({ where: { profileId }, select: { id: true, title: true, subjectIds: true, clientKey: true }, orderBy: { updatedAt: "desc" }, take: WORKSPACES_MAX }),
+    liveSubjectIds(profileId),
+  ]);
+  return liveRows(rows, live);
 }
 
 // Their newest workspaces' titles and summaries, for what Nova is told
 // (builder.ts): a record of what exists.
 export async function recentWorkspaceTitles(profileId: string, take: number): Promise<Array<{ title: string; summary: string | null }>> {
-  return prisma.novaWorkspace.findMany({ where: { profileId }, select: { title: true, summary: true }, orderBy: { createdAt: "desc" }, take });
+  const [rows, live] = await Promise.all([
+    prisma.novaWorkspace.findMany({ where: { profileId }, select: { title: true, summary: true, subjectIds: true }, orderBy: { createdAt: "desc" }, take: Math.max(take * 3, take) }),
+    liveSubjectIds(profileId),
+  ]);
+  return liveRows(rows, live).slice(0, take).map(r => ({ title: r.title, summary: r.summary }));
 }
 
 // These workspaces of theirs, as summaries, in the order asked.
 export async function workspaceSummaries(profileId: string, ids: string[]): Promise<WorkspaceSummary[]> {
   if (ids.length === 0) return [];
   const rows = await prisma.novaWorkspace.findMany({ where: { profileId, id: { in: ids } }, select: SUMMARY_SELECT });
-  const list = await summaries(profileId, rows);
+  const list = await summaries(profileId, liveRows(rows, await liveSubjectIds(profileId)));
   return ids.flatMap(id => list.filter(w => w.id === id));
 }
 
@@ -276,7 +304,7 @@ export async function resourceCandidates(profileId: string): Promise<ResourceCan
     prisma.novaWorkspace.findMany({ where: { profileId }, select: { id: true, title: true, subjectIds: true }, orderBy: { createdAt: "desc" }, take: WORKSPACES_MAX }),
     subjectsForMatching(profileId),
   ]);
-  return { workspaces, subjects };
+  return { workspaces: liveRows(workspaces, new Set(subjects.map(s => s.id))), subjects };
 }
 
 // Topics of theirs with recorded study: renamed, never removed.
@@ -559,7 +587,11 @@ export type DeleteResult =
   | { ok: true; scope: DeletionScope }
   | { ok: false; error: "not_found" | "changed"; message: string };
 
-export async function deleteResource(platformChatId: string, input: { ref: Pick<ResourceRef, "workspaceId" | "subjectIds">; fingerprint: string; whole?: boolean }, now = new Date()): Promise<DeleteResult> {
+type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+type JsonInput = object;
+type DeleteHooks = { before?: (tx: TxClient, scope: DeletionScope) => Promise<void>; after?: (tx: TxClient, scope: DeletionScope) => Promise<void> };
+
+export async function deleteResource(platformChatId: string, input: { ref: Pick<ResourceRef, "workspaceId" | "subjectIds">; fingerprint: string; whole?: boolean }, now = new Date(), hooks: DeleteHooks = {}): Promise<DeleteResult> {
   const ensured = await ensureSetupProfile(platformChatId);
   if (!ensured) return { ok: false, error: "not_found", message: "Finish setting up with Nova first." };
   const { profileId } = ensured;
@@ -576,6 +608,7 @@ export async function deleteResource(platformChatId: string, input: { ref: Pick<
   if (checkStudyEdits(checkable, edits).issues.length > 0) return { ok: false, error: "changed", message: "Your subjects changed since this was shown. Nothing was deleted; look at it again." };
   try {
     await prisma.$transaction(async tx => {
+      if (hooks.before) await hooks.before(tx, scope);
       // The learner's own steps first come out from under what goes.
       await liftStepsIn(tx, profileId, scope.lifts);
       await removeTasksIn(tx, profileId, scope.removes.tasks.map(t => t.id));
@@ -584,6 +617,7 @@ export async function deleteResource(platformChatId: string, input: { ref: Pick<
       await unfileDatesIn(tx, profileId, [...going]);
       await playStudyEditsIn(tx, profileId, edits, structure.version);
       if (scope.workspaceId) await tx.novaWorkspace.deleteMany({ where: { id: scope.workspaceId, profileId } });
+      if (hooks.after) await hooks.after(tx, scope);
     }, { timeout: 30_000, maxWait: 10_000 });
   } catch (err) {
     if (err instanceof StaleStructure || err instanceof TaskChanged || err instanceof DateChanged || err instanceof NoteChanged || (err as { code?: string } | null)?.code === "P2025") {
@@ -615,10 +649,73 @@ export async function previewMapDeletion(platformChatId: string, profileId: stri
   return ref ? deletionScope(platformChatId, profileId, ref, new Date(), { whole: true }) : null;
 }
 
-export async function deleteMap(platformChatId: string, profileId: string, target: MapTarget, fingerprint: string): Promise<DeleteResult> {
+// The delete keeps a copy in the trash (knowledge-trash.ts), and every other
+// workspace that listed a deleted subject stops listing it; one left with no
+// subjects goes too, into the same trash item. All in the delete's one transaction.
+export async function deleteMap(platformChatId: string, profileId: string, target: MapTarget, fingerprint: string, now = new Date()): Promise<DeleteResult> {
   const ref = await refOfMap(profileId, target);
   if (!ref) return { ok: false, error: "not_found", message: "That isn't in your Kivo any more, so there's nothing to delete." };
-  return deleteResource(platformChatId, { ref, fingerprint, whole: true });
+  let copy: Omit<TrashSnapshot, "workspaces"> | null = null;
+  const workspaces: TrashSnapshot["workspaces"] = [];
+  return deleteResource(platformChatId, { ref, fingerprint, whole: true }, now, {
+    before: async (tx, scope) => {
+      const going = scope.removes.subjects.map(s => s.id);
+      copy = await snapshotIn(tx, profileId, { subjectIds: going, topicIds: scope.removes.topics.map(t => t.id), dateIds: scope.removes.dates.map(d => d.id) });
+      const touched = await tx.novaWorkspace.findMany({ where: { profileId, OR: [{ subjectIds: { hasSome: going.length ? going : ["-"] } }, ...(scope.workspaceId ? [{ id: scope.workspaceId }] : [])] } });
+      for (const w of touched) workspaces.push({ id: w.id, removed: w.id === scope.workspaceId, row: w as unknown as Record<string, unknown>, subjectIds: w.subjectIds });
+    },
+    after: async (tx, scope) => {
+      const going = new Set(scope.removes.subjects.map(s => s.id));
+      for (const w of workspaces) {
+        if (w.removed) continue;
+        const left = w.subjectIds.filter(id => !going.has(id));
+        if (left.length === 0) { await tx.novaWorkspace.deleteMany({ where: { id: w.id, profileId } }); w.removed = true; }
+        else if (left.length !== w.subjectIds.length) await tx.novaWorkspace.updateMany({ where: { id: w.id, profileId }, data: { subjectIds: left } });
+      }
+      const kept = workspaces.map(w => ({ ...w, row: w.removed ? w.row : null }));
+      const named = "subjectId" in target ? copy!.subjects.find(x => x.id === target.subjectId)?.name as string | undefined : undefined;
+      await trashIn(tx, profileId, { kind: "workspaceId" in target ? "workspace" : "subject", title: named ?? scope.title, snapshot: { ...copy!, workspaces: kept } }, now);
+    },
+  });
+}
+
+export const listDeletedKnowledge = (profileId: string) => listTrash(profileId);
+export type { TrashItem };
+
+export type RestoreResult = { ok: true; title: string; renamed: string[] } | { ok: false; error: "not_found"; message: string };
+
+// Puts one deleted map or subject back, with the same ids, and the workspace
+// records it took with it. Nova sees it again because it is active again.
+export async function restoreKnowledge(profileId: string, trashId: string, now = new Date()): Promise<RestoreResult> {
+  try {
+    return await prisma.$transaction(async tx => {
+      const { title, snapshot } = await claimIn(tx, profileId, trashId, now);
+      const { renamed } = await putBackIn(tx, profileId, snapshot);
+      const back = new Set(snapshot.subjects.map(s => s.id as string));
+      for (const w of snapshot.workspaces) {
+        const ids = w.subjectIds.filter(id => back.has(id));
+        if (w.removed && w.row) {
+          const r = w.row;
+          const taken = await tx.novaWorkspace.findFirst({ where: { profileId, clientKey: r.clientKey as string }, select: { id: true } });
+          const exists = await tx.novaWorkspace.findFirst({ where: { id: w.id }, select: { id: true } });
+          if (exists) continue;
+          await tx.novaWorkspace.create({ data: {
+            id: w.id, profileId, kind: r.kind as string, templateId: (r.templateId as string | null) ?? null, templateVersion: (r.templateVersion as number | null) ?? null,
+            title: r.title as string, summary: (r.summary as string | null) ?? null, plan: (r.plan ?? {}) as JsonInput,
+            sources: (r.sources ?? undefined) as JsonInput | undefined, subjectIds: (r.subjectIds as string[]).filter(id => back.has(id)),
+            clientKey: taken ? `${r.clientKey as string}-restored-${now.getTime().toString(36)}` : r.clientKey as string, createdAt: new Date(r.createdAt as string),
+          } });
+        } else {
+          const row = await tx.novaWorkspace.findFirst({ where: { id: w.id, profileId }, select: { subjectIds: true } });
+          if (row) await tx.novaWorkspace.updateMany({ where: { id: w.id, profileId }, data: { subjectIds: [...new Set([...row.subjectIds, ...ids])] } });
+        }
+      }
+      return { ok: true as const, title, renamed };
+    }, { timeout: 30_000, maxWait: 10_000 });
+  } catch (err) {
+    if (err instanceof TrashGone) return { ok: false, error: "not_found", message: "That isn't in Recently deleted any more. It may have been restored already." };
+    throw err;
+  }
 }
 
 // What Nova added to a workspace through an approved change, recorded on

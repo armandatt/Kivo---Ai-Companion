@@ -325,3 +325,20 @@ export async function removeExam(platformChatId: string, examId: string, now = n
   if (gone.count === 0) return { status: "not_found" };
   return { status: "removed", exams: await examsOf(profile, now) };
 }
+
+// ── Bringing a deleted subject's dates back (knowledge-trash.ts) ──────────────
+// The dates a delete removed, as they were (same ids), under their subject if
+// it is back; and the dates it only unfiled, filed again if still filed nowhere.
+export async function restoreDatesIn(
+  tx: Pick<typeof prisma, "novaExam">, profileId: string,
+  rows: Array<Record<string, unknown>>, unfiled: Array<{ id: string; subjectId: string }>, subjectsNow: ReadonlySet<string>,
+): Promise<void> {
+  for (const d of rows) {
+    await tx.novaExam.create({ data: {
+      id: d.id as string, profileId, subjectId: d.subjectId && subjectsNow.has(d.subjectId as string) ? d.subjectId as string : null,
+      title: d.title as string, examType: (d.examType as string) ?? "midterm", scheduledAt: new Date(d.scheduledAt as string),
+      durationMin: (d.durationMin as number | null) ?? null, ...(d.createdAt ? { createdAt: new Date(d.createdAt as string) } : {}),
+    } });
+  }
+  for (const f of unfiled) if (subjectsNow.has(f.subjectId)) await tx.novaExam.updateMany({ where: { id: f.id, profileId, subjectId: null }, data: { subjectId: f.subjectId } });
+}

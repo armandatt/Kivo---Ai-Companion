@@ -660,3 +660,17 @@ export async function refileTasksForTopic(
   });
   return r.count;
 }
+
+// Where tasks under these subjects are filed now, for the knowledge trash
+// (knowledge-trash.ts): what a subject's delete is about to unfile.
+export async function taskFilingIn(tx: Pick<typeof prisma, "novaTask">, profileId: string, subjectIds: string[]): Promise<Array<{ id: string; subjectId: string; topicName: string | null }>> {
+  if (subjectIds.length === 0) return [];
+  const rows = await tx.novaTask.findMany({ where: { profileId, subjectId: { in: subjectIds } }, select: { id: true, subjectId: true, topicName: true } });
+  return rows.map(r => ({ id: r.id, subjectId: r.subjectId!, topicName: r.topicName }));
+}
+
+// Filed back where they were when their subject comes back: only those still
+// filed under nothing, so a choice made since is kept.
+export async function refileTasksIn(tx: Pick<typeof prisma, "novaTask">, profileId: string, filings: Array<{ id: string; subjectId: string; topicName: string | null }>): Promise<void> {
+  for (const f of filings) await tx.novaTask.updateMany({ where: { id: f.id, profileId, subjectId: null }, data: { subjectId: f.subjectId, topicName: f.topicName } });
+}

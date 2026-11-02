@@ -248,12 +248,15 @@ describe("a learning event is a record of an action, and nothing else", () => {
     // as sources for a learner-asked action on a note; it stores and
     // computes nothing about the learner (note-assist.test.ts). note-tutor
     // does the same for the tutor beside a note (note-tutor.test.ts).
+    // knowledge-trash.ts remembers which saved pages a deleted subject unfiled,
+    // and files them back on restore (refileResourcesIn); it computes nothing.
     // note-append.ts keeps a passage that also went into a note as the same saved
     // entry, through this module's recordPassageIn; it computes nothing either.
     // setup-edit.ts calls only refileResourcesForTopic: when the learner
     // renames, moves or removes a topic, their saved pages' filing follows.
     // It reads nothing about them (setup-edit.test.ts).
-    expect(readers.sort()).toEqual(["product/focus-context.ts", "product/knowledge-map.ts", "product/learning-events.ts", "product/note-append.ts",
+    expect(readers.sort()).toEqual(["product/focus-context.ts", "product/knowledge-map.ts",
+        "product/knowledge-trash.ts", "product/learning-events.ts", "product/note-append.ts",
         "product/note-assist.ts", "product/note-tutor.ts", "product/resource-processing.ts", "product/setup-edit.ts"]);
     expect(read("product/setup-edit.ts")).toMatch(/import \{ refileResourcesForTopic \} from "\.\/learning-events";/);
     const map = read("product/knowledge-map.ts");
