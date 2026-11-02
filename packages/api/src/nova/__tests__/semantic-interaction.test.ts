@@ -490,7 +490,7 @@ describe("one path for both surfaces", () => {
   it("at most two model calls per turn: the reading, and the wording", () => {
     for (const src of [web, tg]) {
       expect(src.match(/runUnderstandingBrain\)\(/g)).toHaveLength(1);
-      expect(src.match(/await runNovaOrchestrator\(/g)).toHaveLength(1);
+      expect(src.match(/(await|=>) runNovaOrchestrator\(/g)).toHaveLength(1);
       expect(src).not.toContain("runDisambiguationPass");
     }
   });

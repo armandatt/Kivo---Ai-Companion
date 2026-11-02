@@ -6,8 +6,11 @@
 // Postgres re-checks the condition on the row it locks.
 
 import { prisma } from "@repo/db/client";
-import { meterLlmUsage, type LlmUsage } from "../services/llm-usage";
+import { meterLlmUsage, startInteraction, withUsageContext, type LlmUsage, type UsageContext } from "../services/llm-usage";
 import type { Entitlement } from "./entitlements";
+
+// Who and what a metered request is, for its usage events (llm-usage.ts).
+export type UsageEntry = Pick<UsageContext, "feature" | "surface"> & Partial<Pick<UsageContext, "learner" | "requestId">>;
 
 export const utcDay = (now: Date) => now.toISOString().slice(0, 10);
 
@@ -47,23 +50,30 @@ export async function recordTokens(usageKey: string, usage: LlmUsage, now = new 
 
 // Runs `work` as one metered AI request: refused when the allowance is used
 // up, and every model call inside it adds its tokens to the day's row. A
-// fault in the meter or in recording tokens never fails the work.
+// fault in the meter or in recording tokens never fails the work. `entry`
+// names the feature for the usage events of its model calls, and they say
+// whether the allowance counted this request (it does not when the meter is
+// down and the work runs anyway).
 export async function withAiAllowance<T>(
   ent: Pick<Entitlement, "usageKey" | "allowance" | "plan">,
   work: () => Promise<T>,
   now = new Date(),
+  entry?: UsageEntry,
 ): Promise<{ ok: true; value: T } | { ok: false; spend: Extract<Spend, { ok: false }> }> {
+  const described = (counted: boolean) => entry
+    ? startInteraction({ ...entry, usageKey: ent.usageKey, isAllowanceCounted: counted }, work)
+    : withUsageContext({ usageKey: ent.usageKey, isAllowanceCounted: counted }, work);
   let spend: Spend;
   try {
     spend = await spendAiRequest(ent, now);
   } catch (err) {
     // The meter could not be read: the learner is not refused for Kivo's fault.
     console.error(`[billing] meter unavailable: ${(err as Error).name}`);
-    return { ok: true, value: await work() };
+    return { ok: true, value: await described(false) };
   }
   if (!spend.ok) return { ok: false, spend };
   const pending: Array<Promise<unknown>> = []
-  const value = await meterLlmUsage(usage => { pending.push(recordTokens(ent.usageKey, usage, now).catch(() => undefined)) }, work);
+  const value = await meterLlmUsage(usage => { pending.push(recordTokens(ent.usageKey, usage, now).catch(() => undefined)) }, () => described(true));
   await Promise.all(pending);
   return { ok: true, value };
 }

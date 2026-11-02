@@ -18,6 +18,8 @@ import { runEventReminders } from "@repo/api/nova/proactive/event-reminders";
 import { purgeProcessedTelegramUpdates } from "@repo/api/services/telegramTransport.service";
 //@ts-ignore
 import { processWaitingResources } from "@repo/api/nova/product/resource-processing";
+//@ts-ignore
+import { startInteraction } from "@repo/api/services/llm-usage";
 
 export type CheckinCronResult = {
   ok: boolean;
@@ -28,7 +30,14 @@ export type CheckinCronResult = {
   nova?: { checked: number; sent: number; errors: number; outcomes: Record<string, number> };
 };
 
+// One tick, one background interaction for its usage events: Rex's
+// check-ins and reminders unless a job names its own (Nova's proactive
+// messages and saved pages each open theirs).
 export async function runCheckinCron(now = new Date()): Promise<CheckinCronResult> {
+  return startInteraction({ feature: "rex", surface: "background", isBackground: true, requestId: `tick:${now.toISOString()}` }, () => runTick(now));
+}
+
+async function runTick(now: Date): Promise<CheckinCronResult> {
   console.log(`[CHECKIN] Cron fired at ${now.toISOString()}`);
 
   // Housekeeping: drop webhook dedup rows past their retention window.

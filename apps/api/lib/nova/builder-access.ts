@@ -14,6 +14,8 @@ import { entitlementForLearner } from "@repo/api/billing/entitlements"
 import { spendAiRequest, meterTokensForLearner } from "@repo/api/billing/usage"
 //@ts-ignore
 import { runJob, type BuilderJob } from "@repo/api/nova/product/builder"
+//@ts-ignore
+import { startInteraction } from "@repo/api/services/llm-usage"
 import { allowAttempt } from "./extension-access"
 
 export const TURNS_PER_MINUTE = 8
@@ -21,27 +23,34 @@ export const TURNS_PER_MINUTE = 8
 export const builderFail = (status: number, error: string, message: string, extra: Record<string, unknown> = {}) =>
   NextResponse.json({ ok: false, error, message, ...extra }, { status, headers: { "cache-control": "no-store" } })
 
-// null: allowed and counted. Otherwise the response to send.
-export async function spendForTurn(platformChatId: string): Promise<NextResponse | null> {
+// `refused`: the response to send. Otherwise allowed, and `counted` says
+// whether the allowance took the request (not when billing could not be
+// read), for the job's usage events.
+export async function spendForTurn(platformChatId: string): Promise<{ refused: NextResponse } | { refused: null; counted: boolean }> {
   if (!allowAttempt(`builder-turn:${platformChatId}`, TURNS_PER_MINUTE, 60_000)) {
-    return builderFail(429, "rate_limited", "That's a lot at once. Give it a minute.")
+    return { refused: builderFail(429, "rate_limited", "That's a lot at once. Give it a minute.") }
   }
   try {
     const ent = await entitlementForLearner(platformChatId)
     const spend = await spendAiRequest(ent)
-    return spend.ok ? null : allowanceUsed(spend.plan)
+    return spend.ok ? { refused: null, counted: true } : { refused: allowanceUsed(spend.plan) }
   } catch (err) {
     // A fault in billing never blocks a learner.
     console.error(`[billing] builder allowance unavailable: ${(err as Error).name}`)
-    return null
+    return { refused: null, counted: false }
   }
 }
 
-export function startJob(platformChatId: string, job: BuilderJob | null): void {
+export function startJob(platformChatId: string, job: BuilderJob | null, counted: boolean): void {
   if (!job) return
   after(async () => {
     try {
-      await meterTokensForLearner(platformChatId, () => runJob(platformChatId, job))
+      // The learner is waiting on the page for this job: interactive work,
+      // one interaction named by the job.
+      await startInteraction(
+        { feature: "build_with_nova", surface: "web", learner: platformChatId, requestId: job.jobId, isAllowanceCounted: counted },
+        () => meterTokensForLearner(platformChatId, () => runJob(platformChatId, job)),
+      )
     } catch (err) {
       console.error("[nova/builder] job crashed:", (err as Error)?.name ?? "error")
     }

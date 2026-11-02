@@ -2,13 +2,19 @@
 // (packages/api/src/billing). Refused once the day's allowance is used, with
 // the same 429 every surface understands; the tokens its model calls use go
 // on the account's meter. A fault in billing itself never blocks a learner:
-// the work runs, and the fault is logged.
+// the work runs, and the fault is logged. `use` names the feature (and the
+// surface, the web unless said) on the usage event of every model call
+// inside it.
 
 import { NextResponse } from "next/server"
 //@ts-ignore
 import { entitlementForLearner } from "@repo/api/billing/entitlements"
 //@ts-ignore
 import { withAiAllowance } from "@repo/api/billing/usage"
+//@ts-ignore
+import { startInteraction, type UsageFeature, type UsageSurface } from "@repo/api/services/llm-usage"
+
+export interface MeteredUse { feature: UsageFeature; surface?: UsageSurface }
 
 export function allowanceUsed(plan: "free" | "pro") {
   const message = plan === "free"
@@ -17,14 +23,15 @@ export function allowanceUsed(plan: "free" | "pro") {
   return NextResponse.json({ ok: false, success: false, error: "allowance_used", message, plan }, { status: 429 })
 }
 
-export async function metered<T>(platformChatId: string, work: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; response: NextResponse }> {
+export async function metered<T>(platformChatId: string, work: () => Promise<T>, use: MeteredUse): Promise<{ ok: true; value: T } | { ok: false; response: NextResponse }> {
+  const entry = { feature: use.feature, surface: use.surface ?? "web", learner: platformChatId }
   let ent: Awaited<ReturnType<typeof entitlementForLearner>>
   try {
     ent = await entitlementForLearner(platformChatId)
   } catch (err) {
     console.error(`[billing] entitlement unavailable: ${(err as Error).name}`)
-    return { ok: true, value: await work() }
+    return { ok: true, value: await startInteraction({ ...entry, isAllowanceCounted: false }, work) }
   }
-  const result = await withAiAllowance(ent, work)
+  const result = await withAiAllowance(ent, work, new Date(), entry)
   return result.ok ? { ok: true, value: result.value } : { ok: false, response: allowanceUsed(result.spend.plan) }
 }

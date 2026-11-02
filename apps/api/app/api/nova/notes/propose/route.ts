@@ -28,7 +28,7 @@ export async function POST(req: Request) {
     }
     const read = await readSmallJson(req, PROPOSAL_BODY_MAX)
     if (!read.ok) return noteFail(read.reason === "too_large" ? 413 : 400, read.reason === "too_large" ? "too_large" : "invalid", read.reason === "too_large" ? "Files can add up to 3 MB." : "That isn't something Nova can start a note from.")
-    const run = await metered(access.platformChatId, () => proposeNewNote(access.profileId, read.body))
+    const run = await metered(access.platformChatId, () => proposeNewNote(access.profileId, read.body), { feature: "notes_proposal" })
     if (!run.ok) return run.response
     const result = run.value as Awaited<ReturnType<typeof proposeNewNote>>
     if (result.ok) return NextResponse.json(result, { headers: { "cache-control": "no-store" } })

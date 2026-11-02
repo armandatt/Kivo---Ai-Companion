@@ -28,7 +28,7 @@ export async function POST(req: Request) {
     const read = await readSmallJson(req, 4 * 1024)
     if (!read.ok) return noteFail(400, "invalid", "Say what you want to change.")
     const contexts = await loadLearningContexts(access.platformChatId).catch(() => [])
-    const run = await metered(access.platformChatId, () => proposeStudyEdits(access.profileId, read.body, contexts))
+    const run = await metered(access.platformChatId, () => proposeStudyEdits(access.profileId, read.body, contexts), { feature: "subject_studio" })
     if (!run.ok) return run.response
     const result = run.value as Awaited<ReturnType<typeof proposeStudyEdits>>
     if (result.ok) return NextResponse.json(result, { headers: { "cache-control": "no-store" } })

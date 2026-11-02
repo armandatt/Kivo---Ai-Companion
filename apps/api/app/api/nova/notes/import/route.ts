@@ -26,7 +26,7 @@ export async function POST(req: Request) {
     if (!allowAttempt(`note-import:${access.profileId}`, IMPORTS_PER_MINUTE, 60_000)) {
       return noteFail(429, "rate_limited", "That's a lot of files at once. Give it a minute.")
     }
-    const run = await metered(access.platformChatId, () => transcribeForNote(read.body))
+    const run = await metered(access.platformChatId, () => transcribeForNote(read.body), { feature: "notes_import" })
     if (!run.ok) return run.response
     const result = run.value as Awaited<ReturnType<typeof transcribeForNote>>
     if (result.ok) return NextResponse.json(result, { headers: { "cache-control": "no-store" } })

@@ -347,7 +347,7 @@ describe("who writes what (read from source)", () => {
   it("only routes that call a model are metered and rate-limited; creating calls none", () => {
     const propose = repo("apps/api/app/api/nova/workspaces/propose/route.ts");
     expect(propose).toContain("if (!usesModel(body)) return NextResponse.json(await proposeWorkspace(access.platformChatId, body)");
-    expect(propose).toContain("const run = await metered(access.platformChatId, () => proposeWorkspace(access.platformChatId, body))");
+    expect(propose).toContain("const run = await metered(access.platformChatId, () => proposeWorkspace(access.platformChatId, body), { feature: \"create_with_nova\" })");
     const create = repo("apps/api/app/api/nova/workspaces/route.ts");
     expect(create).not.toContain("metered");
     expect(create).toContain("requireWorkspaceLearner()");

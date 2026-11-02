@@ -28,7 +28,7 @@ export async function POST(req: Request, { params }: Context) {
     const read = await readSmallJson(req, EDIT_BODY_MAX)
     if (!read.ok) return noteFail(read.reason === "too_large" ? 413 : 400, read.reason === "too_large" ? "too_long" : "invalid", read.reason === "too_large" ? "That's too much to send at once." : "That isn't an edit Nova can make.")
     const noteId = (await params).id
-    const run = await metered(access.platformChatId, () => proposeEdit(access.profileId, noteId, read.body))
+    const run = await metered(access.platformChatId, () => proposeEdit(access.profileId, noteId, read.body), { feature: "notes_editor" })
     if (!run.ok) return run.response
     const result = run.value as Awaited<ReturnType<typeof proposeEdit>>
     if (result.ok) return NextResponse.json(result, { headers: { "cache-control": "no-store" } })

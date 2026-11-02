@@ -51,7 +51,7 @@ export async function POST(req: Request) {
       onboardingDone:   learner.onboardingDone,
       surface:          "web",
       awaitPersistence: true,   // the page re-reads state right after the reply
-    }))
+    }), { feature: "nova_chat" })
     if (!run.ok) return run.response
     const turn = run.value as Awaited<ReturnType<typeof handleNovaTurn>>
     if (!turn.ok) return fail(502, "failed", turn.reply)

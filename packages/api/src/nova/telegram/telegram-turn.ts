@@ -56,6 +56,7 @@ import { slowestStage } from "./telegram.types";
 import { entitlementForLearner, type Entitlement } from "../../billing/entitlements";
 import { allowanceFor } from "../../billing/limits";
 import { spendAiRequest } from "../../billing/usage";
+import { withUsageContext } from "../../services/llm-usage";
 import { openDraftFromChat } from "../product/builder";
 
 export interface TelegramDeps {
@@ -188,8 +189,10 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     .catch(() => ({ plan: "free" as const, allowance: allowanceFor("free"), usageKey: `learner:${event.chatId}` })));
   const factor = async () => (await entitled()).allowance.telegramFactor;
   // One request on the account's daily meter. A fault in the meter allows it.
+  // `counted`: the meter took it (for the usage events of the reading).
+  let counted = false;
   const accountAllows = async () => {
-    try { return (await spendAiRequest(await entitled())).ok } catch { return true }
+    try { return counted = (await spendAiRequest(await entitled())).ok } catch { return true }
   };
   const inLanguage = async (text: string): Promise<string> => {
     if (event.kind !== "text") return text;
@@ -197,7 +200,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     if (!budgetDay || !await spendModelCall(ctx.profileId, "response", budgetDay, await factor())) return text;
     trace.modelCalls++;
     const wording = Date.now();
-    const said = await sayInLanguage({ text, language: ctx.language }, deps.generate);
+    const said = await withUsageContext({ feature: "telegram_rewording", isAllowanceCounted: false }, () => sayInLanguage({ text, language: ctx!.language }, deps.generate));
     spent("responseMs", wording);
     trace.language = { language: ctx.language, rendered: said.rendered };
     return said.text;
@@ -369,11 +372,12 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
             if (actingSince !== null) { spent("actionMs", actingSince); actingSince = null; }
             trace.modelCalls++;
             const wording = Date.now();
-            const worded = await wordFirstUse({
+            const wordingInput = {
               decision, hasButtons, studentName: ctx!.name, language: ctx!.language,
               register:       chooseRegister({ emotion: "neutral", daysUntilNextExam, activeReality, accountability: await loadAccountabilityStyle(event.chatId), tone: await loadTone(event.chatId) }),
               operatingStyle: await loadOperatingStyle(event.chatId),
-            }, deps.generate);
+            };
+            const worded = await withUsageContext({ feature: "telegram_first_use", isAllowanceCounted: false }, () => wordFirstUse(wordingInput, deps.generate));
             spent("responseMs", wording);
             trace.response = { generated: true, ok: worded.generated, ms: Date.now() - wording, fallback: !worded.generated };
             return worded.text;
@@ -433,7 +437,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
         const history = row ? await loadConversationHistory(row.id) : [];
         spent("contextMs", gathering);
         const reading = Date.now();
-        const turn = await runSetupTurn({ ctx, text: event.text, history, understand: deps.understand });
+        const turn = await withUsageContext({ feature: "telegram_onboarding", isAllowanceCounted: counted }, () => runSetupTurn({ ctx: ctx!, text: event.text, history, understand: deps.understand }));
         spent("understandingMs", reading);
         trace.understanding.ok   = turn.decision !== "unreadable";
         trace.understanding.kind = turn.kind;
@@ -472,7 +476,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       trace.modelCalls++;
       trace.understanding.estInputTokens = Math.round((event.text.length + 6200) / 4);
       try {
-        read = await (deps.understand ?? runUnderstandingBrain)(event.text, history, context);
+        read = await withUsageContext({ feature: "telegram_understanding", isAllowanceCounted: counted }, () => (deps.understand ?? runUnderstandingBrain)(event.text, history, context));
       } catch (err) {
         spent("understandingMs", readStarted);
         console.error(`[nova:telegram] ${trace.correlationId} understanding failed:`, (err as Error).message);
@@ -562,7 +566,9 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       if (!generate) await deliver(shell(fallback), true);
 
       try {
-        const turn = await runNovaOrchestrator({
+        // The Response Brain's wording, when there is any: on the chat's own
+        // budget, not the account's allowance.
+        const turn = await withUsageContext({ feature: "telegram_reply", isAllowanceCounted: false }, () => runNovaOrchestrator({
           platformChatId:   event.chatId,
           text:             event.text,
           timestamp:        now,
@@ -582,7 +588,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
                 hooks: { beforeResponse: () => { trace.modelCalls++; }, reply: (text: string) => deliver(shell(text), true) },
               }
             : { scriptedReply: fallback }),
-        });
+        }));
         trace.response = {
           generated: turn.trace?.responseGenerated ?? false,
           ok:        turn.trace?.responseGenerated ? turn.trace.responseOk : null,

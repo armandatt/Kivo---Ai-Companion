@@ -37,13 +37,15 @@ export async function POST(req: Request) {
     if (!read.ok) return builderFail(read.reason === "too_large" ? 413 : 400, "invalid", read.reason === "too_large" ? "Those files are too large together. Up to 3 MB at a time." : "That message couldn't be read.")
     const body = (read.body ?? {}) as { clientKey: unknown; text?: unknown; targetWorkspaceId?: unknown; files?: unknown }
     const talking = (typeof body.text === "string" && body.text.trim() !== "") || (Array.isArray(body.files) && body.files.length > 0)
+    let counted = false
     if (talking) {
-      const refused = await spendForTurn(access.platformChatId)
-      if (refused) return refused
+      const turn = await spendForTurn(access.platformChatId)
+      if (turn.refused) return turn.refused
+      counted = turn.counted
     }
     const started = await startDraft(access.platformChatId, body)
     if (!started.ok) return builderFail(statusFor(started.error), started.error, started.message)
-    startJob(access.platformChatId, started.job)
+    startJob(access.platformChatId, started.job, counted)
     return NextResponse.json({ ok: true, draft: started.draft }, { headers: { "cache-control": "no-store" } })
   } catch (err) {
     console.error("[nova/builder POST]", err)

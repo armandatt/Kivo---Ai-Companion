@@ -27,7 +27,7 @@ export async function POST(req: Request, { params }: Context) {
     const read = await readSmallJson(req, 4 * 1024)
     if (!read.ok) return noteFail(400, "invalid", "That isn't something Nova can do with a note.")
     const noteId = (await params).id
-    const run = await metered(access.platformChatId, () => assistWithNote(access.profileId, noteId, read.body))
+    const run = await metered(access.platformChatId, () => assistWithNote(access.profileId, noteId, read.body), { feature: "notes_assist" })
     if (!run.ok) return run.response
     const result = run.value as Awaited<ReturnType<typeof assistWithNote>>
     if (result.ok) return NextResponse.json(result, { headers: { "cache-control": "no-store" } })

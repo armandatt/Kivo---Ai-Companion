@@ -27,11 +27,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (access.denied) return access.denied
     const read = await readSmallJson(req, BODY_MAX)
     if (!read.ok) return builderFail(read.reason === "too_large" ? 413 : 400, "invalid", read.reason === "too_large" ? "Those files are too large together. Up to 3 MB at a time." : "That message couldn't be read.")
-    const refused = await spendForTurn(access.platformChatId)
-    if (refused) return refused
+    const turn = await spendForTurn(access.platformChatId)
+    if (turn.refused) return turn.refused
     const claimed = await postMessage(access.platformChatId, (await ctx.params).id, (read.body ?? {}) as { text?: unknown; resume?: unknown; files?: unknown; action?: unknown })
     if (!claimed.ok) return builderFail(statusFor(claimed.error), claimed.error, claimed.message, claimed.draft ? { draft: claimed.draft } : {})
-    startJob(access.platformChatId, claimed.job)
+    startJob(access.platformChatId, claimed.job, turn.counted)
     return NextResponse.json({ ok: true, draft: claimed.draft }, { headers: { "cache-control": "no-store" } })
   } catch (err) {
     console.error("[nova/builder/:id/messages]", err)

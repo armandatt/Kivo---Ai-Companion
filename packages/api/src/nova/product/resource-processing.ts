@@ -28,6 +28,7 @@
 // address, and nothing fetched from it: the server never fetches a saved page.
 
 import { generateOpenAIText } from "../../services/openai.service";
+import { startInteraction } from "../../services/llm-usage";
 import {
   claimForProcessing, completeProcessing, failProcessing, listWaitingForProcessing, loadVocabulary,
 } from "./learning-events";
@@ -223,7 +224,12 @@ export async function processSavedResource(
 
   try {
     const vocabulary = await loadVocabulary(claim.profileId);
-    const found = await findConnections({ title: claim.title, domain: claim.domain, excerpt: claim.excerpt }, vocabulary, options.generate);
+    // Not on the learner's allowance either way. The learner's Retry is them
+    // waiting on the page; the first look and the sweep are background work.
+    const found = await startInteraction({
+      feature: by === "learner" ? "saved_page_retry" : "saved_page_processing", surface: by === "learner" ? "web" : "background",
+      profileId: claim.profileId, requestId: `saved:${claim.id}`, isBackground: by !== "learner", isAllowanceCounted: false,
+    }, () => findConnections({ title: claim.title, domain: claim.domain, excerpt: claim.excerpt }, vocabulary, options.generate));
     // Nova files a page only when the learner filed it nowhere.
     const file = claim.subjectId === null ? placeToFile(found.suggestions) : null;
     await completeProcessing(claim, found, file, new Date());

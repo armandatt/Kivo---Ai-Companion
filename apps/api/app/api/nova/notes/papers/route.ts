@@ -30,7 +30,7 @@ export async function POST(req: Request) {
     const body = read.body as { transcribe?: unknown }
     let result: Awaited<ReturnType<typeof importPaper>>
     if (body && body.transcribe === true) {
-      const run = await metered(access.platformChatId, () => importPaper(access.profileId, read.body))
+      const run = await metered(access.platformChatId, () => importPaper(access.profileId, read.body), { feature: "paper_import" })
       if (!run.ok) return run.response
       result = run.value as Awaited<ReturnType<typeof importPaper>>
     } else result = await importPaper(access.profileId, read.body)

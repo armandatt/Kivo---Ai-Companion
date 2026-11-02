@@ -455,8 +455,12 @@ describe("who writes what (read from source)", () => {
       expect([route, src.includes("requireWorkspaceLearner()")]).toEqual([route, true]);
       expect([route, src.includes("platformChatId:")]).toEqual([route, false]);
     }
-    expect(repo("apps/api/app/api/nova/builder/[id]/messages/route.ts")).toContain("const refused = await spendForTurn(access.platformChatId)");
-    expect(repo("apps/api/app/api/nova/builder/[id]/retry/route.ts")).toContain("const refused = await spendForTurn(access.platformChatId)");
+    for (const route of ["builder/[id]/messages/route.ts", "builder/[id]/retry/route.ts"]) {
+      const src = repo(`apps/api/app/api/nova/${route}`);
+      expect(src).toContain("const turn = await spendForTurn(access.platformChatId)\n    if (turn.refused) return turn.refused");
+      // Paid for before the job is claimed and started.
+      expect(src.indexOf("spendForTurn(")).toBeLessThan(src.indexOf("startJob("));
+    }
     // Approving and editing call no model and spend no allowance.
     for (const route of ["builder/[id]/approve/route.ts", "builder/[id]/route.ts", "builder/[id]/cancel/route.ts"]) expect([route, repo(`apps/api/app/api/nova/${route}`).includes("spendForTurn")]).toEqual([route, false]);
   });

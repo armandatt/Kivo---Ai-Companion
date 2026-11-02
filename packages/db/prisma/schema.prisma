@@ -1627,6 +1627,45 @@ model AiUsageDay {
   @@index([day])
 }
 
+// One row per model call, written by billing/usage-events.ts (the only code
+// that touches this table) from what the one LLM client observed: who it was
+// for, which feature and surface asked, the provider and the model that
+// actually answered, the tokens the provider reported, how it ended and what
+// it cost. Measurement only: nothing reads it to allow or refuse anything,
+// and AiUsageDay stays the meter. A token count the provider did not report
+// is null, never 0.
+model AiUsageEvent {
+  id                       String   @id @default(cuid())
+  subjectKey               String // "user:<id>", "learner:<platformChatId>" or "system:<surface>"
+  attributedKey            String? // the learner (platformChatId) the call was for, when known
+  interactionId            String // one learner action or job; several calls may share it
+  requestId                String? // the HTTP request, job or outbox row behind it, when there is one
+  feature                  String // llm-usage.ts USAGE_FEATURES
+  surface                  String // web | telegram | extension | background | script | unknown
+  provider                 String // anthropic | gemini | openai
+  model                    String // as the provider reported it; the requested model when it did not answer
+  inputTokens              Int?
+  outputTokens             Int?
+  cacheCreationInputTokens Int?
+  cacheReadInputTokens     Int?
+  attempts                 Int?
+  outcome                  String // success | failed | not_sent
+  failureCategory          String?
+  latencyMs                Int
+  isBackground             Boolean
+  isAllowanceCounted       Boolean
+  estimatedCostMicros      Int? // USD × 1,000,000; null when it cannot be priced
+  costState                String // measured | estimated | incomplete | unknown
+  pricingVersion           String?
+  day                      String // YYYY-MM-DD, UTC, as AiUsageDay
+  createdAt                DateTime @default(now())
+
+  @@index([day, feature])
+  @@index([subjectKey, day])
+  @@index([interactionId])
+  @@index([createdAt])
+}
+
 // A workspace made from a template or by Nova (packages/api/src/nova/product/
 // workspaces.ts, its only reader and writer). It owns no learning data: its
 // subjects, topics, dates, tasks and notes live in their own tables, made by

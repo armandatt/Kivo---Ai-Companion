@@ -114,6 +114,8 @@ import { handleNovaTelegramEvent } from "@repo/api/nova/telegram/telegram-turn";
 //@ts-ignore
 import { meterTokensForLearner } from "@repo/api/billing/usage";
 //@ts-ignore
+import { annotateUsage, startInteraction, withUsageContext } from "@repo/api/services/llm-usage";
+//@ts-ignore
 import { createTelegramClient, NOVA_CHAT_COMMANDS } from "@repo/api/nova/telegram/telegram-client";
 //@ts-ignore
 import { linkTelegramChat, isLinkedTelegramChat, notConnectedMessage, LINK_MESSAGES, NOVA_LINKED_PLAIN } from "@repo/api/nova/telegram/telegram-link";
@@ -187,7 +189,13 @@ function markWarned(chatId: string): void {
   rateLimitWarnedToday.set(chatId, new Date().toISOString().slice(0, 10));
 }
 
+// One update, one interaction for its usage events (llm-usage.ts): Rex's
+// model calls unless the update turns out to be Nova's, which says so below.
 export async function POST(req: Request) {
+  return startInteraction({ feature: "rex", surface: "telegram" }, () => handleUpdate(req));
+}
+
+async function handleUpdate(req: Request) {
   // When this update arrived, for Nova's account of where its time went.
   const receivedAt = Date.now();
   try {
@@ -209,7 +217,8 @@ export async function POST(req: Request) {
     const event = normalizeTelegramUpdate(body);
     if (event.kind === "callback") {
       if (await isNovaChat(event.chatId) && novaMayProcess(req)) {
-        await handleNovaTelegramEvent(event, novaDeps({ receivedAt }));
+        // A tap calls no model; if that ever changes, it is still Nova's.
+        await withUsageContext({ feature: "other", learner: event.chatId }, () => handleNovaTelegramEvent(event, novaDeps({ receivedAt })));
       }
       return Response.json({ ok: true });
     }
@@ -219,6 +228,7 @@ export async function POST(req: Request) {
     const from   = body.message?.from;
 
     if (!text || !chatId) return Response.json({ ok: true });
+    annotateUsage({ learner: chatId.toString(), requestId: typeof body.update_id === "number" ? `telegram:${body.update_id}` : null });
 
     // ── A chat nobody has connected ──────────────────────────────────────────
     // Before anything is written for it and before either companion sees it.
@@ -268,7 +278,9 @@ export async function POST(req: Request) {
           // "Typing" stops when the reply is sent, not when the turn has
           // been recorded: Nova answers first and records after.
           // The tokens its model calls used go on the account's meter.
-          await meterTokensForLearner(chatId.toString(), () => handleNovaTelegramEvent(event, novaDeps({ receivedAt, onReplied: stopTyping })));
+          // Each model call in the turn names its own feature (telegram-turn.ts).
+          await withUsageContext({ feature: "other", learner: chatId.toString() }, () =>
+            meterTokensForLearner(chatId.toString(), () => handleNovaTelegramEvent(event, novaDeps({ receivedAt, onReplied: stopTyping }))));
         }
         return Response.json({ ok: true });
       }
@@ -920,10 +932,10 @@ async function handleTelegramConnectStart(
     // (telegram/channel-store.ts claimFirstUse); a replayed update never gets
     // this far, because admitTelegramUpdate dropped it.
     if (nova.allowed) {
-      await handleNovaTelegramEvent(
+      await withUsageContext({ feature: "other", learner: String(chatId) }, () => handleNovaTelegramEvent(
         { kind: "command", command: "start", argument: "", updateId: nova.updateId, chatId: String(chatId), fromId: String(chatId) },
         novaDeps(),
-      );
+      ));
     } else {
       await client.sendMessage(String(chatId), NOVA_LINKED_PLAIN);
     }

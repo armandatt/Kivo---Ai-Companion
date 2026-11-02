@@ -260,7 +260,7 @@ describe("the reply and the record", () => {
 
   it("sends a reply code wrote before the canonical turn runs", () => {
     const sendScripted = turn.indexOf("if (!generate) await deliver(shell(fallback), true);");
-    const canonical    = turn.indexOf("const turn = await runNovaOrchestrator({");
+    const canonical    = turn.indexOf("() => runNovaOrchestrator({");
     expect(sendScripted).toBeGreaterThan(0);
     expect(canonical).toBeGreaterThan(sendScripted);
   });

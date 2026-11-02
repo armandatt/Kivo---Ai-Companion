@@ -39,7 +39,7 @@ async function handlePOST(req: Request): Promise<NextResponse> {
         ? eventFail(413, "too_large", "That's more than Nova reads at once. Select a shorter passage, or mark a smaller part of the screenshot.")
         : eventFail(400, "invalid", "That isn't a question Nova can answer.")
     }
-    const run = await metered(caller.platformChatId, () => answerPageQuestion(read.body))
+    const run = await metered(caller.platformChatId, () => answerPageQuestion(read.body), { feature: "extension_ask_nova", surface: "extension" })
     if (!run.ok) return run.response
     const result = run.value as Awaited<ReturnType<typeof answerPageQuestion>>
     if (result.ok) return NextResponse.json(result, { headers: { "cache-control": "no-store" } })

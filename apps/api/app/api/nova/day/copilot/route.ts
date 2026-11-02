@@ -28,7 +28,7 @@ export async function POST(req: Request) {
     const read = await readSmallJson(req, COPILOT_BODY_MAX)
     if (!read.ok) return dayFail(read.reason === "too_large" ? 413 : 400, "invalid", read.reason === "too_large" ? "That's too much to send at once. Attach a smaller file." : "Say what you'd like for today.")
     return await answerLive(req, async onLive => {
-      const run = await metered(access.platformChatId, () => onLive ? askCopilot(access.profileId, access.platformChatId, read.body, liveGenerate(onLive, COPILOT_LIVE_KEYS)) : askCopilot(access.profileId, access.platformChatId, read.body))
+      const run = await metered(access.platformChatId, () => onLive ? askCopilot(access.profileId, access.platformChatId, read.body, liveGenerate(onLive, COPILOT_LIVE_KEYS)) : askCopilot(access.profileId, access.platformChatId, read.body), { feature: "today_copilot" })
       if (!run.ok) return run.response
       const result = run.value as Awaited<ReturnType<typeof askCopilot>>
       const status = result.ok ? 200 : result.error === "stale" ? 409 : result.error === "unavailable" ? 503 : 400

@@ -34,7 +34,7 @@ export async function POST(req: Request) {
     if (!allowAttempt(`workspace-propose:${access.platformChatId}`, MODEL_PROPOSALS_PER_MINUTE, 60_000)) {
       return workspaceFail(429, "rate_limited", "That's a lot at once. Give it a minute.")
     }
-    const run = await metered(access.platformChatId, () => proposeWorkspace(access.platformChatId, body))
+    const run = await metered(access.platformChatId, () => proposeWorkspace(access.platformChatId, body), { feature: "create_with_nova" })
     if (!run.ok) return run.response
     const result = run.value as Awaited<ReturnType<typeof proposeWorkspace>>
     const status = result.ok ? 200 : result.error === "unavailable" ? 503 : 400

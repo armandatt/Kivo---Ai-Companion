@@ -8,6 +8,7 @@
 // call sites work on any provider.
 
 import type Anthropic from "@anthropic-ai/sdk";
+import { NO_USAGE, type LlmFailure, type NormalizedUsage } from "./llm-usage";
 
 export type LlmProvider = "openai" | "gemini" | "anthropic";
 
@@ -311,7 +312,7 @@ export interface GeminiResponse {
   promptFeedback?: { blockReason?: string };
   error?:          { code?: number; message?: string; status?: string };
   // Token counts, when Gemini reports them (llm-usage.ts meters them).
-  usageMetadata?:  { promptTokenCount?: number; candidatesTokenCount?: number };
+  usageMetadata?:  { promptTokenCount?: number; candidatesTokenCount?: number; cachedContentTokenCount?: number; thoughtsTokenCount?: number };
 }
 
 // Gemini likes to wrap JSON in a markdown fence. When the WHOLE reply is one
@@ -369,4 +370,86 @@ export function retryDelayMs(status: number, message: string | undefined): numbe
 // once if it is a different model.
 export function geminiAttemptPlan(model: string): string[] {
   return model === GEMINI_FALLBACK_MODEL ? [model, model] : [model, model, GEMINI_FALLBACK_MODEL];
+}
+
+// ── Usage and outcome, the same shape for every provider ──────────────────────
+// For the usage events (llm-usage.ts emitLlmCall). Each count is what the
+// provider reported, or null when it reported nothing. "input" is the
+// uncached input on every provider: Gemini and OpenAI include cached tokens
+// in their prompt count, so they are taken out of it.
+
+const count = (n: unknown): number | null => typeof n === "number" && Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+
+export function claudeUsageOf(usage: Partial<Anthropic.Beta.Messages.BetaUsage> | null | undefined, partial = false): NormalizedUsage {
+  if (!usage) return { ...NO_USAGE, ...(partial ? { partial } : {}) };
+  return {
+    inputTokens:              count(usage.input_tokens),
+    outputTokens:             count(usage.output_tokens),
+    cacheCreationInputTokens: count(usage.cache_creation_input_tokens),
+    cacheReadInputTokens:     count(usage.cache_read_input_tokens),
+    cacheCreation5mTokens:    usage.cache_creation ? count(usage.cache_creation.ephemeral_5m_input_tokens) : null,
+    cacheCreation1hTokens:    usage.cache_creation ? count(usage.cache_creation.ephemeral_1h_input_tokens) : null,
+    inferenceGeo:             usage.inference_geo ?? null,
+    serviceTier:              usage.service_tier ?? null,
+    speed:                    usage.speed ?? null,
+    ...(partial ? { partial } : {}),
+  };
+}
+
+export function geminiUsageOf(meta: GeminiResponse["usageMetadata"] | null | undefined): NormalizedUsage {
+  if (!meta) return NO_USAGE;
+  const prompt = count(meta.promptTokenCount);
+  const cached = count(meta.cachedContentTokenCount);
+  const answer = count(meta.candidatesTokenCount);
+  const thoughts = count(meta.thoughtsTokenCount);
+  return {
+    inputTokens:              prompt === null ? null : Math.max(0, prompt - (cached ?? 0)),
+    // Gemini bills thinking as output, and counts it apart from the answer.
+    outputTokens:             answer === null && thoughts === null ? null : (answer ?? 0) + (thoughts ?? 0),
+    cacheCreationInputTokens: null,
+    cacheReadInputTokens:     cached,
+  };
+}
+
+export function openaiUsageOf(usage: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | null | undefined): NormalizedUsage {
+  if (!usage) return NO_USAGE;
+  const prompt = count(usage.prompt_tokens);
+  const cached = count(usage.prompt_tokens_details?.cached_tokens);
+  return {
+    inputTokens:              prompt === null ? null : Math.max(0, prompt - (cached ?? 0)),
+    outputTokens:             count(usage.completion_tokens),
+    cacheCreationInputTokens: null,
+    cacheReadInputTokens:     cached,
+  };
+}
+
+// Why a call failed, from the error itself (the SDK's classes and statuses,
+// the client's own messages). `pastDeadline`: the caller's deadline had run
+// out, so an abort is a timeout rather than someone stopping it.
+export function llmFailureOf(err: unknown, pastDeadline = false): LlmFailure {
+  if (isOverPriceTier(err)) return "over_price_tier";
+  if (isTruncated(err)) return "invalid_response";
+  const e = err as { name?: string; status?: number; message?: string } | null;
+  const name = e?.name ?? "";
+  const message = e?.message ?? "";
+  if (message.includes("is not set")) return "config";
+  if (message.includes("declined the request") || message.includes("refused the request") || message.includes("blocked the request")) return "refusal";
+  if (message.includes("returned no text") || message.includes("returned empty content")) return "invalid_response";
+  if (name === "APIUserAbortError" || name === "AbortError") return pastDeadline ? "timeout" : "aborted";
+  if (name === "APIConnectionTimeoutError" || name === "TimeoutError") return "timeout";
+  if (name === "APIConnectionError") return "network";
+  const status = typeof e?.status === "number" ? e.status : null;
+  if (status === 429) return "rate_limited";
+  if (status === 529) return "overloaded";
+  if (status === 401 || status === 403) return "auth";
+  if (status !== null && status >= 500) return "provider_error";
+  if (status !== null && status >= 400) return "request_error";
+  return "unknown";
+}
+
+// The HTTP status of a Gemini or OpenAI failure from the client's own error
+// text ("Gemini request failed (model m: 429: ...)").
+export function statusInMessage(message: string): number | null {
+  const m = message.match(/\b([45][0-9]{2}):/);
+  return m ? Number(m[1]) : null;
 }

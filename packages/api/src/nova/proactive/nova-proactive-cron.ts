@@ -49,6 +49,7 @@ import {
 } from "./proactive-outbox";
 import { listTasks } from "../product/tasks";
 import { proactiveFallback, wordProactiveMessage, type ProactiveWordingInput } from "./nova-proactive-response";
+import { startInteraction } from "../../services/llm-usage";
 
 export interface NovaProactiveCronResult {
   ok:      boolean;
@@ -335,8 +336,13 @@ async function deliver(
       language:       (await loadVoicePreferences(chatId).catch(() => ({ language: null }))).language ?? await loadReplyLanguage(profile.user.id),
     };
     // Past today's budget for generated wording, the plain line goes out.
+    // Background work for this learner: on the chat's wording budget, never
+    // the account's allowance.
     const worded = await spendModelCall(profile.id, "response", dayKey(now, zone))
-      ? await word(input)
+      ? await startInteraction({
+          feature: "scheduled_nova_message", surface: "telegram", learner: chatId, profileId: profile.id,
+          requestId: `proactive:${row.id}`, isBackground: true, isAllowanceCounted: false,
+        }, () => word(input))
       : { text: proactiveFallback(input), generated: false };
     text = worded.text;
     await markReady(row.id, text);

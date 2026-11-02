@@ -6,6 +6,7 @@
 import { translateNovaCommand } from "./commands";
 import { runNovaOrchestrator } from "./nova-orchestrator";
 import { runWebSentence, runWebSetupSentence } from "./interaction/web-sentence";
+import { withUsageContext } from "../services/llm-usage";
 
 export const NOVA_HELP_TEXT = `Here's what I can do:
 
@@ -54,7 +55,7 @@ export async function handleNovaTurn(input: NovaTurnInput): Promise<NovaTurnResu
   // Telegram runs for such a learner, ending at the same setup writer.
   if (!input.onboardingDone) {
     try {
-      const turn = await runWebSetupSentence({ platformChatId, text: command ? plainText : text, timestamp, understand: input.understand });
+      const turn = await withUsageContext({ feature: "nova_setup" }, () => runWebSetupSentence({ platformChatId, text: command ? plainText : text, timestamp, understand: input.understand }));
       return { reply: turn.reply, intervention: "setup", ok: true };
     } catch (err) {
       console.error("[nova:setup] error:", err);

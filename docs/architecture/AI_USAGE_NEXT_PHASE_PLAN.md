@@ -4,7 +4,7 @@ Status: **plan, not started.** It builds on `AI_USAGE_AND_RATE_LIMITING.md` (the
 
 Ground rules for every phase:
 - No phase changes the Free or Pro allowance, a price or a subscription until Phase 5, and Phase 5 needs explicit owner approval.
-- Every schema change is additive and goes in with `prisma db push` **before the merge to `main`**: Render auto-deploys `main` (see the production readiness report, R1).
+- Every schema change is additive and goes in with `prisma db push` **before the merge to `main`**. Vercel deploys `main` at once and Render is deployed by hand, so applying the schema first makes either order safe (see the production readiness report, R1).
 - One phase per branch.
 
 | Phase | What it gives | Changes what learners can do? |
@@ -18,6 +18,15 @@ Ground rules for every phase:
 ---
 
 ## Phase 1: complete telemetry
+
+> **Status (2026-11-03): built and tested on `feature/ai-usage-telemetry`; not merged or deployed.** It needs the `AiUsageEvent` table in production first.
+>
+> - **Details:** every invocation path, test evidence, the known gaps and the deployment order are in `AI_USAGE_TELEMETRY_IMPLEMENTATION.md`.
+> - **Differences from the plan below:**
+>   - the background key is `system:<surface>`, and the learner is resolved from a profile when that's all the entry point has;
+>   - costs and cost states are written in this phase, from the versioned price table (`billing/pricing.ts`), not left for Phase 3;
+>   - `latencyMs`, `attempts`, `requestId` and `isAllowanceCounted` are included;
+>   - the feature taxonomy follows the traced code: there is no `knowledge_map` feature, because the map calls no model.
 
 **Scope:**
 - Record every model call with its feature, model, provider, tokens (`input`, `output`, `cache_creation_input_tokens`, `cache_read_input_tokens`), outcome and latency.
