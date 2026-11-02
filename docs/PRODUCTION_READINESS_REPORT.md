@@ -11,7 +11,7 @@ Everything here was either observed directly or read in the code; anything not v
 | Component | What was checked | Result |
 |---|---|---|
 | API (Render, `kivo-api-6jh4.onrender.com`) | `GET /api/health` | `ok: true`, `commit: ab2099a5a970`, scheduler `running`, last tick ok, not stale |
-| API deploy | GitHub deployment record "main - kivo-api" | Created 22:27:59 UTC, about two minutes after `main` moved; `success` at 22:32:03. **Render auto-deploys `main`.** Earlier notes said it needed a manual deploy, and that is no longer true. |
+| API deploy | GitHub deployment record "main - kivo-api" | Created 22:27:59 UTC, about two minutes after `main` moved; `success` at 22:32:03. **Corrected 2026-11-03:** this report first said Render auto-deploys `main`. It doesn't: `render.yaml` sets `autoDeploy: false`, and the next push (`101655c`, 23:24 UTC) had not deployed 26 minutes later. This deploy was most likely started by hand. |
 | Web (Vercel, both projects) | GitHub deployment records | `kivo-ai-companion-web-kar8` deployed `ab2099a` at 22:24:18 and `kivo-ai-companion-web` at 22:26:07 |
 | Public sites | `www.thekivo.in`, `kivo-ai-companion-web-kar8.vercel.app` | Both answer 200 |
 
@@ -72,14 +72,22 @@ How far the review went: every route under `apps/api/app/api` was scanned for mi
 
 ## 6. The five most important reliability issues
 
-### R1. Deploys are no longer in the owner's hands, and the order matters
+### R1. The web and the API deploy separately, and the order matters
 - **Severity:** High.
-- **User impact:** a release that needs a schema change breaks the features that read it from the moment Render goes live until `prisma db push` runs. For a few minutes on every release, the web app calls an API that is one version behind.
-- **Root cause:** Render auto-deploys `main` about six minutes after a push, and Vercel deploys first. The documented order ("db push, then API deploy, then web") assumes manual deploys.
-- **Evidence:** GitHub deployment records for `ab2099a` (web 22:24 and 22:26, API 22:28–22:32).
-- **Fix:** treat merging to `main` as "deploying the API". Run the schema push before the merge, not after. Optionally turn off Render auto-deploy and deploy by hand after Vercel. Keep web changes tolerant of a one-version-older API, as this release was.
+- **User impact:**
+  - The web app goes live on Vercel a few minutes after a merge. The API goes live only when someone deploys it on Render, so the web app calls an older API until then.
+  - A release that needs a schema change breaks the features that read it if the API is deployed before `prisma db push` runs.
+- **Root cause:** Vercel deploys `main` by itself. Render does not (`render.yaml`: `autoDeploy: false`). So "merged" and "live" mean different things for the two halves.
+- **Evidence:**
+  - `ab2099a`: web 22:24 and 22:26, API 22:28–22:32, the API deployed by hand.
+  - `101655c`: web 23:25 and 23:27, API still on `ab2099a` at 23:50.
+  - (This finding first said Render auto-deploys, which was wrong; corrected 2026-11-03.)
+- **Fix:**
+  - Run any schema push and verify it **before** merging, so either deploy order is safe.
+  - Deploy Render straight after Vercel and check `/api/health` `commit`.
+  - Keep web changes tolerant of a one-version-older API, as this release was.
 - **Database change:** no.
-- **Deployment or environment change:** a Render setting, if auto-deploy is turned off, plus a release checklist.
+- **Deployment or environment change:** a release checklist. Turning on Render auto-deploy is an option, but not needed.
 
 ### R2. AI work that is unmetered or not recorded
 - **Severity:** Medium today, High as usage grows.

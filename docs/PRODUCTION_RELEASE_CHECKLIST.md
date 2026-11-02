@@ -53,7 +53,7 @@ Stage the release by listing files explicitly, never with `git add -A`.
 | Web, `kivo-ai-companion-web-kar8` and `kivo-ai-companion-web` | `ab2099a` | GitHub deployment records |
 | `origin/main` | `ab2099a` | `git fetch` |
 
-**Render auto-deploys `main`.** The last push was live on the API about six minutes later, and on the web two to four minutes later. Merging is deploying.
+**Vercel deploys `main` by itself; Render does not** (`render.yaml`: `autoDeploy: false`). This section first said Render auto-deploys, and that was wrong (corrected 2026-11-03): `ab2099a` was deployed on Render by hand two minutes after the push, and `101655c` had not deployed 26 minutes after its push. A merge updates the web app; the API needs a Manual Deploy on Render.
 
 **Production database:** equals the repository's schema (`prisma migrate diff`: empty, 2026-11-02). **This release has no schema change.**
 
@@ -103,10 +103,10 @@ There is no schema change, so no database step is needed. Each step needs your g
    - `fix(api)`: the race and the Retry limit;
    - `docs` + `feat(health)`: the reports, the provider names and the tests.
 3. **Push the branch** and review the compare view on GitHub.
-4. **Merge to `main`.** This deploys: web in about 2–4 minutes, API in about 6.
+4. **Merge to `main`.** Vercel deploys the web app in about 2–4 minutes. **Then deploy the API on Render** (Manual Deploy → latest commit).
 5. **Verify after the deploy:**
    - `curl https://kivo-api-6jh4.onrender.com/api/health`: `commit` shows the new commit, and `llm.provider` is `anthropic` with `keyPresent: true`.
    - Re-run the signed-out smoke checks from the readiness report §3.
-6. **If anything regresses:** revert the merge commit on `main`. Render redeploys the previous build by itself, and no data migration needs undoing.
+6. **If anything regresses:** revert the merge commit on `main` (Vercel redeploys by itself), and on Render roll back to the previous deploy. No data migration needs undoing.
 
 Then stop. Phase 1 (telemetry) starts only after you approve it; it adds an `AiUsageEvent` table, which must be pushed to production and verified **before** its code is merged.

@@ -12,8 +12,8 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   startInternalCheckinScheduler();
   // Which commit this process was built from (Render sets RENDER_GIT_COMMIT).
-  // Render deploys main by itself, a few minutes after the web app, so this
-  // is how to tell whether the API is behind.
+  // The web app deploys by itself on every merge and this API does not, so
+  // this is how to tell whether the API is behind.
   const commit = (process.env.RENDER_GIT_COMMIT ?? "").slice(0, 12) || null;
   return Response.json({ ok: true, commit, scheduler: schedulerStatus(), llm: describeLlmSelection(process.env) });
 }
