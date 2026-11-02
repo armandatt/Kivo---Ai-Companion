@@ -3,10 +3,14 @@ import { NextResponse } from "next/server"
 import { getSavedResource } from "@repo/api/nova/product/learning-events"
 //@ts-ignore
 import { processSavedResource } from "@repo/api/nova/product/resource-processing"
-import { requireWebLearner } from "../../../../../../lib/nova/extension-access"
+import { allowAttempt, requireWebLearner } from "../../../../../../lib/nova/extension-access"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
+
+// Each Retry is a model call outside the AI allowance (resource processing
+// is not metered), so a learner's retries are bounded per minute.
+const RETRIES_PER_MINUTE = 6
 
 // POST /api/nova/learning-events/[id]/process   (the signed-in web app)
 // The learner's Retry: look at one of their saved pages again for what it
@@ -18,6 +22,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   try {
     const access = await requireWebLearner()
     if (access.denied) return access.denied
+    if (!allowAttempt(`resource-retry:${access.profileId}`, RETRIES_PER_MINUTE, 60_000)) {
+      return NextResponse.json({ ok: false, error: "rate_limited", message: "That's a lot at once. Give it a minute." }, { status: 429 })
+    }
     const { id } = await params
     const outcome  = await processSavedResource(id, "learner", { profileId: access.profileId })
     const resource = typeof id === "string" && id.length <= 64 ? await getSavedResource(access.profileId, id) : null

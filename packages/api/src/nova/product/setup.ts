@@ -484,13 +484,19 @@ export async function applySetup(platformChatId: string, change: SetupChange, no
 export async function ensureSetupProfile(platformChatId: string): Promise<{ profileId: string; timezone: string | null; userId: string } | null> {
   const learner = await loadLearner(platformChatId);
   if (!learner) return null;
-  const profile = learner.novaAcademicProfile
-    ?? await prisma.novaAcademicProfile.upsert({
-      where:  { userId: learner.id },
-      create: { userId: learner.id, goals: await seedGoalFromSignup(prisma, platformChatId), ...dailyColumns(await seedDailyMinutesFromSignup(platformChatId)) },
-      update: {},
-      select: { id: true, timezone: true },
-    });
+  const made = async () => prisma.novaAcademicProfile.upsert({
+    where:  { userId: learner.id },
+    create: { userId: learner.id, goals: await seedGoalFromSignup(prisma, platformChatId), ...dailyColumns(await seedDailyMinutesFromSignup(platformChatId)) },
+    update: {},
+    select: { id: true, timezone: true },
+  });
+  // Two first requests at the same moment (two tabs, a retry) can both try to
+  // create the row; Prisma's upsert is not one statement here, so the second
+  // fails on the unique key. It finds the row there on a second look.
+  const profile = learner.novaAcademicProfile ?? await made().catch(err => {
+    if ((err as { code?: string } | null)?.code !== "P2002") throw err;
+    return made();
+  });
   return { profileId: profile.id, timezone: profile.timezone, userId: learner.id };
 }
 

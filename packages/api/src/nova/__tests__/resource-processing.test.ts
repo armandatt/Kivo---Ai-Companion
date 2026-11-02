@@ -213,6 +213,14 @@ describe("processing is not evidence of learning", () => {
     expect(source).not.toMatch(/\bfetch\(|https?\.get|axios|undici/);
   });
 
+  it("the learner's Retry, a model call outside the AI allowance, is limited per minute before anything is claimed", () => {
+    const route = read("../../../../apps/api/app/api/nova/learning-events/[id]/process/route.ts");
+    const limit = route.indexOf("allowAttempt(`resource-retry:${access.profileId}`, RETRIES_PER_MINUTE, 60_000)");
+    expect(limit).toBeGreaterThan(route.indexOf("if (access.denied) return access.denied"));
+    expect(limit).toBeLessThan(route.indexOf("processSavedResource(id"));
+    expect(route).toMatch(/status: 429/);
+  });
+
   it("a failure is written on the row and removes nothing", () => {
     const fail = events.slice(events.indexOf("export async function failProcessing"), events.indexOf("// Saved pages waiting"));
     expect(fail).toMatch(/updateMany/);
