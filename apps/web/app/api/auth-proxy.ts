@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { SignJWT } from "jose"
 import { errorLabel } from "@repo/api/auth/error-label"
-import { PROXY_CLIENT_IP_HEADER, PROXY_PROOF_HEADER } from "@repo/api/auth/proxy-headers"
+import { PROXY_APP_ORIGIN_HEADER, PROXY_CLIENT_IP_HEADER, PROXY_PROOF_HEADER } from "@repo/api/auth/proxy-headers"
 import { crossSiteProblem, originOf, requestOrigin } from "@repo/api/auth/request-origin"
 import { proxyProof } from "@repo/api/auth/secrets"
 import { sessionSecret } from "../../lib/auth/session-secret"
@@ -91,8 +91,9 @@ export async function proxyAuth(req: Request, path: string, options: ProxyOption
   const env = options.env ?? process.env
   const send = options.fetch ?? fetch
 
+  const here = requestOrigin(req.headers, req.url)
   const problem = crossSiteProblem(req.headers, [
-    requestOrigin(req.headers, req.url),
+    here,
     originOf(env.NEXT_PUBLIC_APP_URL),
   ])
   if (problem) {
@@ -117,6 +118,7 @@ export async function proxyAuth(req: Request, path: string, options: ProxyOption
         "Content-Type": "application/json",
         [PROXY_PROOF_HEADER]: proof,
         [PROXY_CLIENT_IP_HEADER]: clientIp(req),
+        ...(here ? { [PROXY_APP_ORIGIN_HEADER]: here } : {}),
       },
       body: await req.text(),
       cache: "no-store",

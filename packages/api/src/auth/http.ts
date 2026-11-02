@@ -21,8 +21,8 @@
 import { defaultAuthDeps, type AuthDeps, type AuthFailure, type SessionUser } from "./auth-deps";
 import { errorLabel } from "./error-label";
 import { loginWithPassword } from "./login.service";
-import { completePasswordReset, requestPasswordReset } from "./password-reset.service";
-import { PROXY_CLIENT_IP_HEADER, PROXY_PROOF_HEADER } from "./proxy-headers";
+import { completePasswordReset, resetLinkUsable, RESET_REJECTED_MESSAGE, requestPasswordReset } from "./password-reset.service";
+import { PROXY_APP_ORIGIN_HEADER, PROXY_CLIENT_IP_HEADER, PROXY_PROOF_HEADER } from "./proxy-headers";
 import { createRateLimiter, type RateLimiter } from "./rate-limiter";
 import { crossSiteProblem, originOf } from "./request-origin";
 import { proxyProof, safeEqual } from "./secrets";
@@ -77,6 +77,26 @@ export function callerOf(headers: Headers): string {
   return ip ? `ip:${ip}` : "proxy:unknown";
 }
 
+/**
+ * The web address to put in links in emails: the one the browser used, when
+ * the request came through Kivo's own proxy (its proof checked here) and the
+ * address is an ordinary https origin (or localhost outside production).
+ * Otherwise NEXT_PUBLIC_APP_URL. A missing or stale setting on the API then
+ * no longer sends every reset link to the wrong place.
+ */
+export function emailOriginOf(headers: Headers, env: NodeJS.ProcessEnv = process.env): string | null {
+  const proof = headers.get(PROXY_PROOF_HEADER);
+  if (!proof || !safeEqual(proof, proxyProof())) return null;
+  const raw = headers.get(PROXY_APP_ORIGIN_HEADER)?.trim();
+  if (!raw || raw.length > 200) return null;
+  let url: URL;
+  try { url = new URL(raw); } catch { return null; }
+  if (url.origin !== raw) return null;
+  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  if (url.protocol === "https:" && !local) return url.origin;
+  return local && env.NODE_ENV !== "production" ? url.origin : null;
+}
+
 function reply(status: number, body: Record<string, unknown>, headers: Record<string, string> = {}): AuthHttpResult {
   return { status, body, headers };
 }
@@ -123,7 +143,9 @@ export async function handleAuthRequest(
     const body = await readJson(req);
     if (!body) return reply(400, { error: "The request body must be a JSON object." });
 
-    const context = { deps, now };
+    // Links in emails open on the site the request came from (see emailOriginOf).
+    const origin = emailOriginOf(req.headers);
+    const context = { deps: origin ? { ...deps, appUrl: () => origin } : deps, now };
 
     switch (route) {
       case "login": {
@@ -159,6 +181,11 @@ export async function handleAuthRequest(
         return reply(200, { message: result.message });
       }
       case "reset-password": {
+        // The page asks first whether the link still works, before a password is typed.
+        if (body.check === true) {
+          const usable = await resetLinkUsable(body.token, context);
+          return usable ? reply(200, { usable: true }) : reply(400, { error: RESET_REJECTED_MESSAGE, usable: false });
+        }
         const result = await completePasswordReset(body, context);
         if (!result.ok) return failure(result);
         return reply(200, { message: "Password reset successfully. You can now sign in." });

@@ -19,15 +19,27 @@ function ResetPasswordForm() {
     }
   }, [token])
 
+  // Whether the link still works, asked as the page opens, so nobody types a
+  // new password into a link that was already used or replaced.
+  const [usable, setUsable] = useState<'checking' | 'yes' | 'no' | 'unknown'>('checking')
+  useEffect(() => {
+    if (!token) return
+    let live = true
+    fetch('/api/reset-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, check: true }) })
+      .then(async res => { const data = await res.json().catch(() => null); if (live) setUsable(res.ok && data?.usable ? 'yes' : data && data.usable === false ? 'no' : 'unknown') })
+      .catch(() => { if (live) setUsable('unknown') })
+    return () => { live = false }
+  }, [token])
+
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
-  if (!token) {
+  if (!token || usable === 'no') {
     return (
       <AuthShell title="This link can’t be used" subtitle="Reset links work once and last an hour.">
-        <AuthError>This reset link is invalid or has expired.</AuthError>
+        <AuthError>{token ? 'This link has expired or was already used. Only the newest reset email works.' : 'This reset link is incomplete. Open it from the email again, or ask for a new one.'}</AuthError>
         <p className="mt-6 text-center">
           <Link href="/forgot-password" className={`text-sm ${authLinkClass}`}>
             Request a new reset link →
@@ -68,6 +80,10 @@ function ResetPasswordForm() {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  if (usable === 'checking') {
+    return <AuthShell title="Set a new password" subtitle="Checking your reset link…"><p className="text-sm text-center opacity-70" role="status" data-reset-checking>One moment.</p></AuthShell>
   }
 
   return (

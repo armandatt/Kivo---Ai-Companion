@@ -25,7 +25,9 @@ export const RESET_MAX_REQUESTS_PER_HOUR = 3;
 
 export const RESET_REQUESTED_MESSAGE =
   "If an account with that email exists, we've sent instructions to it.";
-export const RESET_REJECTED_MESSAGE = "This reset link is invalid or has expired.";
+// Said for any link that can't be used: expired, used, replaced by a newer one,
+// or never real. It never says which, so it tells a guesser nothing.
+export const RESET_REJECTED_MESSAGE = "This reset link has expired or was already used. Links last an hour, and only the newest one works.";
 
 // Requests acted on for one address, whoever asks, counted in Postgres.
 const RESET_REQUESTS: ThrottleRule = {
@@ -138,6 +140,14 @@ function sendInBackground(deps: AuthDeps, email: Parameters<AuthDeps["sendEmail"
 }
 
 export type ResetCompleteResult = { ok: true } | AuthFailure;
+
+// Whether a link would work now. Reads only; nothing is used up.
+export async function resetLinkUsable(token: unknown, options: ResetOptions = {}): Promise<boolean> {
+  const { deps = defaultAuthDeps, now = new Date() } = options;
+  if (!isTokenShaped(token)) return false;
+  const row = await deps.db.passwordResetToken.findUnique({ where: { token: hashToken(token) } });
+  return !!row && !row.used && row.expiresAt.getTime() > now.getTime();
+}
 
 export async function completePasswordReset(
   input: { token?: unknown; password?: unknown },
