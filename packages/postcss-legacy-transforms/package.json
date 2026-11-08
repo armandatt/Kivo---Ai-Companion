@@ -1,0 +1,13 @@
+{
+  "name": "@repo/postcss-legacy-transforms",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A transform beside Tailwind v4's translate/scale/rotate, for browsers without those properties (apps/web/postcss.config.mjs).",
+  "main": "./index.cjs",
+  "scripts": {
+    "test": "node --test"
+  },
+  "peerDependencies": {
+    "postcss": "^8.4.31"
+  }
+}

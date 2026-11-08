@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint --max-warnings 0",
-    "test": "tsx --test components/nova/saved/saved-api.test.ts lib/auth/dashboard-entry.test.ts components/settings/delete-account.test.ts components/sidebar-modes.test.ts components/nova/local-graph.test.ts components/nova/knowledge-board-data.test.ts components/nova/knowledge/subject-board.test.ts components/nova/workspace/command-search.test.ts components/nova/tasks/task-format.test.ts components/nova/builder/plan-edit.test.ts components/nova/builder/builder-view.test.ts components/nova/builder/paste.test.ts components/nova/stream-post.test.ts components/nova/calendar/calendar-grid.test.ts components/nova/knowledge/connections.test.ts components/nova/knowledge/knowledge-tree.test.ts components/nova/knowledge/knowledge-page.test.ts components/nova/subject-color.test.ts components/nova/today-links.test.ts components/nova/today-focus.test.ts components/nova/knowledge-map/layout.test.ts components/nova/knowledge-map/layout-saver.test.ts components/nova/knowledge-map/map-edit.test.ts components/nova/knowledge-map/view-state.test.ts components/nova/knowledge-map/explore.test.ts components/nova/knowledge-map/map-shortcuts.test.ts components/nova/knowledge-map/view-memory.test.ts components/nova/knowledge-map/map-structure.test.ts components/nova/knowledge-map/map-connect.test.ts components/nova/knowledge-map/map-disconnect.test.ts components/nova/notes/note-blocks.test.ts components/nova/notes/pdf-geometry.test.ts components/nova/notes/tutor-session.test.ts components/nova/notes/notes-shortcuts.test.ts components/legal/legal.test.ts components/landing/landing.test.ts app/api/auth-proxy.test.ts lib/creature/places.test.ts lib/focus/soundscapes.test.ts lib/focus/music-links.test.ts",
+    "test": "tsx --test components/nova/saved/saved-api.test.ts lib/auth/dashboard-entry.test.ts components/settings/delete-account.test.ts components/sidebar-modes.test.ts components/nova/local-graph.test.ts components/nova/knowledge-board-data.test.ts components/nova/knowledge/subject-board.test.ts components/nova/workspace/command-search.test.ts components/nova/tasks/task-format.test.ts components/nova/builder/plan-edit.test.ts components/nova/builder/builder-view.test.ts components/nova/builder/paste.test.ts components/nova/stream-post.test.ts components/nova/calendar/calendar-grid.test.ts components/nova/knowledge/connections.test.ts components/nova/knowledge/knowledge-tree.test.ts components/nova/knowledge/knowledge-page.test.ts components/nova/subject-color.test.ts components/nova/today-links.test.ts components/nova/today-focus.test.ts components/nova/knowledge-map/layout.test.ts components/nova/knowledge-map/layout-saver.test.ts components/nova/knowledge-map/map-edit.test.ts components/nova/knowledge-map/view-state.test.ts components/nova/knowledge-map/explore.test.ts components/nova/knowledge-map/map-shortcuts.test.ts components/nova/knowledge-map/view-memory.test.ts components/nova/knowledge-map/map-structure.test.ts components/nova/knowledge-map/map-connect.test.ts components/nova/knowledge-map/map-disconnect.test.ts components/nova/notes/note-blocks.test.ts components/nova/notes/pdf-geometry.test.ts components/nova/notes/tutor-session.test.ts components/nova/notes/notes-shortcuts.test.ts components/legal/legal.test.ts components/landing/landing.test.ts app/api/auth-proxy.test.ts lib/legacy-css.test.ts lib/creature/places.test.ts lib/focus/soundscapes.test.ts lib/focus/music-links.test.ts",
     "check-types": "next typegen && tsc --noEmit"
   },
   "dependencies": {
@@ -51,7 +51,10 @@
     "vaul": "^1.1.2"
   },
   "devDependencies": {
+    "@csstools/postcss-cascade-layers": "6.0.2",
+    "@csstools/postcss-oklab-function": "5.0.15",
     "@repo/eslint-config": "*",
+    "@repo/postcss-legacy-transforms": "*",
     "@repo/typescript-config": "*",
     "@types/node": "^22.15.3",
     "@types/react": "19.2.2",
@@ -59,5 +62,13 @@
     "eslint": "^9.39.1",
     "shadcn": "^4.0.8",
     "typescript": "5.9.2"
-  }
+  },
+  "browserslist": [
+    "chrome >= 87",
+    "edge >= 88",
+    "firefox >= 91",
+    "safari >= 14",
+    "ios_saf >= 14",
+    "samsung >= 14"
+  ]
 }
