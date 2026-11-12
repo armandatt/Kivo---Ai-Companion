@@ -209,6 +209,22 @@ export async function recoverReminders(now: Date, windowMinutes: number): Promis
   return rows.map(toRow);
 }
 
+// When each reminder row recoverReminders would hand back for a retry is due,
+// and until when, for the scheduler's "is anything due before my next full
+// run" check (services/schedulerIdle.ts). Ready or failed: at once. Claimed:
+// once the claim is stale. Either way only inside the window after firedAt.
+export async function reminderRetryWindows(now: Date, windowMinutes: number): Promise<Array<{ from: Date; until: Date }>> {
+  const rows = await prisma.novaProactiveMessage.findMany({
+    where:  { eventType: EVENT_REMINDER, status: { in: ["ready", "failed", "claimed"] }, firedAt: { gte: new Date(now.getTime() - windowMinutes * 60_000) } },
+    take:   500,
+    select: { status: true, firedAt: true },
+  });
+  return rows.map(r => ({
+    from:  r.status === "claimed" ? new Date(r.firedAt.getTime() + SENDING_STALE_MS + 1) : r.firedAt,
+    until: new Date(r.firedAt.getTime() + windowMinutes * 60_000),
+  }));
+}
+
 // Where each of these reminder occurrences stands, for the calendar page.
 // Keys with no row have not been claimed.
 export async function reminderStatuses(profileId: string, keys: string[]): Promise<Map<string, string>> {

@@ -154,6 +154,27 @@ Do not run more than one of these that *ticks* the scheduler. Pinging `/api/heal
 - `scheduler.startedAt`: when this process started its timer. A time a few minutes ago, every time you look, means the service keeps sleeping.
 - `scheduler.stale`: `true` when no tick has run for over 16 minutes.
 - `scheduler.nova`: what the last tick did for Nova learners (`checked`, `sent`, `errors`, and `outcomes` such as `no_timezone`, `nothing_due`, `suppressed`).
+- `scheduler.idle`: skipping the database on idle ticks (`SCHEDULER_IDLE_SKIP`): `mode`, `fullRuns`, `skipped`, `lastReasons`, `nextDueAt`, `unpredictedWork`, `cacheReadFailed`. Read from memory; looking never wakes the database.
+
+### Skipping the database on idle ticks (rollout)
+
+The scheduler is Nova's only: no Rex job runs (dynamic check-ins, custom reminders and the gym jobs stopped with this release; Rex users get none of those messages). `SCHEDULER_IDLE_SKIP` is `shadow` when unset: nothing is skipped, and every tick logs one `{"layer":"scheduler","tick":"full","wouldSkip":…,"reasons":[…]}` line.
+
+**Phase A: shadow, at least 7 days.** Deploy with the variable unset. Every day:
+- `/api/health`: `scheduler.idle.mode` is `shadow`, `unpredictedWork` is 0, `cacheReadFailed` is near 0, `scheduler.stale` is `false`.
+- Logs: no `"event":"unpredicted_work"` (a tick a skip would have taken that found Nova work; each names the job and count). Count `"wouldSkip":true` lines: about half the ticks is expected.
+- Nova delivery as usual: `"layer":"nova_proactive"` `"outcome":"sent"` lines and calendar reminders.
+
+**Phase B: on.** Only if Phase A had no `unpredicted_work` and no `cacheReadFailed` growth:
+1. Render dashboard → kivo-api → Environment → add `SCHEDULER_IDLE_SKIP` = `on` → Save (Render restarts the service).
+2. `/api/health`: `commit` unchanged, `scheduler.idle.mode` is `on`, `stale` `false`; within 15 minutes `skipped` > 0 and `fullRuns` keeps rising.
+3. Logs: `"tick":"skipped"` lines with `nextDueAt`; full ticks at least every 10 minutes (`"reasons":["reconcile"]` or a due reason).
+4. Verify a real check-in and a real calendar reminder on your own test account (below): each arrives at the first tick after its time.
+5. For the first week, check `unpredictedWork` daily: in `on` it counts Nova work found only by a reconciliation tick (late by up to 10 minutes). It should stay 0.
+
+**Phase C: validate.** Compare Neon's compute hours for the week before Phase B and the week after, and `fullRuns` / `skipped`. With full ticks at least every 10 minutes and Neon's default 5-minute suspend, expect roughly half the idle compute saved, not more.
+
+Emergency: set `SCHEDULER_IDLE_SKIP=off` (Render restarts): every tick runs in full, nothing extra read.
 
 ### Verifying a real check-in (use your own test account)
 

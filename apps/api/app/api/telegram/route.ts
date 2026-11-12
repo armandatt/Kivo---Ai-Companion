@@ -118,7 +118,11 @@ import { annotateUsage, startInteraction, withUsageContext } from "@repo/api/ser
 //@ts-ignore
 import { createTelegramClient, NOVA_CHAT_COMMANDS } from "@repo/api/nova/telegram/telegram-client";
 //@ts-ignore
-import { linkTelegramChat, isLinkedTelegramChat, notConnectedMessage, LINK_MESSAGES, NOVA_LINKED_PLAIN } from "@repo/api/nova/telegram/telegram-link";
+import { linkTelegramChat, isLinkedTelegramChat, ensureLinkedChatRow, notConnectedMessage, LINK_MESSAGES, NOVA_LINKED_PLAIN } from "@repo/api/nova/telegram/telegram-link";
+// Which writes the scheduler counts as "something may have changed"
+// (packages/db/src/write-signal.ts): not transport bookkeeping, not Rex.
+//@ts-ignore
+import { runWithoutWriteSignal, quietFromHere } from "@repo/db/write-signal";
 
 export const runtime = "nodejs";
 
@@ -203,10 +207,11 @@ async function handleUpdate(req: Request) {
 
     // ── Transport safety: authenticate the request, drop replayed updates ────
     // Runs before anything else so a duplicate update never reaches a pipeline.
-    const admission = await admitTelegramUpdate({
+    // The dedup row it writes is bookkeeping: not counted by the scheduler.
+    const admission: Awaited<ReturnType<typeof admitTelegramUpdate>> = await runWithoutWriteSignal("telegram-transport", () => admitTelegramUpdate({
       secretHeader: req.headers.get(TELEGRAM_SECRET_HEADER),
       updateId:     body.update_id,
-    });
+    }));
     if (!admission.admit) {
       return Response.json({ ok: admission.status === 200 }, { status: admission.status });
     }
@@ -245,15 +250,21 @@ async function handleUpdate(req: Request) {
       return Response.json({ ok: true });
     }
 
+    // A connected chat with no row yet gets one with its account's companion
+    // (Nova for every Kivo account), before the profile update below could
+    // make it with the schema default, "rex". Existing rows are not touched.
+    await ensureLinkedChatRow(chatId.toString());
+
     const stopTyping = startTelegramTyping(chatId);
     let lockAcquired = false;
 
     try {
       // ── Profile update (display name, username) ───────────────────────────
-      await updateUserProfile(chatId.toString(), {
+      // A name is not timing: not counted by the scheduler.
+      await runWithoutWriteSignal("telegram-profile", () => updateUserProfile(chatId.toString(), {
         displayName: [from?.first_name, from?.last_name].filter(Boolean).join(" ") || undefined,
         username:    from?.username,
-      });
+      }));
 
       // ── /start token handling (web → Telegram connect) ────────────────────
       if (await handleTelegramConnectStart(text, chatId, body.message?.chat?.type ?? null, {
@@ -284,6 +295,12 @@ async function handleUpdate(req: Request) {
         }
         return Response.json({ ok: true });
       }
+
+      // ── Everything below is Rex, which is not part of Kivo ────────────────
+      // Its writes are not counted by the scheduler (Nova only): a Rex chat
+      // never makes the five-minute tick read the database. Rex's code below
+      // is unchanged and kept only until Rex is removed.
+      quietFromHere("rex-legacy");
 
       // ── Intake gate ───────────────────────────────────────────────────────
       // Routing decision tree (single source of truth):

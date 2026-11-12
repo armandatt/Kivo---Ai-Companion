@@ -111,6 +111,24 @@ export async function findRetryableJobs(now: Date, limit: number): Promise<Array
   });
 }
 
+// When each job findRetryableJobs would pick up becomes retryable, for the
+// scheduler's "is anything due before my next full run" check
+// (services/schedulerIdle.ts). A failed job is retryable at once; a pending
+// one RETRY_AFTER_MS after it was made; a processing one when its lease ends.
+// The same conditions as findRetryableJobs, read as moments.
+export async function consolidationRetryTimes(): Promise<Date[]> {
+  const rows = await prisma.novaConsolidationJob.findMany({
+    // A processing job with no claim time is never picked up (its comparison
+    // with null is false), so it is never due either.
+    where:  { attempts: { lt: MAX_ATTEMPTS }, OR: [{ status: { in: ["failed", "pending"] } }, { status: "processing", claimedAt: { not: null } }] },
+    select: { status: true, createdAt: true, claimedAt: true, updatedAt: true },
+  });
+  return rows.map(r =>
+    r.status === "failed"  ? r.updatedAt
+    : r.status === "pending" ? new Date(r.createdAt.getTime() + RETRY_AFTER_MS + 1)
+    : new Date(r.claimedAt!.getTime() + LEASE_MS + 1));
+}
+
 export async function purgeCompletedJobs(now: Date): Promise<number> {
   const removed = await prisma.novaConsolidationJob.deleteMany({
     where: { status: "completed", completedAt: { lt: new Date(now.getTime() - COMPLETED_RETENTION_MS) } },

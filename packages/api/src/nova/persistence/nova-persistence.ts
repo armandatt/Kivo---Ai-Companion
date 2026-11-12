@@ -447,6 +447,20 @@ async function abandonRow(
   return closed.count === 1;
 }
 
+// ── For the scheduler (services/schedulerIdle.ts) ─────────────────────────────
+// The open sessions as the sweep reads them, and whether the sweep would
+// close any of them at moment t: the same rule (abandonmentOf), so a tick
+// that would close a session is never skipped.
+export type OpenSessionRow = AbandonRow;
+
+export async function openSessionsForSweep(): Promise<OpenSessionRow[]> {
+  return prisma.novaStudySession.findMany({ where: { status: { in: OPEN_STATUSES } }, select: ABANDON_SELECT });
+}
+
+export function anySessionAbandonableAt(rows: readonly OpenSessionRow[], t: Date): boolean {
+  return rows.some(row => abandonmentOf(row, t) !== null);
+}
+
 // true: the session was past its limit and is now closed as abandoned.
 export async function abandonIfStale(sessionId: string, now: Date): Promise<boolean> {
   const row = await prisma.novaStudySession.findUnique({ where: { id: sessionId }, select: ABANDON_SELECT });

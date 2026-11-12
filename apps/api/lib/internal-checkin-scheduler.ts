@@ -2,6 +2,13 @@ import { runCheckinCron, type CheckinCronResult } from "./checkin-cron";
 // Production runs the jobs; `next dev` only with ENABLE_INTERNAL_CHECKIN_CRON=true.
 //@ts-ignore
 import { schedulerEnabled } from "@repo/api/services/schedulerGate";
+// Ticks that cannot find work skip the database (SCHEDULER_IDLE_SKIP).
+//@ts-ignore
+import { IdleScheduler, idleModeOf, type IdleStats } from "@repo/api/services/schedulerIdle";
+//@ts-ignore
+import { loadDueSources } from "@repo/api/services/schedulerDueSources";
+//@ts-ignore
+import { runWithoutWriteSignal } from "@repo/db/write-signal";
 
 const CHECKIN_INTERVAL_MS = 5 * 60 * 1000;
 const STARTUP_DELAY_MS = 10 * 1000;
@@ -14,7 +21,26 @@ type SchedulerGlobal = typeof globalThis & {
   __kevoCheckinStartedAt?: string;
   __kevoCheckinLastNova?: CheckinCronResult["nova"];
   __kevoCheckinDisabledLogged?: boolean;
+  __kevoCheckinIdle?: IdleScheduler;
 };
+
+// One per process, shared by the timer and the health check (globalThis:
+// Next bundles the instrumentation hook and the routes separately).
+function idleScheduler(): IdleScheduler {
+  const globalState = globalThis as SchedulerGlobal;
+  return (globalState.__kevoCheckinIdle ??= new IdleScheduler({
+    runFull: async (now: Date) => {
+      const result = await runCheckinCron(now);
+      globalState.__kevoCheckinLastTickOk = result.ok;
+      globalState.__kevoCheckinLastNova   = result.nova;
+      return { work: result.work, nova: result.novaOutlooks };
+    },
+    loadDue: (now: Date) => loadDueSources(now),
+    mode:    () => idleModeOf(process.env),
+    log:     (line: Record<string, unknown>) => console.log(JSON.stringify(line)),
+    quietly: <T,>(work: () => Promise<T>) => runWithoutWriteSignal("scheduler", work),
+  }));
+}
 
 // A tick is due every five minutes. Three missed in a row means the timer is
 // not doing its job, whatever the process says about itself.
@@ -32,9 +58,14 @@ export interface SchedulerStatus {
   startedAt:  string | null;
   // running, but no tick for longer than three intervals.
   stale:      boolean;
-  // Nova's proactive job on the last tick: learners looked at, messages
+  // Nova's proactive job on the last full tick: learners looked at, messages
   // sent, and how many ended in each outcome. No learner data.
   nova:       CheckinCronResult["nova"] | null;
+  // Skipping the database on idle ticks (services/schedulerIdle.ts): mode,
+  // full and skipped ticks, the reasons for the last decision, when work is
+  // next due, and how many full ticks found work a skip would have missed.
+  // From memory: reading it never touches the database.
+  idle:       IdleStats | null;
 }
 
 // What this process's scheduler is doing, for the health check. It reports
@@ -50,6 +81,7 @@ export function schedulerStatus(): SchedulerStatus {
     stale:      globalState.__kevoCheckinSchedulerStarted === true
       && Date.now() - new Date(globalState.__kevoCheckinLastTickAt ?? globalState.__kevoCheckinStartedAt ?? Date.now()).getTime() > STALE_AFTER_MS,
     nova:       globalState.__kevoCheckinLastNova ?? null,
+    idle:       globalState.__kevoCheckinIdle?.status() ?? null,
   };
 }
 
@@ -70,7 +102,7 @@ export function startInternalCheckinScheduler() {
 
   globalState.__kevoCheckinSchedulerStarted = true;
   globalState.__kevoCheckinStartedAt = new Date().toISOString();
-  console.log("[CHECKIN] Internal scheduler started; interval=5m");
+  console.log(`[CHECKIN] Internal scheduler started; interval=5m; idle skip=${idleModeOf(process.env)}`);
 
   const tick = async () => {
     if (globalState.__kevoCheckinSchedulerRunning) {
@@ -80,9 +112,11 @@ export function startInternalCheckinScheduler() {
 
     globalState.__kevoCheckinSchedulerRunning = true;
     try {
-      const result = await runCheckinCron();
-      globalState.__kevoCheckinLastTickOk = result.ok;
-      globalState.__kevoCheckinLastNova = result.nova;
+      // A full tick, or none at all when nothing can be due
+      // (SCHEDULER_IDLE_SKIP=on). The heartbeat below is kept either way, so
+      // /api/health/scheduler sees a skipped tick as a live one.
+      const { ran } = await idleScheduler().tick(new Date());
+      if (!ran) globalState.__kevoCheckinLastTickOk = true;
     } catch (error) {
       globalState.__kevoCheckinLastTickOk = false;
       console.error("[CHECKIN] Internal scheduler tick failed:", error);

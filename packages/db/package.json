@@ -17,6 +17,7 @@
         "typescript": "^5.9.2"
     },
     "exports": {
-        "./client": "./src/index.ts"
+        "./client": "./src/index.ts",
+        "./write-signal": "./src/write-signal.ts"
     }
 }

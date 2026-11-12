@@ -24,11 +24,14 @@ function authorized(req: Request): boolean {
 export async function GET(req: Request) {
   if (!authorized(req)) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
 
-  const result = await runCheckinCron();
+  // Counts only. The tick also hands the scheduler what it read about users
+  // and learners (gym, novaOutlooks); that never leaves the process.
+  const { ok, sent, error, nova, work } = await runCheckinCron();
+  const body = { ok, sent, error, nova, work };
 
-  if (!result.ok) {
-    return Response.json(result, { status: 500 });
+  if (!ok) {
+    return Response.json(body, { status: 500 });
   }
 
-  return Response.json(result);
+  return Response.json(body);
 }

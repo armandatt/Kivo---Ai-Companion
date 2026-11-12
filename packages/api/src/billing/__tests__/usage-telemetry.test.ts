@@ -94,7 +94,8 @@ describe("every model call is attributed", () => {
     const pages = read("packages/api/src/nova/product/resource-processing.ts");
     expect(pages).toContain('feature: by === "learner" ? "saved_page_retry" : "saved_page_processing"');
     expect(pages).toContain('isBackground: by !== "learner", isAllowanceCounted: false');
-    expect(read("apps/api/lib/checkin-cron.ts")).toContain('startInteraction({ feature: "rex", surface: "background", isBackground: true');
+    // The tick is Nova's only (12 Nov); its own interaction makes no model call.
+    expect(read("apps/api/lib/checkin-cron.ts")).toContain('startInteraction({ feature: "other", surface: "background", isBackground: true');
     const builder = read("apps/api/lib/nova/builder-access.ts");
     expect(builder).toContain('{ feature: "build_with_nova", surface: "web", learner: platformChatId, requestId: job.jobId, isAllowanceCounted: counted }');
     expect(read("packages/api/src/nova/entry.ts")).toContain('withUsageContext({ feature: "nova_setup" }, () => runWebSetupSentence(');
