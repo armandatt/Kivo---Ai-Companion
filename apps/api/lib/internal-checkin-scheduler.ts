@@ -1,4 +1,7 @@
 import { runCheckinCron, type CheckinCronResult } from "./checkin-cron";
+// Production runs the jobs; `next dev` only with ENABLE_INTERNAL_CHECKIN_CRON=true.
+//@ts-ignore
+import { schedulerEnabled } from "@repo/api/services/schedulerGate";
 
 const CHECKIN_INTERVAL_MS = 5 * 60 * 1000;
 const STARTUP_DELAY_MS = 10 * 1000;
@@ -10,6 +13,7 @@ type SchedulerGlobal = typeof globalThis & {
   __kevoCheckinLastTickOk?: boolean;
   __kevoCheckinStartedAt?: string;
   __kevoCheckinLastNova?: CheckinCronResult["nova"];
+  __kevoCheckinDisabledLogged?: boolean;
 };
 
 // A tick is due every five minutes. Three missed in a row means the timer is
@@ -18,7 +22,8 @@ const STALE_AFTER_MS = 3 * CHECKIN_INTERVAL_MS + 60_000;
 
 export interface SchedulerStatus {
   // running: this process ticks every five minutes. disabled: it was told
-  // not to (DISABLE_INTERNAL_CHECKIN_CRON=true); some other host must.
+  // not to (DISABLE_INTERNAL_CHECKIN_CRON=true), or it is not production and
+  // was not asked to (schedulerEnabled); some other host must.
   state:      "running" | "disabled" | "not_started";
   lastTickAt: string | null;
   lastTickOk: boolean | null;
@@ -37,7 +42,7 @@ export interface SchedulerStatus {
 export function schedulerStatus(): SchedulerStatus {
   const globalState = globalThis as SchedulerGlobal;
   return {
-    state: process.env.DISABLE_INTERNAL_CHECKIN_CRON === "true" ? "disabled"
+    state: !schedulerEnabled().enabled ? "disabled"
          : globalState.__kevoCheckinSchedulerStarted ? "running" : "not_started",
     lastTickAt: globalState.__kevoCheckinLastTickAt ?? null,
     lastTickOk: globalState.__kevoCheckinLastTickOk ?? null,
@@ -51,8 +56,11 @@ export function schedulerStatus(): SchedulerStatus {
 export function startInternalCheckinScheduler() {
   const globalState = globalThis as SchedulerGlobal;
 
-  if (process.env.DISABLE_INTERNAL_CHECKIN_CRON === "true") {
-    console.log("[CHECKIN] Internal scheduler disabled by DISABLE_INTERNAL_CHECKIN_CRON=true");
+  const { enabled, reason } = schedulerEnabled();
+  if (!enabled) {
+    // Said once per process: /api/health calls this on every ping.
+    if (!globalState.__kevoCheckinDisabledLogged) console.log(`[CHECKIN] Internal scheduler not started: ${reason}`);
+    globalState.__kevoCheckinDisabledLogged = true;
     return;
   }
 
