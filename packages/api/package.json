@@ -56,6 +56,8 @@
     "./nova/product/builder-state": "./src/nova/product/builder-state.ts",
     "./nova/product/learner-key": "./src/nova/product/learner-key.ts",
     "./nova/product/note-links": "./src/nova/product/note-links.ts",
+    "./nova/product/note-colors": "./src/nova/product/note-colors.ts",
+    "./nova/product/resource-meta": "./src/nova/product/resource-meta.ts",
     "./nova/product/note-assist.types": "./src/nova/product/note-assist.types.ts",
     "./nova/product/note-tutor.types": "./src/nova/product/note-tutor.types.ts",
     "./nova/product/note-outline": "./src/nova/product/note-outline.ts",

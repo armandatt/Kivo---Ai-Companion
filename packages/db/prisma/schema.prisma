@@ -769,6 +769,7 @@ model NovaAcademicProfile {
   telegramChannel   NovaTelegramChannel?
   telegramPrompts   NovaTelegramPrompt[]
   learningEvents    NovaLearningEvent[]
+  resourceCollections NovaResourceCollection[]
   tasks             NovaTask[]
   planOverrides     NovaPlanOverride[]
   dayFlows          NovaDayFlow[]
@@ -1297,8 +1298,29 @@ model NovaLearningEvent {
   // What processing found: ResourceConnections (learning-events.types.ts).
   connections         Json?
 
+  // The saved-pages library (12 Nov), all optional, so older rows and older
+  // extensions keep working. What a page says about itself is read by the
+  // extension from the page's public metadata tags when the learner saves it;
+  // the server never fetches a saved address (product/resource-meta.ts).
+  resourceType    String?   // article | video | paper | documentation | tutorial | blog | news | page
+  description     String?   @db.Text
+  imageUrl        String?   @db.Text
+  author          String?
+  siteName        String?
+  publishedAt     DateTime?
+  durationSeconds Int?
+  // The address as compared for duplicates: tracking parameters and host
+  // spellings taken out, meaningful parameters kept (resource-meta.ts dedupeKey).
+  dedupeKey       String?   @db.Text
+  // The learner's own organisation.
+  readingStatus   String    @default("unread") // unread | reading | done
+  tags            String[]  @default([])
+  collectionId    String?
+  personalNote    String?   @db.Text
+
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   subject NovaSubject?        @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  collection NovaResourceCollection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
 
@@ -1306,6 +1328,30 @@ model NovaLearningEvent {
   @@index([processingStatus, processingStartedAt])
   @@index([profileId, eventType, occurredAt])
   @@index([profileId, subjectId])
+  @@index([profileId, eventType, resourceType])
+  @@index([profileId, collectionId])
+  @@index([profileId, readingStatus])
+  @@index([profileId, dedupeKey])
+  @@index([tags], type: Gin)
+}
+
+// A collection of saved pages the learner made ("System Design", "Read
+// later"). One page is in at most one collection; tags do the rest. Deleting
+// a collection keeps its pages (they are in none). product/resource-collections.ts
+// is the only reader and writer.
+model NovaResourceCollection {
+  id        String   @id @default(cuid())
+  profileId String
+  name      String
+  // The name compared: trimmed, single-spaced, lower case. One per learner.
+  nameKey   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  profile   NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  resources NovaLearningEvent[]
+
+  @@unique([profileId, nameKey])
 }
 
 // A browser the learner connected to their account. It starts as a one-time

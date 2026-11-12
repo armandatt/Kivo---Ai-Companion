@@ -2,7 +2,7 @@
 // connection. Contracts: packages/api/src/nova/product/learning-events.types.ts.
 
 import type {
-  ExtensionConnectionView, LearningEventInput, LearningEventResponse, LearningResourceResponse, PairingCodeResponse,
+  CollectionResponse, ExtensionConnectionView, LearningEventInput, LearningEventResponse, LearningResourceResponse, LibraryResponse, PairingCodeResponse,
   ResourceUpdateResponse,
 } from '@repo/api/nova/product/learning-events.types'
 
@@ -138,3 +138,42 @@ export async function saveLink(input: { clientEventId: string; url: string; titl
     return { success: false, error: 'failed', message: FAILED }
   }
 }
+
+// ── The library (12 Nov) ──────────────────────────────────────────────────────
+
+export type LibraryFilter = { q?: string; type?: string; collection?: string; tag?: string; status?: string; domain?: string; days?: number; sort?: string }
+
+export async function fetchLibrary(filter: LibraryFilter, cursor?: string | null, signal?: AbortSignal): Promise<LibraryResponse | { status: 'error'; message: string }> {
+  const params = new URLSearchParams()
+  for (const [k, v] of Object.entries(filter)) if (v !== undefined && v !== '' && v !== null) params.set(k, String(v))
+  if (cursor) params.set('cursor', cursor)
+  try {
+    const res = await fetch(`/api/nova/saved?${params.toString()}`, { cache: 'no-store', signal })
+    if (res.status === 401) { window.location.href = '/signin'; return { status: 'error', message: 'Sign in again.' } }
+    const data = await res.json().catch(() => null) as LibraryResponse | null
+    // A server that does not have the library yet answers 404: said, not broken.
+    if (!data || typeof data !== 'object' || !('status' in data)) return { status: 'error', message: res.status === 404 ? 'The library isn’t available yet. Your pages are safe; reload in a moment.' : FAILED }
+    return data
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') return { status: 'error', message: '' }
+    return { status: 'error', message: FAILED }
+  }
+}
+
+// The learner's organisation of one page: reading status, tags, collection, note.
+export const organizeResource = (id: string, organize: { readingStatus?: string; tags?: string[]; collectionId?: string | null; personalNote?: string | null }) =>
+  updateResource(resourcePath(id), 'PATCH', { organize })
+
+async function collectionCall(path: string, method: 'POST' | 'PATCH' | 'DELETE', body?: unknown): Promise<CollectionResponse> {
+  try {
+    const res = await fetch(path, { method, cache: 'no-store', ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) })
+    const json = await res.json().catch(() => null) as CollectionResponse | null
+    if (json && typeof json === 'object' && 'ok' in json) return json
+    return { ok: false, error: 'failed', message: res.status === 401 ? 'Sign in again to do that.' : "That didn't work. Try again." }
+  } catch {
+    return { ok: false, error: 'failed', message: FAILED }
+  }
+}
+export const createCollection = (name: string) => collectionCall('/api/nova/saved/collections', 'POST', { name })
+export const renameCollection = (id: string, name: string) => collectionCall(`/api/nova/saved/collections/${encodeURIComponent(id)}`, 'PATCH', { name })
+export const deleteCollection = (id: string) => collectionCall(`/api/nova/saved/collections/${encodeURIComponent(id)}`, 'DELETE')

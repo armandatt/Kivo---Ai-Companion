@@ -34,19 +34,76 @@ const ADDRESS_MAX        = 2048
 
 // Runs inside the page. It must not use anything from this file: the browser
 // copies the function's text into the page. It returns the text the learner
-// has selected and the address the page gives as its canonical one, and reads
-// nothing else: no page text, no forms, no cookies, no storage.
+// has selected, the address the page gives as its canonical one, and what the
+// page publicly says about itself in its metadata tags (description, preview
+// image, author, dates, type, a video's length: <meta> tags and JSON-LD), so
+// Saved can show what the page is (1.3.0). It reads nothing else: no page
+// text, no forms, no cookies, no storage.
 export function probePage() {
   const selected  = window.getSelection ? String(window.getSelection()) : ''
   const canonical = document.querySelector('link[rel~="canonical"][href]')
-  return { selection: selected.slice(0, 4200), canonical: canonical ? canonical.href : null }
+  const tag = selectors => {
+    for (const selector of selectors) {
+      const el = document.querySelector(selector)
+      const value = el && (el.getAttribute('content') || el.getAttribute('href'))
+      if (value) return value.slice(0, 1000)
+    }
+    return ''
+  }
+  const types = []
+  const ogType = tag(['meta[property="og:type"]'])
+  if (ogType) types.push(ogType)
+  let published = '', author = '', duration = ''
+  // JSON-LD: the page's structured description of itself. Its type, dates, author, length.
+  for (const script of Array.from(document.querySelectorAll('script[type="application/ld+json"]')).slice(0, 4)) {
+    let data
+    try { data = JSON.parse(String(script.textContent).slice(0, 100000)) } catch { continue }
+    const items = [].concat(data && data['@graph'] ? data['@graph'] : data).slice(0, 8)
+    for (const item of items) {
+      if (!item || typeof item !== 'object') continue
+      for (const t of [].concat(item['@type'] || [])) if (typeof t === 'string') types.push(t)
+      if (!published && typeof item.datePublished === 'string') published = item.datePublished
+      if (!duration && typeof item.duration === 'string') duration = item.duration
+      const by = [].concat(item.author || [])[0]
+      if (!author && by) author = typeof by === 'string' ? by : typeof by.name === 'string' ? by.name : ''
+    }
+  }
+  return {
+    selection: selected.slice(0, 4200), canonical: canonical ? canonical.href : null,
+    meta: {
+      description: tag(['meta[property="og:description"]', 'meta[name="description"]', 'meta[name="twitter:description"]']),
+      imageUrl: tag(['meta[property="og:image:secure_url"]', 'meta[property="og:image"]', 'meta[name="twitter:image"]']),
+      author: author || tag(['meta[name="author"]', 'meta[name="citation_author"]', 'span[itemprop="author"] link[itemprop="name"]', 'meta[property="article:author"]']),
+      siteName: tag(['meta[property="og:site_name"]', 'meta[name="application-name"]']),
+      publishedAt: published || tag(['meta[property="article:published_time"]', 'meta[name="citation_publication_date"]', 'meta[itemprop="datePublished"]', 'meta[name="date"]']),
+      duration: duration || tag(['meta[itemprop="duration"]']),
+      types: types.slice(0, 12),
+      citation: Boolean(document.querySelector('meta[name="citation_title"]')),
+    },
+  }
+}
+
+// What a page said about itself, kept to its fields and their sizes. The
+// server checks it again (resource-meta.ts readPageMeta).
+function readMeta(raw) {
+  const m = raw && typeof raw === 'object' ? raw : {}
+  const text = (v, max) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '')
+  const meta = {
+    description: text(m.description, 500), imageUrl: text(m.imageUrl, 1000), author: text(m.author, 200), siteName: text(m.siteName, 120),
+    publishedAt: text(m.publishedAt, 40), duration: text(m.duration, 40),
+    types: Array.isArray(m.types) ? m.types.filter(t => typeof t === 'string' && t.length <= 60).slice(0, 6) : [],
+    citation: m.citation === true,
+  }
+  for (const k of Object.keys(meta)) if (meta[k] === '' || (Array.isArray(meta[k]) && meta[k].length === 0)) delete meta[k]
+  if (meta.citation === false) delete meta.citation
+  return Object.keys(meta).length ? meta : null
 }
 
 /**
  * What the probe returned, as data the popup can trust the shape of.
  * @param {unknown} raw
  * @param {number} max the longest passage Nova keeps
- * @returns {{ available: true, selection: string, tooLong: boolean, canonicalUrl: string | null }}
+ * @returns {{ available: true, selection: string, tooLong: boolean, canonicalUrl: string | null, meta: object | null }}
  */
 export function readProbe(raw, max) {
   const value = raw && typeof raw === 'object' ? raw : {}
@@ -59,10 +116,10 @@ export function readProbe(raw, max) {
     } catch { /* not an address: left out */ }
   }
   const tooLong = text.length > max
-  return { available: true, selection: tooLong ? '' : text, tooLong, canonicalUrl }
+  return { available: true, selection: tooLong ? '' : text, tooLong, canonicalUrl, meta: readMeta(value.meta) }
 }
 
-export const NO_PROBE = { available: false, selection: '', tooLong: false, canonicalUrl: null }
+export const NO_PROBE = { available: false, selection: '', tooLong: false, canonicalUrl: null, meta: null }
 
 export const browser = {
   storage: () => chrome.storage.local,

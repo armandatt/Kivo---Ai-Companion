@@ -26,6 +26,7 @@ import { jsonObjectIn, logContext, logModelFailure, modelFailure, timeLeft, unre
 import { surfaceLanguageLine, type ReplyLanguage } from "./surface-language";
 import { imageRefsIn, MODEL_IMAGES_MAX, NOTE_IMAGE_SCHEME, noteImagesForModel, readImageIds } from "./note-images";
 import { imageLine } from "./note-image-prompt";
+import { formattingMarks } from "./note-colors";
 import { TUTOR_SELECTION_MAX } from "./note-tutor.types";
 import { NOTE_BODY_MAX } from "./notes.types";
 
@@ -102,6 +103,7 @@ const SYSTEM = [
   "- Put new material where it belongs: under the heading it is about, near the passage it explains, a summary near the top (after the title's own text) or in a section called Summary. Make a new heading for a new subtopic, at the right level under its parent.",
   "- Structure: propose headings (#, ##, ###) and order for what is there, by replacing the blocks concerned with the same words under the new headings. Keep every sentence.",
   "- Images in the note are lines like ![caption](kivo-image:ID). Never remove, move into other text or rewrite such a line, and never write one with an ID you were not given; a replacement of blocks that hold one keeps that line exactly. To put an attached image into the note, write its line as given in IMAGES, on a line of its own, where it belongs.",
+  "- Colour and highlights are the learner's: [words]{.blue} (words in a colour), [words]{.hl-amber} and ==words== (highlights). Keep every one on the same words when you reword around them; never remove one unless asked to; add one only when the request is about colour or emphasis, using only these names: accent, blue, teal, amber, green, red, muted (hl- before a name for a highlight).",
   "- Keep Markdown as the note uses it: '# ' headings, '- ' lists, **bold**, `code`, ``` code blocks, > [!type] callouts, [[links]], $maths$. Preserve code and links exactly.",
   "- If you cannot tell where something should go or what is meant, ask one short question (question) and propose no changes.",
   "- EARLIER IN THIS CONVERSATION lists what the learner asked before and what came of it. Use it to understand what the new request refers to (\"the same for the next section\", \"shorter than that\", an answer to your question) and keep to what they decided earlier unless they change it. Changes marked applied are already in the NOTE: the NOTE as given is the current text, and the only text you change.",
@@ -242,6 +244,8 @@ export function interpretEditReply(raw: string, request: ParsedEdit, body: strin
     const before = body.slice(first.start, last.end);
     const text = c.op === "delete" ? "" : clean(c.text, TEXT_MAX);
     if (c.op === "replace" && (!text || text === before.trim())) continue;
+    // A rewrite that keeps none of the colouring of what it replaces (12 Nov).
+    if (c.op === "replace" && formattingMarks(before) > 0 && formattingMarks(text) === 0) { say("a change that would remove your colours or highlights"); continue; }
     if (losesImage(before, text)) { say("a change that would remove an image from your note (remove an image yourself if you mean to)"); continue; }
     if (unknownImage(text)) { say("an image that isn't in your note"); continue; }
     for (const id of ids) used.add(id);

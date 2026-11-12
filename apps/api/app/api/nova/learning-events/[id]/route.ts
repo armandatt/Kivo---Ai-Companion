@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 //@ts-ignore
-import { fileSavedResource, getLearningResource, removeSavedResource } from "@repo/api/nova/product/learning-events"
+import { fileSavedResource, getLearningResource, organizeResource, removeSavedResource } from "@repo/api/nova/product/learning-events"
+//@ts-ignore
+import { ownsCollection } from "@repo/api/nova/product/resource-collections"
 import { readSmallJson, requireWebLearner } from "../../../../../lib/nova/extension-access"
 
 export const runtime = "nodejs"
@@ -32,6 +34,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 //   { undo: true }              undo a link Nova made
 //   { unfile: true }            filed under nothing (the page stays saved)
 //   { dismiss: { subjectId, topicName } }   take one suggestion off the list
+//   { organize: { readingStatus?, tags?, collectionId?, personalNote? } }   the library (12 Nov)
 // Response: ResourceUpdateResponse. It files a page and nothing else: no
 // topic is created and nothing is recorded about what the learner knows.
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -41,10 +44,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
       return NextResponse.json({ ok: false, error: "invalid", message: "That isn't something Nova can do." }, { status: 400 })
     }
-    const read = await readSmallJson(req, 1024)
+    // Room for a personal note (2,000 characters) and a dozen tags.
+    const read = await readSmallJson(req, 8 * 1024)
     const body = read.ok && read.body && typeof read.body === "object" && !Array.isArray(read.body) ? read.body as Record<string, unknown> : null
     if (!body) return NextResponse.json({ ok: false, error: "invalid", message: "That isn't something Nova can do." }, { status: 400 })
     const { id } = await params
+    // The library: reading status, tags, collection, a note of their own.
+    if (body.organize && typeof body.organize === "object") {
+      const result = await organizeResource(access.profileId, id, body.organize, ownsCollection)
+      return NextResponse.json(result, { status: result.ok ? 200 : result.error === "not_found" ? 404 : 400 })
+    }
     const change = body.keep === true ? { kind: "keep" as const }
       : body.unfile === true ? { kind: "unfile" as const }
       : body.undo === true ? { kind: "undo" as const }

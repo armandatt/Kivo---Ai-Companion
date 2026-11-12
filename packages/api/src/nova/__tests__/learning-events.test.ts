@@ -143,8 +143,14 @@ describe("what a learning event may carry", () => {
       mastery: 1, masteryProbability: 1, outcome: "crushed_it", durationMinutes: 600, status: "completed",
       body: "the whole page text", html: "<html>…</html>", cookies: "session=abc", metadata: { anything: "at all" }, formInputs: { password: "hunter2" },
     });
-    expect(Object.keys(parsed).sort()).toEqual(["canonicalUrl", "clientEventId", "domain", "eventType", "excerpt", "occurredAt", "subjectId", "title", "topicName", "url"]);
+    expect(Object.keys(parsed).sort()).toEqual(["canonicalUrl", "clientEventId", "domain", "eventType", "excerpt", "meta", "occurredAt", "subjectId", "title", "topicName", "url"]);
     expect(parsed.excerpt).toBeNull();
+    // `meta` (12 Nov) is only what the page's metadata tags said, through its own
+    // field and checked; a bag under any other name gives nothing.
+    expect(parsed.meta).toEqual({ description: null, imageUrl: null, author: null, siteName: null, publishedAt: null, durationSeconds: null, declaredTypes: [], citation: false });
+    const tagged = ok({ meta: { description: "From the og:description tag.", body: "the whole page text", cookies: "session=abc" } });
+    expect(tagged.meta.description).toBe("From the og:description tag.");
+    expect(JSON.stringify(tagged.meta)).not.toMatch(/whole page|session=abc/);
     expect(JSON.stringify(parsed)).not.toMatch(/someone-else|rex|trusted_internal|whole page|hunter2|session=abc|crushed_it/);
   });
 

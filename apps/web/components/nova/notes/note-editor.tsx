@@ -31,7 +31,8 @@ import type { Taken } from './pdf-reader'
 import { ReaderSendDialog, type AddToCurrent } from './reader-send-dialog'
 import { addInto } from './reader-send'
 import { NoteCreate, type StartChoice } from './note-create'
-import { callout, divider, noteLink, prefixLines, tag, wrap, type Edited } from './note-format'
+import { callout, clearColor, colorize, divider, noteLink, prefixLines, tag, wrap, type Edited } from './note-format'
+import { ColorMenu } from './color-menu'
 import { NotesTree } from './notes-tree'
 import { novaModeCommands, useNotesCommands } from './notes-commands'
 import { modLabel } from './notes-shortcuts'
@@ -1174,6 +1175,9 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
                     <tool.icon className="size-4" />
                   </button>
                 ))}
+              <ColorMenu disabled={layout === 'preview'} buttonClass={iconButton()}
+                onPick={(color, highlight) => format((t, s0, x) => colorize(t, s0, x, color, highlight))}
+                onClear={() => format((t, s0, x) => clearColor(t, s0, x))} />
               <div role="tablist" aria-label="Write or preview" className="ml-auto inline-flex rounded-lg border border-white/10 p-0.5 text-xs">
                 {(['write', 'split', 'preview'] as const).map(l => (
                   <button key={l} type="button" role="tab" aria-selected={layout === l} onClick={() => setPrefs({ layout: l })}
@@ -1210,7 +1214,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
               </p>
             )}
             <p className="mt-3 text-[11px] leading-relaxed text-foreground/40">
-              # heading · **bold** · ==highlight== · [[Title]] links a note · #tag · &gt; [!quote] starts a callout ([!idea], [!question], [!warning], [!summary], [!definition])
+              # heading · **bold** · ==highlight== · [words]{"{"}.blue{"}"} colour · - [ ] checklist · [[Title]] links a note · #tag · &gt; [!quote] starts a callout ([!idea], [!question], [!warning], [!summary], [!definition])
             </p>
           </div>
         </div>

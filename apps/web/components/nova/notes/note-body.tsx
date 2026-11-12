@@ -9,12 +9,12 @@
 import Link from 'next/link'
 import { useState, type ReactNode } from 'react'
 import {
-  AlertTriangle, BookOpen, BookOpenText, ChevronRight, ExternalLink, FileText, FlaskConical, HelpCircle, KeyRound, Lightbulb, ListChecks, NotebookPen, Quote,
+  AlertTriangle, BookOpen, BookOpenText, Check, ChevronRight, ExternalLink, FileText, FlaskConical, HelpCircle, KeyRound, Lightbulb, ListChecks, NotebookPen, Quote,
 } from 'lucide-react'
 import { linkKey, tokenizeLine } from '@repo/api/nova/product/note-links'
 import type { NoteLinkRef } from '@repo/api/nova/product/notes.types'
 import { PAPER_STATUS_WORDS, paperRegion, readPaperCard, type PaperCard } from '@repo/api/nova/product/paper-source'
-import { inlineTokens, parseBlocks, type Block, type CalloutType } from './note-blocks'
+import { checkItem, inlineTokens, parseBlocks, type Block, type CalloutType } from './note-blocks'
 import { Tex } from './tex'
 
 // cite: Nova's text (the tutor) marks what a claim rests on with [S1], [S2]…;
@@ -54,11 +54,15 @@ function inline(text: string, key: string): ReactNode[] {
       case 'text':      return t.text
       case 'bold':      return <strong key={k} className="font-semibold text-foreground">{t.text}</strong>
       case 'italic':    return <em key={k} className="italic">{t.text}</em>
-      case 'highlight': return <mark key={k} className="rounded-[3px] bg-yellow-300/25 px-0.5 text-inherit [box-decoration-break:clone]" data-note-highlight>{t.text}</mark>
-      case 'code':      return <code key={k} className="rounded bg-white/8 px-1 py-0.5 font-mono text-[0.86em]">{t.text}</code>
+      case 'highlight': return <mark key={k} className="note-hl hl-amber" data-note-highlight>{t.text}</mark>
+      // Colour (note-colors.ts): the words keep their own bold, italic and links.
+      case 'color':     return t.highlight
+        ? <mark key={k} className={`note-hl hl-${t.color}`} data-note-highlight={t.color}>{inline(t.text, k)}</mark>
+        : <span key={k} className={`ink-${t.color}`} data-note-color={t.color}>{inline(t.text, k)}</span>
+      case 'code':      return <code key={k} className="note-code rounded-[5px] px-[0.35em] py-[0.1em] font-mono text-[0.86em]">{t.text}</code>
       case 'math':      return t.display ? <span key={k} className="my-2 block"><Tex tex={t.text} display /></span> : <Tex key={k} tex={t.text} />
       case 'tag':       return <span key={k} className="mx-0.5 inline-block rounded-full bg-orange-400/15 px-2 py-px align-[0.08em] font-sans text-[0.8em] font-medium text-orange-300" data-note-tag={t.text}>#{t.text}</span>
-      case 'url':       return <a key={k} href={t.href} target="_blank" rel="noopener noreferrer" className="break-all text-keppel-300 underline decoration-keppel-300/40 underline-offset-2 hover:decoration-keppel-300">{t.text}</a>
+      case 'url':       return <a key={k} href={t.href} target="_blank" rel="noopener noreferrer" className="note-link break-all underline underline-offset-2">{t.text}</a>
     }
   })
 }
@@ -92,7 +96,7 @@ function line(text: string, key: string, resolve: Resolve): ReactNode[] {
         title={missing ? `No note called "${t.target}" yet. Open to write it.` : undefined}
         className={missing
           ? 'text-foreground/60 underline decoration-dashed decoration-foreground/30 underline-offset-2 hover:text-foreground'
-          : 'text-keppel-300 underline decoration-keppel-300/40 underline-offset-2 hover:decoration-keppel-300'}>
+          : 'note-link underline underline-offset-2'}>
         {t.text}
       </Link>,
     ]
@@ -139,10 +143,23 @@ function render(blocks: Block[], key: string, resolve: Resolve, nested = false):
     switch (b.kind) {
       case 'para': return <p key={k} className={`my-3 ${edge}`} {...span}>{lines(b.lines, k, resolve)}</p>
       case 'list': {
-        const items = b.items.map((it, j) => <li key={`${k}-${j}`} className="my-1 pl-1">{line(it, `${k}-${j}`, resolve)}</li>)
+        // A list whose items are all "[ ]" / "[x]" is a checklist: boxes, the
+        // done ones quieter. Shown, not ticked here: the text is the record.
+        const checks = b.items.map(checkItem)
+        if (!b.ordered && checks.every(Boolean)) return (
+          <ul key={k} className={`my-3 space-y-1 ${edge}`} {...span} data-note-checklist>
+            {checks.map((c, j) => (
+              <li key={`${k}-${j}`} className={`flex items-start gap-2.5 ${c!.done ? 'text-[color:var(--note-soft)] line-through decoration-[color:var(--note-rule)]' : ''}`} data-checked={c!.done ? 'true' : 'false'}>
+                <span aria-hidden className={`mt-[0.32em] grid size-[1.05em] shrink-0 place-items-center rounded-[4px] border ${c!.done ? 'border-transparent bg-[color:var(--nova)] text-background' : 'border-[color:var(--note-soft)]'}`}>{c!.done && <Check className="size-[0.75em]" strokeWidth={3} />}</span>
+                <span className="min-w-0"><span className="sr-only">{c!.done ? 'Done: ' : 'To do: '}</span>{line(c!.text, `${k}-${j}`, resolve)}</span>
+              </li>
+            ))}
+          </ul>
+        )
+        const items = b.items.map((it, j) => <li key={`${k}-${j}`} className="my-1 pl-1.5">{line(it, `${k}-${j}`, resolve)}</li>)
         return b.ordered
-          ? <ol key={k} className={`my-3 list-decimal space-y-0.5 pl-6 marker:text-foreground/40 ${edge}`} {...span}>{items}</ol>
-          : <ul key={k} className={`my-3 list-disc space-y-0.5 pl-6 marker:text-keppel-400/60 ${edge}`} {...span}>{items}</ul>
+          ? <ol key={k} className={`my-3 list-decimal space-y-1 pl-6 ${edge}`} {...span}>{items}</ol>
+          : <ul key={k} className={`my-3 list-disc space-y-1 pl-6 ${edge}`} {...span}>{items}</ul>
       }
       case 'math': return (
         <div key={k} className={`my-4 flex items-start gap-3 ${edge}`} {...span} data-note-math-block>
@@ -157,22 +174,24 @@ function render(blocks: Block[], key: string, resolve: Resolve, nested = false):
         </figure>
       )
       case 'code': return <pre key={k} className={`my-4 overflow-x-auto rounded-lg border border-white/6 bg-white/[0.03] px-4 py-3 font-mono text-[13px] leading-relaxed text-foreground/85 ${edge}`} {...span}><code>{b.text}</code></pre>
-      case 'quote': return <blockquote key={k} className={`my-4 border-l-2 border-foreground/20 pl-4 italic text-foreground/70 ${edge}`} {...span}>{lines(b.lines, k, resolve)}</blockquote>
-      case 'rule': return <hr key={k} className="my-8 border-white/10" {...span} />
+      case 'quote': return <blockquote key={k} className={`note-quote my-5 border-l-2 pl-4 italic ${edge}`} {...span}>{lines(b.lines, k, resolve)}</blockquote>
+      case 'rule': return <hr key={k} className="note-rule my-9" {...span} />
       case 'callout': return <Callout key={k} block={b} k={k} resolve={resolve} span={span} />
       case 'table': return (
-        <div key={k} className={`my-4 overflow-x-auto rounded-lg border border-white/8 ${edge}`} {...span}>
-          <table className="w-full border-collapse text-[0.92em]">
-            <thead><tr>{b.head.map((h, j) => <th key={j} className="border-b border-white/10 bg-white/[0.03] px-3 py-2 text-left font-semibold text-foreground">{line(h, `${k}h${j}`, resolve)}</th>)}</tr></thead>
-            <tbody>{b.rows.map((r, j) => <tr key={j} className="border-t border-white/6 first:border-t-0">{r.map((c, x) => <td key={x} className="px-3 py-2 align-top">{line(c, `${k}r${j}c${x}`, resolve)}</td>)}</tr>)}</tbody>
+        <div key={k} className={`my-5 overflow-x-auto rounded-xl border border-[color:var(--note-rule)] ${edge}`} {...span}>
+          <table className="w-full border-collapse text-[0.92em] leading-normal">
+            <thead><tr>{b.head.map((h, j) => <th key={j} className="border-b border-[color:var(--note-rule)] bg-[color:var(--note-code-bg)] px-3.5 py-2 text-left font-sans text-[0.86em] font-semibold tracking-wide text-[color:var(--note-strong)]">{line(h, `${k}h${j}`, resolve)}</th>)}</tr></thead>
+            <tbody>{b.rows.map((r, j) => <tr key={j} className="border-t border-[color:var(--note-rule)] first:border-t-0 even:bg-[color:color-mix(in_oklch,var(--foreground)_3%,transparent)]">{r.map((c, x) => <td key={x} className="px-3.5 py-2 align-top">{line(c, `${k}r${j}c${x}`, resolve)}</td>)}</tr>)}</tbody>
           </table>
         </div>
       )
       case 'heading': {
         const content = line(b.text, k, resolve)
-        if (b.level === 1) return <h2 key={k} id={b.id} {...span} className={`mb-3 mt-10 scroll-mt-24 font-serif text-[1.75em] font-semibold leading-tight tracking-tight text-keppel-200 ${edge}`}>{content}</h2>
-        if (b.level === 2) return <h3 key={k} id={b.id} {...span} className={`mb-2 mt-8 scroll-mt-24 font-serif text-[1.35em] font-semibold leading-snug text-foreground ${edge}`}>{content}</h3>
-        return <h4 key={k} id={b.id} {...span} className={`mb-1.5 mt-6 scroll-mt-24 text-[1.08em] font-semibold text-foreground/90 ${edge}`}>{content}</h4>
+        // Three steps, set by size and weight: the first with Kivo's one accent
+        // rule under it, the third in the sans face, a little quieter.
+        if (b.level === 1) return <h2 key={k} id={b.id} {...span} className={`note-h1 mb-4 mt-11 scroll-mt-24 font-serif text-[1.7em] font-semibold leading-[1.2] tracking-[-0.01em] ${edge}`}>{content}</h2>
+        if (b.level === 2) return <h3 key={k} id={b.id} {...span} className={`note-h2 mb-2.5 mt-9 scroll-mt-24 font-serif text-[1.3em] font-semibold leading-snug ${edge}`}>{content}</h3>
+        return <h4 key={k} id={b.id} {...span} className={`note-h3 mb-1.5 mt-7 scroll-mt-24 font-sans text-[1.04em] font-semibold ${edge}`}>{content}</h4>
       }
     }
   })
@@ -291,7 +310,7 @@ export function NoteBody({ body, links, serif = false, cite, compact = false, ti
   } else content = render(blocks, 'n', resolve)
   return (
     <div
-      className={`break-words text-foreground/85 [&>*:first-child]:mt-0 ${compact ? '[&>*:last-child]:mb-0 text-[14px] leading-relaxed [&_h2]:mt-5 [&_h2]:text-[1.2em] [&_h3]:mt-4 [&_h3]:text-[1.08em] [&_p]:my-2' : serif ? 'font-serif text-[17px] leading-[1.8]' : 'text-[15px] leading-relaxed'}`}
+      className={`note-prose break-words [&>*:first-child]:mt-0 ${compact ? '[&>*:last-child]:mb-0 text-[14px] leading-relaxed [&_h2]:mt-5 [&_h2]:text-[1.2em] [&_h2]:after:hidden [&_h3]:mt-4 [&_h3]:text-[1.08em] [&_p]:my-2' : serif ? 'font-serif text-[17px] leading-[1.8] [&_p]:my-4' : 'text-[15.5px] leading-[1.75] [&_p]:my-3.5'}`}
       data-note-body
     >
       {content}

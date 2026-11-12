@@ -31,8 +31,11 @@ export const EVENT_ID_MIN    = 16;
 export const EVENT_ID_MAX    = 64;
 export const EVENTS_PER_MINUTE = 20;
 
-// What the extension sends. Every other field in the request is ignored:
-// there is no metadata bag, and no field names whose event this is.
+// What the extension sends. Every other field in the request is ignored, and
+// no field names whose event this is. `meta` (extension 1.3.0, 12 Nov) is what
+// the page says about itself in its public metadata tags, read by the
+// extension when the learner saves; each field is checked and bounded
+// (resource-meta.ts readPageMeta) and the save never depends on it.
 export interface LearningEventInput {
   eventType:     LearningEventType;
   // Made up by the client for this one action. A retry sends the same id.
@@ -44,7 +47,21 @@ export interface LearningEventInput {
   topicName?:    string | null;     // needs a subject
   canonicalUrl?: string | null;     // the page's own canonical link, if it has one
   excerpt?:      string | null;     // selection_saved only: the selected passage
+  meta?:         PageMetaInput | null;
 }
+
+export interface PageMetaInput {
+  description?: string; imageUrl?: string; author?: string; siteName?: string;
+  publishedAt?: string;          // ISO date
+  duration?:    string | number; // ISO 8601 ("PT12M3S") or seconds
+  types?:       string[];        // schema.org @type and og:type, as declared
+  citation?:    boolean;         // the page has scholarly citation_* tags
+}
+
+// The library's words (resource-meta.ts holds the lists).
+export type ResourceKind = "article" | "video" | "paper" | "documentation" | "tutorial" | "blog" | "news" | "page";
+export type ReadingStatusName = "unread" | "reading" | "done";
+export interface ResourceCollectionRef { id: string; name: string }
 
 // ── What processing found ─────────────────────────────────────────────────────
 // A saved page is looked at once, in the background, for what it connects to
@@ -100,6 +117,20 @@ export interface LearningResource {
   // "nova": Nova filed it here from a name match; the learner can keep or undo it.
   filedBy:      "learner" | "nova" | null;
   processing:   ResourceProcessing;
+  // The library (12 Nov). Optional: the web app ships before the API.
+  resourceType?:    ResourceKind;
+  description?:     string | null;
+  // An https preview image the page named (or a YouTube video's own); shown
+  // with no referrer. null: none, and the card shows the site instead.
+  imageUrl?:        string | null;
+  author?:          string | null;
+  siteName?:        string | null;
+  publishedAt?:     string | null;
+  durationSeconds?: number | null;
+  readingStatus?:   ReadingStatusName;
+  tags?:            string[];
+  collection?:      ResourceCollectionRef | null;
+  personalNote?:    string | null;
   // Whether a session can be started from it as it stands. A session needs
   // a subject and a topic to be tied to anything.
   study: { available: boolean; blockedBy: "no_subject" | "no_topic" | null; minutes: number };
@@ -133,7 +164,32 @@ export type NovaSavedResourcesView =
   | NovaSavedResourcesReady
   | { status: "not_nova" } | { status: "not_connected" } | { status: "onboarding_incomplete" };
 
+// GET /api/nova/saved  The library, a page at a time, searched and filtered on the server.
+export type LibrarySort = "recent" | "oldest" | "title" | "type";
+export interface LibraryQuery {
+  q?: string; type?: ResourceKind; collectionId?: string | "none"; tag?: string; status?: ReadingStatusName;
+  domain?: string; savedWithinDays?: number; sort?: LibrarySort; cursor?: string; limit?: number;
+}
+export interface LibraryFacets {
+  total:       number;                                  // everything saved, before filters
+  types:       Partial<Record<ResourceKind, number>>;
+  statuses:    Partial<Record<ReadingStatusName, number>>;
+  collections: Array<ResourceCollectionRef & { count: number }>;
+  unfiled:     number;                                  // in no collection
+  tags:        Array<{ tag: string; count: number }>;   // most used first
+  domains:     Array<{ domain: string; count: number }>;
+}
+export type LibraryResponse =
+  | { status: "ready"; items: LearningResource[]; matched: number; nextCursor: string | null; facets: LibraryFacets }
+  | { status: "not_nova" } | { status: "not_connected" } | { status: "onboarding_incomplete" };
+
+// /api/nova/saved/collections
+export type CollectionResponse =
+  | { ok: true; collections: Array<ResourceCollectionRef & { count: number }>; collection?: ResourceCollectionRef }
+  | { ok: false; error: "invalid" | "exists" | "not_found" | "too_many" | "failed" | "unauthenticated"; message: string };
+
 // PATCH /api/nova/learning-events/[id]  { subjectId, topicName } | { keep: true } | { undo: true } | { dismiss: { subjectId, topicName } }
+//   | { organize: { readingStatus?, tags?, collectionId?, personalNote? } }  (the library, 12 Nov)
 // POST  /api/nova/learning-events/[id]/process
 export type ResourceUpdateResponse =
   | { ok: true; resource: LearningResource }

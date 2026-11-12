@@ -238,7 +238,7 @@ function renderReady(page, context, probe = NO_PROBE, flash = null, { regionShot
             : "This isn't a web page Nova can save. Open it on an article, a video, a problem: anything with an ordinary address.")),
         footer()))
   }
-  page = { ...page, canonicalUrl: probe.canonicalUrl }
+  page = { ...page, canonicalUrl: probe.canonicalUrl, meta: probe.meta }
 
   // One id per kind of action. A retry after a lost answer repeats the id,
   // so Nova stores the action once. A new id is made after it succeeds.
