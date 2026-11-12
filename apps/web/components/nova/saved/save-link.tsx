@@ -82,23 +82,25 @@ export function SaveLink({ subjects, resources, capture, onSaved }: {
   }
 
   return (
-    <section className="rounded-3xl border border-white/8 bg-card/70 p-5 sm:p-7" data-section="save-link" data-state={draft ? 'review' : done ? 'done' : 'enter'}>
-      <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+    <section className={draft ? 'rounded-2xl border border-white/8 bg-card/60 p-5 sm:p-6' : ''} data-section="save-link" data-state={draft ? 'review' : done ? 'done' : 'enter'}>
+      {/* While a link is entered the field says what it is for; the heading
+          shows once there is a link to review. */}
+      <h2 className={draft ? 'flex items-center gap-2 text-base font-semibold text-foreground' : 'sr-only'}>
         <Link2 className="size-4 text-keppel-300" aria-hidden /> Save a link
       </h2>
 
       {!draft && (
-        <form className="mt-4" noValidate onSubmit={e => { e.preventDefault(); review(address, null) }}>
+        <form noValidate onSubmit={e => { e.preventDefault(); review(address, null) }}>
           <label htmlFor={`${id}-address`} className="sr-only">Page address</label>
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="flex gap-2">
             <input
               id={`${id}-address`} type="url" inputMode="url" autoComplete="off" autoCapitalize="none" spellCheck={false}
               value={address} onChange={e => { setAddress(e.target.value); setProblem(null) }}
-              placeholder="Paste a page address" aria-invalid={problem !== null} aria-describedby={problem ? `${id}-problem` : undefined}
-              className="h-11 min-w-0 flex-1 rounded-xl border border-white/10 bg-background px-3 text-sm text-foreground placeholder:text-foreground/30"
+              placeholder="Paste a link to save it" aria-invalid={problem !== null} aria-describedby={problem ? `${id}-problem` : undefined}
+              className="h-10 min-w-0 flex-1 rounded-lg border border-white/10 bg-card/50 px-3 text-sm text-foreground placeholder:text-foreground/40 transition-colors hover:border-white/20 focus:border-white/30 focus:outline-none"
               data-link-input
             />
-            <button type="submit" className="inline-flex h-11 shrink-0 items-center justify-center rounded-xl bg-keppel-400 px-5 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300" data-link-review>
+            <button type="submit" className="inline-flex h-10 shrink-0 items-center justify-center rounded-lg border border-white/12 px-4 text-sm font-medium text-foreground/85 transition-colors hover:border-white/25 hover:bg-white/5 hover:text-foreground" data-link-review>
               Review
             </button>
           </div>
@@ -156,7 +158,7 @@ export function SaveLink({ subjects, resources, capture, onSaved }: {
           )}
 
           <div className="flex flex-wrap items-center gap-2">
-            <button type="submit" disabled={saving} className="inline-flex h-11 items-center justify-center rounded-xl bg-keppel-400 px-5 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300 disabled:opacity-60" data-link-save>
+            <button type="submit" disabled={saving} className="inline-flex h-11 items-center justify-center rounded-xl bg-action px-5 text-sm font-semibold text-action-foreground transition-colors hover:bg-action-hover disabled:opacity-60" data-link-save>
               {saving ? 'Saving…' : error ? 'Try again' : already ? 'Update saved page' : 'Save to Kivo'}
             </button>
             <button type="button" disabled={saving} onClick={() => { setDraft(null); setError(null) }} className="inline-flex h-11 items-center justify-center rounded-xl border border-white/12 px-5 text-sm text-foreground/75 transition-colors hover:bg-white/5 disabled:opacity-60">

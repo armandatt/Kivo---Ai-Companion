@@ -1,0 +1,66 @@
+<!doctype html>
+<!-- Chrome Web Store images for Nova, laid out around genuine screenshots in
+     raw/ (captured from the running app and extension with the researcher
+     demo workspace). Open compose.html?shot=1 … 5, ?shot=promo or
+     ?shot=marquee at the exact size and screenshot the page. Nothing here is
+     drawn to look like the product: every product pixel is a capture. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg: #0b0d12; --ink: #f2f4f7; --dim: #9aa3b0; --teal: #3fb6a8; --line: rgba(255,255,255,.1); }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { background: var(--bg); color: var(--ink); font-family: "Inter", "SF Pro Display", -apple-system, "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; overflow: hidden; }
+  .frame { position: relative; overflow: hidden; background:
+      radial-gradient(70% 90% at 0% 0%, rgba(63,182,168,.20), transparent 60%),
+      radial-gradient(60% 70% at 100% 100%, rgba(63,182,168,.10), transparent 60%), var(--bg); }
+  .frame::after { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: radial-gradient(rgba(255,255,255,.05) 1px, transparent 1px); background-size: 22px 22px; mask-image: linear-gradient(180deg, rgba(0,0,0,.6), transparent 55%); }
+  .brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; color: var(--dim); letter-spacing: -.01em; }
+  .brand .tile { width: 30px; height: 30px; border-radius: 8px; background: #fff; display: grid; place-items: center; }
+  h1 { font-size: 54px; line-height: 1.04; font-weight: 650; letter-spacing: -.035em; }
+  h1 em { font-style: normal; color: var(--teal); }
+  p.sub { margin-top: 14px; font-size: 22px; line-height: 1.4; color: var(--dim); letter-spacing: -.01em; }
+  .window { position: absolute; overflow: hidden; border-radius: 16px; border: 1px solid var(--line); background: #0f1116; box-shadow: 0 40px 80px -30px rgba(0,0,0,.8), 0 0 0 1px rgba(0,0,0,.4); }
+  .window img { position: absolute; display: block; }
+  .popup { position: absolute; overflow: hidden; border-radius: 14px; border: 1px solid rgba(255,255,255,.14); box-shadow: 0 30px 70px -20px rgba(0,0,0,.85), 0 0 0 1px rgba(0,0,0,.5); }
+  .popup img { display: block; width: 100%; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const MARK = '<svg viewBox="0 0 32 32" width="20" height="20"><circle cx="16" cy="16" r="4" fill="#0D1117"/><path d="M16 7 A9 9 0 0 1 25 16" stroke="#0D1117" stroke-width="1.6" stroke-linecap="round" fill="none" opacity=".5"/><path d="M16 25 A9 9 0 0 1 7 16" stroke="#0D1117" stroke-width="1.6" stroke-linecap="round" fill="none" opacity=".25"/><circle cx="25" cy="16" r="1.8" fill="#3FB6A8"/></svg>'
+const brand = `<div class="brand"><span class="tile">${MARK}</span>Nova · Kivo</div>`
+// A capture (2x, 2880x1800 for app pages) shown at `scale`, cropped by its top-left corner.
+const win = ({ src, x, y, w, h, cx = 0, cy = 0, scale = 0.5, natW = 2880 }) =>
+  `<div class="window" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"><img src="raw/${src}" style="width:${natW * scale}px;left:${-cx * scale}px;top:${-cy * scale}px"></div>`
+const text = (title, sub, x = 72, y = 64, w = 1136) =>
+  `<div style="position:absolute;z-index:2;left:${x}px;top:${y}px;width:${w}px">${brand}<h1 style="margin-top:22px">${title}</h1><p class="sub">${sub}</p></div>`
+
+// Sidebar of the app is 280px wide (560 at 2x); crops start right of it.
+const SHOTS = {
+  1: () => text('Save what you <em>discover</em>.', 'One click saves the page, or a passage you selected, to Kivo.', 72, 64, 420)
+        + win({ src: 'arxiv.png', x: 540, y: 70, w: 820, h: 800, cx: 0, cy: 0, scale: 0.55, natW: 2560 })
+        + `<div class="popup" style="left:800px;top:150px;width:390px">${'<img src="raw/popup.png">'}</div>`,
+  2: () => text('Everything you save, <em>in one place</em>.', 'Search, tag and sort the pages, papers and passages you keep.')
+        + win({ src: 'library.png', x: 72, y: 268, w: 1136, h: 620, cx: 580, cy: 268, scale: 0.5 }),
+  3: () => text('See how your <em>ideas connect</em>.', 'What you save and write is filed on your Knowledge Map.')
+        + win({ src: 'map.png', x: 72, y: 268, w: 1136, h: 620, cx: 600, cy: 300, scale: 0.5 }),
+  4: () => text('Study it <em>with Nova</em>.', 'Write notes from what you saved, and ask Nova as you read.')
+        + win({ src: 'note.png', x: 72, y: 268, w: 1136, h: 620, cx: 580, cy: 0, scale: 0.5 }),
+  5: () => text('Turn reading into <em>progress</em>.', 'Study this starts a focus session on the page, filed under its topic.')
+        + win({ src: 'focus.png', x: 127, y: 268, w: 1026, h: 620, cx: 600, cy: 170, scale: 0.45 }),
+  // Promotional tiles: no words, by the store's guidance (they are not localised).
+  promo: () => `<div style="position:absolute;inset:0;display:grid;place-items:center"><div style="width:120px;height:120px;border-radius:30px;background:#fff;display:grid;place-items:center;box-shadow:0 30px 60px -20px rgba(0,0,0,.8),0 0 80px rgba(63,182,168,.25)">${MARK.replace('width="20" height="20"', 'width="84" height="84"')}</div></div>`
+        + `<div class="popup" style="left:300px;top:150px;width:230px;opacity:.9;transform:rotate(-4deg)"><img src="raw/popup.png"></div>`,
+  marquee: () => win({ src: 'library.png', x: 500, y: 64, w: 940, h: 560, cx: 580, cy: 268, scale: 0.5 })
+        + `<div class="popup" style="left:200px;top:96px;width:380px"><img src="raw/popup.png"></div>`
+        + `<div style="position:absolute;left:60px;top:56px;width:96px;height:96px;border-radius:24px;background:#fff;display:grid;place-items:center;box-shadow:0 20px 50px -15px rgba(0,0,0,.8)">${MARK.replace('width="20" height="20"', 'width="66" height="66"')}</div>`,
+}
+const SIZE = { promo: [440, 280], marquee: [1400, 560] }
+const shot = new URLSearchParams(location.search).get('shot') || '1'
+const [W, H] = SIZE[shot] || [1280, 800]
+document.getElementById('root').innerHTML = `<div class="frame" style="width:${W}px;height:${H}px">${SHOTS[shot]()}</div>`
+</script>
+</body>
+</html>

@@ -16,7 +16,8 @@ import { createCollection, deleteCollection, fetchLibrary, fetchResource, rename
 
 const VIEW_KEY = 'kivo-saved-view'
 const readView = (): 'list' | 'grid' => { try { return localStorage.getItem(VIEW_KEY) === 'grid' ? 'grid' : 'list' } catch { return 'list' } }
-const rail = (on: boolean) => `flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors ${on ? 'bg-white/[0.07] font-medium text-foreground' : 'text-foreground/70 hover:bg-white/[0.04] hover:text-foreground'}`
+// Below the desktop width the rail is a row of chips that scrolls sideways.
+const rail = (on: boolean) => `flex w-full shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors max-lg:w-auto max-lg:rounded-full max-lg:border max-lg:border-white/10 max-lg:px-3 ${on ? 'bg-white/[0.07] font-medium text-foreground' : 'text-foreground/70 hover:bg-white/[0.04] hover:text-foreground'}`
 const chip = (on: boolean) => `inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors ${on ? 'border-nova/50 bg-nova/10 text-foreground' : 'border-white/10 text-foreground/70 hover:border-white/20 hover:text-foreground'}`
 
 function CollectionRow({ c, active, onPick, onChanged }: { c: { id: string; name: string; count: number }; active: boolean; onPick: () => void; onChanged: (message?: string) => void }) {
@@ -144,19 +145,19 @@ export function SavedLibrary({ refreshKey, onItems }: { refreshKey: number; onIt
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]" data-library>
       {/* ── Where to look ─────────────────────────────────────────────── */}
-      <nav aria-label="Library" className="space-y-5 lg:sticky lg:top-4 lg:self-start">
-        <ul className="space-y-0.5">
+      <nav aria-label="Library" className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:mx-0 lg:block lg:space-y-5 lg:overflow-visible lg:px-0 lg:pb-0 lg:sticky lg:top-4 lg:self-start">
+        <ul className="flex gap-1.5 lg:block lg:space-y-0.5">
           <li><button type="button" className={rail(!filter.status && !filter.collection)} onClick={() => set({ status: undefined, collection: undefined })} aria-pressed={!filter.status && !filter.collection}><span>All saved</span><span className="text-xs text-subtle">{facets?.total ?? ''}</span></button></li>
           {(Object.keys(READING_STATUS_LABEL) as ReadingStatus[]).map(s => (
             <li key={s}><button type="button" className={rail(filter.status === s)} onClick={() => set({ status: filter.status === s ? undefined : s })} aria-pressed={filter.status === s} data-status-filter={s}><span>{READING_STATUS_LABEL[s]}</span><span className="text-xs text-subtle">{facets?.statuses[s] ?? 0}</span></button></li>
           ))}
         </ul>
-        <div>
-          <p className="mb-1.5 flex items-center justify-between px-2.5 text-[11px] font-medium uppercase tracking-[0.14em] text-subtle">
+        <div className="flex shrink-0 items-center gap-1.5 lg:block">
+          <p className="flex items-center justify-between px-2.5 text-[11px] font-medium uppercase tracking-[0.14em] text-subtle max-lg:hidden lg:mb-1.5">
             Collections
             <button type="button" onClick={() => setNewName('')} className="grid size-6 place-items-center rounded hover:bg-white/10 hover:text-foreground" aria-label="New collection" data-new-collection><Plus className="size-3.5" /></button>
           </p>
-          <ul className="space-y-0.5">
+          <ul className="flex gap-1.5 lg:block lg:space-y-0.5">
             {newName !== null && (
               <li className="px-1">
                 <form onSubmit={e => { e.preventDefault(); void addCollection() }}>
@@ -167,7 +168,8 @@ export function SavedLibrary({ refreshKey, onItems }: { refreshKey: number; onIt
             )}
             {collections.map(c => <CollectionRow key={c.id} c={c} active={filter.collection === c.id} onPick={() => set({ collection: filter.collection === c.id ? undefined : c.id })} onChanged={m => { if (m) setNotice(m); if (filter.collection === c.id && m) set({ collection: undefined }); setReload(n => n + 1) }} />)}
             {collections.length > 0 && <li><button type="button" className={rail(filter.collection === 'none')} onClick={() => set({ collection: filter.collection === 'none' ? undefined : 'none' })} aria-pressed={filter.collection === 'none'}><span>In no collection</span><span className="text-xs text-subtle">{facets?.unfiled ?? 0}</span></button></li>}
-            {collections.length === 0 && newName === null && <li className="px-2.5 text-xs leading-relaxed text-subtle">Group pages your way: “Read later”, “System Design”.</li>}
+            {newName === null && <li className="lg:hidden"><button type="button" onClick={() => setNewName('')} className={rail(false)} data-new-collection-chip><span className="inline-flex items-center gap-1"><Plus className="size-3.5" aria-hidden /> Collection</span></button></li>}
+            {collections.length === 0 && newName === null && <li className="px-2.5 text-xs leading-relaxed text-subtle max-lg:hidden">Group pages your way: “Read later”, “System Design”.</li>}
           </ul>
         </div>
       </nav>

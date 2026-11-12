@@ -29,7 +29,7 @@ export const TYPE_ICON: Record<ResourceType, typeof Globe> = {
 
 const CHIP = 'rounded-md border border-white/12 px-2 py-1 text-xs text-foreground/75 transition-colors hover:bg-white/5 disabled:opacity-50'
 const SECONDARY = 'inline-flex h-8 items-center justify-center rounded-lg border border-white/12 px-3 text-xs text-foreground/75 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--ring)] disabled:opacity-50'
-const SELECT = 'h-8 rounded-lg border border-white/10 bg-transparent px-2 text-xs text-foreground/80 focus:border-nova/60 focus:outline-none disabled:opacity-50'
+const SELECT = 'h-8 rounded-full border border-white/10 bg-transparent px-3 text-xs text-foreground/75 transition-colors hover:border-white/20 focus:border-nova/60 focus:outline-none disabled:opacity-50'
 
 export const durationLabel = (s: number) => (s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min` : s >= 60 ? `${Math.round(s / 60)} min` : `${s} s`)
 const year = (iso: string) => new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
@@ -60,13 +60,12 @@ function Preview({ r, grid }: { r: LearningResource; grid: boolean }) {
       {type === 'video' && r.durationSeconds ? <span className="absolute bottom-1.5 right-1.5 rounded bg-black/75 px-1.5 py-0.5 text-[10px] font-medium text-white">{durationLabel(r.durationSeconds)}</span> : null}
     </span>
   )
-  // No picture: a slim band in a card (a 16:9 box of nothing wastes a phone's screen).
+  // No picture: nothing in a card (a box of nothing says nothing), and a small
+  // tile with the kind's icon in a list row, so rows still line up.
+  if (grid) return null
   return (
-    <span className={`grid place-items-center bg-white/[0.035] text-foreground/45 ${grid ? 'h-14 w-full rounded-t-2xl' : box}`} aria-hidden>
-      <span className={`flex items-center gap-1 ${grid ? 'flex-row gap-2' : 'flex-col'}`}>
-        <Icon className={grid ? 'size-6' : 'size-5'} />
-        <span className="max-w-24 truncate text-[10px] font-medium uppercase tracking-[0.12em]">{(r.siteName || r.domain).slice(0, 18)}</span>
-      </span>
+    <span className="grid size-10 shrink-0 place-items-center rounded-lg border border-white/8 bg-white/[0.03] text-foreground/45 max-sm:hidden" aria-hidden>
+      <Icon className="size-[18px]" />
     </span>
   )
 }
@@ -222,12 +221,15 @@ export function ResourceCard({ resource: initial, view, collections, knownTags, 
         : `group flex gap-4 px-4 py-4 sm:px-5 ${linked ? 'bg-nova/[0.05]' : ''}`}>
       <a href={resource.url} target="_blank" rel="noopener noreferrer" tabIndex={-1} aria-hidden className={grid ? '' : 'pt-0.5'}><Preview r={resource} grid={grid} /></a>
       <div className={`min-w-0 flex-1 ${grid ? 'flex flex-col p-4' : ''}`}>
-        <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">
-          <TypeIcon className="size-3.5" aria-hidden />
-          <span data-type-label>{passage ? 'Passage' : RESOURCE_TYPE_LABEL[type]}</span>
-          {status !== 'unread' && <><span aria-hidden>·</span><span className={status === 'done' ? 'text-[color:var(--sem-positive-ink)]' : 'text-[color:var(--sem-warning-ink)]'}>{READING_STATUS_LABEL[status]}</span></>}
-        </p>
-        <a href={resource.url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex max-w-full items-start gap-1.5 text-[15px] font-semibold leading-snug text-foreground/90 underline-offset-4 hover:text-foreground hover:underline">
+        {/* The kind is said when it tells something ("Web page" on every row does not). */}
+        {(passage || type !== 'page' || status !== 'unread') && (
+          <p className="mb-1 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">
+            {(passage || type !== 'page') && <><TypeIcon className="size-3.5" aria-hidden /><span data-type-label>{passage ? 'Passage' : RESOURCE_TYPE_LABEL[type]}</span></>}
+            {(passage || type !== 'page') && status !== 'unread' && <span aria-hidden>·</span>}
+            {status !== 'unread' && <span className={status === 'done' ? 'text-[color:var(--sem-positive-ink)]' : 'text-[color:var(--sem-warning-ink)]'}>{READING_STATUS_LABEL[status]}</span>}
+          </p>
+        )}
+        <a href={resource.url} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-full items-start gap-1.5 text-[15px] font-semibold leading-snug text-foreground/90 underline-offset-4 hover:text-foreground hover:underline">
           <span className={grid ? 'line-clamp-2' : 'line-clamp-2 sm:line-clamp-1'}>{resource.title}</span>
           <ExternalLink className="mt-1 size-3.5 shrink-0 text-subtle" aria-hidden />
         </a>
@@ -245,22 +247,27 @@ export function ResourceCard({ resource: initial, view, collections, knownTags, 
           <select id={`status-${resource.id}`} value={status} disabled={busy} onChange={e => organize({ readingStatus: e.target.value })} className={SELECT} data-status-select>
             {(Object.keys(READING_STATUS_LABEL) as ReadingStatus[]).map(s => <option key={s} value={s}>{READING_STATUS_LABEL[s]}</option>)}
           </select>
-          <label className="sr-only" htmlFor={`coll-${resource.id}`}>Collection</label>
-          <select id={`coll-${resource.id}`} value={resource.collection?.id ?? ''} disabled={busy} onChange={e => organize({ collectionId: e.target.value || null })} className={`${SELECT} max-w-[11rem]`} data-collection-select>
-            <option value="">No collection</option>
-            {collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          {/* A collection picker only once there are collections to pick (made in the list's side rail). */}
+          {collections.length > 0 && <>
+            <label className="sr-only" htmlFor={`coll-${resource.id}`}>Collection</label>
+            <select id={`coll-${resource.id}`} value={resource.collection?.id ?? ''} disabled={busy} onChange={e => organize({ collectionId: e.target.value || null })} className={`${SELECT} max-w-[11rem]`} data-collection-select>
+              <option value="">No collection</option>
+              {collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </>}
           <TagEditor tags={resource.tags ?? []} known={knownTags} busy={busy} onChange={tags => organize({ tags })} />
-          <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} className="ml-auto inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-foreground/70 hover:bg-white/5 hover:text-foreground" data-more>
+          <span className="ml-auto flex items-center gap-1">
+          <Link href={`/focus?study=${encodeURIComponent(resource.id)}`} className="inline-flex h-8 items-center rounded-lg px-2.5 text-xs font-medium text-action-ink hover:bg-action/10" data-study>Study</Link>
+          <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-foreground/70 hover:bg-white/5 hover:text-foreground" data-more>
             More <ChevronDown className={`size-3.5 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
           </button>
+          </span>
         </div>
 
         {open && (
           <div className="mt-3 space-y-3 border-t border-white/6 pt-3" data-details>
             <p className="text-xs text-subtle" data-filed>{filed ? `Filed under ${filed}` : 'Not filed under a subject'}{resource.collection ? ` · In ${resource.collection.name}` : ''}</p>
             <div className="flex flex-wrap gap-1.5">
-              <Link href={`/focus?study=${encodeURIComponent(resource.id)}`} className="inline-flex h-8 items-center justify-center rounded-lg bg-action px-3 text-xs font-semibold text-action-foreground hover:bg-action-hover" data-study>Study this</Link>
               <Link href={`/notes/new?${new URLSearchParams({
                 title: resource.title.slice(0, 200), source: resource.url, sourceTitle: resource.title,
                 ...(resource.subjectId ? { subjectId: resource.subjectId } : {}), ...(resource.subjectId && resource.topicName ? { topic: resource.topicName } : {}),

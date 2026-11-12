@@ -1,73 +1,83 @@
 # Chrome Web Store listing: Nova extension
 
-Draft text and checklists for the store's forms. Everything here describes what the extension in this repository does (`apps/extension/src`, version 1.0.0). Items marked **DECIDE** or **CONFIRM** need the developer; nothing below has been submitted or reviewed by Google.
+Text and assets for the store's forms. Everything here describes what the extension in this repository does (`apps/extension/src`). The listing is live (https://chromewebstore.google.com/detail/nova/eddopegjkjiadejiocfbhoecjlbfcjba, version 1.2.0 on 12 Nov 2026). Paste the text below into the Developer Dashboard; nothing here is submitted by the repository. Items marked **DECIDE** or **CONFIRM** need the developer.
 
 ## Title
 
-The store shows the manifest's `name`. It is currently **Nova**.
+The store shows the manifest's `name`: **Nova**. Kept: the listing, its users and its ratings are under that name.
 
-- **DECIDE:** "Nova" alone is a common name and says nothing about Kivo. Suggested: `Nova by Kivo`. Changing it means editing `name` and `action.default_title` in `src/manifest.template.json` and rebuilding; the popup's own heading can stay "Nova".
+- **DECIDE (later):** "Nova by Kivo" would say whose it is. It needs `name` and `action.default_title` changed in `src/manifest.template.json` and a release.
 
 ## Short description (132 characters max)
 
-Used from the manifest's `description` (119 characters):
+From the manifest's `description` (118 characters), shipped with the next release:
 
-> Save what you're reading to Nova, or study it. Nova sees a page only when you click its button on that page.
+> Save pages and passages to Kivo as you read, and ask Nova about them. Nova sees a page only when you click its button.
 
 ## Detailed description
 
-> Nova is the study companion inside Kivo. This extension is the quickest way to get a page you are reading into it.
+Plain text: the store prints Markdown symbols (`**`) as they are, so the live description shows asterisks. Replace it with this when 1.3.0 is published (the line about description tags is true from 1.3.0).
+
+> Save what you discover. Continue learning in Kivo.
 >
-> Click the Nova icon on any web page and choose:
+> Nova is Kivo's browser extension. When something is worth keeping, click it and the page goes into your Kivo workspace, filed under your subject and topic.
 >
-> • Save to Nova: keeps the page's address and title in your Saved list, filed under one of your subjects and a topic if you like.
-> • Study this: does the same, then opens Nova's Focus screen so you can start a timed study session on it.
-> • Save selection: select a passage first, and Nova keeps that passage with the page it came from.
-> • Ask Nova about this page: type a question and get an answer in the popup.
+> WHAT YOU CAN DO
 >
-> What it does not do
+> • Save a page: articles, YouTube videos, research papers, documentation. It lands in Saved pages in Kivo, ready to search, tag and sort.
+> • Save a passage: select text first, then keep that passage with the page it came from, or add it to one of your notes.
+> • Study this: start a focus session on the page in Kivo, under its topic.
+> • Ask Nova: ask about the page you are on. Add a screenshot, or select an area, to ask about a diagram.
 >
-> • It does not read the page. It sees the address, the title and the text you have selected, and sends them only when you press a button. With no selection, Nova answers a question from the title alone and says so.
-> • It does not see your other tabs or your browsing history.
-> • It does nothing in the background. There is no content script. A small background worker wakes only to take the picture of an area you selected.
-> • Saving a page does not count as studying it. Your progress in Nova changes only when you finish a study session.
+> IN KIVO
 >
-> Getting started
+> Saved pages sit with your notes on your Knowledge Map, under the subjects you study. Open one, write a note from it, and study it with Nova.
 >
-> 1. You need a Kivo account with Nova set up.
-> 2. Click the Nova icon and choose "Get a code from Nova". Nova opens on its Saved page.
-> 3. Press "Connect a browser" there and type the one-time code into the extension.
+> PRIVATE BY DESIGN
 >
-> You can disconnect a browser at any time from the extension or from the Saved page.
+> • Nova sees a page only when you click its button. There is no background tracking and no content script.
+> • It reads the address, the title, the text you selected and the page's public description tags (title, image, author, date). Nothing else on the page.
+> • It never sees your other tabs or your history.
+>
+> GETTING STARTED
+>
+> 1. Add Nova to Chrome and pin it from the puzzle icon.
+> 2. In Kivo, open Browser Extension and press Get a code.
+> 3. Type the code into the extension. That's it.
+>
+> You need a free Kivo account: thekivo.in
+
+**CONFIRM** before pasting: "free Kivo account" matches the plans on the pricing page.
 
 ## Category
 
-**Suggested:** Education (the store lists it under Productivity). Alternative: Workflow & Planning.
+Education (current). Alternative: Workflow & Planning.
 
 ## Language
 
 English.
 
-## Graphics checklist
+## Graphics
 
-Nothing here exists yet. The store requires the first three.
+Made in this repository from genuine captures of the app and the extension (researcher demo workspace, local server): `design/store/` (see its `README.md`).
 
-| Asset | Size | Status |
+| Asset | Size | File |
 |---|---|---|
-| Store icon | 128×128 PNG | The build draws a plain teal rounded square (`scripts/build.mjs`). It is valid, but it is a placeholder. **DECIDE:** replace with the Kivo/Nova mark before listing. |
-| Screenshots (1 to 5) | 1280×800 or 640×400 | **TO DO.** Take them from the real extension against production. Suggested set below. |
-| Small promo tile | 440×280 | **TO DO.** |
-| Marquee promo tile | 1400×560 | Optional. |
+| Store icon | 128×128 PNG, 96 px artwork + 16 px clear | Built by `scripts/build.mjs` (`icons/128.png` in the ZIP). The Kivo mark on a white tile, replacing the old plain teal square |
+| Screenshots (5) | 1280×800 PNG, full bleed | `screenshot-1-save.png` … `screenshot-5-focus.png` |
+| Small promo tile | 440×280 PNG, no text | `promo-small-440x280.png` |
+| Marquee promo tile | 1400×560 PNG, no text | `promo-marquee-1400x560.png` |
 
-Suggested screenshots, all of real screens:
+Screenshot order and captions:
 
-1. The popup on an article, connected: title, subject, topic, "Save to Nova" and "Study this".
-2. The popup after a save, showing where the page was filed.
-3. Nova's Saved page listing saved pages.
-4. The "Connect Nova" popup beside the Saved page showing a pairing code. Use a code that has already expired.
-5. Nova's Focus screen opened from "Study this".
+1. Save what you discover: the popup on a research paper.
+2. Everything you save, in one place: Saved pages in Kivo.
+3. See how your ideas connect: the Knowledge Map, one subject explored.
+4. Study it with Nova: a paper's note with Nova beside it.
+5. Turn reading into progress: Study this, on the Focus screen.
 
-Do not show a real person's data: use a test account.
+The people and workspace in them are Kivo's demo personas, not a user's data.
+
 
 ## "Privacy practices" tab
 
