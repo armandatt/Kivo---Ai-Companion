@@ -310,13 +310,15 @@ describe("what each answer changes", () => {
     expect(coach).toContain("never about them, their ability or their worth");
   });
 
-  it("language: what they write in wins; their choice answers what the reading cannot place", () => {
+  it("language: a chosen Hinglish or Hindi holds whatever a message is written in; with no choice, what they write in wins", () => {
     const sentence = "How is my progress going?";
     expect(chooseLanguage(null, "english", sentence, "hinglish")).toBe("hinglish");
     expect(chooseLanguage(null, "english", sentence, null)).toBe("english");
-    expect(chooseLanguage("english", "hinglish", sentence, "hindi")).toBe("english");
-    // A short reply keeps the conversation's language.
-    expect(chooseLanguage(null, "english", "ok", "hinglish")).toBe("english");
+    // Changed 12 Nov: an English sentence from a learner who chose Hindi is answered in Hindi.
+    expect(chooseLanguage("english", "hinglish", sentence, "hindi")).toBe("hindi");
+    expect(chooseLanguage(null, "english", "ok", "hinglish")).toBe("hinglish");
+    // Only an explicit request changes it.
+    expect(chooseLanguage("hinglish", "hinglish", "reply in English please", "hinglish", { requested: "english" })).toBe("english");
   });
 
   it("language: the conversation starts in their choice, and Nova speaks first in it", () => {
@@ -326,7 +328,7 @@ describe("what each answer changes", () => {
     expect(repo("packages/api/src/nova/proactive/nova-proactive-cron.ts")).toContain("(await loadVoicePreferences(chatId).catch(() => ({ language: null }))).language ?? await loadReplyLanguage(profile.user.id),");
     // The web's worded replies get the same language line Telegram's do.
     const web = repo("packages/api/src/nova/interaction/web-sentence.ts");
-    expect(web).toContain("const language  = scriptLanguage(text) ?? chooseLanguage(safe.request?.language, await loadReplyLanguage(user.id, preferred ?? \"english\"), text, preferred);");
+    expect(web).toContain("const language  = scriptLanguage(text) ?? chooseLanguage(safe.request?.language, await loadReplyLanguage(user.id, preferred ?? \"english\"), text, preferred, choice);");
     expect(web).toContain("directive: told(blocked ? SENTENCE_RUNS_NO_SESSION");
   });
 

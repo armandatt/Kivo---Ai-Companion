@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import {
   ArrowLeft, ArrowRight, Bold, Check, ChevronLeft, ChevronRight, Code, Columns2, FileText, Hash, Heading1, Heading2,
   HelpCircle, Highlighter, Italic, Lightbulb, Link2, List, ListOrdered, ListTree, Loader2, Minus, PanelLeft, Pencil,
-  Quote, Sparkles, Trash2, Type, Undo2, X,
+  ImagePlus, Quote, RotateCcw, Sparkles, Trash2, Type, Undo2, X,
 } from 'lucide-react'
 import type { NoteDetail, NoteSubjectOption, NoteSummary } from '@repo/api/nova/product/notes.types'
 import { NOTE_BODY_MAX, NOTE_TITLE_MAX, NOTE_TOPIC_MAX } from '@repo/api/nova/product/notes.types'
@@ -38,6 +38,8 @@ import { modLabel } from './notes-shortcuts'
 import { paperPlacement } from '@repo/api/nova/product/paper-source'
 import { createNote, deleteNote, fetchNote, fetchNotes, updateNote } from './notes-api'
 import { BOARD_PATH } from '@repo/api/nova/product/companion'
+import { IMAGE_ACCEPT, imageMarkdown, insertImageLines, isImage, newImageKey, storeImageFile } from './note-image-upload'
+import { imagesOnClipboard } from '../builder/paste'
 
 // Unsaved text is kept in this browser while it is typed, so a crash, a
 // closed tab or a failed save loses nothing. One entry per note ("new" for
@@ -171,6 +173,13 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const [autoError, setAutoError] = useState<{ message: string; at: number } | null>(null)
   const [dragWidth, setDragWidth] = useState<number | null>(null)
   const caret = useRef<number | null>(null)
+  // Screenshots pasted, dropped or chosen into the note: stored on the note,
+  // then their lines put in at the caret. Each file keeps one key, so a
+  // retry never stores it twice; what failed waits with Retry.
+  const [imagesAdding, setImagesAdding] = useState(0)
+  const [imageFail, setImageFail] = useState<{ files: File[]; message: string; retry: boolean } | null>(null)
+  const imageKeys = useRef(new WeakMap<File, string>())
+  const imagePicker = useRef<HTMLInputElement>(null)
   const previewRef = useRef<HTMLDivElement>(null)
   // What the tutor hands the editor to work into the note.
   const [editorSeed, setEditorSeed] = useState<EditAsk | null>(null)
@@ -639,8 +648,61 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     setReader({ url, view: url, label, pdf: true }); setSourceOpen(true)
   }, [])
 
+  async function addImages(files: File[], at: number | null) {
+    const images = files.filter(f => isImage(f.type))
+    if (files.length && !images.length) { setNotice('Only PNG, JPEG or WebP images can go in a note.'); return }
+    if (!images.length) return
+    const current = noteRef.current
+    if (!current) { setNotice('Save this note once (give it a title), then paste, drop or choose images for it.'); return }
+    setImageFail(null)
+    setImagesAdding(n => n + images.length)
+    const lines: string[] = [], failed: File[] = []
+    let message = '', retry = true
+    for (const f of images) {
+      let key = imageKeys.current.get(f)
+      if (!key) { key = newImageKey(`note-image:${current.id}`); imageKeys.current.set(f, key) }
+      const r = await storeImageFile(current.id, f, key)
+      if (r.ok) lines.push(imageMarkdown(r.id, f.name && !f.name.startsWith('image.') && !f.name.startsWith('Pasted') ? f.name.replace(/\.[a-z0-9]+$/i, '') : 'Screenshot'))
+      else { failed.push(f); message = r.message; retry = retry && r.retry }
+    }
+    setImagesAdding(n => n - images.length)
+    if (lines.length) {
+      // Put in where the caret was; the text typed meanwhile stays.
+      setDraft(d => { const r = insertImageLines(d.body, at ?? d.body.length, lines); caret.current = r.caret; return { ...d, body: r.text } })
+      if (!editingRef.current) setEditing(true)
+      setNotice(lines.length === 1 ? 'Image added. It saves with the note.' : `${lines.length} images added. They save with the note.`)
+    }
+    if (failed.length) setImageFail({ files: failed, message, retry })
+  }
+  function onBodyPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const images = imagesOnClipboard(e.clipboardData.items)
+    if (!images.length) return
+    // A screenshot is an image; text copied with an image (a web page) stays text.
+    if (e.clipboardData.getData('text/plain')) return
+    e.preventDefault()
+    void addImages(images, e.currentTarget.selectionStart)
+  }
+  function onBodyDrop(e: React.DragEvent<HTMLTextAreaElement>) {
+    const files = Array.from(e.dataTransfer.files ?? [])
+    if (!files.length) return
+    e.preventDefault()
+    void addImages(files, e.currentTarget.selectionStart)
+  }
+
   const banners = (
     <>
+      {imagesAdding > 0 && (
+        <p role="status" className="mb-3 flex items-center gap-2 text-sm text-foreground/70" data-note-images-adding><Loader2 className="size-4 animate-spin" aria-hidden /> Adding {imagesAdding === 1 ? 'the image' : `${imagesAdding} images`} to this note…</p>
+      )}
+      {imageFail && (
+        <div role="alert" className="mb-5 flex flex-col gap-3 rounded-2xl border border-red-400/30 bg-red-400/5 p-4 text-sm sm:flex-row sm:items-center sm:justify-between" data-note-image-failed>
+          <p className="text-foreground/80">{imageFail.files.length === 1 ? 'An image' : `${imageFail.files.length} images`} didn’t go in: {imageFail.message} Your text is unchanged.</p>
+          <div className="flex shrink-0 gap-2">
+            {imageFail.retry && <button type="button" className={quiet} onClick={() => void addImages(imageFail.files, caret.current)}><RotateCcw className="mr-1 inline size-3.5" aria-hidden />Try again</button>}
+            <button type="button" className={quiet} onClick={() => setImageFail(null)}>Dismiss</button>
+          </div>
+        </div>
+      )}
       {recovered && (
         <div role="status" className="mb-5 flex flex-col gap-3 rounded-2xl border border-amber-300/25 bg-amber-300/5 p-4 text-sm sm:flex-row sm:items-center sm:justify-between" data-note-recovered>
           <p className="text-foreground/75">Unsaved changes to this note were kept in this browser {relativeDay(new Date(recovered.at).toISOString())}. They are not saved yet.</p>
@@ -1017,6 +1079,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       { label: 'Link a note', icon: Link2, run: () => format(noteLink) },
       { label: 'Tag', icon: Hash, run: () => format(tag) },
       { label: 'Divider', icon: Minus, run: () => format((t, s) => divider(t, s)) },
+      { label: 'Insert an image (or paste or drop a screenshot)', icon: ImagePlus, run: () => imagePicker.current?.click() },
       'gap',
       { label: 'Ask Nova about the selection', icon: Sparkles, run: () => {
         const text = editorSelection()
@@ -1031,6 +1094,9 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
         onChange={e => { caret.current = e.target.selectionStart; setDraft(d => ({ ...d, body: e.target.value })) }}
         onSelect={e => { caret.current = e.currentTarget.selectionEnd }}
         onKeyDown={onBodyKey}
+        onPaste={onBodyPaste}
+        onDragOver={e => { if ([...e.dataTransfer.types].includes('Files')) e.preventDefault() }}
+        onDrop={onBodyDrop}
         placeholder={'Write what you\'re learning, in your own words.\n\nPaste a passage from what you\'re reading, select it and press the quote button: it becomes a callout, and your own thoughts go under it.'}
         className="min-h-[24rem] w-full flex-1 resize-none bg-transparent px-1 py-2 font-mono text-[14px] leading-[1.7] text-foreground/90 placeholder:font-sans placeholder:text-foreground/30 focus:outline-none"
         spellCheck
@@ -1047,6 +1113,8 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className={`mx-auto w-full px-5 pb-10 pt-6 sm:px-8 ${layout === 'split' ? 'max-w-6xl' : 'max-w-3xl'}`}>
             {banners}
+            <input ref={imagePicker} type="file" accept={IMAGE_ACCEPT} multiple hidden data-note-image-input
+              onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; void addImages(files, caret.current) }} />
             <label htmlFor="note-title" className="sr-only">Title</label>
             <input
               id="note-title" value={draft.title} maxLength={NOTE_TITLE_MAX} autoFocus={!note}

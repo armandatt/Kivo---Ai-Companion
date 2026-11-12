@@ -177,6 +177,10 @@ export interface LearnerRequest {
   // mixed to say ("ok", "30", a topic name). It chooses the language of the
   // reply and nothing else. Absent on a reading made before this field.
   language?:        ReplyLanguage | null;
+  // The learner explicitly asks Nova to reply in a language from now on
+  // ("reply in English", "Hinglish mein bolo"). Writing in a language is not
+  // a request. null: no such request. Absent on older readings.
+  languageRequest?: ReplyLanguage | null;
 }
 
 export const ASK_SCOPES = ["knowledge", "about_me", "none"] as const;

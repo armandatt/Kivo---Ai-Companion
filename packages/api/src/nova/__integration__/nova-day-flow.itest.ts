@@ -29,7 +29,7 @@ process.env.OPENAI_API_KEY = "";
 const { prisma } = await import("@repo/db/client");
 const { ensureSetupProfile, saveSetup } = await import("../product/setup.js");
 const { createTask, listTasks } = await import("../product/tasks.js");
-const { acceptDraft, changeDayFlow, loadDayFlow, startFocus, undoDayFlow } = await import("../product/day-flow.js");
+const { acceptDraft, changeDayFlow, finishItemTask, loadDayFlow, startFocus, undoDayFlow } = await import("../product/day-flow.js");
 const { runNovaSessionCommand } = await import("../product/session.js");
 const { approvePending, askCopilot, PLAN_QUESTION } = await import("../product/day-copilot.js");
 const { abandonIfStale } = await import("../persistence/nova-persistence.js");
@@ -221,4 +221,61 @@ test("the copilot proposes and the learner decides: nothing is written until the
 
   const undone = await undoDayFlow({ ...base, version: now.version });
   assert.ok(undone.ok, "the learner's change can be undone");
+});
+
+// 12 Nov: a second session on an item replaced the first's id, so the time
+// already spent vanished and Start offered the whole time again; and a
+// finished task could only be ticked on the board. Persisted state checked.
+test("sessions on one item add up across a day, Start continues from what is left, and Task finished marks the task done once", async () => {
+  const L = await learner();
+  const base = { profileId: L.profileId, platformChatId: L.id };
+  const t0 = new Date(Date.now() - 3 * 60 * 60_000);
+  const at = (min: number) => new Date(t0.getTime() + min * 60_000);
+  const made = await changeDayFlow({ ...base, version: 0, by: "learner", ops: [{ op: "add", item: { kind: "task", taskId: L.taskId, minutes: 60 } }] });
+  assert.ok(made.ok);
+  const itemId = made.flow.items[0]!.id;
+
+  // First session: 20 minutes.
+  const s1 = await startFocus({ ...base, version: made.flow.version, itemId, minutes: 25, now: at(0) });
+  assert.ok(s1.ok);
+  assert.ok((await runNovaSessionCommand(L.id, { action: "end", outcome: "okay" }, at(20))).ok);
+  let flow = await loadDayFlow(L.profileId, L.id, at(21));
+  let it = flow.items.find(i => i.id === itemId)!;
+  assert.deepEqual([it.spentMinutes, it.remainingMinutes], [20, 40]);
+
+  // Back for a second: the first session's time stays.
+  const s2 = await startFocus({ ...base, version: flow.version, itemId, minutes: 40, now: at(30) });
+  assert.ok(s2.ok);
+  const running = (await loadDayFlow(L.profileId, L.id, at(35))).items.find(i => i.id === itemId)!;
+  assert.equal(running.spentMinutes, 20, "while the second runs, the first is still counted");
+  assert.ok((await runNovaSessionCommand(L.id, { action: "end", outcome: "good" }, at(45))).ok);
+  flow = await loadDayFlow(L.profileId, L.id, at(46));
+  it = flow.items.find(i => i.id === itemId)!;
+  assert.deepEqual([it.spentMinutes, it.remainingMinutes], [35, 25]);
+  // Two separate sessions on record, neither merged nor counted twice.
+  const sessions = await prisma.novaStudySession.findMany({ where: { profileId: L.profileId }, orderBy: { sessionDate: "asc" }, select: { id: true, durationMinutes: true, status: true } });
+  assert.deepEqual(sessions.map(s => s.durationMinutes), [20, 15]);
+  const row = await prisma.novaDayFlow.findFirst({ where: { profileId: L.profileId } });
+  const stored = (row!.items as Array<{ id: string; sessionId: string; earlierSessionIds?: string[] }>).find(i => i.id === itemId)!;
+  assert.deepEqual([...(stored.earlierSessionIds ?? []), stored.sessionId], sessions.map(s => s.id));
+
+  // Ending completes nothing by itself.
+  assert.equal((await listTasks(L.profileId)).tasks.find(x => x.id === L.taskId)!.status, "todo");
+  // The learner says the task is finished: done on the board and for today.
+  const fin = await finishItemTask({ ...base, version: flow.version, itemId, now: at(47) });
+  assert.ok(fin.ok);
+  const task = await prisma.novaTask.findUnique({ where: { id: L.taskId }, select: { status: true, completedAt: true } });
+  assert.equal(task!.status, "done");
+  assert.equal((await loadDayFlow(L.profileId, L.id, at(48))).items.find(i => i.id === itemId)!.status, "done");
+  // A second press (a double click, a retry) changes nothing.
+  const again = await finishItemTask({ ...base, version: flow.version, itemId, now: at(50) });
+  assert.ok(again.ok);
+  const after2 = await prisma.novaTask.findUnique({ where: { id: L.taskId }, select: { status: true, completedAt: true } });
+  assert.deepEqual(after2, task, "completedAt is stamped once");
+  // A focus item that is not a task cannot be finished as one.
+  const added = await changeDayFlow({ ...base, version: (await loadDayFlow(L.profileId, L.id)).version, by: "learner", ops: [{ op: "add", item: { kind: "focus", title: "Read a chapter", minutes: 20 } }] });
+  assert.ok(added.ok);
+  const focusItem = added.flow.items.find(i => i.kind === "focus")!;
+  const refused = await finishItemTask({ ...base, version: added.flow.version, itemId: focusItem.id });
+  assert.ok(!refused.ok && refused.error === "invalid");
 });

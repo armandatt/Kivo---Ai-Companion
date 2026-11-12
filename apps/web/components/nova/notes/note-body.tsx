@@ -152,9 +152,7 @@ function render(blocks: Block[], key: string, resolve: Resolve, nested = false):
       )
       case 'image': return (
         <figure key={k} className={`my-5 ${edge}`} {...span} data-note-image={b.id}>
-          {/* eslint-disable-next-line @next/next/no-img-element -- the learner's own capture, served to them only */}
-          <img src={`/api/nova/notes/images/${encodeURIComponent(b.id)}`} alt={b.alt || 'Image in this note'} loading="lazy"
-            className="max-h-[36rem] w-auto max-w-full rounded-lg border border-white/8 bg-white" />
+          <NoteImage id={b.id} alt={b.alt} />
           {b.alt && <figcaption className="mt-1.5 font-sans text-xs text-subtle">{b.alt}</figcaption>}
         </figure>
       )
@@ -298,5 +296,18 @@ export function NoteBody({ body, links, serif = false, cite, compact = false, ti
     >
       {content}
     </div>
+  )
+}
+
+// An image of the note, served to its owner only. One that can't be shown (removed,
+// or the note was copied from another account) says so in its place; the line in
+// the note stays, so nothing is lost by viewing.
+function NoteImage({ id, alt }: { id: string; alt: string }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return <p className="rounded-lg border border-dashed border-white/15 px-3 py-4 font-sans text-xs text-subtle" data-note-image-missing>This image isn’t available any more{alt ? ` (${alt})` : ''}.</p>
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- the learner's own image, served to them only
+    <img src={`/api/nova/notes/images/${encodeURIComponent(id)}`} alt={alt || 'Image in this note'} loading="lazy" onError={() => setFailed(true)}
+      className="max-h-[36rem] w-auto max-w-full rounded-lg border border-white/8 bg-white" />
   )
 }

@@ -10,6 +10,8 @@ import { answerLive } from "../../../../../../lib/nova/stream-answer"
 //@ts-ignore
 import { TUTOR_LIVE_KEYS } from "@repo/api/nova/product/reply-stream"
 //@ts-ignore
+import { loadChosenLanguage } from "@repo/api/nova/product/surface-language"
+//@ts-ignore
 import { liveGenerate } from "@repo/api/nova/product/reply-live"
 
 export const runtime = "nodejs"
@@ -38,7 +40,8 @@ export async function POST(req: Request, { params }: Context) {
     if (!read.ok) return noteFail(read.reason === "too_large" ? 413 : 400, read.reason === "too_large" ? "too_long" : "invalid", read.reason === "too_large" ? "That's too much to send at once. Select a shorter passage." : "That isn't something Nova can do with a note.")
     const noteId = (await params).id
     return await answerLive(req, async onLive => {
-      const run = await metered(access.platformChatId, () => onLive ? tutorOnNote(access.profileId, noteId, read.body, liveGenerate(onLive, TUTOR_LIVE_KEYS)) : tutorOnNote(access.profileId, noteId, read.body), { feature: "notes_tutor" })
+      const language = await loadChosenLanguage(access.platformChatId)
+      const run = await metered(access.platformChatId, () => onLive ? tutorOnNote(access.profileId, noteId, read.body, liveGenerate(onLive, TUTOR_LIVE_KEYS), undefined, undefined, { language }) : tutorOnNote(access.profileId, noteId, read.body, undefined, undefined, undefined, { language }), { feature: "notes_tutor" })
       if (!run.ok) return run.response
       const result = run.value as Awaited<ReturnType<typeof tutorOnNote>>
       if (result.ok) return NextResponse.json(result, { headers: { "cache-control": "no-store" } })

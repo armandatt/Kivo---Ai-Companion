@@ -25,6 +25,8 @@ export interface UserTurnAnnotation {
   surface?: string;
   // The language the message was written in, when the reading could tell.
   language?: ReplyLanguage | null;
+  // A language the learner explicitly asked for, still in force (interaction/language.ts heldAfter).
+  languageHeld?: ReplyLanguage | null;
 }
 
 interface NovaMessageMetadata {
@@ -60,6 +62,7 @@ export async function saveUserMessage(
         secondaryIntents: annotation.secondaryIntents ?? [],
         ...(annotation.surface ? { surface: annotation.surface } : {}),
         ...(annotation.language ? { language: annotation.language } : {}),
+        ...(annotation.languageHeld ? { languageHeld: annotation.languageHeld } : {}),
       },
       createdAt: now,
     },
@@ -134,6 +137,24 @@ export async function loadReplyLanguage(userId: string, fallback: ReplyLanguage 
     if (known) return known;
   }
   return fallback;
+}
+
+// The language the learner explicitly asked for that is still in force: read
+// from the latest message that recorded a language. null: none.
+export async function loadHeldLanguage(userId: string): Promise<ReplyLanguage | null> {
+  const rows = await prisma.companionMessage.findMany({
+    where:   { userId, role: "user" },
+    orderBy: { createdAt: "desc" },
+    take:    LANGUAGE_LOOKBACK,
+    select:  { intent: true, metadata: true },
+  });
+  for (const row of rows) {
+    if (!isNovaRow(row)) continue;
+    const meta = row.metadata as NovaMessageMetadata | null;
+    if (!REPLY_LANGUAGES.some(l => l === meta?.["language"])) continue;
+    return REPLY_LANGUAGES.find(l => l === meta?.["languageHeld"]) ?? null;
+  }
+  return null;
 }
 
 // Per-message classification history for the pattern detector, oldest first.

@@ -12,7 +12,8 @@ import { parseLearnerRequest } from "../brains/understanding-parser";
 import { UNDERSTANDING_BRAIN_SYSTEM_PROMPT } from "../brains/prompts/understanding-brain.prompt";
 import { safeReading } from "../decision/interpretation-safety";
 import { decideFirstUse } from "../interaction/first-use";
-import { chooseLanguage, languageLine, SENTENCE_WORDS, wordCount } from "../interaction/language";
+import { chooseLanguage, heldAfter, languageLine, SENTENCE_WORDS, wordCount } from "../interaction/language";
+import { surfaceLanguageLine } from "../product/surface-language";
 import { wordProactiveMessage } from "../proactive/nova-proactive-response";
 import { isFixedText, TEXT, TEXT_HINGLISH, textFor } from "../telegram/telegram-replies";
 import type { NovaTodayReady, TodayAction } from "../product/today.types";
@@ -99,9 +100,12 @@ describe("choosing the reply language", () => {
 
   it("is applied before the reading too, and stored with the message, in the Telegram and setup turns", () => {
     const turn = read("telegram/telegram-turn.ts");
-    expect(turn).toContain("chooseLanguage(safe.request?.language, ctx.language, event.text, ctx.preferredLanguage)");
-    expect(turn).toContain("request: { ...safe.request, language: ctx.language }");
-    expect(read("interaction/setup-turn.ts")).toContain("chooseLanguage(understanding.request?.language, ctx.language, text, ctx.preferredLanguage)");
+    expect(turn).toContain("chooseLanguage(safe.request?.language, ctx.language, event.text, ctx.preferredLanguage, choice)");
+    expect(turn).toContain("request: { ...safe.request, language: ctx.language, languageRequest: ctx.heldLanguage }");
+    expect(read("interaction/setup-turn.ts")).toContain("chooseLanguage(understanding.request?.language, ctx.language, text, ctx.preferredLanguage, choice)");
+    // A request still in force is stored with the message, and read back for the next one.
+    expect(read("persistence/nova-persistence.ts")).toContain("languageHeld: understanding.request?.languageRequest ?? null,");
+    expect(turn).toContain("const heldLanguage = user ? await loadHeldLanguage(user.id).catch(() => null) : null;");
   });
 
   it("adds nothing to a prompt for English, and one line for Hinglish", () => {
@@ -270,5 +274,79 @@ describe("where the language is kept", () => {
     expect(turn).toContain('if (event.kind !== "text") return text;');
     // The language step spends from the same daily wording budget.
     expect(turn).toContain('!await spendModelCall(ctx.profileId, "response", budgetDay, await factor())');
+  });
+});
+
+// ── A chosen language is a standing constraint (12 Nov) ──────────────────────
+// Reported: a learner who chose Hinglish got English, then Hinglish again, at
+// random. The reading labels each message by its own words, and a Hinglish
+// learner's message about a technical topic is mostly English.
+describe("a learner who chose Hinglish", () => {
+  // What the reading might call fifteen messages from one Hinglish learner.
+  const turns: Array<[string, "english" | "hinglish" | null]> = [
+    ["explain the deadlock detection algorithm", "english"], ["acha samajh gaya", "hinglish"], ["what is the banker's algorithm?", "english"],
+    ["ok", null], ["iska time complexity kya hai", "hinglish"], ["give me an example with 3 processes", "english"],
+    ["thoda aur simple bata", "hinglish"], ["and safe state?", "english"], ["30", null], ["how does paging work", "english"],
+    ["TLB ka role kya hai", "hinglish"], ["Compare FIFO and LRU page replacement", "english"], ["hmm", null],
+    ["What should I study next for OS?", "english"], ["thanks bhai", "hinglish"],
+  ];
+
+  it("is answered in Hinglish for fifteen messages in a row, whatever each is written in", () => {
+    let language: "english" | "hinglish" | "hindi" = "hinglish";
+    let held: "english" | "hinglish" | "hindi" | null = null;
+    const replies: string[] = [];
+    for (const [text, read] of turns) {
+      const choice = { requested: null, held };
+      language = chooseLanguage(read, language, text, "hinglish", choice);
+      held = heldAfter(choice, "hinglish");
+      replies.push(language);
+    }
+    expect(new Set(replies)).toEqual(new Set(["hinglish"]));
+  });
+
+  it("switches only when they ask, stays switched, and switches back when they ask again", () => {
+    const run = (steps: Array<{ read: "english" | "hinglish" | null; requested?: "english" | "hinglish" }>) => {
+      let language: "english" | "hinglish" | "hindi" = "hinglish";
+      let held: "english" | "hinglish" | "hindi" | null = null;
+      return steps.map(s => {
+        const choice = { requested: s.requested ?? null, held };
+        language = chooseLanguage(s.read, language, "a sentence of several words", "hinglish", choice);
+        held = heldAfter(choice, "hinglish");
+        return language;
+      });
+    };
+    expect(run([
+      { read: "hinglish" }, { read: "english", requested: "english" }, { read: "hinglish" }, { read: "english" },
+      { read: "hinglish", requested: "hinglish" }, { read: "english" }, { read: "english" },
+    ])).toEqual(["hinglish", "english", "english", "english", "hinglish", "hinglish", "hinglish"]);
+  });
+
+  it("a request for the language they chose ends a held one; any other request is held", () => {
+    expect(heldAfter({ requested: "hinglish" }, "hinglish")).toBeNull();
+    expect(heldAfter({ requested: "english" }, "hinglish")).toBe("english");
+    expect(heldAfter({ held: "english" }, "hinglish")).toBe("english");
+    expect(heldAfter({}, "hinglish")).toBeNull();
+  });
+
+  it("with no choice made, what they write in still decides (unchanged)", () => {
+    expect(chooseLanguage("english", "hinglish", "How is my progress going?", null)).toBe("english");
+    expect(chooseLanguage("hinglish", "english", "Aaj ke plans update karne hain", null)).toBe("hinglish");
+  });
+
+  it("every product surface gets the same rule: the whole reply, every turn, technical terms left in English", () => {
+    const line = surfaceLanguageLine("hinglish");
+    expect(line).toContain("from the first sentence to the last, every turn, even when their message is mostly English");
+    expect(line).toContain("do not invent Hindi for technical words");
+    expect(line).toContain("only if the learner explicitly asks");
+    expect(surfaceLanguageLine(null)).toContain("LANGUAGE: English, unless the learner writes to you in Hinglish");
+  });
+
+  it("reaches the editor, the tutor, Today's Nova, the study proposal and Build with Nova", () => {
+    const src = (f: string) => require("node:fs").readFileSync(require("node:path").join(__dirname, "..", f), "utf8") as string;
+    expect(src("product/note-edit.ts")).toContain("surfaceLanguageLine(language, { content: \"note\" })");
+    expect(src("product/note-tutor.ts")).toContain("surfaceLanguageLine(options.language ?? null)");
+    expect(src("product/day-copilot.ts")).toContain("surfaceLanguageLine(language)");
+    expect(src("product/study-proposal.ts")).toContain("surfaceLanguageLine(language)");
+    expect(src("product/builder-conversation.ts")).toContain("return surfaceLanguageLine(chosen)");
   });
 });

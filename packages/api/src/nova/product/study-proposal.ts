@@ -17,6 +17,8 @@
 // as instructions about how Nova works.
 
 import { generateOpenAIText } from "../../services/openai.service";
+import { logModelFailure, modelFailure, unreadableReply } from "./model-failure";
+import { surfaceLanguageLine, type ReplyLanguage } from "./surface-language";
 import { prisma } from "@repo/db/client";
 import { checkStudyEdits, loadStudyStructure, parseStudyEdits } from "./setup-edit";
 import type { StudyEdit, StudyStructure } from "./setup-edit.types";
@@ -114,6 +116,7 @@ export async function proposeStudyEdits(
   learningContexts: string[],
   // Test seams.
   generate: typeof generateOpenAIText = generateOpenAIText,
+  language: ReplyLanguage | null = null,
 ): Promise<StudyProposalResponse> {
   const request = raw && typeof raw === "object" && typeof (raw as { request?: unknown }).request === "string"
     ? (raw as { request: string }).request.trim() : "";
@@ -124,25 +127,32 @@ export async function proposeStudyEdits(
     loadStudyStructure(profileId),
     prisma.novaAcademicProfile.findUnique({ where: { id: profileId }, select: { goals: true } }),
   ]);
-  return proposeFor(structure, profile?.goals ?? [], learningContexts, request, generate);
+  return proposeFor(structure, profile?.goals ?? [], learningContexts, request, generate, language);
 }
 
 // The model call and the check, for a structure already read.
 export async function proposeFor(
   structure: StudyStructure, goals: string[], learningContexts: string[], request: string,
   generate: typeof generateOpenAIText = generateOpenAIText,
+  language: ReplyLanguage | null = null,
 ): Promise<StudyProposalResponse> {
   try {
     const reply = await generate({
       model: "gpt-4o", systemInstruction: SYSTEM,
-      prompt: studyProposalPrompt(structure, goals, learningContexts, request),
-      maxOutputTokens: 1_500, deadlineMs: STUDY_PROPOSAL_DEADLINE_MS,
+      prompt: `${surfaceLanguageLine(language)}\n\n${studyProposalPrompt(structure, goals, learningContexts, request)}`,
+      maxOutputTokens: 1_500, deadlineMs: STUDY_PROPOSAL_DEADLINE_MS, json: true,
     });
     const read = readStudyProposal(typeof reply === "string" ? reply : "", structure);
-    if (!read) return { ok: false, error: "unavailable", message: "Nova didn't come back with a change it could make. Try saying it another way." };
+    if (!read) {
+      // An answer arrived but held no change code could check: the reply, not the request.
+      const f = unreadableReply();
+      logModelFailure("study_proposal", "propose", f, { subjects: structure.subjects.length });
+      return { ok: false, error: "unavailable", message: `${f.message} You can still edit your subjects yourself.` };
+    }
     return { ok: true, version: structure.version, ...read };
   } catch (err) {
-    console.error("[nova:study-proposal] no result:", (err as Error).message);
-    return { ok: false, error: "unavailable", message: "Nova can't help with this right now. You can still edit your subjects yourself." };
+    const f = modelFailure(err);
+    logModelFailure("study_proposal", "propose", f, { subjects: structure.subjects.length });
+    return { ok: false, error: "unavailable", message: `${f.message} You can still edit your subjects yourself.` };
   }
 }

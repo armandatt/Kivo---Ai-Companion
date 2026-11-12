@@ -166,6 +166,13 @@ export function NovaHome({ view, refreshing }: Props) {
                 <section className="rounded-2xl border border-nova/25 bg-nova/[0.05] px-4 py-3.5" role="status" data-session-ended={ended.id}>
                   <p className="text-sm text-foreground">You focused on <span className="font-medium">{ended.title}</span>{ended.spentMinutes ? ` for ${minutesLabel(ended.spentMinutes)}` : ''}. What next?</p>
                   <div className="mt-2.5 flex flex-wrap gap-2 text-sm">
+                    {/* The learner's own word that the task itself is finished: the task
+                        moves to Done on the board and the item is done for today. Never
+                        automatic; offered first when today's time on it is used up. */}
+                    {ended.kind === 'task' && ended.ref?.status !== 'done' && !ended.ref?.gone && (
+                      <button type="button" disabled={day.busy} onClick={() => void day.act({ action: 'finish_task', itemId: ended.id })}
+                        className={ended.minutes && (ended.spentMinutes ?? 0) >= ended.minutes ? 'rounded-lg bg-action px-3 py-1.5 font-semibold text-action-foreground hover:bg-action-hover' : 'rounded-lg border border-white/12 px-3 py-1.5 hover:bg-white/5'} data-ended-finished>Task finished</button>
+                    )}
                     <button type="button" disabled={day.busy} onClick={() => void day.ops([{ op: 'set_status', id: ended.id, status: 'done' }])} className="rounded-lg border border-white/12 px-3 py-1.5 hover:bg-white/5" data-ended-done>Done for today</button>
                     <button type="button" disabled={day.busy} onClick={() => void day.ops([{ op: 'set_status', id: ended.id, status: 'planned' }])} className="rounded-lg border border-white/12 px-3 py-1.5 hover:bg-white/5" data-ended-keep>Keep it in today</button>
                     {next && next.id !== ended.id && <button type="button" disabled={day.busy} onClick={() => void day.ops([{ op: 'set_status', id: ended.id, status: 'planned' }, { op: 'move', id: next.id, to: 0 }])} className="rounded-lg border border-white/12 px-3 py-1.5 hover:bg-white/5">Next: {next.title}</button>}

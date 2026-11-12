@@ -4,6 +4,8 @@ import { metered } from "../../../../../../lib/billing/metered"
 import { proposeEdit, EDIT_REQUESTS_PER_MINUTE } from "@repo/api/nova/product/note-edit"
 //@ts-ignore
 import { EDIT_BODY_MAX } from "@repo/api/nova/product/note-edit.types"
+//@ts-ignore
+import { loadChosenLanguage } from "@repo/api/nova/product/surface-language"
 import { noteFail, requireNoteLearner } from "../../../../../../lib/nova/note-access"
 import { allowAttempt, readSmallJson } from "../../../../../../lib/nova/extension-access"
 
@@ -28,11 +30,14 @@ export async function POST(req: Request, { params }: Context) {
     const read = await readSmallJson(req, EDIT_BODY_MAX)
     if (!read.ok) return noteFail(read.reason === "too_large" ? 413 : 400, read.reason === "too_large" ? "too_long" : "invalid", read.reason === "too_large" ? "That's too much to send at once." : "That isn't an edit Nova can make.")
     const noteId = (await params).id
-    const run = await metered(access.platformChatId, () => proposeEdit(access.profileId, noteId, read.body), { feature: "notes_editor" })
+    const language = await loadChosenLanguage(access.platformChatId)
+    const run = await metered(access.platformChatId, () => proposeEdit(access.profileId, noteId, read.body, undefined, undefined, { language }), { feature: "notes_editor" })
     if (!run.ok) return run.response
     const result = run.value as Awaited<ReturnType<typeof proposeEdit>>
     if (result.ok) return NextResponse.json(result, { headers: { "cache-control": "no-store" } })
-    const status = result.error === "not_found" ? 404 : result.error === "unavailable" ? 503 : 400
+    // unavailable: the model failed (busy, slow, incomplete reply); nothing_usable:
+    // it answered, and nothing it proposed fitted the note. Neither is the learner's wording.
+    const status = result.error === "not_found" ? 404 : result.error === "unavailable" ? 503 : result.error === "nothing_usable" ? 422 : 400
     return NextResponse.json(result, { status })
   } catch (err) {
     console.error("[nova/notes/:id/edit]", err)

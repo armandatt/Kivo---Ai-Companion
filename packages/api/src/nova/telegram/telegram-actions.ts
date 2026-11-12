@@ -46,6 +46,8 @@ export interface ActionContext {
   // The language they chose for Nova, if they did: what a sentence the
   // reading cannot place is answered in, instead of English.
   preferredLanguage?: ReplyLanguage | null;
+  // A language they explicitly asked for, still in force (interaction/language.ts).
+  heldLanguage?: ReplyLanguage | null;
 }
 
 export interface ActionResult {

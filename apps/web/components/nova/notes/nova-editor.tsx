@@ -17,33 +17,30 @@
 // edits, Nova drafting, a proposal waiting for the learner, applied.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Check, Eye, Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react'
+import { AlertTriangle, Check, Eye, ImagePlus, Loader2, RotateCcw, Send, Square, Trash2, X } from 'lucide-react'
+import { AttachmentTray, useAttachments, useDropZone } from '../attachments'
+import { earlierImages, IMAGE_ACCEPT, isImage, newImageKey, storeImageData } from './note-image-upload'
 import { ThinkingDots } from '../chat-ui'
 import type { NoteDetail } from '@repo/api/nova/product/notes.types'
 import type { EditChange } from '@repo/api/nova/product/note-outline'
 import type { EditKind, EditProposal } from '@repo/api/nova/product/note-edit.types'
 import { EDIT_INSTRUCTION_MAX } from '@repo/api/nova/product/note-edit.types'
+import { EDIT_LABEL, historyOf, openQuestion, type EditAsk, type EditEntry } from './edit-history'
+export { EDIT_LABEL }
+export type { EditAsk }
 import { NoteBody } from './note-body'
 import { proposeEdit } from './tutor-api'
 import type { Passage } from './nova-tutor'
 
-export const EDIT_LABEL: Record<EditKind, string> = {
-  structure: 'Improve the structure', rewrite: 'Rewrite more clearly', expand: 'Expand what’s thin', grammar: 'Fix grammar and wording',
-  dedupe: 'Remove repetition', summary: 'Add a summary', takeaways: 'Add key takeaways', examples: 'Add examples',
-  integrate: 'Work it into the note', custom: 'Edit',
-}
 const EDIT_WORK: Record<EditKind, string> = {
   structure: 'Drafting a structure', rewrite: 'Drafting a rewrite', expand: 'Drafting an expansion', grammar: 'Checking the wording',
   dedupe: 'Looking for repetition', summary: 'Drafting a summary', takeaways: 'Drafting takeaways', examples: 'Drafting examples',
   integrate: 'Finding where it belongs', custom: 'Drafting an edit',
 }
 
-export interface EditAsk { kind: EditKind; instruction?: string; passage?: string; material?: string; label?: string }
 // applying: being applied and saved; applied: in the note and saved;
 // unsaved: in the note on screen, but the save did not go through.
-type Entry =
-  | { id: string; ask: EditAsk; state: 'proposed' | 'applying' | 'applied' | 'unsaved' | 'discarded' | 'conflict'; proposal: EditProposal; skip: string[]; note?: string }
-  | { id: string; ask: EditAsk; state: 'error'; message: string }
+type Entry = EditEntry
 type Pending = { ask: EditAsk; stage: 'saving' | 'drafting'; controller: AbortController }
 
 // saved: the note was saved with the changes. already: they were in it.
@@ -97,6 +94,9 @@ export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version
 }) {
   const noteId = note?.id ?? null
   const [entries, setEntries] = useState<Entry[]>([])
+  // The entries as they stand, for a request sent from a callback.
+  const entriesRef = useRef<Entry[]>([])
+  entriesRef.current = entries
   const [pending, setPending] = useState<Pending | null>(null)
   const [input, setInput] = useState('')
   const [announce, setAnnounce] = useState('')
@@ -104,6 +104,18 @@ export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version
   // Refining the open proposal: the next message is a change to it.
   const [refining, setRefining] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // Screenshots for the editor: pasted, dropped or chosen; images only.
+  const files = useAttachments()
+  const panel = useRef<HTMLElement>(null)
+  const picker = useRef<HTMLInputElement>(null)
+  const addImages = (list: FileList | File[]) => {
+    const all = Array.from(list), images = all.filter(f => isImage(f.type))
+    if (images.length < all.length) setAnnounce('The editor takes images (PNG, JPEG, WebP). To work a PDF in, ask the tutor about it first.')
+    if (images.length) files.add(images)
+  }
+  const drop = useDropZone(panel, addImages, !!note)
+  const shown = useRef<string[]>([])
+  useEffect(() => () => { for (const url of shown.current) URL.revokeObjectURL(url) }, [])
   const listRef = useRef<HTMLDivElement>(null)
   // One apply at a time: a second click while one is saving does nothing.
   const applying = useRef(false)
@@ -127,8 +139,26 @@ export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version
       setEntries(list => [...list, { id: newId(), ask, state: 'error', message: "Your latest edits aren't saved, so Nova would edit an older version of the note. Save them, then try again." }])
       return
     }
+    // Screenshots are stored on the note first, then named by id (a retry
+    // uses the same keys, so nothing is stored twice).
+    if (ask.toStore?.length) {
+      const ids: string[] = []
+      for (const f of ask.toStore) {
+        const r = await storeImageData(noteId, f.data, f.key)
+        if (controller.signal.aborted) return
+        if (!r.ok) {
+          setPending(null)
+          setEntries(list => [...list, { id: newId(), ask, state: 'error', message: `${r.message}${r.retry ? '' : ' Remove it and try again without it.'}` }])
+          setAnnounce(r.message)
+          return
+        }
+        ids.push(r.id)
+      }
+      ask = { ...ask, images: [...(ask.images ?? []), ...ids], toStore: undefined }
+    }
     setPending(p => (p ? { ...p, stage: 'drafting' } : p))
-    const res = await proposeEdit(noteId, { kind: ask.kind, instruction: ask.instruction, selection: ask.passage, material: ask.material, noteVersion: version() ?? undefined }, controller.signal)
+    const earlier = earlierImages(entriesRef.current.map(e => e.ask), ask.images ?? [])
+    const res = await proposeEdit(noteId, { kind: ask.kind, instruction: ask.instruction, selection: ask.passage, material: ask.material, noteVersion: version() ?? undefined, history: historyOf(entriesRef.current), ...(ask.answering ? { answering: ask.answering } : {}), ...(ask.images?.length ? { images: ask.images } : {}), ...(earlier.length ? { earlierImages: earlier } : {}) }, controller.signal)
     setPending(null)
     if (!res.ok) {
       if (res.error === 'aborted') return
@@ -148,18 +178,27 @@ export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version
   }, [seed, noteId, pending, send, onSeedUsed])
 
   function submit() {
-    const text = input.trim()
-    if (!text || pending) return
+    const uploads = files.uploads()
+    const text = input.trim() || (uploads.length ? 'Work what the attached image shows into the note, where it belongs.' : '')
+    if (!text || pending || files.preparing || files.blocked) return
+    const taken = files.take()
+    const previews = taken.flatMap(a => (a.preview ? [a.preview] : []))
+    shown.current.push(...previews)
+    const pictures = uploads.length ? { toStore: uploads.map(u => ({ name: u.name, data: u.data, key: newImageKey(`editor-image:${noteId}`) })), previews } : {}
     setInput('')
     const open = entries.find(e => e.state === 'proposed')
     if (refining && open && open.state === 'proposed') {
       // The proposal goes back with what to change in it, as material to work from.
       setRefining(false)
       const was = open.proposal.changes.map(c => `${c.op} ${c.section ? `in ${c.section}` : ''}:\n${c.after || c.before}`).join('\n\n').slice(0, 5_500)
-      void send({ kind: open.ask.kind === 'integrate' ? 'integrate' : 'custom', instruction: `${text} (a change to the proposal below)`.slice(0, EDIT_INSTRUCTION_MAX), passage: open.ask.passage, material: `${open.ask.material ? `${open.ask.material.slice(0, 2_000)}\n\n` : ''}THE PROPOSAL SO FAR:\n${was}`.slice(0, 6_000), label: text })
+      void send({ kind: open.ask.kind === 'integrate' ? 'integrate' : 'custom', instruction: `${text} (a change to the proposal below)`.slice(0, EDIT_INSTRUCTION_MAX), passage: open.ask.passage, material: `${open.ask.material ? `${open.ask.material.slice(0, 2_000)}\n\n` : ''}THE PROPOSAL SO FAR:\n${was}`.slice(0, 6_000), label: text, ...pictures })
       return
     }
-    void send({ kind: 'custom', instruction: text.slice(0, EDIT_INSTRUCTION_MAX), passage: passage?.text })
+    // An answer to Nova's question goes back with the question and the
+    // passage it was about, so it is read as the answer it is.
+    const question = openQuestion(entries)
+    const asked = question ? entries.at(-1)!.ask : null
+    void send({ kind: asked && asked.kind !== 'custom' ? asked.kind : 'custom', instruction: text.slice(0, EDIT_INSTRUCTION_MAX), passage: passage?.text ?? asked?.passage, material: asked?.material, label: text, ...(question ? { answering: question } : {}), ...pictures })
   }
 
   // A change to one proposal (never to an error line).
@@ -214,7 +253,7 @@ export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version
   const actions: EditKind[] = empty ? ['structure'] : passage ? ['rewrite', 'expand', 'grammar', 'examples'] : ['structure', 'summary', 'dedupe', 'takeaways', 'grammar', 'examples']
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-background" aria-label="Nova, your editor" data-nova-editor data-editor-state={pending ? pending.stage : open ? 'waiting' : 'idle'}>
+    <section ref={panel} className="relative flex h-full min-h-0 flex-col bg-background" aria-label="Nova, your editor" data-nova-editor data-editor-state={pending ? pending.stage : open ? 'waiting' : 'idle'}>
       {header(<>{pending && <Loader2 className="size-3 animate-spin" aria-hidden />}{status}</>, !!pending)}
 
       <div ref={listRef} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4" data-editor-log>
@@ -232,6 +271,12 @@ export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version
             <p className="mb-2 text-sm text-foreground/90" data-edit-ask>
               <span className="text-foreground/50">You asked: </span>{e.ask.instruction ?? e.ask.label ?? EDIT_LABEL[e.ask.kind]}
               {e.ask.passage && <span className="mt-1 block line-clamp-2 border-l-2 border-nova/40 pl-2 text-xs italic text-foreground/55">{e.ask.passage}</span>}
+              {(e.ask.previews?.length || e.ask.images?.length) ? (
+                <span className="mt-1.5 flex flex-wrap gap-1.5" data-edit-images>
+                  {/* eslint-disable-next-line @next/next/no-img-element -- the learner's own images, stored on this note and served to them only */}
+                  {(e.ask.previews?.length ? e.ask.previews : (e.ask.images ?? []).map(id => `/api/nova/notes/images/${encodeURIComponent(id)}`)).map(src => <img key={src} src={src} alt="" className="max-h-24 max-w-full rounded-md object-contain" />)}
+                </span>
+              ) : null}
             </p>
             {e.state === 'error' ? (
               <div role="alert" className="text-sm text-foreground/80" data-editor-error>
@@ -325,10 +370,14 @@ export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version
             ))}
           </div>
         )}
+        <AttachmentTray items={files.items} onRemove={files.remove} onRetry={files.retry} className="mb-2" />
+        <input ref={picker} type="file" accept={IMAGE_ACCEPT} multiple hidden onChange={e => { if (e.target.files?.length) addImages(e.target.files); e.target.value = '' }} data-editor-image-input />
         <form onSubmit={e => { e.preventDefault(); submit() }} className="flex items-end gap-2">
+          <button type="button" disabled={!note} onClick={() => picker.current?.click()} className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl border border-white/10 text-foreground/70 hover:bg-white/5 disabled:opacity-40" title="Attach a screenshot (or paste or drop one)" aria-label="Attach a screenshot" data-editor-attach><ImagePlus className="size-4" /></button>
           <label htmlFor="editor-input" className="sr-only">Tell Nova what to change</label>
           <textarea id="editor-input" ref={inputRef} rows={1} value={input} maxLength={EDIT_INSTRUCTION_MAX} disabled={!note}
             onChange={e => setInput(e.target.value)}
+            onPaste={files.onPaste}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() } if (e.key === 'Escape' && pending) { pending.controller.abort(); setPending(null) } }}
             placeholder={refining ? 'What should be different in the proposal?' : passage ? 'What should change in this passage?' : 'Tell Nova what to change…'}
             className="max-h-32 min-h-10 flex-1 resize-none rounded-xl border border-white/10 bg-transparent px-3 py-2.5 text-sm text-foreground placeholder:text-foreground/35 focus:border-nova/60 focus:outline-none disabled:opacity-50"
@@ -336,11 +385,12 @@ export function NovaEditor({ note, passage, onClearPassage, ensureSaved, version
           {pending ? (
             <button type="button" onClick={() => { pending.controller.abort(); setPending(null) }} className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl border border-white/12 text-foreground/80 hover:bg-white/5" title="Stop (Esc)" aria-label="Stop"><Square className="size-3.5" /></button>
           ) : (
-            <button type="submit" disabled={!input.trim() || !note} className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-action text-action-foreground transition-colors hover:bg-action-hover disabled:opacity-40" title="Send (Enter)" aria-label="Send"><Send className="size-4" /></button>
+            <button type="submit" disabled={(!input.trim() && files.uploads().length === 0) || files.preparing || files.blocked || !note} className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-action text-action-foreground transition-colors hover:bg-action-hover disabled:opacity-40" title="Send (Enter)" aria-label="Send"><Send className="size-4" /></button>
           )}
         </form>
       </div>
       <p className="sr-only" role="status" aria-live="polite">{announce}</p>
+      {drop.overlay}
     </section>
   )
 }

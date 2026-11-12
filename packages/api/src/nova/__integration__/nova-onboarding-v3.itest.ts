@@ -206,16 +206,24 @@ test("a web reply is worded in their language and tone, with the support lines",
   assert.match(turn!.layer, /Working on \(their own answer at sign-up/);
 });
 
-test("what they write in wins over their choice", async () => {
+// Changed 12 Nov: a chosen Hinglish holds whatever a message is written in
+// (a Hinglish learner's messages are often mostly English); only an explicit
+// request changes it, and that request is kept for the next message too.
+test("their choice holds over a message written in English; an explicit request switches, and holds", async () => {
   const learner = await readyLearner();
   worded.length = 0;
-  await handleNovaTurn({
-    platformChatId: learner, text: "Can we just chat for a minute about my week", onboardingDone: true, surface: "web",
-    awaitPersistence: true, timestamp: new Date(), respond, understand: understandAs({ ...BASE, request: { ...REQ, language: "english" } }),
+  const turn = (text: string, request: Record<string, unknown>) => handleNovaTurn({
+    platformChatId: learner, text, onboardingDone: true, surface: "web",
+    awaitPersistence: true, timestamp: new Date(), respond, understand: understandAs({ ...BASE, request: { ...REQ, ...request } }),
   });
-  const turn = worded.at(-1);
-  assert.ok(turn);
-  assert.doesNotMatch(turn!.prompt, /Language: Hinglish/);
+  await turn("Can we just chat for a minute about my week", { language: "english" });
+  assert.match(worded.at(-1)!.prompt, /Language: Hinglish/);
+  await turn("Please reply in English from now on", { language: "english", languageRequest: "english" });
+  assert.doesNotMatch(worded.at(-1)!.prompt, /Language: Hinglish/);
+  await turn("acha theek hai, what about tomorrow", { language: "hinglish" });
+  assert.doesNotMatch(worded.at(-1)!.prompt, /Language: Hinglish/, "the request is held across messages");
+  await turn("Hinglish mein hi bolo yaar", { language: "hinglish", languageRequest: "hinglish" });
+  assert.match(worded.at(-1)!.prompt, /Language: Hinglish/);
 });
 
 test("the name they ask Nova to use is kept, read back, and replaces the account name for Nova", async () => {

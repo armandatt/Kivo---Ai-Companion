@@ -12,7 +12,7 @@
 // what they said about their term, and adding an exam.
 
 import { prisma } from "@repo/db/client";
-import { loadConversationHistory, loadReplyLanguage, saveAssistantMessage, saveUserMessage } from "../adapters/conversation-adapter";
+import { loadConversationHistory, loadHeldLanguage, loadReplyLanguage, saveAssistantMessage, saveUserMessage } from "../adapters/conversation-adapter";
 import { loadVoicePreferences } from "../adapters/account-preferences-adapter";
 import { runUnderstandingBrain } from "../brains/understanding-brain";
 import { decideAction, type TurnAction } from "../decision/action-decision";
@@ -37,7 +37,7 @@ import { ensureSetupProfile } from "../product/setup";
 import { openDraftFromChat } from "../product/builder";
 import { interpret } from "./semantics";
 import { runSetupTurn } from "./setup-turn";
-import { chooseLanguage, languageLine, scriptLanguage } from "./language";
+import { chooseLanguage, heldAfter, languageLine, scriptLanguage } from "./language";
 
 // The questions the web chat can ask and have answered in words. A Start
 // offer made on Telegram is not one of them: "yes" typed here must not start
@@ -123,8 +123,9 @@ export async function runWebSentence(input: WebSentenceInput): Promise<WebSenten
   // by the rule Telegram uses (chooseLanguage), with the language they chose
   // for Nova in place of English. Lines code wrote stay English on the web.
   const preferred = (await loadVoicePreferences(platformChatId).catch(() => ({ language: null }))).language;
-  const language  = scriptLanguage(text) ?? chooseLanguage(safe.request?.language, await loadReplyLanguage(user.id, preferred ?? "english"), text, preferred);
-  const understanding = safe.request ? { ...safe, request: { ...safe.request, language } } : safe;
+  const choice = { requested: safe.request?.languageRequest ?? null, held: await loadHeldLanguage(user.id).catch(() => null) };
+  const language  = scriptLanguage(text) ?? chooseLanguage(safe.request?.language, await loadReplyLanguage(user.id, preferred ?? "english"), text, preferred, choice);
+  const understanding = safe.request ? { ...safe, request: { ...safe.request, language, languageRequest: heldAfter(choice, preferred) } } : safe;
   const interaction   = interpret(understanding);
   const inTheirLanguage = languageLine(language);
   const told = (directive: string) => inTheirLanguage ? `${directive}\n${inTheirLanguage}` : directive;

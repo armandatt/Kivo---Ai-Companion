@@ -94,3 +94,60 @@ export async function readNoteImage(profileId: string, id: string): Promise<{ mi
   const row = await prisma.novaNoteImage.findFirst({ where: { id, profileId }, select: { mimeType: true, bytes: true } });
   return row ? { mimeType: row.mimeType, bytes: Buffer.from(row.bytes) } : null;
 }
+
+// ── Images given to Nova ──────────────────────────────────────────────────────
+// A screenshot the learner attaches in the tutor or the editor is stored here
+// first, on the note being worked on, like any image in a note; the request
+// then names it by id. So the bytes are never kept in a conversation or a
+// note's text, a follow-up message can name the same image again, a reload
+// keeps it, and a retry sends the same thing. Only an image of this learner
+// and of this note is ever read for the model.
+
+export const MODEL_IMAGES_MAX = 4;
+// Together, as sent to the model (the provider's own limits are larger).
+export const MODEL_IMAGE_BYTES_MAX = 8_000_000;
+
+const isIdChar = (c: string) => (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9");
+const isRowId = (id: unknown): id is string =>
+  typeof id === "string" && id.length >= 8 && id.length <= 40 && [...id].every(isIdChar);
+
+// Image ids from a request: valid ids only, each once, at most `max`.
+export function readImageIds(v: unknown, max = MODEL_IMAGES_MAX): string[] {
+  if (!Array.isArray(v)) return [];
+  return [...new Set(v.filter(isRowId))].slice(0, max);
+}
+
+// The ids of the images a text holds (![caption](kivo-image:<id>)), in order. Pure.
+export function imageRefsIn(text: string): string[] {
+  const out: string[] = [];
+  for (let at = text.indexOf(NOTE_IMAGE_SCHEME); at !== -1; at = text.indexOf(NOTE_IMAGE_SCHEME, at + 1)) {
+    let end = at + NOTE_IMAGE_SCHEME.length;
+    while (end < text.length && isIdChar(text[end]!)) end++;
+    const id = text.slice(at + NOTE_IMAGE_SCHEME.length, end);
+    if (isRowId(id) && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+export interface ModelImage { id: string; name: string; mimeType: string; data: string }
+
+// The images, as attachments for the model, in the order asked. One that is
+// not this learner's, not on this note, or gone is `missing`, never an error:
+// the request goes on without it and says so.
+export async function noteImagesForModel(profileId: string, noteId: string, ids: string[]): Promise<{ images: ModelImage[]; missing: string[] }> {
+  const wanted = readImageIds(ids);
+  if (!wanted.length) return { images: [], missing: [] };
+  const rows = await prisma.novaNoteImage.findMany({ where: { id: { in: wanted }, profileId, noteId }, select: { id: true, mimeType: true, bytes: true } });
+  const byId = new Map(rows.map(r => [r.id, r]));
+  const images: ModelImage[] = [], missing: string[] = [];
+  let total = 0;
+  for (const id of wanted) {
+    const r = byId.get(id);
+    if (!r) { missing.push(id); continue; }
+    const bytes = Buffer.from(r.bytes);
+    if (total + bytes.length > MODEL_IMAGE_BYTES_MAX) { missing.push(id); continue; }
+    total += bytes.length;
+    images.push({ id, name: `image I${images.length + 1}`, mimeType: r.mimeType, data: bytes.toString("base64") });
+  }
+  return { images, missing };
+}

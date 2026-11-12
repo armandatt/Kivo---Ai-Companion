@@ -24,6 +24,7 @@ import type { TutorMode, TutorReply } from '@repo/api/nova/product/note-tutor.ty
 import { TUTOR_MESSAGE_MAX } from '@repo/api/nova/product/note-tutor.types'
 import { askTutor } from './tutor-api'
 import { ACCEPT, AttachmentTray, useAttachments, useDropZone } from '../attachments'
+import { earlierImages, isImage, newImageKey, storeImageData } from './note-image-upload'
 import { LiveText, ThinkingDots, useFollowBottom } from '../chat-ui'
 import type { EditAsk } from './nova-editor'
 import { ReplyView, type Insert, type Reveal } from './tutor-playground'
@@ -105,7 +106,8 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
     const controller = new AbortController()
     followBottom()
     setLive('')
-    setEntries(list => [...list, { id: newId(), role: 'learner', ask, at: Date.now() }])
+    const askId = newId()
+    setEntries(list => [...list, { id: askId, role: 'learner', ask, at: Date.now() }])
     setPending({ ask, stage: 'saving', since: Date.now(), controller })
     setAnnounce('')
 
@@ -116,11 +118,34 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
       setEntries(list => [...list, { id: newId(), role: 'error', ask, at: Date.now(), message: "Your latest edits aren't saved, so Nova would read an older version of the note. Save them, then try again." }])
       return
     }
+    // Screenshots are stored on the note first, then named by id. The same key
+    // on a retry stores nothing twice; a failure leaves them to try again.
+    if (ask.toStore?.length) {
+      const ids: string[] = []
+      for (const f of ask.toStore) {
+        const r = await storeImageData(noteId, f.data, f.key)
+        if (controller.signal.aborted) return
+        if (!r.ok) {
+          setPending(null)
+          setEntries(list => [...list, { id: newId(), role: 'error', ask, at: Date.now(), message: `${r.message}${r.retry ? '' : ' Remove it and try again without it.'}` }])
+          setAnnounce(r.message)
+          return
+        }
+        ids.push(r.id)
+      }
+      ask = { ...ask, images: [...(ask.images ?? []), ...ids], toStore: undefined }
+      const stored = ask
+      setEntries(list => list.map(e => (e.id === askId && e.role === 'learner' ? { ...e, ask: stored } : e)))
+    }
     setPending(p => (p ? { ...p, stage: 'asking' } : p))
+    // Images from the last messages go again, so "and the second one?" still sees them.
+    const earlier = earlierImages(before.flatMap(e => (e.role === 'learner' ? [e.ask] : [])), ask.images ?? [])
     const res = await askTutor(noteId, {
       mode: ask.mode, message: ask.message, selection: ask.passage, noteVersion: version() ?? undefined,
       history: historyOf(before), results: resultsOf(before), exercise: ask.exercise, answer: ask.answer,
       ...(ask.files?.length ? { files: ask.files } : {}),
+      ...(ask.images?.length ? { images: ask.images } : {}),
+      ...(earlier.length ? { earlierImages: earlier } : {}),
     }, controller.signal, setLive)
     setPending(null)
     setLive('')
@@ -165,9 +190,13 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
     const shown = taken.flatMap(a => (a.preview ? [a.preview] : []))
     previews.current.push(...shown)
     setInput('')
+    // Images are stored on the note and sent by id; a PDF goes with this message only.
+    const pictures = uploads.filter(u => isImage(u.type)), docs = uploads.filter(u => !isImage(u.type))
     void send({
       mode: 'explain', message: (text || 'Look at what I attached and tell me what matters here.').slice(0, TUTOR_MESSAGE_MAX), passage: passage?.text,
-      ...(uploads.length ? { files: uploads.map(u => ({ name: u.name, data: u.data })), previews: shown, attached: uploads.map(u => u.name) } : {}),
+      ...(uploads.length ? { previews: shown, attached: uploads.map(u => u.name) } : {}),
+      ...(docs.length ? { files: docs.map(u => ({ name: u.name, data: u.data })) } : {}),
+      ...(pictures.length ? { toStore: pictures.map(u => ({ name: u.name, data: u.data, key: newImageKey(`tutor-image:${noteId}`) })) } : {}),
     })
   }
 
@@ -212,6 +241,11 @@ export function NovaTutor({ note, passage, onClearPassage, ensureSaved, version,
                 <span className="mb-1.5 flex flex-wrap gap-1.5" data-tutor-sent-images>
                   {/* eslint-disable-next-line @next/next/no-img-element -- the learner's own image, from this browser */}
                   {e.ask.previews.map(url => <img key={url} src={url} alt="" className="max-h-40 max-w-full rounded-lg object-contain" />)}
+                </span>
+              ) : e.ask.images?.length ? (
+                <span className="mb-1.5 flex flex-wrap gap-1.5" data-tutor-sent-images>
+                  {/* eslint-disable-next-line @next/next/no-img-element -- the learner's own image, stored on this note and served to them only */}
+                  {e.ask.images.map(id => <img key={id} src={`/api/nova/notes/images/${encodeURIComponent(id)}`} alt="" className="max-h-40 max-w-full rounded-lg object-contain" onError={ev => { ev.currentTarget.style.display = 'none' }} />)}
                 </span>
               ) : e.ask.attached?.length ? <span className="mb-1 block text-xs text-foreground/55">Attached: {e.ask.attached.join(', ')}</span> : null}
               {askLine(e.ask)}

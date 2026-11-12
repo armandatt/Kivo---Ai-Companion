@@ -753,7 +753,7 @@ async function runChanges(platformChatId: string, profile: { id: string; timezon
   const checked = checkChanges(ops, current, { today, studied });
   const set = filterTaskOps(withinAsk(checked, brief.touches?.length ? asked : [], current, { removes: brief.removes ?? null }), taskConsent(brief), current);
   if (set.ops.length === 0) {
-    const text = `I couldn't turn that into a change to ${current.title}${set.dropped.length ? `: ${set.dropped.slice(0, 3).join("; ")}` : ""}. Nothing is proposed; could you say it another way?`;
+    const text = `I couldn't turn that into a change to ${current.title}${set.dropped.length ? `: ${set.dropped.slice(0, 3).join("; ")}` : ""}. Nothing is proposed. Say which part to change, or ask again and I will try once more.`;
     await settle(row.id, job.jobId, { status: fallback, failure: null, brief: { ...brief, dropped: set.dropped }, add: [message("nova", text, new Date(), { kind: "chat" })] });
     return;
   }
@@ -851,7 +851,7 @@ async function runRevision(profile: { id: string; timezone: string | null }, row
   const ops = asked.includes("priorities") ? placed.ops : withoutPriorities(placed.ops);
   const set = filterTaskOps(withinAsk(checkChanges(ops, detail, { today, studied: new Set() }), brief.touches?.length ? asked : [], detail, { removes: brief.removes ?? null }), taskConsent(brief), detail);
   if (set.ops.length === 0) {
-    const text = `I couldn't turn that into a change to the proposal${set.dropped.length ? `: ${set.dropped.slice(0, 3).join("; ")}` : ""}. Nothing changed; could you say it another way?`;
+    const text = `I couldn't turn that into a change to the proposal${set.dropped.length ? `: ${set.dropped.slice(0, 3).join("; ")}` : ""}. Nothing changed. Say which part to change, or ask again and I will try once more.`;
     await settle(row.id, job.jobId, { status: "awaiting_approval", failure: null, brief: { ...brief, dropped: set.dropped }, add: [message("nova", text, new Date(), { kind: "chat" })] });
     return;
   }
