@@ -149,6 +149,8 @@ Known gaps, deliberately not fixed here: `UserProfile.primaryPersona` is never c
 
 `runCheckinCron` in `apps/api/lib/checkin-cron.ts` sends dynamic check-ins, custom reminders, gym cues and Nova proactive messages; each job has its own `try`, so one failing does not stop the others. It is driven by an in-process 5-minute `setInterval` started from `apps/api/instrumentation.ts` (disable with `DISABLE_INTERNAL_CHECKIN_CRON=true`). `render.yaml` sets that flag to `false`: Render is the one host that runs it. **Only production starts it** (`schedulerEnabled` in `services/schedulerGate.ts`, held by `scheduler-gate.test.ts`): `next dev` ticks only with `ENABLE_INTERNAL_CHECKIN_CRON=true`, because a local `.env` has held the production database and the production bot token. `GET /api/health` reports `scheduler.state` (`running` / `disabled`) with the time and result of the last tick. `GET /api/checkin` runs one tick by hand; nothing deployed calls it, and it requires `Authorization: Bearer $CRON_SECRET` (closed in production when `CRON_SECRET` is unset). The root `vercel.json` still declares a cron for `/api/checkin`, but the web app has neither that route nor a rewrite for it. Nova's part is described under "Nova on Telegram".
 
+**Retention purges run hourly** (`createHousekeepingGate`): webhook dedup rows, old prompts, legacy decision rows. `runNovaProactiveCron(now, { housekeeping: false })` skips its two. Held by `scheduler-gate.test.ts`.
+
 ### Data model
 
 Two user identities, deliberately not merged:

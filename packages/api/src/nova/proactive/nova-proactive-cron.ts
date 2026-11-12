@@ -25,7 +25,7 @@ import { dayKey, dayNumber, localHour, localMinute } from "../engines/learner-ca
 import { STUDY_WINDOWS } from "../engines/learning-dna-engine";
 import { loadReplyLanguage, saveAssistantMessage, userMessagedSince } from "../adapters/conversation-adapter";
 import { loadOperatingStyle, loadAccountabilityStyle, loadTone } from "../adapters/operating-style-adapter";
-import { ensureLearnerTimezone, loadAccountPreferences, loadVoicePreferences } from "../adapters/account-preferences-adapter";
+import { ensureLearnerTimezone, loadAccountPreferences, loadAccountPreferencesFor, loadVoicePreferences, type AccountPreferences } from "../adapters/account-preferences-adapter";
 import { retryPendingConsolidations } from "../consolidation/run-consolidation";
 import { abandonStaleSessions } from "../persistence/nova-persistence";
 import { chooseRegister } from "../decision/register";
@@ -37,7 +37,7 @@ import { loadLearningDna } from "../persistence/learning-dna-store";
 import { loadNovaToday } from "../product/today";
 import type { NovaTodayReady } from "../product/today.types";
 import type { ProactiveType } from "../types/proactive.types";
-import { ensureChannel, loadChannel, markDelivered, markUndeliverable, spendModelCall } from "../telegram/channel-store";
+import { CHANNEL_DEFAULTS, ensureChannel, loadChannelRow, markDelivered, markUndeliverable, spendModelCall } from "../telegram/channel-store";
 import { closeOpenPrompt, openPrompt, purgeOldPrompts, recordPromptMessage } from "../telegram/prompt-store";
 import { createTelegramClient } from "../telegram/telegram-client";
 import { encodeCallback } from "../telegram/telegram-event";
@@ -74,6 +74,11 @@ type Outcome =
 export interface ProactiveDeps {
   client?: TelegramClient;
   word?:   (input: ProactiveWordingInput) => Promise<{ text: string; generated: boolean }>;
+  // Run the retention purges (old prompts, legacy decision rows) this tick.
+  // Default true. The in-process scheduler passes false except once an hour:
+  // they delete rows days old, so running them every five minutes only costs
+  // database time.
+  housekeeping?: boolean;
 }
 
 const PRIORITY: Record<ProactiveType, number> = { exam_countdown: 9, missed_plan_recovery: 6, task_due: 5, review_due: 4, daily_checkin: 3, daily_nudge: 3 };
@@ -96,8 +101,10 @@ export async function runNovaProactiveCron(now = new Date(), deps: ProactiveDeps
   await retryPendingConsolidations(now)
     .then(r => { if (r.retried > 0) console.log(`[nova:cron] consolidation retries: ${r.completed}/${r.retried} completed`); })
     .catch(err => console.error("[nova:cron] consolidation retry failed", err));
-  await purgeOldPrompts(now).catch(err => console.error("[nova:cron] prompt purge failed", err));
-  await purgeLegacyDecisions(now).catch(err => console.error("[nova:cron] legacy decision purge failed", err));
+  if (deps.housekeeping !== false) {
+    await purgeOldPrompts(now).catch(err => console.error("[nova:cron] prompt purge failed", err));
+    await purgeLegacyDecisions(now).catch(err => console.error("[nova:cron] legacy decision purge failed", err));
+  }
 
   // Operational switch: stops Nova messaging first without a deploy. Replies
   // to learners, commands and buttons are unaffected.
@@ -121,12 +128,15 @@ export async function runNovaProactiveCron(now = new Date(), deps: ProactiveDeps
     },
   });
 
+  // Every learner's check-in time and sign-up zone in one query, not one each.
+  const accounts = await loadAccountPreferencesFor(profiles.map(p => p.user.platformChatId));
+
   let sent = 0, errors = 0;
   const outcomes: Record<string, number> = {};
   for (const profile of profiles) {
     let outcome: string;
     try {
-      outcome = await processLearner(profile, now, client, word);
+      outcome = await processLearner(profile, now, client, word, accounts.get(profile.user.platformChatId));
       if (outcome === "sent") sent++;
     } catch (err) {
       // One learner's failure never stops the rest of the tick.
@@ -151,22 +161,30 @@ async function processLearner(
   now:     Date,
   client:  TelegramClient,
   word:    NonNullable<ProactiveDeps["word"]>,
+  // Their account preferences, already read for the whole tick. Absent (a
+  // direct caller): read here, as before.
+  preloaded?: AccountPreferences,
 ): Promise<Outcome> {
   const chatId  = profile.user.platformChatId;
   // What they chose on the web: a check-in time, and the zone their browser
   // reported. Nova will not guess what time it is for a learner.
-  const account = await loadAccountPreferences(chatId);
+  const account = preloaded ?? await loadAccountPreferences(chatId);
+  // Writes only for a learner with no usable zone of their own yet.
   const zone    = await ensureLearnerTimezone(profile, chatId, account);
   if (!zone) return "no_timezone";
   const hour   = localHour(now, zone);
   const minute = localMinute(now, zone);
   const day    = dayKey(now, zone);
   const clock  = { localHour: hour, localMinute: minute, checkinMinute: account.checkinMinute };
-  // The cheapest gate first: most ticks for most learners end here.
+  // The cheapest gate first: most ticks for most learners end here, with no
+  // query of their own.
   if (isQuietFor(clock as ProactiveFacts)) return "quiet_hours";
 
-  await ensureChannel(profile.id);
-  const channel = await loadChannel(profile.id);
+  // The channel row is made once, the first time it is needed (the outbox
+  // and delivery marks update it), not upserted on every tick.
+  const stored  = await loadChannelRow(profile.id);
+  if (!stored) await ensureChannel(profile.id);
+  const channel = stored ?? CHANNEL_DEFAULTS;
   if (!channel.proactiveEnabled) return "proactive_off";
   if (channel.undeliverableSince) return "undeliverable";
   const paused = channel.proactivePausedUntil !== null && channel.proactivePausedUntil > now;

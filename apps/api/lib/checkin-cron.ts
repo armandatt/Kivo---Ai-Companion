@@ -5,6 +5,8 @@ import { getUsersDueForDynamicCheckIn, advanceDynamicCheckIn, clearStaleCheckIns
 //@ts-ignore
 import { addToShortTerm } from "@repo/api/services/memory.service";
 //@ts-ignore
+import { createHousekeepingGate } from "@repo/api/services/schedulerGate";
+//@ts-ignore
 import { formatMessengerText } from "@repo/api/services/formatter.service";
 //@ts-ignore
 import { runGymCronJobs } from "@repo/api/services/gymCron.service";
@@ -37,11 +39,17 @@ export async function runCheckinCron(now = new Date()): Promise<CheckinCronResul
   return startInteraction({ feature: "rex", surface: "background", isBackground: true, requestId: `tick:${now.toISOString()}` }, () => runTick(now));
 }
 
+// Retention purges run once an hour, not every tick (services/schedulerGate.ts).
+const housekeepingDue: (now: Date) => boolean = createHousekeepingGate();
+
 async function runTick(now: Date): Promise<CheckinCronResult> {
   console.log(`[CHECKIN] Cron fired at ${now.toISOString()}`);
 
+  const housekeeping = housekeepingDue(now);
   // Housekeeping: drop webhook dedup rows past their retention window.
-  await purgeProcessedTelegramUpdates(now).catch((err: unknown) => console.error("[CHECKIN] update purge failed", err));
+  if (housekeeping) {
+    await purgeProcessedTelegramUpdates(now).catch((err: unknown) => console.error("[CHECKIN] update purge failed", err));
+  }
 
   const token = process.env.TELEGRAM_BOT_TOKEN ?? process.env.BOT_TOKEN;
   if (!token) {
@@ -99,7 +107,7 @@ async function runTick(now: Date): Promise<CheckinCronResult> {
   }
 
   // ── Nova proactive mentor (academic coaching) ─────────────────────────────
-  const novaResult = await runNovaProactiveCron(now).catch((err: unknown) => {
+  const novaResult = await runNovaProactiveCron(now, { housekeeping }).catch((err: unknown) => {
     console.error("[CHECKIN] Nova proactive cron failed:", err);
     return { ok: false, sent: 0, checked: 0, errors: 1, outcomes: {} as Record<string, number> };
   });

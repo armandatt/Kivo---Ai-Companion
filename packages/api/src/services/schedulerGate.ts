@@ -1,5 +1,5 @@
-// ─── Whether the scheduled jobs run in this process (pure) ─────────────────────
-// Used by apps/api/lib/internal-checkin-scheduler.ts.
+// ─── Whether the scheduled jobs run here, and how often cleanup runs (pure) ───
+// Used by apps/api/lib/internal-checkin-scheduler.ts and checkin-cron.ts.
 
 // Whether this process may run the scheduled jobs.
 //
@@ -14,4 +14,22 @@ export function schedulerEnabled(env: Record<string, string | undefined> = proce
   if (env.NODE_ENV === "production") return { enabled: true, reason: "production" };
   if (env.ENABLE_INTERNAL_CHECKIN_CRON === "true") return { enabled: true, reason: "ENABLE_INTERNAL_CHECKIN_CRON=true" };
   return { enabled: false, reason: "not production (set ENABLE_INTERNAL_CHECKIN_CRON=true to run it)" };
+}
+
+// The retention purges (webhook dedup rows, old prompts, legacy decision
+// rows) delete rows days old, so once an hour is plenty; every five minutes
+// was three or four DELETEs a tick for nothing. The first call always says
+// yes, so a fresh process cleans up at once. Process memory, and only paces
+// cleanup: a restart runs it early, a clock that went backwards runs it, and
+// nothing depends on it being exact.
+export const HOUSEKEEPING_EVERY_MS = 60 * 60 * 1000;
+
+export function createHousekeepingGate(everyMs = HOUSEKEEPING_EVERY_MS): (now: Date) => boolean {
+  let last: number | null = null;
+  return (now: Date) => {
+    const t = now.getTime();
+    if (last !== null && t >= last && t - last < everyMs) return false;
+    last = t;
+    return true;
+  };
 }

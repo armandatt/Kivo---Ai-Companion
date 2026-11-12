@@ -25,13 +25,19 @@ export async function ensureChannel(profileId: string): Promise<void> {
     .catch(err => { if ((err as { code?: string } | null)?.code !== "P2002") throw err; });
 }
 
-export async function loadChannel(profileId: string): Promise<ChannelState> {
-  const row = await prisma.novaTelegramChannel.findUnique({
+export const CHANNEL_DEFAULTS: Readonly<ChannelState> = { proactiveEnabled: true, proactivePausedUntil: null, undeliverableSince: null };
+
+// The stored row, or null when this learner has none yet.
+export async function loadChannelRow(profileId: string): Promise<ChannelState | null> {
+  return prisma.novaTelegramChannel.findUnique({
     where:  { profileId },
     select: { proactiveEnabled: true, proactivePausedUntil: true, undeliverableSince: true },
   });
+}
+
+export async function loadChannel(profileId: string): Promise<ChannelState> {
   // No row yet: the defaults.
-  return row ?? { proactiveEnabled: true, proactivePausedUntil: null, undeliverableSince: null };
+  return (await loadChannelRow(profileId)) ?? { ...CHANNEL_DEFAULTS };
 }
 
 // The learner wrote or tapped, so the chat is reachable again.
