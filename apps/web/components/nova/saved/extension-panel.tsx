@@ -1,14 +1,17 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ExtensionConnectionView } from '@repo/api/nova/product/learning-events.types'
 import { relativeDay } from '../format'
 import { disconnectBrowser, fetchConnections, requestPairingCode } from './saved-api'
+import { recordFunnel } from '@/lib/extension-funnel'
 
 // Connecting a browser: Nova shows a one-time code here, and the learner
 // types it into the extension. The code is made for the signed-in account
 // and goes nowhere but this screen.
-export function ExtensionPanel({ open }: { open: boolean }) {
+// The page above reads the connection state from here (onState): it is the
+// one thing it can know for sure about the extension.
+export function ExtensionPanel({ open, onState }: { open: boolean; onState?: (state: 'checking' | 'none' | 'connected', count: number) => void }) {
   const [connections, setConnections] = useState<ExtensionConnectionView[] | null>(null)
   const [code, setCode]       = useState<{ code: string; expiresAt: string } | null>(null)
   const [busy, setBusy]       = useState(false)
@@ -23,13 +26,19 @@ export function ExtensionPanel({ open }: { open: boolean }) {
     return () => clearInterval(timer)
   }, [code, load])
   const known = connections?.length ?? 0
-  useEffect(() => { setCode(null) }, [known])
+  // A browser redeemed the code on screen: that is a connection completed.
+  const shownFor = useRef<number | null>(null)
+  useEffect(() => {
+    if (shownFor.current !== null && known > shownFor.current) recordFunnel('Extension connected', 'saved-panel')
+    shownFor.current = null
+    setCode(null)
+  }, [known])
 
   async function getCode() {
     setBusy(true); setError(null)
     const res = await requestPairingCode()
     setBusy(false)
-    if (res.ok) setCode({ code: res.code, expiresAt: res.expiresAt })
+    if (res.ok) { shownFor.current = known; setCode({ code: res.code, expiresAt: res.expiresAt }); recordFunnel('Extension code requested', 'saved-panel') }
     else setError(res.message)
   }
 
@@ -39,10 +48,11 @@ export function ExtensionPanel({ open }: { open: boolean }) {
   }
 
   const state = connections === null ? 'checking' : known > 0 ? 'connected' : 'none'
+  useEffect(() => { onState?.(state, known) }, [onState, state, known])
   return (
-    <section className="rounded-2xl border border-white/8 bg-card/50 p-5 sm:p-6" data-section="extension" data-open={open} aria-labelledby="extension-heading">
+    <section id="connect" className="scroll-mt-24 rounded-2xl border border-white/8 bg-card/50 p-5 sm:p-6" data-section="extension" data-open={open} aria-labelledby="extension-heading">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id="extension-heading" className="text-base font-semibold tracking-tight text-foreground">Browser extension</h2>
+        <h2 id="extension-heading" className="text-base font-semibold tracking-tight text-foreground">Connect a browser</h2>
         {/* Said in words as well as colour. */}
         <span role="status" data-connection-state={state}
           className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs ${state === 'connected' ? 'border-keppel-400/35 bg-keppel-400/10 text-keppel-300' : 'border-white/12 text-foreground/55'}`}>
@@ -51,7 +61,7 @@ export function ExtensionPanel({ open }: { open: boolean }) {
         </span>
       </div>
       <p className="mt-2 max-w-prose text-sm leading-relaxed text-foreground/60">
-        Save a page to Nova, or study it, from wherever you are reading. Nova sees a page only when you click its button on that page.
+        With the extension installed, connect it here with a one-time code. Nova sees a page only when you click its button on that page.
       </p>
 
       {connections && connections.length > 0 && (

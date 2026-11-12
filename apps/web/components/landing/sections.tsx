@@ -14,6 +14,8 @@ import type { ReactNode } from 'react'
 import { ArrowRight, Bookmark, Brain, CalendarDays, Compass, Dna, FileText, GraduationCap, KanbanSquare, KeyRound, LayoutTemplate, Map as MapIcon, Puzzle, Search, Send, Sparkles, Sprout, Target, Timer, TrendingUp, Briefcase } from 'lucide-react'
 import { AuthAwareLink } from '@/components/auth-aware-link'
 import { Reveal } from './frame'
+import { StoreButton } from '@/components/extension/store-button'
+import { CHROME_STORE_URL, STORE_LISTING_NAME } from '@/lib/extension-store'
 import { LazyBuildDemo, LazyCreatureDemo, LazyExtensionDemo, LazyFocusDemo, LazyMapDemo, LazyNotesDemo, LazyPaperDemo, LazyTelegramDemo, LazyWorkspaceDemo } from './demos'
 
 // One continuous page: sections share the page's background (page.tsx draws
@@ -133,8 +135,8 @@ export function WorkspaceSection() {
   )
 }
 
-// Nova for Chrome's listing. Until it is set, the button leads to sign-up.
-const CHROME_STORE_URL: string | null = null
+// Nova for Chrome's listing is CHROME_STORE_URL (lib/extension-store.ts, the
+// one place it is set). Until it is set, the button leads to sign-up.
 
 export function ExtensionSection() {
   return (
@@ -152,12 +154,10 @@ export function ExtensionSection() {
         ]} />
         <div className="flex flex-col items-center gap-3">
           {CHROME_STORE_URL ? (
-            <a href={CHROME_STORE_URL} target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-full bg-[#00E5A0] px-5 py-2.5 text-sm font-semibold text-[#04130e] transition-colors hover:bg-[#33ebb3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00E5A0]">
-              Add Nova to Chrome <ArrowRight aria-hidden className="size-4" />
-            </a>
+            <StoreButton from="landing"
+              className="inline-flex items-center gap-1.5 rounded-full bg-[#00E5A0] px-5 py-2.5 text-sm font-semibold text-[#04130e] transition-colors hover:bg-[#33ebb3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00E5A0]" />
           ) : <SectionCta>Get Nova for Chrome</SectionCta>}
-          <p className="text-sm text-slate-500">Free on the Chrome Web Store. Connect it with a code from your Kivo account. On a phone, a bookmark saves any page too.</p>
+          <p className="text-sm text-slate-500">{CHROME_STORE_URL ? `Free on the Chrome Web Store, listed as “${STORE_LISTING_NAME}”.` : 'Coming to the Chrome Web Store.'} Works in Chrome on a computer; connect it with a code from your Kivo account. On a phone, a bookmark saves any page.</p>
         </div>
       </div>
     </section>
