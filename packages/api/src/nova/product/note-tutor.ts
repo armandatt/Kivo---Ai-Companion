@@ -22,6 +22,10 @@
 
 import { MY_NOTES, PAPER_NOTE_WINDOW, readPaperCard, type PaperCard, type PaperTextStatus } from "./paper-source";
 import { generateOpenAIText } from "../../services/openai.service";
+import { logModelFailure, modelFailure, unreadableReply } from "./model-failure";
+import { MODEL_IMAGES_MAX, noteImagesForModel, readImageIds } from "./note-images";
+import { imageLine } from "./note-image-prompt";
+import { surfaceLanguageLine, type ReplyLanguage } from "./surface-language";
 import { noteSources, type NoteSources } from "./notes";
 import { NOTE_BODY_MAX } from "./notes.types";
 import { checkFiles } from "./workspace-generation";
@@ -61,6 +65,8 @@ export type ParsedTutor = Required<Pick<TutorRequest, "mode">> & {
   message: string | null; selection: string | null; noteVersion: string | null;
   history: TutorTurn[]; results: TutorResult[]; exercise: TutorExercise | null; answer: string | null;
   files: LlmAttachment[];
+  // Images stored on this note (note-images.ts), by id: attached now first, then earlier ones.
+  images: string[]; imagesNew: number;
 };
 
 export function parseTutorRequest(raw: unknown): { ok: true; request: ParsedTutor } | { ok: false; refusal: Refusal } {
@@ -102,7 +108,10 @@ export function parseTutorRequest(raw: unknown): { ok: true; request: ParsedTuto
   const noteVersion = typeof input.noteVersion === "string" && input.noteVersion.length <= 40 ? input.noteVersion : null;
   const checked = checkFiles(input.files);
   if (!checked.ok) return bad(refuse("invalid", checked.message));
-  return { ok: true, request: { mode, message: message || null, selection: selection || null, noteVersion, history, results, exercise, answer, files: checked.files } };
+  const fresh = readImageIds(input.images);
+  const earlier = readImageIds(input.earlierImages).filter(id => !fresh.includes(id));
+  const images = [...fresh, ...earlier].slice(0, MODEL_IMAGES_MAX);
+  return { ok: true, request: { mode, message: message || null, selection: selection || null, noteVersion, history, results, exercise, answer, files: checked.files, images, imagesNew: Math.min(fresh.length, images.length) } };
 }
 
 // ── Where a passage sits in the note ──────────────────────────────────────────
@@ -288,12 +297,14 @@ export function tutorPrompt(
   request: ParsedTutor,
   sources: NoteAssistSource[],
   texts: string[],
-  context: { subjectName: string | null; topicName: string | null; partial: boolean; passage: { text: string; heading: string | null; found: boolean } | null; paper?: PaperCard | null },
+  context: { subjectName: string | null; topicName: string | null; partial: boolean; passage: { text: string; heading: string | null; found: boolean } | null; paper?: PaperCard | null; imagesGone?: string | null },
 ): string {
   const pace = request.results.length === 0 ? null
     : `Their last answers in this conversation: ${request.results.join(", ")}. ${request.results.slice(-2).every(r => r === "incorrect") ? "Go slower and simpler." : request.results.slice(-2).every(r => r === "correct") ? "They are ready for more depth." : ""}`.trim();
   return [
     `Task: ${TASK[request.mode]}`,
+    imageLine(request.images.length, request.imagesNew),
+    context.imagesGone ?? null,
     request.files.length ? `The learner attached ${request.files.map(f => f.name).join(", ")} to this message: it is with this request. Look at it closely and answer from what it actually shows, saying what you see. It is not part of their note, so what you take from it has basis "nova". If you can't read it, say so.` : null,
     context.subjectName ? `The note is filed under: ${[context.subjectName, context.topicName].filter(Boolean).join(" › ")}` : null,
     context.partial ? "The note is long: S1 is the part of it around what is being discussed." : null,
@@ -469,6 +480,7 @@ export async function tutorOnNote(
   generate: typeof generateOpenAIText = generateOpenAIText,
   load: (profileId: string, noteId: string, options: { bodyMax?: number }) => Promise<NoteSources | null> = noteSources,
   loadResources: typeof listResourceSources = listResourceSources,
+  options: { language?: ReplyLanguage | null; loadImages?: typeof noteImagesForModel } = {},
 ): Promise<TutorResponse> {
   const parsed = parseTutorRequest(raw);
   if (!parsed.ok) return parsed.refusal;
@@ -491,6 +503,14 @@ export async function tutorOnNote(
     : [];
   const related = WITH_RELATED.includes(request.mode) ? material.related : [];
 
+  // Screenshots stored on this note, read now; one that is gone is said, not an error.
+  const stored = request.images.length ? await (options.loadImages ?? noteImagesForModel)(profileId, noteId, request.images) : { images: [], missing: [] };
+  const attachments = [...stored.images.map(i => ({ name: i.name, mimeType: i.mimeType, data: i.data })), ...request.files];
+  // Labelled by what was found: I1… in order, the new ones first.
+  const freshIds = new Set(request.images.slice(0, request.imagesNew));
+  request.imagesNew = stored.images.filter(i => freshIds.has(i.id)).length;
+  request.images = stored.images.map(i => i.id);
+  const gone = stored.missing.length ? `${stored.missing.length === 1 ? "One image" : `${stored.missing.length} images`} attached in this conversation ${stored.missing.length === 1 ? "is" : "are"} no longer available (removed, or too much at once): say so if the question depends on it.` : null;
   const sources: NoteAssistSource[] = [
     { id: "S1", kind: "note", recordId: material.note.id, title: material.note.title, domain: null, url: null },
     ...related.map((n, i) => ({ id: tutorSourceLabel(i + 1), kind: "note" as const, recordId: n.id, title: n.title, domain: null, url: null })),
@@ -505,12 +525,16 @@ export async function tutorOnNote(
   try {
     const reply = await generate({
       model: "gpt-4o", systemInstruction: SYSTEM,
-      prompt: tutorPrompt(request, sources, texts, { subjectName: material.note.subjectName, topicName: material.note.topicName, partial: window.partial, passage, paper }),
+      prompt: `${surfaceLanguageLine(options.language ?? null)}\n\n${tutorPrompt(request, sources, texts, { subjectName: material.note.subjectName, topicName: material.note.topicName, partial: window.partial, passage, paper, imagesGone: gone })}`,
       maxOutputTokens: request.mode === "organize" ? 3_000 : 1_800, json: true,
-      ...(request.files.length ? { attachments: request.files, deadlineMs: TUTOR_FILES_DEADLINE_MS } : { deadlineMs: TUTOR_DEADLINE_MS }),
+      ...(attachments.length ? { attachments, deadlineMs: TUTOR_FILES_DEADLINE_MS } : { deadlineMs: TUTOR_DEADLINE_MS }),
     });
     const parts = readTutorReply(typeof reply === "string" ? reply : "", request.mode, sources, window.blocks);
-    if (!parts) return refuse("unavailable", "Nova didn't come back with anything usable. Try again in a moment.");
+    if (!parts) {
+      const f = unreadableReply();
+      logModelFailure("notes_tutor", request.mode, f, { noteChars: material.note.body.length, partial: window.partial });
+      return { ...refuse("unavailable", f.message), retryable: true };
+    }
     const out: TutorReply = {
       ok: true, mode: request.mode, sources, noteVersion: material.note.updatedAt,
       versionDiffers: request.noteVersion !== null && request.noteVersion !== material.note.updatedAt,
@@ -518,7 +542,8 @@ export async function tutorOnNote(
     };
     return out;
   } catch (err) {
-    console.error("[nova:note-tutor] no result:", (err as Error).message);
-    return refuse("unavailable", "Nova can't help with this right now. Try again in a moment.");
+    const f = modelFailure(err);
+    logModelFailure("notes_tutor", request.mode, f, { noteChars: material.note.body.length, partial: window.partial, files: request.files.length });
+    return { ...refuse("unavailable", f.message), retryable: f.retryable };
   }
 }

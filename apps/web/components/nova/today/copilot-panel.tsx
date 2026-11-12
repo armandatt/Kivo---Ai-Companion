@@ -137,13 +137,16 @@ export const CopilotPanel = forwardRef<CopilotHandle, {
     setLive('')
     followBottom()
     const history = turns.slice(-12).map(t => ({ role: t.role, text: t.role === 'learner' ? t.text : [t.question ? `${t.text} ${t.question}`.trim() : t.text, t.pending ? `[Proposal, ${OUTCOME[t.pending.state]}: ${t.pending.changed.join(' ')}]` : ''].filter(Boolean).join(' ') }))
+    // What they said before those turns: their own decisions and limits for
+    // today, kept beyond the window of recent turns.
+    const earlier = turns.slice(0, -12).filter(t => t.role === 'learner').slice(-20).map(t => t.text.slice(0, 300))
     const openNow = open ? { id: open.id, version: open.version, ops: open.ops } : null
     const openTurn = open ? lastProposal : null
     setTurns(list => [...list, { id: newId(), role: 'learner', text: message, ...(opts.files?.length ? { attached: opts.files.map(f => f.name), previews: opts.shown } : {}) }])
     setPending(true)
     const controller = new AbortController()
     inFlight.current = controller
-    const res = await askCopilot({ message, version: flow.version, history, open: openNow, draftNow: opts.draftNow, subjectId: subject?.id ?? null, ...(opts.files?.length ? { files: opts.files } : {}) }, controller.signal, setLive)
+    const res = await askCopilot({ message, version: flow.version, history, earlier, open: openNow, draftNow: opts.draftNow, subjectId: subject?.id ?? null, ...(opts.files?.length ? { files: opts.files } : {}) }, controller.signal, setLive)
     inFlight.current = null
     setPending(false)
     setLive('')

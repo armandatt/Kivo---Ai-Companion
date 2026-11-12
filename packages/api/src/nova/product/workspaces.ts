@@ -29,9 +29,10 @@ import { TrashGone, claimIn, listTrash, putBackIn, snapshotIn, trashIn, type Tra
 import { declareWorkspaceSubjectsIn, ensureSetupProfile } from "./setup";
 import { addDatesIn } from "./exams";
 import { createTasksIn } from "./tasks";
-import { createNotesIn, listNoteTitlesIn, removeNotesIn, untouchedNotesIn } from "./notes";
+import { createNotesIn, listNoteTitlesIn, removeNotesIn, unfileNotesIn, untouchedNotesIn } from "./notes";
+import { unfileResourcesIn } from "./learning-events";
 import { subjectsForMatching, subjectsWithTopics } from "./setup";
-import { TaskChanged, listTasksInSubjects, listTasksWithKeyPrefix, placeTasksIn, liftStepsIn, removeOpenTasksIn, removeTasksIn, setWaitsIn, tasksMadeUnder, updateTasksIn } from "./tasks";
+import { TaskChanged, listTasksInSubjects, listTasksWithKeyPrefix, placeTasksIn, liftStepsIn, removeOpenTasksIn, removeTasksIn, setWaitsIn, tasksMadeUnder, unfileTasksIn, updateTasksIn } from "./tasks";
 import { DateChanged, listExams, removeDatesIn, unfileDatesIn, updateDatesIn } from "./exams";
 import { StaleStructure, checkStudyEdits, loadStudyStructure, playStudyEditsIn } from "./setup-edit";
 import type { StudyEdit } from "./setup-edit.types";
@@ -615,6 +616,11 @@ export async function deleteResource(platformChatId: string, input: { ref: Pick<
       if (!(await removeNotesIn(tx, profileId, scope.removes.notes.map(n => n.id)))) throw new NoteChanged();
       await removeDatesIn(tx, profileId, scope.removes.dates.map(d => d.id));
       await unfileDatesIn(tx, profileId, [...going]);
+      // What stays of the learner's own (notes, tasks, saved pages) is filed
+      // under nothing, topic name included, before its subject goes.
+      await unfileNotesIn(tx, profileId, [...going]);
+      await unfileTasksIn(tx, profileId, [...going]);
+      await unfileResourcesIn(tx, profileId, [...going]);
       await playStudyEditsIn(tx, profileId, edits, structure.version);
       if (scope.workspaceId) await tx.novaWorkspace.deleteMany({ where: { id: scope.workspaceId, profileId } });
       if (hooks.after) await hooks.after(tx, scope);

@@ -64,6 +64,12 @@ export interface TutorRequest {
   // A screenshot, photo or PDF for this one message (workspace-generation's
   // checkFiles). Read for this answer and not kept; later turns do not have it.
   files?:       Array<{ name: string; data: string }>;
+  // Screenshots stored on this note first (POST /api/nova/notes/images), by
+  // id: attached with this message, and ones attached earlier in this
+  // conversation, sent again so a follow-up can still see them. At most 4
+  // in all. The bytes never travel in the conversation.
+  images?:        string[];
+  earlierImages?: string[];
 }
 
 // A part of an explanation. "notes" means what the learner's sources say,
@@ -130,4 +136,5 @@ export type TutorError =
   | "invalid" | "too_long" | "not_found" | "empty" | "unavailable" | "rate_limited"
   | "unauthenticated" | "not_nova" | "not_connected" | "onboarding_incomplete" | "allowance_used" | "failed";
 
-export type TutorResponse = TutorReply | { ok: false; error: TutorError; message: string };
+// retryable: the model was busy, slow or its reply came back incomplete.
+export type TutorResponse = TutorReply | { ok: false; error: TutorError; message: string; retryable?: boolean };

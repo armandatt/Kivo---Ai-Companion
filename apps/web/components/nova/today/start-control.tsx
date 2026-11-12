@@ -5,34 +5,22 @@
 // only, or no time limit. What is chosen here is this session's length: the
 // item's time for today and the task's own estimate stay as they are.
 //
-// Suggested: the item's time for today, else its own estimate (a task's, a
-// planned block's), else a standard block, said as such.
+// Suggested: what is left of the item's time for today after the sessions
+// already on it today, else its own estimate (a task's, a planned block's),
+// else a standard block, said as such. A second session on an item no longer
+// starts from scratch (12 Nov).
 
 import { useEffect, useId, useRef, useState } from 'react'
 import { ChevronDown, Infinity as Unlimited, Loader2, Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-export const STANDARD_BLOCK = 25
-
-export function suggestedFor(item: { minutes: number | null; ref: { minutes: number | null } | null }): { minutes: number; basis: 'today' | 'estimate' | 'standard' } {
-  if (item.minutes) return { minutes: item.minutes, basis: 'today' }
-  if (item.ref?.minutes) return { minutes: item.ref.minutes, basis: 'estimate' }
-  return { minutes: STANDARD_BLOCK, basis: 'standard' }
-}
-
-// Quick lengths around the suggestion, not a fixed list: a shorter and a
-// longer one either side of it, rounded to five minutes.
-export function quickLengths(suggested: number): number[] {
-  const all = [10, 15, 20, 25, 30, 45, 60, 90, 120]
-  const lower = all.filter(m => m < suggested).slice(-2)
-  const higher = all.filter(m => m > suggested).slice(0, 2)
-  return [...lower, ...higher]
-}
+import { quickLengths, STANDARD_BLOCK, suggestedFor } from './start-length'
+export { quickLengths, STANDARD_BLOCK, suggestedFor }
 
 const label = (m: number) => (m >= 60 && m % 60 === 0 ? `${m / 60} h` : m > 60 ? `${Math.floor(m / 60)} h ${m % 60}` : `${m} min`)
 
 export function StartControl({ item, onStart, disabled, busy, size = 'sm' }: {
-  item: { id: string; title: string; minutes: number | null; ref: { minutes: number | null } | null }
+  item: { id: string; title: string; minutes: number | null; ref: { minutes: number | null } | null; spentMinutes?: number | null; remainingMinutes?: number | null }
   // minutes: this session's length; 0: no time limit.
   onStart: (minutes: number) => void
   disabled?: boolean
@@ -80,7 +68,7 @@ export function StartControl({ item, onStart, disabled, busy, size = 'sm' }: {
           <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-subtle">This session</p>
           <button type="button" onClick={() => start(s.minutes)} className="mt-2 flex w-full items-center justify-between rounded-lg bg-nova/10 px-2.5 py-2 text-left hover:bg-nova/15" data-duration="suggested">
             <span className="font-medium text-foreground">Suggested: {label(s.minutes)}</span>
-            <span className="text-[11px] text-subtle">{s.basis === 'today' ? 'today’s time' : s.basis === 'estimate' ? 'its estimate' : 'a standard block'}</span>
+            <span className="text-[11px] text-subtle">{s.basis === 'today' ? 'today’s time' : s.basis === 'remaining' ? `left of today’s ${label(item.minutes ?? 0)}` : s.basis === 'estimate' ? 'its estimate' : 'a standard block'}</span>
           </button>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {quickLengths(s.minutes).map(m => (

@@ -625,6 +625,17 @@ export async function refileResourcesForTopic(
 
 // Where saved pages under these subjects are filed now, for the knowledge trash
 // (knowledge-trash.ts): what a subject's delete is about to unfile.
+// Filed under nothing, topic name included, when the subjects they were
+// filed under are deleted (workspaces.ts deleteResource). The database's own
+// SET NULL clears only the subject, and the topic name left behind kept a
+// deleted topic showing on the record, in the extension and on the map
+// (12 Nov). The trash snapshot taken before this (knowledge-trash.ts) keeps
+// the filing, so a restore puts it back.
+export async function unfileResourcesIn(tx: Pick<typeof prisma, "novaLearningEvent">, profileId: string, subjectIds: string[]): Promise<number> {
+  if (subjectIds.length === 0) return 0;
+  return (await tx.novaLearningEvent.updateMany({ where: { profileId, subjectId: { in: subjectIds } }, data: { subjectId: null, topicName: null } })).count;
+}
+
 export async function resourceFilingIn(tx: Pick<typeof prisma, "novaLearningEvent">, profileId: string, subjectIds: string[]): Promise<Array<{ id: string; subjectId: string; topicName: string | null }>> {
   if (subjectIds.length === 0) return [];
   const rows = await tx.novaLearningEvent.findMany({ where: { profileId, subjectId: { in: subjectIds } }, select: { id: true, subjectId: true, topicName: true } });

@@ -20,7 +20,8 @@ export type EditKind = (typeof EDIT_KINDS)[number];
 
 export const EDIT_INSTRUCTION_MAX = 1_000;
 export const EDIT_MATERIAL_MAX    = 6_000;
-export const EDIT_BODY_MAX        = 24 * 1024;
+// The request, history included (EDIT_HISTORY_MAX turns of EDIT_TURN_TEXT_MAX twice).
+export const EDIT_BODY_MAX        = 40 * 1024;
 
 export interface EditRequest {
   kind:         EditKind;
@@ -30,7 +31,32 @@ export interface EditRequest {
   // What the tutor wrote, to be worked into the note (integrate).
   material?:    string;
   noteVersion?: string;
+  // What happened earlier in this editing conversation, oldest first, so a
+  // request can refer to an earlier one ("do the same for the next section").
+  // The note itself is always read fresh from the database: this is the
+  // conversation, never a copy of the note.
+  history?:     EditTurn[];
+  // The question Nova asked last that this message answers.
+  answering?:   string;
+  // Screenshots stored on this note first (POST /api/nova/notes/images), by
+  // id: with this request, and from the request before (sent again so a
+  // follow-up can still see them). At most 4. Images already in the note are
+  // its ![caption](kivo-image:id) lines and need no id here.
+  images?:        string[];
+  earlierImages?: string[];
 }
+
+// One earlier request and what came of it, as the page saw it.
+export interface EditTurn {
+  asked:    string;
+  // proposed: shown, not acted on yet; applied: in the note and saved;
+  // discarded: the learner left it; question: Nova asked something; failed: nothing came of it.
+  outcome:  "proposed" | "applied" | "discarded" | "question" | "failed";
+  // Nova's summary of its proposal, or its question.
+  said?:    string;
+}
+export const EDIT_HISTORY_MAX = 10;
+export const EDIT_TURN_TEXT_MAX = 400;
 
 export interface EditProposal {
   ok: true;
@@ -51,7 +77,9 @@ export interface EditProposal {
 }
 
 export type EditError =
-  | "invalid" | "too_long" | "not_found" | "empty" | "unavailable" | "rate_limited"
+  | "invalid" | "too_long" | "not_found" | "empty" | "unavailable" | "rate_limited" | "nothing_usable"
   | "unauthenticated" | "not_nova" | "not_connected" | "onboarding_incomplete" | "allowance_used" | "failed";
 
-export type EditResponse = EditProposal | { ok: false; error: EditError; message: string };
+// retryable: trying the same request again may work (the model was busy, slow,
+// or its reply came back incomplete); false or absent: it will not as it is.
+export type EditResponse = EditProposal | { ok: false; error: EditError; message: string; retryable?: boolean };

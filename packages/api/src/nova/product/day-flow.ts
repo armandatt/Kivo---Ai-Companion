@@ -25,7 +25,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "@repo/db/client";
 import { dayKey, localHour, localMinute, resolveTimezone } from "../engines/learner-calendar";
 import { getAllTopicMasteries } from "../engines/knowledge-engine";
-import { listTasks } from "./tasks";
+import { listTasks, updateTask } from "./tasks";
 import { listWorkspaces } from "./workspaces";
 import { loadNovaToday } from "./today";
 import { runNovaSessionCommand } from "./session";
@@ -136,8 +136,23 @@ function candidatesOf(ctx: Context, items: FlowItem[]): FlowCandidate[] {
   return [...tasks.slice(0, 60), ...topics.slice(0, 80)];
 }
 
+// Every session an item was focused in today, current one last, each once.
+export const sessionIdsOf = (i: Pick<FlowItem, "sessionId" | "earlierSessionIds">): string[] =>
+  [...new Set([...(i.earlierSessionIds ?? []), ...(i.sessionId ? [i.sessionId] : [])])];
+
+// Time spent today: the sessions that have ended, added up. null: none has.
+export function spentOn(i: Pick<FlowItem, "sessionId" | "earlierSessionIds">, sessions: Map<string, { status: string; minutes: number }>): number | null {
+  let total = 0, any = false;
+  for (const id of sessionIdsOf(i)) {
+    const s = sessions.get(id);
+    if (!s || s.status === "in_progress" || s.status === "paused") continue;
+    total += s.minutes; any = true;
+  }
+  return any ? total : null;
+}
+
 async function sessionsOf(profileId: string, items: FlowItem[]) {
-  const ids = items.map(i => i.sessionId).filter((x): x is string => !!x);
+  const ids = [...new Set(items.flatMap(sessionIdsOf))];
   if (!ids.length) return new Map<string, { status: string; minutes: number }>();
   const rows = await prisma.novaStudySession.findMany({ where: { profileId, id: { in: ids } }, select: { id: true, status: true, durationMinutes: true } });
   return new Map(rows.map(r => [r.id, { status: r.status, minutes: r.durationMinutes }]));
@@ -158,7 +173,8 @@ async function viewOf(profileId: string, row: Row | null, ctx: Context, clock: {
       title: task ? (i.title.endsWith(")") && i.title.startsWith(task.title) ? i.title : task.title) : i.title,
       ref: i.kind === "task" ? { status: task?.status ?? null, minutes: task?.estimatedMinutes ?? null, dueInDays: task?.dueInDays ?? null, gone: !task }
         : i.kind === "topic" ? { status: null, minutes: block?.durationMinutes ?? null, dueInDays: null, gone: !topic } : null,
-      spentMinutes: s ? (open ? null : s.minutes) : null,
+      spentMinutes: spentOn(i, sessions),
+      remainingMinutes: i.minutes ? Math.max(0, i.minutes - (spentOn(i, sessions) ?? 0)) : null,
       sessionEnded: i.status === "active" && !!i.sessionId && !open && i.sessionId !== ctx.activeSessionId,
     };
   });
@@ -286,7 +302,43 @@ export async function setDayView(input: Changing & { view: unknown }): Promise<D
   return { ok: true, flow: await loadDayFlow(input.profileId, input.platformChatId, b.now), changed: [], message: null };
 }
 
+// ── The learner says the task is finished ───────────────────────────────────
+// After a session, "Task finished" on the item: the learner's own tick, not
+// the timer's. A session reaching zero completes nothing (focus durations in
+// CLAUDE.md), and "done for today" alone is not the task's status. This is the
+// one step that does both, on the learner's word: the task is marked done
+// through tasks.ts (entering done stamps it once, so a repeat writes nothing
+// new), then the item is done for today. If the flow changed meanwhile it is
+// read again once; the task is done either way, and the reply says what was
+// saved, never more.
+export async function finishItemTask(input: Changing & { itemId: unknown }): Promise<DayFlowResponse> {
+  const now = input.now ?? new Date();
+  const first = await loadDayFlow(input.profileId, input.platformChatId, now);
+  const item = first.items.find(i => i.id === input.itemId);
+  if (!item) return refuse("not_found", "That item isn't in today's flow any more.", first);
+  if (item.kind !== "task" || !item.taskId) return refuse("invalid", "Only a task can be marked finished. Use Done for today instead.", first);
+  const task = await updateTask(input.profileId, item.taskId, { status: "done" }, { now });
+  if (!task.ok) return refuse(task.error === "not_found" ? "not_found" : "failed", task.error === "not_found" ? "That task doesn't exist any more." : "The task couldn't be marked done. Nothing changed; try again.", first);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const flow = attempt === 0 ? first : await loadDayFlow(input.profileId, input.platformChatId, now);
+    const still = flow.items.find(i => i.id === item.id);
+    if (!still || still.status === "done") return { ok: true, flow, changed: [`${item.title} is done.`], message: null };
+    const res = await changeDayFlow({ profileId: input.profileId, platformChatId: input.platformChatId, version: flow.version, ops: [{ op: "set_status", id: item.id, status: "done" }], by: "learner", now });
+    if (res.ok) return { ...res, changed: [`${item.title} is done.`] };
+    if (res.error !== "stale") break;
+  }
+  const flow = await loadDayFlow(input.profileId, input.platformChatId, now);
+  return { ok: true, flow, changed: [`${item.title} is done on your board.`], message: "The task is marked done; today's flow changed meanwhile, so tick it there too." };
+}
+
 // ── Focus on an item ─────────────────────────────────────────────────────────
+
+// The item, now focused in this session; a session started on it before
+// is kept among the earlier ones.
+export function withSession(i: FlowItem, sessionId: string): FlowItem {
+  const earlier = i.sessionId && i.sessionId !== sessionId ? [...(i.earlierSessionIds ?? []), i.sessionId] : i.earlierSessionIds ?? [];
+  return { ...i, status: "active", sessionId, ...(earlier.length ? { earlierSessionIds: [...new Set(earlier)].slice(-20) } : {}) };
+}
 
 // minutes: a length for this session only (the item's time for today and the
 // task's estimate are left as they are); 0: no time limit.
@@ -308,9 +360,14 @@ export async function startFocus(input: Changing & { itemId: unknown; minutes: u
     ? { action: "start", topicName, subjectName: item.subjectName, plannedMinutes: minutes, label: item.kind === "topic" ? null : item.title }
     : { action: "start", topicName: null, subjectName: null, plannedMinutes: minutes, label: item.title }, b.now);
   if (!res.ok || !res.session) return refuse(res.ok ? "failed" : res.error === "session_abandoned" ? "failed" : "invalid", res.ok ? "The session did not start. Try again." : res.message, await viewOf(input.profileId, b.row, b.ctx, b.clock, b.now));
-  const next = items.map(i => (i.id === item.id ? { ...i, status: "active" as const, sessionId: res.session!.id } : i.status === "active" ? { ...i, status: "planned" as const } : i));
-  // The session is running whatever happens to this write; a stale flow just
-  // shows it without the item marked.
-  await write(input.profileId, b.clock.day, b.row, b.version, { items: next, intention: b.row?.intention ?? null });
+  const mark = (list: FlowItem[]) => list.map(i => (i.id === item.id ? withSession(i, res.session!.id) : i.status === "active" ? { ...i, status: "planned" as const } : i));
+  // The session is running whatever happens to this write. A flow that
+  // changed meanwhile is read again and the item marked on it, once: an item
+  // that loses its session loses the time spent on it.
+  if (!await write(input.profileId, b.clock.day, b.row, b.version, { items: mark(items), intention: b.row?.intention ?? null })) {
+    const row = await prisma.novaDayFlow.findUnique({ where: { profileId_day: { profileId: input.profileId, day: b.clock.day } }, select: SELECT });
+    const fresh = readItems(row?.items);
+    if (fresh.some(i => i.id === item.id)) await write(input.profileId, b.clock.day, row, row?.version ?? 0, { items: mark(fresh), intention: row?.intention ?? null });
+  }
   return { ok: true, started: true, flow: await loadDayFlow(input.profileId, input.platformChatId, b.now), changed: [`Started ${item.title}.`], message: null };
 }

@@ -43,8 +43,13 @@ export interface FlowItem {
   status:      FlowItemStatus;
   // A fixed time of day, "HH:MM", for the schedule view; null: in order.
   at:          string | null;
-  // The focus session started on it today, if any.
+  // The focus session started on it today, if any (the latest).
   sessionId:   string | null;
+  // Sessions started on it earlier today, oldest first. A second Start keeps
+  // the first: the time spent today is all of them (12 Nov: a new session
+  // replaced the old id, so the earlier time vanished and Start offered the
+  // whole time again). Absent on items saved before this.
+  earlierSessionIds?: string[];
   addedBy:     "learner" | "nova";
 }
 
@@ -104,8 +109,11 @@ export interface FlowItemView extends FlowItem {
   // The thing it points at as it is now: a task's status and own estimate, a
   // topic's suggested length. gone: deleted or archived since it was added.
   ref:         { status: string | null; minutes: number | null; dueInDays: number | null; gone: boolean } | null;
-  // Study time today on this item, from its session (ended or running).
+  // Study time today on this item: its sessions that have ended, added up.
   spentMinutes: number | null;
+  // Today's time less what was spent: what a new session on it is offered.
+  // null: no time for today was given. Optional: the web ships first.
+  remainingMinutes?: number | null;
   // Its session ended and the learner has not said what next.
   sessionEnded: boolean;
 }
@@ -149,6 +157,9 @@ export interface CopilotRequest {
   message: string;
   version: number;
   history?: Array<{ role: "learner" | "nova"; text: string }>;
+  // The learner's own messages from earlier today, before `history`: their
+  // decisions and limits, kept beyond the recent turns.
+  earlier?: string[];
   // The proposal open on the page, so "yes, do it" can approve it in words.
   open?:   { id: string; version: number; ops: FlowOp[] } | null;
   // The learner asked to skip questions and see a draft from what is known.
@@ -208,4 +219,6 @@ export type CopilotResponse =
       // A place in Kivo that does what was asked.
       link:     { href: string; label: string } | null;
     }
-  | { ok: false; error: DayFlowError; message: string; flow?: NovaDayView };
+  // retryable: the model was busy, slow or its reply came back incomplete;
+  // the same message again may work. Nothing was changed either way.
+  | { ok: false; error: DayFlowError; message: string; flow?: NovaDayView; retryable?: boolean };

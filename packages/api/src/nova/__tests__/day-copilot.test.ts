@@ -280,3 +280,88 @@ describe("focus sessions Today starts", () => {
     expect(sessionAbandonment(row(45) as never, at(80))).toMatchObject({ reason: "ran_past_plan", countedMinutes: 45 });
   });
 });
+
+// ── Long conversations and failures (12 Nov) ─────────────────────────────────
+// Reported: Today's Nova went vague after a long conversation, stopped
+// following what was said earlier, then worked again for no clear reason; and
+// failures answered "try saying it another way".
+describe("a long planning conversation", () => {
+  beforeEach(() => {
+    loadDayFlow.mockReset().mockResolvedValue(FLOW);
+    changeDayFlow.mockReset();
+    previewDayFlow.mockReset().mockImplementation(async ({ ops }: { ops: unknown[] }) => ({ ok: true, before: FLOW.items, after: FLOW.items, changed: ops.map(() => "Added."), touched: [], budgetMinutes: 120, intention: null }));
+  });
+  // Fourteen exchanges after the one that said how much time they have.
+  const said = "I have 3 hours today and only want DAA";
+  const history = Array.from({ length: 12 }, (_, i) => ({ role: i % 2 ? "nova" : "learner", text: i % 2 ? `Okay (${i}).` : `small change ${i}` }));
+  const draft = { intent: "propose", reply: "Here's a day for DAA.", heard: [{ kind: "time", quote: "I have 3 hours today" }], ops: [{ op: "add", ref: "c1" }, { op: "add", ref: "c2" }] };
+
+  it("what the learner said before the recent turns still counts: a day is drafted, not asked about again", async () => {
+    const g = jest.fn(async () => JSON.stringify(draft));
+    const r = await askCopilot("p1", "web:u1", { message: "ok now put it together", version: 4, history, earlier: [said] }, g as never, noExtras);
+    expect(r).toMatchObject({ ok: true, question: null, pending: expect.objectContaining({ version: 4 }) });
+    const prompt = (g.mock.calls[0] as unknown as [{ prompt: string }])[0].prompt;
+    expect(prompt).toContain("WHAT THE LEARNER SAID EARLIER TODAY");
+    expect(prompt).toContain(`- ${said}`);
+  });
+
+  it("without it (the old behaviour), the same reply turns into a question again", async () => {
+    const r = await askCopilot("p1", "web:u1", { message: "ok now put it together", version: 4, history }, jest.fn(async () => JSON.stringify(draft)) as never, noExtras);
+    expect(r).toMatchObject({ ok: true, pending: null, question: PLAN_QUESTION });
+  });
+
+  it("fifteen requests in a row each get a proposal, and none writes the flow", async () => {
+    let turns: Array<{ role: string; text: string }> = [];
+    const earlier: string[] = [said];
+    for (let i = 1; i <= 15; i++) {
+      const g = jest.fn(async () => JSON.stringify({ intent: "propose", reply: `Change ${i}.`, ops: [{ op: "move", item: "i2", to: 0 }] }));
+      const r = await askCopilot("p1", "web:u1", { message: `change ${i}`, version: 4, history: turns.slice(-12), earlier }, g as never, noExtras);
+      expect(r.ok && r.pending).toBeTruthy();
+      turns = [...turns, { role: "learner", text: `change ${i}` }, { role: "nova", text: `Change ${i}.` }];
+      // What is sent stays bounded however long the conversation runs.
+      expect((g.mock.calls[0] as unknown as [{ prompt: string }])[0].prompt.length).toBeLessThan(20_000);
+    }
+    expect(changeDayFlow).not.toHaveBeenCalled();
+  });
+
+  it("is told the learner's chosen language for every reply", async () => {
+    const g = jest.fn(async () => JSON.stringify({ intent: "ask", reply: "Kitna time hai aaj?", question: "Kitna time hai aaj?" }));
+    await askCopilot("p1", "web:u1", { message: "plan karo", version: 4 }, g as never, noExtras, { language: "hinglish" });
+    expect((g.mock.calls[0] as unknown as [{ prompt: string }])[0].prompt).toContain("LANGUAGE: Hinglish, the learner's chosen language.");
+  });
+});
+
+describe("when the model fails", () => {
+  beforeEach(() => { loadDayFlow.mockReset().mockResolvedValue(FLOW); changeDayFlow.mockReset(); });
+  const never = (m: string) => expect(m).not.toMatch(/another way|rephrase/i);
+
+  it("a timeout says so, nothing changes, and it can be retried", async () => {
+    const r = await askCopilot("p1", "web:u1", { message: "move FastAPI up", version: 4 }, (async () => { throw Object.assign(new Error("timed out"), { name: "TimeoutError" }); }) as never, noExtras);
+    expect(r).toMatchObject({ ok: false, error: "unavailable", retryable: true });
+    if (!r.ok) { expect(r.message).toContain("took too long"); expect(r.message).toContain("nothing changed"); never(r.message); }
+    expect(changeDayFlow).not.toHaveBeenCalled();
+  });
+
+  it("a rate limit says the model is busy", async () => {
+    const r = await askCopilot("p1", "web:u1", { message: "move FastAPI up", version: 4 }, (async () => { throw Object.assign(new Error("429"), { status: 429 }); }) as never, noExtras);
+    if (r.ok) throw new Error("answered");
+    expect(r.message).toContain("busy");
+    never(r.message);
+  });
+
+  it("an empty reply is tried once more; a second empty one is an incomplete answer, not an unclear request", async () => {
+    const g = jest.fn(async () => "");
+    const r = await askCopilot("p1", "web:u1", { message: "move FastAPI up", version: 4 }, g as never, noExtras);
+    expect(g).toHaveBeenCalledTimes(2);
+    expect(r).toMatchObject({ ok: false, error: "unavailable", retryable: true });
+    if (!r.ok) never(r.message);
+  });
+
+  it("recovers on the second attempt", async () => {
+    let n = 0;
+    previewDayFlow.mockReset().mockResolvedValue({ ok: true, before: FLOW.items, after: FLOW.items, changed: ["Moved."], touched: [], budgetMinutes: 120, intention: null });
+    const r = await askCopilot("p1", "web:u1", { message: "move FastAPI up", version: 4 }, (async () => (++n === 1 ? "" : JSON.stringify({ intent: "propose", reply: "Moved.", ops: [{ op: "move", item: "i2", to: 0 }] }))) as never, noExtras);
+    expect(n).toBe(2);
+    expect(r.ok && r.pending).toBeTruthy();
+  });
+});

@@ -25,12 +25,33 @@ export type { ReplyLanguage };
 // The chosen language is also where a conversation starts: callers pass it
 // as `last` when the log holds no language yet (loadReplyLanguage), and Nova
 // uses it when it speaks first.
+//
+// A chosen Hinglish or Hindi is a standing constraint (12 Nov): it holds for
+// every message, whatever the message itself is written in, because a
+// Hinglish learner's message about a technical topic is mostly English and
+// answering each such message in English made Nova switch back and forth.
+// What changes it is an explicit request in the learner's words, which the
+// Understanding Brain reads as `languageRequest`, and that holds (`held`,
+// from the log) until they ask again. A request for the language they chose
+// ends a held one.
 export const SENTENCE_WORDS = 4;
+export interface LanguageChoice { requested?: ReplyLanguage | null; held?: ReplyLanguage | null }
 export function chooseLanguage(
   read: ReplyLanguage | null | undefined, last: ReplyLanguage, text?: string, preferred: ReplyLanguage | null = null,
+  choice: LanguageChoice = {},
 ): ReplyLanguage {
+  if (choice.requested) return choice.requested;
+  if (choice.held) return choice.held;
+  if (preferred === "hinglish" || preferred === "hindi") return read === "hindi" || read === "hinglish" ? read : preferred;
   if (read) return read;
   return text !== undefined && wordCount(text) >= SENTENCE_WORDS ? (preferred ?? "english") : last;
+}
+
+// The request in force after this message: a new one (unless it asks for the
+// language they chose anyway, which ends any request), else the one held.
+export function heldAfter(choice: LanguageChoice, preferred: ReplyLanguage | null): ReplyLanguage | null {
+  if (choice.requested) return choice.requested === (preferred ?? "english") ? null : choice.requested;
+  return choice.held ?? null;
 }
 
 // Words with at least one letter: "8 pm" is one word, "30" none.

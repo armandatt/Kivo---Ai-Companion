@@ -152,3 +152,65 @@ test("another learner can't see or restore it", async () => {
   assert.ok(!(await restoreKnowledge(other.profileId, item.id)).ok);
   assert.equal(await prisma.novaSubject.count({ where: { id: m.tf.id } }), 0);
 });
+
+// 12 Nov: deleted map content kept showing in Notes and the extension. The
+// database's SET NULL cleared only a record's subject, so a topic name stayed
+// on notes, tasks and saved pages filed under a deleted subject. Persisted
+// state checked after each step a learner takes.
+test("what stays after a subject is deleted is filed under nothing, topic name included, everywhere; a restore puts it back; a repeat deletes nothing more", async () => {
+  const m = await twoMaps();
+  const { loadExtensionContext, loadSavedResources } = await import("../product/learning-events.js");
+  const { createTask } = await import("../product/tasks.js");
+  // Filed by a name the map does not hold as a topic (typed in the extension or a note).
+  const loose = await createNote(m.profileId, { title: "Positional encoding notes", body: "Sinusoids.", subjectId: m.tf.id, topicName: "Positional encoding" });
+  assert.ok(loose.ok);
+  const page = await prisma.novaLearningEvent.create({ data: { profileId: m.profileId, eventType: "resource_saved", source: "browser_extension", clientEventId: `pe-${STAMP}`, url: "https://example.com/pe", domain: "example.com", title: "PE explained", subjectId: m.tf.id, topicName: "Positional encoding", occurredAt: new Date() } });
+  const task = await createTask(m.profileId, { title: "Read PE paper", subjectId: m.tf.id, topicName: "Positional encoding" });
+  assert.ok(task.ok);
+  // A task, a note and a page under the subject that stays are not touched.
+  const keep = await createNote(m.profileId, { title: "WACC note", body: "x", subjectId: m.fin.id, topicName: "WACC" });
+  assert.ok(keep.ok);
+
+  const scope = await previewMapDeletion(m.id, m.profileId, { subjectId: m.tf.id });
+  const out = await deleteMap(m.id, m.profileId, { subjectId: m.tf.id }, scope!.fingerprint);
+  assert.ok(out.ok, JSON.stringify(out));
+
+  // Notes page: the notes are there, filed under nothing.
+  for (const id of [m.noteId, loose.note.id]) {
+    const n = await prisma.novaNote.findUnique({ where: { id }, select: { subjectId: true, topicName: true, body: true } });
+    assert.deepEqual([n!.subjectId, n!.topicName], [null, null], "no deleted topic name left on the note");
+    assert.ok(n!.body.length > 0, "the learner's text is kept");
+  }
+  const t = await prisma.novaTask.findUnique({ where: { id: task.task.id }, select: { subjectId: true, topicName: true } });
+  assert.deepEqual([t!.subjectId, t!.topicName], [null, null]);
+  const p = await prisma.novaLearningEvent.findUnique({ where: { id: page.id }, select: { subjectId: true, topicName: true } });
+  assert.deepEqual([p!.subjectId, p!.topicName], [null, null]);
+  // The rest of the map is untouched.
+  const k = await prisma.novaNote.findUnique({ where: { id: keep.note.id }, select: { subjectId: true, topicName: true } });
+  assert.deepEqual([k!.subjectId, k!.topicName], [m.fin.id, "WACC"]);
+
+  // Browser extension sync: the deleted subject and its topics are not offered.
+  const ctx = await loadExtensionContext(m.id, null);
+  assert.ok(ctx.status === "ready");
+  const offered = JSON.stringify(ctx);
+  for (const gone of ["Transformers", "Attention", "Self-attention", "Multi-head", "Positional encoding"]) assert.ok(!offered.includes(gone), `${gone} is not offered`);
+  const saved = await loadSavedResources(m.id);
+  assert.ok(saved.status === "ready" && saved.resources.every(r => r.topicName !== "Positional encoding"));
+  // The map, read fresh, has none of it.
+  const map = JSON.stringify(await loadNovaKnowledgeMap(m.id));
+  for (const gone of ["Self-attention", "Multi-head", "Positional encoding"]) assert.ok(!map.includes(`"${gone}"`), `${gone} is not on the map`);
+
+  // The same delete again (a double click, a retry, a second tab): nothing more goes.
+  const again = await deleteMap(m.id, m.profileId, { subjectId: m.tf.id }, scope!.fingerprint);
+  assert.ok(!again.ok);
+  assert.equal(await prisma.novaSubject.count({ where: { id: m.fin.id } }), 1);
+  assert.equal((await listDeletedKnowledge(m.profileId)).length, 1, "one trash item, not two");
+
+  // Restore: the filings come back as they were.
+  const trash = (await listDeletedKnowledge(m.profileId))[0]!;
+  assert.ok((await restoreKnowledge(m.profileId, trash.id)).ok);
+  const back = await prisma.novaNote.findUnique({ where: { id: loose.note.id }, select: { subjectId: true, topicName: true } });
+  assert.deepEqual([back!.subjectId, back!.topicName], [m.tf.id, "Positional encoding"]);
+  const backPage = await prisma.novaLearningEvent.findUnique({ where: { id: page.id }, select: { subjectId: true, topicName: true } });
+  assert.deepEqual([backPage!.subjectId, backPage!.topicName], [m.tf.id, "Positional encoding"]);
+});

@@ -117,6 +117,7 @@ export async function persistTurn(input: PersistenceInput): Promise<PersistedTur
       signals: signals.detectedSignals.map(s => s.type),
       secondaryIntents: understanding.secondaryIntents,
       language: understanding.request?.language ?? null,
+      languageHeld: understanding.request?.languageRequest ?? null,
     }, now);
   } catch (err) {
     console.error("[nova:persistence] user message save failed:", err);

@@ -29,6 +29,12 @@ export interface TutorAsk {
   files?:    Array<{ name: string; data: string }>
   previews?: string[]
   attached?: string[]
+  // Screenshots: stored on the note before the message goes (note-image-upload.ts),
+  // then named by id. The ids are kept with the conversation, so a reload, a
+  // retry or a follow-up still has the image; toStore (the bytes, each with
+  // its key) lives only until it is stored.
+  images?:   string[]
+  toStore?:  Array<{ name: string; data: string; key: string }>
 }
 
 // The state of what a reply set the learner to do, kept with the reply.
@@ -272,15 +278,18 @@ export function loadConversation(store: Store | null, noteId: string): TutorEntr
 // after a reload: only their names stay with the conversation.
 export function withoutFiles(e: TutorEntry): TutorEntry {
   if (e.role !== 'learner' && e.role !== 'error') return e
-  if (!e.ask.files && !e.ask.previews) return e
+  if (!e.ask.files && !e.ask.previews && !e.ask.toStore) return e
   const ask = { ...e.ask }
   delete ask.files
   delete ask.previews
+  delete ask.toStore
   return { ...e, ask }
 }
 
-// A message whose file is gone (the page was reloaded) can't be sent again as it was.
-export const canRetry = (ask: TutorAsk) => !ask.attached?.length || !!ask.files?.length
+// A message whose file is gone (the page was reloaded) can't be sent again as
+// it was. A stored screenshot is never gone: it is named by its id.
+export const canRetry = (ask: TutorAsk) =>
+  (ask.attached?.length ?? 0) <= (ask.images?.length ?? 0) + (ask.files?.length ?? 0) + (ask.toStore?.length ?? 0)
 
 export function saveConversation(store: Store | null, noteId: string, entries: TutorEntry[]): void {
   try {

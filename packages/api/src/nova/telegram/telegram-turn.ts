@@ -19,7 +19,7 @@ import { checkRateLimit } from "../../services/rateLimit.service";
 import { runUnderstandingBrain } from "../brains/understanding-brain";
 import { wordFirstUse } from "../brains/first-use-wording";
 import { sayInLanguage } from "../brains/language-wording";
-import { chooseLanguage, languageLine, scriptLanguage } from "../interaction/language";
+import { chooseLanguage, heldAfter, languageLine, scriptLanguage } from "../interaction/language";
 import { ensureLearnerTimezone, loadVoicePreferences } from "../adapters/account-preferences-adapter";
 import { chooseRegister } from "../decision/register";
 import { loadAccountabilityStyle, loadOperatingStyle, loadTone } from "../adapters/operating-style-adapter";
@@ -32,7 +32,7 @@ import { runNovaOrchestrator } from "../nova-orchestrator";
 import { examToOffer } from "../product/exams";
 import { loadNovaSession } from "../product/session";
 import { loadStudySnapshot } from "../engines/study-snapshot";
-import { loadConversationHistory, loadReplyLanguage, saveAssistantMessage, saveUserMessage } from "../adapters/conversation-adapter";
+import { loadConversationHistory, loadHeldLanguage, loadReplyLanguage, saveAssistantMessage, saveUserMessage } from "../adapters/conversation-adapter";
 import type { NovaOrchestratorInput } from "../types/context.types";
 import type { AcademicUnderstanding, UnderstandingContext } from "../types/understanding.types";
 import {
@@ -283,10 +283,13 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     const voice = await loadVoicePreferences(event.chatId).catch(() => ({ language: null, nickname: null }));
     const preferredLanguage = voice.language;
     const lastLanguage = user ? await loadReplyLanguage(user.id, preferredLanguage ?? "english") : (preferredLanguage ?? "english");
+    const heldLanguage = user ? await loadHeldLanguage(user.id).catch(() => null) : null;
     ctx = {
       chatId: event.chatId, profileId: profile.id, timezone: profile.timezone, name: voice.nickname ?? user?.displayName ?? null, now,
-      language: event.kind === "text" ? (scriptLanguage(event.text) ?? chooseLanguage(null, lastLanguage, event.text, preferredLanguage)) : lastLanguage,
-      preferredLanguage,
+      language: event.kind === "text"
+        ? (scriptLanguage(event.text) ?? chooseLanguage(null, lastLanguage, event.text, preferredLanguage, { held: heldLanguage }))
+        : chooseLanguage(null, lastLanguage, undefined, preferredLanguage, { held: heldLanguage }),
+      preferredLanguage, heldLanguage,
     };
     budgetDay = dayKey(now, resolveTimezone(profile.timezone));
     // The row is made once, and "reachable again" is written only when the
@@ -444,7 +447,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
         trace.decision           = turn.decision;
         if (!turn.ok && turn.decision === "unreadable") trace.failure = "understanding_malformed";
         if (row) {
-          await saveUserMessage(row.id, event.text, { intent: "general_chat", emotion: "neutral", signals: [], surface: "telegram", language: turn.language }, now)
+          await saveUserMessage(row.id, event.text, { intent: "general_chat", emotion: "neutral", signals: [], surface: "telegram", language: turn.language, languageHeld: ctx?.heldLanguage ?? null }, now)
             .then(() => saveAssistantMessage(row.id, turn.reply.text, "nova_setup", {}, now))
             .catch(err => console.error(`[nova:telegram] ${trace.correlationId} conversation log failed`, err));
         }
@@ -494,10 +497,12 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       // decision and the evidence alike, sees only this.
       const safe = safeReading(read, { today: day });
       // This reply is in the language the message was written in.
-      ctx.language = chooseLanguage(safe.request?.language, ctx.language, event.text, ctx.preferredLanguage);
-      // The log records the language this reply was given in, so the next
-      // short message follows the conversation as it now is.
-      const understanding = safe.request ? { ...safe, request: { ...safe.request, language: ctx.language } } : safe;
+      const choice = { requested: safe.request?.languageRequest ?? null, held: ctx.heldLanguage ?? null };
+      ctx.language = chooseLanguage(safe.request?.language, ctx.language, event.text, ctx.preferredLanguage, choice);
+      ctx.heldLanguage = heldAfter(choice, ctx.preferredLanguage ?? null);
+      // The log records the language this reply was given in, and a request
+      // still in force, so the next message follows the conversation as it now is.
+      const understanding = safe.request ? { ...safe, request: { ...safe.request, language: ctx.language, languageRequest: ctx.heldLanguage } } : safe;
       trace.understanding.ok           = true;
       trace.understanding.intent       = understanding.intent;
       trace.understanding.request      = understanding.request?.action ?? null;
@@ -526,7 +531,7 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       if (understanding.request?.clarity === "unintelligible") {
         const text = reply?.text ?? say().clarifyOpen;
         if (userRow) {
-          await saveUserMessage(userRow.id, event.text, { intent: "general_chat", emotion: "neutral", signals: [], surface: "telegram", language: understanding.request?.language ?? null }, now)
+          await saveUserMessage(userRow.id, event.text, { intent: "general_chat", emotion: "neutral", signals: [], surface: "telegram", language: understanding.request?.language ?? null, languageHeld: understanding.request?.languageRequest ?? null }, now)
             .then(() => saveAssistantMessage(userRow.id, text, "nova_clarify", {}, now))
             .catch(err => console.error(`[nova:telegram] ${trace.correlationId} conversation log failed`, err));
         }

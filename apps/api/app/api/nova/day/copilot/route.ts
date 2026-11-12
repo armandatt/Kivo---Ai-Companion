@@ -2,6 +2,8 @@ import { NextResponse } from "next/server"
 import { metered } from "../../../../../lib/billing/metered"
 //@ts-ignore
 import { askCopilot, COPILOT_BODY_MAX, COPILOT_REQUESTS_PER_MINUTE } from "@repo/api/nova/product/day-copilot"
+//@ts-ignore
+import { loadChosenLanguage } from "@repo/api/nova/product/surface-language"
 import { dayFail, requireDayLearner } from "../../../../../lib/nova/day-access"
 import { allowAttempt, readSmallJson } from "../../../../../lib/nova/extension-access"
 import { answerLive } from "../../../../../lib/nova/stream-answer"
@@ -28,7 +30,8 @@ export async function POST(req: Request) {
     const read = await readSmallJson(req, COPILOT_BODY_MAX)
     if (!read.ok) return dayFail(read.reason === "too_large" ? 413 : 400, "invalid", read.reason === "too_large" ? "That's too much to send at once. Attach a smaller file." : "Say what you'd like for today.")
     return await answerLive(req, async onLive => {
-      const run = await metered(access.platformChatId, () => onLive ? askCopilot(access.profileId, access.platformChatId, read.body, liveGenerate(onLive, COPILOT_LIVE_KEYS)) : askCopilot(access.profileId, access.platformChatId, read.body), { feature: "today_copilot" })
+      const language = await loadChosenLanguage(access.platformChatId)
+      const run = await metered(access.platformChatId, () => onLive ? askCopilot(access.profileId, access.platformChatId, read.body, liveGenerate(onLive, COPILOT_LIVE_KEYS), undefined, { language }) : askCopilot(access.profileId, access.platformChatId, read.body, undefined, undefined, { language }), { feature: "today_copilot" })
       if (!run.ok) return run.response
       const result = run.value as Awaited<ReturnType<typeof askCopilot>>
       const status = result.ok ? 200 : result.error === "stale" ? 409 : result.error === "unavailable" ? 503 : 400

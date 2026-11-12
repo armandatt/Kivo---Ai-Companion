@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 //@ts-ignore
-import { acceptDraft, changeDayFlow, loadDayFlow, setDayView, startFocus, undoDayFlow } from "@repo/api/nova/product/day-flow"
+import { acceptDraft, changeDayFlow, finishItemTask, loadDayFlow, setDayView, startFocus, undoDayFlow } from "@repo/api/nova/product/day-flow"
 //@ts-ignore
 import { approvePending } from "@repo/api/nova/product/day-copilot"
 import { dayFail, requireDayLearner } from "../../../../lib/nova/day-access"
@@ -50,6 +50,8 @@ export async function POST(req: Request) {
       : body?.action === "view" ? await setDayView({ ...base, view: body.view })
       : body?.action === "approve" ? await approvePending(access.profileId, access.platformChatId, body)
       : body?.action === "start" ? await startFocus({ ...base, itemId: body.itemId, minutes: body.minutes })
+      // After a session: the learner says the task itself is finished.
+      : body?.action === "finish_task" ? await finishItemTask({ ...base, itemId: body.itemId })
       : null
     if (!result) return dayFail(400, "invalid", "That isn't a change Today can make.")
     const status = result.ok ? 200 : result.error === "stale" ? 409 : result.error === "not_found" ? 404 : result.error === "failed" ? 500 : 400

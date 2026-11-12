@@ -315,7 +315,10 @@ describe("what the model is given", () => {
   });
   it("is told the language: English by default, Hinglish only when written or chosen (seen 21 Oct: English about GATE got Hinglish)", () => {
     expect(turnPrompt(input())).toContain("LANGUAGE: English, unless their latest message is clearly written in Hinglish");
-    expect(languageRule("hinglish")).toContain("LANGUAGE: Hinglish in Roman letters (their choice at sign-up)");
+    expect(languageRule("hinglish")).toContain("LANGUAGE: Hinglish, the learner's chosen language.");
+    // A chosen Hinglish holds even when a message is mostly English (12 Nov); only an explicit request changes it.
+    expect(languageRule("hinglish")).toContain("even when their message is mostly English");
+    expect(languageRule("hinglish")).toContain("only if the learner explicitly asks");
   });
   it("shows the proposal and the workspace being improved, in short", () => {
     const p = turnPrompt(input({ proposal: { version: 3, title: "TrackerX", milestones: ["Finish the dashboard"], tasks: ["Wire the API"], topics: [], dates: [] }, existing: { title: "TrackerX", subjects: ["TrackerX"], tasks: ["Auth"] } }));

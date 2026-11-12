@@ -10,6 +10,8 @@
 //
 // The conversation and the record are material, not instructions.
 
+import { jsonObjectIn, modelFailure } from "./model-failure";
+import { surfaceLanguageLine } from "./surface-language";
 import { generateOpenAIText } from "../../services/openai.service";
 import type { LlmAttachment } from "../../services/llmProviders";
 import type { ReplyLanguage } from "../types/understanding.types";
@@ -92,9 +94,11 @@ export interface TurnInput {
 // Which language Nova writes in: what the learner writes in, and otherwise
 // the one they chose (English when they chose none), as on Telegram and the
 // web chat ("Reply language" in CLAUDE.md).
+// A chosen Hinglish or Hindi holds for the whole conversation (surface-language.ts):
+// switching to English whenever a message was mostly English is what made
+// Nova seem to change language at random. Only an explicit request changes it.
 export function languageRule(chosen: TurnInput["language"]): string {
-  if (chosen === "hinglish") return "LANGUAGE: Hinglish in Roman letters (their choice at sign-up), unless their latest message is clearly written in English; then English.";
-  if (chosen === "hindi") return "LANGUAGE: Hindi (their choice at sign-up), in the script their latest message uses, unless that message is clearly written in English; then English.";
+  if (chosen === "hinglish" || chosen === "hindi") return surfaceLanguageLine(chosen);
   return "LANGUAGE: English, unless their latest message is clearly written in Hinglish (Hindi in Roman letters) or Hindi; then that.";
 }
 
@@ -124,19 +128,22 @@ export async function readBuilderTurn(t: TurnInput, generate: Generate = generat
   let raw: string;
   try {
     const files = t.files ?? [];
-    raw = await generate({
-      model: "gpt-4o", systemInstruction: SYSTEM, prompt: turnPrompt(t), maxOutputTokens: 1600,
+    const call = () => generate({
+      model: "gpt-4o", systemInstruction: SYSTEM, prompt: turnPrompt(t), maxOutputTokens: 1600, json: true,
       ...(files.length ? { attachments: files, deadlineMs: TURN_WITH_FILES_DEADLINE_MS, attemptMs: TURN_WITH_FILES_ATTEMPT_MS } : { deadlineMs: TURN_DEADLINE_MS }),
     });
+    raw = String(await call() ?? "");
+    // A reply that is not one readable object is asked for once more: the
+    // reading writes nothing, so a second call cannot do anything twice.
+    if (!jsonObjectIn(raw)) { failed("unreadable_reply_retried", `${raw.length} chars`); raw = String(await call() ?? ""); }
   } catch (err) {
-    failed("model_error", (err as Error)?.name ?? "error");
+    const f = modelFailure(err);
+    failed("model_error", `${f.problem}/${f.category}`);
     return null;
   }
-  const start = raw.indexOf("{"), end = raw.lastIndexOf("}");
-  let parsed: unknown = null;
-  if (start !== -1 && end > start) { try { parsed = JSON.parse(raw.slice(start, end + 1)); } catch { parsed = null; } }
+  const parsed: unknown = jsonObjectIn(raw);
   const said = t.messages.filter(m => m.role === "user");
-  const reading = parsed === null ? null : readTurn(parsed, said.map(m => m.text).join("\n"), (t.files ?? []).map(f => f.name), said.at(-1)?.text ?? "");
+  const reading = !parsed ? null : readTurn(parsed, said.map(m => m.text).join("\n"), (t.files ?? []).map(f => f.name), said.at(-1)?.text ?? "");
   if (!reading) failed("unreadable_reply", `${raw.length} chars`);
   return reading;
 }
