@@ -108,6 +108,9 @@ export function buildEvent({ eventType, clientEventId, page, title, subjectId, t
     // What the page calls its own address, when it says.
     canonicalUrl: page.canonicalUrl || null,
   }
+  // What the page says about itself in its metadata tags (1.3.0). Optional:
+  // the server saves the page without it.
+  if (page.meta && typeof page.meta === 'object') event.meta = page.meta
   // The selected passage travels only with the action that is about it.
   if (eventType === 'selection_saved') event.excerpt = typeof excerpt === 'string' ? excerpt : ''
   return event

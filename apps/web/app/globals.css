@@ -139,6 +139,11 @@
   --sem-source: oklch(74% 0.1 232);
   --sem-source-ink: oklch(83% 0.08 232);
   --sem-removed: oklch(68% 0.16 25);
+  /* Colour in a note's text (note-colors.ts): results and cautions, quieter than the callouts. */
+  --sem-positive: oklch(72% 0.11 152);
+  --sem-positive-ink: oklch(82% 0.09 152);
+  --sem-caution: oklch(68% 0.1 25);
+  --sem-caution-ink: oklch(80% 0.07 25);
   background: var(--background);
   color: var(--foreground);
 }
@@ -198,6 +203,11 @@ html[data-kivo-theme="light"] .kivo-app {
   --sem-source: oklch(52% 0.11 238);
   --sem-source-ink: oklch(43% 0.1 240);
   --sem-removed: oklch(52% 0.17 25);
+  /* Colour in a note's text (note-colors.ts): results and cautions, quieter than the callouts. */
+  --sem-positive: oklch(56% 0.12 152);
+  --sem-positive-ink: oklch(44% 0.1 152);
+  --sem-caution: oklch(56% 0.13 25);
+  --sem-caution-ink: oklch(47% 0.12 25);
   /* Accent and status text that was pale-on-dark, darkened to read on paper. */
   --color-keppel-200: oklch(46% 0.08 181);
   --color-keppel-300: oklch(60% 0.105 179.6);
@@ -275,6 +285,11 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   --sem-source: oklch(74% 0.1 232);
   --sem-source-ink: oklch(83% 0.08 232);
   --sem-removed: oklch(68% 0.16 25);
+  /* Colour in a note's text (note-colors.ts): results and cautions, quieter than the callouts. */
+  --sem-positive: oklch(72% 0.11 152);
+  --sem-positive-ink: oklch(82% 0.09 152);
+  --sem-caution: oklch(68% 0.1 25);
+  --sem-caution-ink: oklch(80% 0.07 25);
   color: var(--foreground);
 }
 
@@ -692,6 +707,55 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 .sem-frame { border-color: color-mix(in oklch, var(--sem) 65%, transparent); background-color: color-mix(in oklch, var(--sem) 7%, transparent); }
 .sem-ink { color: var(--sem-i); }
 .sem-chip { color: var(--sem-i); background-color: color-mix(in oklch, var(--sem) 12%, transparent); }
+/* A note's reading surface (note-body.tsx). Every colour comes from the
+   theme's tokens, so dark and light are one set of rules. Body text sits a
+   little below full contrast for long reading; headings, bold and links
+   stand out from it by weight and one accent, not by many colours. */
+.note-prose {
+  --note-text: color-mix(in oklch, var(--foreground) 86%, var(--background));
+  --note-strong: var(--foreground);
+  --note-soft: color-mix(in oklch, var(--foreground) 68%, var(--background));
+  --note-rule: color-mix(in oklch, var(--foreground) 12%, transparent);
+  --note-code-bg: color-mix(in oklch, var(--foreground) 7%, transparent);
+  --note-link: var(--nova-ink);
+  color: var(--note-text);
+}
+.note-prose h2.note-h1 { color: var(--note-strong); }
+.note-prose h2.note-h1::after { content: ""; display: block; width: 2.5rem; height: 2px; margin-top: 0.55rem; border-radius: 2px; background: color-mix(in oklch, var(--nova) 70%, transparent); }
+.note-prose .note-h2 { color: var(--note-strong); }
+.note-prose .note-h3 { color: color-mix(in oklch, var(--foreground) 80%, var(--background)); letter-spacing: 0.005em; }
+.note-prose strong { color: var(--note-strong); font-weight: 600; }
+.note-prose .note-link { color: var(--note-link); text-decoration-color: color-mix(in oklch, var(--note-link) 40%, transparent); }
+.note-prose .note-link:hover { text-decoration-color: var(--note-link); }
+.note-prose .note-code { background: var(--note-code-bg); color: var(--note-strong); }
+/* Code keeps its monospace face in the serif reading mode too (the reading
+   face is set on the note, and flattened layers let it win over font-mono). */
+.note-prose code, .note-prose pre, .note-prose .note-code { font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
+.note-prose .note-quote { color: var(--note-soft); border-color: var(--note-rule); }
+.note-prose .note-rule { border-color: var(--note-rule); }
+.note-prose li::marker { color: color-mix(in oklch, var(--foreground) 40%, transparent); }
+.note-prose ul > li::marker { color: color-mix(in oklch, var(--nova) 70%, transparent); }
+/* Colour in a note's text: [words]{.blue}. Inks are the callouts' text
+   inks, readable on the page in both themes. */
+.ink-accent { color: var(--sem-definition-ink); }
+.ink-blue   { color: var(--sem-source-ink); }
+.ink-teal   { color: var(--sem-takeaway-ink); }
+.ink-amber  { color: var(--sem-warning-ink); }
+.ink-green  { color: var(--sem-positive-ink); }
+.ink-red    { color: var(--sem-caution-ink); }
+.ink-muted  { color: var(--subtle); }
+/* Highlights: [words]{.hl-amber}, and ==words== (amber). A soft wash
+   behind text that keeps its own colour. */
+.note-hl { border-radius: 3px; padding: 0 0.15em; box-decoration-break: clone; -webkit-box-decoration-break: clone; color: inherit; }
+.hl-accent { background-color: color-mix(in oklch, var(--sem-definition) 24%, transparent); }
+.hl-blue   { background-color: color-mix(in oklch, var(--sem-source) 24%, transparent); }
+.hl-teal   { background-color: color-mix(in oklch, var(--sem-takeaway) 24%, transparent); }
+.hl-amber  { background-color: color-mix(in oklch, var(--sem-warning) 26%, transparent); }
+.hl-green  { background-color: color-mix(in oklch, var(--sem-positive) 24%, transparent); }
+.hl-red    { background-color: color-mix(in oklch, var(--sem-caution) 24%, transparent); }
+.hl-muted  { background-color: color-mix(in oklch, var(--foreground) 10%, transparent); }
+/* A swatch in the colour menu shows the role's own ink or wash. */
+.swatch-ink { background-color: currentColor; }
 /* Maths, kept as its LaTeX: set apart from the prose and never reflowed. */
 .note-math { font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 0.88em; }
 .note-math-block { overflow-x: auto; white-space: pre; border-radius: 0.5rem; padding: 0.6rem 0.9rem; background-color: color-mix(in oklch, var(--sem-definition) 6%, transparent); border: 1px solid color-mix(in oklch, var(--sem-definition) 22%, transparent); }

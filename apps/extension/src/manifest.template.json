@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Nova",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Save a page or passage to Nova, study it, or ask about a diagram with a screenshot. Nova sees a page only when you click its button.",
   "minimum_chrome_version": "110",
   "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },

@@ -199,14 +199,19 @@ test("Save to Nova stores the address, the title and where it was filed, and not
     canonicalUrl: null, excerpt: null, filedBy: "learner",
     // Saved, and waiting to be looked at: the save does not wait for that.
     processing: { status: "pending", error: null, canRetry: false, concepts: [], suggestions: [] },
+    // The library (12 Nov): its kind from the address, nothing the page did not say.
+    resourceType: "page", description: null, imageUrl: null, author: null, siteName: null, publishedAt: null, durationSeconds: null,
+    readingStatus: "unread", tags: [], collection: null, personalNote: null,
   });
 
   const [row] = await events("a");
   assert.deepEqual(Object.keys(row!).sort(), [
-    "canonicalUrl", "clientEventId", "connections", "createdAt", "domain", "eventType", "excerpt", "filedBy", "id", "occurredAt",
-    "processedAt", "processingAttempts", "processingError", "processingStartedAt", "processingStatus",
-    "profileId", "source", "subjectId", "title", "topicName", "url",
+    "author", "canonicalUrl", "clientEventId", "collectionId", "connections", "createdAt", "dedupeKey", "description", "domain", "durationSeconds", "eventType", "excerpt", "filedBy", "id",
+    "imageUrl", "occurredAt", "personalNote", "processedAt", "processingAttempts", "processingError", "processingStartedAt", "processingStatus",
+    "profileId", "publishedAt", "readingStatus", "resourceType", "siteName", "source", "subjectId", "tags", "title", "topicName", "url",
   ]);
+  // A metadata bag under any other name is never read: nothing the page did not say through `meta`.
+  assert.deepEqual([row!.description, row!.imageUrl, row!.author], [null, null, null]);
   assert.equal(row!.profileId, profile.a, "owned by the caller, not by the profileId in the request");
   assert.equal(row!.source, "browser_extension", "source is the server's, not the request's");
   assert.ok(!JSON.stringify(row).match(/SECRET|page text|xxxx|user:pw|queue/));

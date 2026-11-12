@@ -19,6 +19,19 @@
 //   > [!paper] Title      an imported research paper's card (paper-source.ts)
 // Inside a line (inlineTokens): **bold**, *italic*, ==highlight==, `code`,
 // #tag, $maths$, \(maths\), $$maths$$ (shown as a display) and bare web addresses. [[Links]] are read first, by note-links.ts.
+// Colour (note-colors.ts): [words]{.blue} for words in a colour,
+// [words]{.hl-amber} for a highlight in one; the words keep their own marks.
+//   - [ ] / - [x]        a checklist item, open or done
+
+import { colorSpanAt, type NoteColor } from '@repo/api/nova/product/note-colors'
+
+// A checklist item ("[ ] …", "[x] …" at the start of a list item), or null.
+export function checkItem(item: string): { done: boolean; text: string } | null {
+  if (item.length < 4 || item[0] !== '[' || item[2] !== ']' || item[3] !== ' ') return null
+  const mark = item[1]
+  if (mark !== ' ' && mark !== 'x' && mark !== 'X') return null
+  return { done: mark !== ' ', text: item.slice(4) }
+}
 
 export type CalloutType = 'note' | 'quote' | 'idea' | 'question' | 'warning' | 'summary' | 'example' | 'definition' | 'takeaway' | 'paper'
 
@@ -268,6 +281,7 @@ export const imageMarkdown = (alt: string, id: string) => `![${alt.split(']').jo
 
 export type InlineToken =
   | { kind: 'text' | 'bold' | 'italic' | 'highlight' | 'code' | 'tag'; text: string }
+  | { kind: 'color'; text: string; color: NoteColor; highlight: boolean }
   | { kind: 'math'; text: string; display?: boolean }
   | { kind: 'url'; text: string; href: string }
 
@@ -297,6 +311,8 @@ export function inlineTokens(text: string): InlineToken[] {
   const push = (token: InlineToken, next: number) => { flush(); out.push(token); i = next }
 
   while (i < text.length) {
+    const span = text[i] === '[' ? colorSpanAt(text, i) : null
+    if (span) { push({ kind: 'color', text: span.words, color: span.color, highlight: span.highlight }, span.end); continue }
     let end = paired(text, i, '**')
     if (end !== -1) { push({ kind: 'bold', text: text.slice(i + 2, end) }, end + 2); continue }
     end = paired(text, i, '==')

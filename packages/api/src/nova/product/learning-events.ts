@@ -25,9 +25,14 @@ import { prisma } from "@repo/db/client";
 import { REVIEW_BLOCK_MINUTES } from "../engines/planning-engine";
 import { likeLiteral, normalizeTopicName } from "../engines/topic-mastery-engine";
 import {
+  classifyResource, dedupeKey, fallbackImage, mergeTags, NO_META, PERSONAL_NOTE_MAX, READING_STATUSES, readPageMeta, RESOURCE_TYPES, tagKey,
+  type PageMeta, type ReadingStatus, type ResourceType,
+} from "./resource-meta";
+import {
   EVENTS_PER_MINUTE, EVENT_EXCERPT_MAX, EVENT_ID_MAX, EVENT_ID_MIN, EVENT_TITLE_MAX, EVENT_TOPIC_MAX, EVENT_URL_MAX,
   type ExtensionContext, type LearningEventResponse, type LearningEventSource, type LearningEventType,
   type LearningResource, type LearningResourceResponse, type NovaSavedResourcesView,
+  type LibraryFacets, type LibraryQuery, type LibraryResponse,
   type ProcessingStatus, type ResourceConnection, type ResourceConnections, type ResourceProcessing, type ResourceUpdateResponse,
 } from "./learning-events.types";
 
@@ -75,6 +80,8 @@ export interface ParsedLearningEvent {
   occurredAt:    Date;
   canonicalUrl:  string | null;
   excerpt:       string | null;
+  // What the page said about itself (resource-meta.ts); NO_META from an older extension.
+  meta:          PageMeta;
 }
 
 // Reads the fields a learning event has and no others. Whatever else the
@@ -133,7 +140,7 @@ export function parseLearningEvent(raw: unknown, now: Date): { ok: true; event: 
     if (!Number.isNaN(at.getTime()) && Math.abs(at.getTime() - now.getTime()) <= DAY_MS) occurredAt = at.getTime() > now.getTime() ? now : at;
   }
 
-  return { ok: true, event: { eventType, clientEventId: input.clientEventId, url: address.url, domain: address.domain, title: title || address.domain, subjectId, topicName, occurredAt, canonicalUrl, excerpt } };
+  return { ok: true, event: { eventType, clientEventId: input.clientEventId, url: address.url, domain: address.domain, title: title || address.domain, subjectId, topicName, occurredAt, canonicalUrl, excerpt, meta: readPageMeta(input.meta, now) } };
 }
 
 // ── Reading ───────────────────────────────────────────────────────────────────
@@ -143,6 +150,8 @@ const SELECT = {
   canonicalUrl: true, excerpt: true, filedBy: true,
   processingStatus: true, processingError: true, connections: true,
   subject: { select: { name: true } },
+  resourceType: true, description: true, imageUrl: true, author: true, siteName: true, publishedAt: true, durationSeconds: true,
+  readingStatus: true, tags: true, personalNote: true, collection: { select: { id: true, name: true } },
 } as const;
 
 type Row = {
@@ -150,6 +159,9 @@ type Row = {
   subjectId: string | null; topicName: string | null; occurredAt: Date; subject: { name: string } | null;
   canonicalUrl: string | null; excerpt: string | null; filedBy: string | null;
   processingStatus: string; processingError: string | null; connections: unknown;
+  resourceType: string | null; description: string | null; imageUrl: string | null; author: string | null; siteName: string | null;
+  publishedAt: Date | null; durationSeconds: number | null; readingStatus: string; tags: string[]; personalNote: string | null;
+  collection: { id: string; name: string } | null;
 };
 
 const STATUSES: ProcessingStatus[] = ["none", "pending", "processing", "done", "failed"];
@@ -201,7 +213,35 @@ function toResource(row: Row): LearningResource {
     filedBy: row.filedBy === "nova" ? "nova" : row.subjectId ? "learner" : null,
     processing: toProcessing(row),
     study: { available: blockedBy === null, blockedBy, minutes: REVIEW_BLOCK_MINUTES },
+    // The library. A row saved before it has no stored type: read from its address.
+    resourceType: RESOURCE_TYPES.find(t => t === row.resourceType) ?? classifyResource(row.url).type,
+    description: row.description, imageUrl: row.imageUrl ?? fallbackImage(row.url), author: row.author, siteName: row.siteName,
+    publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null, durationSeconds: row.durationSeconds,
+    readingStatus: READING_STATUSES.find(r => r === row.readingStatus) ?? "unread",
+    tags: row.tags ?? [], collection: row.collection, personalNote: row.personalNote,
   };
+}
+
+// The metadata columns for a save: what the page said, and its kind.
+function metaColumns(url: string, meta: PageMeta) {
+  return {
+    resourceType: classifyResource(url, meta).type,
+    description: meta.description, imageUrl: meta.imageUrl, author: meta.author, siteName: meta.siteName,
+    publishedAt: meta.publishedAt, durationSeconds: meta.durationSeconds,
+  };
+}
+
+// On a page saved again: what is missing is filled in, nothing the page or
+// the learner already gave is replaced. A kind read from the page is better
+// than "page", never the other way round.
+function fillMissing(existing: Pick<Row, "resourceType" | "description" | "imageUrl" | "author" | "siteName" | "publishedAt" | "durationSeconds">, url: string, meta: PageMeta) {
+  const fresh = metaColumns(url, meta);
+  const out: Record<string, unknown> = {};
+  if (!existing.resourceType || (existing.resourceType === "page" && fresh.resourceType !== "page")) out.resourceType = fresh.resourceType;
+  for (const k of ["description", "imageUrl", "author", "siteName", "publishedAt", "durationSeconds"] as const) {
+    if ((existing[k] === null || existing[k] === undefined) && fresh[k] !== null) out[k] = fresh[k];
+  }
+  return out;
 }
 
 type Learner = { status: "ready"; profileId: string } | { status: "not_connected" | "onboarding_incomplete" };
@@ -344,9 +384,23 @@ export async function recordLearningEvent(
   // entry per page, and one per passage of a page: the same passage sent
   // again is the same entry, a different passage is its own.
   if (event.eventType === "resource_saved" || event.eventType === "selection_saved") {
+    // The same page however it was reached: the same address, its canonical
+    // link, or the same address once tracking and host spellings are taken
+    // out (resource-meta.ts dedupeKey). A YouTube video is its id. Only this
+    // learner's own rows; an uncertain match is simply a new entry.
+    const key = dedupeKey(event.url);
+    const canonicalKey = event.canonicalUrl ? dedupeKey(event.canonicalUrl) : null;
+    const same = [
+      { url: event.url },
+      ...(event.canonicalUrl ? [{ url: event.canonicalUrl }, { canonicalUrl: event.canonicalUrl }] : []),
+      { canonicalUrl: event.url },
+      ...(key ? [{ dedupeKey: key }] : []),
+      ...(canonicalKey && canonicalKey !== key ? [{ dedupeKey: canonicalKey }] : []),
+    ];
     const existing = await prisma.novaLearningEvent.findFirst({
-      where:  { profileId, eventType: event.eventType, url: event.url, ...(event.eventType === "selection_saved" ? { excerpt: event.excerpt } : {}) },
-      select: { id: true, subjectId: true, filedBy: true },
+      where:  { profileId, eventType: event.eventType, OR: same, ...(event.eventType === "selection_saved" ? { excerpt: event.excerpt } : {}) },
+      orderBy: { occurredAt: "asc" },
+      select: { id: true, subjectId: true, filedBy: true, resourceType: true, description: true, imageUrl: true, author: true, siteName: true, publishedAt: true, durationSeconds: true, dedupeKey: true },
     });
     if (existing) {
       // Saved again with a subject: the learner's filing replaces whatever was
@@ -356,7 +410,7 @@ export async function recordLearningEvent(
         : { title: event.title, occurredAt: event.occurredAt };
       const row = await prisma.novaLearningEvent.update({
         where: { id: existing.id },
-        data:  { ...refiled, ...(event.canonicalUrl ? { canonicalUrl: event.canonicalUrl } : {}) },
+        data:  { ...refiled, ...(event.canonicalUrl ? { canonicalUrl: event.canonicalUrl } : {}), ...fillMissing(existing, event.url, event.meta), ...(existing.dedupeKey ? {} : { dedupeKey: key }) },
         select: SELECT,
       });
       return { success: true, eventId: row.id, action: "already_saved", duplicate: false, resource: toResource(row), focusPath: null };
@@ -368,6 +422,7 @@ export async function recordLearningEvent(
       data: {
         profileId, eventType: event.eventType, source: options.source, clientEventId: event.clientEventId, url: event.url, domain: event.domain, ...filed,
         canonicalUrl: event.canonicalUrl, excerpt: event.excerpt, filedBy: event.subjectId ? "learner" : null,
+        ...metaColumns(event.url, event.meta), dedupeKey: dedupeKey(event.url),
         // A saved page or passage waits to be looked at. A study request does not.
         processingStatus: event.eventType === "study_requested" ? "none" : "pending",
       },
@@ -412,6 +467,7 @@ export async function recordPassageIn(
       profileId, eventType: "selection_saved", source, clientEventId: event.clientEventId, url: event.url, domain: event.domain, title: event.title,
       subjectId: filed.subjectId, topicName: filed.topicName, occurredAt: event.occurredAt, canonicalUrl: event.canonicalUrl, excerpt: event.excerpt,
       filedBy: filed.subjectId ? "learner" : null, processingStatus: filed.subjectId ? "none" : "pending",
+      ...metaColumns(event.url, event.meta ?? NO_META), dedupeKey: dedupeKey(event.url),
     },
   });
 }
@@ -646,4 +702,177 @@ export async function resourceFilingIn(tx: Pick<typeof prisma, "novaLearningEven
 // filed under nothing, so a choice made since is kept.
 export async function refileResourcesIn(tx: Pick<typeof prisma, "novaLearningEvent">, profileId: string, filings: Array<{ id: string; subjectId: string; topicName: string | null }>): Promise<void> {
   for (const f of filings) await tx.novaLearningEvent.updateMany({ where: { id: f.id, profileId, subjectId: null }, data: { subjectId: f.subjectId, topicName: f.topicName } });
+}
+
+// ── The library (12 Nov) ──────────────────────────────────────────────────────
+// Saved pages as a library: searched, filtered, sorted and paged on the
+// server, so a learner with thousands loads forty at a time. The learner's
+// organisation (reading status, tags, a collection, a note of their own) is
+// written here; a collection itself is resource-collections.ts's.
+
+export const LIBRARY_PAGE = 40;
+const LIBRARY_PAGE_MAX = 100;
+const TAG_SCAN_MAX = 5000;
+
+const isType = (v: unknown): v is ResourceType => RESOURCE_TYPES.some(t => t === v);
+const isStatus = (v: unknown): v is ReadingStatus => READING_STATUSES.some(s => s === v);
+
+// The tags a learner uses, each once, most used first. For reuse of their
+// own spelling, and for the filter.
+export async function learnerTags(profileId: string): Promise<Array<{ tag: string; count: number }>> {
+  const rows = await prisma.novaLearningEvent.findMany({
+    where: { profileId, eventType: { in: SAVED_TYPES }, NOT: { tags: { isEmpty: true } } }, select: { tags: true }, take: TAG_SCAN_MAX,
+  });
+  const counts = new Map<string, { tag: string; count: number }>();
+  for (const r of rows) for (const t of r.tags) {
+    const k = tagKey(t), c = counts.get(k);
+    if (c) c.count++; else counts.set(k, { tag: t, count: 1 });
+  }
+  return [...counts.values()].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+}
+
+export function readLibraryQuery(params: URLSearchParams | Record<string, string | undefined>): LibraryQuery {
+  const get = (k: string) => (params instanceof URLSearchParams ? params.get(k) : params[k]) ?? undefined;
+  const q = get("q")?.trim().slice(0, 200) || undefined;
+  const days = Number(get("days"));
+  const limit = Number(get("limit"));
+  const sort = get("sort");
+  return {
+    q, type: isType(get("type")) ? get("type") as ResourceType : undefined,
+    collectionId: get("collection")?.slice(0, 64) || undefined,
+    tag: get("tag")?.trim().slice(0, 40) || undefined,
+    status: isStatus(get("status")) ? get("status") as ReadingStatus : undefined,
+    domain: get("domain")?.trim().toLowerCase().slice(0, 200) || undefined,
+    savedWithinDays: Number.isInteger(days) && days > 0 && days <= 3650 ? days : undefined,
+    sort: sort === "oldest" || sort === "title" || sort === "type" ? sort : "recent",
+    cursor: get("cursor")?.slice(0, 64) || undefined,
+    limit: Number.isInteger(limit) && limit > 0 ? Math.min(limit, LIBRARY_PAGE_MAX) : LIBRARY_PAGE,
+  };
+}
+
+function libraryWhere(profileId: string, q: LibraryQuery, now: Date) {
+  const and: object[] = [{ profileId, eventType: { in: SAVED_TYPES } }];
+  if (q.type) and.push(q.type === "page" ? { OR: [{ resourceType: "page" }, { resourceType: null }] } : { resourceType: q.type });
+  if (q.collectionId === "none") and.push({ collectionId: null });
+  else if (q.collectionId) and.push({ collectionId: q.collectionId });
+  if (q.tag) and.push({ tags: { has: q.tag } });
+  if (q.status) and.push({ readingStatus: q.status });
+  if (q.domain) and.push({ domain: q.domain });
+  if (q.savedWithinDays) and.push({ occurredAt: { gte: new Date(now.getTime() - q.savedWithinDays * DAY_MS) } });
+  if (q.q) {
+    const like = likeLiteral(q.q);
+    const has = (field: string) => ({ [field]: { contains: like, mode: "insensitive" as const } });
+    and.push({ OR: [
+      has("title"), has("domain"), has("description"), has("siteName"), has("author"), has("excerpt"), has("personalNote"),
+      { tags: { hasSome: [q.q, q.q.toLowerCase()] } },
+      { collection: { name: { contains: like, mode: "insensitive" as const } } },
+      { subject: { name: { contains: like, mode: "insensitive" as const } } },
+      { topicName: { contains: like, mode: "insensitive" as const } },
+    ] });
+  }
+  return { AND: and };
+}
+
+const ORDER: Record<NonNullable<LibraryQuery["sort"]>, object[]> = {
+  recent: [{ occurredAt: "desc" }, { id: "desc" }],
+  oldest: [{ occurredAt: "asc" }, { id: "asc" }],
+  title:  [{ title: "asc" }, { id: "asc" }],
+  type:   [{ resourceType: "asc" }, { occurredAt: "desc" }, { id: "desc" }],
+};
+
+export async function loadLibrary(platformChatId: string, query: LibraryQuery, now = new Date()): Promise<LibraryResponse> {
+  const learner = await resolveEventLearner(platformChatId);
+  if (learner.status !== "ready") return learner;
+  const profileId = learner.profileId;
+  const where = libraryWhere(profileId, query, now);
+  const limit = query.limit ?? LIBRARY_PAGE;
+  const all = { profileId, eventType: { in: SAVED_TYPES } };
+  // A cursor names a row of this learner's; anything else starts from the top.
+  const cursorOk = query.cursor ? (await prisma.novaLearningEvent.count({ where: { id: query.cursor, profileId } })) === 1 : false;
+  const [rows, matched, total, byType, byStatus, unfiled, tags, domains] = await Promise.all([
+    prisma.novaLearningEvent.findMany({
+      where, orderBy: ORDER[query.sort ?? "recent"] as never, take: limit + 1, select: SELECT,
+      ...(cursorOk ? { cursor: { id: query.cursor! }, skip: 1 } : {}),
+    }),
+    prisma.novaLearningEvent.count({ where }),
+    prisma.novaLearningEvent.count({ where: all }),
+    prisma.novaLearningEvent.groupBy({ by: ["resourceType"], where: all, _count: { _all: true } }),
+    prisma.novaLearningEvent.groupBy({ by: ["readingStatus"], where: all, _count: { _all: true } }),
+    prisma.novaLearningEvent.count({ where: { ...all, collectionId: null } }),
+    learnerTags(profileId),
+    prisma.novaLearningEvent.groupBy({ by: ["domain"], where: all, _count: { _all: true }, orderBy: { _count: { domain: "desc" } }, take: 30 }),
+  ]);
+  const types: LibraryFacets["types"] = {};
+  for (const g of byType) { const t = isType(g.resourceType) ? g.resourceType : "page"; types[t] = (types[t] ?? 0) + g._count._all; }
+  const statuses: LibraryFacets["statuses"] = {};
+  for (const g of byStatus) if (isStatus(g.readingStatus)) statuses[g.readingStatus] = g._count._all;
+  const page = rows.slice(0, limit) as unknown as Row[];
+  return {
+    status: "ready", items: page.map(toResource), matched,
+    nextCursor: rows.length > limit ? page[page.length - 1]!.id : null,
+    facets: { total, types, statuses, collections: [], unfiled, tags: tags.slice(0, 60), domains: domains.map(d => ({ domain: d.domain, count: d._count._all })) },
+  };
+}
+
+// The learner's own organisation of one saved page. `ownsCollection` is
+// resource-collections.ts's check that a collection is theirs.
+export async function organizeResource(
+  profileId: string, id: string, raw: unknown, ownsCollection: (profileId: string, id: string) => Promise<boolean>,
+): Promise<ResourceUpdateResponse> {
+  const o = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+  if (!o) return { ok: false, error: "invalid", message: "Nothing to change." };
+  const data: Record<string, unknown> = {};
+  if (o.readingStatus !== undefined) {
+    if (!isStatus(o.readingStatus)) return { ok: false, error: "invalid", message: "That isn't a reading status." };
+    data.readingStatus = o.readingStatus;
+  }
+  if (o.tags !== undefined) {
+    if (!Array.isArray(o.tags)) return { ok: false, error: "invalid", message: "Tags are a list." };
+    data.tags = mergeTags(o.tags, (await learnerTags(profileId)).map(t => t.tag));
+  }
+  if (o.collectionId !== undefined) {
+    if (o.collectionId === null || o.collectionId === "") data.collectionId = null;
+    else if (typeof o.collectionId !== "string" || !(await ownsCollection(profileId, o.collectionId))) return { ok: false, error: "not_found", message: "That collection isn't one of yours." };
+    else data.collectionId = o.collectionId;
+  }
+  if (o.personalNote !== undefined) {
+    if (o.personalNote !== null && typeof o.personalNote !== "string") return { ok: false, error: "invalid", message: "That note couldn't be read." };
+    const note = typeof o.personalNote === "string" ? o.personalNote.split("\r").join("").trim() : "";
+    if (note.length > PERSONAL_NOTE_MAX) return { ok: false, error: "invalid", message: `Keep your note under ${PERSONAL_NOTE_MAX} characters.` };
+    data.personalNote = note || null;
+  }
+  if (Object.keys(data).length === 0) return { ok: false, error: "invalid", message: "Nothing to change." };
+  const done = await prisma.novaLearningEvent.updateMany({ where: { id, profileId, eventType: { in: SAVED_TYPES } }, data });
+  if (done.count === 0) return { ok: false, error: "not_found", message: "Nova doesn't have that page." };
+  const row = await prisma.novaLearningEvent.findFirst({ where: { id, profileId }, select: SELECT });
+  return { ok: true, resource: toResource(row as unknown as Row) };
+}
+
+// ── Backfill for pages saved before the library ───────────────────────────────
+// Fills only what an address alone can say: the kind (from the address's
+// structure) and the key duplicates are compared by. Never metadata: a
+// description, image or author nobody gave stays empty. Only rows where the
+// field is still null are written, so it can run again safely. `apply: false`
+// counts and writes nothing.
+export async function backfillLibrary(options: { apply: boolean; batch?: number }): Promise<{ scanned: number; typed: number; keyed: number }> {
+  const batch = Math.min(Math.max(options.batch ?? 500, 1), 2000);
+  let scanned = 0, typed = 0, keyed = 0, after: string | undefined;
+  for (;;) {
+    const rows = await prisma.novaLearningEvent.findMany({
+      where: { eventType: { in: SAVED_TYPES }, OR: [{ resourceType: null }, { dedupeKey: null }], ...(after ? { id: { gt: after } } : {}) },
+      orderBy: { id: "asc" }, take: batch, select: { id: true, url: true, resourceType: true, dedupeKey: true },
+    });
+    if (!rows.length) break;
+    for (const r of rows) {
+      scanned++;
+      const data: Record<string, unknown> = {};
+      if (!r.resourceType) { data.resourceType = classifyResource(r.url).type; typed++; }
+      if (!r.dedupeKey) { const k = dedupeKey(r.url); if (k) { data.dedupeKey = k; keyed++; } }
+      if (options.apply && Object.keys(data).length) {
+        await prisma.novaLearningEvent.updateMany({ where: { id: r.id, ...(data.resourceType ? { resourceType: null } : {}) }, data });
+      }
+    }
+    after = rows[rows.length - 1]!.id;
+  }
+  return { scanned, typed, keyed };
 }

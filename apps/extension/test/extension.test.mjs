@@ -105,7 +105,7 @@ test('the code uses five browser APIs, all in one file: the active tab, opening 
   assert.equal((all.match(/chrome\.tabs\.query/g) ?? []).length, 1, 'the active tab is the only tab ever asked about')
 })
 
-test('inside a page it reads the selection and the canonical link, once, and nothing else', () => {
+test('inside a page it reads the selection, the canonical link and the page\'s metadata tags, once, and nothing else', () => {
   const adapter = code(src('lib/browser.js'))
   assert.equal((adapter.match(/chrome\.scripting\.executeScript/g) ?? []).length, 2, 'two ways into a page: the probe, and the area selector when asked')
   assert.match(adapter, /executeScript\(\{ target: \{ tabId \}, files: \['region-overlay\.js'\] \}\)/, 'that one tab, that one file')
@@ -113,19 +113,29 @@ test('inside a page it reads the selection and the canonical link, once, and not
   const probe = adapter.match(/export function probePage\(\) \{[\s\S]*?\n\}/)[0]
   assert.match(probe, /window\.getSelection/)
   assert.match(probe, /link\[rel~="canonical"\]\[href\]/)
-  assert.ok(!probe.match(/innerText|textContent|innerHTML|outerHTML|\.body|forms|\.value|cookie|localStorage|sessionStorage|fetch|XMLHttpRequest|querySelectorAll|addEventListener|MutationObserver/), 'no page text, forms, cookies, storage, requests or listeners')
-  assert.equal((probe.match(/document\./g) ?? []).length, 1, 'one look at the document: the canonical link')
+  assert.ok(!probe.match(/innerText|innerHTML|outerHTML|\.body|forms|\.value|cookie|localStorage|sessionStorage|fetch|XMLHttpRequest|addEventListener|MutationObserver/), 'no page text, forms, cookies, storage, requests or listeners')
+  // 1.3.0: what the page says about itself, from its metadata only (12 Nov).
+  // Every selector it reads is a <meta>, a link, an itemprop tag or a JSON-LD block.
+  const selectors = [...probe.matchAll(/'([a-z][^']*\[[^']*\])'/g)].map(m => m[1])
+  assert.ok(selectors.length > 5)
+  for (const sel of selectors) assert.match(sel, /^(meta\[|link\[|span\[itemprop="author"\] link\[|script\[type="application\/ld\+json"\])/, `${sel} is a metadata tag`)
+  assert.equal((probe.match(/textContent/g) ?? []).length, 1, 'text is read only from a JSON-LD block')
+  assert.match(probe, /querySelectorAll\('script\[type="application\/ld\+json"\]'\)/, 'the only list read is the JSON-LD blocks')
+  assert.equal((probe.match(/querySelectorAll/g) ?? []).length, 1)
 })
 
 test('what the page probe returns is read as data, and a long selection is not cut silently', () => {
   assert.deepEqual(readProbe({ selection: '  Spaced repetition\nworks. ', canonical: 'https://user:pw@example.com/a#top' }, 2000),
-    { available: true, selection: 'Spaced repetition\nworks.', tooLong: false, canonicalUrl: 'https://example.com/a' })
-  assert.deepEqual(readProbe({ selection: 'x'.repeat(2001), canonical: null }, 2000), { available: true, selection: '', tooLong: true, canonicalUrl: null })
+    { available: true, selection: 'Spaced repetition\nworks.', tooLong: false, canonicalUrl: 'https://example.com/a', meta: null })
+  assert.deepEqual(readProbe({ selection: 'x'.repeat(2001), canonical: null }, 2000), { available: true, selection: '', tooLong: true, canonicalUrl: null, meta: null })
   for (const canonical of ['javascript:alert(1)', 'chrome://settings', 'not an address', 42, `https://example.com/${'a'.repeat(2100)}`]) {
     assert.equal(readProbe({ selection: '', canonical }, 2000).canonicalUrl, null)
   }
-  for (const raw of [null, undefined, 'text', 42, [], { selection: 42 }]) assert.deepEqual(readProbe(raw, 2000), { available: true, selection: '', tooLong: false, canonicalUrl: null })
-  assert.deepEqual(NO_PROBE, { available: false, selection: '', tooLong: false, canonicalUrl: null })
+  for (const raw of [null, undefined, 'text', 42, [], { selection: 42 }]) assert.deepEqual(readProbe(raw, 2000), { available: true, selection: '', tooLong: false, canonicalUrl: null, meta: null })
+  assert.deepEqual(NO_PROBE, { available: false, selection: '', tooLong: false, canonicalUrl: null, meta: null })
+  // The page's metadata: kept to its fields and sizes; empty fields left out.
+  const meta = readProbe({ selection: '', canonical: null, meta: { description: '  A  guide ', imageUrl: 'https://x.test/i.png', author: '', types: ['Article', 7, 'x'.repeat(80)], citation: true, cookie: 'no' } }, 2000).meta
+  assert.deepEqual(meta, { description: 'A guide', imageUrl: 'https://x.test/i.png', types: ['Article'], citation: true })
   assert.equal(typeof probePage, 'function')
 })
 
