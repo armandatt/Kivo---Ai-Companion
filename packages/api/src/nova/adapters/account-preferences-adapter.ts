@@ -109,11 +109,11 @@ const NONE: AccountPreferences = { checkinMinute: null, checkinTime: null, timez
 
 const two = (n: number) => String(n).padStart(2, "0");
 
-export async function loadAccountPreferences(platformChatId: string): Promise<AccountPreferences> {
-  const account = await prisma.userProfile.findFirst({
-    where:  accountOf(platformChatId),
-    select: { preferredCheckInTime: true, timezone: true, onboardingAnswers: true },
-  }).catch(() => null);
+const PREFERENCE_COLUMNS = { preferredCheckInTime: true, timezone: true, onboardingAnswers: true } as const;
+
+type PreferenceRow = { preferredCheckInTime: string | null; timezone: string | null; onboardingAnswers: unknown };
+
+function preferencesOf(account: PreferenceRow | null): AccountPreferences {
   if (!account) return NONE;
   const minute = parseCheckinTime(account.preferredCheckInTime);
   const zone   = account.timezone && isValidTimezone(account.timezone) ? currentZoneName(account.timezone) : null;
@@ -123,6 +123,39 @@ export async function loadAccountPreferences(platformChatId: string): Promise<Ac
     timezone:      zone,
     learningContexts: learningContextsIn(account.onboardingAnswers),
   };
+}
+
+export async function loadAccountPreferences(platformChatId: string): Promise<AccountPreferences> {
+  const account = await prisma.userProfile.findFirst({
+    where:  accountOf(platformChatId),
+    select: PREFERENCE_COLUMNS,
+  }).catch(() => null);
+  return preferencesOf(account);
+}
+
+// The same for many learners in one query (the proactive tick), keyed by the
+// learner id each was asked for. A learner with no account, or a failed read,
+// gets NONE, exactly as loadAccountPreferences gives it. Where two accounts
+// name the same chat, the first row the database returns is used, which is
+// what findFirst does there too.
+export async function loadAccountPreferencesFor(platformChatIds: readonly string[]): Promise<Map<string, AccountPreferences>> {
+  const out = new Map<string, AccountPreferences>(platformChatIds.map(id => [id, NONE]));
+  if (!platformChatIds.length) return out;
+  const userIds = platformChatIds.filter(id => id.startsWith("web:")).map(id => id.slice(4));
+  const chatIds = platformChatIds.filter(id => !id.startsWith("web:"));
+  const rows = await prisma.userProfile.findMany({
+    where:  { OR: [...(userIds.length ? [{ userId: { in: userIds } }] : []), ...(chatIds.length ? [{ telegramChatId: { in: chatIds } }] : [])] },
+    select: { ...PREFERENCE_COLUMNS, userId: true, telegramChatId: true },
+  }).catch(() => [] as Array<PreferenceRow & { userId: string; telegramChatId: string | null }>);
+  const seen = new Set<string>();
+  for (const row of rows) {
+    for (const key of [`web:${row.userId}`, row.telegramChatId]) {
+      if (!key || seen.has(key) || !out.has(key)) continue;
+      seen.add(key);
+      out.set(key, preferencesOf(row));
+    }
+  }
+  return out;
 }
 
 // Only what they said they are learning for, for callers that need nothing else.

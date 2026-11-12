@@ -596,6 +596,28 @@ export async function failProcessing(claim: ProcessingClaim, message: string, no
   });
 }
 
+// When each saved page listWaitingForProcessing would pick up becomes due, for
+// the scheduler's "is anything due before my next full run" check
+// (services/schedulerIdle.ts). Pending: at once. Processing: once the attempt
+// is stale. Failed with attempts left: once the retry wait has passed. The
+// same conditions as listWaitingForProcessing, read as moments.
+export async function processingDueTimes(): Promise<Date[]> {
+  const rows = await prisma.novaLearningEvent.findMany({
+    // A processing or failed row with no start time is never picked up
+    // (its comparison with null is false), so it is never due either.
+    where: { eventType: { in: SAVED_TYPES }, OR: [
+      { processingStatus: "pending" },
+      { processingStatus: "processing", processingStartedAt: { not: null } },
+      { processingStatus: "failed", processingAttempts: { lt: PROCESSING_MAX_ATTEMPTS }, processingStartedAt: { not: null } },
+    ] },
+    select: { processingStatus: true, processingStartedAt: true, createdAt: true },
+  });
+  return rows.map(r =>
+    r.processingStatus === "pending"    ? r.createdAt
+    : r.processingStatus === "processing" ? new Date(r.processingStartedAt!.getTime() + PROCESSING_STALE_MS + 1)
+    : new Date(r.processingStartedAt!.getTime() + PROCESSING_RETRY_MS + 1));
+}
+
 // Saved pages waiting to be looked at, oldest first.
 export async function listWaitingForProcessing(now: Date, take: number): Promise<string[]> {
   const stale = new Date(now.getTime() - PROCESSING_STALE_MS);

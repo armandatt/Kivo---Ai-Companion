@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
-// The production API host. It is public (the keep-awake workflow pings it).
+// The production API host. It is public (the uptime monitor pings it).
 const PRODUCTION_API_HOSTS = ["kivo-api-6jh4.onrender.com", ...(process.env.NOVA_PRODUCTION_API_HOSTS ?? "").split(",").map(h => h.trim()).filter(Boolean)];
 
 export class GuardError extends Error {}

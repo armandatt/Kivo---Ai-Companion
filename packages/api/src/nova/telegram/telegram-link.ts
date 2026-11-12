@@ -160,6 +160,35 @@ export async function linkTelegramChat(
   };
 }
 
+// ── A connected chat with no row of its own ───────────────────────────────────
+// The webhook calls this for a chat isLinkedTelegramChat accepts, before it
+// writes anything else for it. Normally the link already made the row. If it
+// did not (a message arriving between the link's token write and its row
+// write, or that second write failing), the webhook's profile update would
+// make one with the schema's default persona, "rex", and a Nova learner's
+// chat would be handed to Rex for good. So a missing row is made here, with
+// the companion the account chose (companionOf, as the link decides it).
+//
+// Never changes a row that exists, and makes none for an account whose
+// companion is not Nova (older Rex accounts keep what they had).
+export async function ensureLinkedChatRow(chatId: string): Promise<"exists" | "created" | "not_nova" | "no_account"> {
+  const where = { platform_platformChatId: { platform: "telegram", platformChatId: chatId } };
+  if (await prisma.messengerUser.findUnique({ where, select: { id: true } })) return "exists";
+  const account = await prisma.userProfile.findFirst({ where: { telegramChatId: chatId }, select: { primaryPersona: true } });
+  if (!account) return "no_account";
+  if (companionOf({ primaryPersona: account.primaryPersona, hasLinkedChat: false, messengerPersona: undefined }) !== "nova") return "not_nova";
+  try {
+    await prisma.messengerUser.create({
+      data: { platform: "telegram", platformChatId: chatId, persona: "nova", aspirationWords: [], activeModules: [] },
+    });
+    return "created";
+  } catch (err) {
+    // Made at the same moment by the link or another update: it exists.
+    if ((err as { code?: string } | null)?.code === "P2002") return "exists";
+    throw err;
+  }
+}
+
 // ── A chat nobody has connected ───────────────────────────────────────────────
 // Kivo is entered from the web: an account is made there, and its connect
 // link is what ties a Telegram chat to it. A chat with no such tie has no

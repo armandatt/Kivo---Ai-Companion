@@ -122,3 +122,39 @@ test("a Rex account's connect link connects the chat to Rex, as before", async (
   assert.deepEqual([link.status, link.status === "linked" && link.companion], ["linked", "rex"]);
   assert.equal(await isLinkedTelegramChat(chat), true);
 });
+
+// ── A connected chat with no row of its own (ensureLinkedChatRow) ─────────────
+// The webhook's profile update used to make a missing row with the schema's
+// default persona, "rex". Now a Nova account's chat gets a Nova row first;
+// nothing that exists is changed, and older Rex accounts are left as they were.
+
+const { ensureLinkedChatRow } = await import("../telegram/telegram-link.js");
+
+test("a Nova account's connected chat with no row gets a Nova row, not the schema's Rex default", async () => {
+  const chat = chatId();
+  await account("nova", { chat });
+  assert.deepEqual(await rowsFor(chat), []);
+  assert.equal(await ensureLinkedChatRow(chat), "created");
+  assert.deepEqual(await rowsFor(chat), [{ platform: "telegram", persona: "nova", intakeComplete: false }]);
+  assert.equal(await ensureLinkedChatRow(chat), "exists", "a second update changes nothing");
+  await prisma.messengerUser.deleteMany({ where: { platformChatId: chat } });
+});
+
+test("an existing row is never changed, whatever its persona", async () => {
+  const chat = chatId();
+  await account("nova", { chat });
+  await prisma.messengerUser.create({ data: { platform: "telegram", platformChatId: chat, persona: "rex", intakeComplete: true } });
+  assert.equal(await ensureLinkedChatRow(chat), "exists");
+  assert.deepEqual(await rowsFor(chat), [{ platform: "telegram", persona: "rex", intakeComplete: true }]);
+  await prisma.messengerUser.deleteMany({ where: { platformChatId: chat } });
+});
+
+test("an older Rex account's chat, and a chat no account names, get no row from this", async () => {
+  const rexChat = chatId();
+  await account("rex", { chat: rexChat });
+  assert.equal(await ensureLinkedChatRow(rexChat), "not_nova");
+  assert.deepEqual(await rowsFor(rexChat), []);
+  const stranger = chatId();
+  assert.equal(await ensureLinkedChatRow(stranger), "no_account");
+  assert.deepEqual(await rowsFor(stranger), []);
+});

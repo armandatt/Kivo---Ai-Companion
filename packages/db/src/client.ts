@@ -3,6 +3,7 @@ import { PrismaPg } from "@prisma/adapter-pg"
 import { config } from "dotenv"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { signallingAdapter } from "./write-signal"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -19,9 +20,11 @@ if (!connectionString) {
   throw new Error("DATABASE_URL is not set")
 }
 
-const adapter = new PrismaPg({
+// Every committed write is noted for the scheduler (write-signal.ts), so it
+// can tell when it may skip the database between its full runs.
+const adapter = signallingAdapter(new PrismaPg({
   connectionString,
-})
+}))
 
 export const prisma =
   globalForPrisma.prisma ??

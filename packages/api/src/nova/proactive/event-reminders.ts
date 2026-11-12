@@ -42,7 +42,7 @@ import {
 } from "../product/calendar-rules";
 import { REPEAT_FREQS, type EventCategory, type RepeatFreq } from "../product/calendar.types";
 import {
-  beginSend, claimOccurrence, dropStale, dropUnworded, EVENT_REMINDER, markReady, markSendFailed, markSent, recoverReminders, type OutboxRow,
+  beginSend, claimOccurrence, dropStale, dropUnworded, EVENT_REMINDER, markReady, markSendFailed, markSent, recoverReminders, reminderRetryWindows, type OutboxRow,
 } from "./proactive-outbox";
 
 export interface EventRemindersResult {
@@ -95,6 +95,28 @@ const textFor = (event: DueEvent, occurrence: Occurrence, now: Date) =>
 async function moveOn(event: DueEvent, from: Date, after: Date): Promise<void> {
   const next = nextReminder(seriesOf(event), after);
   await prisma.novaCalendarEvent.updateMany({ where: { id: event.id, remindAt: from }, data: { remindAt: next?.at ?? null } });
+}
+
+// When calendar reminder work is due, for the scheduler's "is anything due
+// before my next full run" check (services/schedulerIdle.ts): every reminder
+// moment still inside its grace (due from remindAt until the grace ends, as
+// the "come due" query selects it), and every outbox row a retry would pick
+// up. A repeating event already past its grace is only moved on, which sends
+// nothing, so it is left to the next full run.
+export async function upcomingEventReminderWindows(now: Date): Promise<Array<{ from: Date; until: Date }>> {
+  const graceMs = REMINDER_GRACE_MINUTES * 60_000;
+  const [events, retries] = await Promise.all([
+    prisma.novaCalendarEvent.findMany({
+      where:  { remindAt: { gt: new Date(now.getTime() - graceMs) } },
+      take:   2000,
+      select: { remindAt: true },
+    }),
+    reminderRetryWindows(now, REMINDER_GRACE_MINUTES),
+  ]);
+  return [
+    ...events.flatMap(e => e.remindAt ? [{ from: e.remindAt, until: new Date(e.remindAt.getTime() + graceMs) }] : []),
+    ...retries,
+  ];
 }
 
 export async function runEventReminders(now = new Date(), deps: { client?: TelegramClient } = {}): Promise<EventRemindersResult> {

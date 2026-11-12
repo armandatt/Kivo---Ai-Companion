@@ -146,6 +146,14 @@ export function inCheckinWindow(f: ProactiveFacts): boolean {
 // they chose, if they chose one; else their study window.
 const inPressureWindow = (f: ProactiveFacts): boolean => (hasCheckin(f) ? inCheckinWindow(f) : inWindow(f.localHour, f.window));
 
+// The same window rules, for the scheduler deciding whether a tick could send
+// anything at all (proactive/proactive-outlook.ts): an exam countdown only
+// inside EXAM_WINDOW, everything else only inside the pressure window.
+export const inExamWindow = (localHour: number): boolean => inWindow(localHour, EXAM_WINDOW);
+export const inPressureWindowAt = (f: Pick<ProactiveFacts, "localHour" | "localMinute" | "checkinMinute" | "window">): boolean =>
+  inPressureWindow(f as ProactiveFacts);
+export const isPressureType = (type: string): boolean => PRESSURE.has(type as ProactiveType);
+
 // Quiet hours protect the learner from a time Nova picked. A time the learner
 // picked is theirs: a 6:30 check-in is sent at 6:30.
 export const isQuietFor = (f: ProactiveFacts): boolean => isQuietHour(f.localHour) && !inCheckinWindow(f);
