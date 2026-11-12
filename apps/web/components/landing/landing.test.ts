@@ -164,6 +164,7 @@ test('the extension preview uses the popup’s own words, keeps only what it rea
   assert.ok(demo.includes('It is on your Saved list in Nova, with the page it came from.'))
   // An outside link only to the store, opened safely.
   const sections = web('components/landing/sections.tsx')
-  assert.match(sections, /const CHROME_STORE_URL: string \| null = (null|'https:\/\/chromewebstore\.google\.com\/detail\/[^']+')/)
-  assert.match(sections, /href=\{CHROME_STORE_URL\} target="_blank" rel="noopener noreferrer"/)
+  assert.match(sections, /import \{ CHROME_STORE_URL, STORE_LISTING_NAME \} from '@\/lib\/extension-store'/)
+  assert.doesNotMatch(sections, /chromewebstore/)
+  assert.match(web('components/extension/store-button.tsx'), /href=\{url\} target="_blank" rel="noopener noreferrer"/)
 })

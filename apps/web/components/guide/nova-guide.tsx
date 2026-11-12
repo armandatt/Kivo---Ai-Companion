@@ -9,6 +9,7 @@ import {
 import { PLANS, formatPrice } from '@repo/api/billing/plans'
 import { NOVA_ROUTES } from '@repo/api/nova/product/companion'
 import { PLACES } from '@/lib/creature/places'
+import { CHROME_STORE_URL, STORE_LISTING_NAME } from '@/lib/extension-store'
 
 // Kivo's Docs: every page and every feature, in one place. Everything
 // here describes behaviour that exists: the commands are the ones the
@@ -47,6 +48,7 @@ const CHAT = [
 ]
 
 const EXTENSION_STEPS = [
+  { title: 'Install it',       body: CHROME_STORE_URL ? `Add Kivo to Chrome on the Browser Extension page opens the Chrome Web Store, where it’s listed as “${STORE_LISTING_NAME}”. Press Add to Chrome, and pin it from the puzzle piece in the toolbar.` : 'The Chrome Web Store link will be on the Browser Extension page soon. Meanwhile, the Save to Kivo bookmark there saves any page.' },
   { title: 'Open the popup',   body: 'Click the Nova icon in your browser toolbar and choose Get a code from Nova.' },
   { title: 'Get a code',       body: 'Kivo opens its Browser Extension page. Connect a browser shows a one-time code, good for ten minutes.' },
   { title: 'Type it in',       body: 'Enter the code in the popup. That browser is now connected until you disconnect it or leave it unused for thirty days.' },
@@ -337,7 +339,7 @@ const FAQ = [
   { q: 'I didn’t get the password-reset email.', a: 'Check spam, and that Profile shows the address you expect. A link works once, for an hour, and asking again makes the earlier one stop working. After a few requests in an hour, wait before asking again.' },
   { q: 'A note says it can’t be saved because it is too long.', a: 'A note holds up to 1,000,000 characters. Your text stays on screen and in this browser, nothing is cut: move part of it into a second note, then save.' },
   { q: 'Select area or Screenshot doesn’t work on a page.', a: 'Browsers don’t let extensions into their own pages (settings, the Web Store, new tabs). Open an ordinary web page. If the page still refuses, select the text and ask about that.' },
-  { q: 'I can’t find the extension in the Chrome Web Store.', a: 'It isn’t listed there yet. Until it is, the Save to Kivo bookmark on the Browser Extension page saves any page from any browser, phones and Safari included.' },
+  { q: 'I can’t find the extension in the Chrome Web Store.', a: CHROME_STORE_URL ? `Use Add Kivo to Chrome on the Browser Extension page: it opens the listing itself. In the store it’s called “${STORE_LISTING_NAME}”.` : 'The store link will be on the Browser Extension page soon. Until then, the Save to Kivo bookmark there saves any page from any browser, phones and Safari included.' },
   { q: 'The extension says it was disconnected.', a: 'Its connection ends if you disconnect it or leave it unused for thirty days. Open the Browser Extension page, press Connect a browser and type the new code into the extension.' },
   { q: 'Can Nova remind me at a set time?', a: 'Not yet. It checks in around the time you picked on days you haven’t studied, and messages first only when something is due, at most twice a day. It says so plainly if you ask for a reminder.' },
   { q: 'Does saving a page or ticking a task count as studying?', a: 'No. Only finished, timed sessions move the record. Saved pages and tasks are how you organise; sessions are how you learn.' },
@@ -705,7 +707,7 @@ export function NovaGuide() {
             </Grid>
           </Section>
 
-          <Section topic={topic('extension')} hidden={hide('extension')} lead="On any page, click the Kivo icon to save it under a subject or start a study session on it. Works in Chrome, Edge, Brave and Arc. It isn’t listed in the Chrome Web Store yet, and Safari is not supported yet; the Save to Kivo bookmark works everywhere meanwhile.">
+          <Section topic={topic('extension')} hidden={hide('extension')} lead={`On any page, click the ${STORE_LISTING_NAME} icon to save it under a subject or start a study session on it. It installs in Google Chrome on a computer${CHROME_STORE_URL ? ', from Add Kivo to Chrome on the Browser Extension page' : '; the store link will be on the Browser Extension page soon'}. Other browsers and phones aren’t supported yet; the Save to Kivo bookmark works everywhere.`}>
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] lg:items-center">
               <div>
                 <ol className="space-y-4">
