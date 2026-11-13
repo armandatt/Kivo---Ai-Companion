@@ -68,6 +68,8 @@ services:
         sync: false
       - key: NEXT_PUBLIC_APP_URL       # https://<web-domain>
         sync: false
+      - key: KIVO_CONNECT_ORIGIN       # Kivo Connect (MCP) issuer and resource: https://www.thekivo.in, no trailing slash. Falls back to NEXT_PUBLIC_APP_URL
+        sync: false
       - key: RESEND_FROM_EMAIL         # a sender on a domain verified with Resend, e.g. no-reply@<your-domain>
         sync: false
       - key: BOT_USERNAME              # Telegram bot username, without @

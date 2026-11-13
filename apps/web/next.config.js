@@ -151,6 +151,15 @@ const nextConfig = {
         source: "/api/billing/:path(trial|checkout|portal)",
         destination: `${apiUrl}/api/billing/:path`,
       },
+      // Kivo Connect (MCP for ChatGPT, Claude): the endpoint, OAuth and its
+      // metadata live on the API and are reached through this origin, the
+      // issuer, so the consent page can use the Kivo session.
+      { source: "/api/mcp", destination: `${apiUrl}/api/mcp` },
+      { source: "/api/oauth/:path*", destination: `${apiUrl}/api/oauth/:path*` },
+      { source: "/api/connect/:path*", destination: `${apiUrl}/api/connect/:path*` },
+      { source: "/.well-known/oauth-protected-resource", destination: `${apiUrl}/.well-known/oauth-protected-resource` },
+      { source: "/.well-known/oauth-protected-resource/api/mcp", destination: `${apiUrl}/.well-known/oauth-protected-resource/api/mcp` },
+      { source: "/.well-known/oauth-authorization-server", destination: `${apiUrl}/.well-known/oauth-authorization-server` },
       {
         source: "/api/personality",
         destination: `${apiUrl}/api/personality`,

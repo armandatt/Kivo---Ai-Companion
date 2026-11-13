@@ -10,13 +10,15 @@
     "check-types": "next typegen && tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.27.1",
     "@repo/api": "^1.0.0",
     "@repo/db": "^0.0.0",
     "bcrypt": "^6.0.0",
     "jose": "^6.2.2",
     "next": "16.4.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@repo/typescript-config": "*",

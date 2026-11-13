@@ -207,6 +207,7 @@ All are read from `process.env` at call time, so flipping one on Railway needs n
 | `API_URL` | web | Base URL of `apps/api` for the rewrites |
 | `NEXT_PUBLIC_APP_URL` | web | Public URL of the web app |
 | `NEXT_PUBLIC_BOT_USERNAME` / `BOT_USERNAME` | web / api | Bot username without `@`, for "open chat" links and the `?start=TOKEN` deeplink |
+| `KIVO_CONNECT_ORIGIN` | api | Kivo Connect's issuer and resource origin (`https://www.thekivo.in`, no trailing slash). Falls back to `NEXT_PUBLIC_APP_URL`; required in production when that is unset |
 | `NEXT_PUBLIC_CHROME_STORE_URL` | web | Optional. Replaces the extension's Chrome Web Store listing (`LISTING` in `lib/extension-store.ts`, the live "Nova" item `eddopegjkjiadejiocfbhoecjlbfcjba`). Only `https://chromewebstore.google.com/detail/<name>/<32-letter id>` is accepted. Read at build time |
 
 ## Deployment
@@ -515,6 +516,18 @@ Held by `recovery.test.ts`, `hard-availability.test.ts` and `nova-recovery.itest
 ## Quick Focus
 
 Held by `nova-quick-focus.itest.ts`. Home's Quick focus starts the ordinary `start` command with only a label ("Quick focus", untimed): no task, no topic, no plan (`useNovaSession.quickStart`). While it runs, `set_details` (title for a session with no topic → `currentFocus`; category and description → `NovaStudySession.focusDetails` Json, additive) changes nothing about its time (`setSessionDetails`). End is the existing guarded end. It counts in Progress by the usual rule and moves no mastery and completes no task. `GET /api/nova/sessions/recent` (`product/focus-history.ts`, type in `focus-history.types.ts`) feeds Recent sessions on Progress.
+
+## Kivo Connect (MCP for ChatGPT, Claude)
+
+Docs: `docs/integrations/KIVO_CONNECT_*.md`. `packages/api/src/connect/` (tools, OAuth, plans, curation; no HTTP, no model), `apps/api/app/api/mcp` + `api/oauth/*` + `api/connect/*` + `app/.well-known/oauth-*`, web pages `/connect/authorize`, `/connect/approve`, Settings › AI assistants. Held by `src/connect/__tests__`, `kivo-connect.itest.ts`, `kivo-connect-http.e2e.ts` (official SDK client over HTTP) and `extension-origin.test.ts`.
+
+- **Endpoint** `https://www.thekivo.in/api/mcp`: stateless Streamable HTTP (JSON responses), one server per request with only the tools the token's scopes allow. Served by the API, reached through the web origin's rewrites, because the consent page needs the Kivo session; `KIVO_CONNECT_ORIGIN` (else `NEXT_PUBLIC_APP_URL`) is issuer and resource.
+- **OAuth 2.1**: dynamic registration, PKCE S256 only, exact redirects, 5-minute single-use codes, 1-hour access tokens bound to the resource, rotating 30-day refresh tokens (reuse revokes the grant), RFC 7009 revocation, everything hashed (`NovaConnectClient`, `NovaConnectGrant`, only `connect/oauth.ts` writes them). The learner is the grant's; no tool takes an identity argument.
+- **Thin layer**: no `connect/` file touches a learning table or calls a model (test-held). Writes go through `changes.ts` → `notes.ts` (`createNote`, `updateNote` guarded on the version read, `deleteNote`, `searchNoteBodies`) and Subject Studio's `applyStudyEdits` (versioned, all or nothing); every write is read back (`verification`) and reported item by item; `completed` only when nothing failed.
+- **Only Kivo's relationships**: inside (subject/topic hierarchy), filed under (note → subject/topic), `[[link]]` (note → note/topic). No free-form relation types. Search and similarity are keyword (`ILIKE` + word overlap), labelled `basis: "keyword"`; there are no embeddings.
+- **Approval is server-enforced** (`approvalNeeded`): any delete, move, rename or refile, or more than `ORDINARY_MAX` (12) items, returns a plan (`plans.ts`: HMAC over account, exact changes, structure version, touched notes' versions, 30-minute expiry, pending row in `NovaConnectAudit`); the learner approves on `/connect/approve`; `execute_knowledge_changes` recomputes the id (changed → fresh preview), claims the plan, runs it once.
+- **Curation**: the assistant extracts; `curation.ts planCapture` skips exact duplicates, enriches the same concept (append, guarded), creates related/new notes with `[[links]]`, files by subject/topic only when named or matching, provenance from known fields only.
+- **Audit** (`NovaConnectAudit`, only `connect/audit.ts`): writes, refusals, idempotency keys and results, pending/approved plans; never content.
 
 ## Focus context and the session note
 

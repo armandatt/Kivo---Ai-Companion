@@ -555,3 +555,33 @@ export async function noteFilingIn(tx: Pick<typeof prisma, "novaNote">, profileI
 export async function refileNotesIn(tx: Pick<typeof prisma, "novaNote">, profileId: string, filings: Array<{ id: string; subjectId: string; topicName: string | null }>): Promise<void> {
   for (const f of filings) await tx.novaNote.updateMany({ where: { id: f.id, profileId, subjectId: null }, data: { subjectId: f.subjectId, topicName: f.topicName } });
 }
+
+// ── For Kivo Connect (packages/api/src/connect) ──────────────────────────────
+// The learner's notes matching any of these words in the title or text
+// (case-insensitive substring, as listNotes; no ranking here), newest first,
+// with the text cut to `bodyMax`. How an assistant searches and compares
+// what it is about to save with what is there. Their own notes only.
+export const CONNECT_TERMS_MAX = 8;
+export async function searchNoteBodies(profileId: string, terms: string[], options: { take?: number; bodyMax?: number; subjectIds?: string[] | null } = {}): Promise<Array<{
+  id: string; title: string; body: string; bodyLength: number; subjectId: string | null; subjectName: string | null; topicName: string | null; createdAt: Date; updatedAt: Date;
+}>> {
+  const words = [...new Set(terms.map(t => t.trim().slice(0, 100)).filter(Boolean))].slice(0, CONNECT_TERMS_MAX).map(likeLiteral);
+  const rows = await prisma.novaNote.findMany({
+    where: {
+      profileId,
+      ...(options.subjectIds ? { subjectId: { in: options.subjectIds } } : {}),
+      ...(words.length ? { OR: words.flatMap(w => [
+        { title: { contains: w, mode: "insensitive" as const } },
+        { body:  { contains: w, mode: "insensitive" as const } },
+      ]) } : {}),
+    },
+    orderBy: { updatedAt: "desc" },
+    take:    Math.min(Math.max(options.take ?? 20, 1), 100),
+    select:  NOTE_SELECT,
+  });
+  const max = options.bodyMax ?? 4_000;
+  return rows.map(r => ({
+    id: r.id, title: r.title, body: r.body.slice(0, max), bodyLength: r.body.length,
+    subjectId: r.subjectId, subjectName: r.subject?.name ?? null, topicName: r.topicName, createdAt: r.createdAt, updatedAt: r.updatedAt,
+  }));
+}

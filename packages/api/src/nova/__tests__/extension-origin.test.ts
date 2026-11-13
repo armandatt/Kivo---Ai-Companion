@@ -90,7 +90,9 @@ describe("which routes give those headers", () => {
     }
   };
   walk("apps/api/app/api");
-  const answering = routes.filter(path => /withCors|preflight|extensionCors/.test(read(path))).sort();
+  // Kivo Connect's public OAuth/MCP routes answer any origin with their own
+  // helper (lib/connect/config.ts); they are held by the next block.
+  const answering = routes.filter(path => /withCors|preflight|extensionCors/.test(read(path)) && !read(path).includes("lib/connect/config")).sort();
 
   it("only the ones the extension calls", () => {
     expect(answering).toEqual([
@@ -109,6 +111,47 @@ describe("which routes give those headers", () => {
       const route = read(path);
       expect(route).toContain("export const OPTIONS = preflight");
       expect(route).toContain("return withCors(req,");
+    }
+  });
+});
+
+describe("Kivo Connect's open routes (any origin, bearer or no credential)", () => {
+  const routes: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(join(repo, dir))) {
+      const path = `${dir}/${name}`;
+      if (statSync(join(repo, path)).isDirectory()) walk(path);
+      else if (name === "route.ts") routes.push(path);
+    }
+  };
+  walk("apps/api/app");
+  const open = routes.filter(path => read(path).includes("lib/connect/config") && /preflight|OPEN_CORS/.test(read(path))).sort();
+
+  it("are only the MCP endpoint, OAuth and its metadata", () => {
+    expect(open).toEqual([
+      "apps/api/app/.well-known/oauth-authorization-server/route.ts",
+      "apps/api/app/.well-known/oauth-protected-resource/api/mcp/route.ts",
+      "apps/api/app/.well-known/oauth-protected-resource/route.ts",
+      "apps/api/app/api/mcp/route.ts",
+      "apps/api/app/api/oauth/register/route.ts",
+      "apps/api/app/api/oauth/revoke/route.ts",
+      "apps/api/app/api/oauth/token/route.ts",
+    ]);
+  });
+
+  it("never read the session cookie, and never allow credentials", () => {
+    for (const path of open) {
+      const route = read(path);
+      expect(route).not.toMatch(/getSession|sessionUser|cookies\(|resolveNovaLearner/);
+    }
+    expect(read("apps/api/lib/connect/config.ts")).not.toMatch(/allow-credentials/i);
+  });
+
+  it("the cookie routes of Kivo Connect answer no other origin", () => {
+    for (const path of routes.filter(p => p.startsWith("apps/api/app/api/connect/"))) {
+      const route = read(path);
+      expect(route).not.toMatch(/OPEN_CORS|preflight|withCors/);
+      if (/export async function (POST|DELETE)/.test(route)) expect(route).toContain("sameSiteProblem(req)");
     }
   });
 });
