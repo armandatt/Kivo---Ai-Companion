@@ -3,6 +3,7 @@ import Link from "next/link"
 import { PLANS, formatPrice } from "@repo/api/billing/plans"
 import { TERMS_VERSION } from "@repo/api/auth/legal"
 import { Confirm, LegalPage, Section } from "@/components/legal/legal-page"
+import { LEGAL_CONTACT, LEGAL_ENTITY } from "@/components/legal/to-confirm"
 
 // Plain terms for the service as it exists today. Business and legal facts
 // the code cannot establish are <Confirm> placeholders, never guesses.
@@ -40,7 +41,7 @@ export default function TermsPage() {
       summary={<p>Use Kivo to plan and track your own studying. What you write stays yours. Nova’s replies come from AI and can be wrong, so treat them as help, not as instructions you must follow. You can delete your account at any time from Settings.</p>}
     >
       <Section id="agreement" title="These terms">
-        <p>These terms are an agreement between you and <Confirm id="entity" /> (“Kivo”, “we”). When you create an account you are asked to agree to them, and you cannot create one without doing so; using Kivo means you continue to agree. Our <Link href="/privacy">Privacy Policy</Link> explains what we collect and how it is used.</p>
+        <p>These terms are an agreement between you and {LEGAL_ENTITY} (“Kivo”, “we”). When you create an account you are asked to agree to them, and you cannot create one without doing so; using Kivo means you continue to agree. Our <Link href="/privacy">Privacy Policy</Link> explains what we collect and how it is used.</p>
       </Section>
 
       <Section id="service" title="What Kivo is">
@@ -54,7 +55,7 @@ export default function TermsPage() {
       <Section id="account" title="Your account">
         <ul>
           <li>Give an email address you can receive mail at, and keep your password to yourself.</li>
-          <li>You are responsible for what happens under your account. Tell us at <Confirm id="contact" /> if you think someone else has used it.</li>
+          <li>You are responsible for what happens under your account. Tell us at <a href={`mailto:${LEGAL_CONTACT}`}>{LEGAL_CONTACT}</a> if you think someone else has used it.</li>
           <li>Signing in keeps you signed in on that browser for up to 30 days. Resetting your password does not yet sign out other browsers, so sign out of any you do not trust.</li>
         </ul>
       </Section>
@@ -110,7 +111,7 @@ export default function TermsPage() {
       </Section>
 
       <Section id="changes" title="Changes and contact">
-        <p><Confirm id="changes" /> Questions about these terms: <Confirm id="contact" />.</p>
+        <p><Confirm id="changes" /> Questions about these terms: <a href={`mailto:${LEGAL_CONTACT}`}>{LEGAL_CONTACT}</a>.</p>
       </Section>
     </LegalPage>
   )

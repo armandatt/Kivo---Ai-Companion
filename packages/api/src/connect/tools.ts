@@ -120,7 +120,7 @@ export const TOOLS: ToolDef[] = [
   }),
   def({
     name: "list_workspaces", title: "List workspaces", kind: "read", scopes: ["workspace:read"],
-    description: "Read-only. The learner's workspaces (maps made from a template or with Nova) and top-level subjects, with ids. Call this before naming a workspace anywhere else; never invent an id.",
+    description: "Read-only. The learner's workspaces (maps made from a template or with Nova) and top-level subjects, with ids. The workspace and subject ids the other Kivo tools take come from this list.",
     input: {},
     handler: async (_a, ctx) => {
       const ws = await workspacesOf(ctx.learner);

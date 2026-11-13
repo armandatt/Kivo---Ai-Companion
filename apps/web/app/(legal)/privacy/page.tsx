@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { PRIVACY_VERSION } from "@repo/api/auth/legal"
 import { Confirm, LegalPage, Section } from "@/components/legal/legal-page"
+import { LEGAL_CONTACT, LEGAL_ENTITY } from "@/components/legal/to-confirm"
 
 // Written from what the code stores and sends (the database schema, the auth
 // and Nova services, the browser extension's own statement). Anything the
@@ -40,7 +41,7 @@ export default function PrivacyPage() {
       summary={<p>Kivo keeps what you give it to plan and run your studying: your account, what you study, what you write, and your conversations with Nova. Some of it is sent to an AI provider to answer you. You can edit or delete what you create, and delete your whole account from Settings.</p>}
     >
       <Section id="who" title="Who we are">
-        <p>Kivo is provided by <Confirm id="entity" />. You can contact us at <Confirm id="contact" />. <Confirm id="address" /></p>
+        <p>Kivo is provided by {LEGAL_ENTITY}. You can contact us at <a href={`mailto:${LEGAL_CONTACT}`}>{LEGAL_CONTACT}</a>. <Confirm id="address" /></p>
       </Section>
 
       <Section id="collect" title="What we collect">
@@ -161,12 +162,12 @@ export default function PrivacyPage() {
       </Section>
 
       <Section id="rights" title="Your rights">
-        <p>Depending on where you live, you may have rights over your personal data, such as to access, correct or delete it. Use the controls above, or contact us at <Confirm id="contact" />.</p>
+        <p>Depending on where you live, you may have rights over your personal data, such as to access, correct or delete it. Use the controls above, or contact us at <a href={`mailto:${LEGAL_CONTACT}`}>{LEGAL_CONTACT}</a>.</p>
         <p><Confirm id="legalBasis" /></p>
       </Section>
 
       <Section id="changes" title="Changes and contact">
-        <p><Confirm id="changes" /> Questions about this policy: <Confirm id="contact" />. See also the <Link href="/terms">Terms of Service</Link>.</p>
+        <p><Confirm id="changes" /> Questions about this policy: <a href={`mailto:${LEGAL_CONTACT}`}>{LEGAL_CONTACT}</a>. See also the <Link href="/terms">Terms of Service</Link>.</p>
       </Section>
     </LegalPage>
   )

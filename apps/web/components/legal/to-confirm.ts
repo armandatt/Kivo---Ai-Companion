@@ -3,9 +3,11 @@
 // it; nothing here is a guess. One list, so the pages and the review of what
 // is missing never disagree.
 
+// Facts the owner has supplied (2026-11-13).
+export const LEGAL_ENTITY = 'Kivo'
+export const LEGAL_CONTACT = 'Contact@thekivo.in'
+
 export const TO_CONFIRM = {
-  entity:        'The legal name of the person or company that provides Kivo',
-  contact:       'A contact email address for privacy and legal questions',
   address:       'A postal address, if the law that applies to you requires one',
   effectiveDate: 'The date these documents take effect',
   minAge:        'The minimum age to use Kivo, and whether younger users need a parent or guardian’s consent',
