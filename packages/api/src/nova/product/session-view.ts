@@ -13,6 +13,8 @@ export const MIN_PLANNED_MINUTES = 5;
 export const MAX_PLANNED_MINUTES = 240;
 const MAX_TOPIC_LENGTH = 120;
 const MAX_LABEL_LENGTH = 160;
+export const MAX_CATEGORY_LENGTH = 40;
+export const MAX_DESCRIPTION_LENGTH = 1000;
 
 export function toSessionView(session: ActiveSessionInfo, now: Date): NovaSessionView {
   return {
@@ -42,6 +44,15 @@ export function parseSessionCommand(body: unknown): NovaSessionCommand | null {
     const m = b.minutes;
     if (m === 0) return { action: "set_length", minutes: 0 };
     return typeof m === "number" && Number.isInteger(m) && m >= MIN_PLANNED_MINUTES && m <= MAX_PLANNED_MINUTES ? { action: "set_length", minutes: m } : null;
+  }
+  if (b.action === "set_details") {
+    // Each field: a string (trimmed; empty clears it), null (clears it), or absent (unchanged).
+    const field = (v: unknown, max: number): string | null | undefined | false =>
+      v === undefined ? undefined : v === null ? null : typeof v === "string" ? (v.trim().slice(0, max) || null) : false;
+    const title = field(b.title, MAX_LABEL_LENGTH), category = field(b.category, MAX_CATEGORY_LENGTH), description = field(b.description, MAX_DESCRIPTION_LENGTH);
+    if (title === false || category === false || description === false) return null;
+    if (title === undefined && category === undefined && description === undefined) return null;
+    return { action: "set_details", ...(title !== undefined ? { title } : {}), ...(category !== undefined ? { category } : {}), ...(description !== undefined ? { description } : {}) };
   }
   if (b.action === "end") {
     // Anything that is not one of the four answers is "no answer".

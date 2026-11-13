@@ -7,6 +7,7 @@ import { GOALS_HREF } from '@repo/api/nova/product/goals.types'
 import { Consistency } from './consistency'
 import { Growth } from './growth'
 import { Journey } from './journey'
+import { RecentSessions } from './recent-sessions'
 import { PageHeader } from '@/components/dashboard/page-states'
 
 function Stat({ id, label, value, hint }: { id: string; label: string; value: string; hint: string }) {
@@ -86,6 +87,7 @@ export function NovaProgress({ view }: { view: NovaProgressReady }) {
               <Journey events={view.journey} timezone={consistency.timezone} />
             </>
           )}
+          <RecentSessions />
         </div>
 
         <aside className="space-y-6">
