@@ -1,7 +1,7 @@
 // The extension's calls to Nova, all to Nova's own address: redeem a pairing
 // code, read the learner's subjects, send one learning event (a page saved, a
 // passage saved, a page to study), capture into a draft and see where it was
-// filed, ask about the page, take a research task one step at a time, disconnect. The credential travels as a bearer header and nowhere
+// filed, ask about the page, run one task of the browser agent (start it, one step at a time, read the workspace), disconnect. The credential travels as a bearer header and nowhere
 // else; cookies are never sent.
 //
 // Every failure comes back as { ok: false, kind, message } with words a
@@ -12,8 +12,8 @@ const TIMEOUT_MS = 12_000
 const SCREENSHOT_TIMEOUT_MS = 30_000
 // Placing a passage may ask a small model (the server stops it at 4 s).
 const PLACE_TIMEOUT_MS = 9_000
-// One research decision: the model reads a page's worth of text.
-const RESEARCH_STEP_TIMEOUT_MS = 45_000
+// One decision of the browser agent: the model reads a page's worth of text.
+const AGENT_STEP_TIMEOUT_MS = 45_000
 
 export const WORDS = {
   offline:         "Can't reach Nova right now. Check your connection and try again.",
@@ -89,9 +89,11 @@ export function createClient({ baseUrl, fetch: doFetch, getToken }) {
     place:       (draftId, itemId) => call('/api/nova/extension/captures/place', { method: 'POST', body: { draftId, itemId }, timeoutMs: PLACE_TIMEOUT_MS }),
     choosePlace: (draftId, itemId, subjectId, topicId) => call('/api/nova/extension/captures/place', { method: 'PUT', body: { draftId, itemId, subjectId: subjectId || null, topicId: topicId || null } }),
     places:      () => call('/api/nova/extension/places'),
-    // Research: what the workspace already holds, and one decision at a time.
-    researchContext: objective => call('/api/nova/extension/research/context', { method: 'POST', body: { objective } }),
-    researchStep:    input => call('/api/nova/extension/research/step', { method: 'POST', body: input, timeoutMs: RESEARCH_STEP_TIMEOUT_MS }),
+    // The browser agent: start a task (counted once; its ticket and what the
+    // workspace holds), one decision at a time, and the workspace read mid-task.
+    agentStart:     (objective, pageTitle = '') => call('/api/nova/extension/agent/start', { method: 'POST', body: { objective, pageTitle } }),
+    agentStep:      input => call('/api/nova/extension/agent/step', { method: 'POST', body: input, timeoutMs: AGENT_STEP_TIMEOUT_MS }),
+    agentWorkspace: body => call('/api/nova/extension/agent/workspace', { method: 'POST', body }),
   }
 }
 

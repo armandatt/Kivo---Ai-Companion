@@ -41,7 +41,7 @@ export const USAGE_FEATURES = [
   "build_with_nova", "create_with_nova", "subject_studio", "today_copilot",
   "notes_tutor", "notes_editor", "notes_assist", "notes_proposal", "notes_import", "paper_import",
   "telegram_understanding", "telegram_reply", "telegram_rewording", "telegram_onboarding", "telegram_first_use",
-  "extension_ask_nova", "extension_research", "capture_placement",
+  "extension_ask_nova", "extension_agent", "capture_placement",
   "saved_page_processing", "saved_page_retry", "scheduled_nova_message",
   "rex", "other",
 ] as const;

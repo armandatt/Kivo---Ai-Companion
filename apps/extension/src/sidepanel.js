@@ -1,16 +1,22 @@
-// Nova's side panel: a conversation about the page the learner is reading.
-// Opened from the popup's Ask Nova, for that tab only (lib/browser.js
-// openPanel); in a browser with no side panel (Safari) the same page opens
-// inside the popup instead.
+// Nova's side panel: one conversation with Nova about, and on, the page the
+// learner is on. Opened from the popup's Ask Nova, for that tab only
+// (lib/browser.js openPanel); in a browser with no side panel (Safari) the
+// same page opens inside the popup instead.
 //
-// What Nova gets with each question: the page's title and address, the
-// selected passage if the learner keeps it attached, a screenshot only if they
-// took one, and the conversation so far (the latest turns, lib/thread.js),
-// so a follow-up ("explain the second point") has what came before. Nova's
-// server stores none of it; the conversation is kept in the browser's memory
-// (chrome.storage.session) until New conversation or the browser quits.
-// Answers are short by default; More detail asks again for a fuller one.
-// Answers are drawn from Markdown and LaTeX (lib/markdown.js, KaTeX).
+// What the learner types goes to Nova's browser agent (lib/agent*.js, run by
+// the background worker): it reads the page, and answers a question about it
+// in a step or two, or does what was asked (a form, a quiz, a setting, a
+// search across sources, their Kivo notes), showing what it does and waiting
+// for the learner before anything with consequences (lib/agent-view.js). A
+// question sent with a screenshot goes to Ask Nova (the picture is what Nova
+// reads then), and so does More detail on such an answer.
+//
+// What goes with each message: the conversation so far (the latest turns,
+// lib/thread.js), so a follow-up has what came before, and the selected
+// passage if the learner keeps it attached. Nova's server stores none of it;
+// the conversation is kept in the browser's memory (chrome.storage.session)
+// until New conversation or the browser quits. Answers are drawn from
+// Markdown and LaTeX (lib/markdown.js, KaTeX).
 
 import { NOVA_URL } from './config.js'
 import { buildCapture, buildQuestion, createClient, newActionId } from './lib/api.js'
@@ -20,6 +26,8 @@ import { parse, render } from './lib/markdown.js'
 import { createStore } from './lib/store.js'
 import { LOCK_DAYS, createThreads, historyOf } from './lib/thread.js'
 import { alertBox, busy, clamp, el, encodeShot, idle, loadPicture, markBetween, placeMark, siteInitial, sr } from './lib/ui.js'
+import { FINISHED } from './lib/agent.js'
+import { answerOf, liveTask, send, taskExtras, taskSummary } from './lib/agent-view.js'
 
 const store   = createStore(browser.storage())
 // In memory by default; on this device only when the learner locks a conversation (Keep).
@@ -39,7 +47,12 @@ const openNova = path => { void browser.openTab(`${NOVA_URL}${path}`) }
 
 const SUGGESTIONS = {
   selection: ['Explain this passage simply', 'Give me an example of this', 'What should I remember from this?'],
-  page:      ['What is this page about?', 'Explain the key ideas', 'Quiz me on this topic'],
+  page:      ['Summarise this page', 'How does this connect to my Kivo notes?', 'Quiz me on this topic'],
+  research:  [
+    'Explain the main Retrieval-Augmented Generation architectures and how they differ',
+    'Find the best introductions to Raft consensus and compare how they explain leader election',
+    'What does current research say about spaced repetition intervals?',
+  ],
 }
 
 function answerNode(text) {
@@ -65,10 +78,13 @@ async function start() {
   }
   setStatus('connected', handoff.name ? `Connected · ${handoff.name}` : 'Connected')
   const canonical = typeof handoff.canonicalUrl === 'string' ? handoff.canonicalUrl : null
-  renderConversation({ ...page, tabId, windowId: handoff.windowId, canonical }, handoff, await threads.load(page.url, canonical), await threads.loadTyping(page.url, canonical))
+  renderConversation({ ...page, tabId, windowId: handoff.windowId, canonical }, handoff, await threads.load(page.url, canonical), await threads.loadTyping(page.url, canonical), await taskState())
 }
 
-function renderConversation(page, handoff, saved, typing) {
+const taskState = () => browser.agentState()
+
+function renderConversation(page, handoff, saved, typing, task) {
+  const research = handoff.mode === 'research'
   let turns = Array.isArray(saved.turns) ? saved.turns.filter(t => t.answer || t.error) : []
   let selection = typeof handoff.selection === 'string' ? handoff.selection : ''
   let useSelection = Boolean(selection) && typing.useSelection !== false
@@ -81,12 +97,17 @@ function renderConversation(page, handoff, saved, typing) {
 
   const log = el('div', { class: 'log', role: 'log', ariaLive: 'polite', ariaLabel: 'Conversation with Nova', dataset: { log: '' } })
   const scroller = el('div', { class: 'scroll', dataset: { scroll: '' } }, log)
-  const question = el('textarea', { id: 'question', rows: 1, placeholder: 'Ask about this page…', maxLength: 500, autocomplete: 'off', dataset: { question: '' } })
+  const question = el('textarea', { id: 'question', rows: 1, placeholder: research ? 'What should Nova research?' : 'Ask about this page, or tell Nova what to do…', maxLength: 1000, autocomplete: 'off', dataset: { question: '' } })
   const askButton = el('button', { class: 'primary send', type: 'submit', disabled: true, ariaLabel: 'Ask', title: 'Ask (Enter)', dataset: { askSubmit: '' } }, 'Ask')
   const shotButton = el('button', { class: 'quiet tool', type: 'button', dataset: { screenshot: '' }, title: 'Send a picture of what this tab shows with your question' }, 'Screenshot')
   const regionButton = el('button', { class: 'quiet tool', type: 'button', dataset: { screenshotRegion: '' }, title: 'Drag over one part of the page' }, 'Select area')
   const selButton = el('button', { class: 'quiet tool', type: 'button', dataset: { refreshSelection: '' }, title: 'Read the text selected on the page now' }, 'Use selection')
   const attached = el('div', { class: 'attached', dataset: { attached: '' } })
+  // Watch Nova work: its tabs come to the front and each action is shown on the page.
+  const watchBox = el('input', { type: 'checkbox', id: 'watch', checked: true, dataset: { watch: '' } })
+  void browser.watchPreference().then(on => { watchBox.checked = on })
+  watchBox.addEventListener('change', () => void browser.setWatchPreference(watchBox.checked))
+  const watchToggle = el('label', { class: 'watch small', htmlFor: 'watch', title: 'Nova brings the pages it works on to the front and shows each click and keystroke as it happens' }, watchBox, el('span', {}, 'Watch Nova work'))
   const errors = el('div', { class: 'errors' })
 
   const persist = () => threads.save(page.url, page.canonical, page, turns, { locked })
@@ -168,6 +189,7 @@ function renderConversation(page, handoff, saved, typing) {
     screenshot: 'From your screenshot. Nova saw only what was in the picture.',
     selection:  'From your selection. Nova has not read the rest of the page.',
     title:      'Nova saw only the title. Select the part you mean for a closer answer.',
+    agent:      '',
   }
 
   function turnNode(turn, index) {
@@ -175,13 +197,18 @@ function renderConversation(page, handoff, saved, typing) {
     node.append(el('div', { class: 'you', dataset: { asked: '' } },
       el('p', {}, turn.question),
       turn.sent?.length ? el('p', { class: 'sent' }, `with ${turn.sent.join(', ').toLowerCase()}`) : null))
+    if (turn.pending && turn.kind === 'task') {
+      node.append(live && live.id === turn.taskId ? liveTask(live) : el('p', { class: 'thinking', role: 'status' }, 'Nova is starting…'))
+      return node
+    }
     if (turn.pending) {
       node.append(el('p', { class: 'thinking', role: 'status' }, turn.sent?.includes('Screenshot') || turn.sent?.includes('Marked area') ? 'Nova is looking at your screenshot…' : turn.detail === 'detailed' ? 'Nova is writing a fuller answer…' : 'Nova is thinking…'))
       return node
     }
     if (turn.error) {
       node.append(el('div', { class: 'nova failed' }, alertBox(turn.error),
-        el('button', { class: 'link', type: 'button', dataset: { retry: '' }, onclick: () => void ask(turn.question, { detail: turn.detail, replace: index }) }, 'Try again')))
+        turn.busyTab ? el('button', { class: 'link', type: 'button', dataset: { stopOther: '' }, onclick: async () => { await send('agent:stop'); await send('agent:dismiss'); void ask(turn.asked ?? turn.question, { replace: index }) } }, 'Stop that task and do this') : null,
+        el('button', { class: 'link', type: 'button', dataset: { retry: '' }, onclick: () => void ask(turn.asked ?? turn.question, { detail: turn.detail, replace: index }) }, 'Try again')))
       return node
     }
     const copied = el('span', { class: 'small', role: 'status' })
@@ -196,8 +223,9 @@ function renderConversation(page, handoff, saved, typing) {
     })
     node.append(el('div', { class: 'nova', dataset: { answer: '', basis: turn.basis, detail: turn.detail } },
       answerNode(turn.answer),
+      turn.task ? taskExtras(turn.task, { client, openNova, onSaved: () => void persist() }) : null,
       el('div', { class: 'answer-bar' },
-        turn.detail !== 'detailed' ? el('button', { class: 'link', type: 'button', dataset: { moreDetail: '' }, onclick: () => void ask(turn.question, { detail: 'detailed', label: 'More detail' }) }, 'More detail') : null,
+        turn.kind !== 'task' && turn.detail !== 'detailed' ? el('button', { class: 'link', type: 'button', dataset: { moreDetail: '' }, onclick: () => void ask(turn.question, { detail: 'detailed', label: 'More detail' }) }, 'More detail') : null,
         el('button', { class: 'link', type: 'button', dataset: { copy: '' }, onclick: async () => { try { await navigator.clipboard.writeText(turn.answer); copied.textContent = 'Copied.' } catch { copied.textContent = "Couldn't copy." } } }, 'Copy'),
         keepButton, copied),
       el('p', { class: 'basis small' }, BASIS[turn.basis] ?? '')))
@@ -206,10 +234,13 @@ function renderConversation(page, handoff, saved, typing) {
 
   function draw() {
     if (!turns.length) {
-      const ideas = SUGGESTIONS[selection ? 'selection' : 'page']
+      const ideas = SUGGESTIONS[research ? 'research' : selection ? 'selection' : 'page']
       log.replaceChildren(el('div', { class: 'welcome', dataset: { welcome: '' } },
-        el('h1', {}, 'Ask about this page'),
-        el('p', {}, selection ? 'Your selection goes with your question. Follow-ups keep the conversation.' : 'Nova sees its title. Select a passage, or add a screenshot, for a closer answer.'),
+        el('h1', {}, research ? 'What should Nova research?' : 'Ask Nova, or have it do something'),
+        el('p', {}, research
+          ? 'Nova checks your Kivo first, then searches, reads and compares sources in tabs of its own. You can pause or stop it at any time, and save what it finds to your Drafts.'
+          : selection ? 'Your selection goes with your message. Nova reads this page, and can act on it: fill a form, answer questions, find something, or research and save to your Kivo.'
+          : 'Nova reads this page and can act on it: fill a form, work through questions, find something, or research across sources and save to your Kivo. It asks before anything with consequences.'),
         el('div', { class: 'ideas' }, ideas.map(text => el('button', { class: 'idea', type: 'button', dataset: { idea: '' }, onclick: () => void ask(text) }, text)))))
       return
     }
@@ -219,6 +250,8 @@ function renderConversation(page, handoff, saved, typing) {
   async function ask(text, { detail = 'brief', label = null, replace = null } = {}) {
     const asked = (text ?? '').trim()
     if (!asked || asking) return
+    // With a screenshot (or More detail on such an answer): Ask Nova reads the picture.
+    if (!shot && !label) return runTask(asked, { replace })
     const screenshot = shot ? encodeShot(shot.img, shot.mark) : null
     if (shot && !screenshot) return errors.replaceChildren(alertBox('That screenshot is too large to send. Drag across the part you mean, then ask again.'))
     errors.replaceChildren()
@@ -239,6 +272,73 @@ function renderConversation(page, handoff, saved, typing) {
     question.focus()
   }
 
+  // ── A task for Nova's browser agent ────────────────────────────────────────
+  let live = task && !FINISHED.includes(task.status) && task.startTab?.id === page.tabId ? task : null
+
+  async function runTask(asked, { replace = null } = {}) {
+    errors.replaceChildren()
+    const previous = replace === null ? turns : turns.slice(0, replace)
+    const sent = useSelection && selection ? ['Selection'] : []
+    const turn = { question: asked, asked, kind: 'task', sent, pending: true, at: Date.now() }
+    turns = replace === null ? [...turns, turn] : [...previous, turn]
+    asking = true; ready(); busy(askButton, 'Starting'); question.readOnly = true
+    draw(); toBottom(true)
+    const objective = useSelection && selection ? `${asked}\n\n(The learner selected this on the page: "${selection.slice(0, 1500)}")` : asked
+    const res = await send('agent:begin', { objective, history: historyOf(previous), tab: { id: page.tabId, url: page.url, title: page.title }, windowId: page.windowId, watch: watchBox.checked })
+    idle(askButton); question.readOnly = false
+    if (!res?.ok) {
+      asking = false
+      delete turn.pending
+      if (res?.kind === 'unauthenticated') await store.clear()
+      turn.error = res?.message ?? "Nova couldn't start. Try again."
+      if (res?.busy) turn.busyTab = res.tab ?? true
+      ready(); draw(); toBottom()
+      return
+    }
+    turn.taskId = res.id
+    question.value = ''; fit(); void keepTyping()
+    await persist()
+    live = await taskState()
+    draw(); toBottom()
+  }
+
+  // The task's state, as the background worker saves it: redraw its turn,
+  // and when it ends, the answer joins the conversation.
+  async function follow(state) {
+    if (!state) return
+    const turn = turns.find(t => t.taskId === state.id)
+    if (!turn) return
+    if (FINISHED.includes(state.status)) {
+      live = null
+      asking = false
+      delete turn.pending
+      turn.answer = answerOf(state)
+      turn.basis = 'agent'
+      turn.task = taskSummary(state)
+      await persist()
+      await send('agent:dismiss')
+      ready(); draw(); toBottom()
+      question.focus()
+      return
+    }
+    live = state
+    asking = true; ready()
+    const node = log.querySelector(`[data-turn="${turns.indexOf(turn)}"]`)
+    if (node) node.replaceWith(turnNode(turn, turns.indexOf(turn)))
+    else draw()
+    toBottom()
+  }
+  browser.onAgentState(state => void follow(state))
+  // Opened again while a task of this tab's runs (or after it ended): pick it up.
+  if (task && task.startTab?.id === page.tabId) {
+    if (!turns.some(t => t.taskId === task.id)) turns.push({ question: task.objective, asked: task.objective, kind: 'task', sent: [], pending: true, taskId: task.id, at: task.startedAt })
+    if (!FINISHED.includes(task.status)) asking = true
+    queueMicrotask(() => void follow(task))
+  }
+  // A task turn left waiting with no task behind it (the browser restarted): said so.
+  for (const t of turns) if (t.pending && t.kind === 'task' && t.taskId !== task?.id) { delete t.pending; t.error = 'This task ended while the panel was closed, and its result was not kept. Ask again to run it again.' }
+  const elsewhere = task && !FINISHED.includes(task.status) && task.startTab?.id !== page.tabId ? task : null
+
   question.addEventListener('input', () => { ready(); fit(); void keepTyping() })
   question.addEventListener('keydown', e => {
     if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return
@@ -248,10 +348,10 @@ function renderConversation(page, handoff, saved, typing) {
   const form = el('form', { class: 'composer', dataset: { composer: '' }, onsubmit: e => { e.preventDefault(); void ask(question.value) } },
     attached, errors,
     el('div', { class: 'ask-box' }, sr('Your question about this page', { htmlFor: 'question' }), question, askButton),
-    el('div', { class: 'tools' }, selButton, shotButton, regionButton))
+    el('div', { class: 'tools' }, selButton, shotButton, regionButton, watchToggle))
 
   const fresh = el('button', { class: 'link', type: 'button', dataset: { newConversation: '' }, title: 'Start again: Nova forgets this conversation' }, 'New conversation')
-  fresh.addEventListener('click', async () => { if (asking) return; turns = []; locked = false; showLock(); await threads.clear(page.url, page.canonical); draw(); question.focus() })
+  fresh.addEventListener('click', async () => { if (asking || live) return; turns = []; locked = false; showLock(); await threads.clear(page.url, page.canonical); draw(); question.focus() })
 
   // Keep (lock): on this device until unlocked; off, in memory until the browser quits.
   const lock = el('button', { class: 'link lock', type: 'button', dataset: { lock: '' } })
@@ -269,16 +369,20 @@ function renderConversation(page, handoff, saved, typing) {
   lock.addEventListener('click', async () => { locked = !locked; showLock(); await persist() })
   showLock()
 
-  view.replaceChildren(
+  view.replaceChildren(...[
     el('section', { class: 'pagebar', ariaLabel: 'The page this conversation is about', dataset: { context: page.url } },
       el('span', { class: 'site', ariaHidden: 'true' }, siteInitial(page.domain)),
       el('div', { class: 'pagebar-text' }, el('p', { class: 'pagebar-title', title: page.title }, page.title), el('p', { class: 'small' }, page.domain)),
       el('div', { class: 'pagebar-tools' }, lock, fresh)),
+    elsewhere ? el('div', { class: 'elsewhere small', role: 'status', dataset: { elsewhere: '' } },
+      el('span', {}, `Nova is working on “${elsewhere.objective.slice(0, 60)}” in another tab.`),
+      el('button', { class: 'link', type: 'button', onclick: () => void send('agent:show', { tab: elsewhere.startTab?.id }) }, 'Show'),
+      el('button', { class: 'link', type: 'button', onclick: async e => { await send('agent:stop'); await send('agent:dismiss'); e.target.closest('.elsewhere')?.remove() } }, 'Stop it')) : null,
     scroller,
     form,
     el('footer', { class: 'panel-foot small' },
       el('button', { class: 'link ext', type: 'button', onclick: () => openNova('/notes/drafts') }, 'Drafts in Kivo'),
-      keepNote))
+      keepNote)].filter(Boolean))
 
   if (typing.text) question.value = typing.text
   showAttached(); draw(); ready(); fit()

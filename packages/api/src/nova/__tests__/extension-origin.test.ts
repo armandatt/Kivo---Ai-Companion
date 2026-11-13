@@ -96,6 +96,9 @@ describe("which routes give those headers", () => {
 
   it("only the ones the extension calls", () => {
     expect(answering).toEqual([
+      "apps/api/app/api/nova/extension/agent/start/route.ts",
+      "apps/api/app/api/nova/extension/agent/step/route.ts",
+      "apps/api/app/api/nova/extension/agent/workspace/route.ts",
       "apps/api/app/api/nova/extension/ask/route.ts",
       "apps/api/app/api/nova/extension/captures/place/route.ts",
       "apps/api/app/api/nova/extension/captures/route.ts",
@@ -104,8 +107,6 @@ describe("which routes give those headers", () => {
       "apps/api/app/api/nova/extension/disconnect/route.ts",
       "apps/api/app/api/nova/extension/notes/route.ts",
       "apps/api/app/api/nova/extension/places/route.ts",
-      "apps/api/app/api/nova/extension/research/context/route.ts",
-      "apps/api/app/api/nova/extension/research/step/route.ts",
       "apps/api/app/api/nova/learning-events/route.ts",
     ]);
   });

@@ -119,12 +119,13 @@ export function readProbe(raw, max) {
   return { available: true, selection: tooLong ? '' : text, tooLong, canonicalUrl, meta: readMeta(value.meta) }
 }
 
+// Where the worker keeps the agent's task (lib/agent.js STATE_KEY).
+const AGENT_STATE = 'kivo.agent'
+
 export const NO_PROBE = { available: false, selection: '', tooLong: false, canonicalUrl: null, meta: null }
 
 // The side panel's page for one tab, and what the popup hands it.
 const PANEL_PAGE = 'sidepanel.html'
-// The same panel in Research mode (research.js).
-export const RESEARCH_PAGE = 'research.html'
 const HANDOFF = tabId => `nova.panel:${tabId}`
 const PANEL_REGION = 'novaPanelRegion'
 
@@ -144,10 +145,10 @@ export const browser = {
    * @param {number} tabId
    * @param {object} handoff the page, and the selection, for the panel to start with
    */
-  openPanel(tabId, handoff, page = PANEL_PAGE) {
+  openPanel(tabId, handoff) {
     if (typeof tabId !== 'number' || !globalThis.chrome?.sidePanel?.open) return false
     try {
-      const path = `${page === RESEARCH_PAGE ? RESEARCH_PAGE : PANEL_PAGE}?tab=${tabId}`
+      const path = `${PANEL_PAGE}?tab=${tabId}`
       void chrome.sidePanel.setOptions({ tabId, path, enabled: true })
       const opening = chrome.sidePanel.open({ tabId })
       void chrome.storage.session.set({ [HANDOFF(tabId)]: { ...handoff, at: Date.now() } })
@@ -158,8 +159,8 @@ export const browser = {
   },
 
   /** Where there is no side panel (Safari): the same page opens in the popup. */
-  async handOffInline(tabId, handoff, page = PANEL_PAGE) {
-    try { await chrome.storage.session.set({ [HANDOFF(tabId)]: { ...handoff, at: Date.now() } }); return `${page === RESEARCH_PAGE ? RESEARCH_PAGE : PANEL_PAGE}?tab=${tabId}&inline=1` } catch { return null }
+  async handOffInline(tabId, handoff) {
+    try { await chrome.storage.session.set({ [HANDOFF(tabId)]: { ...handoff, at: Date.now() } }); return `${PANEL_PAGE}?tab=${tabId}&inline=1` } catch { return null }
   },
 
   /** What the popup handed this tab's panel. Waits a moment for it to arrive. */
@@ -192,6 +193,27 @@ export const browser = {
     chrome.storage.onChanged.addListener(listen)
     return stop
   },
+
+  // ── Nova's browser agent, run by the background worker (lib/agent-runtime.js) ──
+  /** The task's state as the worker saved it, or null. */
+  async agentState() {
+    try { return (await chrome.storage.session.get(AGENT_STATE))?.[AGENT_STATE] ?? null } catch { return null }
+  },
+  /** Calls `onState` whenever the worker saves the task. Returns a function that stops listening. */
+  onAgentState(onState) {
+    const listen = (changes, area) => { if (area === 'session' && changes[AGENT_STATE]?.newValue) onState(changes[AGENT_STATE].newValue) }
+    chrome.storage.onChanged.addListener(listen)
+    return () => chrome.storage.onChanged.removeListener(listen)
+  },
+  /** One message to the worker (agent:begin, agent:pause, …); null when it does not answer. */
+  agentSend: (type, payload = {}) => chrome.runtime.sendMessage({ type, ...payload }).catch(() => null),
+  /** Asks the browser to let Nova use these sites, straight from the learner's click. */
+  allowSites: origins => (chrome.permissions?.request ? chrome.permissions.request({ origins }).catch(() => false) : Promise.resolve(false)),
+  /** Whether the learner watches Nova work (on unless they turned it off). */
+  async watchPreference() { try { return (await chrome.storage.local.get('nova.watch'))?.['nova.watch'] !== false } catch { return true } },
+  setWatchPreference: on => chrome.storage.local.set({ 'nova.watch': Boolean(on) }).catch(() => undefined),
+  /** Closes tabs Nova opened for a task. */
+  closeTabs: ids => chrome.tabs.remove(ids).catch(() => undefined),
 
   /** The tab the popup was opened on, or null. */
   async activeTab() {

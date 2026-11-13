@@ -17,7 +17,7 @@
 
 import { NOVA_URL } from './config.js'
 import { buildCapture, buildEvent, createClient, disconnectOutcome, newActionId } from './lib/api.js'
-import { NO_PROBE, RESEARCH_PAGE, browser } from './lib/browser.js'
+import { NO_PROBE, browser } from './lib/browser.js'
 import { describePage } from './lib/page.js'
 import { createStore } from './lib/store.js'
 import { placementLine } from './lib/places.js'
@@ -66,7 +66,7 @@ const privacyText = () => [
     el('li', {}, 'Not your other tabs, and not your history. Nova does nothing while this popup and its panel are closed, except take the picture of an area you selected.'),
     el('li', {}, 'It sends a page to Nova only when you press Capture, Save, Study or Ask.'),
   ),
-  el('p', { class: 'small' }, 'Permissions: "activeTab" lets Nova read this tab\'s address and title when you click its icon, and take a screenshot of it when you press Screenshot. "scripting" lets it read your selected text and the page\'s own address on that tab, at that moment. "sidePanel" lets Ask Nova open beside the page. "storage" keeps this browser connected, your open conversation in memory, and a conversation you chose to Keep on this device. Optional website access is asked for only when you start a research task, and given back when it ends. It has no standing access to any website.'),
+  el('p', { class: 'small' }, 'Permissions: "activeTab" lets Nova read this tab\'s address and title when you click its icon, and take a screenshot of it when you press Screenshot. "scripting" lets it read your selected text and the page\'s own address on that tab, at that moment. "sidePanel" lets Ask Nova open beside the page. "storage" keeps this browser connected, your open conversation in memory, and a conversation you chose to Keep on this device. Optional website access is asked for, site by site, only when a task you gave Nova needs a site, and given back when the task ends. It has no standing access to any website.'),
 ]
 
 // ── Not connected ─────────────────────────────────────────────────────────────
@@ -267,15 +267,15 @@ function renderReady(page, context, probe = NO_PROBE, flash = null, draft = null
     else errors.replaceChildren(alertBox("Nova couldn't open here. Try again."))
   })
 
-  // Research: Kivo works through several sources for an objective, beside the page.
-  const research = el('button', { class: 'link', type: 'button', dataset: { researchOpen: '' }, title: 'Kivo searches, reads and compares sources for you, and organises what it finds in your workspace' }, 'Research a topic with Kivo')
+  // Research is one of the things Nova does in the same panel: opened ready for it.
+  const research = el('button', { class: 'link', type: 'button', dataset: { researchOpen: '' }, title: 'Nova searches, reads and compares sources for you, and organises what it finds in your workspace' }, 'Research a topic with Nova')
   research.addEventListener('click', async () => {
-    const handoff = { url: page.url, canonicalUrl: probe.canonicalUrl || null, title: title.value.trim() || page.title, selection: probe.selection || '', windowId: tabWindowId, name: context.learner.name ? context.learner.name.split(' ')[0] : null }
-    const opened = browser.openPanel(page.tabId, handoff, RESEARCH_PAGE)
+    const handoff = { url: page.url, canonicalUrl: probe.canonicalUrl || null, title: title.value.trim() || page.title, selection: probe.selection || '', windowId: tabWindowId, name: context.learner.name ? context.learner.name.split(' ')[0] : null, mode: 'research' }
+    const opened = browser.openPanel(page.tabId, handoff)
     if (opened && await opened) return window.close()
-    const inline = await browser.handOffInline(page.tabId, handoff, RESEARCH_PAGE)
+    const inline = await browser.handOffInline(page.tabId, handoff)
     if (inline) location.href = inline
-    else errors.replaceChildren(alertBox("Research couldn't open here. Try again."))
+    else errors.replaceChildren(alertBox("Nova couldn't open here. Try again."))
   })
 
   show('ready',

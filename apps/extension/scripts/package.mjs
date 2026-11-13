@@ -54,7 +54,7 @@ const katexDir = dirname(createRequire(join(root, 'package.json')).resolve('kate
 const KATEX_FONTS = readdirSync(join(katexDir, 'dist', 'fonts')).filter(f => f.endsWith('.woff2')).map(f => `vendor/katex/fonts/${f}`)
 const KATEX = ['vendor/katex/LICENSE', 'vendor/katex/katex.min.css', 'vendor/katex/katex.min.js', ...KATEX_FONTS]
 const katexSource = name => name === 'vendor/katex/LICENSE' ? join(katexDir, 'LICENSE') : name.startsWith('vendor/katex/fonts/') ? join(katexDir, 'dist', 'fonts', name.slice('vendor/katex/fonts/'.length)) : join(katexDir, 'dist', name.slice('vendor/katex/'.length))
-const EXPECTED = ['background.js', 'config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/agent-page.js', 'lib/agent-tools.js', 'lib/agent.js', 'lib/api.js', 'lib/browser.js', 'lib/markdown.js', 'lib/page.js', 'lib/places.js', 'lib/region.js', 'lib/store.js', 'lib/thread.js', 'lib/ui.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js', 'research.html', 'research.js', 'sidepanel.css', 'sidepanel.html', 'sidepanel.js', ...KATEX].sort((a, b) => (a < b ? -1 : 1))
+const EXPECTED = ['background.js', 'config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/agent-page.js', 'lib/agent-runtime.js', 'lib/agent-tools.js', 'lib/agent-view.js', 'lib/agent.js', 'lib/api.js', 'lib/browser.js', 'lib/markdown.js', 'lib/page.js', 'lib/places.js', 'lib/region.js', 'lib/store.js', 'lib/thread.js', 'lib/ui.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js', 'sidepanel.css', 'sidepanel.html', 'sidepanel.js', ...KATEX].sort((a, b) => (a < b ? -1 : 1))
 const names = entries.map(e => e.name)
 if (JSON.stringify(names) !== JSON.stringify(EXPECTED)) fail(`unexpected files in the build: ${names.join(', ')}`)
 // Third-party code is the installed package's, unchanged.
@@ -66,30 +66,30 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 if (manifest.manifest_version !== 3) fail('the manifest is not version 3')
 if (manifest.version !== pkg.version) fail(`manifest version ${manifest.version} is not package.json version ${pkg.version}`)
 if (JSON.stringify(manifest.permissions) !== JSON.stringify(['activeTab', 'scripting', 'sidePanel', 'storage'])) fail(`permissions are ${JSON.stringify(manifest.permissions)}`)
-// Research mode: web pages only as an optional permission, asked for per task.
+// The browser agent: web pages only as an optional permission, asked for site by site during a task.
 if (manifest.optional_host_permissions !== undefined && JSON.stringify(manifest.optional_host_permissions) !== JSON.stringify(['https://*/*', 'http://*/*'])) fail(`optional_host_permissions are ${JSON.stringify(manifest.optional_host_permissions)}`)
 for (const key of ['host_permissions', 'optional_permissions', 'content_scripts', 'web_accessible_resources', 'externally_connectable']) {
   if (manifest[key] !== undefined) fail(`the manifest declares ${key}`)
 }
-// One worker, for one job (background.js), and no page can reach it.
+// One worker (background.js: the area picture, and the agent's runtime), and no web page can reach it.
 if (JSON.stringify(manifest.background) !== JSON.stringify({ service_worker: 'background.js', type: 'module' })) fail(`the background is ${JSON.stringify(manifest.background)}`)
 if ((manifest.description ?? '').length > 132) fail('the manifest description is over the store limit of 132 characters')
 if (text('config.js').trim().split('\n').pop() !== `export const NOVA_URL = ${JSON.stringify(origin)}`) fail('config.js does not hold the release address')
 
-// KaTeX names two XML namespaces (MathML and SVG), which are identifiers, not
-// addresses anything is fetched from.
+// KaTeX names two XML namespaces (MathML and SVG), and the agent's watch-mode
+// pointer the SVG one: identifiers, not addresses anything is fetched from.
 const NAMESPACES = ['http://www.w3.org/1998/Math/MathML', 'http://www.w3.org/2000/svg']
-// Research mode opens two pages by name: search results (DuckDuckGo, then
+// The agent opens two pages by name: search results (DuckDuckGo, then
 // Bing; lib/agent-tools.js SEARCH_URLS), in the agent's own tab, never fetched.
 const SEARCH_PAGE = { file: 'lib/agent-tools.js', prefixes: ['https://html.duckduckgo.com/html/?q=', 'https://www.bing.com/search?q='] }
-// The optional website permission's two match patterns (manifest, research.js):
+// The optional website permission's two match patterns (manifest, lib/agent-tools.js ANY_SITE):
 // patterns the browser asks about, not addresses anything is fetched from.
 const PERMISSION_PATTERNS = ['https://*/*', 'http://*/*']
 // The agent's refusal list names local hosts in order to refuse them.
 const LOCAL_REFUSED_IN = 'lib/agent-tools.js'
 for (const entry of entries.filter(e => !e.name.endsWith('.png') && !e.name.endsWith('.woff2'))) {
   const body = entry.data.toString('utf8')
-  const elsewhere = [...body.matchAll(/https?:\/\/[^\s'"`<>)]+/g)].map(m => m[0]).filter(found => !found.startsWith(origin) && !(entry.name.startsWith('vendor/katex/') && NAMESPACES.includes(found)) && !(entry.name === SEARCH_PAGE.file && SEARCH_PAGE.prefixes.some(p => found.startsWith(p))) && !PERMISSION_PATTERNS.includes(found))
+  const elsewhere = [...body.matchAll(/https?:\/\/[^\s'"`<>)]+/g)].map(m => m[0]).filter(found => !found.startsWith(origin) && !((entry.name.startsWith('vendor/katex/') || entry.name === 'lib/agent-page.js') && NAMESPACES.includes(found)) && !(entry.name === SEARCH_PAGE.file && SEARCH_PAGE.prefixes.some(p => found.startsWith(p))) && !PERMISSION_PATTERNS.includes(found))
   if (elsewhere.length) fail(`${entry.name} names another address: ${elsewhere[0]}`)
   if (entry.name !== LOCAL_REFUSED_IN && LOCAL.some(host => body.includes(host))) fail(`${entry.name} mentions a local address`)
   if (/nvx_[A-Za-z0-9]|BEGIN [A-Z ]*PRIVATE KEY|sk-[A-Za-z0-9]{16}|AIza[0-9A-Za-z_-]{20}/.test(body)) fail(`${entry.name} looks like it holds a credential`)

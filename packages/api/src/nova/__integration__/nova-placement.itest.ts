@@ -6,8 +6,9 @@
  * only; a low-confidence pick is kept as a suggestion, not filed; the
  * learner's own choice is stored as theirs and never replaced; clearing is a
  * choice too; a subject or topic that is not the learner's is refused;
- * another learner's draft is out of reach; research context finds the
- * learner's related notes and places.
+ * another learner's draft is out of reach; the browser agent's context finds the
+ * learner's related notes and places, and its workspace reads reach the
+ * learner's own notes and saved pages only.
  *
  *   NOVA_TEST_DATABASE_URL=postgresql://... npx tsx --test src/nova/__integration__/nova-placement.itest.ts
  */
@@ -26,7 +27,7 @@ const { ensureSetupProfile, saveSetup } = await import("../product/setup.js");
 const { createNote } = await import("../product/notes.js");
 const { captureToDraft, getDraft, placeDraftItem, setDraftItemPlacement } = await import("../product/capture-drafts.js");
 const { forgetStructure, workspacePlaces } = await import("../product/knowledge-placement.js");
-const { researchContext } = await import("../product/research-agent.js");
+const { agentContext, agentReadNote, agentWorkspaceSearch } = await import("../product/browser-agent.js");
 
 const STAMP = Date.now();
 const ids: string[] = [];
@@ -189,14 +190,35 @@ test("the learner's notes are evidence: a note filed under a topic pulls a relat
   assert.equal(placed.placement?.confidence, "medium");
 });
 
-test("research context: the learner's related notes and places, never the whole workspace", async () => {
+test("agent context: the learner's related notes and places, never the whole workspace", async () => {
   const { profileId } = await learner(WORKSPACE);
   const { places } = await workspacePlaces(profileId);
   const rag = places.find(p => p.topicName === "Retrieval-Augmented Generation")!;
   await createNote(profileId, { title: "RAG basics", body: "Retrieval-augmented generation combines a retriever with a generator.", subjectId: rag.subjectId, topicName: rag.topicName });
-  const ctx = await researchContext(profileId, "Research retrieval-augmented generation architectures");
+  const ctx = await agentContext(profileId, "Research retrieval-augmented generation architectures");
   assert.ok(ctx.notes.some(note => note.title === "RAG basics"), "the related note is found");
   assert.ok(ctx.places.some(p => p.path.includes("Retrieval-Augmented Generation")), "the matching topic is listed");
   assert.match(ctx.summary, /Retrieval-Augmented Generation/);
   assert.ok(ctx.summary.length <= 2_400);
+});
+
+test("agent workspace: search finds the learner's own notes and places, with what Kivo knows of each topic; another learner's note is out of reach", async () => {
+  const me = await learner(WORKSPACE);
+  const other = await learner(WORKSPACE);
+  const { places } = await workspacePlaces(me.profileId);
+  const vdb = places.find(p => p.topicName === "Vector Databases")!;
+  const mine = await createNote(me.profileId, { title: "HNSW notes", body: "HNSW builds a layered proximity graph; search starts at the top layer and descends greedily to the nearest neighbours.", subjectId: vdb.subjectId, topicName: vdb.topicName });
+  const theirs = await createNote(other.profileId, { title: "HNSW secrets", body: "Another learner's private HNSW note about proximity graphs.", subjectId: null, topicName: null });
+  assert.ok(mine.ok && theirs.ok);
+  const found = await agentWorkspaceSearch({ profileId: me.profileId, platformChatId: me.id }, "HNSW proximity graph");
+  assert.match(found.text, /HNSW notes/);
+  assert.match(found.text, /layered proximity graph/, "a snippet of the note, around its words");
+  assert.doesNotMatch(found.text, /HNSW secrets|private HNSW/, "never another learner's");
+  assert.ok(found.text.length <= 6_000);
+  const searchVdb = await agentWorkspaceSearch({ profileId: me.profileId, platformChatId: me.id }, "vector databases");
+  assert.match(searchVdb.text, /Vector Databases \(not studied in Kivo yet\)/, "a topic with no sessions has no level");
+  const read = await agentReadNote(me.profileId, (mine as { note: { id: string } }).note.id);
+  assert.match(read!.text, /filed in Artificial Intelligence › Vector Databases/);
+  assert.match(read!.text, /descends greedily/);
+  assert.equal(await agentReadNote(me.profileId, (theirs as { note: { id: string } }).note.id), null, "another learner's note is not found");
 });
