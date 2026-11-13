@@ -208,6 +208,7 @@ All are read from `process.env` at call time, so flipping one on Railway needs n
 | `NEXT_PUBLIC_APP_URL` | web | Public URL of the web app |
 | `NEXT_PUBLIC_BOT_USERNAME` / `BOT_USERNAME` | web / api | Bot username without `@`, for "open chat" links and the `?start=TOKEN` deeplink |
 | `KIVO_CONNECT_ORIGIN` | api | Kivo Connect's issuer and resource origin (`https://www.thekivo.in`, no trailing slash). Falls back to `NEXT_PUBLIC_APP_URL`; required in production when that is unset |
+| `OPENAI_APPS_CHALLENGE` | web | OpenAI plugin directory domain-verification token, served as plain text at `/.well-known/openai-apps-challenge` (404 when unset). Copy it from the OpenAI portal when it asks |
 | `NEXT_PUBLIC_CHROME_STORE_URL` | web | Optional. Replaces the extension's Chrome Web Store listing (`LISTING` in `lib/extension-store.ts`, the live "Nova" item `eddopegjkjiadejiocfbhoecjlbfcjba`). Only `https://chromewebstore.google.com/detail/<name>/<32-letter id>` is accepted. Read at build time |
 
 ## Deployment

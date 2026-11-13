@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import type { ReactNode } from "react"
 import { KivoMark, KivoWordmark } from "@/components/brand/kivo-brand"
+import { LEGAL_CONTACT } from "@/components/legal/to-confirm"
 
 // Public documentation for Kivo Connect (the MCP server at /api/mcp): what it
 // does, how to connect Claude or ChatGPT, what each permission allows, and how
@@ -30,6 +31,7 @@ const SECTIONS = [
   { id: "data", title: "Your data" },
   { id: "disconnect", title: "Disconnect" },
   { id: "help", title: "Troubleshooting" },
+  { id: "support", title: "Support" },
 ]
 
 const TOOLS: Array<{ group: string; items: Array<[string, string, "read" | "write" | "approval"]> }> = [
@@ -237,6 +239,10 @@ export default function KivoConnectDocs() {
               <li><strong>&ldquo;approval_required&rdquo;</strong>: open the approval link the assistant gave you and approve the change in Kivo.</li>
               <li><strong>Asked to sign in again</strong>: the connection was disconnected or expired after 30 days without use. Connect again.</li>
             </ul>
+          </Section>
+
+          <Section id="support" title="Support">
+            <p>Questions, problems or a security report about Kivo Connect: email <a href={`mailto:${LEGAL_CONTACT}`}>{LEGAL_CONTACT}</a>. Include which assistant you use and, if you have one, the time the problem happened.</p>
           </Section>
         </div>
       </main>
