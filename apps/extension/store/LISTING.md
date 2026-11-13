@@ -10,9 +10,9 @@ The store shows the manifest's `name`: **Nova**. Kept: the listing, its users an
 
 ## Short description (132 characters max)
 
-From the manifest's `description` (118 characters), shipped with the next release:
+From the manifest's `description` (116 characters), shipped with the next release:
 
-> Save pages and passages to Kivo as you read, and ask Nova about them. Nova sees a page only when you click its button.
+> Capture passages as you read and ask Nova about the page beside it. Nova sees a page only when you click its button.
 
 ## Detailed description
 
@@ -25,9 +25,9 @@ Plain text: the store prints Markdown symbols (`**`) as they are, so the live de
 > WHAT YOU CAN DO
 >
 > • Save a page: articles, YouTube videos, research papers, documentation. It lands in Saved pages in Kivo, ready to search, tag and sort.
-> • Save a passage: select text first, then keep that passage with the page it came from, or add it to one of your notes.
+> • Capture a passage: select text and press Capture. Passages from one sitting collect in a draft in Kivo, each with the page it came from, until you put them in a note.
 > • Study this: start a focus session on the page in Kivo, under its topic.
-> • Ask Nova: ask about the page you are on. Add a screenshot, or select an area, to ask about a diagram.
+> • Ask Nova: a conversation beside the page, with follow-up questions, short answers by default (More detail when you want it), and maths, tables and code drawn properly. Add a screenshot, or select an area, to ask about a diagram.
 >
 > IN KIVO
 >
@@ -93,7 +93,8 @@ The people and workspace in them are Kivo's demo personas, not a user's data.
 |---|---|
 | `activeTab` | When the user clicks the extension's icon, the popup reads the address and title of that one tab so the user can save it. It is the only tab the extension asks about (`chrome.tabs.query({ active: true, currentWindow: true })`), and only after the click. If the user presses **Screenshot**, the popup also captures that tab's visible area (`chrome.tabs.captureVisibleTab`) so they can ask about a diagram; it is shown to them first and sent only with their question. |
 | `scripting` | On that one tab, after that click, the popup runs one small function that returns the text the user has selected and the page's canonical link, so the user can save a passage they highlighted. It reads no other page content, runs once, and is part of the package (no remote code). The selection is sent only if the user presses **Save selection**. |
-| `storage` | Stores the extension's own access credential in `chrome.storage.local` after the user pairs the browser with a one-time code, so they stay connected. Nothing else is stored: no page addresses, no history. |
+| `sidePanel` | Ask Nova opens a conversation in the browser's side panel beside the page, for that one tab, only when the user presses Ask Nova. It reads nothing from any page and grants no site access. |
+| `storage` | Stores the extension's own access credential in `chrome.storage.local` after the user pairs the browser with a one-time code, so they stay connected. The open conversation with Nova about a page is kept in `chrome.storage.session` (memory only, cleared when the browser closes or the user presses New conversation) so follow-up questions have context. Nothing else is stored: no browsing history. |
 
 Host permissions: **none requested.** Remote code: **No, the extension does not use remote code.** All scripts are in the package; `popup.html` loads only `popup.js` and `popup.css`.
 

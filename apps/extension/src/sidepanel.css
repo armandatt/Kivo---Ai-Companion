@@ -44,10 +44,10 @@ html[data-inline] body.panel { width: 420px; height: 600px; }
 .composer .send { flex: none; height: 30px; margin-bottom: 6px; padding: 0 var(--s3); }
 .tools { display: flex; flex-wrap: wrap; gap: 2px; margin: 6px 0 0 -6px; }
 .tool { height: 28px; padding: 0 8px; font-size: 12px; }
-.attached { display: grid; gap: var(--s2); }
+.attached { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s2); }
 .attached:not(:empty) { margin-bottom: var(--s2); }
 .attached .chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 4px 2px 9px; font-size: 11.5px; justify-self: start; }
-.chip-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chip-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .chip-x { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; color: inherit; font-size: 13px; line-height: 1; }
 .attached .shot { margin-top: 0; }
 .attached .shot-frame { max-height: 180px; }
@@ -78,7 +78,7 @@ html[data-inline] body.panel { width: 420px; height: 600px; }
 .md-table { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r); }
 .md table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .md th, .md td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
-.md td { white-space: normal; min-width: 80px; }
+.md td { white-space: normal; min-width: 80px; overflow-wrap: normal; word-break: normal; }
 .md th { color: var(--dim); font-weight: 600; background: rgba(255,255,255,.03); }
 .md tr:last-child td { border-bottom: 0; }
 .md-math-block { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }

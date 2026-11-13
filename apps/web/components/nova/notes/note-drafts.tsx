@@ -99,6 +99,9 @@ export function NoteDrafts() {
           {selected && (
             <DraftReview key={selected} id={selected} onBack={() => open(null)}
               onChanged={() => void load()}
+              // Keep this draft named in the address, so its "In your note" answer
+              // stays on screen when the list it came from is now empty.
+              onMerged={() => { if (!chosen) open(selected); void load() }}
               onGone={async (summary, how) => {
                 await load()
                 open(null)
@@ -122,10 +125,11 @@ export function NoteDrafts() {
 
 // ── One draft ────────────────────────────────────────────────────────────────
 
-function DraftReview({ id, onBack, onChanged, onGone, onNotice }: {
+function DraftReview({ id, onBack, onChanged, onMerged, onGone, onNotice }: {
   id: string
   onBack: () => void
   onChanged: () => void
+  onMerged: () => void
   onGone: (summary: DraftSummary, how: 'discarded' | 'merged') => void
   onNotice: (n: Notice) => void
 }) {
@@ -187,8 +191,8 @@ function DraftReview({ id, onBack, onChanged, onGone, onNotice }: {
   return (
     <article className="min-w-0" aria-labelledby="draft-title" data-draft={draft.id}>
       <button type="button" onClick={onBack} className="mb-3 text-xs text-subtle hover:text-foreground lg:hidden">← All drafts</button>
-      <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 border-b border-white/8 pb-4">
-        <div className="min-w-0 flex-1">
+      <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 border-b border-white/8 pb-4">
+        <div className="min-w-0 basis-full">
           <TitleField draft={draft} onRename={title => void apply([{ op: 'rename', title }])} />
           <p className="mt-1 text-xs text-subtle" data-draft-counts>
             {counts(draft)} · captured {ago(draft.lastCaptureAt)}{saving && <span className="ml-2 inline-flex items-center gap-1"><Loader2 className="size-3 animate-spin" /> Saving</span>}
@@ -206,7 +210,7 @@ function DraftReview({ id, onBack, onChanged, onGone, onNotice }: {
 
       {merging && (
         <MergePanel draft={draft} mode={merging} onMode={setMerging} onClose={() => setMerging(null)}
-          onDone={r => { setDone(r); setMerging(null); onChanged() }} onStale={() => void load()} />
+          onDone={r => { setDone(r); setMerging(null); onMerged() }} onStale={() => void load()} />
       )}
 
       {draft.items.length === 0 && <p className="mt-6 text-sm text-foreground/60">This draft is empty. Capture a passage, or discard it.</p>}
@@ -247,7 +251,7 @@ function TitleField({ draft, onRename }: { draft: DraftDetail; onRename: (title:
         onChange={e => setValue(e.target.value)}
         onBlur={() => { if (value !== null && value.trim() !== (draft.named ? draft.title : '')) onRename(value.trim() || null); setValue(null) }}
         onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setValue(null); e.currentTarget.blur() } }}
-        className="w-full rounded-md bg-transparent font-serif text-2xl font-semibold tracking-tight text-foreground placeholder:text-foreground/80 focus:bg-white/4 focus:outline-none focus:ring-1 focus:ring-white/15" data-draft-title />
+        className="w-full text-ellipsis rounded-md bg-transparent font-serif text-2xl font-semibold tracking-tight text-foreground placeholder:text-foreground/80 focus:bg-white/4 focus:outline-none focus:ring-1 focus:ring-white/15" data-draft-title />
     </label>
   )
 }
