@@ -16,7 +16,7 @@ From the manifest's `description` (116 characters), shipped with the next releas
 
 ## Detailed description
 
-Plain text: the store prints Markdown symbols (`**`) as they are, so the live description shows asterisks. Replace it with this when 1.3.0 is published (the line about description tags is true from 1.3.0).
+Plain text: the store prints Markdown symbols (`**`) as they are, so the live description shows asterisks. Replace it with this when 1.4.0 is published (Capture, the side panel and Keep are in 1.4.0; the line about description tags is true from 1.3.0).
 
 > Save what you discover. Continue learning in Kivo.
 >
