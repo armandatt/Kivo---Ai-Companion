@@ -10,9 +10,9 @@ import { NextResponse } from "next/server"
 //@ts-ignore
 import { entitlementForLearner } from "@repo/api/billing/entitlements"
 //@ts-ignore
-import { withAiAllowance } from "@repo/api/billing/usage"
+import { recordTokens, withAiAllowance } from "@repo/api/billing/usage"
 //@ts-ignore
-import { startInteraction, type UsageFeature, type UsageSurface } from "@repo/api/services/llm-usage"
+import { meterLlmUsage, startInteraction, type UsageFeature, type UsageSurface } from "@repo/api/services/llm-usage"
 
 export interface MeteredUse { feature: UsageFeature; surface?: UsageSurface }
 
@@ -34,4 +34,20 @@ export async function metered<T>(platformChatId: string, work: () => Promise<T>,
   }
   const result = await withAiAllowance(ent, work, new Date(), entry)
   return result.ok ? { ok: true, value: result.value } : { ok: false, response: allowanceUsed(result.spend.plan) }
+}
+
+// Work inside a task already counted (the browser agent: one task, one
+// request, however many steps; packages/api/src/nova/product/agent-ticket.ts).
+// Not counted again on the allowance, but every token its model calls use
+// still goes on the account's meter and the usage events, under `use`.
+export async function withinCountedTask<T>(platformChatId: string, work: () => Promise<T>, use: MeteredUse): Promise<T> {
+  const entry = { feature: use.feature, surface: use.surface ?? "web", learner: platformChatId, isAllowanceCounted: false }
+  let usageKey: string | null = null
+  try { usageKey = (await entitlementForLearner(platformChatId)).usageKey } catch (err) { console.error(`[billing] entitlement unavailable: ${(err as Error).name}`) }
+  if (!usageKey) return startInteraction(entry, work)
+  const key = usageKey
+  const pending: Array<Promise<unknown>> = []
+  const value = await meterLlmUsage((usage: Parameters<typeof recordTokens>[1]) => { pending.push(recordTokens(key, usage).catch(() => undefined)) }, () => startInteraction({ ...entry, usageKey: key }, work))
+  await Promise.all(pending)
+  return value
 }

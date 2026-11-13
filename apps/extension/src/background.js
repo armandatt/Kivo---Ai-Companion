@@ -1,13 +1,19 @@
-// The background worker, for one job: taking the picture when the learner
-// presses Capture on an area they selected. The popup has closed by then (it
-// closes as soon as they click the page), and a page can't take a picture of
-// itself. It wakes for that one message and does nothing else: it reads no tab,
-// and listens for no navigation, no timer and no site.
+// The background worker, for two jobs.
 //
-// The picture is held in session storage (memory, gone when the browser quits)
-// until the popup picks it up. It goes to Nova only with a question.
+// 1. Taking the picture when the learner presses Capture on an area they
+//    selected. The popup has closed by then (it closes as soon as they click
+//    the page), and a page can't take a picture of itself. The picture is held
+//    in session storage (memory, gone when the browser quits) until the popup
+//    picks it up. It goes to Nova only with a question.
+// 2. Running Nova's browser agent for what the learner asks in the side panel
+//    (lib/agent-runtime.js), so a task goes on when they switch tabs or close
+//    the panel. It acts only on a task the learner started, and only on the
+//    sites the browser lets it into for that task.
+//
+// It listens for no navigation and no site of its own accord.
 
 import { REGION_SHOT_KEY, cropArea } from './lib/region.js'
+import { handleAgentMessage, recoverAgent } from './lib/agent-runtime.js'
 
 const CANNOT = "Nova couldn't capture this page. Some pages don't allow it."
 
@@ -27,7 +33,10 @@ async function capture(windowId, rect, viewport) {
   return { src: `data:image/jpeg;base64,${btoa(binary)}`, width: area.sw, height: area.sh }
 }
 
+void recoverAgent()
+
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (handleAgentMessage(message, sender, reply)) return true
   const tab = sender.tab
   // Only our own overlay, in a tab, can send this; nothing from a web page reaches it.
   if (sender.id !== chrome.runtime.id || !tab?.id) return false

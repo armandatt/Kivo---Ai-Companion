@@ -3,25 +3,27 @@
 // Drafts: what the learner captured while reading, before deciding where it
 // belongs (docs/CAPTURE_FIRST.md). One draft per reading session; its passages
 // are shown under the page each came from, and can be edited, annotated,
-// reordered or removed. Organising happens only here, at the end: Create note
+// reordered or removed. Kivo files each passage under one of the learner's own
+// subjects and topics (knowledge-placement.ts), shown on the passage with
+// Change; Create note starts from where most of them were filed. Create note
 // or Add to note, each after a preview of exactly what the note will hold.
 // Nothing is written to a note before the learner confirms.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowDown, ArrowUp, Check, ExternalLink, FilePlus2, Inbox, Loader2, NotebookPen, Pencil, Search, Trash2, Undo2, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, ExternalLink, FilePlus2, FolderClosed, Inbox, Loader2, NotebookPen, Pencil, Search, Trash2, Undo2, X } from 'lucide-react'
 import type { NoteSubjectOption, NoteSummary } from '@repo/api/nova/product/notes.types'
 import { sourceGroups } from '@repo/api/nova/product/capture-draft-rules'
 import { PageFrame, PageHeader } from '@/components/dashboard/page-states'
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '@/components/nova/workspace/ui'
 import { cn } from '@/lib/utils'
 import { DestinationPicker } from './destination-picker'
-import { NO_SUBJECT, type Destination } from './note-destinations'
+import { NO_SUBJECT, destinationFor, destinationsOf, type Destination } from './note-destinations'
 import { NoteBody } from './note-body'
 import { fetchNotes } from './notes-api'
 import {
-  discardDraft, editDraft, fetchDraft, fetchDrafts, mergeDraft, restoreDraft, today,
+  choosePlace, discardDraft, editDraft, fetchDraft, fetchDrafts, mergeDraft, placeItem, restoreDraft, today,
   type CaptureItem, type DraftDetail, type DraftEdit, type DraftSummary, type MergePreview, type MergeTarget,
 } from './drafts-api'
 
@@ -139,6 +141,8 @@ function DraftReview({ id, onBack, onChanged, onMerged, onGone, onNotice }: {
   const [merging, setMerging] = useState<'new' | 'existing' | null>(null)
   const [done, setDone] = useState<{ noteId: string; noteTitle: string } | null>(null)
   const latest = useRef<DraftDetail | null>(null)
+  const [subjects, setSubjects] = useState<NoteSubjectOption[]>([])
+  const asked = useRef(new Set<string>())
 
   const load = useCallback(async () => {
     const res = await fetchDraft(id)
@@ -146,6 +150,29 @@ function DraftReview({ id, onBack, onChanged, onMerged, onGone, onNotice }: {
     latest.current = res.draft; setDraft(res.draft); setError(null)
   }, [id])
   useEffect(() => { void load() }, [load])
+  useEffect(() => { void fetchNotes().then(v => { if (v?.status === 'ready') setSubjects(v.subjects) }) }, [])
+
+  // Passages not yet placed (captured before placement existed, or in Kivo):
+  // asked once each, a few at a time. The answer is kept on the passage.
+  useEffect(() => {
+    if (!draft || draft.status !== 'open') return
+    const waiting = draft.items.filter(i => !i.placement && !i.suggestion && !i.placedBy && !asked.current.has(i.id)).slice(0, 20)
+    if (!waiting.length) return
+    for (const i of waiting) asked.current.add(i.id)
+    void (async () => {
+      for (const item of waiting) {
+        const res = await placeItem(draft.id, item.id)
+        if (res.ok) { latest.current = res.draft; setDraft(res.draft) }
+      }
+    })()
+  }, [draft])
+
+  const setPlace = useCallback(async (item: CaptureItem, dest: { subjectId: string | null; topicName: string | null }) => {
+    const res = await choosePlace(id, item.id, dest)
+    if (!res.ok) { onNotice({ text: res.message, tone: 'error' }); return false }
+    latest.current = res.draft; setDraft(res.draft)
+    return true
+  }, [id, onNotice])
 
   // Edits go on the version on screen. If a capture arrived meanwhile, the
   // server answers with the draft as it now is and the same edits are sent
@@ -229,6 +256,8 @@ function DraftReview({ id, onBack, onChanged, onMerged, onGone, onNotice }: {
             <ol className="mt-2.5 space-y-3">
               {g.items.map((item, n) => (
                 <Passage key={item.id} item={item} first={n === 0} last={n === g.items.length - 1}
+                  subjects={subjects} onPlace={dest => setPlace(item, dest)}
+                  onSubjectsChanged={async () => { const v = await fetchNotes(); if (v?.status === 'ready') { setSubjects(v.subjects); return v.subjects } return null }}
                   onEdit={(text, note) => apply([{ op: 'edit', id: item.id, ...(text !== undefined ? { text } : {}), ...(note !== undefined ? { note } : {}) }])}
                   onMove={dir => move(item, dir)}
                   onRemove={() => void apply([{ op: 'remove', id: item.id }])} />
@@ -256,8 +285,11 @@ function TitleField({ draft, onRename }: { draft: DraftDetail; onRename: (title:
   )
 }
 
-function Passage({ item, first, last, onEdit, onMove, onRemove }: {
+function Passage({ item, first, last, onEdit, onMove, onRemove, subjects, onPlace, onSubjectsChanged }: {
   item: CaptureItem; first: boolean; last: boolean
+  subjects: NoteSubjectOption[]
+  onPlace: (dest: { subjectId: string | null; topicName: string | null }) => Promise<boolean>
+  onSubjectsChanged: () => Promise<NoteSubjectOption[] | null>
   onEdit: (text?: string, note?: string) => Promise<boolean>
   onMove: (dir: -1 | 1) => void
   onRemove: () => void
@@ -294,6 +326,8 @@ function Passage({ item, first, last, onEdit, onMove, onRemove }: {
           className="w-full resize-none rounded-lg bg-transparent px-0 py-1 text-sm leading-relaxed text-foreground/80 placeholder:text-foreground/35 focus:bg-white/3 focus:px-2 focus:outline-none" data-passage-note />
       </label>
 
+      <PlaceRow item={item} subjects={subjects} onPlace={onPlace} onSubjectsChanged={onSubjectsChanged} />
+
       <div className="mt-1 flex items-center gap-0.5">
         <span className="mr-auto text-[11px] text-subtle">{new Date(item.capturedAt).toLocaleString(undefined, { hour: 'numeric', minute: '2-digit', day: 'numeric', month: 'short' })}</span>
         {!editing && item.text && <button type="button" onClick={() => setEditing(true)} className={icon} aria-label="Edit passage" title="Edit passage" data-passage-edit><Pencil className="size-3.5" /></button>}
@@ -303,6 +337,56 @@ function Passage({ item, first, last, onEdit, onMove, onRemove }: {
       </div>
     </li>
   )
+}
+
+// Where Kivo filed a passage, and changing it: the same picker as a note's.
+function PlaceRow({ item, subjects, onPlace, onSubjectsChanged }: {
+  item: CaptureItem
+  subjects: NoteSubjectOption[]
+  onPlace: (dest: { subjectId: string | null; topicName: string | null }) => Promise<boolean>
+  onSubjectsChanged: () => Promise<NoteSubjectOption[] | null>
+}) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const p = item.placement, s = item.suggestion
+  const words = (x: NonNullable<CaptureItem['placement']>) => [x.subjectName, x.topicName].filter(Boolean).join(' › ')
+  const choose = async (d: { subjectId: string | null; topicName: string | null }) => { setBusy(true); const ok = await onPlace(d); setBusy(false); if (ok) setOpen(false) }
+  const link = 'text-xs text-nova-ink underline-offset-2 hover:underline disabled:opacity-50'
+  const current = p ? destinationFor(destinationsOf(subjects), p.subjectId, p.topicName) : NO_SUBJECT
+  return (
+    <div className="mt-2" data-passage-place={p ? (item.placedBy === 'learner' ? 'yours' : p.confidence) : s ? 'suggested' : item.placedBy === 'learner' ? 'unfiled' : 'waiting'}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-foreground/65">
+        <FolderClosed aria-hidden className="size-3.5 text-foreground/40" />
+        {p ? (
+          <span>Filed under <strong className={cn('font-medium', p.confidence === 'medium' && item.placedBy !== 'learner' ? 'text-amber-300' : 'text-foreground/90')} title={p.path.join(' › ')}>{words(p)}</strong>{p.confidence === 'medium' && item.placedBy !== 'learner' && <span className="text-subtle"> (Kivo’s guess)</span>}</span>
+        ) : s ? (
+          <span>Not filed. Suggested: <strong className="font-medium text-foreground/90" title={s.path.join(' › ')}>{words(s)}</strong></span>
+        ) : item.placedBy === 'learner' ? <span>Left unfiled</span> : <span className="inline-flex items-center gap-1"><Loader2 className="size-3 animate-spin" /> Filing…</span>}
+        {s && !p && <button type="button" className={link} disabled={busy} onClick={() => void choose({ subjectId: s.subjectId, topicName: s.topicName })} data-place-accept>File here</button>}
+        <button type="button" className={link} onClick={() => setOpen(o => !o)} aria-expanded={open} data-place-change>{p ? 'Change' : 'Choose'}</button>
+      </div>
+      {open && (
+        <div className="mt-2 max-w-md">
+          <DestinationPicker subjects={subjects} value={current} onChange={d => void choose({ subjectId: d.subjectId, topicName: d.topicName })} onSubjectsChanged={onSubjectsChanged} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// The place most of a draft's passages were filed under (at least half of
+// the filed ones), for Create note to start from.
+export function dominantPlace(items: CaptureItem[]): { subjectId: string; topicName: string | null } | null {
+  const filed = items.filter(i => i.placement)
+  if (!filed.length) return null
+  const count = new Map<string, { subjectId: string; topicName: string | null; n: number }>()
+  for (const i of filed) {
+    const k = `${i.placement!.subjectId}|${i.placement!.topicName ?? ''}`
+    const c = count.get(k) ?? { subjectId: i.placement!.subjectId, topicName: i.placement!.topicName, n: 0 }
+    c.n++; count.set(k, c)
+  }
+  const best = [...count.values()].sort((a, b) => b.n - a.n)[0]!
+  return best.n * 2 >= filed.length ? { subjectId: best.subjectId, topicName: best.topicName } : null
 }
 
 // ── Into a note: choose, preview, confirm ────────────────────────────────────
@@ -326,7 +410,17 @@ function MergePanel({ draft, mode, onMode, onClose, onDone, onStale }: {
   const [error, setError] = useState<string | null>(null)
   const pressed = useRef(false)
 
-  useEffect(() => { void fetchNotes().then(v => { if (v?.status === 'ready') setSubjects(v.subjects) }) }, [])
+  const fromPlacement = useRef(false)
+  // Read once, when the panel opens: a placement arriving later never moves
+  // a destination the learner has already chosen.
+  const itemsAtOpen = useRef(draft.items)
+  useEffect(() => { void fetchNotes().then(v => {
+    if (v?.status !== 'ready') return
+    setSubjects(v.subjects)
+    // Where most passages were filed: the note starts there; the learner can change it.
+    const place = dominantPlace(itemsAtOpen.current)
+    if (place) { const d = destinationFor(destinationsOf(v.subjects), place.subjectId, place.topicName); if (d !== NO_SUBJECT) { fromPlacement.current = true; setDest(d) } }
+  }) }, [])
   useEffect(() => {
     if (mode !== 'existing') return
     const t = window.setTimeout(() => { void fetchNotes(query.trim() ? { q: query.trim() } : {}).then(v => setResults(v?.status === 'ready' ? v.notes.slice(0, 8) : [])) }, 220)
@@ -375,7 +469,7 @@ function MergePanel({ draft, mode, onMode, onClose, onDone, onStale }: {
               className="mt-1 h-10 w-full rounded-lg border border-white/12 bg-background/60 px-3 text-sm text-foreground focus:border-nova/50 focus:outline-none" data-merge-title />
           </label>
           <div>
-            <span className="text-xs font-medium text-foreground/70">Where it goes <span className="font-normal text-subtle">(optional)</span></span>
+            <span className="text-xs font-medium text-foreground/70">Where it goes <span className="font-normal text-subtle">{fromPlacement.current && dest !== NO_SUBJECT ? '(where Kivo filed most of these passages)' : '(optional)'}</span></span>
             <div className="mt-1"><DestinationPicker subjects={subjects} value={dest} onChange={setDest}
               onSubjectsChanged={async () => { const v = await fetchNotes(); if (v?.status === 'ready') { setSubjects(v.subjects); return v.subjects } return null }} /></div>
           </div>

@@ -20,33 +20,43 @@ import { HISTORY_SENT, LOCKED_KEPT, LOCK_DAYS, THREADS_KEPT, createThreads, hist
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const src  = name => readFileSync(join(root, 'src', name), 'utf8')
-const sources = ['popup.js', 'sidepanel.js', 'background.js', 'region-overlay.js', 'lib/api.js', 'lib/browser.js', 'lib/markdown.js', 'lib/page.js', 'lib/region.js', 'lib/store.js', 'lib/thread.js', 'lib/ui.js'].map(name => ({ name, text: src(name) }))
+const sources = ['popup.js', 'sidepanel.js', 'background.js', 'region-overlay.js', 'lib/api.js', 'lib/browser.js', 'lib/markdown.js', 'lib/page.js', 'lib/places.js', 'lib/region.js', 'lib/store.js', 'lib/thread.js', 'lib/ui.js'].map(name => ({ name, text: src(name) }))
+// Nova's browser agent: the one part that opens, reads and acts on pages, audited on its own (test/agent.test.mjs).
+const RESEARCH = ['lib/agent.js', 'lib/agent-tools.js', 'lib/agent-page.js', 'lib/agent-runtime.js', 'lib/agent-view.js']
+const research = RESEARCH.map(name => ({ name, text: src(name) }))
 const code = text => text.split('\n').filter(line => !line.trim().startsWith('//') && !line.trim().startsWith('*') && !line.trim().startsWith('/*')).join('\n')
 
 // ── What the extension is allowed to do ───────────────────────────────────────
 
-test('manifest: activeTab, scripting, sidePanel and storage, and nothing else', () => {
+test('manifest: activeTab, scripting, sidePanel and storage; website access only as an optional, asked-for permission', () => {
   const manifest = JSON.parse(src('manifest.template.json'))
   assert.equal(manifest.manifest_version, 3)
   // sidePanel: Ask Nova opens beside the page. It reaches no page and adds no install warning.
   assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'sidePanel', 'storage'])
   assert.equal(Number(manifest.minimum_chrome_version) >= 116, true, 'sidePanel.open needs Chrome 116')
-  for (const key of ['host_permissions', 'optional_permissions', 'optional_host_permissions', 'content_scripts', 'web_accessible_resources', 'externally_connectable', 'content_security_policy', 'chrome_url_overrides', 'devtools_page', 'side_panel', 'omnibox', 'commands']) {
+  // The agent: web pages, asked for site by site during a task (lib/agent-view.js) and given back when it ends. Not granted at install.
+  assert.deepEqual(manifest.optional_host_permissions, ['https://*/*', 'http://*/*'])
+  for (const key of ['host_permissions', 'optional_permissions', 'content_scripts', 'web_accessible_resources', 'externally_connectable', 'content_security_policy', 'chrome_url_overrides', 'devtools_page', 'side_panel', 'omnibox', 'commands']) {
     assert.equal(manifest[key], undefined, `${key} is not declared`)
   }
-  assert.ok(!JSON.stringify(manifest).match(/<all_urls>|\*:\/\/|history|tabs"|webRequest|cookies|bookmarks|clipboard|downloads|webNavigation|debugger/))
+  const { optional_host_permissions: _optional, ...rest } = manifest
+  assert.ok(!JSON.stringify(rest).match(/<all_urls>|\*:\/\/|history|tabs"|webRequest|cookies|bookmarks|clipboard|downloads|webNavigation|debugger/))
   assert.deepEqual(Object.keys(manifest.action).sort(), ['default_icon', 'default_popup', 'default_title'])
 })
 
-test('no content script, and one worker with one job: while the popup is closed nothing runs but the picture of an area the learner selected', () => {
+test('no content script, and one worker with two jobs: the picture of an area the learner selected, and a task they gave Nova', () => {
   assert.deepEqual(readdirSync(join(root, 'src')).filter(n => !n.endsWith(' 2')).sort(), ['background.js', 'lib', 'manifest.template.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js', 'sidepanel.css', 'sidepanel.html', 'sidepanel.js'])
-  assert.deepEqual(readdirSync(join(root, 'src', 'lib')).sort(), ['api.js', 'browser.js', 'markdown.js', 'page.js', 'region.js', 'store.js', 'thread.js', 'ui.js'])
+  assert.deepEqual(readdirSync(join(root, 'src', 'lib')).filter(n => !n.endsWith(' 2')).sort(), ['agent-page.js', 'agent-runtime.js', 'agent-tools.js', 'agent-view.js', 'agent.js', 'api.js', 'browser.js', 'markdown.js', 'page.js', 'places.js', 'region.js', 'store.js', 'thread.js', 'ui.js'])
   assert.deepEqual(JSON.parse(src('manifest.template.json')).background, { service_worker: 'background.js', type: 'module' })
   const worker = code(src('background.js'))
-  assert.equal((worker.match(/\.addListener\(/g) ?? []).length, 1, 'it listens for one thing')
+  assert.equal((worker.match(/\.addListener\(/g) ?? []).length, 1, 'it listens for one thing: messages')
   assert.match(worker, /chrome\.runtime\.onMessage\.addListener/)
   assert.match(worker, /sender\.id !== chrome\.runtime\.id/, 'only its own overlay')
-  assert.ok(!worker.match(/executeScript|tabs\.query|tabs\.get|onUpdated|onActivated|alarms|fetch\(/), 'it reads no tab and calls no server')
+  assert.match(worker, /if \(handleAgentMessage\(message, sender, reply\)\) return true/, 'agent messages go to the agent runtime')
+  assert.ok(!worker.match(/executeScript|tabs\.query|tabs\.get|onUpdated|onActivated|alarms|fetch\(/), 'the worker file itself reads no tab and calls no server')
+  const runtime = code(src('lib/agent-runtime.js'))
+  assert.match(runtime, /String\(sender\.url \?\? ''\)\.startsWith\(chrome\.runtime\.getURL\(''\)\)/, 'the agent takes messages only from Kivo\'s own pages, never a web page or the overlay')
+  assert.ok(!runtime.match(/onUpdated|onActivated|alarms|webNavigation|addListener/), 'it listens for no navigation and no site')
 })
 
 test('the area selector reads nothing from the page and is off the page before the picture', () => {
@@ -91,7 +101,7 @@ test('a capture carries the page and the passage, and nothing to file it under: 
 test('the code uses its browser APIs in one file: the active tab, opening a tab, extension storage, the side panel, one read of that tab, and its screenshot', () => {
   const used = new Set()
   for (const { text } of sources) for (const m of code(text).matchAll(/chrome\.([a-zA-Z]+)\.([a-zA-Z]+)/g)) used.add(`${m[1]}.${m[2]}`)
-  assert.deepEqual([...used].sort(), ['action.openPopup', 'action.setBadgeBackgroundColor', 'action.setBadgeText', 'runtime.id', 'runtime.onMessage', 'runtime.sendMessage', 'scripting.executeScript', 'sidePanel.open', 'sidePanel.setOptions', 'storage.local', 'storage.onChanged', 'storage.session', 'tabs.captureVisibleTab', 'tabs.create', 'tabs.query'])
+  assert.deepEqual([...used].sort(), ['action.openPopup', 'action.setBadgeBackgroundColor', 'action.setBadgeText', 'permissions.request', 'runtime.id', 'runtime.onMessage', 'runtime.sendMessage', 'scripting.executeScript', 'sidePanel.open', 'sidePanel.setOptions', 'storage.local', 'storage.onChanged', 'storage.session', 'tabs.captureVisibleTab', 'tabs.create', 'tabs.query', 'tabs.remove'])
   // lib/browser.js is the adapter; the worker and the overlay run where it can't.
   for (const { name, text } of sources) if (!['lib/browser.js', 'background.js', 'region-overlay.js'].includes(name)) assert.ok(!code(text).match(/\bchrome\b/), `${name} goes through lib/browser.js`)
   const all = sources.map(s => code(s.text)).join('\n')
@@ -164,7 +174,7 @@ test('the only address it talks to is Nova, fixed at build time', () => {
   assert.match(code(src('lib/api.js')), /credentials: 'omit'/)
   assert.ok(!all.match(/openai|anthropic|gemini|\/api\/nova\/message/i), 'no LLM call and no chat route')
   const paths = [...code(src('lib/api.js')).matchAll(/call\('([^']+)'/g)].map(m => m[1]).sort()
-  assert.deepEqual(paths, ['/api/nova/extension/ask', '/api/nova/extension/captures', '/api/nova/extension/captures', '/api/nova/extension/connect', '/api/nova/extension/context', '/api/nova/extension/disconnect', '/api/nova/learning-events'])
+  assert.deepEqual(paths, ['/api/nova/extension/agent/start', '/api/nova/extension/agent/step', '/api/nova/extension/agent/workspace', '/api/nova/extension/ask', '/api/nova/extension/captures', '/api/nova/extension/captures', '/api/nova/extension/captures/place', '/api/nova/extension/captures/place', '/api/nova/extension/connect', '/api/nova/extension/context', '/api/nova/extension/disconnect', '/api/nova/extension/places', '/api/nova/learning-events'])
 })
 
 test('the popup page loads only its own files', () => {
@@ -192,6 +202,8 @@ test('every permission is explained in the popup', () => {
   assert.match(popup, /Your conversation with Nova about a page stays in this browser\\'s memory until you start a new one or close the browser/)
   assert.match(popup, /Nothing else inside the page: no other text, no forms, no passwords/)
   assert.match(popup, /Not your other tabs, and not your history/)
+  assert.match(popup, /Optional website access is asked for, site by site, only when a task you gave Nova needs a site, and given back when the task ends/)
+  assert.match(popup, /Kivo files it under one of your own subjects and topics/)
 })
 
 test('the build refuses an insecure Nova address and writes exactly one', () => {
@@ -585,7 +597,7 @@ test('the release ZIP holds the built extension and nothing else', () => {
   const { zip, name, out } = packageWith({ NOVA_URL: 'https://kivo.example/some/path' })
   assert.equal(name, `nova-extension-${JSON.parse(src('manifest.template.json')).version}.zip`)
   const names = zipNames(zip)
-  assert.deepEqual(names.filter(n => !n.startsWith('vendor/katex/fonts/')), ['background.js', 'config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/api.js', 'lib/browser.js', 'lib/markdown.js', 'lib/page.js', 'lib/region.js', 'lib/store.js', 'lib/thread.js', 'lib/ui.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js', 'sidepanel.css', 'sidepanel.html', 'sidepanel.js', 'vendor/katex/LICENSE', 'vendor/katex/katex.min.css', 'vendor/katex/katex.min.js'])
+  assert.deepEqual(names.filter(n => !n.startsWith('vendor/katex/fonts/')), ['background.js', 'config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/agent-page.js', 'lib/agent-runtime.js', 'lib/agent-tools.js', 'lib/agent-view.js', 'lib/agent.js', 'lib/api.js', 'lib/browser.js', 'lib/markdown.js', 'lib/page.js', 'lib/places.js', 'lib/region.js', 'lib/store.js', 'lib/thread.js', 'lib/ui.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js', 'sidepanel.css', 'sidepanel.html', 'sidepanel.js', 'vendor/katex/LICENSE', 'vendor/katex/katex.min.css', 'vendor/katex/katex.min.js'])
   assert.ok(names.filter(n => n.startsWith('vendor/katex/fonts/')).every(n => n.endsWith('.woff2')), 'only KaTeX woff2 fonts')
   assert.match(out, /sha256 [0-9a-f]{64}/)
   assert.match(out, /for https:\/\/kivo\.example\n/)

@@ -263,7 +263,10 @@ describe("a learning event is a record of an action, and nothing else", () => {
     // It reads nothing about them (setup-edit.test.ts).
     // workspaces.ts calls only unfileResourcesIn: a saved page filed under a
     // subject being deleted is filed under nothing, topic name included (12 Nov).
-    expect(readers.sort()).toEqual(["product/focus-context.ts", "product/knowledge-map.ts",
+    // browser-agent.ts reads saved pages through the library (loadLibrary) as
+    // material for the learner's own task in the extension; nothing it reads
+    // becomes evidence or state (13 Nov).
+    expect(readers.sort()).toEqual(["product/browser-agent.ts", "product/focus-context.ts", "product/knowledge-map.ts",
         "product/knowledge-trash.ts", "product/learning-events.ts", "product/note-append.ts",
         "product/note-assist.ts", "product/note-tutor.ts", "product/resource-processing.ts", "product/setup-edit.ts", "product/workspaces.ts"]);
     expect(read("product/workspaces.ts")).toMatch(/import \{ unfileResourcesIn \} from "\.\/learning-events";/);

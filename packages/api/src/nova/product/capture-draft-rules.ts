@@ -12,9 +12,11 @@
 //     and one compact line, `[View source](address) · site`. Never the raw
 //     address after every passage.
 //
-// No regex, and nothing but resource-link (pure, no imports).
+// No regex. Imports: resource-link, and the placement rules for the stored
+// shape of a passage's place (knowledge-placement-rules.ts).
 
 import { normalizeResourceUrl } from "./resource-link";
+import { readPlacement, type Placement } from "./knowledge-placement-rules";
 
 export const SESSION_GAP_MS     = 3 * 60 * 60_000;
 export const DRAFT_ITEMS_MAX    = 100;
@@ -36,6 +38,12 @@ export interface CaptureItem {
   context:    string | null;    // a little of what surrounds it, when the page gave it
   note:       string;           // the learner's own observation
   capturedAt: string;           // ISO
+  // Where it belongs in the learner's workspace (knowledge-placement.ts):
+  // filed (high or medium confidence), or only suggested (low). placedBy
+  // "learner": their own choice, never replaced by Kivo's.
+  placement?:  Placement | null;
+  suggestion?: Placement | null;
+  placedBy?:   "kivo" | "learner" | null;
 }
 
 export type DraftStatus = "open" | "merged" | "discarded";
@@ -148,6 +156,15 @@ export function summarise(row: {
   };
 }
 
+function placementFields(i: Record<string, unknown>): Pick<CaptureItem, "placement" | "suggestion" | "placedBy"> {
+  const placedBy = i.placedBy === "learner" || i.placedBy === "kivo" ? i.placedBy : null;
+  const placement = readPlacement(i.placement), suggestion = readPlacement(i.suggestion);
+  return {
+    ...(placedBy || placement ? { placement, placedBy } : {}),
+    ...(suggestion ? { suggestion } : {}),
+  };
+}
+
 // Items as stored (Json), read defensively: anything malformed is left out.
 export function readItems(raw: unknown): CaptureItem[] {
   if (!Array.isArray(raw)) return [];
@@ -162,6 +179,8 @@ export function readItems(raw: unknown): CaptureItem[] {
       site: typeof i.site === "string" ? i.site : null, text: typeof i.text === "string" ? i.text : "",
       context: typeof i.context === "string" ? i.context : null, note: typeof i.note === "string" ? i.note : "",
       capturedAt: i.capturedAt,
+      // Only when there is something to say: older passages read as before.
+      ...placementFields(i),
     });
   }
   return out;
