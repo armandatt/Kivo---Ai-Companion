@@ -10,8 +10,9 @@
 // printed SHA-256 can be compared against a rebuild.
 //
 // It refuses to package anything that is not the audited shape: a release
-// must talk to an https address that is not this machine, ask for the three
-// permissions and no others, and carry no other address.
+// must talk to an https address that is not this machine, ask for the four
+// permissions and no others, and carry no other address. KaTeX (vendor/katex,
+// for maths in answers) must be the installed package's files, byte for byte.
 
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -19,6 +20,7 @@ import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { deflateRawSync } from 'node:zlib'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -48,16 +50,22 @@ walk(stage)
 const entries = files.map(path => ({ name: relative(stage, path).split(sep).join('/'), data: readFileSync(path) })).sort((a, b) => (a.name < b.name ? -1 : 1))
 
 // ── Check what is about to be shipped ─────────────────────────────────────────
-const EXPECTED = ['background.js', 'config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/api.js', 'lib/browser.js', 'lib/note-picker.js', 'lib/page.js', 'lib/region.js', 'lib/store.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js']
+const katexDir = dirname(createRequire(join(root, 'package.json')).resolve('katex/package.json'))
+const KATEX_FONTS = readdirSync(join(katexDir, 'dist', 'fonts')).filter(f => f.endsWith('.woff2')).map(f => `vendor/katex/fonts/${f}`)
+const KATEX = ['vendor/katex/LICENSE', 'vendor/katex/katex.min.css', 'vendor/katex/katex.min.js', ...KATEX_FONTS]
+const katexSource = name => name === 'vendor/katex/LICENSE' ? join(katexDir, 'LICENSE') : name.startsWith('vendor/katex/fonts/') ? join(katexDir, 'dist', 'fonts', name.slice('vendor/katex/fonts/'.length)) : join(katexDir, 'dist', name.slice('vendor/katex/'.length))
+const EXPECTED = ['background.js', 'config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/api.js', 'lib/browser.js', 'lib/markdown.js', 'lib/page.js', 'lib/region.js', 'lib/store.js', 'lib/thread.js', 'lib/ui.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js', 'sidepanel.css', 'sidepanel.html', 'sidepanel.js', ...KATEX].sort((a, b) => (a < b ? -1 : 1))
 const names = entries.map(e => e.name)
 if (JSON.stringify(names) !== JSON.stringify(EXPECTED)) fail(`unexpected files in the build: ${names.join(', ')}`)
+// Third-party code is the installed package's, unchanged.
+for (const name of KATEX) if (!entries.find(e => e.name === name).data.equals(readFileSync(katexSource(name)))) fail(`${name} is not KaTeX's own file`)
 
 const text = name => entries.find(e => e.name === name).data.toString('utf8')
 const manifest = JSON.parse(text('manifest.json'))
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 if (manifest.manifest_version !== 3) fail('the manifest is not version 3')
 if (manifest.version !== pkg.version) fail(`manifest version ${manifest.version} is not package.json version ${pkg.version}`)
-if (JSON.stringify(manifest.permissions) !== JSON.stringify(['activeTab', 'scripting', 'storage'])) fail(`permissions are ${JSON.stringify(manifest.permissions)}`)
+if (JSON.stringify(manifest.permissions) !== JSON.stringify(['activeTab', 'scripting', 'sidePanel', 'storage'])) fail(`permissions are ${JSON.stringify(manifest.permissions)}`)
 for (const key of ['host_permissions', 'optional_permissions', 'optional_host_permissions', 'content_scripts', 'web_accessible_resources', 'externally_connectable']) {
   if (manifest[key] !== undefined) fail(`the manifest declares ${key}`)
 }
@@ -66,9 +74,12 @@ if (JSON.stringify(manifest.background) !== JSON.stringify({ service_worker: 'ba
 if ((manifest.description ?? '').length > 132) fail('the manifest description is over the store limit of 132 characters')
 if (text('config.js').trim().split('\n').pop() !== `export const NOVA_URL = ${JSON.stringify(origin)}`) fail('config.js does not hold the release address')
 
-for (const entry of entries.filter(e => !e.name.endsWith('.png'))) {
+// KaTeX names two XML namespaces (MathML and SVG), which are identifiers, not
+// addresses anything is fetched from.
+const NAMESPACES = ['http://www.w3.org/1998/Math/MathML', 'http://www.w3.org/2000/svg']
+for (const entry of entries.filter(e => !e.name.endsWith('.png') && !e.name.endsWith('.woff2'))) {
   const body = entry.data.toString('utf8')
-  const elsewhere = [...body.matchAll(/https?:\/\/[^\s'"`<>)]+/g)].map(m => m[0]).filter(found => !found.startsWith(origin))
+  const elsewhere = [...body.matchAll(/https?:\/\/[^\s'"`<>)]+/g)].map(m => m[0]).filter(found => !found.startsWith(origin) && !(entry.name.startsWith('vendor/katex/') && NAMESPACES.includes(found)))
   if (elsewhere.length) fail(`${entry.name} names another address: ${elsewhere[0]}`)
   if (LOCAL.some(host => body.includes(host))) fail(`${entry.name} mentions a local address`)
   if (/nvx_[A-Za-z0-9]|BEGIN [A-Z ]*PRIVATE KEY|sk-[A-Za-z0-9]{16}|AIza[0-9A-Za-z_-]{20}/.test(body)) fail(`${entry.name} looks like it holds a credential`)

@@ -40,6 +40,10 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     try {
       const picture = await capture(tab.windowId, message.rect, message.viewport)
       await chrome.storage.session.set({ [REGION_SHOT_KEY]: { ...picture, tabId: tab.id, at: Date.now() } })
+      // Asked for from Nova's side panel on this tab: the panel takes it from
+      // storage itself, so the popup is not opened.
+      const { novaPanelRegion } = await chrome.storage.session.get('novaPanelRegion')
+      if (novaPanelRegion === tab.id) { reply({ opened: true }); return }
       // Back to the popup with it. A browser that won't open it from here shows
       // a mark on the icon, and the page says to click it.
       let opened = false

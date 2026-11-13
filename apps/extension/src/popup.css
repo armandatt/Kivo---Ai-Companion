@@ -170,3 +170,16 @@ button[aria-busy="true"]::before { content: ""; width: 12px; height: 12px; borde
   button[aria-busy="true"]::before, .thinking::before { animation: none; border-right-color: currentColor; opacity: .6; }
 }
 .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* ── Capture and Ask (capture first) ────────────────────────────────────── */
+.capture { display: grid; gap: var(--s2); }
+.capture .quote { margin: 0 0 2px; }
+.draft-line { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); min-height: 20px; }
+.draft-line[data-draft="current"] .small { color: var(--accent-hi); }
+.draft-tools { display: flex; gap: var(--s3); flex: none; }
+.actions.even { grid-template-columns: 1fr 1fr; }
+button.ask-open { height: 38px; border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-hi); font-weight: 600; }
+button.ask-open::before { content: "✦"; font-size: 12px; }
+button.ask-open:hover:not(:disabled) { border-color: var(--accent); background: rgba(52,209,168,.18); }
+button[data-captured] { background: var(--accent-soft); color: var(--accent-hi); opacity: 1; }
+button[data-captured]::before { content: "✓"; font-weight: 700; }

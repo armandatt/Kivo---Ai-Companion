@@ -75,20 +75,11 @@ export function createClient({ baseUrl, fetch: doFetch, getToken }) {
     // One explicit action. `event.clientEventId` is what makes a retry safe.
     sendEvent:  event => call('/api/nova/learning-events', { method: 'POST', body: event }),
     // The learner's notes to choose from: titles and where they are filed, no text.
-    noteChoices: ({ q = '', subjectId = '', topic = '', skip = 0 } = {}) => {
-      const p = new URLSearchParams()
-      if (q.trim()) p.set('q', q.trim())
-      if (subjectId) p.set('subjectId', subjectId)
-      if (subjectId && topic) p.set('topic', topic)
-      if (skip) p.set('skip', String(skip))
-      const query = p.toString()
-      return call(`/api/nova/extension/notes${query ? `?${query}` : ''}`)
-    },
-    notePreview: id => call(`/api/nova/extension/notes?preview=${encodeURIComponent(id)}`),
-    // A passage into a note, or into a new one. A retry repeats the id, and adds nothing.
-    saveToNote: body => call('/api/nova/extension/notes', { method: 'POST', body }),
-    // A question about the page. Answered and not kept, screenshot included.
-    ask:        question => call('/api/nova/extension/ask', { method: 'POST', body: question, timeoutMs: question.screenshot ? SCREENSHOT_TIMEOUT_MS : TIMEOUT_MS }),
+    // Capture: a passage (or the page) into the learner's current draft, with
+    // nothing to choose. drafts(): the draft a capture would join, and how many are open.
+    capture:    body => call('/api/nova/extension/captures', { method: 'POST', body }),
+    drafts:     () => call('/api/nova/extension/captures'),
+    ask:        question => call('/api/nova/extension/ask', { method: 'POST', body: question, timeoutMs: question.screenshot || question.detail === 'detailed' ? SCREENSHOT_TIMEOUT_MS : TIMEOUT_MS }),
   }
 }
 
@@ -117,28 +108,33 @@ export function buildEvent({ eventType, clientEventId, page, title, subjectId, t
 }
 
 /**
- * A passage for a note: the passage's own event fields, and where it goes.
- * @param {{ clientEventId: string, page: object, title?: string, excerpt: string, noteId?: string, newNote?: { title: string }, subjectId?: string, topicName?: string, now?: Date }} input
+ * A capture for the current draft: the page, and the passage if one was
+ * selected. key: the same on a retry, so Nova keeps it once. fresh: start a
+ * new draft with it. No subject, topic or note: organising happens in Kivo.
+ * @param {{ key: string, page: { url: string, title: string }, title?: string, text?: string, fresh?: boolean }} input
  */
-export function buildNoteSave({ clientEventId, page, title, excerpt, noteId, newNote, subjectId, topicName, now = new Date() }) {
-  const event = buildEvent({ eventType: 'selection_saved', clientEventId, page, title, subjectId: noteId ? '' : subjectId, topicName: noteId ? '' : topicName, excerpt, now })
-  const pad = n => String(n).padStart(2, '0')
-  return { ...event, day: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`, ...(noteId ? { noteId } : { newNote }) }
+export function buildCapture({ key, page, title, text, fresh = false }) {
+  const capture = { key, url: page.url, title: (title ?? page.title).trim(), text: typeof text === 'string' ? text : '' }
+  if (fresh) capture.newDraft = true
+  return capture
 }
 
 /**
  * What a question about the page carries: the question, the page's address
  * and title, the selected passage if there is one, and the screenshot the
  * learner took and saw, if they took one. Never the page itself.
- * @param {{ question: string, page: { url: string, title: string }, title?: string, excerpt?: string, screenshot?: string | null }} input
+ * @param {{ question: string, page: { url: string, title: string }, title?: string, excerpt?: string, screenshot?: string | null, history?: Array<{ question: string, answer: string }>, detail?: 'brief' | 'detailed' }} input
  *   screenshot: a JPEG as plain base64
  */
-export function buildQuestion({ question, page, title, excerpt, screenshot }) {
+export function buildQuestion({ question, page, title, excerpt, screenshot, history = [], detail = 'brief' }) {
   const asked = {
     question: question.trim(),
     url: page.url,
     title: (title ?? page.title).trim(),
     excerpt: typeof excerpt === 'string' && excerpt ? excerpt : null,
+    // The conversation so far (thread.js historyOf): what a follow-up refers to.
+    history: Array.isArray(history) ? history : [],
+    detail: detail === 'detailed' ? 'detailed' : 'brief',
   }
   if (typeof screenshot === 'string' && screenshot) asked.screenshot = { mimeType: 'image/jpeg', data: screenshot }
   return asked

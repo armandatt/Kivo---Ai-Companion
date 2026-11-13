@@ -11,23 +11,26 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 
 import { ADAPTERS, describePage } from '../src/lib/page.js'
-import { WORDS, buildEvent, buildNoteSave, buildQuestion, createClient, disconnectOutcome, newActionId } from '../src/lib/api.js'
+import { WORDS, buildCapture, buildEvent, buildQuestion, createClient, disconnectOutcome, newActionId } from '../src/lib/api.js'
 import { createStore } from '../src/lib/store.js'
 import { NO_PROBE, probePage, readProbe } from '../src/lib/browser.js'
 import { REGION_SHOT_KEEP_MS, cropArea, freshShot } from '../src/lib/region.js'
-import { nestedSubjects, subjectLabel } from '../src/lib/note-picker.js'
+import { inline, parse } from '../src/lib/markdown.js'
+import { HISTORY_SENT, THREADS_KEPT, createThreads, historyOf, threadKey } from '../src/lib/thread.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const src  = name => readFileSync(join(root, 'src', name), 'utf8')
-const sources = ['popup.js', 'background.js', 'region-overlay.js', 'lib/api.js', 'lib/browser.js', 'lib/note-picker.js', 'lib/page.js', 'lib/region.js', 'lib/store.js'].map(name => ({ name, text: src(name) }))
+const sources = ['popup.js', 'sidepanel.js', 'background.js', 'region-overlay.js', 'lib/api.js', 'lib/browser.js', 'lib/markdown.js', 'lib/page.js', 'lib/region.js', 'lib/store.js', 'lib/thread.js', 'lib/ui.js'].map(name => ({ name, text: src(name) }))
 const code = text => text.split('\n').filter(line => !line.trim().startsWith('//') && !line.trim().startsWith('*') && !line.trim().startsWith('/*')).join('\n')
 
 // ── What the extension is allowed to do ───────────────────────────────────────
 
-test('manifest: activeTab, scripting and storage, and nothing else', () => {
+test('manifest: activeTab, scripting, sidePanel and storage, and nothing else', () => {
   const manifest = JSON.parse(src('manifest.template.json'))
   assert.equal(manifest.manifest_version, 3)
-  assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage'])
+  // sidePanel: Ask Nova opens beside the page. It reaches no page and adds no install warning.
+  assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'sidePanel', 'storage'])
+  assert.equal(Number(manifest.minimum_chrome_version) >= 116, true, 'sidePanel.open needs Chrome 116')
   for (const key of ['host_permissions', 'optional_permissions', 'optional_host_permissions', 'content_scripts', 'web_accessible_resources', 'externally_connectable', 'content_security_policy', 'chrome_url_overrides', 'devtools_page', 'side_panel', 'omnibox', 'commands']) {
     assert.equal(manifest[key], undefined, `${key} is not declared`)
   }
@@ -36,8 +39,8 @@ test('manifest: activeTab, scripting and storage, and nothing else', () => {
 })
 
 test('no content script, and one worker with one job: while the popup is closed nothing runs but the picture of an area the learner selected', () => {
-  assert.deepEqual(readdirSync(join(root, 'src')).sort(), ['background.js', 'lib', 'manifest.template.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js'])
-  assert.deepEqual(readdirSync(join(root, 'src', 'lib')).sort(), ['api.js', 'browser.js', 'note-picker.js', 'page.js', 'region.js', 'store.js'])
+  assert.deepEqual(readdirSync(join(root, 'src')).filter(n => !n.endsWith(' 2')).sort(), ['background.js', 'lib', 'manifest.template.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js', 'sidepanel.css', 'sidepanel.html', 'sidepanel.js'])
+  assert.deepEqual(readdirSync(join(root, 'src', 'lib')).sort(), ['api.js', 'browser.js', 'markdown.js', 'page.js', 'region.js', 'store.js', 'thread.js', 'ui.js'])
   assert.deepEqual(JSON.parse(src('manifest.template.json')).background, { service_worker: 'background.js', type: 'module' })
   const worker = code(src('background.js'))
   assert.equal((worker.match(/\.addListener\(/g) ?? []).length, 1, 'it listens for one thing')
@@ -74,30 +77,21 @@ test('a captured area is handed only to its own tab, and not for long', () => {
   assert.equal(freshShot(null, 7, 2000), null)
 })
 
-test('subjects are listed in their tree, and none is lost to a loop', () => {
-  const subjects = [{ id: 'b', name: 'Inner', parentId: 'a' }, { id: 'a', name: 'Outer', parentId: null }, { id: 'c', name: 'Deep', parentId: 'b' }, { id: 'x', name: 'Orphan', parentId: 'gone' }, { id: 'l1', name: 'L1', parentId: 'l2' }, { id: 'l2', name: 'L2', parentId: 'l1' }]
-  const out = nestedSubjects(subjects)
-  assert.deepEqual(out.slice(0, 4).map(s => [s.id, s.depth]), [['a', 0], ['b', 1], ['c', 2], ['x', 0]])
-  assert.equal(out.length, subjects.length)
-  assert.equal(subjectLabel(out[0]), 'Outer')
-  assert.ok(subjectLabel(out[1]).endsWith('↳ Inner'))
-})
-
-test('a passage for a note carries the note, not a subject: the note is filed where it is', () => {
-  const now = new Date(2026, 10, 1, 9)
-  const to = buildNoteSave({ clientEventId: 'id', page, title: 'T', excerpt: 'A passage.', noteId: 'n1', subjectId: 's1', topicName: 'x', now })
-  assert.equal(to.noteId, 'n1'); assert.equal(to.subjectId, null); assert.equal(to.topicName, null); assert.equal(to.excerpt, 'A passage.'); assert.equal(to.day, '2026-11-01')
-  assert.ok(!('newNote' in to))
-  const fresh = buildNoteSave({ clientEventId: 'id', page, title: 'T', excerpt: 'A passage.', newNote: { title: 'New' }, subjectId: 's1', topicName: 'x', now })
-  assert.deepEqual(fresh.newNote, { title: 'New' }); assert.equal(fresh.subjectId, 's1'); assert.equal(fresh.topicName, 'x')
+test('a capture carries the page and the passage, and nothing to file it under: organising happens in Kivo', () => {
+  const capture = buildCapture({ key: 'k-123456789', page, title: ' A page ', text: 'A passage.' })
+  assert.deepEqual(capture, { key: 'k-123456789', url: 'https://example.com/a', title: 'A page', text: 'A passage.' })
+  assert.equal(buildCapture({ key: 'k', page, fresh: true }).newDraft, true, 'New draft is asked for, never assumed')
+  assert.equal(buildCapture({ key: 'k', page }).text, '', 'a page with nothing selected is the page itself')
   const popup = code(src('popup.js'))
-  assert.ok(popup.indexOf('const clientEventId = newActionId()', popup.indexOf('async function confirmNote')) !== -1, 'one id for the note chosen, so Try again repeats it')
+  assert.ok(!popup.match(/subjectId|el\('select'|topicName: /), 'no subject or topic is asked for in the popup')
+  assert.match(popup, /client\.capture\(buildCapture\(\{ key: ids\.capture, page, title: title\.value, text: probe\.selection, fresh \}\)\)/)
+  assert.match(popup, /ids\.capture = newActionId\(\)/, 'a new id only after it succeeded, so a retry repeats it')
 })
 
-test('the code uses five browser APIs, all in one file: the active tab, opening a tab, extension storage, one read of that tab, and its screenshot', () => {
+test('the code uses its browser APIs in one file: the active tab, opening a tab, extension storage, the side panel, one read of that tab, and its screenshot', () => {
   const used = new Set()
   for (const { text } of sources) for (const m of code(text).matchAll(/chrome\.([a-zA-Z]+)\.([a-zA-Z]+)/g)) used.add(`${m[1]}.${m[2]}`)
-  assert.deepEqual([...used].sort(), ['action.openPopup', 'action.setBadgeBackgroundColor', 'action.setBadgeText', 'runtime.id', 'runtime.onMessage', 'runtime.sendMessage', 'scripting.executeScript', 'storage.local', 'storage.session', 'tabs.captureVisibleTab', 'tabs.create', 'tabs.query'])
+  assert.deepEqual([...used].sort(), ['action.openPopup', 'action.setBadgeBackgroundColor', 'action.setBadgeText', 'runtime.id', 'runtime.onMessage', 'runtime.sendMessage', 'scripting.executeScript', 'sidePanel.open', 'sidePanel.setOptions', 'storage.local', 'storage.onChanged', 'storage.session', 'tabs.captureVisibleTab', 'tabs.create', 'tabs.query'])
   // lib/browser.js is the adapter; the worker and the overlay run where it can't.
   for (const { name, text } of sources) if (!['lib/browser.js', 'background.js', 'region-overlay.js'].includes(name)) assert.ok(!code(text).match(/\bchrome\b/), `${name} goes through lib/browser.js`)
   const all = sources.map(s => code(s.text)).join('\n')
@@ -139,26 +133,17 @@ test('what the page probe returns is read as data, and a long selection is not c
   assert.equal(typeof probePage, 'function')
 })
 
-test('the selection is sent only by its own button, and never with a page save or a study request', () => {
-  const selected = buildEvent({ eventType: 'selection_saved', clientEventId: 'x', page, excerpt: 'A passage.' })
-  assert.equal(selected.excerpt, 'A passage.')
+test('the selection is sent only by Capture or with a question, and never with a page save or a study request', () => {
   for (const eventType of ['resource_saved', 'study_requested']) {
     assert.ok(!('excerpt' in buildEvent({ eventType, clientEventId: 'x', page, excerpt: 'A passage.' })), `${eventType} carries no passage`)
   }
   const popup = code(src('popup.js'))
-  assert.match(popup, /saveSelection\.addEventListener\('click', \(\) => renderDestination\(/, 'its button only asks where it goes')
-  assert.match(popup, /buildEvent\(\{ eventType: 'selection_saved', clientEventId: keepId/, 'Saved pages stays one of the answers')
-  assert.equal((popup.match(/'selection_saved'/g) ?? []).length, 2, 'named where it is sent and where its result is shown')
-})
-
-test('Add to notes opens Nova\'s capture page with the page and selection in the fragment, and sends nothing itself', () => {
-  const popup = code(src('popup.js'))
-  const at = popup.indexOf('const toNotes')
-  assert.ok(at !== -1)
-  const handler = popup.slice(at, popup.indexOf('const buttons', at))
-  assert.match(handler, /openNova\(`\/notes\/capture#\$\{p\.toString\(\)\}`\)/)
-  assert.doesNotMatch(handler, /client\.|fetch\(|sendEvent/, 'no request: the web page saves it, signed in as usual')
-  assert.match(handler, /p\.set\('via', 'extension'\)/)
+  assert.ok(!popup.match(/sendEvent\([^\n]*(probe\.selection|excerpt)/), 'a save or a study request never carries it')
+  assert.equal((popup.match(/client\.capture\(/g) ?? []).length, 1, 'Capture sends it')
+  // Handed to the side panel only when the learner presses Ask Nova, and only in this browser's memory.
+  const handoff = popup.slice(popup.indexOf("ask.addEventListener('click'"), popup.indexOf("show('ready'"))
+  assert.match(handoff, /selection: probe\.selection \|\| ''/)
+  assert.doesNotMatch(handoff, /client\.|fetch\(/, 'opening the panel sends nothing')
 })
 
 test('it keeps nothing in page-readable storage, writes no markup and runs nothing on a timer', () => {
@@ -174,12 +159,12 @@ test('the only address it talks to is Nova, fixed at build time', () => {
   const all = sources.map(s => code(s.text)).join('\n')
   const urls = [...all.matchAll(/https?:\/\/[^\s'"`]+/g)].map(m => m[0])
   assert.deepEqual(urls, [], 'no address is written into the code')
-  assert.equal((all.match(/\bfetch\(/g) ?? []).length, 1, 'one fetch, inside the client the popup builds')
+  assert.equal((all.match(/\bfetch\(/g) ?? []).length, 2, 'one fetch in each page, handed to the one client (lib/api.js)')
   assert.match(code(src('lib/api.js')), /doFetch\(`\$\{baseUrl\}\$\{path\}`/)
   assert.match(code(src('lib/api.js')), /credentials: 'omit'/)
   assert.ok(!all.match(/openai|anthropic|gemini|\/api\/nova\/message/i), 'no LLM call and no chat route')
   const paths = [...code(src('lib/api.js')).matchAll(/call\('([^']+)'/g)].map(m => m[1]).sort()
-  assert.deepEqual(paths, ['/api/nova/extension/ask', '/api/nova/extension/connect', '/api/nova/extension/context', '/api/nova/extension/disconnect', '/api/nova/extension/notes', '/api/nova/learning-events'])
+  assert.deepEqual(paths, ['/api/nova/extension/ask', '/api/nova/extension/captures', '/api/nova/extension/captures', '/api/nova/extension/connect', '/api/nova/extension/context', '/api/nova/extension/disconnect', '/api/nova/learning-events'])
 })
 
 test('the popup page loads only its own files', () => {
@@ -189,13 +174,22 @@ test('the popup page loads only its own files', () => {
   assert.ok(!html.match(/\son[a-z]+="/), "no inline handlers")
 })
 
+test('the side panel loads only its own files and the packaged KaTeX', () => {
+  const html = src('sidepanel.html')
+  assert.deepEqual([...html.matchAll(/(?:src|href)="([^"]+)"/g)].map(m => m[1]).sort(), ['popup.css', 'sidepanel.css', 'sidepanel.js', 'vendor/katex/katex.min.css', 'vendor/katex/katex.min.js'])
+  assert.ok(!html.match(/<script(?![^>]*src=)[^>]*>\s*\S/), 'no inline script')
+  assert.ok(!html.match(/\son[a-z]+="/), 'no inline handlers')
+})
+
 test('every permission is explained in the popup', () => {
   const popup = src('popup.js')
   assert.match(popup, /"activeTab" lets Nova read this tab\\'s address and title when you click its icon, and take a screenshot of it when you press Screenshot/)
   assert.match(popup, /A screenshot of what that tab is showing, only when you press Screenshot or capture an area you selected\. You see it here first\. It goes to Nova only with a question you ask, and is not kept\./)
   assert.match(popup, /"scripting" lets it read your selected text and the page\\'s own address on that tab, at that moment/)
   assert.match(popup, /"storage" keeps this browser connected/)
-  assert.match(popup, /It is sent only if you press Save selection/)
+  assert.match(popup, /It is sent only if you press Capture, or with a question you ask/)
+  assert.match(popup, /"sidePanel" lets Ask Nova open beside the page/)
+  assert.match(popup, /Your conversation with Nova about a page stays in this browser\\'s memory until you start a new one or close the browser/)
   assert.match(popup, /Nothing else inside the page: no other text, no forms, no passwords/)
   assert.match(popup, /Not your other tabs, and not your history/)
 })
@@ -208,7 +202,8 @@ test('the build refuses an insecure Nova address and writes exactly one', () => 
   run('https://nova.example.com/some/path?x=1')
   assert.equal(readFileSync(join(out, 'config.js'), 'utf8').match(/NOVA_URL = "(.*)"/)[1], 'https://nova.example.com')
   const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'))
-  assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage'])
+  assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'sidePanel', 'storage'])
+  assert.ok(readFileSync(join(out, 'vendor', 'katex', 'katex.min.js')).length > 100_000, 'KaTeX is packaged, not fetched')
   assert.equal(manifest.host_permissions, undefined)
   assert.equal(readFileSync(join(out, 'icons', '128.png')).subarray(1, 4).toString(), 'PNG')
 })
@@ -230,30 +225,65 @@ test('a build for real use refuses a missing, local or insecure Nova address', (
   assert.match(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts['build:safari:release'], /^NOVA_RELEASE=1 node scripts\/build\.mjs && xcodebuild /)
 })
 
-test('a question about the page carries the question, the address, the title and the selection, and never the page', () => {
+test('a question about the page carries the question, the address, the title, the selection and the conversation so far, and never the page', () => {
   assert.deepEqual(buildQuestion({ question: '  What is the spacing effect? ', page, title: ' A page ', excerpt: 'A passage.' }),
-    { question: 'What is the spacing effect?', url: 'https://example.com/a', title: 'A page', excerpt: 'A passage.' })
+    { question: 'What is the spacing effect?', url: 'https://example.com/a', title: 'A page', excerpt: 'A passage.', history: [], detail: 'brief' })
   assert.equal(buildQuestion({ question: 'Why?', page, excerpt: '' }).excerpt, null)
-  const popup = code(src('popup.js'))
-  assert.equal((popup.match(/client\.ask\(/g) ?? []).length, 1, 'asked only from the form the learner submits')
-  assert.match(popup, /onsubmit: async event => \{\s*event\.preventDefault\(\)\s*if \(!question\.value\.trim\(\)\) return/)
-  assert.match(src('popup.js'), /Nova has not read this page: it saw only the title/)
+  assert.equal(buildQuestion({ question: 'Why?', page, detail: 'detailed' }).detail, 'detailed')
+  assert.equal(buildQuestion({ question: 'Why?', page, detail: 'everything' }).detail, 'brief')
+  const panel = code(src('sidepanel.js'))
+  assert.equal((panel.match(/client\.ask\(/g) ?? []).length, 1, 'asked from one place')
+  assert.match(panel, /client\.ask\(buildQuestion\(\{ question: asked, page, excerpt: useSelection \? selection : '', screenshot, history: historyOf\(previous\), detail \}\)\)/)
+  assert.match(src('sidepanel.js'), /Nova saw only the title/)
+  assert.ok(!code(src('popup.js')).match(/client\.ask\(/), 'the popup asks nothing itself: Ask Nova opens the panel')
+})
+
+test('a follow-up carries the latest turns, question and answer only', () => {
+  const turns = Array.from({ length: 10 }, (_, i) => ({ question: `q${i}`, answer: `a${i}`, basis: 'title', at: i }))
+  const sent = historyOf([...turns, { question: 'failed', error: 'x' }])
+  assert.equal(sent.length, HISTORY_SENT)
+  assert.deepEqual(sent.at(-1), { question: 'q9', answer: 'a9' })
+  assert.ok(sent.every(t => Object.keys(t).join() === 'question,answer'))
+})
+
+test('a conversation is kept per page in session memory only, the latest few', async () => {
+  const data = {}
+  const area = { get: async k => (k === null ? { ...data } : { [k]: data[k] }), set: async o => Object.assign(data, o), remove: async k => { for (const key of [].concat(k)) delete data[key] } }
+  const threads = createThreads(area)
+  await threads.save('https://example.com/a#part', { title: 'A', domain: 'example.com' }, [{ question: 'q', answer: 'a' }])
+  assert.deepEqual((await threads.load('https://example.com/a')).turns, [{ question: 'q', answer: 'a' }], 'the fragment is not part of the page')
+  for (let i = 0; i < THREADS_KEPT + 5; i++) await threads.save(`https://example.com/${i}`, { title: 't', domain: 'example.com' }, [{ question: 'q', answer: 'a' }])
+  assert.equal(Object.keys(data).length, THREADS_KEPT)
+  assert.equal(threadKey('not a url'), null)
+  const panel = code(src('sidepanel.js'))
+  assert.match(panel, /createThreads\(browser\.session\(\)\)/, 'chrome.storage.session: in memory, gone when the browser quits')
+  assert.ok(!code(src('lib/thread.js')).match(/storage\.local|localStorage/))
+})
+
+test('answers are read as Markdown with maths, and nothing in them becomes markup or a script', () => {
+  const blocks = parse('## Steps\n\n1. **First** with $x^2$\n2. Second\n\n$$\\frac{a}{b}$$\n\n| A | B |\n|---|--:|\n| 1 | 2 |\n\n```js\nconst x = 1\n```')
+  assert.deepEqual(blocks.map(b => b.type), ['heading', 'list', 'math', 'table', 'code'])
+  assert.equal(blocks[2].tex, '\\frac{a}{b}')
+  assert.deepEqual(inline('costs $5 and $10'), [{ type: 'text', text: 'costs $5 and $10' }], 'a price is not maths')
+  assert.equal(inline('[x](javascript:alert(1))')[0].type, 'text', 'only web links')
+  assert.equal(inline('<img src=x onerror=alert(1)>')[0].type, 'text', 'HTML stays text')
+  const renderer = code(src('lib/markdown.js'))
+  assert.ok(!renderer.match(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/))
+  assert.match(renderer, /trust: false/, 'KaTeX may not make links or load anything')
 })
 
 test('a screenshot is taken only by its button, shown before it is sent, and sent only with a question', () => {
   const adapter = code(src('lib/browser.js'))
   assert.equal((adapter.match(/captureVisibleTab/g) ?? []).length, 1, 'one way to take one')
-  assert.match(adapter, /chrome\.tabs\.captureVisibleTab\(typeof windowId === 'number' \? windowId : undefined, \{ format: 'jpeg', quality: 90 \}\)/, 'the visible tab of the popup\'s own window')
-  const popup = code(src('popup.js'))
-  assert.equal((popup.match(/browser\.captureTab\(/g) ?? []).length, 1)
-  const handler = popup.slice(popup.indexOf("shotButton.addEventListener('click'"), popup.indexOf('const ask = el('))
-  assert.match(handler, /browser\.captureTab\(tabWindowId\)/, 'taken in the Screenshot button\'s handler and nowhere else')
+  assert.match(adapter, /chrome\.tabs\.captureVisibleTab\(typeof windowId === 'number' \? windowId : undefined, \{ format: 'jpeg', quality: 90 \}\)/)
+  const panel = code(src('sidepanel.js'))
+  assert.equal((panel.match(/browser\.captureTab\(/g) ?? []).length, 1)
+  const handler = panel.slice(panel.indexOf("shotButton.addEventListener('click'"), panel.indexOf("regionButton.addEventListener('click'"))
+  assert.match(handler, /browser\.captureTab\(page\.windowId\)/, 'taken in the Screenshot button handler and nowhere else')
   assert.doesNotMatch(handler, /client\.|fetch\(|sendEvent/, 'taking one sends nothing')
-  assert.match(handler, /showShot\(\)/, 'shown to the learner first')
-  assert.ok(!popup.match(/screenshot[^\n]*(store\.|chrome\.storage)/i), 'kept nowhere')
-  // It travels only inside the one question the learner submits.
-  assert.match(popup, /client\.ask\(buildQuestion\(\{ question: question\.value, page, title: title\.value, excerpt: probe\.selection, screenshot \}\)\)/)
-  assert.ok(!popup.match(/sendEvent\([^)]*screenshot/), 'never with a save')
+  assert.match(handler, /showAttached\(\)/, 'shown to the learner first')
+  assert.ok(!panel.match(/screenshot[^\n]*(store\.|threads\.|chrome\.storage)/i), 'kept nowhere')
+  assert.ok(!panel.match(/capture\([^\n]*screenshot/), 'never with a capture')
 })
 
 test('a question carries a screenshot only when one was taken, as a JPEG, and waits longer for it', async () => {
@@ -508,7 +538,9 @@ test('a release is refused without an https address that is somewhere else', () 
 test('the release ZIP holds the built extension and nothing else', () => {
   const { zip, name, out } = packageWith({ NOVA_URL: 'https://kivo.example/some/path' })
   assert.equal(name, `nova-extension-${JSON.parse(src('manifest.template.json')).version}.zip`)
-  assert.deepEqual(zipNames(zip), ['background.js', 'config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/api.js', 'lib/browser.js', 'lib/note-picker.js', 'lib/page.js', 'lib/region.js', 'lib/store.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js'])
+  const names = zipNames(zip)
+  assert.deepEqual(names.filter(n => !n.startsWith('vendor/katex/fonts/')), ['background.js', 'config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/api.js', 'lib/browser.js', 'lib/markdown.js', 'lib/page.js', 'lib/region.js', 'lib/store.js', 'lib/thread.js', 'lib/ui.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js', 'sidepanel.css', 'sidepanel.html', 'sidepanel.js', 'vendor/katex/LICENSE', 'vendor/katex/katex.min.css', 'vendor/katex/katex.min.js'])
+  assert.ok(names.filter(n => n.startsWith('vendor/katex/fonts/')).every(n => n.endsWith('.woff2')), 'only KaTeX woff2 fonts')
   assert.match(out, /sha256 [0-9a-f]{64}/)
   assert.match(out, /for https:\/\/kivo\.example\n/)
 })
@@ -530,18 +562,20 @@ test('the extension and its package.json agree on the version, and the descripti
 // ── How the popup behaves ─────────────────────────────────────────────────────
 
 test('Ask Nova: Enter asks and Shift+Enter is a new line; a failed question stays in the box', () => {
-  const popup = code(src('popup.js'))
-  assert.match(popup, /if \(event\.key !== 'Enter' \|\| event\.shiftKey \|\| event\.isComposing\) return/)
-  assert.match(popup, /question\.form\.requestSubmit\(\)/, 'Enter goes through the same form submit, so the one ask path holds')
-  const handler = popup.slice(popup.indexOf("el('form', {\n      onsubmit: async event => {\n        event.preventDefault()\n        if (!question.value.trim()) return"))
-  const failed = handler.indexOf("return thread.replaceChildren(alertBox(")
+  const panel = code(src('sidepanel.js'))
+  assert.match(panel, /if \(e\.key !== 'Enter' \|\| e\.shiftKey \|\| e\.isComposing\) return/)
+  assert.match(panel, /form\.requestSubmit\(\)/, 'Enter goes through the same form submit')
+  const handler = panel.slice(panel.indexOf('async function ask('), panel.indexOf("question.addEventListener('input'"))
+  assert.match(handler, /if \(!asked \|\| asking\) return/, 'a second submit while asking sends nothing')
+  const failed = handler.indexOf('turn.error = ')
   const cleared = handler.indexOf("question.value = ''")
   assert.ok(failed > 0 && cleared > failed, 'the box is cleared only after an answer arrived')
-  assert.match(handler, /if \(askButton\.getAttribute\('aria-busy'\)\) return/, 'a second submit while asking sends nothing')
+  assert.match(panel, /More detail/, 'a fuller answer is one press away')
+  assert.match(panel, /New conversation/)
 })
 
 test('an action on its way blocks the others, so a double click saves once', () => {
-  const send = code(src('popup.js')).match(/async function send\(eventType, button, words\) \{[\s\S]*?\n  \}/)[0]
+  const send = code(src('popup.js')).match(/async function send\(button, words, request\) \{[\s\S]*?\n  \}/)[0]
   assert.match(send, /if \(buttons\(\)\.some\(b => b\.getAttribute\('aria-busy'\)\)\) return null/)
   assert.match(send, /for \(const b of buttons\(\)\) b\.disabled = true/)
 })
@@ -556,9 +590,14 @@ test('connection status and the privacy disclosure are said in words, not colour
   assert.match(popup, /code\.setAttribute\('aria-describedby', 'code-error'\)/)
 })
 
-test('the popup stays within its width and moves nothing for reduced motion', () => {
+test('the popup stays within its width, the panel fills its own, and nothing moves for reduced motion', () => {
   const css = src('popup.css')
   assert.match(css, /body \{ width: 420px;/)
+  const panel = src('sidepanel.css')
+  assert.match(panel, /body\.panel \{ width: auto;/)
+  assert.match(panel, /\.md-table \{ overflow-x: auto;/, 'a wide table scrolls, inside the answer')
+  assert.match(panel, /\.md pre \{[^}]*overflow-x: auto;/, 'so does code')
+  assert.ok(!panel.match(/@import|url\(/), 'no outside fonts or images')
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/)
   assert.ok(!css.match(/@import|url\(/), 'no outside fonts or images')
 })
