@@ -1,7 +1,7 @@
 // The extension's calls to Nova, all to Nova's own address: redeem a pairing
 // code, read the learner's subjects, send one learning event (a page saved, a
-// passage saved, a page to study), find a note and put a passage into it,
-// ask about the page, disconnect. The credential travels as a bearer header and nowhere
+// passage saved, a page to study), capture into a draft and see where it was
+// filed, ask about the page, take a research task one step at a time, disconnect. The credential travels as a bearer header and nowhere
 // else; cookies are never sent.
 //
 // Every failure comes back as { ok: false, kind, message } with words a
@@ -10,6 +10,10 @@
 const TIMEOUT_MS = 12_000
 // A question with a screenshot: the model takes longer to read a picture.
 const SCREENSHOT_TIMEOUT_MS = 30_000
+// Placing a passage may ask a small model (the server stops it at 4 s).
+const PLACE_TIMEOUT_MS = 9_000
+// One research decision: the model reads a page's worth of text.
+const RESEARCH_STEP_TIMEOUT_MS = 45_000
 
 export const WORDS = {
   offline:         "Can't reach Nova right now. Check your connection and try again.",
@@ -80,6 +84,14 @@ export function createClient({ baseUrl, fetch: doFetch, getToken }) {
     capture:    body => call('/api/nova/extension/captures', { method: 'POST', body }),
     drafts:     () => call('/api/nova/extension/captures'),
     ask:        question => call('/api/nova/extension/ask', { method: 'POST', body: question, timeoutMs: question.screenshot || question.detail === 'detailed' ? SCREENSHOT_TIMEOUT_MS : TIMEOUT_MS }),
+    // Where a captured passage belongs: Kivo's placement (asked once, after
+    // the capture is saved), the learner's own choice, and the places to choose from.
+    place:       (draftId, itemId) => call('/api/nova/extension/captures/place', { method: 'POST', body: { draftId, itemId }, timeoutMs: PLACE_TIMEOUT_MS }),
+    choosePlace: (draftId, itemId, subjectId, topicId) => call('/api/nova/extension/captures/place', { method: 'PUT', body: { draftId, itemId, subjectId: subjectId || null, topicId: topicId || null } }),
+    places:      () => call('/api/nova/extension/places'),
+    // Research: what the workspace already holds, and one decision at a time.
+    researchContext: objective => call('/api/nova/extension/research/context', { method: 'POST', body: { objective } }),
+    researchStep:    input => call('/api/nova/extension/research/step', { method: 'POST', body: input, timeoutMs: RESEARCH_STEP_TIMEOUT_MS }),
   }
 }
 

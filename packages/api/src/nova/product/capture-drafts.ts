@@ -9,9 +9,15 @@
 //              notes module's own writes (createNote once, replaceBodyIn on the
 //              version read), so there is still one notes system.
 //
+//   place      where each passage belongs in the learner's workspace: asked of
+//              knowledge-placement.ts (the one placement service) after the
+//              capture is saved, so a capture never waits on it. The
+//              learner's own choice is stored as theirs and never replaced.
+//
 // Not evidence: a draft is the learner's material. It writes no mastery,
-// session, Learning DNA, fact, reality or pattern, and nothing here calls a
-// model. Every query names the learner's profile; an id alone reaches nothing.
+// session, Learning DNA, fact, reality or pattern. The only model call is the
+// placement service's. Every query names the learner's profile; an id alone
+// reaches nothing.
 
 import { prisma } from "@repo/db/client";
 import { randomUUID } from "node:crypto";
@@ -20,6 +26,8 @@ import {
   DRAFT_ITEMS_MAX, type CaptureItem, type DraftDetail, type DraftSummary,
 } from "./capture-draft-rules";
 import { createNote, noteRowIn, noteRowWithBody, replaceBodyIn } from "./notes";
+import { forgetStructure, suggestPlacement, workspacePlaces, type PlacementAnswer, type RelatedNote } from "./knowledge-placement";
+import { chosenPlace, placementOf, type Placement } from "./knowledge-placement-rules";
 import { NOTE_TITLE_MAX } from "./notes.types";
 
 const ROW = { id: true, title: true, status: true, items: true, version: true, lastCaptureAt: true, createdAt: true, mergedNoteId: true } as const;
@@ -278,6 +286,72 @@ export async function mergeDraft(profileId: string, id: string, raw: unknown): P
     }
   }
   return fail("conflict", "That note kept changing while Nova was adding to it. Nothing was added. Try again.");
+}
+
+// ── Placing a passage ────────────────────────────────────────────────────────
+
+// One passage changed in place, on the version read; read again on a race.
+async function changeItem(profileId: string, draftId: string, itemId: string, change: (item: CaptureItem) => CaptureItem | null): Promise<{ ok: true; item: CaptureItem; draft: DraftDetail } | { ok: false; error: "not_found" | "busy" }> {
+  for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt++) {
+    const row = (await prisma.novaCaptureDraft.findFirst({ where: { id: draftId, profileId }, select: ROW })) as Row | null;
+    if (!row) return { ok: false, error: "not_found" };
+    const items = readItems(row.items);
+    const at = items.findIndex(i => i.id === itemId);
+    if (at === -1) return { ok: false, error: "not_found" };
+    const next = change(items[at]!);
+    if (!next) return { ok: true, item: items[at]!, draft: detailOf(row) };
+    const all = items.slice(); all[at] = next;
+    const written = await prisma.novaCaptureDraft.updateMany({
+      where: { id: draftId, profileId, version: row.version },
+      data:  { items: all as unknown as object, version: { increment: 1 } },
+    });
+    if (written.count === 1) return { ok: true, item: next, draft: detailOf({ ...row, items: all, version: row.version + 1 }) };
+  }
+  return { ok: false, error: "busy" };
+}
+
+export type PlaceResult =
+  | { ok: true; itemId: string; placement: Placement | null; suggestion: Placement | null; placedBy: "kivo" | "learner" | null; related: RelatedNote[]; draft: DraftDetail }
+  | { ok: false; error: "not_found" | "busy" | "unknown_place"; message: string };
+
+const PLACE_WORDS = {
+  not_found: "That passage isn't in your drafts any more.",
+  busy: "Kivo was busy with your other captures. Try again.",
+  unknown_place: "That subject or topic isn't in your workspace any more. Choose another.",
+} as const;
+
+// Kivo's placement for one captured passage: asked once. A passage the
+// learner placed (or cleared) themselves, or one already placed, is answered
+// as it stands.
+export async function placeDraftItem(profileId: string, draftId: string, itemId: string, options: Pick<NonNullable<Parameters<typeof suggestPlacement>[2]>, "generate" | "surface" | "now"> = {}): Promise<PlaceResult> {
+  const row = (await prisma.novaCaptureDraft.findFirst({ where: { id: draftId, profileId }, select: ROW })) as Row | null;
+  const item = row ? readItems(row.items).find(i => i.id === itemId) : undefined;
+  if (!row || !item) return { ok: false, error: "not_found", message: PLACE_WORDS.not_found };
+  if (item.placedBy === "learner" || item.placement || item.suggestion) {
+    return { ok: true, itemId, placement: item.placement ?? null, suggestion: item.suggestion ?? null, placedBy: item.placedBy ?? null, related: [], draft: detailOf(row) };
+  }
+  const answer: PlacementAnswer = await suggestPlacement(profileId, { title: item.title, text: item.text, context: item.context, domain: item.site }, { generate: options.generate, surface: options.surface, requestId: `place:${itemId}`, now: options.now });
+  const changed = await changeItem(profileId, draftId, itemId, current =>
+    // The learner chose while Kivo was thinking: theirs stands.
+    current.placedBy === "learner" ? null : { ...current, placement: answer.placement, suggestion: answer.suggestion, placedBy: answer.placement ? "kivo" : null });
+  if (!changed.ok) return { ok: false, error: changed.error, message: PLACE_WORDS[changed.error] };
+  return { ok: true, itemId, placement: changed.item.placement ?? null, suggestion: changed.item.suggestion ?? null, placedBy: changed.item.placedBy ?? null, related: answer.related, draft: changed.draft };
+}
+
+// The learner's own choice: a subject (and optionally one of its topics), or
+// none at all. Checked against the workspace as it stands.
+export async function setDraftItemPlacement(profileId: string, draftId: string, itemId: string, choice: { subjectId: string | null; topicId: string | null; topicName?: string | null }, now = new Date()): Promise<PlaceResult> {
+  let placement: Placement | null = null;
+  if (choice.subjectId) {
+    forgetStructure(profileId);
+    const { places } = await workspacePlaces(profileId, now.getTime());
+    const place = chosenPlace(places, { subjectId: choice.subjectId, topicId: choice.topicId, topicName: choice.topicName ?? null });
+    if (!place) return { ok: false, error: "unknown_place", message: PLACE_WORDS.unknown_place };
+    placement = placementOf(place, "high", "learner", now);
+  }
+  const changed = await changeItem(profileId, draftId, itemId, current => ({ ...current, placement, suggestion: null, placedBy: "learner" }));
+  if (!changed.ok) return { ok: false, error: changed.error, message: PLACE_WORDS[changed.error] };
+  return { ok: true, itemId, placement, suggestion: null, placedBy: "learner", related: [], draft: changed.draft };
 }
 
 export { DRAFT_ITEMS_MAX };

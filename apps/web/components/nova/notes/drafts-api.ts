@@ -41,3 +41,11 @@ export const today = () => {
 }
 
 export const newKey = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`)
+
+// Where each passage belongs (knowledge-placement.ts): Kivo's placement,
+// asked once per passage, and the learner's own choice (or "nowhere").
+export type PlaceAnswer = { itemId: string; placement: CaptureItem['placement']; suggestion: CaptureItem['suggestion']; placedBy: CaptureItem['placedBy']; draft: DraftDetail }
+export const placeItem = (draftId: string, itemId: string) =>
+  call<PlaceAnswer>(`/api/nova/drafts/${encodeURIComponent(draftId)}/place`, 'POST', { itemId })
+export const choosePlace = (draftId: string, itemId: string, dest: { subjectId: string | null; topicName: string | null }) =>
+  call<PlaceAnswer>(`/api/nova/drafts/${encodeURIComponent(draftId)}/place`, 'PUT', { itemId, subjectId: dest.subjectId, topicName: dest.topicName })

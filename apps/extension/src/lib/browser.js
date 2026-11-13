@@ -123,6 +123,8 @@ export const NO_PROBE = { available: false, selection: '', tooLong: false, canon
 
 // The side panel's page for one tab, and what the popup hands it.
 const PANEL_PAGE = 'sidepanel.html'
+// The same panel in Research mode (research.js).
+export const RESEARCH_PAGE = 'research.html'
 const HANDOFF = tabId => `nova.panel:${tabId}`
 const PANEL_REGION = 'novaPanelRegion'
 
@@ -142,10 +144,10 @@ export const browser = {
    * @param {number} tabId
    * @param {object} handoff the page, and the selection, for the panel to start with
    */
-  openPanel(tabId, handoff) {
+  openPanel(tabId, handoff, page = PANEL_PAGE) {
     if (typeof tabId !== 'number' || !globalThis.chrome?.sidePanel?.open) return false
     try {
-      const path = `${PANEL_PAGE}?tab=${tabId}`
+      const path = `${page === RESEARCH_PAGE ? RESEARCH_PAGE : PANEL_PAGE}?tab=${tabId}`
       void chrome.sidePanel.setOptions({ tabId, path, enabled: true })
       const opening = chrome.sidePanel.open({ tabId })
       void chrome.storage.session.set({ [HANDOFF(tabId)]: { ...handoff, at: Date.now() } })
@@ -156,8 +158,8 @@ export const browser = {
   },
 
   /** Where there is no side panel (Safari): the same page opens in the popup. */
-  async handOffInline(tabId, handoff) {
-    try { await chrome.storage.session.set({ [HANDOFF(tabId)]: { ...handoff, at: Date.now() } }); return `${PANEL_PAGE}?tab=${tabId}&inline=1` } catch { return null }
+  async handOffInline(tabId, handoff, page = PANEL_PAGE) {
+    try { await chrome.storage.session.set({ [HANDOFF(tabId)]: { ...handoff, at: Date.now() } }); return `${page === RESEARCH_PAGE ? RESEARCH_PAGE : PANEL_PAGE}?tab=${tabId}&inline=1` } catch { return null }
   },
 
   /** What the popup handed this tab's panel. Waits a moment for it to arrive. */

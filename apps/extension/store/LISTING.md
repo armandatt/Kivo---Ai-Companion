@@ -96,7 +96,13 @@ The people and workspace in them are Kivo's demo personas, not a user's data.
 | `sidePanel` | Ask Nova opens a conversation in the browser's side panel beside the page, for that one tab, only when the user presses Ask Nova. It reads nothing from any page and grants no site access. |
 | `storage` | Stores the extension's own access credential in `chrome.storage.local` after the user pairs the browser with a one-time code, so they stay connected. The open conversation with Nova about an article is kept in `chrome.storage.session` (memory only, cleared when the browser closes or the user presses New conversation) so follow-up questions have context. Only if the user presses Keep on a conversation is it saved in `chrome.storage.local` on this device, with that article's address and title, until they unlock it, start a new conversation, or leave it unused for 14 days (at most 10 kept). Nothing else is stored: no browsing history. |
 
-Host permissions: **none requested.** Remote code: **No, the extension does not use remote code.** All scripts are in the package; `popup.html` loads only `popup.js` and `popup.css`.
+Host permissions: **none at install.** `optional_host_permissions` (`https://*/*`, `http://*/*`) are requested only when the user starts a **Research** task in the side panel, and given back (`chrome.permissions.remove`) when the task ends. Justification for the store's host permission field:
+
+> Research is an optional feature the user starts by typing an objective and pressing Start research. Only then does the extension ask for website access, for that task. It opens public web pages in background tabs of its own (search results, then the sources it chooses), reads their visible text, links and buttons with a function shipped in the package, and keeps passages it quotes, checked word for word against the page. It never reads the user's other tabs, cookies, passwords or form contents, never signs in, buys, posts or submits forms (anything like that waits for the user's explicit OK), and refuses local and private-network addresses. Access is removed when the task ends.
+
+**CONFIRM** the single-purpose statement still covers Research (it is the same purpose: bringing what the user reads into their Kivo study material), and update the data-usage boxes: during Research, page text the agent reads is sent to Kivo's server for each decision (not stored there).
+
+Remote code: **No, the extension does not use remote code.** All scripts are in the package; `popup.html` loads only `popup.js` and `popup.css`; `research.html` loads only its own files and the packaged KaTeX.
 
 ### Data usage
 
