@@ -46,7 +46,7 @@ describe("what the note holds", () => {
   it("a captured passage is quoted under its source, word for word", () => {
     const body = captureBody({ url: "https://example.edu/ch7", title: "Chapter 7", text: "Line one\n\nLine **two**", via: "bookmarklet" }, "2026-10-26");
     expect(body.split("\n")).toEqual([
-      "Source: Chapter 7 https://example.edu/ch7",
+      "Source: [Chapter 7](https://example.edu/ch7)",
       "Captured 2026-10-26 from example.edu with the Kivo bookmarklet.",
       "",
       "> [!quote] From the source",
@@ -118,6 +118,9 @@ describe("the boundary", () => {
   it("capture is pure: no database, no model, only the resource-link helpers", () => {
     const src = readFileSync(join(__dirname, "..", "product", "note-capture.ts"), "utf8");
     const imports = src.split("\n").filter(l => l.startsWith("import "));
-    expect(imports).toEqual(['import { normalizeResourceUrl } from "./resource-link";']);
+    expect(imports).toEqual(['import { normalizeResourceUrl } from "./resource-link";', 'import { linkTarget } from "./capture-draft-rules";']);
+    // and the draft rules it shares the source line with are pure too
+    const rules = readFileSync(join(__dirname, "..", "product", "capture-draft-rules.ts"), "utf8");
+    expect(rules.split("\n").filter(l => l.startsWith("import "))).toEqual(['import { normalizeResourceUrl } from "./resource-link";']);
   });
 });

@@ -121,8 +121,75 @@ export function readProbe(raw, max) {
 
 export const NO_PROBE = { available: false, selection: '', tooLong: false, canonicalUrl: null, meta: null }
 
+// The side panel's page for one tab, and what the popup hands it.
+const PANEL_PAGE = 'sidepanel.html'
+const HANDOFF = tabId => `nova.panel:${tabId}`
+const PANEL_REGION = 'novaPanelRegion'
+
 export const browser = {
   storage: () => chrome.storage.local,
+  // In memory only, gone when the browser quits; for the conversation (thread.js).
+  session: () => chrome.storage.session,
+
+  /** Whether this browser has a side panel (Chrome 116+; not Safari). */
+  panelAvailable: () => Boolean(globalThis.chrome?.sidePanel?.open),
+
+  /**
+   * Opens Nova's side panel on this tab, for this page. It must run straight
+   * from the learner's click (the browser allows it only then), so nothing is
+   * awaited first. The panel is set for this tab only: it closes when the
+   * learner switches tabs and comes back with this one. false: not opened.
+   * @param {number} tabId
+   * @param {object} handoff the page, and the selection, for the panel to start with
+   */
+  openPanel(tabId, handoff) {
+    if (typeof tabId !== 'number' || !globalThis.chrome?.sidePanel?.open) return false
+    try {
+      const path = `${PANEL_PAGE}?tab=${tabId}`
+      void chrome.sidePanel.setOptions({ tabId, path, enabled: true })
+      const opening = chrome.sidePanel.open({ tabId })
+      void chrome.storage.session.set({ [HANDOFF(tabId)]: { ...handoff, at: Date.now() } })
+      return opening.then(() => true, () => false)
+    } catch {
+      return false
+    }
+  },
+
+  /** Where there is no side panel (Safari): the same page opens in the popup. */
+  async handOffInline(tabId, handoff) {
+    try { await chrome.storage.session.set({ [HANDOFF(tabId)]: { ...handoff, at: Date.now() } }); return `${PANEL_PAGE}?tab=${tabId}&inline=1` } catch { return null }
+  },
+
+  /** What the popup handed this tab's panel. Waits a moment for it to arrive. */
+  async panelHandoff(tabId) {
+    const key = HANDOFF(tabId)
+    const read = async () => (await chrome.storage.session.get(key).catch(() => ({})))?.[key] ?? null
+    const now = await read()
+    if (now) return now
+    return new Promise(resolve => {
+      const done = value => { chrome.storage.onChanged.removeListener(listen); clearTimeout(timer); resolve(value) }
+      const listen = (changes, area) => { if (area === 'session' && changes[key]?.newValue) done(changes[key].newValue) }
+      const timer = setTimeout(() => void read().then(done), 2500)
+      chrome.storage.onChanged.addListener(listen)
+    })
+  },
+
+  /**
+   * In the panel: Select area, then the picture comes back here instead of
+   * to the popup. Returns a function that stops waiting.
+   * @param {number} tabId
+   * @param {(shot: object) => void} onShot
+   */
+  waitForRegion(tabId, onShot) {
+    void chrome.storage.session.set({ [PANEL_REGION]: tabId })
+    const listen = (changes, area) => {
+      if (area !== 'session' || !changes[REGION_SHOT_KEY]?.newValue) return
+      void browser.takeRegionShot(tabId).then(shot => { if (shot) { stop(); onShot(shot) } })
+    }
+    const stop = () => { chrome.storage.onChanged.removeListener(listen); void chrome.storage.session.remove(PANEL_REGION) }
+    chrome.storage.onChanged.addListener(listen)
+    return stop
+  },
 
   /** The tab the popup was opened on, or null. */
   async activeTab() {

@@ -408,6 +408,28 @@ export async function setSessionLength(sessionId: string, minutes: number): Prom
   return done.count === 1;
 }
 
+// A running session's own details (Quick Focus): its title, when it has no
+// topic (a topic session is named by its topic), and a category and a
+// description. Only while it is open; nothing about its time changes.
+export async function setSessionDetails(
+  sessionId: string,
+  details: { title?: string | null; category?: string | null; description?: string | null },
+  current: { topicName: string | null; details: { category: string | null; description: string | null } | null },
+): Promise<boolean> {
+  const next = {
+    category:    details.category    !== undefined ? details.category    : current.details?.category ?? null,
+    description: details.description !== undefined ? details.description : current.details?.description ?? null,
+  };
+  const done = await prisma.novaStudySession.updateMany({
+    where: { id: sessionId, status: { in: OPEN_STATUSES } },
+    data: {
+      ...(details.title !== undefined && current.topicName === null ? { currentFocus: details.title } : {}),
+      focusDetails: next,
+    },
+  });
+  return done.count === 1;
+}
+
 // ── Sessions nobody came back to ──────────────────────────────────────────────
 // The rule is engines/session-clock.ts (sessionAbandonment). These are its
 // only writers: the tick's sweep, a Start over a session left open, and a

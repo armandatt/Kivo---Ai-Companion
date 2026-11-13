@@ -15,7 +15,7 @@ type Ended  = NonNullable<Extract<NovaSessionResponse, { ok: true }>['ended']>
 export function useNovaSession() {
   const [synced, setSynced]   = useState<Synced | null>(null)
   const [ended, setEnded]     = useState<Ended | null>(null)
-  const [pending, setPending] = useState<'pause' | 'resume' | 'end' | null>(null)
+  const [pending, setPending] = useState<'pause' | 'resume' | 'end' | 'start' | 'details' | null>(null)
   const [error, setError]     = useState<string | null>(null)
   const [blocked, setBlocked] = useState<string | null>(null)   // this account cannot have a session
   const [now, setNow]         = useState(() => Date.now())
@@ -74,10 +74,29 @@ export function useNovaSession() {
     setPending(null)
   }, [apply])
 
+  // Quick Focus: a session at once, with no task, no topic and no time limit,
+  // through the ordinary start command. Details can be added while it runs.
+  const quickStart = useCallback(async () => {
+    setPending('start'); setEnded(null)
+    const res = await sendSessionCommand({ action: 'start', topicName: null, subjectName: null, plannedMinutes: 0, label: 'Quick focus' })
+    apply(res)
+    setPending(null)
+    return res.ok && res.session !== null
+  }, [apply])
+
+  // A running session's optional details (title, category, description).
+  const setDetails = useCallback(async (details: { title?: string | null; category?: string | null; description?: string | null }) => {
+    setPending('details')
+    const res = await sendSessionCommand({ action: 'set_details', ...details })
+    apply(res)
+    setPending(null)
+    return res.ok
+  }, [apply])
+
   const session = synced?.session ?? null
   const elapsedSeconds = session
     ? session.elapsedSeconds + (running && synced ? Math.max(0, (now - synced.at) / 1000) : 0)
     : 0
 
-  return { loading: synced === null && !blocked && !error, session, elapsedSeconds, ended, pending, error, blocked, command, end, setLength, retry: sync }
+  return { loading: synced === null && !blocked && !error, session, elapsedSeconds, ended, pending, error, blocked, command, end, setLength, quickStart, setDetails, retry: sync }
 }

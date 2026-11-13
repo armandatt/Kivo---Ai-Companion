@@ -203,8 +203,12 @@ export interface NovaSessionView {
   plannedDurationMinutes: number;      // 0 = no planned length
   // Started with no time limit, by choice (no countdown; nothing is due).
   untimed?:               boolean;
-  // What is being worked on when it is not a topic (a task's title).
+  // What is being worked on when it is not a topic (a task's title, or a
+  // Quick Focus session's title).
   label?:                 string | null;
+  // A Quick Focus session's optional details beyond its title. Learner-written;
+  // read by nothing but the page (never evidence, never in a prompt).
+  details?:               { category: string | null; description: string | null } | null;
   // Study time so far as of serverNow, pauses excluded. The page counts up
   // from this value; it never keeps a clock of its own.
   elapsedSeconds:         number;
@@ -225,7 +229,11 @@ export type NovaSessionCommand =
   | { action: "resume" }
   // outcome: the learner's one-tap answer to "How did it go?". Without it
   // the session is still closed, and its report is marked "unreported".
-  | { action: "end"; outcome: NovaSessionOutcome | null };
+  | { action: "end"; outcome: NovaSessionOutcome | null }
+  // A running session's optional details (Quick Focus): its title (only for a
+  // session with no topic), a category and a description. undefined: unchanged;
+  // null: cleared. Changes nothing about its time or what it counts as.
+  | { action: "set_details"; title?: string | null; category?: string | null; description?: string | null };
 
 export type NovaSessionOutcome = "struggled" | "okay" | "good" | "crushed_it";
 

@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, ArrowLeft, Check, ClipboardPaste, FileText, Loader2, Smartphone, Sparkles, Square, Upload } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Check, ClipboardPaste, FileText, Inbox, Loader2, Smartphone, Sparkles, Square, Upload } from 'lucide-react'
 import type { NoteDetail, NoteSubjectOption, NoteSummary } from '@repo/api/nova/product/notes.types'
 import { SubjectSelect } from '../subject-select'
 import { NOTE_BODY_MAX, NOTE_TITLE_MAX, NOTE_TOPIC_MAX } from '@repo/api/nova/product/notes.types'
@@ -27,6 +27,7 @@ import { NoteBody } from './note-body'
 import { createNote, fetchNote, fetchNotes, updateNote } from './notes-api'
 import { takeNoteCapture } from './pending-note-capture'
 import { transcribeFile } from './tutor-api'
+import { keepInDrafts, newKey } from './drafts-api'
 
 const TEXT_TYPES = ['.md', '.markdown', '.txt', '.text']
 const MODEL_TYPES = ['.pdf', '.png', '.jpg', '.jpeg', '.webp']
@@ -184,6 +185,21 @@ export function NoteCaptureScreen() {
   }, [])
 
   const canSave = !!addition && !saving && !urlBad && (dest === 'new' ? !!title.trim() : !!target)
+
+  // Keep in drafts: organise later. The passage joins the current draft (one
+  // per reading session) with its source; a retry repeats the key, so it is
+  // kept once. Nothing is asked about where it goes.
+  const [keeping, setKeeping] = useState<'saving' | 'kept' | 'error' | null>(null)
+  const [keepError, setKeepError] = useState('')
+  const keepKey = useRef(newKey())
+  useEffect(() => { setKeeping(null); keepKey.current = newKey() }, [text, url, pageTitle])
+  async function keep() {
+    if (keeping === 'saving') return
+    setKeeping('saving')
+    const res = await keepInDrafts({ key: keepKey.current, url: cleanUrl, title: pageTitle, text: text.trim() })
+    if (res.ok) { setKeeping('kept'); return }
+    setKeepError(res.message); setKeeping('error')
+  }
 
   async function save() {
     if (!canSave) return
@@ -353,7 +369,15 @@ export function NoteCaptureScreen() {
               <button type="button" onClick={() => void save()} disabled={!canSave} className={primary} data-capture-save>
                 {saving ? <><Loader2 className="size-4 animate-spin" /> Saving…</> : dest === 'new' ? 'Save as a note' : target ? `Add to “${target.title.slice(0, 40)}”` : 'Choose a note'}
               </button>
-              <span className="text-xs text-subtle">Saved to your account only. You can edit it afterwards.</span>
+              {tab === 'paste' && (text.trim() || cleanUrl) && !urlBad && (
+                <button type="button" onClick={() => void keep()} disabled={keeping !== null && keeping !== 'error'} className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/85 transition-colors hover:bg-white/5 disabled:opacity-60" data-capture-keep>
+                  {keeping === 'saving' ? <Loader2 className="size-4 animate-spin" /> : <Inbox className="size-4" />} Keep in drafts
+                </button>
+              )}
+              {keeping === 'kept'
+                ? <span role="status" className="text-xs text-foreground/70" data-capture-kept>In your drafts. <Link href="/notes/drafts" className="underline">Open drafts</Link></span>
+                : keeping === 'error' ? <span role="alert" className="text-xs text-amber-200">{keepError}</span>
+                : <span className="text-xs text-subtle">Saved to your account only. You can edit it afterwards.</span>}
             </div>
           </div>
 

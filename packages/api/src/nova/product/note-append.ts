@@ -25,6 +25,7 @@
 
 import { prisma } from "@repo/db/client";
 import { appendToBody, captureBody, hasSelection, selectionSection } from "./note-capture";
+import { linkTarget, mergeIntoBody, siteOf } from "./capture-draft-rules";
 import { eventsLastMinute, parseLearningEvent, passageSeen, recordLearningEvent, recordPassageIn } from "./learning-events";
 import { createNote, listNoteRows, noteRowIn, noteRowWithBody, replaceBodyIn, type NoteChoiceRow } from "./notes";
 import { EVENTS_PER_MINUTE, type LearningEventSource } from "./learning-events.types";
@@ -149,7 +150,12 @@ export async function saveSelectionToNote(
     if (seen || hasSelection(note.body, event.excerpt)) {
       return { success: true, action: "already_in_note", duplicate: !!seen, note: choiceOf(note, subjects), added: 0 };
     }
-    const next = appendToBody(note.body, section, day);
+    // A page this note already cites gets the passage in its section, under no
+    // second heading; anything else is a new section at the end.
+    const cites = event.url !== null && note.body.includes(`](${linkTarget(event.url)})`);
+    const next = cites
+      ? mergeIntoBody(note.body, [{ id: event.clientEventId, key: null, url: event.url, title: event.title, site: siteOf(new URL(event.url!).hostname), text: event.excerpt, context: null, note: "", capturedAt: event.occurredAt.toISOString() }], day)?.body ?? null
+      : appendToBody(note.body, section, day);
     if (next === null) return fail("too_long", `That note can't take more: it would be over the ${NOTE_BODY_MAX.toLocaleString("en-US")} characters a note can hold. Choose another, or create a new note.`);
     try {
       const updated = await prisma.$transaction(async tx => {

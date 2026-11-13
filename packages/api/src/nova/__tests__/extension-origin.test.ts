@@ -92,9 +92,10 @@ describe("which routes give those headers", () => {
   walk("apps/api/app/api");
   const answering = routes.filter(path => /withCors|preflight|extensionCors/.test(read(path))).sort();
 
-  it("only the five the extension calls", () => {
+  it("only the ones the extension calls", () => {
     expect(answering).toEqual([
       "apps/api/app/api/nova/extension/ask/route.ts",
+      "apps/api/app/api/nova/extension/captures/route.ts",
       "apps/api/app/api/nova/extension/connect/route.ts",
       "apps/api/app/api/nova/extension/context/route.ts",
       "apps/api/app/api/nova/extension/disconnect/route.ts",

@@ -67,7 +67,7 @@ test("a captured passage is an ordinary note: listed, searchable by its source, 
   const list = await listNotes(profileId, { q: "https://example.edu/os/ch7" });
   assert.deepEqual(list.notes.map(x => x.id), [first.note.id], "found by its source address");
   const note = await getNote(profileId, first.note.id);
-  assert.ok(note!.body.startsWith("Source: Chapter 7: Deadlocks https://example.edu/os/ch7\n"));
+  assert.ok(note!.body.startsWith("Source: [Chapter 7: Deadlocks](https://example.edu/os/ch7)\n"));
   assert.ok(note!.body.includes("> A deadlock needs four conditions"), "the passage is kept, quoted");
 });
 

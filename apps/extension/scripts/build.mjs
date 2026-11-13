@@ -12,7 +12,8 @@
 // how a build is pointed at a dead port to see the popup's failure states.
 // `npm run build:safari:release` sets it, as `npm run package` does its own check.
 
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { deflateSync } from 'node:zlib'
@@ -39,6 +40,18 @@ mkdirSync(join(out, 'icons'), { recursive: true })
 cpSync(join(root, 'src'), out, { recursive: true, filter: source => !source.endsWith('manifest.template.json') })
 writeFileSync(join(out, 'config.js'), `// Written by scripts/build.mjs.\nexport const NOVA_URL = ${JSON.stringify(origin)}\n`)
 writeFileSync(join(out, 'manifest.json'), readFileSync(join(root, 'src', 'manifest.template.json'), 'utf8'))
+
+// ── KaTeX, for maths in Nova's answers (sidepanel.html). The same package the
+// web app draws notes with, copied into the package: no remote code. Only
+// what the panel loads: the script, its stylesheet, the woff2 fonts (every
+// browser the extension runs in reads woff2) and the licence.
+const katexDir = dirname(createRequire(join(root, 'package.json')).resolve('katex/package.json'))
+const vendor = join(out, 'vendor', 'katex')
+mkdirSync(join(vendor, 'fonts'), { recursive: true })
+cpSync(join(katexDir, 'dist', 'katex.min.js'), join(vendor, 'katex.min.js'))
+cpSync(join(katexDir, 'dist', 'katex.min.css'), join(vendor, 'katex.min.css'))
+cpSync(join(katexDir, 'LICENSE'), join(vendor, 'LICENSE'))
+for (const font of readdirSync(join(katexDir, 'dist', 'fonts')).filter(f => f.endsWith('.woff2'))) cpSync(join(katexDir, 'dist', 'fonts', font), join(vendor, 'fonts', font))
 
 // ── Icons: Kivo's mark (components/brand/kivo-brand.tsx: a dot, two arcs and
 // the node on its orbit, on a 32-unit grid) in ink on a white tile, drawn here

@@ -1,0 +1,92 @@
+/* Nova's side panel: the conversation fills the panel, the page it is about
+   is one line at the top, and the box to ask in stays at the bottom. Built on
+   popup.css (its tokens, buttons and fields); only the layout and the drawing
+   of answers are here. In Safari, with no side panel, the same page runs
+   inside the popup ([data-inline]) at the popup's size. */
+
+body.panel { width: auto; min-width: 300px; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+html[data-inline] body.panel { width: 420px; height: 600px; }
+.panel-view { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0; }
+.panel-view > * { animation: none; }
+
+/* ── The page this is about ─────────────────────────────────────────────── */
+.pagebar { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: var(--s3); padding: 10px var(--s4); border-bottom: 1px solid var(--line); }
+.pagebar .site { width: 28px; height: 28px; font-size: 12px; }
+.pagebar-title { overflow: hidden; color: var(--text); font-weight: 600; font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
+.pagebar .small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* ── The conversation ───────────────────────────────────────────────────── */
+.scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scroll-padding-bottom: var(--s4); }
+.log { display: flex; flex-direction: column; gap: var(--s5); max-width: 760px; margin: 0 auto; padding: var(--s4) var(--s4) var(--s5); }
+.turn { display: flex; flex-direction: column; gap: var(--s3); animation: enter .22s var(--ease) both; }
+.you { align-self: flex-end; max-width: 88%; padding: 8px var(--s3); border-radius: var(--r-lg) var(--r-lg) 4px var(--r-lg); background: var(--raised); border: 1px solid var(--line); }
+.you p { color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.you .sent { margin-top: 2px; color: var(--faint); font-size: 11px; }
+.nova { min-width: 0; }
+.nova.failed { display: grid; gap: var(--s2); justify-items: start; }
+.answer-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3); margin-top: var(--s2); }
+.answer-bar .small { margin-left: auto; }
+.basis { margin-top: 2px; }
+
+.welcome { padding: var(--s6) 0 0; }
+.welcome h1 { font-size: 16px; }
+.welcome p { margin-top: var(--s1); }
+.ideas { display: grid; gap: var(--s2); margin-top: var(--s4); }
+.idea { justify-content: flex-start; height: auto; min-height: 36px; padding: 8px var(--s3); text-align: left; white-space: normal; color: var(--dim); background: var(--surface); border-color: var(--line); }
+.idea:hover:not(:disabled) { color: var(--text); border-color: var(--accent-line); background: var(--accent-soft); }
+.empty { padding: var(--s6) var(--s5); }
+.empty p { margin-top: var(--s2); }
+
+/* ── Asking ─────────────────────────────────────────────────────────────── */
+.composer { padding: var(--s3) var(--s4) var(--s2); border-top: 1px solid var(--line); background: var(--bg); }
+.composer .ask-box { display: flex; align-items: flex-end; gap: var(--s2); margin-top: 0; padding-right: 6px; }
+.composer textarea { flex: 1; min-height: 40px; max-height: 160px; }
+.composer .send { flex: none; height: 30px; margin-bottom: 6px; padding: 0 var(--s3); }
+.tools { display: flex; flex-wrap: wrap; gap: 2px; margin: 6px 0 0 -6px; }
+.tool { height: 28px; padding: 0 8px; font-size: 12px; }
+.attached { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s2); }
+.attached:not(:empty) { margin-bottom: var(--s2); }
+.attached .chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 4px 2px 9px; font-size: 11.5px; justify-self: start; }
+.chip-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chip-x { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; color: inherit; font-size: 13px; line-height: 1; }
+.attached .shot { margin-top: 0; }
+.attached .shot-frame { max-height: 180px; }
+.attached .shot-frame img { max-height: 180px; object-fit: contain; }
+.composer .errors:not(:empty) { margin-bottom: var(--s2); }
+.panel-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding: 6px var(--s4) 10px; background: var(--bg); }
+.panel-foot span { text-align: right; }
+
+/* ── Answers: Markdown and maths (lib/markdown.js) ──────────────────────── */
+.md { color: var(--text); font-size: 13.5px; line-height: 1.6; overflow-wrap: anywhere; }
+.md > * + * { margin-top: 10px; }
+.md p { color: var(--text); }
+.md .md-h { margin: 16px 0 0; font-size: 13.5px; font-weight: 650; letter-spacing: -.005em; }
+.md h3.md-h { font-size: 14.5px; }
+.md > .md-h:first-child { margin-top: 0; }
+.md ul, .md ol { margin: 0; padding-left: 20px; }
+.md li + li { margin-top: 4px; }
+.md li > ul, .md li > ol { margin-top: 4px; }
+.md li::marker { color: var(--faint); }
+.md strong { font-weight: 650; color: #fff; }
+.md a { color: var(--accent-hi); text-decoration: underline; text-underline-offset: 2px; }
+.md code { padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.07); font: 12px/1.4 ui-monospace, "SF Mono", Menlo, monospace; }
+.md pre { position: relative; margin: 0; padding: 10px var(--s3); overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r); background: #0a0b0f; }
+.md pre[data-lang]::before { content: attr(data-lang); position: sticky; left: 0; display: block; margin-bottom: 4px; color: var(--faint); font: 10.5px/1 system-ui, sans-serif; text-transform: lowercase; }
+.md pre code { padding: 0; background: none; font-size: 12px; line-height: 1.55; white-space: pre; }
+.md blockquote { margin: 0; padding-left: var(--s3); border-left: 2px solid var(--line-strong); color: var(--dim); }
+.md hr { border: 0; border-top: 1px solid var(--line); }
+.md-table { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r); }
+.md table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.md th, .md td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
+.md td { white-space: normal; min-width: 80px; overflow-wrap: normal; word-break: normal; }
+.md th { color: var(--dim); font-weight: 600; background: rgba(255,255,255,.03); }
+.md tr:last-child td { border-bottom: 0; }
+.md-math-block { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
+.md .katex { font-size: 1.06em; }
+.md .katex-display { margin: 0; }
+.md-math-raw { padding: 1px 5px; border: 1px dashed var(--warn-line); border-radius: 5px; color: var(--warn); font: 12px/1.4 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre-wrap; }
+
+/* ── Keep (lock) ───────────────────────────────────────────────────────── */
+.pagebar-tools { display: flex; align-items: center; gap: var(--s3); }
+button.lock[aria-pressed="true"]::after { content: "✓"; margin-left: 4px; font-size: 11px; }
+button.lock[aria-pressed="true"] { color: var(--accent-hi); font-weight: 600; }

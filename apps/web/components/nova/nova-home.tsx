@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ChevronRight, KanbanSquare, Plus, Sparkles, Target, Undo2, X } from 'lucide-react'
+import { ChevronRight, KanbanSquare, Loader2, Plus, Sparkles, Target, Timer, Undo2, X } from 'lucide-react'
 import type { NovaTodayReady } from '@repo/api/nova/product/today.types'
 import type { FlowItemView, FlowOp } from '@repo/api/nova/product/day-flow.types'
 import { greetingFor } from '@repo/api/nova/product/greetings'
@@ -65,6 +65,8 @@ export function NovaHome({ view, refreshing }: Props) {
   const [boardOpen, setBoardOpen] = useState(false)
   const [boardTask, setBoardTask] = useState<string | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
+  const [quickError, setQuickError] = useState<string | null>(null)
+  const [quickSaved, setQuickSaved] = useState(false)
   const boardToggle = useRef<HTMLButtonElement>(null)
 
   const flow = day.flow
@@ -105,6 +107,18 @@ export function NovaHome({ view, refreshing }: Props) {
   const focusItem = flow?.items.find(i => i.status === 'active' && !i.sessionEnded) ?? null
   const subject = view.subjectProgress?.find(p => p.subjectName === chosen) ?? null
 
+  // Quick Focus: the clock starts at once, with no task, plan or topic. The
+  // session is the ordinary one (one at a time, the server's clock), shown
+  // above the day like any other; a title and the rest can be added while it runs.
+  const quickFocus = useCallback(async () => {
+    setQuickError(null); setQuickSaved(false)
+    const ok = await live.quickStart()
+    if (!ok) { setQuickError('The session didn’t start. Try again.'); return }
+    window.scrollTo({ top: 0, behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+  }, [live])
+  // A Quick Focus session just ended here: say it was saved, and where.
+  useEffect(() => { if (live.ended && live.ended.topicName === null) setQuickSaved(true) }, [live.ended])
+
   const startItem = useCallback(async (item: FlowItemView, minutes: number) => {
     setStartingItem(item.id)
     const res = await day.act({ action: 'start', itemId: item.id, minutes }, { quiet: true })
@@ -140,6 +154,13 @@ export function NovaHome({ view, refreshing }: Props) {
               </h1>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
+              {!sessionRunning && (
+                <button type="button" onClick={() => void quickFocus()} disabled={live.pending === 'start' || live.loading}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-action px-3 text-sm font-semibold text-action-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.16)] transition-colors hover:bg-action-hover disabled:opacity-60"
+                  title="Start a focus timer now. No task or plan needed; add details while it runs." data-quick-focus>
+                  {live.pending === 'start' ? <Loader2 className="size-4 animate-spin" /> : <Timer className="size-4" />} Quick focus
+                </button>
+              )}
               <button type="button" ref={boardToggle} onClick={() => toggleBoard(!boardOpen)} aria-expanded={boardOpen} aria-controls={BOARD_ID}
                 className={cn('inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm hover:bg-white/5 hover:text-foreground', boardOpen ? 'bg-white/6 text-foreground' : 'text-foreground/70')}
                 aria-label="Board" title={boardOpen ? 'Close your task board' : 'Open your task board below'} data-today-board-toggle>
@@ -156,6 +177,16 @@ export function NovaHome({ view, refreshing }: Props) {
           {/* ── Subjects: top-level only; choosing one is context ───────── */}
           {view.subjectProgress && view.subjectProgress.length > 0 && (
             <SubjectSwitcher progress={view.subjectProgress} focus={chosen} onChoose={choose} busy={false} />
+          )}
+
+          {quickError && <p role="alert" className="mt-3 text-sm text-amber-200" data-quick-focus-error>{quickError}</p>}
+          {quickSaved && !live.session && live.ended && (
+            <section role="status" className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl border border-nova/25 bg-nova/[0.05] px-4 py-3 text-sm" data-quick-focus-saved>
+              <span className="text-foreground">Saved: {minutesLabel(live.ended.minutes)} of focus.</span>
+              <span className="text-foreground/65">{live.ended.counted ? 'It counts toward your focus time on Progress.' : 'Under 10 minutes, so Progress doesn’t count it.'}</span>
+              <Link href="/progress#recent-sessions" className="font-medium text-nova-ink hover:underline">Recent sessions</Link>
+              <button type="button" onClick={() => setQuickSaved(false)} aria-label="Dismiss" className="ml-auto text-subtle hover:text-foreground"><X className="size-3.5" /></button>
+            </section>
           )}
 
           {/* ── A session running, or one that just ended ──────────────── */}

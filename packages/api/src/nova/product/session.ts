@@ -14,6 +14,7 @@ import {
   persistSessionEnd,
   resumeStudySession,
   setSessionLength,
+  setSessionDetails,
   abandonIfStale,
   saveSessionNote,
 } from "../persistence/nova-persistence";
@@ -26,7 +27,21 @@ import type { NovaSessionCommand, NovaSessionResponse, NovaSessionView } from ".
 
 export async function loadNovaSession(platformChatId: string, now = new Date()): Promise<NovaSessionView | null> {
   const snapshot = await loadStudySnapshot(platformChatId);
-  return snapshot.activeSession ? toSessionView(snapshot.activeSession, now) : null;
+  if (!snapshot.activeSession) return null;
+  return { ...toSessionView(snapshot.activeSession, now), details: await detailsOf(snapshot.activeSession.id) };
+}
+
+// A session's Quick Focus details, read only for the page.
+export function readFocusDetails(raw: unknown): { category: string | null; description: string | null } | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const category = typeof r.category === "string" && r.category ? r.category : null;
+  const description = typeof r.description === "string" && r.description ? r.description : null;
+  return category || description ? { category, description } : null;
+}
+async function detailsOf(sessionId: string) {
+  const row = await prisma.novaStudySession.findUnique({ where: { id: sessionId }, select: { focusDetails: true } });
+  return readFocusDetails(row?.focusDetails);
 }
 
 const SESSION_ABANDONED = {
@@ -90,6 +105,8 @@ export async function runNovaSessionCommand(
       durationMinutes: command.plannedMinutes,
       label:           command.label ?? null,
     });
+  } else if (active && command.action === "set_details") {
+    await setSessionDetails(active.id, command, { topicName: active.topicName, details: await detailsOf(active.id) });
   } else if (active && command.action === "set_length") {
     await setSessionLength(active.id, command.minutes);
   } else if (active && command.action === "pause") {
@@ -131,6 +148,9 @@ export async function runNovaSessionCommand(
     : command.action === "pause"  ? session?.status === "paused"
     : command.action === "resume" ? session?.status === "in_progress"
     : command.action === "set_length" ? session !== null && session.plannedDurationMinutes === command.minutes
+    : command.action === "set_details" ? session !== null && session.id === active?.id
+      && (command.category === undefined || (session.details?.category ?? null) === command.category)
+      && (command.description === undefined || (session.details?.description ?? null) === command.description)
     : session === null || session.id !== active?.id;
 
   if (!applied) return { ok: false, error: "failed", message: "That didn't save. Try again." };

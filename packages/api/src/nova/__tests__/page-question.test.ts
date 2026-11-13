@@ -6,7 +6,7 @@ import { join } from "node:path";
 // The real client reads its environment on import; no test here calls a model.
 jest.mock("../../services/openai.service", () => ({ generateOpenAIText: jest.fn(async () => { throw new Error("no model call is allowed here"); }) }));
 
-import { ANSWER_MAX, PAGE_QUESTION_BODY_MAX_BYTES, QUESTION_MAX, SCREENSHOT_MAX_BASE64, answerPageQuestion, pageQuestionPrompt, parsePageQuestion, parseScreenshot } from "../product/page-question";
+import { ANSWER_MAX, DETAIL, HISTORY_TURNS_MAX, PAGE_QUESTION_BODY_MAX_BYTES, tidyAnswer, QUESTION_MAX, SCREENSHOT_MAX_BASE64, answerPageQuestion, pageQuestionPrompt, parsePageQuestion, parseScreenshot } from "../product/page-question";
 import { EVENT_EXCERPT_MAX } from "../product/learning-events.types";
 
 const ask = (over: Record<string, unknown> = {}) => ({ question: "What is the spacing effect?", url: "https://example.com/memory?token=SECRET#top", title: "Memory", ...over });
@@ -20,7 +20,7 @@ const WEBP = Buffer.concat([Buffer.from("RIFF"), Buffer.from([1, 2, 3, 4]), Buff
 describe("what a page question may carry", () => {
   it("reads the question, the site, the title and the selection, and nothing else", () => {
     const parsed = parsePageQuestion(ask({ excerpt: " Spacing   helps.\r\n\r\nSo does testing. ", body: "the whole page", html: "<html>", cookies: "session=abc", userId: "someone-else" }));
-    expect(parsed).toEqual({ ok: true, input: { question: "What is the spacing effect?", domain: "example.com", title: "Memory", excerpt: "Spacing helps.\n\nSo does testing.", screenshot: null } });
+    expect(parsed).toEqual({ ok: true, input: { question: "What is the spacing effect?", domain: "example.com", title: "Memory", excerpt: "Spacing helps.\n\nSo does testing.", screenshot: null, history: [], detail: "brief" } });
     expect(JSON.stringify(parsed)).not.toMatch(/SECRET|whole page|session=abc|someone-else|https?:/);
   });
 
@@ -70,7 +70,7 @@ describe("a screenshot", () => {
   it("goes to the model as an attachment, with more time, and the answer says it rested on it", async () => {
     const generate = jest.fn(async () => "The arrow from A to B is the dependency.");
     const result = await answerPageQuestion(ask({ excerpt: "A passage.", screenshot: { mimeType: "image/jpeg", data: JPEG } }), generate as never);
-    expect(result).toEqual({ ok: true, answer: "The arrow from A to B is the dependency.", basis: "screenshot" });
+    expect(result).toEqual({ ok: true, answer: "The arrow from A to B is the dependency.", basis: "screenshot", detail: "brief", followUp: false });
     const [[request]] = generate.mock.calls as unknown as [[{ prompt: string; systemInstruction: string; deadlineMs: number; attachments: unknown[] }]];
     expect(request.attachments).toEqual([{ name: "screenshot", mimeType: "image/jpeg", data: JPEG }]);
     expect(request.prompt).toMatch(/Screenshot: attached/);
@@ -99,7 +99,7 @@ describe("answering", () => {
   it("gives the model the title, the site, the passage and the question, and not the address", async () => {
     const generate = jest.fn(async () => "Spacing reviews out improves recall.");
     const result = await answerPageQuestion(ask({ excerpt: "Spacing helps." }), generate as never);
-    expect(result).toEqual({ ok: true, answer: "Spacing reviews out improves recall.", basis: "selection" });
+    expect(result).toEqual({ ok: true, answer: "Spacing reviews out improves recall.", basis: "selection", detail: "brief", followUp: false });
     const [[request]] = generate.mock.calls as unknown as [[{ prompt: string; systemInstruction: string; deadlineMs: number }]];
     expect(request.prompt).toBe(pageQuestionPrompt({ question: "What is the spacing effect?", domain: "example.com", title: "Memory", excerpt: "Spacing helps." }));
     expect(request.prompt).not.toMatch(/https?:\/\/|SECRET/);
@@ -110,7 +110,7 @@ describe("answering", () => {
 
   it("says when it had only the title to go on", async () => {
     const result = await answerPageQuestion(ask(), (async () => "An answer.") as never);
-    expect(result).toEqual({ ok: true, answer: "An answer.", basis: "title" });
+    expect(result).toEqual({ ok: true, answer: "An answer.", basis: "title", detail: "brief", followUp: false });
     expect(pageQuestionPrompt({ question: "Why?", domain: "example.com", title: "Memory", excerpt: null })).toContain("Passage the student selected: none");
   });
 
@@ -155,5 +155,38 @@ describe("a page question is answered and nothing else", () => {
     expect(route).toMatch(/caller\.kind !== "learner"/);
     expect(route).toMatch(/allowAttempt\(`ask:\$\{caller\.connectionId\}`/);
     expect(route).not.toMatch(/cookies\(|kevo_session|requireWebLearner/);
+  });
+});
+
+describe("a conversation in the side panel", () => {
+  it("sends the earlier turns with a follow-up, so 'the second point' means something", async () => {
+    const generate = jest.fn(async (_req: { prompt: string }) => "The second point is about retrieval.");
+    const history = [{ question: "What does this say about memory?", answer: "1. Spacing\n2. Testing yourself" }];
+    const result = await answerPageQuestion(ask({ question: "Can you explain the second point?", history }), generate as never);
+    expect(result).toMatchObject({ ok: true, followUp: true });
+    const prompt = generate.mock.calls[0]![0].prompt;
+    expect(prompt).toContain("[1] Student: What does this say about memory?");
+    expect(prompt).toContain("[1] Nova: 1. Spacing\n2. Testing yourself");
+    expect(prompt).toContain("follow-up question: Can you explain the second point?");
+  });
+  it("keeps only the latest well-formed turns, each cut short", () => {
+    const many = Array.from({ length: 10 }, (_, i) => ({ question: `q${i}`, answer: `a${i}`.padEnd(5000, "x") }));
+    const parsed = parsePageQuestion(ask({ history: [...many, { question: 5 }, "junk"] }));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.input.history!.length).toBeLessThanOrEqual(HISTORY_TURNS_MAX);
+    expect(parsed.input.history!.every(t => t.answer.length <= 2500)).toBe(true);
+  });
+  it("is brief unless the learner asks for more, and says so to the model", async () => {
+    const generate = jest.fn(async (_req: { prompt: string; maxOutputTokens: number }) => "Answer.");
+    await answerPageQuestion(ask(), generate as never);
+    await answerPageQuestion(ask({ detail: "detailed" }), generate as never);
+    expect(generate.mock.calls[0]![0].maxOutputTokens).toBe(DETAIL.brief.maxOutputTokens);
+    expect(generate.mock.calls[0]![0].prompt).toContain(DETAIL.brief.words);
+    expect(generate.mock.calls[1]![0].maxOutputTokens).toBe(DETAIL.detailed.maxOutputTokens);
+    expect(generate.mock.calls[1]![0].prompt).toContain(DETAIL.detailed.words);
+  });
+  it("keeps the answer's Markdown: code indentation and line breaks survive", () => {
+    expect(tidyAnswer("```python\ndef f():\n    return 1\n```\n\n\n\n- a\n  - b")).toBe("```python\ndef f():\n    return 1\n```\n\n- a\n  - b");
   });
 });
