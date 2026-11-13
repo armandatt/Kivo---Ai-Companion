@@ -34,10 +34,10 @@ Synced from the server: 30 tools. Read-only: 19 (`readOnlyHint: true`). Writes: 
   >
   > Requires a Kivo account (sign up at thekivo.in).
 
-- **Categories** (1–5): choose from the portal's list. Intended: Education; Productivity; Knowledge management / Notes, if offered.
+- **Categories** (1–5, from the portal's list; it has no knowledge-management category): Education, Productivity
 - **Documentation URL**: https://www.thekivo.in/integrations/kivo-connect
 - **Privacy policy URL**: https://www.thekivo.in/privacy (see "AI assistants you connect")
-- **Support contact**: _owner to supply_ (no support address exists in the code or on the site)
+- **Support contact**: Contact@thekivo.in
 - **URL slug**: `kivo` (permanent once published)
 
 ## 4. Use cases
@@ -52,9 +52,9 @@ Synced from the server: 30 tools. Read-only: 19 (`readOnlyHint: true`). Writes: 
 
 ## 5. Company
 
-- Company name: _owner to supply_ (the privacy policy also still lacks it)
+- Company name: Kivo
 - Website: https://www.thekivo.in
-- Primary contact for review updates: _owner to supply_
+- Primary contact for review updates: Akshar, Contact@thekivo.in
 
 ## 6. Authentication
 
@@ -72,7 +72,7 @@ Synced from the server: 30 tools. Read-only: 19 (`readOnlyHint: true`). Writes: 
 1. In Claude: Settings › Connectors › add Kivo (or custom connector `https://www.thekivo.in/api/mcp`) › Connect.
 2. On the Kivo sign-in page, sign in with the reviewer email and password given in this submission (email + password, not Google).
 3. On Kivo's consent page select **Allow**.
-4. The reviewer account (to be created and populated before submission: several subjects with topics, notes and links) is ready to use. Try:
+4. The reviewer account (email + password, given in the portal only) has 5 subjects (AI Analytics Feature, Competitive Intelligence, Customer Insights, Launch Strategy, Product Strategy), 20 topics and 25 notes. Try:
    - "List my Kivo workspaces" → `list_workspaces`
    - "What do my notes say about consensus?" → `search_notes`, `get_note`
    - "Show my Knowledge Map for Distributed Systems" → `get_knowledge_map`
