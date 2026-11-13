@@ -118,13 +118,13 @@ function renderConnect(note, followUp) {
     el('div', { class: 'stack' },
       el('div', {},
         el('h1', {}, 'Connect Nova'),
-        el('p', { class: 'lede' }, 'Save what you are reading, or start a study session on it, when you ask.')),
+        el('p', { class: 'lede' }, 'Save what you read to Kivo, and study it there.')),
       note ? el('p', { class: 'note', role: 'status', dataset: { note: '' } }, note) : null,
       followUp ? el('button', { class: 'link ext', type: 'button', dataset: { followUp: '' }, onclick: () => openNova(followUp.path) }, followUp.label) : null,
       el('div', { class: 'field' },
         el('span', { class: 'label' }, 'Step 1'),
         el('button', { class: 'wide ext', type: 'button', dataset: { getCode: '' }, onclick: () => openNova('/saved?connect=1') }, 'Get a code from Nova'),
-        el('p', { class: 'small' }, 'Opens Nova in a new tab. The code works once, for ten minutes.')),
+        el('p', { class: 'small' }, 'Opens Kivo. The code works once, for ten minutes.')),
       el('div', { class: 'section' }, form),
       (() => { const { toggle, panel } = privacy(); return [el('div', { class: 'foot' }, toggle), panel] })(),
     ),
@@ -249,12 +249,12 @@ function renderReady(page, context, probe = NO_PROBE, flash = null, { regionShot
     el('option', { value: '' }, context.subjects.length ? 'No subject' : 'No subjects in Nova yet'),
     context.subjects.map(s => el('option', { value: s.id }, s.name)))
   const topics  = el('datalist', { id: 'topics' })
-  const topic   = el('input', { id: 'topic', placeholder: 'After a subject', maxLength: context.limits.topic, disabled: true, autocomplete: 'off' })
+  const topic   = el('input', { id: 'topic', placeholder: 'Topic', maxLength: context.limits.topic, disabled: true, autocomplete: 'off' })
   topic.setAttribute('list', 'topics')
   subject.addEventListener('change', () => {
     const chosen = context.subjects.find(s => s.id === subject.value)
     topic.disabled = !chosen
-    topic.placeholder = chosen ? 'Optional' : 'After a subject'
+    topic.placeholder = chosen ? 'Topic (optional)' : 'Topic'
     if (!chosen) topic.value = ''
     topics.replaceChildren(...(chosen?.topics ?? []).map(name => el('option', { value: name })))
   })
@@ -273,7 +273,7 @@ function renderReady(page, context, probe = NO_PROBE, flash = null, { regionShot
   const selectionHint = probe.selection ? null
     : el('p', { class: 'small hint', dataset: { selectionHint: probe.tooLong ? 'too_long' : probe.available ? 'none' : 'unavailable' } },
         probe.tooLong ? `That selection is longer than Nova keeps (${context.limits.excerpt.toLocaleString()} characters). Select less, then open Nova again.`
-          : probe.available ? 'To save a passage, select it first, then open Nova.'
+          : probe.available ? 'Select text first to save a passage.'
           : "Nova can't read a selection on this page. You can still save the page.")
   // Add to notes: opens Nova's capture page with the page and the selection
   // in the address's fragment (never sent to a server). The learner reviews
@@ -414,9 +414,8 @@ function renderReady(page, context, probe = NO_PROBE, flash = null, { regionShot
 
   const ask = el('section', { class: 'section', dataset: { ask: '' }, ariaLabel: 'Ask Nova about this page' },
     el('h2', {}, 'Ask Nova'),
-    el('p', { class: 'small lede' }, probe.selection
-      ? 'Nova gets the page title, its address and your selection, not the rest of the page. Asking about a diagram? Add a screenshot.'
-      : 'Nova gets the page title and its address, not the page. Select text, or add a screenshot of a diagram, to ask about one part.'),
+    // What goes with a question is shown by the chips under the box (Title,
+    // Address, Your selection, Screenshot), so there is no line about it here.
     el('form', {
       onsubmit: async event => {
         event.preventDefault()
@@ -463,8 +462,9 @@ function renderReady(page, context, probe = NO_PROBE, flash = null, { regionShot
           el('div', { class: 'domain', dataset: { domain: '' }, title: page.domain }, page.domain),
           sr('Title', { htmlFor: 'title' }), title)),
       el('div', { class: 'fields' },
-        el('div', { class: 'field' }, el('label', { htmlFor: 'subject' }, 'Subject'), subject),
-        el('div', { class: 'field' }, el('label', { htmlFor: 'topic' }, 'Topic'), topic, topics)),
+        // The fields say what they are ("No subject", "Topic"); the labels stay for screen readers.
+        el('div', { class: 'field' }, el('label', { htmlFor: 'subject', class: 'sr' }, 'Subject'), subject),
+        el('div', { class: 'field' }, el('label', { htmlFor: 'topic', class: 'sr' }, 'Topic'), topic, topics)),
       el('div', {},
         running ? el('p', { class: 'small', dataset: { running: '' }, style: 'margin-bottom: 8px' }, `You have a session running${running.topicName ? ` on ${running.topicName}` : ''}. One at a time.`) : null,
         el('div', { class: 'actions' }, save, study),
@@ -676,11 +676,11 @@ function renderSaved(result, page, context, probe) {
             already ? (passage ? 'That passage is already saved.' : 'Already on your list.') : (passage ? 'Passage saved.' : 'Saved.')),
           el('p', { class: 'lede' }, already
             ? "Saving it twice doesn't count as studying it. Nova re-filed it for you."
-            : passage ? 'It is on your Saved list in Nova, with the page it came from.' : 'Future-you can deal with it. It is on your Saved list in Nova.'))),
+            : passage ? 'It is on your Saved list in Nova, with the page it came from.' : 'It is in Saved pages in Kivo.'))),
       el('div', { class: 'note' },
         el('div', { style: 'color: var(--text); font-weight: 500' }, result.resource.title),
         el('div', { class: 'small', dataset: { filed: '' } }, filed || 'Not filed under a subject')),
-      !already && !filed ? el('p', { class: 'small', dataset: { looking: '' } }, 'Nova will look at which of your topics it belongs under. You will see that on Saved.') : null,
+      !already && !filed ? el('p', { class: 'small', dataset: { looking: '' } }, 'Nova will suggest the topic it belongs under.') : null,
       el('div', { class: 'actions' },
         el('button', { class: 'primary ext', type: 'button', dataset: { openSaved: '' }, onclick: () => openNova('/saved') }, 'Open saved pages'),
         el('button', { type: 'button', dataset: { back: '' }, onclick: () => renderReady(page, context, probe) }, 'Back')),

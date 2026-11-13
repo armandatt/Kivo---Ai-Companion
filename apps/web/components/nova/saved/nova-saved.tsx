@@ -3,17 +3,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LearningResource, NovaSavedResourcesReady } from '@repo/api/nova/product/learning-events.types'
 import { BookmarkletPanel } from './bookmarklet-panel'
-import { ExtensionPanel } from './extension-panel'
-import { ExtensionFaq, ExtensionIntro, HowItWorks, WhatYouCanSave, type ConnectionState } from './extension-install'
+import { useExtensionConnection } from './extension-panel'
+import { BrowsersPanel, ExtensionHeader, ExtensionHelp, SetupSteps } from './extension-install'
 import { takeCapture, type Capture } from './pending-capture'
 import { SaveLink } from './save-link'
 import { SavedLibrary } from './saved-library'
 
 // The Browser Extension page: getting the extension, connecting it, and the learner's
 // inbox of saved pages and passages (pasted here, sent by the bookmark, or
-// sent by the extension) with what Nova found each connects to. One page,
-// because what the extension saves lands here; the address stays /saved. A saved page is a bookmark with a subject,
+// sent by the extension). One page, because what the extension saves lands
+// here; the address stays /saved. A saved page is a bookmark with a subject,
 // nothing more: Nova learns nothing about the learner from it until they study it.
+//
+// Order, by what the learner needs now:
+//   not connected: header (status, Add to Chrome) → setup → saved pages → other ways → help
+//   connected:     header (status) → saved pages → browsers → other ways → help
 export function NovaSaved({ view, connect, onChanged }: { view: NovaSavedResourcesReady; connect: boolean; onChanged: () => void }) {
   // A page the bookmark brought, read once when the screen opens.
   // Taking it empties the address, so it is taken exactly once per visit.
@@ -32,47 +36,45 @@ export function NovaSaved({ view, connect, onChanged }: { view: NovaSavedResourc
   const keep = useCallback((items: LearningResource[]) => setShown(items), [])
   const saved = () => { setRefreshKey(k => k + 1); onChanged() }
 
-  // Whether a browser is connected, from the server's list (ExtensionPanel).
-  // Until one is, the page leads with installing and connecting; after, with
-  // the saved pages, and the steps and questions move below them.
-  const [conn, setConn] = useState<{ state: ConnectionState; count: number }>({ state: 'checking', count: 0 })
-  const onState = useCallback((state: ConnectionState, count: number) => setConn({ state, count }), [])
-  const connected = conn.state === 'connected'
-  const guide = <div className="mt-12 space-y-12"><HowItWorks /><WhatYouCanSave /></div>
+  const connection = useExtensionConnection()
+  const connected = connection.state === 'connected'
+
+  // Arriving from the extension's "Get a code from Nova" (?connect): the
+  // connect controls are brought into view (and opened, once connected).
+  const pointed = useRef(false)
+  useEffect(() => {
+    if (!connect || pointed.current || connection.state === 'checking') return
+    pointed.current = true
+    const target = document.getElementById('connect')
+    if (target instanceof HTMLDetailsElement) target.open = true
+    target?.scrollIntoView({ block: 'start' })
+  }, [connect, connection.state])
 
   return (
-    <div className="mx-auto w-full max-w-7xl pb-20 pt-10 lg:pt-4" data-saved={view.resources.length > 0 ? 'ready' : 'empty'}>
-      <ExtensionIntro state={conn.state} count={conn.count} />
+    <div className="mx-auto w-full max-w-6xl space-y-10 pb-20 pt-10 lg:pt-4" data-saved={view.resources.length > 0 ? 'ready' : 'empty'}>
+      <ExtensionHeader connection={connection} />
 
-      {/* The library takes the full width: with hundreds of pages, room to read
-          them matters more than the side notes, which sit beside the extension panel. */}
-      <div className="mt-8 grid grid-cols-1 gap-x-10 gap-y-8 xl:grid-cols-[minmax(0,1fr)_20rem]">
-        <ExtensionPanel open={connect} onState={onState} />
-        <aside className="space-y-6">
-          <BookmarkletPanel />
-          <details className="group rounded-2xl border border-white/8 bg-card/50 p-5">
-            <summary className="cursor-pointer list-none text-sm font-semibold text-foreground [&::-webkit-details-marker]:hidden">What Nova keeps <span className="font-normal text-subtle group-open:hidden">· show</span></summary>
-            <ul className="mt-3 list-disc space-y-2 pl-4 text-sm leading-relaxed text-foreground/60 marker:text-foreground/30">
-              <li>The page&apos;s address and title, where you filed it, and what the page says about itself in its public metadata tags (a description, a preview image, its author, date and kind, a video&apos;s length). From its text, only a passage you selected and chose to save.</li>
-              <li>Preview images load from the page&apos;s own site, with no referrer.</li>
-              <li>To suggest where a page belongs, Nova reads its title and your selected passage alongside the names of your subjects and topics. It never opens the page.</li>
-              <li>Only pages you save or ask to study. Nova does not see your other tabs or your history.</li>
-              <li>Saving a page changes nothing in Knowledge. A finished study session does.</li>
-            </ul>
-          </details>
-        </aside>
-      </div>
+      {!connected && connection.state !== 'checking' && <SetupSteps connection={connection} />}
+      {/* Sent here to connect (?connect) with a browser already connected: the
+          browsers come first, above the library that loads after them. */}
+      {connected && connect && <BrowsersPanel connection={connection} />}
 
-      {!connected && guide}
-
-      <section className="mt-12 space-y-5 border-t border-white/6 pt-8" aria-labelledby="saved-heading">
-        <h2 id="saved-heading" className="text-lg font-semibold tracking-tight text-foreground" data-saved-heading>Saved pages</h2>
+      <section className="space-y-4" aria-labelledby="saved-heading">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <h2 id="saved-heading" className="text-lg font-semibold tracking-tight text-foreground" data-saved-heading>Saved pages</h2>
+        </div>
         <SaveLink subjects={view.subjects} resources={shown} capture={capture} onSaved={saved} />
         <SavedLibrary refreshKey={refreshKey} onItems={keep} />
       </section>
 
-      {connected && guide}
-      <div className="mt-12"><ExtensionFaq /></div>
+      {connected && !connect && <BrowsersPanel connection={connection} />}
+
+      <section aria-labelledby="elsewhere-heading" className="space-y-4 border-t border-white/6 pt-8">
+        <h2 id="elsewhere-heading" className="text-base font-semibold tracking-tight text-foreground">Other ways to save</h2>
+        <BookmarkletPanel />
+      </section>
+
+      <ExtensionHelp />
     </div>
   )
 }

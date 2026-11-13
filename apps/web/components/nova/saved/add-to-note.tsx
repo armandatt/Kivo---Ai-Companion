@@ -69,7 +69,7 @@ export function AddToNote({ resource, onClose, onDone }: { resource: LearningRes
           <p className="mt-0.5 text-xs text-foreground/55">{chosen.path || 'Not filed under a subject'}</p>
           <p className="mt-2 text-xs leading-relaxed text-foreground/60">This passage goes at the end as a new section, with the page it came from. You can edit it like the rest of the note.</p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => void add()} disabled={busy} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-keppel-400 px-3 text-xs font-semibold text-keppel-950 hover:bg-keppel-300 disabled:opacity-60" data-add-note-confirm>
+            <button type="button" onClick={() => void add()} disabled={busy} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-action px-3 text-xs font-semibold text-action-foreground hover:bg-action-hover disabled:opacity-60" data-add-note-confirm>
               {busy && <Loader2 aria-hidden className="size-3.5 animate-spin" />}{error ? 'Try again' : 'Add to this note'}
             </button>
             <button type="button" onClick={() => setChosen(null)} className="h-9 rounded-lg px-3 text-xs text-foreground/70 hover:bg-white/5">Choose another</button>
