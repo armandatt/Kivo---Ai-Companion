@@ -30,9 +30,10 @@ describe("reading an unfinished reply", () => {
 describe("a passage as a section of a note", () => {
   const section = selectionSection({ title: "Attention explained", url: "https://ex.com/a", text: "Self-attention relates positions.\n\nSecond line.", day: "2026-11-01", via: "extension" });
   it("says what it is, quotes the passage and keeps where it came from", () => {
-    expect(section).toContain("### Research excerpt: Attention explained");
+    expect(section).toContain("### Attention explained\n[View source](https://ex.com/a) · ex.com");
     expect(section).toContain("> Self-attention relates positions.\n>\n> Second line.");
-    expect(section).toContain("*Source:* Attention explained https://ex.com/a");
+    // The address once, behind words: never the raw address as text.
+    expect(section.split("https://ex.com/a").length - 1).toBe(1);
     expect(section).toContain("*Captured 2026-11-01 with the Nova extension.*");
   });
   it("does not become the note's own source", () => {
@@ -47,8 +48,8 @@ describe("a passage as a section of a note", () => {
   });
   it("copes with a page with no title or address", () => {
     const bare = selectionSection({ title: "", url: null, text: "Text.", day: "2026-11-01", via: "paste" });
-    expect(bare).toContain("### Research excerpt\n");
-    expect(bare).toContain("*Source:* ");
+    expect(bare).toContain("### Excerpt\n");
+    expect(bare).not.toContain("View source");
   });
   it("names a note's place by its subjects and topic", () => {
     const subjects = [{ id: "a", name: "ML", parentId: null }, { id: "b", name: "Deep", parentId: "a" }];

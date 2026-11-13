@@ -14,7 +14,7 @@ import {
 import { linkKey, tokenizeLine } from '@repo/api/nova/product/note-links'
 import type { NoteLinkRef } from '@repo/api/nova/product/notes.types'
 import { PAPER_STATUS_WORDS, paperRegion, readPaperCard, type PaperCard } from '@repo/api/nova/product/paper-source'
-import { checkItem, inlineTokens, parseBlocks, type Block, type CalloutType } from './note-blocks'
+import { checkItem, inlineTokens, parseBlocks, shortAddress, type Block, type CalloutType } from './note-blocks'
 import { Tex } from './tex'
 
 // cite: Nova's text (the tutor) marks what a claim rests on with [S1], [S2]…;
@@ -62,7 +62,11 @@ function inline(text: string, key: string): ReactNode[] {
       case 'code':      return <code key={k} className="note-code rounded-[5px] px-[0.35em] py-[0.1em] font-mono text-[0.86em]">{t.text}</code>
       case 'math':      return t.display ? <span key={k} className="my-2 block"><Tex tex={t.text} display /></span> : <Tex key={k} tex={t.text} />
       case 'tag':       return <span key={k} className="mx-0.5 inline-block rounded-full bg-orange-400/15 px-2 py-px align-[0.08em] font-sans text-[0.8em] font-medium text-orange-300" data-note-tag={t.text}>#{t.text}</span>
-      case 'url':       return <a key={k} href={t.href} target="_blank" rel="noopener noreferrer" className="note-link break-all underline underline-offset-2">{t.text}</a>
+      // A link written as [words](address) shows its words; a bare address is
+      // shortened to its site and path, the whole address on hover.
+      case 'url':       return t.label
+        ? <a key={k} href={t.href} target="_blank" rel="noopener noreferrer" title={t.href} className="note-link underline underline-offset-2" data-note-source-link>{t.text}<ExternalLink aria-hidden className="ml-0.5 inline size-[0.8em] align-[-0.05em] opacity-60" /></a>
+        : <a key={k} href={t.href} target="_blank" rel="noopener noreferrer" title={t.href} className="note-link break-words underline underline-offset-2">{shortAddress(t.href)}</a>
     }
   })
 }

@@ -126,10 +126,12 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const [missing, setMissing]   = useState<string | null>(null)
 
   const [editing, setEditing]   = useState(noteId === null)
-  // A new note starts on the create screen (note-create.tsx): written at once,
-  // or set up first by Nova's editor. Not for a note arriving with its text
-  // (a saved page's source) or unsaved text kept from before.
-  const [creatingNew, setCreatingNew] = useState(noteId === null)
+  // A new note opens straight into writing (13 Nov: one obvious way to start).
+  // Nova's create screen (note-create.tsx: a title, an outline and a place
+  // proposed from the learner's words) is one press away, "Draft with Nova",
+  // or opened directly with /notes/new?with=nova.
+  const [creatingNew, setCreatingNew] = useState(false)
+  useEffect(() => { if (noteId === null && new URLSearchParams(window.location.search).get('with') === 'nova') setCreatingNew(true) }, [noteId])
   // A passage or capture taken from the PDF beside the note, on its way to a note.
   const [taken, setTaken] = useState<Taken | null>(null)
   const [draft, setDraft]       = useState<Draft>(EMPTY)
@@ -811,6 +813,13 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       <button type="button" onClick={e => { leave(e); if (!e.defaultPrevented) router.back() }} className={`${iconButton()} max-sm:hidden`} title="Back"><ChevronLeft className="size-4" /></button>
       <button type="button" onClick={e => { leave(e); if (!e.defaultPrevented) window.history.forward() }} className={`${iconButton()} max-sm:hidden`} title="Forward"><ChevronRight className="size-4" /></button>
       <div className="ml-1.5 min-w-0 flex-1">{crumbs}</div>
+      {editing && !note && !draft.body.trim() && (
+        <button type="button" onClick={() => setCreatingNew(true)}
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-nova/35 bg-nova/[0.06] px-2.5 text-xs font-semibold text-nova-ink transition-colors hover:bg-nova/12"
+          title="Nova proposes a title, an outline and a place from your words or files" data-draft-with-nova>
+          <Sparkles className="size-3.5" /> <span className="max-sm:sr-only">Draft with Nova</span>
+        </button>
+      )}
       {shown && (
         <button type="button" onClick={() => setSourceOpen(o => !o)} aria-pressed={showSource}
           className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors ${showSource ? 'bg-sky-400/15 text-sky-200' : 'text-foreground/60 hover:bg-white/6 hover:text-foreground'}`}

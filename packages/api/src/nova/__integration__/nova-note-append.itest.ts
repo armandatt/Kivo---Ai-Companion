@@ -67,9 +67,9 @@ test("a passage becomes a section at the end, and everything else stays as it wa
   assert.ok(res.success && res.action === "added");
   const note = await getNote(profileId, noteId);
   assert.ok(note!.body.startsWith(ORIGINAL), "what was there is untouched");
-  assert.ok(note!.body.includes("### Research excerpt: Attention, explained"));
+  assert.ok(note!.body.includes("### Attention, explained\n[View source](https://example.org/attention) · example.org"));
   assert.ok(note!.body.includes("> Self-attention relates positions of one sequence."));
-  assert.ok(note!.body.includes("*Source:* Attention, explained https://example.org/attention"));
+  assert.equal(note!.body.split("https://example.org/attention").length - 1, 1, "the address once, behind words");
   assert.ok(note!.body.includes("*Captured 2026-11-01 with the Nova extension.*"));
   assert.equal(note!.subjectId, subject.id, "the note keeps its place on the map");
   assert.equal(note!.topicName, "Transformers");
@@ -87,11 +87,20 @@ test("the same note takes several passages, and each can be edited afterwards", 
   assert.ok((await saveSelectionToNote(profileId, passage({ noteId, url: "https://example.org/multi", title: "Multi-head", excerpt: "Many heads, many views." }), FROM)).success);
   const note = await getNote(profileId, noteId);
   assert.ok(note!.body.includes("Attention, explained") && note!.body.includes("Many heads, many views."));
-  assert.equal(note!.body.split("### Research excerpt").length - 1, 2);
+  assert.equal(note!.body.split("[View source](").length - 1, 2, "one source line per page");
   const edited = note!.body.replace("Many heads, many views.", "Many heads, edited by me.");
   const saved = await updateNote(profileId, noteId, { body: edited, baseUpdatedAt: note!.updatedAt });
   assert.ok(saved.ok);
   assert.ok((await getNote(profileId, noteId))!.body.includes("edited by me"));
+});
+
+test("a second passage from a page the note already cites joins its section: the source is named once", async () => {
+  const { profileId, noteId } = await withNote();
+  assert.ok((await saveSelectionToNote(profileId, passage({ noteId }), FROM)).success);
+  assert.ok((await saveSelectionToNote(profileId, passage({ noteId, excerpt: "A second passage from the same page." }), FROM)).success);
+  const body = (await getNote(profileId, noteId))!.body;
+  assert.equal(body.split("[View source](https://example.org/attention)").length - 1, 1);
+  assert.ok(body.includes("> A second passage from the same page."));
 });
 
 test("a retry adds nothing, and neither does the same passage under a new id", async () => {
@@ -111,7 +120,7 @@ test("two copies of one request at once add one section", async () => {
   const same = passage({ noteId });
   const results = await Promise.all([saveSelectionToNote(profileId, same, FROM), saveSelectionToNote(profileId, same, FROM), saveSelectionToNote(profileId, same, FROM)]);
   assert.ok(results.every(r => r.success), JSON.stringify(results));
-  assert.equal((await getNote(profileId, noteId))!.body.split("### Research excerpt").length - 1, 1);
+  assert.equal((await getNote(profileId, noteId))!.body.split("[View source](").length - 1, 1);
 });
 
 test("an edit in between isn't lost, and an editor still on the old version is told, not overwritten", async () => {
@@ -120,7 +129,7 @@ test("an edit in between isn't lost, and an editor still on the old version is t
   assert.ok((await saveSelectionToNote(profileId, passage({ noteId }), FROM)).success);
   const stale = await updateNote(profileId, noteId, { body: "Replaced by a stale tab.", baseUpdatedAt: opened });
   assert.ok(!stale.ok && stale.error === "conflict");
-  assert.ok((await getNote(profileId, noteId))!.body.includes("Research excerpt"), "the section survives");
+  assert.ok((await getNote(profileId, noteId))!.body.includes("View source"), "the section survives");
 });
 
 test("a note that couldn't take it is refused and unchanged, and nothing is half saved", async () => {

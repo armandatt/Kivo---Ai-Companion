@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { FileText, LayoutGrid, Plus, Rows3, Search, Upload } from 'lucide-react'
+import { FileText, Inbox, LayoutGrid, MoreHorizontal, Plus, Rows3, Search, Upload } from 'lucide-react'
 import type { NovaNotesReady, NovaNotesView, NoteSummary } from '@repo/api/nova/product/notes.types'
 import { relativeDay } from '../format'
 import { subjectColor } from '../subject-color'
 import { useNovaView } from '../use-nova-view'
 import { fetchNotes, notesUrl } from './notes-api'
+import { fetchDrafts } from './drafts-api'
 import { useNotesCommands } from './notes-commands'
 import { modLabel } from './notes-shortcuts'
 import { groupNotes } from './notes-tree-data'
@@ -133,6 +134,10 @@ function Ready({ view, onReload, search, onSearch, subjectId, onSubject, topic, 
     return [...new Map(names.map(n => [n.toLowerCase(), n])).values()].sort((a, b) => a.localeCompare(b))
   }, [view.subjects, subjectId])
   const groups = useMemo(() => groupNotes(view.notes), [view.notes])
+  // How many drafts are waiting (captured, not yet in a note). null until known;
+  // an API without drafts yet simply shows none.
+  const [drafts, setDrafts] = useState<number | null>(null)
+  useEffect(() => { void fetchDrafts().then(r => setDrafts(r.ok ? r.open : null)) }, [])
   // ⌘P imports a paper, ⌘K finds a note or runs a command, ? lists the keys.
   const reloadSubjects = useCallback(async () => {
     const next = await fetchNotes()
@@ -152,14 +157,27 @@ function Ready({ view, onReload, search, onSearch, subjectId, onSubject, topic, 
         title="Notes"
         description="Your learning notebook"
         actions={<>
-          <button type="button" onClick={commands.openImport} title={`Import a research paper (${modLabel(commands.mac)}P)`} aria-keyshortcuts={commands.mac ? 'Meta+P' : 'Control+P'}
-            className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/80 transition-colors hover:bg-white/5" data-notes-import-paper>
-            <FileText aria-hidden className="size-4" /> Import paper
-            <kbd className="ml-1 hidden rounded border border-white/10 px-1 font-sans text-[10px] text-subtle sm:inline">{modLabel(commands.mac)}P</kbd>
-          </button>
-          <Link href="/notes/capture" className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/80 transition-colors hover:bg-white/5" data-notes-capture>
-            <Upload aria-hidden className="size-4" /> Capture or import
+          {/* Three ways in, one each: Drafts (what was captured, waiting to be
+              organised), New note, and the less frequent imports under More. */}
+          <Link href="/notes/drafts" className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/80 transition-colors hover:bg-white/5" data-notes-drafts>
+            <Inbox aria-hidden className="size-4" /> Drafts
+            {drafts !== null && drafts > 0 && <span className="ml-0.5 rounded-full bg-nova/20 px-1.5 text-[11px] font-semibold tabular-nums text-nova-ink" data-drafts-count>{drafts}</span>}
           </Link>
+          <details className="relative" data-notes-more>
+            <summary className="inline-flex h-10 cursor-pointer list-none items-center gap-1.5 rounded-xl border border-white/12 px-3 text-sm font-medium text-foreground/80 transition-colors hover:bg-white/5 [&::-webkit-details-marker]:hidden" aria-label="More ways to add notes">
+              <MoreHorizontal aria-hidden className="size-4" /> <span className="max-sm:sr-only">More</span>
+            </summary>
+            <div className="absolute right-0 z-30 mt-1.5 w-64 rounded-xl border border-white/10 bg-background p-1.5 shadow-float" role="menu">
+              <button type="button" role="menuitem" onClick={e => { (e.currentTarget.closest('details') as HTMLDetailsElement).open = false; commands.openImport() }} title={`Import a research paper (${modLabel(commands.mac)}P)`} aria-keyshortcuts={commands.mac ? 'Meta+P' : 'Control+P'}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-foreground/85 hover:bg-white/5" data-notes-import-paper>
+                <FileText aria-hidden className="size-4" /> <span className="flex-1">Import a paper</span>
+                <kbd className="rounded border border-white/10 px-1 font-sans text-[10px] text-subtle">{modLabel(commands.mac)}P</kbd>
+              </button>
+              <Link href="/notes/capture" role="menuitem" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-foreground/85 hover:bg-white/5" data-notes-capture>
+                <Upload aria-hidden className="size-4" /> Paste or import a file
+              </Link>
+            </div>
+          </details>
           <PageAction href="/notes/new"><Plus aria-hidden className="size-4" /> New note</PageAction>
         </>}
       />

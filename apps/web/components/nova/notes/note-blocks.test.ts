@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { NoteSummary } from '@repo/api/nova/product/notes.types'
-import { calloutHeader, imageLine, imageMarkdown, inlineTokens, outline, parseBlocks as parseWithSpans, sourceOf, tagsOf, wordCount, type Block } from './note-blocks'
+import { calloutHeader, imageLine, imageMarkdown, inlineTokens, outline, parseBlocks as parseWithSpans, shortAddress, sourceOf, tagsOf, wordCount, type Block } from './note-blocks'
 import { drawTex } from './math'
 import { callout, divider, noteLink, prefixLines, tag, wrap } from './note-format'
 import { filterNotes, groupNotes } from './notes-tree-data'
@@ -224,4 +224,27 @@ test('an image line is drawn only for Kivo\'s own images; any other address stay
   assert.equal(parseBlocks('Text\n\n![Fig](kivo-image:ckabc12345)\n\nMore')[1]!.kind, 'image')
   assert.equal(parseBlocks('![x](https://evil.example/a.png)')[0]!.kind, 'para')
   assert.equal(imageMarkdown('A ] tricky\ncaption', 'ckabc12345'), '![A ) tricky caption](kivo-image:ckabc12345)')
+})
+
+test('a source written as [words](address) is a link shown as its words', () => {
+  const tokens = inlineTokens('[View source](https://arxiv.org/abs/1706.03762) · arxiv.org')
+  assert.deepEqual(tokens[0], { kind: 'url', text: 'View source', href: 'https://arxiv.org/abs/1706.03762', label: true })
+  assert.deepEqual(tokens[1], { kind: 'text', text: ' · arxiv.org' })
+  // only web addresses become links; colour spans and plain brackets stay what they were
+  assert.equal(inlineTokens('[x](javascript:alert(1))')[0]!.kind, 'text')
+  assert.equal(inlineTokens('[words]{.blue}')[0]!.kind, 'color')
+  assert.deepEqual(inlineTokens('an [aside] here'), [{ kind: 'text', text: 'an [aside] here' }])
+  // an encoded bracket in the address keeps the link whole
+  assert.equal((inlineTokens('[Mercury](https://en.wikipedia.org/wiki/Mercury_%28planet%29)')[0] as { href: string }).href, 'https://en.wikipedia.org/wiki/Mercury_%28planet%29')
+})
+
+test('the note\'s own source is found behind a compact link too', () => {
+  assert.deepEqual(sourceOf('Source: [Attention paper](https://arxiv.org/abs/1706.03762)\n\n# What it says'),
+    { url: 'https://arxiv.org/abs/1706.03762', view: 'https://arxiv.org/pdf/1706.03762', label: 'arxiv.org', pdf: true })
+})
+
+test('a bare address is shown short: its site and the start of its path', () => {
+  assert.equal(shortAddress('https://www.example.com/a'), 'example.com/a')
+  const long = shortAddress('https://docs.python.org/3/library/asyncio-eventloop.html?highlight=run_until_complete&section=loops')
+  assert.ok(long.length <= 48 && long.endsWith('…') && long.startsWith('docs.python.org/3/library/'))
 })

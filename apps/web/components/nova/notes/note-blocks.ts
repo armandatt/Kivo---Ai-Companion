@@ -283,7 +283,8 @@ export type InlineToken =
   | { kind: 'text' | 'bold' | 'italic' | 'highlight' | 'code' | 'tag'; text: string }
   | { kind: 'color'; text: string; color: NoteColor; highlight: boolean }
   | { kind: 'math'; text: string; display?: boolean }
-  | { kind: 'url'; text: string; href: string }
+  // label: written as [words](address), so the words are shown, not the address.
+  | { kind: 'url'; text: string; href: string; label?: boolean }
 
 function safeUrl(raw: string): string | null {
   try {
@@ -304,16 +305,42 @@ function paired(text: string, i: number, mark: string): number {
   return end > from && text[end - 1] !== ' ' ? end : -1
 }
 
+// A bare address as it is shown: the site and the start of the path, never a
+// long raw address (the full one is the link and its title).
+export function shortAddress(href: string, max = 48): string {
+  try {
+    const u = new URL(href)
+    const host = u.hostname.startsWith('www.') ? u.hostname.slice(4) : u.hostname
+    const rest = `${u.pathname === '/' ? '' : u.pathname}${u.search}`
+    const whole = `${host}${rest}`
+    return whole.length <= max ? whole : `${whole.slice(0, max - 1)}…`
+  } catch {
+    return href
+  }
+}
+
 export function inlineTokens(text: string): InlineToken[] {
   const out: InlineToken[] = []
   let i = 0, plain = ''
   const flush = () => { if (plain) { out.push({ kind: 'text', text: plain }); plain = '' } }
   const push = (token: InlineToken, next: number) => { flush(); out.push(token); i = next }
+  let end = -1
 
   while (i < text.length) {
     const span = text[i] === '[' ? colorSpanAt(text, i) : null
     if (span) { push({ kind: 'color', text: span.words, color: span.color, highlight: span.highlight }, span.end); continue }
-    let end = paired(text, i, '**')
+    // [words](https://…): a link shown as its words. Only a web address; anything
+    // else stays as written.
+    if (text[i] === '[') {
+      const close = text.indexOf('](', i + 1)
+      const words = close > i + 1 ? text.slice(i + 1, close) : ''
+      if (words && !words.includes('[')) {
+        end = text.indexOf(')', close + 2)
+        const href = end > close + 2 ? safeUrl(text.slice(close + 2, end)) : null
+        if (href) { push({ kind: 'url', text: words, href, label: true }, end + 1); continue }
+      }
+    }
+    end = paired(text, i, '**')
     if (end !== -1) { push({ kind: 'bold', text: text.slice(i + 2, end) }, end + 2); continue }
     end = paired(text, i, '==')
     if (end !== -1) { push({ kind: 'highlight', text: text.slice(i + 2, end) }, end + 2); continue }

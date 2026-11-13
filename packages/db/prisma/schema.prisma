@@ -770,6 +770,7 @@ model NovaAcademicProfile {
   telegramPrompts   NovaTelegramPrompt[]
   learningEvents    NovaLearningEvent[]
   resourceCollections NovaResourceCollection[]
+  captureDrafts     NovaCaptureDraft[]
   tasks             NovaTask[]
   planOverrides     NovaPlanOverride[]
   dayFlows          NovaDayFlow[]
@@ -939,6 +940,9 @@ model NovaStudySession {
   pausedAt                DateTime?
   executionReport         Json?
   reflectionText          String?
+  // A Quick Focus session's optional details beyond its title (currentFocus):
+  // { category?, description? }. Learner-written, read by nothing but the page.
+  focusDetails            Json?
 
   profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
@@ -946,6 +950,31 @@ model NovaStudySession {
 
   @@index([profileId, sessionDate])
   @@index([profileId, status])
+}
+
+// Captures waiting to be organised (docs/CAPTURE_FIRST.md): passages the
+// learner collected while reading, before deciding which note they belong
+// in. One row per reading session; each passage keeps its own source.
+// product/capture-drafts.ts is the only reader and writer. Not evidence:
+// nothing reads it as mastery, memory or reality.
+model NovaCaptureDraft {
+  id            String    @id @default(cuid())
+  profileId     String
+  title         String?             // the learner's own name for it; null: named from its sources
+  status        String    @default("open")   // open | merged | discarded
+  items         Json                // CaptureItem[], in the learner's order
+  version       Int       @default(0)
+  lastCaptureAt DateTime  @default(now())
+  mergedNoteId  String?
+  mergedAt      DateTime?
+  discardedAt   DateTime?
+
+  profile NovaAcademicProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([profileId, status, lastCaptureAt])
 }
 
 // A note the learner wrote. Learner-owned content, not cognitive state:

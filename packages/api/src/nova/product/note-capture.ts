@@ -15,6 +15,7 @@
 // No regex, and nothing but the resource-link helpers (pure, no imports).
 
 import { normalizeResourceUrl } from "./resource-link";
+import { linkTarget } from "./capture-draft-rules";
 
 export const NOTE_CAPTURE_PATH = "/notes/capture";
 export const CAPTURE_TEXT_MAX = 20_000;
@@ -93,7 +94,9 @@ export function captureTitle(c: { title?: string; text?: string; fileName?: stri
 // `day` is the learner's own day (YYYY-MM-DD), given by the page.
 export function captureBody(c: NoteCapture, day: string): string {
   const lines: string[] = [];
-  if (c.url) lines.push(`Source: ${c.title ? `${c.title} ` : ""}${c.url}`);
+  // A compact link, not the raw address: the reader draws [words](address) as
+  // the words (note-blocks sourceOf still finds it, to open the page beside).
+  if (c.url) lines.push(`Source: [${linkWords(c.title) || siteOf(c.url) || "View source"}](${linkTarget(c.url)})`);
   const how = c.via === "extension" ? "with the Nova extension" : c.via === "bookmarklet" ? "with the Kivo bookmarklet" : "by pasting";
   lines.push(`Captured ${day}${c.url ? ` from ${siteOf(c.url)}` : ""} ${how}.`);
   if (c.text) lines.push("", "> [!quote] From the source", quote(c.text));
@@ -137,15 +140,20 @@ export function appendToBody(existing: string, addition: string, day: string): s
 export function selectionSection(s: { title: string; url: string | null; text: string; day: string; via: NoteCapture["via"] }): string {
   const title = oneLine(s.title).slice(0, 120);
   const how = s.via === "extension" ? "with the Nova extension" : s.via === "bookmarklet" ? "with the Kivo bookmarklet" : "from your saved pages";
+  // The source once, as a heading and one compact line (capture-draft-rules),
+  // never "Source:" (that names the note's own source, note-blocks sourceOf).
   return [
-    `### Research excerpt${title ? `: ${title}` : ""}`,
+    `### ${title || "Excerpt"}`,
+    ...(s.url ? [`[View source](${linkTarget(s.url)}) · ${siteOf(s.url)}`] : []),
     "",
     quote(s.text),
     "",
-    `*Source:* ${[title, s.url].filter(Boolean).join(" ")}`,
     `*Captured ${s.day} ${how}.*`,
   ].join("\n");
 }
+
+// Link words: brackets would end the link early, so they go.
+const linkWords = (title: string) => oneLine(title).split("[").join("").split("]").join("").slice(0, 160);
 
 // Whether this passage is already in the note, as a section like the above.
 export const hasSelection = (body: string, text: string): boolean => unifyLines(body).includes(quote(text));
