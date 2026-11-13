@@ -19,6 +19,7 @@ const SECTIONS = [
   { id: "collect", title: "What we collect" },
   { id: "use", title: "How we use it" },
   { id: "ai", title: "AI features" },
+  { id: "assistants", title: "AI assistants you connect" },
   { id: "sources", title: "Research papers and sources" },
   { id: "processors", title: "Who processes it" },
   { id: "browser", title: "Cookies and your browser" },
@@ -92,6 +93,16 @@ export default function PrivacyPage() {
         </ul>
         <p>The note you add after a study session is not sent to the AI model. AI replies can be wrong; nothing an AI reply says changes your records unless you confirm it.</p>
         <p>The provider used is <Confirm id="aiProvider" />.</p>
+      </Section>
+
+      <Section id="assistants" title="AI assistants you connect">
+        <p>You can connect an AI assistant you use, such as Claude or ChatGPT, to your Kivo with <Link href="/integrations/kivo-connect">Kivo Connect</Link>. Nothing is shared until you approve the connection on Kivo&apos;s consent page, and the assistant only gets the permissions listed there.</p>
+        <ul>
+          <li><strong>What the assistant can see:</strong> what its permissions cover, such as your name, your subjects and topics, your notes and your Knowledge Map, when it calls a tool. What it does with that is governed by that assistant&apos;s own terms and privacy policy.</li>
+          <li><strong>What Kivo stores:</strong> the assistant&apos;s registration (its name and return address), the connection you approved (permissions, expiry, last use), its tokens in hashed form only, and a log of its tool calls on your account: the tool, the outcome, the ids of the items affected and the result of each change. Kivo does not store your conversation with the assistant. What it saves for you, such as notes, becomes part of your Kivo like anything you write.</li>
+          <li><strong>No AI call by Kivo:</strong> Kivo Connect does not send what the assistant gives it to an AI model.</li>
+          <li><strong>Ending it:</strong> disconnect in Settings › AI assistants, and the assistant&apos;s access ends at once. Deleting your account deletes every connection and its log.</li>
+        </ul>
       </Section>
 
       <Section id="sources" title="Research papers and sources">

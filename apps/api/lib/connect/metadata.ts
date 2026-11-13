@@ -14,7 +14,7 @@ export function protectedResource(): Response {
     scopes_supported: ALL_SCOPES,
     bearer_methods_supported: ["header"],
     resource_name: "Kivo",
-    resource_documentation: `${connectOrigin()}/guide`,
+    resource_documentation: `${connectOrigin()}/integrations/kivo-connect`,
   }, 200, { "cache-control": "public, max-age=300" })
 }
 

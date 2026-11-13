@@ -107,6 +107,10 @@ test("a remote MCP client connects, works and is cut off, over HTTP", async () =
   const del = tools.find(t => t.name === "delete_note")!;
   assert.equal(del.annotations?.destructiveHint, true);
   assert.equal(tools.find(t => t.name === "search_notes")!.annotations?.readOnlyHint, true);
+  // Claude Connectors Directory: every tool has a title and is either read-only
+  // or marked destructive (any write).
+  assert.ok(tools.every(t => t.annotations?.title && (t.annotations.readOnlyHint === true) !== (t.annotations.destructiveHint === true)), "each tool is read-only xor destructive");
+  assert.equal(tools.find(t => t.name === "create_note")!.annotations?.destructiveHint, true);
   assert.ok(tools.every(t => t.inputSchema.type === "object" && t.outputSchema));
 
   const who = parse(await client.callTool({ name: "get_my_profile", arguments: {} }));
