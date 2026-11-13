@@ -41,7 +41,10 @@ export function buildServer(learner: ConnectLearner, origin: string): McpServer 
       annotations: {
         title: tool.title,
         readOnlyHint: tool.kind === "read",
-        destructiveHint: tool.destructive === true,
+        // Every tool that changes the learner's data is marked destructive, as
+        // the Claude Connectors Directory requires ("destructiveHint: true for
+        // tools that modify or delete data"): Claude then confirms each write.
+        destructiveHint: tool.kind !== "read",
         idempotentHint: tool.kind === "read",
         openWorldHint: false,
       },
