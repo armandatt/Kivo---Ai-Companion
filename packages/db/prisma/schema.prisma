@@ -33,6 +33,8 @@ model User {
   // Agreement to the Terms and the Privacy Policy, given at sign-up (auth/legal.ts).
   legalConsents LegalConsent[]
   novaExtensionConnections NovaExtensionConnection[]
+  connectGrants            NovaConnectGrant[]
+  connectAudit             NovaConnectAudit[]
 
   userProfile UserProfile?
   workoutLogs       WorkoutLog[]
@@ -1405,6 +1407,81 @@ model NovaExtensionConnection {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+// ─── Kivo Connect: ChatGPT, Claude and other MCP clients (packages/api/src/connect) ─
+// An assistant the learner allowed to reach their Kivo. A client registers
+// itself (OAuth dynamic client registration); it owns nothing until the
+// learner approves it on /connect/authorize. Only connect/oauth.ts writes it.
+model NovaConnectClient {
+  id               String   @id @default(cuid())
+  // The public client_id given to the assistant.
+  clientId         String   @unique
+  name             String
+  // Exact redirect addresses it registered; nothing else is ever redirected to.
+  redirectUris     String[]
+  // "none" (PKCE only) or "client_secret_post" / "client_secret_basic".
+  tokenAuthMethod  String   @default("none")
+  // SHA-256 of the client secret, when it has one.
+  secretHash       String?
+  createdAt        DateTime @default(now())
+
+  grants NovaConnectGrant[]
+}
+
+// One approval by one learner for one assistant: the authorization code and,
+// once exchanged, its tokens. Only SHA-256 hashes are stored. Revoked by the
+// learner or by the assistant; a refresh rotates both tokens on this row.
+model NovaConnectGrant {
+  id               String    @id @default(cuid())
+  userId           String
+  clientRowId      String
+  scopes           String[]
+  // The MCP endpoint the tokens are for (RFC 8707). Tokens are refused anywhere else.
+  resource         String
+  codeHash         String?   @unique
+  codeChallenge    String?
+  redirectUri      String?
+  codeExpiresAt    DateTime?
+  accessHash       String?   @unique
+  accessExpiresAt  DateTime?
+  refreshHash      String?   @unique
+  // The refresh token this one replaced: presenting it again means a copy
+  // leaked (or a client replayed it), and the whole grant is revoked.
+  previousRefreshHash String? @unique
+  refreshExpiresAt DateTime?
+  lastUsedAt       DateTime?
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  user   User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client NovaConnectClient @relation(fields: [clientRowId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// What an assistant did, one row per write (and per refused access), never
+// the content: the tool, the outcome and the ids it touched. A key makes a
+// retried write return its first result instead of running again. Only
+// connect/audit.ts writes it.
+model NovaConnectAudit {
+  id             String   @id @default(cuid())
+  userId         String
+  grantId        String?
+  tool           String
+  // ok | partial | refused | failed | conflict
+  outcome        String
+  // Ids of what was created, changed or refused. No note text.
+  resources      Json?
+  // For an idempotent write: the caller's key and the result it got.
+  idempotencyKey String?
+  result         Json?
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
 }
 
 // ─── Nova tasks ───────────────────────────────────────────────────────────────

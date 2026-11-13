@@ -7,6 +7,7 @@ import { CheckinSettings } from '@/components/nova/checkin-settings'
 import { HelpPreferences } from '@/components/nova/help-preferences'
 import { TelegramSettings } from '@/components/nova/telegram-connect'
 import { DeleteAccountSection } from '@/components/settings/delete-account-section'
+import { ConnectedAssistants } from '@/components/settings/connected-assistants'
 import { ThemePicker } from '@/components/theme/kivo-theme'
 import { PageHeader } from '@/components/dashboard/page-states'
 
@@ -78,6 +79,7 @@ export default function SettingsPage() {
           ? <div aria-busy="true" aria-label="Loading settings" className="h-40 animate-pulse rounded-3xl border border-white/5 bg-white/3" />
           : <TelegramSettings companion={companion} />}
       </div>
+      {companion === 'Nova' && <div className="mt-3"><ConnectedAssistants /></div>}
 
       {/* For every account, whichever companion it uses. */}
       <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">Account</p>
