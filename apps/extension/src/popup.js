@@ -19,9 +19,11 @@ import { buildCapture, buildEvent, createClient, disconnectOutcome, newActionId 
 import { NO_PROBE, browser } from './lib/browser.js'
 import { describePage } from './lib/page.js'
 import { createStore } from './lib/store.js'
+import { createThreads } from './lib/thread.js'
 import { alertBox, busy, el, idle, siteInitial } from './lib/ui.js'
 
 const store  = createStore(browser.storage())
+const threads = createThreads(browser.session(), browser.storage())
 const client = createClient({ baseUrl: NOVA_URL, fetch: (...args) => fetch(...args), getToken: () => store.token() })
 const view   = document.getElementById('view')
 const status = document.getElementById('status')
@@ -56,12 +58,12 @@ const privacyText = () => [
     el('li', {}, 'The text you have selected on that page, shown here so you can capture it. It is sent only if you press Capture, or with a question you ask.'),
     el('li', {}, 'A passage you capture goes to your Drafts in Kivo with the page it came from, until you put it in a note or discard it.'),
     el('li', {}, 'A screenshot of what that tab is showing, only when you press Screenshot or capture an area you selected. You see it here first. It goes to Nova only with a question you ask, and is not kept.'),
-    el('li', {}, 'Your conversation with Nova about a page stays in this browser\'s memory until you start a new one or close the browser. Nova\'s server does not keep it.'),
+    el('li', {}, 'Your conversation with Nova about a page stays in this browser\'s memory until you start a new one or close the browser. Press Keep in the panel to keep it on this device while you read that article (until you unlock it, or 14 days unused). Nova\'s server does not keep it.'),
     el('li', {}, 'Nothing else inside the page: no other text, no forms, no passwords.'),
     el('li', {}, 'Not your other tabs, and not your history. Nova does nothing while this popup and its panel are closed, except take the picture of an area you selected.'),
     el('li', {}, 'It sends a page to Nova only when you press Capture, Save, Study or Ask.'),
   ),
-  el('p', { class: 'small' }, 'Permissions: "activeTab" lets Nova read this tab\'s address and title when you click its icon, and take a screenshot of it when you press Screenshot. "scripting" lets it read your selected text and the page\'s own address on that tab, at that moment. "sidePanel" lets Ask Nova open beside the page. "storage" keeps this browser connected, and your open conversation in memory. It has no standing access to any website.'),
+  el('p', { class: 'small' }, 'Permissions: "activeTab" lets Nova read this tab\'s address and title when you click its icon, and take a screenshot of it when you press Screenshot. "scripting" lets it read your selected text and the page\'s own address on that tab, at that moment. "sidePanel" lets Ask Nova open beside the page. "storage" keeps this browser connected, your open conversation in memory, and a conversation you chose to Keep on this device. It has no standing access to any website.'),
 ]
 
 // ── Not connected ─────────────────────────────────────────────────────────────
@@ -160,7 +162,7 @@ const toastOf = flash => (flash ? el('p', { class: 'toast', role: 'status', data
 // How the current draft stands, in words: "3 passages from 2 pages".
 const draftWords = d => `${d.passages} passage${d.passages === 1 ? '' : 's'}${d.sources ? ` from ${d.sources} page${d.sources === 1 ? '' : 's'}` : ''}`
 
-function renderReady(page, context, probe = NO_PROBE, flash = null, draft = null) {
+function renderReady(page, context, probe = NO_PROBE, flash = null, draft = null, thread = null) {
   setStatus('connected', context.learner.name ? `Connected · ${context.learner.name.split(' ')[0]}` : 'Connected')
 
   if (!page.supported) {
@@ -242,9 +244,12 @@ function renderReady(page, context, probe = NO_PROBE, flash = null, draft = null
 
   // Ask Nova: the conversation opens beside the page, with this page and the
   // selection handed to it. Opened straight from this click, as the browser asks.
-  const ask = el('button', { class: 'ask-open wide', type: 'button', dataset: { askOpen: '' } }, 'Ask Nova about this page')
+  // A conversation already going on this article: Ask Nova picks it up.
+  const asked = thread?.turns?.filter(t => t.answer).length ?? 0
+  const ask = el('button', { class: 'ask-open wide', type: 'button', dataset: { askOpen: asked ? 'continue' : 'new' } },
+    asked ? `Continue with Nova · ${asked} question${asked === 1 ? '' : 's'}${thread.locked ? ' · kept' : ''}` : 'Ask Nova about this page')
   ask.addEventListener('click', async () => {
-    const handoff = { url: page.url, title: title.value.trim() || page.title, selection: probe.selection || '', windowId: tabWindowId, name: context.learner.name ? context.learner.name.split(' ')[0] : null }
+    const handoff = { url: page.url, canonicalUrl: probe.canonicalUrl || null, title: title.value.trim() || page.title, selection: probe.selection || '', windowId: tabWindowId, name: context.learner.name ? context.learner.name.split(' ')[0] : null }
     const opened = browser.openPanel(page.tabId, handoff)
     if (opened && await opened) return window.close()
     // No side panel here (Safari): the same conversation, in this popup.
@@ -345,7 +350,8 @@ async function start(flash = null) {
   const [probe, drafts] = page.supported
     ? await Promise.all([browser.readPage(tab?.id, limit), client.drafts()])
     : [NO_PROBE, null]
-  renderReady({ ...page, tabId: tab?.id }, { ...context.data, limits: { ...context.data.limits, excerpt: limit } }, probe, flash, drafts?.ok ? drafts.data : null)
+  const thread = page.supported ? await threads.load(page.url, probe.canonicalUrl).catch(() => null) : null
+  renderReady({ ...page, tabId: tab?.id }, { ...context.data, limits: { ...context.data.limits, excerpt: limit } }, probe, flash, drafts?.ok ? drafts.data : null, thread)
 }
 
 void start()

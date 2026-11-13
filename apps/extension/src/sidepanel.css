@@ -85,3 +85,8 @@ html[data-inline] body.panel { width: 420px; height: 600px; }
 .md .katex { font-size: 1.06em; }
 .md .katex-display { margin: 0; }
 .md-math-raw { padding: 1px 5px; border: 1px dashed var(--warn-line); border-radius: 5px; color: var(--warn); font: 12px/1.4 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre-wrap; }
+
+/* ── Keep (lock) ───────────────────────────────────────────────────────── */
+.pagebar-tools { display: flex; align-items: center; gap: var(--s3); }
+button.lock[aria-pressed="true"]::after { content: "✓"; margin-left: 4px; font-size: 11px; }
+button.lock[aria-pressed="true"] { color: var(--accent-hi); font-weight: 600; }

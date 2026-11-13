@@ -16,7 +16,7 @@ import { createStore } from '../src/lib/store.js'
 import { NO_PROBE, probePage, readProbe } from '../src/lib/browser.js'
 import { REGION_SHOT_KEEP_MS, cropArea, freshShot } from '../src/lib/region.js'
 import { inline, parse } from '../src/lib/markdown.js'
-import { HISTORY_SENT, THREADS_KEPT, createThreads, historyOf, threadKey } from '../src/lib/thread.js'
+import { HISTORY_SENT, LOCKED_KEPT, LOCK_DAYS, THREADS_KEPT, createThreads, historyOf, threadKey } from '../src/lib/thread.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const src  = name => readFileSync(join(root, 'src', name), 'utf8')
@@ -246,18 +246,64 @@ test('a follow-up carries the latest turns, question and answer only', () => {
   assert.ok(sent.every(t => Object.keys(t).join() === 'question,answer'))
 })
 
-test('a conversation is kept per page in session memory only, the latest few', async () => {
+const memoryArea = () => {
   const data = {}
-  const area = { get: async k => (k === null ? { ...data } : { [k]: data[k] }), set: async o => Object.assign(data, o), remove: async k => { for (const key of [].concat(k)) delete data[key] } }
-  const threads = createThreads(area)
-  await threads.save('https://example.com/a#part', { title: 'A', domain: 'example.com' }, [{ question: 'q', answer: 'a' }])
-  assert.deepEqual((await threads.load('https://example.com/a')).turns, [{ question: 'q', answer: 'a' }], 'the fragment is not part of the page')
-  for (let i = 0; i < THREADS_KEPT + 5; i++) await threads.save(`https://example.com/${i}`, { title: 't', domain: 'example.com' }, [{ question: 'q', answer: 'a' }])
-  assert.equal(Object.keys(data).length, THREADS_KEPT)
+  return { data, get: async k => (k === null ? { ...data } : Object.fromEntries([].concat(k).filter(key => key in data).map(key => [key, data[key]]))), set: async o => Object.assign(data, o), remove: async k => { for (const key of [].concat(k)) delete data[key] } }
+}
+const PAGE = { title: 'A', domain: 'example.com' }
+
+test('a conversation is kept per article in session memory, the latest few', async () => {
+  const session = memoryArea(), device = memoryArea()
+  const threads = createThreads(session, device)
+  await threads.save('https://example.com/a#part', null, PAGE, [{ question: 'q', answer: 'a' }])
+  assert.deepEqual((await threads.load('https://example.com/a')).turns, [{ question: 'q', answer: 'a' }], 'the fragment is not part of the article')
+  assert.equal(Object.keys(device.data).length, 0, 'unlocked: nothing on the device')
+  for (let i = 0; i < THREADS_KEPT + 5; i++) await threads.save(`https://example.com/${i}`, null, PAGE, [{ question: 'q', answer: 'a' }])
+  assert.equal(Object.keys(session.data).length, THREADS_KEPT)
   assert.equal(threadKey('not a url'), null)
   const panel = code(src('sidepanel.js'))
-  assert.match(panel, /createThreads\(browser\.session\(\)\)/, 'chrome.storage.session: in memory, gone when the browser quits')
-  assert.ok(!code(src('lib/thread.js')).match(/storage\.local|localStorage/))
+  assert.match(panel, /createThreads\(browser\.session\(\), browser\.storage\(\)\)/)
+  assert.ok(!code(src('lib/thread.js')).match(/chrome\.|localStorage/), 'storage is handed in, never reached for')
+})
+
+test('the same article is one conversation, however it was reached', () => {
+  const key = threadKey('https://www.example.com/post/?utm_source=x&fbclid=1#comments')
+  assert.equal(key, threadKey('https://example.com/post'))
+  assert.equal(threadKey('https://arxiv.org/pdf/1706.03762'), threadKey('https://arxiv.org/abs/1706.03762'), 'a paper\'s PDF is the paper')
+  assert.equal(threadKey('https://example.com/p?id=2&page=1'), threadKey('https://example.com/p?page=1&id=2'), 'meaningful parameters kept, in any order')
+  assert.notEqual(threadKey('https://example.com/p?id=2'), threadKey('https://example.com/p?id=3'))
+  assert.equal(threadKey('https://example.com/amp/post', 'https://example.com/post'), threadKey('https://example.com/post'), 'the page\'s own canonical address')
+  assert.equal(threadKey('https://example.com/post', 'https://evil.example/other'), threadKey('https://example.com/post'), 'never another site\'s')
+})
+
+test('Keep (lock) keeps an article\'s conversation on this device until unlocked, New conversation, or LOCK_DAYS unused', async () => {
+  const session = memoryArea(), device = memoryArea()
+  const threads = createThreads(session, device)
+  const url = 'https://example.com/a'
+  const turns = [{ question: 'q', answer: 'a' }]
+  await threads.save(url, null, PAGE, turns, { locked: true })
+  assert.equal(Object.keys(session.data).length, 0, 'moved out of memory')
+  // A browser restart empties memory; the kept one is still there.
+  for (const k of Object.keys(session.data)) delete session.data[k]
+  const back = await threads.load(url)
+  assert.equal(back.locked, true); assert.deepEqual(back.turns, turns)
+  await threads.save(url, null, PAGE, turns, { locked: false })
+  assert.equal(Object.keys(device.data).length, 0, 'unlocking takes it off the device')
+  await threads.save(url, null, PAGE, turns, { locked: true })
+  await threads.clear(url)
+  assert.equal((await threads.load(url)).turns.length, 0, 'New conversation forgets it everywhere')
+  await threads.save(url, null, PAGE, turns, { locked: true, now: 0 })
+  assert.equal((await threads.load(url, null, (LOCK_DAYS + 1) * 864e5)).turns.length, 0, 'unused too long: gone')
+  for (let i = 0; i < LOCKED_KEPT + 3; i++) await threads.save(`https://example.com/k${i}`, null, PAGE, turns, { locked: true, now: 1000 + i })
+  assert.equal(Object.keys(device.data).length, LOCKED_KEPT)
+})
+
+test('what is being typed comes back for the same article', async () => {
+  const threads = createThreads(memoryArea(), memoryArea())
+  await threads.saveTyping('https://example.com/a?utm_source=x', null, { text: 'half a question', useSelection: false })
+  assert.deepEqual(await threads.loadTyping('https://example.com/a'), { text: 'half a question', useSelection: false })
+  const panel = code(src('sidepanel.js'))
+  assert.match(panel, /if \(typing\.text\) question\.value = typing\.text/)
 })
 
 test('answers are read as Markdown with maths, and nothing in them becomes markup or a script', () => {

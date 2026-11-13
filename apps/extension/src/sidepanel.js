@@ -18,11 +18,12 @@ import { browser } from './lib/browser.js'
 import { describePage } from './lib/page.js'
 import { parse, render } from './lib/markdown.js'
 import { createStore } from './lib/store.js'
-import { createThreads, historyOf } from './lib/thread.js'
+import { LOCK_DAYS, createThreads, historyOf } from './lib/thread.js'
 import { alertBox, busy, clamp, el, encodeShot, idle, loadPicture, markBetween, placeMark, siteInitial, sr } from './lib/ui.js'
 
 const store   = createStore(browser.storage())
-const threads = createThreads(browser.session())
+// In memory by default; on this device only when the learner locks a conversation (Keep).
+const threads = createThreads(browser.session(), browser.storage())
 const client  = createClient({ baseUrl: NOVA_URL, fetch: (...args) => fetch(...args), getToken: () => store.token() })
 const params  = new URLSearchParams(location.search)
 const tabId   = Number(params.get('tab'))
@@ -63,13 +64,17 @@ async function start() {
       el('p', {}, 'Click Nova in the toolbar on the page you are reading, then Ask Nova.')))
   }
   setStatus('connected', handoff.name ? `Connected · ${handoff.name}` : 'Connected')
-  renderConversation({ ...page, tabId, windowId: handoff.windowId }, handoff, await threads.load(page.url))
+  const canonical = typeof handoff.canonicalUrl === 'string' ? handoff.canonicalUrl : null
+  renderConversation({ ...page, tabId, windowId: handoff.windowId, canonical }, handoff, await threads.load(page.url, canonical), await threads.loadTyping(page.url, canonical))
 }
 
-function renderConversation(page, handoff, saved) {
+function renderConversation(page, handoff, saved, typing) {
   let turns = Array.isArray(saved.turns) ? saved.turns.filter(t => t.answer || t.error) : []
   let selection = typeof handoff.selection === 'string' ? handoff.selection : ''
-  let useSelection = Boolean(selection)
+  let useSelection = Boolean(selection) && typing.useSelection !== false
+  // Locked (Keep): this article's conversation is kept on this device until
+  // unlocked, so closing the panel or the browser loses nothing while reading it.
+  let locked = saved.locked === true
   let shot = null          // { src, img, mark }
   let asking = false
   let stopRegion = null
@@ -84,7 +89,9 @@ function renderConversation(page, handoff, saved) {
   const attached = el('div', { class: 'attached', dataset: { attached: '' } })
   const errors = el('div', { class: 'errors' })
 
-  const persist = () => threads.save(page.url, page, turns)
+  const persist = () => threads.save(page.url, page.canonical, page, turns, { locked })
+  // What is being typed, and whether the selection goes with it, kept for this article.
+  const keepTyping = () => threads.saveTyping(page.url, page.canonical, { text: question.value, useSelection })
   const atBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80
   const toBottom = (force = false) => { if (force || atBottom()) scroller.scrollTo({ top: scroller.scrollHeight, behavior: reduced() ? 'auto' : 'smooth' }) }
   const fit = () => { question.style.height = 'auto'; question.style.height = `${Math.min(question.scrollHeight + 2, 160)}px` }
@@ -96,7 +103,7 @@ function renderConversation(page, handoff, saved) {
     if (selection) {
       chips.push(el('span', { class: `chip ${useSelection ? 'on' : ''}`, dataset: { chipSelection: useSelection ? 'on' : 'off' } },
         el('span', { class: 'chip-text', title: selection }, `Selection: “${selection.slice(0, 60)}${selection.length > 60 ? '…' : ''}”`),
-        el('button', { class: 'chip-x', type: 'button', ariaLabel: useSelection ? 'Don’t send the selection' : 'Send the selection', title: useSelection ? 'Don’t send the selection' : 'Send the selection', onclick: () => { useSelection = !useSelection; showAttached() } }, useSelection ? '×' : '+')))
+        el('button', { class: 'chip-x', type: 'button', ariaLabel: useSelection ? 'Don’t send the selection' : 'Send the selection', title: useSelection ? 'Don’t send the selection' : 'Send the selection', onclick: () => { useSelection = !useSelection; showAttached(); void keepTyping() } }, useSelection ? '×' : '+')))
     }
     if (shot) {
       const mark  = el('div', { class: 'shot-mark', ariaHidden: 'true' })
@@ -226,13 +233,13 @@ function renderConversation(page, handoff, saved) {
     delete turn.pending
     if (!res.ok && res.kind === 'unauthenticated') { await store.clear(); turn.error = res.message }
     else if (!res.ok || typeof res.data.answer !== 'string') turn.error = res.ok ? "That didn't work. Try again in a moment." : res.message
-    else { turn.answer = res.data.answer; turn.basis = res.data.basis; turn.detail = res.data.detail ?? detail; if (text === question.value.trim()) { question.value = ''; fit() } }
+    else { turn.answer = res.data.answer; turn.basis = res.data.basis; turn.detail = res.data.detail ?? detail; if (text === question.value.trim()) { question.value = ''; fit(); void keepTyping() } }
     ready(); draw(); toBottom()
     if (turn.answer) await persist()
     question.focus()
   }
 
-  question.addEventListener('input', () => { ready(); fit() })
+  question.addEventListener('input', () => { ready(); fit(); void keepTyping() })
   question.addEventListener('keydown', e => {
     if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return
     e.preventDefault()
@@ -244,19 +251,36 @@ function renderConversation(page, handoff, saved) {
     el('div', { class: 'tools' }, selButton, shotButton, regionButton))
 
   const fresh = el('button', { class: 'link', type: 'button', dataset: { newConversation: '' }, title: 'Start again: Nova forgets this conversation' }, 'New conversation')
-  fresh.addEventListener('click', async () => { if (asking) return; turns = []; await threads.clear(page.url); draw(); question.focus() })
+  fresh.addEventListener('click', async () => { if (asking) return; turns = []; locked = false; showLock(); await threads.clear(page.url, page.canonical); draw(); question.focus() })
+
+  // Keep (lock): on this device until unlocked; off, in memory until the browser quits.
+  const lock = el('button', { class: 'link lock', type: 'button', dataset: { lock: '' } })
+  const keepNote = el('span', { dataset: { keepNote: '' } })
+  function showLock() {
+    lock.setAttribute('aria-pressed', String(locked))
+    lock.textContent = locked ? 'Kept' : 'Keep'
+    lock.title = locked
+      ? `Kept on this device for this article, even after the browser closes. Press to stop keeping it (unused for ${LOCK_DAYS} days, it goes by itself).`
+      : 'Keep this conversation on this device, so it is still here after the browser closes while you read this article'
+    keepNote.textContent = locked
+      ? `Kept on this device for this article until you unlock it (or ${LOCK_DAYS} days unused).`
+      : 'Kept until you close the browser. Press Keep to keep it longer.'
+  }
+  lock.addEventListener('click', async () => { locked = !locked; showLock(); await persist() })
+  showLock()
 
   view.replaceChildren(
     el('section', { class: 'pagebar', ariaLabel: 'The page this conversation is about', dataset: { context: page.url } },
       el('span', { class: 'site', ariaHidden: 'true' }, siteInitial(page.domain)),
       el('div', { class: 'pagebar-text' }, el('p', { class: 'pagebar-title', title: page.title }, page.title), el('p', { class: 'small' }, page.domain)),
-      fresh),
+      el('div', { class: 'pagebar-tools' }, lock, fresh)),
     scroller,
     form,
     el('footer', { class: 'panel-foot small' },
       el('button', { class: 'link ext', type: 'button', onclick: () => openNova('/notes/drafts') }, 'Drafts in Kivo'),
-      el('span', {}, 'Nova keeps this conversation only until you close the browser.')))
+      keepNote))
 
+  if (typing.text) question.value = typing.text
   showAttached(); draw(); ready(); fit()
   requestAnimationFrame(() => toBottom(true))
   question.focus()
