@@ -42,12 +42,13 @@ function Actions() {
   </>
 }
 
-// The map is the page: a one-line title, and the canvas takes every pixel
-// left below it (the dashboard's main area pads 1.5rem on each side).
+// The map is the page, edge to edge: the dashboard's 1.5rem padding is taken
+// back (-m-6), a slim bar holds the title and its links, and the canvas takes
+// every pixel below it, with no frame around it.
 function Workspace({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mx-auto flex h-[calc(100dvh-3rem)] w-full max-w-[120rem] flex-col pt-10 lg:pt-0">
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 pb-3">
+    <div className="-m-6 flex h-[100dvh] flex-col pt-10 lg:pt-0 [&_[data-knowledge-map]]:rounded-none [&_[data-knowledge-map]]:border-x-0 [&_[data-knowledge-map]]:border-b-0">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5 sm:px-5">
         <h1 className="text-xl font-semibold tracking-[-0.02em] text-foreground sm:text-2xl" title={DESCRIPTION}>{TITLE}</h1>
         <div className="flex items-center gap-2 [&_a]:h-9 [&_a]:text-sm"><Actions /></div>
       </header>

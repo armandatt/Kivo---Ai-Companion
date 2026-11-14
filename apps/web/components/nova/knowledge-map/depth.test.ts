@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { MapNode } from '@repo/api/nova/product/knowledge-map.types'
-import { CARD_MS, EDGE_MS, LARGE_MAP, chooseMotion, chosenMotion, enteredBefore, entranceMode, entrancePlan, markEntered, regionsOf, thicknessOf } from './depth'
+import { CARD_MS, EDGE_MS, LARGE_MAP, NODE_BUDGET, chooseMotion, chosenMotion, enteredBefore, entranceMode, entrancePlan, markEntered, regionsOf, thicknessOf } from './depth'
 
 const topic = (over: Partial<Extract<MapNode, { type: 'topic' }>>) => ({
   id: 'topic:t', type: 'topic', label: 'T', subjectId: 's', subjectName: 'S', sessions: 3, level: 'developing', masteryPercent: 50, notes: 0, resources: 0, href: null, ...over,
@@ -30,14 +30,15 @@ test('the entrance follows the tree: a subject, then its topics, then their note
   assert.ok(p.edge.get('e3')! > d('note:n'), 'drawn after the card it reaches')
   assert.equal(p.edge.has('gone'), false, 'a line to a card not drawn is not scheduled')
   assert.equal(p.node.size, ids.length, 'every card drawn has a place in it, loose ones too')
-  assert.ok(p.total <= 1250 + Math.max(CARD_MS.full, 140 + EDGE_MS.full), 'quick, whatever the size')
+  assert.ok(p.total <= NODE_BUDGET.full + Math.max(CARD_MS.full, 240 + EDGE_MS.full), 'bounded, whatever the size')
+  assert.ok(p.total >= 2500, `felt: ${p.total} ms`)
 })
 
 test('a deep tree is squeezed into the same time, never stretched', () => {
   const deep = Array.from({ length: 30 }, (_, i) => `topic:${i}`)
   const parent = new Map(deep.slice(1).map((id, i) => [id, deep[i]!]))
   const p = entrancePlan(deep, parent, new Map(), [], 'full')
-  assert.ok(Math.max(...p.node.values()) <= 1250)
+  assert.ok(Math.max(...p.node.values()) <= NODE_BUDGET.full)
   const order = deep.map(id => p.node.get(id)!)
   assert.deepEqual(order, [...order].sort((a, b) => a - b), 'still in order')
 })

@@ -23,11 +23,14 @@ type Props = {
   aboutNode?:   string
   // Questions to start with, shown until the first message; one tap sends it.
   suggestions?: string[]
+  // More room to read and write: a taller conversation, wider spacing,
+  // larger text and input (the Knowledge Map's Nova).
+  roomy?:       boolean
 }
 
 // A short conversation with Nova through POST /api/nova/message: the same
 // turn Telegram runs, for the same learner.
-export function TalkToNova({ opening, placeholder, onReplied, className, about, aboutNode, suggestions }: Props) {
+export function TalkToNova({ opening, placeholder, onReplied, className, about, aboutNode, suggestions, roomy }: Props) {
   const [turns, setTurns]     = useState<Turn[]>(opening ? [{ from: 'nova', text: opening }] : [])
   const [draft, setDraft]     = useState('')
   const [sending, setSending] = useState(false)
@@ -58,11 +61,12 @@ export function TalkToNova({ opening, placeholder, onReplied, className, about, 
   return (
     <div className={cn('rounded-2xl border border-white/8 bg-white/3', className)}>
       {turns.length > 0 && (
-        <div className="max-h-80 space-y-3 overflow-y-auto p-4 sm:p-5" aria-live="polite">
+        <div className={cn('overflow-y-auto', roomy ? 'max-h-[min(30rem,52vh)] space-y-4 p-5' : 'max-h-80 space-y-3 p-4 sm:p-5')} aria-live="polite">
           {turns.map((turn, i) => (
             <div key={i} className={cn('flex', turn.from === 'you' && 'justify-end')}>
               <p className={cn(
-                'max-w-[85%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed',
+                'whitespace-pre-wrap rounded-2xl',
+                roomy ? 'max-w-[92%] px-4 py-3 text-[14.5px] leading-7' : 'max-w-[85%] px-3.5 py-2.5 text-sm leading-relaxed',
                 turn.from === 'you' ? 'bg-keppel-400/15 text-foreground' : 'bg-white/5 text-foreground/85',
               )}>
                 {turn.text}
@@ -83,27 +87,27 @@ export function TalkToNova({ opening, placeholder, onReplied, className, about, 
       )}
 
       {suggestions && suggestions.length > 0 && !turns.some(t => t.from === 'you') && (
-        <div className="flex flex-wrap gap-1.5 p-2.5 pb-0" data-nova-suggestions>
+        <div className={cn('flex flex-wrap gap-1.5 pb-0', roomy ? 'p-4' : 'p-2.5')} data-nova-suggestions>
           {suggestions.map(q => (
             <button key={q} type="button" disabled={sending} onClick={() => void send(null, q)}
               className="rounded-full border border-white/10 bg-white/4 px-2.5 py-1 text-xs text-foreground/75 transition-colors hover:border-keppel-400/40 hover:text-foreground disabled:opacity-50">{q}</button>
           ))}
         </div>
       )}
-      <form onSubmit={send} className="flex items-center gap-2 border-t border-white/8 p-2.5 first:border-t-0">
+      <form onSubmit={send} className={cn('flex items-center gap-2 border-t border-white/8 first:border-t-0', roomy ? 'p-3' : 'p-2.5')}>
         <input
           value={draft}
           onChange={e => setDraft(e.target.value)}
           placeholder={placeholder}
           maxLength={2000}
           aria-label="Message Nova"
-          className="h-10 min-w-0 flex-1 rounded-lg bg-transparent px-3 text-sm text-foreground placeholder:text-foreground/35 focus:outline-none"
+          className={cn('min-w-0 flex-1 rounded-lg bg-transparent px-3 text-foreground placeholder:text-foreground/35 focus:outline-none', roomy ? 'h-12 text-[15px]' : 'h-10 text-sm')}
         />
         <button
           type="submit"
           disabled={sending || !draft.trim()}
           aria-label="Send"
-          className="inline-flex size-10 shrink-0 items-center justify-center rounded-lg bg-keppel-400 text-keppel-950 transition-colors hover:bg-keppel-300 disabled:opacity-40"
+          className={cn('inline-flex shrink-0 items-center justify-center bg-keppel-400 text-keppel-950 transition-colors hover:bg-keppel-300 disabled:opacity-40', roomy ? 'size-12 rounded-xl' : 'size-10 rounded-lg')}
         >
           <ArrowUp className="size-4" />
         </button>

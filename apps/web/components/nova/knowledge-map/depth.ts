@@ -49,12 +49,13 @@ export type EntranceMode = 'full' | 'brief' | 'none'
 // Past this many cards, the entrance is one short fade: a long cascade over
 // hundreds of cards shows nothing and costs frames.
 export const LARGE_MAP = 260
-const NODE_BUDGET = { full: 1250, brief: 160 }   // the last card starts by then
-const LEVEL_STEP  = { full: 230, brief: 40 }     // one level deeper starts this much later
-const SIBLING_SPREAD = { full: 160, brief: 0 }   // a level's cards spread over this
-const EDGE_LAG    = { full: 140, brief: 60 }     // a line starts once both its cards have
-export const CARD_MS = { full: 520, brief: 240 }
-export const EDGE_MS = { full: 460, brief: 220 }
+// Full: about 3 to 4 seconds in all, so opening the map is felt (owner's ask, 14 Nov).
+export const NODE_BUDGET = { full: 2800, brief: 160 }   // the last card starts by then
+const LEVEL_STEP  = { full: 650, brief: 40 }     // one level deeper starts this much later
+const SIBLING_SPREAD = { full: 900, brief: 0 }   // a level's cards spread over this
+const EDGE_LAG    = { full: 240, brief: 60 }     // a line starts once both its cards have
+export const CARD_MS = { full: 900, brief: 240 }
+export const EDGE_MS = { full: 900, brief: 220 }
 
 export function entranceMode(o: { seen: boolean; reduced: boolean; motion: Motion; count: number }): EntranceMode {
   if (o.reduced || o.motion === 'reduced') return 'none'

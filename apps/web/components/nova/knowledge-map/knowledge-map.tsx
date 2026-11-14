@@ -31,7 +31,7 @@ import { GAP_LABEL, LENSES, STATE_LABEL, gapRank, gapsOf, isRecent, lensTargets,
 import { detailAt, minimapFrame, viewCentredOn, viewOfBox, viewportOn, REGION_LABEL_PX } from './overview'
 import { pathOf, searchMap, matchesOf } from './map-search'
 import { TalkToNova } from '../talk-to-nova'
-import { chooseMotion, chosenMotion, enteredBefore, entranceMode, entrancePlan, markEntered, radiusOf, regionsOf, thicknessOf, type Entrance, type EntranceMode, type Motion } from './depth'
+import { EDGE_MS, chooseMotion, chosenMotion, enteredBefore, entranceMode, entrancePlan, markEntered, radiusOf, regionsOf, thicknessOf, type Entrance, type EntranceMode, type Motion } from './depth'
 
 // The browser session's store, for "this map was opened already" (depth.ts).
 const sessionStore = () => { try { return typeof window === 'undefined' ? null : window.sessionStorage } catch { return null } }
@@ -418,7 +418,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
 
   return (
     <aside aria-label={`Selected: ${TYPE_LABEL[node.type]} ${node.label}`} data-map-overlay data-detail data-detail-type={node.type}
-      className="subject-tone map-inspector map-inspector-in absolute inset-x-0 bottom-0 z-20 flex max-h-[55%] flex-col gap-3.5 overflow-y-auto overscroll-contain rounded-t-2xl border-t border-white/10 bg-card/95 p-4 shadow-float backdrop-blur lg:inset-x-auto lg:bottom-auto lg:right-3 lg:top-3 lg:max-h-[calc(100%-1.5rem)] lg:w-[21rem] lg:rounded-2xl lg:border"
+      className={cn("subject-tone map-inspector map-inspector-in absolute inset-x-0 bottom-0 z-20 flex max-h-[55%] flex-col gap-3.5 overflow-y-auto overscroll-contain rounded-t-2xl border-t border-white/10 bg-card/95 p-4 shadow-float backdrop-blur lg:inset-x-auto lg:bottom-auto lg:right-3 lg:top-3 lg:max-h-[calc(100%-1.5rem)] lg:rounded-2xl lg:border", section === 'ask' ? 'lg:w-[30rem]' : 'lg:w-[21rem]')}
       style={toneStyle(tone)} onPointerDown={e => e.stopPropagation()}>
       {/* What it is, where it sits, and its state at a glance. */}
       <div className="flex items-start gap-3">
@@ -514,7 +514,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
           )}
       {startError && <p role="alert" className="-mt-2 text-sm text-red-400">{startError}</p>}
       {section === 'ask' && askable && (
-        <TalkToNova about={node.type === 'topic' ? `the topic “${node.label}” in ${node.subjectName}` : `the subject “${node.label}”`} aboutNode={node.id} placeholder={`Ask about ${short(node.label, 32)}…`} className="-mt-1" />
+        <TalkToNova roomy about={node.type === 'topic' ? `the topic “${node.label}” in ${node.subjectName}` : `the subject “${node.label}”`} aboutNode={node.id} placeholder={`Ask about ${short(node.label, 40)}…`} className="-mt-1" />
       )}
 
       {/* One next step, from its own record, as an action. */}
@@ -767,7 +767,7 @@ export const STATE_FILL: Record<TopicState, string> = {
   solid: 'var(--nova)', developing: 'var(--map-resource)', weak: 'var(--map-note)', unrated: 'var(--map-topic)',
   unstudied: 'var(--map-topic)', organising: 'var(--map-topic)', milestone: 'var(--nova)',
 }
-const LENS_KEY = 'kivo-map-lens', GUIDE_KEY = 'kivo-map-guide-closed', DENSITY_KEY = 'kivo-map-density'
+const LENS_KEY = 'kivo-map-lens', GUIDE_KEY = 'kivo-map-guide-closed'
 const readKey = (k: string) => { try { return window.localStorage.getItem(k) } catch { return null } }
 const writeKey = (k: string, v: string) => { try { window.localStorage.setItem(k, v) } catch { /* this visit only */ } }
 const ago = (iso: string) => {
@@ -821,10 +821,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     setGuideClosed(readKey(GUIDE_KEY) === '1')
   }, [])
   const setLens = useCallback((l: Lens) => { setLensState(l); writeKey(LENS_KEY, l) }, [])
-  // Everything is an overview by default (overview-density.ts); the learner may ask for every item.
-  const [density, setDensityState] = useState<Density>('overview')
-  useEffect(() => { if (readKey(DENSITY_KEY) === 'all') setDensityState('all') }, [])
-  const setDensity = useCallback((d: Density) => { setDensityState(d); writeKey(DENSITY_KEY, d) }, [])
+  // Everything always opens with every item drawn (the full structure); the
+  // overview (counts folded into cards, overview-density.ts) is a choice for
+  // this visit only.
+  const [density, setDensity] = useState<Density>('all')
   const [narrow, setNarrow]     = useState(() => typeof window !== 'undefined' && window.matchMedia(OUTLINE_QUERY).matches)
   const orientation: Orientation = chosen ?? (narrow ? 'outline' : 'tree')
   const portrait = orientation === 'outline'
@@ -946,14 +946,33 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   // and each card gone into is a step in the browser's history: its Back and
   // Forward (and a mouse's or trackpad's) move between the levels as the
   // map's own Back does. A step the browser made is not written again.
+  // Going into a card adds a step (kivoPrev: the level it came from); going
+  // out (Back, Up, a breadcrumb) goes back through that step when it is the
+  // one before, else replaces this step, so browser Back never lands inside
+  // a card the learner just left.
   const fromHistory = useRef<string | null | undefined>(undefined)
+  const replaceNext = useRef(false)
+  const prevFocus = useRef<string | null>(null)
   useEffect(() => {
+    const was = prevFocus.current
+    prevFocus.current = focus
     if (!focusApplied.current) return
     const url = new URL(window.location.href)
     if (focus) url.searchParams.set('explore', focus); else url.searchParams.delete('explore')
-    if (fromHistory.current !== undefined) { const was = fromHistory.current; fromHistory.current = undefined; if (was === focus) return }
-    if (url.toString() !== window.location.href) window.history.pushState({ ...(window.history.state ?? {}), kivoMap: focus ?? null }, '', url.toString())
+    if (fromHistory.current !== undefined) { const popped = fromHistory.current; fromHistory.current = undefined; if (popped === focus) return }
+    if (url.toString() === window.location.href) { replaceNext.current = false; return }
+    const state = window.history.state ?? {}
+    if (replaceNext.current) { replaceNext.current = false; window.history.replaceState({ ...state, kivoMap: focus ?? null }, '', url.toString()); return }
+    window.history.pushState({ ...state, kivoMap: focus ?? null, kivoPrev: was }, '', url.toString())
   }, [focus])
+  // Out to the level `target` (null: the whole map): through the browser's
+  // own Back when its step before is exactly that level, else in place.
+  const leaveTo = useCallback((target: string | null, apply: () => void) => {
+    const st = window.history.state
+    if (st && 'kivoMap' in st && 'kivoPrev' in st && st.kivoPrev === target) { window.history.back(); return }
+    replaceNext.current = true
+    apply()
+  }, [])
   const treeNow = useRef(tree)
   treeNow.current = tree
   useEffect(() => {
@@ -1230,24 +1249,24 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     lastChosen.current = id
     setScope(null)
   }, [tree, say])
-  // Back: through the browser's history when the step was one the map made
-  // (so the two never disagree), else the map's own stack.
+  // Back: to the view before on the map's own levels (out, never back into a
+  // card just left), kept in step with the browser's history.
   const goBack = useCallback(() => {
-    if (window.history.state && 'kivoMap' in window.history.state) { window.history.back(); return }
-    setStack(s => back(s))
-  }, [])
+    if (stack.length <= 1) return
+    leaveTo(stack[stack.length - 2]!.focus, () => setStack(s => back(s)))
+  }, [stack, leaveTo])
   const goUp = useCallback(() => {
     if (!focus) { say('You are on the whole map.'); return }
     const from = focus
-    setStack(s => up(s, tree))
     setSelected(from)
-  }, [focus, tree, say])
+    leaveTo(current(up(stack, tree)).focus, () => setStack(s => up(s, tree)))
+  }, [focus, tree, say, stack, leaveTo])
   // A breadcrumb: back to that view when it is open, else into that card.
   const goTo = useCallback((id: string | null) => {
-    if (id === null) { setStack(s => [s[0]!]); return }
+    if (id === null) { leaveTo(null, () => setStack(s => [s[0]!])); return }
     const at = stack.findIndex(l => l.focus === id)
-    if (at >= 0) setStack(s => s.slice(0, at + 1)); else explore(id)
-  }, [stack, explore])
+    if (at >= 0) leaveTo(id, () => setStack(s => s.slice(0, at + 1))); else explore(id)
+  }, [stack, explore, leaveTo])
   // A round marker: to the card outside, in the deepest view that holds it.
   const goOutside = useCallback((id: string) => {
     revealCard(id)
@@ -1566,7 +1585,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     const delay = entrance?.edge.get(e.id) ?? (fresh?.edges.has(e.id) ? 160 : undefined)
     const dashed = e.kind === 'depends_on' || e.kind === 'filed_under'
     const arrive = delay === undefined ? undefined : dashed ? 'map-edge-fade' : 'map-edge-draw'
-    const anim = delay === undefined ? undefined : { animationDelay: `${delay}ms`, animationDuration: `${entrance?.mode === 'brief' ? 220 : 460}ms` }
+    const anim = delay === undefined ? undefined : { animationDelay: `${delay}ms`, animationDuration: `${entrance?.mode === 'brief' ? EDGE_MS.brief : EDGE_MS.full}ms` }
     const drawProps = arrive === 'map-edge-draw' ? { pathLength: 1 } : {}
     let d: string, stroke: string, width: number, dash: string | undefined, rest = 1
     if (e.kind === 'depends_on') {
@@ -1588,7 +1607,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         : flow ? `M ${a.x} ${a.y} C ${mx} ${a.y} ${mx} ${b.y} ${b.x} ${b.y}` : `M ${a.x} ${a.y} L ${b.x} ${b.y}`
       // In its subject's colour, so each subject's branches read as its own.
       stroke = lit ? 'var(--action)' : 'color-mix(in oklch, var(--sc) 62%, var(--map-line-strong))'
-      width = lit ? 2.2 : laned ? 1.3 : e.kind === 'contains' ? 2 : e.kind === 'has_topic' || e.kind === 'subtopic' ? 1.5 : 1.1
+      width = lit ? 2.2 : laned ? 1.3 : e.kind === 'contains' ? 2.2 : e.kind === 'has_topic' ? 1.8 : e.kind === 'subtopic' ? 1.5 : 1.1
       dash = e.kind === 'filed_under' ? '5 4' : undefined
       // Deeper in the tree, lighter: never under 55%.
       rest = Math.max(0.45, 0.85 - Math.max(0, depthOf(e.to) - 1) * 0.14)
@@ -1605,7 +1624,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     const signal = tree_ && !dim && (e.kind === 'has_topic' || e.kind === 'contains')
     return (
       <g key={e.id} className={cn('subject-tone', arrive)} style={{ ...toneStyle(toNode?.type === 'subject' ? toNode.label : toNode?.subjectName ?? null), ...anim }}>
-        {tree_ && !lit && <path d={d} fill="none" stroke="var(--sc)" strokeWidth={6} strokeLinecap="round" opacity={dim ? 0.02 : 0.07} vectorEffect="non-scaling-stroke" className="pointer-events-none" />}
+        {tree_ && !lit && <path d={d} fill="none" stroke="var(--sc)" strokeWidth={6} strokeLinecap="round" opacity={dim ? 0.02 : 0.085} vectorEffect="non-scaling-stroke" className="pointer-events-none" />}
         {signal && !lit && <path d={d} fill="none" className="map-signal pointer-events-none" stroke="var(--sc)" strokeWidth={2} strokeDasharray="2 34" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.7} style={{ animationDelay: `${(e.id.length * 137) % 2400}ms` }} />}
         {port && (
           <g className="pointer-events-none" opacity={dim ? 0.25 : 1}>
@@ -1798,16 +1817,16 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     return (
       <g key={`region-${r.id}`} className="subject-tone" style={toneStyle(s?.type === 'subject' ? s.label : null)} data-region={r.id}>
         <defs>
-          <radialGradient id={`map-region-${i}`} cx={overviewOn ? '50%' : '30%'} cy={overviewOn ? '50%' : '35%'} r={overviewOn ? '50%' : '75%'}>
-            <stop offset="0%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.16 : 0.11 }} />
-            <stop offset="65%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.06 : 0.035 }} />
-            <stop offset="100%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.02 : 0 }} />
+          <radialGradient id={`map-region-${i}`} cx="50%" cy="50%" r="50%">
+            <stop offset="0%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.09 : 0.07 }} />
+            <stop offset="55%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.035 : 0.025 }} />
+            <stop offset="100%" style={{ stopColor: 'var(--sc)', stopOpacity: 0 }} />
           </radialGradient>
         </defs>
-        {overviewOn
-          // Everything: no walls between subjects, a soft light of its colour where its cluster stands.
-          ? <ellipse cx={r.x + r.w / 2} cy={r.y + r.h / 2} rx={r.w * 0.62} ry={r.h * 0.62} fill={`url(#map-region-${i})`} />
-          : <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={28} fill={`url(#map-region-${i})`} stroke={far ? 'var(--sc-edge)' : 'var(--sc-faint)'} strokeWidth={1} vectorEffect="non-scaling-stroke" />}
+        {/* No walls between subjects, at any zoom: a soft light of its colour
+            where its branches spread, fading out with no edge, so the map
+            reads as one architecture. */}
+        <ellipse cx={r.x + r.w / 2} cy={r.y + r.h / 2} rx={r.w * 0.62} ry={r.h * 0.62} fill={`url(#map-region-${i})`} />
       </g>
     )
   }), [regions, byId, detail, overviewOn])
@@ -1832,11 +1851,11 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           return (
             <g transform={`translate(${r.x + 10 * ks} ${r.y + 10 * ks}) scale(${ks})`} role="button" tabIndex={-1} aria-label={`${s.label}: ${facts}. Zoom to it.`} data-region-label={r.id}
               className="cursor-pointer" onPointerDown={e => e.stopPropagation()} onClick={() => zoomToRegion(r)} onDoubleClick={() => { if (canExplore(tree, r.id)) explore(r.id) }}>
-              <rect width={plateW} height={plateH} rx={10} fill="var(--card)" opacity={0.94} />
-              {!overviewOn && <rect width={plateW} height={plateH} rx={10} fill="none" stroke="var(--sc-edge)" strokeWidth={1} />}
+              {/* No box: the name over a dark halo, so far out adds no coloured shapes. */}
+              <rect width={plateW} height={plateH} fill="transparent" />
               <circle cx={14} cy={15} r={4.5} fill="var(--sc)" />
-              <text x={25} y={20} fontSize={REGION_LABEL_PX.title} fontWeight={650} className="fill-foreground" style={{ fontFamily: 'var(--font-display)' }}>{title}</text>
-              {line && <text x={11} y={39} fontSize={REGION_LABEL_PX.line} className="fill-[var(--subtle)]">{line}</text>}
+              <text x={25} y={20} fontSize={REGION_LABEL_PX.title} fontWeight={650} className="fill-foreground" style={{ fontFamily: 'var(--font-display)', paintOrder: 'stroke', stroke: 'var(--map-space-b)', strokeWidth: 5, strokeLinejoin: 'round' }}>{title}</text>
+              {line && <text x={11} y={39} fontSize={REGION_LABEL_PX.line} className="fill-[var(--subtle)]" style={{ paintOrder: 'stroke', stroke: 'var(--map-space-b)', strokeWidth: 4, strokeLinejoin: 'round' }}>{line}</text>}
             </g>
           )
         })()}
@@ -2284,7 +2303,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           const scopeLabel = explored ? explored.label : view.workspaceId ? (view.workspaces?.find(w => w.id === view.workspaceId)?.title ?? 'this workspace') : 'Everything'
           return (
             <section aria-label="Nova on your map" data-map-overlay data-map-nova onPointerDown={e => e.stopPropagation()}
-              className="map-inspector-in absolute bottom-14 left-3 z-20 flex max-h-[min(34rem,calc(100%-5rem))] w-[min(24rem,calc(100%-1.5rem))] flex-col overflow-hidden rounded-2xl border border-white/10 bg-popover/95 shadow-float backdrop-blur">
+              className="map-inspector-in absolute bottom-14 left-3 z-20 flex max-h-[min(44rem,calc(100%-5rem))] w-[min(34rem,calc(100%-1.5rem))] flex-col overflow-hidden rounded-2xl border border-white/10 bg-popover/95 shadow-float backdrop-blur">
               <header className="flex items-center gap-2 border-b border-white/8 px-4 py-3">
                 <Sparkles aria-hidden className="size-4 text-keppel-400" />
                 <div className="min-w-0 flex-1">
@@ -2293,8 +2312,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
                 </div>
                 <button type="button" onClick={closePanel} aria-label="Close Nova" className="rounded-full p-1.5 text-subtle hover:bg-white/6 hover:text-foreground"><X className="size-4" /></button>
               </header>
-              <div className="min-h-0 overflow-y-auto p-3">
-                <TalkToNova key={scopeId} aboutNode={scopeId}
+              <div className="min-h-0 overflow-y-auto p-4">
+                <TalkToNova roomy key={scopeId} aboutNode={scopeId}
                   about={explored ? `“${explored.label}” on my Knowledge Map` : 'my Knowledge Map'}
                   placeholder={explored ? `Ask about ${short(scopeLabel, 28)}…` : 'Ask about your map…'}
                   suggestions={explored
