@@ -25,6 +25,7 @@
 // under. They are stored on the page's own row and passed through as they
 // are; this file works none out. They are not edges.
 
+import { isDueForReview } from "../engines/retention-engine";
 import { prisma } from "@repo/db/client";
 import { learnerKey } from "./learner-key";
 import { listResourceLinks } from "./learning-events";
@@ -43,7 +44,9 @@ import { boardHref } from "./companion";
 
 export interface MapInputs {
   subjects:  Array<{ id: string; name: string; parentId?: string | null }>;
-  topics:    Array<{ id: string; subjectId: string; name: string; masteryProbability: number; reviewCount: number; parentId?: string | null; position?: number | null; kind?: string | null; details?: unknown; createdAt?: Date }>;
+  // nextReviewAt / lastStudiedAt: the review schedule and the last session,
+  // as stored. Absent: not shown (an older caller).
+  topics:    Array<{ id: string; subjectId: string; name: string; masteryProbability: number; reviewCount: number; parentId?: string | null; position?: number | null; kind?: string | null; details?: unknown; createdAt?: Date; nextReviewAt?: Date | null; lastStudiedAt?: Date | null }>;
   // linksTo: titles the note names in [[...]] (notes.ts). Absent: none.
   notes:     Array<{ id: string; title: string; subjectId: string | null; topicName: string | null; updatedAt: Date; linksTo?: string[] }>;
   resources: Array<{
@@ -58,11 +61,14 @@ export interface MapInputs {
   // What is drawn and what else there is to switch to.
   workspaceId?: string | null;
   workspaces?:  MapWorkspace[];
+  // The moment "due for review" is judged at. Absent: now.
+  now?: Date;
 }
 
 const topicKey = (subjectId: string, name: string) => `${subjectId}\n${normalizeTopicName(name).toLowerCase()}`;
 
 export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
+  const now = input.now ?? new Date();
   const subjectName = new Map(input.subjects.map(s => [s.id, s.name]));
   // Only topics of a subject the learner still has.
   const topics  = input.topics.filter(t => subjectName.has(t.subjectId));
@@ -161,6 +167,9 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
         masteryPercent: known !== "unverified" ? Math.round(t.masteryProbability * 100) : null,
         notes: tally.get(id)?.notes ?? 0, resources: tally.get(id)?.resources ?? 0,
         order: at, studied: studied.has(t.id),
+        // Due by the one definition (retention-engine.ts): the schedule's date has come.
+        ...(t.nextReviewAt !== undefined ? { reviewDue: isDueForReview({ reviewDueAt: t.nextReviewAt }, now) } : {}),
+        ...(t.lastStudiedAt !== undefined ? { lastStudiedAt: t.lastStudiedAt ? t.lastStudiedAt.toISOString() : null } : {}),
         ...(parent ? { parentId: parent } : {}), ...(kind ? { kind } : {}),
         ...(details ? { details: { explanation: details.explanation, weeks: details.weeks, hoursPerWeek: details.hoursPerWeek, goals: details.goals, exercises: details.exercises, project: details.project, completion: details.completion } } : {}),
         ...(treeAt.has(id) ? { tasks: treeAt.get(id)! } : {}),
@@ -263,7 +272,7 @@ export async function loadNovaKnowledgeMap(platformChatId: string, options: { wo
     prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true, parentId: true }, orderBy: { createdAt: "asc" } }),
     prisma.novaTopicMastery.findMany({
       where: { subject: { profileId }, archivedAt: null }, orderBy: { createdAt: "asc" },
-      select: { id: true, subjectId: true, name: true, masteryProbability: true, reviewCount: true, parentId: true, position: true, kind: true, details: true, createdAt: true },
+      select: { id: true, subjectId: true, name: true, masteryProbability: true, reviewCount: true, parentId: true, position: true, kind: true, details: true, createdAt: true, nextReviewAt: true, lastStudiedAt: true },
     }),
     listNoteLinks(profileId, MAP_NOTES_MAX),
     listResourceLinks(profileId, MAP_RESOURCES_MAX),

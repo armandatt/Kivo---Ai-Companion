@@ -673,7 +673,45 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 .map-card:hover .map-lift, .map-card:focus-visible .map-lift, .map-lift.map-raise { transform: translateY(-3px); }
 .map-lift.map-recede { transform: scale(0.965); }
 .map-card { transition: opacity 0.25s ease; }
-.map-moving .map-lift, .map-moving .map-card { transition: none; }
+.map-moving .map-lift, .map-moving .map-card, .map-moving .map-shadow { transition: none; }
+
+/* ── The final polish: light, touch and motion (Knowledge Map) ──────────────
+   Ambient light between the dots and the cards, moved by a transform. */
+.map-ambient {
+  will-change: transform;
+  background:
+    radial-gradient(38% 34% at 28% 30%, color-mix(in oklch, var(--nova) 7%, transparent), transparent 70%),
+    radial-gradient(32% 30% at 74% 68%, oklch(66% 0.11 255 / 0.06), transparent 70%);
+}
+/* A card's shadow deepens as it lifts under the pointer. */
+.map-shadow { transform-box: fill-box; transform-origin: center; transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease; }
+.map-card:hover .map-shadow { transform: translateY(3px) scale(1.02); opacity: 0.5; }
+.map-card { transition: opacity 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+/* Selected: one pulse outward. */
+@keyframes map-select-pulse { from { opacity: 0.75; transform: scale(1); } to { opacity: 0; transform: scale(1.09); } }
+.map-select-pulse { transform-box: fill-box; transform-origin: center; animation: map-select-pulse 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+/* The selection's lines carry a quiet travelling pulse. */
+@keyframes map-edge-flow { to { stroke-dashoffset: -25; } }
+.map-edge-flow { animation: map-edge-flow 1.2s linear infinite; }
+/* The entrance: the subjects' light comes up before their cards. */
+@keyframes map-glow-in { from { opacity: 0; } to { opacity: 1; } }
+.map-glow-in { animation: map-glow-in 0.7s ease-out both; }
+/* The inspector slides in from the map's edge (up from the bottom on a phone); its ring sweeps to its value. */
+@keyframes map-inspector-in { from { opacity: 0; transform: translateX(12px) scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes map-inspector-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+.map-inspector-in { animation: map-inspector-up 0.26s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@media (min-width: 1024px) { .map-inspector-in { animation-name: map-inspector-in; } }
+@keyframes map-ring-in { from { stroke-dashoffset: var(--ring-c); } }
+.map-ring-arc { animation: map-ring-in 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) 0.08s both; }
+/* A folded count answers the pointer. */
+.map-chip rect { transition: stroke 0.2s ease, fill 0.2s ease; }
+.map-chip:hover rect { stroke: var(--action); }
+/* Calm: depth and light stay, nothing moves. */
+.map-still .map-shadow { transition: none; }
+.map-still .map-card:hover .map-shadow { transform: none; }
+.map-still .map-ambient { transform: none !important; }
+.map-still .map-select-pulse, .map-still .map-edge-flow { display: none; }
+.map-still .map-glow-in, .map-still .map-inspector-in, .map-still .map-ring-arc { animation: none; }
 
 /* The entrance: the camera settles, cards come up into place, lines draw. */
 @keyframes map-cam-in {
@@ -710,6 +748,11 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   .map-lift, .map-card { transition: none; }
   .map-card:hover .map-lift, .map-card:focus-visible .map-lift, .map-lift.map-raise, .map-lift.map-recede { transform: none; }
   .map-cam-in, .map-cam-brief, .map-card-in, .map-card-in-brief, .map-card-new, .map-card-out, .map-edge-draw path, .map-edge-fade, .map-found { animation: none; stroke-dasharray: none; }
+  .map-shadow { transition: none; }
+  .map-card:hover .map-shadow { transform: none; }
+  .map-ambient { transform: none !important; }
+  .map-select-pulse, .map-edge-flow { display: none; }
+  .map-glow-in, .map-inspector-in, .map-ring-arc { animation: none; }
 }
 @keyframes nova-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .nova-rise { animation: nova-rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; }

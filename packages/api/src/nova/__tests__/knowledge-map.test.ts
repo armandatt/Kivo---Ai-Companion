@@ -47,6 +47,33 @@ describe("nodes", () => {
   });
 });
 
+describe("learning state on a topic", () => {
+  it("says a review is due only when the schedule's date has come, and when it was last studied", () => {
+    const map = buildKnowledgeMap(input({
+      now: at,
+      topics: [
+        { id: "due", subjectId: "os", name: "Deadlocks", masteryProbability: 0.5, reviewCount: 3, nextReviewAt: new Date(at.getTime() - 60_000), lastStudiedAt: new Date("2026-10-01T09:00:00Z") },
+        { id: "later", subjectId: "os", name: "Paging", masteryProbability: 0.7, reviewCount: 4, nextReviewAt: new Date(at.getTime() + 86_400_000), lastStudiedAt: at },
+        { id: "never", subjectId: "os", name: "Threads", masteryProbability: 0, reviewCount: 0, nextReviewAt: null, lastStudiedAt: null },
+        { id: "old", subjectId: "os", name: "Scheduling", masteryProbability: 0.2, reviewCount: 1 },
+      ],
+    }));
+    const by = Object.fromEntries(map.nodes.filter(n => n.type === "topic").map(n => [n.label, n]));
+    expect(by["Deadlocks"]).toMatchObject({ reviewDue: true, lastStudiedAt: "2026-10-01T09:00:00.000Z" });
+    expect(by["Paging"]).toMatchObject({ reviewDue: false, lastStudiedAt: at.toISOString() });
+    expect(by["Threads"]).toMatchObject({ reviewDue: false, lastStudiedAt: null });
+    // Nothing read about the schedule: nothing said (no "not due" either).
+    expect(by["Scheduling"]).not.toHaveProperty("reviewDue");
+    expect(by["Scheduling"]).not.toHaveProperty("lastStudiedAt");
+  });
+
+  it("uses the one definition of due (retention-engine.ts), not a comparison of its own", () => {
+    const src = read("product/knowledge-map.ts");
+    expect(src).toContain("isDueForReview(");
+    expect(src).not.toMatch(/nextReviewAt\s*[<>]=?/);
+  });
+});
+
 describe("edges are links that are stored", () => {
   it("joins a topic to its subject", () => {
     expect(edgesOf(buildKnowledgeMap(input()))).toEqual([

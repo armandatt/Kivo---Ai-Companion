@@ -69,8 +69,9 @@ export function CardFace({ n, detail }: { n: MapNode; detail: CardDetail }) {
     const barW = w - 36
     return (
       <>
+        {/* Far out (detail 0) the outline is plain: dashes that small read as noise. */}
         <rect x={x0} y={y0} width={w} height={h} rx={14} fill="var(--card)" stroke={unstudied ? 'var(--map-topic)' : 'var(--border)'}
-          strokeWidth={unstudied ? 1.4 : 1} strokeDasharray={unstudied ? '4 3' : undefined} vectorEffect="non-scaling-stroke" />
+          strokeWidth={unstudied && detail > 0 ? 1.4 : 1} strokeDasharray={unstudied && detail > 0 ? '4 3' : undefined} opacity={unstudied && detail === 0 ? 0.75 : 1} vectorEffect="non-scaling-stroke" />
         {n.subjectName && <rect x={x0 + 7} y={y0 + 11} width={3} height={h - 22} rx={1.5} fill="var(--sc)" />}
         {detail >= 1 && <text x={x0 + 18} y={detail === 2 ? -7 : 5} className={text} fontSize={13} fontWeight={600}>{short(n.label, 20)}</text>}
         {detail === 2 && (

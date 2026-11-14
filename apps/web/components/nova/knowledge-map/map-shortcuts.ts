@@ -8,7 +8,7 @@
 
 export type ShortcutAction =
   | 'search' | 'navigate' | 'open' | 'explore' | 'up' | 'fold' | 'escape'
-  | 'zoom_in' | 'zoom_out' | 'actual_size' | 'fit' | 'add' | 'delete' | 'help' | 'pan'
+  | 'zoom_in' | 'zoom_out' | 'actual_size' | 'fit' | 'add' | 'delete' | 'help' | 'pan' | 'lens' | 'next'
 
 export interface Shortcut { action: ShortcutAction; keys: string[]; label: string; group: 'Find and move' | 'View' | 'Edit' }
 
@@ -20,10 +20,12 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { action: 'explore',     keys: ['Enter'],               label: 'Explore inside the selected card (a card with nothing inside shows its details)', group: 'Find and move' },
   { action: 'open',        keys: ['Shift+Enter'],         label: 'Show the selected card’s details', group: 'Find and move' },
   { action: 'up',          keys: ['U'],                   label: 'Up one level, out of an explored card', group: 'Find and move' },
+  { action: 'next',        keys: ['G'],                   label: 'Go to the next card the search or lens points at (a gap, a match)', group: 'Find and move' },
   { action: 'escape',      keys: ['Esc'],                 label: 'Close a menu or panel, then clear the selection', group: 'Find and move' },
   { action: 'fold',        keys: ['Space'],               label: 'Fold or show what is inside the selected card', group: 'View' },
   { action: 'zoom_in',     keys: ['+'],                   label: 'Zoom in', group: 'View' },
   { action: 'zoom_out',    keys: ['-'],                   label: 'Zoom out', group: 'View' },
+  { action: 'lens',        keys: ['L'],                   label: 'Change the lens: Structure, Learning, Gaps', group: 'View' },
   { action: 'fit',         keys: ['F'],                   label: 'Fit the whole map (or the explored card) on screen', group: 'View' },
   { action: 'actual_size', keys: ['0'],                   label: 'Zoom to 100%, centred on the selected card. Card positions do not change', group: 'View' },
   { action: 'add',         keys: ['N'],                   label: 'Add a card inside or beside the selected one', group: 'Edit' },
@@ -75,6 +77,8 @@ export function shortcutFor(e: KeyLike): KeyResult | null {
     case 'f': case 'F': return { action: 'fit' }
     case 'n': case 'N': return { action: 'add' }
     case 'u': case 'U': return { action: 'up' }
+    case 'l': case 'L': return { action: 'lens' }
+    case 'g': case 'G': return { action: 'next' }
     case 'Delete': case 'Backspace': return { action: 'delete' }
     default: return null
   }

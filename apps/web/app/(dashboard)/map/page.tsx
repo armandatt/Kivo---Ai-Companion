@@ -10,6 +10,7 @@ import { useNovaView } from '@/components/nova/use-nova-view'
 import { PageAction, PageFrame, PageHeader, PageLoading, PageNotice, RetryButton } from '@/components/dashboard/page-states'
 import { BUTTON_QUIET } from '@/components/nova/workspace/ui'
 import { cn } from '@/lib/utils'
+import { scopeState } from '@/components/nova/knowledge-map/scope-switch'
 
 const TITLE = 'Knowledge Map'
 const DESCRIPTION = 'A workspace as you arranged it: its subjects, topics inside topics, tasks and their steps, notes and saved pages, joined the way they are filed and linked. Nothing here is guessed.'
@@ -65,7 +66,7 @@ function workspaceInAddress(): string | null {
 export default function KnowledgeMapPage() {
   const [workspace, setWorkspace] = useState<string | null>(null)
   useEffect(() => { setWorkspace(workspaceInAddress()) }, [])
-  const { view, loading, refreshing, refresh } = useNovaView<NovaKnowledgeMapView>(`/api/nova/knowledge-map${workspace ? `?workspace=${encodeURIComponent(workspace)}` : ''}`)
+  const { view, loading, refreshing, error, refresh } = useNovaView<NovaKnowledgeMapView>(`/api/nova/knowledge-map${workspace ? `?workspace=${encodeURIComponent(workspace)}` : ''}`)
   const choose = (id: string) => {
     setWorkspace(id)
     const url = new URL(window.location.href)
@@ -118,5 +119,28 @@ export default function KnowledgeMapPage() {
       </Frame>
     )
   }
-  return <Workspace><KnowledgeMap key={view.workspaceId ?? 'all'} view={view} onChanged={() => void refresh()} onWorkspace={choose} /></Workspace>
+  // The map on screen stays while the next one loads; what was asked and is
+  // not shown yet is said, and a failed request is said with Retry (it was
+  // silent before, so "Everything" could look like it never came).
+  const scope = scopeState({ requested: workspace, shown: view.workspaceId ?? null, hasView: true, refreshing, error, label: id => view.workspaces?.find(w => w.id === id)?.title ?? 'that map' })
+  return (
+    <Workspace>
+      {scope.kind !== 'showing' && (
+        <div role={scope.kind === 'failed' ? 'alert' : 'status'} data-scope-state={scope.kind}
+          className={cn('mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 text-xs', scope.kind === 'failed' ? 'border-red-400/30 bg-red-400/8 text-foreground/85' : 'border-white/10 bg-white/3 text-foreground/75')}>
+          <span className="flex items-center gap-2">
+            {scope.kind === 'switching' && <span aria-hidden className="kivo-node-pulse inline-block size-2 rounded-full bg-[var(--nova)]" />}
+            {scope.kind === 'switching' ? `Loading ${scope.to}… the map below is the one you had.` : `Couldn't load ${scope.to}. The map below is still the one you had; nothing was changed.`}
+          </span>
+          {scope.kind === 'failed' && (
+            <span className="flex gap-2">
+              <RetryButton onRetry={() => void refresh()} busy={refreshing} />
+              <button type="button" onClick={() => choose(view.workspaceId ?? 'all')} className={cn(BUTTON_QUIET, 'h-8')}>Stay here</button>
+            </span>
+          )}
+        </div>
+      )}
+      <KnowledgeMap key={view.workspaceId ?? 'all'} view={view} onChanged={() => void refresh()} onWorkspace={choose} pendingScope={scope.kind === 'switching' ? workspace : null} />
+    </Workspace>
+  )
 }

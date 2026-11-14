@@ -1,16 +1,16 @@
 'use client'
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useStartSession } from '../use-start-session'
-import { ArrowUpRight, ChevronsDownUp, ChevronsUpDown, Focus, Info, Keyboard, Layers, Link2, Maximize2, Minus, PanelRightOpen, Plus, RotateCcw, Search, SlidersHorizontal, Trash2, Unlink, Waypoints, X } from 'lucide-react'
+import { ArrowUp, ArrowUpRight, ChevronsDownUp, ChevronsUpDown, Circle, CornerDownRight, FilePlus, FileText, Focus, Globe, Info, Keyboard, Layers, Lightbulb, Link2, ListChecks, Maximize2, Minus, MoreHorizontal, PanelRightOpen, Plus, RotateCcw, Search, SlidersHorizontal, Sparkles, Timer, Trash2, Unlink, Waypoints, X } from 'lucide-react'
 import type { MapEdge, MapEdgeKind, MapNode, MapNodeType, NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
 import { MAP_LAYOUT_COORD_MAX } from '@repo/api/nova/product/map-layout.types'
 import { treeOrder } from '@repo/api/nova/product/task-tree'
 import { cn } from '@/lib/utils'
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '../workspace/ui'
 import { toneStyle } from '../subject-color'
-import { CardFace, FILL, LEVEL_TEXT, plural, short, type CardDetail } from './card-face'
+import { CardFace, FILL, plural, short, type CardDetail } from './card-face'
 import { CARD, TREE_EDGES, layoutMap, treeOf, withPositions, type MapLayout } from './layout'
 import { useMapLayout } from './use-map-layout'
 import { filingChoices, placementLabel, placementOf, planLink, samePlacement, type Placement } from './map-edit'
@@ -24,6 +24,13 @@ import { disconnectPlan } from './map-disconnect'
 import { sendDisconnect } from './map-structure-api'
 import { AddDialog, Breadcrumbs, DeleteDialog, DeleteWholeDialog, Legend, ShortcutsHelp } from './map-panels'
 import { BOARD_PATH } from '@repo/api/nova/product/companion'
+import { nextStep, summaryOf, type Status } from './node-summary'
+import { loadNotePreview } from './note-preview'
+import { crossSubjectLinks, foldedLabel, foldedTotal, overviewDensity, rootOf, type Density } from './overview-density'
+import { GAP_LABEL, LENSES, STATE_LABEL, gapRank, gapsOf, isRecent, lensTargets, nextLens, tallyOf, topicState, type Lens, type StateTally, type TopicState } from './lens'
+import { detailAt, minimapFrame, viewCentredOn, viewOfBox, viewportOn, REGION_LABEL_PX } from './overview'
+import { pathOf, searchMap, matchesOf } from './map-search'
+import { TalkToNova } from '../talk-to-nova'
 import { chooseMotion, chosenMotion, enteredBefore, entranceMode, entrancePlan, markEntered, radiusOf, regionsOf, thicknessOf, type Entrance, type EntranceMode, type Motion } from './depth'
 
 // The browser session's store, for "this map was opened already" (depth.ts).
@@ -45,7 +52,8 @@ const TYPE_LABEL = Object.fromEntries(TYPES.map(t => [t.type, t.label])) as Reco
 
 const day   = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
 
-const MIN_K = 0.2, MAX_K = 2.5
+// Far out, the map reads as subjects (overview.ts), so it may zoom out further than a card can be read.
+const MIN_K = 0.1, MAX_K = 2.5
 
 // A session started from the map has no planned block behind it, so it is
 // the length of an ordinary one.
@@ -290,8 +298,46 @@ function Disconnect({ edge, view, onDone, onCancel }: { edge: MapEdge; view: Nov
   )
 }
 
-function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onChanged, inside, collapsed, onCollapse, onExplore, onAdd, onDelete, onDisconnected }: {
+// How the "Connected to" list is grouped, from the selected card's side.
+const GROUPS: Array<{ key: string; title: string; test: (kind: MapEdgeKind, outgoing: boolean) => boolean }> = [
+  { key: 'above', title: 'Sits inside', test: (k, out) => !out && k !== 'links_to' && k !== 'depends_on' },
+  { key: 'inside', title: 'Inside it', test: (k, out) => out && (k === 'contains' || k === 'has_topic' || k === 'subtopic' || k === 'step' || k === 'has_task') },
+  { key: 'filed', title: 'Notes and saved pages', test: (k, out) => out && (k === 'about_topic' || k === 'filed_under') },
+  { key: 'links', title: '[[Links]]', test: k => k === 'links_to' },
+  { key: 'waits', title: 'Waits', test: k => k === 'depends_on' },
+]
+
+// The inspector beside the map: a small workspace for the card, not a record.
+// What it is and where it sits; its state as a picture (a ring, dots); one
+// next step from its own record; the actions Kivo has for it; what is filed
+// there as tiles and what is around it as chips, each one selecting that card
+// on the map. Secondary facts and every connection (with Unlink) only when
+// asked for. Every control is an existing Kivo action: the ordinary session
+// start, the ordinary Nova turn, the note editor, the map's own explore, add
+// and delete. Each kind of card has its own (node-summary.ts).
+const STATUS_TONE: Record<Status['tone'], string> = { solid: 'var(--nova)', developing: 'var(--map-resource)', weak: 'var(--map-note)', due: 'var(--map-note)', plain: 'var(--subtle)' }
+
+// Progress as a ring: the share given, in the state's colour; no number when none is on record.
+function Ring({ percent, color, size = 52, label }: { percent: number | null; color: string; size?: number; label: string }) {
+  const r = size / 2 - 4, c = 2 * Math.PI * r
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-label={label} className="shrink-0 -rotate-90">
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--map-line)" strokeWidth={4} />
+      {percent !== null && <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={4} strokeLinecap="round" className="map-ring-arc"
+        strokeDasharray={c} strokeDashoffset={c * (1 - percent / 100)} style={{ ['--ring-c' as string]: c }} />}
+      <text x={size / 2} y={size / 2} transform={`rotate(90 ${size / 2} ${size / 2})`} textAnchor="middle" dominantBaseline="central" fontSize={percent === null ? 13 : 12} fontWeight={650} className="fill-foreground">{percent === null ? '–' : `${percent}%`}</text>
+    </svg>
+  )
+}
+
+const TILE_ICON: Partial<Record<MapNodeType, typeof FileText>> = { note: FileText, resource: Globe, task: ListChecks, topic: Circle, subject: Circle }
+
+function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onChanged, inside, collapsed, onCollapse, onExplore, onAdd, onDelete, onDisconnected, where = [], tally, subjectTopics = [] }: {
   node: MapNode; neighbours: Array<{ node: MapNode; relation: string; edge: MapEdge }>; onPick: (id: string) => void; onClose: () => void
+  // What it sits inside, from the top (each can be selected).
+  where?: Array<{ id: string; label: string }>
+  // A subject's topics by state (all of them, folded or not), and the topics themselves.
+  tally?: StateTally; subjectTopics?: Array<Extract<MapNode, { type: 'topic' }>>
   onDisconnected: (said: string, stale: boolean) => void
   onScope: (() => void) | null; scoped: boolean; view: NovaKnowledgeMapReady; onChanged: () => void
   // How many cards hang from it, and whether they are folded away.
@@ -302,173 +348,272 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
   const { start, starting, error: startError } = useStartSession()
   // The connection being removed, by edge id.
   const [removing, setRemoving] = useState<string | null>(null)
-  const facts: Array<[string, string]> = []
-  if (node.type === 'subject') {
-    const parent = node.parentId ? view.nodes.find(n => n.id === `subject:${node.parentId}`) : undefined
-    if (parent) facts.push(['Inside', parent.label])
-    const inner = view.edges.filter(e => e.kind === 'contains' && e.from === node.id).length
-    if (inner) facts.push(['Subjects inside', String(inner)])
-    facts.push(['Topics', String(node.topics)], ['Notes', String(node.notes)], ['Saved pages', String(node.resources)])
-  } else if (node.type === 'topic') {
-    facts.push(['Subject', node.subjectName])
-    const parent = node.parentId ? view.nodes.find(n => n.id === `topic:${node.parentId}`) : undefined
-    if (parent) facts.push(['Inside', parent.label])
-    const within = view.edges.filter(e => e.kind === 'subtopic' && e.from === node.id).length
-    if (within) facts.push(['Topics inside', String(within)])
-    if (node.kind === 'milestone') {
-      facts.push(['Kind', 'A milestone (a stage of work, not studied)'])
-      const d = node.details
-      if (d?.weeks || d?.hoursPerWeek) facts.push(['Effort (an estimate)', [d.weeks ? `${d.weeks} week${d.weeks === 1 ? '' : 's'}` : null, d.hoursPerWeek ? `${d.hoursPerWeek} h a week` : null].filter(Boolean).join(', ')])
-      if (d?.completion) facts.push(['Done when', d.completion])
-    } else if (node.studied === false) {
-      facts.push(['Studied', 'Through the topics inside it'])
-    } else {
-      facts.push(['Sessions behind it', node.sessions === 0 ? 'None yet' : String(node.sessions)])
-      if (node.level && node.masteryPercent !== null) facts.push(['Your own estimate', `${LEVEL_TEXT[node.level]} · ${node.masteryPercent}%`])
-    }
-    facts.push(['Notes', String(node.notes)], ['Saved pages', String(node.resources)])
-  } else if (node.type === 'task') {
-    facts.push(['Status', node.status === 'done' ? 'Done' : node.status === 'in_progress' ? 'In progress' : 'To do'])
-    if (node.subjectName) facts.push(['Subject', node.subjectName])
-    if (node.topicName) facts.push(['Filed under', node.topicName])
-    if (node.dueDay) facts.push(['Due', node.dueDay])
-    if (node.estimatedMinutes) facts.push(['Estimate', `about ${node.estimatedMinutes} min`])
-    if (node.priority) facts.push(['Priority', node.priority[0]!.toUpperCase() + node.priority.slice(1)])
-    if (node.waitsOn) facts.push(['Waits for', `${node.waitsOn} task${node.waitsOn === 1 ? '' : 's'}`])
-  } else if (node.type === 'note') {
-    facts.push(['Subject', node.subjectName ?? 'Not filed under a subject'])
-    if (node.topicName) facts.push(['Topic', node.topicLinked ? node.topicName : `${node.topicName} (not one of that subject's topics yet)`])
-    facts.push(['Last edited', day(node.updatedAt)])
-  } else {
-    facts.push(['Site', node.domain])
-    facts.push(['Subject', node.subjectName ?? 'Not filed under a subject'])
-    if (node.topicName) facts.push(['Topic', node.topicLinked ? node.topicName : `${node.topicName} (not one of that subject's topics yet)`])
-    if (node.filedBy === 'nova') facts.push(['Filed by', 'Nova, from a name match. Keep or undo it under Saved pages on Browser Extension.'])
-    facts.push([node.kind === 'study_requested' ? 'Asked to study' : 'Saved', day(node.savedAt)])
-  }
-  const open = node.type === 'note' ? 'Open note' : node.type === 'resource' ? 'Open in Saved' : node.type === 'topic' ? 'Open this topic' : node.type === 'task' ? 'Open on the board' : 'Open this subject'
+  const [section, setSection] = useState<'none' | 'more' | 'ask'>('none')
+  const [menu, setMenu] = useState(false)
+  const summary = summaryOf(node, { tally, when: ago })
+  const step = nextStep(node)
+  // A note's opening words, read when the note is opened (note-preview.ts).
+  const [preview, setPreview] = useState<string | null | undefined>(undefined)
+  useEffect(() => {
+    setSection('none'); setMenu(false)
+    if (node.type !== 'note') return
+    let live = true
+    setPreview(undefined)
+    void loadNotePreview(rowId(node.id)).then(p => { if (live) setPreview(p) })
+    return () => { live = false }
+  }, [node.id, node.type])
+  const open = node.type === 'note' ? 'Open note' : node.type === 'resource' ? 'Open in Saved' : node.type === 'topic' ? 'Open topic' : node.type === 'task' ? 'Open on the board' : 'Open subject'
   // A new note filed where this node is. The note editor reads both from the address.
   const noteHere = node.type === 'topic' ? `/notes/new?subjectId=${encodeURIComponent(node.subjectId ?? '')}&topic=${encodeURIComponent(node.label)}`
     : node.type === 'subject' ? `/notes/new?subjectId=${encodeURIComponent(node.subjectId ?? '')}` : null
   const tone = node.type === 'subject' ? node.label : node.subjectName ?? null
-  const explanation = node.type === 'topic' ? node.details?.explanation ?? null : null
   const goals = node.type === 'topic' ? node.details?.goals ?? [] : []
-  const action = cn(BUTTON_QUIET, 'h-9')
+  const studiable = node.type === 'topic' && node.studied !== false && node.kind !== 'milestone'
+  const askable = node.type === 'subject' || node.type === 'topic'
+  // What is filed here (tiles) and what is around it (chips), from the links on record.
+  // Each card once, though two links may join it (a [[link]] both ways).
+  const once = (rows: typeof neighbours) => rows.filter((r, i) => rows.findIndex(x => x.node.id === r.node.id) === i)
+  const filed = once(neighbours.filter(({ edge }) => edge.from === node.id && (edge.kind === 'about_topic' || edge.kind === 'filed_under' || edge.kind === 'has_task')))
+  const up = once(neighbours.filter(({ edge }) => edge.to === node.id && edge.kind !== 'links_to' && edge.kind !== 'depends_on'))
+  const within = once(neighbours.filter(({ edge }) => edge.from === node.id && (edge.kind === 'subtopic' || edge.kind === 'contains' || edge.kind === 'step' || (node.type === 'subject' && edge.kind === 'has_topic'))))
+  const linked = once(neighbours.filter(({ edge }) => edge.kind === 'links_to' || edge.kind === 'depends_on'))
+  const act = 'flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-0.5 py-2 text-[11px] whitespace-nowrap font-medium text-foreground/80 transition duration-150 active:scale-95 hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50 aria-expanded:bg-white/8 aria-expanded:text-foreground'
+  const icon = 'size-[18px]'
+  const chip = 'inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/10 px-2.5 py-1 text-xs text-foreground/80 transition-colors hover:border-white/20 hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring'
+  const toggle = (s: typeof section) => setSection(v => (v === s ? 'none' : s))
+  const startNow = () => { if (node.type === 'topic') void start({ topicName: node.label, subjectName: node.subjectName, durationMinutes: MAP_SESSION_MINUTES }, node.id) }
+
+  const tiles = (rows: typeof filed, max = 4) => rows.length === 0 ? null : (
+    <div className="grid grid-cols-2 gap-1.5" data-filed-tiles>
+      {rows.slice(0, max).map(({ node: n }) => {
+        const Icon = TILE_ICON[n.type] ?? FileText
+        return (
+          <button key={n.id} type="button" onClick={() => onPick(n.id)} title={n.label}
+            className="flex min-w-0 items-start gap-2 rounded-xl border border-white/8 bg-white/[0.025] p-2 text-left transition duration-200 hover:-translate-y-0.5 hover:border-white/16 hover:bg-white/5 hover:shadow-soft active:translate-y-0 focus-visible:outline-2 focus-visible:outline-ring">
+            <Icon aria-hidden className="mt-0.5 size-3.5 shrink-0" style={{ color: FILL[n.type] }} />
+            <span className="min-w-0">
+              <span className="line-clamp-2 text-xs font-medium leading-snug text-foreground/90">{n.label}</span>
+              <span className="mt-0.5 block truncate text-[10.5px] text-subtle">{n.type === 'resource' ? n.domain : n.type === 'note' ? ago(n.updatedAt) : n.type === 'task' ? (n.status === 'done' ? 'Done' : n.status === 'in_progress' ? 'In progress' : 'To do') : TYPE_LABEL[n.type]}</span>
+            </span>
+          </button>
+        )
+      })}
+      {rows.length > max && node.href && <Link href={node.href} className="col-span-2 rounded-lg py-1 text-center text-xs text-foreground/60 hover:bg-white/5 hover:text-foreground">+{rows.length - max} more</Link>}
+    </div>
+  )
+  const chips = (title: string, Icon: typeof Circle, rows: typeof filed, key: string) => rows.length === 0 ? null : (
+    <div data-around={key}>
+      <p className="mb-1 flex items-center gap-1 text-[11px] text-subtle"><Icon aria-hidden className="size-3" /> {title}</p>
+      <div className="flex flex-wrap gap-1">
+        {rows.slice(0, 6).map(({ node: n }) => (
+          <button key={n.id} type="button" onClick={() => onPick(n.id)} className={chip} title={`${TYPE_LABEL[n.type]}: ${n.label}`}>
+            <span aria-hidden className="inline-block size-1.5 shrink-0 rounded-full" style={{ background: n.type === 'topic' ? STATE_FILL[topicState(n)] : FILL[n.type] }} />
+            <span className="truncate">{short(n.label, 26)}</span>
+          </button>
+        ))}
+        {rows.length > 6 && <span className="px-1 py-1 text-xs text-subtle">+{rows.length - 6}</span>}
+      </div>
+    </div>
+  )
 
   return (
-    <aside aria-label="Selected item" data-map-overlay data-detail
-      className="subject-tone absolute inset-x-0 bottom-0 z-20 flex max-h-[58%] flex-col overflow-y-auto overscroll-contain rounded-t-2xl border-t border-white/10 bg-card/95 p-5 shadow-float backdrop-blur lg:inset-x-auto lg:bottom-3 lg:right-3 lg:top-3 lg:max-h-none lg:w-[22rem] lg:rounded-2xl lg:border"
+    <aside aria-label={`Selected: ${TYPE_LABEL[node.type]} ${node.label}`} data-map-overlay data-detail data-detail-type={node.type}
+      className="subject-tone map-inspector map-inspector-in absolute inset-x-0 bottom-0 z-20 flex max-h-[55%] flex-col gap-3.5 overflow-y-auto overscroll-contain rounded-t-2xl border-t border-white/10 bg-card/95 p-4 shadow-float backdrop-blur lg:inset-x-auto lg:bottom-auto lg:right-3 lg:top-3 lg:max-h-[calc(100%-1.5rem)] lg:w-[21rem] lg:rounded-2xl lg:border"
       style={toneStyle(tone)} onPointerDown={e => e.stopPropagation()}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em] text-subtle">
-            <span className="inline-block size-2 rounded-full" style={{ background: FILL[node.type] }} />{TYPE_LABEL[node.type]}
-            {tone && <><span aria-hidden>·</span><span className="truncate normal-case tracking-normal text-[var(--sc-ink)]">{tone}</span></>}
+      {/* What it is, where it sits, and its state at a glance. */}
+      <div className="flex items-start gap-3">
+        {node.type === 'topic' && summary.status && (
+          <Ring percent={summary.status.percent} color={STATUS_TONE[summary.status.tone]} label={`${summary.status.label}${summary.status.percent !== null ? `, ${summary.status.percent}% (your own estimate)` : ''}`} />
+        )}
+        {node.type === 'subject' && summary.status && <Ring percent={summary.status.percent} color="var(--sc)" label={summary.status.label} />}
+        {node.type !== 'topic' && node.type !== 'subject' && (
+          <span className="grid size-11 shrink-0 place-items-center rounded-xl" style={{ background: `color-mix(in oklch, ${FILL[node.type]} 16%, transparent)` }}>
+            {(() => { const Icon = TILE_ICON[node.type] ?? FileText; return <Icon aria-hidden className="size-5" style={{ color: FILL[node.type] }} /> })()}
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <h2 className="break-words text-[17px] font-semibold leading-snug tracking-[-0.01em] text-foreground">{node.label}</h2>
+          {where.length > 0 && (
+            <nav aria-label="Where it sits" className="mt-0.5 flex flex-wrap items-center gap-x-1 text-xs text-subtle" data-detail-path>
+              {where.map((w, i) => (
+                <span key={w.id} className="flex items-center gap-1">
+                  {i > 0 && <span aria-hidden>›</span>}
+                  <button type="button" onClick={() => onPick(w.id)} className="rounded hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring">{w.label}</button>
+                </span>
+              ))}
+            </nav>
+          )}
+          <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs" data-detail-status>
+            {summary.status && node.type !== 'subject' && <span className="font-medium" style={{ color: STATUS_TONE[summary.status.tone] === 'var(--subtle)' ? undefined : STATUS_TONE[summary.status.tone] }}>{summary.status.label}</span>}
+            {node.type === 'subject' && summary.status && <span className="text-foreground/70">{summary.status.label}</span>}
+            {node.type === 'topic' && node.reviewDue && <span className="rounded-full px-1.5 py-px text-[10.5px] font-semibold" style={{ background: 'color-mix(in oklch, var(--map-note) 18%, transparent)', color: 'var(--map-note)' }}>Review due</span>}
+            {node.type === 'topic' && node.lastStudiedAt && <span className="text-subtle">· studied {ago(node.lastStudiedAt)}</span>}
+            {node.type === 'resource' && <span className="text-subtle">{node.domain}</span>}
+            {node.type === 'note' && <span className="text-subtle">Edited {ago(node.updatedAt)}</span>}
           </p>
-          <h2 className="mt-2 break-words text-xl font-semibold leading-tight tracking-[-0.01em] text-foreground">{node.label}</h2>
         </div>
-        <button type="button" onClick={onClose} aria-label="Hide details (the card stays selected)" title="Hide details" className="rounded-lg p-1.5 text-subtle transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"><X className="size-4" /></button>
+        <button type="button" onClick={onClose} aria-label="Hide details (the card stays selected)" title="Hide details" className="-m-1 rounded-lg p-1 text-subtle transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"><X className="size-4" /></button>
       </div>
 
-      <dl className="mt-4 divide-y divide-white/6 border-y border-white/6 text-sm">
-        {facts.map(([k, v]) => (
-          <div key={k} className="flex justify-between gap-4 py-2">
-            <dt className="shrink-0 text-subtle">{k}</dt>
-            <dd className="text-right text-foreground/90 tabular-nums">{v}</dd>
-          </div>
-        ))}
-      </dl>
-      {node.type === 'topic' && node.level && node.studied !== false && (
-        <p className="mt-3 text-xs leading-relaxed text-subtle">The estimate comes from how you said your sessions went. It is not a test result.</p>
+      {summary.description && <p className="line-clamp-3 text-[13px] leading-relaxed text-foreground/75" title={summary.description}>{summary.description}</p>}
+      {node.type === 'note' && (
+        <p className="line-clamp-5 rounded-xl border border-white/8 bg-white/[0.025] p-2.5 text-[13px] leading-relaxed text-foreground/75" data-note-preview>
+          {preview === undefined ? <span className="text-subtle">Reading the note…</span> : preview ? preview : <span className="text-subtle">The note is empty, or couldn’t be read here.</span>}
+        </p>
       )}
-      {explanation && <p className="mt-3 text-sm leading-relaxed text-foreground/80">{explanation}</p>}
-      {goals.length > 0 && <ul className="mt-3 list-disc space-y-0.5 pl-5 text-sm text-foreground/80" data-milestone-goals>{goals.map(g => <li key={g}>{g}</li>)}</ul>}
 
-      <div className="mt-5 flex flex-wrap gap-2">
-        {node.href && <Link href={node.href} className={BUTTON_PRIMARY}>{open}</Link>}
-        {node.type === 'resource' && (
-          <a href={node.url} target="_blank" rel="noopener noreferrer" className={action}>
-            Visit page <ArrowUpRight className="size-3.5" />
-          </a>
-        )}
+      {/* A subject: every topic as a dot, by state; a review due is ringed. One click opens it. */}
+      {node.type === 'subject' && subjectTopics.length > 0 && (
+        <div data-subject-dots>
+          <div className="flex flex-wrap gap-1">
+            {subjectTopics.slice(0, 60).map(t => {
+              const st = topicState(t)
+              return (
+                <button key={t.id} type="button" onClick={() => onPick(t.id)} title={`${t.label}: ${STATE_LABEL[st]}${t.reviewDue ? ' · review due' : ''}`} aria-label={`${t.label}, ${STATE_LABEL[st]}`}
+                  className="size-4 rounded-[5px] transition-transform hover:scale-125 focus-visible:outline-2 focus-visible:outline-ring"
+                  style={{ background: st === 'unstudied' ? 'transparent' : STATE_FILL[st], border: st === 'unstudied' ? '1.5px dashed var(--map-topic)' : undefined, boxShadow: t.reviewDue ? '0 0 0 2px var(--map-note)' : undefined, opacity: st === 'organising' ? 0.45 : 1 }} />
+              )
+            })}
+          </div>
+          <p className="mt-1.5 flex flex-wrap gap-x-3 text-[10.5px] text-subtle">
+            <span><span className="mr-1 inline-block size-2 rounded-sm bg-[var(--nova)]" />solid</span><span><span className="mr-1 inline-block size-2 rounded-sm bg-[var(--map-resource)]" />developing</span><span><span className="mr-1 inline-block size-2 rounded-sm bg-[var(--map-note)]" />weak</span><span><span className="mr-1 inline-block size-2 rounded-sm border border-dashed border-[var(--map-topic)]" />not studied</span>
+          </p>
+        </div>
+      )}
+
+      {/* The actions Kivo has for it. */}
+      <div className="flex gap-0.5 rounded-2xl border border-white/8 bg-white/[0.02] p-1" data-node-actions role="toolbar" aria-label="Actions">
+        {node.href && <Link href={node.href} className={act} title={open}><ArrowUpRight aria-hidden className={icon} />Open</Link>}
+        {askable && <button type="button" onClick={() => toggle('ask')} aria-expanded={section === 'ask'} className={act} data-ask-nova title="Ask Nova about it"><Sparkles aria-hidden className={icon} style={{ color: 'var(--nova)' }} />Ask</button>}
+        {node.type === 'note' && <Link href={`/notes/${encodeURIComponent(rowId(node.id))}?tutor=summary`} className={act} data-ask-nova title="Open the note with Nova summarising it"><Sparkles aria-hidden className={icon} style={{ color: 'var(--nova)' }} />Summarise</Link>}
         {/* The ordinary start, on a topic studied on its own, under its own subject. */}
-        {node.type === 'topic' && node.studied !== false && node.kind !== 'milestone' && (
-          <button type="button" disabled={starting !== null} data-start-topic
-            onClick={() => void start({ topicName: node.label, subjectName: node.subjectName, durationMinutes: MAP_SESSION_MINUTES }, node.id)}
-            className={action}>
-            {starting === node.id ? 'Starting…' : `Start a ${MAP_SESSION_MINUTES} min session`}
+        {studiable && node.type === 'topic' && (
+          <button type="button" disabled={starting !== null} data-start-topic className={act} title={`Start a ${MAP_SESSION_MINUTES}-minute session`}
+            onClick={() => void start({ topicName: node.label, subjectName: node.subjectName, durationMinutes: MAP_SESSION_MINUTES }, node.id)}>
+            {node.reviewDue ? <RotateCcw aria-hidden className={icon} /> : <Timer aria-hidden className={icon} />}
+            {starting === node.id ? 'Starting…' : node.reviewDue ? 'Revise' : 'Focus'}
           </button>
         )}
-        {noteHere && <Link href={noteHere} className={action} data-note-here>New note here</Link>}
+        {onExplore && <button type="button" onClick={onExplore} className={act} data-explore title="Explore inside (Enter)"><Layers aria-hidden className={icon} />Explore</button>}
+        {!onExplore && onScope && !scoped && <button type="button" onClick={onScope} className={act} data-scope-here title="Show what is around it"><Focus aria-hidden className={icon} />Around</button>}
+        {noteHere && <Link href={noteHere} className={act} data-note-here title="A new note filed here"><FilePlus aria-hidden className={icon} />Note</Link>}
+        {node.type === 'subject' && onAdd && <button type="button" onClick={onAdd} className={act} title="Add a topic (N)"><Plus aria-hidden className={icon} />Topic</button>}
+        {node.type === 'resource' && <a href={node.url} target="_blank" rel="noopener noreferrer" className={act} title="Visit the page"><Globe aria-hidden className={icon} />Visit</a>}
+        <span className="flex min-w-0 flex-1">
+          <button type="button" onClick={() => setMenu(m => !m)} aria-expanded={menu} aria-haspopup="menu" className={cn(act, 'w-full')} data-more-open title="More"><MoreHorizontal aria-hidden className={icon} />More</button>
+        </span>
       </div>
-      {startError && <p role="alert" className="mt-3 text-sm text-red-400">{startError}</p>}
+      {menu && (
+            <span role="menu" className="-mt-2 flex flex-col rounded-xl border border-white/10 bg-popover p-1" onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); setMenu(false) } }}>
+              <button type="button" role="menuitem" onClick={() => { setMenu(false); toggle('more') }} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-white/6" data-details-open><Info aria-hidden className="size-3.5" /> Details and every link</button>
+              {onExplore && onScope && !scoped && <button type="button" role="menuitem" onClick={() => { setMenu(false); onScope() }} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-white/6" data-scope-here><Focus aria-hidden className="size-3.5" /> Show what is around it</button>}
+              {onAdd && <button type="button" role="menuitem" onClick={() => { setMenu(false); onAdd() }} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-white/6" data-add-open title="N"><Plus aria-hidden className="size-3.5" /> Add inside or beside…</button>}
+              {inside > 0 && <button type="button" role="menuitem" onClick={() => { setMenu(false); onCollapse() }} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-white/6" data-collapse aria-pressed={collapsed} title="Space">{collapsed ? <ChevronsUpDown aria-hidden className="size-3.5" /> : <ChevronsDownUp aria-hidden className="size-3.5" />} {collapsed ? `Show the ${inside} inside` : `Fold the ${inside} inside`}</button>}
+              {onDelete && <button type="button" role="menuitem" onClick={() => { setMenu(false); onDelete() }} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm text-red-400 hover:bg-red-400/10" data-delete-open title="Delete"><Trash2 aria-hidden className="size-3.5" /> Delete…</button>}
+            </span>
+          )}
+      {startError && <p role="alert" className="-mt-2 text-sm text-red-400">{startError}</p>}
+      {section === 'ask' && askable && (
+        <TalkToNova about={node.type === 'topic' ? `the topic “${node.label}” in ${node.subjectName}` : `the subject “${node.label}”`} placeholder={`Ask about ${short(node.label, 32)}…`} className="-mt-1" />
+      )}
 
-      <div className="mt-4 flex flex-wrap gap-2" data-node-actions>
-        {onExplore && <button type="button" onClick={onExplore} className={action} data-explore title="Explore inside (Enter)"><Layers aria-hidden className="size-3.5" /> Explore inside</button>}
-        {onScope && !scoped && <button type="button" onClick={onScope} className={action} data-scope-here><Focus aria-hidden className="size-3.5" /> Show what is around it</button>}
-        {inside > 0 && <button type="button" onClick={onCollapse} className={action} data-collapse aria-pressed={collapsed} title="Space">{collapsed ? <ChevronsUpDown aria-hidden className="size-3.5" /> : <ChevronsDownUp aria-hidden className="size-3.5" />} {collapsed ? `Show the ${inside} inside` : `Fold the ${inside} inside`}</button>}
-        {onAdd && <button type="button" onClick={onAdd} className={action} data-add-open title="N"><Plus aria-hidden className="size-3.5" /> Add…</button>}
-        {onDelete && <button type="button" onClick={onDelete} className={cn(action, 'hover:text-red-400')} data-delete-open title="Delete"><Trash2 aria-hidden className="size-3.5" /> Delete…</button>}
-      </div>
-
-      {(node.type === 'note' || node.type === 'resource') && (
-        <div className="mt-6 space-y-2">
-          <h3 className="text-[11px] font-medium uppercase tracking-[0.14em] text-subtle">Connect</h3>
-          {node.type === 'note' && <LinkEditor key={`link-${node.id}`} node={node} view={view} onChanged={onChanged} />}
-          <FileEditor key={`file-${node.id}`} node={node} view={view} onChanged={onChanged} />
+      {/* One next step, from its own record, as an action. */}
+      {step && (
+        <div className="flex items-center gap-2.5 rounded-xl border px-3 py-2" style={{ borderColor: 'color-mix(in oklch, var(--map-note) 35%, transparent)', background: 'color-mix(in oklch, var(--map-note) 7%, transparent)' }} data-next-step={step.kind}>
+          <Lightbulb aria-hidden className="size-4 shrink-0" style={{ color: 'var(--map-note)' }} />
+          <span className="min-w-0 flex-1 text-xs text-foreground/85">{step.text}</span>
+          {step.kind === 'note'
+            ? noteHere && <Link href={noteHere} className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-foreground hover:bg-white/8">Add a note</Link>
+            : studiable && <button type="button" onClick={startNow} disabled={starting !== null} className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-foreground hover:bg-white/8 disabled:opacity-50">{step.kind === 'revise' ? 'Revise now' : step.kind === 'start' ? 'Start' : 'Study again'}</button>}
         </div>
       )}
 
-      {(node.type === 'topic' || node.type === 'subject') && node.tasks && node.tasks.length > 0 && (
-        <div className="mt-6" data-map-tasks>
-          <h3 className="flex items-center justify-between text-[11px] font-medium uppercase tracking-[0.14em] text-subtle">
-            Tasks <span className="normal-case tracking-normal">{node.tasks.filter(t => t.status === 'done').length} of {node.tasks.length} done</span>
-          </h3>
-          <ul className="mt-2 space-y-0.5">
-            {treeOrder(node.tasks.map(t => ({ ...t, parent: t.parentId }))).map(({ item: t, depth }) => (
-              <li key={t.id} className="flex items-start gap-2 py-0.5 text-sm" style={{ paddingLeft: depth * 14 }} data-depth={depth}>
-                <span aria-hidden className={cn('mt-1.5 size-1.5 shrink-0 rounded-full', t.status === 'done' ? 'bg-action' : t.status === 'in_progress' ? 'bg-amber-400' : 'bg-foreground/30')} />
-                <span className={cn('min-w-0 break-words', t.status === 'done' ? 'text-subtle line-through' : depth > 0 ? 'text-foreground/75' : 'text-foreground/90')}>{t.title}</span>
-              </li>
-            ))}
-          </ul>
-          <Link href={BOARD_PATH} className="mt-2 inline-block text-xs font-medium text-foreground/60 underline-offset-4 hover:text-foreground hover:underline">Open on the board</Link>
+      {/* What is filed here, as tiles; each one goes to its card. */}
+      {filed.length > 0 && (
+        <div>
+          <p className="mb-1.5 flex items-center justify-between text-[11px] text-subtle"><span>Filed here</span><span className="tabular-nums">{filed.length}</span></p>
+          {tiles(filed)}
         </div>
       )}
 
-      <div className="mt-6">
-        <h3 className="text-[11px] font-medium uppercase tracking-[0.14em] text-subtle">Connected to</h3>
-        {neighbours.length === 0 ? (
-          <p className="mt-2 text-sm leading-relaxed text-foreground/65">
-            Nothing. {node.type === 'note' || node.type === 'resource'
-              ? 'It is not filed under a subject. File it under one and it joins that subject here.'
-              : node.type === 'topic' ? 'No note or saved page names this topic yet.' : 'This subject has no topics, notes or saved pages yet.'}
-          </p>
-        ) : (
-          <ul className="mt-2 space-y-0.5">
-            {neighbours.map(({ node: n, relation, edge }) => (
-              <li key={`${n.id}:${relation}`} className="group/row">
-                <div className="flex items-center">
-                <button type="button" onClick={() => onPick(n.id)} className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-foreground/85 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
-                  <span className={cn('inline-block size-2 shrink-0', relation === RELATION.links_to![0] || relation === RELATION.links_to![1] ? 'rounded-full ring-1 ring-[var(--nova)]' : 'rounded-full')} style={{ background: FILL[n.type] }} />
-                  <span className="min-w-0">
-                    <span className="block truncate">{n.label}</span>
-                    <span className="block text-[11px] text-subtle">{relation}</span>
-                  </span>
-                  <span className="ml-auto shrink-0 text-[11px] text-subtle">{TYPE_LABEL[n.type]}</span>
-                </button>
-                <button type="button" onClick={() => setRemoving(r => (r === edge.id ? null : edge.id))} aria-expanded={removing === edge.id}
-                  aria-label={`Unlink ${n.label}`} title="Unlink (no card is deleted)" data-disconnect-open={n.label}
-                  className="ml-1 inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/10 px-2 py-1 text-[11px] font-medium text-foreground/70 transition-colors hover:border-white/20 hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring aria-expanded:border-white/20 aria-expanded:text-foreground">
-                  <Unlink aria-hidden className="size-3.5" /> Unlink
-                </button>
-                </div>
-                {removing === edge.id && <Disconnect edge={edge} view={view} onCancel={() => setRemoving(null)} onDone={(said, stale) => { setRemoving(null); onDisconnected(said, stale) }} />}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {/* What is around it, as chips: what it sits inside, what is inside it, what links to it. */}
+      {(up.length > 0 || within.length > 0 || linked.length > 0) && (
+        <div className="space-y-2">
+          {chips('Sits inside', ArrowUp, up, 'up')}
+          {node.type !== 'subject' && chips('Inside it', CornerDownRight, within, 'inside')}
+          {chips(node.type === 'task' ? 'Waits' : 'Linked', Link2, linked, 'linked')}
+        </div>
+      )}
+
+      {section === 'more' && (
+        <div className="space-y-3 border-t border-white/6 pt-3" data-detail-more>
+          {summary.more.length > 0 && (
+            <dl className="space-y-1 text-sm">
+              {summary.more.map(([k, v]) => (
+                <div key={k} className="flex justify-between gap-4"><dt className="text-subtle">{k}</dt><dd className="text-right tabular-nums text-foreground/85">{v}</dd></div>
+              ))}
+            </dl>
+          )}
+          {node.type === 'topic' && node.level && node.studied !== false && <p className="text-xs leading-relaxed text-subtle">The estimate comes from how you said your sessions went. It is not a test result.</p>}
+          {node.type === 'topic' && gapsOf(node).length > 0 && <p className="text-xs" style={{ color: 'var(--map-note)' }} data-detail-gaps>To act on: {gapsOf(node).map(g => GAP_LABEL[g].toLowerCase()).join(', ')}</p>}
+          {node.type === 'resource' && node.filedBy === 'nova' && <p className="text-xs leading-relaxed text-subtle">Nova filed it here from a name match. Keep or undo it under Saved pages.</p>}
+          {goals.length > 0 && <ul className="list-disc space-y-0.5 pl-5 text-sm text-foreground/80" data-milestone-goals>{goals.map(g => <li key={g}>{g}</li>)}</ul>}
+          {(node.type === 'topic' || node.type === 'subject') && node.tasks && node.tasks.length > 0 && (
+            <div data-map-tasks>
+              <h3 className="flex items-center justify-between text-xs text-subtle">Tasks <span>{node.tasks.filter(t => t.status === 'done').length} of {node.tasks.length} done</span></h3>
+              <ul className="mt-1 space-y-0.5">
+                {treeOrder(node.tasks.map(t => ({ ...t, parent: t.parentId }))).map(({ item: t, depth }) => (
+                  <li key={t.id} className="flex items-start gap-2 py-0.5 text-sm" style={{ paddingLeft: depth * 14 }} data-depth={depth}>
+                    <span aria-hidden className={cn('mt-1.5 size-1.5 shrink-0 rounded-full', t.status === 'done' ? 'bg-action' : t.status === 'in_progress' ? 'bg-amber-400' : 'bg-foreground/30')} />
+                    <span className={cn('min-w-0 break-words', t.status === 'done' ? 'text-subtle line-through' : depth > 0 ? 'text-foreground/75' : 'text-foreground/90')}>{t.title}</span>
+                  </li>
+                ))}
+              </ul>
+              <Link href={BOARD_PATH} className="mt-1 inline-block text-xs font-medium text-foreground/60 underline-offset-4 hover:text-foreground hover:underline">Open on the board</Link>
+            </div>
+          )}
+          {(node.type === 'note' || node.type === 'resource') && (
+            <div className="space-y-2">
+              {node.type === 'note' && <LinkEditor key={`link-${node.id}`} node={node} view={view} onChanged={onChanged} />}
+              <FileEditor key={`file-${node.id}`} node={node} view={view} onChanged={onChanged} />
+            </div>
+          )}
+          {/* Every connection, grouped, with Unlink (no card is deleted). */}
+          <div>
+            {neighbours.length === 0 ? (
+              <p className="text-sm leading-relaxed text-foreground/65">
+                Nothing linked yet. {node.type === 'note' || node.type === 'resource' ? 'File it under a subject (above) and it joins that subject.' : ''}
+              </p>
+            ) : GROUPS.map(g => {
+              const rows = neighbours.filter(({ edge }) => g.test(edge.kind, edge.from === node.id))
+              if (rows.length === 0) return null
+              return (
+                <section key={g.key} className="mt-2" data-connected-group={g.key}>
+                  <h4 className="px-2 text-[11px] text-subtle">{g.title} <span className="tabular-nums">· {rows.length}</span></h4>
+                  <ul className="mt-0.5 space-y-0.5">
+                    {rows.map(({ node: n, relation, edge }) => (
+                      <li key={`${n.id}:${relation}`} className="group/row">
+                        <div className="flex items-center">
+                          <button type="button" onClick={() => onPick(n.id)} className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-foreground/85 transition-colors hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+                            <span className={cn('inline-block size-2 shrink-0', relation === RELATION.links_to![0] || relation === RELATION.links_to![1] ? 'rounded-full ring-1 ring-[var(--nova)]' : 'rounded-full')} style={{ background: FILL[n.type] }} />
+                            <span className="min-w-0 flex-1 truncate">{n.label}</span>
+                          </button>
+                          <button type="button" onClick={() => setRemoving(r => (r === edge.id ? null : edge.id))} aria-expanded={removing === edge.id}
+                            aria-label={`Unlink ${n.label}`} title="Unlink (no card is deleted)" data-disconnect-open={n.label}
+                            className="ml-1 inline-flex shrink-0 items-center rounded-lg p-1.5 text-foreground/50 opacity-0 transition hover:bg-white/5 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-ring group-hover/row:opacity-100 aria-expanded:opacity-100">
+                            <Unlink aria-hidden className="size-3.5" />
+                          </button>
+                        </div>
+                        {removing === edge.id && <Disconnect edge={edge} view={view} onCancel={() => setRemoving(null)} onDone={(said, stale) => { setRemoving(null); onDisconnected(said, stale) }} />}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </aside>
   )
 }
@@ -498,7 +643,122 @@ function ringPoint(from: { x: number; y: number }, to: { x: number; y: number },
   return { x: to.x + ux * s, y: to.y + uy * s }
 }
 
-export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowledgeMapReady; onChanged: () => void; onWorkspace?: (id: string) => void }) {
+// ── The minimap ─────────────────────────────────────────────────────────────
+// The whole map, small, with where the screen is. A click or a drag moves the
+// view there (overview.ts does the arithmetic). The cards are drawn once per
+// map; only the viewport's outline follows the pan.
+const MINI = { w: 184, h: 116 }
+// The minimap takes the map's own shape, inside MINI.
+const miniSize = (b: { minX: number; minY: number; maxX: number; maxY: number }) => {
+  const a = Math.max(1, b.maxX - b.minX) / Math.max(1, b.maxY - b.minY)
+  return a >= MINI.w / MINI.h ? { w: MINI.w, h: Math.max(48, Math.round(MINI.w / a)) } : { w: Math.max(56, Math.round(MINI.h * a)), h: MINI.h }
+}
+type MiniCard = { id: string; x: number; y: number; w: number; h: number; fill: string }
+const MinimapBody = memo(function MinimapBody({ cards, regions, f }: { cards: MiniCard[]; regions: Array<{ id: string; x: number; y: number; w: number; h: number; tone: string | null }>; f: ReturnType<typeof minimapFrame> }) {
+  return (
+    <>
+      {regions.map(r => (
+        <rect key={r.id} className="subject-tone" style={toneStyle(r.tone)} x={r.x * f.scale + f.ox} y={r.y * f.scale + f.oy} width={r.w * f.scale} height={r.h * f.scale} rx={4} fill="var(--sc-soft)" />
+      ))}
+      {cards.map(c => <rect key={c.id} x={(c.x - c.w / 2) * f.scale + f.ox} y={(c.y - c.h / 2) * f.scale + f.oy} width={Math.max(1.5, c.w * f.scale)} height={Math.max(1.2, c.h * f.scale)} rx={0.8} fill={c.fill} opacity={0.85} />)}
+    </>
+  )
+})
+function Minimap({ cards, regions, box, t, cw, ch, onJump }: {
+  cards: MiniCard[]; regions: Array<{ id: string; x: number; y: number; w: number; h: number; tone: string | null }>
+  box: { minX: number; minY: number; maxX: number; maxY: number }; t: View; cw: number; ch: number; onJump: (v: View) => void
+}) {
+  const size = useMemo(() => miniSize(box), [box])
+  const f = useMemo(() => minimapFrame(box, size.w, size.h), [box, size])
+  const vp = viewportOn(f, t, cw, ch)
+  const jump = (e: React.PointerEvent<SVGSVGElement>) => {
+    const b = e.currentTarget.getBoundingClientRect()
+    onJump(viewCentredOn(f, e.clientX - b.left, e.clientY - b.top, t.k, cw, ch))
+  }
+  return (
+    <svg width={size.w} height={size.h} role="group" aria-label="Minimap: the whole map, and where you are in it. Click to move there." data-minimap
+      className="block cursor-pointer touch-none"
+      onPointerDown={e => { e.stopPropagation(); e.currentTarget.setPointerCapture(e.pointerId); jump(e) }}
+      onPointerMove={e => { if (e.buttons & 1) jump(e) }}>
+      <MinimapBody cards={cards} regions={regions} f={f} />
+      <rect x={vp.x} y={vp.y} width={vp.w} height={vp.h} rx={3} fill="color-mix(in oklch, var(--action) 10%, transparent)" stroke="var(--action)" strokeWidth={1.25} data-minimap-view />
+    </svg>
+  )
+}
+
+// What a card says when the pointer rests on it: its whole title (cards cut
+// long ones short), where it sits, and its state; never an action.
+function peekLines(n: MapNode, path: string[], now: Date): { title: string; where: string; facts: string[] } {
+  const facts: string[] = []
+  if (n.type === 'topic') {
+    const st = topicState(n)
+    facts.push(n.level && n.masteryPercent !== null && st !== 'organising' ? `${STATE_LABEL[st]} · ${n.masteryPercent}% (your own estimate)` : STATE_LABEL[st])
+    if (n.reviewDue) facts.push('Review due')
+    if (n.lastStudiedAt) facts.push(`Last studied ${ago(n.lastStudiedAt)}${isRecent(n, now) ? '' : ''}`)
+    facts.push(`${plural(n.sessions, 'session')} · ${plural(n.notes, 'note')} · ${plural(n.resources, 'saved page')}`)
+  } else if (n.type === 'subject') facts.push(`${plural(n.topics, 'topic')} · ${plural(n.notes, 'note')} · ${plural(n.resources, 'saved page')}`)
+  else if (n.type === 'note') facts.push(`Edited ${ago(n.updatedAt)}`)
+  else if (n.type === 'resource') facts.push(`${n.domain} · saved ${ago(n.savedAt)}`)
+  else facts.push([n.status === 'done' ? 'Done' : n.status === 'in_progress' ? 'In progress' : 'To do', n.dueDay ? `due ${n.dueDay}` : null].filter(Boolean).join(' · '))
+  return { title: n.label, where: path.join(' › '), facts }
+}
+
+// What a topic card shows about learning, over its face: all of it read from
+// the record (lens.ts). Far out, the tile is tinted by its state, so the
+// overview reads as what is known; near, a review due is marked whatever the
+// lens, the Learning lens colours the accent and marks recent study, and the
+// Gaps lens rings a gap and says why under the card.
+function TopicMarks({ n, detail, lens, now }: { n: Extract<MapNode, { type: 'topic' }>; detail: CardDetail; lens: Lens; now: Date }) {
+  const { w, h } = CARD.topic
+  const x0 = -w / 2, y0 = -h / 2
+  const state = topicState(n)
+  const gaps = gapsOf(n)
+  const chip = (x: number, label: string, fill: string) => (
+    <g transform={`translate(${x} ${y0 - 8})`} className="pointer-events-none">
+      <rect width={label.length * 5.6 + 14} height={15} rx={7.5} fill="var(--card)" stroke={fill} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+      <rect width={label.length * 5.6 + 14} height={15} rx={7.5} fill={fill} opacity={0.18} />
+      <text x={7} y={10.6} fontSize={9.5} fontWeight={600} style={{ fill }}>{label}</text>
+    </g>
+  )
+  if (detail === 0) {
+    return (
+      <>
+        {state !== 'unstudied' && state !== 'organising' && <rect className="pointer-events-none" x={x0} y={y0} width={w} height={h} rx={14} fill={STATE_FILL[state]} opacity={state === 'milestone' ? 0.18 : 0.42} />}
+        {n.reviewDue && <circle cx={-x0 - 12} cy={y0 + 12} r={9} fill="var(--map-note)" />}
+        {lens === 'gaps' && gaps.length > 0 && <rect className="pointer-events-none" x={x0 - 7} y={y0 - 7} width={w + 14} height={h + 14} rx={20} fill="none" stroke="var(--map-note)" strokeWidth={2.5} vectorEffect="non-scaling-stroke" />}
+      </>
+    )
+  }
+  return (
+    <>
+      {lens === 'learning' && n.subjectName && state !== 'unstudied' && <rect className="pointer-events-none" x={x0 + 7} y={y0 + 11} width={3} height={h - 22} rx={1.5} fill={STATE_FILL[state]} />}
+      {/* On the top edge, left of the card's own + button. */}
+      {n.reviewDue && chip(x0 + 12, 'Review due', 'var(--map-note)')}
+      {lens === 'learning' && isRecent(n, now) && chip(x0 + 12 + (n.reviewDue ? 76 : 0), 'Recent', 'var(--nova)')}
+      {lens === 'gaps' && gaps.length > 0 && (
+        <>
+          <rect className="pointer-events-none" x={x0 - 6} y={y0 - 6} width={w + 12} height={h + 12} rx={19} fill="none" stroke="var(--map-note)" strokeWidth={1.6} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
+          <text x={x0 + 4} y={h / 2 + 17} fontSize={10.5} fontWeight={500} className="pointer-events-none" style={{ fill: 'var(--map-note)' }}>{gaps.filter(g => g !== 'review_due').map(g => GAP_LABEL[g]).join(' · ')}</text>
+        </>
+      )}
+    </>
+  )
+}
+
+// A topic's state, in a colour of the theme (the overview, the Learning lens, the legend).
+export const STATE_FILL: Record<TopicState, string> = {
+  solid: 'var(--nova)', developing: 'var(--map-resource)', weak: 'var(--map-note)', unrated: 'var(--map-topic)',
+  unstudied: 'var(--map-topic)', organising: 'var(--map-topic)', milestone: 'var(--nova)',
+}
+const LENS_KEY = 'kivo-map-lens', GUIDE_KEY = 'kivo-map-guide-closed', DENSITY_KEY = 'kivo-map-density'
+const readKey = (k: string) => { try { return window.localStorage.getItem(k) } catch { return null } }
+const writeKey = (k: string, v: string) => { try { window.localStorage.setItem(k, v) } catch { /* this visit only */ } }
+const ago = (iso: string) => {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
+  return days <= 0 ? 'today' : days === 1 ? 'yesterday' : days < 30 ? `${days} days ago` : day(iso)
+}
+
+export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null }: { view: NovaKnowledgeMapReady; onChanged: () => void; onWorkspace?: (id: string) => void; pendingScope?: string | null }) {
   const [shown, setShown]       = useState<Record<MapNodeType, boolean>>({ subject: true, topic: true, task: true, note: true, resource: true })
   // Branches folded away: what hangs from these cards is not drawn.
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -533,6 +793,21 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   const [removed, setRemoved]   = useState<Set<string>>(new Set())
   // A card found by search, lit for a moment where the view lands.
   const [flash, setFlash]       = useState<{ id: string; n: number } | null>(null)
+  // Map 3.0: the lens (emphasis only), the card previewed under the pointer,
+  // and the first-steps guide on a small map (closed for good once closed).
+  const [lens, setLensState]    = useState<Lens>('structure')
+  const [peek, setPeek]         = useState<string | null>(null)
+  const [guideClosed, setGuideClosed] = useState(true)
+  useEffect(() => {
+    const l = readKey(LENS_KEY)
+    if (l === 'learning' || l === 'gaps') setLensState(l)
+    setGuideClosed(readKey(GUIDE_KEY) === '1')
+  }, [])
+  const setLens = useCallback((l: Lens) => { setLensState(l); writeKey(LENS_KEY, l) }, [])
+  // Everything is an overview by default (overview-density.ts); the learner may ask for every item.
+  const [density, setDensityState] = useState<Density>('overview')
+  useEffect(() => { if (readKey(DENSITY_KEY) === 'all') setDensityState('all') }, [])
+  const setDensity = useCallback((d: Density) => { setDensityState(d); writeKey(DENSITY_KEY, d) }, [])
   const [narrow, setNarrow]     = useState(() => typeof window !== 'undefined' && window.matchMedia(OUTLINE_QUERY).matches)
   const orientation: Orientation = chosen ?? (narrow ? 'outline' : 'tree')
   const portrait = orientation === 'outline'
@@ -584,8 +859,14 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   const toggleFold = useCallback((id: string) => setCollapsed(c => { const next = new Set(c); if (next.has(id)) next.delete(id); else next.add(id); return next }), [])
   // Every card the filters leave, explored or not: the layout is worked out
   // for these, so a card explored keeps the place it has on the whole map.
-  const nodes = useMemo(() => view.nodes.filter(n => !removed.has(n.id) &&
-    shown[n.type] && !folded.has(n.id) && (subject === '' || n.subjectId === subject) && (!inScope || inScope.has(n.id))), [view.nodes, shown, folded, subject, inScope, removed])
+  // Everything, not explored, not scoped: an overview (overview-density.ts).
+  // A workspace's own map, and any card explored, draw every item as before.
+  const overviewOn = !view.workspaceId && density === 'overview' && current(stack).focus === null && !inScope
+  const dens = useMemo(() => (overviewOn ? overviewDensity(view.nodes, tree.parent) : null), [overviewOn, view.nodes, tree.parent])
+  // What search reaches: everything the filters leave, folded or not.
+  const searchable = useMemo(() => view.nodes.filter(n => !removed.has(n.id) && shown[n.type] && (subject === '' || n.subjectId === subject) && (!inScope || inScope.has(n.id))), [view.nodes, removed, shown, subject, inScope])
+  const nodes = useMemo(() => view.nodes.filter(n => !removed.has(n.id) && !dens?.hidden.has(n.id) &&
+    shown[n.type] && !folded.has(n.id) && (subject === '' || n.subjectId === subject) && (!inScope || inScope.has(n.id))), [view.nodes, shown, folded, subject, inScope, removed, dens])
   // What arrived since the map was last read (an add, a link), so it can
   // come in on its own. The first reading is the entrance's, not this.
   const known = useRef<{ nodes: Set<string>; edges: Set<string> } | null>(null)
@@ -721,26 +1002,32 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   const stopMoving = useCallback(() => startMoving(120), [startMoving])
   // Eased: the point at the centre of the screen glides, and the zoom changes
   // by the same proportion each frame, so going in reads as a zoom into it.
-  const animateTo = useCallback((to: View, ms = 320) => {
+  // Like a camera: a short move is quick, a long one or a big change of zoom
+  // takes longer (never over 0.7 s), easing in and out. Calm: at once.
+  const animateTo = useCallback((to: View, minMs?: number) => {
     stopAnim()
     const el = frame.current
-    if (!el || reducedMotion()) { setT(to); return }
+    if (!el || reducedMotion() || motion === 'reduced') { setT(to); return }
     const from = tNow.current, cw = el.clientWidth / 2, ch = el.clientHeight / 2
     const a = { x: (cw - from.x) / from.k, y: (ch - from.y) / from.k }, b = { x: (cw - to.x) / to.k, y: (ch - to.y) / to.k }
+    const travel = Math.hypot((b.x - a.x) * to.k, (b.y - a.y) * to.k), zoom = Math.abs(Math.log(to.k / from.k))
+    const ms = Math.max(minMs ?? 0, Math.min(700, 240 + travel * 0.3 + zoom * 260))
     const start = performance.now()
     startMoving(ms + 120)
     const step = (now: number) => {
-      const p = Math.min(1, (now - start) / ms), e = 1 - (1 - p) ** 3
+      const p = Math.min(1, (now - start) / ms), e = p < 0.5 ? 4 * p ** 3 : 1 - (-2 * p + 2) ** 3 / 2
       const k = from.k * (to.k / from.k) ** e
       const cx = a.x + (b.x - a.x) * e, cy = a.y + (b.y - a.y) * e
       setT(p === 1 ? to : { k, x: cw - cx * k, y: ch - cy * k })
       anim.current = p < 1 ? requestAnimationFrame(step) : null
     }
     anim.current = requestAnimationFrame(step)
-  }, [stopAnim, startMoving])
+  }, [stopAnim, startMoving, motion])
 
   // The details panel covers the right of a wide canvas: fit beside it.
   const besidePanel = useCallback((el: HTMLElement) => (selected && detailOpen && el.clientWidth >= 1024 ? 372 : 0), [selected, detailOpen])
+  // The Gaps list covers the left of the canvas (from 640px): a card is centred in the room beside it.
+  const besideLeft = useCallback((el: HTMLElement) => (lens === 'gaps' && el.clientWidth >= 640 ? 300 : 0), [lens])
   const fitTarget = useCallback((): View | null => {
     const el = frame.current
     if (!el) return null
@@ -756,8 +1043,15 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
       const k = Math.max(0.62, Math.min(1.1, el.clientWidth / w))
       return round({ k, x: w * k <= el.clientWidth ? el.clientWidth / 2 - ((minX + maxX) / 2) * k : 12 - minX * k, y: 16 - minY * k })
     }
-    const k = Math.max(MIN_K, Math.min(1.1, Math.min(room / w, el.clientHeight / h)))
-    return round({ k, x: room / 2 - ((minX + maxX) / 2) * k, y: el.clientHeight / 2 - ((minY + maxY) / 2) * k })
+    // The subjects' regions reach past their cards, and far out each carries
+    // a label above it: both are kept on screen (before, a far-out fit cut
+    // the subjects' names off at the edge).
+    const pad = 44, H = el.clientHeight
+    const bw = w + pad * 2, bh = h + pad * 2
+    let top = 0
+    let k = Math.max(MIN_K, Math.min(1.1, Math.min(room / bw, H / bh)))
+    if (detailAt(k) === 0) { top = 44; k = Math.max(MIN_K, Math.min(1.1, Math.min(room / bw, (H - top) / bh))) }
+    return round({ k, x: room / 2 - ((minX + maxX) / 2) * k, y: top + (H - top) / 2 - ((minY + maxY) / 2) * k })
   }, [bounds, portrait, besidePanel])
   const fit = useCallback((animated = true) => { const to = fitTarget(); if (to) { if (animated) animateTo(to); else { stopAnim(); setT(to) } } }, [fitTarget, animateTo, stopAnim])
 
@@ -856,16 +1150,17 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     const el = frame.current
     if (!p || !el) return
     const kk = k ?? tNow.current.k
-    animateTo({ k: kk, x: (el.clientWidth - besidePanel(el)) / 2 - p.x * kk, y: el.clientHeight / 2 - p.y * kk }, 260)
-  }, [placed, markers, animateTo, besidePanel])
+    const left = besideLeft(el)
+    animateTo({ k: kk, x: left + (el.clientWidth - besidePanel(el) - left) / 2 - p.x * kk, y: el.clientHeight / 2 - p.y * kk }, 260)
+  }, [placed, markers, animateTo, besidePanel, besideLeft])
   // Keeps a card reached by the keyboard on screen, moving the view only when it is not.
   const keepInView = useCallback((id: string) => {
     const p = placed.at.get(id)
     const el = frame.current
     if (!p || !el) return
     const v = tNow.current, sx = v.x + p.x * v.k, sy = v.y + p.y * v.k, m = 80
-    if (sx < m || sy < m || sx > el.clientWidth - m - besidePanel(el) || sy > el.clientHeight - m) centreOn(id)
-  }, [placed, centreOn, besidePanel])
+    if (sx < m + besideLeft(el) || sy < m || sx > el.clientWidth - m - besidePanel(el) || sy > el.clientHeight - m) centreOn(id)
+  }, [placed, centreOn, besidePanel, besideLeft])
 
   // Shows the card's details, keeping it selected.
   const select = useCallback((id: string | null, opts: { centre?: boolean; focusCard?: boolean } = {}) => {
@@ -971,22 +1266,50 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
 
   // Found by its name, and by what it is filed under or comes from, anywhere
   // the filters leave (a card outside an explored one is reached by going to it).
-  const found = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return []
-    const about = (n: MapNode) => [n.label, 'subjectName' in n ? n.subjectName : null, 'topicName' in n ? n.topicName : null, n.type === 'resource' ? n.domain : null]
-      .filter(Boolean).join('\n').toLowerCase()
-    return nodes.filter(n => about(n).includes(q)).slice(0, 8)
-  }, [query, nodes])
+  // Ranked (map-search.ts): the name first, then a word in it, then what it is filed under.
+  const found = useMemo(() => searchMap(searchable, query, 10), [query, searchable])
+  // Every card the query matches is lit on the map while the learner types.
+  const matchIds = useMemo(() => (query.trim() ? matchesOf(nodes, query) : null), [query, nodes])
+  const labelOf = useCallback((id: string) => byId.get(id)?.label, [byId])
+  // Each top-level subject's topics by state, all of them (folded or not).
+  const subjectTallies = useMemo(() => {
+    const groups = new Map<string, MapNode[]>()
+    for (const n of view.nodes) { const r = rootOf(n.id, tree.parent); const l = groups.get(r); if (l) l.push(n); else groups.set(r, [n]) }
+    return new Map([...groups].map(([r, list]) => [r, tallyOf(list)]))
+  }, [view.nodes, tree.parent])
+  // What a card sits inside, from the top, each one selectable.
+  const ancestorsOf = useCallback((id: string) => {
+    const out: Array<{ id: string; label: string }> = []
+    for (let p = tree.parent.get(id), hops = 0; p && hops < 12; p = tree.parent.get(p), hops++) out.unshift({ id: p, label: byId.get(p)?.label ?? '' })
+    return out
+  }, [tree.parent, byId])
+  // What the lens points at, among the cards drawn; the search wins while typing.
+  const lensIds = useMemo(() => lensTargets(lens, drawn), [lens, drawn])
+  const emphasis = matchIds ?? lensIds
+  // The gaps on this map, the ones to act on first at the top.
+  const gapList = useMemo(() => (lens !== 'gaps' ? [] : drawn.filter((n): n is Extract<MapNode, { type: 'topic' }> => n.type === 'topic' && gapsOf(n).length > 0)
+    .sort((a, b) => gapRank(a) - gapRank(b) || (placed.at.get(a.id)?.y ?? 0) - (placed.at.get(b.id)?.y ?? 0))), [lens, drawn, placed])
+  const gapCount = useMemo(() => drawn.reduce((c, n) => c + (n.type === 'topic' && gapsOf(n).length > 0 ? 1 : 0), 0), [drawn])
+  // A preview of the card under the pointer, after a short rest on it.
+  useEffect(() => {
+    if (!hover || dragAt) { setPeek(null); return }
+    const id = window.setTimeout(() => setPeek(hover), 380)
+    return () => window.clearTimeout(id)
+  }, [hover, dragAt])
   const [foundAt, setFoundAt] = useState(0)
   useEffect(() => setFoundAt(0), [query])
   const pick = useCallback((id: string) => {
     setQuery('')
     pendingSelect.current = null
     setFlash(f => ({ id, n: (f?.n ?? 0) + 1 }))
-    if (drawnIds.has(id)) select(id, { centre: true, focusCard: true })
-    else goOutside(id)
-  }, [drawnIds, select, goOutside])
+    if (drawnIds.has(id)) { select(id, { centre: true, focusCard: true }); return }
+    // Folded into the overview: go into its subject, where every item is drawn, and select it there.
+    if (dens?.hidden.has(id)) {
+      const root = rootOf(id, tree.parent)
+      if (root !== id && canExplore(tree, root)) { revealCard(id); explore(root); pendingSelect.current = id; return }
+    }
+    goOutside(id)
+  }, [drawnIds, select, goOutside, dens, tree, revealCard, explore])
 
   // ── Adding and deleting ────────────────────────────────────────────────────
   const canDelete = (n: MapNode) => n.type === 'subject' || n.type === 'topic' || n.type === 'task'
@@ -1046,6 +1369,27 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
         if (panel) { act(); setPanel(null); return }
         if (selected) { act(); setSelected(null); lastChosen.current = null; frame.current?.focus({ preventScroll: true }) }
         return
+      case 'lens': {
+        act()
+        const l = nextLens(lens)
+        setLens(l)
+        const hint = LENSES.find(x => x.id === l)!.hint
+        say(`${LENSES.find(x => x.id === l)!.label} lens: ${hint[0]!.toLowerCase()}${hint.slice(1)}.`)
+        return
+      }
+      case 'next': {
+        act()
+        // The next match while searching, else the next gap (Gaps) or studied topic (Learning).
+        const reading = (a: string, b: string) => (placed.at.get(a)?.y ?? 0) - (placed.at.get(b)?.y ?? 0) || (placed.at.get(a)?.x ?? 0) - (placed.at.get(b)?.x ?? 0)
+        const order = matchIds ? found.map(n => n.id).filter(id => drawnIds.has(id))
+          : lens === 'gaps' ? gapList.map(n => n.id)
+          : lensIds ? [...lensIds].sort(reading) : []
+        if (!order.length) { say(matchIds ? 'Nothing found here.' : lens === 'gaps' ? 'No gaps on this map.' : 'G goes to the next gap or match: press L for the Gaps lens, or / to search.'); return }
+        const to = order[(order.indexOf(selected ?? '') + 1) % order.length]!
+        setFlash(f => ({ id: to, n: (f?.n ?? 0) + 1 }))
+        select(to, { centre: true, focusCard: true })
+        return
+      }
       case 'zoom_in': act(); zoomAt(1.25); return
       case 'zoom_out': act(); zoomAt(0.8); return
       case 'fit': act(); fit(); return
@@ -1105,6 +1449,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
         if (!target) return
         act()
         if (!tree.children.get(target)?.length) { say('Nothing is inside this card to fold.'); return }
+        if (dens && (tree.children.get(target) ?? []).every(c => dens.hidden.has(c))) { say('What is inside is folded into the overview. Enter opens it.'); return }
         toggleFold(target)
         say(collapsed.has(target) ? 'Showing what is inside.' : 'Folded.')
         return
@@ -1130,8 +1475,11 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   // ── What is drawn ──────────────────────────────────────────────────────────
   // How much a card says at this zoom: far out, only the shapes and the
   // subjects' names (drawn at a readable size); then titles; then facts.
-  const detail: CardDetail = t.k >= 0.62 ? 2 : t.k >= 0.36 ? 1 : 0
+  const detail: CardDetail = detailAt(t.k)
   const textScale = 1 / Math.max(t.k, 0.0001)
+  // "Recent" is judged against when the map was read.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- read again with each new reading of the map
+  const now = useMemo(() => new Date(), [view])
   const focusId = hover ?? selected
   // A card outside an explored one is drawn at its marker, not where it sits on the whole map.
   const pointOf = useCallback((id: string) => markers.get(id) ?? placed.at.get(id), [placed, markers])
@@ -1150,7 +1498,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     const a = pointOf(e.from), b = pointOf(e.to)
     if (!a || !b) return null
     const lit = focusId !== null && (e.from === focusId || e.to === focusId)
-    const dim = focusId !== null && !lit
+    // Far out, a [[link]] or a wait crossing the map says nothing but tangle:
+    // drawn only for the card in focus. The tree's own lines stay.
+    if (detail === 0 && !lit && (e.kind === 'links_to' || e.kind === 'depends_on')) return null
+    const dim = (focusId !== null && !lit) || (focusId === null && emphasis !== null && !emphasis.has(e.from) && !emphasis.has(e.to))
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y
     // Arriving: drawn along its length once both its cards are there (a
     // dashed line, whose dashes would be lost, fades in instead).
@@ -1179,6 +1530,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
       // Deeper in the tree, lighter: never under 55%.
       rest = Math.max(0.55, 1 - Math.max(0, depthOf(e.to) - 1) * 0.15)
     }
+    // Far out the tree's lines are thin and plain: dashes at that size read as noise.
+    if (detail === 0 && !lit) { dash = undefined; width = Math.min(width, 1); rest = Math.min(rest, 0.55) }
     return (
       <g key={e.id} className={arrive} style={anim}>
         {/* A lit line glows, so what the selected card joins reads at a glance. */}
@@ -1186,12 +1539,14 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
         <path d={d} fill="none" data-edge={e.kind} data-lane={d.includes(' H ') && e.kind !== 'links_to' && e.kind !== 'depends_on' ? '' : undefined}
           stroke={stroke} strokeWidth={width} strokeDasharray={dash} strokeLinejoin="round" vectorEffect="non-scaling-stroke"
           opacity={dim ? (e.kind === 'depends_on' ? 0.2 : 0.25) : rest} {...drawProps} />
+        {/* What the selection joins: a quiet pulse travelling along the line. */}
+        {lit && !arrive && <path d={d} fill="none" className="map-edge-flow" stroke="var(--action)" strokeWidth={2.4} strokeDasharray="1.5 11" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.95} />}
       </g>
     )
-  }), [allLines, pointOf, focusId, placed.lanes, markers, entrance, fresh, depthOf])
+  }), [allLines, pointOf, focusId, placed.lanes, markers, entrance, fresh, depthOf, detail, emphasis])
 
   // The rings of [[links]], over the cards: one where each link arrives.
-  const ringLayer = useMemo(() => allLines.filter(e => e.kind === 'links_to').map(e => {
+  const ringLayer = useMemo(() => allLines.filter(e => e.kind === 'links_to' && (detail > 0 || (focusId !== null && (e.from === focusId || e.to === focusId)))).map(e => {
     const a = pointOf(e.from), b = pointOf(e.to)
     const to = byId.get(e.to), from = byId.get(e.from)
     if (!a || !b || !to || !from) return null
@@ -1205,9 +1560,9 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
         <title>{`“${from.label}” links to “${to.label}” with [[${to.label}]]`}</title>
       </circle>
     )
-  }), [allLines, pointOf, byId, markers, focusId])
+  }), [allLines, pointOf, byId, markers, focusId, detail])
 
-  const suggestionLayer = useMemo(() => suggestions.map(s => {
+  const suggestionLayer = useMemo(() => (detail === 0 ? [] : suggestions).map(s => {
     const a = placed.at.get(s.from), b = placed.at.get(s.to)
     if (!a || !b) return null
     const lit = focusId !== null && (s.from === focusId || s.to === focusId)
@@ -1217,7 +1572,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
         strokeWidth={1.2} strokeDasharray="1 6" strokeLinecap="round" vectorEffect="non-scaling-stroke"
         opacity={focusId !== null && !lit ? 0.15 : 0.8} />
     )
-  }), [suggestions, placed, focusId])
+  }), [suggestions, placed, focusId, detail])
 
   // The cards. Memoised apart from the pan; the zoom only changes them when
   // it crosses into another level of detail.
@@ -1226,6 +1581,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     if (!p) return null
     const { w, h } = CARD[n.type]
     const dim = neighbourIds !== null && !neighbourIds.has(n.id)
+    // A lens or a search sets the rest back (never hides it).
+    const faded = !dim && emphasis !== null && !emphasis.has(n.id) && selected !== n.id
     const on  = selected === n.id
     const dragging = dragAt?.id === n.id
     const tone = n.type === 'subject' ? n.label : n.subjectName
@@ -1241,7 +1598,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     const arriving = delay !== undefined ? (entrance!.mode === 'full' ? 'map-card-in' : 'map-card-in-brief') : fresh?.nodes.has(n.id) ? 'map-card-new' : undefined
     return (
       <g
-        key={n.id} transform={`translate(${p.x} ${p.y})`} style={{ ...toneStyle(tone), opacity: dim ? 0.38 : 1 }}
+        key={n.id} transform={`translate(${p.x} ${p.y})`} style={{ ...toneStyle(tone), opacity: dim ? 0.38 : faded ? 0.3 : 1 }} data-emphasis={emphasis?.has(n.id) ? '' : undefined}
         role="button" tabIndex={0} aria-label={`${TYPE_LABEL[n.type]}: ${n.label}${kids ? `, ${kids} inside` : ''}`} aria-pressed={on}
         aria-keyshortcuts="Enter Shift+Enter Space N Delete Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
         className={cn('map-card subject-tone group/card outline-none [&:focus-visible_.map-focus]:opacity-100', dragging ? 'cursor-grabbing' : 'cursor-pointer')}
@@ -1266,14 +1623,47 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
           {th > 0 && <rect className="map-slab" x={-w / 2} y={-h / 2 + th} width={w} height={h} rx={r} />}
           <g className={cn('map-lift', on || near || dragging ? 'map-raise' : recede ? 'map-recede' : undefined)}>
             {(on || dragging) && <rect x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="color-mix(in oklch, var(--action) 9%, transparent)" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
+            {/* Selected: one soft pulse outward, then still. */}
+            {on && !dragging && <rect className="map-select-pulse pointer-events-none" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
             <rect className="map-focus opacity-0" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--ring)" strokeWidth={2.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" />
             <g style={dragging ? { filter: 'drop-shadow(0 10px 18px rgb(0 0 0 / 0.25))' } : undefined}><CardFace n={n} detail={detail} /></g>
+            {n.type === 'topic' && <TopicMarks n={n} detail={detail} lens={lens} now={now} />}
             {/* Light on its surface, from above. */}
             {detail > 0 && <rect className="pointer-events-none" x={-w / 2} y={-h / 2} width={w} height={h} rx={r} fill="url(#map-sheen)" />}
             {flash?.id === n.id && <rect key={flash.n} className="map-found pointer-events-none" x={-w / 2 - 6} y={-h / 2 - 6} width={w + 12} height={h + 12} rx={r + 6} fill="none" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
           </g>
         </g>
-        {kids > 0 && detail >= 1 && (
+        {/* Everything's overview: what is folded under it, as one chip; it opens by going in. */}
+        {dens && foldedTotal(dens.folded.get(n.id)) > 0 && (() => {
+          const c = dens.folded.get(n.id)!
+          const text = detail >= 1 ? `+ ${foldedLabel(c)}` : `+${foldedTotal(c)}`
+          const cw = text.length * (detail >= 1 ? 6.1 : 7.5) + 16
+          const below = n.type === 'subject'
+          const x = below ? -cw / 2 : w / 2 + 12, y = below ? h / 2 + th + (detail >= 1 ? 18 : 22) : -10
+          return (
+            <g transform={`translate(${x} ${y})`} role="button" tabIndex={-1} aria-label={`${foldedLabel(c)} inside ${n.label}. Open it to see them.`} data-folded={n.id}
+              className="map-chip cursor-pointer" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); if (canExplore(tree, n.id)) explore(n.id) }}>
+              <title>{`${foldedLabel(c)}: open ${n.label} to see them`}</title>
+              <rect width={cw} height={20} rx={10} fill="var(--card)" stroke="var(--map-line-strong)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+              <text x={8} y={13.6} fontSize={detail >= 1 ? 10.5 : 12} fontWeight={500} className="fill-[var(--subtle)]">{text}</text>
+            </g>
+          )
+        })()}
+        {/* A subject's progress at a glance: its topics by state, all of them. */}
+        {overviewOn && n.type === 'subject' && (() => {
+          const tl = subjectTallies.get(n.id)
+          if (!tl || tl.topics === 0) return null
+          const bw = w - 36, x0 = -bw / 2, y0 = h / 2 + th + 6
+          const segs: Array<[number, string]> = [[tl.solid, 'var(--nova)'], [tl.developing, 'var(--map-resource)'], [tl.weak, 'var(--map-note)'], [tl.studied - tl.solid - tl.developing - tl.weak, 'var(--map-topic)']]
+          let at = x0
+          return (
+            <g className="pointer-events-none" data-subject-progress={n.id}>
+              <rect x={x0} y={y0} width={bw} height={4} rx={2} fill="var(--map-line)" />
+              {segs.map(([count, fill], i) => { if (count <= 0) return null; const sw = (bw * count) / tl.topics; const r = <rect key={i} x={at} y={y0} width={sw} height={4} rx={2} fill={fill} />; at += sw; return r })}
+            </g>
+          )
+        })()}
+        {kids > 0 && detail >= 1 && !(dens && (tree.children.get(n.id) ?? []).every(c => dens.hidden.has(c))) && (
           // Fold or show what hangs from it.
           <g transform={`translate(${w / 2} 0)`} role="button" tabIndex={-1} aria-label={collapsed.has(n.id) ? `Show what is inside ${n.label}` : `Fold what is inside ${n.label}`} data-fold={collapsed.has(n.id) ? 'folded' : 'open'}
             onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); toggleFold(n.id) }} className="cursor-pointer">
@@ -1295,24 +1685,117 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
         )}
       </g>
     )
-  }), [drawn, placed, neighbourIds, selected, dragAt, detail, onCardPointerDown, onCardPointerMove, onCardPointerUp, onCardPointerCancel, tree, collapsed, insideCount, toggleFold, select, explore, openAdd, entrance, fresh, flash, chosenAround])
+  }), [drawn, placed, neighbourIds, selected, dragAt, detail, onCardPointerDown, onCardPointerMove, onCardPointerUp, onCardPointerCancel, tree, collapsed, insideCount, toggleFold, select, explore, openAdd, entrance, fresh, flash, chosenAround, emphasis, lens, now, dens, overviewOn, subjectTallies])
 
-  // The ground each subject's tree stands on, lit softly in its colour.
-  const regionLayer = useMemo(() => regionsOf(drawn, tree.parent, placed.at).map((r, i) => {
+  // The ground each subject's tree stands on, lit softly in its colour, and
+  // what each holds (for the overview's labels).
+  const regions = useMemo(() => {
+    const list = regionsOf(drawn, tree.parent, placed.at)
+    const rootOf = (id: string) => { let r = id; for (let p = tree.parent.get(r), hops = 0; p && drawnIds.has(p) && hops < 64; p = tree.parent.get(p), hops++) r = p; return r }
+    const members = new Map<string, MapNode[]>()
+    for (const n of drawn) { const r = rootOf(n.id); const l = members.get(r); if (l) l.push(n); else members.set(r, [n]) }
+    return list.map(r => ({ ...r, tally: tallyOf(members.get(r.id) ?? []) }))
+  }, [drawn, tree.parent, placed.at, drawnIds])
+  // Zoom to a subject: its whole region on screen (a click on it far out).
+  const zoomToRegion = useCallback((r: { x: number; y: number; w: number; h: number }) => {
+    const el = frame.current
+    if (!el) return
+    animateTo(viewOfBox({ minX: r.x, minY: r.y, maxX: r.x + r.w, maxY: r.y + r.h }, el.clientWidth - besidePanel(el), el.clientHeight, { maxK: 0.9, minK: MIN_K, pad: 24 }), 420)
+  }, [animateTo, besidePanel])
+  const regionLayer = useMemo(() => regions.map((r, i) => {
     const s = byId.get(r.id)
+    const far = detail === 0
     return (
       <g key={`region-${r.id}`} className="subject-tone" style={toneStyle(s?.type === 'subject' ? s.label : null)} data-region={r.id}>
         <defs>
-          <radialGradient id={`map-region-${i}`} cx="30%" cy="35%" r="75%">
-            <stop offset="0%" style={{ stopColor: 'var(--sc)', stopOpacity: 0.11 }} />
-            <stop offset="65%" style={{ stopColor: 'var(--sc)', stopOpacity: 0.035 }} />
-            <stop offset="100%" style={{ stopColor: 'var(--sc)', stopOpacity: 0 }} />
+          <radialGradient id={`map-region-${i}`} cx={overviewOn ? '50%' : '30%'} cy={overviewOn ? '50%' : '35%'} r={overviewOn ? '50%' : '75%'}>
+            <stop offset="0%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.16 : 0.11 }} />
+            <stop offset="65%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.06 : 0.035 }} />
+            <stop offset="100%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.02 : 0 }} />
           </radialGradient>
         </defs>
-        <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={28} fill={`url(#map-region-${i})`} stroke="var(--sc-faint)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        {overviewOn
+          // Everything: no walls between subjects, a soft light of its colour where its cluster stands.
+          ? <ellipse cx={r.x + r.w / 2} cy={r.y + r.h / 2} rx={r.w * 0.62} ry={r.h * 0.62} fill={`url(#map-region-${i})`} />
+          : <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={28} fill={`url(#map-region-${i})`} stroke={far ? 'var(--sc-edge)' : 'var(--sc-faint)'} strokeWidth={1} vectorEffect="non-scaling-stroke" />}
       </g>
     )
-  }), [drawn, tree.parent, placed.at, byId])
+  }), [regions, byId, detail, overviewOn])
+  // Far out, each subject's plate, over its cards (drawn after them).
+  const regionLabelLayer = useMemo(() => (detail !== 0 ? null : regions.map(r => {
+    const s = byId.get(r.id)
+    const far = true
+    const ks = 1 / Math.max(t.k, 0.0001)
+    const facts = [plural(r.tally.topics, 'topic'), r.tally.topics ? (r.tally.studied ? `${r.tally.studied} studied` : 'none studied yet') : null, r.tally.reviewDue ? `${r.tally.reviewDue} review${r.tally.reviewDue === 1 ? '' : 's'} due` : null, r.tally.notes ? plural(r.tally.notes, 'note') : null].filter(Boolean).join(' · ')
+    return (
+      <g key={`plate-${r.id}`} className="subject-tone" style={toneStyle(s?.type === 'subject' ? s.label : null)}>
+        {far && s && (() => {
+          // Far out, the subject's name and what it holds, on a plate inside
+          // its own region (above it, stacked subjects' labels ran into each
+          // other), cut to the region's width; a click goes to it.
+          const wPx = r.w * t.k - 20, hPx = r.h * t.k
+          if (wPx < 70 || hPx < 34) return null
+          const title = short(s.label, Math.max(6, Math.floor((wPx - 30) / 8.8)))
+          const line = hPx >= 76 ? short(facts, Math.max(8, Math.floor((wPx - 20) / 6.4))) : null
+          const plateW = Math.min(wPx, Math.max(title.length * 8.8 + 34, (line?.length ?? 0) * 6.4 + 22))
+          const plateH = line ? 48 : 30
+          return (
+            <g transform={`translate(${r.x + 10 * ks} ${r.y + 10 * ks}) scale(${ks})`} role="button" tabIndex={-1} aria-label={`${s.label}: ${facts}. Zoom to it.`} data-region-label={r.id}
+              className="cursor-pointer" onPointerDown={e => e.stopPropagation()} onClick={() => zoomToRegion(r)} onDoubleClick={() => { if (canExplore(tree, r.id)) explore(r.id) }}>
+              <rect width={plateW} height={plateH} rx={10} fill="var(--card)" opacity={0.94} />
+              {!overviewOn && <rect width={plateW} height={plateH} rx={10} fill="none" stroke="var(--sc-edge)" strokeWidth={1} />}
+              <circle cx={14} cy={15} r={4.5} fill="var(--sc)" />
+              <text x={25} y={20} fontSize={REGION_LABEL_PX.title} fontWeight={650} className="fill-foreground" style={{ fontFamily: 'var(--font-display)' }}>{title}</text>
+              {line && <text x={11} y={39} fontSize={REGION_LABEL_PX.line} className="fill-[var(--subtle)]">{line}</text>}
+            </g>
+          )
+        })()}
+      </g>
+    )
+  })), [regions, byId, detail, t.k, zoomToRegion, tree, explore, overviewOn])
+
+  // Between subjects, in the overview: the [[links]] written from one subject's
+  // items to another's, one line per pair with how many. Only links on record.
+  const subjectLinkLayer = useMemo(() => {
+    if (!overviewOn) return null
+    // The strongest few, quietly; all of a subject's when it is in focus.
+    const all = crossSubjectLinks(usable, tree.parent, id => byId.get(id)?.type === 'subject')
+    const focusRoot = focusId ? rootOf(focusId, tree.parent) : null
+    return all.filter((l, i) => i < 5 || l.a === focusRoot || l.b === focusRoot).map(l => {
+      const a = placed.at.get(l.a), b = placed.at.get(l.b)
+      if (!a || !b) return null
+      const lit = focusRoot !== null && (focusRoot === l.a || focusRoot === l.b)
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y
+      const cx = mx - dy * 0.15, cy = my + dx * 0.15
+      return (
+        <g key={`xs-${l.a}-${l.b}`} data-subject-link={`${l.a}|${l.b}`} opacity={focusId !== null && !lit ? 0.2 : 1}>
+          <path d={`M ${a.x} ${a.y} Q ${cx} ${cy} ${b.x} ${b.y}`} fill="none" stroke={lit ? 'var(--action)' : 'var(--nova)'} strokeWidth={lit ? 1.8 : 1} strokeDasharray="2 6" strokeLinecap="round" opacity={lit ? 0.85 : 0.35} vectorEffect="non-scaling-stroke">
+            <title>{`${l.count} [[link${l.count === 1 ? '' : 's'}]] between ${byId.get(l.a)?.label} and ${byId.get(l.b)?.label}`}</title>
+          </path>
+          {lit && <g transform={`translate(${(mx + cx) / 2} ${(my + cy) / 2}) scale(${1 / Math.max(t.k, 0.3)})`}>
+            <title>{`${l.count} [[link${l.count === 1 ? '' : 's'}]] between ${byId.get(l.a)?.label} and ${byId.get(l.b)?.label}`}</title>
+            <circle r={10} fill="var(--card)" stroke="var(--nova)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+            <text textAnchor="middle" y={3.8} fontSize={10.5} fontWeight={600} style={{ fill: 'var(--nova)' }}>{l.count}</text>
+          </g>}
+        </g>
+      )
+    })
+  }, [overviewOn, usable, tree.parent, byId, placed.at, focusId, t.k])
+
+  // The minimap's picture: every card drawn and each subject's ground, once per map.
+  const miniCards = useMemo<MiniCard[]>(() => drawn.flatMap(n => {
+    const p = placed.at.get(n.id)
+    if (!p) return []
+    const st = n.type === 'topic' ? topicState(n) : null
+    return [{ id: n.id, x: p.x, y: p.y, ...CARD[n.type], fill: st && st !== 'unstudied' && st !== 'organising' ? STATE_FILL[st] : n.type === 'topic' ? 'var(--map-line-strong)' : FILL[n.type] }]
+  }), [drawn, placed])
+  const miniRegions = useMemo(() => regions.map(r => ({ id: r.id, x: r.x, y: r.y, w: r.w, h: r.h, tone: byId.get(r.id)?.label ?? null })), [regions, byId])
+  const miniBox = useMemo(() => {
+    // What is drawn here: inside an explored card, its own box (with markers), not the whole map's.
+    let { minX, minY, maxX, maxY } = bounds
+    for (const r of regions) { minX = Math.min(minX, r.x); minY = Math.min(minY, r.y); maxX = Math.max(maxX, r.x + r.w); maxY = Math.max(maxY, r.y + r.h) }
+    return { minX, minY, maxX, maxY }
+  }, [bounds, regions])
 
   // A card deleted here, leaving where it stood while the map is read again.
   const ghostLayer = ghost ? (() => {
@@ -1350,7 +1833,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   }), [markers, byId, focusId, detail, goOutside])
 
   // Far out, the subjects' names over their cards, at a size that can be read.
-  const farLabels = detail === 0 ? drawn.filter(n => n.type === 'subject').map(n => {
+  const regionRoots = new Set(regions.map(r => r.id))
+  const farLabels = detail === 0 ? drawn.filter(n => n.type === 'subject' && !regionRoots.has(n.id)).map(n => {
     const p = placed.at.get(n.id)
     if (!p) return null
     const size = 13 * Math.min(textScale, 4)
@@ -1408,17 +1892,13 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
       <div className="flex flex-wrap items-center gap-2 border-b border-white/8 px-3 py-2">
         {(view.workspaces?.length ?? 0) > 0 && onWorkspace && (
           // One workspace's map at a time; everything together on request.
-          <select value={view.workspaceId ?? 'all'} onChange={e => onWorkspace(e.target.value)} aria-label="Which workspace's map" data-workspace-switch
-            className="h-8 max-w-[11rem] rounded-full border border-white/12 bg-background px-3 text-xs font-medium text-foreground outline-none focus-visible:border-ring sm:max-w-[14rem]">
+          // One workspace's map at a time; everything together on request. While
+          // the next one loads, the choice shows what was asked for.
+          <select value={pendingScope ?? view.workspaceId ?? 'all'} onChange={e => onWorkspace(e.target.value)} aria-label="Which map" data-workspace-switch aria-busy={pendingScope !== null}
+            className={cn('h-8 max-w-[11rem] rounded-full border border-white/12 bg-background px-3 text-xs font-medium text-foreground outline-none focus-visible:border-ring sm:max-w-[14rem]', pendingScope !== null && 'animate-pulse')}>
             {view.workspaces!.map(w => <option key={w.id} value={w.id}>{w.title}</option>)}
-            <option value="all">Everything you have</option>
+            <option value="all">Everything</option>
           </select>
-        )}
-        {view.workspaceId && (
-          <button type="button" onClick={() => setPanel({ kind: 'delete_map', workspaceId: view.workspaceId!, title: view.workspaces?.find(w => w.id === view.workspaceId)?.title ?? 'this map' })}
-            className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/12 px-2.5 text-xs text-foreground/70 hover:border-red-400/50 hover:text-red-400" title="Delete this whole map in one step" data-delete-map>
-            <Trash2 aria-hidden className="size-3.5" /> <span className="max-sm:sr-only">Delete map</span>
-          </button>
         )}
         <Breadcrumbs trail={trail} canBack={stack.length > 1} onBack={goBack} onUp={goUp} onGo={goTo} />
         <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 max-sm:w-full">
@@ -1438,16 +1918,21 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
               <p role="status" className="absolute right-0 top-10 z-30 w-64 rounded-xl border border-white/10 bg-popover px-3 py-2 text-xs text-foreground/70 shadow-float">Nothing on the map matches. Hidden types and subjects are not searched.</p>
             )}
             {found.length > 0 && (
-              <ul id="map-found" role="listbox" data-map-overlay className="absolute right-0 top-10 z-30 w-full min-w-64 overflow-hidden rounded-xl border border-white/10 bg-popover shadow-float">
+              <ul id="map-found" role="listbox" data-map-overlay className="absolute right-0 top-10 z-30 w-full min-w-80 overflow-hidden rounded-xl border border-white/10 bg-popover shadow-float">
                 {found.map((n, i) => (
                   <li key={n.id} id={`map-found-${i}`} role="option" aria-selected={i === foundAt}>
-                    <button type="button" tabIndex={-1} onClick={() => pick(n.id)} className={cn('flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-foreground/85 hover:bg-white/6', i === foundAt && 'bg-white/6')}>
-                      <span className="inline-block size-2 shrink-0 rounded-full" style={{ background: FILL[n.type] }} />
-                      <span className="truncate">{n.label}</span>
-                      <span className="ml-auto shrink-0 text-subtle">{inside && !drawnIds.has(n.id) ? 'Outside' : TYPE_LABEL[n.type]}</span>
+                    <button type="button" tabIndex={-1} onClick={() => pick(n.id)} className={cn('flex w-full items-start gap-2.5 px-3 py-2 text-left text-xs text-foreground/85 hover:bg-white/6', i === foundAt && 'bg-white/6')}>
+                      <span className="mt-1 inline-block size-2 shrink-0 rounded-full" style={{ background: FILL[n.type] }} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium text-foreground">{n.label}</span>
+                        {/* Where it sits, so the jump is not a surprise. */}
+                        <span className="block truncate text-[11px] text-subtle">{pathOf(n.id, tree.parent, labelOf).join(' › ') || (n.type === 'subject' ? 'A subject' : 'Not filed under anything')}</span>
+                      </span>
+                      <span className="mt-0.5 shrink-0 text-[11px] text-subtle">{inside && !drawnIds.has(n.id) ? 'Outside' : TYPE_LABEL[n.type]}</span>
                     </button>
                   </li>
                 ))}
+                <li className="border-t border-white/8 px-3 py-1.5 text-[11px] text-subtle" aria-hidden>{matchIds?.size ?? 0} on the map, lit · ↑↓ choose · Enter goes · G next</li>
               </ul>
             )}
           </div>
@@ -1457,7 +1942,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
           </span>
           <div className="relative">
             <button type="button" onClick={() => setPanel(p => (p?.kind === 'filters' ? null : { kind: 'filters' }))} aria-expanded={panel?.kind === 'filters'} className={tool} data-filters-open>
-              <SlidersHorizontal aria-hidden className="size-3.5" /> <span className="hidden sm:inline">Show</span>{hidden > 0 && <span className="rounded-full bg-action-soft px-1.5 text-[10px] tabular-nums text-foreground">{hidden}</span>}
+              <SlidersHorizontal aria-hidden className="size-3.5" /> <span className="hidden sm:inline">View</span>{hidden > 0 && <span className="rounded-full bg-action-soft px-1.5 text-[10px] tabular-nums text-foreground">{hidden}</span>}
             </button>
             {panel?.kind === 'filters' && (
               <div data-map-overlay className="absolute right-0 top-10 z-30 w-[min(20rem,calc(100vw-2rem))] space-y-3 rounded-2xl border border-white/10 bg-popover p-3 shadow-float" onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); setPanel(null) } }}>
@@ -1496,6 +1981,19 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
                     ))}
                   </div>
                 </div>
+                {!view.workspaceId && (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-subtle">Everything shows</span>
+                    <div role="radiogroup" aria-label="What Everything shows" className="inline-flex rounded-full border border-white/10 p-0.5">
+                      {(['overview', 'all'] as const).map(d => (
+                        <button key={d} type="button" role="radio" aria-checked={density === d} data-density-choice={d} onClick={() => setDensity(d)}
+                          className={cn('rounded-full px-2.5 py-1 text-xs font-medium', density === d ? 'bg-white/8 text-foreground' : 'text-subtle hover:text-foreground')}>
+                          {d === 'overview' ? 'Overview' : 'Every item'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-subtle">Motion</span>
                   <div role="radiogroup" aria-label="Motion" className="inline-flex rounded-full border border-white/10 p-0.5">
@@ -1508,6 +2006,18 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
                     ))}
                   </div>
                 </div>
+                <div className="flex flex-wrap gap-1.5 border-t border-white/8 pt-3">
+                  <button type="button" onClick={() => { setPanel(null); askReset() }} className={chip(false)} data-reset-layout title="Kivo's own layout, fitted to the screen">
+                    <RotateCcw aria-hidden className="size-3" /> Reset layout
+                  </button>
+                  {view.workspaceId && (
+                    // Out of the way, in a menu: one step deletes a whole map (it goes to Recently deleted).
+                    <button type="button" onClick={() => setPanel({ kind: 'delete_map', workspaceId: view.workspaceId!, title: view.workspaces?.find(w => w.id === view.workspaceId)?.title ?? 'this map' })}
+                      className={cn(chip(false), 'hover:border-red-400/50 hover:text-red-400')} title="Delete this whole map in one step" data-delete-map>
+                      <Trash2 aria-hidden className="size-3.5" /> Delete this map…
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1516,9 +2026,6 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
               <Plus aria-hidden className="size-3.5" /> <span className="hidden sm:inline">New subject</span>
             </button>
           )}
-          <button type="button" onClick={askReset} className={tool} data-reset-layout title="Kivo's own layout, fitted to the screen">
-            <RotateCcw aria-hidden className="size-3" /> <span className="hidden md:inline">Reset layout</span>
-          </button>
           <button type="button" onClick={() => setPanel(p => (p?.kind === 'help' ? null : { kind: 'help' }))} className={cn(tool, 'px-2.5')} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" data-shortcuts-open>
             <Keyboard aria-hidden className="size-3.5" />
           </button>
@@ -1577,6 +2084,9 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
             than the cards (so the cards read as nearer), ambient light, and
             a vignette. Decoration only: nothing here can be pointed at. */}
         <div aria-hidden className="map-space pointer-events-none absolute inset-0" />
+        {/* Ambient light, nearer than the dots and farther than the cards: it drifts a little with a pan (a transform, so nothing repaints). */}
+        <div aria-hidden className="map-ambient pointer-events-none absolute -inset-[12%]"
+          style={{ transform: `translate3d(${Math.max(-90, Math.min(90, t.x * 0.05))}px, ${Math.max(-70, Math.min(70, t.y * 0.05))}px, 0)` }} />
         {(() => {
           // Moved by a transform within one dot's spacing, so a pan repaints nothing.
           const S = Math.round(30 * (0.55 + 0.45 * Math.min(t.k, 1.6)))
@@ -1602,14 +2112,16 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
             </defs>
             <g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>
               <g key={focus ?? 'root'} className={entrance ? undefined : 'map-enter'}>
-                {regionLayer}
+                <g className={entrance ? 'map-glow-in' : undefined}>{regionLayer}</g>
                 {!inside && placed.loose && (
                   <text x={placed.loose.x - CARD.note.w / 2} y={placed.loose.y - 44} className="fill-[var(--subtle)]" fontSize={12 * Math.min(textScale, 2.5)}>Not filed under a subject</text>
                 )}
+                {subjectLinkLayer}
                 {edgeLayer}
                 {suggestionLayer}
                 {nodeLayer}
                 {ghostLayer}
+                {regionLabelLayer}
                 {markerLayer}
                 {ringLayer}
                 {farLabels}
@@ -1683,16 +2195,129 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
           )}
         </div>
 
-        <div className={cn('absolute bottom-3 flex flex-col overflow-hidden rounded-xl border border-white/10 bg-card/90 shadow-soft backdrop-blur transition-[right]', picked && detailOpen ? 'right-3 max-lg:bottom-[calc(58%+0.75rem)] lg:right-[23.5rem]' : 'right-3')} onPointerDown={e => e.stopPropagation()}>
+        {/* The card under the pointer: its whole title, where it sits, its state. */}
+        {peek && peek !== selected && drawnIds.has(peek) && !panel && !dragAt && (() => {
+          const n = byId.get(peek), p = placed.at.get(peek), el = frame.current
+          if (!n || !p || !el) return null
+          const { h } = CARD[n.type]
+          const sx = t.x + p.x * t.k, top = t.y + (p.y - h / 2) * t.k, bottom = t.y + (p.y + h / 2) * t.k
+          const below = top < 150
+          const lines = peekLines(n, pathOf(n.id, tree.parent, labelOf), now)
+          return (
+            <div role="tooltip" data-map-peek className="pointer-events-none absolute z-20 w-72 -translate-x-1/2 rounded-xl border border-white/10 bg-popover/95 px-3.5 py-2.5 shadow-float backdrop-blur"
+              style={{ left: Math.max(150, Math.min(sx, el.clientWidth - 150)), ...(below ? { top: bottom + 10 } : { top: top - 10, transform: 'translate(-50%, -100%)' }) }}>
+              <p className="flex items-center gap-1.5 text-[10.5px] font-medium uppercase tracking-[0.12em] text-subtle">
+                <span className="inline-block size-1.5 rounded-full" style={{ background: FILL[n.type] }} />{TYPE_LABEL[n.type]}
+                {lines.where && <span className="truncate normal-case tracking-normal">· {lines.where}</span>}
+              </p>
+              <p className="mt-1 text-sm font-semibold leading-snug text-foreground">{lines.title}</p>
+              <ul className="mt-1 space-y-0.5 text-xs text-foreground/70">{lines.facts.map(f => <li key={f}>{f}</li>)}</ul>
+              {n.type === 'topic' && gapsOf(n).length > 0 && <p className="mt-1.5 text-xs" style={{ color: 'var(--map-note)' }}>{gapsOf(n).map(g => GAP_LABEL[g]).join(' · ')}</p>}
+              <p className="mt-1.5 text-[10.5px] text-subtle">Click for details{canExplore(tree, n.id) ? ' · Enter or double-click to explore inside' : ''}</p>
+            </div>
+          )
+        })()}
+
+        {/* The lens, on the canvas it changes. */}
+        <div className="absolute left-3 top-3 z-10" onPointerDown={e => e.stopPropagation()}>
+        {/* The lens: what stands out. Emphasis only: nothing is hidden or moved. */}
+        <div role="radiogroup" aria-label="Lens (L)" className="inline-flex h-8 items-center rounded-full border border-white/10 bg-popover/90 p-0.5 shadow-soft backdrop-blur" data-lens={lens}>
+          {LENSES.map(l => (
+            <button key={l.id} type="button" role="radio" aria-checked={lens === l.id} onClick={() => setLens(l.id)} title={`${l.hint} (L)`} data-lens-choice={l.id}
+              className={cn('inline-flex h-full items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition-colors', lens === l.id ? 'bg-white/10 text-foreground' : 'text-subtle hover:text-foreground')}>
+              {l.label}
+              {l.id === 'gaps' && gapCount > 0 && <span className="rounded-full bg-[color-mix(in_oklch,var(--map-note)_22%,transparent)] px-1.5 text-[10px] tabular-nums text-foreground">{gapCount}</span>}
+            </button>
+          ))}
+        </div>
+        </div>
+
+        {/* Gaps: the topics to act on, first things first, each one click from its card. */}
+        {lens === 'gaps' && !inScope && (
+          <section aria-label="Gaps on this map" data-map-overlay data-gaps-panel onPointerDown={e => e.stopPropagation()}
+            className="absolute left-3 top-14 z-10 hidden max-h-[calc(100%-8rem)] w-72 flex-col overflow-hidden rounded-2xl border border-white/10 bg-popover/95 shadow-float backdrop-blur sm:flex">
+            <header className="flex items-start justify-between gap-2 border-b border-white/8 px-3.5 py-2.5">
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">Gaps <span className="tabular-nums text-subtle">· {gapList.length}</span></h2>
+                <p className="mt-0.5 text-[11px] leading-snug text-subtle">From your record: reviews due, topics not studied, weak, or with nothing written. G goes to the next.</p>
+              </div>
+              <button type="button" onClick={() => setLens('structure')} aria-label="Close the Gaps lens" className="rounded-lg p-1 text-subtle hover:bg-white/5 hover:text-foreground"><X className="size-4" /></button>
+            </header>
+            {gapList.length === 0 ? <p className="px-3.5 py-3 text-xs text-foreground/70">No gaps on this map. Every topic has a session and something written, and no review is due.</p> : (
+              <ul className="min-h-0 flex-1 overflow-y-auto p-1.5">
+                {gapList.slice(0, 60).map(g => (
+                  <li key={g.id}>
+                    <button type="button" onClick={() => { setFlash(f => ({ id: g.id, n: (f?.n ?? 0) + 1 })); select(g.id, { centre: true, focusCard: true }) }} aria-current={selected === g.id || undefined}
+                      className="w-full rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-white/5 aria-[current]:bg-white/8" data-gap={g.id}>
+                      <span className="block truncate text-[13px] font-medium text-foreground/90">{g.label}</span>
+                      <span className="block truncate text-[11px]" style={{ color: 'var(--map-note)' }}>{gapsOf(g).map(r => GAP_LABEL[r]).join(' · ')}</span>
+                      <span className="block truncate text-[11px] text-subtle">{pathOf(g.id, tree.parent, labelOf).join(' › ')}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
+
+        {/* Everything: what this level shows, and the way to every item. */}
+        {!view.workspaceId && !focus && !inScope && !panel && (overviewOn ? (dens?.hidden.size ?? 0) > 0 : density === 'all') && (
+          <div data-map-overlay data-overview-hint={density} onPointerDown={e => e.stopPropagation()}
+            className="absolute bottom-3 left-1/2 z-10 hidden max-w-[min(40rem,calc(100%-24rem))] -translate-x-1/2 items-center gap-2 rounded-full border border-white/10 bg-popover/90 py-1 pl-3.5 pr-1 text-xs text-foreground/70 shadow-soft backdrop-blur md:flex">
+            <span className="truncate">{overviewOn
+              ? `Overview · ${dens!.hidden.size} notes, pages, tasks and subtopics folded into their cards`
+              : 'Every item is drawn.'}</span>
+            <button type="button" onClick={() => setDensity(overviewOn ? 'all' : 'overview')} className="shrink-0 rounded-full px-2.5 py-1 font-medium text-foreground/85 hover:bg-white/8" data-density-toggle>
+              {overviewOn ? 'Show every item' : 'Back to overview'}
+            </button>
+          </div>
+        )}
+
+        {/* A small map: how it grows, once, until closed. */}
+        {!guideClosed && !inside && view.nodes.length <= 8 && !panel && (
+          <section aria-label="How your map grows" data-map-overlay data-map-guide onPointerDown={e => e.stopPropagation()}
+            className="absolute bottom-16 left-1/2 z-10 w-[min(34rem,calc(100%-1.5rem))] -translate-x-1/2 rounded-2xl border border-white/10 bg-popover/95 p-4 shadow-float backdrop-blur">
+            <div className="flex items-start justify-between gap-3">
+              <h2 className="text-sm font-semibold text-foreground">Your map grows as you learn</h2>
+              <button type="button" onClick={() => { setGuideClosed(true); writeKey(GUIDE_KEY, '1') }} aria-label="Close" className="rounded-lg p-1 text-subtle hover:bg-white/5 hover:text-foreground"><X className="size-4" /></button>
+            </div>
+            <ol className="mt-2 grid gap-2 text-xs leading-relaxed text-foreground/75 sm:grid-cols-3">
+              <li><span className="font-medium text-foreground">1. Subjects and topics.</span> Each is a card; a topic rises as your sessions build your own estimate.</li>
+              <li><span className="font-medium text-foreground">2. Notes and pages.</span> File one under a topic and it joins that card; a [[link]] in a note joins two cards.</li>
+              <li><span className="font-medium text-foreground">3. Find your gaps.</span> Press L for the Gaps lens: what is due, not studied, or has nothing written.</li>
+            </ol>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {!view.workspaceId && <button type="button" onClick={() => openAdd(null)} className={cn(BUTTON_QUIET, 'h-8')}><Plus aria-hidden className="size-3.5" /> New subject</button>}
+              <Link href="/notes/new" className={cn(BUTTON_QUIET, 'h-8')}>Write a note</Link>
+              <Link href="/saved" className={cn(BUTTON_QUIET, 'h-8')}>Save pages from your browser</Link>
+            </div>
+          </section>
+        )}
+
+        <div className={cn('absolute bottom-3 flex flex-col items-end gap-2 transition-[right]', picked && detailOpen ? 'right-3 max-lg:bottom-[calc(58%+0.75rem)] lg:right-[23.5rem]' : 'right-3')} onPointerDown={e => e.stopPropagation()}>
+        {/* The minimap, when the map is bigger than the screen. */}
+        {!portrait && miniCards.length > 0 && frame.current && (() => {
+          const cw = frame.current.clientWidth, ch = frame.current.clientHeight
+          const ms = miniSize(miniBox), mf = minimapFrame(miniBox, ms.w, ms.h), vp = viewportOn(mf, t, cw, ch)
+          // Shown only when part of the map is off screen.
+          const whole = vp.whole || vp.w * vp.h >= 0.8 * ms.w * ms.h
+          return whole ? null : (
+            <div className="hidden overflow-hidden rounded-xl border border-white/10 bg-card/90 p-1 shadow-soft backdrop-blur lg:block">
+              <Minimap cards={miniCards} regions={miniRegions} box={miniBox} t={t} cw={cw} ch={ch} onJump={v => { stopAnim(); setT(v) }} />
+            </div>
+          )
+        })()}
+        <div className="flex flex-col overflow-hidden rounded-xl border border-white/10 bg-card/90 shadow-soft backdrop-blur">
           <button type="button" onClick={() => zoomAt(1.25)} aria-label="Zoom in" title="Zoom in (+)" className="p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"><Plus className="size-4" /></button>
           <button type="button" onClick={() => { if (selected && placed.at.has(selected)) centreOn(selected, 1); else zoomAt(1 / t.k) }} aria-label={`Zoom ${Math.round(t.k * 100)}%. Set to 100%`} title="Zoom to 100% (0)"
             className="border-t border-white/8 py-1 text-[10px] font-medium tabular-nums text-foreground/70 hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring">{Math.round(t.k * 100)}%</button>
           <button type="button" onClick={() => zoomAt(0.8)} aria-label="Zoom out" title="Zoom out (-)" className="border-t border-white/8 p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"><Minus className="size-4" /></button>
           <button type="button" onClick={() => fit()} aria-label="Fit the map on screen" title="Fit (F)" className="border-t border-white/8 p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"><Maximize2 className="size-4" /></button>
         </div>
+        </div>
 
         {picked && detailOpen && (
-          <Detail node={picked} neighbours={neighbours} onPick={id => pick(id)} onClose={() => setDetailOpen(false)}
+          <Detail key={picked.id} node={picked} neighbours={neighbours} onPick={id => pick(id)} onClose={() => setDetailOpen(false)} where={ancestorsOf(picked.id)} tally={picked.type === 'subject' ? subjectTallies.get(picked.id) : undefined} subjectTopics={picked.type === 'subject' ? view.nodes.filter((n): n is Extract<MapNode, { type: 'topic' }> => n.type === 'topic' && rootOf(n.id, tree.parent) === picked.id) : undefined}
             onScope={!canExplore(tree, picked.id) && focus === null ? () => setScope(picked.id) : null}
             scoped={scope === picked.id} view={view} onChanged={onChanged}
             inside={insideCount(picked.id)} collapsed={collapsed.has(picked.id)} onCollapse={() => toggleFold(picked.id)}
