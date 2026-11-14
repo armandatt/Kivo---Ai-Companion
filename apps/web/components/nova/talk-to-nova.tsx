@@ -15,11 +15,14 @@ type Props = {
   // Called after Nova has replied and saved the turn, so the page can re-read state.
   onReplied?:   () => void
   className?:   string
+  // What the conversation is about (the Knowledge Map's topic), said to Nova
+  // before each message; the learner's own words are shown as they typed them.
+  about?:       string
 }
 
 // A short conversation with Nova through POST /api/nova/message: the same
 // turn Telegram runs, for the same learner.
-export function TalkToNova({ opening, placeholder, onReplied, className }: Props) {
+export function TalkToNova({ opening, placeholder, onReplied, className, about }: Props) {
   const [turns, setTurns]     = useState<Turn[]>(opening ? [{ from: 'nova', text: opening }] : [])
   const [draft, setDraft]     = useState('')
   const [sending, setSending] = useState(false)
@@ -36,7 +39,7 @@ export function TalkToNova({ opening, placeholder, onReplied, className }: Props
     setError(null)
     setTurns(t => [...t, { from: 'you', text }])
     setSending(true)
-    const res = await sendNovaMessage(text)
+    const res = await sendNovaMessage(about ? `About ${about}: ${text}` : text)
     setSending(false)
     if (res.ok) {
       setTurns(t => [...t, { from: 'nova', text: res.reply, ...(res.link ? { link: res.link } : {}) }])

@@ -50,6 +50,9 @@ export type MapNode =
       sessions: number;
       // A self-report-driven estimate, as on Knowledge. null with no session.
       level: MapLevel | null; masteryPercent: number | null;
+      // The review schedule's date has come (retention-engine.ts isDueForReview),
+      // and when a session last fed it. Absent on an older server.
+      reviewDue?: boolean; lastStudiedAt?: string | null;
       notes: number; resources: number;
       tasks?: MapTask[];
     })
