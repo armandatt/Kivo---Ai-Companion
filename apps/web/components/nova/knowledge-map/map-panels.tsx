@@ -506,7 +506,8 @@ export function Legend({ onClose, suggestions, outside }: { onClose: () => void;
       <Header title="What the map shows" onClose={onClose} />
       <ul className="mt-3 space-y-2">
         {row(<rect x={2} y={2} width={30} height={14} rx={5} fill="var(--card)" stroke="var(--border)" />, 'A card: a subject, topic, task, note or saved page. Each branch reads top to bottom in its saved order.')}
-        {row(<rect x={2} y={2} width={30} height={14} rx={5} fill="none" stroke="var(--map-topic)" strokeDasharray="4 3" />, 'A topic with no session yet.')}
+        {row(<rect x={2} y={2} width={30} height={14} rx={5} fill="none" stroke="var(--map-topic)" strokeDasharray="4 3" />, 'A topic with no session yet: it lies flat.')}
+        {row(<><rect x={2} y={6} width={30} height={11} rx={5} className="map-slab" /><rect x={2} y={1} width={30} height={11} rx={5} fill="var(--card)" stroke="var(--border)" /></>, 'A raised card has more behind it: a topic stands higher as your own estimate grows (weak, developing, solid); subjects stand highest.')}
         {row(<path d="M 6 2 v 14 M 6 2 h 9 l -2.5 3.5 l 2.5 3.5 h -9" fill="none" stroke="var(--nova)" strokeWidth={1.4} />, 'A milestone: a stage of work, not studied.')}
         {row(<><path d="M 0 9 Q 14 2 26 9" fill="none" stroke="var(--map-line-strong)" strokeWidth={1.2} /><circle cx={28} cy={9} r={4} fill="var(--card)" stroke="var(--nova)" strokeWidth={1.5} /></>, <>A <b className="font-semibold text-foreground">ring</b> is a [[link]]: a note links to the card the ring sits on.</>)}
         {row(<path d="M 0 9 Q 16 2 32 9" fill="none" stroke="var(--map-task)" strokeWidth={1.2} strokeDasharray="5 3" />, 'A task waiting on another, from the one that waits.')}
