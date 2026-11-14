@@ -1601,8 +1601,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
       const flow = Math.abs(b.x - a.x) > 60
       d = laned ? roundedLane(a, lane, b)
         : flow ? `M ${a.x} ${a.y} C ${mx} ${a.y} ${mx} ${b.y} ${b.x} ${b.y}` : `M ${a.x} ${a.y} L ${b.x} ${b.y}`
-      // Neutral, with a trace of its subject's colour: the subject's own card and bars carry the hue.
-      stroke = lit ? 'var(--action)' : 'color-mix(in oklch, var(--sc) 22%, var(--map-line-strong))'
+      // In its subject's colour, so each subject's branches read as its own.
+      stroke = lit ? 'var(--action)' : 'color-mix(in oklch, var(--sc) 70%, var(--map-line-strong))'
       width = lit ? 2.2 : laned ? 1.3 : e.kind === 'contains' ? 2.2 : e.kind === 'has_topic' ? 1.8 : e.kind === 'subtopic' ? 1.5 : 1.1
       dash = e.kind === 'filed_under' ? '5 4' : undefined
       // Deeper in the tree, lighter: never under 55%.
@@ -1617,13 +1617,15 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     const tree_ = TREE_EDGES.has(e.kind) && !d.includes(' H ')
     const dir = Math.sign(b.x - a.x) || 1
     const port = tree_ && toNode && !markers.has(e.to) ? { x: b.x - dir * (CARD[toNode.type].w / 2 + 2), y: b.y } : null
-    const signal = tree_ && !dim && (e.kind === 'has_topic' || e.kind === 'contains')
+    const signal = tree_ && !dim && (e.kind === 'has_topic' || e.kind === 'contains' || (e.kind === 'subtopic' && drawnEdges.length < 700))
     return (
       <g key={e.id} className={cn('subject-tone', arrive)} style={{ ...toneStyle(toNode?.type === 'subject' ? toNode.label : toNode?.subjectName ?? null), ...anim }}>
-        {signal && !lit && <path d={d} fill="none" className="map-signal pointer-events-none" stroke="var(--map-line-strong)" strokeWidth={1.6} strokeDasharray="2 34" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.8} style={{ animationDelay: `${(e.id.length * 137) % 2400}ms` }} />}
+        {tree_ && !lit && <path d={d} fill="none" stroke="var(--sc)" strokeWidth={6} strokeLinecap="round" opacity={dim ? 0.02 : 0.1} vectorEffect="non-scaling-stroke" className="pointer-events-none" />}
+        {signal && !lit && <path d={d} fill="none" className="map-signal pointer-events-none" stroke="var(--sc-ink)" strokeWidth={2.6} strokeDasharray="4 48" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.9} style={{ animationDelay: `${(e.id.length * 137) % 2400}ms` }} />}
         {port && (
           <g className="pointer-events-none" opacity={dim ? 0.25 : 1}>
-            <circle cx={port.x} cy={port.y} r={2.2} fill={lit ? 'var(--action)' : 'color-mix(in oklch, var(--sc) 45%, var(--map-line-strong))'} />
+            <circle cx={port.x} cy={port.y} r={6} fill={lit ? 'var(--action)' : 'var(--sc)'} opacity={0.2} />
+            <circle cx={port.x} cy={port.y} r={2.6} fill={lit ? 'var(--action)' : 'var(--sc)'} />
           </g>
         )}
         {/* A lit line glows, so what the selected card joins reads at a glance. */}
@@ -1716,7 +1718,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           {/* A subject anchor glows softly in its colour, so the eye finds the anchors first. */}
           {n.type === 'subject' && (
             <g className="map-anchor-glow pointer-events-none">
-              <rect x={-w / 2 - 9} y={-h / 2 - 8} width={w + 18} height={h + 16} rx={24} fill="var(--sc)" opacity={0.035} />
+              <rect x={-w / 2 - 20} y={-h / 2 - 18} width={w + 40} height={h + 36} rx={34} fill="var(--sc)" opacity={0.045} />
+              <rect x={-w / 2 - 9} y={-h / 2 - 8} width={w + 18} height={h + 16} rx={24} fill="var(--sc)" opacity={0.09} />
             </g>
           )}
           {detail > 0 && <rect className="map-shadow" x={-w / 2 + 3} y={-h / 2 + th + 4} width={w - 6} height={h} rx={r + 2} opacity={0.13 + th * 0.018} />}
@@ -1811,8 +1814,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
       <g key={`region-${r.id}`} className="subject-tone" style={toneStyle(s?.type === 'subject' ? s.label : null)} data-region={r.id}>
         <defs>
           <radialGradient id={`map-region-${i}`} cx="50%" cy="50%" r="50%">
-            <stop offset="0%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.035 : 0.025 }} />
-            <stop offset="55%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.012 : 0.008 }} />
+            <stop offset="0%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.05 : 0.04 }} />
+            <stop offset="55%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.018 : 0.012 }} />
             <stop offset="100%" style={{ stopColor: 'var(--sc)', stopOpacity: 0 }} />
           </radialGradient>
         </defs>

@@ -84,11 +84,11 @@
   --map-card-top: oklch(100% 0 0 / 0.16);
   /* Knowledge Map depth: a card's edge, the shadow it casts, the space around. */
   /* A slab is the subject's hue, dark and nearly grey: a plain colour (a color-mix per card cost frames on a pan). */
-  --map-slab-l: 25%; --map-slab-c: 0.02;
+  --map-slab-l: 26%; --map-slab-c: 0.055;
   --map-shadow: oklch(5% 0.01 294);
   /* The ground is the app's own charcoal, one hue, a little lighter at the centre. */
-  --map-space-a: oklch(17.5% 0.013 294);
-  --map-space-b: oklch(14.5% 0.012 294);
+  --map-space-a: oklch(15.5% 0.012 294);
+  --map-space-b: oklch(13% 0.011 294);
   --map-dot: oklch(100% 0 0 / 0.055);
 }
 
@@ -245,7 +245,7 @@ html[data-kivo-theme="light"] .kivo-app {
   --map-card: var(--card);
   --map-card-edge: oklch(24% 0.02 290 / 0.14);
   --map-card-top: oklch(100% 0 0 / 0.85);
-  --map-slab-l: 82%; --map-slab-c: 0.02;
+  --map-slab-l: 80%; --map-slab-c: 0.04;
   --map-shadow: oklch(32% 0.02 80);
   --map-space-a: oklch(97.5% 0.008 90);
   --map-space-b: oklch(94.5% 0.012 88);
@@ -665,11 +665,8 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
    The space: one charcoal (or paper) ground with no coloured light, a soft
    vignette, and a far plane of dots the page moves slower than the cards. */
 .map-space { background: radial-gradient(120% 100% at 50% 40%, var(--map-space-a), var(--map-space-b)); }
-/* On the map, colour is an accent: subject tones and the kinds' colours are
-   quieter here than on the rest of Kivo, so the canvas reads as one surface. */
-[data-knowledge-map] { --tone-c: 0.085; --map-note: oklch(80% 0.085 82); --map-resource: oklch(76% 0.065 240); --map-task: oklch(78% 0.07 155); }
-html[data-kivo-theme="light"] .kivo-app [data-knowledge-map] { --tone-c: 0.1; --map-note: oklch(64% 0.11 75); --map-resource: oklch(56% 0.09 240); --map-task: oklch(52% 0.085 155); }
-html[data-kivo-theme="light"] .kivo-app .kivo-dark [data-knowledge-map] { --tone-c: 0.085; --map-note: oklch(80% 0.085 82); --map-resource: oklch(76% 0.065 240); --map-task: oklch(78% 0.07 155); }
+/* The ground carries no colour of its own: the colour on the map is the
+   cards', their branches' and the signals travelling along them. */
 .map-space::after { content: ""; position: absolute; inset: 0; background: radial-gradient(130% 95% at 50% 45%, transparent 60%, color-mix(in oklch, var(--map-space-b) 70%, transparent)); }
 .map-far-mask { mask-image: radial-gradient(ellipse 85% 80% at 50% 45%, #000 40%, transparent 100%); }
 .map-far { background-image: radial-gradient(circle at 1px 1px, var(--map-dot) 1px, transparent 0); will-change: transform; }
@@ -700,11 +697,16 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark [data-knowledge-map] { --tone
 /* The selection's lines carry a quiet travelling pulse. */
 @keyframes map-edge-flow { to { stroke-dashoffset: -25; } }
 /* The neuron touch: a slow signal travelling out along a subject's branches. Paused while the view moves; off in Calm and under reduced motion. */
-@keyframes map-signal { from { stroke-dashoffset: 36; } to { stroke-dashoffset: -400; } }
-.map-signal { animation: map-signal 4.2s linear infinite; }
+@keyframes map-signal { from { stroke-dashoffset: 52; } to { stroke-dashoffset: -468; } }
+.map-signal { animation: map-signal 4.6s linear infinite; }
+/* A subject's own light breathes slowly, like a cell at rest. */
+@keyframes map-breathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+.map-anchor-glow { animation: map-breathe 5.5s ease-in-out infinite; }
+.map-moving .map-anchor-glow { animation-play-state: paused; }
+.map-still .map-anchor-glow { animation: none; }
 .map-moving .map-signal { animation-play-state: paused; }
 .map-still .map-signal { display: none; }
-@media (prefers-reduced-motion: reduce) { .map-signal { display: none; } }
+@media (prefers-reduced-motion: reduce) { .map-signal { display: none; } .map-anchor-glow { animation: none; } }
 .map-edge-flow { animation: map-edge-flow 1.2s linear infinite; }
 /* The entrance: the subjects' light comes up before their cards. */
 @keyframes map-glow-in { from { opacity: 0; } to { opacity: 1; } }
