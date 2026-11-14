@@ -74,20 +74,21 @@
   --map-note: oklch(80% 0.13 82);
   --map-resource: oklch(74% 0.11 235);
   --map-task: oklch(78% 0.12 150);
-  --map-line: oklch(84% 0.03 255 / 0.2);
+  --map-line: oklch(100% 0 0 / 0.16);
   /* An understated line that still reads on its own: a [[link]], an outside card. */
-  --map-line-strong: oklch(88% 0.03 255 / 0.38);
-  /* A card on the map: a clear step above the ground (a navy charcoal), a
-     hairline edge, and a lit top edge, so cards separate without glowing. */
-  --map-card: oklch(23% 0.022 262);
+  --map-line-strong: oklch(100% 0 0 / 0.34);
+  /* A card on the map: the app's own card charcoal, a step above the ground,
+     with a hairline edge and a lit top edge, so cards separate without glowing. */
+  --map-card: oklch(21.5% 0.017 294);
   --map-card-edge: oklch(100% 0 0 / 0.13);
   --map-card-top: oklch(100% 0 0 / 0.16);
   /* Knowledge Map depth: a card's edge, the shadow it casts, the space around. */
-  /* A slab is the subject's hue, dark: a plain colour (a color-mix per card cost frames on a pan). */
-  --map-slab-l: 25%; --map-slab-c: 0.05;
-  --map-shadow: oklch(5% 0.012 262);
-  --map-space-a: oklch(17.5% 0.026 258);
-  --map-space-b: oklch(10.5% 0.018 264);
+  /* A slab is the subject's hue, dark and nearly grey: a plain colour (a color-mix per card cost frames on a pan). */
+  --map-slab-l: 25%; --map-slab-c: 0.02;
+  --map-shadow: oklch(5% 0.01 294);
+  /* The ground is the app's own charcoal, one hue, a little lighter at the centre. */
+  --map-space-a: oklch(17.5% 0.013 294);
+  --map-space-b: oklch(14.5% 0.012 294);
   --map-dot: oklch(100% 0 0 / 0.055);
 }
 
@@ -244,10 +245,10 @@ html[data-kivo-theme="light"] .kivo-app {
   --map-card: var(--card);
   --map-card-edge: oklch(24% 0.02 290 / 0.14);
   --map-card-top: oklch(100% 0 0 / 0.85);
-  --map-slab-l: 80%; --map-slab-c: 0.035;
-  --map-shadow: oklch(30% 0.03 260);
-  --map-space-a: oklch(98% 0.006 250);
-  --map-space-b: oklch(94% 0.01 260);
+  --map-slab-l: 82%; --map-slab-c: 0.02;
+  --map-shadow: oklch(32% 0.02 80);
+  --map-space-a: oklch(97.5% 0.008 90);
+  --map-space-b: oklch(94.5% 0.012 88);
   --map-dot: oklch(24% 0.02 290 / 0.09);
   /* Subject tones and raised surfaces, set for paper (see below). */
   --tone-l: 66%;
@@ -661,15 +662,15 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 .map-enter { animation: map-enter 260ms ease-out both; }
 
 /* ── Knowledge Map 2.0: depth and motion (knowledge-map.tsx, depth.ts) ──────
-   The space: ambient light over a near-black (or paper) ground, a vignette,
-   and a far plane of dots the page moves slower than the cards. */
-.map-space {
-  background:
-    radial-gradient(60% 55% at 22% 18%, color-mix(in oklch, var(--nova) 9%, transparent), transparent 70%),
-    radial-gradient(55% 60% at 85% 90%, oklch(62% 0.12 260 / 0.08), transparent 70%),
-    radial-gradient(120% 100% at 50% 40%, var(--map-space-a), var(--map-space-b));
-}
-.map-space::after { content: ""; position: absolute; inset: 0; background: radial-gradient(130% 95% at 50% 45%, transparent 55%, color-mix(in oklch, var(--map-space-b) 85%, transparent)); }
+   The space: one charcoal (or paper) ground with no coloured light, a soft
+   vignette, and a far plane of dots the page moves slower than the cards. */
+.map-space { background: radial-gradient(120% 100% at 50% 40%, var(--map-space-a), var(--map-space-b)); }
+/* On the map, colour is an accent: subject tones and the kinds' colours are
+   quieter here than on the rest of Kivo, so the canvas reads as one surface. */
+[data-knowledge-map] { --tone-c: 0.085; --map-note: oklch(80% 0.085 82); --map-resource: oklch(76% 0.065 240); --map-task: oklch(78% 0.07 155); }
+html[data-kivo-theme="light"] .kivo-app [data-knowledge-map] { --tone-c: 0.1; --map-note: oklch(64% 0.11 75); --map-resource: oklch(56% 0.09 240); --map-task: oklch(52% 0.085 155); }
+html[data-kivo-theme="light"] .kivo-app .kivo-dark [data-knowledge-map] { --tone-c: 0.085; --map-note: oklch(80% 0.085 82); --map-resource: oklch(76% 0.065 240); --map-task: oklch(78% 0.07 155); }
+.map-space::after { content: ""; position: absolute; inset: 0; background: radial-gradient(130% 95% at 50% 45%, transparent 60%, color-mix(in oklch, var(--map-space-b) 70%, transparent)); }
 .map-far-mask { mask-image: radial-gradient(ellipse 85% 80% at 50% 45%, #000 40%, transparent 100%); }
 .map-far { background-image: radial-gradient(circle at 1px 1px, var(--map-dot) 1px, transparent 0); will-change: transform; }
 
@@ -687,9 +688,7 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
    Ambient light between the dots and the cards, moved by a transform. */
 .map-ambient {
   will-change: transform;
-  background:
-    radial-gradient(38% 34% at 28% 30%, color-mix(in oklch, var(--nova) 7%, transparent), transparent 70%),
-    radial-gradient(32% 30% at 74% 68%, oklch(66% 0.11 255 / 0.06), transparent 70%);
+  background: radial-gradient(46% 42% at 50% 42%, color-mix(in oklch, var(--foreground) 3%, transparent), transparent 70%);
 }
 /* A card's shadow deepens as it lifts under the pointer. */
 .map-shadow { transform-box: fill-box; transform-origin: center; transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease; }

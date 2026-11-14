@@ -3,7 +3,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useStartSession } from '../use-start-session'
-import { ArrowUp, ArrowUpRight, ChevronsDownUp, ChevronsUpDown, Circle, CornerDownRight, FilePlus, FileText, Focus, Globe, Info, Keyboard, Layers, Lightbulb, Link2, ListChecks, Maximize2, Minus, MoreHorizontal, PanelRightOpen, Plus, RotateCcw, Search, SlidersHorizontal, Sparkles, Timer, Trash2, Unlink, Waypoints, X } from 'lucide-react'
+import { ArrowUp, ArrowUpRight, ChevronsDownUp, ChevronsUpDown, Circle, CornerDownRight, FilePlus, FileText, Focus, Globe, Info, Keyboard, Layers, Lightbulb, Link2, ListChecks, Maximize2, Minus, MoreHorizontal, PanelRightOpen, Plus, RotateCcw, Search, SlidersHorizontal, Timer, Trash2, Unlink, Waypoints, X } from 'lucide-react'
 import type { MapEdge, MapEdgeKind, MapNode, MapNodeType, NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
 import { MAP_LAYOUT_COORD_MAX } from '@repo/api/nova/product/map-layout.types'
 import { treeOrder } from '@repo/api/nova/product/task-tree'
@@ -24,13 +24,12 @@ import { disconnectPlan } from './map-disconnect'
 import { sendDisconnect } from './map-structure-api'
 import { AddDialog, Breadcrumbs, DeleteDialog, DeleteWholeDialog, Legend, ShortcutsHelp } from './map-panels'
 import { BOARD_PATH } from '@repo/api/nova/product/companion'
-import { askSuggestions, nextStep, overdueIn, summaryOf, type Status } from './node-summary'
+import { nextStep, summaryOf, type Status } from './node-summary'
 import { loadNotePreview } from './note-preview'
 import { crossSubjectLinks, foldedLabel, foldedTotal, overviewDensity, rootOf, type Density } from './overview-density'
 import { GAP_LABEL, LENSES, STATE_LABEL, gapRank, gapsOf, isRecent, lensTargets, nextLens, tallyOf, topicState, type Lens, type StateTally, type TopicState } from './lens'
 import { detailAt, minimapFrame, viewCentredOn, viewOfBox, viewportOn, REGION_LABEL_PX } from './overview'
 import { pathOf, searchMap, matchesOf } from './map-search'
-import { TalkToNova } from '../talk-to-nova'
 import { EDGE_MS, chooseMotion, chosenMotion, enteredBefore, entranceMode, entrancePlan, markEntered, radiusOf, regionsOf, thicknessOf, type Entrance, type EntranceMode, type Motion } from './depth'
 
 // The browser session's store, for "this map was opened already" (depth.ts).
@@ -334,12 +333,12 @@ function Ring({ percent, color, size = 52, label }: { percent: number | null; co
 
 const TILE_ICON: Partial<Record<MapNodeType, typeof FileText>> = { note: FileText, resource: Globe, task: ListChecks, topic: Circle, subject: Circle }
 
-function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onChanged, inside, collapsed, onCollapse, onExplore, onAdd, onDelete, onDisconnected, where = [], tally, subjectTopics = [] }: {
+function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onChanged, inside, collapsed, onCollapse, onExplore, onAdd, onDelete, onDisconnected, where = [], tally }: {
   node: MapNode; neighbours: Array<{ node: MapNode; relation: string; edge: MapEdge }>; onPick: (id: string) => void; onClose: () => void
   // What it sits inside, from the top (each can be selected).
   where?: Array<{ id: string; label: string }>
-  // A subject's topics by state (all of them, folded or not), and the topics themselves.
-  tally?: StateTally; subjectTopics?: Array<Extract<MapNode, { type: 'topic' }>>
+  // A subject's topics by state (all of them, folded or not).
+  tally?: StateTally
   onDisconnected: (said: string, stale: boolean) => void
   onScope: (() => void) | null; scoped: boolean; view: NovaKnowledgeMapReady; onChanged: () => void
   // How many cards hang from it, and whether they are folded away.
@@ -350,7 +349,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
   const { start, starting, error: startError } = useStartSession()
   // The connection being removed, by edge id.
   const [removing, setRemoving] = useState<string | null>(null)
-  const [section, setSection] = useState<'none' | 'more' | 'ask'>('none')
+  const [section, setSection] = useState<'none' | 'more'>('none')
   const [menu, setMenu] = useState(false)
   const summary = summaryOf(node, { tally, when: ago })
   const step = nextStep(node)
@@ -371,7 +370,6 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
   const tone = node.type === 'subject' ? node.label : node.subjectName ?? null
   const goals = node.type === 'topic' ? node.details?.goals ?? [] : []
   const studiable = node.type === 'topic' && node.studied !== false && node.kind !== 'milestone'
-  const askable = node.type === 'subject' || node.type === 'topic'
   // What is filed here (tiles) and what is around it (chips), from the links on record.
   // Each card once, though two links may join it (a [[link]] both ways).
   const once = (rows: typeof neighbours) => rows.filter((r, i) => rows.findIndex(x => x.node.id === r.node.id) === i)
@@ -382,6 +380,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
   const act = 'flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-0.5 py-2 text-[11px] whitespace-nowrap font-medium text-foreground/80 transition duration-150 active:scale-95 hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50 aria-expanded:bg-white/8 aria-expanded:text-foreground'
   const icon = 'size-[18px]'
   const chip = 'inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/10 px-2.5 py-1 text-xs text-foreground/80 transition-colors hover:border-white/20 hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring'
+  const item = 'flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-foreground/85 transition-colors hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring'
   const toggle = (s: typeof section) => setSection(v => (v === s ? 'none' : s))
   const startNow = () => { if (node.type === 'topic') void start({ topicName: node.label, subjectName: node.subjectName, durationMinutes: MAP_SESSION_MINUTES }, node.id) }
 
@@ -420,7 +419,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
 
   return (
     <aside aria-label={`Selected: ${TYPE_LABEL[node.type]} ${node.label}`} data-map-overlay data-detail data-detail-type={node.type}
-      className={cn("subject-tone map-inspector map-inspector-in absolute inset-x-0 bottom-0 z-20 flex max-h-[55%] flex-col gap-3.5 overflow-y-auto overscroll-contain rounded-t-2xl border-t border-white/10 bg-card/95 p-4 shadow-float backdrop-blur lg:inset-x-auto lg:bottom-auto lg:right-3 lg:top-3 lg:max-h-[calc(100%-1.5rem)] lg:rounded-2xl lg:border", section === 'ask' ? 'lg:w-[30rem]' : 'lg:w-[21rem]')}
+      className="subject-tone map-inspector map-inspector-in absolute inset-x-0 bottom-0 z-20 flex max-h-[55%] flex-col gap-4 overflow-y-auto overscroll-contain rounded-t-2xl border-t border-white/10 bg-card/95 p-4 shadow-float backdrop-blur lg:inset-x-auto lg:bottom-auto lg:right-3 lg:top-3 lg:max-h-[calc(100%-1.5rem)] lg:w-[21rem] lg:rounded-2xl lg:border"
       style={toneStyle(tone)} onPointerDown={e => e.stopPropagation()}>
       {/* What it is, where it sits, and its state at a glance. */}
       <div className="flex items-start gap-3">
@@ -464,30 +463,9 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
         </p>
       )}
 
-      {/* A subject: every topic as a dot, by state; a review due is ringed. One click opens it. */}
-      {node.type === 'subject' && subjectTopics.length > 0 && (
-        <div data-subject-dots>
-          <div className="flex flex-wrap gap-1">
-            {subjectTopics.slice(0, 60).map(t => {
-              const st = topicState(t)
-              return (
-                <button key={t.id} type="button" onClick={() => onPick(t.id)} title={`${t.label}: ${STATE_LABEL[st]}${t.reviewDue ? ' · review due' : ''}`} aria-label={`${t.label}, ${STATE_LABEL[st]}`}
-                  className="size-4 rounded-[5px] transition-transform hover:scale-125 focus-visible:outline-2 focus-visible:outline-ring"
-                  style={{ background: st === 'unstudied' ? 'transparent' : STATE_FILL[st], border: st === 'unstudied' ? '1.5px dashed var(--map-topic)' : undefined, boxShadow: t.reviewDue ? '0 0 0 2px var(--map-note)' : undefined, opacity: st === 'organising' ? 0.45 : 1 }} />
-              )
-            })}
-          </div>
-          <p className="mt-1.5 flex flex-wrap gap-x-3 text-[10.5px] text-subtle">
-            <span><span className="mr-1 inline-block size-2 rounded-sm bg-[var(--nova)]" />solid</span><span><span className="mr-1 inline-block size-2 rounded-sm bg-[var(--map-resource)]" />developing</span><span><span className="mr-1 inline-block size-2 rounded-sm bg-[var(--map-note)]" />weak</span><span><span className="mr-1 inline-block size-2 rounded-sm border border-dashed border-[var(--map-topic)]" />not studied</span>
-          </p>
-        </div>
-      )}
-
       {/* The actions Kivo has for it. */}
       <div className="flex gap-0.5 rounded-2xl border border-white/8 bg-white/[0.02] p-1" data-node-actions role="toolbar" aria-label="Actions">
         {node.href && <Link href={node.href} className={act} title={open}><ArrowUpRight aria-hidden className={icon} />Open</Link>}
-        {askable && <button type="button" onClick={() => toggle('ask')} aria-expanded={section === 'ask'} className={act} data-ask-nova title="Ask Nova about it"><Sparkles aria-hidden className={icon} style={{ color: 'var(--nova)' }} />Ask</button>}
-        {node.type === 'note' && <Link href={`/notes/${encodeURIComponent(rowId(node.id))}?tutor=summary`} className={act} data-ask-nova title="Open the note with Nova summarising it"><Sparkles aria-hidden className={icon} style={{ color: 'var(--nova)' }} />Summarise</Link>}
         {/* The ordinary start, on a topic studied on its own, under its own subject. */}
         {studiable && node.type === 'topic' && (
           <button type="button" disabled={starting !== null} data-start-topic className={act} title={`Start a ${MAP_SESSION_MINUTES}-minute session`}
@@ -499,27 +477,21 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
         {onExplore && <button type="button" onClick={onExplore} className={act} data-explore title="Explore inside (Enter)"><Layers aria-hidden className={icon} />Explore</button>}
         {!onExplore && onScope && !scoped && <button type="button" onClick={onScope} className={act} data-scope-here title="Show what is around it"><Focus aria-hidden className={icon} />Around</button>}
         {noteHere && <Link href={noteHere} className={act} data-note-here title="A new note filed here"><FilePlus aria-hidden className={icon} />Note</Link>}
-        {node.type === 'subject' && onAdd && <button type="button" onClick={onAdd} className={act} title="Add a topic (N)"><Plus aria-hidden className={icon} />Topic</button>}
         {node.type === 'resource' && <a href={node.url} target="_blank" rel="noopener noreferrer" className={act} title="Visit the page"><Globe aria-hidden className={icon} />Visit</a>}
         <span className="flex min-w-0 flex-1">
           <button type="button" onClick={() => setMenu(m => !m)} aria-expanded={menu} aria-haspopup="menu" className={cn(act, 'w-full')} data-more-open title="More"><MoreHorizontal aria-hidden className={icon} />More</button>
         </span>
       </div>
       {menu && (
-            <span role="menu" className="-mt-2 flex flex-col rounded-xl border border-white/10 bg-popover p-1" onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); setMenu(false) } }}>
-              <button type="button" role="menuitem" onClick={() => { setMenu(false); toggle('more') }} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-white/6" data-details-open><Info aria-hidden className="size-3.5" /> Details and every link</button>
-              {onExplore && onScope && !scoped && <button type="button" role="menuitem" onClick={() => { setMenu(false); onScope() }} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-white/6" data-scope-here><Focus aria-hidden className="size-3.5" /> Show what is around it</button>}
-              {onAdd && <button type="button" role="menuitem" onClick={() => { setMenu(false); onAdd() }} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-white/6" data-add-open title="N"><Plus aria-hidden className="size-3.5" /> Add inside or beside…</button>}
-              {inside > 0 && <button type="button" role="menuitem" onClick={() => { setMenu(false); onCollapse() }} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm hover:bg-white/6" data-collapse aria-pressed={collapsed} title="Space">{collapsed ? <ChevronsUpDown aria-hidden className="size-3.5" /> : <ChevronsDownUp aria-hidden className="size-3.5" />} {collapsed ? `Show the ${inside} inside` : `Fold the ${inside} inside`}</button>}
-              {onDelete && <button type="button" role="menuitem" onClick={() => { setMenu(false); onDelete() }} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm text-red-400 hover:bg-red-400/10" data-delete-open title="Delete"><Trash2 aria-hidden className="size-3.5" /> Delete…</button>}
+            <span role="menu" className="-mt-2.5 flex flex-col rounded-xl border border-white/8 bg-white/[0.02] p-1" onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); setMenu(false) } }}>
+              <button type="button" role="menuitem" onClick={() => { setMenu(false); toggle('more') }} className={item} data-details-open><Info aria-hidden className="size-3.5" /> {section === 'more' ? 'Hide details' : 'Details and links'}</button>
+              {onExplore && onScope && !scoped && <button type="button" role="menuitem" onClick={() => { setMenu(false); onScope() }} className={item} data-scope-here><Focus aria-hidden className="size-3.5" /> Show around it</button>}
+              {onAdd && <button type="button" role="menuitem" onClick={() => { setMenu(false); onAdd() }} className={item} data-add-open title="N"><Plus aria-hidden className="size-3.5" /> Add…</button>}
+              {inside > 0 && <button type="button" role="menuitem" onClick={() => { setMenu(false); onCollapse() }} className={item} data-collapse aria-pressed={collapsed} title="Space">{collapsed ? <ChevronsUpDown aria-hidden className="size-3.5" /> : <ChevronsDownUp aria-hidden className="size-3.5" />} {collapsed ? `Unfold ${inside} inside` : `Fold ${inside} inside`}</button>}
+              {onDelete && <button type="button" role="menuitem" onClick={() => { setMenu(false); onDelete() }} className={cn(item, 'mt-1 text-red-400 hover:bg-red-400/10 hover:text-red-400')} data-delete-open title="Delete"><Trash2 aria-hidden className="size-3.5" /> Delete…</button>}
             </span>
           )}
       {startError && <p role="alert" className="-mt-2 text-sm text-red-400">{startError}</p>}
-      {section === 'ask' && askable && (
-        <TalkToNova roomy about={node.type === 'topic' ? `the topic “${node.label}” in ${node.subjectName}` : `the subject “${node.label}”`} aboutNode={node.id} placeholder={`Ask about ${short(node.label, 40)}…`} className="-mt-1"
-          suggestions={askSuggestions(node, tally, { overdue: overdueIn(view.nodes, node) })} />
-      )}
-
       {/* One next step, from its own record, as an action. */}
       {step && (
         <div className="flex items-center gap-2.5 rounded-xl border px-3 py-2" style={{ borderColor: 'color-mix(in oklch, var(--map-note) 35%, transparent)', background: 'color-mix(in oklch, var(--map-note) 7%, transparent)' }} data-next-step={step.kind}>
@@ -531,8 +503,8 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
         </div>
       )}
 
-      {/* What is filed here, as tiles; each one goes to its card. */}
-      {filed.length > 0 && (
+      {/* What is filed here, as tiles; each one goes to its card. With the details open, the full list below says it once. */}
+      {section !== 'more' && filed.length > 0 && (
         <div>
           <p className="mb-1.5 flex items-center justify-between text-[11px] text-subtle"><span>Filed here</span><span className="tabular-nums">{filed.length}</span></p>
           {tiles(filed)}
@@ -540,7 +512,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
       )}
 
       {/* What is around it, as chips: what it sits inside, what is inside it, what links to it. */}
-      {(up.length > 0 || within.length > 0 || linked.length > 0) && (
+      {section !== 'more' && (up.length > 0 || within.length > 0 || linked.length > 0) && (
         <div className="space-y-2">
           {chips('Sits inside', ArrowUp, up, 'up')}
           {node.type !== 'subject' && chips('Inside it', CornerDownRight, within, 'inside')}
@@ -551,15 +523,14 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
       {section === 'more' && (
         <div className="space-y-3 border-t border-white/6 pt-3" data-detail-more>
           {summary.more.length > 0 && (
-            <dl className="space-y-1 text-sm">
+            <dl className="space-y-1 text-[13px]">
               {summary.more.map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-4"><dt className="text-subtle">{k}</dt><dd className="text-right tabular-nums text-foreground/85">{v}</dd></div>
               ))}
             </dl>
           )}
-          {node.type === 'topic' && node.level && node.studied !== false && <p className="text-xs leading-relaxed text-subtle">The estimate comes from how you said your sessions went. It is not a test result.</p>}
           {node.type === 'topic' && gapsOf(node).length > 0 && <p className="text-xs" style={{ color: 'var(--map-note)' }} data-detail-gaps>To act on: {gapsOf(node).map(g => GAP_LABEL[g].toLowerCase()).join(', ')}</p>}
-          {node.type === 'resource' && node.filedBy === 'nova' && <p className="text-xs leading-relaxed text-subtle">Nova filed it here from a name match. Keep or undo it under Saved pages.</p>}
+          {node.type === 'resource' && node.filedBy === 'nova' && <p className="text-xs leading-relaxed text-subtle">Filed here from a name match. Keep or undo it under Saved pages.</p>}
           {goals.length > 0 && <ul className="list-disc space-y-0.5 pl-5 text-sm text-foreground/80" data-milestone-goals>{goals.map(g => <li key={g}>{g}</li>)}</ul>}
           {(node.type === 'topic' || node.type === 'subject') && node.tasks && node.tasks.length > 0 && (
             <div data-map-tasks>
@@ -630,7 +601,7 @@ type Panel =
   | { kind: 'add'; node: MapNode | null }
   | { kind: 'delete'; node: MapNode }
   | { kind: 'delete_map'; workspaceId: string; title: string }
-  | { kind: 'help' } | { kind: 'legend' } | { kind: 'filters' } | { kind: 'reset' } | { kind: 'nova' }
+  | { kind: 'help' } | { kind: 'legend' } | { kind: 'filters' } | { kind: 'reset' }
 
 const ADDABLE: ReadonlySet<MapNodeType> = new Set(['subject', 'topic', 'task'])
 const reducedMotion = () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -1630,8 +1601,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
       const flow = Math.abs(b.x - a.x) > 60
       d = laned ? roundedLane(a, lane, b)
         : flow ? `M ${a.x} ${a.y} C ${mx} ${a.y} ${mx} ${b.y} ${b.x} ${b.y}` : `M ${a.x} ${a.y} L ${b.x} ${b.y}`
-      // In its subject's colour, so each subject's branches read as its own.
-      stroke = lit ? 'var(--action)' : 'color-mix(in oklch, var(--sc) 62%, var(--map-line-strong))'
+      // Neutral, with a trace of its subject's colour: the subject's own card and bars carry the hue.
+      stroke = lit ? 'var(--action)' : 'color-mix(in oklch, var(--sc) 22%, var(--map-line-strong))'
       width = lit ? 2.2 : laned ? 1.3 : e.kind === 'contains' ? 2.2 : e.kind === 'has_topic' ? 1.8 : e.kind === 'subtopic' ? 1.5 : 1.1
       dash = e.kind === 'filed_under' ? '5 4' : undefined
       // Deeper in the tree, lighter: never under 55%.
@@ -1649,12 +1620,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     const signal = tree_ && !dim && (e.kind === 'has_topic' || e.kind === 'contains')
     return (
       <g key={e.id} className={cn('subject-tone', arrive)} style={{ ...toneStyle(toNode?.type === 'subject' ? toNode.label : toNode?.subjectName ?? null), ...anim }}>
-        {tree_ && !lit && <path d={d} fill="none" stroke="var(--sc)" strokeWidth={6} strokeLinecap="round" opacity={dim ? 0.02 : 0.085} vectorEffect="non-scaling-stroke" className="pointer-events-none" />}
-        {signal && !lit && <path d={d} fill="none" className="map-signal pointer-events-none" stroke="var(--sc)" strokeWidth={2} strokeDasharray="2 34" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.7} style={{ animationDelay: `${(e.id.length * 137) % 2400}ms` }} />}
+        {signal && !lit && <path d={d} fill="none" className="map-signal pointer-events-none" stroke="var(--map-line-strong)" strokeWidth={1.6} strokeDasharray="2 34" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.8} style={{ animationDelay: `${(e.id.length * 137) % 2400}ms` }} />}
         {port && (
           <g className="pointer-events-none" opacity={dim ? 0.25 : 1}>
-            <circle cx={port.x} cy={port.y} r={6} fill={lit ? 'var(--action)' : 'var(--sc)'} opacity={0.18} />
-            <circle cx={port.x} cy={port.y} r={2.6} fill={lit ? 'var(--action)' : 'var(--sc)'} />
+            <circle cx={port.x} cy={port.y} r={2.2} fill={lit ? 'var(--action)' : 'color-mix(in oklch, var(--sc) 45%, var(--map-line-strong))'} />
           </g>
         )}
         {/* A lit line glows, so what the selected card joins reads at a glance. */}
@@ -1747,8 +1716,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           {/* A subject anchor glows softly in its colour, so the eye finds the anchors first. */}
           {n.type === 'subject' && (
             <g className="map-anchor-glow pointer-events-none">
-              <rect x={-w / 2 - 18} y={-h / 2 - 16} width={w + 36} height={h + 32} rx={32} fill="var(--sc)" opacity={0.03} />
-              <rect x={-w / 2 - 9} y={-h / 2 - 8} width={w + 18} height={h + 16} rx={24} fill="var(--sc)" opacity={0.05} />
+              <rect x={-w / 2 - 9} y={-h / 2 - 8} width={w + 18} height={h + 16} rx={24} fill="var(--sc)" opacity={0.035} />
             </g>
           )}
           {detail > 0 && <rect className="map-shadow" x={-w / 2 + 3} y={-h / 2 + th + 4} width={w - 6} height={h} rx={r + 2} opacity={0.13 + th * 0.018} />}
@@ -1843,8 +1811,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
       <g key={`region-${r.id}`} className="subject-tone" style={toneStyle(s?.type === 'subject' ? s.label : null)} data-region={r.id}>
         <defs>
           <radialGradient id={`map-region-${i}`} cx="50%" cy="50%" r="50%">
-            <stop offset="0%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.09 : 0.07 }} />
-            <stop offset="55%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.035 : 0.025 }} />
+            <stop offset="0%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.035 : 0.025 }} />
+            <stop offset="55%" style={{ stopColor: 'var(--sc)', stopOpacity: far ? 0.012 : 0.008 }} />
             <stop offset="100%" style={{ stopColor: 'var(--sc)', stopOpacity: 0 }} />
           </radialGradient>
         </defs>
@@ -2320,38 +2288,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         )}
         {panel?.kind === 'help' && <ShortcutsHelp mac={mac} onClose={closePanel} />}
         {panel?.kind === 'legend' && <Legend onClose={closePanel} suggestions={suggestions.length > 0} outside={markers.size > 0} />}
-        {/* Nova on the map: about what is on screen (Everything, a workspace, or the card
-            explored). A card's own questions are asked from its panel (Ask). */}
-        {panel?.kind === 'nova' && (() => {
-          const explored = focus ? byId.get(focus) : null
-          const scopeId = explored ? explored.id : view.workspaceId ? `map:${view.workspaceId}` : 'map'
-          const scopeLabel = explored ? explored.label : view.workspaceId ? (view.workspaces?.find(w => w.id === view.workspaceId)?.title ?? 'this workspace') : 'Everything'
-          return (
-            <section aria-label="Nova on your map" data-map-overlay data-map-nova onPointerDown={e => e.stopPropagation()}
-              className="map-inspector-in absolute bottom-14 left-3 z-20 flex max-h-[min(44rem,calc(100%-5rem))] w-[min(34rem,calc(100%-1.5rem))] flex-col overflow-hidden rounded-2xl border border-white/10 bg-popover/95 shadow-float backdrop-blur">
-              <header className="flex items-center gap-2 border-b border-white/8 px-4 py-3">
-                <Sparkles aria-hidden className="size-4 text-keppel-400" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-foreground">Nova</p>
-                  <p className="truncate text-xs text-subtle">Knows {explored ? `“${short(scopeLabel, 34)}” and what is inside it` : scopeLabel === 'Everything' ? 'your whole map' : `the map of ${short(scopeLabel, 30)}`}</p>
-                </div>
-                <button type="button" onClick={closePanel} aria-label="Close Nova" className="rounded-full p-1.5 text-subtle hover:bg-white/6 hover:text-foreground"><X className="size-4" /></button>
-              </header>
-              <div className="min-h-0 overflow-y-auto p-4">
-                <TalkToNova roomy key={scopeId} aboutNode={scopeId}
-                  about={explored ? `“${explored.label}” on my Knowledge Map` : 'my Knowledge Map'}
-                  placeholder={explored ? `Ask about ${short(scopeLabel, 28)}…` : 'Ask about your map…'}
-                  suggestions={askSuggestions(explored ?? null, explored ? (explored.type === 'subject' ? subjectTallies.get(explored.id) : undefined) : tallyOf(view.nodes), { overdue: overdueIn(view.nodes, explored ?? null) })} />
-              </div>
-            </section>
-          )
-        })()}
-
         <div className="absolute bottom-3 left-3 flex items-center gap-2" onPointerDown={e => e.stopPropagation()}>
-          <button type="button" onClick={() => setPanel(p => (p?.kind === 'nova' ? null : { kind: 'nova' }))} aria-expanded={panel?.kind === 'nova'}
-            className="inline-flex h-8 items-center gap-1.5 rounded-full border border-keppel-400/30 bg-card/90 px-3 text-xs font-medium text-foreground/85 shadow-soft backdrop-blur hover:border-keppel-400/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" data-map-nova-open>
-            <Sparkles aria-hidden className="size-3.5 text-keppel-400" /> Ask Nova
-          </button>
           <button type="button" onClick={() => setPanel(p => (p?.kind === 'legend' ? null : { kind: 'legend' }))} aria-expanded={panel?.kind === 'legend'}
             className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-card/90 px-3 text-xs font-medium text-foreground/75 shadow-soft backdrop-blur hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" data-legend-open>
             <Info aria-hidden className="size-3.5" /> Legend
@@ -2486,7 +2423,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         </div>
 
         {picked && detailOpen && (
-          <Detail key={picked.id} node={picked} neighbours={neighbours} onPick={id => pick(id)} onClose={() => setDetailOpen(false)} where={ancestorsOf(picked.id)} tally={picked.type === 'subject' ? subjectTallies.get(picked.id) : undefined} subjectTopics={picked.type === 'subject' ? view.nodes.filter((n): n is Extract<MapNode, { type: 'topic' }> => n.type === 'topic' && rootOf(n.id, tree.parent) === picked.id) : undefined}
+          <Detail key={picked.id} node={picked} neighbours={neighbours} onPick={id => pick(id)} onClose={() => setDetailOpen(false)} where={ancestorsOf(picked.id)} tally={picked.type === 'subject' ? subjectTallies.get(picked.id) : undefined}
             onScope={!canExplore(tree, picked.id) && focus === null ? () => setScope(picked.id) : null}
             scoped={scope === picked.id} view={view} onChanged={onChanged}
             inside={insideCount(picked.id)} collapsed={collapsed.has(picked.id)} onCollapse={() => toggleFold(picked.id)}
