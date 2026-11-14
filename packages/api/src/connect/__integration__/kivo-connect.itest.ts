@@ -31,7 +31,7 @@ const { saveSetup } = await import("../../nova/product/setup.js");
 const { createNote, getNote, updateNote } = await import("../../nova/product/notes.js");
 const { loadStudyStructure } = await import("../../nova/product/setup-edit.js");
 const { registerClient, exchangeCode, refreshTokens, authenticateAccessToken, revokeToken, findClient, listConnections, revokeConnection } = await import("../oauth.js");
-const { checkAuthorize, decide } = await import("../authorize.js");
+const { checkAuthorize, decide, STATE_MAX } = await import("../authorize.js");
 const { learnerFor } = await import("../learner.js");
 const { TOOLS, runTool } = await import("../tools.js");
 const { approvePendingPlan } = await import("../audit.js");
@@ -145,6 +145,22 @@ test("OAuth: a wrong verifier, an unregistered redirect and plain PKCE are refus
   assert.ok("error" in (await exchangeCode({ clientRowId: client.id, code, redirectUri: REDIRECT, verifier: verifier() })));
   const denied = new URL(await decide(userId, ok, false, ISSUER));
   assert.equal(denied.searchParams.get("error"), "access_denied");
+});
+
+test("OAuth: a long state (OpenAI's platform sends a signed relay token, ~900 characters) comes back exactly; one too long is refused, never dropped", async () => {
+  const userId = await account();
+  const reg = await registerClient({ name: `itest ${STAMP} OpenAI`, redirectUris: [REDIRECT], tokenAuthMethod: "none" });
+  const v = verifier();
+  const scope = "profile:read notes:read";
+  const state = `openai_platform_oauth_relay__${"eyJ".padEnd(880, "x")}`;
+  const ok = await checkAuthorize({ response_type: "code", client_id: reg.client_id, redirect_uri: REDIRECT, scope, state, code_challenge: challengeOf(v), code_challenge_method: "S256", resource: MCP }, MCP, ISSUER);
+  assert.ok(ok.ok);
+  if (!ok.ok) return;
+  const back = new URL(await decide(userId, ok, true, ISSUER));
+  assert.equal(back.searchParams.get("state"), state, "returned unchanged");
+  assert.ok(back.searchParams.get("code"));
+  const tooLong = await checkAuthorize({ response_type: "code", client_id: reg.client_id, redirect_uri: REDIRECT, scope, state: "s".repeat(STATE_MAX + 1), code_challenge: challengeOf(v), code_challenge_method: "S256", resource: MCP }, MCP, ISSUER);
+  assert.ok(!tooLong.ok && "show" in tooLong, "refused on Kivo's page, not sent back without its state");
 });
 
 test("scopes: a read-only connection gets no write tools' access", async () => {
