@@ -35,7 +35,7 @@ export function twoLines(text: string, max: number): [string, string | null] {
 // theme a card stands a clear step above the ground, with a lit top edge.
 const SURFACE = 'var(--map-card)', EDGE = 'var(--map-card-edge)'
 // A wash of the card's subject colour over its surface, faint: cards of one subject read as one family.
-const wash = (w: number, h: number, rx: number) => <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={rx} fill="var(--sc)" opacity={0.055} className="pointer-events-none" />
+const wash = (w: number, h: number, rx: number) => <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={rx} fill="var(--sc)" opacity={0.09} className="pointer-events-none" />
 
 // folded: in Everything's overview, what is folded inside the card ("2 notes
 // · 1 page"), said on its face; '' when nothing is. undefined: not the overview.
