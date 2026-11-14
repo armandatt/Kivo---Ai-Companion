@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useStartSession } from '../use-start-session'
 import { ArrowUpRight, ChevronsDownUp, ChevronsUpDown, Focus, Info, Keyboard, Layers, Link2, Maximize2, Minus, PanelRightOpen, Plus, RotateCcw, Search, SlidersHorizontal, Trash2, Unlink, Waypoints, X } from 'lucide-react'
@@ -24,6 +24,12 @@ import { disconnectPlan } from './map-disconnect'
 import { sendDisconnect } from './map-structure-api'
 import { AddDialog, Breadcrumbs, DeleteDialog, DeleteWholeDialog, Legend, ShortcutsHelp } from './map-panels'
 import { BOARD_PATH } from '@repo/api/nova/product/companion'
+import { chooseMotion, chosenMotion, enteredBefore, entranceMode, entrancePlan, markEntered, radiusOf, regionsOf, thicknessOf, type Entrance, type EntranceMode, type Motion } from './depth'
+
+// The browser session's store, for "this map was opened already" (depth.ts).
+const sessionStore = () => { try { return typeof window === 'undefined' ? null : window.sessionStorage } catch { return null } }
+// How long a card created or deleted here takes to arrive or leave.
+const FRESH_MS = 1300, GHOST_MS = 520
 
 const TYPES: Array<{ type: MapNodeType; label: string; plural: string }> = [
   { type: 'subject',  label: 'Subject',    plural: 'Subjects' },
@@ -516,6 +522,17 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   // The orientation: the learner's choice, else the device's own (by width,
   // never by the frame's shape, so opening a panel never turns the map round).
   const [chosen, setChosen]     = useState<Orientation | null>(() => chosenOrientation(store))
+  // Depth and motion: the learner's choice on this device (Show menu), and
+  // the entrance being played, if any (depth.ts).
+  const [motion, setMotion]     = useState<Motion>(() => chosenMotion(store))
+  const [entrance, setEntrance] = useState<(Entrance & { mode: Exclude<EntranceMode, 'none'>; key: string }) | null>(null)
+  // Cards and lines that arrived in this visit (an add, a link), and a card
+  // just deleted here, drawn leaving while the map is read again.
+  const [fresh, setFresh]       = useState<{ nodes: Set<string>; edges: Set<string> } | null>(null)
+  const [ghost, setGhost]       = useState<{ node: MapNode; x: number; y: number } | null>(null)
+  const [removed, setRemoved]   = useState<Set<string>>(new Set())
+  // A card found by search, lit for a moment where the view lands.
+  const [flash, setFlash]       = useState<{ id: string; n: number } | null>(null)
   const [narrow, setNarrow]     = useState(() => typeof window !== 'undefined' && window.matchMedia(OUTLINE_QUERY).matches)
   const orientation: Orientation = chosen ?? (narrow ? 'outline' : 'tree')
   const portrait = orientation === 'outline'
@@ -567,8 +584,36 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   const toggleFold = useCallback((id: string) => setCollapsed(c => { const next = new Set(c); if (next.has(id)) next.delete(id); else next.add(id); return next }), [])
   // Every card the filters leave, explored or not: the layout is worked out
   // for these, so a card explored keeps the place it has on the whole map.
-  const nodes = useMemo(() => view.nodes.filter(n =>
-    shown[n.type] && !folded.has(n.id) && (subject === '' || n.subjectId === subject) && (!inScope || inScope.has(n.id))), [view.nodes, shown, folded, subject, inScope])
+  const nodes = useMemo(() => view.nodes.filter(n => !removed.has(n.id) &&
+    shown[n.type] && !folded.has(n.id) && (subject === '' || n.subjectId === subject) && (!inScope || inScope.has(n.id))), [view.nodes, shown, folded, subject, inScope, removed])
+  // What arrived since the map was last read (an add, a link), so it can
+  // come in on its own. The first reading is the entrance's, not this.
+  const known = useRef<{ nodes: Set<string>; edges: Set<string> } | null>(null)
+  useEffect(() => {
+    const now = { nodes: new Set(view.nodes.map(n => n.id)), edges: new Set(view.edges.map(e => e.id)) }
+    const before = known.current
+    known.current = now
+    setRemoved(r => (r.size ? new Set() : r))
+    if (!before) return
+    const nodes = new Set([...now.nodes].filter(id => !before.nodes.has(id)))
+    const edges = new Set([...now.edges].filter(id => !before.edges.has(id)))
+    if (nodes.size || edges.size) setFresh({ nodes, edges })
+  }, [view.nodes, view.edges])
+  useEffect(() => {
+    if (!fresh) return
+    const id = window.setTimeout(() => setFresh(null), FRESH_MS)
+    return () => window.clearTimeout(id)
+  }, [fresh])
+  useEffect(() => {
+    if (!ghost) return
+    const id = window.setTimeout(() => setGhost(null), GHOST_MS)
+    return () => window.clearTimeout(id)
+  }, [ghost])
+  useEffect(() => {
+    if (!flash) return
+    const id = window.setTimeout(() => setFlash(null), 1600)
+    return () => window.clearTimeout(id)
+  }, [flash])
   const ids   = useMemo(() => new Set(nodes.map(n => n.id)), [nodes])
   const edges = useMemo(() => usable.filter(e => ids.has(e.from) && ids.has(e.to)), [usable, ids])
   const linkCount = useMemo(() => view.edges.filter(e => e.kind === 'links_to').length, [view.edges])
@@ -650,11 +695,30 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     return set
   }, [hover, selected, view.edges])
 
+  // The selected card and what it is joined to (the depth effects use this, not hover).
+  const chosenAround = useMemo(() => {
+    if (!selected) return null
+    const set = new Set<string>([selected])
+    for (const e of view.edges) { if (e.from === selected) set.add(e.to); if (e.to === selected) set.add(e.from) }
+    return set
+  }, [selected, view.edges])
+
   // ── The view: pan and zoom ─────────────────────────────────────────────────
   const tNow = useRef(t)
   useEffect(() => { tNow.current = t }, [t])
   const anim = useRef<number | null>(null)
   const stopAnim = useCallback(() => { if (anim.current !== null) cancelAnimationFrame(anim.current); anim.current = null }, [])
+  // While the view moves (a drag, the wheel, a glide), the cards' lift
+  // transitions are off: kept on, every card's is checked on every frame,
+  // and a large map pans at half speed. Set on the element, not in state,
+  // so moving renders nothing extra.
+  const moving = useRef<number | null>(null)
+  const startMoving = useCallback((ms?: number) => {
+    root.current?.classList.add('map-moving')
+    if (moving.current !== null) window.clearTimeout(moving.current)
+    moving.current = ms === undefined ? null : window.setTimeout(() => { root.current?.classList.remove('map-moving'); moving.current = null }, ms)
+  }, [])
+  const stopMoving = useCallback(() => startMoving(120), [startMoving])
   // Eased: the point at the centre of the screen glides, and the zoom changes
   // by the same proportion each frame, so going in reads as a zoom into it.
   const animateTo = useCallback((to: View, ms = 320) => {
@@ -664,6 +728,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     const from = tNow.current, cw = el.clientWidth / 2, ch = el.clientHeight / 2
     const a = { x: (cw - from.x) / from.k, y: (ch - from.y) / from.k }, b = { x: (cw - to.x) / to.k, y: (ch - to.y) / to.k }
     const start = performance.now()
+    startMoving(ms + 120)
     const step = (now: number) => {
       const p = Math.min(1, (now - start) / ms), e = 1 - (1 - p) ** 3
       const k = from.k * (to.k / from.k) ** e
@@ -672,7 +737,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
       anim.current = p < 1 ? requestAnimationFrame(step) : null
     }
     anim.current = requestAnimationFrame(step)
-  }, [stopAnim])
+  }, [stopAnim, startMoving])
 
   // The details panel covers the right of a wide canvas: fit beside it.
   const besidePanel = useCallback((el: HTMLElement) => (selected && detailOpen && el.clientWidth >= 1024 ? 372 : 0), [selected, detailOpen])
@@ -725,6 +790,40 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     settle.current(moved)
   }, [settleWhen, focus])
 
+  // ── The entrance ───────────────────────────────────────────────────────────
+  // Played once the saved layout is in (or after a short wait for it), so no
+  // card arrives and then jumps: subjects, then what hangs from them, then
+  // the lines. Full the first time this map is opened in a session, brief on
+  // a return, a large map or going into a card, none under reduced motion.
+  // Nothing waits on it: every card can be clicked from the first frame.
+  const [layoutWait, setLayoutWait] = useState(true)
+  useEffect(() => {
+    if (layout.load !== 'loading') { setLayoutWait(false); return }
+    const id = window.setTimeout(() => setLayoutWait(false), 700)
+    return () => window.clearTimeout(id)
+  }, [layout.load])
+  const entered = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    if (layoutWait || entered.current === where) return
+    const first = entered.current === null
+    entered.current = where
+    const session = sessionStore()
+    const calm = reducedMotion() || motion === 'reduced'
+    const mode = first ? entranceMode({ seen: enteredBefore(session, where), reduced: calm, motion, count: drawn.length }) : calm ? 'none' : 'brief'
+    markEntered(session, where)
+    if (mode === 'none') { setEntrance(null); return }
+    const plan = entrancePlan(drawn.map(n => n.id), tree.parent, placed.at, [...drawnEdges, ...cross.map(c => c.edge)], mode)
+    setEntrance({ ...plan, mode, key: where })
+  // Only a new place starts an entrance; what it draws is read as it stands then.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [where, layoutWait])
+  useEffect(() => {
+    if (!entrance) return
+    const id = window.setTimeout(() => setEntrance(null), entrance.total + 80)
+    return () => window.clearTimeout(id)
+  }, [entrance])
+  const changeMotion = (m: Motion) => { setMotion(m); chooseMotion(store, m); if (m === 'reduced') setEntrance(null) }
+
   const zoomAt = useCallback((factor: number, cx?: number, cy?: number) => {
     const el = frame.current
     if (!el) return
@@ -744,12 +843,13 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     const onWheel = (e: WheelEvent) => {
       if ((e.target as Element | null)?.closest?.('[data-map-overlay]')) return
       e.preventDefault()
+      startMoving(160)
       const b = el.getBoundingClientRect()
       zoomAt(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX - b.left, e.clientY - b.top)
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [zoomAt])
+  }, [zoomAt, startMoving])
 
   const centreOn = useCallback((id: string, k?: number) => {
     const p = placed.at.get(id) ?? markers.get(id)
@@ -883,6 +983,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   const pick = useCallback((id: string) => {
     setQuery('')
     pendingSelect.current = null
+    setFlash(f => ({ id, n: (f?.n ?? 0) + 1 }))
     if (drawnIds.has(id)) select(id, { centre: true, focusCard: true })
     else goOutside(id)
   }, [drawnIds, select, goOutside])
@@ -898,6 +999,12 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     if (select) { pendingSelect.current = select; revealCard(select) }
     onChanged()
   }, [say, onChanged, revealCard])
+  // A card just deleted leaves where it stood, and is not drawn while the map is read again.
+  const leave = useCallback((n: MapNode) => {
+    const p = placed.at.get(n.id)
+    if (p && !reducedMotion() && motion === 'full') setGhost({ node: n, x: p.x, y: p.y })
+    setRemoved(r => new Set(r).add(n.id))
+  }, [placed, motion])
   // A dialog sits by its card, kept inside the map; on a phone, along the bottom.
   const anchor = useCallback((id: string | null): React.CSSProperties => {
     const el = frame.current
@@ -1032,44 +1139,56 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
   // Lines between cards, and the cross-links to markers. Memoised apart from
   // the pan, which only moves the group they sit in.
   const allLines = useMemo(() => [...drawnEdges, ...cross.map(c => c.edge)], [drawnEdges, cross])
+  // How deep a card sits in the tree drawn: lines further from a subject are
+  // drawn lighter, so the eye reads the levels as layers.
+  const depthOf = useCallback((id: string) => {
+    let d = 0
+    for (let p = tree.parent.get(id); p && drawnIds.has(p) && d < 12; p = tree.parent.get(p)) d++
+    return d
+  }, [tree, drawnIds])
   const edgeLayer = useMemo(() => allLines.map(e => {
     const a = pointOf(e.from), b = pointOf(e.to)
     if (!a || !b) return null
     const lit = focusId !== null && (e.from === focusId || e.to === focusId)
     const dim = focusId !== null && !lit
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y
+    // Arriving: drawn along its length once both its cards are there (a
+    // dashed line, whose dashes would be lost, fades in instead).
+    const delay = entrance?.edge.get(e.id) ?? (fresh?.edges.has(e.id) ? 160 : undefined)
+    const dashed = e.kind === 'depends_on' || e.kind === 'filed_under'
+    const arrive = delay === undefined ? undefined : dashed ? 'map-edge-fade' : 'map-edge-draw'
+    const anim = delay === undefined ? undefined : { animationDelay: `${delay}ms`, animationDuration: `${entrance?.mode === 'brief' ? 220 : 460}ms` }
+    const drawProps = arrive === 'map-edge-draw' ? { pathLength: 1 } : {}
+    let d: string, stroke: string, width: number, dash: string | undefined, rest = 1
     if (e.kind === 'depends_on') {
       // A wait: from the task that waits to the one it waits for, dashed in the tasks' colour.
-      return (
-        <path key={e.id} d={`M ${a.x} ${a.y} Q ${mx + dy * 0.22} ${my - dx * 0.22} ${b.x} ${b.y}`} fill="none" data-edge={e.kind}
-          stroke={lit ? 'var(--action)' : 'var(--map-task)'} strokeWidth={lit ? 1.8 : 1.2} strokeDasharray="6 4" vectorEffect="non-scaling-stroke" opacity={dim ? 0.2 : 0.8} />
-      )
-    }
-    if (e.kind === 'links_to') {
+      d = `M ${a.x} ${a.y} Q ${mx + dy * 0.22} ${my - dx * 0.22} ${b.x} ${b.y}`
+      stroke = lit ? 'var(--action)' : 'var(--map-task)'; width = lit ? 1.8 : 1.2; dash = '6 4'; rest = 0.8
+    } else if (e.kind === 'links_to') {
       // A [[link]]: a quiet curve; the ring where it arrives says what it is.
-      return (
-        <path key={e.id} d={`M ${a.x} ${a.y} Q ${mx - dy * 0.18} ${my + dx * 0.18} ${b.x} ${b.y}`} fill="none" data-edge={e.kind}
-          stroke={lit ? 'var(--action)' : 'var(--map-line-strong)'} strokeWidth={lit ? 1.6 : 1.1} vectorEffect="non-scaling-stroke" opacity={dim ? 0.25 : 1} />
-      )
-    }
-    // Into a wrapped column: along the gaps, never across the cards before it.
-    const lane = placed.lanes?.get(e.to)
-    if (lane && lane.x === b.x && lane.y === b.y && !markers.has(e.to)) {
-      return (
-        <path key={e.id} d={`M ${a.x} ${a.y} H ${lane.trunkX} V ${lane.laneY} H ${b.x} V ${b.y}`} fill="none" data-edge={e.kind} data-lane
-          stroke={lit ? 'var(--action)' : 'var(--map-line)'} strokeWidth={lit ? 2.2 : 1.3} strokeLinejoin="round"
-          vectorEffect="non-scaling-stroke" opacity={dim ? 0.25 : 1} />
-      )
+      d = `M ${a.x} ${a.y} Q ${mx - dy * 0.18} ${my + dx * 0.18} ${b.x} ${b.y}`
+      stroke = lit ? 'var(--action)' : 'var(--map-line-strong)'; width = lit ? 1.6 : 1.1
+    } else {
+      // Into a wrapped column: along the gaps, never across the cards before it.
+      const lane = placed.lanes?.get(e.to)
+      const laned = lane && lane.x === b.x && lane.y === b.y && !markers.has(e.to)
+      d = laned ? `M ${a.x} ${a.y} H ${lane.trunkX} V ${lane.laneY} H ${b.x} V ${b.y}` : `M ${a.x} ${a.y} L ${b.x} ${b.y}`
+      stroke = lit ? 'var(--action)' : 'var(--map-line)'
+      width = lit ? 2.2 : laned ? 1.3 : e.kind === 'contains' ? 2 : e.kind === 'has_topic' || e.kind === 'subtopic' ? 1.5 : 1.1
+      dash = e.kind === 'filed_under' ? '5 4' : undefined
+      // Deeper in the tree, lighter: never under 55%.
+      rest = Math.max(0.55, 1 - Math.max(0, depthOf(e.to) - 1) * 0.15)
     }
     return (
-      <line key={e.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-        stroke={lit ? 'var(--action)' : 'var(--map-line)'}
-        strokeWidth={lit ? 2.2 : e.kind === 'contains' ? 2 : e.kind === 'has_topic' || e.kind === 'subtopic' ? 1.5 : 1.1}
-        strokeDasharray={e.kind === 'filed_under' ? '5 4' : undefined}
-        vectorEffect="non-scaling-stroke" data-edge={e.kind}
-        opacity={dim ? 0.25 : 1} />
+      <g key={e.id} className={arrive} style={anim}>
+        {/* A lit line glows, so what the selected card joins reads at a glance. */}
+        {lit && <path d={d} fill="none" stroke="var(--action)" strokeWidth={7} strokeLinecap="round" strokeLinejoin="round" opacity={0.16} vectorEffect="non-scaling-stroke" {...drawProps} />}
+        <path d={d} fill="none" data-edge={e.kind} data-lane={d.includes(' H ') && e.kind !== 'links_to' && e.kind !== 'depends_on' ? '' : undefined}
+          stroke={stroke} strokeWidth={width} strokeDasharray={dash} strokeLinejoin="round" vectorEffect="non-scaling-stroke"
+          opacity={dim ? (e.kind === 'depends_on' ? 0.2 : 0.25) : rest} {...drawProps} />
+      </g>
     )
-  }), [allLines, pointOf, focusId, placed.lanes, markers])
+  }), [allLines, pointOf, focusId, placed.lanes, markers, entrance, fresh, depthOf])
 
   // The rings of [[links]], over the cards: one where each link arrives.
   const ringLayer = useMemo(() => allLines.filter(e => e.kind === 'links_to').map(e => {
@@ -1111,13 +1230,22 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     const dragging = dragAt?.id === n.id
     const tone = n.type === 'subject' ? n.label : n.subjectName
     const kids = tree.children.get(n.id)?.length ?? 0
+    // Depth (depth.ts): the card's slab, its shadow on the ground, and where
+    // it is in the entrance or arriving after an add.
+    const th = thicknessOf(n), r = radiusOf(n)
+    // Raised and receded by the selection only: a hover lifts just its own
+    // card (CSS), so sweeping the pointer over the map starts no transitions.
+    const near = chosenAround !== null && chosenAround.has(n.id)
+    const recede = chosenAround !== null && !chosenAround.has(n.id)
+    const delay = entrance?.node.get(n.id)
+    const arriving = delay !== undefined ? (entrance!.mode === 'full' ? 'map-card-in' : 'map-card-in-brief') : fresh?.nodes.has(n.id) ? 'map-card-new' : undefined
     return (
       <g
-        key={n.id} transform={`translate(${p.x} ${p.y})`} opacity={dim ? 0.38 : 1}
+        key={n.id} transform={`translate(${p.x} ${p.y})`} style={{ ...toneStyle(tone), opacity: dim ? 0.38 : 1 }}
         role="button" tabIndex={0} aria-label={`${TYPE_LABEL[n.type]}: ${n.label}${kids ? `, ${kids} inside` : ''}`} aria-pressed={on}
         aria-keyshortcuts="Enter Shift+Enter Space N Delete Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
-        className={cn('subject-tone group/card outline-none [&:focus-visible_.map-focus]:opacity-100', dragging ? 'cursor-grabbing' : 'cursor-pointer')}
-        style={toneStyle(tone)} data-node={n.type} data-node-id={n.id}
+        className={cn('map-card subject-tone group/card outline-none [&:focus-visible_.map-focus]:opacity-100', dragging ? 'cursor-grabbing' : 'cursor-pointer')}
+        data-node={n.type} data-node-id={n.id} data-depth-thickness={th}
         onPointerDown={e => onCardPointerDown(e, n.id)} onPointerMove={onCardPointerMove}
         onPointerUp={onCardPointerUp} onPointerCancel={onCardPointerCancel}
         onClick={() => {
@@ -1131,9 +1259,20 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
         onFocus={() => { lastChosen.current = n.id }}
         onPointerEnter={() => setHover(n.id)} onPointerLeave={() => setHover(null)}
       >
-        {(on || dragging) && <rect x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="color-mix(in oklch, var(--action) 9%, transparent)" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
-        <rect className="map-focus opacity-0" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--ring)" strokeWidth={2.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" />
-        <g style={dragging ? { filter: 'drop-shadow(0 10px 18px rgb(0 0 0 / 0.25))' } : undefined}><CardFace n={n} detail={detail} /></g>
+        <g className={arriving} style={arriving ? { animationDelay: `${delay ?? 0}ms` } : undefined}>
+          {/* The shadow it casts, softer the higher it stands; then its edge (the slab). */}
+          {/* Far out it can't be seen: not drawn, so zooming stays light on a large map. */}
+          {detail > 0 && <rect className="map-shadow" x={-w / 2 + 3} y={-h / 2 + th + 4} width={w - 6} height={h} rx={r + 2} opacity={0.22 + th * 0.025} />}
+          {th > 0 && <rect className="map-slab" x={-w / 2} y={-h / 2 + th} width={w} height={h} rx={r} />}
+          <g className={cn('map-lift', on || near || dragging ? 'map-raise' : recede ? 'map-recede' : undefined)}>
+            {(on || dragging) && <rect x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="color-mix(in oklch, var(--action) 9%, transparent)" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
+            <rect className="map-focus opacity-0" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--ring)" strokeWidth={2.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" />
+            <g style={dragging ? { filter: 'drop-shadow(0 10px 18px rgb(0 0 0 / 0.25))' } : undefined}><CardFace n={n} detail={detail} /></g>
+            {/* Light on its surface, from above. */}
+            {detail > 0 && <rect className="pointer-events-none" x={-w / 2} y={-h / 2} width={w} height={h} rx={r} fill="url(#map-sheen)" />}
+            {flash?.id === n.id && <rect key={flash.n} className="map-found pointer-events-none" x={-w / 2 - 6} y={-h / 2 - 6} width={w + 12} height={h + 12} rx={r + 6} fill="none" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
+          </g>
+        </g>
         {kids > 0 && detail >= 1 && (
           // Fold or show what hangs from it.
           <g transform={`translate(${w / 2} 0)`} role="button" tabIndex={-1} aria-label={collapsed.has(n.id) ? `Show what is inside ${n.label}` : `Fold what is inside ${n.label}`} data-fold={collapsed.has(n.id) ? 'folded' : 'open'}
@@ -1156,7 +1295,34 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
         )}
       </g>
     )
-  }), [drawn, placed, neighbourIds, selected, dragAt, detail, onCardPointerDown, onCardPointerMove, onCardPointerUp, onCardPointerCancel, tree, collapsed, insideCount, toggleFold, select, explore, openAdd])
+  }), [drawn, placed, neighbourIds, selected, dragAt, detail, onCardPointerDown, onCardPointerMove, onCardPointerUp, onCardPointerCancel, tree, collapsed, insideCount, toggleFold, select, explore, openAdd, entrance, fresh, flash, chosenAround])
+
+  // The ground each subject's tree stands on, lit softly in its colour.
+  const regionLayer = useMemo(() => regionsOf(drawn, tree.parent, placed.at).map((r, i) => {
+    const s = byId.get(r.id)
+    return (
+      <g key={`region-${r.id}`} className="subject-tone" style={toneStyle(s?.type === 'subject' ? s.label : null)} data-region={r.id}>
+        <defs>
+          <radialGradient id={`map-region-${i}`} cx="30%" cy="35%" r="75%">
+            <stop offset="0%" style={{ stopColor: 'var(--sc)', stopOpacity: 0.11 }} />
+            <stop offset="65%" style={{ stopColor: 'var(--sc)', stopOpacity: 0.035 }} />
+            <stop offset="100%" style={{ stopColor: 'var(--sc)', stopOpacity: 0 }} />
+          </radialGradient>
+        </defs>
+        <rect x={r.x} y={r.y} width={r.w} height={r.h} rx={28} fill={`url(#map-region-${i})`} stroke="var(--sc-faint)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+      </g>
+    )
+  }), [drawn, tree.parent, placed.at, byId])
+
+  // A card deleted here, leaving where it stood while the map is read again.
+  const ghostLayer = ghost ? (() => {
+    const { w, h } = CARD[ghost.node.type]
+    return (
+      <g transform={`translate(${ghost.x} ${ghost.y})`} className="subject-tone pointer-events-none" aria-hidden style={toneStyle(ghost.node.type === 'subject' ? ghost.node.label : ghost.node.subjectName)}>
+        <g className="map-card-out"><rect className="map-shadow" x={-w / 2 + 2} y={-h / 2 + 4} width={w - 4} height={h} rx={radiusOf(ghost.node)} opacity={0.2} /><CardFace n={ghost.node} detail={detail} /></g>
+      </g>
+    )
+  })() : null
 
   // Round markers for the cards outside an explored one, joined by a link.
   const markerLayer = useMemo(() => [...markers.entries()].map(([id, m]) => {
@@ -1237,7 +1403,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
     ...(focus ? pathTo(tree, focus).map(id => ({ id, label: byId.get(id)?.label ?? '' })) : [])]
 
   return (
-    <div ref={root} className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-white/8 bg-card/60" data-knowledge-map>
+    <div ref={root} className={cn('relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-white/8 bg-card/60', motion === 'reduced' && 'map-still')} data-knowledge-map data-motion={motion}>
       {/* The toolbar: where you are, finding, and the view. Filters are folded into one menu. */}
       <div className="flex flex-wrap items-center gap-2 border-b border-white/8 px-3 py-2">
         {(view.workspaces?.length ?? 0) > 0 && onWorkspace && (
@@ -1330,6 +1496,18 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
                     ))}
                   </div>
                 </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-subtle">Motion</span>
+                  <div role="radiogroup" aria-label="Motion" className="inline-flex rounded-full border border-white/10 p-0.5">
+                    {(['full', 'reduced'] as const).map(m => (
+                      <button key={m} type="button" role="radio" aria-checked={motion === m} data-motion-choice={m}
+                        onClick={() => changeMotion(m)} title={m === 'full' ? 'Cards arrive, lift and glide' : 'No entrance or movement; depth stays'}
+                        className={cn('rounded-full px-2.5 py-1 text-xs font-medium', motion === m ? 'bg-white/8 text-foreground' : 'text-subtle hover:text-foreground')}>
+                        {m === 'full' ? 'Full' : 'Calm'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -1358,12 +1536,13 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
 
       <div
         ref={frame}
-        className="nova-canvas relative min-h-[20rem] flex-1 touch-none select-none overflow-hidden bg-background/40 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+        className="relative min-h-[20rem] flex-1 touch-none select-none overflow-hidden bg-background focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
         style={{ cursor: drag.current ? 'grabbing' : 'grab' }}
         tabIndex={0} role="group" aria-roledescription="map"
         aria-label={`Knowledge map${focus ? `, exploring ${byId.get(focus)?.label ?? ''}` : ''}. Arrow keys move the view or, with a card selected, between cards; plus and minus zoom; F fits; question mark lists every shortcut.`}
         onPointerDown={e => {
           stopAnim()
+          startMoving()
           const el = e.currentTarget as HTMLElement
           el.setPointerCapture(e.pointerId)
           pinch.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
@@ -1391,28 +1570,53 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
           setT(v => ({ ...v, x: v.x + dx, y: v.y + dy }))
         }}
         // A press on the background that did not pan clears the selection.
-        onPointerUp={e => { pinch.current.delete(e.pointerId); const dd = drag.current; drag.current = null; if (dd && !dd.moved && pinch.current.size === 0) { setSelected(null); lastChosen.current = null; setPanel(p => (p?.kind === 'filters' || p?.kind === 'legend' ? null : p)) } }}
-        onPointerCancel={e => { pinch.current.delete(e.pointerId); drag.current = null }}
+        onPointerUp={e => { stopMoving(); pinch.current.delete(e.pointerId); const dd = drag.current; drag.current = null; if (dd && !dd.moved && pinch.current.size === 0) { setSelected(null); lastChosen.current = null; setPanel(p => (p?.kind === 'filters' || p?.kind === 'legend' ? null : p)) } }}
+        onPointerCancel={e => { stopMoving(); pinch.current.delete(e.pointerId); drag.current = null }}
       >
+        {/* The space the map stands in: a far plane of dots that moves slower
+            than the cards (so the cards read as nearer), ambient light, and
+            a vignette. Decoration only: nothing here can be pointed at. */}
+        <div aria-hidden className="map-space pointer-events-none absolute inset-0" />
+        {(() => {
+          // Moved by a transform within one dot's spacing, so a pan repaints nothing.
+          const S = Math.round(30 * (0.55 + 0.45 * Math.min(t.k, 1.6)))
+          const off = (v: number) => (((v * 0.35) % S) + S) % S
+          return (
+            <div aria-hidden className="map-far-mask pointer-events-none absolute inset-0 overflow-hidden">
+              <div className="map-far absolute" style={{ left: -S, top: -S, right: -S, bottom: -S, backgroundSize: `${S}px ${S}px`, transform: `translate3d(${off(t.x)}px, ${off(t.y)}px, 0)` }} />
+            </div>
+          )
+        })()}
         {drawn.length === 0 ? (
           <p className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm text-foreground/65">Nothing matches these filters{inScope ? ' around this item' : ''}. Turn one back on{inScope ? ', or show everything,' : ''} to see the map.</p>
         ) : (
-          // A group, not an image: it holds the items a keyboard reaches.
+          // The camera: on the first visit the map tilts up into place as it settles.
+          <div className={cn('absolute inset-0', layoutWait && !entrance ? 'opacity-0' : entrance ? (entrance.mode === 'full' && entrance.key.endsWith('/root') ? 'map-cam-in' : 'map-cam-brief') : undefined)}>
+          {/* A group, not an image: it holds the items a keyboard reaches. */}
           <svg className="absolute inset-0 size-full" role="group" aria-label={`${drawn.length} items and ${drawnEdges.length} links${markers.size ? `, ${markers.size} outside` : ''}`}>
+            <defs>
+              <linearGradient id="map-sheen" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#fff" stopOpacity={0.075} />
+                <stop offset="45%" stopColor="#fff" stopOpacity={0} />
+              </linearGradient>
+            </defs>
             <g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>
-              <g key={focus ?? 'root'} className="map-enter">
+              <g key={focus ?? 'root'} className={entrance ? undefined : 'map-enter'}>
+                {regionLayer}
                 {!inside && placed.loose && (
                   <text x={placed.loose.x - CARD.note.w / 2} y={placed.loose.y - 44} className="fill-[var(--subtle)]" fontSize={12 * Math.min(textScale, 2.5)}>Not filed under a subject</text>
                 )}
                 {edgeLayer}
                 {suggestionLayer}
                 {nodeLayer}
+                {ghostLayer}
                 {markerLayer}
                 {ringLayer}
                 {farLabels}
               </g>
             </g>
           </svg>
+          </div>
         )}
 
         {/* What the selected card can do, beside it. */}
@@ -1444,9 +1648,9 @@ export function KnowledgeMap({ view, onChanged, onWorkspace }: { view: NovaKnowl
         {panel?.kind === 'delete' && (panel.node.type === 'subject'
           // A subject goes with everything inside it, in one step: no clearing it card by card first.
           ? <DeleteWholeDialog key={`del-${panel.node.id}`} target={{ subjectId: panel.node.subjectId ?? panel.node.id.slice('subject:'.length) }} title={panel.node.label} style={anchor(panel.node.id)} onClose={closePanel}
-              onDeleted={said => { setSelected(null); goTo(null); afterEdit(said, null) }} />
+              onDeleted={said => { leave(panel.node); setSelected(null); goTo(null); afterEdit(said, null) }} />
           : <DeleteDialog key={`del-${panel.node.id}`} node={panel.node} edges={view.edges} tree={tree} style={anchor(panel.node.id)} onClose={closePanel}
-              onDeleted={said => { if (selected === panel.node.id) setSelected(null); afterEdit(said, null) }} onStale={onChanged} />
+              onDeleted={said => { leave(panel.node); if (selected === panel.node.id) setSelected(null); afterEdit(said, null) }} onStale={onChanged} />
         )}
         {panel?.kind === 'delete_map' && (
           <DeleteWholeDialog target={{ workspaceId: panel.workspaceId }} title={panel.title} style={{ left: '50%', top: 12, transform: 'translateX(-50%)' }} onClose={closePanel}
