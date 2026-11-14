@@ -323,7 +323,8 @@ function Ring({ percent, color, size = 52, label }: { percent: number | null; co
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-label={label} className="shrink-0 -rotate-90">
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--map-line)" strokeWidth={4} />
-      {percent !== null && <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={4} strokeLinecap="round" strokeDasharray={`${(c * percent) / 100} ${c}`} />}
+      {percent !== null && <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={4} strokeLinecap="round" className="map-ring-arc"
+        strokeDasharray={c} strokeDashoffset={c * (1 - percent / 100)} style={{ ['--ring-c' as string]: c }} />}
       <text x={size / 2} y={size / 2} transform={`rotate(90 ${size / 2} ${size / 2})`} textAnchor="middle" dominantBaseline="central" fontSize={percent === null ? 13 : 12} fontWeight={650} className="fill-foreground">{percent === null ? '–' : `${percent}%`}</text>
     </svg>
   )
@@ -376,7 +377,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
   const up = once(neighbours.filter(({ edge }) => edge.to === node.id && edge.kind !== 'links_to' && edge.kind !== 'depends_on'))
   const within = once(neighbours.filter(({ edge }) => edge.from === node.id && (edge.kind === 'subtopic' || edge.kind === 'contains' || edge.kind === 'step' || (node.type === 'subject' && edge.kind === 'has_topic'))))
   const linked = once(neighbours.filter(({ edge }) => edge.kind === 'links_to' || edge.kind === 'depends_on'))
-  const act = 'flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-0.5 py-2 text-[11px] whitespace-nowrap font-medium text-foreground/80 transition-colors hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50 aria-expanded:bg-white/8 aria-expanded:text-foreground'
+  const act = 'flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-0.5 py-2 text-[11px] whitespace-nowrap font-medium text-foreground/80 transition duration-150 active:scale-95 hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50 aria-expanded:bg-white/8 aria-expanded:text-foreground'
   const icon = 'size-[18px]'
   const chip = 'inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/10 px-2.5 py-1 text-xs text-foreground/80 transition-colors hover:border-white/20 hover:bg-white/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring'
   const toggle = (s: typeof section) => setSection(v => (v === s ? 'none' : s))
@@ -388,7 +389,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
         const Icon = TILE_ICON[n.type] ?? FileText
         return (
           <button key={n.id} type="button" onClick={() => onPick(n.id)} title={n.label}
-            className="flex min-w-0 items-start gap-2 rounded-xl border border-white/8 bg-white/[0.025] p-2 text-left transition-colors hover:border-white/16 hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-ring">
+            className="flex min-w-0 items-start gap-2 rounded-xl border border-white/8 bg-white/[0.025] p-2 text-left transition duration-200 hover:-translate-y-0.5 hover:border-white/16 hover:bg-white/5 hover:shadow-soft active:translate-y-0 focus-visible:outline-2 focus-visible:outline-ring">
             <Icon aria-hidden className="mt-0.5 size-3.5 shrink-0" style={{ color: FILL[n.type] }} />
             <span className="min-w-0">
               <span className="line-clamp-2 text-xs font-medium leading-snug text-foreground/90">{n.label}</span>
@@ -417,7 +418,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
 
   return (
     <aside aria-label={`Selected: ${TYPE_LABEL[node.type]} ${node.label}`} data-map-overlay data-detail data-detail-type={node.type}
-      className="subject-tone map-inspector absolute inset-x-0 bottom-0 z-20 flex max-h-[55%] flex-col gap-3.5 overflow-y-auto overscroll-contain rounded-t-2xl border-t border-white/10 bg-card/95 p-4 shadow-float backdrop-blur lg:inset-x-auto lg:bottom-auto lg:right-3 lg:top-3 lg:max-h-[calc(100%-1.5rem)] lg:w-[21rem] lg:rounded-2xl lg:border"
+      className="subject-tone map-inspector map-inspector-in absolute inset-x-0 bottom-0 z-20 flex max-h-[55%] flex-col gap-3.5 overflow-y-auto overscroll-contain rounded-t-2xl border-t border-white/10 bg-card/95 p-4 shadow-float backdrop-blur lg:inset-x-auto lg:bottom-auto lg:right-3 lg:top-3 lg:max-h-[calc(100%-1.5rem)] lg:w-[21rem] lg:rounded-2xl lg:border"
       style={toneStyle(tone)} onPointerDown={e => e.stopPropagation()}>
       {/* What it is, where it sits, and its state at a glance. */}
       <div className="flex items-start gap-3">
@@ -1001,23 +1002,27 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   const stopMoving = useCallback(() => startMoving(120), [startMoving])
   // Eased: the point at the centre of the screen glides, and the zoom changes
   // by the same proportion each frame, so going in reads as a zoom into it.
-  const animateTo = useCallback((to: View, ms = 320) => {
+  // Like a camera: a short move is quick, a long one or a big change of zoom
+  // takes longer (never over 0.7 s), easing in and out. Calm: at once.
+  const animateTo = useCallback((to: View, minMs?: number) => {
     stopAnim()
     const el = frame.current
-    if (!el || reducedMotion()) { setT(to); return }
+    if (!el || reducedMotion() || motion === 'reduced') { setT(to); return }
     const from = tNow.current, cw = el.clientWidth / 2, ch = el.clientHeight / 2
     const a = { x: (cw - from.x) / from.k, y: (ch - from.y) / from.k }, b = { x: (cw - to.x) / to.k, y: (ch - to.y) / to.k }
+    const travel = Math.hypot((b.x - a.x) * to.k, (b.y - a.y) * to.k), zoom = Math.abs(Math.log(to.k / from.k))
+    const ms = Math.max(minMs ?? 0, Math.min(700, 240 + travel * 0.3 + zoom * 260))
     const start = performance.now()
     startMoving(ms + 120)
     const step = (now: number) => {
-      const p = Math.min(1, (now - start) / ms), e = 1 - (1 - p) ** 3
+      const p = Math.min(1, (now - start) / ms), e = p < 0.5 ? 4 * p ** 3 : 1 - (-2 * p + 2) ** 3 / 2
       const k = from.k * (to.k / from.k) ** e
       const cx = a.x + (b.x - a.x) * e, cy = a.y + (b.y - a.y) * e
       setT(p === 1 ? to : { k, x: cw - cx * k, y: ch - cy * k })
       anim.current = p < 1 ? requestAnimationFrame(step) : null
     }
     anim.current = requestAnimationFrame(step)
-  }, [stopAnim, startMoving])
+  }, [stopAnim, startMoving, motion])
 
   // The details panel covers the right of a wide canvas: fit beside it.
   const besidePanel = useCallback((el: HTMLElement) => (selected && detailOpen && el.clientWidth >= 1024 ? 372 : 0), [selected, detailOpen])
@@ -1534,6 +1539,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         <path d={d} fill="none" data-edge={e.kind} data-lane={d.includes(' H ') && e.kind !== 'links_to' && e.kind !== 'depends_on' ? '' : undefined}
           stroke={stroke} strokeWidth={width} strokeDasharray={dash} strokeLinejoin="round" vectorEffect="non-scaling-stroke"
           opacity={dim ? (e.kind === 'depends_on' ? 0.2 : 0.25) : rest} {...drawProps} />
+        {/* What the selection joins: a quiet pulse travelling along the line. */}
+        {lit && !arrive && <path d={d} fill="none" className="map-edge-flow" stroke="var(--action)" strokeWidth={2.4} strokeDasharray="1.5 11" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.95} />}
       </g>
     )
   }), [allLines, pointOf, focusId, placed.lanes, markers, entrance, fresh, depthOf, detail, emphasis])
@@ -1616,6 +1623,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           {th > 0 && <rect className="map-slab" x={-w / 2} y={-h / 2 + th} width={w} height={h} rx={r} />}
           <g className={cn('map-lift', on || near || dragging ? 'map-raise' : recede ? 'map-recede' : undefined)}>
             {(on || dragging) && <rect x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="color-mix(in oklch, var(--action) 9%, transparent)" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
+            {/* Selected: one soft pulse outward, then still. */}
+            {on && !dragging && <rect className="map-select-pulse pointer-events-none" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
             <rect className="map-focus opacity-0" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--ring)" strokeWidth={2.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" />
             <g style={dragging ? { filter: 'drop-shadow(0 10px 18px rgb(0 0 0 / 0.25))' } : undefined}><CardFace n={n} detail={detail} /></g>
             {n.type === 'topic' && <TopicMarks n={n} detail={detail} lens={lens} now={now} />}
@@ -1633,7 +1642,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           const x = below ? -cw / 2 : w / 2 + 12, y = below ? h / 2 + th + (detail >= 1 ? 18 : 22) : -10
           return (
             <g transform={`translate(${x} ${y})`} role="button" tabIndex={-1} aria-label={`${foldedLabel(c)} inside ${n.label}. Open it to see them.`} data-folded={n.id}
-              className="cursor-pointer" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); if (canExplore(tree, n.id)) explore(n.id) }}>
+              className="map-chip cursor-pointer" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); if (canExplore(tree, n.id)) explore(n.id) }}>
               <title>{`${foldedLabel(c)}: open ${n.label} to see them`}</title>
               <rect width={cw} height={20} rx={10} fill="var(--card)" stroke="var(--map-line-strong)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
               <text x={8} y={13.6} fontSize={detail >= 1 ? 10.5 : 12} fontWeight={500} className="fill-[var(--subtle)]">{text}</text>
@@ -2075,6 +2084,9 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
             than the cards (so the cards read as nearer), ambient light, and
             a vignette. Decoration only: nothing here can be pointed at. */}
         <div aria-hidden className="map-space pointer-events-none absolute inset-0" />
+        {/* Ambient light, nearer than the dots and farther than the cards: it drifts a little with a pan (a transform, so nothing repaints). */}
+        <div aria-hidden className="map-ambient pointer-events-none absolute -inset-[12%]"
+          style={{ transform: `translate3d(${Math.max(-90, Math.min(90, t.x * 0.05))}px, ${Math.max(-70, Math.min(70, t.y * 0.05))}px, 0)` }} />
         {(() => {
           // Moved by a transform within one dot's spacing, so a pan repaints nothing.
           const S = Math.round(30 * (0.55 + 0.45 * Math.min(t.k, 1.6)))
@@ -2100,7 +2112,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
             </defs>
             <g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>
               <g key={focus ?? 'root'} className={entrance ? undefined : 'map-enter'}>
-                {regionLayer}
+                <g className={entrance ? 'map-glow-in' : undefined}>{regionLayer}</g>
                 {!inside && placed.loose && (
                   <text x={placed.loose.x - CARD.note.w / 2} y={placed.loose.y - 44} className="fill-[var(--subtle)]" fontSize={12 * Math.min(textScale, 2.5)}>Not filed under a subject</text>
                 )}
@@ -2305,7 +2317,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         </div>
 
         {picked && detailOpen && (
-          <Detail node={picked} neighbours={neighbours} onPick={id => pick(id)} onClose={() => setDetailOpen(false)} where={ancestorsOf(picked.id)} tally={picked.type === 'subject' ? subjectTallies.get(picked.id) : undefined} subjectTopics={picked.type === 'subject' ? view.nodes.filter((n): n is Extract<MapNode, { type: 'topic' }> => n.type === 'topic' && rootOf(n.id, tree.parent) === picked.id) : undefined}
+          <Detail key={picked.id} node={picked} neighbours={neighbours} onPick={id => pick(id)} onClose={() => setDetailOpen(false)} where={ancestorsOf(picked.id)} tally={picked.type === 'subject' ? subjectTallies.get(picked.id) : undefined} subjectTopics={picked.type === 'subject' ? view.nodes.filter((n): n is Extract<MapNode, { type: 'topic' }> => n.type === 'topic' && rootOf(n.id, tree.parent) === picked.id) : undefined}
             onScope={!canExplore(tree, picked.id) && focus === null ? () => setScope(picked.id) : null}
             scoped={scope === picked.id} view={view} onChanged={onChanged}
             inside={insideCount(picked.id)} collapsed={collapsed.has(picked.id)} onCollapse={() => toggleFold(picked.id)}
