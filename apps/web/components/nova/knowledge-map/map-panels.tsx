@@ -506,7 +506,7 @@ export function Legend({ onClose, suggestions, outside }: { onClose: () => void;
       <Header title="What the map shows" onClose={onClose} />
       <ul className="mt-3 space-y-2">
         {row(<rect x={2} y={2} width={30} height={14} rx={5} fill="var(--card)" stroke="var(--border)" />, 'A card: a subject, topic, task, note or saved page. Each branch reads top to bottom in its saved order.')}
-        {row(<rect x={2} y={2} width={30} height={14} rx={5} fill="none" stroke="var(--map-topic)" strokeDasharray="4 3" />, 'A topic with no session yet: it lies flat.')}
+        {row(<><rect x={2} y={2} width={30} height={14} rx={5} fill="var(--map-card)" stroke="var(--map-card-edge)" /><rect x={5.5} y={5} width={2.5} height={8} rx={1.25} fill="none" stroke="var(--map-topic)" strokeWidth={1.1} /></>, 'A topic with no session yet: it lies flat, its colour bar hollow.')}
         {row(<><rect x={2} y={6} width={30} height={11} rx={5} className="map-slab" /><rect x={2} y={1} width={30} height={11} rx={5} fill="var(--card)" stroke="var(--border)" /></>, 'A raised card has more behind it: a topic stands higher as your own estimate grows (weak, developing, solid); subjects stand highest.')}
         {row(<path d="M 6 2 v 14 M 6 2 h 9 l -2.5 3.5 l 2.5 3.5 h -9" fill="none" stroke="var(--nova)" strokeWidth={1.4} />, 'A milestone: a stage of work, not studied.')}
         {row(<><rect x={1} y={3} width={32} height={12} rx={6} fill="none" stroke="var(--map-note)" /><text x={5} y={12} fontSize={7.5} fontWeight={600} style={{ fill: 'var(--map-note)' }}>Review</text></>, 'Review due: the topic’s review date, set by your sessions, has come.')}

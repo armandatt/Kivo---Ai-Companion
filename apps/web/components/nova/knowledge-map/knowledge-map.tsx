@@ -861,7 +861,9 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   // for these, so a card explored keeps the place it has on the whole map.
   // Everything, not explored, not scoped: an overview (overview-density.ts).
   // A workspace's own map, and any card explored, draw every item as before.
-  const overviewOn = !view.workspaceId && density === 'overview' && current(stack).focus === null && !inScope
+  // The whole map: not a workspace's own, nothing explored or scoped.
+  const wholeMap = !view.workspaceId && current(stack).focus === null && !inScope
+  const overviewOn = wholeMap && density === 'overview'
   const dens = useMemo(() => (overviewOn ? overviewDensity(view.nodes, tree.parent) : null), [overviewOn, view.nodes, tree.parent])
   // What search reaches: everything the filters leave, folded or not.
   const searchable = useMemo(() => view.nodes.filter(n => !removed.has(n.id) && shown[n.type] && (subject === '' || n.subjectId === subject) && (!inScope || inScope.has(n.id))), [view.nodes, removed, shown, subject, inScope])
@@ -1494,13 +1496,23 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     for (let p = tree.parent.get(id); p && drawnIds.has(p) && d < 12; p = tree.parent.get(p)) d++
     return d
   }, [tree, drawnIds])
+  // The selected card's way back to its subject lights with it: what it sits
+  // in, and what that sits in, as one path.
+  const litPath = useMemo(() => {
+    if (!focusId) return null
+    const set = new Set<string>([focusId])
+    for (let p = tree.parent.get(focusId), hops = 0; p && hops < 24; p = tree.parent.get(p), hops++) set.add(p)
+    return set
+  }, [focusId, tree.parent])
   const edgeLayer = useMemo(() => allLines.map(e => {
     const a = pointOf(e.from), b = pointOf(e.to)
     if (!a || !b) return null
-    const lit = focusId !== null && (e.from === focusId || e.to === focusId)
+    const lit = focusId !== null && (e.from === focusId || e.to === focusId || (litPath !== null && litPath.has(e.from) && litPath.has(e.to)))
     // Far out, a [[link]] or a wait crossing the map says nothing but tangle:
-    // drawn only for the card in focus. The tree's own lines stay.
-    if (detail === 0 && !lit && (e.kind === 'links_to' || e.kind === 'depends_on')) return null
+    // drawn only for the card in focus. In Everything, the same until close
+    // (full detail): there they run between subjects across the whole map.
+    // The tree's own lines stay.
+    if (!lit && (e.kind === 'links_to' || e.kind === 'depends_on') && (detail === 0 || (detail === 1 && wholeMap))) return null
     const dim = (focusId !== null && !lit) || (focusId === null && emphasis !== null && !emphasis.has(e.from) && !emphasis.has(e.to))
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y
     // Arriving: drawn along its length once both its cards are there (a
@@ -1523,17 +1535,23 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
       // Into a wrapped column: along the gaps, never across the cards before it.
       const lane = placed.lanes?.get(e.to)
       const laned = lane && lane.x === b.x && lane.y === b.y && !markers.has(e.to)
-      d = laned ? `M ${a.x} ${a.y} H ${lane.trunkX} V ${lane.laneY} H ${b.x} V ${b.y}` : `M ${a.x} ${a.y} L ${b.x} ${b.y}`
-      stroke = lit ? 'var(--action)' : 'var(--map-line)'
+      // A branch flows out of its card and into the next, level at both ends;
+      // in the outline (one card under another) it is the plain line.
+      const flow = Math.abs(b.x - a.x) > 60
+      d = laned ? `M ${a.x} ${a.y} H ${lane.trunkX} V ${lane.laneY} H ${b.x} V ${b.y}`
+        : flow ? `M ${a.x} ${a.y} C ${mx} ${a.y} ${mx} ${b.y} ${b.x} ${b.y}` : `M ${a.x} ${a.y} L ${b.x} ${b.y}`
+      // In its subject's colour, so each subject's branches read as its own.
+      stroke = lit ? 'var(--action)' : 'color-mix(in oklch, var(--sc) 62%, var(--map-line-strong))'
       width = lit ? 2.2 : laned ? 1.3 : e.kind === 'contains' ? 2 : e.kind === 'has_topic' || e.kind === 'subtopic' ? 1.5 : 1.1
       dash = e.kind === 'filed_under' ? '5 4' : undefined
       // Deeper in the tree, lighter: never under 55%.
-      rest = Math.max(0.55, 1 - Math.max(0, depthOf(e.to) - 1) * 0.15)
+      rest = Math.max(0.45, 0.85 - Math.max(0, depthOf(e.to) - 1) * 0.14)
     }
     // Far out the tree's lines are thin and plain: dashes at that size read as noise.
     if (detail === 0 && !lit) { dash = undefined; width = Math.min(width, 1); rest = Math.min(rest, 0.55) }
+    const toNode = byId.get(e.to)
     return (
-      <g key={e.id} className={arrive} style={anim}>
+      <g key={e.id} className={cn('subject-tone', arrive)} style={{ ...toneStyle(toNode?.type === 'subject' ? toNode.label : toNode?.subjectName ?? null), ...anim }}>
         {/* A lit line glows, so what the selected card joins reads at a glance. */}
         {lit && <path d={d} fill="none" stroke="var(--action)" strokeWidth={7} strokeLinecap="round" strokeLinejoin="round" opacity={0.16} vectorEffect="non-scaling-stroke" {...drawProps} />}
         <path d={d} fill="none" data-edge={e.kind} data-lane={d.includes(' H ') && e.kind !== 'links_to' && e.kind !== 'depends_on' ? '' : undefined}
@@ -1543,10 +1561,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         {lit && !arrive && <path d={d} fill="none" className="map-edge-flow" stroke="var(--action)" strokeWidth={2.4} strokeDasharray="1.5 11" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.95} />}
       </g>
     )
-  }), [allLines, pointOf, focusId, placed.lanes, markers, entrance, fresh, depthOf, detail, emphasis])
+  }), [allLines, pointOf, focusId, placed.lanes, markers, entrance, fresh, depthOf, detail, emphasis, wholeMap, litPath, byId])
 
   // The rings of [[links]], over the cards: one where each link arrives.
-  const ringLayer = useMemo(() => allLines.filter(e => e.kind === 'links_to' && (detail > 0 || (focusId !== null && (e.from === focusId || e.to === focusId)))).map(e => {
+  const ringLayer = useMemo(() => allLines.filter(e => e.kind === 'links_to' && ((detail === 2 || (detail === 1 && !wholeMap)) || (focusId !== null && (e.from === focusId || e.to === focusId)))).map(e => {
     const a = pointOf(e.from), b = pointOf(e.to)
     const to = byId.get(e.to), from = byId.get(e.from)
     if (!a || !b || !to || !from) return null
@@ -1560,7 +1578,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         <title>{`“${from.label}” links to “${to.label}” with [[${to.label}]]`}</title>
       </circle>
     )
-  }), [allLines, pointOf, byId, markers, focusId, detail])
+  }), [allLines, pointOf, byId, markers, focusId, detail, wholeMap])
 
   const suggestionLayer = useMemo(() => (detail === 0 ? [] : suggestions).map(s => {
     const a = placed.at.get(s.from), b = placed.at.get(s.to)
@@ -1576,6 +1594,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
 
   // The cards. Memoised apart from the pan; the zoom only changes them when
   // it crosses into another level of detail.
+  // Which way a card's tree grows: on the left of its subject, leftward.
+  const outer = useCallback((id: string) => (placed.left?.has(id) ? -1 : 1), [placed.left])
   const nodeLayer = useMemo(() => drawn.map(n => {
     const p = placed.at.get(n.id)
     if (!p) return null
@@ -1619,6 +1639,13 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         <g className={arriving} style={arriving ? { animationDelay: `${delay ?? 0}ms` } : undefined}>
           {/* The shadow it casts, softer the higher it stands; then its edge (the slab). */}
           {/* Far out it can't be seen: not drawn, so zooming stays light on a large map. */}
+          {/* A subject anchor glows softly in its colour, so the eye finds the anchors first. */}
+          {n.type === 'subject' && (
+            <g className="map-anchor-glow pointer-events-none">
+              <rect x={-w / 2 - 22} y={-h / 2 - 20} width={w + 44} height={h + 40} rx={34} fill="var(--sc)" opacity={0.05} />
+              <rect x={-w / 2 - 11} y={-h / 2 - 10} width={w + 22} height={h + 20} rx={25} fill="var(--sc)" opacity={0.08} />
+            </g>
+          )}
           {detail > 0 && <rect className="map-shadow" x={-w / 2 + 3} y={-h / 2 + th + 4} width={w - 6} height={h} rx={r + 2} opacity={0.22 + th * 0.025} />}
           {th > 0 && <rect className="map-slab" x={-w / 2} y={-h / 2 + th} width={w} height={h} rx={r} />}
           <g className={cn('map-lift', on || near || dragging ? 'map-raise' : recede ? 'map-recede' : undefined)}>
@@ -1626,46 +1653,48 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
             {/* Selected: one soft pulse outward, then still. */}
             {on && !dragging && <rect className="map-select-pulse pointer-events-none" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
             <rect className="map-focus opacity-0" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--ring)" strokeWidth={2.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" />
-            <g style={dragging ? { filter: 'drop-shadow(0 10px 18px rgb(0 0 0 / 0.25))' } : undefined}><CardFace n={n} detail={detail} /></g>
+            <g style={dragging ? { filter: 'drop-shadow(0 10px 18px rgb(0 0 0 / 0.25))' } : undefined}><CardFace n={n} detail={detail} folded={overviewOn ? (dens && foldedTotal(dens.folded.get(n.id)) > 0 ? foldedLabel(dens.folded.get(n.id)!) : '') : undefined} /></g>
             {n.type === 'topic' && <TopicMarks n={n} detail={detail} lens={lens} now={now} />}
             {/* Light on its surface, from above. */}
             {detail > 0 && <rect className="pointer-events-none" x={-w / 2} y={-h / 2} width={w} height={h} rx={r} fill="url(#map-sheen)" />}
+            {detail > 0 && <rect className="pointer-events-none" x={-w / 2} y={-h / 2} width={w} height={h} rx={r} fill="url(#map-shade)" />}
             {flash?.id === n.id && <rect key={flash.n} className="map-found pointer-events-none" x={-w / 2 - 6} y={-h / 2 - 6} width={w + 12} height={h + 12} rx={r + 6} fill="none" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
           </g>
         </g>
-        {/* Everything's overview: what is folded under it, as one chip; it opens by going in. */}
-        {dens && foldedTotal(dens.folded.get(n.id)) > 0 && (() => {
-          const c = dens.folded.get(n.id)!
-          const text = detail >= 1 ? `+ ${foldedLabel(c)}` : `+${foldedTotal(c)}`
-          const cw = text.length * (detail >= 1 ? 6.1 : 7.5) + 16
-          const below = n.type === 'subject'
-          const x = below ? -cw / 2 : w / 2 + 12, y = below ? h / 2 + th + (detail >= 1 ? 18 : 22) : -10
+        {/* Everything's overview: how many items are folded inside, on its outer
+            edge (where a fold button sits); it opens by going in. What they are
+            is said on the card's face. */}
+        {dens && detail >= 1 && foldedTotal(dens.folded.get(n.id)) > 0 && (() => {
+          const c = dens.folded.get(n.id)!, total = foldedTotal(c)
+          const label = total > 99 ? '99+' : `+${total}`
+          const r = label.length > 2 ? 12 : 10
+          const at = n.type === 'subject' ? { x: 0, y: h / 2 + th } : { x: (outer(n.id)) * (w / 2), y: 0 }
           return (
-            <g transform={`translate(${x} ${y})`} role="button" tabIndex={-1} aria-label={`${foldedLabel(c)} inside ${n.label}. Open it to see them.`} data-folded={n.id}
+            <g transform={`translate(${at.x} ${at.y})`} role="button" tabIndex={-1} aria-label={`${foldedLabel(c)} inside ${n.label}. Open it to see them.`} data-folded={n.id}
               className="map-chip cursor-pointer" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); if (canExplore(tree, n.id)) explore(n.id) }}>
               <title>{`${foldedLabel(c)}: open ${n.label} to see them`}</title>
-              <rect width={cw} height={20} rx={10} fill="var(--card)" stroke="var(--map-line-strong)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-              <text x={8} y={13.6} fontSize={detail >= 1 ? 10.5 : 12} fontWeight={500} className="fill-[var(--subtle)]">{text}</text>
+              <rect x={-r - 2} y={-10} width={2 * r + 4} height={20} rx={10} fill="var(--map-card)" stroke="var(--map-line-strong)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+              <text textAnchor="middle" y={3.6} fontSize={10} fontWeight={650} className="fill-[var(--subtle)]">{label}</text>
             </g>
           )
         })()}
-        {/* A subject's progress at a glance: its topics by state, all of them. */}
-        {overviewOn && n.type === 'subject' && (() => {
+        {/* A subject's progress at a glance, along its card's foot: its topics by state, all of them. */}
+        {overviewOn && n.type === 'subject' && detail >= 1 && (() => {
           const tl = subjectTallies.get(n.id)
           if (!tl || tl.topics === 0) return null
-          const bw = w - 36, x0 = -bw / 2, y0 = h / 2 + th + 6
+          const bw = w - 68, x0 = -w / 2 + 34, y0 = h / 2 - 12
           const segs: Array<[number, string]> = [[tl.solid, 'var(--nova)'], [tl.developing, 'var(--map-resource)'], [tl.weak, 'var(--map-note)'], [tl.studied - tl.solid - tl.developing - tl.weak, 'var(--map-topic)']]
           let at = x0
           return (
             <g className="pointer-events-none" data-subject-progress={n.id}>
-              <rect x={x0} y={y0} width={bw} height={4} rx={2} fill="var(--map-line)" />
-              {segs.map(([count, fill], i) => { if (count <= 0) return null; const sw = (bw * count) / tl.topics; const r = <rect key={i} x={at} y={y0} width={sw} height={4} rx={2} fill={fill} />; at += sw; return r })}
+              <rect x={x0} y={y0} width={bw} height={3} rx={1.5} fill="var(--map-line)" />
+              {segs.map(([count, fill], i) => { if (count <= 0) return null; const sw = (bw * count) / tl.topics; const r = <rect key={i} x={at} y={y0} width={sw} height={3} rx={1.5} fill={fill} />; at += sw; return r })}
             </g>
           )
         })()}
         {kids > 0 && detail >= 1 && !(dens && (tree.children.get(n.id) ?? []).every(c => dens.hidden.has(c))) && (
           // Fold or show what hangs from it.
-          <g transform={`translate(${w / 2} 0)`} role="button" tabIndex={-1} aria-label={collapsed.has(n.id) ? `Show what is inside ${n.label}` : `Fold what is inside ${n.label}`} data-fold={collapsed.has(n.id) ? 'folded' : 'open'}
+          <g transform={`translate(${outer(n.id) * (w / 2)} 0)`} role="button" tabIndex={-1} aria-label={collapsed.has(n.id) ? `Show what is inside ${n.label}` : `Fold what is inside ${n.label}`} data-fold={collapsed.has(n.id) ? 'folded' : 'open'}
             onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); toggleFold(n.id) }} className="cursor-pointer">
             <circle r={9} fill="var(--card)" stroke="var(--border)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
             {collapsed.has(n.id)
@@ -1685,7 +1714,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         )}
       </g>
     )
-  }), [drawn, placed, neighbourIds, selected, dragAt, detail, onCardPointerDown, onCardPointerMove, onCardPointerUp, onCardPointerCancel, tree, collapsed, insideCount, toggleFold, select, explore, openAdd, entrance, fresh, flash, chosenAround, emphasis, lens, now, dens, overviewOn, subjectTallies])
+  }), [drawn, placed, neighbourIds, selected, dragAt, detail, onCardPointerDown, onCardPointerMove, onCardPointerUp, onCardPointerCancel, tree, collapsed, insideCount, toggleFold, select, explore, openAdd, entrance, fresh, flash, chosenAround, emphasis, lens, now, dens, overviewOn, subjectTallies, outer])
 
   // The ground each subject's tree stands on, lit softly in its colour, and
   // what each holds (for the overview's labels).
@@ -2106,8 +2135,13 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           <svg className="absolute inset-0 size-full" role="group" aria-label={`${drawn.length} items and ${drawnEdges.length} links${markers.size ? `, ${markers.size} outside` : ''}`}>
             <defs>
               <linearGradient id="map-sheen" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#fff" stopOpacity={0.075} />
+                <stop offset="0%" stopColor="#fff" stopOpacity={0.1} />
                 <stop offset="45%" stopColor="#fff" stopOpacity={0} />
+              </linearGradient>
+              {/* Toward a card's foot, a little shade: with the light from above, a surface with volume. */}
+              <linearGradient id="map-shade" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="55%" stopColor="#000" stopOpacity={0} />
+                <stop offset="100%" stopColor="#000" stopOpacity={0.16} />
               </linearGradient>
             </defs>
             <g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>

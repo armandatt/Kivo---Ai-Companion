@@ -170,32 +170,53 @@ const boxOf = (at: Map<string, { x: number; y: number }>) => {
   return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) }
 }
 
-test('a subject with many topics is not one long column: they wrap, in their order', () => {
+test('a subject with many topics is not one long column: they sit on both its sides, wrapped, in their order', () => {
   const nodes: MapNode[] = [subject('ml')], edges: MapEdge[] = []
   for (let i = 0; i < 40; i++) { const t = topic(`t${String(i).padStart(2, '0')}`, 'ml'); nodes.push(t); edges.push(edge('subject:ml', t.id, 'has_topic')) }
-  const { at } = layoutMap(nodes, edges)
+  const { at, left } = layoutMap(nodes, edges)
   noOverlap(nodes, at)
-  const columns = new Set(nodes.slice(1).map(n => at.get(n.id)!.x))
-  assert.equal(columns.size, 3, 'three short columns, not one of 40')
+  const s = at.get('subject:ml')!
+  const right = nodes.slice(1).filter(n => at.get(n.id)!.x > s.x), leftSide = nodes.slice(1).filter(n => at.get(n.id)!.x < s.x)
+  assert.equal(right.length, 20, 'half to its right')
+  assert.equal(leftSide.length, 20, 'half to its left')
+  assert.deepEqual(leftSide.map(n => n.id), [...left!].sort(), 'the layout says which cards are on the left')
+  assert.equal(new Set(right.map(n => at.get(n.id)!.x)).size, 3, 'each side a few short columns')
   const { w, h } = boxOf(at)
-  assert.ok(h < 40 * 58 / 2, `height ${h} well under a single column`)
-  assert.ok(w < h * 2, 'not a wide strip either')
-  // Read down each column, then the next: the saved order.
-  const order = nodes.slice(1).map(n => n.id).sort((a, b) => at.get(a)!.x - at.get(b)!.x || at.get(a)!.y - at.get(b)!.y)
-  assert.deepEqual(order, nodes.slice(1).map(n => n.id))
+  assert.ok(h < 40 * 58 / 4, `height ${h} far under a single column`)
+  assert.ok(w / h < 4.5, `not a wide strip either: ${Math.round(w)}×${Math.round(h)}`)
+  // Each side reads outward column by column, top to bottom: the saved order, the first half to the right.
+  const out = (ids: MapNode[]) => ids.map(n => n.id).sort((a, b) => Math.abs(at.get(a)!.x - s.x) - Math.abs(at.get(b)!.x - s.x) || at.get(a)!.y - at.get(b)!.y)
+  assert.deepEqual([...out(right), ...out(leftSide)], nodes.slice(1).map(n => n.id))
   // The subject sits level with the middle of what hangs from it.
-  const ys = nodes.slice(1).map(n => at.get(n.id)!.y)
-  assert.equal(at.get('subject:ml')!.y, (Math.min(...ys) + Math.max(...ys)) / 2)
+  const ys = right.map(n => at.get(n.id)!.y)
+  assert.equal(s.y, (Math.min(...ys) + Math.max(...ys)) / 2)
 })
 
-test('a few topics, and topics with topics inside, keep the plain tree', () => {
-  const nodes: MapNode[] = [subject('os')], edges: MapEdge[] = []
-  for (let i = 0; i < 5; i++) { const t = topic(`u${i}`, 'os'); nodes.push(t); edges.push(edge('subject:os', t.id, 'has_topic')) }
-  const { at } = layoutMap(nodes, edges)
-  assert.equal(new Set(nodes.slice(1).map(n => at.get(n.id)!.x)).size, 1, 'five topics: one column, as before')
+test('a few topics keep one side; from four branches they sit around their subject, by weight', () => {
+  const build = (count: number, deep = -1) => {
+    const nodes: MapNode[] = [subject('os')], edges: MapEdge[] = []
+    for (let i = 0; i < count; i++) {
+      const t = topic(`u${i}`, 'os'); nodes.push(t); edges.push(edge('subject:os', t.id, 'has_topic'))
+      if (i === deep) for (let j = 0; j < 6; j++) { const u = topic(`u${i}s${j}`, 'os'); nodes.push(u); edges.push(edge(t.id, u.id, 'subtopic')) }
+    }
+    return { nodes, edges, ...layoutMap(nodes, edges) }
+  }
+  const three = build(3)
+  assert.equal(new Set(three.nodes.slice(1).map(n => three.at.get(n.id)!.x)).size, 1, 'three topics: one column, as before')
+  assert.equal(three.left!.size, 0)
+  const five = build(5)
+  const sx = five.at.get('subject:os')!.x
+  assert.deepEqual(five.nodes.slice(1).map(n => Math.sign(five.at.get(n.id)!.x - sx)), [1, 1, 1, -1, -1], 'in order: the first to the right')
+  // A heavy first branch weighs a side on its own.
+  const heavy = build(5, 0)
+  assert.deepEqual(['topic:u0', 'topic:u1', 'topic:u4'].map(id => Math.sign(heavy.at.get(id)!.x - heavy.at.get('subject:os')!.x)), [1, -1, -1])
+  noOverlap(heavy.nodes, heavy.at)
+  // The left side is the same tree, mirrored: a subtopic further out than its topic.
+  const deepLeft = build(5, 4)
+  assert.ok(deepLeft.at.get('topic:u4s0')!.x < deepLeft.at.get('topic:u4')!.x)
 })
 
-test('many subjects pack into columns toward a balanced shape, uneven and deep branches never overlapping', () => {
+test('many subjects pack into rows toward a balanced shape, uneven and deep branches never overlapping', () => {
   const nodes: MapNode[] = [], edges: MapEdge[] = []
   for (let s = 0; s < 10; s++) {
     nodes.push(subject(`s${s}`))
@@ -212,23 +233,64 @@ test('many subjects pack into columns toward a balanced shape, uneven and deep b
   const { w, h } = boxOf(a.at)
   assert.ok(w / h > 0.6 && w / h < 3.5, `shape ${Math.round(w)}×${Math.round(h)}`)
   const roots = nodes.filter(n => n.type === 'subject').map(n => a.at.get(n.id)!.x)
-  assert.ok(new Set(roots).size > 1, 'subjects sit in more than one column')
+  assert.ok(new Set(roots).size > 1, 'subjects sit side by side')
+  const rowsY = new Set(nodes.filter(n => n.type === 'subject').map(n => Math.round(a.at.get(n.id)!.y)))
+  assert.ok(rowsY.size > 1, 'and in more than one row')
   assert.deepEqual([...layoutMap(nodes, edges).at.entries()], [...a.at.entries()], 'the same data, the same map')
 })
 
-test('lines into wrapped columns run along the gaps, and only while the card is where the layout put it', () => {
+test('lines into wrapped columns run along the gaps, on either side, and only while the card is where the layout put it', () => {
   const nodes: MapNode[] = [subject('ml')], edges: MapEdge[] = []
-  for (let i = 0; i < 14; i++) { const t = topic(`t${String(i).padStart(2, '0')}`, 'ml'); nodes.push(t); edges.push(edge('subject:ml', t.id, 'has_topic')) }
+  for (let i = 0; i < 28; i++) { const t = topic(`t${String(i).padStart(2, '0')}`, 'ml'); nodes.push(t); edges.push(edge('subject:ml', t.id, 'has_topic')) }
   const auto = layoutMap(nodes, edges)
-  const xs = [...new Set(nodes.slice(1).map(n => auto.at.get(n.id)!.x))].sort((a, b) => a - b)
-  for (const n of nodes.slice(1)) {
-    const p = auto.at.get(n.id)!, lane = auto.lanes!.get(n.id)
-    if (p.x === xs[0]) { assert.equal(lane, undefined, 'the first column is reached directly'); continue }
-    assert.ok(lane && lane.trunkX < xs[0]! - CARD.topic.w / 2 && lane.trunkX > auto.at.get('subject:ml')!.x + CARD.subject.w / 2, 'the trunk sits in the gap before the first column')
-    // The lane runs in the gap above the card's row: clear of every card it passes.
-    for (const o of nodes.slice(1)) { const q = auto.at.get(o.id)!; assert.ok(Math.abs(lane.laneY - q.y) >= CARD.topic.h / 2, `${n.id}'s lane clears ${o.id}`) }
+  const s = auto.at.get('subject:ml')!
+  let laned = 0
+  for (const dir of [1, -1]) {
+    const mine = nodes.slice(1).filter(n => Math.sign(auto.at.get(n.id)!.x - s.x) === dir)
+    const inner = Math.min(...mine.map(n => Math.abs(auto.at.get(n.id)!.x - s.x)))
+    for (const n of mine) {
+      const p = auto.at.get(n.id)!, lane = auto.lanes!.get(n.id)
+      if (Math.abs(p.x - s.x) === inner) { assert.equal(lane, undefined, 'the first column is reached directly'); continue }
+      laned++
+      const t = Math.abs(lane!.trunkX - s.x)
+      assert.ok(lane && t < inner - CARD.topic.w / 2 && t > CARD.subject.w / 2, 'the trunk sits in the gap before the first column')
+      for (const o of nodes.slice(1)) { const q = auto.at.get(o.id)!; assert.ok(Math.abs(lane!.laneY - q.y) >= CARD.topic.h / 2, `${n.id}'s lane clears ${o.id}`) }
+    }
   }
+  assert.ok(laned > 0)
   const moved = withPositions(auto, nodes, new Map([['topic:t13', { x: 9000, y: 9000 }]]))
   const l = moved.lanes!.get('topic:t13')!
   assert.notDeepEqual([l.x, l.y], [moved.at.get('topic:t13')!.x, moved.at.get('topic:t13')!.y], 'a moved card no longer matches its lane, so its line is straight')
+})
+
+test('subjects of very different sizes compose into a balanced whole: no cluster on another, consistent gaps, near the shape', () => {
+  const nodes: MapNode[] = [], edges: MapEdge[] = []
+  const sizes = [47, 6, 37, 3, 19, 12, 8, 1, 10, 7]
+  sizes.forEach((count, s) => {
+    nodes.push(subject(`s${s}`))
+    for (let i = 0; i < count; i++) {
+      const t = topic(`s${s}t${i}`, `s${s}`); nodes.push(t); edges.push(edge(`subject:s${s}`, t.id, 'has_topic'))
+      if (i % 5 === 0) for (let j = 0; j < 3; j++) { const n = note(`s${s}t${i}n${j}`, `s${s}`); nodes.push(n); edges.push(edge(t.id, n.id, 'about_topic')) }
+    }
+  })
+  const a = layoutMap(nodes, edges)
+  noOverlap(nodes, a.at)
+  const { w, h } = boxOf(a.at)
+  assert.ok(w / h > 0.9 && w / h < 2.6, `shape ${Math.round(w)}×${Math.round(h)}`)
+  // Each subject's cluster box, and none inside another's.
+  const box = new Map<string, { x0: number; x1: number; y0: number; y1: number }>()
+  for (const n of nodes) {
+    const sid = `subject:${n.subjectId}`, p = a.at.get(n.id)!, c = CARD[n.type]
+    const b = box.get(sid) ?? { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity }
+    box.set(sid, { x0: Math.min(b.x0, p.x - c.w / 2), x1: Math.max(b.x1, p.x + c.w / 2), y0: Math.min(b.y0, p.y - c.h / 2), y1: Math.max(b.y1, p.y + c.h / 2) })
+  }
+  const list = [...box.entries()]
+  for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+    const [ia, p] = list[i]!, [ib, q] = list[j]!
+    const apart = p.x1 + 100 <= q.x0 || q.x1 + 100 <= p.x0 || p.y1 + 90 <= q.y0 || q.y1 + 90 <= p.y0
+    assert.ok(apart, `${ia} and ${ib} keep a clear gap`)
+  }
+  // The largest subject is not the tallest thing by far: it sits around its subject.
+  const big = box.get('subject:s0')!
+  assert.ok(big.y1 - big.y0 < (big.x1 - big.x0) * 1.2, `largest cluster ${Math.round(big.x1 - big.x0)}×${Math.round(big.y1 - big.y0)}`)
 })

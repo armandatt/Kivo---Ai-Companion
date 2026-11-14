@@ -74,16 +74,21 @@
   --map-note: oklch(80% 0.13 82);
   --map-resource: oklch(74% 0.11 235);
   --map-task: oklch(78% 0.12 150);
-  --map-line: oklch(100% 0 0 / 0.16);
+  --map-line: oklch(84% 0.03 255 / 0.2);
   /* An understated line that still reads on its own: a [[link]], an outside card. */
-  --map-line-strong: oklch(100% 0 0 / 0.34);
+  --map-line-strong: oklch(88% 0.03 255 / 0.38);
+  /* A card on the map: a clear step above the ground (a navy charcoal), a
+     hairline edge, and a lit top edge, so cards separate without glowing. */
+  --map-card: oklch(23% 0.022 262);
+  --map-card-edge: oklch(100% 0 0 / 0.1);
+  --map-card-top: oklch(100% 0 0 / 0.1);
   /* Knowledge Map depth: a card's edge, the shadow it casts, the space around. */
   /* A slab is the subject's hue, dark: a plain colour (a color-mix per card cost frames on a pan). */
-  --map-slab-l: 26%; --map-slab-c: 0.045;
-  --map-shadow: oklch(0% 0 0);
-  --map-space-a: oklch(17% 0.02 250);
-  --map-space-b: oklch(11% 0.012 260);
-  --map-dot: oklch(100% 0 0 / 0.07);
+  --map-slab-l: 25%; --map-slab-c: 0.05;
+  --map-shadow: oklch(5% 0.012 262);
+  --map-space-a: oklch(17.5% 0.026 258);
+  --map-space-b: oklch(10.5% 0.018 264);
+  --map-dot: oklch(100% 0 0 / 0.055);
 }
 
 /* ── The app's dark theme (the default) ─────────────────────────────────────────
@@ -236,6 +241,9 @@ html[data-kivo-theme="light"] .kivo-app {
   --map-task: oklch(52% 0.13 150);
   --map-line: oklch(24% 0.02 290 / 0.2);
   --map-line-strong: oklch(24% 0.02 290 / 0.42);
+  --map-card: var(--card);
+  --map-card-edge: oklch(24% 0.02 290 / 0.14);
+  --map-card-top: oklch(100% 0 0 / 0.85);
   --map-slab-l: 80%; --map-slab-c: 0.035;
   --map-shadow: oklch(30% 0.03 260);
   --map-space-a: oklch(98% 0.006 250);
