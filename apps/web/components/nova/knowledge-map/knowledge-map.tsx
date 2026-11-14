@@ -1573,11 +1573,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     const a = pointOf(e.from), b = pointOf(e.to)
     if (!a || !b) return null
     const lit = focusId !== null && (e.from === focusId || e.to === focusId || (litPath !== null && litPath.has(e.from) && litPath.has(e.to)))
-    // Far out, a [[link]] or a wait crossing the map says nothing but tangle:
-    // drawn only for the card in focus. In Everything, the same until close
-    // (full detail): there they run between subjects across the whole map.
-    // The tree's own lines stay.
-    if (!lit && (e.kind === 'links_to' || e.kind === 'depends_on') && (detail === 0 || (detail === 1 && wholeMap))) return null
+    // Every [[link]] and wait is drawn, at every zoom, with every item. Only
+    // the overview the learner chooses (compact: counts folded into cards)
+    // leaves them to the card in focus, with subjects' links between them.
+    if (!lit && (e.kind === 'links_to' || e.kind === 'depends_on') && overviewOn) return null
     const dim = (focusId !== null && !lit) || (focusId === null && emphasis !== null && !emphasis.has(e.from) && !emphasis.has(e.to))
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y
     // Arriving: drawn along its length once both its cards are there (a
@@ -1641,10 +1640,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         {lit && !arrive && <path d={d} fill="none" className="map-edge-flow" stroke="var(--action)" strokeWidth={2.4} strokeDasharray="1.5 11" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.95} />}
       </g>
     )
-  }), [allLines, pointOf, focusId, placed.lanes, markers, entrance, fresh, depthOf, detail, emphasis, wholeMap, litPath, byId])
+  }), [allLines, pointOf, focusId, placed.lanes, markers, entrance, fresh, depthOf, detail, emphasis, overviewOn, litPath, byId])
 
   // The rings of [[links]], over the cards: one where each link arrives.
-  const ringLayer = useMemo(() => allLines.filter(e => e.kind === 'links_to' && ((detail === 2 || (detail === 1 && !wholeMap)) || (focusId !== null && (e.from === focusId || e.to === focusId)))).map(e => {
+  const ringLayer = useMemo(() => allLines.filter(e => e.kind === 'links_to' && (!overviewOn || (focusId !== null && (e.from === focusId || e.to === focusId)))).map(e => {
     const a = pointOf(e.from), b = pointOf(e.to)
     const to = byId.get(e.to), from = byId.get(e.from)
     if (!a || !b || !to || !from) return null
@@ -1658,9 +1657,9 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         <title>{`“${from.label}” links to “${to.label}” with [[${to.label}]]`}</title>
       </circle>
     )
-  }), [allLines, pointOf, byId, markers, focusId, detail, wholeMap])
+  }), [allLines, pointOf, byId, markers, focusId, overviewOn])
 
-  const suggestionLayer = useMemo(() => (detail === 0 ? [] : suggestions).map(s => {
+  const suggestionLayer = useMemo(() => (overviewOn ? [] : suggestions).map(s => {
     const a = placed.at.get(s.from), b = placed.at.get(s.to)
     if (!a || !b) return null
     const lit = focusId !== null && (s.from === focusId || s.to === focusId)
@@ -1670,7 +1669,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         strokeWidth={1.2} strokeDasharray="1 6" strokeLinecap="round" vectorEffect="non-scaling-stroke"
         opacity={focusId !== null && !lit ? 0.15 : 0.8} />
     )
-  }), [suggestions, placed, focusId, detail])
+  }), [suggestions, placed, focusId, overviewOn])
 
   // The cards. Memoised apart from the pan; the zoom only changes them when
   // it crosses into another level of detail.
