@@ -83,3 +83,18 @@ test('one next step, from the topic’s own record: review due first, then not s
   assert.equal(nextStep(t({ kind: 'milestone', sessions: 0 })), null)
   assert.equal(nextStep(node('note:n')), null)
 })
+
+test('what to ask Nova first comes from the card’s own record, never generic', async () => {
+  const { askSuggestions, overdueIn } = await import('./node-summary')
+  const t = (o: Record<string, unknown>) => node('topic:x', { label: 'Paging', sessions: 2, level: 'solid', masteryPercent: 80, notes: 1, resources: 0, ...o })
+  assert.equal(askSuggestions(t({ reviewDue: true }))[0], 'Help me revise Paging')
+  assert.equal(askSuggestions(t({ sessions: 0, level: null, masteryPercent: null }))[0], 'Where do I start with Paging?')
+  assert.ok(askSuggestions(t({ level: 'weak' })).includes('Why is Paging weak, and how do I fix it?'))
+  assert.ok(!askSuggestions(t({})).some(q => /revise|weak|start/.test(q)), 'nothing claimed the record does not hold')
+  const tally = { topics: 4, studied: 1, solid: 1, developing: 0, weak: 0, unstudied: 3, reviewDue: 0, notes: 0, resources: 0, tasks: 0 }
+  const s = askSuggestions(node('subject:s', { label: 'OS', topics: 4, notes: 0, resources: 0 }), tally, { overdue: 1 })
+  assert.deepEqual(s, ["What's overdue in OS?", 'What should I study first in OS?', 'What is inside OS?'])
+  assert.equal(askSuggestions(null, { ...tally, reviewDue: 2 })[0], 'What is due for review?')
+  const tasks = [node('task:a', { status: 'todo', dueDay: '2026-11-01', subjectName: 'OS', topicName: null }), node('task:b', { status: 'done', dueDay: '2026-11-01', subjectName: 'OS', topicName: null })]
+  assert.equal(overdueIn(tasks, node('subject:s', { label: 'OS' }), '2026-11-14'), 1)
+})

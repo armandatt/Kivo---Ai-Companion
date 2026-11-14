@@ -72,3 +72,37 @@ export function nextStep(n: MapNode): NextStep {
   if (n.notes === 0 && n.resources === 0) return { kind: 'note', text: 'Nothing written here yet' }
   return null
 }
+
+// ── What to ask Nova first, from the record ─────────────────────────────────
+// The starting questions on a card's Ask, and on Nova for the whole map: from
+// what that card (or the map) actually holds, so they are about it, never
+// generic. At most three; a question is offered only when the record has
+// something for it (a review due, a weak or untouched topic, overdue work).
+export function askSuggestions(n: MapNode | null, tally?: StateTally, extra: { overdue?: number } = {}): string[] {
+  const out: string[] = []
+  const name = n ? (n.label.length > 32 ? `${n.label.slice(0, 31).trimEnd()}…` : n.label) : null
+  if (n?.type === 'topic') {
+    const st = topicState(n)
+    if (n.reviewDue && n.sessions > 0) out.push(`Help me revise ${name}`)
+    if (st === 'unstudied') out.push(`Where do I start with ${name}?`)
+    if (st === 'weak') out.push(`Why is ${name} weak, and how do I fix it?`)
+    if (st === 'organising') out.push(`Which topic in ${name} should I study first?`)
+    out.push(`Explain ${name} simply`, `What is inside ${name}?`)
+    return out.slice(0, 3)
+  }
+  if (n && n.type !== 'subject') return [`What is ${name} about on my map?`, `How does ${name} connect to the rest?`]
+  const t = tally
+  if (t?.reviewDue) out.push(n ? `What's due for review in ${name}?` : 'What is due for review?')
+  if (extra.overdue) out.push(n ? `What's overdue in ${name}?` : 'What is overdue, and what first?')
+  if (t?.weak) out.push(n ? `Where am I weakest in ${name}?` : 'Where am I weakest?')
+  if (t && t.unstudied > 0) out.push(n ? `What should I study first in ${name}?` : 'What should I study next?')
+  out.push(n ? `What is inside ${name}?` : 'Give me an overview of my map', n ? `How does ${name} connect to my other subjects?` : 'How do my subjects connect?')
+  return [...new Set(out)].slice(0, 3)
+}
+
+// Open tasks past their due day (the device's own day), within a card: filed
+// under that subject or topic by name; the whole map when there is no card.
+export function overdueIn(nodes: readonly MapNode[], scope: MapNode | null, today = new Date().toLocaleDateString('en-CA')): number {
+  return nodes.filter(n => n.type === 'task' && n.status !== 'done' && !!n.dueDay && n.dueDay < today &&
+    (!scope || (scope.type === 'subject' ? n.subjectName === scope.label : scope.type === 'topic' ? n.topicName === scope.label : false))).length
+}

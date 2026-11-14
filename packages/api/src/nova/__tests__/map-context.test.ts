@@ -1,5 +1,5 @@
 // What Nova is told about a card it is asked from on the Knowledge Map.
-import { MAP_NODE_ID, mapFactsOf } from "../product/map-context";
+import { MAP_NODE_ID, mapFactsOf, mapOverviewFacts } from "../product/map-context";
 import type { MapEdge, MapNode, NovaKnowledgeMapReady } from "../product/knowledge-map.types";
 
 const base = { href: null, subjectId: "s" };
@@ -10,6 +10,7 @@ const nodes: MapNode[] = [
   { ...base, id: "note:n", type: "note", label: "Secret note title", subjectName: "Launch Strategy", topicName: "Go-to-Market", topicLinked: true, updatedAt: "2026-11-01T00:00:00Z" },
   { ...base, id: "resource:r", type: "resource", label: "Pricing guide", subjectName: "Launch Strategy", topicName: "Pricing", topicLinked: true, url: "https://x.org/p", domain: "x.org", savedAt: "2026-11-01T00:00:00Z", kind: "saved" },
   { ...base, id: "task:t", type: "task", label: "Write launch plan", subjectName: "Launch Strategy", topicName: null, status: "in_progress", priority: null, dueDay: "2026-11-20", estimatedMinutes: null, order: 0, waitsOn: 0 },
+  { ...base, id: "task:late", type: "task", label: "Send survey", subjectName: "Launch Strategy", topicName: null, status: "todo", priority: null, dueDay: "2026-11-10", estimatedMinutes: null, order: 1, waitsOn: 1 },
 ];
 const edges: MapEdge[] = [
   { id: "1", from: "subject:s", to: "topic:a", kind: "has_topic" },
@@ -17,8 +18,9 @@ const edges: MapEdge[] = [
   { id: "3", from: "topic:a", to: "note:n", kind: "about_topic" },
   { id: "4", from: "topic:b", to: "resource:r", kind: "about_topic" },
   { id: "5", from: "subject:s", to: "task:t", kind: "has_task" },
+  { id: "6", from: "subject:s", to: "task:late", kind: "has_task" },
 ];
-const view: NovaKnowledgeMapReady = { status: "ready", nodes, edges, counts: { subject: 1, topic: 2, task: 1, note: 1, resource: 1 }, notShown: { notes: 0, resources: 0 }, unconnected: 0 };
+const view: NovaKnowledgeMapReady = { status: "ready", nodes, edges, counts: { subject: 1, topic: 2, task: 2, note: 1, resource: 1 }, notShown: { notes: 0, resources: 0 }, unconnected: 0 };
 
 describe("map-context", () => {
   it("names what the card holds, with each topic's state, from the learner's own map", () => {
@@ -53,5 +55,29 @@ describe("map-context: the map itself", () => {
     expect(MAP_NODE_ID.test("map")).toBe(true);
     expect(MAP_NODE_ID.test("map:ws_1")).toBe(true);
     expect(MAP_NODE_ID.test("mapx")).toBe(false);
+  });
+});
+
+describe("map-context: what stands out, for a specific answer", () => {
+  const ctx = { today: "2026-11-14", now: new Date("2026-11-14T10:00:00Z"), exams: [
+    { id: "e1", title: "Launch review", type: "project" as const, subjectName: "Launch Strategy", date: "2026-11-21", daysUntil: 7 },
+    { id: "e2", title: "Other final", type: "exam" as const, subjectName: "Machine Learning", date: "2026-11-30", daysUntil: 16 },
+  ] };
+  it("leads with dates, overdue and soon-due tasks, reviews due and the weakest topics, from the record only", () => {
+    const facts = mapFactsOf(view, "subject:s", ctx).join("\n");
+    expect(facts).toContain('Dates coming up: "Launch review" (project, Launch Strategy) on 2026-11-21, in 7 days');
+    expect(facts).not.toContain("Other final");
+    expect(facts).toContain('Overdue tasks: "Send survey" (due 2026-11-10, 4 days late)');
+    expect(facts).toContain('Tasks due within a week: "Write launch plan" (due in 6 days)');
+    expect(facts).toContain('Reviews due now: "Pricing"');
+    expect(facts).toContain('Weakest estimates: "Pricing" (30%)');
+    expect(facts).toContain('Not started yet (1), in the map\'s order: "Go-to-Market"');
+    expect(facts).toContain('Tasks waiting on other tasks first: "Send survey" (waits on 1)');
+    expect(facts.indexOf("Dates coming up")).toBeLessThan(facts.indexOf("Reviews due now"));
+  });
+  it("the whole map: what stands out across every subject, dates of every subject", () => {
+    const facts = mapOverviewFacts(view, "everything", ctx).join("\n");
+    expect(facts).toContain("Other final");
+    expect(facts).toContain("Overdue tasks");
   });
 });

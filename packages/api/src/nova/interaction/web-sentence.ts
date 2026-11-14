@@ -36,7 +36,7 @@ import type { NovaOrchestratorInput } from "../types/context.types";
 import type { UnderstandingContext } from "../types/understanding.types";
 import { ensureSetupProfile } from "../product/setup";
 import { openDraftFromChat } from "../product/builder";
-import { interpret } from "./semantics";
+import { interpret, type ContextNeed } from "./semantics";
 import { runSetupTurn } from "./setup-turn";
 import { chooseLanguage, heldAfter, languageLine, scriptLanguage } from "./language";
 
@@ -57,12 +57,22 @@ const PROMPT_QUESTION: Partial<Record<PromptKind, string>> = {
 export const SENTENCE_RUNS_NO_SESSION =
   "This message did not start, pause, resume or end a study session, and nothing was added or scheduled. Do not say or imply otherwise. If the student wants to start or end a session, point them to the Start button on this page or to Focus.";
 
+// Asked from the map, the reply knows the learner as well as any other turn
+// does: who they are, their goals, how they study, what is going on, their dates.
+const MAP_NEEDS: readonly ContextNeed[] = ["profile", "goals", "support", "state", "patterns", "memory", "exams", "reviews", "reality"];
+
 // Readings that only show something: asked from the map, answered from the map instead.
 const MAP_ANSWERS: ReadonlySet<TurnAction["type"]> = new Set<TurnAction["type"]>(["show_today", "show_status", "show_week", "show_progress", "something_else", "clarify"]);
 
 // Said when the message was asked from a card on the Knowledge Map.
-export const MAP_CARD_LINE =
-  "The student asked this from their Knowledge Map (a card on it, or the map itself); what it holds is under \"What Nova has on record\". Answer from it: when they ask what it holds or what to look at, name the items as written there (a short list is fine), and say plainly when something is not on record. Mention no topic, task or page that is not written there.";
+export const MAP_CARD_LINE = [
+  "The student asked this from their Knowledge Map (a card on it, or the map itself). What it holds is under \"What Nova has on record\", with what stands out there.",
+  "Be specific and personal: speak to them as someone who knows their map, use their name when you have it, and name their own subjects, topics, tasks and pages exactly as written there.",
+  "When they ask what to do, recommend one concrete next step from what stands out (a date coming up, an overdue task, a review due, a weak or untouched topic), say why in one short clause, and connect it to their goals when goals are on record.",
+  "When they ask about the subject matter itself (what something is, how it works), answer it properly from your own knowledge, then tie it to what they have on record.",
+  "When they ask what it holds, name the items as written there (a short list is fine). Say plainly when something is not on record; mention no topic, task, page, date or figure that is not written there or in their message.",
+  "Do not remark that nothing was saved, started or scheduled unless they asked for one of those.",
+].join(" ");
 
 const NOTHING_WAS_DONE =
   "Nova's system took no action this turn: nothing was started, paused, ended, saved, added or scheduled. Do not say or imply otherwise. Do not state a date, a number of days or any other figure that is not written in the context above.";
@@ -151,7 +161,7 @@ export async function runWebSentence(input: WebSentenceInput): Promise<WebSenten
   // would only show something (today, status, the week, progress) or could
   // not place it ("tell me everything in it") is answered from what it holds.
   // Anything that changes something still takes its own checked path.
-  const mapFacts = input.about && !blocked ? await loadMapFacts(platformChatId, input.about).catch(() => [] as string[]) : [];
+  const mapFacts = input.about && !blocked ? await loadMapFacts(platformChatId, input.about, { today: day, now }).catch(() => [] as string[]) : [];
   const fromCard = mapFacts.length > 0 && MAP_ANSWERS.has(decision.action.type);
   // Advice and explanations run as usual, and are worded with the map's facts too.
   const mapAnswer = fromCard || (mapFacts.length > 0 && (decision.action.type === "advise" || decision.action.type === "explain"));
@@ -185,7 +195,7 @@ export async function runWebSentence(input: WebSentenceInput): Promise<WebSenten
     awaitPersistence: input.awaitPersistence,
     sessionCommands:  "surface",
     respond:          input.respond,
-    focus:            { needs: interaction.needs, facts, ...(explaining ? { mode: "explain" as const } : {}) },
+    focus:            { needs: mapAnswer ? [...new Set([...interaction.needs, ...MAP_NEEDS])] : interaction.needs, facts, ...(explaining ? { mode: "explain" as const } : {}) },
     ...(generate
       ? {
           responseFallback: fallback,

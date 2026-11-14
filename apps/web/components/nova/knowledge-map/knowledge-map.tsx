@@ -24,7 +24,7 @@ import { disconnectPlan } from './map-disconnect'
 import { sendDisconnect } from './map-structure-api'
 import { AddDialog, Breadcrumbs, DeleteDialog, DeleteWholeDialog, Legend, ShortcutsHelp } from './map-panels'
 import { BOARD_PATH } from '@repo/api/nova/product/companion'
-import { nextStep, summaryOf, type Status } from './node-summary'
+import { askSuggestions, nextStep, overdueIn, summaryOf, type Status } from './node-summary'
 import { loadNotePreview } from './note-preview'
 import { crossSubjectLinks, foldedLabel, foldedTotal, overviewDensity, rootOf, type Density } from './overview-density'
 import { GAP_LABEL, LENSES, STATE_LABEL, gapRank, gapsOf, isRecent, lensTargets, nextLens, tallyOf, topicState, type Lens, type StateTally, type TopicState } from './lens'
@@ -514,7 +514,8 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
           )}
       {startError && <p role="alert" className="-mt-2 text-sm text-red-400">{startError}</p>}
       {section === 'ask' && askable && (
-        <TalkToNova roomy about={node.type === 'topic' ? `the topic “${node.label}” in ${node.subjectName}` : `the subject “${node.label}”`} aboutNode={node.id} placeholder={`Ask about ${short(node.label, 40)}…`} className="-mt-1" />
+        <TalkToNova roomy about={node.type === 'topic' ? `the topic “${node.label}” in ${node.subjectName}` : `the subject “${node.label}”`} aboutNode={node.id} placeholder={`Ask about ${short(node.label, 40)}…`} className="-mt-1"
+          suggestions={askSuggestions(node, tally, { overdue: overdueIn(view.nodes, node) })} />
       )}
 
       {/* One next step, from its own record, as an action. */}
@@ -2315,9 +2316,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
                 <TalkToNova roomy key={scopeId} aboutNode={scopeId}
                   about={explored ? `“${explored.label}” on my Knowledge Map` : 'my Knowledge Map'}
                   placeholder={explored ? `Ask about ${short(scopeLabel, 28)}…` : 'Ask about your map…'}
-                  suggestions={explored
-                    ? ['What is inside this?', 'What should I study here first?', 'What is not studied yet?']
-                    : ['Give me an overview of my map', 'Where are my gaps?', 'What is due for review?']} />
+                  suggestions={askSuggestions(explored ?? null, explored ? (explored.type === 'subject' ? subjectTallies.get(explored.id) : undefined) : tallyOf(view.nodes), { overdue: overdueIn(view.nodes, explored ?? null) })} />
               </div>
             </section>
           )
