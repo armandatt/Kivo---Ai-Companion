@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { SHORTCUTS, enterAction, enterTarget, isMacPlatform, isTypingTarget, keyLabel, navigate, shortcutFor } from './map-shortcuts'
+import { SHORTCUTS, enterAction, enterTarget, isMacPlatform, isTypingTarget, keyLabel, navigate, nearestTo, shortcutFor, type NavBox } from './map-shortcuts'
 
 test('each listed key does what the help panel says', () => {
   const cases: Array<[Parameters<typeof shortcutFor>[0], string]> = [
@@ -52,40 +52,48 @@ test('modifier keys are shown for the learner’s own keyboard', () => {
   assert.equal(keyLabel('Shift+Enter', true), '⇧Enter')
 })
 
-// subject › (A › (A1, A2), B); a loose note.
-const tree = {
-  children: new Map([['s', ['a', 'b']], ['a', ['a1', 'a2']]]),
-  parent: new Map([['a', 's'], ['b', 's'], ['a1', 'a'], ['a2', 'a']]),
-  roots: ['s', 'loose'],
-}
-const all = new Set(['s', 'a', 'b', 'a1', 'a2', 'loose'])
+// Cards where the map draws them (centre, width, height): a subject S with
+// topics A, B to its right and C to its left; another subject T further right
+// with topic D; a note N under A, and a card Z above T, far to the side of S.
+const card = (x: number, y: number, w = 180, h = 58): NavBox => ({ x, y, w, h })
+const boxes = new Map<string, NavBox>([
+  ['S', card(0, 0, 208, 66)], ['A', card(300, -40)], ['B', card(300, 40)], ['C', card(-300, 0)],
+  ['N', card(300, 120, 164, 48)],
+  ['T', card(900, 0, 208, 66)], ['D', card(1200, 0)],
+  ['Z', card(900, -300)],
+])
 
-test('the arrow keys move along the tree that is drawn', () => {
-  const go = (from: string, arrow: 'left' | 'right' | 'up' | 'down', shown = all) => navigate(from, arrow, tree, shown, { outline: false })
-  assert.deepEqual(go('s', 'right'), { to: 'a' })
-  assert.deepEqual(go('a', 'right'), { to: 'a1' })
-  assert.deepEqual(go('a1', 'down'), { to: 'a2' })
-  assert.deepEqual(go('a2', 'up'), { to: 'a1' })
-  assert.deepEqual(go('a2', 'left'), { to: 'a' })
-  assert.deepEqual(go('a', 'down'), { to: 'b' })
-  assert.deepEqual(go('s', 'down'), { to: 'loose' }, 'cards at the top go one to the next')
-  assert.equal(go('b', 'right').to, null)
-  assert.match((go('b', 'right') as { why: string }).why, /Nothing is inside/)
-  assert.match((go('s', 'left') as { why: string }).why, /top of the map/)
-  assert.match((go('a2', 'down') as { why: string }).why, /last/)
-  // Folded or hidden cards are not reached; the reason says so.
-  const folded = new Set(['s', 'a', 'b', 'loose'])
-  const r = navigate('a', 'right', tree, folded, { outline: false, folded: true })
-  assert.equal(r.to, null)
-  assert.match((r as { why: string }).why, /folded/)
+test('the arrow keys go by where cards are on screen, across the whole map', () => {
+  const to = (from: string, arrow: 'left' | 'right' | 'up' | 'down') => navigate(from, arrow, boxes).to
+  assert.equal(to('S', 'left'), 'C', 'left of a subject: the card on its left, whatever it is filed under')
+  assert.equal(to('C', 'right'), 'S')
+  assert.equal(to('A', 'down'), 'B', 'straight below first')
+  assert.equal(to('B', 'down'), 'N')
+  assert.equal(to('B', 'up'), 'A')
+  assert.equal(to('A', 'right'), 'T', 'across into the next subject: not limited to parent and child')
+  assert.equal(to('T', 'left'), 'A', 'the nearest in line, back the other way')
+  assert.equal(to('T', 'right'), 'D')
 })
 
-test('in the outline, up and down go row by row', () => {
-  const rows = ['s', 'a', 'a1', 'a2', 'b', 'loose']
-  assert.deepEqual(navigate('a2', 'down', tree, all, { outline: true, rows }), { to: 'b' })
-  assert.deepEqual(navigate('b', 'up', tree, all, { outline: true, rows }), { to: 'a2' })
-  assert.deepEqual(navigate('a1', 'left', tree, all, { outline: true, rows }), { to: 'a' })
-  assert.equal(navigate('loose', 'down', tree, all, { outline: true, rows }).to, null)
+test('each step starts from the card reached: left, up, right, down and round again', () => {
+  let at = 'B'
+  const path: string[] = []
+  for (const arrow of ['left', 'up', 'right', 'down', 'left', 'up', 'right', 'down'] as const) {
+    const r = navigate(at, arrow, boxes)
+    if (r.to) at = r.to
+    path.push(at)
+  }
+  assert.deepEqual(path, ['S', 'S', 'A', 'B', 'S', 'S', 'A', 'B'], 'up from S: nothing above it (Z is mostly off to the side), so it stays')
+})
+
+test('nothing in that direction: the selection stays, and says so; a card mostly beside is not ahead', () => {
+  const r = navigate('D', 'right', boxes)
+  assert.equal(r.to, null)
+  assert.match((r as { why: string }).why, /No card to the right/)
+  assert.equal(navigate('C', 'left', boxes).to, null)
+  assert.notEqual(navigate('T', 'up', boxes).to, null, 'a card well above and only a little aside still counts')
+  assert.equal(navigate('S', 'up', boxes).to, null, 'Z is far more aside than above S: not "up"')
+  assert.equal(nearestTo({ x: 280, y: 0 }, boxes), 'A', 'with nothing selected, the card nearest the middle of the view starts')
 })
 
 test('Enter acts on the card chosen last, never a stale one', () => {
