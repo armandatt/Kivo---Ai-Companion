@@ -15,13 +15,13 @@ export interface Shortcut { action: ShortcutAction; keys: string[]; label: strin
 // `Mod` is ⌘ on a Mac and Ctrl elsewhere.
 export const SHORTCUTS: readonly Shortcut[] = [
   { action: 'search',      keys: ['/', 'Mod+K'],          label: 'Find on the map', group: 'Find and move' },
-  { action: 'navigate',    keys: ['←', '→', '↑', '↓'],    label: 'Move between connected cards: right into a card, left to the card it is inside, up and down beside it. With nothing selected, the arrows move the view', group: 'Find and move' },
+  { action: 'navigate',    keys: ['←', '→', '↑', '↓'],    label: 'Move to the nearest card in that direction, across the whole map (with nothing selected, start from the card in the middle of the view)', group: 'Find and move' },
   { action: 'pan',         keys: ['Shift+←→↑↓'],          label: 'Move the view', group: 'Find and move' },
   { action: 'explore',     keys: ['Enter'],               label: 'Explore inside the selected card (a card with nothing inside shows its details)', group: 'Find and move' },
   { action: 'open',        keys: ['Shift+Enter'],         label: 'Show the selected card’s details', group: 'Find and move' },
   { action: 'up',          keys: ['U'],                   label: 'Up one level, out of an explored card', group: 'Find and move' },
   { action: 'next',        keys: ['G'],                   label: 'Go to the next card the search or lens points at (a gap, a match)', group: 'Find and move' },
-  { action: 'escape',      keys: ['Esc'],                 label: 'Close a menu or panel, then clear the selection', group: 'Find and move' },
+  { action: 'escape',      keys: ['Esc'],                 label: 'Close a menu or panel, then clear the selection, then step out of an explored card', group: 'Find and move' },
   { action: 'fold',        keys: ['Space'],               label: 'Fold or show what is inside the selected card', group: 'View' },
   { action: 'zoom_in',     keys: ['+'],                   label: 'Zoom in', group: 'View' },
   { action: 'zoom_out',    keys: ['-'],                   label: 'Zoom out', group: 'View' },
@@ -92,37 +92,48 @@ export function keyLabel(key: string, mac: boolean): string {
 }
 
 // ── Moving between cards with the arrow keys ─────────────────────────────────
-// Along the tree the map draws: right into a card's first card, left to the
-// card it sits inside, up and down to the cards beside it. In the outline
-// (a phone), up and down go row by row. Only drawn cards are reached.
+// By where the cards are on screen, not by how they are filed: from the
+// selected card, the nearest card in that direction, the ones in line with
+// it first (straight above, below, to the left or right), then the nearest.
+// Any drawn card can be reached, whatever it belongs to, so the arrows cross
+// from one subject's branch into the next. The card reached is where the next
+// arrow starts. A card mostly off to the side is not "in that direction";
+// with nothing there, the selection stays.
 
-export interface NavTree {
-  children: ReadonlyMap<string, readonly string[]>
-  parent:   ReadonlyMap<string, string>
-  // Cards with no parent drawn, top to bottom.
-  roots:    readonly string[]
-}
-
+export interface NavBox { x: number; y: number; w: number; h: number }
 export type NavResult = { to: string } | { to: null; why: string }
 
-export function navigate(from: string, arrow: Arrow, tree: NavTree, shown: ReadonlySet<string>, opts: { outline: boolean; rows?: readonly string[]; folded?: boolean }): NavResult {
-  const kids = (tree.children.get(from) ?? []).filter(c => shown.has(c))
-  const parent = tree.parent.get(from)
-  const shownParent = parent !== undefined && shown.has(parent) ? parent : undefined
-  if (opts.outline && (arrow === 'up' || arrow === 'down') && opts.rows) {
-    const i = opts.rows.indexOf(from)
-    const to = i < 0 ? undefined : opts.rows[i + (arrow === 'down' ? 1 : -1)]
-    return to ? { to } : { to: null, why: arrow === 'down' ? 'That is the last card.' : 'That is the first card.' }
+const SIDE: Record<Arrow, string> = { left: 'to the left', right: 'to the right', up: 'above', down: 'below' }
+
+export function navigate(from: string, arrow: Arrow, boxes: ReadonlyMap<string, NavBox>): NavResult {
+  const a = boxes.get(from)
+  if (!a) return { to: null, why: 'That card is not on the map.' }
+  const horiz = arrow === 'left' || arrow === 'right'
+  const sign = arrow === 'right' || arrow === 'down' ? 1 : -1
+  let best: string | null = null, bestScore = Infinity
+  for (const [id, b] of boxes) {
+    if (id === from) continue
+    // How far ahead it is (centre to centre), and the gap between their edges that way.
+    const along = (horiz ? b.x - a.x : b.y - a.y) * sign
+    if (along <= 1) continue
+    const gapAlong = Math.max(0, along - (horiz ? (a.w + b.w) / 2 : (a.h + b.h) / 2))
+    // How far off to the side: nothing when the two overlap across the direction.
+    const across = horiz ? Math.abs(b.y - a.y) : Math.abs(b.x - a.x)
+    const gapAcross = Math.max(0, across - (horiz ? (a.h + b.h) / 2 : (a.w + b.w) / 2))
+    // Mostly beside rather than ahead: not in that direction.
+    if (gapAcross > 0 && across > along * 2) continue
+    const score = gapAlong + gapAcross * 3 + across * 0.12
+    if (score < bestScore - 1e-6 || (Math.abs(score - bestScore) <= 1e-6 && best !== null && id < best)) { bestScore = score; best = id }
   }
-  if (arrow === 'right') {
-    if (kids.length) return { to: kids[0]! }
-    return { to: null, why: opts.folded ? 'What is inside it is folded. Space shows it.' : 'Nothing is inside this card.' }
-  }
-  if (arrow === 'left') return shownParent ? { to: shownParent } : { to: null, why: 'This card is at the top of the map.' }
-  const siblings = shownParent ? (tree.children.get(shownParent) ?? []).filter(c => shown.has(c)) : tree.roots.filter(r => shown.has(r))
-  const i = siblings.indexOf(from)
-  const to = i < 0 ? undefined : siblings[i + (arrow === 'down' ? 1 : -1)]
-  return to ? { to } : { to: null, why: arrow === 'down' ? 'That is the last card here.' : 'That is the first card here.' }
+  return best ? { to: best } : { to: null, why: `No card ${SIDE[arrow]}.` }
+}
+
+// The card nearest a point (the middle of the view): where the arrows start
+// when nothing is selected.
+export function nearestTo(point: { x: number; y: number }, boxes: ReadonlyMap<string, NavBox>): string | null {
+  let best: string | null = null, bestD = Infinity
+  for (const [id, b] of boxes) { const d = Math.hypot(b.x - point.x, b.y - point.y); if (d < bestD - 1e-6 || (Math.abs(d - bestD) <= 1e-6 && best !== null && id < best)) { bestD = d; best = id } }
+  return best
 }
 
 // ── Enter ────────────────────────────────────────────────────────────────────

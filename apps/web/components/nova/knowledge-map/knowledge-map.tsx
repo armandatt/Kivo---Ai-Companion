@@ -17,7 +17,7 @@ import { filingChoices, placementLabel, placementOf, planLink, samePlacement, ty
 import { addNoteLink, fileItem, type EditOutcome } from './map-actions'
 import { fitKey, focusToApply, keepValid } from './view-state'
 import { START, back, canExplore, crossLinks, current, enter, insideOf, keepLevels, MARKER_R, pathTo, placeOutside, reach, up, type Level, type View } from './explore'
-import { enterAction, enterTarget, isMacPlatform, isTypingTarget, navigate, shortcutFor } from './map-shortcuts'
+import { enterAction, enterTarget, isMacPlatform, isTypingTarget, navigate, nearestTo, shortcutFor, type NavBox } from './map-shortcuts'
 import { OUTLINE_QUERY, browserStore, chooseOrientation, chosenOrientation, forgetViews, pictureKey, recallView, rememberView, type Orientation } from './view-memory'
 import { NEW_SUBJECT } from './map-structure'
 import { disconnectPlan } from './map-disconnect'
@@ -62,6 +62,8 @@ const MAP_SESSION_MINUTES = 25
 // How far one arrow key moves the map, in screen pixels.
 const PAN_STEP = 60
 // How far Alt and an arrow key move a card, in map units (Shift for more).
+// The opening camera's glide, as long as the cards' entrance.
+const CAMERA_MS = 3200
 const NUDGE = 20
 // How far the pointer must travel before a press on a card becomes a drag.
 // Under it, the press is a click and selects the card.
@@ -1131,7 +1133,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   // else the one they had last time for the same picture, else fitted. New
   // data for the same picture, and a card moved or folded, keep the view.
   const settle = useRef<(animated: boolean) => void>(() => {})
+  // While the opening camera glides out (below), nothing settles the view under it.
+  const cameraEntrance = useRef(false)
   settle.current = (animated: boolean) => {
+    if (cameraEntrance.current) return
     const to = level.view ?? recallView(store, where, picture) ?? fitTarget()
     if (!to) return
     if (animated) animateTo(to); else { stopAnim(); setT(to) }
@@ -1171,6 +1176,20 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     if (mode === 'none') { setEntrance(null); return }
     const plan = entrancePlan(drawn.map(n => n.id), tree.parent, placed.at, [...drawnEdges, ...cross.map(c => c.edge)], mode)
     setEntrance({ ...plan, mode, key: where })
+    // Opening the map: the camera starts close on its middle and glides out to
+    // the whole of it while the cards arrive, ending on the fitted view.
+    const to = mode === 'full' && top ? fitTarget() : null
+    const el = frame.current
+    if (to && el) {
+      const cw = (el.clientWidth - besidePanel(el)) / 2, ch = el.clientHeight / 2
+      const mid = { x: (cw - to.x) / to.k, y: (ch - to.y) / to.k }
+      const k0 = Math.min(1.1, to.k * 2.1)
+      cameraEntrance.current = true
+      stopAnim()
+      setT({ k: k0, x: cw - mid.x * k0, y: ch - mid.y * k0 })
+      requestAnimationFrame(() => animateTo(to, CAMERA_MS))
+      window.setTimeout(() => { cameraEntrance.current = false }, CAMERA_MS + 200)
+    }
   // Only a new place starts an entrance; what it draws is read as it stands then.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [where, layoutWait])
@@ -1435,7 +1454,9 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
       case 'help': act(); setPanel(p => (p?.kind === 'help' ? null : { kind: 'help' })); return
       case 'escape':
         if (panel) { act(); setPanel(null); return }
-        if (selected) { act(); setSelected(null); lastChosen.current = null; frame.current?.focus({ preventScroll: true }) }
+        if (selected) { act(); setSelected(null); lastChosen.current = null; frame.current?.focus({ preventScroll: true }); return }
+        // Nothing open or selected: out of the explored card, one level.
+        if (focus && stack.length > 1) { act(); goBack(); return }
         return
       case 'lens': {
         act()
@@ -1478,15 +1499,19 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
       }
       case 'navigate': {
         act()
+        // Every card drawn, where it is: the arrows go by position on screen.
+        const boxes = new Map<string, NavBox>()
+        for (const n of drawn) { const p = placed.at.get(n.id); if (p) boxes.set(n.id, { x: p.x, y: p.y, ...CARD[n.type] }) }
         if (!target || !drawnIds.has(target)) {
-          const by = { left: [PAN_STEP, 0], right: [-PAN_STEP, 0], up: [0, PAN_STEP], down: [0, -PAN_STEP] }[k.arrow]
-          stopAnim(); setT(v => ({ ...v, x: v.x + by[0]!, y: v.y + by[1]! }))
+          // Nothing selected: start from the card in the middle of the view.
+          const el = frame.current
+          const mid = el ? { x: (el.clientWidth / 2 - t.x) / t.k, y: (el.clientHeight / 2 - t.y) / t.k } : { x: 0, y: 0 }
+          const start = nearestTo(mid, boxes)
+          if (start) { pendingSelect.current = null; select(start, { focusCard: true }); keepInView(start) }
           return
         }
-        const order = [...drawnIds].filter(id => placed.at.has(id)).sort((a, b) => placed.at.get(a)!.y - placed.at.get(b)!.y || placed.at.get(a)!.x - placed.at.get(b)!.x)
-        const roots = order.filter(id => { const p = tree.parent.get(id); return p === undefined || !drawnIds.has(p) })
-        const res = navigate(target, k.arrow, { children: tree.children, parent: tree.parent, roots }, drawnIds, { outline: portrait, rows: order, folded: collapsed.has(target) })
-        if (res.to !== null) { pendingSelect.current = null; select(res.to, { focusCard: true }); keepInView(res.to) } else say(res.why)
+        const res = navigate(target, k.arrow, boxes)
+        if (res.to !== null) { pendingSelect.current = null; lastChosen.current = res.to; select(res.to, { focusCard: true }); keepInView(res.to) } else say(res.why)
         return
       }
       case 'nudge': {
