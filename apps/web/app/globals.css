@@ -74,21 +74,9 @@
   --map-note: oklch(80% 0.13 82);
   --map-resource: oklch(74% 0.11 235);
   --map-task: oklch(78% 0.12 150);
-  --map-line: oklch(84% 0.03 255 / 0.2);
+  --map-line: oklch(100% 0 0 / 0.16);
   /* An understated line that still reads on its own: a [[link]], an outside card. */
-  --map-line-strong: oklch(88% 0.03 255 / 0.38);
-  /* A card on the map: a clear step above the ground (a navy charcoal), a
-     hairline edge, and a lit top edge, so cards separate without glowing. */
-  --map-card: oklch(23% 0.022 262);
-  --map-card-edge: oklch(100% 0 0 / 0.13);
-  --map-card-top: oklch(100% 0 0 / 0.16);
-  /* Knowledge Map depth: a card's edge, the shadow it casts, the space around. */
-  /* A slab is the subject's hue, dark: a plain colour (a color-mix per card cost frames on a pan). */
-  --map-slab-l: 25%; --map-slab-c: 0.05;
-  --map-shadow: oklch(5% 0.012 262);
-  --map-space-a: oklch(17.5% 0.026 258);
-  --map-space-b: oklch(10.5% 0.018 264);
-  --map-dot: oklch(100% 0 0 / 0.055);
+  --map-line-strong: oklch(100% 0 0 / 0.34);
 }
 
 /* ── The app's dark theme (the default) ─────────────────────────────────────────
@@ -241,14 +229,6 @@ html[data-kivo-theme="light"] .kivo-app {
   --map-task: oklch(52% 0.13 150);
   --map-line: oklch(24% 0.02 290 / 0.2);
   --map-line-strong: oklch(24% 0.02 290 / 0.42);
-  --map-card: var(--card);
-  --map-card-edge: oklch(24% 0.02 290 / 0.14);
-  --map-card-top: oklch(100% 0 0 / 0.85);
-  --map-slab-l: 80%; --map-slab-c: 0.035;
-  --map-shadow: oklch(30% 0.03 260);
-  --map-space-a: oklch(98% 0.006 250);
-  --map-space-b: oklch(94% 0.01 260);
-  --map-dot: oklch(24% 0.02 290 / 0.09);
   /* Subject tones and raised surfaces, set for paper (see below). */
   --tone-l: 66%;
   --tone-ink: 46%;
@@ -659,115 +639,6 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 /* Going into a card on the Knowledge Map: what is inside fades in as the view zooms to it. */
 @keyframes map-enter { from { opacity: 0; } to { opacity: 1; } }
 .map-enter { animation: map-enter 260ms ease-out both; }
-
-/* ── Knowledge Map 2.0: depth and motion (knowledge-map.tsx, depth.ts) ──────
-   The space: ambient light over a near-black (or paper) ground, a vignette,
-   and a far plane of dots the page moves slower than the cards. */
-.map-space {
-  background:
-    radial-gradient(60% 55% at 22% 18%, color-mix(in oklch, var(--nova) 9%, transparent), transparent 70%),
-    radial-gradient(55% 60% at 85% 90%, oklch(62% 0.12 260 / 0.08), transparent 70%),
-    radial-gradient(120% 100% at 50% 40%, var(--map-space-a), var(--map-space-b));
-}
-.map-space::after { content: ""; position: absolute; inset: 0; background: radial-gradient(130% 95% at 50% 45%, transparent 55%, color-mix(in oklch, var(--map-space-b) 85%, transparent)); }
-.map-far-mask { mask-image: radial-gradient(ellipse 85% 80% at 50% 45%, #000 40%, transparent 100%); }
-.map-far { background-image: radial-gradient(circle at 1px 1px, var(--map-dot) 1px, transparent 0); will-change: transform; }
-
-/* A card: its edge takes the subject's colour, darkened; its shadow lies on the ground. */
-.map-slab { fill: oklch(var(--map-slab-l) var(--map-slab-c) var(--sh, 180)); }
-.map-shadow { fill: var(--map-shadow); }
-/* Lifting: hovered, focused, selected or joined to the selection; the rest recede a little. */
-.map-lift { transform-box: fill-box; transform-origin: center; transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
-.map-card:hover .map-lift, .map-card:focus-visible .map-lift, .map-lift.map-raise { transform: translateY(-3px); }
-.map-lift.map-recede { transform: scale(0.965); }
-.map-card { transition: opacity 0.25s ease; }
-.map-moving .map-lift, .map-moving .map-card, .map-moving .map-shadow { transition: none; }
-
-/* ── The final polish: light, touch and motion (Knowledge Map) ──────────────
-   Ambient light between the dots and the cards, moved by a transform. */
-.map-ambient {
-  will-change: transform;
-  background:
-    radial-gradient(38% 34% at 28% 30%, color-mix(in oklch, var(--nova) 7%, transparent), transparent 70%),
-    radial-gradient(32% 30% at 74% 68%, oklch(66% 0.11 255 / 0.06), transparent 70%);
-}
-/* A card's shadow deepens as it lifts under the pointer. */
-.map-shadow { transform-box: fill-box; transform-origin: center; transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease; }
-.map-card:hover .map-shadow { transform: translateY(3px) scale(1.02); opacity: 0.5; }
-.map-card { transition: opacity 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
-/* Selected: one pulse outward. */
-@keyframes map-select-pulse { from { opacity: 0.75; transform: scale(1); } to { opacity: 0; transform: scale(1.09); } }
-.map-select-pulse { transform-box: fill-box; transform-origin: center; animation: map-select-pulse 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-/* The selection's lines carry a quiet travelling pulse. */
-@keyframes map-edge-flow { to { stroke-dashoffset: -25; } }
-/* The neuron touch: a slow signal travelling out along a subject's branches. Paused while the view moves; off in Calm and under reduced motion. */
-@keyframes map-signal { from { stroke-dashoffset: 36; } to { stroke-dashoffset: -400; } }
-.map-signal { animation: map-signal 4.2s linear infinite; }
-.map-moving .map-signal { animation-play-state: paused; }
-.map-still .map-signal { display: none; }
-@media (prefers-reduced-motion: reduce) { .map-signal { display: none; } }
-.map-edge-flow { animation: map-edge-flow 1.2s linear infinite; }
-/* The entrance: the subjects' light comes up before their cards. */
-@keyframes map-glow-in { from { opacity: 0; } to { opacity: 1; } }
-.map-glow-in { animation: map-glow-in 1.6s ease-out both; }
-/* The inspector slides in from the map's edge (up from the bottom on a phone); its ring sweeps to its value. */
-@keyframes map-inspector-in { from { opacity: 0; transform: translateX(12px) scale(0.985); } to { opacity: 1; transform: none; } }
-@keyframes map-inspector-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
-.map-inspector-in { animation: map-inspector-up 0.26s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-@media (min-width: 1024px) { .map-inspector-in { animation-name: map-inspector-in; } }
-@keyframes map-ring-in { from { stroke-dashoffset: var(--ring-c); } }
-.map-ring-arc { animation: map-ring-in 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) 0.08s both; }
-/* A folded count answers the pointer. */
-.map-chip rect { transition: stroke 0.2s ease, fill 0.2s ease; }
-.map-chip:hover rect { stroke: var(--action); }
-/* Calm: depth and light stay, nothing moves. */
-.map-still .map-shadow { transition: none; }
-.map-still .map-card:hover .map-shadow { transform: none; }
-.map-still .map-ambient { transform: none !important; }
-.map-still .map-select-pulse, .map-still .map-edge-flow { display: none; }
-.map-still .map-glow-in, .map-still .map-inspector-in, .map-still .map-ring-arc { animation: none; }
-
-/* The entrance: the camera settles, cards come up into place, lines draw. */
-@keyframes map-cam-in {
-  from { opacity: 0; transform: perspective(1600px) rotateX(15deg) translateY(26px) scale(0.94); }
-  45% { opacity: 1; }
-  to { opacity: 1; transform: none; }
-}
-.map-cam-in { animation: map-cam-in 2.4s cubic-bezier(0.16, 0.84, 0.24, 1) both; transform-origin: 50% 35%; }
-@keyframes map-cam-brief { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: none; } }
-.map-cam-brief { animation: map-cam-brief 0.3s ease-out both; }
-@keyframes map-card-in {
-  from { opacity: 0; transform: translateY(16px) scale(0.92); }
-  60% { opacity: 1; transform: translateY(-2px) scale(1.01); }
-  to { opacity: 1; transform: none; }
-}
-.map-card-in, .map-card-in-brief, .map-card-new, .map-card-out { transform-box: fill-box; transform-origin: center; }
-.map-card-in { animation: map-card-in 0.9s cubic-bezier(0.2, 0.8, 0.25, 1) both; }
-.map-card-in-brief { animation: map-enter 0.24s ease-out both; }
-@keyframes map-card-new { from { opacity: 0; transform: scale(0.8); } 55% { opacity: 1; transform: scale(1.04); } to { opacity: 1; transform: none; } }
-.map-card-new { animation: map-card-new 0.6s cubic-bezier(0.2, 0.8, 0.25, 1) both; }
-@keyframes map-card-out { to { opacity: 0; transform: translateY(10px) scale(0.9); } }
-.map-card-out { animation: map-card-out 0.5s ease-in both; }
-@keyframes map-edge-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
-.map-edge-draw path { stroke-dasharray: 1 1; stroke-dashoffset: 1; animation: map-edge-draw 0.46s ease-out both; animation-delay: inherit; animation-duration: inherit; }
-.map-edge-fade { animation: map-enter 0.46s ease-out both; }
-/* Found by search: one ring that widens and fades where the view lands. */
-@keyframes map-found { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(1.12); } }
-.map-found { transform-box: fill-box; transform-origin: center; animation: map-found 1.1s ease-out 0.25s both; }
-
-/* Calm (the Show menu) or reduced motion: depth stays, nothing moves. */
-.map-still .map-lift, .map-still .map-card { transition: none; }
-.map-still .map-card:hover .map-lift, .map-still .map-card:focus-visible .map-lift, .map-still .map-lift.map-raise, .map-still .map-lift.map-recede { transform: none; }
-@media (prefers-reduced-motion: reduce) {
-  .map-lift, .map-card { transition: none; }
-  .map-card:hover .map-lift, .map-card:focus-visible .map-lift, .map-lift.map-raise, .map-lift.map-recede { transform: none; }
-  .map-cam-in, .map-cam-brief, .map-card-in, .map-card-in-brief, .map-card-new, .map-card-out, .map-edge-draw path, .map-edge-fade, .map-found { animation: none; stroke-dasharray: none; }
-  .map-shadow { transition: none; }
-  .map-card:hover .map-shadow { transform: none; }
-  .map-ambient { transform: none !important; }
-  .map-select-pulse, .map-edge-flow { display: none; }
-  .map-glow-in, .map-inspector-in, .map-ring-arc { animation: none; }
-}
 @keyframes nova-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .nova-rise { animation: nova-rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 /* A tree branch's rows as it opens, and the Knowledge page's view as it changes: short, so navigation never waits on them. */
