@@ -2,7 +2,8 @@
 // content script. Two things, each one press:
 //   Capture   the selected passage goes into the learner's current draft in
 //             Kivo (one per reading session, each passage with its page), with
-//             nothing to choose: organising happens later, in Kivo's Drafts.
+//             nothing to choose. Kivo then files it under the learner's own
+//             subject and topic and says where, with Change (lib/places.js).
 //   Ask Nova  opens Nova's side panel beside the page (sidepanel.js), where the
 //             conversation has room; Safari, with no side panel, opens it here.
 // Save page (Saved pages) and Study this (a focus session) stay as they were.
@@ -19,6 +20,7 @@ import { buildCapture, buildEvent, createClient, disconnectOutcome, newActionId 
 import { NO_PROBE, browser } from './lib/browser.js'
 import { describePage } from './lib/page.js'
 import { createStore } from './lib/store.js'
+import { placementLine } from './lib/places.js'
 import { createThreads } from './lib/thread.js'
 import { alertBox, busy, el, idle, siteInitial } from './lib/ui.js'
 
@@ -56,14 +58,15 @@ const privacyText = () => [
   el('ul', {},
     el('li', {}, 'The address and title of the page you are on, and only when you open this popup on it.'),
     el('li', {}, 'The text you have selected on that page, shown here so you can capture it. It is sent only if you press Capture, or with a question you ask.'),
-    el('li', {}, 'A passage you capture goes to your Drafts in Kivo with the page it came from, until you put it in a note or discard it.'),
+    el('li', {}, 'A passage you capture goes to your Drafts in Kivo with the page it came from, until you put it in a note or discard it. Kivo files it under one of your own subjects and topics (an AI model may read the passage, its title and site, and the names of a few of your subjects and topics to choose), and you can change where.'),
+    el('li', {}, 'Research, only when you start a task and allow it: Kivo opens pages in background tabs of its own, reads them and keeps the passages it quotes. Access to websites is asked for when you start and given back when the task ends. It does not read your other tabs, sign in, buy, post or fill in forms.'),
     el('li', {}, 'A screenshot of what that tab is showing, only when you press Screenshot or capture an area you selected. You see it here first. It goes to Nova only with a question you ask, and is not kept.'),
     el('li', {}, 'Your conversation with Nova about a page stays in this browser\'s memory until you start a new one or close the browser. Press Keep in the panel to keep it on this device while you read that article (until you unlock it, or 14 days unused). Nova\'s server does not keep it.'),
     el('li', {}, 'Nothing else inside the page: no other text, no forms, no passwords.'),
     el('li', {}, 'Not your other tabs, and not your history. Nova does nothing while this popup and its panel are closed, except take the picture of an area you selected.'),
     el('li', {}, 'It sends a page to Nova only when you press Capture, Save, Study or Ask.'),
   ),
-  el('p', { class: 'small' }, 'Permissions: "activeTab" lets Nova read this tab\'s address and title when you click its icon, and take a screenshot of it when you press Screenshot. "scripting" lets it read your selected text and the page\'s own address on that tab, at that moment. "sidePanel" lets Ask Nova open beside the page. "storage" keeps this browser connected, your open conversation in memory, and a conversation you chose to Keep on this device. It has no standing access to any website.'),
+  el('p', { class: 'small' }, 'Permissions: "activeTab" lets Nova read this tab\'s address and title when you click its icon, and take a screenshot of it when you press Screenshot. "scripting" lets it read your selected text and the page\'s own address on that tab, at that moment. "sidePanel" lets Ask Nova open beside the page. "storage" keeps this browser connected, your open conversation in memory, and a conversation you chose to Keep on this device. Optional website access is asked for, site by site, only when a task you gave Nova needs a site, and given back when the task ends. It has no standing access to any website.'),
 ]
 
 // ── Not connected ─────────────────────────────────────────────────────────────
@@ -223,6 +226,9 @@ function renderReady(page, context, probe = NO_PROBE, flash = null, draft = null
     return null
   }
 
+  // Where the captured passage was filed: asked after the capture is saved,
+  // so Capture never waits on it (lib/places.js).
+  const placeSlot = el('div', { class: 'place-slot', dataset: { placeSlot: '' } })
   capture.addEventListener('click', async () => {
     const result = await send(capture, 'Capturing…', () => client.capture(buildCapture({ key: ids.capture, page, title: title.value, text: probe.selection, fresh })))
     if (!result) return
@@ -231,6 +237,9 @@ function renderReady(page, context, probe = NO_PROBE, flash = null, draft = null
     capture.textContent = result.action === 'already_in_draft' ? 'Already in this draft' : 'Captured'
     capture.disabled = true
     capture.dataset.captured = result.action
+    if (result.draft?.id && result.itemId) {
+      placeSlot.replaceChildren(placementLine({ client, draftId: result.draft.id, itemId: result.itemId, onUnauthenticated: async res => { await store.clear(); renderConnect(res.message) } }))
+    }
   })
   save.addEventListener('click', async () => {
     const result = await send(save, 'Saving…', () => client.sendEvent(buildEvent({ eventType: 'resource_saved', clientEventId: ids.resource_saved, page, title: title.value })))
@@ -258,6 +267,17 @@ function renderReady(page, context, probe = NO_PROBE, flash = null, draft = null
     else errors.replaceChildren(alertBox("Nova couldn't open here. Try again."))
   })
 
+  // Research is one of the things Nova does in the same panel: opened ready for it.
+  const research = el('button', { class: 'link', type: 'button', dataset: { researchOpen: '' }, title: 'Nova searches, reads and compares sources for you, and organises what it finds in your workspace' }, 'Research a topic with Nova')
+  research.addEventListener('click', async () => {
+    const handoff = { url: page.url, canonicalUrl: probe.canonicalUrl || null, title: title.value.trim() || page.title, selection: probe.selection || '', windowId: tabWindowId, name: context.learner.name ? context.learner.name.split(' ')[0] : null, mode: 'research' }
+    const opened = browser.openPanel(page.tabId, handoff)
+    if (opened && await opened) return window.close()
+    const inline = await browser.handOffInline(page.tabId, handoff)
+    if (inline) location.href = inline
+    else errors.replaceChildren(alertBox("Nova couldn't open here. Try again."))
+  })
+
   show('ready',
     el('div', { class: 'stack' },
       toastOf(flash),
@@ -274,12 +294,13 @@ function renderReady(page, context, probe = NO_PROBE, flash = null, draft = null
                 : probe.available ? 'Select text on the page to capture it.'
                 : "Nova can't read a selection on this page. You can still save it or ask about it."),
         capture,
+        placeSlot,
         draftLine),
       el('div', {},
         running ? el('p', { class: 'small', dataset: { running: '' }, style: 'margin-bottom: 8px' }, `You have a session running${running.topicName ? ` on ${running.topicName}` : ''}. One at a time.`) : null,
         el('div', { class: 'actions even' }, save, study),
         errors),
-      el('section', { class: 'section', dataset: { ask: '' }, ariaLabel: 'Ask Nova' }, ask),
+      el('section', { class: 'section', dataset: { ask: '' }, ariaLabel: 'Ask Nova' }, ask, el('div', { class: 'research-entry' }, research)),
       footer()),
   )
   if (probe.selection) capture.focus()

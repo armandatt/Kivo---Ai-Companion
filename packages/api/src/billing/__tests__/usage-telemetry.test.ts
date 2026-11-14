@@ -33,6 +33,8 @@ const MODEL_CALLERS: Record<string, string> = {
   "packages/api/src/nova/product/note-proposal.ts":              "notes_proposal (metered)",
   "packages/api/src/nova/product/note-tutor.ts":                 "notes_tutor (metered)",
   "packages/api/src/nova/product/page-question.ts":              "extension_ask_nova (metered)",
+  "packages/api/src/nova/product/knowledge-placement.ts":        "capture_placement (startInteraction in knowledge-placement.ts; not on the allowance)",
+  "packages/api/src/nova/product/browser-agent.ts":              "extension_agent (the task metered once at start; its steps inside it, withinCountedTask: tokens metered, not counted again)",
   "packages/api/src/nova/product/resource-processing.ts":        "saved_page_processing / saved_page_retry (resource-processing.ts)",
   "packages/api/src/nova/product/study-proposal.ts":             "subject_studio (metered)",
   // Rex, reached only through the Telegram webhook and the scheduler.
@@ -57,7 +59,7 @@ describe("every model call is attributed", () => {
 
   it("every metered route names a feature from the list", () => {
     const routes = sources("apps/api/app").filter(f => read(f).includes("await metered("));
-    expect(routes.length).toBe(11);
+    expect(routes.length).toBe(12);
     for (const route of routes) {
       const features = [...read(route).matchAll(/await metered\([\s\S]*?\{ feature: "([a-z_]+)"(?:, surface: "([a-z]+)")? \}\)/g)];
       expect([route, features.length]).toEqual([route, (read(route).match(/await metered\(/g) ?? []).length]);

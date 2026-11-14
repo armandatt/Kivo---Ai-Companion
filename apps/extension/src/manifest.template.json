@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Nova",
-  "version": "1.3.0",
-  "description": "Capture passages as you read and ask Nova about the page beside it. Nova sees a page only when you click its button.",
+  "version": "1.4.1",
+  "description": "Capture as you read, ask Nova about a page, or have Nova do it: forms, questions, research. It sees a page only when you ask.",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/16.png",
@@ -26,5 +26,9 @@
     "scripting",
     "sidePanel",
     "storage"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
   ]
 }

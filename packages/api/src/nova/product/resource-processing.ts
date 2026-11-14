@@ -38,43 +38,14 @@ export const RESOURCE_DEADLINE_MS = 8_000;
 const CONCEPTS_MAX     = 5;
 const CONCEPT_CHARS    = 48;
 const SUGGESTIONS_MAX  = 6;
-// A name this short matches too much by accident ("C", "OS") to act on.
-const NAME_MIN_CHARS   = 3;
 
 export type Vocabulary = Array<{ id: string; name: string; topics: string[] }>;
 export interface PageText { title: string; domain: string; excerpt: string | null }
 
 // ── Names ─────────────────────────────────────────────────────────────────────
 
-// The words of a text, lower-cased: runs of letters and digits, whatever the
-// script. Punctuation and spacing separate words and are otherwise ignored.
-export function wordsOf(text: string): string[] {
-  const words: string[] = [];
-  let word = "";
-  for (const ch of text.toLowerCase()) {
-    const at = ch.codePointAt(0) ?? 0;
-    // Scripts without case (Devanagari, CJK) count as letters; the punctuation
-    // and symbol blocks above Latin do not.
-    const uncased = at > 0x2ff && !(at >= 0x2000 && at <= 0x2bff) && !(at >= 0x3000 && at <= 0x303f) && !(at >= 0xfe00 && at <= 0xfe6f) && !(at >= 0xff00 && at <= 0xff0f);
-    const letter  = ch.toLowerCase() !== ch.toUpperCase() || (ch >= "0" && ch <= "9") || uncased;
-    if (letter) { word += ch; continue; }
-    if (word) { words.push(word); word = ""; }
-  }
-  if (word) words.push(word);
-  return words;
-}
-
-// Whether `name`, as whole words in order, appears in `text`.
-export function namesIt(textWords: string[], name: string): boolean {
-  const wanted = wordsOf(name);
-  if (wanted.length === 0 || wanted.join("").length < NAME_MIN_CHARS) return false;
-  for (let i = 0; i + wanted.length <= textWords.length; i++) {
-    let all = true;
-    for (let j = 0; j < wanted.length; j++) if (textWords[i + j] !== wanted[j]) { all = false; break; }
-    if (all) return true;
-  }
-  return false;
-}
+export { namesIt, wordsOf } from "./word-match";
+import { namesIt, wordsOf } from "./word-match";
 
 // Every place the page names outright. A subject is offered as a whole only
 // when none of its topics is named: the topic is the more exact place.

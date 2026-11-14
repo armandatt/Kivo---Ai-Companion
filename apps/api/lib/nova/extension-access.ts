@@ -48,6 +48,20 @@ export async function requireWebLearner(): Promise<
   return { profileId: resolved.profileId, platformChatId: learner.platformChatId }
 }
 
+// The extension's learner: the credential's own, set up and ready. One rule
+// for every extension route that reads or writes the learner's material.
+export async function requireExtensionLearner(req: Request): Promise<
+  { profileId: string; platformChatId: string; connectionId: string; denied?: undefined } |
+  { denied: NextResponse; profileId?: undefined; platformChatId?: undefined; connectionId?: undefined }
+> {
+  const caller = await resolveExtensionCaller(req)
+  if (caller.kind === "unauthenticated") return { denied: eventFail(401, "unauthenticated", "Connect Nova again.") }
+  if (caller.kind !== "learner") return { denied: eventFail(409, caller.kind, "Finish connecting Nova on the web first.") }
+  const learner = await resolveEventLearner(caller.platformChatId)
+  if (learner.status !== "ready") return { denied: eventFail(409, learner.status, "Finish the short setup on Nova first.") }
+  return { profileId: learner.profileId, platformChatId: caller.platformChatId, connectionId: caller.connectionId }
+}
+
 // A JSON body no larger than `maxBytes`. "too_large" is decided before the
 // body is parsed; a declared length over the limit is refused unread.
 export async function readSmallJson(req: Request, maxBytes: number): Promise<{ ok: true; body: unknown } | { ok: false; reason: "too_large" | "invalid" }> {

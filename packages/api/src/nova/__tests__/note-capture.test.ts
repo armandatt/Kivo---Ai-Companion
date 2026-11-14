@@ -121,6 +121,11 @@ describe("the boundary", () => {
     expect(imports).toEqual(['import { normalizeResourceUrl } from "./resource-link";', 'import { linkTarget } from "./capture-draft-rules";']);
     // and the draft rules it shares the source line with are pure too
     const rules = readFileSync(join(__dirname, "..", "product", "capture-draft-rules.ts"), "utf8");
-    expect(rules.split("\n").filter(l => l.startsWith("import "))).toEqual(['import { normalizeResourceUrl } from "./resource-link";']);
+    expect(rules.split("\n").filter(l => l.startsWith("import "))).toEqual(['import { normalizeResourceUrl } from "./resource-link";', 'import { readPlacement, type Placement } from "./knowledge-placement-rules";']);
+    // which is pure as well: words and types only (the web page imports this chain)
+    const placement = readFileSync(join(__dirname, "..", "product", "knowledge-placement-rules.ts"), "utf8");
+    expect(placement.split("\n").filter(l => l.startsWith("import "))).toEqual(['import { namesIt, stem, wordsOf } from "./word-match";', 'import type { StudyStructure } from "./setup-edit.types";']);
+    const words = readFileSync(join(__dirname, "..", "product", "word-match.ts"), "utf8");
+    expect(words.split("\n").filter(l => l.startsWith("import "))).toEqual([]);
   });
 });

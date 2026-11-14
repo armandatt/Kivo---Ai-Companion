@@ -183,3 +183,26 @@ button.ask-open::before { content: "✦"; font-size: 12px; }
 button.ask-open:hover:not(:disabled) { border-color: var(--accent); background: rgba(52,209,168,.18); }
 button[data-captured] { background: var(--accent-soft); color: var(--accent-hi); opacity: 1; }
 button[data-captured]::before { content: "✓"; font-weight: 700; }
+
+/* ── Where a capture was filed (lib/places.js) ──────────────────────────── */
+.place-slot:empty { display: none; }
+.place-slot { margin-top: var(--s2); }
+.place-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 4px; color: var(--dim); line-height: 1.5; }
+.place-line strong { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
+.place-line[data-place="medium"] strong { color: var(--warn); }
+.place-line[data-place="filing"]::before { content: ""; width: 10px; height: 10px; margin-right: 4px; border: 2px solid var(--accent-line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; align-self: center; }
+.place-line .link { font-size: 12px; }
+.place-line[data-place="choosing"] { display: block; }
+.place-picker { display: grid; gap: var(--s2); width: 100%; margin-top: 2px; padding: var(--s3); border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
+.place-picker .actions { grid-template-columns: auto auto 1fr; align-items: center; }
+.combo { position: relative; display: grid; gap: 4px; }
+.combo-input { width: 100%; height: 34px; padding: 0 var(--s3); border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--bg); color: var(--text); font: inherit; font-size: 13px; }
+.combo-input:focus { outline: none; border-color: var(--accent-line); }
+.combo-input:disabled { opacity: .5; }
+.combo-list { position: absolute; z-index: 5; top: 100%; left: 0; right: 0; max-height: 220px; margin: 4px 0 0; padding: 4px; overflow-y: auto; list-style: none; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--raised); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.combo-option { padding: 6px 10px; border-radius: 6px; color: var(--text); font-size: 12.5px; cursor: pointer; overflow-wrap: anywhere; }
+.combo-option[aria-selected="true"], .combo-option:hover { background: var(--accent-soft); }
+.combo-empty { padding: 6px 10px; }
+.combo-more { margin: 0; }
+.research-entry { margin-top: var(--s2); text-align: center; }
+@keyframes spin { to { transform: rotate(360deg); } }
