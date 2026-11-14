@@ -32,42 +32,58 @@ type Lang = 'en' | 'hi'
 // What Nova and the learner say, in each language. Nova's sentences follow the
 // learner's language; the buttons and the lines code writes (Running, How did
 // it go?, Logged) go out as code wrote them in both, as the bot sends them.
-const SAID: Record<Lang, { offer: string; done: string; exam: string; away: string; reply: string }> = {
+type Said = { checkin: string; offer: string; done: string; review: string; task: string; exam: string; away: string; reply: string; lapse: string }
+const SAID: Record<Lang, Said> = {
   en: {
+    checkin: 'Good morning! Gradient descent is first today, 25 minutes this evening. How’s the day looking?',
     offer: 'Evening! First on today’s plan: Gradient descent, 25 minutes. Your Linear regression review is due too.',
     done: 'done, it finally clicked',
+    review: 'Linear regression is due for review today. 15 minutes keeps it fresh.',
+    task: 'One thing due today: Submit ML assignment 2. Just a heads-up.',
     exam: 'ML midterm is on Thursday. Model evaluation is the topic it covers that needs you most. 30 minutes tonight?',
     away: 'can’t today, family function at home',
     reply: 'No problem, enjoy it. No study messages from me today. The midterm is on Thursday, that’s all to keep in mind.',
+    lapse: 'It’s been a few days. No pressure: 15 minutes of Gradient descent to ease back in?',
   },
   hi: {
+    checkin: 'Good morning! Aaj pehle Gradient descent hai, shaam ko 25 minute. Din kaisa lag raha hai?',
     offer: 'Shaam ho gayi! Aaj ke plan mein pehle: Gradient descent, 25 minute. Linear regression ka review bhi due hai.',
     done: 'ho gaya, finally samajh aaya',
+    review: 'Linear regression ka review aaj due hai. 15 minute mein fresh ho jayega.',
+    task: 'Aaj ek cheez due hai: Submit ML assignment 2. Bas ek reminder.',
     exam: 'ML midterm Thursday ko hai. Model evaluation pe sabse zyada kaam baaki hai. Aaj raat 30 minute?',
     away: 'aaj nahi ho payega, ghar pe function hai',
     reply: 'Koi baat nahi, enjoy karo. Aaj padhai ke liye koi message nahi aayega. Midterm Thursday ko hai, bas itna yaad rakhna.',
+    lapse: 'Kuch din ho gaye. Koi pressure nahi: wapas shuru karne ke liye 15 minute Gradient descent?',
   },
 }
 
-// Each step adds lines to the chat, says which rule it shows, and what is happening.
+// Each step adds lines to the chat, says what is happening, and, when Nova
+// writes first, which reason it is writing for (only those steps light one).
 const stepsIn = (lang: Lang): Array<{ label: string; caption: string; clock: string; lines: Line[]; reason?: Reason; quiet?: Quiet }> => {
   const t = SAID[lang]
+  const offer = (n: number) => [`Start ${n} min`, 'Later', 'Not today']
   return [
     {
-      label: 'Nova writes first', reason: 'plan', clock: '6:30',
-      caption: 'In your usual study window, Nova opens with today’s first block and a Start button.',
+      label: 'Morning check-in', reason: 'checkin', clock: '8:00',
+      caption: 'At the time you chose, Nova says what today holds. Once a day, never more.',
       lines: [
-        { kind: 'day', text: 'Today' },
-        { kind: 'nova', time: '6:30 pm', text: t.offer, buttons: ['Start 25 min', 'Later', 'Not today'] },
+        { kind: 'day', text: 'Friday' },
+        { kind: 'nova', time: '8:00 am', text: t.checkin },
       ],
     },
     {
-      label: 'One tap starts', reason: 'plan', quiet: 'session', clock: '6:31',
+      label: 'Nova writes first', reason: 'plan', clock: '6:30',
+      caption: 'In your usual study window, Nova opens with today’s first block and a Start button.',
+      lines: [{ kind: 'nova', time: '6:30 pm', text: t.offer, buttons: offer(25) }],
+    },
+    {
+      label: 'One tap starts', quiet: 'session', clock: '6:31',
       caption: 'Start runs a real session, the same one the web app shows. Nova stays quiet until it ends.',
       lines: [{ kind: 'nova', time: '6:31 pm', text: 'Running: Gradient descent, 0 of 25 min.', buttons: ['Pause', 'End'] }],
     },
     {
-      label: 'Say how it went', reason: 'plan', clock: '6:57',
+      label: 'Say how it went', clock: '6:57',
       caption: 'Reply in your own words. Ending a session always asks how it went.',
       lines: [
         { kind: 'you', time: '6:57 pm', text: t.done },
@@ -75,17 +91,30 @@ const stepsIn = (lang: Lang): Array<{ label: string; caption: string; clock: str
       ],
     },
     {
-      label: 'Logged', reason: 'plan', clock: '6:57',
+      label: 'Logged', clock: '6:57',
       caption: 'Your answer updates the topic’s progress and schedules its next review.',
       lines: [{ kind: 'nova', time: '6:57 pm', text: 'Logged: 25 min on Gradient descent. Good.', link: 'Open Nova' }],
     },
     {
-      label: 'An exam close', reason: 'exam', clock: '5:45',
-      caption: 'Three days out, Nova points at the topic the exam needs most.',
+      label: 'A review comes round', reason: 'review', clock: '11:00',
+      caption: 'When a topic’s review falls due, Nova brings it back before it fades.',
+      lines: [
+        { kind: 'day', text: 'Saturday' },
+        { kind: 'nova', time: '11:00 am', text: t.review, buttons: offer(15) },
+      ],
+    },
+    {
+      label: 'A task due today', reason: 'task', clock: '9:15',
+      caption: 'A task of yours falls due: Nova names it, and pushes no topic with it.',
       lines: [
         { kind: 'day', text: 'Monday' },
-        { kind: 'nova', time: '5:45 pm', text: t.exam, buttons: ['Start 30 min', 'Later', 'Not today'] },
+        { kind: 'nova', time: '9:15 am', text: t.task },
       ],
+    },
+    {
+      label: 'An exam close', reason: 'exam', clock: '5:45',
+      caption: 'Three days out, Nova points at the topic the exam needs most.',
+      lines: [{ kind: 'nova', time: '5:45 pm', text: t.exam, buttons: offer(30) }],
     },
     {
       label: 'A day off', quiet: 'life', clock: '5:52',
@@ -93,6 +122,14 @@ const stepsIn = (lang: Lang): Array<{ label: string; caption: string; clock: str
       lines: [
         { kind: 'you', time: '5:52 pm', text: t.away },
         { kind: 'nova', time: '5:52 pm', text: t.reply },
+      ],
+    },
+    {
+      label: 'Back after a break', reason: 'lapse', clock: '7:10',
+      caption: 'A few days with no study: Nova writes once, gently, to help you back in.',
+      lines: [
+        { kind: 'day', text: 'Sunday' },
+        { kind: 'nova', time: '7:10 pm', text: t.lapse, buttons: offer(15) },
       ],
     },
   ]
@@ -105,7 +142,7 @@ const STEP_MS = 2800
 const TYPING_MS = 650
 
 // The button tapped to reach a step, kept lit on the message it was on.
-const TAPPED: Record<number, string> = { 1: 'Start 25 min', 3: 'Good' }
+const TAPPED: Record<number, string> = { 2: 'Start 25 min', 4: 'Good' }
 
 const REASONS: Array<{ id: Reason; icon: typeof Send; title: string; body: string }> = [
   { id: 'checkin', icon: Sunrise, title: 'Your check-in time', body: 'Once a day, at the time you choose.' },
@@ -327,7 +364,7 @@ export function TelegramDemo() {
               <span className="text-[11px] font-medium tabular-nums text-slate-500">{s.step + 1} / {STEPS.length}</span>
             </div>
             <AnimatePresence mode="wait" initial={false}>
-              <motion.div key={`${s.step}`} className="min-h-[6.5rem] sm:min-h-[6rem]" initial={s.reduced ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}>
+              <motion.div key={`${s.step}`} className="min-h-[6rem] sm:min-h-[5.25rem]" initial={s.reduced ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}>
                 <p className="mt-2 text-xl font-semibold tracking-[-0.01em] text-white sm:text-2xl">{now.label}</p>
                 <p className="mt-1.5 max-w-md text-[14px] leading-relaxed text-slate-300">{now.caption}</p>
               </motion.div>
