@@ -41,54 +41,58 @@
     "composerIcon": "./assets/logo.png"
   },
   "mcpServers": "./.mcp.json",
-  "review": {
-    "test_cases": {
-      "positive": [
-        {
-          "description": "List the learner's workspaces and subjects",
-          "prompt": "List my Kivo workspaces and subjects.",
-          "tools_triggered": "list_workspaces",
-          "expected_behavior": "Returns the test account's subjects (AI Analytics Feature, Competitive Intelligence, Customer Insights, Launch Strategy, Product Strategy) with ids. Nothing is changed."
-        },
-        {
-          "description": "Answer a question from the learner's own notes",
-          "prompt": "What do my Kivo notes say about competitors?",
-          "tools_triggered": "search_notes, get_note",
-          "expected_behavior": "Finds notes under Competitive Intelligence by keyword, reads the best matches and answers from their text with links to the notes in Kivo. Nothing is changed."
-        },
-        {
-          "description": "Show one subject's Knowledge Map",
-          "prompt": "Show the Knowledge Map for Launch Strategy in Kivo.",
-          "tools_triggered": "list_workspaces, get_knowledge_map",
-          "expected_behavior": "Returns the subject's topics, how they nest, and the notes filed under each, with links into Kivo. Nothing is changed."
-        },
-        {
-          "description": "Find knowledge gaps",
-          "prompt": "Which topics in my Kivo account have few or no notes?",
-          "tools_triggered": "find_knowledge_gaps",
-          "expected_behavior": "Lists topics with no notes or little material, and links to notes that are not written yet, each with the evidence from the records. Nothing is changed."
-        },
-        {
-          "description": "Save ideas from the conversation as notes, with a preview first",
-          "prompt": "Save these points to Kivo under Customer Insights: users want weekly email digests; onboarding takes too long.",
-          "tools_triggered": "capture_knowledge",
-          "expected_behavior": "First call with mode preview shows what would be created, enriched or skipped as duplicates. After the user agrees, mode apply creates the notes under Customer Insights and reports each item with a link and a passed verification."
+  "extensions": {
+    "com.openai": {
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "List the learner's workspaces and subjects",
+              "prompt": "List my Kivo workspaces and subjects.",
+              "tools_triggered": "list_workspaces",
+              "expected_behavior": "Returns the test account's subjects (AI Analytics Feature, Competitive Intelligence, Customer Insights, Launch Strategy, Product Strategy) with ids. Nothing is changed."
+            },
+            {
+              "description": "Answer a question from the learner's own notes",
+              "prompt": "What do my Kivo notes say about competitors?",
+              "tools_triggered": "search_notes, get_note",
+              "expected_behavior": "Finds notes under Competitive Intelligence by keyword, reads the best matches and answers from their text with links to the notes in Kivo. Nothing is changed."
+            },
+            {
+              "description": "Show one subject's Knowledge Map",
+              "prompt": "Show the Knowledge Map for Launch Strategy in Kivo.",
+              "tools_triggered": "list_workspaces, get_knowledge_map",
+              "expected_behavior": "Returns the subject's topics, how they nest, and the notes filed under each, with links into Kivo. Nothing is changed."
+            },
+            {
+              "description": "Find knowledge gaps",
+              "prompt": "Which topics in my Kivo account have few or no notes?",
+              "tools_triggered": "find_knowledge_gaps",
+              "expected_behavior": "Lists topics with no notes or little material, and links to notes that are not written yet, each with the evidence from the records. Nothing is changed."
+            },
+            {
+              "description": "Save ideas from the conversation as notes, with a preview first",
+              "prompt": "Save these points to Kivo under Customer Insights: users want weekly email digests; onboarding takes too long.",
+              "tools_triggered": "capture_knowledge",
+              "expected_behavior": "First call with mode preview shows what would be created, enriched or skipped as duplicates. After the user agrees, mode apply creates the notes under Customer Insights and reports each item with a link and a passed verification."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Unrelated request: weather",
+              "prompt": "What's the weather in Delhi tomorrow?"
+            },
+            {
+              "description": "Financial action Kivo does not support",
+              "prompt": "Transfer $100 to my friend's bank account."
+            },
+            {
+              "description": "General knowledge with no reference to the user's Kivo",
+              "prompt": "Write a poem about the ocean."
+            }
+          ]
         }
-      ],
-      "negative": [
-        {
-          "description": "Unrelated request: weather",
-          "prompt": "What's the weather in Delhi tomorrow?"
-        },
-        {
-          "description": "Financial action Kivo does not support",
-          "prompt": "Transfer $100 to my friend's bank account."
-        },
-        {
-          "description": "General knowledge with no reference to the user's Kivo",
-          "prompt": "Write a poem about the ocean."
-        }
-      ]
+      }
     }
   }
 }
