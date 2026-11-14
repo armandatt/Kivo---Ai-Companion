@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "kivo": {
+      "type": "streamable-http",
+      "url": "https://www.thekivo.in/api/mcp",
+      "extensions": {
+        "com.openai": {
+          "auth": {
+            "type": "oauth",
+            "client": { "mode": "dcr" }
+          }
+        }
+      }
+    }
+  }
+}

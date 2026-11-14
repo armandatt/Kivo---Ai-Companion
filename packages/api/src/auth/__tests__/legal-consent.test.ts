@@ -1,7 +1,7 @@
 // Agreement to the Terms and the Privacy Policy at sign-up (auth/legal.ts), and
 // a signed-in learner's own password-reset link (password-reset.service.ts).
 
-import { checkLegalConsent, consentFromToken, consentToken, LEGAL_OUTDATED_MESSAGE, LEGAL_REQUIRED_MESSAGE, PRIVACY_VERSION, TERMS_VERSION } from "../legal";
+import { checkLegalConsent, consentFromToken, consentToken, LEGAL_OUTDATED_MESSAGE, LEGAL_REQUIRED_MESSAGE, PRIVACY_VERSION, TERMS_VERSION, PREVIOUS_TERMS_VERSION, PREVIOUS_PRIVACY_VERSION } from "../legal";
 import { resolveGoogleSignIn, type GoogleIdentity } from "../google-signin.service";
 import { requestOwnPasswordReset, completePasswordReset, RESET_MAX_REQUESTS_PER_HOUR } from "../password-reset.service";
 import { startSignup, verifySignup } from "../signup.service";
@@ -117,5 +117,13 @@ describe("a signed-in learner's own reset link", () => {
     for (let i = 0; i < RESET_MAX_REQUESTS_PER_HOUR; i++) expect((await requestOwnPasswordReset("u1", { deps: auth.deps })).ok).toBe(true);
     expect(await requestOwnPasswordReset("u1", { deps: auth.deps })).toMatchObject({ ok: false, reason: "limited" });
     expect(auth.sent).toHaveLength(RESET_MAX_REQUESTS_PER_HOUR);
+  });
+});
+
+describe("the previous versions, during a deploy", () => {
+  it("are accepted only as the earlier pair together, and recorded as what was agreed", () => {
+    expect(checkLegalConsent({ terms: PREVIOUS_TERMS_VERSION, privacy: PREVIOUS_PRIVACY_VERSION })).toEqual({ ok: true, consent: { terms: PREVIOUS_TERMS_VERSION, privacy: PREVIOUS_PRIVACY_VERSION } });
+    expect(checkLegalConsent({ terms: TERMS_VERSION, privacy: PREVIOUS_PRIVACY_VERSION }).ok).toBe(false);
+    expect(checkLegalConsent({ terms: "2020-01-01", privacy: "2020-01-01" }).ok).toBe(false);
   });
 });

@@ -20,7 +20,7 @@ import {
   resolveWorkspace, searchAll, subjectsIn, workspacesOf,
 } from "./knowledge";
 import {
-  CAPTURE_EXCERPT_MAX, CAPTURE_ITEM_MAX, CAPTURE_ITEMS_MAX, ITEM_KINDS, planCapture, planMapBuild, type OutlineNode,
+  CAPTURE_ITEM_MAX, CAPTURE_ITEMS_MAX, ITEM_KINDS, planCapture, planMapBuild, type OutlineNode,
 } from "./curation";
 import { keyTerms } from "./similarity";
 
@@ -516,7 +516,6 @@ export const TOOLS: ToolDef[] = [
       subjectId: z.string().max(50).optional(), subjectName: z.string().max(80).optional(), createSubject: z.boolean().optional().describe("Create subjectName if the learner has no such subject (only when they asked for it)."),
       topicName: z.string().max(120).optional(),
       source: z.object({ conversationTitle: z.string().max(200).optional(), conversationId: z.string().max(120).optional(), url: z.string().url().max(500).optional() }).optional(),
-      excerpt: z.string().max(CAPTURE_EXCERPT_MAX).optional().describe("Optional: the passage of the conversation these items came from, for checking sizes; it is not stored."),
       mode: z.enum(["preview", "apply"]), idempotencyKey: idemArg,
     },
     handler: async (a, ctx) => {

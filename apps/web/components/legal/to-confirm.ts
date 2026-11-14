@@ -1,30 +1,20 @@
 // Facts the Privacy Policy and Terms need that the code cannot establish.
-// Each is shown on the page as a marked placeholder until the owner supplies
-// it; nothing here is a guess. One list, so the pages and the review of what
-// is missing never disagree.
+// While any is missing, the page shows it as a marked placeholder (<Confirm>),
+// is marked as a draft and is kept out of search results. Nothing here is a
+// guess. One list, so the pages and the review of what is missing never
+// disagree.
 
 // Facts the owner has supplied (2026-11-13).
 export const LEGAL_ENTITY = 'Kivo'
 export const LEGAL_CONTACT = 'Contact@thekivo.in'
 
-export const TO_CONFIRM = {
-  address:       'A postal address, if the law that applies to you requires one',
-  effectiveDate: 'The date these documents take effect',
-  minAge:        'The minimum age to use Kivo, and whether younger users need a parent or guardian’s consent',
-  providers:     'The service providers used in production and where they store data. The code points to Vercel (web app), Render (API), Neon (database), Resend (email) and Polar (billing); confirm these and their regions',
-  aiProvider:    'Which AI provider production uses (the code supports Anthropic’s Claude, Google Gemini and OpenAI, chosen by configuration) and that provider’s terms on the data it receives',
-  analytics:     'How Vercel Web Analytics is configured and what it records',
-  hostingLogs:   'Whether the hosting providers’ request logs record IP addresses, and for how long',
-  noSale:        'Whether Kivo sells personal data or shares it with anyone other than the service providers listed',
-  retention:     'How long account data, conversations and study records are kept, and how long backups are kept',
-  requests:      'How someone asks for a copy of their data, or for deletion if they cannot sign in',
-  legalBasis:    'The legal bases for processing and the rights section required where your users are (for example the GDPR in the EU and UK), if it applies',
-  changes:       'How changes to these documents will be announced',
-  termination:   'When Kivo may suspend or close an account',
-  billing:       'Pro’s renewal, cancellation, refund and tax terms, and whether Polar sells it as merchant of record',
-  consentKeeping:'How long sign-up agreement records are kept, including whether any record is kept after an account is deleted',
-  liability:     'Warranty disclaimer and limitation of liability wording, from a qualified legal adviser',
-  governingLaw:  'Which law governs the Terms and where disputes are decided',
-} as const
+// The owner's decisions for publication (2026-11-14): the date the published
+// text takes effect, the governing law and courts, the minimum age, refunds.
+export const EFFECTIVE_DATE = '2026-11-14'
+export const GOVERNING_LAW = 'the laws of India'
+export const COURTS = 'the courts at New Delhi, India'
+export const MIN_AGE = 13
 
-export type ToConfirm = keyof typeof TO_CONFIRM
+// Nothing is waiting to be supplied. Add an entry here (and a <Confirm id>
+// where it belongs) when a page needs a fact the owner has not given.
+export const TO_CONFIRM: Record<string, string> = {}

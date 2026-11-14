@@ -1,18 +1,17 @@
 import type { Metadata } from "next"
 import Link from "next/link"
 import { PRIVACY_VERSION } from "@repo/api/auth/legal"
-import { Confirm, LegalPage, Section } from "@/components/legal/legal-page"
-import { LEGAL_CONTACT, LEGAL_ENTITY } from "@/components/legal/to-confirm"
+import { LegalPage, Section } from "@/components/legal/legal-page"
+import { EFFECTIVE_DATE, LEGAL_CONTACT, LEGAL_ENTITY, MIN_AGE } from "@/components/legal/to-confirm"
 
 // Written from what the code stores and sends (the database schema, the auth
-// and Nova services, the browser extension's own statement). Anything the
-// code cannot establish is a <Confirm> placeholder, never a guess.
+// and Nova services, the browser extension's own statement) and the owner's
+// decisions (components/legal/to-confirm.ts). A fact still missing would be a
+// <Confirm> placeholder, never a guess.
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
   description: "What Kivo collects, why, who processes it, and the controls you have.",
-  // A draft with facts still to confirm: kept out of search results until published.
-  robots: { index: false, follow: true },
 }
 
 const SECTIONS = [
@@ -37,11 +36,12 @@ export default function PrivacyPage() {
     <LegalPage
       title="Privacy Policy"
       updated={PRIVACY_VERSION}
+      effective={EFFECTIVE_DATE}
       sections={SECTIONS}
       summary={<p>Kivo keeps what you give it to plan and run your studying: your account, what you study, what you write, and your conversations with Nova. Some of it is sent to an AI provider to answer you. You can edit or delete what you create, and delete your whole account from Settings.</p>}
     >
       <Section id="who" title="Who we are">
-        <p>Kivo is provided by {LEGAL_ENTITY}. You can contact us at <a href={`mailto:${LEGAL_CONTACT}`}>{LEGAL_CONTACT}</a>. <Confirm id="address" /></p>
+        <p>Kivo is provided by {LEGAL_ENTITY}. You can contact us at <a href={`mailto:${LEGAL_CONTACT}`}>{LEGAL_CONTACT}</a>. Kivo is operated from India.</p>
       </Section>
 
       <Section id="collect" title="What we collect">
@@ -76,7 +76,7 @@ export default function PrivacyPage() {
           <li>To answer and help you with AI, as described below.</li>
           <li>To keep accounts safe, for example by limiting repeated sign-in attempts.</li>
         </ul>
-        <p><Confirm id="noSale" /></p>
+        <p>We do not sell your personal data, and we do not use it for advertising. We share it only with the service providers listed below, for the purposes described here, or where the law requires us to.</p>
       </Section>
 
       <Section id="ai" title="AI features">
@@ -93,7 +93,7 @@ export default function PrivacyPage() {
           <li><strong>Asking about a page from the browser extension:</strong> your question, the page’s title and site name, and any text you selected. The question is not stored.</li>
         </ul>
         <p>The note you add after a study session is not sent to the AI model. AI replies can be wrong; nothing an AI reply says changes your records unless you confirm it.</p>
-        <p>The provider used is <Confirm id="aiProvider" />.</p>
+        <p>The provider used is Anthropic (its Claude models), through its API. Anthropic processes what Kivo sends under its commercial terms, which do not allow it to use that data to train its models.</p>
       </Section>
 
       <Section id="assistants" title="AI assistants you connect">
@@ -114,15 +114,15 @@ export default function PrivacyPage() {
       <Section id="processors" title="Who processes it">
         <p>Kivo relies on service providers to host and deliver it. Each receives only what its part of the service needs:</p>
         <ul>
-          <li>Hosting for the web app and the server, and the database. <Confirm id="providers" /></li>
+          <li>Vercel, which hosts Kivo’s website and web app; Render, which runs Kivo’s server in the United States (Virginia); and Neon, which hosts Kivo’s database in the United States (US East). Your data is therefore stored and processed in the United States.</li>
           <li>Resend, which delivers Kivo’s emails.</li>
           <li>Polar, which takes payment if you subscribe to Pro.</li>
           <li>Google, if you choose to sign in with Google.</li>
           <li>Telegram, which carries your messages with Nova if you connect it. Telegram’s own privacy policy applies to your use of Telegram.</li>
           <li>The AI model provider described above.</li>
-          <li>Vercel Web Analytics, which records visits to Kivo’s pages. <Confirm id="analytics" /></li>
+          <li>Vercel Web Analytics, which counts visits to Kivo’s pages (which page, the referring site, and the browser, device type and country) without cookies and without identifying you; visits are counted in aggregate.</li>
         </ul>
-        <p><Confirm id="hostingLogs" /></p>
+        <p>Like any website, our hosting providers keep request logs, which include your IP address, for a limited time under their own policies. We use them only to keep Kivo running and secure, for example to look into an error or an attack.</p>
       </Section>
 
       <Section id="browser" title="Cookies and your browser">
@@ -143,14 +143,14 @@ export default function PrivacyPage() {
           <li>Reset your password from your <Link href="/profile">Profile</Link>, or with Forgot password on the sign-in page.</li>
           <li><strong>Delete your account</strong> in Settings. This deletes your account and your Nova study record with it: subjects, topics, sessions, notes, tasks, saved pages, your map, connected browsers, and your conversation with Nova. Two exceptions: if another Kivo account is connected to the same Telegram chat, that chat’s history is left for that account; and a Telegram chat first set up with Rex, Kivo’s earlier companion, keeps its own history.</li>
           <li>There is no button to disconnect Telegram yet. You can stop Nova messaging you by blocking the bot in Telegram, or by deleting your account.</li>
-          <li>There is no self-service download of your data yet. <Confirm id="requests" /></li>
+          <li>There is no self-service download of your data yet. To get a copy of your data, or to have your account deleted if you cannot sign in, email <a href={`mailto:${LEGAL_CONTACT}`}>{LEGAL_CONTACT}</a> from the address on your account. We will confirm it is you, and reply within 30 days.</li>
         </ul>
       </Section>
 
       <Section id="keeping" title="How long we keep it">
         <p>A sign-up code stops working after 10 minutes, and a password-reset link after one hour. A connected browser’s credential stops working after 30 days without use. Everything else is kept while your account exists, until you delete it or delete your account.</p>
-        <p><Confirm id="retention" /></p>
-        <p><Confirm id="consentKeeping" /></p>
+        <p>When you delete something, or your account, it is removed from Kivo’s database at once. Copies can remain in the database provider’s backups for up to 7 days, after which they are gone too.</p>
+        <p>The record of which Terms and Privacy Policy you agreed to is kept with your account, and is deleted with it.</p>
       </Section>
 
       <Section id="security" title="Security">
@@ -158,16 +158,17 @@ export default function PrivacyPage() {
       </Section>
 
       <Section id="children" title="Children">
-        <p><Confirm id="minAge" /></p>
+        <p>Kivo is not for children under {MIN_AGE}. If you are under 18, you may use Kivo only with the consent of a parent or guardian. If you are a parent or guardian and believe a child is using Kivo without your consent, contact us at <a href={`mailto:${LEGAL_CONTACT}`}>{LEGAL_CONTACT}</a> and we will delete the account.</p>
       </Section>
 
       <Section id="rights" title="Your rights">
         <p>Depending on where you live, you may have rights over your personal data, such as to access, correct or delete it. Use the controls above, or contact us at <a href={`mailto:${LEGAL_CONTACT}`}>{LEGAL_CONTACT}</a>.</p>
-        <p><Confirm id="legalBasis" /></p>
+        <p>In India, we process your personal data under the Digital Personal Data Protection Act, 2023, on the basis of the consent you give when you create your account and for the purposes described here. You can withdraw consent by deleting your account; this does not affect what was done before. If you are in the European Union or the United Kingdom, we rely on our contract with you (to run Kivo for you) and, for keeping accounts safe, on our legitimate interests; you also have the right to object, to restrict processing, to data portability and to complain to your data protection authority.</p>
+        <p>If you have a concern about how we handle your data, contact us first at <a href={`mailto:${LEGAL_CONTACT}`}>{LEGAL_CONTACT}</a>; we will reply within 30 days.</p>
       </Section>
 
       <Section id="changes" title="Changes and contact">
-        <p><Confirm id="changes" /> Questions about this policy: <a href={`mailto:${LEGAL_CONTACT}`}>{LEGAL_CONTACT}</a>. See also the <Link href="/terms">Terms of Service</Link>.</p>
+        <p>When we change this policy, the date at the top of this page changes. If a change affects how we use your data, we will tell you by email or in Kivo before it takes effect. Questions about this policy: <a href={`mailto:${LEGAL_CONTACT}`}>{LEGAL_CONTACT}</a>. See also the <Link href="/terms">Terms of Service</Link>.</p>
       </Section>
     </LegalPage>
   )

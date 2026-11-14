@@ -10,18 +10,21 @@ const pages = { privacy: web('app/(legal)/privacy/page.tsx'), terms: web('app/(l
 const frame = web('components/legal/legal-page.tsx')
 const used = (src: string) => [...src.matchAll(/<Confirm id="(\w+)"/g)].map(m => m[1]!)
 
-test('every placeholder on the pages is a listed fact, and every listed fact is shown somewhere', () => {
+test('every placeholder on the pages is a listed fact, and every listed fact is shown somewhere (none are left, 14 Nov)', () => {
   const all = new Set([...used(pages.privacy), ...used(pages.terms), ...used(frame)])
   for (const id of all) assert.ok(id in TO_CONFIRM, `unlisted placeholder ${id}`)
   for (const id of Object.keys(TO_CONFIRM)) assert.ok(all.has(id), `listed but never shown: ${id}`)
 })
 
-test('a page with facts still to confirm is marked as a draft and kept out of search results', () => {
+test('a page with facts still to confirm is marked as a draft and kept out of search results; a complete one is published', () => {
+  assert.match(frame, /\{draft \? \(/)
   assert.match(frame, /Draft\./)
   assert.match(frame, /not legal advice/)
   for (const [name, src] of Object.entries(pages)) {
-    if (used(src).length > 0) assert.match(src, /robots: \{ index: false/, name)
+    if (used(src).length > 0) { assert.match(src, /robots: \{ index: false/, name); assert.match(src, /draft\b/, name) }
+    else assert.doesNotMatch(src, /robots: \{ index: false/, `${name} is complete and published`)
   }
+  assert.match(frame, /Takes effect: <time dateTime=\{effective\}>/)
 })
 
 test('the footer links to the real pages and has no Security link', () => {
