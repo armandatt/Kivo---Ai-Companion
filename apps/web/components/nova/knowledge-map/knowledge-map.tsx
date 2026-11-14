@@ -514,7 +514,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
           )}
       {startError && <p role="alert" className="-mt-2 text-sm text-red-400">{startError}</p>}
       {section === 'ask' && askable && (
-        <TalkToNova about={node.type === 'topic' ? `the topic “${node.label}” in ${node.subjectName}` : `the subject “${node.label}”`} placeholder={`Ask about ${short(node.label, 32)}…`} className="-mt-1" />
+        <TalkToNova about={node.type === 'topic' ? `the topic “${node.label}” in ${node.subjectName}` : `the subject “${node.label}”`} aboutNode={node.id} placeholder={`Ask about ${short(node.label, 32)}…`} className="-mt-1" />
       )}
 
       {/* One next step, from its own record, as an action. */}
@@ -627,7 +627,7 @@ type Panel =
   | { kind: 'add'; node: MapNode | null }
   | { kind: 'delete'; node: MapNode }
   | { kind: 'delete_map'; workspaceId: string; title: string }
-  | { kind: 'help' } | { kind: 'legend' } | { kind: 'filters' } | { kind: 'reset' }
+  | { kind: 'help' } | { kind: 'legend' } | { kind: 'filters' } | { kind: 'reset' } | { kind: 'nova' }
 
 const ADDABLE: ReadonlySet<MapNodeType> = new Set(['subject', 'topic', 'task'])
 const reducedMotion = () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -743,6 +743,23 @@ function TopicMarks({ n, detail, lens, now }: { n: Extract<MapNode, { type: 'top
       )}
     </>
   )
+}
+
+// A line along the gaps (into a wrapped column), its corners rounded so it
+// bends like a fibre: out to the trunk, along the gap above the card's row,
+// then down into the card. The same course as before, never across a card.
+function roundedLane(a: { x: number; y: number }, lane: { trunkX: number; laneY: number }, b: { x: number; y: number }): string {
+  const r = 14
+  const sx1 = Math.sign(lane.trunkX - a.x) || 1, sy1 = Math.sign(lane.laneY - a.y) || 1
+  const sx2 = Math.sign(b.x - lane.trunkX) || 1, sy2 = Math.sign(b.y - lane.laneY) || 1
+  const r1 = Math.min(r, Math.abs(lane.trunkX - a.x) / 2, Math.abs(lane.laneY - a.y) / 2)
+  const r2 = Math.min(r, Math.abs(lane.laneY - a.y) / 2, Math.abs(b.x - lane.trunkX) / 2)
+  const r3 = Math.min(r, Math.abs(b.x - lane.trunkX) / 2, Math.abs(b.y - lane.laneY) / 2)
+  return [
+    `M ${a.x} ${a.y}`, `H ${lane.trunkX - sx1 * r1}`, `Q ${lane.trunkX} ${a.y} ${lane.trunkX} ${a.y + sy1 * r1}`,
+    `V ${lane.laneY - sy1 * r2}`, `Q ${lane.trunkX} ${lane.laneY} ${lane.trunkX + sx2 * r2} ${lane.laneY}`,
+    `H ${b.x - sx2 * r3}`, `Q ${b.x} ${lane.laneY} ${b.x} ${lane.laneY + sy2 * r3}`, `V ${b.y}`,
+  ].join(' ')
 }
 
 // A topic's state, in a colour of the theme (the overview, the Learning lens, the legend).
@@ -925,13 +942,34 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     if (ex && allIds.has(ex) && canExplore(tree, ex)) setStack(s => enter(s, ex, null))
     if (f) { setScope(f); setSelected(f) }
   }, [allIds, tree])
-  // The address says which card is explored, so a reload opens there again.
+  // The address says which card is explored, so a reload opens there again,
+  // and each card gone into is a step in the browser's history: its Back and
+  // Forward (and a mouse's or trackpad's) move between the levels as the
+  // map's own Back does. A step the browser made is not written again.
+  const fromHistory = useRef<string | null | undefined>(undefined)
   useEffect(() => {
     if (!focusApplied.current) return
     const url = new URL(window.location.href)
     if (focus) url.searchParams.set('explore', focus); else url.searchParams.delete('explore')
-    if (url.toString() !== window.location.href) window.history.replaceState(window.history.state, '', url.toString())
+    if (fromHistory.current !== undefined) { const was = fromHistory.current; fromHistory.current = undefined; if (was === focus) return }
+    if (url.toString() !== window.location.href) window.history.pushState({ ...(window.history.state ?? {}), kivoMap: focus ?? null }, '', url.toString())
   }, [focus])
+  const treeNow = useRef(tree)
+  treeNow.current = tree
+  useEffect(() => {
+    const onPop = () => {
+      const ex = new URLSearchParams(window.location.search).get('explore')
+      fromHistory.current = ex
+      setStack(s => {
+        if (!ex) return [s[0]!]
+        const at = s.findIndex(l => l.focus === ex)
+        if (at >= 0) return s.slice(0, at + 1)
+        return canExplore(treeNow.current, ex) ? enter(s, ex, null) : s
+      })
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
   // After a reload, a selection, scope, hover or explored card that has gone
   // (deleted, archived) is dropped; one still there is kept.
   useEffect(() => {
@@ -1089,8 +1127,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   // ── The entrance ───────────────────────────────────────────────────────────
   // Played once the saved layout is in (or after a short wait for it), so no
   // card arrives and then jumps: subjects, then what hangs from them, then
-  // the lines. Full the first time this map is opened in a session, brief on
-  // a return, a large map or going into a card, none under reduced motion.
+  // the lines. Full whenever the map is opened (Everything or a workspace),
+  // brief going into a card, none in Calm or under reduced motion.
   // Nothing waits on it: every card can be clicked from the first frame.
   const [layoutWait, setLayoutWait] = useState(true)
   useEffect(() => {
@@ -1105,7 +1143,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     entered.current = where
     const session = sessionStore()
     const calm = reducedMotion() || motion === 'reduced'
-    const mode = first ? entranceMode({ seen: enteredBefore(session, where), reduced: calm, motion, count: drawn.length }) : calm ? 'none' : 'brief'
+    // Opening the map (Everything or a workspace) always plays the full
+    // entrance; going into a card, the brief one. Calm and reduced motion: none.
+    const top = focus === null
+    const mode = calm ? 'none' : top ? entranceMode({ seen: false, reduced: calm, motion, count: Math.min(drawn.length, 400) }) : first ? entranceMode({ seen: enteredBefore(session, where), reduced: calm, motion, count: drawn.length }) : 'brief'
     markEntered(session, where)
     if (mode === 'none') { setEntrance(null); return }
     const plan = entrancePlan(drawn.map(n => n.id), tree.parent, placed.at, [...drawnEdges, ...cross.map(c => c.edge)], mode)
@@ -1189,7 +1230,12 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     lastChosen.current = id
     setScope(null)
   }, [tree, say])
-  const goBack = useCallback(() => setStack(s => back(s)), [])
+  // Back: through the browser's history when the step was one the map made
+  // (so the two never disagree), else the map's own stack.
+  const goBack = useCallback(() => {
+    if (window.history.state && 'kivoMap' in window.history.state) { window.history.back(); return }
+    setStack(s => back(s))
+  }, [])
   const goUp = useCallback(() => {
     if (!focus) { say('You are on the whole map.'); return }
     const from = focus
@@ -1538,7 +1584,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
       // A branch flows out of its card and into the next, level at both ends;
       // in the outline (one card under another) it is the plain line.
       const flow = Math.abs(b.x - a.x) > 60
-      d = laned ? `M ${a.x} ${a.y} H ${lane.trunkX} V ${lane.laneY} H ${b.x} V ${b.y}`
+      d = laned ? roundedLane(a, lane, b)
         : flow ? `M ${a.x} ${a.y} C ${mx} ${a.y} ${mx} ${b.y} ${b.x} ${b.y}` : `M ${a.x} ${a.y} L ${b.x} ${b.y}`
       // In its subject's colour, so each subject's branches read as its own.
       stroke = lit ? 'var(--action)' : 'color-mix(in oklch, var(--sc) 62%, var(--map-line-strong))'
@@ -1550,8 +1596,23 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     // Far out the tree's lines are thin and plain: dashes at that size read as noise.
     if (detail === 0 && !lit) { dash = undefined; width = Math.min(width, 1); rest = Math.min(rest, 0.55) }
     const toNode = byId.get(e.to)
+    // The neuron touch on the tree's own lines: a faint fibre of the subject's
+    // colour under the line, a synapse where it meets its card, and on a
+    // subject's own branches a slow signal travelling out (motion only).
+    const tree_ = TREE_EDGES.has(e.kind) && !d.includes(' H ')
+    const dir = Math.sign(b.x - a.x) || 1
+    const port = tree_ && toNode && !markers.has(e.to) ? { x: b.x - dir * (CARD[toNode.type].w / 2 + 2), y: b.y } : null
+    const signal = tree_ && !dim && (e.kind === 'has_topic' || e.kind === 'contains')
     return (
       <g key={e.id} className={cn('subject-tone', arrive)} style={{ ...toneStyle(toNode?.type === 'subject' ? toNode.label : toNode?.subjectName ?? null), ...anim }}>
+        {tree_ && !lit && <path d={d} fill="none" stroke="var(--sc)" strokeWidth={6} strokeLinecap="round" opacity={dim ? 0.02 : 0.07} vectorEffect="non-scaling-stroke" className="pointer-events-none" />}
+        {signal && !lit && <path d={d} fill="none" className="map-signal pointer-events-none" stroke="var(--sc)" strokeWidth={2} strokeDasharray="2 34" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.7} style={{ animationDelay: `${(e.id.length * 137) % 2400}ms` }} />}
+        {port && (
+          <g className="pointer-events-none" opacity={dim ? 0.25 : 1}>
+            <circle cx={port.x} cy={port.y} r={6} fill={lit ? 'var(--action)' : 'var(--sc)'} opacity={0.18} />
+            <circle cx={port.x} cy={port.y} r={2.6} fill={lit ? 'var(--action)' : 'var(--sc)'} />
+          </g>
+        )}
         {/* A lit line glows, so what the selected card joins reads at a glance. */}
         {lit && <path d={d} fill="none" stroke="var(--action)" strokeWidth={7} strokeLinecap="round" strokeLinejoin="round" opacity={0.16} vectorEffect="non-scaling-stroke" {...drawProps} />}
         <path d={d} fill="none" data-edge={e.kind} data-lane={d.includes(' H ') && e.kind !== 'links_to' && e.kind !== 'depends_on' ? '' : undefined}
@@ -1642,11 +1703,11 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           {/* A subject anchor glows softly in its colour, so the eye finds the anchors first. */}
           {n.type === 'subject' && (
             <g className="map-anchor-glow pointer-events-none">
-              <rect x={-w / 2 - 22} y={-h / 2 - 20} width={w + 44} height={h + 40} rx={34} fill="var(--sc)" opacity={0.05} />
-              <rect x={-w / 2 - 11} y={-h / 2 - 10} width={w + 22} height={h + 20} rx={25} fill="var(--sc)" opacity={0.08} />
+              <rect x={-w / 2 - 18} y={-h / 2 - 16} width={w + 36} height={h + 32} rx={32} fill="var(--sc)" opacity={0.03} />
+              <rect x={-w / 2 - 9} y={-h / 2 - 8} width={w + 18} height={h + 16} rx={24} fill="var(--sc)" opacity={0.05} />
             </g>
           )}
-          {detail > 0 && <rect className="map-shadow" x={-w / 2 + 3} y={-h / 2 + th + 4} width={w - 6} height={h} rx={r + 2} opacity={0.22 + th * 0.025} />}
+          {detail > 0 && <rect className="map-shadow" x={-w / 2 + 3} y={-h / 2 + th + 4} width={w - 6} height={h} rx={r + 2} opacity={0.13 + th * 0.018} />}
           {th > 0 && <rect className="map-slab" x={-w / 2} y={-h / 2 + th} width={w} height={h} rx={r} />}
           <g className={cn('map-lift', on || near || dragging ? 'map-raise' : recede ? 'map-recede' : undefined)}>
             {(on || dragging) && <rect x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="color-mix(in oklch, var(--action) 9%, transparent)" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
@@ -2135,13 +2196,13 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           <svg className="absolute inset-0 size-full" role="group" aria-label={`${drawn.length} items and ${drawnEdges.length} links${markers.size ? `, ${markers.size} outside` : ''}`}>
             <defs>
               <linearGradient id="map-sheen" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#fff" stopOpacity={0.1} />
+                <stop offset="0%" stopColor="#fff" stopOpacity={0.07} />
                 <stop offset="45%" stopColor="#fff" stopOpacity={0} />
               </linearGradient>
               {/* Toward a card's foot, a little shade: with the light from above, a surface with volume. */}
               <linearGradient id="map-shade" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="55%" stopColor="#000" stopOpacity={0} />
-                <stop offset="100%" stopColor="#000" stopOpacity={0.16} />
+                <stop offset="100%" stopColor="#000" stopOpacity={0.08} />
               </linearGradient>
             </defs>
             <g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>
@@ -2215,8 +2276,40 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         )}
         {panel?.kind === 'help' && <ShortcutsHelp mac={mac} onClose={closePanel} />}
         {panel?.kind === 'legend' && <Legend onClose={closePanel} suggestions={suggestions.length > 0} outside={markers.size > 0} />}
+        {/* Nova on the map: about what is on screen (Everything, a workspace, or the card
+            explored). A card's own questions are asked from its panel (Ask). */}
+        {panel?.kind === 'nova' && (() => {
+          const explored = focus ? byId.get(focus) : null
+          const scopeId = explored ? explored.id : view.workspaceId ? `map:${view.workspaceId}` : 'map'
+          const scopeLabel = explored ? explored.label : view.workspaceId ? (view.workspaces?.find(w => w.id === view.workspaceId)?.title ?? 'this workspace') : 'Everything'
+          return (
+            <section aria-label="Nova on your map" data-map-overlay data-map-nova onPointerDown={e => e.stopPropagation()}
+              className="map-inspector-in absolute bottom-14 left-3 z-20 flex max-h-[min(34rem,calc(100%-5rem))] w-[min(24rem,calc(100%-1.5rem))] flex-col overflow-hidden rounded-2xl border border-white/10 bg-popover/95 shadow-float backdrop-blur">
+              <header className="flex items-center gap-2 border-b border-white/8 px-4 py-3">
+                <Sparkles aria-hidden className="size-4 text-keppel-400" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-foreground">Nova</p>
+                  <p className="truncate text-xs text-subtle">Knows {explored ? `“${short(scopeLabel, 34)}” and what is inside it` : scopeLabel === 'Everything' ? 'your whole map' : `the map of ${short(scopeLabel, 30)}`}</p>
+                </div>
+                <button type="button" onClick={closePanel} aria-label="Close Nova" className="rounded-full p-1.5 text-subtle hover:bg-white/6 hover:text-foreground"><X className="size-4" /></button>
+              </header>
+              <div className="min-h-0 overflow-y-auto p-3">
+                <TalkToNova key={scopeId} aboutNode={scopeId}
+                  about={explored ? `“${explored.label}” on my Knowledge Map` : 'my Knowledge Map'}
+                  placeholder={explored ? `Ask about ${short(scopeLabel, 28)}…` : 'Ask about your map…'}
+                  suggestions={explored
+                    ? ['What is inside this?', 'What should I study here first?', 'What is not studied yet?']
+                    : ['Give me an overview of my map', 'Where are my gaps?', 'What is due for review?']} />
+              </div>
+            </section>
+          )
+        })()}
 
         <div className="absolute bottom-3 left-3 flex items-center gap-2" onPointerDown={e => e.stopPropagation()}>
+          <button type="button" onClick={() => setPanel(p => (p?.kind === 'nova' ? null : { kind: 'nova' }))} aria-expanded={panel?.kind === 'nova'}
+            className="inline-flex h-8 items-center gap-1.5 rounded-full border border-keppel-400/30 bg-card/90 px-3 text-xs font-medium text-foreground/85 shadow-soft backdrop-blur hover:border-keppel-400/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" data-map-nova-open>
+            <Sparkles aria-hidden className="size-3.5 text-keppel-400" /> Ask Nova
+          </button>
           <button type="button" onClick={() => setPanel(p => (p?.kind === 'legend' ? null : { kind: 'legend' }))} aria-expanded={panel?.kind === 'legend'}
             className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-card/90 px-3 text-xs font-medium text-foreground/75 shadow-soft backdrop-blur hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" data-legend-open>
             <Info aria-hidden className="size-3.5" /> Legend

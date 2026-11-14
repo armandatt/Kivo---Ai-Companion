@@ -31,12 +31,14 @@ export async function fetchSession(): Promise<NovaSessionResponse> {
   }
 }
 
-export async function sendNovaMessage(text: string): Promise<NovaMessageResponse> {
+// about: a card on the Knowledge Map ("topic:<id>") the message is asked from;
+// the server reads what it holds from the learner's own map.
+export async function sendNovaMessage(text: string, about?: string): Promise<NovaMessageResponse> {
   try {
     const res = await fetch('/api/nova/message', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ text }),
+      body:    JSON.stringify(about ? { text, about } : { text }),
     })
     return await res.json() as NovaMessageResponse
   } catch {

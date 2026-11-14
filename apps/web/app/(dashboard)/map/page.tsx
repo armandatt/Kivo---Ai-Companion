@@ -56,17 +56,18 @@ function Workspace({ children }: { children: React.ReactNode }) {
   )
 }
 
-// Which workspace's map: ?workspace=<id> (or "all"), else the one worked on last.
-function workspaceInAddress(): string | null {
-  if (typeof window === 'undefined') return null
+// Which workspace's map: ?workspace=<id>, else Everything ("all"). The map
+// always opens on everything the learner has unless a link names a workspace.
+function workspaceInAddress(): string {
+  if (typeof window === 'undefined') return 'all'
   const w = new URLSearchParams(window.location.search).get('workspace')
-  return w && w.length <= 64 ? w : null
+  return w && w.length <= 64 ? w : 'all'
 }
 
 export default function KnowledgeMapPage() {
-  const [workspace, setWorkspace] = useState<string | null>(null)
+  const [workspace, setWorkspace] = useState<string>(workspaceInAddress)
   useEffect(() => { setWorkspace(workspaceInAddress()) }, [])
-  const { view, loading, refreshing, error, refresh } = useNovaView<NovaKnowledgeMapView>(`/api/nova/knowledge-map${workspace ? `?workspace=${encodeURIComponent(workspace)}` : ''}`)
+  const { view, loading, refreshing, error, refresh } = useNovaView<NovaKnowledgeMapView>(`/api/nova/knowledge-map?workspace=${encodeURIComponent(workspace)}`)
   const choose = (id: string) => {
     setWorkspace(id)
     const url = new URL(window.location.href)

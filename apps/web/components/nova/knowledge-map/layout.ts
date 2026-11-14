@@ -42,17 +42,27 @@ export const CARD: Record<MapNodeType, { w: number; h: number }> = {
 // The links that make the tree. A [[link]] and a wait are drawn, never laid out.
 export const TREE_EDGES: ReadonlySet<MapEdge['kind']> = new Set(['contains', 'has_topic', 'subtopic', 'has_task', 'step', 'about_topic', 'filed_under'])
 
-const COL       = 250   // one level deeper, to the right
-const ROW_GAP   = 14    // between cards one under another
-const GROUP_GAP = 24    // around a card with cards hanging from it, so branches read apart
+const COL       = 290   // one level deeper, outward
+const ROW_GAP   = 26    // between cards one under another
+const GROUP_GAP = 40    // around a card with cards hanging from it, so branches read apart
+// Organic, still structured: siblings fan out from their parent in an arc
+// (the ones level with it reach furthest), and each card is nudged by a fixed
+// amount from its id, so the map reads as branches, not a grid. Neither
+// changes which side or level a card is on. A last pass keeps cards apart.
+const FAN       = 44
+const NUDGE_X   = 14
+const NUDGE_Y   = 5
+const CLEAR     = 12    // the least room kept between two cards
 const BRANCH_GAP = 36   // between two subjects' trees
 // A run of this many cards with nothing inside them, side by side in a
 // branch, wraps into up to WRAP_COLS short columns instead of one long one.
 // wraps into short columns, as many as keep the block about as wide as tall.
 const WRAP      = 8
 const WRAP_COLS = 4
-const WRAP_GAP  = 22    // between the wrapped columns
-const BLOCK_SHAPE = 1.3
+const WRAP_GAP  = 40    // between the wrapped columns (wider than two nudges)
+// Taller than wide: a subject already reaches out on both its sides, so its
+// branches fill the page's height before they add width.
+const BLOCK_SHAPE = 0.85
 // A subject with this many branches has them on both its sides.
 const SPLIT     = 4
 // Subjects' clusters are packed into rows toward this shape (width to
@@ -290,6 +300,61 @@ export function layoutMap(nodes: MapNode[], edges: MapEdge[], { portrait = false
       placed.splice(from, 1)   // the subject, placed twice
       at.set(r, { id: r, x: 0, y: ry })
     }
+    // A cluster made organic (see FAN): positions only, the tree unchanged.
+    const hash = (id: string) => { let h = 2166136261; for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619) } return ((h >>> 0) % 2001) / 1000 - 1 }
+    const organic = (root: string, ids: string[]) => {
+      const inCluster = new Set(ids)
+      const shift = new Map<string, { dx: number; dy: number }>()
+      for (const id of ids) {
+        if (id === root) continue
+        const p = parent.get(id)
+        if (!p || !inCluster.has(p)) continue
+        const me = at.get(id)!, pa = at.get(p)!
+        const dir = me.x >= pa.x ? 1 : -1
+        // The siblings in the same column as this card: how far the column spans.
+        const side = (children.get(p) ?? []).filter(c => inCluster.has(c) && Math.sign(at.get(c)!.x - pa.x) === dir)
+        const sibs = side.filter(c => Math.abs(at.get(c)!.x - me.x) < 1)
+        const span = Math.max(1, ...sibs.map(c => Math.abs(at.get(c)!.y - pa.y)))
+        const t = Math.min(1, Math.abs(me.y - pa.y) / span)
+        // A run already wrapped into columns keeps its columns: a fan would push one into the next.
+        const wrapped = side.some(c => Math.abs(at.get(c)!.x - me.x) >= 1)
+        const fan = sibs.length >= 3 && !wrapped ? FAN * (1 - t * t) : 0
+        shift.set(id, { dx: dir * fan + hash(id) * NUDGE_X, dy: hash(`${id}:y`) * NUDGE_Y })
+      }
+      // A card's branch moves with it, so a fan never folds a branch back.
+      const total = (id: string): { dx: number; dy: number } => {
+        let dx = 0, dy = 0
+        for (let at_: string | undefined = id, hops = 0; at_ && inCluster.has(at_) && hops < 64; at_ = parent.get(at_), hops++) { const s = shift.get(at_); if (s) { dx += s.dx; dy += s.dy } }
+        return { dx, dy }
+      }
+      const moved = new Map(ids.map(id => [id, total(id)]))
+      for (const id of ids) {
+        const m = moved.get(id)!, p = at.get(id)!
+        at.set(id, { id, x: p.x + m.dx, y: p.y + m.dy })
+        const l = lanes.get(id)
+        if (l) lanes.set(id, { ...l, laneY: l.laneY, x: l.x + m.dx, y: l.y + m.dy })
+      }
+      // Keep every card clear of the others (rarely needed): a sweep along x
+      // finds the pairs that touch; the later one moves along the axis that frees it soonest.
+      for (let round = 0; round < 40; round++) {
+        const order = ids.map(id => ({ id, x0: at.get(id)!.x - w(id) / 2 })).sort((a, b) => a.x0 - b.x0 || (a.id < b.id ? -1 : 1))
+        let any = false
+        for (let i = 0; i < order.length; i++) {
+          const ia = order[i]!.id, a = at.get(ia)!
+          for (let j = i + 1; j < order.length && order[j]!.x0 < a.x + w(ia) / 2 + CLEAR; j++) {
+            const ib = order[j]!.id, b = at.get(ib)!
+            const ox = (w(ia) + w(ib)) / 2 + CLEAR - Math.abs(a.x - b.x)
+            const oy = (h(ia) + h(ib)) / 2 + CLEAR - Math.abs(a.y - b.y)
+            if (ox <= 0 || oy <= 0) continue
+            any = true
+            const mv = ib === root ? ia : ib, other = mv === ib ? a : b, q = at.get(mv)!
+            at.set(mv, oy <= ox ? { id: mv, x: q.x, y: q.y + (q.y >= other.y ? oy : -oy) } : { id: mv, x: q.x + (q.x >= other.x ? ox : -ox), y: q.y })
+            lanes.delete(mv)
+          }
+        }
+        if (!any) break
+      }
+    }
     // Each subject's cluster on its own, then packed into rows in their
     // order: each row centred under the widest, each cluster centred in its
     // row's height, the row width chosen so the whole is near the shape asked.
@@ -299,6 +364,7 @@ export function layoutMap(nodes: MapNode[], edges: MapEdge[], { portrait = false
       const from = placed.length
       placeRoot(r)
       const ids = placed.slice(from)
+      organic(r, ids)
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
       for (const id of ids) {
         const p = at.get(id)!

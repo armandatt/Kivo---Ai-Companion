@@ -700,6 +700,12 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 .map-select-pulse { transform-box: fill-box; transform-origin: center; animation: map-select-pulse 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 /* The selection's lines carry a quiet travelling pulse. */
 @keyframes map-edge-flow { to { stroke-dashoffset: -25; } }
+/* The neuron touch: a slow signal travelling out along a subject's branches. Paused while the view moves; off in Calm and under reduced motion. */
+@keyframes map-signal { from { stroke-dashoffset: 36; } to { stroke-dashoffset: -400; } }
+.map-signal { animation: map-signal 4.2s linear infinite; }
+.map-moving .map-signal { animation-play-state: paused; }
+.map-still .map-signal { display: none; }
+@media (prefers-reduced-motion: reduce) { .map-signal { display: none; } }
 .map-edge-flow { animation: map-edge-flow 1.2s linear infinite; }
 /* The entrance: the subjects' light comes up before their cards. */
 @keyframes map-glow-in { from { opacity: 0; } to { opacity: 1; } }

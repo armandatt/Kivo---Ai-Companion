@@ -25,6 +25,8 @@ export interface NovaTurnInput {
   onboardingDone: boolean;
   timestamp?:     Date;
   surface:        "telegram" | "web";
+  // Web: a card on the learner's Knowledge Map the message is about.
+  about?:         string;
   // The web app reads state straight after the reply, so it waits for the
   // turn to be persisted. Telegram does not.
   awaitPersistence?: boolean;
@@ -72,6 +74,7 @@ export async function handleNovaTurn(input: NovaTurnInput): Promise<NovaTurnResu
       const turn = await runWebSentence({
         platformChatId, text: plainText, timestamp,
         awaitPersistence: input.awaitPersistence, understand: input.understand, respond: input.respond,
+        ...(input.about ? { about: input.about } : {}),
       });
       console.log(JSON.stringify({
         ts: new Date().toISOString(), chatId: platformChatId, layer: "nova", surface: input.surface,

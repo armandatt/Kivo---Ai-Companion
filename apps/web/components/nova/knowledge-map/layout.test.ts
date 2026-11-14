@@ -165,6 +165,9 @@ const noOverlap = (nodes: MapNode[], at: Map<string, { x: number; y: number }>) 
   const list = [...at.entries()].map(([id, p]) => ({ id, x: p.x, y: p.y, t: type.get(id)! }))
   for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) assert.equal(overlap(list[i]!, list[j]!), false, `${list[i]!.id} and ${list[j]!.id}`)
 }
+// Columns, allowing for the organic nudge and fan: x within 60 of each other is one column.
+const columnsOf = (xs: number[]) => { const c: number[] = []; for (const x of [...xs].sort((a, b) => a - b)) if (!c.length || x - c[c.length - 1]! > 60) c.push(x); else c[c.length - 1] = x; return c.length }
+const colOf = (x: number, xs: number[]) => { const sorted = [...xs].sort((a, b) => a - b); let col = 0; for (let i = 1; i < sorted.length && sorted[i]! <= x; i++) if (sorted[i]! - sorted[i - 1]! > 60) col++; return col }
 const boxOf = (at: Map<string, { x: number; y: number }>) => {
   const xs = [...at.values()].map(p => p.x), ys = [...at.values()].map(p => p.y)
   return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) }
@@ -180,16 +183,16 @@ test('a subject with many topics is not one long column: they sit on both its si
   assert.equal(right.length, 20, 'half to its right')
   assert.equal(leftSide.length, 20, 'half to its left')
   assert.deepEqual(leftSide.map(n => n.id), [...left!].sort(), 'the layout says which cards are on the left')
-  assert.equal(new Set(right.map(n => at.get(n.id)!.x)).size, 3, 'each side a few short columns')
+  assert.equal(columnsOf(right.map(n => at.get(n.id)!.x)), 3, 'each side a few short columns')
   const { w, h } = boxOf(at)
   assert.ok(h < 40 * 58 / 4, `height ${h} far under a single column`)
   assert.ok(w / h < 4.5, `not a wide strip either: ${Math.round(w)}×${Math.round(h)}`)
   // Each side reads outward column by column, top to bottom: the saved order, the first half to the right.
-  const out = (ids: MapNode[]) => ids.map(n => n.id).sort((a, b) => Math.abs(at.get(a)!.x - s.x) - Math.abs(at.get(b)!.x - s.x) || at.get(a)!.y - at.get(b)!.y)
+  const out = (ids: MapNode[]) => { const ds = ids.map(n => Math.abs(at.get(n.id)!.x - s.x)); return ids.map(n => n.id).sort((a, b) => colOf(Math.abs(at.get(a)!.x - s.x), ds) - colOf(Math.abs(at.get(b)!.x - s.x), ds) || at.get(a)!.y - at.get(b)!.y) }
   assert.deepEqual([...out(right), ...out(leftSide)], nodes.slice(1).map(n => n.id))
   // The subject sits level with the middle of what hangs from it.
   const ys = right.map(n => at.get(n.id)!.y)
-  assert.equal(s.y, (Math.min(...ys) + Math.max(...ys)) / 2)
+  assert.ok(Math.abs(s.y - (Math.min(...ys) + Math.max(...ys)) / 2) <= 12, 'level with the middle of what hangs from it')
 })
 
 test('a few topics keep one side; from four branches they sit around their subject, by weight', () => {
@@ -202,7 +205,10 @@ test('a few topics keep one side; from four branches they sit around their subje
     return { nodes, edges, ...layoutMap(nodes, edges) }
   }
   const three = build(3)
-  assert.equal(new Set(three.nodes.slice(1).map(n => three.at.get(n.id)!.x)).size, 1, 'three topics: one column, as before')
+  assert.equal(columnsOf(three.nodes.slice(1).map(n => three.at.get(n.id)!.x)), 1, 'three topics: one column, as before')
+  // Organic, still a tree: the three fan out from their subject, the middle one reaching furthest.
+  const [t0, t1, t2] = ['topic:u0', 'topic:u1', 'topic:u2'].map(id => three.at.get(id)!.x)
+  assert.ok(t1! > t0! + 15 && t1! > t2! + 15, `a fan: ${t0} ${t1} ${t2}`)
   assert.equal(three.left!.size, 0)
   const five = build(5)
   const sx = five.at.get('subject:os')!.x
@@ -250,7 +256,8 @@ test('lines into wrapped columns run along the gaps, on either side, and only wh
     const inner = Math.min(...mine.map(n => Math.abs(auto.at.get(n.id)!.x - s.x)))
     for (const n of mine) {
       const p = auto.at.get(n.id)!, lane = auto.lanes!.get(n.id)
-      if (Math.abs(p.x - s.x) === inner) { assert.equal(lane, undefined, 'the first column is reached directly'); continue }
+      if (Math.abs(p.x - s.x) - inner < 60) { assert.equal(lane, undefined, 'the first column is reached directly'); continue }
+      assert.deepEqual([lane!.x, lane!.y], [p.x, p.y], 'the lane ends where the card is')
       laned++
       const t = Math.abs(lane!.trunkX - s.x)
       assert.ok(lane && t < inner - CARD.topic.w / 2 && t > CARD.subject.w / 2, 'the trunk sits in the gap before the first column')

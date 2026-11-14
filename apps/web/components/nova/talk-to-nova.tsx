@@ -18,11 +18,16 @@ type Props = {
   // What the conversation is about (the Knowledge Map's topic), said to Nova
   // before each message; the learner's own words are shown as they typed them.
   about?:       string
+  // The Knowledge Map card it is asked from ("topic:<id>"): Nova is given what
+  // that card holds, read on the server from the learner's own map.
+  aboutNode?:   string
+  // Questions to start with, shown until the first message; one tap sends it.
+  suggestions?: string[]
 }
 
 // A short conversation with Nova through POST /api/nova/message: the same
 // turn Telegram runs, for the same learner.
-export function TalkToNova({ opening, placeholder, onReplied, className, about }: Props) {
+export function TalkToNova({ opening, placeholder, onReplied, className, about, aboutNode, suggestions }: Props) {
   const [turns, setTurns]     = useState<Turn[]>(opening ? [{ from: 'nova', text: opening }] : [])
   const [draft, setDraft]     = useState('')
   const [sending, setSending] = useState(false)
@@ -31,15 +36,15 @@ export function TalkToNova({ opening, placeholder, onReplied, className, about }
 
   useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }) }, [turns, sending])
 
-  async function send(e: React.FormEvent) {
-    e.preventDefault()
-    const text = draft.trim()
+  async function send(e: React.FormEvent | null, said?: string) {
+    e?.preventDefault()
+    const text = (said ?? draft).trim()
     if (!text || sending) return
     setDraft('')
     setError(null)
     setTurns(t => [...t, { from: 'you', text }])
     setSending(true)
-    const res = await sendNovaMessage(about ? `About ${about}: ${text}` : text)
+    const res = await sendNovaMessage(about ? `About ${about}: ${text}` : text, aboutNode)
     setSending(false)
     if (res.ok) {
       setTurns(t => [...t, { from: 'nova', text: res.reply, ...(res.link ? { link: res.link } : {}) }])
@@ -77,6 +82,14 @@ export function TalkToNova({ opening, placeholder, onReplied, className, about }
         </div>
       )}
 
+      {suggestions && suggestions.length > 0 && !turns.some(t => t.from === 'you') && (
+        <div className="flex flex-wrap gap-1.5 p-2.5 pb-0" data-nova-suggestions>
+          {suggestions.map(q => (
+            <button key={q} type="button" disabled={sending} onClick={() => void send(null, q)}
+              className="rounded-full border border-white/10 bg-white/4 px-2.5 py-1 text-xs text-foreground/75 transition-colors hover:border-keppel-400/40 hover:text-foreground disabled:opacity-50">{q}</button>
+          ))}
+        </div>
+      )}
       <form onSubmit={send} className="flex items-center gap-2 border-t border-white/8 p-2.5 first:border-t-0">
         <input
           value={draft}

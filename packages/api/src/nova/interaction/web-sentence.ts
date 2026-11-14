@@ -11,6 +11,7 @@
 // Telegram, and so do the two things a learner confirms in words: saving
 // what they said about their term, and adding an exam.
 
+import { loadMapFacts } from "../product/map-context";
 import { prisma } from "@repo/db/client";
 import { loadConversationHistory, loadHeldLanguage, loadReplyLanguage, saveAssistantMessage, saveUserMessage } from "../adapters/conversation-adapter";
 import { loadVoicePreferences } from "../adapters/account-preferences-adapter";
@@ -56,6 +57,13 @@ const PROMPT_QUESTION: Partial<Record<PromptKind, string>> = {
 export const SENTENCE_RUNS_NO_SESSION =
   "This message did not start, pause, resume or end a study session, and nothing was added or scheduled. Do not say or imply otherwise. If the student wants to start or end a session, point them to the Start button on this page or to Focus.";
 
+// Readings that only show something: asked from the map, answered from the map instead.
+const MAP_ANSWERS: ReadonlySet<TurnAction["type"]> = new Set<TurnAction["type"]>(["show_today", "show_status", "show_week", "show_progress", "something_else", "clarify"]);
+
+// Said when the message was asked from a card on the Knowledge Map.
+export const MAP_CARD_LINE =
+  "The student asked this from their Knowledge Map (a card on it, or the map itself); what it holds is under \"What Nova has on record\". Answer from it: when they ask what it holds or what to look at, name the items as written there (a short list is fine), and say plainly when something is not on record. Mention no topic, task or page that is not written there.";
+
 const NOTHING_WAS_DONE =
   "Nova's system took no action this turn: nothing was started, paused, ended, saved, added or scheduled. Do not say or imply otherwise. Do not state a date, a number of days or any other figure that is not written in the context above.";
 
@@ -64,6 +72,9 @@ export interface WebSentenceInput {
   text:           string;
   timestamp:      Date;
   awaitPersistence?: boolean;
+  // A card on the learner's Knowledge Map the message is about ("topic:<id>").
+  // What it holds is read from their own map and given to the reply as facts.
+  about?: string;
   // Test seams. Production uses the real brains.
   understand?: typeof runUnderstandingBrain;
   respond?:    NovaOrchestratorInput["respond"];
@@ -135,8 +146,17 @@ export async function runWebSentence(input: WebSentenceInput): Promise<WebSenten
     prompt:  prompt ? { kind: prompt.kind, options: prompt.options.map(o => ({ id: o.id, type: o.action.type, minutes: o.action.type === "start" ? o.action.minutes : null })) } : null,
   });
   const blocked = PAGE_BUTTONS_ONLY.has(decision.action.type);
+  // Asked from a card on the map: what that card holds, from their own map.
+  // A question there is about that card (or the map), so a reading that
+  // would only show something (today, status, the week, progress) or could
+  // not place it ("tell me everything in it") is answered from what it holds.
+  // Anything that changes something still takes its own checked path.
+  const mapFacts = input.about && !blocked ? await loadMapFacts(platformChatId, input.about).catch(() => [] as string[]) : [];
+  const fromCard = mapFacts.length > 0 && MAP_ANSWERS.has(decision.action.type);
+  // Advice and explanations run as usual, and are worded with the map's facts too.
+  const mapAnswer = fromCard || (mapFacts.length > 0 && (decision.action.type === "advise" || decision.action.type === "explain"));
 
-  const acted = blocked ? null : await act(decision.action, ctx, prompt, understanding.topic, now, understanding.rawText);
+  const acted = blocked || fromCard ? null : await act(decision.action, ctx, prompt, understanding.topic, now, understanding.rawText);
   let reply: TelegramReply | null = acted?.reply ?? null;
 
   if (decision.proposeExam) {
@@ -155,8 +175,9 @@ export async function runWebSentence(input: WebSentenceInput): Promise<WebSenten
   }
 
   const explaining = decision.action.type === "explain";
+  const facts = [...(acted?.facts ?? []), ...(mapAnswer && plain ? [`Nova's plan says: ${plain.slice(0, 400)}`] : []), ...mapFacts];
   const happened   = acted === null || acted.operation.ok;
-  const generate   = happened && (blocked || decision.generate || plain === "");
+  const generate   = happened && (blocked || mapAnswer || decision.generate || plain === "");
   const fallback   = plain || (explaining ? TEXT.explainFallback : TEXT.converseFallback);
 
   const turn = await runNovaOrchestrator({
@@ -164,11 +185,12 @@ export async function runWebSentence(input: WebSentenceInput): Promise<WebSenten
     awaitPersistence: input.awaitPersistence,
     sessionCommands:  "surface",
     respond:          input.respond,
-    focus:            { needs: interaction.needs, facts: acted?.facts, ...(explaining ? { mode: "explain" as const } : {}) },
+    focus:            { needs: interaction.needs, facts, ...(explaining ? { mode: "explain" as const } : {}) },
     ...(generate
       ? {
           responseFallback: fallback,
           directive: told(blocked ? SENTENCE_RUNS_NO_SESSION
+            : mapAnswer ? `${NOTHING_WAS_DONE} ${MAP_CARD_LINE}`
             : plain ? `Nova's system already did or offered exactly this, and nothing else: "${plain.slice(0, 400)}". Say it in your own words in at most three short sentences. Do not say anything else was started, ended, saved, added or scheduled, and do not state a date, a number of days or any other figure that is not in that sentence or the context above. To start a session the student uses the Start button on this page.`
             : explaining ? NOTHING_WAS_DONE
             : `${NOTHING_WAS_DONE} Reply in at most three short sentences.`),

@@ -16,7 +16,7 @@ const MAX_TEXT_LENGTH = 2000
 const inFlight = new Map<string, number>()
 const LOCK_TTL_MS = 45_000
 
-// POST /api/nova/message  { text }
+// POST /api/nova/message  { text, about? }
 // A message to Nova from the web app: natural language, or a slash command
 // such as "/study Deadlocks". It runs the same turn Telegram runs, for the
 // same learner, and returns the reply instead of sending it to Telegram.
@@ -30,8 +30,12 @@ export async function POST(req: Request) {
   if (learner.kind === "not_nova")        return fail(409, "not_nova", "This account is not set up with Nova.")
   if (learner.kind === "not_connected")   return fail(409, "not_connected", "Choose Nova in setup first.")
 
-  const body = await req.json().catch(() => null) as { text?: unknown } | null
+  const body = await req.json().catch(() => null) as { text?: unknown; about?: unknown } | null
   const text = typeof body?.text === "string" ? body.text.trim().slice(0, MAX_TEXT_LENGTH) : ""
+  // A card on the learner's Knowledge Map the question is about ("topic:<id>"),
+  // or the map itself ("map", "map:<workspace>"):
+  // the server reads it from their own map (product/map-context.ts).
+  const about = typeof body?.about === "string" && /^(?:(subject|topic|task|note|resource):[A-Za-z0-9_-]{1,64}|map(?::[A-Za-z0-9_-]{1,64})?)$/.test(body.about) ? body.about : undefined
   if (!text) return fail(400, "empty", "Say something first.")
 
   const limit = await checkRateLimit(learner.platformChatId, learner.channel)
@@ -51,6 +55,7 @@ export async function POST(req: Request) {
       onboardingDone:   learner.onboardingDone,
       surface:          "web",
       awaitPersistence: true,   // the page re-reads state right after the reply
+      ...(about ? { about } : {}),
     }), { feature: "nova_chat" })
     if (!run.ok) return run.response
     const turn = run.value as Awaited<ReturnType<typeof handleNovaTurn>>
