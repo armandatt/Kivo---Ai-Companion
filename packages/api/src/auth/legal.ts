@@ -12,8 +12,14 @@
 // A version is the date of the text it names. Change the text, change the
 // version, and the date the pages show changes with it.
 
-export const TERMS_VERSION = "2026-10-27";
-export const PRIVACY_VERSION = "2026-10-27";
+export const TERMS_VERSION = "2026-11-14";
+export const PRIVACY_VERSION = "2026-11-14";
+// The versions just before these, still accepted while a deploy is under way
+// (the web app and the API deploy separately, so for a few minutes a sign-up
+// page can still show the earlier text). Each is recorded as what was agreed
+// to. Empty this once both are deployed.
+export const PREVIOUS_TERMS_VERSION = "2026-10-27";
+export const PREVIOUS_PRIVACY_VERSION = "2026-10-27";
 
 export interface LegalConsentInput { terms: string; privacy: string }
 
@@ -22,13 +28,16 @@ export const LEGAL_OUTDATED_MESSAGE = "The Terms or the Privacy Policy changed w
 
 export type LegalConsentCheck = { ok: true; consent: LegalConsentInput } | { ok: false; message: string };
 
-// What the sign-up request said. Only the current versions, named exactly,
-// count as agreement; anything else is no agreement.
+// What the sign-up request said. Only the current versions (or, during a
+// deploy, the previous pair together), named exactly, count as agreement;
+// anything else is no agreement.
 export function checkLegalConsent(input: unknown): LegalConsentCheck {
   if (!input || typeof input !== "object") return { ok: false, message: LEGAL_REQUIRED_MESSAGE };
   const { terms, privacy } = input as { terms?: unknown; privacy?: unknown };
   if (typeof terms !== "string" || typeof privacy !== "string") return { ok: false, message: LEGAL_REQUIRED_MESSAGE };
-  if (terms !== TERMS_VERSION || privacy !== PRIVACY_VERSION) return { ok: false, message: LEGAL_OUTDATED_MESSAGE };
+  const current = terms === TERMS_VERSION && privacy === PRIVACY_VERSION;
+  const previous = terms === PREVIOUS_TERMS_VERSION && privacy === PREVIOUS_PRIVACY_VERSION;
+  if (!current && !previous) return { ok: false, message: LEGAL_OUTDATED_MESSAGE };
   return { ok: true, consent: { terms, privacy } };
 }
 

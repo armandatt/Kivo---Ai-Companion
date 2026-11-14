@@ -1,19 +1,19 @@
 import type { ReactNode } from 'react'
 import Link from 'next/link'
 import { KivoMark, KivoWordmark } from '@/components/brand/kivo-brand'
-import { TO_CONFIRM, type ToConfirm } from './to-confirm'
+import { TO_CONFIRM } from './to-confirm'
 
 // The frame the Privacy Policy and the Terms share: Kivo's mark, the title in
-// the editorial serif, a draft notice while any fact is still to be supplied,
-// and a contents list. Written against the theme tokens, so it works on ink
+// the editorial serif, the dates, a draft notice only while a page still has a
+// fact to be supplied (`draft`), and a contents list. Written against the theme tokens, so it works on ink
 // and on paper.
 
 // A fact the owner must supply before publication, marked so it cannot be
 // mistaken for a statement.
-export function Confirm({ id }: { id: ToConfirm }) {
+export function Confirm({ id }: { id: string }) {
   return (
     <span data-to-confirm={id} className="rounded border border-dashed border-amber-500/60 bg-amber-400/10 px-1.5 py-0.5 text-[0.95em] text-foreground">
-      [To confirm: {TO_CONFIRM[id]}]
+      [To confirm: {TO_CONFIRM[id] ?? id}]
     </span>
   )
 }
@@ -32,8 +32,8 @@ export function Section({ id, title, children }: { id: string; title: string; ch
 // updated: the version's date (auth/legal.ts), the day this text last changed.
 const longDate = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
 
-export function LegalPage({ title, summary, sections, updated, children }: {
-  title: string; summary: ReactNode; sections: Array<{ id: string; title: string }>; updated: string; children: ReactNode
+export function LegalPage({ title, summary, sections, updated, effective, draft = false, children }: {
+  title: string; summary: ReactNode; sections: Array<{ id: string; title: string }>; updated: string; effective: string; draft?: boolean; children: ReactNode
 }) {
   return (
     <div className="kivo-app min-h-screen bg-background text-foreground">
@@ -54,12 +54,14 @@ export function LegalPage({ title, summary, sections, updated, children }: {
       <main className="mx-auto max-w-3xl px-4 pb-24 pt-10 sm:px-6 sm:pt-14">
         <h1 className="text-[2.1rem] font-semibold leading-[1.05] tracking-[-0.03em] sm:text-[2.8rem]">{title}</h1>
         <p className="mt-3 text-sm text-subtle" data-legal-updated>Last updated: <time dateTime={updated}>{longDate(updated)}</time></p>
-        <p className="mt-1 text-sm text-subtle">Takes effect: <Confirm id="effectiveDate" /></p>
+        <p className="mt-1 text-sm text-subtle" data-legal-effective>Takes effect: <time dateTime={effective}>{longDate(effective)}</time></p>
 
-        <div role="note" className="mt-6 rounded-xl border border-amber-500/40 bg-amber-400/8 p-4 text-sm leading-relaxed text-foreground/85">
-          <strong className="font-semibold text-foreground">Draft.</strong> This page was written from how Kivo works today and has not had legal review.
-          It is not legal advice and does not by itself make Kivo compliant with any law. Items marked “To confirm” must be supplied before it is published.
-        </div>
+        {draft ? (
+          <div role="note" className="mt-6 rounded-xl border border-amber-500/40 bg-amber-400/8 p-4 text-sm leading-relaxed text-foreground/85">
+            <strong className="font-semibold text-foreground">Draft.</strong> This page was written from how Kivo works today and has not had legal review.
+            It is not legal advice and does not by itself make Kivo compliant with any law. Items marked “To confirm” must be supplied before it is published.
+          </div>
+        ) : null}
 
         <div className="mt-8 text-[17px] leading-relaxed text-foreground/85">{summary}</div>
 
