@@ -61,6 +61,8 @@ const MAP_SESSION_MINUTES = 25
 // How far one arrow key moves the map, in screen pixels.
 const PAN_STEP = 60
 // How far Alt and an arrow key move a card, in map units (Shift for more).
+// The zoom a map too large to fit at a readable size opens at: titles and every link are seen.
+const OPEN_K = 0.44
 // At most this many lines carry a travelling signal at once.
 const SIGNAL_MAX = 140
 // The opening camera's glide, as long as the cards' entrance.
@@ -1032,8 +1034,19 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   const startMoving = useCallback((ms?: number) => {
     root.current?.classList.add('map-moving')
     if (moving.current !== null) window.clearTimeout(moving.current)
-    moving.current = ms === undefined ? null : window.setTimeout(() => { root.current?.classList.remove('map-moving'); moving.current = null }, ms)
+    moving.current = ms === undefined ? null : window.setTimeout(() => {
+      root.current?.classList.remove('map-moving'); moving.current = null
+      // What the pointer rests on now (cards slid under it while the view moved).
+      const pt = lastPointer.current
+      const under = pt ? document.elementFromPoint(pt.x, pt.y)?.closest?.('[data-node-id]')?.getAttribute('data-node-id') ?? null : null
+      setHover(h => (h === under ? h : under))
+    }, ms)
   }, [])
+  // While the view moves, cards slide under a still pointer: lighting each in
+  // turn redrew every line and card many times a second (the lag in a zoom on
+  // a large map). The hover waits until the view rests.
+  const lastPointer = useRef<{ x: number; y: number } | null>(null)
+  const hoverCard = useCallback((id: string | null) => { if (!root.current?.classList.contains('map-moving')) setHover(id) }, [])
   const stopMoving = useCallback(() => startMoving(120), [startMoving])
   // Eased: the point at the centre of the screen glides, and the zoom changes
   // by the same proportion each frame, so going in reads as a zoom into it.
@@ -1147,26 +1160,47 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     const mode = calm ? 'none' : top ? entranceMode({ seen: false, reduced: calm, motion, count: drawn.length, opening: true }) : first ? entranceMode({ seen: enteredBefore(session, where), reduced: calm, motion, count: drawn.length }) : 'brief'
     markEntered(session, where)
     if (mode === 'none') { setEntrance(null); return }
-    // A large map opening: the cards come in quickly by level and the camera's
-    // pull-back is one transform on the whole drawing (CSS, map-cam-glide), so
-    // it stays smooth however many cards there are. Smaller maps play the
-    // card-by-card cascade with the camera moved frame by frame.
-    const glide = mode === 'full' && top && drawn.length > LARGE_MAP
-    const played = glide ? 'brief' : mode
-    const plan = entrancePlan(drawn.map(n => n.id), tree.parent, placed.at, [...drawnEdges, ...cross.map(c => c.edge)], played)
-    setEntrance({ ...plan, total: glide ? Math.max(plan.total, CAMERA_MS) : plan.total, mode: played, key: where, glide })
-    // Opening the map: the camera starts close on its middle and glides out to
-    // the whole of it while the cards arrive, ending on the fitted view.
-    const to = mode === 'full' && top && !glide ? fitTarget() : null
+    // Where the opening ends. A map that fits at a readable size ends fitted.
+    // A larger one ends closer (OPEN_K), on the subject nearest its middle, so
+    // the titles, the branches and their signals are seen, not a far-off
+    // picture of all of it; the rest is a pan or a zoom away.
     const el = frame.current
-    if (to && el) {
+    let to = top ? fitTarget() : null
+    if (to && el && !portrait && to.k < OPEN_K) {
       const cw = (el.clientWidth - besidePanel(el)) / 2, ch = el.clientHeight / 2
       const mid = { x: (cw - to.x) / to.k, y: (ch - to.y) / to.k }
-      const k0 = Math.min(1.1, to.k * 2.1)
+      let best = mid, near = Infinity
+      for (const n of drawn) {
+        const p = n.type === 'subject' ? placed.at.get(n.id) : undefined
+        const d = p ? Math.hypot(p.x - mid.x, p.y - mid.y) : Infinity
+        if (p && d < near) { near = d; best = p }
+      }
+      to = { k: OPEN_K, x: Math.round(cw - best.x * OPEN_K), y: Math.round(ch - best.y * OPEN_K) }
+    }
+    // The cascade (cards rising in level by level, lines drawing) is played by
+    // the cards the opening view shows; the rest are simply there. So a map
+    // of any size opens like a small one, and stays smooth.
+    const W = el?.clientWidth ?? 0, H = el?.clientHeight ?? 0
+    const inView = to && mode === 'full' ? drawn.filter(n => { const p = placed.at.get(n.id); if (!p) return false; const x = p.x * to!.k + to!.x, y = p.y * to!.k + to!.y; return x > -160 && x < W + 160 && y > -120 && y < H + 120 }) : drawn
+    const played = mode === 'full' && inView.length > LARGE_MAP ? 'brief' : mode
+    const plan = entrancePlan(inView.map(n => n.id), tree.parent, placed.at, [...drawnEdges, ...cross.map(c => c.edge)], played)
+    // On a large map the camera's pull-back is one transform on the whole
+    // drawing (CSS, map-cam-glide): no card is repainted for it. A smaller
+    // map's camera is moved frame by frame, as before.
+    const glide = mode === 'full' && top && drawn.length > LARGE_MAP
+    setEntrance({ ...plan, total: glide ? Math.max(plan.total, CAMERA_MS) : plan.total, mode: played, key: where, glide })
+    if (to && el && top) {
       cameraEntrance.current = true
       stopAnim()
-      setT({ k: k0, x: cw - mid.x * k0, y: ch - mid.y * k0 })
-      requestAnimationFrame(() => animateTo(to, CAMERA_MS))
+      if (glide || mode !== 'full') setT(to)
+      else {
+        const cw = (el.clientWidth - besidePanel(el)) / 2, ch = el.clientHeight / 2
+        const mid = { x: (cw - to.x) / to.k, y: (ch - to.y) / to.k }
+        const k0 = Math.min(1.1, to.k * 2.1)
+        setT({ k: k0, x: cw - mid.x * k0, y: ch - mid.y * k0 })
+        const end = to
+        requestAnimationFrame(() => animateTo(end, CAMERA_MS))
+      }
       window.setTimeout(() => { cameraEntrance.current = false }, CAMERA_MS + 200)
     }
   // Only a new place starts an entrance; what it draws is read as it stands then.
@@ -1198,6 +1232,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     const onWheel = (e: WheelEvent) => {
       if ((e.target as Element | null)?.closest?.('[data-map-overlay]')) return
       e.preventDefault()
+      lastPointer.current = { x: e.clientX, y: e.clientY }
       startMoving(160)
       const b = el.getBoundingClientRect()
       zoomAt(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX - b.left, e.clientY - b.top)
@@ -1726,7 +1761,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         }}
         onDoubleClick={() => { if (kids) explore(n.id) }}
         onFocus={() => { lastChosen.current = n.id }}
-        onPointerEnter={() => setHover(n.id)} onPointerLeave={() => setHover(null)}
+        onPointerEnter={() => hoverCard(n.id)} onPointerLeave={() => hoverCard(null)}
       >
         <g className={arriving} style={arriving ? { animationDelay: `${delay ?? 0}ms` } : undefined}>
           {/* The shadow it casts, softer the higher it stands; then its edge (the slab). */}
@@ -1806,7 +1841,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         )}
       </g>
     )
-  }), [drawn, placed, neighbourIds, selected, dragAt, detail, onCardPointerDown, onCardPointerMove, onCardPointerUp, onCardPointerCancel, tree, collapsed, insideCount, toggleFold, select, explore, openAdd, entrance, fresh, flash, chosenAround, emphasis, lens, now, dens, overviewOn, subjectTallies, outer])
+  }), [hoverCard, drawn, placed, neighbourIds, selected, dragAt, detail, onCardPointerDown, onCardPointerMove, onCardPointerUp, onCardPointerCancel, tree, collapsed, insideCount, toggleFold, select, explore, openAdd, entrance, fresh, flash, chosenAround, emphasis, lens, now, dens, overviewOn, subjectTallies, outer])
 
   // The ground each subject's tree stands on, lit softly in its colour, and
   // what each holds (for the overview's labels).
@@ -2177,6 +2212,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           drag.current = pinch.current.size === 1 ? { x: e.clientX, y: e.clientY, moved: false } : null
         }}
         onPointerMove={e => {
+          lastPointer.current = { x: e.clientX, y: e.clientY }
           const pts = pinch.current
           if (pts.size === 2 && pts.has(e.pointerId)) {
             // Two fingers: zoom about the point between them.
