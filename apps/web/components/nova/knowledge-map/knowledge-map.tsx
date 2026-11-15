@@ -1,6 +1,6 @@
 'use client'
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useStartSession } from '../use-start-session'
 import { ArrowUp, ArrowUpRight, ChevronsDownUp, ChevronsUpDown, Circle, CornerDownRight, FilePlus, FileText, Focus, Globe, Info, Keyboard, Layers, Lightbulb, Link2, ListChecks, Maximize2, Minus, MoreHorizontal, PanelRightOpen, Plus, RotateCcw, Search, SlidersHorizontal, Timer, Trash2, Unlink, Waypoints, X } from 'lucide-react'
@@ -1229,12 +1229,16 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   useEffect(() => {
     const el = frame.current
     if (!el) return
+    let box: DOMRect | null = null
     const onWheel = (e: WheelEvent) => {
       if ((e.target as Element | null)?.closest?.('[data-map-overlay]')) return
       e.preventDefault()
       lastPointer.current = { x: e.clientX, y: e.clientY }
+      // Where the map sits on the page is read once per gesture: asking on
+      // every wheel event made the browser lay the whole drawing out each time.
+      if (!box || !root.current?.classList.contains('map-moving')) box = el.getBoundingClientRect()
+      const b = box
       startMoving(160)
-      const b = el.getBoundingClientRect()
       zoomAt(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX - b.left, e.clientY - b.top)
     }
     el.addEventListener('wheel', onWheel, { passive: false })
@@ -1582,7 +1586,9 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   // ── What is drawn ──────────────────────────────────────────────────────────
   // How much a card says at this zoom: far out, only the shapes and the
   // subjects' names (drawn at a readable size); then titles; then facts.
-  const detail: CardDetail = detailAt(t.k)
+  // Deferred: crossing a threshold redraws every card's face, which on a large
+  // map is a long frame. The zoom itself goes first and the faces follow.
+  const detail: CardDetail = useDeferredValue(detailAt(t.k))
   const textScale = 1 / Math.max(t.k, 0.0001)
   // "Recent" is judged against when the map was read.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- read again with each new reading of the map
@@ -1674,7 +1680,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     if (lit && !arrive) live.push(<path key={`f-${e.id}`} d={d} fill="none" className="map-edge-flow" stroke="var(--action)" strokeWidth={2.4} strokeDasharray="1.5 11" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.95} />)
     return (
       <g key={e.id} className={cn('subject-tone', arrive)} style={{ ...toneStyle(toNode?.type === 'subject' ? toNode.label : toNode?.subjectName ?? null), ...anim }}>
-        {tree_ && !lit && <path d={d} fill="none" stroke="var(--sc)" strokeWidth={6} strokeLinecap="round" opacity={dim ? 0.02 : 0.13} vectorEffect="non-scaling-stroke" className="map-fibre pointer-events-none" />}
+        {/* The fibre is sized in the map's own units, so far out (where every line is on screen) it thins with the map: at a fixed width on screen, hundreds of wide soft strokes halved the frame rate of a zoom. */}
+        {tree_ && !lit && <path d={d} fill="none" stroke="var(--sc)" strokeWidth={7} strokeOpacity={dim ? 0.02 : 0.13} className="map-fibre pointer-events-none" />}
         {port && (
           <g className="map-port pointer-events-none" opacity={dim ? 0.25 : 1}>
             <circle cx={port.x} cy={port.y} r={6} fill={lit ? 'var(--action)' : 'var(--sc)'} opacity={0.2} />
