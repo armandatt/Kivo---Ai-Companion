@@ -68,7 +68,7 @@ export function CardFace({ n, detail, folded }: { n: MapNode; detail: CardDetail
     const done = n.status === 'done'
     return (
       <>
-        <rect x={x0} y={y0} width={w} height={h} rx={9} fill={SURFACE} stroke={EDGE} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        <rect x={x0} y={y0} width={w} height={h} rx={9} fill={SURFACE} stroke={n.subjectName ? 'var(--sc-edge)' : EDGE} strokeOpacity={n.subjectName ? 0.6 : 1} strokeWidth={1} vectorEffect="non-scaling-stroke" />
         {n.subjectName && wash(w, h, 9)}
         {lit}
         <rect x={x0 + 10} y={-5} width={10} height={10} rx={2.5} fill={done ? FILL.task : 'none'} stroke={FILL.task} strokeWidth={1.4} vectorEffect="non-scaling-stroke" />
@@ -99,7 +99,7 @@ export function CardFace({ n, detail, folded }: { n: MapNode; detail: CardDetail
     return (
       <>
         {/* No session yet: the card lies flat (no slab, depth.ts) and its subject bar is hollow. */}
-        <rect x={x0} y={y0} width={w} height={h} rx={14} fill={SURFACE} stroke={EDGE} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        <rect x={x0} y={y0} width={w} height={h} rx={14} fill={SURFACE} stroke={n.subjectName ? 'var(--sc-edge)' : EDGE} strokeOpacity={n.subjectName ? 0.6 : 1} strokeWidth={1} vectorEffect="non-scaling-stroke" />
         {n.subjectName && wash(w, h, 14)}
         {lit}
         {n.subjectName && (unstudied
@@ -130,7 +130,7 @@ export function CardFace({ n, detail, folded }: { n: MapNode; detail: CardDetail
   const resource = n.type === 'resource'
   return (
     <>
-      <rect x={x0} y={y0} width={w} height={h} rx={resource ? 6 : 11} fill={SURFACE} stroke={EDGE} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+      <rect x={x0} y={y0} width={w} height={h} rx={resource ? 6 : 11} fill={SURFACE} stroke={n.subjectName ? 'var(--sc-edge)' : EDGE} strokeOpacity={n.subjectName ? 0.6 : 1} strokeWidth={1} vectorEffect="non-scaling-stroke" />
       {n.subjectName && wash(w, h, resource ? 6 : 11)}
       {lit}
       {n.subjectName && <rect x={x0 + 6} y={y0 + 10} width={3} height={h - 20} rx={1.5} fill="var(--sc)" />}

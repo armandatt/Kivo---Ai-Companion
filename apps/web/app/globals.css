@@ -697,16 +697,17 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 /* The selection's lines carry a quiet travelling pulse. */
 @keyframes map-edge-flow { to { stroke-dashoffset: -25; } }
 /* The neuron touch: a slow signal travelling out along a subject's branches. Paused while the view moves; off in Calm and under reduced motion. */
-@keyframes map-signal { from { stroke-dashoffset: 52; } to { stroke-dashoffset: -468; } }
+@keyframes map-signal { from { stroke-dashoffset: 52; } to { stroke-dashoffset: -520; } }
 .map-signal { animation: map-signal 4.6s linear infinite; }
-/* A subject's own light breathes slowly, like a cell at rest. */
-@keyframes map-breathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
-.map-anchor-glow { animation: map-breathe 5.5s ease-in-out infinite; }
-.map-moving .map-anchor-glow { animation-play-state: paused; }
-.map-still .map-anchor-glow { animation: none; }
+/* What moves on its own sits on a layer of its own, under the map's drawing,
+   so a signal's frame repaints that layer and never the cards. */
+.map-live, .map-main { will-change: transform; }
+.map-still .map-live { display: none; }
+/* On the map the subjects' colours are a little fuller than on the rest of Kivo. */
+[data-knowledge-map] { --tone-c: 0.165; }
 .map-moving .map-signal { animation-play-state: paused; }
 .map-still .map-signal { display: none; }
-@media (prefers-reduced-motion: reduce) { .map-signal { display: none; } .map-anchor-glow { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .map-signal { display: none; } }
 .map-edge-flow { animation: map-edge-flow 1.2s linear infinite; }
 /* The entrance: the subjects' light comes up before their cards. */
 @keyframes map-glow-in { from { opacity: 0; } to { opacity: 1; } }
@@ -745,6 +746,10 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 .map-card-in, .map-card-in-brief, .map-card-new, .map-card-out { transform-box: fill-box; transform-origin: center; }
 .map-card-in { animation: map-card-in 0.9s cubic-bezier(0.2, 0.8, 0.25, 1) both; }
 .map-card-in-brief { animation: map-enter 0.24s ease-out both; }
+/* A large map opening: the whole drawing starts close and pulls back as one
+   transform (the compositor's work: no card is repainted for it). */
+@keyframes map-cam-glide { from { opacity: 0; transform: scale(1.9); } 16% { opacity: 1; } to { opacity: 1; transform: none; } }
+.map-cam-glide { animation: map-cam-glide 3.2s cubic-bezier(0.22, 0.78, 0.18, 1) both; transform-origin: 50% 45%; will-change: transform, opacity; }
 @keyframes map-card-new { from { opacity: 0; transform: scale(0.8); } 55% { opacity: 1; transform: scale(1.04); } to { opacity: 1; transform: none; } }
 .map-card-new { animation: map-card-new 0.6s cubic-bezier(0.2, 0.8, 0.25, 1) both; }
 @keyframes map-card-out { to { opacity: 0; transform: translateY(10px) scale(0.9); } }
@@ -762,7 +767,7 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 @media (prefers-reduced-motion: reduce) {
   .map-lift, .map-card { transition: none; }
   .map-card:hover .map-lift, .map-card:focus-visible .map-lift, .map-lift.map-raise, .map-lift.map-recede { transform: none; }
-  .map-cam-in, .map-cam-brief, .map-card-in, .map-card-in-brief, .map-card-new, .map-card-out, .map-edge-draw path, .map-edge-fade, .map-found { animation: none; stroke-dasharray: none; }
+  .map-cam-in, .map-cam-glide, .map-cam-brief, .map-card-in, .map-card-in-brief, .map-card-new, .map-card-out, .map-edge-draw path, .map-edge-fade, .map-found { animation: none; stroke-dasharray: none; }
   .map-shadow { transition: none; }
   .map-card:hover .map-shadow { transform: none; }
   .map-ambient { transform: none !important; }

@@ -30,7 +30,7 @@ import { crossSubjectLinks, foldedLabel, foldedTotal, overviewDensity, rootOf, t
 import { GAP_LABEL, LENSES, STATE_LABEL, gapRank, gapsOf, isRecent, lensTargets, nextLens, tallyOf, topicState, type Lens, type StateTally, type TopicState } from './lens'
 import { detailAt, minimapFrame, viewCentredOn, viewOfBox, viewportOn, REGION_LABEL_PX } from './overview'
 import { pathOf, searchMap, matchesOf } from './map-search'
-import { EDGE_MS, chooseMotion, chosenMotion, enteredBefore, entranceMode, entrancePlan, markEntered, radiusOf, regionsOf, thicknessOf, type Entrance, type EntranceMode, type Motion } from './depth'
+import { EDGE_MS, LARGE_MAP, chooseMotion, chosenMotion, enteredBefore, entranceMode, entrancePlan, markEntered, radiusOf, regionsOf, thicknessOf, type Entrance, type EntranceMode, type Motion } from './depth'
 
 // The browser session's store, for "this map was opened already" (depth.ts).
 const sessionStore = () => { try { return typeof window === 'undefined' ? null : window.sessionStorage } catch { return null } }
@@ -61,6 +61,8 @@ const MAP_SESSION_MINUTES = 25
 // How far one arrow key moves the map, in screen pixels.
 const PAN_STEP = 60
 // How far Alt and an arrow key move a card, in map units (Shift for more).
+// At most this many lines carry a travelling signal at once.
+const SIGNAL_MAX = 140
 // The opening camera's glide, as long as the cards' entrance.
 const CAMERA_MS = 3200
 const NUDGE = 20
@@ -776,7 +778,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   // Depth and motion: the learner's choice on this device (Show menu), and
   // the entrance being played, if any (depth.ts).
   const [motion, setMotion]     = useState<Motion>(() => chosenMotion(store))
-  const [entrance, setEntrance] = useState<(Entrance & { mode: Exclude<EntranceMode, 'none'>; key: string }) | null>(null)
+  const [entrance, setEntrance] = useState<(Entrance & { mode: Exclude<EntranceMode, 'none'>; key: string; glide?: boolean }) | null>(null)
   // Cards and lines that arrived in this visit (an add, a link), and a card
   // just deleted here, drawn leaving while the map is read again.
   const [fresh, setFresh]       = useState<{ nodes: Set<string>; edges: Set<string> } | null>(null)
@@ -1142,14 +1144,20 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     // Opening the map (Everything or a workspace) always plays the full
     // entrance; going into a card, the brief one. Calm and reduced motion: none.
     const top = focus === null
-    const mode = calm ? 'none' : top ? entranceMode({ seen: false, reduced: calm, motion, count: Math.min(drawn.length, 400) }) : first ? entranceMode({ seen: enteredBefore(session, where), reduced: calm, motion, count: drawn.length }) : 'brief'
+    const mode = calm ? 'none' : top ? entranceMode({ seen: false, reduced: calm, motion, count: drawn.length, opening: true }) : first ? entranceMode({ seen: enteredBefore(session, where), reduced: calm, motion, count: drawn.length }) : 'brief'
     markEntered(session, where)
     if (mode === 'none') { setEntrance(null); return }
-    const plan = entrancePlan(drawn.map(n => n.id), tree.parent, placed.at, [...drawnEdges, ...cross.map(c => c.edge)], mode)
-    setEntrance({ ...plan, mode, key: where })
+    // A large map opening: the cards come in quickly by level and the camera's
+    // pull-back is one transform on the whole drawing (CSS, map-cam-glide), so
+    // it stays smooth however many cards there are. Smaller maps play the
+    // card-by-card cascade with the camera moved frame by frame.
+    const glide = mode === 'full' && top && drawn.length > LARGE_MAP
+    const played = glide ? 'brief' : mode
+    const plan = entrancePlan(drawn.map(n => n.id), tree.parent, placed.at, [...drawnEdges, ...cross.map(c => c.edge)], played)
+    setEntrance({ ...plan, total: glide ? Math.max(plan.total, CAMERA_MS) : plan.total, mode: played, key: where, glide })
     // Opening the map: the camera starts close on its middle and glides out to
     // the whole of it while the cards arrive, ending on the fitted view.
-    const to = mode === 'full' && top ? fitTarget() : null
+    const to = mode === 'full' && top && !glide ? fitTarget() : null
     const el = frame.current
     if (to && el) {
       const cw = (el.clientWidth - besidePanel(el)) / 2, ch = el.clientHeight / 2
@@ -1566,7 +1574,12 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     for (let p = tree.parent.get(focusId), hops = 0; p && hops < 24; p = tree.parent.get(p), hops++) set.add(p)
     return set
   }, [focusId, tree.parent])
-  const edgeLayer = useMemo(() => allLines.map(e => {
+  // What moves on its own (the signals, the selection's pulse) is drawn on a
+  // layer of its own under the map (liveLayer): moving inside the map's own
+  // drawing would repaint every card on every frame. On a large map only
+  // some lines carry a signal, spread evenly, so the cost stays bounded.
+  const signalStride = Math.max(1, Math.ceil(allLines.length / SIGNAL_MAX))
+  const { base: edgeLayer, live: liveLayer } = useMemo(() => { const live: React.ReactNode[] = []; const base = allLines.map((e, index) => {
     const a = pointOf(e.from), b = pointOf(e.to)
     if (!a || !b) return null
     const lit = focusId !== null && (e.from === focusId || e.to === focusId || (litPath !== null && litPath.has(e.from) && litPath.has(e.to)))
@@ -1617,13 +1630,18 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     const tree_ = TREE_EDGES.has(e.kind) && !d.includes(' H ')
     const dir = Math.sign(b.x - a.x) || 1
     const port = tree_ && toNode && !markers.has(e.to) ? { x: b.x - dir * (CARD[toNode.type].w / 2 + 2), y: b.y } : null
-    const signal = tree_ && !dim && (e.kind === 'has_topic' || e.kind === 'contains' || (e.kind === 'subtopic' && drawnEdges.length < 700))
+    const signal = tree_ && !dim && (e.kind === 'has_topic' || e.kind === 'contains' || e.kind === 'subtopic')
+    const toneOf = toneStyle(toNode?.type === 'subject' ? toNode.label : toNode?.subjectName ?? null)
+    if (signal && !lit && index % signalStride === 0) {
+      const seed = (e.id.length * 137 + index * 61) % 2400
+      live.push(<path key={`s-${e.id}`} d={d} fill="none" className="map-signal subject-tone" stroke="var(--sc-ink)" strokeWidth={2.6} strokeDasharray="1 4 5 42" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.95} style={{ ...toneOf, animationDelay: `${-seed}ms`, animationDuration: `${3800 + (seed % 5) * 450}ms` }} />)
+    }
+    if (lit && !arrive) live.push(<path key={`f-${e.id}`} d={d} fill="none" className="map-edge-flow" stroke="var(--action)" strokeWidth={2.4} strokeDasharray="1.5 11" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.95} />)
     return (
       <g key={e.id} className={cn('subject-tone', arrive)} style={{ ...toneStyle(toNode?.type === 'subject' ? toNode.label : toNode?.subjectName ?? null), ...anim }}>
-        {tree_ && !lit && <path d={d} fill="none" stroke="var(--sc)" strokeWidth={6} strokeLinecap="round" opacity={dim ? 0.02 : 0.1} vectorEffect="non-scaling-stroke" className="pointer-events-none" />}
-        {signal && !lit && <path d={d} fill="none" className="map-signal pointer-events-none" stroke="var(--sc-ink)" strokeWidth={2.6} strokeDasharray="4 48" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.9} style={{ animationDelay: `${(e.id.length * 137) % 2400}ms` }} />}
+        {tree_ && !lit && <path d={d} fill="none" stroke="var(--sc)" strokeWidth={6} strokeLinecap="round" opacity={dim ? 0.02 : 0.13} vectorEffect="non-scaling-stroke" className="map-fibre pointer-events-none" />}
         {port && (
-          <g className="pointer-events-none" opacity={dim ? 0.25 : 1}>
+          <g className="map-port pointer-events-none" opacity={dim ? 0.25 : 1}>
             <circle cx={port.x} cy={port.y} r={6} fill={lit ? 'var(--action)' : 'var(--sc)'} opacity={0.2} />
             <circle cx={port.x} cy={port.y} r={2.6} fill={lit ? 'var(--action)' : 'var(--sc)'} />
           </g>
@@ -1633,11 +1651,9 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         <path d={d} fill="none" data-edge={e.kind} data-lane={d.includes(' H ') && e.kind !== 'links_to' && e.kind !== 'depends_on' ? '' : undefined}
           stroke={stroke} strokeWidth={width} strokeDasharray={dash} strokeLinejoin="round" vectorEffect="non-scaling-stroke"
           opacity={dim ? (e.kind === 'depends_on' ? 0.2 : 0.25) : rest} {...drawProps} />
-        {/* What the selection joins: a quiet pulse travelling along the line. */}
-        {lit && !arrive && <path d={d} fill="none" className="map-edge-flow" stroke="var(--action)" strokeWidth={2.4} strokeDasharray="1.5 11" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.95} />}
       </g>
     )
-  }), [allLines, pointOf, focusId, placed.lanes, markers, entrance, fresh, depthOf, detail, emphasis, overviewOn, litPath, byId])
+  }); return { base, live } }, [allLines, pointOf, focusId, placed.lanes, markers, entrance, fresh, depthOf, detail, emphasis, overviewOn, litPath, byId, signalStride])
 
   // The rings of [[links]], over the cards: one where each link arrives.
   const ringLayer = useMemo(() => allLines.filter(e => e.kind === 'links_to' && (!overviewOn || (focusId !== null && (e.from === focusId || e.to === focusId)))).map(e => {
@@ -2206,9 +2222,11 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           <p className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm text-foreground/65">Nothing matches these filters{inScope ? ' around this item' : ''}. Turn one back on{inScope ? ', or show everything,' : ''} to see the map.</p>
         ) : (
           // The camera: on the first visit the map tilts up into place as it settles.
-          <div className={cn('absolute inset-0', layoutWait && !entrance ? 'opacity-0' : entrance ? (entrance.mode === 'full' && entrance.key.endsWith('/root') ? 'map-cam-in' : 'map-cam-brief') : undefined)}>
+          <div className={cn('absolute inset-0', layoutWait && !entrance ? 'opacity-0' : entrance ? (entrance.glide ? 'map-cam-glide' : entrance.mode === 'full' && entrance.key.endsWith('/root') ? 'map-cam-in' : 'map-cam-brief') : undefined)}>
+          {/* What moves on its own, on its own layer under the cards: signals along the branches, the selection's pulse. */}
+          <svg aria-hidden className="map-live pointer-events-none absolute inset-0 size-full"><g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>{liveLayer}</g></svg>
           {/* A group, not an image: it holds the items a keyboard reaches. */}
-          <svg className="absolute inset-0 size-full" role="group" aria-label={`${drawn.length} items and ${drawnEdges.length} links${markers.size ? `, ${markers.size} outside` : ''}`}>
+          <svg className="map-main absolute inset-0 size-full" role="group" aria-label={`${drawn.length} items and ${drawnEdges.length} links${markers.size ? `, ${markers.size} outside` : ''}`}>
             <defs>
               <linearGradient id="map-sheen" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="#fff" stopOpacity={0.07} />

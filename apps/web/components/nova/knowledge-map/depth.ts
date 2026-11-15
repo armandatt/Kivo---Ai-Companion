@@ -46,9 +46,11 @@ export function radiusOf(n: MapNode): number {
 export type Motion = 'full' | 'reduced'
 export type EntranceMode = 'full' | 'brief' | 'none'
 
-// Past this many cards, the entrance is one short fade: a long cascade over
-// hundreds of cards shows nothing and costs frames.
+// Past this many cards the map opens differently (knowledge-map.tsx): the
+// cards come in quickly and the camera's pull-back is one transform on the
+// whole drawing, which stays smooth at any size. Past HUGE_MAP: one short fade.
 export const LARGE_MAP = 260
+export const HUGE_MAP = 1600
 // Full: about 3 to 4 seconds in all, so opening the map is felt (owner's ask, 14 Nov).
 export const NODE_BUDGET = { full: 2800, brief: 160 }   // the last card starts by then
 const LEVEL_STEP  = { full: 650, brief: 40 }     // one level deeper starts this much later
@@ -57,8 +59,11 @@ const EDGE_LAG    = { full: 240, brief: 60 }     // a line starts once both its 
 export const CARD_MS = { full: 900, brief: 240 }
 export const EDGE_MS = { full: 900, brief: 220 }
 
-export function entranceMode(o: { seen: boolean; reduced: boolean; motion: Motion; count: number }): EntranceMode {
+// opening: the map itself being opened (Everything or a workspace), which
+// plays the full entrance at any size short of huge.
+export function entranceMode(o: { seen: boolean; reduced: boolean; motion: Motion; count: number; opening?: boolean }): EntranceMode {
   if (o.reduced || o.motion === 'reduced') return 'none'
+  if (o.opening) return o.count > HUGE_MAP ? 'brief' : 'full'
   if (o.seen || o.count > LARGE_MAP) return 'brief'
   return 'full'
 }
