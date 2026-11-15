@@ -63,6 +63,8 @@ const PAN_STEP = 60
 // How far Alt and an arrow key move a card, in map units (Shift for more).
 // The zoom a map too large to fit at a readable size opens at: titles and every link are seen.
 const OPEN_K = 0.44
+// How far past the frame the map is drawn on every side, as a share of the frame: picture to slide in while the view moves.
+const OVERSCAN = 0.3
 // At most this many lines carry a travelling signal at once.
 const SIGNAL_MAX = 140
 // The opening camera's glide, as long as the cards' entrance.
@@ -1022,8 +1024,35 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   }, [selected, view.edges])
 
   // ── The view: pan and zoom ─────────────────────────────────────────────────
+  // ── How the view moves ─────────────────────────────────────────────────────
+  // `t` is the view the map was last DRAWN at; `tNow` is where the view is.
+  // While it moves (a pan, a zoom, a camera glide) the drawing is not redrawn:
+  // the picture already drawn is slid and scaled by one CSS transform (the
+  // compositor's work, smooth whatever the map's size), and the map is drawn
+  // again once, sharp, when the movement rests. The drawing reaches past the
+  // frame on every side (OVERSCAN), so there is picture to slide in; when a
+  // movement goes past that, or scales the picture too far, it is redrawn then.
   const tNow = useRef(t)
-  useEffect(() => { tNow.current = t }, [t])
+  const drawnAt = useRef(t)
+  const cam = useRef<HTMLDivElement>(null), dots = useRef<HTMLDivElement>(null)
+  // Puts the picture where tNow says. False: out of the picture's reach, draw again.
+  const applyCam = useCallback((): boolean => {
+    const el = cam.current, c = drawnAt.current, n = tNow.current
+    if (!el) return false
+    const r = n.k / c.k, tx = n.x - c.x * r, ty = n.y - c.y * r
+    const still = Math.abs(r - 1) < 1e-4 && Math.abs(tx) < 0.01 && Math.abs(ty) < 0.01
+    el.style.transform = still ? '' : `translate3d(${tx}px, ${ty}px, 0) scale(${r})`
+    if (dots.current) dots.current.style.transform = still ? '' : `translate3d(${(n.x - c.x) * 0.35}px, ${(n.y - c.y) * 0.35}px, 0)`
+    if (still) return true
+    const W = el.clientWidth, H = el.clientHeight
+    // The frame, in the picture's own pixels: it must stay inside what was drawn.
+    const left = -tx / r, top = -ty / r, right = (W - tx) / r, bottom = (H - ty) / r
+    return r > 0.55 && r < 1.9 && left > -OVERSCAN * W && top > -OVERSCAN * H && right < (1 + OVERSCAN) * W && bottom < (1 + OVERSCAN) * H
+  }, [])
+  useLayoutEffect(() => { drawnAt.current = t; applyCam() }, [t, applyCam])
+  // The view set outright (drawn at once), and moved (slid; drawn when it rests).
+  const setView = useCallback((v: View) => { tNow.current = v; setT(v) }, [])
+  const glideTo = useCallback((v: View) => { tNow.current = v; if (!applyCam()) setT(v) }, [applyCam])
   const anim = useRef<number | null>(null)
   const stopAnim = useCallback(() => { if (anim.current !== null) cancelAnimationFrame(anim.current); anim.current = null }, [])
   // While the view moves (a drag, the wheel, a glide), the cards' lift
@@ -1036,6 +1065,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     if (moving.current !== null) window.clearTimeout(moving.current)
     moving.current = ms === undefined ? null : window.setTimeout(() => {
       root.current?.classList.remove('map-moving'); moving.current = null
+      // The movement rests: the map is drawn where it now is.
+      if (tNow.current !== drawnAt.current) setT(tNow.current)
       // What the pointer rests on now (cards slid under it while the view moved).
       const pt = lastPointer.current
       const under = pt ? document.elementFromPoint(pt.x, pt.y)?.closest?.('[data-node-id]')?.getAttribute('data-node-id') ?? null : null
@@ -1055,7 +1086,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   const animateTo = useCallback((to: View, minMs?: number) => {
     stopAnim()
     const el = frame.current
-    if (!el || reducedMotion() || motion === 'reduced') { setT(to); return }
+    if (!el || reducedMotion() || motion === 'reduced') { setView(to); return }
     const from = tNow.current, cw = el.clientWidth / 2, ch = el.clientHeight / 2
     const a = { x: (cw - from.x) / from.k, y: (ch - from.y) / from.k }, b = { x: (cw - to.x) / to.k, y: (ch - to.y) / to.k }
     const travel = Math.hypot((b.x - a.x) * to.k, (b.y - a.y) * to.k), zoom = Math.abs(Math.log(to.k / from.k))
@@ -1066,11 +1097,11 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
       const p = Math.min(1, (now - start) / ms), e = p < 0.5 ? 4 * p ** 3 : 1 - (-2 * p + 2) ** 3 / 2
       const k = from.k * (to.k / from.k) ** e
       const cx = a.x + (b.x - a.x) * e, cy = a.y + (b.y - a.y) * e
-      setT(p === 1 ? to : { k, x: cw - cx * k, y: ch - cy * k })
+      if (p === 1) setView(to); else glideTo({ k, x: cw - cx * k, y: ch - cy * k })
       anim.current = p < 1 ? requestAnimationFrame(step) : null
     }
     anim.current = requestAnimationFrame(step)
-  }, [stopAnim, startMoving, motion])
+  }, [stopAnim, startMoving, motion, setView, glideTo])
 
   // The details panel covers the right of a wide canvas: fit beside it.
   const besidePanel = useCallback((el: HTMLElement) => (selected && detailOpen && el.clientWidth >= 1024 ? 372 : 0), [selected, detailOpen])
@@ -1101,7 +1132,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     if (detailAt(k) === 0) { top = 44; k = Math.max(MIN_K, Math.min(1.1, Math.min(room / bw, (H - top) / bh))) }
     return round({ k, x: room / 2 - ((minX + maxX) / 2) * k, y: top + (H - top) / 2 - ((minY + maxY) / 2) * k })
   }, [bounds, portrait, besidePanel])
-  const fit = useCallback((animated = true) => { const to = fitTarget(); if (to) { if (animated) animateTo(to); else { stopAnim(); setT(to) } } }, [fitTarget, animateTo, stopAnim])
+  const fit = useCallback((animated = true) => { const to = fitTarget(); if (to) { if (animated) animateTo(to); else { stopAnim(); setView(to) } } }, [fitTarget, animateTo, stopAnim, setView])
 
   // What this view is, for remembering it: the workspace, the card explored,
   // and the cards drawn. A view comes back only for the same picture.
@@ -1125,7 +1156,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     if (cameraEntrance.current) return
     const to = level.view ?? recallView(store, where, picture) ?? fitTarget()
     if (!to) return
-    if (animated) animateTo(to); else { stopAnim(); setT(to) }
+    if (animated) animateTo(to); else { stopAnim(); setView(to) }
   }
   const settleWhen = fitKey({ shown, subject, scope, showLinks, portrait, generation: layout.generation }) + `|${view.workspaceId ?? 'all'}|${focus ?? ''}|${stack.length}`
   const lastFocus = useRef<string | null | undefined>(undefined)
@@ -1192,12 +1223,12 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     if (to && el && top) {
       cameraEntrance.current = true
       stopAnim()
-      if (glide || mode !== 'full') setT(to)
+      if (glide || mode !== 'full') setView(to)
       else {
         const cw = (el.clientWidth - besidePanel(el)) / 2, ch = el.clientHeight / 2
         const mid = { x: (cw - to.x) / to.k, y: (ch - to.y) / to.k }
         const k0 = Math.min(1.1, to.k * 2.1)
-        setT({ k: k0, x: cw - mid.x * k0, y: ch - mid.y * k0 })
+        setView({ k: k0, x: cw - mid.x * k0, y: ch - mid.y * k0 })
         const end = to
         requestAnimationFrame(() => animateTo(end, CAMERA_MS))
       }
@@ -1218,11 +1249,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     if (!el) return
     stopAnim()
     const px = cx ?? el.clientWidth / 2, py = cy ?? el.clientHeight / 2
-    setT(v => {
-      const k = Math.max(MIN_K, Math.min(MAX_K, v.k * factor))
-      return { k, x: px - ((px - v.x) / v.k) * k, y: py - ((py - v.y) / v.k) * k }
-    })
-  }, [stopAnim])
+    const v = tNow.current
+    const k = Math.max(MIN_K, Math.min(MAX_K, v.k * factor))
+    glideTo({ k, x: px - ((px - v.x) / v.k) * k, y: py - ((py - v.y) / v.k) * k })
+  }, [stopAnim, glideTo])
 
   // The wheel zooms where the pointer is. Registered by hand so it can stop
   // the page from scrolling under the map; a panel over the map scrolls itself.
@@ -1512,7 +1542,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         act()
         const step = PAN_STEP * 3
         const by = { left: [step, 0], right: [-step, 0], up: [0, step], down: [0, -step] }[k.arrow]
-        stopAnim(); setT(v => ({ ...v, x: v.x + by[0]!, y: v.y + by[1]! }))
+        stopAnim(); { const v = tNow.current; setView({ ...v, x: v.x + by[0]!, y: v.y + by[1]! }) }
         return
       }
       case 'navigate': {
@@ -2189,6 +2219,9 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
               <Plus aria-hidden className="size-3.5" /> <span className="hidden sm:inline">New subject</span>
             </button>
           )}
+          <button type="button" onClick={() => { setPanel(null); askReset() }} className={tool} data-reset-layout-bar title="Kivo's own layout, fitted to the screen">
+            <RotateCcw aria-hidden className="size-3.5" /> <span className="hidden md:inline">Reset layout</span>
+          </button>
           <button type="button" onClick={() => setPanel(p => (p?.kind === 'help' ? null : { kind: 'help' }))} className={cn(tool, 'px-2.5')} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" data-shortcuts-open>
             <Keyboard aria-hidden className="size-3.5" />
           </button>
@@ -2238,7 +2271,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           if (Math.abs(dx) + Math.abs(dy) > 3) dd.moved = true
           dd.x = e.clientX; dd.y = e.clientY
           pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
-          setT(v => ({ ...v, x: v.x + dx, y: v.y + dy }))
+          { const v = tNow.current; glideTo({ ...v, x: v.x + dx, y: v.y + dy }) }
         }}
         // A press on the background that did not pan clears the selection.
         onPointerUp={e => { stopMoving(); pinch.current.delete(e.pointerId); const dd = drag.current; drag.current = null; if (dd && !dd.moved && pinch.current.size === 0) { setSelected(null); lastChosen.current = null; setPanel(p => (p?.kind === 'filters' || p?.kind === 'legend' ? null : p)) } }}
@@ -2257,7 +2290,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           const off = (v: number) => (((v * 0.35) % S) + S) % S
           return (
             <div aria-hidden className="map-far-mask pointer-events-none absolute inset-0 overflow-hidden">
-              <div className="map-far absolute" style={{ left: -S, top: -S, right: -S, bottom: -S, backgroundSize: `${S}px ${S}px`, transform: `translate3d(${off(t.x)}px, ${off(t.y)}px, 0)` }} />
+              <div ref={dots} className="absolute inset-0"><div className="map-far absolute" style={{ left: -S, top: -S, right: -S, bottom: -S, backgroundSize: `${S}px ${S}px`, transform: `translate3d(${off(t.x)}px, ${off(t.y)}px, 0)` }} /></div>
             </div>
           )
         })()}
@@ -2267,9 +2300,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           // The camera: on the first visit the map tilts up into place as it settles.
           <div className={cn('absolute inset-0', layoutWait && !entrance ? 'opacity-0' : entrance ? (entrance.glide ? 'map-cam-glide' : entrance.mode === 'full' && entrance.key.endsWith('/root') ? 'map-cam-in' : 'map-cam-brief') : undefined)}>
           {/* What moves on its own, on its own layer under the cards: signals along the branches, the selection's pulse. */}
-          <svg aria-hidden className="map-live pointer-events-none absolute inset-0 size-full"><g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>{liveLayer}</g></svg>
+          <div ref={cam} className="map-cam absolute inset-0">
+          <svg aria-hidden className="map-live pointer-events-none absolute" style={{ left: `${-OVERSCAN * 100}%`, top: `${-OVERSCAN * 100}%`, width: `${(1 + 2 * OVERSCAN) * 100}%`, height: `${(1 + 2 * OVERSCAN) * 100}%` }}><svg x={`${(OVERSCAN / (1 + 2 * OVERSCAN)) * 100}%`} y={`${(OVERSCAN / (1 + 2 * OVERSCAN)) * 100}%`} overflow="visible"><g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>{liveLayer}</g></svg></svg>
           {/* A group, not an image: it holds the items a keyboard reaches. */}
-          <svg className="map-main absolute inset-0 size-full" role="group" aria-label={`${drawn.length} items and ${drawnEdges.length} links${markers.size ? `, ${markers.size} outside` : ''}`}>
+          <svg className="map-main absolute" style={{ left: `${-OVERSCAN * 100}%`, top: `${-OVERSCAN * 100}%`, width: `${(1 + 2 * OVERSCAN) * 100}%`, height: `${(1 + 2 * OVERSCAN) * 100}%` }} role="group" aria-label={`${drawn.length} items and ${drawnEdges.length} links${markers.size ? `, ${markers.size} outside` : ''}`}>
             <defs>
               <linearGradient id="map-sheen" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="#fff" stopOpacity={0.07} />
@@ -2281,6 +2315,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
                 <stop offset="100%" stopColor="#000" stopOpacity={0.08} />
               </linearGradient>
             </defs>
+            <svg x={`${(OVERSCAN / (1 + 2 * OVERSCAN)) * 100}%`} y={`${(OVERSCAN / (1 + 2 * OVERSCAN)) * 100}%`} overflow="visible">
             <g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>
               <g key={focus ?? 'root'} className={entrance ? undefined : 'map-enter'}>
                 <g className={entrance ? 'map-glow-in' : undefined}>{regionLayer}</g>
@@ -2298,7 +2333,9 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
                 {farLabels}
               </g>
             </g>
+            </svg>
           </svg>
+          </div>
           </div>
         )}
 
@@ -2473,7 +2510,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           const whole = vp.whole || vp.w * vp.h >= 0.8 * ms.w * ms.h
           return whole ? null : (
             <div className="hidden overflow-hidden rounded-xl border border-white/10 bg-card/90 p-1 shadow-soft backdrop-blur lg:block">
-              <Minimap cards={miniCards} regions={miniRegions} box={miniBox} t={t} cw={cw} ch={ch} onJump={v => { stopAnim(); setT(v) }} />
+              <Minimap cards={miniCards} regions={miniRegions} box={miniBox} t={t} cw={cw} ch={ch} onJump={v => { stopAnim(); setView(v) }} />
             </div>
           )
         })()}

@@ -702,6 +702,10 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 /* What moves on its own sits on a layer of its own, under the map's drawing,
    so a signal's frame repaints that layer and never the cards. */
 .map-live, .map-main { will-change: transform; }
+/* The picture of the map: slid and scaled as one while the view moves (knowledge-map.tsx, applyCam). */
+.map-cam { transform-origin: 0 0; will-change: transform; }
+/* What floats over a card is placed from the view as drawn: out of the way while the view moves. */
+.map-moving [data-node-bar], .map-moving [data-map-peek] { visibility: hidden; }
 .map-still .map-live { display: none; }
 /* On the map the subjects' colours are a little fuller than on the rest of Kivo. */
 [data-knowledge-map] { --tone-c: 0.165; }

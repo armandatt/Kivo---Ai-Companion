@@ -11,8 +11,10 @@ import { MAP_LAYOUT_COORD_MAX, MAP_LAYOUT_MAX_POSITIONS } from "../product/map-l
 const read = (file: string) => readFileSync(join(__dirname, "..", file), "utf8");
 
 describe("a map node id", () => {
-  it("is one of the map's four kinds and a row id", () => {
+  it("is one of the map's kinds of card and a row id", () => {
     expect(parseNodeId("topic:ck1abc_D-9")).toEqual({ nodeType: "topic", nodeId: "ck1abc_D-9" });
+    // A task card is on the map too: left out, moving one failed the whole save.
+    expect(parseNodeId("task:ck9task")).toEqual({ nodeType: "task", nodeId: "ck9task" });
     expect(parseNodeId("resource:r1")).toEqual({ nodeType: "resource", nodeId: "r1" });
     for (const bad of [null, 3, "", "topic", "topic:", ":abc", "exam:abc", "Topic:abc", "topic:a b", "topic:a:b", "topic:é", `note:${"a".repeat(65)}`]) {
       expect(parseNodeId(bad)).toBeNull();

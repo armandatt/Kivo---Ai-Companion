@@ -4,7 +4,9 @@
 // moving a card changes no note, saved page, topic or link.
 // No imports, so the web app can import the types directly.
 
-export const MAP_LAYOUT_NODE_TYPES = ["subject", "topic", "note", "resource"] as const;
+// Every kind of card the map draws. "task" was missing when task cards joined the
+// map: moving one made the whole save fail ("That isn't an item on the map").
+export const MAP_LAYOUT_NODE_TYPES = ["subject", "topic", "task", "note", "resource"] as const;
 export type MapLayoutNodeType = (typeof MAP_LAYOUT_NODE_TYPES)[number];
 
 // One save holds at most this many positions. A map draws at most 150 notes
