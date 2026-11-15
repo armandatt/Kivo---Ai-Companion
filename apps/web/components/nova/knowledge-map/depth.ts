@@ -52,7 +52,7 @@ export type EntranceMode = 'full' | 'brief' | 'none'
 export const LARGE_MAP = 260
 export const HUGE_MAP = 1600
 // Full: about 3 to 4 seconds in all, so opening the map is felt (owner's ask, 14 Nov).
-export const NODE_BUDGET = { full: 2800, brief: 160 }   // the last card starts by then
+export const NODE_BUDGET = { full: 2600, brief: 160 }   // the last card starts by then
 const LEVEL_STEP  = { full: 650, brief: 40 }     // one level deeper starts this much later
 const SIBLING_SPREAD = { full: 900, brief: 0 }   // a level's cards spread over this
 const EDGE_LAG    = { full: 240, brief: 60 }     // a line starts once both its cards have
@@ -104,9 +104,11 @@ export function entrancePlan(
     list.sort(reading)
     list.forEach((id, i) => raw.set(id, d * LEVEL_STEP[mode] + (list.length > 1 ? (i / (list.length - 1)) * SIBLING_SPREAD[mode] : 0)))
   }
-  // Squeezed to the budget, never stretched: a small map arrives sooner.
+  // The full entrance always fills its budget (the last card starts at 2.6 s,
+  // the last line lands by about 3.7 s: the owner's 3 to 4 seconds), on a
+  // small map as on a large one. The brief one is squeezed, never stretched.
   const last = Math.max(0, ...raw.values())
-  const squeeze = last > NODE_BUDGET[mode] ? NODE_BUDGET[mode] / last : 1
+  const squeeze = last > 0 && (mode === 'full' || last > NODE_BUDGET[mode]) ? NODE_BUDGET[mode] / last : 1
   const node = new Map([...raw].map(([id, ms]) => [id, Math.round(ms * squeeze)]))
   const edge = new Map<string, number>()
   for (const e of edges) {

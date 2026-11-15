@@ -66,7 +66,7 @@ const OPEN_K = 0.44
 // At most this many lines carry a travelling signal at once.
 const SIGNAL_MAX = 140
 // The opening camera's glide, as long as the cards' entrance.
-const CAMERA_MS = 3200
+const CAMERA_MS = 3600
 const NUDGE = 20
 // How far the pointer must travel before a press on a card becomes a drag.
 // Under it, the press is a click and selects the card.
