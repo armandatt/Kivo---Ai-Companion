@@ -114,8 +114,14 @@ export function needsConfirmation(target, action, args = {}) {
     if (action === 'press' || !hasWord(label, NAVIGATIONAL) || hasWord(label, RISKY)) return `It would submit the form${label && action === 'click' ? ` ("${target.label}")` : ''}.`
     return null
   }
-  if (action === 'click' && target.tag !== 'a' && hasWord(label, RISKY)) return `"${target.label}" could change something on that site.`
-  if (action === 'click' && target.tag === 'a' && hasWord(label, RISKY_LINKS)) return `"${target.label}" could change something on that site.`
+  // A button names its action in a word or two ("Book now", "Delete"). A row of
+  // a list (an email, an issue) or a long label is content: "Your book is due
+  // tomorrow" opens an email, it books nothing. There a risky word counts only
+  // when the label starts with it.
+  const content = ['row', 'gridcell', 'listitem', 'treeitem', 'option', 'article'].includes(target.role) || label.split(' ').length > 5
+  const risky = words => (content ? words.some(w => label === w || label.startsWith(`${w} `)) : hasWord(label, words))
+  if (action === 'click' && target.tag !== 'a' && risky(RISKY)) return `"${target.label}" could change something on that site.`
+  if (action === 'click' && target.tag === 'a' && risky(RISKY_LINKS)) return `"${target.label}" could change something on that site.`
   if ((action === 'check' || action === 'select' || (action === 'click' && ['switch', 'checkbox'].includes(target.role))) && SENSITIVE_SETTINGS.some(w => label.includes(w))) return `It would change "${target.label}", a security or privacy setting.`
   return null
 }

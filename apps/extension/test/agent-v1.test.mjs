@@ -320,3 +320,14 @@ test('Capture browses subject → topic → nested topic, and two "Introduction"
   assert.deepEqual(placeChildren(places, parents, 's:sci').map(p => p.subjectId), ['ch'], 'a subject inside a subject')
   assert.equal(parents.get('t:ch-i'), 's:ch', 'Chemistry’s Introduction is Chemistry’s, not AI’s')
 })
+
+import { needsConfirmation } from '../src/lib/agent-tools.js'
+test('a list row or long label is content: a risky word inside it does not ask; a button that starts with one still does', () => {
+  const row = label => ({ exists: true, tag: 'tr', role: 'row', label, isSubmit: false, form: null })
+  assert.equal(needsConfirmation(row('Library Your book is due tomorrow - Operating System Concepts'), 'click'), null)
+  assert.equal(needsConfirmation(row('Newsletter Post of the week: ten links about databases'), 'click'), null)
+  assert.equal(needsConfirmation({ exists: true, tag: 'div', role: '', label: 'Read why we decided to delete the old wiki pages last year', isSubmit: false, form: null }, 'click'), null)
+  assert.match(needsConfirmation({ exists: true, tag: 'button', role: '', label: 'Book now', isSubmit: false, form: null }, 'click'), /could change/)
+  assert.match(needsConfirmation({ exists: true, tag: 'button', role: '', label: 'Delete this conversation and all of its messages', isSubmit: false, form: null }, 'click'), /could change/, 'a long label that starts with the action still asks')
+  assert.match(needsConfirmation({ exists: true, tag: 'button', role: '', label: 'Send', isSubmit: false, form: null }, 'click'), /could change/)
+})
