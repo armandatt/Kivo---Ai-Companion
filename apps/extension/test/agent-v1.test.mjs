@@ -299,3 +299,24 @@ function fakeTools(calls, { confirmIndex = null, start = null, parts = 1, access
 test('limits are unchanged by default', () => {
   assert.deepEqual(DEFAULT_LIMITS, { steps: 30, minutes: 12, modelCalls: 36 })
 })
+
+// ── Capture's picker: the same tree as the web's ──────────────────────────────
+import { placeChildren, placeParents } from '../src/lib/places.js'
+
+test('Capture browses subject → topic → nested topic, and two "Introduction" topics stay apart', () => {
+  const places = [
+    { subjectId: 'ai', subjectName: 'AI', topicId: null, topicName: null, path: ['AI'] },
+    { subjectId: 'ai', subjectName: 'AI', topicId: 'ml', topicName: 'Machine Learning', path: ['AI', 'Machine Learning'] },
+    { subjectId: 'ai', subjectName: 'AI', topicId: 'dl', topicName: 'Deep Learning', path: ['AI', 'Machine Learning', 'Deep Learning'] },
+    { subjectId: 'ai', subjectName: 'AI', topicId: 'ai-i', topicName: 'Introduction', path: ['AI', 'Introduction'] },
+    { subjectId: 'sci', subjectName: 'Science', topicId: null, topicName: null, path: ['Science'] },
+    { subjectId: 'ch', subjectName: 'Chemistry', topicId: null, topicName: null, path: ['Science', 'Chemistry'] },
+    { subjectId: 'ch', subjectName: 'Chemistry', topicId: 'ch-i', topicName: 'Introduction', path: ['Science', 'Chemistry', 'Introduction'] },
+  ]
+  const parents = placeParents(places)
+  assert.deepEqual(placeChildren(places, parents, null).map(p => p.path.at(-1)), ['AI', 'Science'])
+  assert.deepEqual(placeChildren(places, parents, 's:ai').map(p => p.topicId), ['ai-i', 'ml'])
+  assert.deepEqual(placeChildren(places, parents, 't:ml').map(p => p.topicId), ['dl'])
+  assert.deepEqual(placeChildren(places, parents, 's:sci').map(p => p.subjectId), ['ch'], 'a subject inside a subject')
+  assert.equal(parents.get('t:ch-i'), 's:ch', 'Chemistry’s Introduction is Chemistry’s, not AI’s')
+})

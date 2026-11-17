@@ -215,3 +215,14 @@ button[data-captured]::before { content: "✓"; font-weight: 700; }
 .site-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
 .site-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .site-list .site-name { min-width: 0; overflow-wrap: anywhere; color: var(--text); }
+
+/* ── The place picker (lib/places.js): full names, wrapping ────────────── */
+.place-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; margin-top: 6px; color: var(--faint); }
+.place-crumbs[hidden] { display: none; }
+.place-list { position: static; max-height: 220px; margin-top: 6px; }
+.place-row { display: flex; align-items: flex-start; gap: 2px; padding: 0; }
+.place-row[data-active="true"] { background: var(--accent-soft); }
+.place-pick { flex: 1; min-width: 0; height: auto; justify-content: flex-start; padding: 6px 8px; border: 0; background: none; text-align: left; white-space: normal; overflow-wrap: anywhere; color: var(--text); font-weight: 400; }
+.place-path { color: var(--faint); }
+.place-note { display: block; color: var(--accent-hi); }
+.place-open { flex: none; width: 28px; height: 28px; margin: 2px; padding: 0; border: 0; background: none; color: var(--dim); font-size: 16px; }

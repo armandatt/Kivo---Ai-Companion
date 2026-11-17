@@ -4,10 +4,14 @@ import { useEffect, useId, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Check, Link2 } from 'lucide-react'
 import type { LearningResource } from '@repo/api/nova/product/learning-events.types'
-import { EVENT_TITLE_MAX, EVENT_TOPIC_MAX } from '@repo/api/nova/product/learning-events.types'
+import { EVENT_TITLE_MAX } from '@repo/api/nova/product/learning-events.types'
 import { LINK_PROBLEM_TEXT, checkLink, samePage, titleFromUrl } from '@repo/api/nova/product/resource-link'
 import { parkDraft, type Capture } from './pending-capture'
 import { saveLink } from './saved-api'
+import type { NoteSubjectOption } from '@repo/api/nova/product/notes.types'
+import { DestinationPicker } from '../notes/destination-picker'
+import { NO_SUBJECT, destinationFor, destinationsOf, type Destination } from '../notes/note-destinations'
+import { fetchNotes } from '../notes/notes-api'
 
 const FIELD = 'mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-background px-3 text-sm text-foreground placeholder:text-foreground/30 disabled:opacity-50'
 const LABEL = 'block text-xs font-medium text-foreground/60'
@@ -19,7 +23,7 @@ function newEventId(): string {
   return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}${Math.random().toString(36).slice(2, 12)}`
 }
 
-type Draft = { eventId: string; url: string; domain: string; title: string; titleFrom: 'page' | 'address'; subjectId: string; topic: string }
+type Draft = { eventId: string; url: string; domain: string; title: string; titleFrom: 'page' | 'address'; place: Destination; kept: { subjectId: string | null; topicName: string | null } }
 type Done  = { title: string; already: boolean }
 
 // Saving a link by hand: paste an address, look at what will be kept, and
@@ -39,7 +43,11 @@ export function SaveLink({ subjects, resources, capture, onSaved }: {
   const [saving, setSaving]   = useState(false)
   const [error, setError]     = useState<{ text: string; signIn: boolean } | null>(null)
   const [done, setDone]       = useState<Done | null>(null)
+  // The subjects with their topics, for the one destination picker (Notes' list).
+  const [tree, setTree]       = useState<NoteSubjectOption[] | null>(null)
   const titleRef = useRef<HTMLInputElement>(null)
+  const options: NoteSubjectOption[] = tree ?? subjects.map(s => ({ id: s.id, name: s.name, topics: [] }))
+  const loadTree = async () => { const v = await fetchNotes(); if (v?.status === 'ready') { setTree(v.subjects); return v.subjects } return null }
 
   function review(raw: string, pageTitle: string | null) {
     const checked = checkLink(raw)
@@ -52,9 +60,16 @@ export function SaveLink({ subjects, resources, capture, onSaved }: {
     setDraft({
       eventId: newEventId(), url: checked.url, domain: checked.domain,
       title: fromPage || kept?.title || titleFromUrl(checked.url), titleFrom: fromPage || kept ? 'page' : 'address',
-      subjectId: kept?.subjectId ?? '', topic: kept?.topicName ?? '',
+      place: NO_SUBJECT, kept: { subjectId: kept?.subjectId ?? null, topicName: kept?.topicName ?? null },
     })
+    void loadTree()
   }
+  // Where a page already saved was filed: chosen to start with, once the topics are known.
+  useEffect(() => {
+    if (!draft || !tree || draft.place !== NO_SUBJECT || !draft.kept.subjectId) return
+    const d = destinationFor(destinationsOf(tree), draft.kept.subjectId, draft.kept.topicName)
+    if (d !== NO_SUBJECT) setDraft({ ...draft, place: d })
+  }, [tree, draft])
 
   // A page the bookmarklet brought opens straight on its review.
   useEffect(() => {
@@ -69,7 +84,7 @@ export function SaveLink({ subjects, resources, capture, onSaved }: {
     setSaving(true); setError(null)
     const result = await saveLink({
       clientEventId: draft.eventId, url: draft.url, title: draft.title.trim(),
-      subjectId: draft.subjectId || null, topicName: draft.subjectId && draft.topic.trim() ? draft.topic.trim() : null,
+      subjectId: draft.place.subjectId, topicName: draft.place.subjectId ? draft.place.topicName : null,
     })
     setSaving(false)
     if (!result.success) {
@@ -136,17 +151,10 @@ export function SaveLink({ subjects, resources, capture, onSaved }: {
             )}
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor={`${id}-subject`} className={LABEL}>Subject</label>
-              <select id={`${id}-subject`} value={draft.subjectId} onChange={e => setDraft({ ...draft, subjectId: e.target.value, topic: e.target.value ? draft.topic : '' })} className={FIELD} data-link-subject>
-                <option value="">{subjects.length ? 'No subject' : 'No subjects yet'}</option>
-                {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label htmlFor={`${id}-topic`} className={LABEL}>Topic</label>
-              <input id={`${id}-topic`} value={draft.topic} maxLength={EVENT_TOPIC_MAX} disabled={!draft.subjectId} placeholder={draft.subjectId ? 'Optional' : 'Pick a subject first'} onChange={e => setDraft({ ...draft, topic: e.target.value })} className={FIELD} data-link-topic />
+          <div data-link-place>
+            <p className={LABEL}>Where it goes</p>
+            <div className="mt-1.5">
+              <DestinationPicker subjects={options} value={draft.place} onChange={place => setDraft({ ...draft, place })} onSubjectsChanged={loadTree} />
             </div>
           </div>
 

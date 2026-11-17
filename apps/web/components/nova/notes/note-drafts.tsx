@@ -352,7 +352,10 @@ function PlaceRow({ item, subjects, onPlace, onSubjectsChanged }: {
   const words = (x: NonNullable<CaptureItem['placement']>) => [x.subjectName, x.topicName].filter(Boolean).join(' › ')
   const choose = async (d: { subjectId: string | null; topicName: string | null }) => { setBusy(true); const ok = await onPlace(d); setBusy(false); if (ok) setOpen(false) }
   const link = 'text-xs text-nova-ink underline-offset-2 hover:underline disabled:opacity-50'
-  const current = p ? destinationFor(destinationsOf(subjects), p.subjectId, p.topicName) : NO_SUBJECT
+  const all = destinationsOf(subjects)
+  const suggested = s ? destinationFor(all, s.subjectId, s.topicName) : null
+  // Filed: where it is. Not filed: Kivo's suggestion to start from, if there is one.
+  const current = p ? destinationFor(all, p.subjectId, p.topicName) : suggested && suggested !== NO_SUBJECT ? suggested : NO_SUBJECT
   return (
     <div className="mt-2" data-passage-place={p ? (item.placedBy === 'learner' ? 'yours' : p.confidence) : s ? 'suggested' : item.placedBy === 'learner' ? 'unfiled' : 'waiting'}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-foreground/65">
@@ -367,7 +370,8 @@ function PlaceRow({ item, subjects, onPlace, onSubjectsChanged }: {
       </div>
       {open && (
         <div className="mt-2 max-w-md">
-          <DestinationPicker subjects={subjects} value={current} onChange={d => void choose({ subjectId: d.subjectId, topicName: d.topicName })} onSubjectsChanged={onSubjectsChanged} />
+          <DestinationPicker subjects={subjects} value={current} onChange={d => void choose({ subjectId: d.subjectId, topicName: d.topicName })} onSubjectsChanged={onSubjectsChanged}
+            suggestion={item.placedBy === 'learner' ? null : p ? current : suggested && suggested !== NO_SUBJECT ? suggested : null} />
         </div>
       )}
     </div>
@@ -411,6 +415,7 @@ function MergePanel({ draft, mode, onMode, onClose, onDone, onStale }: {
   const pressed = useRef(false)
 
   const fromPlacement = useRef(false)
+  const [kivoPlace, setKivoPlace] = useState<Destination | null>(null)
   // Read once, when the panel opens: a placement arriving later never moves
   // a destination the learner has already chosen.
   const itemsAtOpen = useRef(draft.items)
@@ -419,7 +424,7 @@ function MergePanel({ draft, mode, onMode, onClose, onDone, onStale }: {
     setSubjects(v.subjects)
     // Where most passages were filed: the note starts there; the learner can change it.
     const place = dominantPlace(itemsAtOpen.current)
-    if (place) { const d = destinationFor(destinationsOf(v.subjects), place.subjectId, place.topicName); if (d !== NO_SUBJECT) { fromPlacement.current = true; setDest(d) } }
+    if (place) { const d = destinationFor(destinationsOf(v.subjects), place.subjectId, place.topicName); if (d !== NO_SUBJECT) { fromPlacement.current = true; setKivoPlace(d); setDest(d) } }
   }) }, [])
   useEffect(() => {
     if (mode !== 'existing') return
@@ -470,7 +475,7 @@ function MergePanel({ draft, mode, onMode, onClose, onDone, onStale }: {
           </label>
           <div>
             <span className="text-xs font-medium text-foreground/70">Where it goes <span className="font-normal text-subtle">{fromPlacement.current && dest !== NO_SUBJECT ? '(where Kivo filed most of these passages)' : '(optional)'}</span></span>
-            <div className="mt-1"><DestinationPicker subjects={subjects} value={dest} onChange={setDest}
+            <div className="mt-1"><DestinationPicker subjects={subjects} value={dest} onChange={setDest} suggestion={kivoPlace}
               onSubjectsChanged={async () => { const v = await fetchNotes(); if (v?.status === 'ready') { setSubjects(v.subjects); return v.subjects } return null }} /></div>
           </div>
         </div>

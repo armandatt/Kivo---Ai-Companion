@@ -71,3 +71,37 @@ test('a loop in the stored parents never hangs the picker', () => {
   const looped: NoteSubjectOption[] = [{ id: 'a', name: 'A', topics: ['x', 'y'], parentId: 'b', topicParents: { x: 'y', y: 'x' } }, { id: 'b', name: 'B', topics: [], parentId: 'a' }]
   assert.ok(destinationsOf(looped).length === 5)
 })
+
+// ── The one destination picker: browsing the tree ─────────────────────────────
+import { ancestorsOf, childrenOf, destinationParents, existingTopic } from './note-destinations'
+
+const TREE: NoteSubjectOption[] = [
+  { id: 'sem', name: 'Semester Five: Advanced Systems and Distributed Computing', topics: [] },
+  { id: 'os', name: 'Operating Systems', parentId: 'sem', topics: ['Introduction', 'Deadlocks', 'Banker’s algorithm'], topicParents: { 'Banker’s algorithm': 'Deadlocks' } },
+  { id: 'net', name: 'Computer Networks', parentId: 'sem', topics: ['Introduction'] },
+]
+
+test('the picker browses by id: subject → subjects and topics inside → topics inside a topic', () => {
+  const all = destinationsOf(TREE)
+  const parents = destinationParents(TREE)
+  assert.deepEqual(childrenOf(all, parents, null).map(d => d.key), ['s:sem'])
+  assert.deepEqual(childrenOf(all, parents, 's:sem').map(d => d.key), ['s:net', 's:os'], 'subjects inside a subject, by name')
+  assert.deepEqual(childrenOf(all, parents, 's:os').map(d => d.path.at(-1)), ['Deadlocks', 'Introduction'])
+  assert.deepEqual(childrenOf(all, parents, 't:os:deadlocks').map(d => d.path.at(-1)), ['Banker’s algorithm'])
+  assert.deepEqual(ancestorsOf(parents, 't:os:banker’s algorithm'), ['s:sem', 's:os', 't:os:deadlocks', 't:os:banker’s algorithm'])
+})
+
+test('two topics with the same name in different subjects never look the same: each shows its whole path', () => {
+  const intros = searchDestinations(destinationsOf(TREE), 'introduction')
+  assert.deepEqual(intros.map(destinationLabel), [
+    'Semester Five: Advanced Systems and Distributed Computing › Computer Networks › Introduction',
+    'Semester Five: Advanced Systems and Distributed Computing › Operating Systems › Introduction',
+  ])
+})
+
+test('typing a name is never a topic: only an existing one matches, any case', () => {
+  const all = destinationsOf(TREE)
+  assert.equal(existingTopic(all, 'os', 'deadlocks')?.topicName, 'Deadlocks')
+  assert.equal(existingTopic(all, 'os', 'Deadlock'), null, 'a typo matches nothing (the picker offers "Create new topic" instead, explicitly)')
+  assert.equal(existingTopic(all, 'net', 'Deadlocks'), null, 'another subject\'s topic is not this one')
+})
