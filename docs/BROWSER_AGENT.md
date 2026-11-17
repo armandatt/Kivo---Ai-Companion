@@ -27,45 +27,51 @@ Two features that share one workspace intelligence: Kivo files every captured pa
 - Extension popup: Capture saves at once, then a quiet line says where it was filed with Change (`apps/extension/src/lib/places.js`): a searchable subject field, then a topic field filtered to that subject (nested topics with their path), arrow keys, Enter, Escape; 50 rows at most, then "keep typing".
 - Drafts page: each passage shows its placement with Change (the same `DestinationPicker` notes use) or File here for a suggestion; passages captured before this are filed when the draft is opened (once each); Create note starts from where most passages were filed.
 
-## 2. The browser agent (extension side panel)
+## 2. Nova in the browser: Chat with Nova, and Do it for me (V1)
 
-### Where it runs, and how it is reached
+### One pipeline
 
-| File | Role |
+RECEIVE → CLASSIFY → RESOLVE CONTEXT → AUTHORISE → PLAN → OBSERVE → DECIDE → ACT → VERIFY → CONTINUE OR FINISH → CLEAN UP.
+
+| Stage | Where |
 |---|---|
-| `apps/extension/src/sidepanel.js` | The one conversation. What the learner types starts a task; a question sent with a screenshot goes to Ask Nova (`/extension/ask`) as before. |
-| `apps/extension/src/lib/agent-view.js` | A task inside the conversation: what Nova is doing, its plan, the card for whatever waits for the learner, Pause/Resume/Stop, what it did; the finished answer with sources, findings and Save to Drafts. |
-| `apps/extension/src/lib/agent-runtime.js` | The background worker's side: one task at a time, its state in `chrome.storage.session`, messages only from Kivo's own pages, site access given back at the end, a waiting mark on the icon. Running in the worker means a task goes on when the learner switches tabs or closes the panel (a side panel belongs to one tab). |
-| `apps/extension/src/lib/agent.js` | The loop (UNDERSTAND → PLAN → OBSERVE → DECIDE → ACT → VERIFY → CONTINUE), limits, repeated-action refusal, pending states. |
-| `apps/extension/src/lib/agent-tools.js` | The browser-control layer: every action checked before (allowed? consequential? never?) and verified after. |
-| `apps/extension/src/lib/agent-page.js` | Functions run inside a page: observe (text; elements by role, accessible name, question group and state; open dialog; alerts; sign-in and human-check detection), act (click, fill, select, check, press), settle, scroll, read search results. |
-| `packages/api/src/nova/product/browser-agent-rules.ts` | Pure: the tool list, the step input read defensively, the system prompt, the reply parser. |
-| `packages/api/src/nova/product/browser-agent.ts` | Context at the start (placement service), one step (one model call), workspace search and note reading. |
-| `packages/api/src/nova/product/agent-ticket.ts` | A task's HMAC ticket (connection-bound, 45 minutes, 40 steps). |
-| Routes | `POST /api/nova/extension/agent/start` (counted once), `/agent/step` (inside the task), `/agent/workspace` (read-only). |
+| Receive | Popup **Chat with Nova** (answers only, `sidepanel.html?inline=1&chat=1`) or the side panel (**Do it for me**, and questions). |
+| Classify | `POST /extension/intent` → `product/browser-intent.ts`: one small-model call reads the request into a kind (conversation, explain/summarise page, explain selection, page question, page action, form, quiz, navigate, workflow, compare, research, unclear) and its **scope** (`limit` "first 3", `short`, `format` points/table). Code maps kind → route: **chat**, **task** (agent on the user's tab), **research** (agent with its own tabs), **clarify** (one question back with choices). A screenshot question is always chat. No model answer: the surface's own route (popup → chat, panel → task). Not counted on the allowance (it precedes the request that is); tokens recorded as `extension_intent`. |
+| Resolve context | `apps/extension/src/lib/page-context.js`: the one source of "which page is the user on". The panel belongs to the window (opened with `sidePanel.open({ windowId })`), listens for tab switches and page changes, and resolves the tab in front to `ready`, `no_access`, `unknown` (Nova may not see the address: click Nova on that page, or turn on the optional **Follow my tabs** = `tabs` permission) or `unsupported`. An empty conversation moves with the user; one with turns offers "You moved to … Switch to this page / Stay". A message is always about the page in front when it is sent. The agent's own tabs are never treated as a move. |
+| Authorise | Site access: the page Nova was opened on (`activeTab`), or a site the user allowed. The access card offers **Allow <site>** (kept until removed under **Sites** in the popup), **Any site, this task** (given back when the task ends) and **Don't allow** (remembered for the rest of the task: never asked again, the task carries on without it). Chrome shows its own prompt for every grant; the card says so. |
+| Chat path | `POST /extension/ask` with the page's text (read by the extension with the same reader as the agent, ≤ 24,000 characters, `pageComplete` says whether that is all of it), the selection, a pasted or taken screenshot, the scope and the conversation. One model call. |
+| Agent path | `lib/agent.js` (loop), `lib/agent-tools.js` (browser control), `lib/agent-page.js` (in-page functions), `lib/agent-runtime.js` (worker), `lib/agent-view.js` (panel UI); server `product/browser-agent-rules.ts` + `browser-agent.ts`. |
 
-### Tools (code-validated; the model proposes, code decides)
+### The task state machine (`lib/agent.js` TRANSITIONS)
 
-Navigation: `search`, `open {url, new_tab}`, `back`, `forward`, `switch_tab`, `close_tab`. Reading: `read {part}`, `scroll`, `wait {seconds, text}`. Interaction: `click`, `fill {text, submit}`, `select {option}`, `check {checked}`, `press {key}` (Enter, Escape, Tab, arrows, PageUp/Down, Home, End, Space, Backspace; no shortcuts). Knowledge: `extract {quote}` (checked word for word), `workspace_search`, `read_note`, `save_to_drafts`. The learner: `ask_user {question, choices}`, `hand_over {reason}`. End: `finish {status: done|partial|blocked, answer, completed, remaining, concepts, gaps}`. No tool runs arbitrary JavaScript.
+`planning → running → awaiting_permission | awaiting_user | paused → … → completed | failed | cancelled`. Finished states are final: nothing finished can act again. Every card the user answers carries its task id and its question id; an answer for an older task or question does nothing. A **no** to an approval is final for that action. **Cancel** stops at once and clears anything pending. A **new request is never blocked** by a task that is only waiting or paused: that task is cancelled and the new one starts ("Stopped the earlier task … to do this"). Only a task actively working asks "Stop that task and do this".
 
-Elements carry stable numbers while they stay on the page; one that was re-drawn is found again by role, name and group once ("stale-element recovery"). After every action the page is re-observed (load, or DOM quiet) and the result says what changed.
+### Execution rules (code, not the model)
 
-### Permissions and safety (code, not the model)
+- **Progress-aware repetition**: an action is refused only when the same *target* (role, name, group of the element as the page showed it; a URL; a query) is tried again on the same *unchanged* page (address + fingerprint + part) after it failed or changed nothing. Opening five different emails, or Next on each quiz page, is allowed. Two refusals in a row → Nova asks the user ("Try another way" / "Stop and tell me what you have") instead of failing.
+- **Current tab first**: in `page` mode, `search` is refused until the page has been read through or searched with `find`. `open` of a page already open in the task switches to it. Results pages load in a background tab and are never brought forward.
+- **Scope**: on `finish`, an answer longer than asked ("short": > 130 words), not in points when points were asked, or with more points than the limit is sent back once to be written again.
+- **Honest reading**: the reader takes the main writing *and* the rest of the page (sections outside `<article>`, sidebars), lists every heading (OUTLINE), tracks which parts were read (PAGE COVERAGE), and `find {query}` searches the whole page, returning numbered elements (including links beyond the 40 shown) and passages. The model may not say the page lacks something before all parts are read or a `find` came back empty. Sources are the pages actually read; the answer cites them `[n]`; the panel counts only those cited.
+- **Interaction**: app rows (`role=row`, `onclick`) are clickable elements. A failure says why: hidden, disabled, covered by something (named), or gone (found again by role and name). A link whose click changed nothing is followed by its address.
+- **Recovery**: an action is marked in flight (saved) before it runs; a worker that restarts pauses the task and records the in-flight action as *interrupted* (Resume looks at the page first; a consequential action needs the user again). Never replayed blindly.
+- **Clean-up**: when a task ends, the tabs Nova opened are closed (never the user's, never the one in front of them) unless **Keep Nova's tabs** is on; task-only access is given back.
+- **Limits** unchanged: 30 steps, 12 minutes, 36 model calls (extension); 40 steps per ticket (server).
 
-- **Site access**: none at install. The page Nova was opened on is read through `activeTab`; any other site waits for the learner (a card names it: Allow this site, Any site for this task, Don't allow). Everything allowed is removed when the task ends.
-- **Never**: local or private-network addresses, browser or extension pages, typing into password, payment or one-time-code fields, reading what the learner typed, cookies or storage, passing a CAPTCHA, signing in.
-- **Waits for the learner's OK** (`needsConfirmation`): submitting a form (a navigational Next/Continue that is not risky is routine), signing in, payment forms, buy/pay/order/book/post/send/delete/publish/subscribe/follow/finish-quiz buttons, deleting/buying/sign-out links, downloads, security or privacy settings, and any text or address carrying 60+ characters of the learner's Kivo material into a site (`carriesPrivate`).
-- **Hand-over**: sign-in pages, human checks, pages stuck on a browser dialog (script timeout).
-- **Untrusted content**: page text and elements reach the model inside `<untrusted_page>`, the learner's notes inside `<workspace_data>`, after the rule that neither is an instruction.
-- **Limits**: 30 steps, 12 minutes, 36 model calls by default (extension), 40 steps per ticket (server); one last write-up step at a limit; the same action repeated is refused, three refusals end the task. Pause takes effect after the step in flight; Stop at once, closing the tabs Nova opened.
+### Measurement
 
-### Workspace intelligence
+Each step returns its own token usage (`usage` from the step route, measured with nested `meterLlmUsage`, which now passes every call to the outer meter too, so billing is unchanged). Each finished task's numbers (model calls, input/output tokens, actions, failed actions, refusals, recoveries, tabs opened/closed, pages read, seconds; no objective text) are kept on the device (`chrome.storage.local` `nova.agentMetrics`, last 50; `lib/metrics.js`).
 
-At the start: subjects, the places most relevant to the objective and the page's title (with Kivo's mastery estimate and session count for each topic, or "not studied yet"), and related notes by id. Mid-task: `workspace_search` (notes with a snippet around the words, places, saved pages via the library) and `read_note` (one note and its related notes), all through the owning modules (`notes.ts`, `learning-events.ts`, the knowledge engine), the credential's learner only. Writes go through Capture into Drafts and are filed by the placement service; notes and the map change only when the learner merges the draft.
+### Tools
 
-### Usage
+Navigation: `search`, `open {url, new_tab}`, `back`, `forward`, `switch_tab`, `close_tab`. Reading: `read {part}`, `find {query}`, `scroll`, `wait {seconds, text}`. Interaction: `click`, `fill {text, submit}`, `select {option}`, `check {checked}`, `press {key}`. Knowledge: `extract {quote}` (checked word for word), `workspace_search`, `read_note`, `save_to_drafts`. The user: `ask_user`, `hand_over`. End: `finish`. No tool runs arbitrary JavaScript.
 
-One task is one request on the learner's daily allowance (counted by `/agent/start`, feature `extension_agent`), the same as one Ask Nova question, however many clicks it takes. Every step's tokens are metered on the account (`withinCountedTask`). A step costs roughly 3–6k input tokens and 100–400 output tokens; a page question takes 1–2 steps, a form or quiz 8–15, research 15–30.
+### Safety (unchanged and still enforced by code)
+
+Never: local or private-network addresses, browser or extension pages, typing into password/payment/one-time-code fields, reading what the user typed, cookies or storage, passing a CAPTCHA, signing in. Waits for the user's OK: submitting a form (navigational Next/Continue aside), signing in, payment, buy/pay/order/book/post/send/delete/publish/subscribe/follow/finish-quiz, risky links, downloads, security or privacy settings, and any text carrying 60+ characters of the user's Kivo material into a site. Page and workspace content reach the model inside `<untrusted_page>` / `<workspace_data>` after the rule that neither is an instruction.
+
+### Search provider
+
+DuckDuckGo's HTML results first, Bing when DuckDuckGo shows a human check or nothing. Google was not adopted: its results page changes structure often, shows consent interstitials in some regions and challenges automated-looking traffic, all of which make extraction less reliable; the provider is kept, but the results page is no longer shown to the user (background tab; the panel lists "Searched for …" and the sources found). A human check is handed to the user, never answered.
 
 ## Cost
 
@@ -73,7 +79,9 @@ One task is one request on the learner's daily allowance (counted by `/agent/sta
 |---|---|---|---|
 | Capture, a name matched outright | 0 | 0 | none |
 | Capture, otherwise | 1 small-tier call | ~500 in, ~20 out | not counted (`capture_placement`, like saved-page filing) |
-| Agent task | 1 per step (1–2 for a question, 8–15 for a form or quiz, 15–30 for research) | ~3–6k in, ~100–400 out per step | one request per task (`extension_agent`); tokens metered per step |
+| Routing a request | 1 small-tier call | ~600 in, ~40 out | not counted (`extension_intent`) |
+| Question about the page (chat) | 1 call | ~1–7k in (page text), ~100–300 out | one request (`extension_ask_nova`) |
+| Agent task | 1 per step (forms/quizzes ~5–12, research 10–25) | ~3–7k in, ~100–400 out per step | one request per task (`extension_agent`); tokens metered per step |
 
 Production routes every tier to the configured provider (Claude Haiku 5.5 at the time of writing); actual cost per feature appears in the AI usage analytics under these feature names.
 
