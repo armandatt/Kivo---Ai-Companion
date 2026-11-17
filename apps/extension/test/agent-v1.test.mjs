@@ -347,6 +347,6 @@ test('the map tool talks to the map by node id through its bridge, points at the
   assert.match(page, /querySelector\(`\[data-node-id="\$\{CSS\.escape\(String\(id\)\)\}"\]`\)/, 'the pointer finds the node by its id where it is drawn now')
   const { createBrowserTools } = await import('../src/lib/agent-tools.js')
   const tools = createBrowserTools({ chrome: {}, startTab: { id: 1, url: 'https://www.thekivo.in/map', title: 'Map' } })
-  assert.match(await tools.check({ tool: 'map', args: { op: 'connect', id: 'topic:a', to: 'note:b' } }), /connect two cards in your Knowledge Map/)
+  assert.match(await tools.check({ tool: 'map', args: { op: 'connect', id: 'topic:a', to: 'note:b' } }), /would change your Knowledge Map: connect topic:a and note:b/)
   assert.equal(await tools.check({ tool: 'map', args: { op: 'open', id: 'topic:a' } }), null, 'looking around the map needs no OK')
 })

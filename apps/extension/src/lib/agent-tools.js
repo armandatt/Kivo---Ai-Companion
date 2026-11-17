@@ -504,7 +504,12 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
     async check(action) {
       const op = action.tool
       // Connecting two cards changes the user's Kivo: they say yes first.
-      if (op === 'map' && action.args.op === 'connect') return `It would connect two cards in your Knowledge Map (${action.args.id} and ${action.args.to}).`
+      // The map says exactly what it would do (a link, or a move), changing nothing yet.
+      if (op === 'map' && action.args.op === 'connect') {
+        let preview = null
+        try { preview = current === null ? null : await run(current, mapRequest, [{ ...action.args, preview: true }], 5000) } catch { preview = null }
+        return `It would change your Knowledge Map: ${preview?.ok ? preview.result : `connect ${action.args.id} and ${action.args.to}`}`
+      }
       if (op === 'open') { let url = action.args.url || ''; try { url = decodeURIComponent(url) } catch { /* as given */ } return carriesPrivate(url, privateTexts()) ? 'The address would carry text from your Kivo notes to another site.' : null }
       if (!['click', 'fill', 'select', 'check', 'press'].includes(op) || current === null) return null
       if (op === 'fill' && carriesPrivate(action.args.text, privateTexts())) return `It would put text from your Kivo notes into ${siteOf(page?.url) || 'this site'}.`

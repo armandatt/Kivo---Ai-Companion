@@ -21,7 +21,8 @@ import type { MapEdge, MapNode } from '@repo/api/nova/product/knowledge-map.type
 import { connectOptions, type ConnectRequest } from './map-connect'
 
 export type MapAgentOp = 'describe' | 'select' | 'open' | 'related' | 'parent' | 'follow' | 'zoom' | 'pan' | 'whole' | 'connect'
-export interface MapAgentRequest { op: MapAgentOp; id?: string; to?: string; query?: string; factor?: number; dx?: number; dy?: number; option?: string }
+// preview (connect only): say what the connection would do, change nothing (the approval card shows it).
+export interface MapAgentRequest { op: MapAgentOp; id?: string; to?: string; query?: string; factor?: number; dx?: number; dy?: number; option?: string; preview?: boolean }
 export interface MapAgentAnswer { ok: boolean; result: string; node?: string | null; nodes?: Array<Record<string, unknown>>; edges?: Array<Record<string, unknown>>; options?: Array<{ key: string; label: string; detail: string }>; pending?: Promise<unknown> }
 
 type Tree = { children: ReadonlyMap<string, readonly string[]>; parent: ReadonlyMap<string, string> }
@@ -146,6 +147,7 @@ export function runMapRequest(req: MapAgentRequest, ctx: MapAgentContext): MapAg
       if (!usable.length) return { ok: false, result: options[0]?.blocked ? `They can't be connected: ${options[0].blocked}` : `"${a.label}" can't be connected to "${b.label}" (from a ${a.type} to a ${b.type}).` }
       const chosen = req.option ? usable.find(o => o.key === req.option) : usable.length === 1 ? usable[0] : null
       if (!chosen) return { ok: false, result: `There is more than one way to connect them; choose one by its key.`, options: usable.map(o => ({ key: o.key, label: o.label, detail: o.detail })) }
+      if (req.preview) return { ok: true, result: `“${a.label}” and “${b.label}”: ${chosen.detail}.${chosen.moves ? ` This moves it: ${chosen.moves}.` : ''}`, node: b.id }
       const pending = ctx.connect(chosen.request!, chosen.request!.route === 'file' ? a.label : b.label)
       return { ok: true, result: `Connecting "${a.label}" and "${b.label}": ${chosen.detail}${chosen.moves ? ` (${chosen.moves})` : ''}.`, node: b.id, pending }
     }
