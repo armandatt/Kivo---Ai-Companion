@@ -58,6 +58,7 @@ const SUGGESTIONS = {
   selection: ['Explain this passage simply', 'Give me an example of this', 'What should I remember from this?'],
   page:      ['Summarise this page in 5 points', 'What is the main idea here?', 'Explain the hardest part of this page'],
   task:      ['Fill in this form with my details', 'Answer the questions on this page', 'Go through the first 3 items here and summarise each'],
+  anywhere:  ['Open Gmail and summarise my 3 latest emails', 'Find a beginner course on linear algebra and save the best one to my Drafts', 'Go to Wikipedia and tell me what Raft consensus is'],
   research:  [
     'Explain the main Retrieval-Augmented Generation architectures and how they differ',
     'Find the best introductions to Raft consensus and compare how they explain leader election',
@@ -75,9 +76,14 @@ let mounted = null        // the conversation on screen: { page, dispose, hasTur
 let context = null        // lib/page-context.js
 let windowId = null
 
+// A tab that is not a website (a new tab, a browser page): nothing to read or
+// chat about, but Do it for me works from anywhere: Nova opens the sites the
+// task needs. Only tasks are offered there (blank: true).
+const blankPage = p => ({ blank: true, supported: true, url: String(p.url || 'about:blank'), title: 'Any site', domain: 'Nova opens the sites it needs', kind: 'none', tabId: p.tabId, windowId, canonical: null, status: 'blank' })
 const pageOf = (p, handoff = {}) => {
   const page = describePage({ url: p.url, title: p.title })
-  return page.supported ? { ...page, tabId: p.tabId, windowId, canonical: typeof handoff.canonicalUrl === 'string' ? handoff.canonicalUrl : null, status: p.status ?? 'ready' } : null
+  if (page.supported) return { ...page, tabId: p.tabId, windowId, canonical: typeof handoff.canonicalUrl === 'string' ? handoff.canonicalUrl : null, status: p.status ?? 'ready' }
+  return Number.isInteger(p.tabId) && p.status !== 'unknown' && !chatOnly ? blankPage(p) : null
 }
 const sameArticle = (a, b) => Boolean(a && b) && articleOf(a.url, a.canonical) === articleOf(b.url, b.canonical)
 
@@ -153,6 +159,7 @@ const taskState = () => browser.agentState()
 
 function renderConversation(page, handoff, saved, typing, task) {
   const research = handoff.mode === 'research'
+  const blank = page.blank === true
   const cleanups = []
   let pinned = false
   let pendingSwitch = null
@@ -168,7 +175,7 @@ function renderConversation(page, handoff, saved, typing, task) {
 
   const log = el('div', { class: 'log', role: 'log', ariaLive: 'polite', ariaLabel: 'Conversation with Nova', dataset: { log: '' } })
   const scroller = el('div', { class: 'scroll', dataset: { scroll: '' } }, log)
-  const question = el('textarea', { id: 'question', rows: 1, placeholder: research ? 'What should Nova research?' : chatOnly ? 'Ask about this page… (paste a screenshot with ⌘V)' : 'Ask about this page, or tell Nova what to do…', maxLength: 1000, autocomplete: 'off', dataset: { question: '' } })
+  const question = el('textarea', { id: 'question', rows: 1, placeholder: research ? 'What should Nova research?' : blank ? 'Tell Nova what to do, on any site…' : chatOnly ? 'Ask about this page… (paste a screenshot with ⌘V)' : 'Ask about this page, or tell Nova what to do…', maxLength: 1000, autocomplete: 'off', dataset: { question: '' } })
   const askButton = el('button', { class: 'primary send', type: 'submit', disabled: true, ariaLabel: 'Ask', title: 'Ask (Enter)', dataset: { askSubmit: '' } }, 'Ask')
   const shotButton = el('button', { class: 'quiet tool', type: 'button', dataset: { screenshot: '' }, title: 'Send a picture of what this tab shows with your question' }, 'Screenshot')
   const regionButton = el('button', { class: 'quiet tool', type: 'button', dataset: { screenshotRegion: '' }, title: 'Drag over one part of the page' }, 'Select area')
@@ -348,15 +355,15 @@ function renderConversation(page, handoff, saved, typing, task) {
 
   function draw() {
     if (!turns.length) {
-      const ideas = SUGGESTIONS[research ? 'research' : selection ? 'selection' : 'page']
+      const ideas = SUGGESTIONS[research ? 'research' : blank ? 'anywhere' : selection ? 'selection' : 'page']
       log.replaceChildren(el('div', { class: 'welcome', dataset: { welcome: '' } },
-        el('h1', {}, research ? 'What should Nova research?' : chatOnly ? 'Chat with Nova about this page' : 'Ask, or say “do it for me”'),
-        el('p', {}, research
+        el('h1', {}, research ? 'What should Nova research?' : blank ? 'What should Nova do?' : chatOnly ? 'Chat with Nova about this page' : 'Ask, or say “do it for me”'),
+        el('p', {}, blank ? 'This tab isn’t a website, so there’s nothing here to read or chat about. Tell Nova a task and it opens the sites it needs in this tab or its own, and asks before anything with consequences. To chat about a page, open the page first.' : research
           ? 'Nova checks your Kivo first, then searches, reads and compares sources in tabs of its own. You can pause or stop it at any time, and save what it finds to your Drafts.'
           : chatOnly ? 'Nova reads this page and answers here. Paste a screenshot with ⌘V or Ctrl+V. For work on the page, use Do it for me.'
           : selection ? 'Your selection goes with your message. A question is answered from this page; a task (a form, questions, items to go through) Nova does here, on your tab.'
           : 'A question is answered from this page. A task (a form, questions, items to go through, research) Nova does on your tab, and asks before anything with consequences.'),
-        el('div', { class: 'ideas' }, [...ideas, ...(research || chatOnly ? [] : SUGGESTIONS.task.slice(0, 2))].map(text => el('button', { class: 'idea', type: 'button', dataset: { idea: '' }, onclick: () => void ask(text) }, text)))))
+        el('div', { class: 'ideas' }, [...ideas, ...(research || chatOnly || blank ? [] : SUGGESTIONS.task.slice(0, 2))].map(text => el('button', { class: 'idea', type: 'button', dataset: { idea: '' }, onclick: () => void ask(text) }, text)))))
       return
     }
     log.replaceChildren(...turns.map(turnNode))
@@ -387,7 +394,8 @@ function renderConversation(page, handoff, saved, typing, task) {
     draw(); toBottom(true)
     const read = await classify(client, { request: asked, page, hasSelection: useSelection && Boolean(selection), hasScreenshot: false, lastAnswer: [...previous].reverse().find(t => t.answer)?.answer ?? '', surface: chatOnly ? 'popup' : 'panel' })
     // "Do it for me": work, whatever the words; research stays research.
-    const routed = forceTask && read.route === 'chat' ? { ...read, route: 'task' } : read
+    // On a tab that is not a website there is no page to chat about: tasks only.
+    const routed = (forceTask || blank) && read.route === 'chat' ? { ...read, route: 'task' } : read
     asking = false; idle(askButton); question.readOnly = false
     turns = turns.filter(t => t !== turn)
     if (routed.route === 'clarify' && routed.question) {
@@ -551,7 +559,7 @@ function renderConversation(page, handoff, saved, typing, task) {
   const form = el('form', { class: 'composer', dataset: { composer: '' }, onsubmit: e => { e.preventDefault(); void ask(question.value) } },
     attached, errors,
     el('div', { class: 'ask-box' }, sr('Your question about this page', { htmlFor: 'question' }), question, askButton),
-    el('div', { class: 'tools' }, selButton, shotButton, regionButton, chatOnly ? null : watchToggle, chatOnly ? null : keepToggle))
+    el('div', { class: 'tools' }, blank ? null : selButton, blank ? null : shotButton, blank ? null : regionButton, chatOnly ? null : watchToggle, chatOnly ? null : keepToggle))
 
   const fresh = el('button', { class: 'link', type: 'button', dataset: { newConversation: '' }, title: 'Start again: Nova forgets this conversation' }, 'New conversation')
   fresh.addEventListener('click', async () => { if (asking || live) return; turns = []; locked = false; showLock(); await threads.clear(page.url, page.canonical); draw(); question.focus() })

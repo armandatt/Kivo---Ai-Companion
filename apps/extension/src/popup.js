@@ -66,7 +66,7 @@ const privacyText = () => [
     el('li', {}, 'The text you have selected on that page, shown here so you can capture it. It is sent only if you press Capture, or with a question you ask.'),
     el('li', {}, 'A passage you capture goes to your Drafts in Kivo with the page it came from, until you put it in a note or discard it. Kivo files it under one of your own subjects and topics (an AI model may read the passage, its title and site, and the names of a few of your subjects and topics to choose), and you can change where.'),
     el('li', {}, 'The text of the page you are on, when you ask Nova about it, to answer from it. Only on a page you opened Nova on or a site you allowed.'),
-    el('li', {}, 'Do it for me, only when you ask: Nova reads and acts on the page in your tab, and opens other pages in tabs of its own when the task needs them (closed when it ends, unless you keep them). It asks before anything with consequences (submitting, sending, buying, deleting), never types passwords, payment details or codes, and never signs in or answers a human check for you.'),
+    el('li', {}, 'Do it for me, only when you ask: Nova reads and acts on the page in your tab, and opens other pages in tabs of its own when the task needs them (they stay open when it ends, so nothing you did in them is lost; you can close them from the panel). It asks before anything with consequences (submitting, sending, buying, deleting), never types passwords, payment details or codes, and never signs in or answers a human check for you.'),
     el('li', {}, 'Sites: a site you allow stays allowed until you remove it under Sites. "Any site, this task" is removed when the task ends.'),
     el('li', {}, 'A screenshot of what that tab is showing, only when you press Screenshot or capture an area you selected. You see it here first. It goes to Nova only with a question you ask, and is not kept.'),
     el('li', {}, 'Your conversation with Nova about a page stays in this browser\'s memory until you start a new one or close the browser. Press Keep in the panel to keep it on this device while you read that article (until you unlock it, or 14 days unused). Nova\'s server does not keep it.'),
@@ -177,15 +177,32 @@ const draftWords = d => `${d.passages} passage${d.passages === 1 ? '' : 's'}${d.
 function renderReady(page, context, probe = NO_PROBE, flash = null, draft = null, thread = null) {
   setStatus('connected', context.learner.name ? `Connected · ${context.learner.name.split(' ')[0]}` : 'Connected')
 
+  // Not a website (a new tab, a browser page): nothing to capture or chat
+  // about, so only the browser agent is offered. It starts from anywhere and
+  // opens the sites the task needs (the side panel runs tasks only here).
   if (!page.supported) {
+    const errors = el('div', { class: 'errors' })
+    const handoff = mode => ({ url: page.tabUrl ?? '', canonicalUrl: null, title: '', selection: '', windowId: tabWindowId, name: context.learner.name ? context.learner.name.split(' ')[0] : null, ...(mode ? { mode } : {}) })
+    const openPanel = async mode => {
+      if (typeof page.tabId !== 'number') return errors.replaceChildren(alertBox("Nova couldn't open here. Try again."))
+      const opened = browser.openPanel(page.tabId, handoff(mode))
+      if (opened && await opened) return window.close()
+      const inline = await browser.handOffInline(page.tabId, handoff(mode))
+      if (inline) location.href = inline
+      else errors.replaceChildren(alertBox("Nova couldn't open here. Try again."))
+    }
     return show('unsupported',
       el('div', { class: 'stack' },
         toastOf(flash),
         el('div', {},
           el('h1', {}, 'Nova is ready.'),
-          el('p', { class: 'lede', dataset: { unsupported: page.reason } }, page.reason === 'no_page'
-            ? 'Open this on a page you want to capture from or ask about.'
-            : "This isn't a web page Nova can read. Open it on an article, a video, a problem: anything with an ordinary address.")),
+          el('p', { class: 'lede', dataset: { unsupported: page.reason } }, 'Capture and Chat with Nova work on websites. From here, Nova can still do a task for you: it opens the sites it needs.')),
+        el('section', { class: 'section', dataset: { ask: '' }, ariaLabel: 'Nova' },
+          el('div', { class: 'nova-actions' },
+            el('button', { class: 'primary wide', type: 'button', dataset: { doItOpen: '' }, title: 'Nova opens the sites a task needs and does it, asking before anything with consequences', onclick: () => void openPanel(null) }, 'Do it for me')),
+          el('div', { class: 'research-entry' },
+            el('button', { class: 'link', type: 'button', dataset: { researchOpen: '' }, onclick: () => void openPanel('research') }, 'Research a topic with Nova'))),
+        errors,
         footer()))
   }
   page = { ...page, canonicalUrl: probe.canonicalUrl, meta: probe.meta }
@@ -414,7 +431,7 @@ async function start(flash = null) {
     ? await Promise.all([browser.readPage(tab?.id, limit), client.drafts()])
     : [NO_PROBE, null]
   const thread = page.supported ? await threads.load(page.url, probe.canonicalUrl).catch(() => null) : null
-  renderReady({ ...page, tabId: tab?.id }, { ...context.data, limits: { ...context.data.limits, excerpt: limit } }, probe, flash, drafts?.ok ? drafts.data : null, thread)
+  renderReady({ ...page, tabId: tab?.id, tabUrl: typeof tab?.url === 'string' ? tab.url : '' }, { ...context.data, limits: { ...context.data.limits, excerpt: limit } }, probe, flash, drafts?.ok ? drafts.data : null, thread)
 }
 
 void start()

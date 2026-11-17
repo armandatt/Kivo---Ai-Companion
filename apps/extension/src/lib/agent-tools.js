@@ -240,6 +240,10 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
     if (err?.timeout) return { ok: false, needsUser: { message: 'The page has stopped answering. It may be showing a browser dialog (a message or a question). Look at the tab, deal with it, then press Resume.', tab: tabId }, result: 'The page stopped answering (a browser dialog?).' }
     const url = await tabUrl(tabId)
     if (/error page/i.test(String(err?.message ?? '')) || url.startsWith('chrome-error:')) return { ok: false, result: 'The site could not be reached (the page did not load).' }
+    // A task started from a new tab or a browser page: nothing there to read, by design.
+    // (The browser may hide a tab's address; the one the task was given is used then.)
+    const known = url || tabs.get(tabId)?.url || ''
+    if (known && !known.startsWith('http:') && !known.startsWith('https:')) return { ok: false, result: 'This tab is a new tab or a browser page, with nothing on it to read. Open the site the task needs (open with its address) or search for it.' }
     if (accessDenied(err?.message) && allowedUrl(url).ok) return askAccess(url)
     return { ok: false, result: 'Kivo is not allowed to read that page (the browser or the site blocks it).' }
   }

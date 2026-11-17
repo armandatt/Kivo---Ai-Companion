@@ -352,3 +352,19 @@ test('the map tool talks to the map by node id through its bridge, points at the
   assert.match(await tools.check({ tool: 'map', args: { op: 'connect', id: 'topic:a', to: 'note:b' } }), /would change your Knowledge Map: connect topic:a and note:b/)
   assert.equal(await tools.check({ tool: 'map', args: { op: 'open', id: 'topic:a' } }), null, 'looking around the map needs no OK')
 })
+
+// ── Where each part of Nova works (17 Nov) ──────────────────────────────────
+test('capture and chat need a website; Do it for me starts from any tab', () => {
+  const popup = readFileSync(new URL('../src/popup.js', import.meta.url), 'utf8')
+  const unsupported = popup.slice(popup.indexOf('if (!page.supported) {'), popup.indexOf("page = { ...page, canonicalUrl: probe.canonicalUrl"))
+  assert.match(unsupported, /doItOpen/, 'Do it for me is offered on a new tab or browser page')
+  assert.match(unsupported, /researchOpen/)
+  assert.doesNotMatch(unsupported, /capture: ''|client\.capture|chatOpen|askOpen|client\.save|client\.study|readPage/, 'no Capture, chat, Save or Study there')
+  const panel = readFileSync(new URL('../src/sidepanel.js', import.meta.url), 'utf8')
+  assert.match(panel, /const blankPage = p => \(\{ blank: true/)
+  assert.match(panel, /\(forceTask \|\| blank\) && read\.route === 'chat'/, 'on a tab that is not a website, every request is a task')
+  assert.match(panel, /blank \? null : selButton, blank \? null : shotButton, blank \? null : regionButton/, 'no page tools there')
+  assert.match(panel, /!chatOnly \? blankPage\(p\) : null/, 'the popup chat never opens on a non-website')
+  const tools = readFileSync(new URL('../src/lib/agent-tools.js', import.meta.url), 'utf8')
+  assert.match(tools, /This tab is a new tab or a browser page, with nothing on it to read\. Open the site the task needs/)
+})
