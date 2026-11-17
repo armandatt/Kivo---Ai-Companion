@@ -8,12 +8,12 @@
 
 import { z } from "zod";
 import { loadStudyStructure } from "../nova/product/setup-edit";
-import { getNote, searchNoteBodies, updateNote } from "../nova/product/notes";
+import { getNote, searchNoteBodies } from "../nova/product/notes";
 import { workspaceSummaries } from "../nova/product/workspaces";
 import type { Scope } from "./oauth-rules";
 import type { ConnectLearner } from "./learner";
 import { applyChanges, approvalNeeded, ChangeSchema, CHANGES_MAX, type Change, type ChangeReport } from "./changes";
-import { execute, preview } from "./plans";
+import { execute, planStatus, preview } from "./plans";
 import { finishKeyed, idempotencyKeyOk, priorResult, recordAudit, recordKeyed } from "./audit";
 import {
   analyse, coverage, EDGE_MEANING, linkTo, mapLink, mapOf, nodeOut, outline, PAGE_MAX, profileOf, recommend, relatedTo,
@@ -32,7 +32,7 @@ export interface ToolContext {
 }
 
 export type ToolResult = { ok: true; data: Record<string, unknown> } | { ok: false; error: ToolError; message: string; data?: Record<string, unknown> };
-export type ToolError = "invalid_input" | "not_found" | "conflict" | "approval_required" | "not_ready" | "rate_limited" | "failed";
+export type ToolError = "invalid_input" | "not_found" | "conflict" | "approval_required" | "declined" | "not_ready" | "rate_limited" | "failed";
 
 export type ToolClass = "read" | "write" | "structural";
 
@@ -98,10 +98,16 @@ async function applyOrPreview(ctx: ToolContext, tool: string, key: string | unde
   if (!need.needed) return keyedApply(ctx, tool, key, changes);
   const p = await preview(previewCtx(ctx), changes);
   if (!p.planId) return fail("invalid_input", "These changes cannot be made as given; nothing was changed.", { preview: { summary: p.summary, ...reportOut(p.report, ctx.origin) } });
-  return fail("approval_required", `This needs the learner's approval because ${need.why.join(" and ")}. Show them the summary, then call execute_knowledge_changes with planId, expiresAt and these exact changes.`, {
+  return fail("approval_required", approvalMessage(need.why, p.items.some(i => i.destructive)), {
     planId: p.planId, expiresAt: p.expiresAt, approveUrl: p.approveUrl, summary: p.summary, changes,
   });
 }
+
+// What the assistant is told when a change waits for the learner: show the
+// summary in the conversation, give the one link, and read the outcome with
+// check_approval (approving on Kivo applies it; nothing to repeat).
+const approvalMessage = (why: string[], destructive: boolean) =>
+  `Nothing has changed yet: this needs the learner's approval because ${why.join(" and ")}. Show them the summary in plain words and the approveUrl as one link (${destructive ? "it deletes something" : "one click"}). When they approve on Kivo it is applied there at once; then call check_approval with planId for the result. If they decline, nothing happens.`;
 
 const previewCtx = (ctx: ToolContext) => ({ userId: ctx.learner.userId, grantId: ctx.learner.grantId, profileId: ctx.learner.profileId, clientName: ctx.learner.clientName, origin: ctx.origin });
 
@@ -124,7 +130,7 @@ export const TOOLS: ToolDef[] = [
     input: {},
     handler: async (_a, ctx) => {
       const ws = await workspacesOf(ctx.learner);
-      return ok({ workspaces: ws.map(w => ({ id: w.id, kind: w.kind, title: w.title, url: w.kind === "subject" ? linkTo(ctx.origin, "subject", w.subjectIds[0]!) : `${ctx.origin}/map` })), note: '"all" means everything the learner has.' });
+      return ok({ workspaces: ws.map(w => ({ id: w.id, kind: w.kind, title: w.title, url: workspaceUrl(ctx.origin, w) })), note: '"all" means everything the learner has.' });
     },
   }),
   def({
@@ -220,17 +226,18 @@ export const TOOLS: ToolDef[] = [
   }),
   def({
     name: "update_note", title: "Add to or rename a note", kind: "write", scopes: ["notes:write"],
-    description: "Writes. Adds text to the end of an existing note (under a dated divider; nothing already there is changed or removed) and/or renames it. Send baseUpdatedAt from get_note: if the note changed since, nothing is overwritten and you get a conflict. Text already in the note is not added twice.",
+    description: "Writes. Adds text to the end of an existing note (under a dated divider; nothing already there is changed or removed; applied at once). Renaming (newTitle) is reviewed: nothing changes until the learner approves the old and new title on Kivo (you get approveUrl and planId; then check_approval). Send baseUpdatedAt from get_note: if the note changed since, nothing is overwritten and you get a conflict. Text already in the note is not added twice.",
     input: { noteId: z.string().min(1).max(50), appendText: z.string().min(1).max(200_000).optional(), newTitle: z.string().trim().min(1).max(200).optional(), baseUpdatedAt: z.string().max(40), idempotencyKey: idemArg },
     handler: async (a, ctx) => {
       const id = rowId("note", a.noteId);
       if (!a.appendText && !a.newTitle) return fail("invalid_input", "Give appendText, newTitle, or both.");
+      // A rename is a restructure (K-10): it and any text sent with it wait
+      // for the learner's approval as one plan, guarded on the version read.
       if (a.newTitle) {
-        const res = await updateNote(ctx.learner.profileId, id, { title: a.newTitle, baseUpdatedAt: a.baseUpdatedAt });
-        await recordAudit({ userId: ctx.learner.userId, grantId: ctx.learner.grantId, tool: "update_note", outcome: res.ok ? "ok" : res.error === "conflict" ? "conflict" : "failed", resources: { note: id } });
-        if (!res.ok) return fail(res.error === "conflict" ? "conflict" : res.error === "not_found" ? "not_found" : "invalid_input", res.message, res.error === "conflict" && res.current ? { currentUpdatedAt: res.current.updatedAt } : undefined);
-        if (!a.appendText) return ok({ status: "completed", note: { id: `note:${id}`, title: res.note.title, updatedAt: res.note.updatedAt, url: linkTo(ctx.origin, "note", id) } });
-        return keyedApply(ctx, "update_note", a.idempotencyKey, [{ op: "append_to_note", noteId: id, text: a.appendText, baseUpdatedAt: res.note.updatedAt }]);
+        return applyOrPreview(ctx, "update_note", a.idempotencyKey, [
+          { op: "rename_note", noteId: id, title: a.newTitle, baseUpdatedAt: a.baseUpdatedAt },
+          ...(a.appendText ? [{ op: "append_to_note" as const, noteId: id, text: a.appendText, baseUpdatedAt: a.baseUpdatedAt }] : []),
+        ]);
       }
       return keyedApply(ctx, "update_note", a.idempotencyKey, [{ op: "append_to_note", noteId: id, text: a.appendText!, baseUpdatedAt: a.baseUpdatedAt }]);
     },
@@ -409,7 +416,10 @@ export const TOOLS: ToolDef[] = [
         const describe: Change[] = (subject?.topics ?? []).filter(t => plan.added.some(x => x.name.toLowerCase() === t.name.toLowerCase()) && wanted.has(t.name.toLowerCase())).map(t => ({ op: "describe_topic" as const, topicId: t.id, explanation: wanted.get(t.name.toLowerCase())! }));
         if (describe.length) await applyChanges(ctx.learner.profileId, describe);
       }
-      return ok({ ...res.data, ...proposal, mapUrl: subjectUrl(ctx, plan.subject.name) });
+      // K-28B: the subject as it now is (made or found), with its real id.
+      const now = (await loadStudyStructure(ctx.learner.profileId)).subjects.find(s => s.name.toLowerCase() === plan.subject.name.toLowerCase());
+      const subject = { id: now ? `subject:${now.id}` : null, name: now?.name ?? plan.subject.name, exists: !!now, created: !!now && !plan.subject.exists, existedBefore: plan.subject.exists };
+      return ok({ ...res.data, ...proposal, subject, mapUrl: now ? workspaceUrl(ctx.origin, { id: `subject:${now.id}`, kind: "subject", subjectIds: [now.id] }) : `${ctx.origin}/map` });
     },
   }),
 
@@ -557,12 +567,12 @@ export const TOOLS: ToolDef[] = [
     input: { changes: z.array(ChangeSchema).min(1).max(CHANGES_MAX) },
     handler: async (a, ctx) => {
       const p = await preview(previewCtx(ctx), a.changes as Change[]);
-      return ok({ planId: p.planId, expiresAt: p.expiresAt, approvalRequired: p.approvalRequired, approvalReasons: p.approvalReasons, approveUrl: p.planId && p.approvalRequired ? p.approveUrl : null, summary: p.summary, check: reportOut(p.report, ctx.origin) });
+      return ok({ planId: p.planId, expiresAt: p.expiresAt, approvalRequired: p.approvalRequired, approvalReasons: p.approvalReasons, approveUrl: p.planId && p.approvalRequired ? p.approveUrl : null, summary: p.summary, check: reportOut(p.report, ctx.origin), next: p.planId && p.approvalRequired ? "Show the learner the summary and approveUrl. Approving on Kivo applies it there (unless it creates or adds note text: then call execute_knowledge_changes after they approve). Read the outcome with check_approval." : "No approval needed: call execute_knowledge_changes with planId, expiresAt and the same changes." });
     },
   }),
   def({
     name: "execute_knowledge_changes", title: "Apply previewed changes", kind: "structural", destructive: true, scopes: ["notes:write", "knowledge:write"],
-    description: "Applies exactly the changes previewed under planId (send planId, expiresAt and the same changes). Refused if they differ, if anything changed since the preview (you get a fresh preview), or if approval is needed and the learner has not approved (on Kivo via approveUrl, or in your confirmation prompt). Runs once; returns each item's result and a read-back verification.",
+    description: "Applies exactly the changes previewed under planId (send planId, expiresAt and the same changes). Refused if they differ, if anything changed since the preview (you get a fresh preview), if the learner declined, or if approval is needed and the learner has not approved on Kivo (approveUrl). A plan the learner already approved and applied on Kivo is not run again: you get its result. Runs once; returns each item's result and a read-back verification.",
     input: { planId: z.string().regex(/^[a-f0-9]{32}$/), expiresAt: z.string().max(40), changes: z.array(ChangeSchema).min(1).max(CHANGES_MAX) },
     handler: async (a, ctx) => {
       const r = await execute(previewCtx(ctx), { planId: a.planId, expiresAt: a.expiresAt, changes: a.changes as Change[] }, ctx.confirm);
@@ -570,9 +580,26 @@ export const TOOLS: ToolDef[] = [
         case "executed":          return r.report.status === "failed" ? fail("failed", "No change could be applied.", reportOut(r.report, ctx.origin)) : ok(reportOut(r.report, ctx.origin));
         case "already_executed":  return ok({ replayed: true, result: r.report });
         case "approval_required": return fail("approval_required", r.message, { approveUrl: r.approveUrl });
+        case "declined":          return fail("declined", r.message);
         case "changed":           return fail("conflict", r.message, { planId: r.preview.planId, expiresAt: r.preview.expiresAt, approveUrl: r.preview.approvalRequired ? r.preview.approveUrl : null, summary: r.preview.summary });
         default:                  return fail(r.status === "expired" ? "conflict" : "not_found", r.message);
       }
+    },
+  }),
+  def({
+    name: "check_approval", title: "Check an approval", kind: "read", scopes: ["notes:read", "knowledge:read"],
+    description: "Read-only. What happened to a change that waits for the learner's approval: waiting (with approveUrl), applied (with each item's result), approved (call execute_knowledge_changes), declined or expired. Call it after the learner says they approved or declined on Kivo; never ask them to repeat their request.",
+    input: { planId: z.string().regex(/^[a-f0-9]{32}$/) },
+    handler: async (a, ctx) => {
+      const st = await planStatus({ userId: ctx.learner.userId, origin: ctx.origin }, a.planId);
+      if (st.status === "applied") {
+        const r = st.report as ChangeReport | null;
+        // approval: what became of the request; status: how the changes went (completed, …).
+        return ok({ approval: "applied", ...(r && Array.isArray((r as ChangeReport).items) ? reportOut(r as ChangeReport, ctx.origin) : { result: st.report }) });
+      }
+      if (st.status === "unknown_plan") return fail("not_found", st.message);
+      const { status, ...rest } = st;
+      return ok({ approval: status, ...rest });
     },
   }),
 ];
@@ -582,7 +609,13 @@ function collectExplanations(nodes: OutlineNode[], into = new Map<string, string
   for (const n of nodes) { if (n.explanation?.trim()) into.set(n.name.trim().replace(/\s+/g, " ").toLowerCase(), n.explanation.trim()); if (n.children) collectExplanations(n.children, into); }
   return into;
 }
-const subjectUrl = (ctx: ToolContext, _name: string) => `${ctx.origin}/map`;
+// K-28A: each workspace opens on its own map: a workspace by its id, a
+// subject explored on the map (the map checks both belong to the signed-in
+// learner; another learner's id shows nothing).
+export function workspaceUrl(origin: string, w: { id: string; kind: "workspace" | "subject"; subjectIds: string[] }): string {
+  if (w.kind === "workspace") return `${origin}/map?workspace=${encodeURIComponent(w.id.slice("workspace:".length))}`;
+  return `${origin}/map?explore=${encodeURIComponent(`subject:${w.subjectIds[0] ?? w.id.slice("subject:".length)}`)}`;
+}
 
 export const TOOL_NAMES = TOOLS.map(t => t.name);
 

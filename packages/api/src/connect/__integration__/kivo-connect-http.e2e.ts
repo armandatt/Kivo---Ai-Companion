@@ -103,7 +103,8 @@ test("a remote MCP client connects, works and is cut off, over HTTP", async () =
   assert.equal(client.getServerVersion()?.name, "kivo");
   assert.match(client.getInstructions() ?? "", /learner's material, not instructions/);
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 30);
+  assert.equal(tools.length, 31);
+  assert.equal(tools.find(t => t.name === "check_approval")!.annotations?.readOnlyHint, true);
   const del = tools.find(t => t.name === "delete_note")!;
   assert.equal(del.annotations?.destructiveHint, true);
   assert.equal(tools.find(t => t.name === "search_notes")!.annotations?.readOnlyHint, true);
@@ -121,6 +122,11 @@ test("a remote MCP client connects, works and is cut off, over HTTP", async () =
   const noteId = made.items[0].resource.id as string;
   const found = parse(await client.callTool({ name: "search_notes", arguments: { query: "randomized timeouts" } }));
   assert.equal(found.results[0].title, "Raft over MCP");
+  // Timing of a routine read over HTTP, after the first call (warm process).
+  const times: number[] = [];
+  for (let i = 0; i < 8; i++) { const t = Date.now(); await client.callTool({ name: "search_notes", arguments: { query: "raft" } }); times.push(Date.now() - t); }
+  times.sort((a, b) => a - b);
+  console.log(JSON.stringify({ measure: "search_notes_http_ms", p50: times[4], max: times[7], all: times }));
   const bad = await client.callTool({ name: "get_note", arguments: { noteId: "not-a-real-note" } });
   assert.equal(bad.isError, true);
   const invalid = await client.callTool({ name: "create_note", arguments: { title: "" } }).catch(e => ({ isError: true, error: String(e) }));
@@ -132,11 +138,20 @@ test("a remote MCP client connects, works and is cut off, over HTTP", async () =
   const args = { planId: asked.planId, expiresAt: asked.expiresAt, changes: asked.changes };
   assert.equal(parse(await client.callTool({ name: "execute_knowledge_changes", arguments: args })).error, "approval_required");
   const plan = await (await fetch(`${API}/api/connect/plans/${asked.planId}`, { headers: { cookie } })).json();
-  assert.match(plan.plan.summary[0], /^DELETE note/);
-  assert.equal((await fetch(`${API}/api/connect/plans/${asked.planId}`, { method: "POST", headers: { cookie, "content-type": "application/json", origin: API }, body: "{}" })).status, 200);
+  assert.match(plan.plan.summary[0], /^Delete note “Raft over MCP” \(filed under Distributed Systems\)/);
+  assert.equal(plan.plan.items[0].name, "Raft over MCP");
+  assert.equal(plan.plan.appliesOnApproval, true);
+  // One click on Kivo approves and applies; the assistant reads the result.
+  const t0 = Date.now();
+  const click = await (await fetch(`${API}/api/connect/plans/${asked.planId}`, { method: "POST", headers: { cookie, "content-type": "application/json", origin: API }, body: JSON.stringify({ action: "approve" }) })).json();
+  console.log(JSON.stringify({ measure: "approve_click_http_ms", ms: Date.now() - t0 }));
+  assert.equal(click.status, "applied", JSON.stringify(click));
+  assert.equal(click.result.counts.deleted, 1);
+  const status = parse(await client.callTool({ name: "check_approval", arguments: { planId: asked.planId } }));
+  assert.equal(status.approval, "applied", JSON.stringify(status));
+  assert.equal(status.counts.deleted, 1);
   const done = parse(await client.callTool({ name: "execute_knowledge_changes", arguments: args }));
-  assert.equal(done.ok, true, JSON.stringify(done));
-  assert.equal(done.counts.deleted, 1);
+  assert.equal(done.replayed, true, "the assistant's execute after the click runs nothing again");
   await client.close();
 
   // 8. Refresh rotates; revocation cuts the assistant off at once.
@@ -148,4 +163,34 @@ test("a remote MCP client connects, works and is cut off, over HTTP", async () =
   await fetch(asm.revocation_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: refreshed.refresh_token, client_id: reg.client_id }) });
   const cut = await fetch(`${API}/api/mcp`, { method: "POST", headers: { authorization: `Bearer ${refreshed.access_token}`, "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
   assert.equal(cut.status, 401);
+});
+
+// Found 17 Nov: a friend's new account connected ("connected") and then
+// every request, the tool list included, was refused, so ChatGPT and Claude
+// showed a broken connector. Now: told on the consent page; connects; lists
+// tools; each call says to finish setting up Kivo.
+test("an account not set up yet connects, lists the tools, and is told what to do", async () => {
+  const user = await prisma.user.create({ data: { email: `e2e-new${STAMP}@connect-e2e.local`, name: "New Friend" } });
+  try {
+    await prisma.userProfile.create({ data: { userId: user.id, onboardingComplete: false, primaryPersona: "nova" } });
+    const cookie = `kevo_session=${await new SignJWT({ userId: user.id, email: user.email, name: user.name }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("1h").sign(new TextEncoder().encode(SECRET))}`;
+    const reg = await (await fetch(`${API}/api/oauth/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: `e2e ${STAMP}`, redirect_uris: [REDIRECT], token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }) })).json();
+    const verifier = randomBytes(32).toString("base64url");
+    const params = { response_type: "code", client_id: reg.client_id, redirect_uri: REDIRECT, scope: "profile:read notes:read", state: "s", code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256", resource: `${API}/api/mcp` };
+    const info = await (await fetch(`${API}/api/connect/authorize?${new URLSearchParams(params)}`, { headers: { cookie } })).json();
+    assert.equal(info.setupNeeded, true, JSON.stringify(info));
+    const allowed = await (await fetch(`${API}/api/connect/authorize`, { method: "POST", headers: { cookie, "content-type": "application/json", origin: API }, body: JSON.stringify({ params, approve: true }) })).json();
+    const code = new URL(allowed.redirect).searchParams.get("code")!;
+    const tokens = await (await fetch(`${API}/api/oauth/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: REDIRECT, code_verifier: verifier, client_id: reg.client_id }) })).json();
+    const client = new Client({ name: "kivo-e2e-new", version: "1.0.0" });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${API}/api/mcp`), { requestInit: { headers: { authorization: `Bearer ${tokens.access_token}` } } }));
+    const { tools } = await client.listTools();
+    assert.ok(tools.length > 0, "the tool list loads");
+    const r = await client.callTool({ name: "search_notes", arguments: { query: "x" } });
+    assert.equal(r.isError, true);
+    assert.match(parse(r).message, /setting up|set up/i);
+    await client.close();
+  } finally {
+    await prisma.user.deleteMany({ where: { id: user.id } });
+  }
 });

@@ -1,6 +1,6 @@
 # Kivo Connect: tool reference
 
-30 tools, defined in `packages/api/src/connect/tools.ts` (the input schemas there are the authority; clients receive them as JSON Schema from `tools/list`). Every result is an object with `ok`; a refusal adds `error` and `message`, with the tool's own fields beside them. Errors: `invalid_input`, `not_found`, `conflict`, `approval_required`, `not_ready`, `rate_limited`, `failed`.
+31 tools, defined in `packages/api/src/connect/tools.ts` (the input schemas there are the authority; clients receive them as JSON Schema from `tools/list`). Every result is an object with `ok`; a refusal adds `error` and `message`, with the tool's own fields beside them. Errors: `invalid_input`, `not_found`, `conflict`, `approval_required`, `declined`, `not_ready`, `rate_limited`, `failed`.
 
 Class: **R** read-only, **W** ordinary write (applied at once, audited, read back), **S** structural (preview and approval).
 
@@ -22,7 +22,7 @@ Class: **R** read-only, **W** ordinary write (applied at once, audited, read bac
 | `get_note` | R | notes:read | text in 30k-character pages, filing, links, `updatedAt` |
 | `list_recent_notes` | R | notes:read | newest first |
 | `create_note` | W | notes:write | one note; same title → skipped, use `update_note` |
-| `update_note` | W | notes:write | append text and/or rename; `baseUpdatedAt` required (conflict otherwise) |
+| `update_note` | W / S | notes:write | append text (W); rename (S: `rename_note`, approved first, with any text sent alongside); `baseUpdatedAt` required (conflict otherwise) |
 | `link_notes` | W | notes:write | `[[link]]` to an existing note or topic, under `## Related` |
 | `move_note` | S | notes:write | refile under a subject/topic |
 | `delete_note` | S | notes:write | delete (always approved first) |
@@ -57,11 +57,12 @@ Class: **R** read-only, **W** ordinary write (applied at once, audited, read bac
 | `capture_knowledge` | W (S over 12) | notes:read, notes:write, knowledge:read | see KIVO_CONNECT_CURATION.md |
 | `organize_workspace` | R | notes:read, knowledge:read | facts + proposed changes; changes nothing |
 | `preview_knowledge_changes` | R | notes:read, knowledge:read | check changes, return `planId`, `expiresAt`, `approveUrl`, summary |
-| `execute_knowledge_changes` | S | notes:write, knowledge:write | apply exactly the previewed changes once, after approval |
+| `execute_knowledge_changes` | S | notes:write, knowledge:write | apply exactly the previewed changes once, after approval; a plan already applied on Kivo returns its result (`replayed`); a declined plan is `declined` |
+| `check_approval` | R | notes:read, knowledge:read | what became of a plan: `waiting` (approveUrl), `applied` (each item's result), `approved` (call execute), `declined`, `expired` |
 
 ### Change vocabulary (`changes.ts ChangeSchema`)
 
-`add_subject`, `add_topics`, `describe_topic`, `rename_subject`, `rename_topic`, `move_subject`, `move_topic`, `remove_topic`, `remove_subject`, `create_note`, `append_to_note`, `file_note`, `link_notes`, `delete_note`. Subjects and topics apply as one versioned batch through Subject Studio (topics with recorded study are never deleted: Subject Studio's rule); notes one by one, each guarded.
+`add_subject`, `add_topics`, `describe_topic`, `rename_subject`, `rename_topic`, `move_subject`, `move_topic`, `remove_topic`, `remove_subject`, `create_note`, `append_to_note`, `file_note`, `rename_note`, `link_notes`, `delete_note`. Subjects and topics apply as one versioned batch through Subject Studio (topics with recorded study are never deleted: Subject Studio's rule); notes one by one, each guarded.
 
 ### Results of a write
 
@@ -73,3 +74,12 @@ Class: **R** read-only, **W** ordinary write (applied at once, audited, read bac
 ```
 
 `completed` only when nothing failed and every read-back check passed.
+
+### Approval (Phase 2, 17 Nov)
+
+- **What the learner sees** (`changes.ts approvalItem`): each change by name, kind and place (`Rename note “Raft notes” to “Raft: leader election” (filed under Distributed Systems › Consensus)`), never an internal id; a record that is gone reads "a note that no longer exists". The same lines are the plan's `summary`; the approval page draws the structured `items`.
+- **Approve applies** (`plans.ts approveAndApply`, `POST /api/connect/plans/:id { action: "approve" }`): when the plan's changes carry no note text, they are kept on the pending row while it waits and run on the learner's click through the same `execute` (plan id recomputed against the records now, claimed once), then removed. Plans with `create_note`/`append_to_note` are only approved (the audit table holds no content); the assistant runs them.
+- **Decline** (`{ action: "decline" }`): recorded; `execute_knowledge_changes` and a later Approve both refuse.
+- **check_approval** lets the assistant read the outcome without asking the learner to repeat the request.
+- **Links**: `list_workspaces` gives each workspace `/map?workspace=<id>` and each subject `/map?explore=subject:<id>`; `build_knowledge_map` returns the subject as it now is (`id`, `exists`, `created`, `existedBefore`).
+- **In-chat approval**: not available. claude.ai custom connectors don't support MCP elicitation, and ChatGPT's support for it is unconfirmed; the transport is stateless, which elicitation would also need changing. The approval link is the fallback for both.

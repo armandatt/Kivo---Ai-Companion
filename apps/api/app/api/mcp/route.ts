@@ -39,9 +39,10 @@ async function handle(req: Request): Promise<Response> {
   if (Number.isFinite(declared) && declared > BODY_MAX_BYTES) return json({ jsonrpc: "2.0", error: { code: -32600, message: "Request too large." }, id: null }, 413)
 
   const learner = await learnerFor(caller)
-  if (!learner.ok) return json({ jsonrpc: "2.0", error: { code: -32001, message: learner.message }, id: null }, 403)
+  if (!learner.ok) console.log(JSON.stringify({ layer: "kivo_connect", event: "mcp_not_ready", reason: learner.reason }))
+  const who = learner.ok ? learner.learner : { blocked: `${learner.message} ${connectOrigin()}/home`, scopes: caller.scopes }
 
-  const res = await serveMcp(req, learner.learner, connectOrigin())
+  const res = await serveMcp(req, who, connectOrigin())
   const out = new Response(res.body, res)
   for (const [k, v] of Object.entries(OPEN_CORS)) out.headers.set(k, v)
   return out

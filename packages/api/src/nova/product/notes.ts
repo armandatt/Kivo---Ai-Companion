@@ -421,6 +421,15 @@ export async function listNoteLinks(profileId: string, take: number): Promise<{
 
 // Titles of the learner's notes filed under these subjects, newest first:
 // how a workspace shows its notes back. No body leaves this file.
+// Title, filing and version of several notes in one query (Kivo Connect's
+// previews and plan ids: what a change touches, never the text).
+export async function noteHeads(profileId: string, noteIds: string[]): Promise<Array<{ id: string; title: string; subjectId: string | null; subjectName: string | null; topicName: string | null; updatedAt: string }>> {
+  const ids = [...new Set(noteIds.filter(i => typeof i === "string" && i.length > 0 && i.length <= 40))];
+  if (ids.length === 0) return [];
+  const rows = await prisma.novaNote.findMany({ where: { profileId, id: { in: ids } }, select: { id: true, title: true, subjectId: true, topicName: true, updatedAt: true, subject: { select: { name: true } } } });
+  return rows.map(r => ({ id: r.id, title: r.title, subjectId: r.subjectId, subjectName: r.subject?.name ?? null, topicName: r.topicName, updatedAt: r.updatedAt.toISOString() }));
+}
+
 export async function listNoteTitlesIn(profileId: string, subjectIds: string[], take = 40): Promise<Array<{ id: string; title: string; subjectId: string | null; updatedAt: Date }>> {
   if (subjectIds.length === 0) return [];
   return prisma.novaNote.findMany({ where: { profileId, subjectId: { in: subjectIds } }, orderBy: { updatedAt: "desc" }, take, select: { id: true, title: true, subjectId: true, updatedAt: true } });

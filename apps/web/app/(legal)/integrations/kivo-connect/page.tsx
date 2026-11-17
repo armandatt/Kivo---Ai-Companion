@@ -48,7 +48,7 @@ const TOOLS: Array<{ group: string; items: Array<[string, string, "read" | "writ
     ["get_note", "Read one note", "read"],
     ["list_recent_notes", "Notes you changed most recently", "read"],
     ["create_note", "Create a note, optionally filed under a subject or topic", "write"],
-    ["update_note", "Add to a note or rename it", "write"],
+    ["update_note", "Add to a note (at once) or rename it (needs approval)", "write"],
     ["link_notes", "Link a note to another note or a topic", "write"],
     ["move_note", "Refile a note under another subject or topic", "approval"],
     ["delete_note", "Delete a note", "approval"],
@@ -58,7 +58,7 @@ const TOOLS: Array<{ group: string; items: Array<[string, string, "read" | "writ
     ["search_knowledge_nodes", "Find a subject or topic on the map", "read"],
     ["get_node_connections", "What a subject or topic connects to", "read"],
     ["add_knowledge_node", "Add a subject or topics", "write"],
-    ["update_knowledge_node", "Describe a subject or topic, or rename it", "write"],
+    ["update_knowledge_node", "Describe a topic (at once), or rename a subject or topic (needs approval)", "write"],
     ["connect_knowledge_nodes", "Connect two items on the map", "write"],
     ["build_knowledge_map", "Build or extend a map from an outline (preview first)", "write"],
   ] },
@@ -74,6 +74,7 @@ const TOOLS: Array<{ group: string; items: Array<[string, string, "read" | "writ
     ["capture_knowledge", "Save ideas from the conversation as notes, skipping duplicates and adding to existing notes (preview first)", "write"],
     ["preview_knowledge_changes", "Show exactly what a set of changes would do", "read"],
     ["execute_knowledge_changes", "Apply a previewed set of changes once you have approved it in Kivo", "approval"],
+    ["check_approval", "See whether you approved or declined a change, and its result", "read"],
   ] },
 ]
 
@@ -177,7 +178,7 @@ export default function KivoConnectDocs() {
           </Section>
 
           <Section id="tools" title="Tools">
-            <p>30 tools. &ldquo;Reads&rdquo; never change anything. &ldquo;Changes&rdquo; write to your Kivo, and Claude asks you before running them. &ldquo;Needs approval&rdquo; tools are refused until you approve the exact change in Kivo (below).</p>
+            <p>31 tools. &ldquo;Reads&rdquo; never change anything and need no approval. &ldquo;Changes&rdquo; write to your Kivo; your assistant may ask you before running them. &ldquo;Needs approval&rdquo; tools change nothing until you approve the exact change in Kivo (below), so you can let your assistant use Kivo&apos;s tools without asking each time and still decide every delete, move and rename.</p>
             {TOOLS.map(g => (
               <div key={g.group}>
                 <h3 className="mt-6 text-base font-semibold text-foreground">{g.group}</h3>
@@ -196,7 +197,9 @@ export default function KivoConnectDocs() {
           </Section>
 
           <Section id="approval" title="Changes that need your approval">
-            <p>Deleting, moving, renaming or refiling, and any change to more than 12 items, is never done straight away. The assistant gets a preview and a link. Open the link, check the summary in Kivo, and approve it; then the assistant can apply that exact change, once. If anything changed in the meantime, the change is refused and previewed again. Approvals expire after 30 minutes.</p>
+            <p>Deleting, moving, renaming or refiling (notes, topics and subjects), and any change to more than 12 items, is never done straight away. The assistant shows you what it wants to do and gives you one link. The page lists each change by name and place: the note or topic, where it is now, and its new name or where it goes. Choose <strong>Approve</strong> and Kivo applies exactly that change there and then; go back to the conversation and the assistant reads the result, so you don&apos;t need to ask again. Choose <strong>Decline</strong> and nothing happens; the assistant can&apos;t apply it later. If anything changed in the meantime, nothing is applied and the assistant previews it again. Approvals expire after 30 minutes.</p>
+            <p>When a change adds note text in bulk (more than 12 notes or additions at once), Kivo doesn&apos;t keep that text while it waits for you: Approve records your approval and the assistant applies it when you go back.</p>
+            <p>Why a link and not a button in the chat: Claude and ChatGPT don&apos;t yet let a connected app ask you to approve something inside the conversation, so the approval happens on Kivo, where you are signed in.</p>
           </Section>
 
           <Section id="examples" title="Things to ask">
@@ -236,7 +239,8 @@ export default function KivoConnectDocs() {
             <ul>
               <li><strong>&ldquo;Finish setting up Kivo on the web first&rdquo;</strong>: sign in to Kivo and complete setup, then try again.</li>
               <li><strong>The first call is slow</strong>: the server may be waking up. Try again after a few seconds.</li>
-              <li><strong>&ldquo;approval_required&rdquo;</strong>: open the approval link the assistant gave you and approve the change in Kivo.</li>
+              <li><strong>&ldquo;approval_required&rdquo;</strong>: open the approval link the assistant gave you and approve or decline the change in Kivo.</li>
+              <li><strong>&ldquo;declined&rdquo;</strong>: you declined that change. Nothing was done; ask again if you change your mind.</li>
               <li><strong>Asked to sign in again</strong>: the connection was disconnected or expired after 30 days without use. Connect again.</li>
             </ul>
           </Section>

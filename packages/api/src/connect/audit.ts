@@ -54,7 +54,14 @@ export const planExecuted = async (userId: string, planId: string) => (await pri
 // Kivo, or through their assistant's own confirmation prompt); executing
 // is recorded under "plan:<planId>", so a plan runs once.
 
-export interface PendingPlan { planId: string; summary: string[]; expiresAt: string; client: string; approvedAt: string | null }
+// items: the same changes as structured lines for the approval page.
+// changes: kept only while the plan waits, and only when no change carries
+// note text (no create_note / append_to_note), so the learner's approval on
+// Kivo can apply it at once; removed when it runs or is declined.
+export interface PendingPlan {
+  planId: string; summary: string[]; expiresAt: string; client: string; approvedAt: string | null;
+  items?: unknown[]; changes?: unknown[]; declinedAt?: string | null; appliedAt?: string | null;
+}
 
 export async function storePendingPlan(userId: string, grantId: string | null, plan: Omit<PendingPlan, "approvedAt">): Promise<void> {
   await prisma.novaConnectAudit.upsert({
@@ -64,22 +71,49 @@ export async function storePendingPlan(userId: string, grantId: string | null, p
   });
 }
 
-export async function pendingPlan(userId: string, planId: string): Promise<PendingPlan | null> {
-  if (typeof planId !== "string" || !/^[a-f0-9]{32}$/.test(planId)) return null;
-  const row = await prisma.novaConnectAudit.findUnique({ where: { userId_idempotencyKey: { userId, idempotencyKey: `pending:${planId}` } }, select: { result: true, outcome: true } });
-  return row ? (row.result as unknown as PendingPlan) : null;
+const PLAN_ID = (planId: unknown): planId is string => typeof planId === "string" && /^[a-f0-9]{32}$/.test(planId);
+
+export async function pendingPlan(userId: string, planId: string): Promise<(PendingPlan & { grantId: string | null }) | null> {
+  if (!PLAN_ID(planId)) return null;
+  const row = await prisma.novaConnectAudit.findUnique({ where: { userId_idempotencyKey: { userId, idempotencyKey: `pending:${planId}` } }, select: { result: true, outcome: true, grantId: true } });
+  return row ? { ...(row.result as unknown as PendingPlan), grantId: row.grantId } : null;
 }
 
-export async function approvePendingPlan(userId: string, planId: string, now = new Date()): Promise<"approved" | "expired" | "not_found"> {
+export async function approvePendingPlan(userId: string, planId: string, now = new Date()): Promise<"approved" | "expired" | "not_found" | "declined"> {
   const plan = await pendingPlan(userId, planId);
   if (!plan) return "not_found";
-  if (new Date(plan.expiresAt) < now) return "expired";
+  if (plan.declinedAt) return "declined";
   if (plan.approvedAt) return "approved";
-  await prisma.novaConnectAudit.updateMany({
+  if (new Date(plan.expiresAt) < now) return "expired";
+  const { grantId: _g, ...stored } = plan;
+  const n = await prisma.novaConnectAudit.updateMany({
     where: { userId, idempotencyKey: `pending:${planId}`, outcome: "pending" },
-    data:  { outcome: "approved", result: { ...plan, approvedAt: now.toISOString() } as object },
+    data:  { outcome: "approved", result: { ...stored, approvedAt: now.toISOString() } as object },
   });
+  if (n.count === 0) return (await pendingPlan(userId, planId))?.declinedAt ? "declined" : "approved";
   return "approved";
+}
+
+// The learner said no. Guarded on the plan still waiting: a plan already
+// approved (and so perhaps applied) is not declined after the fact.
+export async function declinePendingPlan(userId: string, planId: string, now = new Date()): Promise<"declined" | "already_approved" | "not_found"> {
+  const plan = await pendingPlan(userId, planId);
+  if (!plan) return "not_found";
+  if (plan.declinedAt) return "declined";
+  const { grantId: _g, changes: _c, ...stored } = plan;
+  const n = await prisma.novaConnectAudit.updateMany({
+    where: { userId, idempotencyKey: `pending:${planId}`, outcome: "pending" },
+    data:  { outcome: "declined", result: { ...stored, declinedAt: now.toISOString() } as object },
+  });
+  return n.count === 1 ? "declined" : "already_approved";
+}
+
+// Once a plan has run: its changes are no longer kept.
+export async function markPlanApplied(userId: string, planId: string, now = new Date()): Promise<void> {
+  const plan = await pendingPlan(userId, planId);
+  if (!plan) return;
+  const { grantId: _g, changes: _c, ...stored } = plan;
+  await prisma.novaConnectAudit.updateMany({ where: { userId, idempotencyKey: `pending:${planId}` }, data: { result: { ...stored, appliedAt: now.toISOString() } as object } });
 }
 
 // A keyed write's final result, after it was claimed with recordKeyed.

@@ -34,7 +34,9 @@ const { registerClient, exchangeCode, refreshTokens, authenticateAccessToken, re
 const { checkAuthorize, decide, STATE_MAX } = await import("../authorize.js");
 const { learnerFor } = await import("../learner.js");
 const { TOOLS, runTool } = await import("../tools.js");
-const { approvePendingPlan } = await import("../audit.js");
+const { approvePendingPlan, pendingPlan } = await import("../audit.js");
+const { approveAndApply } = await import("../plans.js");
+const { noteHeads } = await import("../../nova/product/notes.js");
 const { applyChanges } = await import("../changes.js");
 
 const MCP = "https://kivo.test/api/mcp";
@@ -341,4 +343,102 @@ test("analysis: links to notes not written, unfiled notes with a topic's name, c
   assert.equal(map.data!.nodes.length, 2);
   const conn = await call("get_node_connections", { nodeId: map.data!.nodes[0].id }, c.ctx);
   assert.ok(conn.data!.connections.length >= 1);
+});
+
+test("Phase 2: a rename waits for approval (K-10); Approve on Kivo applies it at once; the assistant reads the result; Decline stops a plan for good", async () => {
+  const c = await connect(await account());
+  const made = await createNote(c.learner.profileId, { title: "Raft notes", body: "leader election", subjectId: (await loadStudyStructure(c.learner.profileId)).subjects[0]!.id, topicName: "Consensus" });
+  assert.ok(made.ok); if (!made.ok) return;
+  const web = { userId: c.learner.userId, profileId: c.learner.profileId, origin: ISSUER };
+
+  // K-10: nothing renamed before approval; the approval names old and new (K-01).
+  const asked = await call("update_note", { noteId: `note:${made.note.id}`, newTitle: "Raft: leader election", baseUpdatedAt: made.note.updatedAt }, c.ctx);
+  assert.equal(asked.error, "approval_required", JSON.stringify(asked));
+  assert.equal((await getNote(c.learner.profileId, made.note.id))!.title, "Raft notes", "not renamed before approval");
+  assert.deepEqual(asked.data!.summary, ["Rename note “Raft notes” to “Raft: leader election” (filed under Distributed Systems › Consensus)"]);
+  assert.doesNotMatch(JSON.stringify(asked.data!.summary), new RegExp(made.note.id));
+  const stored = await pendingPlan(c.learner.userId, asked.data!.planId);
+  assert.equal((stored!.items as any[])[0].to, "Raft: leader election");
+
+  // Still waiting: the assistant is told so, nothing ran.
+  const waiting = await call("check_approval", { planId: asked.data!.planId }, c.ctx);
+  assert.equal(waiting.data!.approval, "waiting");
+
+  // One click on Kivo: approved and applied, read back.
+  const t0 = Date.now();
+  const clicked = await approveAndApply(web, asked.data!.planId);
+  const approveMs = Date.now() - t0;
+  assert.equal(clicked.status, "applied", JSON.stringify(clicked));
+  assert.equal((await getNote(c.learner.profileId, made.note.id))!.title, "Raft: leader election");
+  assert.equal((await pendingPlan(c.learner.userId, asked.data!.planId))!.changes, undefined, "changes are not kept once run");
+  const result = await call("check_approval", { planId: asked.data!.planId }, c.ctx);
+  assert.equal(result.data!.approval, "applied", JSON.stringify(result));
+  assert.equal(result.data!.status, "completed");
+  assert.match(result.data!.items[0].resource.url, /\/notes\//);
+  // The assistant's own execute after that runs nothing again.
+  const replay = await call("execute_knowledge_changes", { planId: asked.data!.planId, expiresAt: asked.data!.expiresAt, changes: asked.data!.changes }, c.ctx);
+  assert.equal(replay.data!.replayed, true);
+  assert.equal((await approveAndApply(web, asked.data!.planId)).status, "applied", "a second click applies nothing new");
+
+  // Decline: recorded; neither Kivo nor the assistant can run it afterwards.
+  const del = await call("delete_note", { noteId: made.note.id }, c.ctx);
+  assert.equal(del.error, "approval_required");
+  assert.equal(del.data!.summary[0], "Delete note “Raft: leader election” (filed under Distributed Systems › Consensus)");
+  const { declinePendingPlan } = await import("../audit.js");
+  assert.equal(await declinePendingPlan(c.learner.userId, del.data!.planId), "declined");
+  assert.equal((await approveAndApply(web, del.data!.planId)).status, "declined");
+  const refused = await call("execute_knowledge_changes", { planId: del.data!.planId, expiresAt: del.data!.expiresAt, changes: del.data!.changes }, c.ctx);
+  assert.equal(refused.error, "declined");
+  assert.equal((await call("check_approval", { planId: del.data!.planId }, c.ctx)).data!.approval, "declined");
+  assert.ok(await getNote(c.learner.profileId, made.note.id), "a declined delete deletes nothing");
+
+  // A note edited after the preview: the click applies nothing.
+  const del2 = await call("delete_note", { noteId: made.note.id }, c.ctx);
+  await updateNote(c.learner.profileId, made.note.id, { body: "edited meanwhile" });
+  assert.equal((await approveAndApply(web, del2.data!.planId)).status, "changed");
+  assert.ok(await getNote(c.learner.profileId, made.note.id), "not deleted");
+
+  // Another learner cannot approve, decline or read this plan.
+  const other = await connect(await account());
+  assert.equal((await approveAndApply({ userId: other.learner.userId, profileId: other.learner.profileId, origin: ISSUER }, del2.data!.planId)).status, "not_found");
+  assert.equal((await call("check_approval", { planId: del2.data!.planId }, other.ctx)).error, "not_found");
+  console.log(JSON.stringify({ measure: "approve_and_apply_ms", ms: approveMs }));
+});
+
+test("Phase 2: a plan with note text is not kept on the server; Approve only approves it", async () => {
+  const c = await connect(await account());
+  const changes = Array.from({ length: 13 }, (_, i) => ({ op: "create_note", title: `Bulk ${i}`, body: `text ${i}` }));
+  const p = await call("preview_knowledge_changes", { changes }, c.ctx);
+  assert.equal(p.data!.approvalRequired, true);
+  assert.equal((await pendingPlan(c.learner.userId, p.data!.planId))!.changes, undefined);
+  const r = await approveAndApply({ userId: c.learner.userId, profileId: c.learner.profileId, origin: ISSUER }, p.data!.planId);
+  assert.equal(r.status, "approved");
+  assert.equal(await prisma.novaNote.count({ where: { profileId: c.learner.profileId, title: { startsWith: "Bulk " } } }), 0);
+  const ran = await call("execute_knowledge_changes", { planId: p.data!.planId, expiresAt: p.data!.expiresAt, changes }, c.ctx);
+  assert.equal(ran.ok, true, JSON.stringify(ran));
+  assert.equal(await prisma.novaNote.count({ where: { profileId: c.learner.profileId, title: { startsWith: "Bulk " } } }), 13);
+});
+
+test("Phase 2: a new subject comes back with its id (K-28B); workspaces link to their own map (K-28A); previews read notes in one query", async () => {
+  const c = await connect(await account());
+  const built = await call("build_knowledge_map", { subjectName: "Distributed Systems Two", outline: [{ name: "Gossip" }], mode: "apply" }, c.ctx);
+  assert.equal(built.ok, true, JSON.stringify(built));
+  const made = (await loadStudyStructure(c.learner.profileId)).subjects.find(s => s.name === "Distributed Systems Two")!;
+  assert.deepEqual(built.data!.subject, { id: `subject:${made.id}`, name: "Distributed Systems Two", exists: true, created: true, existedBefore: false });
+  assert.equal(built.data!.mapUrl, `${ISSUER}/map?explore=${encodeURIComponent(`subject:${made.id}`)}`);
+  const again = await call("build_knowledge_map", { subjectName: "Distributed Systems Two", outline: [{ name: "Gossip" }, { name: "CRDTs" }], mode: "apply" }, c.ctx);
+  assert.deepEqual(again.data!.subject, { id: `subject:${made.id}`, name: "Distributed Systems Two", exists: true, created: false, existedBefore: true });
+
+  const ws = await call("list_workspaces", {}, c.ctx);
+  const urls = ws.data!.workspaces.map((w: any) => w.url);
+  assert.equal(new Set(urls).size, urls.length, "every workspace has its own link");
+  for (const w of ws.data!.workspaces) assert.ok(w.url.includes(encodeURIComponent(w.id)) || w.url.includes(w.id.split(":")[1]), JSON.stringify(w));
+
+  // Measured: the old preview read each touched note in full, one after another.
+  const ids: string[] = [];
+  for (let i = 0; i < 12; i++) { const r = await createNote(c.learner.profileId, { title: `Timing ${i}`, body: `[[Timing ${(i + 1) % 12}]] body ${i}` }); if (r.ok) ids.push(r.note.id); }
+  const t0 = Date.now(); for (const id of ids) await getNote(c.learner.profileId, id); const before = Date.now() - t0;
+  const t1 = Date.now(); const heads = await noteHeads(c.learner.profileId, ids); const after = Date.now() - t1;
+  assert.equal(heads.length, 12);
+  console.log(JSON.stringify({ measure: "note_versions_12_notes", beforeMs: before, afterMs: after, readsBefore: "12 full note reads, one after another", readsAfter: "1 query" }));
 });
