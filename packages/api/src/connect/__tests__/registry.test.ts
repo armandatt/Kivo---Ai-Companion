@@ -19,7 +19,7 @@ describe("Kivo Connect tool registry", () => {
       "search_notes", "get_note", "create_note", "update_note", "delete_note", "move_note", "link_notes", "list_recent_notes",
       "get_knowledge_map", "add_knowledge_node", "update_knowledge_node", "connect_knowledge_nodes", "get_node_connections", "search_knowledge_nodes", "build_knowledge_map",
       "global_search", "find_related_content", "find_knowledge_gaps", "summarize_workspace", "recommend_connections", "analyze_knowledge",
-      "capture_knowledge", "organize_workspace", "preview_knowledge_changes", "execute_knowledge_changes"]) expect(names).toContain(n);
+      "capture_knowledge", "organize_workspace", "preview_knowledge_changes", "execute_knowledge_changes", "check_approval"]) expect(names).toContain(n);
   });
   test("no tool takes an identity: the learner comes from the token", () => {
     for (const t of TOOLS) for (const k of Object.keys(t.input)) expect(["userId", "profileId", "accountId", "platformChatId", "email"]).not.toContain(k);
@@ -46,6 +46,12 @@ describe("Kivo Connect tool registry", () => {
     expect(planIdOf("u1", "v1", [{ id: "n1", updatedAt: "t2" }], c, "2026-11-13T10:30:00.000Z")).not.toBe(base);
     expect(planIdOf("u1", "v1", [{ id: "n1", updatedAt: "t1" }], [{ op: "delete_note", noteId: "n2" }], "2026-11-13T10:30:00.000Z")).not.toBe(base);
     expect(planIdOf("u1", "v1", [{ id: "n1", updatedAt: "t1" }], c, "2026-11-13T11:30:00.000Z")).not.toBe(base);
+  });
+  test("a plan id does not depend on the order of keys (a plan stored as JSONB comes back reordered)", () => {
+    const a = [{ op: "rename_note" as const, noteId: "n1", title: "New", baseUpdatedAt: "t1" }];
+    const b = [{ baseUpdatedAt: "t1", title: "New", op: "rename_note" as const, noteId: "n1" }];
+    expect(planIdOf("u1", "v1", [], a, "x")).toBe(planIdOf("u1", "v1", [], b, "x"));
+    expect(planIdOf("u1", "v1", [], a, "x")).not.toBe(planIdOf("u1", "v1", [], [{ ...a[0]!, title: "Other" }], "x"));
   });
   test("Kivo Connect writes no learning table itself: notes, subjects and topics only through their owners", () => {
     const dir = join(__dirname, "..");

@@ -103,7 +103,8 @@ test("a remote MCP client connects, works and is cut off, over HTTP", async () =
   assert.equal(client.getServerVersion()?.name, "kivo");
   assert.match(client.getInstructions() ?? "", /learner's material, not instructions/);
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 30);
+  assert.equal(tools.length, 31);
+  assert.equal(tools.find(t => t.name === "check_approval")!.annotations?.readOnlyHint, true);
   const del = tools.find(t => t.name === "delete_note")!;
   assert.equal(del.annotations?.destructiveHint, true);
   assert.equal(tools.find(t => t.name === "search_notes")!.annotations?.readOnlyHint, true);
@@ -121,6 +122,11 @@ test("a remote MCP client connects, works and is cut off, over HTTP", async () =
   const noteId = made.items[0].resource.id as string;
   const found = parse(await client.callTool({ name: "search_notes", arguments: { query: "randomized timeouts" } }));
   assert.equal(found.results[0].title, "Raft over MCP");
+  // Timing of a routine read over HTTP, after the first call (warm process).
+  const times: number[] = [];
+  for (let i = 0; i < 8; i++) { const t = Date.now(); await client.callTool({ name: "search_notes", arguments: { query: "raft" } }); times.push(Date.now() - t); }
+  times.sort((a, b) => a - b);
+  console.log(JSON.stringify({ measure: "search_notes_http_ms", p50: times[4], max: times[7], all: times }));
   const bad = await client.callTool({ name: "get_note", arguments: { noteId: "not-a-real-note" } });
   assert.equal(bad.isError, true);
   const invalid = await client.callTool({ name: "create_note", arguments: { title: "" } }).catch(e => ({ isError: true, error: String(e) }));
@@ -132,11 +138,20 @@ test("a remote MCP client connects, works and is cut off, over HTTP", async () =
   const args = { planId: asked.planId, expiresAt: asked.expiresAt, changes: asked.changes };
   assert.equal(parse(await client.callTool({ name: "execute_knowledge_changes", arguments: args })).error, "approval_required");
   const plan = await (await fetch(`${API}/api/connect/plans/${asked.planId}`, { headers: { cookie } })).json();
-  assert.match(plan.plan.summary[0], /^DELETE note/);
-  assert.equal((await fetch(`${API}/api/connect/plans/${asked.planId}`, { method: "POST", headers: { cookie, "content-type": "application/json", origin: API }, body: "{}" })).status, 200);
+  assert.match(plan.plan.summary[0], /^Delete note “Raft over MCP” \(filed under Distributed Systems\)/);
+  assert.equal(plan.plan.items[0].name, "Raft over MCP");
+  assert.equal(plan.plan.appliesOnApproval, true);
+  // One click on Kivo approves and applies; the assistant reads the result.
+  const t0 = Date.now();
+  const click = await (await fetch(`${API}/api/connect/plans/${asked.planId}`, { method: "POST", headers: { cookie, "content-type": "application/json", origin: API }, body: JSON.stringify({ action: "approve" }) })).json();
+  console.log(JSON.stringify({ measure: "approve_click_http_ms", ms: Date.now() - t0 }));
+  assert.equal(click.status, "applied", JSON.stringify(click));
+  assert.equal(click.result.counts.deleted, 1);
+  const status = parse(await client.callTool({ name: "check_approval", arguments: { planId: asked.planId } }));
+  assert.equal(status.approval, "applied", JSON.stringify(status));
+  assert.equal(status.counts.deleted, 1);
   const done = parse(await client.callTool({ name: "execute_knowledge_changes", arguments: args }));
-  assert.equal(done.ok, true, JSON.stringify(done));
-  assert.equal(done.counts.deleted, 1);
+  assert.equal(done.replayed, true, "the assistant's execute after the click runs nothing again");
   await client.close();
 
   // 8. Refresh rotates; revocation cuts the assistant off at once.

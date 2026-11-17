@@ -16,7 +16,7 @@
 import { z } from "zod";
 import { applyStudyEdits, checkStudyEdits, loadStudyStructure } from "../nova/product/setup-edit";
 import type { StudyEdit, StudyStructure } from "../nova/product/setup-edit.types";
-import { createNote, deleteNote, getNote, searchNoteBodies, updateNote } from "../nova/product/notes";
+import { createNote, deleteNote, getNote, noteHeads, searchNoteBodies, updateNote } from "../nova/product/notes";
 import { NOTE_BODY_MAX, NOTE_TITLE_MAX, NOTE_TOPIC_MAX } from "../nova/product/notes.types";
 import { linkedTitles, linkKey } from "../nova/product/note-links";
 import { appendToBody } from "../nova/product/note-capture";
@@ -47,12 +47,13 @@ export const ChangeSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("append_to_note"), noteId: id, text: z.string().min(1).max(200_000), baseUpdatedAt: z.string().max(40).optional() }),
   z.object({ op: z.literal("file_note"), noteId: id, subjectId: id.nullable().optional(), subjectName: name.optional(), topicName: z.string().trim().max(NOTE_TOPIC_MAX).nullable().optional(), baseUpdatedAt: z.string().max(40).optional() }),
   z.object({ op: z.literal("link_notes"), fromNoteId: id, toNoteTitle: z.string().trim().min(1).max(NOTE_TITLE_MAX).optional(), toTopicName: name.optional() }),
+  z.object({ op: z.literal("rename_note"), noteId: id, title: z.string().trim().min(1).max(NOTE_TITLE_MAX), baseUpdatedAt: z.string().max(40).optional() }),
   z.object({ op: z.literal("delete_note"), noteId: id }),
 ]);
 export type Change = z.infer<typeof ChangeSchema>;
 
 export const DESTRUCTIVE = new Set<Change["op"]>(["remove_topic", "remove_subject", "delete_note"]);
-export const RESTRUCTURE = new Set<Change["op"]>(["rename_subject", "rename_topic", "move_subject", "move_topic", "file_note"]);
+export const RESTRUCTURE = new Set<Change["op"]>(["rename_subject", "rename_topic", "rename_note", "move_subject", "move_topic", "file_note"]);
 const STRUCTURE = new Set<Change["op"]>(["add_subject", "add_topics", "describe_topic", "rename_subject", "rename_topic", "move_subject", "move_topic", "remove_topic", "remove_subject"]);
 
 // Server-side rule for when a human must approve first (Class 3).
@@ -158,17 +159,19 @@ function planStructure(st: StudyStructure, changes: Change[]): StructurePlan {
 
 // ── Note changes (checked against the notes as they are) ─────────────────────
 
-type NoteVersion = { id: string; updatedAt: string };
+// A note a change touches: its version (part of a plan's id) and what a
+// person needs to recognise it (title, where it is filed). Never its text.
+export type NoteVersion = { id: string; updatedAt: string; title?: string; subjectName?: string | null; topicName?: string | null };
 
+// One query for every note the changes touch (was one full note read each).
 async function noteVersions(profileId: string, changes: Change[]): Promise<{ versions: NoteVersion[]; missing: Set<string> }> {
   const ids = [...new Set(changes.flatMap(c => "noteId" in c ? [c.noteId] : c.op === "link_notes" ? [c.fromNoteId] : []))];
-  const versions: NoteVersion[] = [];
-  const missing = new Set<string>();
-  for (const nid of ids) {
-    const n = await getNote(profileId, nid);
-    if (n) versions.push({ id: nid, updatedAt: n.updatedAt }); else missing.add(nid);
-  }
-  return { versions, missing };
+  const heads = await noteHeads(profileId, ids);
+  const found = new Set(heads.map(h => h.id));
+  return {
+    versions: heads.map(h => ({ id: h.id, updatedAt: h.updatedAt, title: h.title, subjectName: h.subjectName, topicName: h.topicName })),
+    missing: new Set(ids.filter(i => !found.has(i))),
+  };
 }
 
 // What identifies the state a plan was made against: the structure version
@@ -178,30 +181,118 @@ export async function stateOf(profileId: string, changes: Change[]): Promise<{ s
   return { structure, notes: nv.versions, missing: nv.missing };
 }
 
-export function describe(c: Change, st: StudyStructure): string {
-  const sub = (sid?: string | null, sname?: string) => (sid ? subjectById(st, sid)?.name ?? sid : sname ?? "(none)");
-  const top = (tid: string) => topicById(st, tid)?.topic.name ?? tid;
+// ── What a person approves (K-01) ───────────────────────────────────────────
+// Every change in words a learner recognises: the item's name, what kind it
+// is, where it is now and where it goes, never an internal id. An item that
+// cannot be found is said so ("a note that no longer exists").
+
+export interface ApprovalItem {
+  action: "add" | "describe" | "rename" | "move" | "delete" | "create" | "append" | "file" | "link";
+  kind: "subject" | "topic" | "note";
+  name: string;              // the item as it is called now (or will be, when added)
+  where: string | null;      // where it is now ("Physics › Mechanics")
+  to: string | null;         // a new name, or where it goes
+  detail: string | null;     // what else: topics added, characters added
+  destructive: boolean;
+  text: string;              // the whole line, plain language
+}
+
+const quote = (s: string) => `“${s}”`;
+
+export function subjectPath(st: StudyStructure, sid: string | null | undefined): string | null {
+  if (!sid) return null;
+  const names: string[] = [];
+  let s = subjectById(st, sid);
+  for (let guard = 0; s && guard < 12; guard++) { names.unshift(s.name); s = s.parentId ? subjectById(st, s.parentId) : null; }
+  return names.length ? names.join(" › ") : null;
+}
+
+export function topicPath(st: StudyStructure, tid: string | null | undefined, includeSelf = false): string | null {
+  const found = tid ? topicById(st, tid) : null;
+  if (!found) return null;
+  const chain: string[] = includeSelf ? [found.topic.name] : [];
+  let parent = found.topic.parentId ? found.subject.topics.find(t => t.id === found.topic.parentId) : undefined;
+  for (let guard = 0; parent && guard < 12; guard++) { chain.unshift(parent.name); parent = parent.parentId ? found.subject.topics.find(t => t.id === parent!.parentId) : undefined; }
+  return [subjectPath(st, found.subject.id) ?? found.subject.name, ...chain].join(" › ");
+}
+
+const filing = (subject: string | null | undefined, topic: string | null | undefined) =>
+  subject ? `${subject}${topic ? ` › ${topic}` : ""}` : topic ? topic : "not filed anywhere";
+
+export function approvalItem(c: Change, st: StudyStructure, notes: NoteVersion[] = []): ApprovalItem {
+  const sub = (sid?: string | null, sname?: string) => (sid ? subjectPath(st, sid) ?? "a subject that no longer exists" : sname ?? null);
+  const topName = (tid: string) => topicById(st, tid)?.topic.name ?? "a topic that no longer exists";
+  const note = (nid: string) => notes.find(n => n.id === nid);
+  const noteName = (nid: string) => note(nid)?.title ?? "a note that no longer exists";
+  const noteWhere = (nid: string) => { const n = note(nid); return n ? filing(n.subjectName, n.topicName) : null; };
+  const item = (a: Omit<ApprovalItem, "text" | "destructive" | "where" | "to" | "detail"> & Partial<ApprovalItem>, text: string): ApprovalItem =>
+    ({ where: null, to: null, detail: null, destructive: false, ...a, text });
   switch (c.op) {
-    case "add_subject":    return `Add subject "${c.name}"${c.parentSubjectId || c.parentSubjectName ? ` inside ${sub(c.parentSubjectId, c.parentSubjectName)}` : ""}${c.topics?.length ? ` with ${c.topics.length} topic(s)` : ""}`;
-    case "add_topics":     return `Add ${c.names.length} topic(s) to ${sub(c.subjectId, c.subjectName)}${c.parentTopicId || c.parentTopicName ? ` under ${c.parentTopicId ? top(c.parentTopicId) : c.parentTopicName}` : ""}: ${c.names.join(", ")}`;
-    case "describe_topic": return `Describe topic "${top(c.topicId)}"`;
-    case "rename_subject": return `Rename subject "${sub(c.subjectId)}" to "${c.name}"`;
-    case "rename_topic":   return `Rename topic "${top(c.topicId)}" to "${c.name}"`;
-    case "move_subject":   return `Move subject "${sub(c.subjectId)}" ${c.parentSubjectId || c.parentSubjectName ? `inside ${sub(c.parentSubjectId, c.parentSubjectName)}` : "to the top level"}`;
-    case "move_topic":     return `Move topic "${top(c.topicId)}"${c.toSubjectId ? ` to ${sub(c.toSubjectId)}` : ""}${c.parentTopicId || c.parentTopicName ? ` under ${c.parentTopicId ? top(c.parentTopicId) : c.parentTopicName}` : ""}`;
-    case "remove_topic":   return `DELETE topic "${top(c.topicId)}"`;
-    case "remove_subject": return `DELETE subject "${sub(c.subjectId)}"`;
-    case "create_note":    return `Create note "${c.title}"${c.subjectId || c.subjectName ? ` in ${sub(c.subjectId, c.subjectName)}` : ""}${c.topicName ? ` › ${c.topicName}` : ""}`;
-    case "append_to_note": return `Add ${c.text.length.toLocaleString("en-US")} characters to note ${c.noteId}`;
-    case "file_note":      return `File note ${c.noteId} under ${c.subjectId === null ? "nothing" : sub(c.subjectId, c.subjectName)}${c.topicName ? ` › ${c.topicName}` : ""}`;
-    case "link_notes":     return `Link note ${c.fromNoteId} to [[${c.toNoteTitle ?? c.toTopicName}]]`;
-    case "delete_note":    return `DELETE note ${c.noteId}`;
+    case "add_subject": {
+      const parent = sub(c.parentSubjectId, c.parentSubjectName);
+      const detail = c.topics?.length ? `with ${c.topics.length} topic${c.topics.length === 1 ? "" : "s"}: ${c.topics.join(", ")}` : null;
+      return item({ action: "add", kind: "subject", name: c.name, to: parent, detail }, `Add subject ${quote(c.name)}${parent ? ` inside ${parent}` : " at the top level"}${detail ? `, ${detail}` : ""}`);
+    }
+    case "add_topics": {
+      const where = sub(c.subjectId, c.subjectName) ?? "the subject";
+      const under = c.parentTopicId ? topicPath(st, c.parentTopicId, true) : c.parentTopicName ? `${where} › ${c.parentTopicName}` : where;
+      return item({ action: "add", kind: "topic", name: c.names.join(", "), to: under, detail: `${c.names.length} topic${c.names.length === 1 ? "" : "s"}` }, `Add ${c.names.length} topic${c.names.length === 1 ? "" : "s"} to ${under}: ${c.names.join(", ")}`);
+    }
+    case "describe_topic": return item({ action: "describe", kind: "topic", name: topName(c.topicId), where: topicPath(st, c.topicId) }, `Set the explanation of topic ${quote(topName(c.topicId))}${topicPath(st, c.topicId) ? ` in ${topicPath(st, c.topicId)}` : ""}`);
+    case "rename_subject": {
+      const old = subjectById(st, c.subjectId)?.name ?? "a subject that no longer exists";
+      const parent = subjectById(st, c.subjectId)?.parentId ? subjectPath(st, subjectById(st, c.subjectId)!.parentId) : null;
+      return item({ action: "rename", kind: "subject", name: old, where: parent, to: c.name }, `Rename subject ${quote(old)} to ${quote(c.name)}${parent ? ` (inside ${parent})` : ""}`);
+    }
+    case "rename_topic": return item({ action: "rename", kind: "topic", name: topName(c.topicId), where: topicPath(st, c.topicId), to: c.name }, `Rename topic ${quote(topName(c.topicId))} to ${quote(c.name)}${topicPath(st, c.topicId) ? ` (in ${topicPath(st, c.topicId)})` : ""}`);
+    case "rename_note": return item({ action: "rename", kind: "note", name: noteName(c.noteId), where: noteWhere(c.noteId), to: c.title }, `Rename note ${quote(noteName(c.noteId))} to ${quote(c.title)}${noteWhere(c.noteId) ? ` (filed under ${noteWhere(c.noteId)})` : ""}`);
+    case "move_subject": {
+      const s = subjectById(st, c.subjectId);
+      const from = s?.parentId ? subjectPath(st, s.parentId) : "the top level";
+      const to = c.parentSubjectId || c.parentSubjectName ? sub(c.parentSubjectId, c.parentSubjectName) : "the top level";
+      const name = s?.name ?? "a subject that no longer exists";
+      return item({ action: "move", kind: "subject", name, where: from, to }, `Move subject ${quote(name)} from ${from} to ${to === "the top level" ? to : `inside ${to}`}`);
+    }
+    case "move_topic": {
+      const found = topicById(st, c.topicId);
+      const from = topicPath(st, c.topicId);
+      const destSubject = c.toSubjectId ? subjectPath(st, c.toSubjectId) ?? "a subject that no longer exists" : found ? subjectPath(st, found.subject.id) ?? found.subject.name : null;
+      const to = c.parentTopicId ? topicPath(st, c.parentTopicId, true) : c.parentTopicName ? `${destSubject} › ${c.parentTopicName}` : destSubject;
+      return item({ action: "move", kind: "topic", name: topName(c.topicId), where: from, to }, `Move topic ${quote(topName(c.topicId))} from ${from ?? "where it is"} to ${to ?? "the top of its subject"}`);
+    }
+    case "remove_topic": return item({ action: "delete", kind: "topic", name: topName(c.topicId), where: topicPath(st, c.topicId), destructive: true }, `Delete topic ${quote(topName(c.topicId))}${topicPath(st, c.topicId) ? ` from ${topicPath(st, c.topicId)}` : ""}`);
+    case "remove_subject": {
+      const s = subjectById(st, c.subjectId);
+      const name = s?.name ?? "a subject that no longer exists";
+      const parent = s?.parentId ? subjectPath(st, s.parentId) : null;
+      const detail = s ? `${s.topics.length} topic${s.topics.length === 1 ? "" : "s"} in it` : null;
+      return item({ action: "delete", kind: "subject", name, where: parent, detail, destructive: true }, `Delete subject ${quote(name)}${parent ? ` from ${parent}` : ""}${detail ? ` (${detail})` : ""}`);
+    }
+    case "create_note": {
+      const where = c.subjectId || c.subjectName ? filing(sub(c.subjectId, c.subjectName), c.topicName) : null;
+      return item({ action: "create", kind: "note", name: c.title, to: where }, `Create note ${quote(c.title)}${where ? ` in ${where}` : ""}`);
+    }
+    case "append_to_note": {
+      const detail = `${c.text.length.toLocaleString("en-US")} characters at the end`;
+      return item({ action: "append", kind: "note", name: noteName(c.noteId), where: noteWhere(c.noteId), detail }, `Add ${detail} of note ${quote(noteName(c.noteId))}`);
+    }
+    case "file_note": {
+      const to = c.subjectId === null ? "not filed anywhere" : filing(sub(c.subjectId, c.subjectName) ?? note(c.noteId)?.subjectName ?? null, c.topicName === undefined ? note(c.noteId)?.topicName : c.topicName);
+      return item({ action: "file", kind: "note", name: noteName(c.noteId), where: noteWhere(c.noteId), to }, `Move note ${quote(noteName(c.noteId))} from ${noteWhere(c.noteId) ?? "where it is"} to ${to}`);
+    }
+    case "link_notes": {
+      const target = c.toNoteTitle ?? c.toTopicName ?? "";
+      return item({ action: "link", kind: "note", name: noteName(c.fromNoteId), where: noteWhere(c.fromNoteId), to: target }, `Link note ${quote(noteName(c.fromNoteId))} to the ${c.toNoteTitle ? "note" : "topic"} ${quote(target)}`);
+    }
+    case "delete_note": return item({ action: "delete", kind: "note", name: noteName(c.noteId), where: noteWhere(c.noteId), destructive: true }, `Delete note ${quote(noteName(c.noteId))}${noteWhere(c.noteId) ? ` (filed under ${noteWhere(c.noteId)})` : ""}`);
   }
 }
 
+export const describe = (c: Change, st: StudyStructure, notes: NoteVersion[] = []): string => approvalItem(c, st, notes).text;
+
 // ── Preview: everything checked, nothing written ─────────────────────────────
 
-export async function previewChanges(profileId: string, changes: Change[]): Promise<{ report: ChangeReport; summary: string[]; state: Awaited<ReturnType<typeof stateOf>> }> {
+export async function previewChanges(profileId: string, changes: Change[]): Promise<{ report: ChangeReport; summary: string[]; items: ApprovalItem[]; state: Awaited<ReturnType<typeof stateOf>> }> {
   const state = await stateOf(profileId, changes);
   const st = state.structure;
   const plan = planStructure(st, changes);
@@ -211,19 +302,20 @@ export async function previewChanges(profileId: string, changes: Change[]): Prom
     const at = plan.first[issue.index];
     if (at) items.push({ index: at.index, op: changes[at.index]!.op, status: "failed", message: issue.message });
   }
-  for (const p of plan.first) if (!items.some(i => i.index === p.index)) items.push({ index: p.index, op: changes[p.index]!.op, status: "planned", message: describe(changes[p.index]!, st) });
+  for (const p of plan.first) if (!items.some(i => i.index === p.index)) items.push({ index: p.index, op: changes[p.index]!.op, status: "planned", message: describe(changes[p.index]!, st, state.notes) });
   for (const p of plan.second) items.push({ index: p.index, op: "add_topics", status: "planned", message: describe(changes[p.index]!, st) });
   changes.forEach((c, index) => {
     if (STRUCTURE.has(c.op)) return;
     const nid = "noteId" in c ? c.noteId : c.op === "link_notes" ? c.fromNoteId : null;
     if (nid && state.missing.has(nid)) { items.push({ index, op: c.op, status: "failed", message: `Note ${nid} is not one of the learner's notes.` }); return; }
-    items.push({ index, op: c.op, status: "planned", message: describe(c, st) });
+    items.push({ index, op: c.op, status: "planned", message: describe(c, st, state.notes) });
   });
   items.sort((a, b) => a.index - b.index);
   const failed = items.filter(i => i.status === "failed").length;
   return {
     report: { status: failed ? "failed" : "preview", items, counts: countOf(items), verification: { ran: false, passed: false, checks: [] }, structureVersion: st.version },
-    summary: changes.map(c => describe(c, st)),
+    summary: changes.map(c => describe(c, st, state.notes)),
+    items: changes.map(c => approvalItem(c, st, state.notes)),
     state,
   };
 }
@@ -376,6 +468,14 @@ async function applyNoteChange(profileId: string, index: number, c: Change, st: 
       if (!res.ok) return fail(res.error === "conflict" ? "The note changed while this was being saved. Nothing was overwritten." : res.message);
       return { index, op: c.op, status: "updated", message: `"${note.title}" now links to [[${target}]].`, resource: { type: "note", id: note.id, title: note.title } };
     }
+    case "rename_note": {
+      const note = await getNote(profileId, c.noteId);
+      if (!note) return fail("That note is not one of the learner's.");
+      if (note.title === c.title.trim().replace(/\s+/g, " ")) return { index, op: c.op, status: "skipped", message: `The note is already called “${note.title}”.`, resource: { type: "note", id: note.id, title: note.title } };
+      const res = await updateNote(profileId, note.id, { title: c.title, baseUpdatedAt: c.baseUpdatedAt ?? note.updatedAt });
+      if (!res.ok) return fail(res.error === "conflict" ? "The note changed since it was read. Nothing was overwritten." : res.message);
+      return { index, op: c.op, status: "updated", message: `Renamed “${note.title}” to “${res.note.title}”.`, resource: { type: "note", id: res.note.id, title: res.note.title } };
+    }
     case "delete_note": {
       const note = await getNote(profileId, c.noteId);
       if (!note) return { index, op: c.op, status: "skipped", message: "That note was already gone." };
@@ -400,6 +500,7 @@ async function verify(profileId: string, changes: Change[], items: ItemResult[])
       let ok = !!n;
       if (n && c.op === "append_to_note") ok = flat(n.body).includes(flat(c.text));
       if (n && c.op === "create_note") ok = n.title === c.title.trim().replace(/\s+/g, " ");
+      if (n && c.op === "rename_note") ok = n.title === c.title.trim().replace(/\s+/g, " ");
       if (n && c.op === "link_notes") ok = linkedTitles(n.body).some(t => linkKey(t) === linkKey(c.toNoteTitle ?? c.toTopicName ?? ""));
       checks.push({ what: `note "${it.resource.title}" ${c.op === "create_note" ? "exists" : "has the change"}`, ok });
     } else if (c.op === "add_subject") {
