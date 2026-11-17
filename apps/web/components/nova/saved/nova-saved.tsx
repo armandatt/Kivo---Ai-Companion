@@ -9,7 +9,7 @@ import { takeCapture, type Capture } from './pending-capture'
 import { SaveLink } from './save-link'
 import { SavedLibrary } from './saved-library'
 
-// The Browser Extension page: getting the extension, connecting it, and the learner's
+// The Saved Pages page: getting the extension, connecting it, and the learner's
 // inbox of saved pages and passages (pasted here, sent by the bookmark, or
 // sent by the extension). One page, because what the extension saves lands
 // here; the address stays /saved. A saved page is a bookmark with a subject,

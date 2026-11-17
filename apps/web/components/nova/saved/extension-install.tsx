@@ -1,6 +1,6 @@
 'use client'
 
-// The Browser Extension page's own pieces: the header with the connection
+// The Saved Pages page's own pieces: the header with the connection
 // status and the one action that matters now, the three setup steps (shown
 // until a browser is connected), the connected browsers, and help.
 //
@@ -55,8 +55,8 @@ export function ExtensionHeader({ connection }: { connection: ExtensionConnectio
   return (
     <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-5" data-extension-intro={connected ? 'connected' : 'install'}>
       <div className="min-w-0 max-w-xl">
-        <h1 className="text-[1.9rem] font-semibold leading-[1.08] tracking-[-0.03em] text-foreground sm:text-[2.2rem]">Browser Extension</h1>
-        <p className="mt-2 text-[15px] text-foreground/65">Save what you discover. Continue learning in Kivo.</p>
+        <h1 className="text-[1.9rem] font-semibold leading-[1.08] tracking-[-0.03em] text-foreground sm:text-[2.2rem]">Saved Pages</h1>
+        <p className="mt-2 text-[15px] text-foreground/65">Pages you save from the web, and the Kivo browser extension that saves them.</p>
       </div>
       <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
         <div className="flex flex-wrap items-center gap-2">

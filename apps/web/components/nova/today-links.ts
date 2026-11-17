@@ -10,7 +10,7 @@ import { topicNode } from './local-graph'
 // have gets nothing. Pure, so it is tested without a page.
 
 export interface TopicRecord {
-  // The topic's own place in the Knowledge Space, and on the map.
+  // The topic's own place in Knowledge, and on the map.
   knowledgeHref: string | null
   mapHref:       string
   // null: no session stands behind it yet.
@@ -42,7 +42,7 @@ export function topicRecord(
   }
 }
 
-// The Knowledge Space address of the topic a task names, if the map has it.
+// The Knowledge address of the topic a task names, if the map has it.
 export function taskTopicHref(map: Pick<NovaKnowledgeMapReady, 'nodes'> | null, task: Pick<NovaTaskItem, 'subjectName' | 'topicName'>): string | null {
   if (!map || !task.subjectName || !task.topicName) return null
   return topicNode(map, { subjectName: task.subjectName, topicName: task.topicName })?.href ?? null

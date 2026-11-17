@@ -15,6 +15,7 @@ import {
   resumeStudySession,
   setSessionLength,
   setSessionDetails,
+  setSessionTopic,
   abandonIfStale,
   saveSessionNote,
 } from "../persistence/nova-persistence";
@@ -107,6 +108,10 @@ export async function runNovaSessionCommand(
     });
   } else if (active && command.action === "set_details") {
     await setSessionDetails(active.id, command, { topicName: active.topicName, details: await detailsOf(active.id) });
+  } else if (active && command.action === "set_topic") {
+    if (active.topicName) return { ok: false, error: "invalid", message: "This session is already on a topic." };
+    const named = await setSessionTopic(profileId, active.id, command.subjectId, command.topicName);
+    if (!named) return { ok: false, error: "invalid", message: "That isn't one of your topics." };
   } else if (active && command.action === "set_length") {
     await setSessionLength(active.id, command.minutes);
   } else if (active && command.action === "pause") {
@@ -148,6 +153,7 @@ export async function runNovaSessionCommand(
     : command.action === "pause"  ? session?.status === "paused"
     : command.action === "resume" ? session?.status === "in_progress"
     : command.action === "set_length" ? session !== null && session.plannedDurationMinutes === command.minutes
+    : command.action === "set_topic" ? session !== null && session.id === active?.id && session.topicName !== null
     : command.action === "set_details" ? session !== null && session.id === active?.id
       && (command.category === undefined || (session.details?.category ?? null) === command.category)
       && (command.description === undefined || (session.details?.description ?? null) === command.description)

@@ -1,5 +1,6 @@
 'use client'
 
+import { KnowledgeViews } from '../knowledge-views'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ChevronDown, ChevronsDownUp, ChevronsUpDown, ChevronRight, Flag, NotebookPen, PencilRuler, Play, Waypoints } from 'lucide-react'
@@ -396,6 +397,7 @@ function Overview({ view, roots, onGo, start, starting, error, onChanged }: {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <KnowledgeViews current="list" />
           <Link href="/notes/new" className={BUTTON_QUIET}><NotebookPen aria-hidden className="size-3.5" /> Note</Link>
           <Link href="/build" className={cn(TEXT_LINK, 'ml-1')} data-edit-structure><PencilRuler aria-hidden className="size-3.5" /> Edit learning structure</Link>
         </div>

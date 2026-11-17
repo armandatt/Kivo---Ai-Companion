@@ -118,6 +118,10 @@ export const EXAM_TOPIC_MINUTES = 30;
 // exam. The Knowledge Engine's "solid" boundary (DEVELOPING_BELOW).
 const SOLID_FROM = 0.7;
 
+// A topic still to work on before an exam: never studied, or not yet solid.
+// One rule for the shortfall and for Today's "N topics to go" line.
+export const notYetSolid = (t: Pick<TopicMasteryState, "reviewCount" | "masteryProbability">) => t.reviewCount === 0 || t.masteryProbability < SOLID_FROM;
+
 // Whether the topics still to be worked on for this exam fit in the time the
 // learner has before it, at the daily time they gave. null when they fit,
 // when no exam is inside the window, or when the day is held short for the
@@ -135,7 +139,7 @@ export function examShortfall(input: {
   if (!examContext || examContext.daysUntil >= EXAM_WINDOW_DAYS) return null;
   if (budget.basis === "no_pressure" || budget.basis === "recovery") return null;
 
-  const remaining = examTopics.filter(t => t.reviewCount === 0 || t.masteryProbability < SOLID_FROM);
+  const remaining = examTopics.filter(notYetSolid);
   if (remaining.length === 0) return null;
 
   // Today, and each day after it before the day of the exam. Counted on the

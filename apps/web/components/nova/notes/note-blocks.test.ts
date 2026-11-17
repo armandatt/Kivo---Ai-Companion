@@ -248,3 +248,16 @@ test('a bare address is shown short: its site and the start of its path', () => 
   const long = shortAddress('https://docs.python.org/3/library/asyncio-eventloop.html?highlight=run_until_complete&section=loops')
   assert.ok(long.length <= 48 && long.endsWith('…') && long.startsWith('docs.python.org/3/library/'))
 })
+
+test('a checklist item is ticked in the note text; nothing else changes; a list that moved ticks nothing', async () => {
+  const { toggleChecklistItem } = await import('./note-blocks')
+  const blocksOf = parseWithSpans
+  const body = '# Tasks\n\n- [ ] Read chapter 3\n- [x] Make flashcards\n  - [ ] nested one\n\nAfter.'
+  const list = blocksOf(body).find(b => b.kind === 'list')!
+  const ticked = toggleChecklistItem(body, list.at!, list.to!, 0)!
+  assert.equal(ticked, body.replace('- [ ] Read', '- [x] Read'))
+  assert.equal(toggleChecklistItem(ticked, list.at!, list.to!, 1), ticked.replace('- [x] Make', '- [ ] Make'))
+  assert.equal(toggleChecklistItem(body, list.at!, list.to!, 2), body.replace('  - [ ] nested', '  - [x] nested'))
+  assert.equal(toggleChecklistItem(body, list.at!, list.to!, 9), null)
+  assert.equal(toggleChecklistItem('Plain text only', 0, 15, 0), null)
+})

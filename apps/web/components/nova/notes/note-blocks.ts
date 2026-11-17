@@ -437,3 +437,30 @@ export function tagsOf(body: string): string[] {
   }
   return [...seen.values()]
 }
+
+// Ticks or unticks the n-th checklist item of the list at [at, to) in the
+// note's text: only that item's "[ ]" / "[x]" changes, everything else is
+// kept byte for byte. null when the text there is no longer that list (the
+// note changed): nothing is ticked rather than the wrong line.
+export function toggleChecklistItem(body: string, at: number, to: number, n: number): string | null {
+  if (at < 0 || to > body.length || at >= to) return null
+  let index = 0
+  let pos = at
+  while (pos < to) {
+    const end = body.indexOf('\n', pos)
+    const lineEnd = end === -1 || end > to ? to : end
+    const line = body.slice(pos, lineEnd)
+    const indent = line.length - line.trimStart().length
+    const rest = line.slice(indent)
+    if ((rest.startsWith('- ') || rest.startsWith('* ')) && checkItem(rest.slice(2))) {
+      if (index === n) {
+        const markAt = pos + indent + 3
+        const done = body[markAt] !== ' '
+        return body.slice(0, markAt) + (done ? ' ' : 'x') + body.slice(markAt + 1)
+      }
+      index++
+    }
+    pos = lineEnd + 1
+  }
+  return null
+}

@@ -919,6 +919,9 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     const params = new URLSearchParams(window.location.search)
     const f = focusToApply(params.get('focus'), allIds, false)
     const ex = params.get('explore')
+    // ?lens=gaps (Today's exam line): what is left to do for an exam's subject.
+    const ln = params.get('lens')
+    if (ln === 'gaps' || ln === 'learning' || ln === 'structure') setLensState(ln)
     focusApplied.current = true
     if (ex && allIds.has(ex) && canExplore(tree, ex)) setStack(s => enter(s, ex, null))
     if (f) { setScope(f); setSelected(f) }

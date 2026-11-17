@@ -25,7 +25,7 @@ import { Identity, ModeSwitch, type NovaMode } from './nova-modes'
 import { placeInto, placementHint, type InsertPart } from './tutor-session'
 import type { TutorReply } from '@repo/api/nova/product/note-tutor.types'
 import { alreadyIn, applyEdits, insertAt, locateChange, placementFor, resolvePlacement, resolveRef, type EditChange, type NoteRef } from '@repo/api/nova/product/note-outline'
-import { outline, parseBlocks, sourceOf, tagsOf, wordCount, type NoteSource } from './note-blocks'
+import { outline, parseBlocks, sourceOf, tagsOf, toggleChecklistItem, wordCount, type NoteSource } from './note-blocks'
 import { SourceReader } from './source-reader'
 import type { Taken } from './pdf-reader'
 import { ReaderSendDialog, type AddToCurrent } from './reader-send-dialog'
@@ -317,6 +317,15 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
         if (same(draftRef.current, sent)) writeDraft(current.id, null)
         return true
       }
+      if (opts.stay && !current) {
+        // A new note autosaved for the first time: it now exists, editing goes
+        // on in place, and the address becomes the note's own (no reload).
+        setSaved(sent)
+        writeDraft(null, null)
+        if (!same(draftRef.current, sent)) writeDraft(res.note.id, { draft: draftRef.current, base: res.note.updatedAt, at: Date.now() })
+        window.history.replaceState(window.history.state, '', `/notes/${res.note.id}`)
+        return true
+      }
       writeDraft(current?.id ?? null, null)
       setDraft(draftOf(res.note)); setSaved(draftOf(res.note)); setEditing(false)
       setJustSaved(true)
@@ -329,11 +338,35 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     return run
   }
 
-  // Autosave: a moment after typing stops, while editing a note that exists.
-  // Not over a conflict (the learner chooses), and not without a title.
+  // Ticking a checklist item while reading: that item's "[ ]" changes in the
+  // note's text, saved at once through the same guarded save (one at a time;
+  // a note changed elsewhere is not overwritten: the tick is undone and said).
+  const ticking = useRef(false)
+  const tickInReader = useCallback(async (at: number, to: number, index: number) => {
+    const n = noteRef.current
+    if (!n || ticking.current) return
+    const body = toggleChecklistItem(n.body, at, to, index)
+    if (body === null) return
+    ticking.current = true
+    setNote({ ...n, body })
+    const res = await updateNote(n.id, { title: n.title, body, subjectId: n.subjectId ?? null, topicName: n.topicName ?? null, baseUpdatedAt: n.updatedAt })
+    ticking.current = false
+    if (res.ok) { setNote(res.note); setDraft(draftOf(res.note)); setSaved(draftOf(res.note)) }
+    else { setNote(n); setError(res.error === 'conflict' ? 'This note changed somewhere else, so the tick wasn’t saved. Reload to see the latest.' : res.message) }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // In the preview while writing: the draft changes, and autosave saves it.
+  const tickInDraft = useCallback((at: number, to: number, index: number) => {
+    setDraft(d => { const body = toggleChecklistItem(d.body, at, to, index); return body === null ? d : { ...d, body } })
+  }, [])
+
+  // Autosave: a moment after typing stops. Not over a conflict (the learner
+  // chooses), and not without a title. A new note is saved the same way once
+  // it has a title and some text (Phase 3: it used to wait for Save, and
+  // closing the tab lost it unless the browser draft was found again).
   useEffect(() => {
-    if (!editing || !note || !dirty || conflict || !draft.title.trim() || draft.body.length > NOTE_BODY_MAX) return
-    const timer = window.setTimeout(() => { void save(note.updatedAt, { stay: true }) }, autoError ? AUTOSAVE_RETRY_MS : AUTOSAVE_MS)
+    if (!editing || !dirty || conflict || !draft.title.trim() || draft.body.length > NOTE_BODY_MAX) return
+    if (!note && !draft.body.trim()) return
+    const timer = window.setTimeout(() => { void save(note?.updatedAt ?? null, { stay: true }) }, autoError ? AUTOSAVE_RETRY_MS : AUTOSAVE_MS)
     return () => window.clearTimeout(timer)
   }, [draft, editing, note, dirty, conflict, autoError]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1111,7 +1144,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     )
     const preview = (
       <div ref={previewRef} className="min-h-[24rem] px-1 py-2" data-note-preview>
-        {draft.body.trim() ? <NoteBody body={draft.body} links={note?.links.outgoing ?? []} serif={prefs.serif} title={draft.title} onReadPdf={readPdf} /> : <p className="py-3 text-sm text-foreground/35">Nothing to preview yet.</p>}
+        {draft.body.trim() ? <NoteBody body={draft.body} links={note?.links.outgoing ?? []} serif={prefs.serif} title={draft.title} onReadPdf={readPdf} onToggleCheck={tickInDraft} /> : <p className="py-3 text-sm text-foreground/35">Nothing to preview yet.</p>}
       </div>
     )
 
@@ -1253,7 +1286,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
         {justSaved && <p role="status" className="mt-4 flex items-center gap-1.5 text-sm text-foreground/70" data-note-saved><Check className="size-4 text-keppel-300" /> Saved</p>}
 
         <div className="mt-8">
-          {note.body ? <NoteBody body={note.body} links={note.links.outgoing} serif={prefs.serif} title={note.title} onReadPdf={readPdf} /> : (
+          {note.body ? <NoteBody body={note.body} links={note.links.outgoing} serif={prefs.serif} title={note.title} onReadPdf={readPdf} onToggleCheck={tickInReader} /> : (
             <button type="button" onClick={() => setEditing(true)} className="w-full rounded-2xl border border-dashed border-white/10 px-6 py-10 text-center text-sm text-foreground/45 transition-colors hover:border-keppel-400/40 hover:text-foreground/70">
               This note is empty. Press E or click here to write it.
             </button>

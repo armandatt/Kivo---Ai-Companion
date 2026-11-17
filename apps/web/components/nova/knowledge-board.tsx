@@ -52,7 +52,7 @@ export function KnowledgeBoard({ map, reviewDue }: { map: Loaded<NovaKnowledgeMa
     <section aria-labelledby="knowledge-board" data-section="knowledge-board">
       <SectionHeading id="knowledge-board" icon={Library} aside={
         <>
-          <Link href="/knowledge" className={TEXT_LINK}>Knowledge Space</Link>
+          <Link href="/knowledge" className={TEXT_LINK}>Knowledge</Link>
           <Link href="/map" className={TEXT_LINK}>Map <ArrowRight aria-hidden className="size-3" /></Link>
         </>
       }>

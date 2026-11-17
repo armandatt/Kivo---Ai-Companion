@@ -7,7 +7,7 @@
 // HTML, so a note cannot run code or change the page.
 
 import Link from 'next/link'
-import { useState, type ReactNode } from 'react'
+import { createContext, useContext, useState, type ReactNode } from 'react'
 import {
   AlertTriangle, BookOpen, BookOpenText, Check, ChevronRight, ExternalLink, FileText, FlaskConical, HelpCircle, KeyRound, Lightbulb, ListChecks, NotebookPen, Quote,
 } from 'lucide-react'
@@ -113,6 +113,21 @@ const lines = (ls: string[], key: string, resolve: Resolve) =>
 // Where a top-level block is in the note's text, for finding a passage Nova
 // cites (note-editor.tsx revealPassage).
 type SpanAttrs = { 'data-at'?: number; 'data-to'?: number }
+// The page's way to tick a checklist item (the list's place in the text and
+// the item's number), when it offers one.
+type ToggleCheck = (at: number, to: number, index: number) => void
+const ToggleContext = createContext<ToggleCheck | null>(null)
+
+function CheckBox({ done, at, to, index }: { done: boolean; at?: number; to?: number; index: number }) {
+  const toggle = useContext(ToggleContext)
+  const box = `mt-[0.32em] grid size-[1.05em] shrink-0 place-items-center rounded-[4px] border ${done ? 'border-transparent bg-[color:var(--nova)] text-background' : 'border-[color:var(--note-soft)]'}`
+  if (!toggle || at === undefined || to === undefined) return <span aria-hidden className={box}>{done && <Check className="size-[0.75em]" strokeWidth={3} />}</span>
+  return (
+    <button type="button" role="checkbox" aria-checked={done} aria-label={done ? 'Mark as not done' : 'Mark as done'} onClick={() => toggle(at, to, index)}
+      className={`${box} cursor-pointer hover:border-[color:var(--nova)]`} data-note-check>{done && <Check className="size-[0.75em]" strokeWidth={3} />}</button>
+  )
+}
+
 const spanOf = (b: Block): SpanAttrs => (b.at !== undefined ? { 'data-at': b.at, 'data-to': b.to } : {})
 
 function Callout({ block, k, resolve, span }: { block: Extract<Block, { kind: 'callout' }>; k: string; resolve: Resolve; span: SpanAttrs }) {
@@ -148,13 +163,15 @@ function render(blocks: Block[], key: string, resolve: Resolve, nested = false):
       case 'para': return <p key={k} className={`my-3 ${edge}`} {...span}>{lines(b.lines, k, resolve)}</p>
       case 'list': {
         // A list whose items are all "[ ]" / "[x]" is a checklist: boxes, the
-        // done ones quieter. Shown, not ticked here: the text is the record.
+        // done ones quieter. Tickable where the page passes onToggleCheck
+        // (the note's own reader and preview): the tick changes that item's
+        // "[ ]" in the text, which is still the record.
         const checks = b.items.map(checkItem)
         if (!b.ordered && checks.every(Boolean)) return (
           <ul key={k} className={`my-3 space-y-1 ${edge}`} {...span} data-note-checklist>
             {checks.map((c, j) => (
               <li key={`${k}-${j}`} className={`flex items-start gap-2.5 ${c!.done ? 'text-[color:var(--note-soft)] line-through decoration-[color:var(--note-rule)]' : ''}`} data-checked={c!.done ? 'true' : 'false'}>
-                <span aria-hidden className={`mt-[0.32em] grid size-[1.05em] shrink-0 place-items-center rounded-[4px] border ${c!.done ? 'border-transparent bg-[color:var(--nova)] text-background' : 'border-[color:var(--note-soft)]'}`}>{c!.done && <Check className="size-[0.75em]" strokeWidth={3} />}</span>
+                <CheckBox done={c!.done} at={b.at} to={b.to} index={j} />
                 <span className="min-w-0"><span className="sr-only">{c!.done ? 'Done: ' : 'To do: '}</span>{line(c!.text, `${k}-${j}`, resolve)}</span>
               </li>
             ))}
@@ -274,8 +291,10 @@ function PaperHeader({ card, title, nav, span, onRead }: { card: PaperCard; titl
   )
 }
 
-export function NoteBody({ body, links, serif = false, cite, compact = false, title, onReadPdf }: {
+export function NoteBody({ body, links, serif = false, cite, compact = false, title, onReadPdf, onToggleCheck }: {
   body: string; links: NoteLinkRef[]; serif?: boolean
+  // Ticks a checklist item (the note's reader and preview); without it, boxes are shown only.
+  onToggleCheck?: ToggleCheck
   // Opens a paper's PDF beside the note instead of in a new tab.
   onReadPdf?: (url: string) => void
   cite?: (label: string, key: string) => ReactNode | null
@@ -317,7 +336,7 @@ export function NoteBody({ body, links, serif = false, cite, compact = false, ti
       className={`note-prose break-words [&>*:first-child]:mt-0 ${compact ? '[&>*:last-child]:mb-0 text-[14px] leading-relaxed [&_h2]:mt-5 [&_h2]:text-[1.2em] [&_h2]:after:hidden [&_h3]:mt-4 [&_h3]:text-[1.08em] [&_p]:my-2' : serif ? 'font-serif text-[17px] leading-[1.8] [&_p]:my-4' : 'text-[15.5px] leading-[1.75] [&_p]:my-3.5'}`}
       data-note-body
     >
-      {content}
+      <ToggleContext.Provider value={onToggleCheck ?? null}>{content}</ToggleContext.Provider>
     </div>
   )
 }

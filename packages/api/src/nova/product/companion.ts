@@ -30,14 +30,17 @@ export const NOVA_ROUTES: ReadonlyArray<{ path: string; label: string }> = [
   // Today is where the day is planned and done, the task board included.
   { path: "/home",    label: "Today" },
   { path: "/map",     label: "Knowledge Map" },
+  // The same subjects and topics as a list, with each topic's record.
+  { path: "/knowledge", label: "Knowledge" },
   // The conversation with Nova that builds a workspace (product/builder.ts).
   { path: "/build",   label: "Build with Nova" },
   { path: "/notes",   label: "Notes" },
-  // Connecting the browser extension, and the pages saved with it.
-  { path: "/saved",   label: "Browser Extension" },
+  // What was captured and not yet organised into a note (capture-drafts.ts).
+  { path: "/notes/drafts", label: "Drafts" },
+  // The pages saved from the browser, with connecting the extension on the same page.
+  { path: "/saved",   label: "Saved Pages" },
   { path: "/calendar", label: "Calendar" },
   { path: "/focus",   label: "Focus" },
-  { path: "/knowledge", label: "Knowledge" },
   { path: "/progress", label: "Progress" },
   { path: "/learning-dna", label: "Learning DNA" },
   // The same world page Rex has, fed by Nova's own numbers (product/creature.ts).

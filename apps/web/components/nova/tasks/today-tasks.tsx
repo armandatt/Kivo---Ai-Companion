@@ -34,7 +34,7 @@ type Props = {
   // Today's plan against the day's time, for saying when the tasks due today
   // (with a length the learner gave) do not fit beside it. Nothing is moved.
   dayMinutes?: { planned: number; budget: number }
-  // Where the task's topic lives in the Knowledge Space, if it names one the
+  // Where the task's topic lives in Knowledge, if it names one the
   // map has.
   topicHref?: (task: NovaTaskItem) => string | null
 }
@@ -173,7 +173,7 @@ export function TodayTasks({ tasks, failed, error, onCreate, onUpdate, onStart, 
                             </span>
                           )}
                           {task.topicName && (topicLink
-                            ? <Link href={topicLink} className="truncate underline decoration-white/20 underline-offset-2 hover:text-foreground hover:decoration-white/50" title={`${task.topicName} in the Knowledge Space`}>{task.topicName}</Link>
+                            ? <Link href={topicLink} className="truncate underline decoration-white/20 underline-offset-2 hover:text-foreground hover:decoration-white/50" title={`${task.topicName} in Knowledge`}>{task.topicName}</Link>
                             : <span className="truncate">{task.topicName}</span>)}
                           {task.estimatedMinutes ? <span className="shrink-0">{task.estimatedMinutes} min</span> : null}
                           {!task.subjectName && !task.topicName && task.status !== 'in_progress' && !task.priority && !task.estimatedMinutes && <span>To do</span>}
