@@ -1,7 +1,7 @@
 import type React from 'react'
 
 // One accent per subject, the same on every page: chosen from the subject's
-// name (trimmed, any case), so Today, the Knowledge Space, its board and the
+// name (trimmed, any case), so Today, Knowledge, its board and the
 // task list agree without asking the server. Six hues, none of them amber or
 // rose, which mean "due" and "late" here. The class names are written out in
 // full so Tailwind keeps them. Light theme darkens the text tones in

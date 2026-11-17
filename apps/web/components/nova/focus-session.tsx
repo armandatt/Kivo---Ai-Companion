@@ -1,5 +1,6 @@
 'use client'
 
+import { SessionTopicAsk } from './session-topic'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
@@ -44,7 +45,7 @@ const glassButton = 'focus-glass inline-flex h-10 items-center gap-2 rounded-xl 
 // a server command on the session Nova is tracking; the room only adds a
 // backdrop and sound, which are this browser's own.
 export function FocusSession() {
-  const { loading, session, elapsedSeconds, ended, pending, error, blocked, command, end, retry } = useNovaSession()
+  const { loading, session, elapsedSeconds, ended, pending, error, blocked, command, end, setTopic, retry } = useNovaSession()
   const [ending, setEnding] = useState(false)
   // A page the learner asked to study, from the browser extension or Saved.
   const studyId = useSearchParams().get('study')
@@ -287,6 +288,7 @@ export function FocusSession() {
       {ending ? (
         // One tap ends the session and tells Nova how it went.
         <div className="mt-10 w-full max-w-xl" role="group" aria-labelledby="how-did-it-go">
+          {!session.topicName && <div className="mb-6"><SessionTopicAsk topicName={null} onChoose={setTopic} busy={pending !== null} dark /></div>}
           <p id="how-did-it-go" className="text-lg font-medium">How did it go?</p>
           <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
             {OUTCOMES.map(o => (

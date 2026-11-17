@@ -7,6 +7,7 @@
 // Finishing asks "How did it go?", the one answer that tells Nova how the
 // study went; it never marks a task done.
 
+import { SessionTopicAsk } from '../session-topic'
 import { useState } from 'react'
 import Link from 'next/link'
 import { Expand, Infinity as Unlimited, Loader2, Map as MapIcon, NotebookPen, Pause, Pencil, Play, Plus, Sparkles, Square } from 'lucide-react'
@@ -78,6 +79,7 @@ export function FocusNow({ live, links, onAskNova }: {
 
       {finishing ? (
         <div className="mt-5" role="group" aria-labelledby="focus-how">
+          <div className="mb-3"><SessionTopicAsk topicName={s.topicName} onChoose={live.setTopic} busy={live.pending !== null} /></div>
           <p id="focus-how" className="text-sm font-medium text-foreground">How did it go?</p>
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
             {OUTCOMES.map(o => (

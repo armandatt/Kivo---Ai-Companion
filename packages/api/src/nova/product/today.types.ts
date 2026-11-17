@@ -67,12 +67,17 @@ export interface TodayActiveSession {
 export interface TodayDeadline {
   title:       string;
   subjectName: string | null;
+  subjectId?:  string | null;
   examType:    string;      // as stored
   // What kind of date it is, and the word for it (product/deadline-types.ts).
   kind:        "exam" | "assignment" | "project" | "interview" | "certification" | "other";
   kindLabel:   string;
   scheduledAt: string;
   daysUntil:   number;
+  // The topics of its subject (and the subjects inside it): how many there
+  // are and how many are not yet solid (planning-engine notYetSolid). Absent
+  // when the date is filed under no subject.
+  topics?:     { total: number; notSolid: number } | null;
 }
 
 export interface TodayWeakArea {
@@ -233,7 +238,11 @@ export type NovaSessionCommand =
   // A running session's optional details (Quick Focus): its title (only for a
   // session with no topic), a category and a description. undefined: unchanged;
   // null: cleared. Changes nothing about its time or what it counts as.
-  | { action: "set_details"; title?: string | null; category?: string | null; description?: string | null };
+  | { action: "set_details"; title?: string | null; category?: string | null; description?: string | null }
+  // What a session with no topic was on (Quick Focus, a task with no topic),
+  // said before it ends: one of the learner's own topics, so the session
+  // counts toward that topic like any other. Refused when it already has one.
+  | { action: "set_topic"; subjectId: string; topicName: string };
 
 export type NovaSessionOutcome = "struggled" | "okay" | "good" | "crushed_it";
 

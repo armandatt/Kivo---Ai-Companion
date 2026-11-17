@@ -15,7 +15,7 @@ type Ended  = NonNullable<Extract<NovaSessionResponse, { ok: true }>['ended']>
 export function useNovaSession() {
   const [synced, setSynced]   = useState<Synced | null>(null)
   const [ended, setEnded]     = useState<Ended | null>(null)
-  const [pending, setPending] = useState<'pause' | 'resume' | 'end' | 'start' | 'details' | null>(null)
+  const [pending, setPending] = useState<'pause' | 'resume' | 'end' | 'start' | 'details' | 'topic' | null>(null)
   const [error, setError]     = useState<string | null>(null)
   const [blocked, setBlocked] = useState<string | null>(null)   // this account cannot have a session
   const [now, setNow]         = useState(() => Date.now())
@@ -93,10 +93,19 @@ export function useNovaSession() {
     return res.ok
   }, [apply])
 
+  // What a session with no topic was on, chosen before it ends (set_topic).
+  const setTopic = useCallback(async (subjectId: string, topicName: string) => {
+    setPending('topic')
+    const res = await sendSessionCommand({ action: 'set_topic', subjectId, topicName })
+    apply(res)
+    setPending(null)
+    return res.ok
+  }, [apply])
+
   const session = synced?.session ?? null
   const elapsedSeconds = session
     ? session.elapsedSeconds + (running && synced ? Math.max(0, (now - synced.at) / 1000) : 0)
     : 0
 
-  return { loading: synced === null && !blocked && !error, session, elapsedSeconds, ended, pending, error, blocked, command, end, setLength, quickStart, setDetails, retry: sync }
+  return { loading: synced === null && !blocked && !error, session, elapsedSeconds, ended, pending, error, blocked, command, end, setLength, quickStart, setDetails, setTopic, retry: sync }
 }

@@ -12,6 +12,7 @@ import { AccountingFor } from './today-sections'
 import { Deadlines } from './home-panels'
 import { useTasks } from './tasks/use-tasks'
 import { firstName } from './format'
+import { ExamLine } from './today/exam-line'
 import { useNovaSession } from './use-nova-session'
 import { SubjectSwitcher } from './subject-switcher'
 import { useDayFlow } from './today/use-day-flow'
@@ -173,6 +174,9 @@ export function NovaHome({ view, refreshing }: Props) {
               <button type="button" onClick={() => setNovaOnPhone(true)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-nova/35 bg-nova/[0.06] px-3 text-sm font-semibold text-nova-ink hover:bg-nova/12 lg:hidden" data-today-nova-phone><Sparkles className="size-4" /> Nova</button>
             </div>
           </header>
+
+          {/* ── The nearest dated item, when there is one ───────────────── */}
+          {view.nextDeadline && <ExamLine deadline={view.nextDeadline} />}
 
           {/* ── Subjects: top-level only; choosing one is context ───────── */}
           {view.subjectProgress && view.subjectProgress.length > 0 && (

@@ -8,6 +8,7 @@ import {
 } from '@repo/api/nova/product/tasks.types'
 import { PRIORITY_LABEL } from './task-format'
 import { trappedTabTarget } from '@/components/settings/dialog-focus'
+import { TaskPlace } from './task-place'
 
 const TAB_STOPS = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
@@ -125,13 +126,6 @@ export function TaskEditor({ task, subjects, initialStatus = 'todo', initialDueD
               <input id="task-due" type="date" value={dueDay} onChange={e => setDueDay(e.target.value)} className={FIELD} />
             </div>
             <div>
-              <label htmlFor="task-subject" className={LABEL}>Subject</label>
-              <select id="task-subject" value={subjectId} onChange={e => setSubjectId(e.target.value)} className={FIELD}>
-                <option value="">None</option>
-                {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </div>
-            <div>
               <label htmlFor="task-priority" className={LABEL}>Priority</label>
               <select id="task-priority" value={priority} onChange={e => setPriority(e.target.value)} className={FIELD}>
                 <option value="">Not set</option>
@@ -142,8 +136,9 @@ export function TaskEditor({ task, subjects, initialStatus = 'todo', initialDueD
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_9rem]">
             <div>
-              <label htmlFor="task-topic" className={LABEL}>Topic <span className="text-foreground/35">(optional)</span></label>
-              <input id="task-topic" value={topicName} onChange={e => setTopicName(e.target.value)} placeholder="e.g. Deadlocks" className={FIELD} />
+              <span className={LABEL}>Filed under <span className="text-foreground/35">(optional)</span></span>
+              <TaskPlace subjectId={subjectId || null} topicName={topicName.trim() || null} fallbackSubject={subjects.find(x => x.id === subjectId)?.name ?? null}
+                onChange={(sid, topic) => { setSubjectId(sid ?? ''); setTopicName(topic ?? '') }} />
             </div>
             <div>
               <label htmlFor="task-minutes" className={LABEL}>Expected time <span className="text-foreground/35">(min)</span></label>

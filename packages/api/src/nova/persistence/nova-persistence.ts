@@ -41,7 +41,7 @@ import type { SessionContext, SessionAction } from "../types/session.types";
 import { saveUserMessage, saveAssistantMessage } from "../adapters/conversation-adapter";
 import { buildTurnEvidence } from "../consolidation/evidence-builder";
 import { consolidateTurn } from "../consolidation/run-consolidation";
-import { normalizeTopicName, resolveTopicSubject, updateTopicMastery } from "../engines/topic-mastery-engine";
+import { likeLiteral, normalizeTopicName, resolveTopicSubject, updateTopicMastery } from "../engines/topic-mastery-engine";
 import { buildExecutionReport, buildSessionContext, computeSessionAction, sessionEvidence } from "../engines/study-session-engine";
 import { ABANDONED_STATUS, pauseLengthSeconds, pausedSecondsOf, sessionAbandonment, sessionElapsedSeconds, type Abandonment } from "../engines/session-clock";
 import { withEstablishedSignal } from "../engines/signal-engine";
@@ -428,6 +428,23 @@ export async function setSessionDetails(
     },
   });
   return done.count === 1;
+}
+
+// What a running session with no topic was on, chosen by the learner before
+// ending it: one of their own active topics (looked up here, by subject and
+// name, any case). Guarded on the session still being open and still having
+// no topic, so it never replaces a topic. The topic's own spelling is kept.
+export async function setSessionTopic(profileId: string, sessionId: string, subjectId: string, topicName: string): Promise<string | null> {
+  const topic = await prisma.novaTopicMastery.findFirst({
+    where:  { subjectId, subject: { profileId }, archivedAt: null, name: { equals: likeLiteral(topicName.trim()), mode: "insensitive" } },
+    select: { name: true },
+  });
+  if (!topic) return null;
+  const done = await prisma.novaStudySession.updateMany({
+    where: { id: sessionId, profileId, status: { in: OPEN_STATUSES }, topicName: null },
+    data:  { subjectId, topicName: topic.name },
+  });
+  return done.count === 1 ? topic.name : null;
 }
 
 // ── Sessions nobody came back to ──────────────────────────────────────────────

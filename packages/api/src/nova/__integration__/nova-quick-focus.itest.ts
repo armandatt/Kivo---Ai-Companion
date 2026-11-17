@@ -93,3 +93,32 @@ test("details need a running session", async () => {
   const res = await runNovaSessionCommand(CHAT, parseSessionCommand({ action: "set_details", title: "Late" })!);
   assert.ok(!res.ok);
 });
+
+// Phase 3: before a Quick Focus session ends, the learner can say what it was
+// on (one of their own topics), so it counts toward that topic like any other.
+test("set_topic: a session with no topic takes one of the learner's topics, only theirs, only once", async () => {
+  const subject = await prisma.novaSubject.findFirstOrThrow({ where: { profileId, name: "Physics" }, select: { id: true } });
+  await prisma.novaTopicMastery.create({ data: { subjectId: subject.id, name: "Kinematics" } });
+  const now = new Date();
+  assert.deepEqual(parseSessionCommand({ action: "set_topic", subjectId: subject.id, topicName: " kinematics " }), { action: "set_topic", subjectId: subject.id, topicName: "kinematics" });
+  assert.equal(parseSessionCommand({ action: "set_topic", subjectId: "", topicName: "x" }), null);
+
+  assert.equal((await runNovaSessionCommand(CHAT, { action: "set_topic", subjectId: subject.id, topicName: "Kinematics" }, now)).ok, false, "needs a running session");
+  assert.equal((await runNovaSessionCommand(CHAT, QUICK, now)).ok, true);
+  const unknown = await runNovaSessionCommand(CHAT, { action: "set_topic", subjectId: subject.id, topicName: "Thermodynamics" }, now);
+  assert.equal(unknown.ok, false, "a topic they don't have is refused, not created");
+  assert.equal(await prisma.novaTopicMastery.count({ where: { subjectId: subject.id, name: "Thermodynamics" } }), 0);
+
+  const set = await runNovaSessionCommand(CHAT, { action: "set_topic", subjectId: subject.id, topicName: "kinematics" }, now);
+  assert.equal(set.ok, true, JSON.stringify(set));
+  assert.equal(set.ok && set.session?.topicName, "Kinematics", "the topic's own spelling");
+  const again = await runNovaSessionCommand(CHAT, { action: "set_topic", subjectId: subject.id, topicName: "Kinematics" }, now);
+  assert.equal(again.ok, false, "a topic is never replaced");
+
+  const ended = await runNovaSessionCommand(CHAT, { action: "end", outcome: "good" }, new Date(now.getTime() + 15 * 60_000));
+  assert.equal(ended.ok, true);
+  assert.equal(ended.ok && ended.ended?.topicName, "Kinematics");
+  const row = await prisma.novaStudySession.findFirstOrThrow({ where: { profileId, topicName: "Kinematics" }, select: { subjectId: true, status: true } });
+  assert.equal(row.subjectId, subject.id);
+  assert.equal(row.status, "completed");
+});

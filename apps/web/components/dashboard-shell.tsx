@@ -4,6 +4,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef } f
 import { usePathname, useRouter } from 'next/navigation'
 import { Menu } from 'lucide-react'
 import { routeAccess, type Companion } from '@repo/api/nova/product/companion'
+import { FocusPill } from './nova/focus-pill'
 import { Sidebar, SIDEBAR_ID } from '@/components/sidebar'
 import { NovaUnavailable } from '@/components/nova/nova-unavailable'
 import { hasParkedCapture } from '@/components/nova/saved/pending-capture'
@@ -158,6 +159,7 @@ export function DashboardShell({ children, companion: fromServer }: Props) {
             : null /* a Rex account on a Nova-only page: being sent to Home */}
         </div>
       </main>
+      {companion === 'nova' && access === 'render' && <FocusPill />}
     </div>
   )
 }

@@ -6,6 +6,7 @@
 // the facts behind it.
 
 import { examCoversSubject } from "../engines/exam-engine";
+import { notYetSolid } from "../engines/planning-engine";
 import type { StudySnapshotResult } from "../engines/study-snapshot";
 import { calendarDaysUntil, dayKey, dayNumber, resolveTimezone } from "../engines/learner-calendar";
 import { daysOverdue, getOverdueTopics, isDueForReview } from "../engines/retention-engine";
@@ -169,11 +170,13 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
     .map(e => ({
       title:       e.title,
       subjectName: e.subjectName,
+      subjectId:   e.subjectId,
       examType:    e.examType,
       kind:        deadlineType(e.examType),
       kindLabel:   DEADLINE_RULES[deadlineType(e.examType)].label,
       scheduledAt: e.scheduledAt.toISOString(),
       daysUntil:   calendarDaysUntil(e.scheduledAt, now, input.timezone ?? null),
+      topics:      topicsUnder(e.subjectName, snapshot.subjects, topics),
     }));
   const active   = snapshot.activeSession;
 
@@ -280,4 +283,21 @@ export async function loadNovaToday(
     }),
     language: voice?.language ?? null,
   } as NovaTodayView;
+}
+
+// A date's subject, the subjects inside it, and their topics: how many, and
+// how many are still to work on. Nothing is estimated beyond the rule.
+function topicsUnder(subjectName: string | null, subjects: Array<{ id: string; name: string; parentId?: string | null }>, topics: Array<{ subjectName: string; reviewCount: number; masteryProbability: number }>): { total: number; notSolid: number } | null {
+  const root = subjectName ? subjects.find(s => s.name === subjectName) : undefined;
+  if (!root) return null;
+  const names = new Set([root.name]);
+  for (let grew = true, guard = 0; grew && guard < 12; guard++) {
+    grew = false;
+    for (const s of subjects) {
+      const parent = s.parentId ? subjects.find(p => p.id === s.parentId) : undefined;
+      if (parent && names.has(parent.name) && !names.has(s.name)) { names.add(s.name); grew = true; }
+    }
+  }
+  const mine = topics.filter(t => names.has(t.subjectName));
+  return { total: mine.length, notSolid: mine.filter(notYetSolid).length };
 }

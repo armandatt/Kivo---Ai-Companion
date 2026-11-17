@@ -54,6 +54,11 @@ export function parseSessionCommand(body: unknown): NovaSessionCommand | null {
     if (title === undefined && category === undefined && description === undefined) return null;
     return { action: "set_details", ...(title !== undefined ? { title } : {}), ...(category !== undefined ? { category } : {}), ...(description !== undefined ? { description } : {}) };
   }
+  if (b.action === "set_topic") {
+    const subjectId = typeof b.subjectId === "string" ? b.subjectId.trim() : "";
+    const topicName = typeof b.topicName === "string" ? b.topicName.trim().slice(0, MAX_TOPIC_LENGTH) : "";
+    return subjectId && subjectId.length <= 40 && topicName ? { action: "set_topic", subjectId, topicName } : null;
+  }
   if (b.action === "end") {
     // Anything that is not one of the four answers is "no answer".
     const outcome = SESSION_OUTCOMES.find(o => o === b.outcome) ?? null;

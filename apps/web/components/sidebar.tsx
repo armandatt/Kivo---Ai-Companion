@@ -6,7 +6,8 @@ import { usePathname } from 'next/navigation'
 import {
   BarChart3,
   BookOpen,
-  Puzzle,
+  Bookmark,
+  Inbox,
   Waypoints,
   Calendar,
   CalendarDays,
@@ -57,7 +58,7 @@ const navItems = [
 ]
 
 // Nova's pages, from the one list that also decides route access.
-const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/build': Sparkles, '/calendar': CalendarDays, '/focus': Timer, '/knowledge': BookOpen, '/map': Waypoints, '/notes': NotebookPen, '/saved': Puzzle, '/progress': TrendingUp, '/learning-dna': Dna, '/creature': Map, '/guide': Compass }
+const NOVA_ICONS: Record<string, typeof Home> = { '/home': Home, '/build': Sparkles, '/calendar': CalendarDays, '/focus': Timer, '/knowledge': BookOpen, '/map': Waypoints, '/notes': NotebookPen, '/notes/drafts': Inbox, '/saved': Bookmark, '/progress': TrendingUp, '/learning-dna': Dna, '/creature': Map, '/guide': Compass }
 // Docs sits with Settings at the foot of the sidebar, not among the pages.
 const NOVA_DOCS = '/guide'
 const novaNavItems = NOVA_ROUTES.filter(r => r.path !== NOVA_DOCS).map(r => ({ href: r.path, label: r.label, icon: NOVA_ICONS[r.path] ?? Home }))
@@ -68,8 +69,8 @@ type NavItem = typeof navItems[number]
 // the Knowledge Map right under it. A page not named here (a new one in
 // NOVA_ROUTES) is listed after the groups, so none is ever dropped.
 const NOVA_GROUPS: ReadonlyArray<{ label: string; paths: readonly string[] }> = [
-  { label: 'Workspace', paths: ['/home', '/map', '/build', '/notes', '/saved'] },
-  { label: 'Study',     paths: ['/calendar', '/focus', '/knowledge'] },
+  { label: 'Workspace', paths: ['/home', '/map', '/knowledge', '/build', '/notes', '/notes/drafts', '/saved'] },
+  { label: 'Study',     paths: ['/calendar', '/focus'] },
   { label: 'Growth',    paths: ['/progress', '/learning-dna', '/creature'] },
 ]
 
@@ -184,8 +185,20 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
     return () => { document.body.style.overflow = previous }
   }, [mode.lockScroll])
 
-  // A page and the pages under it (a note inside Notes) light the same entry.
-  const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`)
+  // A page and the pages under it (a note inside Notes) light the same entry,
+  // unless a more specific entry has it (Drafts, inside Notes).
+  const under = (href: string) => pathname === href || pathname.startsWith(`${href}/`)
+  const isActive = (href: string) => under(href) && !items.some(i => i.href !== href && i.href.startsWith(`${href}/`) && under(i.href))
+
+  // Drafts waiting to be organised: the count beside Drafts, read once a page
+  // (one count query; never polled).
+  const [openDrafts, setOpenDrafts] = useState(0)
+  useEffect(() => {
+    if (companion !== 'nova') return
+    let alive = true
+    fetch('/api/nova/drafts', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(b => { if (alive && b?.ok && typeof b.open === 'number') setOpenDrafts(b.open) }).catch(() => undefined)
+    return () => { alive = false }
+  }, [companion, pathname])
 
   // Choosing a page closes whatever covered it.
   const close = () => { setIsMobileOpen(false); if (overlay) onOpenChange(false) }
@@ -318,6 +331,9 @@ export function Sidebar({ open, onOpenChange, overlay = false, companion }: Side
                     {active && <span aria-hidden className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-action" />}
                     <Icon aria-hidden className="w-[18px] h-[18px] shrink-0" />
                     <span className={label}>{item.label}</span>
+                    {item.href === '/notes/drafts' && openDrafts > 0 && (
+                      <span className={cn('ml-auto rounded-full bg-nova/20 px-1.5 text-[11px] font-semibold tabular-nums text-nova-ink', rail && 'lg:absolute lg:right-1 lg:top-1 lg:ml-0')} aria-label={`${openDrafts} open draft${openDrafts === 1 ? '' : 's'}`} data-drafts-count>{openDrafts}</span>
+                    )}
                   </Link>
                 )
               })}
