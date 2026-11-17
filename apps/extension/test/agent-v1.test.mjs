@@ -5,6 +5,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import { DEFAULT_LIMITS, FINISHED, STATUS, TRANSITIONS, canMove, createAgent, isNoProgressRepeat, newState, pageKey, recoveredState, scopeProblem, statusOf, tabsToClose, targetOf } from '../src/lib/agent.js'
 import { samePage } from '../src/lib/agent-tools.js'
@@ -200,10 +201,13 @@ test('an action is marked in flight before it runs; after a restart it is record
   assert.equal(recoveredState({ ...cut, status: 'awaiting_user', inflight: null }).status, STATUS.AWAITING_USER, 'a task waiting for the user keeps waiting')
 })
 
-test('when a task ends, Nova\'s own tabs are closed unless kept, never the one in front of the user', () => {
-  assert.deepEqual(tabsToClose({ keepTabs: false }, [11, 12, 13], 12), [11, 13])
-  assert.deepEqual(tabsToClose({ keepTabs: true }, [11, 12, 13], null), [])
-  assert.deepEqual(tabsToClose({}, [], 5), [], 'the user\'s tabs are never in the list')
+test('when a task ends, all of Nova\'s own tabs are closed unless kept; the user\'s are never in the list', () => {
+  assert.deepEqual(tabsToClose({ keepTabs: false }, [11, 12, 13]), [11, 12, 13])
+  assert.deepEqual(tabsToClose({ keepTabs: true }, [11, 12, 13]), [])
+  assert.deepEqual(tabsToClose({}, []), [], 'only Nova\'s own tabs are ever passed (tools.ownTabs)')
+  const runtime = readFileSync(new URL('../src/lib/agent-runtime.js', import.meta.url), 'utf8')
+  assert.match(runtime, /tabsToClose\(state, tools\.ownTabs\(\)\)/)
+  assert.match(runtime, /chrome\.tabs\.update\(state\.startTab\.id, \{ active: true \}\)/, 'back to the tab the task started on')
 })
 
 // ── Measurement ───────────────────────────────────────────────────────────────

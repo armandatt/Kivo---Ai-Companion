@@ -87,7 +87,9 @@ async function finishUp(state, tools) {
   if (tools) {
     let active = null
     try { [{ id: active } = {}] = await chrome.tabs.query({ active: true, windowId: state.windowId }) } catch { /* none */ }
-    const close = tabsToClose(state, tools.ownTabs(), state.status === STATUS.CANCELLED ? null : active)
+    const close = tabsToClose(state, tools.ownTabs())
+    // Nova's tab is in front: the user goes back to the tab the task started on.
+    if (close.includes(active) && typeof state.startTab?.id === 'number') await chrome.tabs.update(state.startTab.id, { active: true }).catch(() => undefined)
     if (close.length) {
       await chrome.tabs.remove(close).catch(() => undefined)
       state.closedTabs = close.length

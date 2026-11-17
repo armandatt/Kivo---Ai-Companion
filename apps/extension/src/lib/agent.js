@@ -526,10 +526,14 @@ function sameSite(pattern, url) {
   try { const u = new URL(url); return pattern === `${u.protocol}//${u.hostname}/*` } catch { return false }
 }
 
-/** The task's own tabs that may be closed when it ends: Nova's, never the user's, and not the one they are looking at. */
-export function tabsToClose(state, ownTabs, activeTabId) {
+/**
+ * The task's own tabs to close when it ends: all of Nova's (never one of the
+ * user's), unless the user keeps them. A Nova tab in front is closed too:
+ * Nova put it there; the user is taken back to the tab the task started on.
+ */
+export function tabsToClose(state, ownTabs) {
   if (state.keepTabs) return []
-  return ownTabs.filter(id => id !== activeTabId)
+  return [...ownTabs]
 }
 
 /**
