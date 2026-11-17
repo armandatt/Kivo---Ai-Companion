@@ -546,6 +546,8 @@ Held by `focus-context.test.ts`. `product/focus-context.ts`, `GET /api/nova/focu
 
 ## Knowledge Map
 
+- **Nova's browser agent drives the map through its bridge, not the drawing** (`map-agent.ts`, `[data-kivo-map-bridge]`, docs/BROWSER_AGENT.md). Keep the bridge element, the `data-node-id` attribute on every card and the functions it calls (`pick`, `explore`, `goUp`, `zoomAt`, `connectOptions`/`sendConnect`) working when the map changes; `map-agent.test.ts` holds the contract.
+
 Held by `knowledge-map.test.ts` and `nova-workspace.itest.ts`. `/map`, `GET /api/nova/knowledge-map`, `product/knowledge-map.ts`.
 
 - **A read model of links that are stored.** Nodes are subjects, topics, notes and saved pages. Edges are: a topic's subject; a note or saved page filed under a subject; and under a topic when it names one of that subject's topics (compared trimmed, single-spaced, any case). Nothing is inferred and no edge is added for looks. What is filed under nothing is drawn unconnected, and the view says how many such items there are.

@@ -64,3 +64,43 @@ export function destinationFor(all: Destination[], subjectId: string | null, top
   const t = topicName?.trim().toLowerCase()
   return all.find(d => d.subjectId === subjectId && (t ? d.topicName?.toLowerCase() === t : d.kind === 'subject')) ?? NO_SUBJECT
 }
+
+// ── Browsing the destinations as a tree (the one picker: destination-picker.tsx) ──
+// Subject → its subjects and topics → a topic's topics, by id, never by
+// matching names, so two subjects called "Introduction" stay apart.
+
+export function destinationParents(subjects: NoteSubjectOption[]): Map<string, string | null> {
+  const parents = new Map<string, string | null>([[NO_SUBJECT.key, null]]);
+  const ids = new Set(subjects.map(s => s.id));
+  for (const s of subjects) {
+    parents.set(`s:${s.id}`, s.parentId && ids.has(s.parentId) && s.parentId !== s.id ? `s:${s.parentId}` : null);
+    const tp = s.topicParents ?? {};
+    const own = new Set(s.topics.map(t => t.toLowerCase()));
+    for (const t of s.topics) {
+      const p = tp[t];
+      parents.set(`t:${s.id}:${t.toLowerCase()}`, p && own.has(p.toLowerCase()) && p.toLowerCase() !== t.toLowerCase() ? `t:${s.id}:${p.toLowerCase()}` : `s:${s.id}`);
+    }
+  }
+  return parents;
+}
+
+/** What sits directly inside `parentKey` (null: the top level), subjects first, then topics, by name. */
+export function childrenOf(all: Destination[], parents: Map<string, string | null>, parentKey: string | null): Destination[] {
+  const kids = all.filter(d => d.kind !== "none" && (parents.get(d.key) ?? null) === parentKey);
+  const name = (d: Destination) => d.path[d.path.length - 1]!.toLowerCase();
+  return kids.sort((a, b) => (a.kind === b.kind ? name(a).localeCompare(name(b)) : a.kind === "subject" ? -1 : 1));
+}
+
+/** The chain from the top level down to `key` (for the breadcrumb), the key itself last. */
+export function ancestorsOf(parents: Map<string, string | null>, key: string | null): string[] {
+  const chain: string[] = [];
+  const seen = new Set<string>();
+  for (let at = key; at && !seen.has(at) && chain.length < 20; at = parents.get(at) ?? null) { seen.add(at); chain.unshift(at); }
+  return chain;
+}
+
+/** An existing topic of this subject with this name (any case), or null: typing never makes a topic. */
+export function existingTopic(all: Destination[], subjectId: string, name: string): Destination | null {
+  const n = name.trim().toLowerCase();
+  return n ? all.find(d => d.kind === "topic" && d.subjectId === subjectId && d.topicName?.toLowerCase() === n) ?? null : null;
+}

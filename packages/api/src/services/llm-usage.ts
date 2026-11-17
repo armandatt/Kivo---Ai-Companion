@@ -22,8 +22,12 @@ export interface LlmUsage {
 
 const listeners = new AsyncLocalStorage<(usage: LlmUsage) => void>();
 
+// Meters nest: a meter inside another (a route measuring one step inside a
+// counted task) sees every call, and so does the one outside it.
 export function meterLlmUsage<T>(onUsage: (usage: LlmUsage) => void, work: () => Promise<T>): Promise<T> {
-  return listeners.run(onUsage, work);
+  const outer = listeners.getStore();
+  const both = outer ? (usage: LlmUsage) => { try { outer(usage); } catch { /* never breaks a call */ } onUsage(usage); } : onUsage;
+  return listeners.run(both, work);
 }
 
 export function reportLlmUsage(usage: LlmUsage): void {
@@ -41,7 +45,7 @@ export const USAGE_FEATURES = [
   "build_with_nova", "create_with_nova", "subject_studio", "today_copilot",
   "notes_tutor", "notes_editor", "notes_assist", "notes_proposal", "notes_import", "paper_import",
   "telegram_understanding", "telegram_reply", "telegram_rewording", "telegram_onboarding", "telegram_first_use",
-  "extension_ask_nova", "extension_agent", "capture_placement",
+  "extension_ask_nova", "extension_agent", "extension_intent", "capture_placement",
   "saved_page_processing", "saved_page_retry", "scheduled_nova_message",
   "rex", "other",
 ] as const;

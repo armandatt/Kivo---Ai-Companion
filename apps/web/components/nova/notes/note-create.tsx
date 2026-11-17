@@ -168,7 +168,8 @@ export function NoteCreate({ subjects, initial, reloadSubjects, onBlank, onCreat
         )}
 
         <div>
-          <DestinationPicker subjects={subjects} value={place} onChange={setPlace} onSubjectsChanged={reloadSubjects} />
+          <DestinationPicker subjects={subjects} value={place} onChange={setPlace} onSubjectsChanged={reloadSubjects}
+            suggestion={proposal?.destination ? destinationFor(destinationsOf(subjects), proposal.destination.subjectId, proposal.destination.topicName) : null} />
           {proposal?.destination && place.subjectId === proposal.destination.subjectId && place.topicName === proposal.destination.topicName && (
             <p className="mt-1.5 flex items-center gap-1.5 text-xs text-foreground/60" data-proposal-place><Sparkles className="size-3 text-nova-ink" /> Nova&apos;s pick{proposal.destination.reason ? `: ${proposal.destination.reason}` : ''}</p>
           )}

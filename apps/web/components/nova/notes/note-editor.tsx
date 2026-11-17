@@ -38,6 +38,8 @@ import { novaModeCommands, useNotesCommands } from './notes-commands'
 import { modLabel } from './notes-shortcuts'
 import { paperPlacement } from '@repo/api/nova/product/paper-source'
 import { createNote, deleteNote, fetchNote, fetchNotes, updateNote } from './notes-api'
+import { DestinationPicker } from './destination-picker'
+import { NO_SUBJECT, destinationFor, destinationsOf } from './note-destinations'
 import { BOARD_PATH } from '@repo/api/nova/product/companion'
 import { IMAGE_ACCEPT, imageMarkdown, insertImageLines, isImage, newImageKey, storeImageFile } from './note-image-upload'
 import { imagesOnClipboard } from '../builder/paste'
@@ -101,8 +103,6 @@ const same = (a: Draft, b: Draft) =>
   a.title === b.title && a.body === b.body && a.subjectId === b.subjectId && a.topicName === b.topicName
 
 const LEAVE = 'You have changes that are not saved. Leave without saving?'
-const field =
-  'w-full rounded-xl border border-white/10 bg-transparent px-3.5 text-foreground placeholder:text-foreground/30 focus:border-keppel-400/60 focus:outline-none'
 const primary =
   'inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-keppel-400 px-5 text-sm font-semibold text-keppel-950 transition-colors hover:bg-keppel-300 disabled:opacity-60'
 const quiet =
@@ -121,6 +121,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const [note, setNote]         = useState<NoteDetail | null>(null)
   const [notes, setNotes]       = useState<NoteSummary[]>([])
   const [subjects, setSubjects] = useState<NoteSubjectOption[]>([])
+  const [placing, setPlacing]   = useState(false)
   const [running, setRunning]   = useState<{ topicName: string | null } | null>(null)
   const [loading, setLoading]   = useState(true)
   const [missing, setMissing]   = useState<string | null>(null)
@@ -282,10 +283,6 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     if (dirty && !window.confirm(LEAVE)) e.preventDefault()
   }, [dirty])
 
-  const topicOptions = useMemo(
-    () => subjects.find(s => s.id === draft.subjectId)?.topics ?? [],
-    [subjects, draft.subjectId],
-  )
 
   // base: the version this edit started from. A save over a newer version is
   // refused by the server, and both texts stay on screen.
@@ -1133,29 +1130,21 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
               className="w-full bg-transparent font-serif text-2xl font-semibold leading-tight tracking-tight text-keppel-200 placeholder:text-foreground/25 focus:outline-none sm:text-4xl"
             />
 
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <label htmlFor="note-subject" className="mb-1.5 block text-xs text-foreground/50">Subject</label>
-                <select
-                  id="note-subject" value={draft.subjectId}
-                  onChange={e => setDraft(d => ({ ...d, subjectId: e.target.value, topicName: e.target.value ? d.topicName : '' }))}
-                  className={`${field} h-10 text-sm`}
-                >
-                  <option value="">No subject</option>
-                  {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="note-topic" className="mb-1.5 block text-xs text-foreground/50">Topic</label>
-                <input
-                  id="note-topic" value={draft.topicName} maxLength={NOTE_TOPIC_MAX} list="note-topics"
-                  disabled={!draft.subjectId}
-                  onChange={e => setDraft(d => ({ ...d, topicName: e.target.value }))}
-                  placeholder={draft.subjectId ? 'e.g. Deadlocks' : 'Choose a subject first'}
-                  className={`${field} h-10 text-sm disabled:opacity-50`}
-                />
-                <datalist id="note-topics">{topicOptions.map(t => <option key={t} value={t} />)}</datalist>
-              </div>
+            {/* Where it is filed: the one destination picker every surface uses. */}
+            <div className="mt-4" data-note-place>
+              <p className="flex flex-wrap items-baseline gap-x-1.5 text-xs text-foreground/55">
+                <span>Filed under</span>
+                <strong className="break-words font-medium text-foreground/90" data-note-place-label>{draft.subjectId ? [subjects.find(s => s.id === draft.subjectId)?.name, draft.topicName.trim() || null].filter(Boolean).join(' › ') : 'No subject'}</strong>
+                <button type="button" onClick={() => setPlacing(o => !o)} aria-expanded={placing} className="text-nova-ink underline-offset-2 hover:underline" data-note-place-change>{placing ? 'Done' : 'Change'}</button>
+              </p>
+              {placing && (
+                <div className="mt-2 max-w-xl">
+                  <DestinationPicker subjects={subjects}
+                    value={draft.subjectId ? destinationFor(destinationsOf(subjects), draft.subjectId, draft.topicName.trim() || null) : NO_SUBJECT}
+                    onChange={d => { setDraft(x => ({ ...x, subjectId: d.subjectId ?? '', topicName: d.topicName ?? '' })); setPlacing(false) }}
+                    onSubjectsChanged={reloadSubjects} />
+                </div>
+              )}
             </div>
             {subjects.length === 0 && (
               <p className="mt-2 text-xs text-foreground/45">Nova doesn&apos;t know your subjects yet, so this note can&apos;t be filed under one. You can still write it.</p>

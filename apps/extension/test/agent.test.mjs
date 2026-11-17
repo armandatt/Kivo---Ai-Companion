@@ -34,22 +34,23 @@ test('the agent uses only tab, scripting, permission, session and badge APIs, an
   // (settleDom's own timer runs inside the page, only while it waits for the page to settle.)
   assert.equal((AGENT.filter(r => r.name !== 'lib/agent-page.js').map(r => r.text).join('\n').match(/setInterval/g) ?? []).length, 1)
   assert.match(runtime, /setInterval\(\(\) => \{ void chrome\.runtime\.getPlatformInfo\(\) \}, KEEPALIVE_MS\)/)
-  assert.match(runtime, /awake\(s\.status === 'running'\)/)
+  assert.match(runtime, /awake\(s\.status === STATUS\.RUNNING\)/)
 })
 
 test('it opens its own tabs in the background (in front when watched), injects only its own functions, and asks for sites one at a time (or any site, by the learner\'s choice), given back when the task ends', () => {
   const tools = code(src('lib/agent-tools.js'))
   assert.match(tools, /chrome\.tabs\.create\(\{ url: allowed\.url, active: watch\(\)/, 'in the background, or in front when the learner watches')
+  assert.match(tools, /chrome\.tabs\.create\(\{ url: allowed\.url, active: false/, 'a search results page is always read in the background')
   assert.ok(!tools.match(/files:/), 'it injects functions it ships, never files or code from the network')
   const funcs = [...tools.matchAll(/run\((?:current|tabId|searchTab), ([a-zA-Z]+)/g)].map(m => m[1]).filter(f => f !== 'func')
   const page = src('lib/agent-page.js')
   assert.ok(funcs.length >= 6)
-  for (const f of new Set(funcs)) assert.match(page, new RegExp(`export function ${f}\\(`), `${f} is one of the page functions in lib/agent-page.js`)
+  for (const f of new Set(funcs)) assert.match(page, new RegExp(`export (async )?function ${f}\\(`), `${f} is one of the page functions in lib/agent-page.js`)
   assert.match(tools, /export const ANY_SITE = \['https:\/\/\*\/\*', 'http:\/\/\*\/\*'\]/)
   const view = code(src('lib/agent-view.js'))
   assert.match(view, /browser\.allowSites\(origins\)/, 'asked from the learner\'s click in the panel')
-  assert.match(view, /ask\(\[p\.pattern\], false\)/, 'one site')
-  assert.match(view, /ask\(ANY_SITE, true\)/, 'or any site, for this task')
+  assert.match(view, /ask\(\[p\.pattern\], \{ remember: true \}\)/, 'one site, kept until the user removes it')
+  assert.match(view, /ask\(ANY_SITE, \{ anySite: true \}\)/, 'or any site, for this task only')
   const runtime = code(src('lib/agent-runtime.js'))
   assert.match(runtime, /chrome\.permissions\.remove\(\{ origins \}\)/, 'given back when the task ends')
 })
@@ -268,8 +269,8 @@ const run = async (actions, opts = {}) => {
 
 test('a research task runs to the end: search, open, a verified finding, an answer citing its source', async () => {
   const { state, client, saved } = await run([A.search('RAG architectures'), A.open('https://arxiv.org/abs/2005.11401'), A.extract('combine parametric and non-parametric memory for language generation'), A.finish()])
-  assert.equal(state.status, 'done')
-  assert.deepEqual(state.sources, [{ n: 1, url: 'https://arxiv.org/abs/2005.11401', title: 'RAG paper' }])
+  assert.equal(state.status, 'completed')
+  assert.deepEqual(state.sources, [{ n: 1, url: 'https://arxiv.org/abs/2005.11401', title: 'RAG paper' }], 'the page read, not the results page')
   assert.equal(state.findings.length, 1)
   assert.equal(state.findings[0].source, 1)
   assert.equal(state.result.answer, 'RAG combines memories [1].')
@@ -301,19 +302,22 @@ test('a quote that is not on the page is not kept', async () => {
   assert.match(state.steps.find(s => s.action.tool === 'extract').result, /not on the current page/)
 })
 
-test('the same action again is refused, and three refusals end the task', async () => {
+test('the same action on the same unchanged page is refused, and two refusals ask the user instead of failing', async () => {
   const same = A.search('rag')
-  const { state, tools } = await run([same, same, same, same])
-  assert.equal(tools.calls.filter(c => c[0] === 'search').length, 1, 'searched once')
-  assert.equal(state.status, 'failed')
-  assert.match(state.error, /repeating itself/)
+  const { state, tools, agent } = await run([same, same, same, same, A.finish()], { objective: 'Research RAG' })
+  assert.equal(tools.calls.filter(c => c[0] === 'search').length, 2, 'the second search changed nothing; after that it is not done again')
+  assert.equal(state.status, 'awaiting_user')
+  assert.equal(state.pending.kind, 'question')
+  assert.deepEqual(state.pending.choices, ['Try another way', 'Stop and tell me what you have'])
+  await agent.answer('Try another way', state.pending.id)
+  assert.equal(state.status, 'completed', 'the user unblocked it; the task goes on')
 })
 
 test('a page that fails to load is recorded and the task goes on', async () => {
   const { state } = await run([A.open('https://slow.example/'), A.search('rag'), A.finish()], { tools: fakeTools({ failOpen: true }) })
   assert.equal(state.steps[0].ok, false)
   assert.match(state.steps[0].result, /did not finish loading/)
-  assert.equal(state.status, 'done')
+  assert.equal(state.status, 'completed')
 })
 
 test('pause stops at the next safe boundary (after the step in flight); resume carries on', async () => {
@@ -329,7 +333,7 @@ test('pause stops at the next safe boundary (after the step in flight); resume c
   const resumed = { async agentStep() { return { ok: true, data: { success: true, thought: '', action: A.finish() } } } }
   const again = createAgent({ state, tools: fakeTools(), client: resumed })
   await again.start()
-  assert.equal(state.status, 'done')
+  assert.equal(state.status, 'completed')
 })
 
 test('stop ends the task at once: the decision that arrives after it is not carried out', async () => {
@@ -339,28 +343,31 @@ test('stop ends the task at once: the decision that arrives after it is not carr
   const client = { async agentStep() { await agent.stop(); return { ok: true, data: { success: true, thought: '', action: { tool: 'click', args: { index: 3 } } } } } }
   agent = createAgent({ state, tools, client })
   await agent.start()
-  assert.equal(state.status, 'stopped')
+  assert.equal(state.status, 'cancelled')
   assert.equal(state.steps.length, 0, 'nothing more was done')
   assert.equal(tools.calls.filter(c => c[0] === 'click').length, 0)
 })
 
 test('ask_user waits for the learner, with choices, and their answer goes into the next decision', async () => {
   const { state, agent, client } = await run([{ tool: 'ask_user', args: { question: 'Which email should go in the form?', choices: ['Work', 'Personal'] } }, A.finish()])
-  assert.equal(state.status, 'asking')
+  assert.equal(state.status, 'awaiting_user')
   assert.deepEqual(state.pending.choices, ['Work', 'Personal'])
   await agent.answer('Work')
-  assert.equal(state.status, 'done')
-  assert.match(client.sent[1].steps[0].result, /The learner answered: Work/)
+  assert.equal(state.status, 'completed')
+  assert.match(client.sent[1].steps[0].result, /The user answered: Work/)
 })
 
 test('a click that could buy something waits for the learner, and a no is respected', async () => {
   const { state, agent, tools } = await run([{ tool: 'click', args: { index: 99 } }, A.finish()])
-  assert.equal(state.status, 'confirming')
+  assert.equal(state.status, 'awaiting_user')
+  assert.equal(state.pending.kind, 'confirm')
   assert.match(state.pending.reason, /could change something/)
   await agent.confirm(false)
   assert.equal(tools.calls.filter(c => c[0] === 'click').length, 0, 'not clicked')
   assert.match(state.steps[0].result, /did not allow/)
-  assert.equal(state.status, 'done')
+  assert.equal(state.status, 'completed')
+  await agent.confirm(true)
+  assert.equal(tools.calls.filter(c => c[0] === 'click').length, 0, 'a no is final: a late yes to the same question does nothing')
 })
 
 test('a yes carries out exactly that action once, then the task goes on', async () => {
@@ -368,7 +375,7 @@ test('a yes carries out exactly that action once, then the task goes on', async 
   await agent.confirm(true)
   assert.deepEqual(tools.calls.filter(c => c[0] === 'click'), [['click', 99]])
   assert.equal(state.steps[0].ok, true)
-  assert.equal(state.status, 'done')
+  assert.equal(state.status, 'completed')
 })
 
 test('a password field is never typed into, whatever the model asks', async () => {
@@ -379,12 +386,12 @@ test('a password field is never typed into, whatever the model asks', async () =
 
 test('a site that is not allowed waits for the learner; allowed, the same action runs and the site is given back at the end', async () => {
   const { state, agent, tools } = await run([A.open('https://github.com/kivo/issues/1'), A.finish()], { tools: fakeTools({ access: 'github.com' }) })
-  assert.equal(state.status, 'access')
+  assert.equal(state.status, 'awaiting_permission')
   assert.equal(state.pending.site, 'github.com')
   await agent.access(true, { pattern: 'https://github.com/*' })
   assert.deepEqual(state.granted, ['https://github.com/*'], 'kept so it is given back when the task ends')
   assert.equal(tools.calls.filter(c => c[0] === 'open').length, 2, 'the same open, once more')
-  assert.equal(state.status, 'done')
+  assert.equal(state.status, 'completed')
 })
 
 test('a site refused: the task is told and goes on without it', async () => {
@@ -392,18 +399,19 @@ test('a site refused: the task is told and goes on without it', async () => {
   await agent.access(false)
   assert.match(state.steps[0].result, /did not allow Nova to use github\.com/)
   assert.equal(state.granted.length, 0)
-  assert.equal(state.status, 'done')
+  assert.deepEqual(state.denied, ['https://github.com/*'], 'remembered for the rest of the task')
+  assert.equal(state.status, 'completed')
 })
 
 test('hand_over (a sign-in, a human check) waits for the learner and reads the page again when they are back', async () => {
   const tools = fakeTools({ start: 'https://app.example/login' })
   const { state, agent, client } = await run([{ tool: 'hand_over', args: { reason: 'Sign in to the app, then press Done.' } }, A.finish()], { tools, startTab: { id: 1, url: 'https://app.example/login', title: 'Sign in' } })
-  assert.equal(state.status, 'asking')
+  assert.equal(state.status, 'awaiting_user')
   assert.equal(state.pending.kind, 'needs_you')
   await agent.answer('done')
   assert.equal(tools.calls.filter(c => c[0] === 'observe').length, 2, 'read again when the learner is back')
   assert.match(client.sent[1].steps.at(-1).result, /did what was needed/)
-  assert.equal(state.status, 'done')
+  assert.equal(state.status, 'completed')
 })
 
 test('the workspace is read through Kivo, and what it returned is kept as the learner\'s private material', async () => {
@@ -426,7 +434,7 @@ test('save_to_drafts captures through Kivo, the same path as a selected passage'
 
 test('at the step limit the model is told no steps are left, and the task finishes', async () => {
   const { state, client } = await run([A.search('a'), A.search('b'), A.finish()], { limits: { steps: 2, minutes: 10, modelCalls: 30 } })
-  assert.equal(state.status, 'done')
+  assert.equal(state.status, 'completed')
   assert.equal(client.sent[2].stepsLeft, 0)
 })
 
@@ -435,7 +443,7 @@ test('when the model is unavailable the task pauses with a reason, and can resum
   assert.equal(state.status, 'paused')
   assert.match(state.error, /didn't answer/)
   await agent.start()
-  assert.equal(state.status, 'done')
+  assert.equal(state.status, 'completed')
 })
 
 test('a task the server no longer accepts (expired, or out of steps) ends, saying so', async () => {
@@ -450,7 +458,7 @@ test('each step sends the objective, the conversation, the workspace, the plan, 
   const input = stepInput(state, fakeTools(), OBS('u'))
   assert.equal(input.steps.length, 14, 'only the latest steps')
   assert.equal(input.stepsLeft, DEFAULT_LIMITS.steps - 20)
-  assert.deepEqual(Object.keys(input).sort(), ['data', 'findings', 'history', 'objective', 'observation', 'plan', 'saved', 'seen', 'sources', 'steps', 'stepsLeft', 'tabs', 'ticket', 'watching', 'workspace'])
+  assert.deepEqual(Object.keys(input).sort(), ['data', 'denied', 'findings', 'history', 'mode', 'objective', 'observation', 'plan', 'saved', 'scope', 'seen', 'sources', 'steps', 'stepsLeft', 'tabs', 'ticket', 'watching', 'workspace'])
 })
 
 test('pages read earlier in a task go with each later step (short), so a comparison has both', async () => {

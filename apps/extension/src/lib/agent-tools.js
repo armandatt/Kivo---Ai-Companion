@@ -35,7 +35,7 @@
 // observation when there is a page to look at, or needsAccess / needsUser
 // when the learner must act. check() says when an action waits for their OK.
 
-import { actOn, clearOverlay, inspectTarget, observePage, readSearchResults, scrollPage, settleDom, showAction } from './agent-page.js'
+import { actOn, clearOverlay, findOnPage, inspectTarget, mapLocate, mapRequest, observePage, readSearchResults, scrollPage, settleDom, showAction } from './agent-page.js'
 
 export const PART_CHARS = 6_000
 export const LOAD_TIMEOUT_MS = 20_000
@@ -83,6 +83,15 @@ export function readableUrl(url) {
   return url
 }
 
+/** The same page, whatever fragment or trailing slash the address has. */
+export function samePage(a, b) {
+  try {
+    const x = new URL(a), y = new URL(b)
+    const norm = u => `${u.protocol}//${u.hostname.replace(/^www\./, '')}${u.pathname.replace(/\/$/, '')}${u.search}`
+    return norm(x) === norm(y)
+  } catch { return false }
+}
+
 const lower = s => String(s ?? '').toLowerCase()
 const hasWord = (label, words) => words.some(w => label === w || label.startsWith(`${w} `) || label.endsWith(` ${w}`) || label.includes(` ${w} `))
 
@@ -105,8 +114,14 @@ export function needsConfirmation(target, action, args = {}) {
     if (action === 'press' || !hasWord(label, NAVIGATIONAL) || hasWord(label, RISKY)) return `It would submit the form${label && action === 'click' ? ` ("${target.label}")` : ''}.`
     return null
   }
-  if (action === 'click' && target.tag !== 'a' && hasWord(label, RISKY)) return `"${target.label}" could change something on that site.`
-  if (action === 'click' && target.tag === 'a' && hasWord(label, RISKY_LINKS)) return `"${target.label}" could change something on that site.`
+  // A button names its action in a word or two ("Book now", "Delete"). A row of
+  // a list (an email, an issue) or a long label is content: "Your book is due
+  // tomorrow" opens an email, it books nothing. There a risky word counts only
+  // when the label starts with it.
+  const content = ['row', 'gridcell', 'listitem', 'treeitem', 'option', 'article'].includes(target.role) || label.split(' ').length > 5
+  const risky = words => (content ? words.some(w => label === w || label.startsWith(`${w} `)) : hasWord(label, words))
+  if (action === 'click' && target.tag !== 'a' && risky(RISKY)) return `"${target.label}" could change something on that site.`
+  if (action === 'click' && target.tag === 'a' && risky(RISKY_LINKS)) return `"${target.label}" could change something on that site.`
   if ((action === 'check' || action === 'select' || (action === 'click' && ['switch', 'checkbox'].includes(target.role))) && SENSITIVE_SETTINGS.some(w => label.includes(w))) return `It would change "${target.label}", a security or privacy setting.`
   return null
 }
@@ -207,7 +222,18 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
     check: a => `${a.checked === false ? 'clearing' : 'selecting'} ${nameOf(a.index) ? `“${nameOf(a.index)}”` : 'this'}`,
     press: a => `pressing ${a.key}`,
   }
-  const askAccess = url => ({ ok: false, needsAccess: { site: siteOf(url), pattern: sitePattern(url), url }, result: `Nova needs the learner's permission to use ${siteOf(url)}.` })
+  const askAccess = url => ({ ok: false, needsAccess: { site: siteOf(url), pattern: sitePattern(url), url }, result: `Nova needs your permission to use ${siteOf(url)}.` })
+  // Which parts of each page were read: "the page has no X" needs all of them (or a find).
+  const coverage = new Map(restore?.coverage ?? [])
+  const noteRead = (url, part, parts) => {
+    const key = String(url).split('#')[0]
+    const c = coverage.get(key) ?? { parts, read: [] }
+    c.parts = parts
+    if (!c.read.includes(part)) c.read.push(part)
+    coverage.set(key, c)
+    while (coverage.size > 20) coverage.delete(coverage.keys().next().value)
+  }
+  const coverageOf = url => coverage.get(String(url ?? '').split('#')[0]) ?? null
 
   // A script that could not run: why, in the learner's terms.
   async function failure(err, tabId) {
@@ -226,7 +252,8 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
     if (raw.isPdf) return { ok: false, result: 'This is a PDF, which Kivo cannot read from the browser. Look for an HTML version (an abstract page or documentation page).' }
     const parts = partsOf(raw.text || '')
     const part = Math.min(Math.max(1, partNumber), parts.length || 1)
-    page = { tab: tabId, url: raw.url, title: raw.title, headings: raw.headings, parts, links: raw.links, elements: raw.elements, dialog: raw.dialog, alerts: raw.alerts, signIn: raw.signIn, challenge: raw.challenge, more: raw.more, kind: 'page', fullText: raw.text, fingerprint: raw.fingerprint }
+    page = { tab: tabId, url: raw.url, title: raw.title, headings: raw.headings, outline: raw.outline ?? [], parts, links: raw.links, linksTotal: raw.linksTotal ?? raw.links?.length ?? 0, elements: raw.elements, elementsTotal: raw.elementsTotal ?? 0, dialog: raw.dialog, alerts: raw.alerts, signIn: raw.signIn, challenge: raw.challenge, more: raw.more, kind: 'page', fullText: raw.text, fingerprint: raw.fingerprint, found: null, map: raw.map ?? null }
+    noteRead(raw.url, part, parts.length)
     if (info) { info.url = raw.url; info.title = raw.title }
     await show(tabId, null, 'reading the page')
     return { ok: true, result: `Read part ${part} of ${parts.length} of "${raw.title}".`, observation: observation(part) }
@@ -234,8 +261,11 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
   function observation(part) {
     if (!page) return null
     return {
-      tab: page.tab, url: page.url, title: page.title, headings: page.headings, text: page.parts[part - 1] ?? '', part, parts: page.parts.length,
-      links: page.links, elements: page.elements ?? [], dialog: page.dialog ?? null, alerts: page.alerts ?? [], signIn: Boolean(page.signIn), challenge: Boolean(page.challenge), more: Boolean(page.more), kind: page.kind,
+      tab: page.tab, url: page.url, title: page.title, print: page.fingerprint ?? '', headings: page.headings, outline: page.outline ?? [], text: page.parts[part - 1] ?? '', part, parts: page.parts.length,
+      partsRead: [...(coverageOf(page.url)?.read ?? [part])].sort((a, b) => a - b),
+      links: page.links, linksTotal: page.linksTotal ?? 0, elements: page.elements ?? [], elementsTotal: page.elementsTotal ?? 0, dialog: page.dialog ?? null, alerts: page.alerts ?? [], signIn: Boolean(page.signIn), challenge: Boolean(page.challenge), more: Boolean(page.more), kind: page.kind,
+      found: page.found ?? null,
+      map: page.map ?? null,
     }
   }
 
@@ -246,13 +276,15 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
     try { return await chrome.permissions.contains({ origins: [pattern] }) } catch { return false }
   }
 
-  async function goTo(url, { newTab = false } = {}) {
+  async function goTo(url, { newTab = false, inPlace = false } = {}) {
     const allowed = allowedUrl(readableUrl(url))
     if (!allowed.ok) return { ok: false, result: allowed.reason }
     if (!(await mayUse(allowed.url))) return askAccess(allowed.url)
     try {
-      // The learner's own page is never navigated away by "open": a tab of Nova's is used.
-      if (!newTab && current !== null && tabs.get(current)?.own && current !== searchTab) await chrome.tabs.update(current, { url: allowed.url })
+      // Following a link on the page the task is on: that tab goes there, as a click would.
+      if (inPlace && current !== null) await chrome.tabs.update(current, { url: allowed.url })
+      // The user's own page is never navigated away by "open": a tab of Nova's is used.
+      else if (!newTab && current !== null && tabs.get(current)?.own && current !== searchTab) await chrome.tabs.update(current, { url: allowed.url })
       else { const tab = await chrome.tabs.create({ url: allowed.url, active: watch(), ...(typeof windowId === 'number' ? { windowId } : {}) }); tabs.set(tab.id, { url: allowed.url, title: '', own: true, learners: false }); current = tab.id }
       if (watch()) await chrome.tabs.update(current, { active: true })
     } catch { return { ok: false, result: 'The browser would not open that page.' } }
@@ -278,7 +310,7 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
     if (!read.ok) return { ...read, result: `${words}. Then: ${read.result}` }
     const moved = url !== beforeUrl
     const changed = moved || page?.fingerprint !== beforePrint
-    return { ...read, result: `${words}${moved ? `; the page is now "${page.title}"` : changed ? '; the page changed' : '; nothing visible changed'}.` }
+    return { ...read, changed, result: `${words}${moved ? `; the page is now "${page.title}"` : changed ? '; the page changed' : '; nothing visible changed'}.` }
   }
 
   // The element an index named, found again by role and name if the page re-drew it.
@@ -310,7 +342,7 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
     if (res?.never) return { ok: false, result: res.reason }
     if (!res?.ok) {
       const read = await look(tabId, 1)
-      return { ok: false, result: res?.reason ?? 'That did not work.', observation: read.observation }
+      return { ok: false, kind: res?.kind ?? 'failed', result: res?.reason ?? 'That did not work.', observation: read.observation }
     }
     const words = {
       click: 'Clicked',
@@ -318,7 +350,7 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
       select: `Chose "${res?.value ?? args.option}"`,
       check: res?.checked ? 'It is now checked' : 'It is now unchecked',
       press: `Pressed ${args.key}`,
-    }[op] + (res?.recovered !== undefined ? ` (the page had re-drawn; found it again as ${res.recovered})` : '')
+    }[op] + (res?.recovered !== undefined ? ` (the page had re-drawn; found it again as ${res.recovered})` : '') + (res?.covered ? ` (something was drawn over it: "${res.covered}")` : '')
     return after(tabId, beforeUrl, beforePrint, words)
   }
 
@@ -328,7 +360,8 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
     current: () => current,
     ownTabs: () => [...tabs.entries()].filter(([, t]) => t.own).map(([id]) => id),
     /** What to keep so a restarted worker can carry on. */
-    snapshot: () => ({ tabs: [...tabs.entries()], current, searchTab }),
+    snapshot: () => ({ tabs: [...tabs.entries()], current, searchTab, coverage: [...coverage.entries()] }),
+    coverage: url => coverageOf(url),
     /** A tab the learner put into the task. */
     adopt(tab) { if (tab && !tabs.has(tab.id)) tabs.set(tab.id, { url: tab.url, title: tab.title, own: false, learners: true }) },
 
@@ -339,8 +372,9 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
         if (!(await mayUse(allowed.url))) return askAccess(allowed.url)
         try {
           if (searchTab !== null && tabs.has(searchTab)) await chrome.tabs.update(searchTab, { url: allowed.url })
-          else { const tab = await chrome.tabs.create({ url: allowed.url, active: watch(), ...(typeof windowId === 'number' ? { windowId } : {}) }); searchTab = tab.id; tabs.set(tab.id, { url: allowed.url, title: 'Search', own: true, learners: false }) }
-          if (watch()) await chrome.tabs.update(searchTab, { active: true })
+          // A results page is read in the background: the panel shows the
+          // search and the sources found, not the search site itself.
+          else { const tab = await chrome.tabs.create({ url: allowed.url, active: false, ...(typeof windowId === 'number' ? { windowId } : {}) }); searchTab = tab.id; tabs.set(tab.id, { url: allowed.url, title: 'Search', own: true, learners: false }) }
         } catch { continue }
         current = searchTab
         const done = await settled(searchTab)
@@ -350,14 +384,25 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
         challenged = challenged || Boolean(raw?.challenge)
       }
       // A human check is the learner's to pass, never the agent's.
-      if (!raw?.results?.length && challenged) return { ok: false, needsUser: { message: 'The search site wants to check that a person is searching. Open the search tab, complete the check there, then come back and press Resume.', tab: searchTab }, result: 'The search site asked for a human check.' }
+      if (!raw?.results?.length && challenged) return { ok: false, needsUser: { message: 'The search site wants to check that a person is searching. Show the tab, complete the check there yourself, then press Done, carry on. Nova never answers these checks.', tab: searchTab }, result: 'The search site asked for a human check.' }
       if (!raw?.results?.length) return { ok: false, result: `No results for "${query}". Try other words.` }
       const text = raw.results.map(r => `(${r.i}) ${r.title}\n${r.href}\nSnippet (not verified): ${r.snippet}`).join('\n\n')
       page = { tab: searchTab, url: raw.url, title: `Search: ${query}`, headings: [], parts: [text], links: raw.results.map(r => ({ i: r.i, text: r.title, href: r.href })), elements: [], dialog: null, alerts: [], signIn: false, challenge: false, more: false, kind: 'search_results', fullText: '', fingerprint: raw.url }
-      return { ok: true, result: `${raw.results.length} results for "${query}".`, observation: observation(1) }
+      return { ok: true, result: `${raw.results.length} results for "${query}".`, observation: observation(1), results: raw.results.slice(0, 8).map(r => ({ title: r.title, url: r.href })) }
     },
 
     async open({ url, newTab = false }) {
+      // Already open in this task (the page in front, or another of its tabs): used, not opened twice.
+      const target = readableUrl(url)
+      if (current !== null && page?.kind === 'page' && samePage(page.url, target)) { const read = await look(current, 1); return read.ok ? { ...read, result: `Already on that page. ${read.result}` } : read }
+      for (const [id, t] of tabs) {
+        if (id !== searchTab && samePage(t.url, target)) {
+          current = id
+          if (watch()) await chrome.tabs.update(id, { active: true }).catch(() => undefined)
+          const read = await look(id, 1)
+          return read.ok ? { ...read, result: `That page is already open in tab ${id}; switched to it. ${read.result}` } : read
+        }
+      }
       const failed = await goTo(url, { newTab })
       if (failed) return failed
       return look(current, 1)
@@ -373,9 +418,53 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
       if (current === null) return { ok: false, result: 'No page is open. Search or open one first.' }
       if (page && page.tab === current && page.kind === 'page' && part > 1 && part <= page.parts.length) {
         // The same page, not changed: no need to read it again.
+        noteRead(page.url, part, page.parts.length)
         return { ok: true, result: `Part ${part} of ${page.parts.length} of "${page.title}".`, observation: observation(part) }
       }
       return look(current, part)
+    },
+
+    /** Words looked for on the whole page: elements to act on and passages, read or not. */
+    async find({ query }) {
+      if (current === null) return { ok: false, result: 'No page is open.' }
+      let res
+      try { res = await run(current, findOnPage, [query, 12]) } catch (err) { return failure(err, current) }
+      if (!page || page.tab !== current) { const read = await look(current, 1); if (!read.ok) return read }
+      const lowerText = String(page.fullText ?? '').toLowerCase()
+      const inParts = page.parts.map((p, i) => (String(query).toLowerCase().split(' ').filter(w => w.length > 1).every(w => p.toLowerCase().includes(w)) ? i + 1 : null)).filter(Boolean)
+      page.found = { query: String(query).slice(0, 120), elements: res?.elements ?? [], passages: res?.passages ?? [], total: res?.total ?? 0, parts: inParts }
+      const cov = coverageOf(page.url)
+      if (cov) cov.searched = [...new Set([...(cov.searched ?? []), String(query).toLowerCase()])].slice(-10)
+      const n = page.found.elements.length, m = page.found.passages.length
+      const none = !n && !m && !inParts.length && !lowerText.includes(String(query).toLowerCase())
+      return { ok: true, result: none ? `"${query}" is nowhere on this page (the whole page was searched).` : `Found ${page.found.total} element${page.found.total === 1 ? '' : 's'} and ${m} passage${m === 1 ? '' : 's'} with "${query}"${inParts.length ? ` (text parts ${inParts.join(', ')})` : ''}: see FOUND.`, observation: observation(page.parts.length ? Math.min(...(inParts.length ? inParts : [1])) : 1) }
+    },
+
+    /**
+     * Kivo's Knowledge Map, by its own graph: the pointer goes to the node's
+     * element as it is drawn now (watch mode), then the map does the action
+     * itself (select, open, related, parent, follow, zoom, pan, whole,
+     * connect). Never by screen coordinates.
+     */
+    async map(args) {
+      if (current === null) return { ok: false, result: 'No page is open.' }
+      const tabId = current
+      const point = async (id, words) => {
+        if (!id) return
+        let at = null
+        try { at = await run(tabId, mapLocate, [id], 3000) } catch { at = null }
+        if (at?.index !== null && at?.index !== undefined) await show(tabId, at.index, words)
+      }
+      const label = id => page?.map?.nodes?.find(n => n.id === id)?.label ?? id
+      if (['select', 'open', 'related', 'parent', 'follow', 'connect'].includes(args.op)) await point(args.id, `${args.op === 'connect' ? 'connecting' : args.op === 'follow' ? 'following from' : 'going to'} “${String(label(args.id)).slice(0, 40)}”`)
+      let res
+      try { res = await run(tabId, mapRequest, [args], 12_000) } catch (err) { return failure(err, tabId) }
+      if (res?.absent) return { ok: false, result: 'This page is not Kivo\'s Knowledge Map. Open it in Kivo first (the Knowledge Map page), then use map.' }
+      if (args.op === 'follow' && res?.ok) await point(args.to, `following to “${String(label(args.to)).slice(0, 40)}”`)
+      await run(tabId, settleDom, [1200, ''], 3000).catch(() => undefined)
+      const read = await look(tabId, 1)
+      const extra = res?.options?.length ? ` Ways to connect: ${res.options.map(o => `${o.key} (${o.label}: ${o.detail})`).join('; ')}.` : ''
+      return { ...(read.ok ? read : {}), ok: Boolean(res?.ok), changed: true, result: `${String(res?.result ?? 'The map did not answer.').slice(0, 260)}${extra}` }
     },
 
     async scroll({ direction }) {
@@ -414,6 +503,13 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
     /** null: allowed. Otherwise why it waits for the learner, or 'never'. */
     async check(action) {
       const op = action.tool
+      // Connecting two cards changes the user's Kivo: they say yes first.
+      // The map says exactly what it would do (a link, or a move), changing nothing yet.
+      if (op === 'map' && action.args.op === 'connect') {
+        let preview = null
+        try { preview = current === null ? null : await run(current, mapRequest, [{ ...action.args, preview: true }], 5000) } catch { preview = null }
+        return `It would change your Knowledge Map: ${preview?.ok ? preview.result : `connect ${action.args.id} and ${action.args.to}`}`
+      }
       if (op === 'open') { let url = action.args.url || ''; try { url = decodeURIComponent(url) } catch { /* as given */ } return carriesPrivate(url, privateTexts()) ? 'The address would carry text from your Kivo notes to another site.' : null }
       if (!['click', 'fill', 'select', 'check', 'press'].includes(op) || current === null) return null
       if (op === 'fill' && carriesPrivate(action.args.text, privateTexts())) return `It would put text from your Kivo notes into ${siteOf(page?.url) || 'this site'}.`
@@ -436,7 +532,16 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
         if (!(await mayUse(allowed.url)) && siteOf(allowed.url) !== siteOf(page?.url)) return askAccess(allowed.url)
         if (target?.opensNewTab || !target?.exists) return tools.open({ url: allowed.url, newTab: Boolean(target?.opensNewTab) })
       }
-      return act('click', { index })
+      const out = await act('click', { index })
+      // An ordinary link whose click changed nothing (a page that swallows
+      // synthetic clicks): followed by its address instead, as a person would.
+      if (out.ok && href && !href.startsWith('javascript:') && /nothing visible changed/.test(out.result) && allowedUrl(href).ok && !samePage(href, page?.url ?? '')) {
+        const failed = await goTo(href, { inPlace: true })
+        if (failed) return failed
+        const read = await look(current, 1)
+        return read.ok ? { ...read, result: `Clicked; the page did not react, so Nova followed the link's address. Now on "${page.title}".` } : read
+      }
+      return out
     },
     fill: ({ index, text, submit }) => act('fill', { index, text, submit }),
     select: ({ index, option }) => act('select', { index, option }),

@@ -3,15 +3,22 @@ import { metered } from "../../../../../lib/billing/metered"
 //@ts-ignore
 import { answerPageQuestion, PAGE_QUESTION_BODY_MAX_BYTES, PAGE_QUESTIONS_PER_MINUTE } from "@repo/api/nova/product/page-question"
 import { allowAttempt, eventFail, readSmallJson, resolveExtensionCaller, preflight, withCors } from "../../../../../lib/nova/extension-access"
+//@ts-ignore
+import { meterLlmUsage } from "@repo/api/services/llm-usage"
+//@ts-ignore
+import { agentWorkspaceSearch } from "@repo/api/nova/product/browser-agent"
+//@ts-ignore
+import { resolveEventLearner } from "@repo/api/nova/product/learning-events"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-// POST /api/nova/extension/ask   { question, url, title, excerpt?, screenshot? }
-// The extension's "Ask Nova about this page". One model call, given the
-// page's title and site, the passage the learner selected, if any, and the
-// screenshot they took in the popup, if any. Nova has not read the page and
-// the server does not fetch it.
+// POST /api/nova/extension/ask   { question, url, title, excerpt?, screenshot?, pageText?, pageComplete?, scope? }
+// The extension's chat with Nova about the page. One model call, given the
+// page's title and site, its text as the extension read it (under the
+// browser's permission for that tab), the passage the user selected, and the
+// screenshot they took, each when there is one. The server never fetches the
+// address.
 // It answers and nothing else: nothing is stored (the screenshot included: it
 // is read for this one answer and dropped), and the question does not
 // enter the chat pipeline (see product/page-question.ts).
@@ -39,10 +46,20 @@ async function handlePOST(req: Request): Promise<NextResponse> {
         ? eventFail(413, "too_large", "That's more than Nova reads at once. Select a shorter passage, or mark a smaller part of the screenshot.")
         : eventFail(400, "invalid", "That isn't a question Nova can answer.")
     }
-    const run = await metered(caller.platformChatId, () => answerPageQuestion(read.body), { feature: "extension_ask_nova", surface: "extension" })
+    // The answer's own tokens, returned so the extension can measure a question against a task.
+    const usage = { inputTokens: 0, outputTokens: 0, calls: 0 }
+    // The user's own Kivo, when the question is about it (routed so by …/intent): read from the
+    // database through the same search the agent uses, inside this one request. No extra model call.
+    const wants = (read.body as { workspace?: unknown; question?: unknown; title?: unknown } | null)
+    let workspace: string | null = null
+    if (wants?.workspace === true && typeof wants.question === "string") {
+      const learner = await resolveEventLearner(caller.platformChatId).catch(() => null)
+      if (learner?.status === "ready") workspace = (await agentWorkspaceSearch({ profileId: learner.profileId, platformChatId: caller.platformChatId }, `${wants.question} ${typeof wants.title === "string" ? wants.title : ""}`.slice(0, 200)).catch(() => null))?.text ?? null
+    }
+    const run = await metered(caller.platformChatId, () => meterLlmUsage((u: { inputTokens: number | null; outputTokens: number | null }) => { usage.inputTokens += u.inputTokens ?? 0; usage.outputTokens += u.outputTokens ?? 0; usage.calls++ }, () => answerPageQuestion(read.body, undefined, { workspace })), { feature: "extension_ask_nova", surface: "extension" })
     if (!run.ok) return run.response
     const result = run.value as Awaited<ReturnType<typeof answerPageQuestion>>
-    if (result.ok) return NextResponse.json(result, { headers: { "cache-control": "no-store" } })
+    if (result.ok) return NextResponse.json({ ...result, usage }, { headers: { "cache-control": "no-store" } })
     return NextResponse.json({ success: false, ...result }, { status: result.error === "unavailable" ? 503 : 400 })
   } catch (err) {
     console.error("[nova/extension/ask]", err)

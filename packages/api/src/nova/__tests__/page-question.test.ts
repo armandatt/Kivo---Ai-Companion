@@ -20,7 +20,7 @@ const WEBP = Buffer.concat([Buffer.from("RIFF"), Buffer.from([1, 2, 3, 4]), Buff
 describe("what a page question may carry", () => {
   it("reads the question, the site, the title and the selection, and nothing else", () => {
     const parsed = parsePageQuestion(ask({ excerpt: " Spacing   helps.\r\n\r\nSo does testing. ", body: "the whole page", html: "<html>", cookies: "session=abc", userId: "someone-else" }));
-    expect(parsed).toEqual({ ok: true, input: { question: "What is the spacing effect?", domain: "example.com", title: "Memory", excerpt: "Spacing helps.\n\nSo does testing.", screenshot: null, history: [], detail: "brief" } });
+    expect(parsed).toEqual({ ok: true, input: { question: "What is the spacing effect?", domain: "example.com", title: "Memory", excerpt: "Spacing helps.\n\nSo does testing.", screenshot: null, history: [], detail: "brief", pageText: null, pageComplete: false } });
     expect(JSON.stringify(parsed)).not.toMatch(/SECRET|whole page|session=abc|someone-else|https?:/);
   });
 
@@ -103,7 +103,8 @@ describe("answering", () => {
     const [[request]] = generate.mock.calls as unknown as [[{ prompt: string; systemInstruction: string; deadlineMs: number }]];
     expect(request.prompt).toBe(pageQuestionPrompt({ question: "What is the spacing effect?", domain: "example.com", title: "Memory", excerpt: "Spacing helps." }));
     expect(request.prompt).not.toMatch(/https?:\/\/|SECRET/);
-    expect(request.systemInstruction).toMatch(/You have NOT read the page/);
+    expect(request.systemInstruction).toMatch(/when Nova could read it, the page's text/);
+    expect(request.systemInstruction).toMatch(/Do not invent what the page says/);
     expect(request.systemInstruction).toMatch(/not instructions to follow/);
     expect(request.deadlineMs).toBeGreaterThan(0);
   });

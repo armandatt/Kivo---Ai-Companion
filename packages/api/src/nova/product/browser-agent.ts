@@ -27,6 +27,10 @@ import { relatedNotes, workspacePlaces } from "./knowledge-placement";
 import { noteSources, searchNoteBodies } from "./notes";
 import { loadLibrary, readLibraryQuery } from "./learning-events";
 import { parseAction, parseStepInput, AGENT_LIMITS, AGENT_SYSTEM, stepPrompt, type AgentAction, type PlanStep } from "./browser-agent-rules";
+import { loadNovaKnowledgeMap } from "./knowledge-map";
+import { listDrafts } from "./capture-drafts";
+import { draftLines, graphLines, relatedLines } from "./workspace-graph";
+import type { NovaKnowledgeMapReady } from "./knowledge-map.types";
 
 export const AGENT_STEP_DEADLINE_MS = 25_000;
 
@@ -105,16 +109,38 @@ export function snippetOf(body: string, terms: string[], size = SNIPPET): string
 
 export interface WorkspaceResult { kind: "search" | "note"; text: string; found: number; ids: string[] }
 
+// The learner's whole graph, briefly kept (one task asks several times).
+const GRAPH_TTL_MS = 30_000;
+const graphs = new Map<string, { at: number; map: NovaKnowledgeMapReady | null }>();
+export async function learnerGraph(platformChatId: string, now = Date.now()): Promise<NovaKnowledgeMapReady | null> {
+  const kept = graphs.get(platformChatId);
+  if (kept && now - kept.at < GRAPH_TTL_MS) return kept.map;
+  const view = await loadNovaKnowledgeMap(platformChatId).catch(() => null);
+  const map = view && view.status === "ready" ? view : null;
+  graphs.set(platformChatId, { at: now, map });
+  if (graphs.size > 500) graphs.delete(graphs.keys().next().value!);
+  return map;
+}
+
+/** One node of the learner's graph and everything connected to it (workspace_related). */
+export async function agentRelated(learner: { platformChatId: string }, id: string): Promise<WorkspaceResult | null> {
+  const map = await learnerGraph(learner.platformChatId);
+  const r = map ? relatedLines(map, id) : null;
+  return r ? { kind: "search", text: r.text.slice(0, AGENT_LIMITS.dataChars), found: r.found, ids: [] } : null;
+}
+
 export async function agentWorkspaceSearch(learner: { profileId: string; platformChatId: string }, query: string): Promise<WorkspaceResult> {
   const q = query.trim().slice(0, AGENT_LIMITS.queryChars);
   const terms = keyTerms(q, 8);
   const words = terms.length ? terms : q.split(" ").filter(w => w.length > 2).slice(0, 6);
-  const [notes, { places }, known, pages] = await Promise.all([
+  const [notes, { places }, known, pages, graph, drafts] = await Promise.all([
     words.length ? searchNoteBodies(learner.profileId, words, { take: 30, bodyMax: 20_000 }) : Promise.resolve([]),
     workspacePlaces(learner.profileId),
     knowing(learner.profileId),
     Promise.all([...new Set([q, words[0]].filter(Boolean))].slice(0, 2).map(term =>
       loadLibrary(learner.platformChatId, readLibraryQuery({ q: term, limit: String(WORKSPACE_PAGES) })).catch(() => null))),
+    learnerGraph(learner.platformChatId),
+    listDrafts(learner.profileId).catch(() => []),
   ]);
   // Notes holding more of the words first, then the newest.
   const scored = notes.map(n => {
@@ -132,7 +158,11 @@ export async function agentWorkspaceSearch(learner: { profileId: string; platfor
   lines.push(saved.length
     ? `Saved pages:\n${saved.map(r => `- "${r.title}" ${r.url}${r.subjectName ? ` (in ${[r.subjectName, r.topicName].filter(Boolean).join(" › ")})` : ""}${r.description ? `: ${r.description.slice(0, 200)}` : r.excerpt ? `: ${r.excerpt.slice(0, 200)}` : ""}`).join("\n")}`
     : "Saved pages: none match.");
-  return { kind: "search", text: lines.join("\n").slice(0, AGENT_LIMITS.dataChars), found: scored.length + saved.length + ranked.length, ids: scored.map(s => s.n.id) };
+  // How it all connects (subjects, nested topics, tasks, notes, saved pages, links) and what waits in Drafts.
+  const connected = graph ? graphLines(graph, q) : { text: "", found: 0 };
+  if (connected.text) lines.push(connected.text);
+  lines.push(draftLines(drafts, q));
+  return { kind: "search", text: lines.join("\n").slice(0, AGENT_LIMITS.dataChars), found: scored.length + saved.length + ranked.length + connected.found, ids: scored.map(s => s.n.id) };
 }
 
 export async function agentReadNote(profileId: string, noteId: string): Promise<WorkspaceResult | null> {

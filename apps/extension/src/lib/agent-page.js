@@ -88,6 +88,7 @@ export function observePage(limits) {
     if (tag === 'SELECT') return el.multiple ? 'listbox' : 'menu'
     if (tag === 'TEXTAREA') return 'textbox'
     if (el.isContentEditable) return 'textbox'
+    if (el.matches('[onclick]') && !['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return 'clickable'
     if (tag === 'INPUT') {
       if (['submit', 'button', 'reset', 'image'].includes(type)) return 'button'
       if (type === 'checkbox') return 'checkbox'
@@ -178,20 +179,46 @@ export function observePage(limits) {
   }
   if (dialog) { blocks.push(`[Dialog] ${clean(dialog.innerText).slice(0, 2000)}`); length += 2000 }
   walk(root)
+  // The rest of the page, after the main writing: sections outside the
+  // article (a sidebar's "References", a second column, a section a site
+  // put outside <main>) are read too, so "the page has no X" is never said
+  // of a part that was simply not read. Site navigation and footers stay out.
+  if (root !== document.body && length < max) {
+    const before = blocks.length
+    const rest = el => {
+      if (length > max) return
+      for (const child of el.children) {
+        if (child === root || child.contains(root)) { if (child !== root) rest(child); continue }
+        if ((SKIP.has(child.tagName) && child.tagName !== 'ASIDE') || !visible(child) || child.id === '__kivo_overlay') continue
+        if (BLOCK.has(child.tagName)) {
+          const text = clean(child.innerText)
+          if (text.length >= 2) { const line = /^H[1-6]$/.test(child.tagName) ? `\n## ${text}` : child.tagName === 'LI' ? `- ${text}` : text; blocks.push(line); length += line.length + 1 }
+          continue
+        }
+        const own = [...child.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(' ')
+        if (clean(own).length >= 20 && !child.querySelector('p, li, h1, h2, h3, h4')) { const t = clean(child.innerText); blocks.push(t); length += t.length + 1; continue }
+        rest(child)
+      }
+    }
+    rest(document.body)
+    if (blocks.length > before) blocks.splice(before, 0, '\n## (Elsewhere on this page)')
+  }
   let text = blocks.join('\n').trim()
   if (text.length < 200) text = clean(root.innerText).slice(0, max)
 
   const headings = [...root.querySelectorAll('h1, h2, h3')].filter(visible).map(h => clean(h.innerText)).filter(Boolean).slice(0, 30)
+  // Every heading on the page, in order, wherever it is: the page's outline.
+  const outline = [...document.querySelectorAll('h1, h2, h3, h4')].filter(h => visible(h) && !h.closest('nav, footer')).map(h => `${'#'.repeat(Number(h.tagName[1]))} ${clean(h.innerText).slice(0, 120)}`).filter(h => h.length > 3).slice(0, 60)
 
   // ── Interactive elements ────────────────────────────────────────────────────
   const elements = []
   const links = []
   const seenHref = new Set()
-  const CONTROLS = 'button, input, select, textarea, summary, [role=button], [role=checkbox], [role=radio], [role=switch], [role=tab], [role=menuitem], [role=menuitemcheckbox], [role=menuitemradio], [role=option], [role=combobox], [role=textbox], [role=searchbox], [role=slider], [role=link]:not(a), [contenteditable=""], [contenteditable=true]'
+  const CONTROLS = 'button, input, select, textarea, summary, [role=button], [role=checkbox], [role=radio], [role=switch], [role=tab], [role=menuitem], [role=menuitemcheckbox], [role=menuitemradio], [role=option], [role=combobox], [role=textbox], [role=searchbox], [role=slider], [role=link]:not(a), [contenteditable=""], [contenteditable=true], [role=row], [role=treeitem], [role=gridcell][tabindex], [role=listitem][tabindex], [onclick]:not(body):not(html)'
   const scope = dialog || document
   const candidates = [...scope.querySelectorAll(CONTROLS)]
   // Inside the dialog first; then form controls before buttons.
-  const rank = el => (el.matches('input, select, textarea, [role=checkbox], [role=radio], [role=switch], [role=combobox], [role=textbox], [contenteditable]') ? 0 : 1)
+  const rank = el => (el.matches('input, select, textarea, [role=checkbox], [role=radio], [role=switch], [role=combobox], [role=textbox], [contenteditable]') ? 0 : el.matches('[role=row], [role=treeitem], [role=gridcell], [role=listitem], [onclick]') ? 2 : 1)
   candidates.sort((a, b) => rank(a) - rank(b) || (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
   for (const el of candidates) {
     if (elements.length >= maxElements) break
@@ -199,6 +226,9 @@ export function observePage(limits) {
     if (el.tagName === 'INPUT' && type === 'hidden') continue
     if (!visible(el)) continue
     const role = ROLE_OF(el)
+    // A row of an app's list (an email, an issue) contains a link or button
+    // of its own sometimes; then that one is listed and the row is not.
+    if (rank(el) === 2 && el.querySelector('a[href], button')) continue
     const name = nameOf(el).slice(0, 140)
     const item = { i: mark(el), role, name }
     const states = []
@@ -234,8 +264,9 @@ export function observePage(limits) {
     if (!name && !item.group && role !== 'textbox') continue
     elements.push(item)
   }
+  const vh = window.innerHeight
   for (const a of (dialog || document).querySelectorAll('a[href]')) {
-    if (links.length >= 60) break
+    if (links.length >= 400) break
     if (!visible(a)) continue
     let href
     try { href = new URL(a.getAttribute('href'), location.href) } catch { continue }
@@ -245,9 +276,14 @@ export function observePage(limits) {
     const key = href.href.split('#')[0] + '|' + label
     if (seenHref.has(key)) continue
     seenHref.add(key)
-    links.push({ i: mark(a), text: label, href: href.href.slice(0, 500), inMain: root.contains(a) })
+    const r = a.getBoundingClientRect()
+    links.push({ i: mark(a), text: label, href: href.href.slice(0, 500), inMain: root.contains(a), inView: r.bottom > 0 && r.top < vh })
   }
-  links.sort((x, y) => Number(y.inMain) - Number(x.inMain))
+  // In view first, then the main writing's, then the rest; more than the
+  // model is sent are found with find (findOnPage), never silently missing.
+  const linkRank = l => (l.inView ? 0 : 2) + (l.inMain ? 0 : 1)
+  links.sort((x, y) => linkRank(x) - linkRank(y))
+  const linksTotal = links.length
   doc.setAttribute('data-kivo-next', String(next))
 
   // ── What the page says about itself ─────────────────────────────────────────
@@ -259,13 +295,24 @@ export function observePage(limits) {
   const signIn = [...document.querySelectorAll('input[type=password]')].some(visible)
   const more = window.innerHeight + window.scrollY < doc.scrollHeight - 200
 
+  // Kivo's Knowledge Map: its own description of what is in view (synchronous: the map answers at once).
+  let map = null
+  const bridge = document.querySelector('[data-kivo-map-bridge]')
+  if (bridge) {
+    try {
+      const rid = `o${Date.now().toString(36)}`
+      bridge.dispatchEvent(new CustomEvent('kivo-map:request', { detail: JSON.stringify({ op: 'describe', rid }) }))
+      const r = JSON.parse(bridge.dataset.response || 'null')
+      if (r && r.rid === rid) map = { summary: String(r.result || '').slice(0, 300), nodes: (r.nodes || []).slice(0, 40), edges: (r.edges || []).slice(0, 60) }
+    } catch { map = null }
+  }
   document.getElementById('__kivo_overlay')?.style.removeProperty('display')
   const fingerprint = `${location.href}|${text.length}|${headings.length}|${elements.map(e => e.state || '').join(';').length}|${dialog ? 'd' : ''}`
   return {
     url: location.href, title: clean(document.title).slice(0, 300), headings, text: text.slice(0, max),
-    links: links.slice(0, 40).map(({ inMain, ...l }) => l), elements,
+    links: links.slice(0, 40).map(({ inMain, inView, ...l }) => l), linksTotal, elementsTotal: candidates.length, outline, elements,
     dialog: dialog ? (nameOf(dialog) || clean(dialog.innerText).slice(0, 120)).slice(0, 160) : null,
-    alerts, signIn, challenge, more, fingerprint, isPdf: document.contentType === 'application/pdf',
+    alerts, signIn, challenge, more, fingerprint, isPdf: document.contentType === 'application/pdf', map,
   }
 }
 
@@ -323,6 +370,102 @@ export function readSearchResults() {
   return { url: location.href, title: document.title, results: out, challenge: challenge && !out.length }
 }
 
+/**
+ * Finds, anywhere on the page (not only the part the model was shown), the
+ * elements whose accessible name or text holds the words asked for, and the
+ * passages of text that hold them. Each element found is numbered like any
+ * other (data-kivo-agent), so the agent can act on it at once. An element
+ * that exists but is hidden or disabled is reported as such: "there is a
+ * Cancel button, hidden" is not the same as "there is none".
+ */
+export function findOnPage(query, max) {
+  const limit = max || 12
+  const clean = t => (t || '').replace(/\s+/g, ' ').trim()
+  const words = clean(query).toLowerCase().split(' ').filter(w => w.length > 1)
+  if (!words.length) return { elements: [], passages: [], total: 0 }
+  const has = t => { const l = (t || '').toLowerCase(); return words.every(w => l.includes(w)) }
+  const doc = document.documentElement
+  let next = Number(doc.getAttribute('data-kivo-next') || '0')
+  const mark = node => { let n = node.getAttribute('data-kivo-agent'); if (n === null) { n = String(next++); node.setAttribute('data-kivo-agent', n) } return Number(n) }
+  const shown = node => {
+    if (node.hidden || node.closest('[hidden], [inert], [aria-hidden=true]')) return false
+    const st = getComputedStyle(node)
+    if (st.display === 'none' || st.visibility === 'hidden') return false
+    const r = node.getBoundingClientRect()
+    return r.width > 0 || r.height > 0 || node.matches('input[type=checkbox], input[type=radio]')
+  }
+  const nameOf = el => {
+    const label = el.getAttribute('aria-label') || (el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.innerText) || el.closest('label')?.innerText || el.innerText || el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('value') || el.getAttribute('alt') || ''
+    return clean(label).slice(0, 140)
+  }
+  const SEL = 'a[href], button, input:not([type=hidden]), select, textarea, summary, [role=button], [role=link], [role=checkbox], [role=radio], [role=switch], [role=tab], [role=menuitem], [role=option], [role=row], [role=treeitem], [onclick]:not(body):not(html)'
+  const elements = []
+  let total = 0
+  const vh = window.innerHeight
+  for (const el of document.querySelectorAll(SEL)) {
+    if (el.closest('#__kivo_overlay')) continue
+    const name = nameOf(el)
+    if (!has(name) && !has(el.getAttribute('href') || '')) continue
+    total++
+    if (elements.length >= limit) continue
+    const visibleNow = shown(el)
+    const r = el.getBoundingClientRect()
+    const role = el.getAttribute('role') || (el.tagName === 'A' ? 'link' : el.tagName === 'SELECT' ? 'menu' : el.tagName === 'INPUT' ? (el.getAttribute('type') || 'textbox') : el.tagName.toLowerCase())
+    let href = null
+    if (el.tagName === 'A') { try { href = new URL(el.getAttribute('href'), location.href).href.slice(0, 500) } catch { href = null } }
+    const states = []
+    if (!visibleNow) states.push('hidden')
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') states.push('disabled')
+    if (visibleNow && !(r.bottom > 0 && r.top < vh)) states.push('off screen (scrolled to when used)')
+    elements.push({ i: mark(el), role, name, ...(href ? { href } : {}), ...(states.length ? { state: states.join(', ') } : {}) })
+  }
+  const passages = []
+  for (const block of document.querySelectorAll('p, li, td, dd, pre, blockquote, h1, h2, h3, h4, h5, h6, figcaption, label')) {
+    if (passages.length >= 6) break
+    if (block.closest('#__kivo_overlay, nav, footer')) continue
+    const text = clean(block.innerText)
+    if (!text || !has(text)) continue
+    if ([...block.children].some(c => has(c.innerText))) continue  // the innermost block that holds it
+    let heading = ''
+    for (let at = block; at && !heading; at = at.previousElementSibling || at.parentElement) { if (/^H[1-6]$/.test(at.tagName) && at !== block) heading = clean(at.innerText).slice(0, 100); if (at === document.body) break }
+    passages.push({ text: text.slice(0, 300), heading, visible: shown(block) })
+  }
+  doc.setAttribute('data-kivo-next', String(next))
+  return { elements, passages, total }
+}
+
+/**
+ * Kivo's own Knowledge Map, asked through its bridge ([data-kivo-map-bridge],
+ * apps/web map-agent.ts): a request by node id, answered by the map's own
+ * actions. Text in, text out. The node's own element is numbered so the
+ * watch-mode pointer goes to where it really is now. absent: not the map.
+ */
+export async function mapRequest(req) {
+  const bridge = document.querySelector('[data-kivo-map-bridge]')
+  if (!bridge) return { absent: true }
+  const rid = `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+  bridge.dispatchEvent(new CustomEvent('kivo-map:request', { detail: JSON.stringify({ ...req, rid }) }))
+  let answer = null
+  for (let i = 0; i < 80; i++) {
+    try { const r = JSON.parse(bridge.dataset.response || 'null'); if (r && r.rid === rid) { answer = r; if (r.final) break } } catch { /* not yet */ }
+    await new Promise(r => setTimeout(r, 100))
+  }
+  if (!answer) return { ok: false, result: 'The map did not answer.' }
+  return answer
+}
+
+/** A map node's element as drawn now, numbered for the pointer; null when it is not drawn. */
+export function mapLocate(id) {
+  const el = document.querySelector(`[data-node-id="${CSS.escape(String(id))}"]`)
+  if (!el) return { index: null }
+  const doc = document.documentElement
+  let next = Number(doc.getAttribute('data-kivo-next') || '0')
+  let n = el.getAttribute('data-kivo-agent')
+  if (n === null) { n = String(next++); el.setAttribute('data-kivo-agent', n); doc.setAttribute('data-kivo-next', String(next)) }
+  const r = el.getBoundingClientRect()
+  return { index: Number(n), visible: r.width > 0 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth }
+}
+
 /** What an element is, before the agent acts on it (for the approval rules). */
 export function inspectTarget(index) {
   const el = document.querySelector(`[data-kivo-agent="${index}"]`)
@@ -370,8 +513,21 @@ export function actOn(index, op, args) {
   const type = (el.getAttribute('type') || '').toLowerCase()
   const ac = (el.getAttribute('autocomplete') || '').toLowerCase()
   if (op !== 'click' && op !== 'press' && (type === 'password' || ac.startsWith('cc-') || ac === 'one-time-code')) return { ok: false, never: true, reason: 'Nova never types into password, payment or code fields.' }
-  if (el.disabled || el.getAttribute('aria-disabled') === 'true') return { ok: false, reason: 'That element is disabled.' }
+  if (el.disabled || el.getAttribute('aria-disabled') === 'true') return { ok: false, kind: 'disabled', reason: 'That element is on the page but disabled: something else must happen first (a required field, an earlier step).' }
+  // Present but hidden (a collapsed menu, a closed tab panel): not the same as absent.
+  const hiddenNow = () => { if (el.closest('[hidden], [inert]')) return true; const st = getComputedStyle(el); if (st.display === 'none' || st.visibility === 'hidden') return true; const r = el.getBoundingClientRect(); return r.width === 0 && r.height === 0 && !el.matches('input[type=checkbox], input[type=radio]') }
+  if (op !== 'press' && hiddenNow()) {
+    const label = el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : el.closest('label')
+    if (!(label && !label.hidden && label.getClientRects().length)) return { ok: false, kind: 'hidden', reason: 'That element is on the page but hidden: open the menu, tab or section that holds it first.' }
+  }
   try { el.scrollIntoView({ block: 'center', inline: 'nearest' }) } catch { /* not scrollable */ }
+  // Something drawn over it (a cookie banner, an overlay): named, so it can be dealt with.
+  let covered = null
+  try {
+    const r = el.getBoundingClientRect()
+    const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+    if (top && top !== el && !el.contains(top) && !top.contains(el) && !top.closest('#__kivo_overlay') && !(top.closest('label') && top.closest('label').contains(el))) covered = clean(top.getAttribute('aria-label') || top.innerText || top.tagName).slice(0, 80)
+  } catch { /* no layout */ }
   const pointer = target => {
     const r = target.getBoundingClientRect()
     const at = { bubbles: true, cancelable: true, composed: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 }
@@ -384,7 +540,7 @@ export function actOn(index, op, args) {
 
   if (op === 'click') {
     pointer(el)
-    return { ok: true }
+    return { ok: true, covered }
   }
   if (op === 'fill') {
     const text = String(args?.text ?? '')

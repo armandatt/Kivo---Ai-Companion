@@ -14,6 +14,8 @@ const SCREENSHOT_TIMEOUT_MS = 30_000
 const PLACE_TIMEOUT_MS = 9_000
 // One decision of the browser agent: the model reads a page's worth of text.
 const AGENT_STEP_TIMEOUT_MS = 45_000
+// Routing a request: a small model, stopped at 6 s on the server.
+const INTENT_TIMEOUT_MS = 9_000
 
 export const WORDS = {
   offline:         "Can't reach Nova right now. Check your connection and try again.",
@@ -83,7 +85,9 @@ export function createClient({ baseUrl, fetch: doFetch, getToken }) {
     // nothing to choose. drafts(): the draft a capture would join, and how many are open.
     capture:    body => call('/api/nova/extension/captures', { method: 'POST', body }),
     drafts:     () => call('/api/nova/extension/captures'),
-    ask:        question => call('/api/nova/extension/ask', { method: 'POST', body: question, timeoutMs: question.screenshot || question.detail === 'detailed' ? SCREENSHOT_TIMEOUT_MS : TIMEOUT_MS }),
+    ask:        question => call('/api/nova/extension/ask', { method: 'POST', body: question, timeoutMs: question.screenshot || question.detail === 'detailed' || question.pageText ? SCREENSHOT_TIMEOUT_MS : TIMEOUT_MS }),
+    // What a request is: answered from the page, a task, research, or a question back (lib/intent.js).
+    intent:     body => call('/api/nova/extension/intent', { method: 'POST', body, timeoutMs: INTENT_TIMEOUT_MS }),
     // Where a captured passage belongs: Kivo's placement (asked once, after
     // the capture is saved), the learner's own choice, and the places to choose from.
     place:       (draftId, itemId) => call('/api/nova/extension/captures/place', { method: 'POST', body: { draftId, itemId }, timeoutMs: PLACE_TIMEOUT_MS }),
@@ -140,7 +144,7 @@ export function buildCapture({ key, page, title, text, fresh = false }) {
  * @param {{ question: string, page: { url: string, title: string }, title?: string, excerpt?: string, screenshot?: string | null, history?: Array<{ question: string, answer: string }>, detail?: 'brief' | 'detailed' }} input
  *   screenshot: a JPEG as plain base64
  */
-export function buildQuestion({ question, page, title, excerpt, screenshot, history = [], detail = 'brief' }) {
+export function buildQuestion({ question, page, title, excerpt, screenshot, history = [], detail = 'brief', pageText = null, pageComplete = true, scope = null, workspace = false }) {
   const asked = {
     question: question.trim(),
     url: page.url,
@@ -151,6 +155,11 @@ export function buildQuestion({ question, page, title, excerpt, screenshot, hist
     detail: detail === 'detailed' ? 'detailed' : 'brief',
   }
   if (typeof screenshot === 'string' && screenshot) asked.screenshot = { mimeType: 'image/jpeg', data: screenshot }
+  // The page's text, read from the tab only with the browser's permission, for a question answered from it.
+  if (typeof pageText === 'string' && pageText) { asked.pageText = pageText; asked.pageComplete = pageComplete !== false }
+  // Ask Kivo to add what the user keeps there (their notes, topics, tasks…): the server reads it.
+  if (workspace === true) asked.workspace = true
+  if (scope && typeof scope === 'object') asked.scope = { limit: scope.limit ?? null, short: scope.short === true, format: scope.format ?? null }
   return asked
 }
 
