@@ -201,12 +201,14 @@ test('an action is marked in flight before it runs; after a restart it is record
   assert.equal(recoveredState({ ...cut, status: 'awaiting_user', inflight: null }).status, STATUS.AWAITING_USER, 'a task waiting for the user keeps waiting')
 })
 
-test('when a task ends, all of Nova\'s own tabs are closed unless kept; the user\'s are never in the list', () => {
-  assert.deepEqual(tabsToClose({ keepTabs: false }, [11, 12, 13]), [11, 12, 13])
-  assert.deepEqual(tabsToClose({ keepTabs: true }, [11, 12, 13]), [])
+test('when a task ends, Nova\'s tabs stay open by default; they close only when the user chose it; the user\'s are never in the list', () => {
+  assert.deepEqual(tabsToClose({}, [11, 12, 13]), [], 'default: nothing is closed')
+  assert.deepEqual(tabsToClose({ closeTabs: false }, [11, 12, 13]), [])
+  assert.deepEqual(tabsToClose({ keepTabs: false }, [11, 12, 13]), [], 'the old setting no longer closes anything')
+  assert.deepEqual(tabsToClose({ closeTabs: true }, [11, 12, 13]), [11, 12, 13])
   assert.deepEqual(tabsToClose({}, []), [], 'only Nova\'s own tabs are ever passed (tools.ownTabs)')
   const runtime = readFileSync(new URL('../src/lib/agent-runtime.js', import.meta.url), 'utf8')
-  assert.match(runtime, /tabsToClose\(state, tools\.ownTabs\(\)\)/)
+  assert.match(runtime, /const own = tools\.ownTabs\(\)/); assert.match(runtime, /tabsToClose\(state, own\)/)
   assert.match(runtime, /chrome\.tabs\.update\(state\.startTab\.id, \{ active: true \}\)/, 'back to the tab the task started on')
 })
 

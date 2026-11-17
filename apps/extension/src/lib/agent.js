@@ -535,12 +535,13 @@ function sameSite(pattern, url) {
 }
 
 /**
- * The task's own tabs to close when it ends: all of Nova's (never one of the
- * user's), unless the user keeps them. A Nova tab in front is closed too:
- * Nova put it there; the user is taken back to the tab the task started on.
+ * The task's own tabs to close when it ends: none by default (17 Nov, owner:
+ * what the user did in a tab Nova opened must never be lost), all of Nova's
+ * (never one of the user's) only when the user chose "Close Nova's tabs when
+ * done". Either way the user is taken back to the tab the task started on.
  */
 export function tabsToClose(state, ownTabs) {
-  if (state.keepTabs) return []
+  if (state.closeTabs !== true) return []
   return [...ownTabs]
 }
 

@@ -208,8 +208,9 @@ export const browser = {
     return () => { chrome.permissions.onAdded.removeListener(onChange); chrome.permissions.onRemoved.removeListener(onChange) }
   },
   /** Whether to keep the tabs Nova opens after a task (off unless the user turns it on). */
-  async keepTabsPreference() { try { return (await chrome.storage.local.get('nova.keepTabs'))?.['nova.keepTabs'] === true } catch { return false } },
-  setKeepTabsPreference: on => chrome.storage.local.set({ 'nova.keepTabs': Boolean(on) }).catch(() => undefined),
+  // Off unless the user turns it on: Nova's tabs stay open after a task.
+  async closeTabsPreference() { try { return (await chrome.storage.local.get('nova.closeTabs'))?.['nova.closeTabs'] === true } catch { return false } },
+  setCloseTabsPreference: on => chrome.storage.local.set({ 'nova.closeTabs': Boolean(on) }).catch(() => undefined),
 
   /** Where there is no side panel (Safari): the same page opens in the popup. */
   async handOffInline(tabId, handoff) {

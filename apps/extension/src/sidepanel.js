@@ -179,11 +179,13 @@ function renderConversation(page, handoff, saved, typing, task) {
   void browser.watchPreference().then(on => { watchBox.checked = on })
   watchBox.addEventListener('change', () => void browser.setWatchPreference(watchBox.checked))
   const watchToggle = el('label', { class: 'watch small', htmlFor: 'watch', title: 'Nova brings the pages it works on to the front and shows each click and keystroke as it happens' }, watchBox, el('span', {}, 'Watch Nova work'))
-  // The tabs Nova opens are closed when a task ends, unless the user keeps them.
-  const keepBox = el('input', { type: 'checkbox', id: 'keep-tabs', dataset: { keepTabs: '' } })
-  void browser.keepTabsPreference().then(on => { keepBox.checked = on })
-  keepBox.addEventListener('change', () => void browser.setKeepTabsPreference(keepBox.checked))
-  const keepToggle = el('label', { class: 'watch small', htmlFor: 'keep-tabs', title: 'Leave the tabs Nova opened open after a task' }, keepBox, el('span', {}, 'Keep Nova’s tabs'))
+  // The tabs Nova opens stay open when a task ends (what was done in them is
+  // kept); the user is taken back to the tab they started on. Closing them is
+  // the user's choice.
+  const closeBox = el('input', { type: 'checkbox', id: 'close-tabs', dataset: { closeTabs: '' } })
+  void browser.closeTabsPreference().then(on => { closeBox.checked = on })
+  closeBox.addEventListener('change', () => void browser.setCloseTabsPreference(closeBox.checked))
+  const keepToggle = el('label', { class: 'watch small', htmlFor: 'close-tabs', title: 'Close the tabs Nova opened when a task ends. Off: they stay open and you go back to the tab you started on.' }, closeBox, el('span', {}, 'Close Nova’s tabs when done'))
   const errors = el('div', { class: 'errors' })
   const switchBar = el('div', { class: 'elsewhere switch-bar small', role: 'status', hidden: true, dataset: { moved: '' } })
 
@@ -483,7 +485,7 @@ function renderConversation(page, handoff, saved, typing, task) {
     asking = true; ready(); busy(askButton, 'Starting'); question.readOnly = true
     draw(); toBottom(true)
     const objective = useSelection && selection ? `${asked}\n\n(The learner selected this on the page: "${selection.slice(0, 1500)}")` : asked
-    const res = await send('agent:begin', { objective, history: historyOf(previous), tab: { id: page.tabId, url: page.url, title: page.title }, windowId: page.windowId, watch: watchBox.checked, keepTabs: keepBox.checked, mode, scope, kind })
+    const res = await send('agent:begin', { objective, history: historyOf(previous), tab: { id: page.tabId, url: page.url, title: page.title }, windowId: page.windowId, watch: watchBox.checked, closeTabs: closeBox.checked, mode, scope, kind })
     idle(askButton); question.readOnly = false
     if (!res?.ok) {
       asking = false
