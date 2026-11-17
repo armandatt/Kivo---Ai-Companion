@@ -4,8 +4,14 @@
 //             Kivo (one per reading session, each passage with its page), with
 //             nothing to choose. Kivo then files it under the learner's own
 //             subject and topic and says where, with Change (lib/places.js).
-//   Ask Nova  opens Nova's side panel beside the page (sidepanel.js), where the
-//             conversation has room; Safari, with no side panel, opens it here.
+//   Chat with Nova   a conversation about this page, here in the popup
+//             (sidepanel.html in chat mode): questions answered from the page,
+//             screenshots pasted or taken.
+//   Do it for me     opens Nova's side panel beside the page, where Nova does
+//             the work (forms, questions, items to go through, research) and
+//             asks before anything with consequences. Safari, with no side
+//             panel, runs it here.
+//   Sites     the sites Nova may use, kept until the user removes them.
 // Save page (Saved pages) and Study this (a focus session) stay as they were.
 //
 // It asks the browser for the current tab's address and title, and for the
@@ -59,14 +65,16 @@ const privacyText = () => [
     el('li', {}, 'The address and title of the page you are on, and only when you open this popup on it.'),
     el('li', {}, 'The text you have selected on that page, shown here so you can capture it. It is sent only if you press Capture, or with a question you ask.'),
     el('li', {}, 'A passage you capture goes to your Drafts in Kivo with the page it came from, until you put it in a note or discard it. Kivo files it under one of your own subjects and topics (an AI model may read the passage, its title and site, and the names of a few of your subjects and topics to choose), and you can change where.'),
-    el('li', {}, 'Research, only when you start a task and allow it: Kivo opens pages in background tabs of its own, reads them and keeps the passages it quotes. Access to websites is asked for when you start and given back when the task ends. It does not read your other tabs, sign in, buy, post or fill in forms.'),
+    el('li', {}, 'The text of the page you are on, when you ask Nova about it, to answer from it. Only on a page you opened Nova on or a site you allowed.'),
+    el('li', {}, 'Do it for me, only when you ask: Nova reads and acts on the page in your tab, and opens other pages in tabs of its own when the task needs them (closed when it ends, unless you keep them). It asks before anything with consequences (submitting, sending, buying, deleting), never types passwords, payment details or codes, and never signs in or answers a human check for you.'),
+    el('li', {}, 'Sites: a site you allow stays allowed until you remove it under Sites. "Any site, this task" is removed when the task ends.'),
     el('li', {}, 'A screenshot of what that tab is showing, only when you press Screenshot or capture an area you selected. You see it here first. It goes to Nova only with a question you ask, and is not kept.'),
     el('li', {}, 'Your conversation with Nova about a page stays in this browser\'s memory until you start a new one or close the browser. Press Keep in the panel to keep it on this device while you read that article (until you unlock it, or 14 days unused). Nova\'s server does not keep it.'),
-    el('li', {}, 'Nothing else inside the page: no other text, no forms, no passwords.'),
-    el('li', {}, 'Not your other tabs, and not your history. Nova does nothing while this popup and its panel are closed, except take the picture of an area you selected.'),
+    el('li', {}, 'Nothing else inside the page: no other text unless you ask about it or give Nova a task, never what you typed into a form, never passwords.'),
+    el('li', {}, 'Not your other tabs, and not your history. If you let Nova follow your tabs (optional, under Sites), it sees which page each tab shows, so the side panel can follow you; it still reads a page only when you ask. Nova does nothing while this popup and its panel are closed, except finish a task you started and take the picture of an area you selected.'),
     el('li', {}, 'It sends a page to Nova only when you press Capture, Save, Study or Ask.'),
   ),
-  el('p', { class: 'small' }, 'Permissions: "activeTab" lets Nova read this tab\'s address and title when you click its icon, and take a screenshot of it when you press Screenshot. "scripting" lets it read your selected text and the page\'s own address on that tab, at that moment. "sidePanel" lets Ask Nova open beside the page. "storage" keeps this browser connected, your open conversation in memory, and a conversation you chose to Keep on this device. Optional website access is asked for, site by site, only when a task you gave Nova needs a site, and given back when the task ends. It has no standing access to any website.'),
+  el('p', { class: 'small' }, 'Permissions: "activeTab" lets Nova read this tab\'s address and title when you click its icon, and take a screenshot of it when you press Screenshot. "scripting" lets it read your selected text, and the page when you ask about it or give it a task, on a page it may use. "sidePanel" lets Do it for me open beside the page. "storage" keeps this browser connected, your open conversation in memory, and a conversation you chose to Keep on this device. Optional website access is asked for, site by site, when Nova needs a site; you can remove any site under Sites. Optional "tabs" (asked for only if you choose to let Nova follow your tabs) lets the side panel see which page each tab shows.'),
 ]
 
 // ── Not connected ─────────────────────────────────────────────────────────────
@@ -145,6 +153,7 @@ function footer() {
   return [
     el('div', { class: 'foot' },
       el('button', { class: 'link ext', type: 'button', dataset: { openNova: '' }, onclick: () => openNova('/saved') }, 'Open Nova'),
+      el('button', { class: 'link', type: 'button', dataset: { sites: '' }, onclick: () => void renderSites() }, 'Sites'),
       toggle,
       el('button', { class: 'link push', type: 'button', dataset: { disconnect: '' }, onclick: disconnect }, 'Disconnect')),
     panel,
@@ -251,18 +260,25 @@ function renderReady(page, context, probe = NO_PROBE, flash = null, draft = null
     if (result?.focusPath) openNova(result.focusPath)
   })
 
-  // Ask Nova: the conversation opens beside the page, with this page and the
-  // selection handed to it. Opened straight from this click, as the browser asks.
-  // A conversation already going on this article: Ask Nova picks it up.
+  // Chat with Nova: the conversation about this page, here in the popup.
+  // A conversation already going on this article is picked up.
   const asked = thread?.turns?.filter(t => t.answer).length ?? 0
-  const ask = el('button', { class: 'ask-open wide', type: 'button', dataset: { askOpen: asked ? 'continue' : 'new' } },
-    asked ? `Continue with Nova · ${asked} question${asked === 1 ? '' : 's'}${thread.locked ? ' · kept' : ''}` : 'Ask Nova about this page')
+  const handoffFor = extra => ({ url: page.url, canonicalUrl: probe.canonicalUrl || null, title: title.value.trim() || page.title, selection: probe.selection || '', windowId: tabWindowId, name: context.learner.name ? context.learner.name.split(' ')[0] : null, ...extra })
+  const ask = el('button', { class: 'ask-open wide', type: 'button', dataset: { askOpen: asked ? 'continue' : 'new', chatOpen: '' } },
+    asked ? `Continue chat with Nova · ${asked} question${asked === 1 ? '' : 's'}${thread.locked ? ' · kept' : ''}` : 'Chat with Nova')
   ask.addEventListener('click', async () => {
-    const handoff = { url: page.url, canonicalUrl: probe.canonicalUrl || null, title: title.value.trim() || page.title, selection: probe.selection || '', windowId: tabWindowId, name: context.learner.name ? context.learner.name.split(' ')[0] : null }
-    const opened = browser.openPanel(page.tabId, handoff)
+    const inline = await browser.handOffInline(page.tabId, handoffFor({}))
+    if (inline) location.href = `${inline}&chat=1`
+    else errors.replaceChildren(alertBox("Nova couldn't open here. Try again."))
+  })
+  // Do it for me: the side panel, beside the page, where Nova does the work.
+  // Opened straight from this click, as the browser asks.
+  const doIt = el('button', { class: 'wide', type: 'button', dataset: { doItOpen: '' }, title: 'Nova fills in forms, answers questions, goes through items or researches, on your tab, and asks before anything with consequences' }, 'Do it for me')
+  doIt.addEventListener('click', async () => {
+    const opened = browser.openPanel(page.tabId, handoffFor({}))
     if (opened && await opened) return window.close()
-    // No side panel here (Safari): the same conversation, in this popup.
-    const inline = await browser.handOffInline(page.tabId, handoff)
+    // No side panel here (Safari): the same panel, in this popup.
+    const inline = await browser.handOffInline(page.tabId, handoffFor({}))
     if (inline) location.href = inline
     else errors.replaceChildren(alertBox("Nova couldn't open here. Try again."))
   })
@@ -300,7 +316,7 @@ function renderReady(page, context, probe = NO_PROBE, flash = null, draft = null
         running ? el('p', { class: 'small', dataset: { running: '' }, style: 'margin-bottom: 8px' }, `You have a session running${running.topicName ? ` on ${running.topicName}` : ''}. One at a time.`) : null,
         el('div', { class: 'actions even' }, save, study),
         errors),
-      el('section', { class: 'section', dataset: { ask: '' }, ariaLabel: 'Ask Nova' }, ask, el('div', { class: 'research-entry' }, research)),
+      el('section', { class: 'section', dataset: { ask: '' }, ariaLabel: 'Nova' }, el('div', { class: 'nova-actions' }, ask, doIt), el('div', { class: 'research-entry' }, research)),
       footer()),
   )
   if (probe.selection) capture.focus()
@@ -329,6 +345,32 @@ function renderSaved(result, page, context, probe) {
         el('button', { type: 'button', dataset: { back: '' }, onclick: () => renderReady(page, context, probe) }, 'Back')),
       footer()),
   )
+}
+
+// ── Sites Nova can use ────────────────────────────────────────────────────────
+// What Chrome lets Nova into, from Chrome's own list: each allowed site with
+// Remove, "any site" while a task has it, and following tabs. Removing one
+// here takes it away in Chrome at once.
+
+async function renderSites(note = null) {
+  const { sites, anySite, followTabs } = await browser.allowedSites()
+  const back = el('button', { class: 'link', type: 'button', dataset: { sitesBack: '' }, onclick: () => start() }, '← Back')
+  const host = o => { try { return new URL(o.replace('/*', '/')).hostname } catch { return o } }
+  show('sites', el('div', { class: 'stack', dataset: { sitesScreen: '' } },
+    back,
+    el('div', {}, el('h1', {}, 'Sites Nova can use'), el('p', { class: 'lede' }, 'Nova reads and acts only on these sites, and on a page you open it on. Remove a site and Nova asks again next time.')),
+    note ? el('p', { class: 'toast', role: 'status' }, note) : null,
+    sites.length
+      ? el('ul', { class: 'site-list', ariaLabel: 'Allowed sites' }, sites.sort().map(o => el('li', { dataset: { site: o } },
+          el('span', { class: 'site-name' }, host(o)),
+          el('button', { class: 'link', type: 'button', dataset: { removeSite: o }, onclick: async () => { await browser.removeSites([o]); void renderSites(`Removed ${host(o)}.`) } }, 'Remove'))))
+      : el('p', { class: 'small', dataset: { noSites: '' } }, 'No sites yet. When a task needs a site, Nova asks, and Chrome confirms.'),
+    anySite ? el('div', { class: 'note' }, el('p', {}, 'Any site is allowed for the task running now. It is removed when the task ends.'), el('button', { class: 'link', type: 'button', onclick: async () => { await browser.removeAnySite(); void renderSites('Any-site access removed.') } }, 'Remove now')) : null,
+    el('div', { class: 'section' },
+      el('p', { class: 'label' }, 'Follow my tabs'),
+      el('p', { class: 'small' }, followTabs ? 'On: the side panel sees which page each tab shows, so it can follow you. It reads a page only when you ask.' : 'Off: the side panel follows you only on pages you opened Nova on or sites you allowed.'),
+      el('button', { type: 'button', dataset: { followToggle: followTabs ? 'on' : 'off' }, onclick: async () => { if (followTabs) await browser.stopFollowingTabs(); else await browser.followTabs(); void renderSites() } }, followTabs ? 'Stop following my tabs' : 'Let Nova follow my tabs')),
+  ))
 }
 
 const skeleton = () => el('div', { class: 'skeleton', role: 'status', ariaLabel: 'Loading' },

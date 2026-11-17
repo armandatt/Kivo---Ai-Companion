@@ -206,3 +206,12 @@ button[data-captured]::before { content: "✓"; font-weight: 700; }
 .combo-more { margin: 0; }
 .research-entry { margin-top: var(--s2); text-align: center; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Chat with Nova and Do it for me, side by side ─────────────────────── */
+.nova-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s2); }
+.nova-actions > button { margin: 0; }
+
+/* ── Sites Nova can use ────────────────────────────────────────────────── */
+.site-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.site-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.site-list .site-name { min-width: 0; overflow-wrap: anywhere; color: var(--text); }

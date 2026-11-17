@@ -17,7 +17,7 @@
 // the background worker (lib/agent-runtime.js). Allowing a site is asked of
 // the browser here, from the learner's click, as the browser requires.
 
-import { actionWords } from './agent.js'
+import { STATUS, actionWords, statusOf } from './agent.js'
 import { ANY_SITE } from './agent-tools.js'
 import { placementLine } from './places.js'
 import { alertBox, busy, el, idle } from './ui.js'
@@ -25,21 +25,37 @@ import { browser } from './browser.js'
 
 export const send = async (type, payload = {}) => (await browser.agentSend(type, payload)) ?? { ok: false, message: 'Nova’s background work is not answering. Close the panel and open it again.' }
 
-const STATUS_WORDS = { running: 'Working', paused: 'Paused', asking: 'Waiting for you', confirming: 'Waiting for your OK', access: 'Waiting for you', done: 'Done', stopped: 'Stopped', failed: 'Stopped' }
+const STATUS_WORDS = { planning: 'Starting', running: 'Working', paused: 'Paused', awaiting_user: 'Waiting for you', awaiting_permission: 'Waiting for you', completed: 'Done', cancelled: 'Stopped', failed: 'Could not finish' }
 const RESULT_WORDS = { done: 'Done', partial: 'Partly done', blocked: 'Could not be done' }
+
+/** The numbers [n] an answer cites. */
+export function citedIn(answer) {
+  const out = new Set()
+  const text = String(answer ?? '')
+  for (let i = text.indexOf('['); i >= 0; i = text.indexOf('[', i + 1)) {
+    const end = text.indexOf(']', i)
+    if (end < 0) break
+    for (const part of text.slice(i + 1, end).split(',')) { const n = Number(part.trim()); if (Number.isInteger(n) && n > 0 && n < 100) out.add(n) }
+  }
+  return out
+}
 
 /** A finished task, kept in the conversation (bounded). */
 export function taskSummary(state) {
+  const status = statusOf(state.status)
+  const cited = citedIn(state.result?.answer)
   return {
-    id: state.id, status: state.status, error: state.error ?? null,
+    id: state.id, status, error: state.error ?? null,
     result: state.result ? { status: state.result.status ?? 'done', completed: state.result.completed ?? [], remaining: state.result.remaining ?? [], concepts: state.result.concepts ?? [], gaps: state.result.gaps ?? [] } : null,
     steps: state.steps.slice(-30).map(s => ({ words: actionWords(s.action), ok: s.ok, result: s.ok ? '' : s.result })),
     stepCount: state.steps.length,
-    sources: state.sources.slice(0, 20),
+    // Sources are the pages the answer cites; the others were only read.
+    sources: state.sources.filter(s => cited.has(s.n)).slice(0, 20),
+    pagesRead: state.sources.length,
     findings: state.findings.slice(0, 40).map(f => ({ n: f.n, key: f.key, source: f.source, concept: f.concept, quote: f.quote, note: f.note })),
     saved: state.saved.slice(0, 20),
-    // Stop closes them already; otherwise the learner may close them from here.
-    ownTabs: state.status === 'stopped' ? [] : (state.browser?.tabs ?? []).filter(([, t]) => t.own).map(([id]) => id),
+    ownTabs: (state.browser?.tabs ?? []).filter(([, t]) => t.own).map(([id]) => id),
+    closedTabs: state.closedTabs ?? 0,
     objective: state.objective, answer: state.result?.answer ?? null,
   }
 }
@@ -47,7 +63,8 @@ export function taskSummary(state) {
 /** The answer a finished task gives the conversation. */
 export function answerOf(state) {
   if (state.result?.answer) return state.result.answer
-  if (state.status === 'stopped') return state.steps.length ? 'You stopped this task. What Nova did before that is below.' : 'You stopped this task before Nova did anything.'
+  const status = statusOf(state.status)
+  if (status === STATUS.CANCELLED) return state.steps.length ? 'You stopped this task. What Nova did before that is under Details.' : 'You stopped this task before Nova did anything.'
   return state.error || 'Nova stopped before it could finish.'
 }
 
@@ -58,19 +75,31 @@ function planList(plan) {
     plan.map((p, i) => el('li', { dataset: { done: String(p.done), now: String(i === firstOpen) } }, p.step)))
 }
 
+// What Nova did, folded: the count is shown only inside, when it is opened.
 function stepsList(steps, open = false) {
   if (!steps?.length) return null
-  return el('details', { class: 'did', open },
-    el('summary', { class: 'small' }, `What Nova did (${steps.length})`),
+  return el('details', { class: 'did', open, dataset: { details: '' } },
+    el('summary', { class: 'small' }, 'Details'),
+    el('p', { class: 'small did-count' }, `${steps.length} step${steps.length === 1 ? '' : 's'}`),
     el('ol', { class: 'steps' }, steps.map(s => el('li', { dataset: { ok: String(s.ok) } }, el('span', {}, `${s.words}${s.ok || !s.result ? '' : `: ${s.result}`}`)))))
+}
+
+// A research task's searches: the words, and the sources they found (not the results page itself).
+function searching(state) {
+  const last = state.searches?.at(-1)
+  if (!last) return null
+  return el('div', { class: 'searching', dataset: { searching: '' } },
+    el('p', { class: 'small' }, `Searched for “${last.query}”`),
+    last.results?.length ? el('ul', { class: 'found-sources' }, last.results.slice(0, 5).map(r => el('li', { title: r.url }, el('span', { class: 'src-title' }, r.title || r.url), el('span', { class: 'src-site small' }, (() => { try { return new URL(r.url).hostname.replace(/^www\./, '') } catch { return '' } })())))) : null)
 }
 
 function pendingCard(state) {
   const p = state.pending
   if (!p) return null
+  const task = state.id
   if (p.kind === 'question') {
     const answer = el('input', { class: 'combo-input', placeholder: 'Your answer', ariaLabel: 'Your answer to Nova' })
-    const go = text => { if (text.trim()) void send('agent:answer', { text: text.trim() }) }
+    const go = text => { if (text.trim()) void send('agent:answer', { task, id: p.id, text: text.trim() }) }
     const sendButton = el('button', { class: 'primary', type: 'button', onclick: () => go(answer.value) }, 'Send')
     answer.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); go(answer.value) } })
     setTimeout(() => answer.focus(), 0)
@@ -82,48 +111,57 @@ function pendingCard(state) {
   if (p.kind === 'confirm') {
     return el('div', { class: 'card', dataset: { pending: 'confirm' } },
       el('strong', {}, 'Allow this?'),
-      el('p', {}, `${actionWords(p.action)}${p.site ? ` on ${p.site}` : ''}. ${p.reason}`),
-      p.thought ? el('p', { class: 'small' }, `Why: ${p.thought}`) : null,
-      el('div', { class: 'run-controls' },
-        el('button', { type: 'button', dataset: { confirmNo: '' }, onclick: () => void send('agent:confirm', { allowed: false }) }, "Don't allow"),
-        el('button', { class: 'primary', type: 'button', dataset: { confirmYes: '' }, onclick: () => void send('agent:confirm', { allowed: true }) }, 'Allow once')))
+      el('p', {}, `${actionWords(p.action)}${p.site ? ` on ${p.site}` : ''}.`),
+      el('p', { class: 'small' }, p.reason),
+      el('div', { class: 'card-actions' },
+        el('button', { class: 'primary', type: 'button', dataset: { confirmYes: '' }, onclick: () => void send('agent:confirm', { task, id: p.id, allowed: true }) }, 'Allow once'),
+        el('button', { type: 'button', dataset: { confirmNo: '' }, onclick: () => void send('agent:confirm', { task, id: p.id, allowed: false }) }, 'Don’t allow')))
   }
   if (p.kind === 'access') {
-    const ask = (origins, anySite) => {
-      // Straight from the click, as the browser requires.
-      void browser.allowSites(origins).then(granted => send('agent:access', { granted, pattern: p.pattern, anySite: granted && anySite }))
+    const note = el('p', { class: 'small card-note', role: 'status' })
+    const ask = (origins, { anySite = false, remember = false } = {}) => {
+      // Straight from the click, as the browser requires: Chrome asks the user itself.
+      void browser.allowSites(origins).then(granted => {
+        if (!granted) note.textContent = 'Chrome didn’t allow it. Nova will carry on without this site.'
+        return send('agent:access', { task, id: p.id, granted, pattern: p.pattern, anySite: granted && anySite, remember: granted && remember })
+      })
     }
-    return el('div', { class: 'card', dataset: { pending: 'access' } },
-      el('strong', {}, `Let Nova use ${p.site}?`),
-      el('p', {}, `To ${actionWords(p.action).toLowerCase()}, Nova needs to read and act on ${p.site} for this task. Your browser will ask you to confirm. Access is given back when the task ends.`),
-      el('div', { class: 'run-controls' },
-        el('button', { type: 'button', dataset: { accessNo: '' }, onclick: () => void send('agent:access', { granted: false }) }, "Don't allow"),
-        el('button', { type: 'button', dataset: { accessAny: '' }, title: 'For research across many sites. Given back when the task ends.', onclick: () => ask(ANY_SITE, true) }, 'Any site, this task'),
-        el('button', { class: 'primary', type: 'button', dataset: { accessSite: '' }, onclick: () => ask([p.pattern], false) }, `Allow ${p.site}`)))
+    return el('div', { class: 'card access-card', dataset: { pending: 'access' } },
+      el('strong', {}, `Allow Nova on ${p.site}?`),
+      el('p', {}, `To continue, Nova needs to read and use ${p.site}. Chrome will ask you to confirm.`),
+      el('div', { class: 'card-actions' },
+        el('button', { class: 'primary', type: 'button', dataset: { accessSite: '' }, title: `Nova can use ${p.site} until you remove it in Sites Nova can use`, onclick: () => ask([p.pattern], { remember: true }) }, `Allow ${p.site}`),
+        el('button', { type: 'button', dataset: { accessAny: '' }, title: 'For research across many sites. Removed when this task ends.', onclick: () => ask(ANY_SITE, { anySite: true }) }, 'Any site, this task'),
+        el('button', { class: 'quiet', type: 'button', dataset: { accessNo: '' }, onclick: () => void send('agent:access', { task, id: p.id, granted: false }) }, 'Don’t allow')),
+      el('p', { class: 'small card-note' }, 'An allowed site stays allowed until you remove it in the Nova popup, under Sites.'),
+      note)
   }
   if (p.kind === 'needs_you') {
     return el('div', { class: 'card', dataset: { pending: 'needs_you' } },
       el('strong', {}, 'Over to you'), el('p', {}, p.message),
-      el('div', { class: 'run-controls' },
-        typeof p.tab === 'number' ? el('button', { type: 'button', dataset: { showTab: '' }, onclick: () => void send('agent:show', { tab: p.tab }) }, 'Show the tab') : null,
-        el('button', { class: 'primary', type: 'button', dataset: { needsYouDone: '' }, onclick: () => void send('agent:answer', { text: 'done' }) }, "Done, carry on")))
+      el('div', { class: 'card-actions' },
+        el('button', { class: 'primary', type: 'button', dataset: { needsYouDone: '' }, onclick: () => void send('agent:answer', { task, id: p.id, text: 'done' }) }, 'Done, carry on'),
+        typeof p.tab === 'number' ? el('button', { type: 'button', dataset: { showTab: '' }, onclick: () => void send('agent:show', { tab: p.tab }) }, 'Show the tab') : null))
   }
   return null
 }
 
 /** A task while it runs (or waits). */
 export function liveTask(state) {
-  const pause = el('button', { type: 'button', dataset: { agentPause: '' }, onclick: () => { pause.disabled = true; pause.textContent = 'Pausing…'; void send('agent:pause') } }, 'Pause')
-  const resume = el('button', { class: 'primary', type: 'button', dataset: { agentResume: '' }, onclick: () => { resume.disabled = true; void send('agent:resume') } }, 'Resume')
-  const stop = el('button', { type: 'button', dataset: { agentStop: '' }, onclick: () => { stop.disabled = true; void send('agent:stop') } }, 'Stop')
-  const done = state.plan?.filter(p => p.done).length ?? 0
-  return el('div', { class: 'task', dataset: { task: state.id, status: state.status } },
-    el('div', { class: 'now', role: 'status', ariaLive: 'polite', dataset: { status: state.status } },
-      el('span', { class: 'now-text' }, state.status === 'paused' && state.error ? state.error : state.current),
-      el('span', { class: 'now-meta small' }, `${STATUS_WORDS[state.status] ?? ''} · step ${state.steps.length}${state.plan?.length ? ` · ${done} of ${state.plan.length} planned done` : ''}`)),
+  const status = statusOf(state.status)
+  const task = state.id
+  const pause = el('button', { type: 'button', dataset: { agentPause: '' }, onclick: () => { pause.disabled = true; pause.textContent = 'Pausing…'; void send('agent:pause', { task }) } }, 'Pause')
+  const resume = el('button', { class: 'primary', type: 'button', dataset: { agentResume: '' }, onclick: () => { resume.disabled = true; void send('agent:resume', { task }) } }, 'Resume')
+  const stop = el('button', { type: 'button', dataset: { agentStop: '' }, onclick: () => { stop.disabled = true; void send('agent:stop', { task }) } }, 'Stop')
+  const where = state.where ? ` · ${state.where}` : ''
+  return el('div', { class: 'task', dataset: { task: state.id, status } },
+    el('div', { class: 'now', role: 'status', ariaLive: 'polite', dataset: { status } },
+      el('span', { class: 'now-text' }, status === STATUS.PAUSED && state.error ? state.error : state.current),
+      el('span', { class: 'now-meta small' }, `${STATUS_WORDS[status] ?? ''}${where}`)),
     pendingCard(state),
+    state.mode === 'research' ? searching(state) : null,
     planList(state.plan),
-    el('div', { class: 'run-controls' }, state.status === 'running' ? pause : state.status === 'paused' ? resume : null, stop),
+    el('div', { class: 'run-controls' }, status === STATUS.RUNNING ? pause : status === STATUS.PAUSED ? resume : null, stop),
     stepsList(state.steps.slice(-30).map(s => ({ words: actionWords(s.action), ok: s.ok, result: s.ok ? '' : s.result }))))
 }
 
@@ -136,11 +174,12 @@ export function taskExtras(task, { client, openNova, onSaved = () => {} }) {
   const slot = el('div', { class: 'saved-lines' })
   const save = bySource.length ? el('button', { class: 'primary', type: 'button', dataset: { saveFindings: '' } }, `Save ${task.findings.length} finding${task.findings.length === 1 ? '' : 's'} to Drafts`) : null
   save?.addEventListener('click', () => void saveFindings(task, save, slot, errors, client, openNova).then(ok => { if (ok) onSaved() }))
-  const status = task.status === 'done' ? RESULT_WORDS[r?.status ?? 'done'] : STATUS_WORDS[task.status]
+  const st = statusOf(task.status)
+  const status = st === STATUS.COMPLETED ? RESULT_WORDS[r?.status ?? 'done'] : STATUS_WORDS[st]
   return el('div', { class: 'task-done', dataset: { taskDone: task.id, result: r?.status ?? task.status } },
-    el('p', { class: 'task-status small' }, el('span', { class: 'dot', ariaHidden: 'true' }), `${status} · ${task.stepCount} step${task.stepCount === 1 ? '' : 's'}${task.sources.length ? ` · ${task.sources.length} source${task.sources.length === 1 ? '' : 's'}` : ''}`),
+    el('p', { class: 'task-status small' }, el('span', { class: 'dot', ariaHidden: 'true' }), `${status}${task.sources.length ? ` · ${task.sources.length} source${task.sources.length === 1 ? '' : 's'} cited` : ''}${task.closedTabs ? ` · closed ${task.closedTabs} tab${task.closedTabs === 1 ? '' : 's'} Nova opened` : ''}`),
     // What was done and what is left, for a task (a plain question needs no checklist).
-    r?.remaining?.length || (r?.completed?.length && task.stepCount > 2) ? el('div', { class: 'outcome' },
+    r?.remaining?.length || (r?.completed?.length && task.stepCount > 2 && r.status !== 'done') ? el('div', { class: 'outcome' },
       r.completed.length ? el('div', {}, el('p', { class: 'label' }, 'Done'), el('ul', { class: 'kivo-has' }, r.completed.map(c => el('li', {}, c)))) : null,
       r.remaining.length ? el('div', {}, el('p', { class: 'label' }, 'Not done'), el('ul', { class: 'kivo-has' }, r.remaining.map(c => el('li', {}, c)))) : null) : null,
     r?.concepts?.length ? el('div', { class: 'chips', ariaLabel: 'Key concepts' }, r.concepts.map(c => el('span', {}, c))) : null,
@@ -160,7 +199,7 @@ export function taskExtras(task, { client, openNova, onSaved = () => {} }) {
     errors, save, slot,
     stepsList(task.steps),
     task.ownTabs.length ? el('div', { class: 'run-controls' },
-      el('button', { class: 'link', type: 'button', dataset: { closeTabs: '' }, onclick: async e => { await browser.closeTabs(task.ownTabs); task.ownTabs = []; e.target.remove() } }, `Close the ${task.ownTabs.length} tab${task.ownTabs.length === 1 ? '' : 's'} Nova opened`)) : null)
+      el('button', { class: 'link', type: 'button', dataset: { closeTabs: '' }, onclick: async e => { await browser.closeTabs(task.ownTabs); task.ownTabs = []; e.target.remove() } }, `Close the ${task.ownTabs.length} tab${task.ownTabs.length === 1 ? '' : 's'} Nova left open`)) : null)
 }
 
 // Each finding is captured the way a selected passage is (one draft for the

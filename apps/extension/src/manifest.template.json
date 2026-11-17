@@ -27,6 +27,9 @@
     "sidePanel",
     "storage"
   ],
+  "optional_permissions": [
+    "tabs"
+  ],
   "optional_host_permissions": [
     "https://*/*",
     "http://*/*"

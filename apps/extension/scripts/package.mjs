@@ -54,7 +54,7 @@ const katexDir = dirname(createRequire(join(root, 'package.json')).resolve('kate
 const KATEX_FONTS = readdirSync(join(katexDir, 'dist', 'fonts')).filter(f => f.endsWith('.woff2')).map(f => `vendor/katex/fonts/${f}`)
 const KATEX = ['vendor/katex/LICENSE', 'vendor/katex/katex.min.css', 'vendor/katex/katex.min.js', ...KATEX_FONTS]
 const katexSource = name => name === 'vendor/katex/LICENSE' ? join(katexDir, 'LICENSE') : name.startsWith('vendor/katex/fonts/') ? join(katexDir, 'dist', 'fonts', name.slice('vendor/katex/fonts/'.length)) : join(katexDir, 'dist', name.slice('vendor/katex/'.length))
-const EXPECTED = ['background.js', 'config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/agent-page.js', 'lib/agent-runtime.js', 'lib/agent-tools.js', 'lib/agent-view.js', 'lib/agent.js', 'lib/api.js', 'lib/browser.js', 'lib/markdown.js', 'lib/page.js', 'lib/places.js', 'lib/region.js', 'lib/store.js', 'lib/thread.js', 'lib/ui.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js', 'sidepanel.css', 'sidepanel.html', 'sidepanel.js', ...KATEX].sort((a, b) => (a < b ? -1 : 1))
+const EXPECTED = ['background.js', 'config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/agent-page.js', 'lib/agent-runtime.js', 'lib/agent-tools.js', 'lib/agent-view.js', 'lib/agent.js', 'lib/api.js', 'lib/browser.js', 'lib/intent.js', 'lib/markdown.js', 'lib/metrics.js', 'lib/page-context.js', 'lib/page.js', 'lib/places.js', 'lib/region.js', 'lib/store.js', 'lib/thread.js', 'lib/ui.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js', 'sidepanel.css', 'sidepanel.html', 'sidepanel.js', ...KATEX].sort((a, b) => (a < b ? -1 : 1))
 const names = entries.map(e => e.name)
 if (JSON.stringify(names) !== JSON.stringify(EXPECTED)) fail(`unexpected files in the build: ${names.join(', ')}`)
 // Third-party code is the installed package's, unchanged.
@@ -68,7 +68,9 @@ if (manifest.version !== pkg.version) fail(`manifest version ${manifest.version}
 if (JSON.stringify(manifest.permissions) !== JSON.stringify(['activeTab', 'scripting', 'sidePanel', 'storage'])) fail(`permissions are ${JSON.stringify(manifest.permissions)}`)
 // The browser agent: web pages only as an optional permission, asked for site by site during a task.
 if (manifest.optional_host_permissions !== undefined && JSON.stringify(manifest.optional_host_permissions) !== JSON.stringify(['https://*/*', 'http://*/*'])) fail(`optional_host_permissions are ${JSON.stringify(manifest.optional_host_permissions)}`)
-for (const key of ['host_permissions', 'optional_permissions', 'content_scripts', 'web_accessible_resources', 'externally_connectable']) {
+// Following the user's tabs is optional and asked for only if they choose it; nothing else may be optional.
+if (manifest.optional_permissions !== undefined && JSON.stringify(manifest.optional_permissions) !== JSON.stringify(['tabs'])) fail('the manifest declares optional permissions other than tabs')
+for (const key of ['host_permissions', 'content_scripts', 'web_accessible_resources', 'externally_connectable']) {
   if (manifest[key] !== undefined) fail(`the manifest declares ${key}`)
 }
 // One worker (background.js: the area picture, and the agent's runtime), and no web page can reach it.

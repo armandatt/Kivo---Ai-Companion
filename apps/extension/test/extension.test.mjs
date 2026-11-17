@@ -36,17 +36,19 @@ test('manifest: activeTab, scripting, sidePanel and storage; website access only
   assert.equal(Number(manifest.minimum_chrome_version) >= 116, true, 'sidePanel.open needs Chrome 116')
   // The agent: web pages, asked for site by site during a task (lib/agent-view.js) and given back when it ends. Not granted at install.
   assert.deepEqual(manifest.optional_host_permissions, ['https://*/*', 'http://*/*'])
-  for (const key of ['host_permissions', 'optional_permissions', 'content_scripts', 'web_accessible_resources', 'externally_connectable', 'content_security_policy', 'chrome_url_overrides', 'devtools_page', 'side_panel', 'omnibox', 'commands']) {
+  // Following the user's tabs (the side panel): only if they choose it, from the panel or Sites. No install warning.
+  assert.deepEqual(manifest.optional_permissions, ['tabs'])
+  for (const key of ['host_permissions', 'content_scripts', 'web_accessible_resources', 'externally_connectable', 'content_security_policy', 'chrome_url_overrides', 'devtools_page', 'side_panel', 'omnibox', 'commands']) {
     assert.equal(manifest[key], undefined, `${key} is not declared`)
   }
-  const { optional_host_permissions: _optional, ...rest } = manifest
+  const { optional_host_permissions: _optional, optional_permissions: _tabs, ...rest } = manifest
   assert.ok(!JSON.stringify(rest).match(/<all_urls>|\*:\/\/|history|tabs"|webRequest|cookies|bookmarks|clipboard|downloads|webNavigation|debugger/))
   assert.deepEqual(Object.keys(manifest.action).sort(), ['default_icon', 'default_popup', 'default_title'])
 })
 
 test('no content script, and one worker with two jobs: the picture of an area the learner selected, and a task they gave Nova', () => {
   assert.deepEqual(readdirSync(join(root, 'src')).filter(n => !n.endsWith(' 2')).sort(), ['background.js', 'lib', 'manifest.template.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js', 'sidepanel.css', 'sidepanel.html', 'sidepanel.js'])
-  assert.deepEqual(readdirSync(join(root, 'src', 'lib')).filter(n => !n.endsWith(' 2')).sort(), ['agent-page.js', 'agent-runtime.js', 'agent-tools.js', 'agent-view.js', 'agent.js', 'api.js', 'browser.js', 'markdown.js', 'page.js', 'places.js', 'region.js', 'store.js', 'thread.js', 'ui.js'])
+  assert.deepEqual(readdirSync(join(root, 'src', 'lib')).filter(n => !n.endsWith(' 2')).sort(), ['agent-page.js', 'agent-runtime.js', 'agent-tools.js', 'agent-view.js', 'agent.js', 'api.js', 'browser.js', 'intent.js', 'markdown.js', 'metrics.js', 'page-context.js', 'page.js', 'places.js', 'region.js', 'store.js', 'thread.js', 'ui.js'])
   assert.deepEqual(JSON.parse(src('manifest.template.json')).background, { service_worker: 'background.js', type: 'module' })
   const worker = code(src('background.js'))
   assert.equal((worker.match(/\.addListener\(/g) ?? []).length, 1, 'it listens for one thing: messages')
@@ -101,17 +103,21 @@ test('a capture carries the page and the passage, and nothing to file it under: 
 test('the code uses its browser APIs in one file: the active tab, opening a tab, extension storage, the side panel, one read of that tab, and its screenshot', () => {
   const used = new Set()
   for (const { text } of sources) for (const m of code(text).matchAll(/chrome\.([a-zA-Z]+)\.([a-zA-Z]+)/g)) used.add(`${m[1]}.${m[2]}`)
-  assert.deepEqual([...used].sort(), ['action.openPopup', 'action.setBadgeBackgroundColor', 'action.setBadgeText', 'permissions.request', 'runtime.id', 'runtime.onMessage', 'runtime.sendMessage', 'scripting.executeScript', 'sidePanel.open', 'sidePanel.setOptions', 'storage.local', 'storage.onChanged', 'storage.session', 'tabs.captureVisibleTab', 'tabs.create', 'tabs.query', 'tabs.remove'])
+  assert.deepEqual([...used].sort(), ['action.openPopup', 'action.setBadgeBackgroundColor', 'action.setBadgeText', 'permissions.contains', 'permissions.getAll', 'permissions.onAdded', 'permissions.onRemoved', 'permissions.remove', 'permissions.request', 'runtime.id', 'runtime.onMessage', 'runtime.sendMessage', 'scripting.executeScript', 'sidePanel.open', 'sidePanel.setOptions', 'storage.local', 'storage.onChanged', 'storage.session', 'tabs.captureVisibleTab', 'tabs.create', 'tabs.get', 'tabs.onActivated', 'tabs.onUpdated', 'tabs.query', 'tabs.remove', 'windows.getCurrent'])
   // lib/browser.js is the adapter; the worker and the overlay run where it can't.
   for (const { name, text } of sources) if (!['lib/browser.js', 'background.js', 'region-overlay.js'].includes(name)) assert.ok(!code(text).match(/\bchrome\b/), `${name} goes through lib/browser.js`)
   const all = sources.map(s => code(s.text)).join('\n')
   assert.match(all, /chrome\.tabs\.query\(\{ active: true, currentWindow: true \}\)/)
-  assert.equal((all.match(/chrome\.tabs\.query/g) ?? []).length, 1, 'the active tab is the only tab ever asked about')
+  // The side panel follows the tab in front of the user (lib/page-context.js): only ever the active tab is asked about.
+  assert.equal((all.match(/chrome\.tabs\.query/g) ?? []).length, 2, 'the active tab (the popup), and the active tab of the panel\'s window')
+  assert.match(all, /chrome\.tabs\.query\(\{ active: true, \.\.\.\(typeof windowId === 'number' \? \{ windowId \} : \{ currentWindow: true \}\) \}\)/)
 })
 
 test('inside a page it reads the selection, the canonical link and the page\'s metadata tags, once, and nothing else', () => {
   const adapter = code(src('lib/browser.js'))
-  assert.equal((adapter.match(/chrome\.scripting\.executeScript/g) ?? []).length, 2, 'two ways into a page: the probe, and the area selector when asked')
+  assert.equal((adapter.match(/chrome\.scripting\.executeScript/g) ?? []).length, 4, 'four ways into a page: the probe, the area selector when asked, whether Nova may read the tab, and its text for a question about it')
+  assert.match(adapter, /executeScript\(\{ target: \{ tabId \}, func: \(\) => true \}\)/, 'a check that reads nothing')
+  assert.match(adapter, /executeScript\(\{ target: \{ tabId \}, func: observePage, args: \[\{ textMax: max \+ 1, elements: 0 \}\] \}\)/, 'the page\'s text, with the reader that never reads typed values or secrets (lib/agent-page.js)')
   assert.match(adapter, /executeScript\(\{ target: \{ tabId \}, files: \['region-overlay\.js'\] \}\)/, 'that one tab, that one file')
   assert.match(adapter, /chrome\.scripting\.executeScript\(\{ target: \{ tabId \}, func: probePage \}\)/, 'that one tab, that one function, no files and no all-frames')
   const probe = adapter.match(/export function probePage\(\) \{[\s\S]*?\n\}/)[0]
@@ -159,7 +165,10 @@ test('the selection is sent only by Capture or with a question, and never with a
 test('it keeps nothing in page-readable storage, writes no markup and runs nothing on a timer', () => {
   const all = sources.map(s => code(s.text)).join('\n')
   assert.ok(!sources.filter(s => s.name !== 'background.js').map(s => code(s.text)).join('\n').match(/chrome\.runtime\.onMessage/), 'only the worker listens')
-  assert.ok(!all.match(/chrome\.history|chrome\.cookies|chrome\.webRequest|chrome\.webNavigation|chrome\.tabs\.(onUpdated|onActivated|sendMessage|get\b)/), 'no way into a page, its history or its traffic')
+  assert.ok(!all.match(/chrome\.history|chrome\.cookies|chrome\.webRequest|chrome\.webNavigation|chrome\.tabs\.sendMessage/), 'no way into a page\'s history or its traffic')
+  // Tab switches and page changes are listened for in one place, by the side panel only (lib/page-context.js via lib/browser.js).
+  assert.equal((all.match(/chrome\.tabs\.(onUpdated|onActivated)\.addListener/g) ?? []).length, 2)
+  assert.ok(!code(src('sidepanel.js')).match(/chrome\./) && code(src('sidepanel.js')).includes('createPageContext'), 'the panel follows tabs through the one context module')
   assert.ok(!all.match(/localStorage|sessionStorage|document\.cookie|indexedDB|chrome\.storage\.sync/), 'no page-readable or synced storage')
   assert.ok(!all.match(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function/), 'page titles are set as text, never as markup')
   assert.ok(!all.match(/setInterval|chrome\.alarms|chrome\.idle/), 'nothing runs on a timer')
@@ -174,7 +183,7 @@ test('the only address it talks to is Nova, fixed at build time', () => {
   assert.match(code(src('lib/api.js')), /credentials: 'omit'/)
   assert.ok(!all.match(/openai|anthropic|gemini|\/api\/nova\/message/i), 'no LLM call and no chat route')
   const paths = [...code(src('lib/api.js')).matchAll(/call\('([^']+)'/g)].map(m => m[1]).sort()
-  assert.deepEqual(paths, ['/api/nova/extension/agent/start', '/api/nova/extension/agent/step', '/api/nova/extension/agent/workspace', '/api/nova/extension/ask', '/api/nova/extension/captures', '/api/nova/extension/captures', '/api/nova/extension/captures/place', '/api/nova/extension/captures/place', '/api/nova/extension/connect', '/api/nova/extension/context', '/api/nova/extension/disconnect', '/api/nova/extension/places', '/api/nova/learning-events'])
+  assert.deepEqual(paths, ['/api/nova/extension/agent/start', '/api/nova/extension/agent/step', '/api/nova/extension/agent/workspace', '/api/nova/extension/ask', '/api/nova/extension/captures', '/api/nova/extension/captures', '/api/nova/extension/captures/place', '/api/nova/extension/captures/place', '/api/nova/extension/connect', '/api/nova/extension/context', '/api/nova/extension/disconnect', '/api/nova/extension/intent', '/api/nova/extension/places', '/api/nova/learning-events'])
 })
 
 test('the popup page loads only its own files', () => {
@@ -195,14 +204,15 @@ test('every permission is explained in the popup', () => {
   const popup = src('popup.js')
   assert.match(popup, /"activeTab" lets Nova read this tab\\'s address and title when you click its icon, and take a screenshot of it when you press Screenshot/)
   assert.match(popup, /A screenshot of what that tab is showing, only when you press Screenshot or capture an area you selected\. You see it here first\. It goes to Nova only with a question you ask, and is not kept\./)
-  assert.match(popup, /"scripting" lets it read your selected text and the page\\'s own address on that tab, at that moment/)
+  assert.match(popup, /"scripting" lets it read your selected text, and the page when you ask about it or give it a task, on a page it may use/)
   assert.match(popup, /"storage" keeps this browser connected/)
   assert.match(popup, /It is sent only if you press Capture, or with a question you ask/)
-  assert.match(popup, /"sidePanel" lets Ask Nova open beside the page/)
+  assert.match(popup, /"sidePanel" lets Do it for me open beside the page/)
   assert.match(popup, /Your conversation with Nova about a page stays in this browser\\'s memory until you start a new one or close the browser/)
-  assert.match(popup, /Nothing else inside the page: no other text, no forms, no passwords/)
+  assert.match(popup, /Nothing else inside the page: no other text unless you ask about it or give Nova a task, never what you typed into a form, never passwords/)
+  assert.match(popup, /Optional "tabs" \(asked for only if you choose to let Nova follow your tabs\)/)
   assert.match(popup, /Not your other tabs, and not your history/)
-  assert.match(popup, /Optional website access is asked for, site by site, only when a task you gave Nova needs a site, and given back when the task ends/)
+  assert.match(popup, /Optional website access is asked for, site by site, when Nova needs a site; you can remove any site under Sites/)
   assert.match(popup, /Kivo files it under one of your own subjects and topics/)
 })
 
@@ -245,8 +255,12 @@ test('a question about the page carries the question, the address, the title, th
   assert.equal(buildQuestion({ question: 'Why?', page, detail: 'everything' }).detail, 'brief')
   const panel = code(src('sidepanel.js'))
   assert.equal((panel.match(/client\.ask\(/g) ?? []).length, 1, 'asked from one place')
-  assert.match(panel, /client\.ask\(buildQuestion\(\{ question: asked, page, excerpt: useSelection \? selection : '', screenshot, history: historyOf\(previous\), detail \}\)\)/)
-  assert.match(src('sidepanel.js'), /Nova saw only the title/)
+  assert.match(panel, /client\.ask\(buildQuestion\(\{ question: asked, page, excerpt: useSelection \? selection : '', screenshot, history: historyOf\(previous\), detail, pageText: fresh\?\.text \?\? null, pageComplete: fresh\?\.complete \?\? true, scope \}\)\)/)
+  // The page's text goes only with a question about that page, read from the tab in front just then.
+  assert.match(panel, /const fresh = read && articleOf\(read\.url\) === articleOf\(page\.url\) \? read : null/, 'a reading of another page is never sent as this one')
+  assert.deepEqual(buildQuestion({ question: 'Why?', page, pageText: 'The page.', pageComplete: false }).pageComplete, false)
+  assert.equal('pageText' in buildQuestion({ question: 'Why?', page }), false, 'no page text unless one was read')
+  assert.match(src('sidepanel.js'), /answered from the title/)
   assert.ok(!code(src('popup.js')).match(/client\.ask\(/), 'the popup asks nothing itself: Ask Nova opens the panel')
 })
 
@@ -597,7 +611,7 @@ test('the release ZIP holds the built extension and nothing else', () => {
   const { zip, name, out } = packageWith({ NOVA_URL: 'https://kivo.example/some/path' })
   assert.equal(name, `nova-extension-${JSON.parse(src('manifest.template.json')).version}.zip`)
   const names = zipNames(zip)
-  assert.deepEqual(names.filter(n => !n.startsWith('vendor/katex/fonts/')), ['background.js', 'config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/agent-page.js', 'lib/agent-runtime.js', 'lib/agent-tools.js', 'lib/agent-view.js', 'lib/agent.js', 'lib/api.js', 'lib/browser.js', 'lib/markdown.js', 'lib/page.js', 'lib/places.js', 'lib/region.js', 'lib/store.js', 'lib/thread.js', 'lib/ui.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js', 'sidepanel.css', 'sidepanel.html', 'sidepanel.js', 'vendor/katex/LICENSE', 'vendor/katex/katex.min.css', 'vendor/katex/katex.min.js'])
+  assert.deepEqual(names.filter(n => !n.startsWith('vendor/katex/fonts/')), ['background.js', 'config.js', 'icons/128.png', 'icons/16.png', 'icons/48.png', 'lib/agent-page.js', 'lib/agent-runtime.js', 'lib/agent-tools.js', 'lib/agent-view.js', 'lib/agent.js', 'lib/api.js', 'lib/browser.js', 'lib/intent.js', 'lib/markdown.js', 'lib/metrics.js', 'lib/page-context.js', 'lib/page.js', 'lib/places.js', 'lib/region.js', 'lib/store.js', 'lib/thread.js', 'lib/ui.js', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'region-overlay.js', 'sidepanel.css', 'sidepanel.html', 'sidepanel.js', 'vendor/katex/LICENSE', 'vendor/katex/katex.min.css', 'vendor/katex/katex.min.js'])
   assert.ok(names.filter(n => n.startsWith('vendor/katex/fonts/')).every(n => n.endsWith('.woff2')), 'only KaTeX woff2 fonts')
   assert.match(out, /sha256 [0-9a-f]{64}/)
   assert.match(out, /for https:\/\/kivo\.example\n/)
@@ -623,8 +637,9 @@ test('Ask Nova: Enter asks and Shift+Enter is a new line; a failed question stay
   const panel = code(src('sidepanel.js'))
   assert.match(panel, /if \(e\.key !== 'Enter' \|\| e\.shiftKey \|\| e\.isComposing\) return/)
   assert.match(panel, /form\.requestSubmit\(\)/, 'Enter goes through the same form submit')
-  const handler = panel.slice(panel.indexOf('async function ask('), panel.indexOf("question.addEventListener('input'"))
-  assert.match(handler, /if \(!asked \|\| asking\) return/, 'a second submit while asking sends nothing')
+  const routing = panel.slice(panel.indexOf('async function ask('), panel.indexOf('async function chat('))
+  assert.match(routing, /if \(!asked \|\| asking\) return/, 'a second submit while asking sends nothing')
+  const handler = panel.slice(panel.indexOf('async function chat('), panel.indexOf('function askAccess('))
   const failed = handler.indexOf('turn.error = ')
   const cleared = handler.indexOf("question.value = ''")
   assert.ok(failed > 0 && cleared > failed, 'the box is cleared only after an answer arrived')
