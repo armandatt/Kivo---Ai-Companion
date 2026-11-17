@@ -3,7 +3,7 @@
 // panel (sidepanel.js) starts a task and shows it; everything it does to the
 // task goes through these messages, from Kivo's own pages only:
 //
-//   agent:begin   { objective, history, tab: {id, url, title}, windowId, watch, mode, scope, keepTabs }
+//   agent:begin   { objective, history, tab: {id, url, title}, windowId, watch, mode, scope, closeTabs }
 //   agent:pause | agent:resume | agent:stop            { task }
 //   agent:answer  { task, id, text }   an answer, or "done" after hand_over
 //   agent:confirm { task, id, allowed } yes or no to an action with consequences
@@ -87,9 +87,11 @@ async function finishUp(state, tools) {
   if (tools) {
     let active = null
     try { [{ id: active } = {}] = await chrome.tabs.query({ active: true, windowId: state.windowId }) } catch { /* none */ }
-    const close = tabsToClose(state, tools.ownTabs())
-    // Nova's tab is in front: the user goes back to the tab the task started on.
-    if (close.includes(active) && typeof state.startTab?.id === 'number') await chrome.tabs.update(state.startTab.id, { active: true }).catch(() => undefined)
+    const own = tools.ownTabs()
+    const close = tabsToClose(state, own)
+    // One of Nova's tabs is in front: the user goes back to the tab the task
+    // started on. Nova's tabs stay open (unless they chose to close them).
+    if (own.includes(active) && typeof state.startTab?.id === 'number' && active !== state.startTab.id) await chrome.tabs.update(state.startTab.id, { active: true }).catch(() => undefined)
     if (close.length) {
       await chrome.tabs.remove(close).catch(() => undefined)
       state.closedTabs = close.length
@@ -127,7 +129,7 @@ async function current() {
 // Whether a message is about the task that is current (an old panel's is not).
 const forTask = (a, task) => Boolean(a) && (!task || a.state.id === task)
 
-async function begin({ objective, history, tab, windowId, watch, mode, scope, keepTabs }) {
+async function begin({ objective, history, tab, windowId, watch, mode, scope, closeTabs }) {
   if (!objective || typeof objective !== 'string') return { ok: false, message: 'Say what Nova should do.' }
   const running = await current()
   let superseded = null
@@ -147,7 +149,7 @@ async function begin({ objective, history, tab, windowId, watch, mode, scope, ke
     mode: mode === 'research' ? 'research' : 'page', scope: scope && typeof scope === 'object' ? scope : undefined,
   })
   state.watch = watch !== false
-  state.keepTabs = keepTabs === true
+  state.closeTabs = closeTabs === true
   ending = null
   await persist(state)
   build(state)
