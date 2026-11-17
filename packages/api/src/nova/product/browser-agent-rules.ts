@@ -50,7 +50,7 @@ export const TOOLS = [
   "search", "open", "back", "forward", "read", "find", "scroll", "wait",
   "click", "fill", "select", "check", "press",
   "switch_tab", "close_tab",
-  "extract", "workspace_search", "read_note", "save_to_drafts",
+  "extract", "workspace_search", "workspace_related", "read_note", "save_to_drafts",
   "ask_user", "hand_over", "finish",
 ] as const;
 export type Tool = typeof TOOLS[number];
@@ -80,6 +80,7 @@ export type AgentAction =
   | { tool: "close_tab"; args: { tab: number } }
   | { tool: "extract"; args: { quote: string; note: string; concept: string } }
   | { tool: "workspace_search"; args: { query: string } }
+  | { tool: "workspace_related"; args: { id: string } }
   | { tool: "read_note"; args: { id: string } }
   | { tool: "save_to_drafts"; args: { title: string; text: string; note: string } }
   | { tool: "ask_user"; args: { question: string; choices: string[] } }
@@ -261,8 +262,9 @@ export const AGENT_SYSTEM = [
   "- search {query}: search the web (results come back as titles, links and snippets; snippets are not verified: open a page before relying on it).",
   "- switch_tab {tab} / close_tab {tab}: tabs of this task.",
   "- extract {quote, note, concept}: keep a finding from the CURRENT page. quote is copied word for word from its text (it is checked); note is your own reading; concept is 2-5 words.",
-  "- workspace_search {query}: search the user's Kivo (their notes, saved pages, subjects and topics, with how well they know each topic), when their own knowledge would help.",
-  "- read_note {id}: read one of their notes found by workspace_search.",
+  "- workspace_search {query}: search the user's Kivo: notes, saved pages, drafts, subjects and nested topics (with how well they know each topic), tasks, and how they connect on the Knowledge Map. Use it before searching the web when the user's own knowledge may answer.",
+  "- workspace_related {id}: one thing from their Knowledge Map (a subject, topic, task, note or saved page, by its map id such as \"topic:…\") and everything connected to it: where it sits, what is filed under it, its tasks and steps, what it links to.",
+  "- read_note {id}: read one of their notes found by workspace_search (its id, or its map id \"note:…\").",
   "- save_to_drafts {title, text, note}: save something into the user's Kivo Drafts. Only when they asked for something to be saved or organised in Kivo.",
   "- ask_user {question, choices}: ask when a decision is theirs or the request is ambiguous (choices: up to 4 short answers, or []).",
   "- hand_over {reason}: something only the user may do: sign in, a human check (CAPTCHA), a file to choose, a payment, a browser dialog. They do it and tell you to carry on.",
@@ -403,7 +405,8 @@ export function parseAction(reply: string): ParsedAction {
       return quote.length >= 20 ? ok({ tool, args: { quote, note: str(a.note, L.noteChars), concept: str(a.concept, 80) || "Finding" } }) : bad("extract needs a quote of at least a sentence");
     }
     case "workspace_search": { const query = str(a.query, L.queryChars); return query ? ok({ tool, args: { query } }) : bad("workspace_search needs a query"); }
-    case "read_note": { const id = str(a.id, 64); return id ? ok({ tool, args: { id } }) : bad("read_note needs a note id"); }
+    case "read_note": { const raw = str(a.id, 80); const id = raw.startsWith("note:") ? raw.slice(5) : raw; return id && id.length <= 64 ? ok({ tool, args: { id } }) : bad("read_note needs a note id"); }
+    case "workspace_related": { const id = str(a.id, 80); return id.includes(":") ? ok({ tool, args: { id } }) : bad("workspace_related needs a map id such as topic:…"); }
     case "save_to_drafts": {
       const body = text(a.text, 4_000).trim();
       return body ? ok({ tool, args: { title: str(a.title, 300) || "From Nova", text: body, note: text(a.note, 2_000).trim() } }) : bad("save_to_drafts needs text");

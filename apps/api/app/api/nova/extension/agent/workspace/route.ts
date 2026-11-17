@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 //@ts-ignore
-import { agentReadNote, agentWorkspaceSearch } from "@repo/api/nova/product/browser-agent"
+import { agentReadNote, agentRelated, agentWorkspaceSearch } from "@repo/api/nova/product/browser-agent"
 //@ts-ignore
 import { checkAgentTicket } from "@repo/api/nova/product/agent-ticket"
 import { allowAttempt, eventFail, preflight, readSmallJson, requireExtensionLearner, withCors } from "../../../../../../lib/nova/extension-access"
@@ -32,6 +32,11 @@ async function handle(req: Request): Promise<NextResponse> {
     if (body?.op === "note" && typeof body.id === "string" && body.id.length <= 64) {
       const result = await agentReadNote(who.profileId, body.id)
       if (!result) return eventFail(404, "not_found", "That note isn't in your Kivo.")
+      return NextResponse.json({ success: true, ...result }, { headers: { "cache-control": "no-store" } })
+    }
+    if (body?.op === "related" && typeof body.id === "string" && body.id.length <= 80) {
+      const result = await agentRelated({ platformChatId: who.platformChatId }, body.id)
+      if (!result) return eventFail(404, "not_found", "That isn't on your Knowledge Map.")
       return NextResponse.json({ success: true, ...result }, { headers: { "cache-control": "no-store" } })
     }
     return eventFail(400, "invalid", "Nova asked for something it can't read.")

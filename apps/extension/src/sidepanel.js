@@ -394,7 +394,7 @@ function renderConversation(page, handoff, saved, typing, task) {
       ready(); draw(); toBottom(); question.focus()
       return
     }
-    if (routed.route === 'chat') return chat(asked, { detail, replace, scope: routed.scope })
+    if (routed.route === 'chat') return chat(asked, { detail, replace, scope: routed.scope, workspace: routed.workspace })
     if (chatOnly) {
       turns = [...turns, { question: asked, asked, needsPanel: true, at: Date.now() }]
       question.value = ''; fit(); void keepTyping()
@@ -405,7 +405,7 @@ function renderConversation(page, handoff, saved, typing, task) {
   }
 
   // A question answered from the page, in one call.
-  async function chat(asked, { detail = 'brief', label = null, replace = null, scope = null } = {}) {
+  async function chat(asked, { detail = 'brief', label = null, replace = null, scope = null, workspace = false } = {}) {
     const screenshot = shot ? encodeShot(shot.img, shot.mark) : null
     if (shot && !screenshot) return errors.replaceChildren(alertBox('That picture is too large to send. Drag across the part you mean, then ask again.'))
     errors.replaceChildren()
@@ -425,7 +425,7 @@ function renderConversation(page, handoff, saved, typing, task) {
       return askAccess(asked)
     }
     turn.reading = false; draw()
-    const res = await client.ask(buildQuestion({ question: asked, page, excerpt: useSelection ? selection : '', screenshot, history: historyOf(previous), detail, pageText: fresh?.text ?? null, pageComplete: fresh?.complete ?? true, scope }))
+    const res = await client.ask(buildQuestion({ question: asked, page, excerpt: useSelection ? selection : '', screenshot, history: historyOf(previous), detail, pageText: fresh?.text ?? null, pageComplete: fresh?.complete ?? true, scope, workspace }))
     asking = false; idle(askButton); question.readOnly = false
     delete turn.pending
     if (!res.ok && res.kind === 'unauthenticated') { await store.clear(); turn.error = res.message }
@@ -447,13 +447,18 @@ function renderConversation(page, handoff, saved, typing, task) {
       el('strong', {}, `Allow Nova on ${page.domain}?`),
       el('p', {}, `To answer from this page, Nova needs to read ${page.domain}. Chrome will ask you to confirm.`),
       el('div', { class: 'card-actions' },
-        el('button', { class: 'primary', type: 'button', dataset: { allowPage: '' }, onclick: async () => {
-          const granted = pattern ? await browser.allowSites([pattern]) : false
-          if (!granted) return errors.replaceChildren(alertBox(`Nova can’t read ${page.domain} without your permission. You can also click Nova in the toolbar on this page.`))
-          errors.replaceChildren(); page.status = 'ready'; void ask(asked)
-        } }, `Allow ${page.domain}`),
+        el('button', { class: 'primary', type: 'button', dataset: { allowPage: 'always' }, onclick: () => void allow(true) }, `Always allow ${page.domain}`),
+        el('button', { type: 'button', dataset: { allowPage: 'once' }, onclick: () => void allow(false) }, 'Just this question'),
         el('button', { class: 'quiet', type: 'button', onclick: () => errors.replaceChildren() }, 'Not now')),
-      el('p', { class: 'small card-note' }, 'It stays allowed until you remove it in the Nova popup, under Sites.')))
+      el('p', { class: 'small card-note' }, 'Always allow keeps it after Chrome restarts, until you remove it under Sites in the Nova popup.')))
+    async function allow(always) {
+      const granted = pattern ? await browser.allowSites([pattern]) : false
+      if (!granted) return errors.replaceChildren(alertBox(`Nova can’t read ${page.domain} without your permission. You can also click Nova in the toolbar on this page.`))
+      errors.replaceChildren(); page.status = 'ready'
+      await ask(asked)
+      // Just this question: given back once the page has been read for it.
+      if (!always) { await browser.removeSites([pattern]); page.status = 'no_access' }
+    }
   }
 
   // From the popup's chat: the work moves to the side panel, opened from this click.

@@ -5,6 +5,10 @@ import { answerPageQuestion, PAGE_QUESTION_BODY_MAX_BYTES, PAGE_QUESTIONS_PER_MI
 import { allowAttempt, eventFail, readSmallJson, resolveExtensionCaller, preflight, withCors } from "../../../../../lib/nova/extension-access"
 //@ts-ignore
 import { meterLlmUsage } from "@repo/api/services/llm-usage"
+//@ts-ignore
+import { agentWorkspaceSearch } from "@repo/api/nova/product/browser-agent"
+//@ts-ignore
+import { resolveEventLearner } from "@repo/api/nova/product/learning-events"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -44,7 +48,15 @@ async function handlePOST(req: Request): Promise<NextResponse> {
     }
     // The answer's own tokens, returned so the extension can measure a question against a task.
     const usage = { inputTokens: 0, outputTokens: 0, calls: 0 }
-    const run = await metered(caller.platformChatId, () => meterLlmUsage((u: { inputTokens: number | null; outputTokens: number | null }) => { usage.inputTokens += u.inputTokens ?? 0; usage.outputTokens += u.outputTokens ?? 0; usage.calls++ }, () => answerPageQuestion(read.body)), { feature: "extension_ask_nova", surface: "extension" })
+    // The user's own Kivo, when the question is about it (routed so by …/intent): read from the
+    // database through the same search the agent uses, inside this one request. No extra model call.
+    const wants = (read.body as { workspace?: unknown; question?: unknown; title?: unknown } | null)
+    let workspace: string | null = null
+    if (wants?.workspace === true && typeof wants.question === "string") {
+      const learner = await resolveEventLearner(caller.platformChatId).catch(() => null)
+      if (learner?.status === "ready") workspace = (await agentWorkspaceSearch({ profileId: learner.profileId, platformChatId: caller.platformChatId }, `${wants.question} ${typeof wants.title === "string" ? wants.title : ""}`.slice(0, 200)).catch(() => null))?.text ?? null
+    }
+    const run = await metered(caller.platformChatId, () => meterLlmUsage((u: { inputTokens: number | null; outputTokens: number | null }) => { usage.inputTokens += u.inputTokens ?? 0; usage.outputTokens += u.outputTokens ?? 0; usage.calls++ }, () => answerPageQuestion(read.body, undefined, { workspace })), { feature: "extension_ask_nova", surface: "extension" })
     if (!run.ok) return run.response
     const result = run.value as Awaited<ReturnType<typeof answerPageQuestion>>
     if (result.ok) return NextResponse.json({ ...result, usage }, { headers: { "cache-control": "no-store" } })

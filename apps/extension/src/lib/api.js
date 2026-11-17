@@ -144,7 +144,7 @@ export function buildCapture({ key, page, title, text, fresh = false }) {
  * @param {{ question: string, page: { url: string, title: string }, title?: string, excerpt?: string, screenshot?: string | null, history?: Array<{ question: string, answer: string }>, detail?: 'brief' | 'detailed' }} input
  *   screenshot: a JPEG as plain base64
  */
-export function buildQuestion({ question, page, title, excerpt, screenshot, history = [], detail = 'brief', pageText = null, pageComplete = true, scope = null }) {
+export function buildQuestion({ question, page, title, excerpt, screenshot, history = [], detail = 'brief', pageText = null, pageComplete = true, scope = null, workspace = false }) {
   const asked = {
     question: question.trim(),
     url: page.url,
@@ -157,6 +157,8 @@ export function buildQuestion({ question, page, title, excerpt, screenshot, hist
   if (typeof screenshot === 'string' && screenshot) asked.screenshot = { mimeType: 'image/jpeg', data: screenshot }
   // The page's text, read from the tab only with the browser's permission, for a question answered from it.
   if (typeof pageText === 'string' && pageText) { asked.pageText = pageText; asked.pageComplete = pageComplete !== false }
+  // Ask Kivo to add what the user keeps there (their notes, topics, tasks…): the server reads it.
+  if (workspace === true) asked.workspace = true
   if (scope && typeof scope === 'object') asked.scope = { limit: scope.limit ?? null, short: scope.short === true, format: scope.format ?? null }
   return asked
 }

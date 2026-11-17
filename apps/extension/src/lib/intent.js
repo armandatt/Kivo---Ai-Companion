@@ -10,7 +10,7 @@
 export function routeOf(intent, { surface = 'panel', hasScreenshot = false } = {}) {
   if (hasScreenshot) return { route: 'chat', kind: 'page_question', scope: intent?.scope ?? null, fallback: !intent }
   if (!intent || !intent.route) return { route: surface === 'popup' ? 'chat' : 'task', kind: null, scope: null, fallback: true }
-  return { route: intent.route, kind: intent.kind ?? null, scope: intent.scope ?? null, question: intent.question ?? null, choices: intent.choices ?? [], fallback: intent.fallback === true }
+  return { route: intent.route, kind: intent.kind ?? null, scope: intent.scope ?? null, question: intent.question ?? null, choices: intent.choices ?? [], workspace: intent.workspace === true, fallback: intent.fallback === true }
 }
 
 /** Asks Kivo; never throws. */

@@ -13,7 +13,7 @@ describe("routing a request typed into the extension", () => {
     expect(ROUTE_OF.compare).toBe("research");
   });
   it("reads the model's answer defensively, with the scope checked by code", () => {
-    expect(readIntent('{"kind":"page_action","limit":5,"short":true,"format":"points"}')).toEqual({ ok: true, route: "task", kind: "page_action", scope: { limit: 5, short: true, format: "points" }, question: null, choices: [] });
+    expect(readIntent('{"kind":"page_action","limit":5,"short":true,"format":"points"}')).toEqual({ ok: true, route: "task", kind: "page_action", scope: { limit: 5, short: true, format: "points" }, question: null, choices: [], workspace: false });
     expect(readIntent('{"kind":"quiz","limit":3.5,"short":"yes","format":"essay"}')?.scope).toEqual({ limit: null, short: false, format: null });
     expect(readIntent('{"kind":"delete_everything"}')).toBeNull();
     expect(readIntent("not json")).toBeNull();

@@ -98,6 +98,7 @@ const describe = a => {
     case 'extract': return `Keeping a finding: ${a.args.concept}`
     case 'workspace_search': return `Searching your Kivo for “${a.args.query}”`
     case 'read_note': return 'Reading one of your notes'
+    case 'workspace_related': return 'Following connections in your Kivo'
     case 'save_to_drafts': return `Saving “${a.args.title}” to your Drafts`
     case 'ask_user': return 'Asking you'
     case 'hand_over': return 'Waiting for you'
@@ -108,7 +109,7 @@ const describe = a => {
 }
 export const actionWords = describe
 const argsOf = a => JSON.stringify(a.args).slice(0, 300)
-const READING = new Set(['read', 'find', 'scroll', 'wait', 'observe', 'workspace_search', 'read_note'])
+const READING = new Set(['read', 'find', 'scroll', 'wait', 'observe', 'workspace_search', 'workspace_related', 'read_note'])
 const ACTING = new Set(['click', 'fill', 'select', 'check', 'press'])
 
 /**
@@ -245,12 +246,16 @@ export function createAgent({ state, tools, client, save = async () => {}, onUpd
     if (!res.ok || !res.data?.success) return { ok: false, result: res.ok ? res.data?.message ?? 'Kivo could not read that.' : res.message }
     state.data = { kind: res.data.kind, text: res.data.text }
     keepPrivate(res.data.text)
-    return { ok: true, result: op === 'search' ? `Found ${res.data.found} things in the user's Kivo (shown under WORKSPACE SEARCH RESULT).` : 'Read the note (shown under NOTE READ).' }
+    return { ok: true, result: op === 'note' ? 'Read the note (shown under NOTE READ).' : `Found ${res.data.found} things in the user's Kivo (shown under WORKSPACE SEARCH RESULT).` }
   }
 
   async function saveToDrafts(args) {
     const page = tools.page()
-    const key = `${state.id}-s${state.saved.length + 1}`
+    // The same content gives the same key: a save repeated after a restart is stored once (server: same key).
+    let h = 0
+    for (const ch of `${args.title}\n${args.text}`) h = (h * 31 + ch.codePointAt(0)) >>> 0
+    const key = `${state.id}-s${h.toString(36)}`
+    if (state.saved.some(x => x.key === key)) return { ok: true, result: `"${args.title}" is already saved in this task.` }
     const res = await client.capture({ key, url: page?.kind === 'page' ? page.url : null, title: args.title, text: args.text, note: args.note || '', ...(state.saved.length === 0 && !state.findings.length ? { newDraft: true } : {}) })
     if (!res.ok || !res.data?.success) return { ok: false, result: res.ok ? res.data?.message ?? 'That did not save.' : res.message }
     state.saved.push({ key, title: args.title, draftId: res.data.draft?.id ?? null, itemId: res.data.itemId ?? null })
@@ -284,6 +289,7 @@ export function createAgent({ state, tools, client, save = async () => {}, onUpd
     }
     if (action.tool === 'workspace_search') return workspace('search', action.args)
     if (action.tool === 'read_note') return workspace('note', action.args)
+    if (action.tool === 'workspace_related') return workspace('related', action.args)
     if (action.tool === 'save_to_drafts') return saveToDrafts(action.args)
     if (!confirmed) {
       const why = await tools.check(action)

@@ -161,6 +161,7 @@ button.lock[aria-pressed="true"] { color: var(--accent-hi); font-weight: 600; }
 .card-actions > button.primary { grid-column: 1 / -1; }
 .card-actions > button:only-child { grid-column: 1 / -1; }
 .card-note { color: var(--faint); }
+.card-actions > button.quiet { grid-column: 1 / -1; }
 .card-note:empty { display: none; }
 .now[data-status="awaiting_user"], .now[data-status="awaiting_permission"], .now[data-status="paused"], .now[data-status="failed"], .now[data-status="cancelled"] { border-color: var(--warn-line); background: var(--warn-soft); }
 .now[data-status="planning"]::before { content: ""; flex: none; width: 12px; height: 12px; border: 2px solid var(--accent-line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }

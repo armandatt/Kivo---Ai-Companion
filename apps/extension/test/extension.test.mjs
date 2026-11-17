@@ -255,7 +255,7 @@ test('a question about the page carries the question, the address, the title, th
   assert.equal(buildQuestion({ question: 'Why?', page, detail: 'everything' }).detail, 'brief')
   const panel = code(src('sidepanel.js'))
   assert.equal((panel.match(/client\.ask\(/g) ?? []).length, 1, 'asked from one place')
-  assert.match(panel, /client\.ask\(buildQuestion\(\{ question: asked, page, excerpt: useSelection \? selection : '', screenshot, history: historyOf\(previous\), detail, pageText: fresh\?\.text \?\? null, pageComplete: fresh\?\.complete \?\? true, scope \}\)\)/)
+  assert.match(panel, /client\.ask\(buildQuestion\(\{ question: asked, page, excerpt: useSelection \? selection : '', screenshot, history: historyOf\(previous\), detail, pageText: fresh\?\.text \?\? null, pageComplete: fresh\?\.complete \?\? true, scope, workspace \}\)\)/)
   // The page's text goes only with a question about that page, read from the tab in front just then.
   assert.match(panel, /const fresh = read && articleOf\(read\.url\) === articleOf\(page\.url\) \? read : null/, 'a reading of another page is never sent as this one')
   assert.deepEqual(buildQuestion({ question: 'Why?', page, pageText: 'The page.', pageComplete: false }).pageComplete, false)

@@ -130,10 +130,11 @@ function pendingCard(state) {
       el('strong', {}, `Allow Nova on ${p.site}?`),
       el('p', {}, `To continue, Nova needs to read and use ${p.site}. Chrome will ask you to confirm.`),
       el('div', { class: 'card-actions' },
-        el('button', { class: 'primary', type: 'button', dataset: { accessSite: '' }, title: `Nova can use ${p.site} until you remove it in Sites Nova can use`, onclick: () => ask([p.pattern], { remember: true }) }, `Allow ${p.site}`),
+        el('button', { class: 'primary', type: 'button', dataset: { accessAlways: '' }, title: `Nova can use ${p.site} from now on, until you remove it under Sites in the Nova popup`, onclick: () => ask([p.pattern], { remember: true }) }, `Always allow ${p.site}`),
+        el('button', { type: 'button', dataset: { accessSite: '' }, title: 'Removed when this task ends', onclick: () => ask([p.pattern], { remember: false }) }, 'This task only'),
         el('button', { type: 'button', dataset: { accessAny: '' }, title: 'For research across many sites. Removed when this task ends.', onclick: () => ask(ANY_SITE, { anySite: true }) }, 'Any site, this task'),
         el('button', { class: 'quiet', type: 'button', dataset: { accessNo: '' }, onclick: () => void send('agent:access', { task, id: p.id, granted: false }) }, 'Don’t allow')),
-      el('p', { class: 'small card-note' }, 'An allowed site stays allowed until you remove it in the Nova popup, under Sites.'),
+      el('p', { class: 'small card-note' }, 'Always allow keeps it after Chrome restarts, until you remove it under Sites in the Nova popup. Nova still asks before anything with consequences.'),
       note)
   }
   if (p.kind === 'needs_you') {
