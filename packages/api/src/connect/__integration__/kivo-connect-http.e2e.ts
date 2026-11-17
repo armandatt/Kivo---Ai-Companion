@@ -164,3 +164,33 @@ test("a remote MCP client connects, works and is cut off, over HTTP", async () =
   const cut = await fetch(`${API}/api/mcp`, { method: "POST", headers: { authorization: `Bearer ${refreshed.access_token}`, "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
   assert.equal(cut.status, 401);
 });
+
+// Found 17 Nov: a friend's new account connected ("connected") and then
+// every request, the tool list included, was refused, so ChatGPT and Claude
+// showed a broken connector. Now: told on the consent page; connects; lists
+// tools; each call says to finish setting up Kivo.
+test("an account not set up yet connects, lists the tools, and is told what to do", async () => {
+  const user = await prisma.user.create({ data: { email: `e2e-new${STAMP}@connect-e2e.local`, name: "New Friend" } });
+  try {
+    await prisma.userProfile.create({ data: { userId: user.id, onboardingComplete: false, primaryPersona: "nova" } });
+    const cookie = `kevo_session=${await new SignJWT({ userId: user.id, email: user.email, name: user.name }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("1h").sign(new TextEncoder().encode(SECRET))}`;
+    const reg = await (await fetch(`${API}/api/oauth/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: `e2e ${STAMP}`, redirect_uris: [REDIRECT], token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }) })).json();
+    const verifier = randomBytes(32).toString("base64url");
+    const params = { response_type: "code", client_id: reg.client_id, redirect_uri: REDIRECT, scope: "profile:read notes:read", state: "s", code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256", resource: `${API}/api/mcp` };
+    const info = await (await fetch(`${API}/api/connect/authorize?${new URLSearchParams(params)}`, { headers: { cookie } })).json();
+    assert.equal(info.setupNeeded, true, JSON.stringify(info));
+    const allowed = await (await fetch(`${API}/api/connect/authorize`, { method: "POST", headers: { cookie, "content-type": "application/json", origin: API }, body: JSON.stringify({ params, approve: true }) })).json();
+    const code = new URL(allowed.redirect).searchParams.get("code")!;
+    const tokens = await (await fetch(`${API}/api/oauth/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: REDIRECT, code_verifier: verifier, client_id: reg.client_id }) })).json();
+    const client = new Client({ name: "kivo-e2e-new", version: "1.0.0" });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${API}/api/mcp`), { requestInit: { headers: { authorization: `Bearer ${tokens.access_token}` } } }));
+    const { tools } = await client.listTools();
+    assert.ok(tools.length > 0, "the tool list loads");
+    const r = await client.callTool({ name: "search_notes", arguments: { query: "x" } });
+    assert.equal(r.isError, true);
+    assert.match(parse(r).message, /setting up|set up/i);
+    await client.close();
+  } finally {
+    await prisma.user.deleteMany({ where: { id: user.id } });
+  }
+});

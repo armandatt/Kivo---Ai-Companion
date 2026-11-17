@@ -11,7 +11,7 @@ import { useSearchParams } from 'next/navigation'
 import { AuthError, AuthShell, authPrimaryButtonClass } from '@/components/auth/auth-shell'
 
 type Info =
-  | { ok: true; client: string; scopes: Array<{ scope: string; description: string }>; redirectHost: string; account: string | null }
+  | { ok: true; client: string; scopes: Array<{ scope: string; description: string }>; redirectHost: string; account: string | null; setupNeeded?: boolean }
   | { ok: false; show?: string; redirect?: string; message?: string }
 
 function Consent() {
@@ -72,6 +72,7 @@ function Consent() {
           You can disconnect it at any time from Settings. It will return you to <span className="font-medium text-ink-100">{info.redirectHost}</span>.
         </p>
         <p className="text-ink-300">The name &ldquo;{info.client}&rdquo; is how the assistant describes itself. Only allow it if you started this from your assistant just now.</p>
+        {info.setupNeeded && <AuthError>Your Kivo isn&rsquo;t set up yet, so {info.client} will connect but find nothing. <a href="/home" className="underline">Finish setting up Kivo</a> first, or allow now and finish it afterwards.</AuthError>}
         {error && <AuthError>{error}</AuthError>}
         <div className="flex flex-col gap-2 sm:flex-row-reverse">
           <button type="button" disabled={busy} onClick={() => answer(true)} className={authPrimaryButtonClass}>Allow</button>

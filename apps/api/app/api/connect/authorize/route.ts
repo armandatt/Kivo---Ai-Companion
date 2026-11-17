@@ -5,6 +5,8 @@
 
 import { NextResponse } from "next/server"
 //@ts-ignore
+import { profileForAccount } from "@repo/api/connect/learner"
+//@ts-ignore
 import { checkAuthorize, decide, scopeDescriptions } from "@repo/api/connect/authorize"
 import { connectOrigin, mcpUrl } from "../../../../lib/connect/config"
 import { fail, sameSiteProblem, sessionUser } from "../../../../lib/connect/web-access"
@@ -22,7 +24,10 @@ export async function GET(req: Request) {
   const q = new URL(req.url).searchParams
   const check = await checkAuthorize(pick(k => q.get(k)), mcpUrl(), connectOrigin())
   if (!check.ok) return NextResponse.json("show" in check ? { ok: false, show: check.show } : { ok: false, redirect: check.redirect, message: check.description })
-  return NextResponse.json({ ok: true, client: check.client.name, scopes: scopeDescriptions(check.scopes), redirectHost: new URL(check.redirectUri).host, account: user.name })
+  // Said before they allow: an account not set up yet connects, but the
+  // assistant finds nothing until setup is finished.
+  const setupNeeded = (await profileForAccount(user.userId)) === null
+  return NextResponse.json({ ok: true, client: check.client.name, scopes: scopeDescriptions(check.scopes), redirectHost: new URL(check.redirectUri).host, account: user.name, setupNeeded })
 }
 
 export async function POST(req: Request) {

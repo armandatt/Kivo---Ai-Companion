@@ -30,7 +30,13 @@ const INSTRUCTIONS = [
 // JSON Schema clients receive allows those fields.
 const OUTPUT = z.object({ ok: z.boolean(), error: z.string().optional(), message: z.string().optional() }).passthrough()
 
-export function buildServer(learner: ConnectLearner, origin: string): McpServer {
+// An account that has not finished setting up Kivo still connects: the
+// assistant can initialize and list the tools (clients treat a refusal there
+// as a broken connector, "connected but failed to fetch tools"), and every
+// tool call answers with what to do instead of reaching any data.
+export type Blocked = { blocked: string; scopes: string[] }
+
+export function buildServer(learner: ConnectLearner | Blocked, origin: string): McpServer {
   const server = new McpServer({ name: "kivo", title: "Kivo", version: CONNECT_VERSION }, { instructions: INSTRUCTIONS })
   for (const tool of TOOLS) {
     if (!hasScopes(learner.scopes, tool.scopes)) continue
@@ -50,6 +56,10 @@ export function buildServer(learner: ConnectLearner, origin: string): McpServer 
         openWorldHint: false,
       },
     }, async (args: Record<string, unknown>) => {
+      if ("blocked" in learner) {
+        const structured = { ok: false, error: "not_ready", message: learner.blocked }
+        return { content: [{ type: "text" as const, text: JSON.stringify(structured) }], structuredContent: structured, isError: true }
+      }
       const result: ToolResult = await runTool(tool, args, { learner, origin, confirm: null })
       const structured = result.ok ? { ok: true, ...result.data } : { ok: false, error: result.error, message: result.message, ...(result.data ?? {}) }
       return {
@@ -62,7 +72,7 @@ export function buildServer(learner: ConnectLearner, origin: string): McpServer 
   return server
 }
 
-export async function serveMcp(req: Request, learner: ConnectLearner, origin: string): Promise<Response> {
+export async function serveMcp(req: Request, learner: ConnectLearner | Blocked, origin: string): Promise<Response> {
   const server = buildServer(learner, origin)
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
   await server.connect(transport)
