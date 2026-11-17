@@ -295,13 +295,24 @@ export function observePage(limits) {
   const signIn = [...document.querySelectorAll('input[type=password]')].some(visible)
   const more = window.innerHeight + window.scrollY < doc.scrollHeight - 200
 
+  // Kivo's Knowledge Map: its own description of what is in view (synchronous: the map answers at once).
+  let map = null
+  const bridge = document.querySelector('[data-kivo-map-bridge]')
+  if (bridge) {
+    try {
+      const rid = `o${Date.now().toString(36)}`
+      bridge.dispatchEvent(new CustomEvent('kivo-map:request', { detail: JSON.stringify({ op: 'describe', rid }) }))
+      const r = JSON.parse(bridge.dataset.response || 'null')
+      if (r && r.rid === rid) map = { summary: String(r.result || '').slice(0, 300), nodes: (r.nodes || []).slice(0, 40), edges: (r.edges || []).slice(0, 60) }
+    } catch { map = null }
+  }
   document.getElementById('__kivo_overlay')?.style.removeProperty('display')
   const fingerprint = `${location.href}|${text.length}|${headings.length}|${elements.map(e => e.state || '').join(';').length}|${dialog ? 'd' : ''}`
   return {
     url: location.href, title: clean(document.title).slice(0, 300), headings, text: text.slice(0, max),
     links: links.slice(0, 40).map(({ inMain, inView, ...l }) => l), linksTotal, elementsTotal: candidates.length, outline, elements,
     dialog: dialog ? (nameOf(dialog) || clean(dialog.innerText).slice(0, 120)).slice(0, 160) : null,
-    alerts, signIn, challenge, more, fingerprint, isPdf: document.contentType === 'application/pdf',
+    alerts, signIn, challenge, more, fingerprint, isPdf: document.contentType === 'application/pdf', map,
   }
 }
 
@@ -421,6 +432,38 @@ export function findOnPage(query, max) {
   }
   doc.setAttribute('data-kivo-next', String(next))
   return { elements, passages, total }
+}
+
+/**
+ * Kivo's own Knowledge Map, asked through its bridge ([data-kivo-map-bridge],
+ * apps/web map-agent.ts): a request by node id, answered by the map's own
+ * actions. Text in, text out. The node's own element is numbered so the
+ * watch-mode pointer goes to where it really is now. absent: not the map.
+ */
+export async function mapRequest(req) {
+  const bridge = document.querySelector('[data-kivo-map-bridge]')
+  if (!bridge) return { absent: true }
+  const rid = `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+  bridge.dispatchEvent(new CustomEvent('kivo-map:request', { detail: JSON.stringify({ ...req, rid }) }))
+  let answer = null
+  for (let i = 0; i < 80; i++) {
+    try { const r = JSON.parse(bridge.dataset.response || 'null'); if (r && r.rid === rid) { answer = r; if (r.final) break } } catch { /* not yet */ }
+    await new Promise(r => setTimeout(r, 100))
+  }
+  if (!answer) return { ok: false, result: 'The map did not answer.' }
+  return answer
+}
+
+/** A map node's element as drawn now, numbered for the pointer; null when it is not drawn. */
+export function mapLocate(id) {
+  const el = document.querySelector(`[data-node-id="${CSS.escape(String(id))}"]`)
+  if (!el) return { index: null }
+  const doc = document.documentElement
+  let next = Number(doc.getAttribute('data-kivo-next') || '0')
+  let n = el.getAttribute('data-kivo-agent')
+  if (n === null) { n = String(next++); el.setAttribute('data-kivo-agent', n); doc.setAttribute('data-kivo-next', String(next)) }
+  const r = el.getBoundingClientRect()
+  return { index: Number(n), visible: r.width > 0 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth }
 }
 
 /** What an element is, before the agent acts on it (for the approval rules). */

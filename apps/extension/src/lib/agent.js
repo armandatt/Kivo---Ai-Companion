@@ -104,13 +104,14 @@ const describe = a => {
     case 'hand_over': return 'Waiting for you'
     case 'finish': return 'Writing it up'
     case 'observe': return 'Looking at the page again'
+    case 'map': return { select: 'Selecting a card on your map', open: 'Opening a card on your map', related: 'Showing what is connected', parent: 'Going to the parent card', follow: 'Following a connection', zoom: 'Zooming the map', pan: 'Moving the map', whole: 'Showing the whole map', connect: 'Connecting two cards', describe: 'Reading your map' }[a.args.op] ?? 'Working on your map'
     default: return a.tool
   }
 }
 export const actionWords = describe
 const argsOf = a => JSON.stringify(a.args).slice(0, 300)
 const READING = new Set(['read', 'find', 'scroll', 'wait', 'observe', 'workspace_search', 'workspace_related', 'read_note'])
-const ACTING = new Set(['click', 'fill', 'select', 'check', 'press'])
+const ACTING = new Set(['click', 'fill', 'select', 'check', 'press', 'map'])
 
 /**
  * What an action is aimed at, so "the same action" means the same thing on
@@ -315,6 +316,7 @@ export function createAgent({ state, tools, client, save = async () => {}, onUpd
         case 'switch_tab': return tools.switchTab(action.args)
         case 'close_tab': return tools.closeTab(action.args)
         case 'observe': return tools.observe()
+        case 'map': return tools.map(action.args)
         default: return { ok: false, result: `Nova has no tool called ${action.tool}.` }
       }
     })()

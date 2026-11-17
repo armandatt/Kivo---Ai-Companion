@@ -35,7 +35,7 @@
 // observation when there is a page to look at, or needsAccess / needsUser
 // when the learner must act. check() says when an action waits for their OK.
 
-import { actOn, clearOverlay, findOnPage, inspectTarget, observePage, readSearchResults, scrollPage, settleDom, showAction } from './agent-page.js'
+import { actOn, clearOverlay, findOnPage, inspectTarget, mapLocate, mapRequest, observePage, readSearchResults, scrollPage, settleDom, showAction } from './agent-page.js'
 
 export const PART_CHARS = 6_000
 export const LOAD_TIMEOUT_MS = 20_000
@@ -252,7 +252,7 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
     if (raw.isPdf) return { ok: false, result: 'This is a PDF, which Kivo cannot read from the browser. Look for an HTML version (an abstract page or documentation page).' }
     const parts = partsOf(raw.text || '')
     const part = Math.min(Math.max(1, partNumber), parts.length || 1)
-    page = { tab: tabId, url: raw.url, title: raw.title, headings: raw.headings, outline: raw.outline ?? [], parts, links: raw.links, linksTotal: raw.linksTotal ?? raw.links?.length ?? 0, elements: raw.elements, elementsTotal: raw.elementsTotal ?? 0, dialog: raw.dialog, alerts: raw.alerts, signIn: raw.signIn, challenge: raw.challenge, more: raw.more, kind: 'page', fullText: raw.text, fingerprint: raw.fingerprint, found: null }
+    page = { tab: tabId, url: raw.url, title: raw.title, headings: raw.headings, outline: raw.outline ?? [], parts, links: raw.links, linksTotal: raw.linksTotal ?? raw.links?.length ?? 0, elements: raw.elements, elementsTotal: raw.elementsTotal ?? 0, dialog: raw.dialog, alerts: raw.alerts, signIn: raw.signIn, challenge: raw.challenge, more: raw.more, kind: 'page', fullText: raw.text, fingerprint: raw.fingerprint, found: null, map: raw.map ?? null }
     noteRead(raw.url, part, parts.length)
     if (info) { info.url = raw.url; info.title = raw.title }
     await show(tabId, null, 'reading the page')
@@ -265,6 +265,7 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
       partsRead: [...(coverageOf(page.url)?.read ?? [part])].sort((a, b) => a - b),
       links: page.links, linksTotal: page.linksTotal ?? 0, elements: page.elements ?? [], elementsTotal: page.elementsTotal ?? 0, dialog: page.dialog ?? null, alerts: page.alerts ?? [], signIn: Boolean(page.signIn), challenge: Boolean(page.challenge), more: Boolean(page.more), kind: page.kind,
       found: page.found ?? null,
+      map: page.map ?? null,
     }
   }
 
@@ -439,6 +440,33 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
       return { ok: true, result: none ? `"${query}" is nowhere on this page (the whole page was searched).` : `Found ${page.found.total} element${page.found.total === 1 ? '' : 's'} and ${m} passage${m === 1 ? '' : 's'} with "${query}"${inParts.length ? ` (text parts ${inParts.join(', ')})` : ''}: see FOUND.`, observation: observation(page.parts.length ? Math.min(...(inParts.length ? inParts : [1])) : 1) }
     },
 
+    /**
+     * Kivo's Knowledge Map, by its own graph: the pointer goes to the node's
+     * element as it is drawn now (watch mode), then the map does the action
+     * itself (select, open, related, parent, follow, zoom, pan, whole,
+     * connect). Never by screen coordinates.
+     */
+    async map(args) {
+      if (current === null) return { ok: false, result: 'No page is open.' }
+      const tabId = current
+      const point = async (id, words) => {
+        if (!id) return
+        let at = null
+        try { at = await run(tabId, mapLocate, [id], 3000) } catch { at = null }
+        if (at?.index !== null && at?.index !== undefined) await show(tabId, at.index, words)
+      }
+      const label = id => page?.map?.nodes?.find(n => n.id === id)?.label ?? id
+      if (['select', 'open', 'related', 'parent', 'follow', 'connect'].includes(args.op)) await point(args.id, `${args.op === 'connect' ? 'connecting' : args.op === 'follow' ? 'following from' : 'going to'} “${String(label(args.id)).slice(0, 40)}”`)
+      let res
+      try { res = await run(tabId, mapRequest, [args], 12_000) } catch (err) { return failure(err, tabId) }
+      if (res?.absent) return { ok: false, result: 'This page is not Kivo\'s Knowledge Map. Open it in Kivo first (the Knowledge Map page), then use map.' }
+      if (args.op === 'follow' && res?.ok) await point(args.to, `following to “${String(label(args.to)).slice(0, 40)}”`)
+      await run(tabId, settleDom, [1200, ''], 3000).catch(() => undefined)
+      const read = await look(tabId, 1)
+      const extra = res?.options?.length ? ` Ways to connect: ${res.options.map(o => `${o.key} (${o.label}: ${o.detail})`).join('; ')}.` : ''
+      return { ...(read.ok ? read : {}), ok: Boolean(res?.ok), changed: true, result: `${String(res?.result ?? 'The map did not answer.').slice(0, 260)}${extra}` }
+    },
+
     async scroll({ direction }) {
       if (current === null) return { ok: false, result: 'No page is open.' }
       let moved
@@ -475,6 +503,8 @@ export function createBrowserTools({ chrome, windowId, startTab = null, restore 
     /** null: allowed. Otherwise why it waits for the learner, or 'never'. */
     async check(action) {
       const op = action.tool
+      // Connecting two cards changes the user's Kivo: they say yes first.
+      if (op === 'map' && action.args.op === 'connect') return `It would connect two cards in your Knowledge Map (${action.args.id} and ${action.args.to}).`
       if (op === 'open') { let url = action.args.url || ''; try { url = decodeURIComponent(url) } catch { /* as given */ } return carriesPrivate(url, privateTexts()) ? 'The address would carry text from your Kivo notes to another site.' : null }
       if (!['click', 'fill', 'select', 'check', 'press'].includes(op) || current === null) return null
       if (op === 'fill' && carriesPrivate(action.args.text, privateTexts())) return `It would put text from your Kivo notes into ${siteOf(page?.url) || 'this site'}.`

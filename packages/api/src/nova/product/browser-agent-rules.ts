@@ -49,7 +49,7 @@ export const AGENT_LIMITS = {
 export const TOOLS = [
   "search", "open", "back", "forward", "read", "find", "scroll", "wait",
   "click", "fill", "select", "check", "press",
-  "switch_tab", "close_tab",
+  "switch_tab", "close_tab", "map",
   "extract", "workspace_search", "workspace_related", "read_note", "save_to_drafts",
   "ask_user", "hand_over", "finish",
 ] as const;
@@ -61,6 +61,8 @@ export const KEYS = ["Enter", "Escape", "Tab", "ArrowUp", "ArrowDown", "ArrowLef
 export type Key = typeof KEYS[number];
 
 export type FinishStatus = "done" | "partial" | "blocked";
+export const MAP_OPS = ["describe", "select", "open", "related", "parent", "follow", "zoom", "pan", "whole", "connect"] as const;
+export type MapOp = typeof MAP_OPS[number];
 
 export type AgentAction =
   | { tool: "search"; args: { query: string } }
@@ -78,6 +80,7 @@ export type AgentAction =
   | { tool: "press"; args: { key: Key; index: number | null } }
   | { tool: "switch_tab"; args: { tab: number } }
   | { tool: "close_tab"; args: { tab: number } }
+  | { tool: "map"; args: { op: MapOp; id: string | null; to: string | null; query: string; factor: number | null; dx: number; dy: number; option: string | null } }
   | { tool: "extract"; args: { quote: string; note: string; concept: string } }
   | { tool: "workspace_search"; args: { query: string } }
   | { tool: "workspace_related"; args: { id: string } }
@@ -114,6 +117,8 @@ export interface Observation {
   searched: string[];      // words already looked for on it with find
   linksTotal: number; elementsTotal: number;
   found: FoundOnPage | null;
+  // Kivo's own Knowledge Map, as the map describes itself (only on that page).
+  map: { summary: string; nodes: Array<{ id: string; type: string; label: string; parent: string | null; inside: number; selected?: boolean }>; edges: Array<{ id: string; from: string; to: string; kind: string }> } | null;
   text: string; part: number; parts: number;
   links: Array<{ i: number; text: string; href: string }>;
   elements: ObservedElement[];
@@ -174,6 +179,16 @@ function readElement(raw: unknown): ObservedElement | null {
   return el;
 }
 
+function readMap(raw: unknown): Observation["map"] {
+  const m = obj(raw);
+  if (!m) return null;
+  return {
+    summary: str(m.summary, 300),
+    nodes: list(m.nodes).flatMap(n => { const x = obj(n); const id = str(x?.id, 80); return id ? [{ id, type: str(x!.type, 12), label: str(x!.label, 120), parent: str(x!.parent, 80) || null, inside: int(x!.inside, 0, 100_000) ?? 0, ...(x!.selected === true ? { selected: true } : {}) }] : []; }).slice(0, 40),
+    edges: list(m.edges).flatMap(e => { const x = obj(e); const from = str(x?.from, 80), to = str(x?.to, 80); return from && to ? [{ id: str(x!.id, 80), from, to, kind: str(x!.kind, 20) }] : []; }).slice(0, 60),
+  };
+}
+
 function readFound(raw: unknown): FoundOnPage | null {
   const f = obj(raw);
   if (!f) return null;
@@ -211,6 +226,7 @@ export function parseStepInput(raw: unknown): StepInput | null {
     searched: list(o.searched).map(q => str(q, 80)).filter(Boolean).slice(-10),
     linksTotal: int(o.linksTotal, 0, 100_000) ?? 0, elementsTotal: int(o.elementsTotal, 0, 100_000) ?? 0,
     found: readFound(o.found),
+    map: readMap(o.map),
     text: text(o.text, L.observationChars), part: int(o.part, 1, 999) ?? 1, parts: int(o.parts, 1, 999) ?? 1,
     links: list(o.links).flatMap(l => { const x = obj(l); const i = int(x?.i, 0, 99_999); const href = str(x?.href, 500); return i === null || !href ? [] : [{ i, text: str(x!.text, 120), href }]; }).slice(0, L.links),
     elements: list(o.elements).map(readElement).filter((e): e is ObservedElement => e !== null).slice(0, L.elements),
@@ -261,6 +277,7 @@ export const AGENT_SYSTEM = [
   "- open {url, new_tab}: open an http(s) page. An address already open in the task is switched to, not opened again.",
   "- search {query}: search the web (results come back as titles, links and snippets; snippets are not verified: open a page before relying on it).",
   "- switch_tab {tab} / close_tab {tab}: tabs of this task.",
+  "- map {op, id, to, query, factor, dx, dy, option}: Kivo's own Knowledge Map, when the user is on it (KNOWLEDGE MAP below). Act by node id (\"topic:…\", \"note:…\"), never by clicking the drawing: describe {query} finds cards by name; select {id}; open {id} shows what is inside a card (a neuron); related {id} lists and shows everything connected; parent {id}; follow {id, to} moves along a connection; zoom {factor 0.5-2}; pan {dx, dy}; whole; connect {id, to, option} links two cards (Kivo asks the user first; if several ways exist you get their keys).",
   "- extract {quote, note, concept}: keep a finding from the CURRENT page. quote is copied word for word from its text (it is checked); note is your own reading; concept is 2-5 words.",
   "- workspace_search {query}: search the user's Kivo: notes, saved pages, drafts, subjects and nested topics (with how well they know each topic), tasks, and how they connect on the Knowledge Map. Use it before searching the web when the user's own knowledge may answer.",
   "- workspace_related {id}: one thing from their Knowledge Map (a subject, topic, task, note or saved page, by its map id such as \"topic:…\") and everything connected to it: where it sits, what is filed under it, its tasks and steps, what it links to.",
@@ -349,6 +366,7 @@ export function stepPrompt(s: StepInput): string {
       `PAGE COVERAGE: read part${o.partsRead.length === 1 ? "" : "s"} ${o.partsRead.join(", ") || o.part} of ${o.parts}${o.partsRead.length >= o.parts ? " (all of it)" : " (not all of it: read more or use find before saying something is not on the page)"}${o.searched.length ? `; looked for with find: ${o.searched.map(q => `"${q}"`).join(", ")}` : ""}.`,
       `TEXT (part ${o.part}):\n${o.text}`,
       o.found ? foundBlock(o.found) : "",
+      o.map ? `KNOWLEDGE MAP (Kivo's own graph; use the map tool with these ids, not clicks): ${o.map.summary}\n${o.map.nodes.map(n => `${n.id} ${n.type} "${n.label}"${n.parent ? ` inside ${n.parent}` : ""}${n.inside ? `, ${n.inside} inside` : ""}${n.selected ? " [selected]" : ""}`).join("\n")}${o.map.edges.length ? `\nCONNECTIONS: ${o.map.edges.map(e => `${e.from} -${e.kind}-> ${e.to}`).join("; ")}` : ""}` : "",
       o.elements.length ? `ELEMENTS${o.elementsTotal > o.elements.length ? ` (${o.elements.length} shown of ${o.elementsTotal}: use find for others)` : ""}:\n${o.elements.map(elementLine).join("\n")}` : "",
       o.links.length ? `LINKS${o.linksTotal > o.links.length ? ` (${o.links.length} shown of ${o.linksTotal}: use find for others)` : ""}:\n${o.links.map(l => `(${l.i}) ${l.text} → ${l.href}`).join("\n")}` : "",
       "</untrusted_page>",
@@ -399,6 +417,15 @@ export function parseAction(reply: string): ParsedAction {
     case "select": { const option = str(a.option, 160); return index === null || !option ? bad("select needs an index and an option") : ok({ tool, args: { index, option } }); }
     case "check": return index === null ? bad("check needs an index") : ok({ tool, args: { index, checked: a.checked !== false } });
     case "press": return isKey(a.key) ? ok({ tool, args: { key: a.key, index } }) : bad(`press needs one of: ${KEYS.join(", ")}`);
+    case "map": {
+      const op = (MAP_OPS as readonly string[]).includes(a.op as string) ? a.op as MapOp : null;
+      if (!op) return bad(`map needs an op: ${MAP_OPS.join(", ")}`);
+      const id = str(a.id, 80) || null, to = str(a.to, 80) || null;
+      if (["select", "open", "related", "follow", "connect"].includes(op) && !id) return bad(`map ${op} needs a node id`);
+      if ((op === "follow" || op === "connect") && !to) return bad(`map ${op} needs "to"`);
+      const num = (v: unknown, lo: number, hi: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : null);
+      return ok({ tool, args: { op, id, to, query: str(a.query, 120), factor: num(a.factor, 0.5, 2), dx: num(a.dx, -800, 800) ?? 0, dy: num(a.dy, -800, 800) ?? 0, option: str(a.option, 60) || null } });
+    }
     case "switch_tab": case "close_tab": { const tab = int(a.tab, 0, 2 ** 31); return tab === null ? bad(`${tool} needs a tab number`) : ok({ tool, args: { tab } }); }
     case "extract": {
       const quote = text(a.quote, L.quoteChars).trim();

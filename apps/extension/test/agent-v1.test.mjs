@@ -335,3 +335,18 @@ test('a list row or long label is content: a risky word inside it does not ask; 
   assert.match(needsConfirmation({ exists: true, tag: 'button', role: '', label: 'Delete this conversation and all of its messages', isSubmit: false, form: null }, 'click'), /could change/, 'a long label that starts with the action still asks')
   assert.match(needsConfirmation({ exists: true, tag: 'button', role: '', label: 'Send', isSubmit: false, form: null }, 'click'), /could change/)
 })
+
+// ── Kivo's Knowledge Map: by id, through the map's own bridge ─────────────────
+test('the map tool talks to the map by node id through its bridge, points at the real node, and asks before connecting', async () => {
+  const page = readFileSync(new URL('../src/lib/agent-page.js', import.meta.url), 'utf8')
+  const fn = page.match(/export async function mapRequest\([\s\S]*?\n\}/)[0]
+  assert.match(fn, /querySelector\('\[data-kivo-map-bridge\]'\)/)
+  assert.match(fn, /new CustomEvent\('kivo-map:request', \{ detail: JSON\.stringify/, 'text in')
+  assert.match(fn, /JSON\.parse\(bridge\.dataset\.response/, 'text out')
+  assert.ok(!/clientX|elementFromPoint|getBoundingClientRect/.test(fn), 'no screen coordinates drive the action')
+  assert.match(page, /querySelector\(`\[data-node-id="\$\{CSS\.escape\(String\(id\)\)\}"\]`\)/, 'the pointer finds the node by its id where it is drawn now')
+  const { createBrowserTools } = await import('../src/lib/agent-tools.js')
+  const tools = createBrowserTools({ chrome: {}, startTab: { id: 1, url: 'https://www.thekivo.in/map', title: 'Map' } })
+  assert.match(await tools.check({ tool: 'map', args: { op: 'connect', id: 'topic:a', to: 'note:b' } }), /connect two cards in your Knowledge Map/)
+  assert.equal(await tools.check({ tool: 'map', args: { op: 'open', id: 'topic:a' } }), null, 'looking around the map needs no OK')
+})

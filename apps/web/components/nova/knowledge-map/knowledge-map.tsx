@@ -21,7 +21,8 @@ import { enterAction, enterTarget, isMacPlatform, isTypingTarget, navigate, near
 import { OUTLINE_QUERY, browserStore, chooseOrientation, chosenOrientation, forgetViews, pictureKey, recallView, rememberView, type Orientation } from './view-memory'
 import { NEW_SUBJECT } from './map-structure'
 import { disconnectPlan } from './map-disconnect'
-import { sendDisconnect } from './map-structure-api'
+import { runMapRequest, type MapAgentContext, type MapAgentRequest } from './map-agent'
+import { sendConnect, sendDisconnect } from './map-structure-api'
 import { AddDialog, Breadcrumbs, DeleteDialog, DeleteWholeDialog, Legend, ShortcutsHelp } from './map-panels'
 import { BOARD_PATH } from '@repo/api/nova/product/companion'
 import { nextStep, summaryOf, type Status } from './node-summary'
@@ -1446,6 +1447,31 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     goOutside(id)
   }, [drawnIds, select, goOutside, dens, tree, revealCard, explore])
 
+  // ── Nova's browser agent (map-agent.ts): requests by node id, answered by the map's own actions ──
+  const bridgeRef = useRef<HTMLDivElement>(null)
+  const agentCtx = useRef<MapAgentContext | null>(null)
+  agentCtx.current = {
+    nodes: view.nodes, edges: view.edges, tree, selected, focus, drawn: drawnIds, zoom: tNow.current.k,
+    pick, explore, canExplore: id => canExplore(tree, id), goUp, goWhole: () => goTo(null),
+    zoomBy: f => zoomAt(f), panBy: (dx, dy) => glideTo({ ...tNow.current, x: tNow.current.x - dx, y: tNow.current.y - dy }),
+    connect: async (request, label) => { const out = await sendConnect(request, label); if (out.ok) { say(out.said.join(' ')); onChanged() } return out.ok ? { ok: true, said: out.said.join(' ') } : { ok: false, said: out.message } },
+  }
+  useEffect(() => {
+    const el = bridgeRef.current
+    if (!el) return
+    const on = (e: Event) => {
+      let req: (MapAgentRequest & { rid?: string }) | null = null
+      try { req = JSON.parse(String((e as CustomEvent).detail ?? '')) } catch { req = null }
+      if (!req || !agentCtx.current) return
+      const rid = String(req.rid ?? '')
+      const { pending, ...answer } = runMapRequest(req, agentCtx.current)
+      el.dataset.response = JSON.stringify({ rid, final: !pending, ...answer })
+      if (pending) void pending.then(out => { const o = out as { ok: boolean; said: string }; el.dataset.response = JSON.stringify({ rid, final: true, ok: o.ok, result: o.ok ? `Connected. ${o.said}` : `The connection was not made: ${o.said}`, node: answer.node ?? null }) })
+    }
+    el.addEventListener('kivo-map:request', on)
+    return () => el.removeEventListener('kivo-map:request', on)
+  }, [])
+
   // ── Adding and deleting ────────────────────────────────────────────────────
   const canDelete = (n: MapNode) => n.type === 'subject' || n.type === 'topic' || n.type === 'task'
   const openAdd = useCallback((n: MapNode | null) => setPanel({ kind: 'add', node: n }), [])
@@ -2081,6 +2107,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
 
   return (
     <div ref={root} className={cn('relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-white/8 bg-card/60', motion === 'reduced' && 'map-still')} data-knowledge-map data-motion={motion}>
+      <div ref={bridgeRef} hidden data-kivo-map-bridge="1" />
       {/* The toolbar: where you are, finding, and the view. Filters are folded into one menu. */}
       <div className="flex flex-wrap items-center gap-2 border-b border-white/8 px-3 py-2">
         {(view.workspaces?.length ?? 0) > 0 && onWorkspace && (

@@ -45,7 +45,7 @@ test('it opens its own tabs in the background (in front when watched), injects o
   const funcs = [...tools.matchAll(/run\((?:current|tabId|searchTab), ([a-zA-Z]+)/g)].map(m => m[1]).filter(f => f !== 'func')
   const page = src('lib/agent-page.js')
   assert.ok(funcs.length >= 6)
-  for (const f of new Set(funcs)) assert.match(page, new RegExp(`export function ${f}\\(`), `${f} is one of the page functions in lib/agent-page.js`)
+  for (const f of new Set(funcs)) assert.match(page, new RegExp(`export (async )?function ${f}\\(`), `${f} is one of the page functions in lib/agent-page.js`)
   assert.match(tools, /export const ANY_SITE = \['https:\/\/\*\/\*', 'http:\/\/\*\/\*'\]/)
   const view = code(src('lib/agent-view.js'))
   assert.match(view, /browser\.allowSites\(origins\)/, 'asked from the learner\'s click in the panel')
