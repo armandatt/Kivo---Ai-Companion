@@ -45,10 +45,10 @@ const TOOLS: Array<{ group: string; items: Array<[string, string, "read" | "writ
   ] },
   { group: "Notes", items: [
     ["search_notes", "Find notes by words in their title or text", "read"],
-    ["get_note", "Read one note", "read"],
+    ["get_note", "Read one note, and look at its images when asked", "read"],
     ["list_recent_notes", "Notes you changed most recently", "read"],
-    ["create_note", "Create a note, optionally filed under a subject or topic", "write"],
-    ["update_note", "Add to a note (at once) or rename it (needs approval)", "write"],
+    ["create_note", "Create a note, with screenshots or images if given, optionally filed under a subject or topic", "write"],
+    ["update_note", "Add text or images to a note, at the end or under a heading (at once), or rename it (needs approval)", "write"],
     ["link_notes", "Link a note to another note or a topic", "write"],
     ["move_note", "Refile a note under another subject or topic", "approval"],
     ["delete_note", "Delete a note", "approval"],
@@ -217,6 +217,8 @@ export default function KivoConnectDocs() {
               <li>Search matches words, not meaning. If nothing is found, try other words.</li>
               <li>Relationships are the ones Kivo keeps: a topic inside a subject, a note filed under a topic, and links between notes. Kivo does not infer hidden relationships.</li>
               <li>Kivo Connect does not call an AI model itself. The assistant you use writes the text; Kivo stores and organises it.</li>
+              <li>Images: PNG, JPEG or WebP, up to 2.5 MB each and 6 per request. An assistant can send an image&apos;s data, a public https address, or (in ChatGPT) a file you attached. Claude cannot pass an image you pasted into the chat to a tool: open the note in Kivo and paste it there.</li>
+              <li>When reading, an assistant gets up to 3 of a note&apos;s images per request and asks again for more.</li>
               <li>Up to 120 tool calls a minute per connection.</li>
             </ul>
           </Section>
@@ -226,7 +228,8 @@ export default function KivoConnectDocs() {
               <li>Each tool reaches only the account that approved the connection. The account comes from the access token, never from what the assistant sends.</li>
               <li>Kivo stores the assistant&apos;s registration (its name and return address), the connection you approved (permissions, expiry, last use) and tokens in hashed form only.</li>
               <li>Kivo keeps a log of tool calls on your account: the tool, the outcome and the ids of the items affected, plus the result of each change so that a repeated request is not applied twice. It does not keep your conversation.</li>
-              <li>What the assistant saves (notes, subjects, topics) becomes part of your Kivo, like anything you write yourself.</li>
+              <li>What the assistant saves (notes, images, subjects, topics) becomes part of your Kivo, like anything you write yourself. Images are stored in your notes and shown only to you, and to an assistant you connected when it reads that note.</li>
+              <li>When an assistant gives an image by its address, Kivo downloads it once from that public address (never from a private network) and keeps only the image.</li>
               <li>What the assistant does with what it reads is covered by that assistant&apos;s own terms. See also Kivo&apos;s <Link href="/privacy">Privacy Policy</Link>.</li>
             </ul>
           </Section>

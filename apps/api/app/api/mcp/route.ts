@@ -16,7 +16,9 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
 
-const BODY_MAX_BYTES = 1_200_000
+// Room for a call carrying images as base64 (note-images: 2.5 MB each, a
+// third larger as base64); images by url or file are fetched, not sent here.
+const BODY_MAX_BYTES = 8_000_000
 // Per connection: calls a minute. One process (Render), so memory is the answer.
 const CALLS_PER_MINUTE = 120
 
