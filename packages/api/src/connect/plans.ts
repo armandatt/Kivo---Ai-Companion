@@ -54,7 +54,7 @@ export interface PlanPreview {
 
 // A plan whose changes carry note text is not kept on the server (the audit
 // table holds no content): the assistant sends the changes again to run it.
-const holdsText = (changes: Change[]) => changes.some(c => c.op === "create_note" || c.op === "append_to_note");
+const holdsText = (changes: Change[]) => changes.some(c => c.op === "create_note" || c.op === "append_to_note" || c.op === "insert_into_note");
 
 export async function preview(ctx: { userId: string; grantId: string; profileId: string; clientName: string; origin: string }, changes: Change[], now = new Date()): Promise<PlanPreview> {
   const { report, summary, items, state } = await previewChanges(ctx.profileId, changes);

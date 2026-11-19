@@ -21,6 +21,7 @@ import { NOTE_BODY_MAX, NOTE_TITLE_MAX, NOTE_TOPIC_MAX } from "../nova/product/n
 import { linkedTitles, linkKey } from "../nova/product/note-links";
 import { appendToBody } from "../nova/product/note-capture";
 import { flat } from "./similarity";
+import { insertAt, sectionEnd } from "./images";
 
 export const CHANGES_MAX = 60;
 // More than this many items changed in one request is a bulk change: preview
@@ -45,6 +46,9 @@ export const ChangeSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("remove_subject"), subjectId: id }),
   z.object({ op: z.literal("create_note"), title: z.string().trim().min(1).max(NOTE_TITLE_MAX), body: z.string().max(NOTE_BODY_MAX), subjectId: id.optional(), subjectName: name.optional(), topicName: z.string().trim().max(NOTE_TOPIC_MAX).optional() }),
   z.object({ op: z.literal("append_to_note"), noteId: id, text: z.string().min(1).max(200_000), baseUpdatedAt: z.string().max(40).optional() }),
+  // Text (images' Markdown included) put at the end of one section of a note
+  // (afterHeading), or at the very end without a dated divider. Additive.
+  z.object({ op: z.literal("insert_into_note"), noteId: id, text: z.string().min(1).max(200_000), afterHeading: z.string().trim().min(1).max(200).optional(), baseUpdatedAt: z.string().max(40).optional() }),
   z.object({ op: z.literal("file_note"), noteId: id, subjectId: id.nullable().optional(), subjectName: name.optional(), topicName: z.string().trim().max(NOTE_TOPIC_MAX).nullable().optional(), baseUpdatedAt: z.string().max(40).optional() }),
   z.object({ op: z.literal("link_notes"), fromNoteId: id, toNoteTitle: z.string().trim().min(1).max(NOTE_TITLE_MAX).optional(), toTopicName: name.optional() }),
   z.object({ op: z.literal("rename_note"), noteId: id, title: z.string().trim().min(1).max(NOTE_TITLE_MAX), baseUpdatedAt: z.string().max(40).optional() }),
@@ -276,6 +280,10 @@ export function approvalItem(c: Change, st: StudyStructure, notes: NoteVersion[]
       const detail = `${c.text.length.toLocaleString("en-US")} characters at the end`;
       return item({ action: "append", kind: "note", name: noteName(c.noteId), where: noteWhere(c.noteId), detail }, `Add ${detail} of note ${quote(noteName(c.noteId))}`);
     }
+    case "insert_into_note": {
+      const detail = c.afterHeading ? `at the end of the section ${quote(c.afterHeading)}` : "at the end";
+      return item({ action: "append", kind: "note", name: noteName(c.noteId), where: noteWhere(c.noteId), detail }, `Add to note ${quote(noteName(c.noteId))} ${detail}`);
+    }
     case "file_note": {
       const to = c.subjectId === null ? "not filed anywhere" : filing(sub(c.subjectId, c.subjectName) ?? note(c.noteId)?.subjectName ?? null, c.topicName === undefined ? note(c.noteId)?.topicName : c.topicName);
       return item({ action: "file", kind: "note", name: noteName(c.noteId), where: noteWhere(c.noteId), to }, `Move note ${quote(noteName(c.noteId))} from ${noteWhere(c.noteId) ?? "where it is"} to ${to}`);
@@ -442,6 +450,24 @@ async function applyNoteChange(profileId: string, index: number, c: Change, st: 
       if (!res.ok) return { index, op: c.op, status: "failed", message: res.error === "conflict" ? "The note changed while this was being saved. Nothing was overwritten." : res.message };
       return { index, op: c.op, status: "updated", message: `Added to "${res.note.title}".`, resource: { type: "note", id: res.note.id, title: res.note.title } };
     }
+    case "insert_into_note": {
+      const note = await getNote(profileId, c.noteId);
+      if (!note) return fail("That note is not one of the learner's.");
+      const at = { type: "note" as const, id: note.id, title: note.title };
+      if (c.baseUpdatedAt && new Date(c.baseUpdatedAt).getTime() !== new Date(note.updatedAt).getTime()) return { index, op: c.op, status: "failed", message: `The note changed since it was read (now ${note.updatedAt}). Read it again; nothing was overwritten.`, resource: at };
+      if (flat(note.body).includes(flat(c.text))) return { index, op: c.op, status: "skipped", message: "That is already in the note.", resource: at };
+      let place = note.body.length;
+      if (c.afterHeading) {
+        const s = sectionEnd(note.body, c.afterHeading);
+        if (s.at === null) return { index, op: c.op, status: "failed", message: `The note has no heading "${c.afterHeading}". Its headings: ${s.headings.slice(0, 30).join(" | ") || "none"}. Nothing was changed.`, resource: at };
+        place = s.at;
+      }
+      const body = insertAt(note.body, place, c.text);
+      if (body.length > NOTE_BODY_MAX) return fail("The note would be longer than a note can hold.");
+      const res = await updateNote(profileId, note.id, { body, baseUpdatedAt: note.updatedAt });
+      if (!res.ok) return { index, op: c.op, status: "failed", message: res.error === "conflict" ? "The note changed while this was being saved. Nothing was overwritten." : res.message, resource: at };
+      return { index, op: c.op, status: "updated", message: `Added to "${res.note.title}"${c.afterHeading ? ` under "${c.afterHeading}"` : ""}.`, resource: { type: "note", id: res.note.id, title: res.note.title } };
+    }
     case "file_note": {
       const note = await getNote(profileId, c.noteId);
       if (!note) return fail("That note is not one of the learner's.");
@@ -498,7 +524,7 @@ async function verify(profileId: string, changes: Change[], items: ItemResult[])
       const n = await getNote(profileId, it.resource.id);
       if (c.op === "delete_note") { checks.push({ what: `note ${it.resource.id} is gone`, ok: !n }); continue; }
       let ok = !!n;
-      if (n && c.op === "append_to_note") ok = flat(n.body).includes(flat(c.text));
+      if (n && (c.op === "append_to_note" || c.op === "insert_into_note")) ok = flat(n.body).includes(flat(c.text));
       if (n && c.op === "create_note") ok = n.title === c.title.trim().replace(/\s+/g, " ");
       if (n && c.op === "rename_note") ok = n.title === c.title.trim().replace(/\s+/g, " ");
       if (n && c.op === "link_notes") ok = linkedTitles(n.body).some(t => linkKey(t) === linkKey(c.toNoteTitle ?? c.toTopicName ?? ""));

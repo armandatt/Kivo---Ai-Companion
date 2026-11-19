@@ -22,6 +22,7 @@ const INSTRUCTIONS = [
   "Search is keyword matching, not semantic: try other words when nothing matches.",
   "To save knowledge from this conversation use capture_knowledge (mode preview, then apply). For maps use build_knowledge_map.",
   "Reading needs no approval. Ordinary additions are applied at once. Deleting, moving, renaming (notes included) and large batches wait for the learner: you get a summary, a planId and an approveUrl. Show the summary in plain words and the link once; when they approve on Kivo the change is applied there. Then call check_approval with the planId and report its result. Never ask them to repeat the request, and never retry a declined plan.",
+  "Images: get_note lists a note's images; with includeImages: true the images themselves come back for you to look at. To put a screenshot in a note use create_note or update_note with images (base64 data or a public https url) or, in ChatGPT, the attached files. If you cannot send an image's bytes, never say it was saved: give the learner the note's url to paste it in on Kivo.",
   "Report only what a tool result says was done, with its links. A result with failed items is not a success.",
 ].join("\n")
 
@@ -45,6 +46,7 @@ export function buildServer(learner: ConnectLearner | Blocked, origin: string): 
       description: `${tool.description} Needs: ${tool.scopes.join(", ")}.`,
       inputSchema: tool.input,
       outputSchema: OUTPUT,
+      ...(tool.meta ? { _meta: tool.meta } : {}),
       annotations: {
         title: tool.title,
         readOnlyHint: tool.kind === "read",
@@ -62,8 +64,15 @@ export function buildServer(learner: ConnectLearner | Blocked, origin: string): 
       }
       const result: ToolResult = await runTool(tool, args, { learner, origin, confirm: null })
       const structured = result.ok ? { ok: true, ...result.data } : { ok: false, error: result.error, message: result.message, ...(result.data ?? {}) }
+      // Images go as MCP image content after the JSON, each named first by a
+      // line of text (which note, which image, its caption): never inside
+      // structuredContent, so their bytes are sent once.
+      const media = result.ok ? (result.media ?? []).flatMap((m: { label: string; mimeType: string; data: string }) => [
+        { type: "text" as const, text: m.label },
+        { type: "image" as const, data: m.data, mimeType: m.mimeType },
+      ]) : []
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(structured) }],
+        content: [{ type: "text" as const, text: JSON.stringify(structured) }, ...media],
         structuredContent: structured,
         ...(result.ok ? {} : { isError: true }),
       }

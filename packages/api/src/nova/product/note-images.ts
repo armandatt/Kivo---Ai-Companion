@@ -60,31 +60,109 @@ export async function saveNoteImage(profileId: string, raw: unknown): Promise<No
   if (!r || typeof r.noteId !== "string" || r.noteId.length > 40 || typeof r.data !== "string") return { ok: false, error: "invalid", message: "That image couldn't be read." };
   const clientKey = isClientKey(r.clientKey) ? r.clientKey : null;
   if (!clientKey) return { ok: false, error: "invalid", message: "That image can't be saved." };
-  const bytes = Buffer.from(r.data, "base64");
+  const page = typeof r.page === "number" && Number.isInteger(r.page) && r.page > 0 && r.page <= 10_000 ? r.page : null;
+  const saved = await saveNoteImageBytes(profileId, { noteId: r.noteId, bytes: Buffer.from(r.data, "base64"), clientKey, sourceUrl: short(r.sourceUrl, 2_000), sourceTitle: short(r.sourceTitle, 300), page });
+  return saved.ok ? { ok: true, image: { id: saved.image.id, ref: saved.image.ref, width: saved.image.width, height: saved.image.height } } : saved;
+}
+
+// The bytes checked (an image, of a type and size a note takes), or why not.
+// Pure: nothing is read or written.
+export function checkImageBytes(bytes: Buffer): { ok: true; type: ImageType; width: number; height: number } | { ok: false; error: "invalid" | "unsupported" | "too_large"; message: string } {
   if (bytes.length === 0) return { ok: false, error: "invalid", message: "That image is empty." };
   if (bytes.length > NOTE_IMAGE_BYTES_MAX) return { ok: false, error: "too_large", message: "That image is too large. Capture a smaller region." };
   const info = imageInfo(bytes);
   if (!info) return { ok: false, error: "unsupported", message: "Only PNG, JPEG or WebP images can go in a note." };
   if (info.width < 1 || info.height < 1 || info.width > NOTE_IMAGE_SIDE_MAX || info.height > NOTE_IMAGE_SIDE_MAX) return { ok: false, error: "unsupported", message: "That image's size can't be read." };
-  if (!(await ownsNote(profileId, r.noteId))) return { ok: false, error: "not_found", message: "That note doesn't exist any more." };
+  return { ok: true, ...info };
+}
 
-  const select = { id: true, width: true, height: true } as const;
-  const shown = (x: { id: string; width: number; height: number }) => ({ ok: true as const, image: { ...x, ref: `${NOTE_IMAGE_SCHEME}${x.id}` } });
+export type SavedImage = { id: string; ref: string; width: number; height: number; mimeType: string };
+
+// An image from bytes onto one of the learner's notes. Once per clientKey: the
+// same key again (a retry) gives the image already stored, and `created` says
+// whether this call made it. Used by the web route above and Kivo Connect.
+export async function saveNoteImageBytes(
+  profileId: string,
+  input: { noteId: string; bytes: Buffer; clientKey: string; sourceUrl?: string | null; sourceTitle?: string | null; page?: number | null },
+): Promise<({ ok: true; image: SavedImage; created: boolean }) | { ok: false; error: "invalid" | "unsupported" | "too_large" | "not_found"; message: string }> {
+  const { noteId, bytes, clientKey } = input;
+  if (!isClientKey(clientKey)) return { ok: false, error: "invalid", message: "That image can't be saved." };
+  const info = checkImageBytes(bytes);
+  if (!info.ok) return info;
+  if (!(await ownsNote(profileId, noteId))) return { ok: false, error: "not_found", message: "That note doesn't exist any more." };
+
+  const select = { id: true, width: true, height: true, mimeType: true } as const;
+  const shown = (x: { id: string; width: number; height: number; mimeType: string }, created: boolean) => ({ ok: true as const, created, image: { ...x, ref: `${NOTE_IMAGE_SCHEME}${x.id}` } });
   const existing = await prisma.novaNoteImage.findUnique({ where: { profileId_clientKey: { profileId, clientKey } }, select });
-  if (existing) return shown(existing);
-  const page = typeof r.page === "number" && Number.isInteger(r.page) && r.page > 0 && r.page <= 10_000 ? r.page : null;
+  if (existing) return shown(existing, false);
   try {
     const made = await prisma.novaNoteImage.create({
-      data: { profileId, noteId: r.noteId, mimeType: info.type, bytes, width: info.width, height: info.height, clientKey,
-        sourceUrl: short(r.sourceUrl, 2_000), sourceTitle: short(r.sourceTitle, 300), page },
+      data: { profileId, noteId, mimeType: info.type, bytes: new Uint8Array(bytes), width: info.width, height: info.height, clientKey,
+        sourceUrl: input.sourceUrl ?? null, sourceTitle: input.sourceTitle ?? null, page: input.page ?? null },
       select,
     });
-    return shown(made);
+    return shown(made, true);
   } catch (err) {
     const again = await prisma.novaNoteImage.findUnique({ where: { profileId_clientKey: { profileId, clientKey } }, select });
-    if (again) return shown(again);
+    if (again) return shown(again, false);
     throw err;
   }
+}
+
+// Images this learner's call just made, taken back when the note they were
+// for could not be changed (so nothing unreferenced is left behind).
+export async function discardNoteImages(profileId: string, ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  await prisma.novaNoteImage.deleteMany({ where: { profileId, id: { in: ids } } });
+}
+
+export interface NoteImageMeta { id: string; noteId: string; mimeType: string; width: number; height: number; sourceUrl: string | null; sourceTitle: string | null; page: number | null }
+
+// What is known about the learner's images, without their bytes. Another
+// learner's id is simply absent.
+export async function noteImageMeta(profileId: string, ids: string[]): Promise<Map<string, NoteImageMeta>> {
+  const wanted = readImageIds(ids, 500);
+  if (!wanted.length) return new Map();
+  const rows = await prisma.novaNoteImage.findMany({ where: { id: { in: wanted }, profileId }, select: { id: true, noteId: true, mimeType: true, width: true, height: true, sourceUrl: true, sourceTitle: true, page: true } });
+  return new Map(rows.map(r => [r.id, r]));
+}
+
+// The bytes of several of the learner's images in one read, in the order
+// asked, up to `maxTotal` bytes together. An id that is not the learner's or
+// is gone is `missing`; one over the budget is `deferred` (ask again for it).
+export async function noteImagesByIds(profileId: string, ids: string[], maxTotal: number): Promise<{ images: Array<{ id: string; mimeType: string; data: string; bytes: number }>; missing: string[]; deferred: string[] }> {
+  const wanted = readImageIds(ids, 50);
+  if (!wanted.length) return { images: [], missing: [], deferred: [] };
+  const rows = await prisma.novaNoteImage.findMany({ where: { id: { in: wanted }, profileId }, select: { id: true, mimeType: true, bytes: true } });
+  const byId = new Map(rows.map(r => [r.id, r]));
+  const images: Array<{ id: string; mimeType: string; data: string; bytes: number }> = [], missing: string[] = [], deferred: string[] = [];
+  let total = 0;
+  for (const id of wanted) {
+    const r = byId.get(id);
+    if (!r) { missing.push(id); continue; }
+    const b = Buffer.from(r.bytes);
+    if (deferred.length || (images.length && total + b.length > maxTotal)) { deferred.push(id); continue; }
+    total += b.length;
+    images.push({ id, mimeType: r.mimeType, data: b.toString("base64"), bytes: b.length });
+  }
+  return { images, missing, deferred };
+}
+
+// The images a note's text shows, in order, each with its caption: the text
+// holds ![caption](kivo-image:<id>). An id shown twice counts once. Pure.
+export function imagesInText(text: string): Array<{ id: string; caption: string }> {
+  const out: Array<{ id: string; caption: string }> = [];
+  const marker = `](${NOTE_IMAGE_SCHEME}`;
+  for (let at = text.indexOf(marker); at !== -1; at = text.indexOf(marker, at + 1)) {
+    let end = at + marker.length;
+    while (end < text.length && isIdChar(text[end]!)) end++;
+    const id = text.slice(at + marker.length, end);
+    if (!isRowId(id) || out.some(o => o.id === id)) continue;
+    const open = text.lastIndexOf("![", at);
+    const caption = open !== -1 && !text.slice(open + 2, at).includes("\n") ? text.slice(open + 2, at) : "";
+    out.push({ id, caption: caption.trim() });
+  }
+  return out;
 }
 
 // The bytes, only for their owner. Anyone else gets nothing (the route says 404).

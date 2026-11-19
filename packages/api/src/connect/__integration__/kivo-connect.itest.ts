@@ -442,3 +442,129 @@ test("Phase 2: a new subject comes back with its id (K-28B); workspaces link to 
   assert.equal(heads.length, 12);
   console.log(JSON.stringify({ measure: "note_versions_12_notes", beforeMs: before, afterMs: after, readsBefore: "12 full note reads, one after another", readsAfter: "1 query" }));
 });
+
+// ── Images (MCP image support) ───────────────────────────────────────────────
+const { deflateSync, crc32 } = await import("node:zlib");
+function png(w: number, h: number, rgb: [number, number, number]): Buffer {
+  const chunk = (type: string, data: Buffer) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type, "latin1"), data]);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(td) >>> 0);
+    return Buffer.concat([len, td, crc]);
+  };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const row = Buffer.concat([Buffer.from([0]), ...Array.from({ length: w }, () => Buffer.from(rgb))]);
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(Buffer.concat(Array.from({ length: h }, () => row)))), chunk("IEND", Buffer.alloc(0))]);
+}
+const imageRows = (profileId: string) => prisma.novaNoteImage.count({ where: { profileId } });
+const OS_TEXT = "# Operating Systems\n\nIntro with $O(1)$ maths and **bold**.\n\n## Paging\n\nPages are fixed size.\n\n## Scheduling\n\nRound robin.";
+
+test("images: a note made with a screenshot, more appended and inserted under a heading, read back as the images themselves; retries store nothing twice", async () => {
+  const c = await connect(await account());
+  const pid = c.learner.profileId;
+  const [p1, p2, p3, p4] = [png(4, 3, [255, 0, 0]), png(5, 2, [0, 255, 0]), png(2, 6, [0, 0, 255]), png(3, 3, [9, 9, 9])];
+
+  // 1. Create with one screenshot.
+  const made = await call("create_note", { title: "Operating Systems", text: OS_TEXT, subjectName: "Distributed Systems", images: [{ data: p1.toString("base64"), caption: "Page table [fig 1]" }], idempotencyKey: "os-img-1" }, c.ctx);
+  assert.equal(made.ok, true, JSON.stringify(made));
+  assert.equal(made.data!.status, "completed");
+  assert.equal(made.data!.images.length, 1);
+  assert.deepEqual([made.data!.images[0].caption, made.data!.images[0].width, made.data!.images[0].height, made.data!.images[0].mimeType], ["Page table fig 1", 4, 3, "image/png"]);
+  const noteId = made.data!.items[0].resource.id as string;
+  let note = (await getNote(pid, noteId))!;
+  const id1 = (made.data!.images[0].imageId as string).slice(6);
+  assert.equal(note.body, `${OS_TEXT}\n\n![Page table fig 1](kivo-image:${id1})`, "the text is kept exactly, the image after it");
+  assert.equal(note.subjectName, "Distributed Systems");
+  // The same call again (a retry) is the first result; nothing is stored twice.
+  const again = await call("create_note", { title: "Operating Systems", text: OS_TEXT, images: [{ data: p1.toString("base64") }], idempotencyKey: "os-img-1" }, c.ctx);
+  assert.equal(again.data!.replayed, true);
+  assert.equal(await imageRows(pid), 1);
+
+  // 2. Append a screenshot at the end; a retry without a key adds nothing.
+  const appended = await call("update_note", { noteId, images: [{ data: p2.toString("base64"), caption: "Second" }], baseUpdatedAt: note.updatedAt }, c.ctx);
+  assert.equal(appended.ok, true, JSON.stringify(appended));
+  note = (await getNote(pid, noteId))!;
+  assert.ok(note.body.startsWith(`${OS_TEXT}\n\n![Page table fig 1]`), "earlier text and image untouched");
+  assert.ok(note.body.endsWith(`![Second](${"kivo-image:" + (appended.data!.images[0].imageId as string).slice(6)})`));
+  const retry = await call("update_note", { noteId, images: [{ data: p2.toString("base64"), caption: "Second" }], baseUpdatedAt: note.updatedAt }, c.ctx);
+  assert.equal(retry.ok, true);
+  assert.equal(retry.data!.items[0].status, "skipped");
+  assert.equal(retry.data!.images[0].alreadyStored, true);
+  assert.equal(await imageRows(pid), 2, "a safe retry stores no second copy");
+  assert.equal((await getNote(pid, noteId))!.body, note.body);
+
+  // 3. Two screenshots and a line of text at the end of the "Paging" section.
+  const inserted = await call("update_note", { noteId, appendText: "Diagrams of paging:", afterHeading: "paging", images: [{ data: p3.toString("base64"), caption: "TLB" }, { data: p4.toString("base64"), caption: "Walk" }], baseUpdatedAt: note.updatedAt, idempotencyKey: "os-img-3" }, c.ctx);
+  assert.equal(inserted.ok, true, JSON.stringify(inserted));
+  note = (await getNote(pid, noteId))!;
+  const [i3, i4] = (inserted.data!.images as Array<{ imageId: string }>).map(i => i.imageId.slice(6));
+  assert.ok(note.body.includes(`Pages are fixed size.\n\nDiagrams of paging:\n\n![TLB](kivo-image:${i3})\n\n![Walk](kivo-image:${i4})\n\n## Scheduling`), note.body);
+  for (const line of OS_TEXT.split("\n").filter(Boolean)) assert.ok(note.body.includes(line), `kept: ${line}`);
+
+  // 4. Read: the list (no bytes), in the note's order, with captions.
+  const read = await call("get_note", { noteId }, c.ctx);
+  const images = read.data!.images as Array<Record<string, any>>;
+  assert.deepEqual(images.map(i => [i.order, i.caption, i.available, i.width, i.height]), [[1, "TLB", true, 2, 6], [2, "Walk", true, 3, 3], [3, "Page table fig 1", true, 4, 3], [4, "Second", true, 5, 2]], "in the order the note shows them");
+  assert.equal((read as any).media, undefined, "no bytes unless asked");
+  assert.ok(read.data!.imagesHint);
+
+  // 5. The images themselves, a page at a time, each the stored bytes, labelled with its note and caption.
+  const look = (await runTool(tool("get_note"), { noteId, includeImages: true }, c.ctx as never)) as any;
+  assert.equal(look.ok, true);
+  assert.equal(look.media.length, 3);
+  assert.deepEqual(look.media.map((m: any) => Buffer.from(m.data, "base64")), [p3, p4, p1]);
+  assert.ok(look.media.every((m: any) => m.mimeType === "image/png"));
+  assert.match(look.media[1].label, /^Image 2 of 4 in note "Operating Systems", caption: Walk \(image:/);
+  assert.deepEqual([look.data.imagesReturned, look.data.nextImageOffset], [[1, 2, 3], 3]);
+  const rest = (await runTool(tool("get_note"), { noteId, includeImages: true, imageOffset: 3 }, c.ctx as never)) as any;
+  assert.deepEqual(rest.media.map((m: any) => Buffer.from(m.data, "base64")), [p2]);
+  assert.equal(rest.data.nextImageOffset, null);
+
+  // 6. Text-only work on the same note is as before.
+  const text = await call("update_note", { noteId, appendText: "Plain text still works.", baseUpdatedAt: (await getNote(pid, noteId))!.updatedAt }, c.ctx);
+  assert.equal(text.ok, true);
+  assert.ok((await getNote(pid, noteId))!.body.endsWith("Plain text still works."));
+});
+
+test("images: another learner reaches none; a stale note, a bad image or a missing heading changes nothing and leaves no image behind", async () => {
+  const a = await connect(await account());
+  const b = await connect(await account());
+  const shot = png(3, 2, [1, 2, 3]).toString("base64");
+  const made = await call("create_note", { title: "Private diagram", text: "Mine.", images: [{ data: shot, caption: "secret" }] }, a.ctx);
+  const noteA = made.data!.items[0].resource.id as string;
+  const imgA = (made.data!.images[0].imageId as string).slice(6);
+
+  // B: A's note is not found, to read or to write; nothing is stored for B.
+  assert.equal((await call("get_note", { noteId: noteA, includeImages: true }, b.ctx)).error, "not_found");
+  assert.equal((await call("update_note", { noteId: noteA, images: [{ data: shot }], baseUpdatedAt: new Date().toISOString() }, b.ctx)).error, "not_found");
+  assert.equal(await imageRows(b.learner.profileId), 0);
+  // B's own note naming A's image id shows it as unavailable, never its bytes.
+  const forged = await createNote(b.learner.profileId, { title: "Forged", body: `![x](kivo-image:${imgA})` });
+  assert.ok(forged.ok);
+  const peek = (await runTool(tool("get_note"), { noteId: forged.ok ? forged.note.id : "", includeImages: true }, b.ctx as never)) as any;
+  assert.equal(peek.ok, true);
+  assert.deepEqual(peek.data.images.map((i: any) => i.available), [false]);
+  assert.equal(peek.media?.length ?? 0, 0);
+
+  const before = (await getNote(a.learner.profileId, noteA))!;
+  const rows = await imageRows(a.learner.profileId);
+  const other = png(6, 6, [7, 7, 7]).toString("base64");
+  // Stale: the note changed since it was read.
+  const stale = await call("update_note", { noteId: noteA, images: [{ data: other }], baseUpdatedAt: new Date(Date.parse(before.updatedAt as unknown as string) - 60_000).toISOString() }, a.ctx);
+  assert.equal(stale.error, "conflict");
+  // Not an image a note takes.
+  const gif = await call("update_note", { noteId: noteA, images: [{ data: other }, { data: Buffer.from("GIF89a\u0001\u0000\u0001\u0000").toString("base64") }], baseUpdatedAt: before.updatedAt }, a.ctx);
+  assert.equal(gif.error, "invalid_input");
+  assert.match(gif.message!, /Image 2/);
+  // A heading the note doesn't have: the image stored for it is taken back.
+  const heading = await call("update_note", { noteId: noteA, images: [{ data: other }], afterHeading: "Nowhere", baseUpdatedAt: before.updatedAt }, a.ctx);
+  assert.equal(heading.ok, false);
+  assert.match(heading.data?.items?.[0]?.message ?? heading.message ?? "", /no heading "Nowhere"/);
+  // A rename with images is refused (a rename waits for approval; images don't ride along).
+  assert.equal((await call("update_note", { noteId: noteA, newTitle: "Renamed", images: [{ data: other }], baseUpdatedAt: before.updatedAt }, a.ctx)).error, "invalid_input");
+
+  const after = (await getNote(a.learner.profileId, noteA))!;
+  assert.equal(after.body, before.body);
+  assert.equal(after.title, before.title);
+  assert.equal(await imageRows(a.learner.profileId), rows, "no image left behind by a failed call");
+});

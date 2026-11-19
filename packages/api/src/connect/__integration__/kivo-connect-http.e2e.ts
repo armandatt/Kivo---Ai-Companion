@@ -120,6 +120,31 @@ test("a remote MCP client connects, works and is cut off, over HTTP", async () =
   assert.equal(made.ok, true, JSON.stringify(made));
   assert.equal(made.verification.passed, true);
   const noteId = made.items[0].resource.id as string;
+
+  // Images over the wire. ChatGPT's file parameter is declared as its Apps SDK
+  // requires (_meta openai/fileParams; download_url + file_id required, only
+  // the four properties); a screenshot sent as base64 is saved; asked for,
+  // it comes back as MCP image content (the stored bytes), named by a text
+  // line, and not inside structuredContent.
+  for (const name of ["create_note", "update_note"]) {
+    const t = tools.find(x => x.name === name)!;
+    assert.deepEqual(t._meta?.["openai/fileParams"], ["files"]);
+    const file = (t.inputSchema.properties as any).files.items;
+    assert.deepEqual([Object.keys(file.properties).sort(), [...file.required].sort(), file.additionalProperties], [["download_url", "file_id", "file_name", "mime_type"], ["download_url", "file_id"], false]);
+  }
+  const shot = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP4z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg==", "base64");
+  const fresh = parse(await client.callTool({ name: "get_note", arguments: { noteId } }));
+  const put = parse(await client.callTool({ name: "update_note", arguments: { noteId, images: [{ data: shot.toString("base64"), caption: "Election timeline" }], baseUpdatedAt: fresh.updatedAt } }));
+  assert.equal(put.ok, true, JSON.stringify(put));
+  const seen = await client.callTool({ name: "get_note", arguments: { noteId, includeImages: true } });
+  const content = seen.content as Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+  assert.deepEqual(content.map(c => c.type), ["text", "text", "image"]);
+  assert.match(content[1]!.text!, /^Image 1 of 1 in note "Raft over MCP", caption: Election timeline/);
+  assert.equal(content[2]!.mimeType, "image/png");
+  assert.deepEqual(Buffer.from(content[2]!.data!, "base64"), shot);
+  assert.ok(!JSON.stringify(seen.structuredContent).includes(content[2]!.data!), "bytes only once, as the image");
+  assert.deepEqual((seen.structuredContent as any).images.map((i: any) => [i.order, i.caption, i.width, i.height]), [[1, "Election timeline", 2, 2]]);
+
   const found = parse(await client.callTool({ name: "search_notes", arguments: { query: "randomized timeouts" } }));
   assert.equal(found.results[0].title, "Raft over MCP");
   // Timing of a routine read over HTTP, after the first call (warm process).
