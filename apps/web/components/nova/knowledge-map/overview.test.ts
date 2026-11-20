@@ -63,7 +63,8 @@ test('nothing is said that the record does not hold', () => {
   assert.equal(fresh.description, null, 'no description invented')
   assert.equal(fresh.more.find(([k]) => k === 'Review'), undefined, 'no review line with no session')
   const subject = summaryOf(node('subject:s', { topics: 4, notes: 0, resources: 0 }), { when: () => '', tally: { topics: 4, studied: 1, solid: 1, developing: 0, weak: 0, unstudied: 3, reviewDue: 0, notes: 0, resources: 0, tasks: 0 } })
-  assert.deepEqual(subject.status, { label: '1 of 4 topics studied', tone: 'plain', percent: 25 })
+  // Counted over the topics that are studied (not groups or milestones), and said so (K-20).
+  assert.deepEqual(subject.status, { label: '1 of 4 study topics studied', tone: 'plain', percent: 25 })
   assert.equal(summaryOf(node('subject:s', { topics: 0, notes: 0, resources: 0 }), { when: () => '', tally: { topics: 0, studied: 0, solid: 0, developing: 0, weak: 0, unstudied: 0, reviewDue: 0, notes: 0, resources: 0, tasks: 0 } }).status, null)
 })
 

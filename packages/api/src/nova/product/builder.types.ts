@@ -156,6 +156,9 @@ export interface DeletionScope {
   title:       string;
   workspaceId: string | null;
   subjectIds:  string[];
+  // Clearing a map (the Knowledge Map's Clear map): these subjects stay,
+  // emptied, and so does the workspace record. Absent: nothing is cleared.
+  clears?:     string[];
   removes: {
     subjects: Array<{ id: string; name: string }>;
     topics:   Array<{ id: string; name: string }>;

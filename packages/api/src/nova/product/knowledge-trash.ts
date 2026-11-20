@@ -50,15 +50,19 @@ export interface TrashItem {
 }
 
 // What is about to go, read inside the delete's transaction before it goes.
-export async function snapshotIn(tx: Tx, profileId: string, going: { subjectIds: string[]; topicIds: string[]; dateIds: string[] }): Promise<Omit<TrashSnapshot, "workspaces">> {
+// filedUnder: the subjects whose notes, tasks and saved pages are unfiled by
+// the change (the ones that go, and on a clear the ones emptied); their
+// filing is kept so a restore files them back. Defaults to subjectIds.
+export async function snapshotIn(tx: Tx, profileId: string, going: { subjectIds: string[]; topicIds: string[]; dateIds: string[]; filedUnder?: string[] }): Promise<Omit<TrashSnapshot, "workspaces">> {
+  const filedUnder = going.filedUnder ?? going.subjectIds;
   const [subjects, topics, dates, unfiled, notes, tasks, resources] = await Promise.all([
     tx.novaSubject.findMany({ where: { profileId, id: { in: going.subjectIds } } }),
     tx.novaTopicMastery.findMany({ where: { id: { in: going.topicIds }, subject: { profileId } } }),
     tx.novaExam.findMany({ where: { profileId, id: { in: going.dateIds } } }),
     tx.novaExam.findMany({ where: { profileId, subjectId: { in: going.subjectIds }, id: { notIn: going.dateIds } }, select: { id: true, subjectId: true } }),
-    noteFilingIn(tx, profileId, going.subjectIds),
-    taskFilingIn(tx, profileId, going.subjectIds),
-    resourceFilingIn(tx, profileId, going.subjectIds),
+    noteFilingIn(tx, profileId, filedUnder),
+    taskFilingIn(tx, profileId, filedUnder),
+    resourceFilingIn(tx, profileId, filedUnder),
   ]);
   return {
     subjects: subjects as unknown as Array<Record<string, unknown>>,

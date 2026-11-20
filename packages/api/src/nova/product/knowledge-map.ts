@@ -184,6 +184,7 @@ export function buildKnowledgeMap(input: MapInputs): NovaKnowledgeMapReady {
       ...(parentId ? { parentId } : {}),
       id, type: "subject", label: s.name, href: `/knowledge?subject=${encodeURIComponent(s.id)}`, subjectId: s.id,
       topics: topics.filter(t => t.subjectId === s.id).length,
+      studyTopics: studyTopicIds(topics.filter(t => t.subjectId === s.id)).size,
       notes: tally.get(id)?.notes ?? 0, resources: tally.get(id)?.resources ?? 0,
       ...(treeAt.has(id) ? { tasks: treeAt.get(id)! } : {}),
     };
@@ -261,15 +262,18 @@ export async function loadNovaKnowledgeMap(platformChatId: string, options: { wo
   if (!profile?.onboardingComplete) return { status: "onboarding_incomplete" };
   const profileId = profile.id;
 
-  const workspaces = await workspaceScopes(profileId);
+  const [workspaceRows, allSubjects] = await Promise.all([
+    workspaceScopes(profileId),
+    prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true, parentId: true }, orderBy: { createdAt: "asc" } }),
+  ]);
+  const workspaces = [...workspaceRows.map(w => ({ ...w, kind: "workspace" as const })), ...standaloneMaps(allSubjects, workspaceRows)];
   const chosen = options.workspace === "all" ? null
     : options.workspace ? workspaces.find(w => w.id === options.workspace) ?? null
-    : workspaces[0] ?? null;
+    : workspaceRows[0] ? { ...workspaceRows[0], kind: "workspace" as const } : null;
 
   // Notes and saved pages are read through their owners: this file touches
   // neither table.
-  const [allSubjects, allTopics, noted, saved, allTasks] = await Promise.all([
-    prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, name: true, parentId: true }, orderBy: { createdAt: "asc" } }),
+  const [allTopics, noted, saved, allTasks] = await Promise.all([
     prisma.novaTopicMastery.findMany({
       where: { subject: { profileId }, archivedAt: null }, orderBy: { createdAt: "asc" },
       select: { id: true, subjectId: true, name: true, masteryProbability: true, reviewCount: true, parentId: true, position: true, kind: true, details: true, createdAt: true, nextReviewAt: true, lastStudiedAt: true },
@@ -287,7 +291,7 @@ export async function loadNovaKnowledgeMap(platformChatId: string, options: { wo
   const subjects = allSubjects.filter(s => inScope.has(s.id));
   // Its tasks: those filed under its subjects, those it made (filed under
   // nothing, too), and every step under them.
-  const made = (t: { clientKey: string | null }) => chosen !== null && (t.clientKey?.startsWith(`ws:${chosen.clientKey}:`) ?? false);
+  const made = (t: { clientKey: string | null }) => chosen !== null && chosen.clientKey !== "" && (t.clientKey?.startsWith(`ws:${chosen.clientKey}:`) ?? false);
   const top = new Set(allTasks.filter(t => !chosen || made(t) || (t.subjectId !== null && inScope.has(t.subjectId))).map(t => t.id));
   for (let grew = true; chosen && grew;) {
     grew = false;
@@ -298,6 +302,18 @@ export async function loadNovaKnowledgeMap(platformChatId: string, options: { wo
     subjects, topics: allTopics.filter(t => inScope.has(t.subjectId)),
     notes: scoped(noted.notes), resources: scoped(saved.resources), tasks: allTasks.filter(t => top.has(t.id)),
     totals: { notes: chosen ? scoped(noted.notes).length : noted.total, resources: chosen ? scoped(saved.resources).length : saved.total },
-    workspaceId: chosen?.id ?? null, workspaces: workspaces.map(w => ({ id: w.id, title: w.title })),
+    workspaceId: chosen?.id ?? null, workspaces: workspaces.map(w => ({ id: w.id, title: w.title, kind: w.kind })),
   });
+}
+
+// The maps that are not workspaces: each top-level subject that no workspace
+// holds, newest first, as "subject:<id>". A subject an assistant made through
+// Kivo Connect (build_knowledge_map) is one; so is one made in setup. Before
+// 20 Nov the map listed workspaces only, so such a map showed on Today (its
+// subject card) and in Everything but could not be chosen by name. Nothing is
+// created: it is the same subject row. Pure.
+export function standaloneMaps(subjects: Array<{ id: string; name: string; parentId: string | null }>, workspaces: Array<{ subjectIds: string[] }>): Array<{ id: string; title: string; subjectIds: string[]; clientKey: string; kind: "subject" }> {
+  const held = new Set(workspaces.flatMap(w => w.subjectIds));
+  return subjects.filter(s => !s.parentId && !held.has(s.id)).reverse()
+    .map(s => ({ id: `subject:${s.id}`, title: s.name, subjectIds: [s.id], clientKey: "", kind: "subject" as const }));
 }

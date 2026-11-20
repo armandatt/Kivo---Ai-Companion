@@ -173,18 +173,20 @@ const CONFLICT = 'The note changed somewhere else after the map loaded. Nothing 
 // it (POST /api/nova/knowledge-map/delete). What goes is read from the server
 // first, and the server deletes exactly that, or nothing.
 export type MapDeleteTarget = { workspaceId: string } | { subjectId: string }
+// clear: the map stays (its subjects, emptied; a workspace's record); delete: it goes.
+export type MapDeleteMode = 'delete' | 'clear'
 export type MapDeleteScope = Omit<DeletionScope, 'lifts'>
 
-export async function previewMapDelete(target: MapDeleteTarget): Promise<Outcome<MapDeleteScope>> {
+export async function previewMapDelete(target: MapDeleteTarget, mode: MapDeleteMode = 'delete'): Promise<Outcome<MapDeleteScope>> {
   try {
-    const { json } = await call<{ ok: boolean; scope?: MapDeleteScope; message?: string }>('/api/nova/knowledge-map/delete', 'POST', { ...target, action: 'preview' })
+    const { json } = await call<{ ok: boolean; scope?: MapDeleteScope; message?: string }>('/api/nova/knowledge-map/delete', 'POST', { ...target, action: 'preview', mode })
     return json?.ok && json.scope ? { ok: true, value: json.scope, said: [] } : { ok: false, message: json?.message ?? 'That couldn’t be read. Try again.' }
   } catch { return { ok: false, message: OFFLINE } }
 }
 
-export async function sendMapDelete(target: MapDeleteTarget, fingerprint: string): Promise<Outcome<MapDeleteScope>> {
+export async function sendMapDelete(target: MapDeleteTarget, fingerprint: string, mode: MapDeleteMode = 'delete'): Promise<Outcome<MapDeleteScope>> {
   try {
-    const { json } = await call<{ ok: boolean; scope?: MapDeleteScope; message?: string; error?: string }>('/api/nova/knowledge-map/delete', 'POST', { ...target, action: 'delete', fingerprint })
+    const { json } = await call<{ ok: boolean; scope?: MapDeleteScope; message?: string; error?: string }>('/api/nova/knowledge-map/delete', 'POST', { ...target, action: 'delete', fingerprint, mode })
     return json?.ok && json.scope ? { ok: true, value: json.scope, said: [] } : { ok: false, message: json?.message ?? 'Nothing was deleted. Try again.', stale: json?.error === 'changed' }
   } catch { return { ok: false, message: `${OFFLINE} Nothing was deleted.` } }
 }

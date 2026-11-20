@@ -243,7 +243,8 @@ export async function workspaceDetail(platformChatId: string, profileId: string,
 export async function resourceDetail(platformChatId: string, profileId: string, ref: Pick<ResourceRef, "workspaceId" | "subjectIds">, now = new Date()): Promise<WorkspaceDetail | null> {
   const row = ref.workspaceId ? await prisma.novaWorkspace.findFirst({ where: { id: ref.workspaceId, profileId }, select: { ...SUMMARY_SELECT, clientKey: true, plan: true } }) : null;
   if (ref.workspaceId && !row) return null;
-  const subjectIds = row ? row.subjectIds : ref.subjectIds;
+  // A workspace's subjects, and any given with it (the subjects inside them, for a whole map).
+  const subjectIds = row ? [...new Set([...row.subjectIds, ...ref.subjectIds])] : ref.subjectIds;
   const [summary, subjects, keyed, filed, notes, exams] = await Promise.all([
     row ? summaries(profileId, [row]) : Promise.resolve([]),
     subjectsWithTopics(profileId, subjectIds),
@@ -499,8 +500,13 @@ function madeBy(plan: unknown): { subjects: Set<string>; topics: Set<string>; no
 // subjects, topics and dates go whoever made them. What is never taken with it:
 // a topic with recorded study (and so the subject holding it), and notes and
 // tasks they wrote, which stay, filed under nothing.
-export async function deletionScope(platformChatId: string, profileId: string, ref: Pick<ResourceRef, "workspaceId" | "subjectIds">, now = new Date(), opts: { whole?: boolean } = {}): Promise<DeletionScope | null> {
+// keep (clearing a map): these subjects stay, emptied of everything above, and
+// the learner's own notes, tasks and saved pages in them are unfiled, as when
+// their subject goes; the workspace record stays too.
+export async function deletionScope(platformChatId: string, profileId: string, ref: Pick<ResourceRef, "workspaceId" | "subjectIds">, now = new Date(), opts: { whole?: boolean; keep?: string[] } = {}): Promise<DeletionScope | null> {
   const whole = opts.whole === true;
+  const keep = new Set(opts.keep ?? []);
+  const clears: string[] = [];
   const row = ref.workspaceId ? await prisma.novaWorkspace.findFirst({ where: { id: ref.workspaceId, profileId }, select: { id: true, title: true, clientKey: true, plan: true, subjectIds: true } }) : null;
   if (ref.workspaceId && !row) return null;
   const detail = await resourceDetail(platformChatId, profileId, ref, now);
@@ -557,6 +563,13 @@ export async function deletionScope(platformChatId: string, profileId: string, r
     const tasksLeft = detail.tasks.filter(t => t.subjectId === s.id && !goingTasks.has(t.id));
     const notesLeft = detail.notes.filter(n => n.subjectId === s.id && !goingNotes.has(n.id));
     const datesLeft = detail.dates.filter(d => d.subjectId === s.id && !goingDates.has(d.id));
+    if (keep.has(s.id)) {
+      // The map itself stays, emptied.
+      clears.push(s.id);
+      if (studiedHere.length) keeps.push(`In ${s.name}: ${studiedHere.slice(0, 2).map(t => t.name).join(", ")}${studiedHere.length > 2 ? ` and ${studiedHere.length - 2} more` : ""}, because you've studied ${studiedHere.length === 1 ? "it" : "them"}`);
+      if (tasksLeft.length || notesLeft.length) keeps.push(`Your ${[tasksLeft.length && `${tasksLeft.length} task${tasksLeft.length === 1 ? "" : "s"}`, notesLeft.length && `${notesLeft.length} note${notesLeft.length === 1 ? "" : "s"}`].filter(Boolean).join(" and ")} in ${s.name}, unfiled`);
+      continue;
+    }
     if (studiedHere.length) keeps.push(`${s.name}, because you've studied ${studiedHere.slice(0, 2).map(t => t.name).join(", ")}`);
     else if (withArchived.has(s.id)) keeps.push(`${s.name}, because it holds archived topics and their history`);
     else if (elsewhere && !whole) keeps.push(`${s.name}, which ${elsewhere.title} also uses`);
@@ -573,8 +586,8 @@ export async function deletionScope(platformChatId: string, profileId: string, r
     if (yourNotes) keeps.push(`${yourNotes} note${yourNotes === 1 ? "" : "s"} you wrote or edited`);
   }
   const removes = { subjects, topics, tasks, notes, dates };
-  const fingerprint = [row?.id ?? "-", ...Object.values(removes).flatMap(list => list.map(x => x.id)).sort(), "|", ...lifts].join(",");
-  return { title: detail.title, workspaceId: row?.id ?? null, subjectIds: detail.subjects.map(s => s.id), removes, lifts, keeps: keeps.slice(0, 8), fingerprint: fingerprintOf(fingerprint) };
+  const fingerprint = [row?.id ?? "-", ...Object.values(removes).flatMap(list => list.map(x => x.id)).sort(), "|", ...lifts, "|clear", ...clears].join(",");
+  return { title: detail.title, workspaceId: row?.id ?? null, subjectIds: detail.subjects.map(s => s.id), ...(keep.size ? { clears } : {}), removes, lifts, keeps: keeps.slice(0, 8), fingerprint: fingerprintOf(fingerprint) };
 }
 
 const fingerprintOf = (text: string): string => {
@@ -592,12 +605,14 @@ type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 type JsonInput = object;
 type DeleteHooks = { before?: (tx: TxClient, scope: DeletionScope) => Promise<void>; after?: (tx: TxClient, scope: DeletionScope) => Promise<void> };
 
-export async function deleteResource(platformChatId: string, input: { ref: Pick<ResourceRef, "workspaceId" | "subjectIds">; fingerprint: string; whole?: boolean }, now = new Date(), hooks: DeleteHooks = {}): Promise<DeleteResult> {
+export async function deleteResource(platformChatId: string, input: { ref: Pick<ResourceRef, "workspaceId" | "subjectIds">; fingerprint: string; whole?: boolean; keep?: string[] }, now = new Date(), hooks: DeleteHooks = {}): Promise<DeleteResult> {
   const ensured = await ensureSetupProfile(platformChatId);
   if (!ensured) return { ok: false, error: "not_found", message: "Finish setting up with Nova first." };
   const { profileId } = ensured;
-  const scope = await deletionScope(platformChatId, profileId, input.ref, now, { whole: input.whole });
+  const scope = await deletionScope(platformChatId, profileId, input.ref, now, { whole: input.whole, keep: input.keep });
   if (!scope) return { ok: false, error: "not_found", message: "That isn't in your Kivo any more, so there's nothing to delete." };
+  // Unfiled: what is in a subject that goes, and (clearing) in one emptied.
+  const unfile = [...scope.removes.subjects.map(s => s.id), ...(scope.clears ?? [])];
   if (scope.fingerprint !== input.fingerprint) return { ok: false, error: "changed", message: "What this would delete changed since it was shown. Nothing was deleted; here is what it would delete now." };
   const structure = await loadStudyStructure(profileId);
   const going = new Set(scope.removes.subjects.map(s => s.id));
@@ -618,11 +633,12 @@ export async function deleteResource(platformChatId: string, input: { ref: Pick<
       await unfileDatesIn(tx, profileId, [...going]);
       // What stays of the learner's own (notes, tasks, saved pages) is filed
       // under nothing, topic name included, before its subject goes.
-      await unfileNotesIn(tx, profileId, [...going]);
-      await unfileTasksIn(tx, profileId, [...going]);
-      await unfileResourcesIn(tx, profileId, [...going]);
+      await unfileNotesIn(tx, profileId, unfile);
+      await unfileTasksIn(tx, profileId, unfile);
+      await unfileResourcesIn(tx, profileId, unfile);
       await playStudyEditsIn(tx, profileId, edits, structure.version);
-      if (scope.workspaceId) await tx.novaWorkspace.deleteMany({ where: { id: scope.workspaceId, profileId } });
+      // Clearing keeps the workspace record (its map stays, empty).
+      if (scope.workspaceId && !scope.clears) await tx.novaWorkspace.deleteMany({ where: { id: scope.workspaceId, profileId } });
       if (hooks.after) await hooks.after(tx, scope);
     }, { timeout: 30_000, maxWait: 10_000 });
   } catch (err) {
@@ -641,34 +657,56 @@ export async function deleteResource(platformChatId: string, input: { ref: Pick<
 // nothing (its fingerprint). Ids are used only with the learner's own profile.
 export type MapTarget = { workspaceId: string } | { subjectId: string };
 
+// A whole map is its subjects and every subject inside them, as the map draws
+// it (knowledge-map.ts): for a workspace too (20 Nov: before, a subject inside
+// a workspace's subject was left behind, floating on its own, when its map was
+// deleted, and stayed full when it was cleared).
 async function refOfMap(profileId: string, target: MapTarget): Promise<Pick<ResourceRef, "workspaceId" | "subjectIds"> | null> {
-  if ("workspaceId" in target) return { workspaceId: target.workspaceId, subjectIds: [] };
   const all = await prisma.novaSubject.findMany({ where: { profileId }, select: { id: true, parentId: true } });
+  const inside = (roots: string[]) => {
+    const ids = [...roots];
+    for (let i = 0; i < ids.length; i++) for (const s of all) if (s.parentId === ids[i] && !ids.includes(s.id)) ids.push(s.id);
+    return ids;
+  };
+  if ("workspaceId" in target) {
+    const row = await prisma.novaWorkspace.findFirst({ where: { id: target.workspaceId, profileId }, select: { subjectIds: true } });
+    return { workspaceId: target.workspaceId, subjectIds: row ? inside(row.subjectIds.filter(id => all.some(s => s.id === id))) : [] };
+  }
   if (!all.some(s => s.id === target.subjectId)) return null;
-  const ids = [target.subjectId];
-  for (let i = 0; i < ids.length; i++) for (const s of all) if (s.parentId === ids[i] && !ids.includes(s.id)) ids.push(s.id);
-  return { workspaceId: null, subjectIds: ids };
+  return { workspaceId: null, subjectIds: inside([target.subjectId]) };
 }
 
-export async function previewMapDeletion(platformChatId: string, profileId: string, target: MapTarget): Promise<DeletionScope | null> {
+// Clearing a map keeps the map: a workspace's own subjects (and its record),
+// or the subject itself; everything inside them goes as in a delete.
+async function shellOf(profileId: string, target: MapTarget): Promise<string[]> {
+  if ("subjectId" in target) return [target.subjectId];
+  const row = await prisma.novaWorkspace.findFirst({ where: { id: target.workspaceId, profileId }, select: { subjectIds: true } });
+  return row?.subjectIds ?? [];
+}
+
+export type MapDeleteMode = "delete" | "clear";
+
+export async function previewMapDeletion(platformChatId: string, profileId: string, target: MapTarget, mode: MapDeleteMode = "delete"): Promise<DeletionScope | null> {
   const ref = await refOfMap(profileId, target);
-  return ref ? deletionScope(platformChatId, profileId, ref, new Date(), { whole: true }) : null;
+  if (!ref) return null;
+  return deletionScope(platformChatId, profileId, ref, new Date(), { whole: true, ...(mode === "clear" ? { keep: await shellOf(profileId, target) } : {}) });
 }
 
 // The delete keeps a copy in the trash (knowledge-trash.ts), and every other
 // workspace that listed a deleted subject stops listing it; one left with no
 // subjects goes too, into the same trash item. All in the delete's one transaction.
-export async function deleteMap(platformChatId: string, profileId: string, target: MapTarget, fingerprint: string, now = new Date()): Promise<DeleteResult> {
+export async function deleteMap(platformChatId: string, profileId: string, target: MapTarget, fingerprint: string, now = new Date(), mode: MapDeleteMode = "delete"): Promise<DeleteResult> {
   const ref = await refOfMap(profileId, target);
   if (!ref) return { ok: false, error: "not_found", message: "That isn't in your Kivo any more, so there's nothing to delete." };
   let copy: Omit<TrashSnapshot, "workspaces"> | null = null;
   const workspaces: TrashSnapshot["workspaces"] = [];
-  return deleteResource(platformChatId, { ref, fingerprint, whole: true }, now, {
+  const keep = mode === "clear" ? await shellOf(profileId, target) : undefined;
+  return deleteResource(platformChatId, { ref, fingerprint, whole: true, keep }, now, {
     before: async (tx, scope) => {
       const going = scope.removes.subjects.map(s => s.id);
-      copy = await snapshotIn(tx, profileId, { subjectIds: going, topicIds: scope.removes.topics.map(t => t.id), dateIds: scope.removes.dates.map(d => d.id) });
+      copy = await snapshotIn(tx, profileId, { subjectIds: going, topicIds: scope.removes.topics.map(t => t.id), dateIds: scope.removes.dates.map(d => d.id), filedUnder: [...going, ...(scope.clears ?? [])] });
       const touched = await tx.novaWorkspace.findMany({ where: { profileId, OR: [{ subjectIds: { hasSome: going.length ? going : ["-"] } }, ...(scope.workspaceId ? [{ id: scope.workspaceId }] : [])] } });
-      for (const w of touched) workspaces.push({ id: w.id, removed: w.id === scope.workspaceId, row: w as unknown as Record<string, unknown>, subjectIds: w.subjectIds });
+      for (const w of touched) workspaces.push({ id: w.id, removed: w.id === scope.workspaceId && !scope.clears, row: w as unknown as Record<string, unknown>, subjectIds: w.subjectIds });
     },
     after: async (tx, scope) => {
       const going = new Set(scope.removes.subjects.map(s => s.id));
@@ -679,8 +717,12 @@ export async function deleteMap(platformChatId: string, profileId: string, targe
         else if (left.length !== w.subjectIds.length) await tx.novaWorkspace.updateMany({ where: { id: w.id, profileId }, data: { subjectIds: left } });
       }
       const kept = workspaces.map(w => ({ ...w, row: w.removed ? w.row : null }));
-      const named = "subjectId" in target ? copy!.subjects.find(x => x.id === target.subjectId)?.name as string | undefined : undefined;
-      await trashIn(tx, profileId, { kind: "workspaceId" in target ? "workspace" : "subject", title: named ?? scope.title, snapshot: { ...copy!, workspaces: kept } }, now);
+      // A subject's map is named by the subject (gone with it, or, cleared, still there).
+      const named = "subjectId" in target
+        ? (copy!.subjects.find(x => x.id === target.subjectId)?.name as string | undefined) ?? (await tx.novaSubject.findFirst({ where: { id: target.subjectId, profileId }, select: { name: true } }))?.name
+        : undefined;
+      const title = named ?? scope.title;
+      await trashIn(tx, profileId, { kind: "workspaceId" in target ? "workspace" : "subject", title: scope.clears ? `${title} (cleared)` : title, snapshot: { ...copy!, workspaces: kept } }, now);
     },
   });
 }

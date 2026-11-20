@@ -445,7 +445,7 @@ export function layoutMap(nodes: MapNode[], edges: MapEdge[], { portrait = false
 
 // The box around every card, with room at the bottom for the caption that
 // sits over the map.
-function boundsOf(at: Map<string, Placed>, type: Map<string, MapNodeType>): MapLayout['bounds'] {
+export function boundsOf(at: Map<string, Placed>, type: Map<string, MapNodeType>): MapLayout['bounds'] {
   if (at.size === 0) return { minX: -100, minY: -100, maxX: 100, maxY: 100 }
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
   for (const p of at.values()) {
