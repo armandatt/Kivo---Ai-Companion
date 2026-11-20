@@ -105,6 +105,22 @@ export function SavedLibrary({ refreshKey, onItems }: { refreshKey: number; onIt
   }, [filter, refreshKey, reload])
   useEffect(() => { onItems?.(items) }, [items, onItems])
 
+  // Back on this tab: what was saved or filed meanwhile elsewhere (the browser
+  // extension, or an assistant through Kivo Connect) comes in at the top and
+  // what changed is updated, without losing the pages already loaded below.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.hidden) return
+      void fetchLibrary(filter, null).then(r => {
+        if (r.status !== 'ready') return
+        setItems(list => { const fresh = new Set(r.items.map(i => i.id)); return [...r.items, ...list.filter(i => !fresh.has(i.id))] })
+        setFacets(r.facets); setMatched(r.matched)
+      })
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [filter])
+
   // A page the Knowledge Map links to (?page=<id>) is shown first, even when it is not in this page of results.
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get('page')

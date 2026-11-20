@@ -27,6 +27,12 @@ import {
   CAPTURE_ITEM_MAX, CAPTURE_ITEMS_MAX, ITEM_KINDS, planCapture, planMapBuild, type OutlineNode,
 } from "./curation";
 import { keyTerms } from "./similarity";
+import { randomUUID } from "node:crypto";
+import { fileSavedResource, findSavedPage, getSavedPage, loadLibrary, organizeResource, recordLearningEvent } from "../nova/product/learning-events";
+import { checkLink, LINK_PROBLEM_TEXT, titleFromUrl } from "../nova/product/resource-link";
+import { collectionKey, listCollections, ownsCollection } from "../nova/product/resource-collections";
+import { RESOURCE_TYPES } from "../nova/product/resource-meta";
+import { filingOf, loadStructure, pageOut, resolveNode, type NodePlace } from "./pages";
 
 export interface ToolContext {
   learner: ConnectLearner;
@@ -305,7 +311,7 @@ export const TOOLS: ToolDef[] = [
   }),
   def({
     name: "create_note", title: "Create a note", kind: "write", scopes: ["notes:write"], meta: { "openai/fileParams": ["files"] },
-    description: "Writes. Creates one note the learner asked for (Markdown; $…$ maths and ``` code are kept), optionally with images (screenshots, diagrams) after the text: images [{ data (base64) | url, caption }], or in ChatGPT the attached files. File it with subjectId or subjectName (an existing subject) and optionally topicName. A note with the same title is not duplicated: you are told to use update_note. Use capture_knowledge instead when saving several things from a conversation. " + NO_BYTES_HINT,
+    description: "Writes. Creates one note the learner asked for (Markdown; $…$ maths and ``` code are kept), optionally with images (screenshots, diagrams) after the text: images [{ data (base64) | url, caption }], or in ChatGPT the attached files. File it with subjectId or subjectName (an existing subject) and optionally topicName. A note with the same title is not duplicated: you are told to use update_note. Use capture_knowledge instead when saving several things from a conversation. A note is the learner's own writing: to keep a web page or link (an article, video, paper), use save_page, never a note holding the address. " + NO_BYTES_HINT,
     input: {
       title: z.string().trim().min(1).max(200), text: z.string().max(1_000_000),
       subjectId: z.string().max(50).optional(), subjectName: z.string().max(80).optional(), topicName: z.string().max(120).optional(),
@@ -505,7 +511,8 @@ export const TOOLS: ToolDef[] = [
         if (ft === "topic" && tt === "subject") return applyOrPreview(ctx, "connect_knowledge_nodes", a.idempotencyKey, [{ op: "move_topic", topicId: fid, toSubjectId: tid, parentTopicId: null }]);
         return fail("invalid_input", "'inside' puts a subject in a subject, or a topic in a topic or subject.");
       }
-      if (ft !== "note") return fail("invalid_input", "'filed_under' files a note. Saved pages are filed on Kivo's Saved page.");
+      if (ft === "resource") return fail("invalid_input", "A saved page is filed with file_saved_page (it needs the pages:write permission). Nothing was changed.");
+      if (ft !== "note") return fail("invalid_input", "'filed_under' files a note.");
       if (tt === "subject") return applyOrPreview(ctx, "connect_knowledge_nodes", a.idempotencyKey, [{ op: "file_note", noteId: fid, subjectId: tid, topicName: null }]);
       if (tt === "topic") { const t = topic(tid); if (!t) return fail("not_found", "No topic with that id."); return applyOrPreview(ctx, "connect_knowledge_nodes", a.idempotencyKey, [{ op: "file_note", noteId: fid, subjectId: t.s.id, topicName: t.t.name }]); }
       return fail("invalid_input", "A note is filed under a subject or a topic.");
@@ -550,6 +557,173 @@ export const TOOLS: ToolDef[] = [
       const now = (await loadStudyStructure(ctx.learner.profileId)).subjects.find(s => s.name.toLowerCase() === plan.subject.name.toLowerCase());
       const subject = { id: now ? `subject:${now.id}` : null, name: now?.name ?? plan.subject.name, exists: !!now, created: !!now && !plan.subject.exists, existedBefore: plan.subject.exists };
       return ok({ ...res.data, ...proposal, subject, mapUrl: now ? workspaceUrl(ctx.origin, { id: `subject:${now.id}`, kind: "subject", subjectIds: [now.id] }) : `${ctx.origin}/map` });
+    },
+  }),
+
+  // ── C2. Saved Pages ────────────────────────────────────────────────────────
+  // Kivo's Saved Pages (the library the browser extension saves into), not
+  // notes. A page is filed in one place on the map, a subject or one of its
+  // topics, as a note is (pages.ts).
+  def({
+    name: "save_page", title: "Save a web page to Saved Pages", kind: "write", scopes: ["pages:write"],
+    description: [
+      "Writes. Saves a web page (an article, video, paper, documentation, any http(s) link) into the learner's Saved Pages: Kivo's library of pages, the same one their browser extension saves into. Use this whenever the learner asks to save, keep, bookmark or collect a link or page; never create a note for that (create_note is for their own writing).",
+      "Optionally file it on the Knowledge Map with nodeId: a subject (\"subject:<id>\") or a topic (\"topic:<id>\") from search_knowledge_nodes or get_workspace_structure; it then shows on that node. If no node matches what the learner named, ask them or save it unfiled; do not invent a node.",
+      "One entry per page: a page already saved is not saved twice (you get the existing one, status already_saved); its filing is never changed by this tool (use file_saved_page). Kivo never opens the page: give only what you actually know about it (title, description from the page or the learner); never invent them.",
+    ].join(" "),
+    input: {
+      url: z.string().trim().min(1).max(2_048).describe("The page's address (http or https)."),
+      title: z.string().trim().min(1).max(300).optional().describe("The page's title. Omitted: made from the address."),
+      description: z.string().trim().max(500).optional().describe("What the page says it is about, if you know it from the page or the learner."),
+      siteName: z.string().trim().max(120).optional(), author: z.string().trim().max(200).optional(),
+      publishedAt: z.string().max(40).optional().describe("The page's publication date (ISO), if known."),
+      nodeId: z.string().min(3).max(60).optional().describe('File it under this map node: "subject:<id>" or "topic:<id>".'),
+      tags: z.array(z.string().trim().min(1).max(40)).max(12).optional().describe("The learner's own tags for it."),
+      collection: z.string().trim().min(1).max(60).optional().describe("One of the learner's existing Saved Pages collections, by name."),
+      personalNote: z.string().trim().min(1).max(2_000).optional().describe("A short note of the learner's about the page (shown with it in Saved Pages)."),
+      idempotencyKey: idemArg,
+    },
+    handler: async (a, ctx) => {
+      const l = ctx.learner;
+      const link = checkLink(a.url);
+      if (!link.ok) return fail("invalid_input", `${LINK_PROBLEM_TEXT[link.problem]} Nothing was saved.`);
+      const st = await loadStructure(l.profileId);
+      let place: NodePlace | null = null;
+      if (a.nodeId) {
+        const r = resolveNode(st, a.nodeId);
+        if (!r.ok) return fail("not_found", `${r.message} Nothing was saved.`);
+        place = r.place;
+      }
+      let collectionId: string | null = null;
+      if (a.collection) {
+        const all = await listCollections(l.profileId);
+        const found = all.find(c => collectionKey(c.name.trim().replace(/\s+/g, " ")) === collectionKey(a.collection!.trim().replace(/\s+/g, " ")));
+        if (!found) return fail("not_found", `The learner has no Saved Pages collection called "${a.collection}". Nothing was saved.`, { collections: all.map(c => c.name) });
+        collectionId = found.id;
+      }
+      return keyedRun(ctx, "save_page", a.idempotencyKey, async () => {
+        const notes: string[] = [];
+        const existing = await findSavedPage(l.profileId, link.url);
+        let id: string;
+        let status: "saved" | "already_saved";
+        if (existing) {
+          id = existing.id; status = "already_saved";
+          // Filing: only an unfiled page is filed; a page filed elsewhere stays where the learner put it.
+          if (place) {
+            const here = existing.subjectId === place.subjectId && (existing.topicName ?? "").toLowerCase() === (place.topicName ?? "").toLowerCase();
+            if (!existing.subjectId) {
+              const f = await fileSavedResource(l.profileId, id, { kind: "file", subjectId: place.subjectId, topicName: place.topicName });
+              if (!f.ok) notes.push(`It was not filed: ${f.message}`); else notes.push(`Filed under ${place.label}.`);
+            } else if (!here) notes.push(`It is already filed under ${existing.subjectName ?? "a subject"}${existing.topicName ? ` › ${existing.topicName}` : ""}; it was left there. To move it, use file_saved_page with replace: true (only if the learner asked).`);
+          }
+        } else {
+          const r = await recordLearningEvent(l.profileId, {
+            eventType: "resource_saved", clientEventId: `kc_${randomUUID()}`, url: link.url, title: a.title ?? (titleFromUrl(link.url) || link.domain),
+            ...(place ? { subjectId: place.subjectId, topicName: place.topicName } : {}),
+            meta: { description: a.description, siteName: a.siteName, author: a.author, publishedAt: a.publishedAt },
+          }, { source: "kivo_connect" });
+          if (!r.success) {
+            const error = r.error === "rate_limited" ? "rate_limited" : r.error === "unknown_subject" ? "not_found" : "invalid_input";
+            return { result: fail(error, `${r.message} Nothing was saved.`), outcome: "refused", resources: { error: r.error } };
+          }
+          id = r.eventId; status = r.action === "already_saved" ? "already_saved" : "saved";
+        }
+        // The learner's organisation: tags are added to any it has, a note or
+        // collection it already has is not replaced.
+        const page = await getSavedPage(l.profileId, id);
+        const organize: Record<string, unknown> = {};
+        if (a.tags?.length) organize.tags = [...(page?.tags ?? []), ...a.tags];
+        if (collectionId) { if (!page?.collection) organize.collectionId = collectionId; else if (page.collection.id !== collectionId) notes.push(`It stays in the collection "${page.collection.name}".`); }
+        if (a.personalNote) { if (!page?.personalNote) organize.personalNote = a.personalNote; else notes.push("It already has a personal note; that was kept."); }
+        if (Object.keys(organize).length) {
+          const o = await organizeResource(l.profileId, id, organize, ownsCollection);
+          if (!o.ok) notes.push(`Its tags, collection or note were not set: ${o.message}`);
+        }
+        const now = await getSavedPage(l.profileId, id);
+        if (!now) return { result: fail("failed", "The page could not be read back after saving. Check Saved Pages on Kivo."), outcome: "failed", resources: { type: "resource", id } };
+        return {
+          result: ok({ status, page: pageOut(st, now, ctx.origin), ...(notes.length ? { notes } : {}), savedPagesUrl: `${ctx.origin}/saved` }),
+          outcome: "ok", resources: { type: "resource", id, status, filedUnder: now.subjectId ? { subjectId: now.subjectId, topicName: now.topicName } : null },
+        };
+      });
+    },
+  }),
+  def({
+    name: "get_saved_page", title: "Read a saved page", kind: "read", scopes: ["knowledge:read"],
+    description: "Read-only. One of the learner's Saved Pages, by id (\"resource:<id>\") or by its address: title, address, type, description, tags, collection, the learner's note, and where it is filed on the Knowledge Map (filedUnder: the subject and topic nodes). Kivo stores what was given when the page was saved; it has not read the page itself.",
+    input: { pageId: z.string().min(3).max(80).optional(), url: z.string().trim().min(1).max(2_048).optional() },
+    handler: async (a, ctx) => {
+      if (!a.pageId === !a.url) return fail("invalid_input", "Give exactly one of pageId or url.");
+      const page = a.pageId ? await getSavedPage(ctx.learner.profileId, rowId("resource", a.pageId)) : await findSavedPage(ctx.learner.profileId, a.url!);
+      if (!page) return fail("not_found", a.pageId ? "The learner has no saved page with that id." : "That page is not in the learner's Saved Pages.");
+      return ok({ page: pageOut(await loadStructure(ctx.learner.profileId), page, ctx.origin) });
+    },
+  }),
+  def({
+    name: "search_saved_pages", title: "Search Saved Pages", kind: "read", scopes: ["knowledge:read"],
+    description: "Read-only. The learner's Saved Pages, newest first: keyword search (title, site, description, tags, their note, where it is filed), and/or the pages filed under one map node (nodeId: a subject gives every page in it, its topics' included; a topic gives that topic's). Paged with nextCursor. Saved Pages only; notes are found with search_notes.",
+    input: {
+      query: z.string().trim().min(1).max(200).optional(),
+      nodeId: z.string().min(3).max(60).optional().describe('"subject:<id>" or "topic:<id>".'),
+      tag: z.string().trim().min(1).max(40).optional(), type: z.enum(RESOURCE_TYPES).optional(),
+      limit: z.number().int().min(1).max(50).optional(), cursor: z.string().max(80).optional(),
+    },
+    handler: async (a, ctx) => {
+      const l = ctx.learner;
+      const st = await loadStructure(l.profileId);
+      let place: NodePlace | null = null;
+      if (a.nodeId) { const r = resolveNode(st, a.nodeId); if (!r.ok) return fail("not_found", r.message); place = r.place; }
+      const lib = await loadLibrary(l.platformChatId, {
+        q: a.query, tag: a.tag, type: a.type, sort: "recent", limit: a.limit ?? 20,
+        ...(a.cursor ? { cursor: rowId("resource", a.cursor) } : {}),
+        ...(place ? { subjectId: place.subjectId, ...(place.topicName ? { topicName: place.topicName } : {}) } : {}),
+      });
+      if (lib.status !== "ready") return fail("not_ready", "The learner's Saved Pages are not available yet.");
+      return ok({
+        ...(place ? { node: { id: place.nodeId, name: place.label } } : {}),
+        pages: lib.items.map(p => pageOut(st, p, ctx.origin)), matched: lib.matched, totalSaved: lib.facets.total,
+        nextCursor: lib.nextCursor ? `resource:${lib.nextCursor}` : null, basis: a.query ? "keyword match" : "newest first",
+      });
+    },
+  }),
+  def({
+    name: "file_saved_page", title: "File a saved page on the map", kind: "write", scopes: ["pages:write"],
+    description: 'Writes. Files one of the learner\'s Saved Pages under a Knowledge Map node: a subject ("subject:<id>") or a topic ("topic:<id>"). A page is filed in one place: a page already filed somewhere else is only moved with replace: true, and only when the learner asked to move it (you get where it was, so it can be put back). The page itself never changes.',
+    input: { pageId: z.string().min(3).max(80), nodeId: z.string().min(3).max(60), replace: z.boolean().optional(), idempotencyKey: idemArg },
+    handler: async (a, ctx) => {
+      const l = ctx.learner;
+      const st = await loadStructure(l.profileId);
+      const page = await getSavedPage(l.profileId, rowId("resource", a.pageId));
+      if (!page) return fail("not_found", "The learner has no saved page with that id. Nothing was changed.");
+      const r = resolveNode(st, a.nodeId);
+      if (!r.ok) return fail("not_found", `${r.message} Nothing was changed.`);
+      const was = filingOf(st, page, ctx.origin);
+      const same = page.subjectId === r.place.subjectId && (page.topicName ?? "").toLowerCase() === (r.place.topicName ?? "").toLowerCase();
+      if (same) return ok({ status: "already_filed", page: pageOut(st, page, ctx.origin) });
+      if (page.subjectId && !a.replace) return fail("conflict", "This page is already filed somewhere else. Nothing was changed; move it with replace: true only if the learner asked to.", { filedUnder: was });
+      return keyedRun(ctx, "file_saved_page", a.idempotencyKey, async () => {
+        const f = await fileSavedResource(l.profileId, page.id, { kind: "file", subjectId: r.place.subjectId, topicName: r.place.topicName });
+        if (!f.ok) return { result: fail(f.error === "not_found" ? "not_found" : "invalid_input", `${f.message} Nothing was changed.`), outcome: "refused", resources: { type: "resource", id: page.id } };
+        return { result: ok({ status: page.subjectId ? "moved" : "filed", page: pageOut(st, f.resource, ctx.origin), previouslyFiledUnder: was }), outcome: "ok", resources: { type: "resource", id: page.id, from: was?.nodeId ?? null, to: r.place.nodeId } };
+      });
+    },
+  }),
+  def({
+    name: "unfile_saved_page", title: "Take a saved page off a map node", kind: "write", scopes: ["pages:write"],
+    description: "Writes. Removes a saved page's filing on the Knowledge Map (the subject or topic it is under), only when the learner asked. The page itself stays in Saved Pages, unchanged; you get where it was, so it can be filed back with file_saved_page.",
+    input: { pageId: z.string().min(3).max(80), idempotencyKey: idemArg },
+    handler: async (a, ctx) => {
+      const l = ctx.learner;
+      const st = await loadStructure(l.profileId);
+      const page = await getSavedPage(l.profileId, rowId("resource", a.pageId));
+      if (!page) return fail("not_found", "The learner has no saved page with that id. Nothing was changed.");
+      if (!page.subjectId) return ok({ status: "not_filed", page: pageOut(st, page, ctx.origin) });
+      const was = filingOf(st, page, ctx.origin);
+      return keyedRun(ctx, "unfile_saved_page", a.idempotencyKey, async () => {
+        const f = await fileSavedResource(l.profileId, page.id, { kind: "unfile" });
+        if (!f.ok) return { result: fail("not_found", `${f.message} Nothing was changed.`), outcome: "refused", resources: { type: "resource", id: page.id } };
+        return { result: ok({ status: "unfiled", page: pageOut(st, f.resource, ctx.origin), previouslyFiledUnder: was, kept: "The page is still in Saved Pages." }), outcome: "ok", resources: { type: "resource", id: page.id, from: was?.nodeId ?? null } };
+      });
     },
   }),
 

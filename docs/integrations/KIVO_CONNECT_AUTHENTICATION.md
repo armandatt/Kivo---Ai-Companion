@@ -41,5 +41,6 @@ OAuth 2.1 authorization code with PKCE, as the MCP authorization specification a
 | `notes:write` | create, add to, rename, link, refile and (with approval) delete notes |
 | `knowledge:read` | the Knowledge Map and analysis |
 | `knowledge:write` | add, describe, rename, move subjects and topics; build maps |
+| `pages:write` | save web pages to Saved Pages, file and unfile them on the map (21 Nov). A connection approved before it existed keeps only what it agreed to: it lists the Saved Pages reads (`knowledge:read`) but not the writes until the learner connects again |
 
 A client that asks for no scope gets all six on the consent screen. The MCP server registers only the tools whose scopes the token has.

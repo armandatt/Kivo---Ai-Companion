@@ -16,7 +16,8 @@ export type LearningEventType   = "resource_saved" | "selection_saved" | "study_
 // Where the action was taken: the extension's popup, or the web app's own
 // "Save a link" box (which the bookmarklet also opens). Set by the server from
 // the kind of credential the request carried, never read from the request.
-export type LearningEventSource = "browser_extension" | "web";
+// "kivo_connect": saved by an assistant the learner connected (ChatGPT, Claude: packages/api/src/connect).
+export type LearningEventSource = "browser_extension" | "web" | "kivo_connect";
 
 export const EVENT_URL_MAX   = 2048;
 export const EVENT_TITLE_MAX = 300;
@@ -169,6 +170,8 @@ export type LibrarySort = "recent" | "oldest" | "title" | "type";
 export interface LibraryQuery {
   q?: string; type?: ResourceKind; collectionId?: string | "none"; tag?: string; status?: ReadingStatusName;
   domain?: string; savedWithinDays?: number; sort?: LibrarySort; cursor?: string; limit?: number;
+  // Where pages are filed on the Knowledge Map: a subject, and optionally one of its topics (by name).
+  subjectId?: string; topicName?: string;
 }
 export interface LibraryFacets {
   total:       number;                                  // everything saved, before filters
