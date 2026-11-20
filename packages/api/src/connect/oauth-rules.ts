@@ -13,6 +13,9 @@ export const SCOPES = {
   "notes:write":     "Create, change, move and (with your approval) delete notes",
   "knowledge:read":  "Read your Knowledge Map",
   "knowledge:write": "Add subjects and topics, and connect items on your Knowledge Map",
+  // Its own scope: saving pages is not changing notes or the map's structure,
+  // and a connection made before it existed keeps exactly what it agreed to.
+  "pages:write":     "Save web pages to your Saved Pages and file them on your Knowledge Map",
 } as const;
 export type Scope = keyof typeof SCOPES;
 export const ALL_SCOPES = Object.keys(SCOPES) as Scope[];

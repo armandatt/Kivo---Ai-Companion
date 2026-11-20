@@ -39,6 +39,20 @@ Class: **R** read-only, **W** ordinary write (applied at once, audited, read bac
 | `connect_knowledge_nodes` | W / S | knowledge:write, notes:write | `links_to` (W); `inside`, `filed_under` (S). No other relation types exist. |
 | `build_knowledge_map` | S | knowledge:read, knowledge:write | outline → reuse existing topics by name, add the rest under their parents; `preview` / `apply`; over 12 items needs approval |
 
+## Saved Pages (21 Nov)
+
+Kivo's Saved Pages library: the same pages the browser extension and the web app's "Save a link" save (`NovaLearningEvent` rows, `eventType: "resource_saved"`, written by `learning-events.ts recordLearningEvent`, `source: "kivo_connect"`). A saved page is never a note. Its relationship to the Knowledge Map is its filing: one subject, optionally one of its topics (`subjectId` + `topicName`), drawn on the map as filed under the subject or about the topic. One page, one place; a place holds any number of pages.
+
+| Tool | Class | Scopes | What it does |
+|---|---|---|---|
+| `save_page` | W | pages:write | save a URL (title, description, site, author, date, tags, an existing collection, a personal note), optionally filed under `nodeId` (`subject:<id>` / `topic:<id>`). A page already saved (same address, its canonical link, or the same address without tracking parameters) is returned as `already_saved`: never saved twice, never re-filed or unfiled by a save (an unfiled one is filed when a node is given); tags are added, an existing note or collection is kept |
+| `get_saved_page` | R | knowledge:read | one page by `resource:<id>` or by its address, with `filedUnder` (subject and topic node ids) |
+| `search_saved_pages` | R | knowledge:read | keyword search and/or the pages filed under a node (a subject includes its topics' pages), newest first, paged by `nextCursor` |
+| `file_saved_page` | W | pages:write | file under a node; a page filed elsewhere moves only with `replace: true` (returns `previouslyFiledUnder`) |
+| `unfile_saved_page` | W | pages:write | take the filing off; the page stays saved (returns `previouslyFiledUnder`) |
+
+Node ids are resolved against the learner's own study structure: another learner's, an archived topic or a made-up id is `not_found` and nothing is written. `connect_knowledge_nodes` with a `resource:` source points to `file_saved_page`. `create_note` says to use `save_page` for a web page.
+
 ## Intelligence (all read-only; keyword-based, labelled)
 
 | Tool | Scopes | Does |

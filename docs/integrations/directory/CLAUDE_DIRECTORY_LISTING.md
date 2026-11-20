@@ -60,7 +60,7 @@ Synced from the server: 30 tools. Read-only: 19 (`readOnlyHint: true`). Writes: 
 
 - Authentication requirement: required.
 - Method: OAuth 2.0 (2.1 profile): authorization code + PKCE S256, dynamic client registration (RFC 7591), protected resource metadata (RFC 9728) at `/.well-known/oauth-protected-resource/api/mcp`, authorization server metadata (RFC 8414) at `/.well-known/oauth-authorization-server`, refresh rotation, revocation (RFC 7009). Claude registers its own client, so no Anthropic-held client ID/secret is needed.
-- Scopes: `profile:read workspace:read notes:read notes:write knowledge:read knowledge:write`.
+- Scopes: `profile:read workspace:read notes:read notes:write knowledge:read knowledge:write pages:write` (`pages:write` added 21 Nov: save pages to Saved Pages).
 
 ## 7. Data handling
 

@@ -330,6 +330,41 @@ const isUniqueViolation = (err: unknown) =>
 
 const focusPathOf = (eventType: string, id: string) => (eventType === "study_requested" ? `/focus?study=${encodeURIComponent(id)}` : null);
 
+// The rows that are the same page as `url` (or its canonical link) however it
+// was reached: the same address, its canonical link, or the same address once
+// tracking and host spellings are taken out (resource-meta.ts dedupeKey).
+function samePageWhere(url: string, canonicalUrl: string | null) {
+  const key = dedupeKey(url);
+  const canonicalKey = canonicalUrl ? dedupeKey(canonicalUrl) : null;
+  return [
+    { url },
+    ...(canonicalUrl ? [{ url: canonicalUrl }, { canonicalUrl }] : []),
+    { canonicalUrl: url },
+    ...(key ? [{ dedupeKey: key }] : []),
+    ...(canonicalKey && canonicalKey !== key ? [{ dedupeKey: canonicalKey }] : []),
+  ];
+}
+
+// The learner's saved page for this address, if they have one (the same test
+// a save uses to keep one entry per page). Kivo Connect reads it before
+// saving, so an assistant saving a known page never re-files it.
+export async function findSavedPage(profileId: string, rawUrl: string): Promise<LearningResource | null> {
+  const address = normalizeResourceUrl(rawUrl);
+  if (!address) return null;
+  const row = await prisma.novaLearningEvent.findFirst({
+    where: { profileId, eventType: "resource_saved", OR: samePageWhere(address.url, null) },
+    orderBy: { occurredAt: "asc" }, select: SELECT,
+  });
+  return row ? toResource(row) : null;
+}
+
+// One saved page or passage (never a study request) of the learner's, or null.
+export async function getSavedPage(profileId: string, id: string): Promise<LearningResource | null> {
+  if (typeof id !== "string" || !id || id.length > 64) return null;
+  const row = await prisma.novaLearningEvent.findFirst({ where: { id, profileId, eventType: { in: SAVED_TYPES } }, select: SELECT });
+  return row ? toResource(row) : null;
+}
+
 // Records one explicit action. `profileId` and `source` come from the
 // caller's credential; nothing in `raw` can name another learner.
 export async function recordLearningEvent(
@@ -389,16 +424,8 @@ export async function recordLearningEvent(
     // out (resource-meta.ts dedupeKey). A YouTube video is its id. Only this
     // learner's own rows; an uncertain match is simply a new entry.
     const key = dedupeKey(event.url);
-    const canonicalKey = event.canonicalUrl ? dedupeKey(event.canonicalUrl) : null;
-    const same = [
-      { url: event.url },
-      ...(event.canonicalUrl ? [{ url: event.canonicalUrl }, { canonicalUrl: event.canonicalUrl }] : []),
-      { canonicalUrl: event.url },
-      ...(key ? [{ dedupeKey: key }] : []),
-      ...(canonicalKey && canonicalKey !== key ? [{ dedupeKey: canonicalKey }] : []),
-    ];
     const existing = await prisma.novaLearningEvent.findFirst({
-      where:  { profileId, eventType: event.eventType, OR: same, ...(event.eventType === "selection_saved" ? { excerpt: event.excerpt } : {}) },
+      where:  { profileId, eventType: event.eventType, OR: samePageWhere(event.url, event.canonicalUrl), ...(event.eventType === "selection_saved" ? { excerpt: event.excerpt } : {}) },
       orderBy: { occurredAt: "asc" },
       select: { id: true, subjectId: true, filedBy: true, resourceType: true, description: true, imageUrl: true, author: true, siteName: true, publishedAt: true, durationSeconds: true, dedupeKey: true },
     });
@@ -781,6 +808,8 @@ function libraryWhere(profileId: string, q: LibraryQuery, now: Date) {
   if (q.status) and.push({ readingStatus: q.status });
   if (q.domain) and.push({ domain: q.domain });
   if (q.savedWithinDays) and.push({ occurredAt: { gte: new Date(now.getTime() - q.savedWithinDays * DAY_MS) } });
+  if (q.subjectId) and.push({ subjectId: q.subjectId });
+  if (q.subjectId && q.topicName) and.push({ topicName: { equals: likeLiteral(normalizeTopicName(q.topicName)), mode: "insensitive" as const } });
   if (q.q) {
     const like = likeLiteral(q.q);
     const has = (field: string) => ({ [field]: { contains: like, mode: "insensitive" as const } });
