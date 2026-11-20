@@ -659,7 +659,8 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 
 /* Going into a card on the Knowledge Map: what is inside fades in as the view zooms to it. */
 @keyframes map-enter { from { opacity: 0; } to { opacity: 1; } }
-.map-enter { animation: map-enter 260ms ease-out both; }
+/* backwards, never both: a finished fade kept filling made Chrome's compositing of every card under it about 100x slower (knowledge-map.tsx). */
+.map-enter { animation: map-enter 260ms ease-out backwards; }
 
 /* ── Knowledge Map 2.0: depth and motion (knowledge-map.tsx, depth.ts) ──────
    The space: one charcoal (or paper) ground with no coloured light, a soft
@@ -677,7 +678,6 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 /* Lifting: hovered, focused, selected or joined to the selection; the rest recede a little. */
 .map-lift { transform-box: fill-box; transform-origin: center; transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .map-card:focus-visible .map-lift, .map-lift.map-raise { transform: translateY(-3px); }
-.map-moving .map-lift, .map-moving .map-shadow { transition: none; }
 /* The focus (knowledge-map.tsx, the focus layer): the map stays as drawn and
    a scrim of the canvas's colour fades over it; the card in focus and the
    ones it joins are drawn again above it, raised. One composited layer fades:
@@ -686,10 +686,9 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 .map-scrim-on { opacity: 0.62; }
 /* A lens or a search: what it lights stays, the rest is set back (never hidden). */
 .map-emph .map-card:not([data-emphasis]) { opacity: 0.3; }
-.map-focus-layer { will-change: transform; }
 @keyframes map-lift-in { from { transform: none; } to { transform: translateY(-3px); } }
 .map-copy .map-lift { animation: map-lift-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-.map-copy .map-shadow { transform: translateY(3px) scale(1.02); opacity: 0.5; }
+.map-copy .map-shadow { transform: translateY(3px) scale(1.02); fill-opacity: 0.5; }
 
 /* ── The final polish: light, touch and motion (Knowledge Map) ──────────────
    Ambient light between the dots and the cards, moved by a transform. */
@@ -698,29 +697,20 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
   background: radial-gradient(46% 42% at 50% 42%, color-mix(in oklch, var(--foreground) 3%, transparent), transparent 70%);
 }
 /* A card's shadow deepens as it lifts under the pointer. */
-.map-shadow { transform-box: fill-box; transform-origin: center; transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease; }
+.map-shadow { transform-box: fill-box; transform-origin: center; transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), fill-opacity 0.3s ease; }
 /* Selected: one pulse outward. */
 @keyframes map-select-pulse { from { opacity: 0.75; transform: scale(1); } to { opacity: 0; transform: scale(1.09); } }
 .map-select-pulse { transform-box: fill-box; transform-origin: center; animation: map-select-pulse 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-/* The selection's lines carry a quiet travelling pulse. */
-@keyframes map-edge-flow { to { stroke-dashoffset: -25; } }
-/* The neuron touch: a slow signal travelling out along a subject's branches. Paused while the view moves; off in Calm and under reduced motion. */
-@keyframes map-signal { from { stroke-dashoffset: 52; } to { stroke-dashoffset: -520; } }
-.map-signal { animation: map-signal 4.6s linear infinite; }
-/* What moves on its own sits on a layer of its own, under the map's drawing,
-   so a signal's frame repaints that layer and never the cards. */
-.map-live, .map-main { will-change: transform; }
-/* The picture of the map: slid and scaled as one while the view moves (knowledge-map.tsx, applyCam). */
+/* The cards' layers: drawn in map units at the zoom they were drawn at, slid and
+   scaled as one by the camera (map-camera.ts). The lines, their signals and the
+   selection's pulse are painted on canvases (map-canvas.ts), which follow Calm
+   and reduced motion themselves. */
 .map-cam { transform-origin: 0 0; will-change: transform; }
+.map-canvas { display: block; }
 /* What floats over a card is placed from the view as drawn: out of the way while the view moves. */
 .map-moving [data-node-bar], .map-moving [data-map-peek] { visibility: hidden; }
-.map-still .map-live { display: none; }
 /* On the map the subjects' colours are a little fuller than on the rest of Kivo. */
 [data-knowledge-map] { --tone-c: 0.165; }
-.map-moving .map-signal { animation-play-state: paused; }
-.map-still .map-signal { display: none; }
-@media (prefers-reduced-motion: reduce) { .map-signal { display: none; } }
-.map-edge-flow { animation: map-edge-flow 1.2s linear infinite; }
 /* The entrance: the subjects' light comes up before their cards. */
 @keyframes map-glow-in { from { opacity: 0; } to { opacity: 1; } }
 .map-glow-in { animation: map-glow-in 1.6s ease-out both; }
@@ -732,6 +722,9 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 @keyframes map-ring-in { from { stroke-dashoffset: var(--ring-c); } }
 .map-ring-arc { animation: map-ring-in 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) 0.08s both; }
 /* A folded count answers the pointer. */
+/* A card's keyboard focus ring and its + button's face: shown, not faded in (see card-face.tsx At). */
+.map-card .map-focus, .map-card .map-add-face { display: none; }
+.map-card:focus-visible .map-focus, .map-card:focus-visible .map-add-face { display: inline; }
 .map-chip rect { transition: stroke 0.2s ease, fill 0.2s ease; }
 .map-chip:hover rect { stroke: var(--action); }
 /* Calm: depth and light stay, nothing moves. */
@@ -759,7 +752,7 @@ html[data-kivo-theme="light"] .kivo-app .kivo-dark {
 }
 .map-card-in, .map-card-in-brief, .map-card-new, .map-card-out { transform-box: fill-box; transform-origin: center; }
 .map-card-in { animation: map-card-in 0.9s cubic-bezier(0.2, 0.8, 0.25, 1) both; }
-.map-card-in-brief { animation: map-enter 0.24s ease-out both; }
+.map-card-in-brief { animation: map-enter 0.24s ease-out backwards; }
 /* A large map opening: the whole drawing starts close and pulls back as one
    transform (the compositor's work: no card is repainted for it). */
 @keyframes map-cam-glide { from { opacity: 0; transform: scale(1.55); } 14% { opacity: 1; } to { opacity: 1; transform: none; } }
