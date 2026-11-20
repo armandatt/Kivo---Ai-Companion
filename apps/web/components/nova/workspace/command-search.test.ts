@@ -51,3 +51,11 @@ test('a saved page is found by its site, and nothing matches nothing', () => {
 test('the list is capped', () => {
   assert.equal(searchCommands(entries, 'o', 2).length, 2)
 })
+
+test('K-28a: a task on the map and in the task list is one result; two tasks with one title are two', () => {
+  const onMap = { id: 'task:a', type: 'task', label: 'Revise deadlock prevention', href: '/home?board=open', subjectId: null, subjectName: null } as unknown as MapNode
+  const both = commandEntries({ pages, nodes: [...nodes, onMap], tasks: [task('a', 'Revise deadlock prevention'), task('c', 'Revise deadlock prevention')] })
+  const found = searchCommands(both, 'deadlock prevention').map(e => e.id)
+  assert.deepEqual(found.filter(id => id === 'task:a'), ['task:a'], 'once, by its id')
+  assert.ok(found.includes('task:c'), 'a different task with the same title stays')
+})

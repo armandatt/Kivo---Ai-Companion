@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 //@ts-ignore
 import { loadNovaProgress } from "@repo/api/nova/product/progress"
+//@ts-ignore
+import { workingOnWords } from "@repo/api/nova/product/goals"
 import { resolveNovaLearner } from "../../../../lib/nova/resolve-learner"
 
 export const runtime = "nodejs"
@@ -21,7 +23,9 @@ export async function GET() {
     }
     if (learner.kind !== "learner") return NextResponse.json({ status: learner.kind })
 
-    return NextResponse.json(await loadNovaProgress(learner.platformChatId))
+    const [view, workingOn] = await Promise.all([loadNovaProgress(learner.platformChatId), workingOnWords(learner.platformChatId)])
+    // What they joined for, beside their goals (K-23); Progress itself stays a read model of study.
+    return NextResponse.json(view.status === "ready" ? { ...view, workingOn } : view)
   } catch (err) {
     console.error("[nova/progress]", err)
     return NextResponse.json({ error: "Failed to load progress" }, { status: 500 })

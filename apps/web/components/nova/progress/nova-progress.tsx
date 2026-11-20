@@ -113,9 +113,24 @@ export function NovaProgress({ view }: { view: NovaProgressReady }) {
                 </p>
               </>
             ) : (
-              <p className="mt-3 text-sm leading-relaxed text-foreground/50" data-unknown="no_goals">
-                You haven&apos;t told Nova what you&apos;re working toward. <Link href={GOALS_HREF} className="font-medium text-keppel-300 hover:text-keppel-200">Add a goal</Link>
-              </p>
+              // K-23: no goal in their words, but what is on record is said,
+              // never "nothing": what they joined for, and the date beside.
+              (view.workingOn?.length ?? 0) > 0 || view.nextExam ? (
+                <div className="mt-3 space-y-2 text-sm leading-relaxed" data-goals-from-record>
+                  {(view.workingOn?.length ?? 0) > 0 && (
+                    <>
+                      <p className="text-xs text-foreground/45">When you joined, you said you were:</p>
+                      <ul className="space-y-1 text-foreground/80">{view.workingOn!.map(w => <li key={w}>{w}</li>)}</ul>
+                    </>
+                  )}
+                  {view.nextExam && <p className="text-foreground/70">Next date on record: <span className="text-foreground/85">{view.nextExam.title}</span>, {inDays(view.nextExam.daysUntil)}.</p>}
+                  <p className="text-xs text-foreground/45">No goal in your own words yet. <Link href={GOALS_HREF} className="font-medium text-keppel-300 hover:text-keppel-200">Add one</Link></p>
+                </div>
+              ) : (
+                <p className="mt-3 text-sm leading-relaxed text-foreground/50" data-unknown="no_goals">
+                  You haven&apos;t told Nova what you&apos;re working toward. <Link href={GOALS_HREF} className="font-medium text-keppel-300 hover:text-keppel-200">Add a goal</Link>
+                </p>
+              )
             )}
           </section>
 

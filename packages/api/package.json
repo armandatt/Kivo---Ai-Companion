@@ -27,6 +27,7 @@
     "./nova/product/setup.types": "./src/nova/product/setup.types.ts",
     "./nova/product/telegram-connection": "./src/nova/product/telegram-connection.ts",
     "./nova/product/companion": "./src/nova/product/companion.ts",
+    "./nova/product/zone-names": "./src/nova/product/zone-names.ts",
     "./nova/product/knowledge.types": "./src/nova/product/knowledge.types.ts",
     "./nova/product/notes.types": "./src/nova/product/notes.types.ts",
     "./nova/product/progress.types": "./src/nova/product/progress.types.ts",

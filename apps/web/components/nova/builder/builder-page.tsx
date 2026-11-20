@@ -17,7 +17,7 @@ import { DeletionPanel } from './deletion-panel'
 import { LiveWorkspace } from './live-workspace'
 import { DraftPlayground, PlaygroundHeader, PlaygroundWaiting } from './playground'
 import type { PlaygroundView } from './plan-edit'
-import { useDraft } from './use-draft'
+import { handOver, useDraft } from './use-draft'
 
 // Build with Nova: a conversation on the left, the workspace it shapes on
 // the right, from the first screen on. On a phone the two are tabs. The
@@ -139,6 +139,7 @@ export function BuilderPage() {
     const res = await api.startDraft({ clientKey: api.newClientKey(), ...(text ? { text } : {}), ...(files.length ? { files: files.map(f => ({ name: f.name, data: f.data })) } : {}), ...(targetWorkspaceId ? { targetWorkspaceId } : {}) })
     setStarting(false)
     if (!res.ok) { setStartError(res.message); return false }
+    handOver(res.draft)
     router.push(`/build?draft=${encodeURIComponent(res.draft.id)}`)
     return true
   }, [router])

@@ -26,7 +26,7 @@ import { OUTLINE_QUERY, browserStore, chooseOrientation, chosenOrientation, forg
 import { NEW_SUBJECT } from './map-structure'
 import { disconnectPlan } from './map-disconnect'
 import { runMapRequest, type MapAgentContext, type MapAgentRequest } from './map-agent'
-import { sendConnect, sendDisconnect, type MapDeleteMode, type MapDeleteTarget } from './map-structure-api'
+import { restoreDeleted, sendConnect, sendDisconnect, type MapDeleteMode, type MapDeleteTarget } from './map-structure-api'
 import { AddDialog, Breadcrumbs, DeleteDialog, DeleteWholeDialog, Legend, ShortcutsHelp } from './map-panels'
 import { BOARD_PATH } from '@repo/api/nova/product/companion'
 import { mapColor } from './map-color'
@@ -931,7 +931,8 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   const [t, setT]               = useState<View>({ x: 0, y: 0, k: 1 })
   const [dragAt, setDragAt]     = useState<{ id: string; x: number; y: number } | null>(null)
   const [panel, setPanel]       = useState<Panel | null>(null)
-  const [notice, setNotice]     = useState<{ text: string; n: number } | null>(null)
+  // undo: a Recently deleted item the message offers back (K-02).
+  const [notice, setNotice]     = useState<{ text: string; n: number; undo?: string | null } | null>(null)
   const [mac, setMac]           = useState(false)
   const store = useMemo(() => browserStore(), [])
   // The orientation: the learner's choice, else the device's own (by width,
@@ -988,12 +989,14 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     q.addEventListener('change', on)
     return () => q.removeEventListener('change', on)
   }, [])
-  const say = useCallback((text: string) => setNotice(n => ({ text, n: (n?.n ?? 0) + 1 })), [])
+  const say = useCallback((text: string, undo?: string | null) => setNotice(n => ({ text, n: (n?.n ?? 0) + 1, undo: undo ?? null })), [])
   useEffect(() => {
     if (!notice) return
-    const id = window.setTimeout(() => setNotice(null), 3200)
+    // A message with Undo stays long enough to reach the button.
+    const id = window.setTimeout(() => setNotice(null), notice.undo ? 10_000 : 3200)
     return () => window.clearTimeout(id)
   }, [notice])
+  const [undoing, setUndoing] = useState(false)
 
   const subjects = useMemo(() => view.nodes.filter(n => n.type === 'subject'), [view.nodes])
   const byId     = useMemo(() => new Map(view.nodes.map(n => [n.id, n])), [view.nodes])
@@ -1693,9 +1696,9 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   const openAdd = useCallback((n: MapNode | null) => setPanel({ kind: 'add', node: n }), [])
   const openDelete = useCallback((n: MapNode) => setPanel({ kind: 'delete', node: n }), [])
   const closePanel = useCallback(() => setPanel(null), [])
-  const afterEdit = useCallback((said: string, select: string | null) => {
+  const afterEdit = useCallback((said: string, select: string | null, undo?: string | null) => {
     setPanel(null)
-    say(said)
+    say(said, undo)
     if (select) { pendingSelect.current = select; revealCard(select) }
     onChanged()
   }, [say, onChanged, revealCard])
@@ -2661,14 +2664,14 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         {panel?.kind === 'delete' && (panel.node.type === 'subject'
           // A subject goes with everything inside it, in one step: no clearing it card by card first.
           ? <DeleteWholeDialog key={`del-${panel.node.id}`} target={{ subjectId: panel.node.subjectId ?? panel.node.id.slice('subject:'.length) }} title={panel.node.label} style={anchor(panel.node.id)} onClose={closePanel}
-              onDeleted={said => { leave(panel.node); setSelected(null); goTo(null); afterEdit(said, null) }} />
+              onDeleted={(said, _gone, trashId) => { leave(panel.node); setSelected(null); goTo(null); afterEdit(said, null, trashId) }} />
           : <DeleteDialog key={`del-${panel.node.id}`} node={panel.node} edges={view.edges} tree={tree} style={anchor(panel.node.id)} onClose={closePanel}
-              onDeleted={said => { leave(panel.node); if (selected === panel.node.id) setSelected(null); afterEdit(said, null) }} onStale={onChanged} />
+              onDeleted={(said, trashId) => { leave(panel.node); if (selected === panel.node.id) setSelected(null); afterEdit(said, null, trashId) }} onStale={onChanged} />
         )}
         {panel?.kind === 'delete_map' && (
           <DeleteWholeDialog target={panel.target} title={panel.title} mode={panel.mode} style={{ left: '50%', top: 12, transform: 'translateX(-50%)' }} onClose={closePanel}
-            onDeleted={(said, gone) => {
-              setSelected(null); setPanel(null); say(said)
+            onDeleted={(said, gone, trashId) => {
+              setSelected(null); setPanel(null); say(said, trashId)
               // Deleted: back to everything. Cleared: the same map, read again (empty).
               if (gone) { goTo(null); if (onWorkspace && view.workspaceId) onWorkspace('all'); else onChanged() } else onChanged()
             }} />
@@ -2836,7 +2839,19 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           onDisconnected={said => { say(said); onChanged() }} />
         )}
         {notice && (
-          <p key={notice.n} className="pointer-events-none absolute left-1/2 top-3 z-20 max-w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 rounded-full border border-white/10 bg-popover/95 px-3.5 py-1.5 text-center text-xs text-foreground/85 shadow-soft" data-map-notice>{notice.text}</p>
+          <p key={notice.n} className={cn('absolute left-1/2 top-3 z-20 max-w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 rounded-full border border-white/10 bg-popover/95 px-3.5 py-1.5 text-center text-xs text-foreground/85 shadow-soft', notice.undo ? 'pointer-events-auto' : 'pointer-events-none')} data-map-notice onPointerDown={e => e.stopPropagation()}>
+            {notice.text}
+            {notice.undo && (
+              <button type="button" disabled={undoing} className="ml-2 font-semibold text-nova-ink underline-offset-2 hover:underline disabled:opacity-50" data-map-undo
+                onClick={async () => {
+                  const id = notice.undo!
+                  setUndoing(true)
+                  const out = await restoreDeleted(id)
+                  setUndoing(false)
+                  if (out.ok) { setRemoved(new Set()); say(out.said[0]!); onChanged() } else say(out.message)
+                }}>{undoing ? 'Undoing…' : 'Undo'}</button>
+            )}
+          </p>
         )}
         <p className="sr-only" role="status" aria-live="polite">{notice?.text ?? ''}</p>
       </div>

@@ -20,11 +20,17 @@ function Rail({ children }: { children: React.ReactNode }) {
 // The dates Nova has on record (exams, interviews, things due) and tasks with
 // a due day, in one list by date. Each is named for the kind of date it is.
 // Both are dates the learner gave; nothing is estimated.
+const DEADLINES_SHOWN = 6
 export function Deadlines({ exams, tasks }: { exams: NovaTodayReady['upcoming']; tasks: NovaTaskItem[] }) {
-  const items = [
-    ...exams.map(e => ({ key: `exam:${e.title}:${e.scheduledAt}`, title: e.title, sub: e.subjectName ?? e.kindLabel, days: e.daysUntil, kind: e.kindLabel })),
-    ...tasks.filter(t => t.status !== 'done' && t.dueInDays !== null).map(t => ({ key: `task:${t.id}`, title: t.title, sub: t.subjectName ?? 'Task', days: t.dueInDays!, kind: 'Task' })),
-  ].sort((a, b) => a.days - b.days).slice(0, 6)
+  // Dates (exams, interviews…) are never pushed out by tasks (K-21: many
+  // overdue tasks hid an exam that was on the Calendar); tasks fill the rest,
+  // and what does not fit is said, with the calendar a click away.
+  const dates = exams.map(e => ({ key: `exam:${e.title}:${e.scheduledAt}`, title: e.title, sub: e.subjectName ?? e.kindLabel, days: e.daysUntil, kind: e.kindLabel }))
+  const dated = tasks.filter(t => t.status !== 'done' && t.dueInDays !== null).map(t => ({ key: `task:${t.id}`, title: t.title, sub: t.subjectName ?? 'Task', days: t.dueInDays!, kind: 'Task' }))
+  const room = Math.max(DEADLINES_SHOWN - dates.length, 2)
+  const shownTasks = [...dated].sort((a, b) => a.days - b.days).slice(0, room)
+  const items = [...dates, ...shownTasks].sort((a, b) => a.days - b.days)
+  const more = dated.length - shownTasks.length
 
   return (
     <Rail>
@@ -51,6 +57,7 @@ export function Deadlines({ exams, tasks }: { exams: NovaTodayReady['upcoming'];
           ))}
         </ul>
       )}
+      {more > 0 && <p className="mt-3 text-xs text-foreground/55" data-deadlines-more>{more} more task{more === 1 ? '' : 's'} with a due date · <Link href="/calendar" className={TEXT_LINK}>See them all on the calendar</Link></p>}
     </Rail>
   )
 }

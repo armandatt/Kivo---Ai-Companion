@@ -142,7 +142,10 @@ export interface ExamContext {
   mode:             ExamMode;
   topicWeights:     Record<string, number>;   // topicName → 0–1 importance
   riskMatrix: {
-    critical: string[];   // low mastery + high weight
+    critical: string[];   // low mastery, from study on record
+    // Never studied (no finished session behind its number): no evidence
+    // either way, so not called weak (K-12). Absent on an older context.
+    unstudied?: string[];
     risky:    string[];   // moderate mastery + moderate weight
     safe:     string[];   // high mastery
   };

@@ -42,7 +42,11 @@ export function commandEntries(sources: {
     if (task.status === 'done') continue
     entries.push({ id: `task:${task.id}`, kind: 'task', label: task.title, detail: task.subjectName, href: TASK_BOARD })
   }
-  return entries
+  // One entry per record, by its id (K-28a: a task on the map is also in the
+  // task list, and came up twice). Two tasks with the same title are two
+  // records and both stay.
+  const seen = new Set<string>()
+  return entries.filter(e => (seen.has(e.id) ? false : (seen.add(e.id), true)))
 }
 
 // How well an entry's name matches what was typed: the whole name, its

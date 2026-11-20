@@ -3,7 +3,7 @@
 import { Check, Minus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { PlannerDay } from '@repo/api/nova/product/planner.types'
-import { dayOfMonth, minutesLabel, weekdayOf } from '../format'
+import { dayOfMonth, daysRange, minutesLabel, weekdayOf } from '../format'
 
 function isEmpty(day: PlannerDay): boolean {
   return day.sessions.length === 0 && day.planned.length === 0 && day.reviewsDueCount === 0 && day.exams.length === 0
@@ -12,10 +12,14 @@ function isEmpty(day: PlannerDay): boolean {
 // The week as Nova holds it: records behind, today's plan, and ahead only
 // what is already scheduled to fall due. Later days are planned when they
 // arrive, from whatever Nova knows by then.
-export function WeekPlan({ week }: { week: PlannerDay[] }) {
+// ahead: the days are today and the six after it, and the heading says which.
+export function WeekPlan({ week, ahead = false }: { week: PlannerDay[]; ahead?: boolean }) {
+  const range = week.length ? daysRange(week[0]!.date, week[week.length - 1]!.date) : ''
   return (
     <section aria-labelledby="planner-week">
-      <h2 id="planner-week" className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">This week</h2>
+      <h2 id="planner-week" className="text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/40">
+        {ahead ? 'The week ahead' : 'This week'}{range && <span className="ml-2 normal-case tracking-normal text-foreground/45" data-week-range>{range}</span>}
+      </h2>
       <p className="mt-2 max-w-prose text-xs leading-relaxed text-foreground/45">
         An adaptive plan, not a timetable. Nova plans each day as it arrives, from what it knows by then. Later days show only what is already scheduled to fall due.
       </p>

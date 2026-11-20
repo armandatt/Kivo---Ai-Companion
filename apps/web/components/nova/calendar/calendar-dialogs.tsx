@@ -61,13 +61,13 @@ export function Modal({ label, onClose, children, onSubmit }: {
   )
 }
 
-export function DialogButtons({ busy, saveLabel, onClose, left }: { busy: boolean; saveLabel: string; onClose: () => void; left?: ReactNode }) {
+export function DialogButtons({ busy, blocked = false, saveLabel, onClose, left }: { busy: boolean; blocked?: boolean; saveLabel: string; onClose: () => void; left?: ReactNode }) {
   return (
     <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
       {left ?? <span />}
       <div className="flex gap-2">
         <button type="button" onClick={onClose} className="inline-flex h-10 items-center rounded-xl border border-white/12 px-4 text-sm font-medium text-foreground/80 transition-colors hover:bg-white/5">Cancel</button>
-        <button type="submit" disabled={busy} className={BUTTON_PRIMARY}>{busy ? 'Saving…' : saveLabel}</button>
+        <button type="submit" disabled={busy || blocked} className={BUTTON_PRIMARY}>{busy ? 'Saving…' : saveLabel}</button>
       </div>
     </div>
   )
@@ -162,8 +162,12 @@ export function EventEditor({ event, initial, view, onSave, onDelete, onDeleteOc
     if (reminder && !choices.some(c => String(c.minutes) === reminder)) setReminder('')
   }, [allDay]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // K-28c: an end before (or at) the start is said as it is typed, and the
+  // event can't be saved; the server still checks it (calendar-rules.ts).
+  // Same zone for both, so the day and clock time compare as written.
+  const endsTooEarly = !allDay && !!endTime && !!startTime && `${endDay || startDay}T${endTime}` <= `${startDay}T${startTime}`
   const save = async () => {
-    if (!title.trim() || busy) return
+    if (!title.trim() || busy || endsTooEarly) return
     setBusy(true)
     const ok = await onSave({
       title, category, allDay, startDay, endDay: endDay || null,
@@ -215,11 +219,13 @@ export function EventEditor({ event, initial, view, onSave, onDelete, onDeleteOc
               </div>
               <div>
                 <label htmlFor="ev-end" className={LABEL}>Ends</label>
-                <input id="ev-end" type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className={cn(FIELD, 'px-2.5')} />
+                <input id="ev-end" type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className={cn(FIELD, 'px-2.5', endsTooEarly && 'border-red-400/70')}
+                  aria-invalid={endsTooEarly || undefined} aria-describedby={endsTooEarly ? 'ev-end-error' : undefined} />
               </div>
             </div>
           )}
         </div>
+        {endsTooEarly && <p id="ev-end-error" role="alert" className="-mt-2 text-xs text-red-500" data-end-before-start>It has to end after it starts.</p>}
         {!allDay && <p className="-mt-2 text-xs text-subtle">Times are in {timezone.replace('_', ' ')}.</p>}
 
         <div>
@@ -299,7 +305,7 @@ export function EventEditor({ event, initial, view, onSave, onDelete, onDeleteOc
 
       {error && <p role="alert" className="mt-4 text-sm text-red-500">{error}</p>}
 
-      <DialogButtons busy={busy} saveLabel={event ? 'Save' : 'Add event'} onClose={onClose} left={event && onDelete ? (
+      <DialogButtons busy={busy} blocked={endsTooEarly} saveLabel={event ? 'Save' : 'Add event'} onClose={onClose} left={event && onDelete ? (
         confirming ? (
           event.repeat && onDeleteOccurrence ? (
             <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">

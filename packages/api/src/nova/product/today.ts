@@ -164,9 +164,10 @@ export function buildTodayView(input: TodayInputs): NovaTodayReady {
   const studied = topics.filter(t => t.reviewCount > 0);
   const weakest = [...studied].sort((a, b) => a.masteryProbability - b.masteryProbability)[0];
 
+  // Every date the snapshot holds (its nearest eight), not the first three:
+  // the Deadlines panel shows them all before tasks (K-21).
   const upcoming: TodayDeadline[] = [...snapshot.upcomingExams]
     .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())
-    .slice(0, 3)
     .map(e => ({
       title:       e.title,
       subjectName: e.subjectName,

@@ -7,6 +7,7 @@ import type { ChangeSet, ProposedChange, WorkspaceDetail } from '@repo/api/nova/
 import { treeOrder } from '@repo/api/nova/product/task-tree'
 import { cn } from '@/lib/utils'
 import { patchTask } from './builder-api'
+import { localDayKey } from '../tasks/task-format'
 import { changeMarks, hintFor, nestRows, subjectOutline, topicOutline, wordsFor, type ChangeMarks, type Nested, type SubjectRow, type Words } from './builder-view'
 import type { PlaygroundView } from './plan-edit'
 import { NovaHint, PlaygroundHeader, TITLE_AREA, TreeGuides, ViewTabs } from './playground'
@@ -206,6 +207,11 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
     ...detail.tasks.filter(t => t.dueDay && t.status !== 'done').map(t => ({ day: t.dueDay!, was: null, label: t.title, kind: 'task' as const, proposed: false, removed: marks.removedTasks.has(t.id) })),
     ...marks.addedDates.map(d => ({ day: d.day, was: null, label: d.title, kind: 'date' as const, proposed: true, removed: false })),
   ].sort((a, b) => a.day.localeCompare(b.day))
+  // Coming up: today on. Every date is kept; tasks fill up to three; shown in day order.
+  const ahead = days.filter(d => d.day >= localDayKey())
+  const datesAhead = ahead.filter(d => d.kind === 'date')
+  const soonDays = [...datesAhead, ...ahead.filter(d => d.kind !== 'date').slice(0, Math.max(0, 3 - datesAhead.length))].sort((a, b) => a.day.localeCompare(b.day))
+  const laterCount = ahead.length - soonDays.length
   const done = detail.tasks.filter(t => t.status === 'done').length
   const words = wordsFor(state.draft?.brief.kind)
   const topics = detail.subjects.reduce((n, s) => n + s.topics.filter(t => t.kind !== 'milestone').length, 0)
@@ -250,12 +256,15 @@ export function LiveWorkspace({ view, onView, state, onAsk }: {
                 </ul>
               </section>
             )}
-            {days.length > 0 && (
+            {soonDays.length > 0 && (
               <section aria-labelledby="live-soon">
                 <div className="flex items-baseline justify-between"><h3 id="live-soon" className={H}>Coming up</h3><button type="button" onClick={() => onView('timeline')} className="text-xs font-medium text-foreground/60 hover:text-foreground">Calendar</button></div>
-                <ul className="mt-2 space-y-1">{days.slice(0, 3).map((d, i) => (
+                {/* Coming up is today on: what is past or late is not "coming up", and a
+                    date is never crowded out by tasks (K-21); the rest is on the calendar. */}
+                <ul className="mt-2 space-y-1">{soonDays.map((d, i) => (
                   <li key={i} className="flex items-center gap-3 text-sm"><span className="w-24 shrink-0 text-xs tabular-nums text-subtle">{d.day}</span><span aria-hidden className={cn('size-2 shrink-0 rounded-full', d.kind === 'date' ? 'bg-amber-400' : 'bg-action')} /><span className="min-w-0 truncate text-foreground/85">{d.label}</span></li>
                 ))}</ul>
+                {laterCount > 0 && <p className="mt-1 text-xs text-subtle">and {laterCount} more on the calendar</p>}
               </section>
             )}
             <p className="text-xs text-subtle">These are your real records: changing a task here changes it on your Planner board too.</p>

@@ -81,6 +81,8 @@ export interface PlannerPressure extends TodayDeadline {
   preparation: {
     mode:       "normal" | "triage" | "crisis";
     weak:       string[];
+    // Never studied: no evidence, so not weak (K-12). Absent on an older server.
+    notStudied?: string[];
     developing: string[];
     solid:      string[];
     focusTopic: string | null;

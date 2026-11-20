@@ -187,6 +187,8 @@ export function deletePlan(node: MapNode, edges: readonly MapEdge[], tree: Tree,
     walk(t.id)
     const filed = [node.notes && count(node.notes, 'note'), node.resources && count(node.resources, 'saved page'), node.tasks?.length && count(node.tasks.length, 'task')].filter(Boolean)
     const stays = filed.length ? [`What is filed under it (${filed.join(', ')}) stays, under ${s.name}.`] : []
+    // K-02: a topic's delete is kept in Recently deleted, and said so before it goes.
+    stays.push('It goes to Recently deleted for 30 days: Undo right after, or restore it from there.')
     if (t.hasHistory) {
       return inside.length === 0
         ? { ok: false, what: 'topic', title, why: 'This topic has recorded study, so deleting it would delete that record. Archive it instead: it leaves the map and every list, and its history stays. You can restore it in Subject Studio.', archive: { topicId: t.id } }

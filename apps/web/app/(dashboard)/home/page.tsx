@@ -7,6 +7,7 @@ import { NovaHome } from '@/components/nova/nova-home'
 import { ConnectNova, NovaOnboarding } from '@/components/nova/nova-setup'
 import { useNovaToday } from '@/components/nova/use-nova-today'
 import { useTodayFocus } from '@/components/nova/today-focus'
+import { startEarly } from '@/lib/early-read'
 
 // The shape of Today while it loads: the header, the plan beside the margin.
 function Loading() {
@@ -35,7 +36,12 @@ function Loading() {
 
 // One Home, two companions. The server says which learner this account is
 // (GET /api/nova/today); the page renders that answer.
+// What Today's own sections read once the page knows it is Nova's: started
+// with Today's view, not after it (K-18: one round trip less on a first visit).
+const TODAY_READS = ['/api/nova/tasks', '/api/nova/day', '/api/nova/recovery'] as const
+
 export default function HomePage() {
+  useState(() => startEarly(TODAY_READS))
   const [minutes, setMinutes] = useState<number | null>(null)
   // The subject the learner chose for today, if any: the plan is that subject's.
   const [subject, setSubject] = useTodayFocus()

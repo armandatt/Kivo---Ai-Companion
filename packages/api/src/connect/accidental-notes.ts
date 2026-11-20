@@ -11,7 +11,7 @@
 // made, [[links]] in or out, filing, images, the page already in Saved Pages.
 
 import { prisma } from "@repo/db/client";
-import { getNote } from "../nova/product/notes";
+import { getNote, noteStamps } from "../nova/product/notes";
 import { findSavedPage } from "../nova/product/learning-events";
 
 const URL_RE = /https?:\/\/[^\s)\]>"']+/g;
@@ -49,12 +49,12 @@ export async function reviewAccidentalPageNotes(userId: string, opts: { client?:
     const urls = [...new Set(n.body.match(URL_RE) ?? [])];
     const rest = n.body.replace(URL_RE, "").replace(/[#>*_`\-\[\]()|:]/g, " ").replace(/\s+/g, " ").trim();
     if (!(urls.length > 0 && urls.length <= 4 && rest.length <= 400)) continue; // real writing: the learner's material
-    const raw = await prisma.novaNote.findUnique({ where: { id: n.id }, select: { createdAt: true, updatedAt: true, _count: { select: { images: true } } } });
+    const raw = await noteStamps(profileId, n.id);
     const editedAfterCreation = raw ? raw.updatedAt.getTime() - raw.createdAt.getTime() > 60_000 : false;
     const saved = await Promise.all(urls.map(u => findSavedPage(profileId, u)));
     const relationships = {
       filedUnder: n.subjectName ? `${n.subjectName}${n.topicName ? ` › ${n.topicName}` : ""}` : null,
-      outgoingLinks: n.links.outgoing.map(l => l.title), backlinks: n.links.backlinks.map(l => l.title), images: raw?._count.images ?? 0,
+      outgoingLinks: n.links.outgoing.map(l => l.title), backlinks: n.links.backlinks.map(l => l.title), images: raw?.images ?? 0,
     };
     const touched = editedAfterCreation || relationships.backlinks.length > 0 || relationships.outgoingLinks.length > 0 || relationships.images > 0;
     candidates.push({

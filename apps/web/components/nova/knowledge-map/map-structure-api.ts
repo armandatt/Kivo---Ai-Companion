@@ -37,10 +37,10 @@ export async function loadStructure(): Promise<Outcome<StudyStructure>> {
   } catch { return { ok: false, message: OFFLINE } }
 }
 
-async function studyBatch(version: string, edits: StudyEdit[]): Promise<Outcome<StudyStructure>> {
+async function studyBatch(version: string, edits: StudyEdit[], kept?: { trashId: string | null }): Promise<Outcome<StudyStructure>> {
   try {
     const { json } = await call<StudyEditResponse>('/api/nova/subjects', 'POST', { version, edits })
-    if (json?.ok) return { ok: true, value: json.structure, said: json.applied }
+    if (json?.ok) { if (kept) kept.trashId = json.trashId ?? null; return { ok: true, value: json.structure, said: json.applied } }
     if (json && json.error === 'stale') return { ok: false, stale: true, message: 'Your subjects changed somewhere else after the map loaded. Nothing was changed. The map has been reloaded: look again and try once more.' }
     return { ok: false, message: json?.issues?.[0]?.message ?? json?.message ?? 'Nothing was changed. Try again.' }
   } catch { return { ok: false, message: OFFLINE } }
@@ -72,11 +72,13 @@ export async function describeTopic(structure: StudyStructure, topicId: string, 
 
 // A deletion, against the structure the learner saw when they confirmed it:
 // if it changed meanwhile, nothing is deleted and they look again.
-export async function sendDelete(req: DeleteRequest, structure: StudyStructure | null): Promise<Outcome> {
+// trashId: the Recently deleted item it went into (topics and subjects), for Undo.
+export async function sendDelete(req: DeleteRequest, structure: StudyStructure | null): Promise<Outcome<{ trashId: string | null }>> {
   if (req.route === 'study') {
     if (!structure) return { ok: false, message: 'Nothing was changed. Try again.' }
-    const done = await studyBatch(structure.version, req.edits)
-    return done.ok ? { ok: true, value: undefined, said: done.said } : done
+    const kept = { trashId: null as string | null }
+    const done = await studyBatch(structure.version, req.edits, kept)
+    return done.ok ? { ok: true, value: kept, said: done.said } : done
   }
   try {
     // Steps kept first, so a failure part way leaves every step in place.
@@ -85,8 +87,8 @@ export async function sendDelete(req: DeleteRequest, structure: StudyStructure |
       if (!json?.ok) return { ok: false, message: `A step couldn’t be kept${json && !json.ok ? `: ${json.message}` : ''}. The task was not deleted.` }
     }
     const { status, json } = await call<{ ok: boolean; message?: string }>(`/api/nova/tasks/${encodeURIComponent(req.remove)}`, 'DELETE')
-    if (json?.ok) return { ok: true, value: undefined, said: ['Deleted.'] }
-    if (status === 404) return { ok: true, value: undefined, said: ['It was already gone.'] }
+    if (json?.ok) return { ok: true, value: { trashId: null }, said: ['Deleted.'] }
+    if (status === 404) return { ok: true, value: { trashId: null }, said: ['It was already gone.'] }
     return { ok: false, message: json?.message ?? 'The task wasn’t deleted. Try again.' }
   } catch { return { ok: false, message: OFFLINE } }
 }
@@ -184,9 +186,27 @@ export async function previewMapDelete(target: MapDeleteTarget, mode: MapDeleteM
   } catch { return { ok: false, message: OFFLINE } }
 }
 
-export async function sendMapDelete(target: MapDeleteTarget, fingerprint: string, mode: MapDeleteMode = 'delete'): Promise<Outcome<MapDeleteScope>> {
+export async function sendMapDelete(target: MapDeleteTarget, fingerprint: string, mode: MapDeleteMode = 'delete'): Promise<Outcome<MapDeleteScope & { trashId: string | null }>> {
   try {
-    const { json } = await call<{ ok: boolean; scope?: MapDeleteScope; message?: string; error?: string }>('/api/nova/knowledge-map/delete', 'POST', { ...target, action: 'delete', fingerprint, mode })
-    return json?.ok && json.scope ? { ok: true, value: json.scope, said: [] } : { ok: false, message: json?.message ?? 'Nothing was deleted. Try again.', stale: json?.error === 'changed' }
+    const { json } = await call<{ ok: boolean; scope?: MapDeleteScope; trashId?: string | null; message?: string; error?: string }>('/api/nova/knowledge-map/delete', 'POST', { ...target, action: 'delete', fingerprint, mode })
+    return json?.ok && json.scope ? { ok: true, value: { ...json.scope, trashId: json.trashId ?? null }, said: [] } : { ok: false, message: json?.message ?? 'Nothing was deleted. Try again.', stale: json?.error === 'changed' }
   } catch { return { ok: false, message: `${OFFLINE} Nothing was deleted.` } }
+}
+
+// Recently deleted, one item back (POST /api/nova/knowledge-map/trash): the
+// Undo after a delete, and the list's Restore. Said as the server answered.
+export async function restoreDeleted(trashId: string): Promise<Outcome<{ title: string; renamed: string[]; left: string[] }>> {
+  try {
+    const { json } = await call<{ ok: boolean; title?: string; renamed?: string[]; left?: string[]; message?: string }>('/api/nova/knowledge-map/trash', 'POST', { restore: trashId })
+    if (!json?.ok) return { ok: false, message: json?.message ?? 'Nothing was restored. Try again.' }
+    const value = { title: json.title ?? '', renamed: json.renamed ?? [], left: json.left ?? [] }
+    return { ok: true, value, said: [restoredSentence(value)] }
+  } catch { return { ok: false, message: `${OFFLINE} Nothing was restored.` } }
+}
+
+export function restoredSentence(r: { title: string; renamed: string[]; left: string[] }): string {
+  const parts = [`Restored “${r.title}”.`]
+  if (r.renamed.length) parts.push(`A name was taken since, so it came back as “${r.renamed[0]}”${r.renamed.length > 1 ? ` (and ${r.renamed.length - 1} more renamed)` : ''}.`)
+  if (r.left.length) parts.push(`${r.left.length === 1 ? `“${r.left[0]}”` : `${r.left.length} topics`} couldn’t come back: ${r.left.length === 1 ? 'its' : 'their'} subject was deleted since.`)
+  return parts.join(' ')
 }

@@ -160,6 +160,11 @@ export interface NovaProgressReady {
   // What the learner told Nova they are working toward, in their words.
   // Nova does not track completion of these, so none is shown.
   goals:       string[];
+  // K-23: what they said they are working on when they joined (onboarding,
+  // in Kivo's words or their own), shown when no goal is written, so the page
+  // never says nothing is on record when something is. Not a goal: nothing
+  // is copied into goals. Absent on an older server.
+  workingOn?:  string[];
   // The next exam on record. null: none upcoming.
   nextExam:    { title: string; subjectName: string | null; date: string; daysUntil: number } | null;
   // From Learning DNA, and only once it has enough sessions behind it.

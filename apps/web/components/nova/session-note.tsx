@@ -60,7 +60,7 @@ export function SessionNote({ sessionId }: { sessionId: string }) {
   return (
     <form onSubmit={save} aria-labelledby="session-note-heading" className="mx-auto mt-10 max-w-md rounded-2xl border border-white/8 bg-card/50 p-5 text-left" data-section="session-note">
       <h2 id="session-note-heading" className="text-sm font-medium text-foreground">Leave yourself a note <span className="font-normal text-foreground/45">(optional)</span></h2>
-      <p className="mt-1 text-xs leading-relaxed text-foreground/50">For you, next time. It doesn&apos;t change what Nova has on record for this topic.</p>
+      <p className="mt-1 text-xs leading-relaxed text-foreground/50">For you, next time. It doesn&apos;t change anything Nova has on record.</p>
       <div className="mt-4 space-y-3">
         {QUESTIONS.map(q => (
           <div key={q.key}>

@@ -561,11 +561,20 @@ export async function noteFilingIn(tx: Pick<typeof prisma, "novaNote">, profileI
 
 // Filed back where they were when their subject comes back: only those still
 // filed under nothing, so a choice made since is kept.
-export async function refileNotesIn(tx: Pick<typeof prisma, "novaNote">, profileId: string, filings: Array<{ id: string; subjectId: string; topicName: string | null }>): Promise<void> {
-  for (const f of filings) await tx.novaNote.updateMany({ where: { id: f.id, profileId, subjectId: null }, data: { subjectId: f.subjectId, topicName: f.topicName } });
+export async function refileNotesIn(tx: Pick<typeof prisma, "novaNote">, profileId: string, filings: Array<{ id: string; subjectId: string; topicName: string | null }>, left: "unfiled" | "under_subject" = "unfiled"): Promise<void> {
+  // left: where the delete left it. A subject's delete unfiled it; a topic's
+  // left it under the subject with no topic (K-02). Only one still there moves.
+  for (const f of filings) await tx.novaNote.updateMany({ where: { id: f.id, profileId, ...(left === "unfiled" ? { subjectId: null } : { subjectId: f.subjectId, topicName: null }) }, data: { subjectId: f.subjectId, topicName: f.topicName } });
 }
 
 // ── For Kivo Connect (packages/api/src/connect) ──────────────────────────────
+// When a note of theirs was made and last changed, and how many images it
+// holds (connect/accidental-notes.ts, read only). null: not theirs.
+export async function noteStamps(profileId: string, id: string): Promise<{ createdAt: Date; updatedAt: Date; images: number } | null> {
+  const row = await prisma.novaNote.findFirst({ where: { id, profileId }, select: { createdAt: true, updatedAt: true, _count: { select: { images: true } } } });
+  return row ? { createdAt: row.createdAt, updatedAt: row.updatedAt, images: row._count.images } : null;
+}
+
 // The learner's notes matching any of these words in the title or text
 // (case-insensitive substring, as listNotes; no ranking here), newest first,
 // with the text cut to `bodyMax`. How an assistant searches and compares

@@ -162,21 +162,37 @@ function render(blocks: Block[], key: string, resolve: Resolve, nested = false):
     switch (b.kind) {
       case 'para': return <p key={k} className={`my-3 ${edge}`} {...span}>{lines(b.lines, k, resolve)}</p>
       case 'list': {
-        // A list whose items are all "[ ]" / "[x]" is a checklist: boxes, the
-        // done ones quieter. Tickable where the page passes onToggleCheck
-        // (the note's own reader and preview): the tick changes that item's
-        // "[ ]" in the text, which is still the record.
+        // A list with "[ ]" / "[x]" items is a checklist: those items get
+        // boxes, the done ones quieter; any ordinary item in the same list
+        // stays a bullet (K-13: a list mixing the two showed the raw "[ ]"
+        // and could not be ticked). Tickable where the page passes
+        // onToggleCheck (the note's own reader and preview): the tick changes
+        // that item's "[ ]" in the text, which is still the record. The box's
+        // number counts check items only, as toggleChecklistItem does.
         const checks = b.items.map(checkItem)
-        if (!b.ordered && checks.every(Boolean)) return (
-          <ul key={k} className={`my-3 space-y-1 ${edge}`} {...span} data-note-checklist>
-            {checks.map((c, j) => (
-              <li key={`${k}-${j}`} className={`flex items-start gap-2.5 ${c!.done ? 'text-[color:var(--note-soft)] line-through decoration-[color:var(--note-rule)]' : ''}`} data-checked={c!.done ? 'true' : 'false'}>
-                <CheckBox done={c!.done} at={b.at} to={b.to} index={j} />
-                <span className="min-w-0"><span className="sr-only">{c!.done ? 'Done: ' : 'To do: '}</span>{line(c!.text, `${k}-${j}`, resolve)}</span>
-              </li>
-            ))}
-          </ul>
-        )
+        if (!b.ordered && checks.some(Boolean)) {
+          let n = 0
+          return (
+            <ul key={k} className={`my-3 space-y-1 ${edge}`} {...span} data-note-checklist>
+              {b.items.map((it, j) => {
+                const c = checks[j]
+                if (!c) return (
+                  <li key={`${k}-${j}`} className="flex items-start gap-2.5" data-note-plain-item>
+                    <span aria-hidden className="mt-[0.62em] size-[0.32em] shrink-0 rounded-full bg-[color:var(--note-soft)] mx-[0.36em]" />
+                    <span className="min-w-0">{line(it, `${k}-${j}`, resolve)}</span>
+                  </li>
+                )
+                const index = n++
+                return (
+                  <li key={`${k}-${j}`} className={`flex items-start gap-2.5 ${c.done ? 'text-[color:var(--note-soft)] line-through decoration-[color:var(--note-rule)]' : ''}`} data-checked={c.done ? 'true' : 'false'}>
+                    <CheckBox done={c.done} at={b.at} to={b.to} index={index} />
+                    <span className="min-w-0"><span className="sr-only">{c.done ? 'Done: ' : 'To do: '}</span>{line(c.text, `${k}-${j}`, resolve)}</span>
+                  </li>
+                )
+              })}
+            </ul>
+          )
+        }
         const items = b.items.map((it, j) => <li key={`${k}-${j}`} className="my-1 pl-1.5">{line(it, `${k}-${j}`, resolve)}</li>)
         return b.ordered
           ? <ol key={k} className={`my-3 list-decimal space-y-1 pl-6 ${edge}`} {...span}>{items}</ol>

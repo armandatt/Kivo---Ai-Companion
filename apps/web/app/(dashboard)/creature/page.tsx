@@ -17,6 +17,27 @@ const MOCK_TOTAL_DAYS   = 180
 const MOCK_LEVEL        = 12
 const MOCK_WORLD_HEALTH = 85
 const INTRO_KEY         = 'kivo_intro_v3'
+// When the page says the server is slow, and when it stops waiting.
+const SLOW_AFTER_MS     = 6_000
+const GIVE_UP_AFTER_MS  = 30_000
+const ENGINE_SLOW_MS    = 8_000
+
+// What the page shows before the world is drawn: never a blank screen. The
+// step is what is actually happening; slow adds why it may take longer.
+function WorldLoading({ step, slow, failed, onRetry }: { step: string; slow?: boolean; failed?: string | null; onRetry?: () => void }) {
+  return (
+    <div className="fixed inset-0 z-99 flex items-center justify-center bg-black p-6" role={failed ? 'alert' : 'status'} aria-busy={!failed} data-creature-loading>
+      <div className="max-w-sm text-center">
+        {!failed && <div aria-hidden className="mx-auto mb-5 size-10 animate-spin rounded-full border-2 border-lime-300/20 border-t-lime-300/80 motion-reduce:animate-none" />}
+        <p className="text-sm font-medium text-white/85">{failed ?? step}</p>
+        {slow && !failed && <p className="mt-2 text-xs leading-relaxed text-white/50">This is taking longer than usual. The first visit of the day can be slower while the server wakes up.</p>}
+        {failed && onRetry && (
+          <button type="button" onClick={onRetry} className="mt-5 inline-flex h-10 items-center justify-center rounded-xl border border-white/15 px-5 text-sm font-medium text-white/85 transition-colors hover:bg-white/5">Try again</button>
+        )}
+      </div>
+    </div>
+  )
+}
 
 // The numbers the world is drawn from.
 type World = { seed: string; streak: number; totalDays: number; level: number; health: number }
@@ -49,13 +70,20 @@ export default function CreaturePage() {
   // once from these numbers, so nothing mounts before they are known.
   const [world, setWorld]   = useState<World | null>(null)
   const [failed, setFailed] = useState(false)
+  const [slow, setSlow]     = useState(false)
 
+  // K-17: the page says what it is doing from the first frame, says so when
+  // the server is slow, and gives up with Try again instead of waiting forever.
   const load = useCallback(() => {
-    setFailed(false)
-    fetch('/api/nova/creature', { cache: 'no-store' })
+    setFailed(false); setSlow(false)
+    const abort = new AbortController()
+    const slowTimer = window.setTimeout(() => setSlow(true), SLOW_AFTER_MS)
+    const deadline = window.setTimeout(() => abort.abort(), GIVE_UP_AFTER_MS)
+    fetch('/api/nova/creature', { cache: 'no-store', signal: abort.signal })
       .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json() })
       .then((view: NovaCreatureView) => setWorld(worldFrom(view)))
       .catch(() => setFailed(true))
+      .finally(() => { window.clearTimeout(slowTimer); window.clearTimeout(deadline) })
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -78,7 +106,7 @@ export default function CreaturePage() {
       </div>
     )
   }
-  if (!world) return <div className="h-screen w-full bg-black" aria-busy="true" />
+  if (!world) return <WorldLoading step="Reading your study record…" slow={slow} />
   return <CreatureWorld world={world} />
 }
 
@@ -95,6 +123,15 @@ function CreatureWorld({ world }: { world: World }) {
   const [hudVisible, setHudVisible]   = useState(false)
   const [activity, setActivity]       = useState('...')
   const [creatureName, setCreatureName] = useState<string>('')
+  // The 3D world: drawing until the engine says it is ready; failed when the
+  // device can't draw it (no WebGL), said instead of a black screen.
+  const [engine, setEngine] = useState<'building' | 'ready' | 'failed'>('building')
+  const [engineSlow, setEngineSlow] = useState(false)
+  useEffect(() => {
+    if (engine !== 'building') return
+    const t = window.setTimeout(() => setEngineSlow(true), ENGINE_SLOW_MS)
+    return () => window.clearTimeout(t)
+  }, [engine])
   const [timeOverride, setTimeOverride] = useState<number | null>(null)
 
   const engineApiRef = useRef<EngineApi | null>(null)
@@ -131,6 +168,9 @@ function CreatureWorld({ world }: { world: World }) {
       .then(r => r.json())
       .then(d => setCreatureName(d.creatureName || 'Kivo'))
       .catch(() => setCreatureName('Kivo'))
+    // The name never holds the world back: a slow answer falls back to Kivo.
+    const fallback = window.setTimeout(() => setCreatureName(n => n || 'Kivo'), 4000)
+    return () => window.clearTimeout(fallback)
   }, [])
 
   // Replace hardcoded "Kivo" in activity text with the user's chosen name
@@ -186,7 +226,9 @@ function CreatureWorld({ world }: { world: World }) {
   const handleEngineReady = useCallback((api: EngineApi) => {
     engineApiRef.current = api
     setIntroReady(true)
+    setEngine('ready')
   }, [])
+  const handleEngineError = useCallback(() => setEngine('failed'), [])
 
   const handleReveal = useCallback(() => {
     engineApiRef.current?.startIntroReveal()
@@ -210,6 +252,7 @@ function CreatureWorld({ world }: { world: World }) {
         currentTime={displayTime}
         cameraYaw={cameraYaw}
         onEngineReady={handleEngineReady}
+        onEngineError={handleEngineError}
         onActivityChange={setActivity}
         allowedPlaces={openIds}
         onPlaceChange={onArrive}
@@ -221,6 +264,7 @@ function CreatureWorld({ world }: { world: World }) {
       {/* HUD */}
       {hudVisible && (
         <GameHUD
+          name={creatureName || 'Kivo'}
           playerLevel={world.level}
           currentStreak={world.streak}
           worldHealth={world.health}
@@ -310,19 +354,14 @@ function CreatureWorld({ world }: { world: World }) {
         />
       )}
 
-      {/* Loading state while babylon initialises / name fetches before intro starts */}
-      {showIntro && (!introReady || !creatureName) && (
-        <div className="fixed inset-0 z-99 bg-black flex items-center justify-center">
-          {creatureName && (
-            <p style={{
-              fontSize: 'clamp(2rem,5vw,4.5rem)', fontWeight: 900,
-              color: '#bfff00', opacity: 0.25, letterSpacing: '0.06em',
-              fontFamily: 'system-ui, sans-serif', maxWidth: '90vw', overflow: 'hidden',
-            }}>
-              {creatureName.toUpperCase()}
-            </p>
-          )}
-        </div>
+      {/* Before the world is drawn (first visit or not): what is happening,
+          never a blank screen; a device that can't draw it is told so. */}
+      {(engine !== 'ready' || (showIntro && !creatureName)) && (
+        <WorldLoading
+          step={engine === 'building' ? 'Building your world…' : `Meeting ${creatureName || 'your companion'}…`}
+          slow={engineSlow}
+          failed={engine === 'failed' ? 'Your world couldn’t be drawn on this device: its browser has 3D graphics (WebGL) turned off or unavailable. Your progress is safe.' : null}
+          onRetry={engine === 'failed' ? () => window.location.reload() : undefined} />
       )}
     </div>
   )

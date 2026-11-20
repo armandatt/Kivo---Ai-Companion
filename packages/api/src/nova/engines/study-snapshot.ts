@@ -8,6 +8,7 @@ import { prisma } from "@repo/db/client";
 import { learnerKey } from "../product/learner-key";
 import type { AcademicStateSnapshot } from "../types/academic-state.types";
 import { pausedSecondsOf } from "./session-clock";
+import { dateDayKey, dayKey, resolveTimezone } from "./learner-calendar";
 
 export interface ActiveSessionInfo {
   id:                     string;
@@ -154,13 +155,17 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
           orderBy: { sessionDate: "desc" },
         },
         exams: {
-          where: { scheduledAt: { gte: now } },
+          // A date is a day (stored at noon UTC, older rows at midnight): one
+          // dated today stays upcoming all of the learner's today, as on the
+          // Calendar (K-21: it left Today's Deadlines at noon UTC). Read from
+          // two days back and kept by the learner's day, below.
+          where: { scheduledAt: { gte: new Date(now.getTime() - 2 * 86_400_000) } },
           select: {
             id: true, title: true, examType: true, scheduledAt: true,
             subjectId: true, subject: { select: { name: true } },
           },
           orderBy: { scheduledAt: "asc" },
-          take: 5,
+          take: 12,
         },
         cognitiveState: {
           select: {
@@ -281,7 +286,7 @@ export async function loadStudySnapshot(platformChatId: string): Promise<StudySn
       subjectName:     p.subjects.find(x => x.id === s.subjectId)?.name ?? null,
       activityType:    s.activityType,
     })),
-    upcomingExams: p.exams.map(e => ({
+    upcomingExams: p.exams.filter(e => dateDayKey(e.scheduledAt, p.timezone) >= dayKey(now, resolveTimezone(p.timezone))).slice(0, 8).map(e => ({
       id:          e.id,
       title:       e.title,
       examType:    e.examType,

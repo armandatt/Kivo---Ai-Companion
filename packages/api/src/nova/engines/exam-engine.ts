@@ -19,12 +19,18 @@ function classifyRisk(
   topics:   TopicMasteryState[],
   daysLeft: number,
 ): ExamContext["riskMatrix"] {
-  const critical: string[] = [];
-  const risky:    string[] = [];
-  const safe:     string[] = [];
+  const critical:  string[] = [];
+  const unstudied: string[] = [];
+  const risky:     string[] = [];
+  const safe:      string[] = [];
 
   for (const t of topics) {
-    if (t.masteryProbability < 0.4) {
+    // A topic never studied has no evidence of being weak (K-12): it is its
+    // own group, said as "not studied yet". The Knowledge Engine's rule
+    // (masteryLevel: reviewCount 0 is unverified) is the same one.
+    if (t.reviewCount === 0) {
+      unstudied.push(t.topicName);
+    } else if (t.masteryProbability < 0.4) {
       critical.push(t.topicName);
     } else if (t.masteryProbability < 0.7) {
       risky.push(t.topicName);
@@ -33,7 +39,7 @@ function classifyRisk(
     }
   }
 
-  return { critical, risky, safe };
+  return { critical, unstudied, risky, safe };
 }
 
 // ── Topic weights (uniform until user provides weights) ───────────────────────
@@ -62,11 +68,12 @@ function computePrimaryFocus(
   topicWeights:  Record<string, number>,
   topics:        TopicMasteryState[],
 ): string {
-  if (riskMatrix.critical.length > 0) {
-    // Pick the highest-weight critical topic
-    return riskMatrix.critical.sort((a, b) =>
-      (topicWeights[b] ?? 0) - (topicWeights[a] ?? 0),
-    )[0] ?? riskMatrix.critical[0]!;
+  // Where to start is unchanged by the split above: a topic not yet solid
+  // and low (weak, or not studied at all), in the order the topics are kept,
+  // highest weight first.
+  const low = topics.filter(t => t.masteryProbability < 0.4).map(t => t.topicName);
+  if (low.length > 0) {
+    return [...low].sort((a, b) => (topicWeights[b] ?? 0) - (topicWeights[a] ?? 0))[0] ?? low[0]!;
   }
   if (riskMatrix.risky.length > 0) {
     return riskMatrix.risky[0]!;

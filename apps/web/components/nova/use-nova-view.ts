@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { readGet } from '@/lib/early-read'
 
 const REFRESH_MS = 60_000
 
@@ -17,7 +18,7 @@ export function useNovaView<T>(url: string) {
     const request = ++latest.current
     setRefreshing(true)
     try {
-      const res = await fetch(url, { cache: 'no-store' })
+      const res = await readGet(url)
       if (res.status === 401) { window.location.href = '/signin'; return }
       if (!res.ok) throw new Error(String(res.status))
       const json = await res.json() as T

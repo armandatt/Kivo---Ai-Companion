@@ -163,7 +163,10 @@ async function examsOf(profile: { id: string; timezone: string | null }, now: Da
     select:  { id: true, title: true, examType: true, scheduledAt: true, subject: { select: { name: true } } },
   });
   return rows
-    .map(e => ({ id: e.id, title: e.title, type: deadlineType(e.examType), subjectName: e.subject?.name ?? null, date: isoDayOf(e.scheduledAt),
+    .map(e => ({ id: e.id, title: e.title, type: deadlineType(e.examType), subjectName: e.subject?.name ?? null,
+      // The learner's day, by the one rule every surface uses (K-21: the
+      // Calendar and Today's Deadlines must agree on which day a date is).
+      date: dateDayKey(e.scheduledAt, profile.timezone),
       daysUntil: calendarDaysUntil(e.scheduledAt, now, profile.timezone) }))
     .filter(e => e.date >= today);
 }

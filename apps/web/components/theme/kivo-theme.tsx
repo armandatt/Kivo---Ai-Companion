@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useSyncExternalStore } from 'react'
 import { Monitor, Moon, Sun } from 'lucide-react'
 
 // The app's theme: light, dark, or whatever the device is set to. The choice
@@ -26,24 +26,42 @@ function stored(): ThemeChoice {
 // a choice already made, dark included, is kept.
 export const THEME_SCRIPT = `(function(){try{var c=localStorage.getItem('${THEME_KEY}');var t=c==='light'||c==='dark'?c:c==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):'light';document.documentElement.dataset.kivoTheme=t}catch(e){document.documentElement.dataset.kivoTheme='light'}})()`
 
-export function useKivoTheme() {
-  const [choice, setChoice] = useState<ThemeChoice>('light')
+// One choice for the whole app (K-08): every picker (the sidebar's, Settings')
+// reads the same store, so they never disagree; a change in another tab
+// (the storage event) is followed here too, and applied to this page.
+const CHANGED = 'kivo-theme-change'
+function subscribe(onChange: () => void): () => void {
+  const onStorage = (e: StorageEvent) => { if (e.key === THEME_KEY || e.key === null) { document.documentElement.dataset.kivoTheme = resolve(stored()); onChange() } }
+  window.addEventListener(CHANGED, onChange)
+  window.addEventListener('storage', onStorage)
+  return () => { window.removeEventListener(CHANGED, onChange); window.removeEventListener('storage', onStorage) }
+}
+let memory: ThemeChoice | null = null   // when storage is refused (private mode)
+const current = (): ThemeChoice => memory ?? stored()
 
-  useEffect(() => { setChoice(stored()) }, [])
+export function useKivoTheme() {
+  // The server draws the default; the browser's stored choice replaces it on hydration.
+  const choice = useSyncExternalStore(subscribe, current, () => 'light' as ThemeChoice)
+
+  // The stored choice is put on the page whenever a picker mounts: the
+  // layout's script runs only on a full load, not when arriving from another
+  // part of the app by a client-side navigation (K-08: the theme changed on reload).
+  useEffect(() => { document.documentElement.dataset.kivoTheme = resolve(current()) }, [])
 
   // Following the device: change when it does.
   useEffect(() => {
     if (choice !== 'system') return
     const media = window.matchMedia('(prefers-color-scheme: light)')
     const apply = () => { document.documentElement.dataset.kivoTheme = resolve('system') }
+    apply()
     media.addEventListener('change', apply)
     return () => media.removeEventListener('change', apply)
   }, [choice])
 
   const choose = useCallback((next: ThemeChoice) => {
-    setChoice(next)
-    try { window.localStorage.setItem(THEME_KEY, next) } catch { /* private mode: the choice lasts for this visit */ }
+    try { window.localStorage.setItem(THEME_KEY, next); memory = null } catch { memory = next /* private mode: the choice lasts for this visit */ }
     document.documentElement.dataset.kivoTheme = resolve(next)
+    window.dispatchEvent(new Event(CHANGED))
   }, [])
 
   return { choice, choose }
