@@ -214,3 +214,90 @@ test("what stays after a subject is deleted is filed under nothing, topic name i
   const backPage = await prisma.novaLearningEvent.findUnique({ where: { id: page.id }, select: { subjectId: true, topicName: true } });
   assert.deepEqual([backPage!.subjectId, backPage!.topicName], [m.tf.id, "Positional encoding"]);
 });
+
+// ── Phase 1 (20 Nov): clearing a map, and maps that are not workspaces ───────
+
+test("clearing a subject's map keeps the subject, empty; what stays is unfiled; Recently deleted puts it all back", async () => {
+  const m = await twoMaps();
+  const scope = await previewMapDeletion(m.id, m.profileId, { subjectId: m.tf.id }, "clear");
+  assert.ok(scope, "a preview");
+  assert.deepEqual(scope!.clears, [m.tf.id], "the subject itself stays");
+  assert.deepEqual(scope!.removes.subjects.map(s => s.name), ["Attention"], "the subject inside it goes");
+  assert.deepEqual(scope!.removes.topics.map(t => t.name).sort(), ["Multi-head", "Scaled dot product", "Self-attention"]);
+  // A delete's preview of the same map is a different scope (its fingerprint differs).
+  const asDelete = await previewMapDeletion(m.id, m.profileId, { subjectId: m.tf.id });
+  assert.notEqual(asDelete!.fingerprint, scope!.fingerprint);
+  // The delete's fingerprint does not clear, and the clear's does not delete.
+  assert.equal((await deleteMap(m.id, m.profileId, { subjectId: m.tf.id }, asDelete!.fingerprint, new Date(), "clear")).ok, false);
+
+  const out = await deleteMap(m.id, m.profileId, { subjectId: m.tf.id }, scope!.fingerprint, new Date(), "clear");
+  assert.ok(out.ok, JSON.stringify(out));
+  assert.equal(await prisma.novaSubject.count({ where: { id: m.tf.id } }), 1, "the map stays");
+  assert.equal(await prisma.novaSubject.count({ where: { id: m.inner.id } }), 0);
+  assert.equal(await prisma.novaTopicMastery.count({ where: { subjectId: m.tf.id } }), 0, "emptied");
+  assert.equal(await prisma.novaWorkspace.count({ where: { id: m.ws.id } }), 1, "its workspace record stays");
+  assert.equal(await prisma.novaTopicMastery.count({ where: { subjectId: m.fin.id } }), 1, "another map untouched");
+  const note = await getNote(m.profileId, m.noteId);
+  assert.equal(note!.body, "Mine.");
+  assert.equal(note!.subjectId, null, "the note stays, unfiled");
+  assert.equal(note!.topicName, null, "no topic name left behind");
+
+  const item = (await listDeletedKnowledge(m.profileId)).find(t => t.title === "Transformers (cleared)");
+  assert.ok(item, "in Recently deleted, marked as a clear");
+  const back = await restoreKnowledge(m.profileId, item!.id);
+  assert.ok(back.ok, JSON.stringify(back));
+  assert.equal(await prisma.novaTopicMastery.count({ where: { subjectId: m.tf.id } }), 2, "its topics are back in it");
+  assert.equal(await prisma.novaSubject.count({ where: { id: m.inner.id } }), 1, "the subject inside it is back");
+  const refiled = await getNote(m.profileId, m.noteId);
+  assert.equal(refiled!.subjectId, m.tf.id, "the note is filed back");
+  assert.equal(refiled!.topicName, "Self-attention");
+});
+
+test("clearing a workspace's map keeps its record and its subjects, empty", async () => {
+  const m = await twoMaps();
+  const scope = await previewMapDeletion(m.id, m.profileId, { workspaceId: m.ws.id }, "clear");
+  assert.deepEqual(scope!.clears, [m.tf.id]);
+  const out = await deleteMap(m.id, m.profileId, { workspaceId: m.ws.id }, scope!.fingerprint, new Date(), "clear");
+  assert.ok(out.ok, JSON.stringify(out));
+  assert.equal(await prisma.novaWorkspace.count({ where: { id: m.ws.id } }), 1, "the workspace stays");
+  assert.equal(await prisma.novaSubject.count({ where: { id: m.tf.id } }), 1);
+  assert.equal(await prisma.novaTopicMastery.count({ where: { subjectId: { in: [m.tf.id, m.inner.id] } } }), 0);
+  const view = await loadNovaKnowledgeMap(m.id, { workspace: m.ws.id });
+  assert.equal(view.status, "ready");
+  if (view.status !== "ready") return;
+  assert.deepEqual(view.nodes.map(n => n.label), ["Transformers"], "the map opens, with only its subject");
+});
+
+test("a subject an assistant made (Kivo Connect's build_knowledge_map) is a map of its own: listed, opened by name, alone, and still there after a reload", async () => {
+  const m = await twoMaps();
+  const { applyChanges } = await import("../../connect/changes.js");
+  // Exactly what build_knowledge_map writes: a subject and its topics, through Subject Studio. No workspace record.
+  const made = await applyChanges(m.profileId, [{ op: "add_subject", name: "AI Roadmap", topics: ["Python", "Linear algebra"] }]);
+  assert.equal(made.status, "completed", JSON.stringify(made));
+  const sid = made.items[0]!.resource!.id;
+  const workspacesBefore = await prisma.novaWorkspace.count({ where: { profileId: m.profileId } });
+
+  const all = await loadNovaKnowledgeMap(m.id, { workspace: "all" });
+  assert.equal(all.status, "ready");
+  if (all.status !== "ready") return;
+  const listed = all.workspaces!.find(w => w.id === `subject:${sid}`);
+  assert.deepEqual(listed, { id: `subject:${sid}`, title: "AI Roadmap", kind: "subject" }, "listed among the maps");
+  assert.ok(!all.workspaces!.some(w => w.id === `subject:${m.tf.id}`), "a subject that belongs to a workspace is not listed twice");
+  assert.ok(all.workspaces!.some(w => w.id === m.ws.id && w.kind === "workspace"));
+
+  for (let reload = 0; reload < 2; reload++) {
+    const one = await loadNovaKnowledgeMap(m.id, { workspace: `subject:${sid}` });
+    assert.equal(one.status, "ready");
+    if (one.status !== "ready") return;
+    assert.equal(one.workspaceId, `subject:${sid}`, "opened by its own id");
+    assert.deepEqual(one.nodes.map(n => n.label).sort(), ["AI Roadmap", "Linear algebra", "Python"], "only its own cards");
+    const subj = one.nodes.find(n => n.type === "subject");
+    assert.equal(subj?.type === "subject" ? subj.studyTopics : null, 2);
+  }
+  assert.equal(await prisma.novaWorkspace.count({ where: { profileId: m.profileId } }), workspacesBefore, "no record was made to list it");
+
+  // Another learner's subject id opens nothing of theirs.
+  const other = await learner();
+  const theirs = await loadNovaKnowledgeMap(other.id, { workspace: `subject:${sid}` });
+  assert.equal(theirs.status === "ready" ? theirs.nodes.length : 0, 0);
+});

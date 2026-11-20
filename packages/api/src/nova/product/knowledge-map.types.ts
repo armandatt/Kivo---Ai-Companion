@@ -32,7 +32,11 @@ export interface MapTask { id: string; title: string; status: "todo" | "in_progr
 
 export type MapNode =
   // parentId: the subject it sits inside (a "contains" edge comes from it). Absent: on its own.
-  | (NodeBase & { type: "subject"; topics: number; notes: number; resources: number; tasks?: MapTask[]; parentId?: string })
+  // topics: every topic in it (groups and milestones included, as on Knowledge
+  // and Today); studyTopics: those that are studied (nothing inside them, not a
+  // milestone: topic-tree.ts studyTopicIds), which progress is counted over.
+  // Both are said with their own label (K-20). studyTopics absent on an older server.
+  | (NodeBase & { type: "subject"; topics: number; studyTopics?: number; notes: number; resources: number; tasks?: MapTask[]; parentId?: string })
   | (NodeBase & {
       type: "topic"; subjectName: string;
       // The topic of the same subject it sits inside (a "subtopic" edge comes
@@ -104,7 +108,11 @@ export interface MapSuggestion {
   basis: "name_in_title" | "name_in_selection" | "model";
 }
 
-export interface MapWorkspace { id: string; title: string }
+// A map the learner can open: a workspace (made from a template, with Nova,
+// or by Build with Nova), or a top-level subject that belongs to no workspace
+// (a subject made on its own, by setup, or by an assistant through Kivo
+// Connect), named "subject:<id>". kind absent on an older server: a workspace.
+export interface MapWorkspace { id: string; title: string; kind?: "workspace" | "subject" }
 
 export interface NovaKnowledgeMapReady {
   status: "ready";

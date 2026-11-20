@@ -43,7 +43,7 @@ export function summaryOf(n: MapNode, o: { tally?: StateTally; when: (iso: strin
   }
   if (n.type === 'subject') {
     const t = o.tally
-    const status: Status | null = t && t.topics ? { label: `${t.studied} of ${plural(t.topics, 'topic')} studied`, tone: 'plain', percent: Math.round((t.studied / t.topics) * 100) } : null
+    const status: Status | null = t && t.topics ? { label: `${t.studied} of ${plural(t.topics, 'study topic')} studied`, tone: 'plain', percent: Math.round((t.studied / t.topics) * 100) } : null
     const more: Array<[string, string]> = []
     if (t?.reviewDue) more.push(['Reviews due', String(t.reviewDue)])
     if (t && t.studied) more.push(['Solid · developing · weak', `${t.solid} · ${t.developing} · ${t.weak}`])

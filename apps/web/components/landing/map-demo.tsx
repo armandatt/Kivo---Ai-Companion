@@ -14,7 +14,8 @@ import { ChevronRight, Maximize2, Search, X } from 'lucide-react'
 import type { MapNode } from '@repo/api/nova/product/knowledge-map.types'
 import { CARD, TREE_EDGES, layoutMap, treeOf } from '@/components/nova/knowledge-map/layout'
 import { canExplore, insideOf, pathTo } from '@/components/nova/knowledge-map/explore'
-import { CardFace, LEVEL_TEXT, plural } from '@/components/nova/knowledge-map/card-face'
+import { CardGround, CardSurface, LEVEL_TEXT, MapDefs, plural } from '@/components/nova/knowledge-map/card-face'
+import { linkPath, treePath, TREE_STROKE } from '@/components/nova/knowledge-map/edge-path'
 import { toneStyle } from '@/components/nova/subject-color'
 import { cn } from '@/lib/utils'
 import { DEMO_EDGES, DEMO_NODES } from './demo-map-data'
@@ -145,28 +146,34 @@ export function MapDemo() {
         {/* The map */}
         {/* On a phone the map is the real map's outline layout, drawn at its
             width and scrolled, so the cards stay readable. */}
-        <div className={cn('relative min-h-0 flex-1', portrait && 'overflow-y-auto')} style={{ background: 'radial-gradient(70% 60% at 50% 40%, oklch(70.64% 0.1 179.4 / 0.06), transparent 70%)' }} data-map-demo-canvas>
+        {/* The map's own flat ground, as in the app (the canvas carries no tint; the colour is on the cards and lines). */}
+        <div className={cn('relative min-h-0 flex-1 bg-[var(--map-space-a)]', portrait && 'overflow-y-auto')} data-map-demo-canvas>
           <motion.svg className={portrait ? 'block h-auto w-full' : 'absolute inset-0 h-full w-full'} initial={false} animate={{ viewBox } as never} transition={{ duration: reduced ? 0 : 0.35, ease: [0.22, 1, 0.36, 1] }}
             viewBox={viewBox} preserveAspectRatio={portrait ? 'xMidYMin meet' : 'xMidYMid meet'} role="group" aria-label={focus ? `Inside ${byId.get(focus)?.label}` : 'The whole sample map'} data-map-demo-svg>
+            <MapDefs />
             <g>
               {edges.map((e, i) => {
                 const a = layout.at.get(e.from), b = layout.at.get(e.to)
                 if (!a || !b) return null
                 const lit = selected !== null && (e.from === selected || e.to === selected)
                 const dim = selected !== null && !lit
-                const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y
-                const lane = layout.lanes?.get(e.to)
-                const d = e.kind === 'links_to' ? `M ${a.x} ${a.y} Q ${mx - dy * 0.18} ${my + dx * 0.18} ${b.x} ${b.y}`
-                  : lane && lane.x === b.x && lane.y === b.y ? `M ${a.x} ${a.y} H ${lane.trunkX} V ${lane.laneY} H ${b.x} V ${b.y}`
-                  : `M ${a.x} ${a.y} L ${b.x} ${b.y}`
+                // The app's own lines (edge-path.ts): a subject's branches flow in its colour, with a soft fibre under them and a dot where they meet a card.
+                const link = e.kind === 'links_to'
+                const d = link ? linkPath(a, b) : treePath(a, b, layout.lanes?.get(e.to)).d
+                const to = byId.get(e.to)
+                const tone = to?.type === 'subject' ? to.label : to && 'subjectName' in to ? to.subjectName : null
+                const dir = Math.sign(b.x - a.x) || 1
+                const port = !link && to && Math.abs(b.x - a.x) > 60 ? { x: b.x - dir * (CARD[to.type].w / 2 + 2), y: b.y } : null
+                const draw = { initial: animate ? { pathLength: 0, opacity: 0 } : false, animate: inView ? { pathLength: 1, opacity: dim ? 0.25 : 1 } : undefined, transition: { duration: reduced ? 0 : 0.3, delay: reduced ? 0 : 0.05 + (i % 12) * 0.015 } } as const
                 return (
-                  <motion.path key={e.id} d={d} fill="none" data-edge={e.kind}
-                    stroke={lit ? 'var(--action)' : e.kind === 'links_to' ? 'var(--map-line-strong)' : 'var(--map-line)'}
-                    strokeWidth={lit ? 2.2 : e.kind === 'contains' ? 2 : e.kind === 'has_topic' || e.kind === 'subtopic' ? 1.5 : 1.1}
-                    strokeDasharray={e.kind === 'filed_under' ? '5 4' : undefined} strokeLinejoin="round" vectorEffect="non-scaling-stroke"
-                    initial={animate ? { pathLength: 0, opacity: 0 } : false}
-                    animate={inView ? { pathLength: 1, opacity: dim ? 0.25 : 1 } : undefined}
-                    transition={{ duration: reduced ? 0 : 0.3, delay: reduced ? 0 : 0.05 + (i % 12) * 0.015 }} />
+                  <g key={e.id} className="subject-tone" style={toneStyle(tone)}>
+                    {!link && !lit && <motion.path d={d} fill="none" stroke="var(--sc)" strokeWidth={7} strokeOpacity={0.13} {...draw} />}
+                    <motion.path d={d} fill="none" data-edge={e.kind}
+                      stroke={lit ? 'var(--action)' : link ? 'var(--map-line-strong)' : TREE_STROKE}
+                      strokeWidth={lit ? 2.2 : e.kind === 'contains' ? 2.2 : e.kind === 'has_topic' ? 1.8 : e.kind === 'subtopic' ? 1.5 : 1.1}
+                      strokeDasharray={e.kind === 'filed_under' ? '5 4' : undefined} strokeLinejoin="round" vectorEffect="non-scaling-stroke" {...draw} />
+                    {port && <motion.circle cx={port.x} cy={port.y} r={2.6} fill={lit ? 'var(--action)' : 'var(--sc)'} initial={animate ? { opacity: 0 } : false} animate={inView ? { opacity: dim ? 0.25 : 1 } : undefined} transition={draw.transition} />}
+                  </g>
                 )
               })}
               {DEMO_NODES.filter(n => shown.has(n.id)).map(n => {
@@ -190,9 +197,10 @@ export function MapDemo() {
                     <motion.g initial={animate ? { opacity: 0, scale: 0.92 } : false}
                       animate={inView ? { opacity: dim ? 0.38 : 1, scale: 1 } : undefined}
                       transition={{ duration: reduced ? 0 : 0.22, delay: reduced ? 0 : Math.min(depth(n.id), 4) * 0.04 }}>
+                    <CardGround n={n} detail={2} />
                     {on && <rect x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="color-mix(in oklch, var(--action) 9%, transparent)" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
                     <rect className="map-focus opacity-0" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--ring)" strokeWidth={2.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" />
-                    <CardFace n={n} detail={2} />
+                    <CardSurface n={n} detail={2} />
                     {kids > 0 && (
                       <g transform={`translate(${w / 2} 0)`} aria-hidden>
                         <circle r={9} fill="var(--card)" stroke="var(--border)" strokeWidth={1} vectorEffect="non-scaling-stroke" />

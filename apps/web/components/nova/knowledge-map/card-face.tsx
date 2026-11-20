@@ -8,6 +8,8 @@
 import type { MapNode, MapNodeType } from '@repo/api/nova/product/knowledge-map.types'
 import { cn } from '@/lib/utils'
 import { CARD } from './layout'
+import { radiusOf, thicknessOf } from './depth'
+import type { ReactNode } from 'react'
 
 export const FILL: Record<MapNodeType, string> = {
   subject: 'var(--nova)', topic: 'var(--map-topic)', task: 'var(--map-task)', note: 'var(--map-note)', resource: 'var(--map-resource)',
@@ -47,7 +49,9 @@ export function CardFace({ n, detail, folded }: { n: MapNode; detail: CardDetail
   const lit = <path d={`M ${x0 + 12} ${y0 + 0.75} H ${-x0 - 12}`} stroke="var(--map-card-top)" strokeWidth={1} vectorEffect="non-scaling-stroke" className="pointer-events-none" />
   if (n.type === 'subject') {
     const overview = folded !== undefined
-    const line = overview ? folded || [plural(n.topics, 'topic'), n.notes ? plural(n.notes, 'note') : null].filter(Boolean).join(' · ') : [plural(n.topics, 'topic'), plural(n.notes, 'note'), plural(n.resources, 'page')].join(' · ')
+    // Every topic, and (when not the same) how many of them are studied: one label each (K-20).
+    const topicsSaid = n.studyTopics !== undefined && n.studyTopics !== n.topics ? `${plural(n.topics, 'topic')} · ${n.studyTopics} to study` : plural(n.topics, 'topic')
+    const line = overview ? folded || [topicsSaid, n.notes ? plural(n.notes, 'note') : null].filter(Boolean).join(' · ') : [topicsSaid, plural(n.notes, 'note'), plural(n.resources, 'page')].join(' · ')
     const twoRows = detail === 2 || (overview && detail >= 1)
     return (
       <>
@@ -139,6 +143,62 @@ export function CardFace({ n, detail, folded }: { n: MapNode; detail: CardDetail
         : <circle cx={x0 + 19.5} cy={detail === 2 ? 8.5 : 0.5} r={3.5} fill={FILL.note} />}
       {detail >= 1 && <text x={x0 + (detail === 2 ? 16 : 29)} y={detail === 2 ? -5 : 4.5} className={text} fontSize={12.5} fontWeight={500}>{short(n.label, detail === 2 ? 22 : 20)}</text>}
       {detail === 2 && <text x={x0 + 29} y={12.5} {...meta}>{resource ? short(n.domain, 22) : `Edited ${shortDay(n.updatedAt)}`}</text>}
+    </>
+  )
+}
+
+// ── The card's body, around its face ─────────────────────────────────────────
+// What makes a card stand on the map (its ground: a subject's soft glow, its
+// shadow, its slab) and the light on its surface. The map and the landing
+// page's preview draw cards with these, so they look the same. Both need the
+// gradients in MapDefs once in their SVG.
+
+export function MapDefs() {
+  return (
+    <defs>
+      <linearGradient id="map-sheen" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="#fff" stopOpacity={0.07} />
+        <stop offset="45%" stopColor="#fff" stopOpacity={0} />
+      </linearGradient>
+      {/* Toward a card's foot, a little shade: with the light from above, a surface with volume. */}
+      <linearGradient id="map-shade" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="55%" stopColor="#000" stopOpacity={0} />
+        <stop offset="100%" stopColor="#000" stopOpacity={0.08} />
+      </linearGradient>
+    </defs>
+  )
+}
+
+// Under the card: a subject anchor glows softly in its colour (the eye finds
+// the anchors first); its shadow (not drawn far out, where it can't be seen,
+// so zooming stays light) and its slab, as thick as the record says (depth.ts).
+export function CardGround({ n, detail }: { n: MapNode; detail: CardDetail }) {
+  const { w, h } = CARD[n.type]
+  const th = thicknessOf(n), r = radiusOf(n)
+  return (
+    <>
+      {n.type === 'subject' && (
+        <g className="map-anchor-glow pointer-events-none">
+          <rect x={-w / 2 - 20} y={-h / 2 - 18} width={w + 40} height={h + 36} rx={34} fill="var(--sc)" opacity={0.045} />
+          <rect x={-w / 2 - 9} y={-h / 2 - 8} width={w + 18} height={h + 16} rx={24} fill="var(--sc)" opacity={0.09} />
+        </g>
+      )}
+      {detail > 0 && <rect className="map-shadow" x={-w / 2 + 3} y={-h / 2 + th + 4} width={w - 6} height={h} rx={r + 2} opacity={0.13 + th * 0.018} />}
+      {th > 0 && <rect className="map-slab" x={-w / 2} y={-h / 2 + th} width={w} height={h} rx={r} />}
+    </>
+  )
+}
+
+// The card's face, what is drawn on it (children), and light from above.
+export function CardSurface({ n, detail, folded, lifted, children }: { n: MapNode; detail: CardDetail; folded?: string; lifted?: boolean; children?: ReactNode }) {
+  const { w, h } = CARD[n.type]
+  const r = radiusOf(n)
+  return (
+    <>
+      <g style={lifted ? { filter: 'drop-shadow(0 10px 18px rgb(0 0 0 / 0.25))' } : undefined}><CardFace n={n} detail={detail} folded={folded} /></g>
+      {children}
+      {detail > 0 && <rect className="pointer-events-none" x={-w / 2} y={-h / 2} width={w} height={h} rx={r} fill="url(#map-sheen)" />}
+      {detail > 0 && <rect className="pointer-events-none" x={-w / 2} y={-h / 2} width={w} height={h} rx={r} fill="url(#map-shade)" />}
     </>
   )
 }

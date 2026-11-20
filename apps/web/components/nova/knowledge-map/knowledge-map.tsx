@@ -3,14 +3,14 @@
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useStartSession } from '../use-start-session'
-import { ArrowUp, ArrowUpRight, ChevronsDownUp, ChevronsUpDown, Circle, CornerDownRight, FilePlus, FileText, Focus, Globe, Info, Keyboard, Layers, Lightbulb, Link2, ListChecks, Maximize2, Minus, MoreHorizontal, PanelRightOpen, Plus, RotateCcw, Search, SlidersHorizontal, Timer, Trash2, Unlink, Waypoints, X } from 'lucide-react'
+import { ArrowUp, ArrowUpRight, ChevronsDownUp, Eraser, ChevronsUpDown, Circle, CornerDownRight, FilePlus, FileText, Focus, Globe, Info, Keyboard, Layers, Lightbulb, Link2, ListChecks, Maximize2, Minus, MoreHorizontal, PanelRightOpen, Plus, RotateCcw, Search, SlidersHorizontal, Timer, Trash2, Unlink, Waypoints, X } from 'lucide-react'
 import type { MapEdge, MapEdgeKind, MapNode, MapNodeType, NovaKnowledgeMapReady } from '@repo/api/nova/product/knowledge-map.types'
 import { MAP_LAYOUT_COORD_MAX } from '@repo/api/nova/product/map-layout.types'
 import { treeOrder } from '@repo/api/nova/product/task-tree'
 import { cn } from '@/lib/utils'
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '../workspace/ui'
 import { toneStyle } from '../subject-color'
-import { CardFace, FILL, plural, short, type CardDetail } from './card-face'
+import { CardFace, CardGround, CardSurface, FILL, MapDefs, plural, short, type CardDetail } from './card-face'
 import { CARD, TREE_EDGES, layoutMap, treeOf, withPositions, type MapLayout } from './layout'
 import { useMapLayout } from './use-map-layout'
 import { filingChoices, placementLabel, placementOf, planLink, samePlacement, type Placement } from './map-edit'
@@ -22,9 +22,11 @@ import { OUTLINE_QUERY, browserStore, chooseOrientation, chosenOrientation, forg
 import { NEW_SUBJECT } from './map-structure'
 import { disconnectPlan } from './map-disconnect'
 import { runMapRequest, type MapAgentContext, type MapAgentRequest } from './map-agent'
-import { sendConnect, sendDisconnect } from './map-structure-api'
+import { sendConnect, sendDisconnect, type MapDeleteMode, type MapDeleteTarget } from './map-structure-api'
 import { AddDialog, Breadcrumbs, DeleteDialog, DeleteWholeDialog, Legend, ShortcutsHelp } from './map-panels'
 import { BOARD_PATH } from '@repo/api/nova/product/companion'
+import { mapColor } from './map-color'
+import { linkPath, treePath, TREE_STROKE } from './edge-path'
 import { nextStep, summaryOf, type Status } from './node-summary'
 import { loadNotePreview } from './note-preview'
 import { crossSubjectLinks, foldedLabel, foldedTotal, overviewDensity, rootOf, type Density } from './overview-density'
@@ -58,6 +60,11 @@ const MIN_K = 0.1, MAX_K = 2.5
 // A session started from the map has no planned block behind it, so it is
 // the length of an ordinary one.
 const MAP_SESSION_MINUTES = 25
+
+// The zoom a card found with Find (or asked for by a link) is brought in at, at least: its title and facts show (overview.ts detailAt 2 from 0.62).
+const FIND_K = 0.9
+// The height the lens bar (Structure · Learning · Gaps) takes on the canvas's top edge, in screen pixels.
+const LENS_BAR = 48
 
 // How far one arrow key moves the map, in screen pixels.
 const PAN_STEP = 60
@@ -426,7 +433,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
 
   return (
     <aside aria-label={`Selected: ${TYPE_LABEL[node.type]} ${node.label}`} data-map-overlay data-detail data-detail-type={node.type}
-      className="subject-tone map-inspector map-inspector-in absolute inset-x-0 bottom-0 z-20 flex max-h-[55%] flex-col gap-4 overflow-y-auto overscroll-contain rounded-t-2xl border-t border-white/10 bg-card/95 p-4 shadow-float backdrop-blur lg:inset-x-auto lg:bottom-auto lg:right-3 lg:top-3 lg:max-h-[calc(100%-1.5rem)] lg:w-[21rem] lg:rounded-2xl lg:border"
+      className="subject-tone map-inspector map-inspector-in absolute inset-x-0 bottom-0 z-20 flex max-h-[55%] flex-col gap-4 overflow-y-auto overscroll-contain rounded-t-2xl border-t border-white/10 bg-card/95 p-4 shadow-float backdrop-blur lg:inset-x-auto lg:bottom-auto lg:right-3 lg:top-3 lg:max-h-[calc(100%-4.75rem)] lg:w-[21rem] lg:rounded-2xl lg:border"
       style={toneStyle(tone)} onPointerDown={e => e.stopPropagation()}>
       {/* What it is, where it sits, and its state at a glance. */}
       <div className="flex items-start gap-3">
@@ -607,7 +614,7 @@ function Detail({ node, neighbours, onPick, onClose, onScope, scoped, view, onCh
 type Panel =
   | { kind: 'add'; node: MapNode | null }
   | { kind: 'delete'; node: MapNode }
-  | { kind: 'delete_map'; workspaceId: string; title: string }
+  | { kind: 'delete_map'; target: MapDeleteTarget; title: string; mode: MapDeleteMode }
   | { kind: 'help' } | { kind: 'legend' } | { kind: 'filters' } | { kind: 'reset' }
 
 const ADDABLE: ReadonlySet<MapNodeType> = new Set(['subject', 'topic', 'task'])
@@ -729,19 +736,6 @@ function TopicMarks({ n, detail, lens, now }: { n: Extract<MapNode, { type: 'top
 // A line along the gaps (into a wrapped column), its corners rounded so it
 // bends like a fibre: out to the trunk, along the gap above the card's row,
 // then down into the card. The same course as before, never across a card.
-function roundedLane(a: { x: number; y: number }, lane: { trunkX: number; laneY: number }, b: { x: number; y: number }): string {
-  const r = 14
-  const sx1 = Math.sign(lane.trunkX - a.x) || 1, sy1 = Math.sign(lane.laneY - a.y) || 1
-  const sx2 = Math.sign(b.x - lane.trunkX) || 1, sy2 = Math.sign(b.y - lane.laneY) || 1
-  const r1 = Math.min(r, Math.abs(lane.trunkX - a.x) / 2, Math.abs(lane.laneY - a.y) / 2)
-  const r2 = Math.min(r, Math.abs(lane.laneY - a.y) / 2, Math.abs(b.x - lane.trunkX) / 2)
-  const r3 = Math.min(r, Math.abs(b.x - lane.trunkX) / 2, Math.abs(b.y - lane.laneY) / 2)
-  return [
-    `M ${a.x} ${a.y}`, `H ${lane.trunkX - sx1 * r1}`, `Q ${lane.trunkX} ${a.y} ${lane.trunkX} ${a.y + sy1 * r1}`,
-    `V ${lane.laneY - sy1 * r2}`, `Q ${lane.trunkX} ${lane.laneY} ${lane.trunkX + sx2 * r2} ${lane.laneY}`,
-    `H ${b.x - sx2 * r3}`, `Q ${b.x} ${lane.laneY} ${b.x} ${lane.laneY + sy2 * r3}`, `V ${b.y}`,
-  ].join(' ')
-}
 
 // A topic's state, in a colour of the theme (the overview, the Learning lens, the legend).
 export const STATE_FILL: Record<TopicState, string> = {
@@ -755,6 +749,131 @@ const ago = (iso: string) => {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
   return days <= 0 ? 'today' : days === 1 ? 'yesterday' : days < 30 ? `${days} days ago` : day(iso)
 }
+
+// ── A card ───────────────────────────────────────────────────────────────────
+// One card of the map, memoised: it is drawn again only when something about
+// that card changes. What a hover or a selection lights is not drawn here: the
+// focus layer above the map draws a copy of the card (`copy`) over a scrim,
+// so pointing at or choosing a card never redraws the map under it. Measured
+// on 500 cards (production build, CPU slowed 4x): every hover repainted the
+// whole drawing and rebuilt an opacity layer per card (about 110 ms of paint
+// and layerize per hover), and a selection ran a transition on every card.
+// The handlers come through `acts` (one ref, the same object every render),
+// so passing them never makes a card draw again.
+export interface CardActs {
+  pointerDown(e: React.PointerEvent<SVGGElement>, id: string): void
+  pointerMove(e: React.PointerEvent<SVGGElement>): void
+  pointerUp(e: React.PointerEvent<SVGGElement>): void
+  pointerCancel(): void
+  click(id: string): void
+  dbl(id: string): void
+  focus(id: string): void
+  hover(id: string | null): void
+  chip(id: string): void
+  fold(id: string): void
+  add(n: MapNode): void
+}
+interface CardProps {
+  n: MapNode; x: number; y: number; detail: CardDetail
+  kids: number; inside: number; collapsed: boolean; showFold: boolean; addable: boolean; outer: 1 | -1
+  // Lit by a lens or a search (the rest are set back by the drawing's
+  // map-emph class, so a search redraws only the cards it lights); chosen
+  // (aria-pressed); being dragged.
+  emphasized: boolean; on: boolean; dragging: boolean
+  // A copy on the focus layer: the card in focus, or one joined to it.
+  copy?: 'focus' | 'near'
+  arriving?: string; delay?: number; flash: number | null
+  folded?: string; chip: { total: number; label: string } | null; tally: StateTally | null
+  lens: Lens; now: Date
+  acts: React.RefObject<CardActs | null>
+}
+
+const MapCard = memo(function MapCard({ n, x, y, detail, kids, inside, collapsed, showFold, addable, outer, emphasized, on, dragging, copy, arriving, delay, flash, folded, chip, tally, lens, now, acts }: CardProps) {
+  const { w, h } = CARD[n.type]
+  const tone = n.type === 'subject' ? n.label : n.subjectName
+  // Depth (depth.ts): the card's slab, its shadow on the ground.
+  const th = thicknessOf(n), r = radiusOf(n)
+  const live = !copy
+  const a = () => acts.current!
+  return (
+    <g
+      transform={`translate(${x} ${y})`} style={toneStyle(tone)} data-emphasis={emphasized ? '' : undefined}
+      {...(live ? {
+        role: 'button', tabIndex: 0, 'aria-label': `${TYPE_LABEL[n.type]}: ${n.label}${kids ? `, ${kids} inside` : ''}`, 'aria-pressed': on,
+        'aria-keyshortcuts': 'Enter Shift+Enter Space N Delete Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown',
+        'data-node-id': n.id,
+        onPointerDown: (e: React.PointerEvent<SVGGElement>) => a().pointerDown(e, n.id), onPointerMove: (e: React.PointerEvent<SVGGElement>) => a().pointerMove(e),
+        onPointerUp: (e: React.PointerEvent<SVGGElement>) => a().pointerUp(e), onPointerCancel: () => a().pointerCancel(),
+        onClick: () => a().click(n.id), onDoubleClick: () => a().dbl(n.id), onFocus: () => a().focus(n.id),
+        onPointerEnter: () => a().hover(n.id), onPointerLeave: () => a().hover(null),
+      } : { 'aria-hidden': true, 'data-copy-of': n.id })}
+      className={cn('subject-tone group/card outline-none', live ? 'map-card [&:focus-visible_.map-focus]:opacity-100' : 'map-copy pointer-events-none', dragging ? 'cursor-grabbing' : 'cursor-pointer')}
+      data-node={n.type} data-depth-thickness={th}
+    >
+      <g className={live ? arriving : undefined} style={live && arriving ? { animationDelay: `${delay ?? 0}ms` } : undefined}>
+        <CardGround n={n} detail={detail} />
+        <g className={cn('map-lift', copy || dragging ? 'map-raise' : undefined)}>
+          {(copy === 'focus' && on || dragging) && <rect x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="color-mix(in oklch, var(--action) 9%, transparent)" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
+          {/* Selected: one soft pulse outward, then still. */}
+          {copy === 'focus' && on && !dragging && <rect className="map-select-pulse pointer-events-none" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
+          {live && <rect className="map-focus opacity-0" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--ring)" strokeWidth={2.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" />}
+          <CardSurface n={n} detail={detail} folded={folded} lifted={dragging}>
+            {n.type === 'topic' && <TopicMarks n={n} detail={detail} lens={lens} now={now} />}
+          </CardSurface>
+          {live && flash !== null && <rect key={flash} className="map-found pointer-events-none" x={-w / 2 - 6} y={-h / 2 - 6} width={w + 12} height={h + 12} rx={r + 6} fill="none" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
+        </g>
+      </g>
+      {/* Everything's overview: how many items are folded inside, on its outer
+          edge (where a fold button sits); it opens by going in. */}
+      {chip && detail >= 1 && (() => {
+        const label = chip.total > 99 ? '99+' : `+${chip.total}`
+        const cr = label.length > 2 ? 12 : 10
+        const at = n.type === 'subject' ? { x: 0, y: h / 2 + th } : { x: outer * (w / 2), y: 0 }
+        return (
+          <g transform={`translate(${at.x} ${at.y})`} role={live ? 'button' : undefined} tabIndex={live ? -1 : undefined} aria-label={live ? `${chip.label} inside ${n.label}. Open it to see them.` : undefined} data-folded={live ? n.id : undefined}
+            className="map-chip cursor-pointer" onPointerDown={live ? e => e.stopPropagation() : undefined} onClick={live ? e => { e.stopPropagation(); a().chip(n.id) } : undefined}>
+            {live && <title>{`${chip.label}: open ${n.label} to see them`}</title>}
+            <rect x={-cr - 2} y={-10} width={2 * cr + 4} height={20} rx={10} fill="var(--map-card)" stroke="var(--map-line-strong)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+            <text textAnchor="middle" y={3.6} fontSize={10} fontWeight={650} className="fill-[var(--subtle)]">{label}</text>
+          </g>
+        )
+      })()}
+      {/* A subject's progress at a glance, along its card's foot: its topics by state, all of them. */}
+      {tally && tally.topics > 0 && n.type === 'subject' && detail >= 1 && (() => {
+        const bw = w - 68, x0 = -w / 2 + 34, y0 = h / 2 - 12
+        const segs: Array<[number, string]> = [[tally.solid, 'var(--nova)'], [tally.developing, 'var(--map-resource)'], [tally.weak, 'var(--map-note)'], [tally.studied - tally.solid - tally.developing - tally.weak, 'var(--map-topic)']]
+        let at = x0
+        return (
+          <g className="pointer-events-none" data-subject-progress={live ? n.id : undefined}>
+            <rect x={x0} y={y0} width={bw} height={3} rx={1.5} fill="var(--map-line)" />
+            {segs.map(([count, fill], i) => { if (count <= 0) return null; const sw = (bw * count) / tally.topics; const el = <rect key={i} x={at} y={y0} width={sw} height={3} rx={1.5} fill={fill} />; at += sw; return el })}
+          </g>
+        )
+      })()}
+      {showFold && (
+        // Fold or show what hangs from it.
+        <g transform={`translate(${outer * (w / 2)} 0)`} role={live ? 'button' : undefined} tabIndex={live ? -1 : undefined} aria-label={live ? (collapsed ? `Show what is inside ${n.label}` : `Fold what is inside ${n.label}`) : undefined} data-fold={live ? (collapsed ? 'folded' : 'open') : undefined}
+          onPointerDown={live ? e => e.stopPropagation() : undefined} onClick={live ? e => { e.stopPropagation(); a().fold(n.id) } : undefined} className="cursor-pointer">
+          <circle r={9} fill="var(--card)" stroke="var(--border)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          {collapsed
+            ? <text textAnchor="middle" y={3.5} fontSize={9.5} fontWeight={600} className="fill-foreground">{Math.min(99, inside)}</text>
+            : <path d="M -4 0 h 8" stroke="var(--subtle)" strokeWidth={1.6} vectorEffect="non-scaling-stroke" />}
+        </g>
+      )}
+      {addable && detail >= 1 && (
+        // Add a card inside or beside it. Shown on hover, focus and selection
+        // (the copy in focus shows it; the click reaches the card's own, under it).
+        <g transform={`translate(${w / 2 - 14} ${-h / 2})`} role={live ? 'button' : undefined} tabIndex={live ? -1 : undefined} aria-label={live ? `Add to ${n.label}` : undefined} data-add={live ? n.id : undefined}
+          className={cn('map-add cursor-pointer', copy === 'focus' ? 'opacity-100' : live ? 'opacity-0 group-focus-visible/card:opacity-100' : 'opacity-0')}
+          onPointerDown={live ? e => e.stopPropagation() : undefined} onClick={live ? e => { e.stopPropagation(); a().add(n) } : undefined}>
+          {live && <title>{`Add to ${n.label} (N)`}</title>}
+          <circle r={9} fill="var(--action)" />
+          <path d="M -4 0 h 8 M 0 -4 v 8" stroke="var(--action-foreground)" strokeWidth={1.8} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        </g>
+      )}
+    </g>
+  )
+})
 
 export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null }: { view: NovaKnowledgeMapReady; onChanged: () => void; onWorkspace?: (id: string) => void; pendingScope?: string | null }) {
   const [shown, setShown]       = useState<Record<MapNodeType, boolean>>({ subject: true, topic: true, task: true, note: true, resource: true })
@@ -1019,13 +1138,6 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     return set
   }, [hover, selected, view.edges])
 
-  // The selected card and what it is joined to (the depth effects use this, not hover).
-  const chosenAround = useMemo(() => {
-    if (!selected) return null
-    const set = new Set<string>([selected])
-    for (const e of view.edges) { if (e.from === selected) set.add(e.to); if (e.to === selected) set.add(e.from) }
-    return set
-  }, [selected, view.edges])
 
   // ── The view: pan and zoom ─────────────────────────────────────────────────
   // ── How the view moves ─────────────────────────────────────────────────────
@@ -1124,16 +1236,17 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     const round = (v: View): View => ({ x: Math.round(v.x), y: Math.round(v.y), k: Math.round(v.k * 1000) / 1000 })
     if (portrait) {
       const k = Math.max(0.62, Math.min(1.1, el.clientWidth / w))
-      return round({ k, x: w * k <= el.clientWidth ? el.clientWidth / 2 - ((minX + maxX) / 2) * k : 12 - minX * k, y: 16 - minY * k })
+      // From under the lens bar on the canvas's top edge, never beneath it.
+      return round({ k, x: w * k <= el.clientWidth ? el.clientWidth / 2 - ((minX + maxX) / 2) * k : 12 - minX * k, y: LENS_BAR + 8 - minY * k })
     }
     // The subjects' regions reach past their cards, and far out each carries
     // a label above it: both are kept on screen (before, a far-out fit cut
     // the subjects' names off at the edge).
     const pad = 44, H = el.clientHeight
     const bw = w + pad * 2, bh = h + pad * 2
-    let top = 0
-    let k = Math.max(MIN_K, Math.min(1.1, Math.min(room / bw, H / bh)))
-    if (detailAt(k) === 0) { top = 44; k = Math.max(MIN_K, Math.min(1.1, Math.min(room / bw, (H - top) / bh))) }
+    // The lens bar sits on the canvas's top edge: the fitted map starts below it (K-15).
+    const top = LENS_BAR
+    const k = Math.max(MIN_K, Math.min(1.1, Math.min(room / bw, (H - top) / bh)))
     return round({ k, x: room / 2 - ((minX + maxX) / 2) * k, y: top + (H - top) / 2 - ((minY + maxY) / 2) * k })
   }, [bounds, portrait, besidePanel])
   const fit = useCallback((animated = true) => { const to = fitTarget(); if (to) { if (animated) animateTo(to); else { stopAnim(); setView(to) } } }, [fitTarget, animateTo, stopAnim, setView])
@@ -1158,6 +1271,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   const cameraEntrance = useRef(false)
   settle.current = (animated: boolean) => {
     if (cameraEntrance.current) return
+    // A card asked for (a search result, a marker, ?focus=) is brought into
+    // view as soon as it is drawn (below): fitting the level first would leave
+    // the view on the whole map (K-28b: Enter in Find zoomed out).
+    if (pendingSelect.current) return
     const to = level.view ?? recallView(store, where, picture) ?? fitTarget()
     if (!to) return
     if (animated) animateTo(to); else { stopAnim(); setView(to) }
@@ -1227,7 +1344,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     if (to && el && top) {
       cameraEntrance.current = true
       stopAnim()
-      if (glide || mode !== 'full') setView(to)
+      // A phone's outline opens where it ends, fitted from its top (K-16:
+      // the close-up start of the camera showed an empty, cut-off map for
+      // its first seconds); its cards still rise in.
+      if (glide || mode !== 'full' || portrait) setView(to)
       else {
         const cw = (el.clientWidth - besidePanel(el)) / 2, ch = el.clientHeight / 2
         const mid = { x: (cw - to.x) / to.k, y: (ch - to.y) / to.k }
@@ -1297,12 +1417,14 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   }, [placed, centreOn, besidePanel, besideLeft])
 
   // Shows the card's details, keeping it selected.
-  const select = useCallback((id: string | null, opts: { centre?: boolean; focusCard?: boolean } = {}) => {
+  // readable: brought in at least to the zoom where a card's title and facts
+  // show (overview.ts detailAt 2), never pulled further out than it is.
+  const select = useCallback((id: string | null, opts: { centre?: boolean; focusCard?: boolean; readable?: boolean } = {}) => {
     setSelected(id)
     lastChosen.current = id
     if (!id) return
     setDetailOpen(true)
-    if (opts.centre) centreOn(id)
+    if (opts.centre) centreOn(id, opts.readable ? Math.min(MAX_K, Math.max(tNow.current.k, FIND_K)) : undefined)
     if (opts.focusCard) requestAnimationFrame(() => root.current?.querySelector<SVGGElement>(`[data-node-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true }))
   }, [centreOn])
 
@@ -1345,12 +1467,12 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     pendingSelect.current = id
     setStack(s => reach(s, tree, id))
   }, [tree, revealCard])
-  // Once the map has a card it was asked to select, select it and bring it into view.
+  // Once the map has a card it was asked to select, select it and bring it into view, readable.
   useEffect(() => {
     const id = pendingSelect.current
     if (!id || !drawnIds.has(id) || !placed.at.has(id)) return
     pendingSelect.current = null
-    select(id, { centre: true, focusCard: true })
+    select(id, { centre: true, focusCard: true, readable: true })
   }, [drawnIds, placed, select])
 
   // ── Moving a card ──────────────────────────────────────────────────────────
@@ -1408,7 +1530,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   // Ranked (map-search.ts): the name first, then a word in it, then what it is filed under.
   const found = useMemo(() => searchMap(searchable, query, 10), [query, searchable])
   // Every card the query matches is lit on the map while the learner types.
-  const matchIds = useMemo(() => (query.trim() ? matchesOf(nodes, query) : null), [query, nodes])
+  // Lighting every match sets the rest back, which redraws every card: it
+  // follows the typing (deferred) instead of holding each keystroke.
+  const litQuery = useDeferredValue(query)
+  const matchIds = useMemo(() => (litQuery.trim() ? matchesOf(nodes, litQuery) : null), [litQuery, nodes])
   const labelOf = useCallback((id: string) => byId.get(id)?.label, [byId])
   // Each top-level subject's topics by state, all of them (folded or not).
   const subjectTallies = useMemo(() => {
@@ -1441,7 +1566,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     setQuery('')
     pendingSelect.current = null
     setFlash(f => ({ id, n: (f?.n ?? 0) + 1 }))
-    if (drawnIds.has(id)) { select(id, { centre: true, focusCard: true }); return }
+    if (drawnIds.has(id)) { select(id, { centre: true, focusCard: true, readable: true }); return }
     // Folded into the overview: go into its subject, where every item is drawn, and select it there.
     if (dens?.hidden.has(id)) {
       const root = rootOf(id, tree.parent)
@@ -1679,19 +1804,23 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   // drawing would repaint every card on every frame. On a large map only
   // some lines carry a signal, spread evenly, so the cost stays bounded.
   const signalStride = Math.max(1, Math.ceil(allLines.length / SIGNAL_MAX))
-  const { base: edgeLayer, live: liveLayer } = useMemo(() => { const live: React.ReactNode[] = []; const base = allLines.map((e, index) => {
+  // One line, drawn plainly for the map (`lit` false: its signal, if any, goes
+  // in `live`) or lit for the focus layer above it (glow, the action colour and
+  // its travelling pulse). Nothing here reads the hover or the selection, so
+  // the map's lines are drawn again only when the lines themselves change.
+  const isLit = useCallback((e: { from: string; to: string }) => focusId !== null && (e.from === focusId || e.to === focusId || (litPath !== null && litPath.has(e.from) && litPath.has(e.to))), [focusId, litPath])
+  const drawEdge = useCallback((e: MapEdge, index: number, lit: boolean, live: React.ReactNode[] | null): React.ReactNode => {
     const a = pointOf(e.from), b = pointOf(e.to)
     if (!a || !b) return null
-    const lit = focusId !== null && (e.from === focusId || e.to === focusId || (litPath !== null && litPath.has(e.from) && litPath.has(e.to)))
     // Every [[link]] and wait is drawn, at every zoom, with every item. Only
     // the overview the learner chooses (compact: counts folded into cards)
     // leaves them to the card in focus, with subjects' links between them.
     if (!lit && (e.kind === 'links_to' || e.kind === 'depends_on') && overviewOn) return null
-    const dim = (focusId !== null && !lit) || (focusId === null && emphasis !== null && !emphasis.has(e.from) && !emphasis.has(e.to))
+    const dim = !lit && emphasis !== null && !emphasis.has(e.from) && !emphasis.has(e.to)
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y
     // Arriving: drawn along its length once both its cards are there (a
     // dashed line, whose dashes would be lost, fades in instead).
-    const delay = entrance?.edge.get(e.id) ?? (fresh?.edges.has(e.id) ? 160 : undefined)
+    const delay = lit ? undefined : entrance?.edge.get(e.id) ?? (fresh?.edges.has(e.id) ? 160 : undefined)
     const dashed = e.kind === 'depends_on' || e.kind === 'filed_under'
     const arrive = delay === undefined ? undefined : dashed ? 'map-edge-fade' : 'map-edge-draw'
     const anim = delay === undefined ? undefined : { animationDelay: `${delay}ms`, animationDuration: `${entrance?.mode === 'brief' ? EDGE_MS.brief : EDGE_MS.full}ms` }
@@ -1703,19 +1832,16 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
       stroke = lit ? 'var(--action)' : 'var(--map-task)'; width = lit ? 1.8 : 1.2; dash = '6 4'; rest = 0.8
     } else if (e.kind === 'links_to') {
       // A [[link]]: a quiet curve; the ring where it arrives says what it is.
-      d = `M ${a.x} ${a.y} Q ${mx - dy * 0.18} ${my + dx * 0.18} ${b.x} ${b.y}`
+      d = linkPath(a, b)
       stroke = lit ? 'var(--action)' : 'var(--map-line-strong)'; width = lit ? 1.6 : 1.1
     } else {
       // Into a wrapped column: along the gaps, never across the cards before it.
-      const lane = placed.lanes?.get(e.to)
-      const laned = lane && lane.x === b.x && lane.y === b.y && !markers.has(e.to)
-      // A branch flows out of its card and into the next, level at both ends;
-      // in the outline (one card under another) it is the plain line.
-      const flow = Math.abs(b.x - a.x) > 60
-      d = laned ? roundedLane(a, lane, b)
-        : flow ? `M ${a.x} ${a.y} C ${mx} ${a.y} ${mx} ${b.y} ${b.x} ${b.y}` : `M ${a.x} ${a.y} L ${b.x} ${b.y}`
+      // Along a lane into a wrapped column, else flowing (edge-path.ts, shared with the landing preview).
+      const path = treePath(a, b, markers.has(e.to) ? undefined : placed.lanes?.get(e.to))
+      const laned = path.laned
+      d = path.d
       // In its subject's colour, so each subject's branches read as its own.
-      stroke = lit ? 'var(--action)' : 'color-mix(in oklch, var(--sc) 70%, var(--map-line-strong))'
+      stroke = lit ? 'var(--action)' : TREE_STROKE
       width = lit ? 2.2 : laned ? 1.3 : e.kind === 'contains' ? 2.2 : e.kind === 'has_topic' ? 1.8 : e.kind === 'subtopic' ? 1.5 : 1.1
       dash = e.kind === 'filed_under' ? '5 4' : undefined
       // Deeper in the tree, lighter: never under 55%.
@@ -1732,11 +1858,10 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     const port = tree_ && toNode && !markers.has(e.to) ? { x: b.x - dir * (CARD[toNode.type].w / 2 + 2), y: b.y } : null
     const signal = tree_ && !dim && (e.kind === 'has_topic' || e.kind === 'contains' || e.kind === 'subtopic')
     const toneOf = toneStyle(toNode?.type === 'subject' ? toNode.label : toNode?.subjectName ?? null)
-    if (signal && !lit && index % signalStride === 0) {
+    if (live && signal && !lit && index % signalStride === 0) {
       const seed = (e.id.length * 137 + index * 61) % 2400
       live.push(<path key={`s-${e.id}`} d={d} fill="none" className="map-signal subject-tone" stroke="var(--sc-ink)" strokeWidth={2.6} strokeDasharray="1 4 5 42" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.95} style={{ ...toneOf, animationDelay: `${-seed}ms`, animationDuration: `${3800 + (seed % 5) * 450}ms` }} />)
     }
-    if (lit && !arrive) live.push(<path key={`f-${e.id}`} d={d} fill="none" className="map-edge-flow" stroke="var(--action)" strokeWidth={2.4} strokeDasharray="1.5 11" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.95} />)
     return (
       <g key={e.id} className={cn('subject-tone', arrive)} style={{ ...toneStyle(toNode?.type === 'subject' ? toNode.label : toNode?.subjectName ?? null), ...anim }}>
         {/* The fibre is sized in the map's own units, so far out (where every line is on screen) it thins with the map: at a fixed width on screen, hundreds of wide soft strokes halved the frame rate of a zoom. */}
@@ -1752,162 +1877,112 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
         <path d={d} fill="none" data-edge={e.kind} data-lane={d.includes(' H ') && e.kind !== 'links_to' && e.kind !== 'depends_on' ? '' : undefined}
           stroke={stroke} strokeWidth={width} strokeDasharray={dash} strokeLinejoin="round" vectorEffect="non-scaling-stroke"
           opacity={dim ? (e.kind === 'depends_on' ? 0.2 : 0.25) : rest} {...drawProps} />
+        {/* The selection's lines carry a quiet travelling pulse. */}
+        {lit && <path d={d} fill="none" className="map-edge-flow" stroke="var(--action)" strokeWidth={2.4} strokeDasharray="1.5 11" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.95} />}
       </g>
     )
-  }); return { base, live } }, [allLines, pointOf, focusId, placed.lanes, markers, entrance, fresh, depthOf, detail, emphasis, overviewOn, litPath, byId, signalStride])
+  }, [pointOf, placed.lanes, markers, entrance, fresh, depthOf, detail, emphasis, overviewOn, byId, signalStride])
+  const { base: edgeLayer, live: liveLayer } = useMemo(() => {
+    const live: React.ReactNode[] = []
+    const base = allLines.map((e, index) => drawEdge(e, index, false, live))
+    return { base, live }
+  }, [allLines, drawEdge])
 
   // The rings of [[links]], over the cards: one where each link arrives.
-  const ringLayer = useMemo(() => allLines.filter(e => e.kind === 'links_to' && (!overviewOn || (focusId !== null && (e.from === focusId || e.to === focusId)))).map(e => {
+  const drawRing = useCallback((e: MapEdge, lit: boolean) => {
     const a = pointOf(e.from), b = pointOf(e.to)
     const to = byId.get(e.to), from = byId.get(e.from)
     if (!a || !b || !to || !from) return null
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y
     const ctrl = { x: mx - dy * 0.18, y: my + dx * 0.18 }
     const at = ringPoint(ctrl, b, markers.has(e.to) ? MARKER_R : CARD[to.type])
-    const lit = focusId !== null && (e.from === focusId || e.to === focusId)
     return (
-      <circle key={`ring-${e.id}`} cx={at.x} cy={at.y} r={4.5} fill="var(--card)" stroke={lit ? 'var(--action)' : 'var(--nova)'} strokeWidth={1.5} vectorEffect="non-scaling-stroke" data-backlink={e.id}
-        opacity={focusId !== null && !lit ? 0.35 : 1}>
-        <title>{`“${from.label}” links to “${to.label}” with [[${to.label}]]`}</title>
+      <circle key={`ring-${e.id}`} cx={at.x} cy={at.y} r={4.5} fill="var(--card)" stroke={lit ? 'var(--action)' : 'var(--nova)'} strokeWidth={1.5} vectorEffect="non-scaling-stroke" data-backlink={lit ? undefined : e.id}>
+        {!lit && <title>{`“${from.label}” links to “${to.label}” with [[${to.label}]]`}</title>}
       </circle>
     )
-  }), [allLines, pointOf, byId, markers, focusId, overviewOn])
+  }, [pointOf, byId, markers])
+  const ringLayer = useMemo(() => (overviewOn ? [] : allLines.filter(e => e.kind === 'links_to')).map(e => drawRing(e, false)), [allLines, drawRing, overviewOn])
 
-  const suggestionLayer = useMemo(() => (overviewOn ? [] : suggestions).map(s => {
-    const a = placed.at.get(s.from), b = placed.at.get(s.to)
+  const drawSuggestion = useCallback((sg: { id: string; from: string; to: string; confidence: string }, lit: boolean) => {
+    const a = placed.at.get(sg.from), b = placed.at.get(sg.to)
     if (!a || !b) return null
-    const lit = focusId !== null && (s.from === focusId || s.to === focusId)
     return (
-      <line key={s.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y} data-suggestion={s.confidence}
+      <line key={sg.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y} data-suggestion={lit ? undefined : sg.confidence}
         stroke={lit ? 'var(--action)' : 'var(--map-line-strong)'}
-        strokeWidth={1.2} strokeDasharray="1 6" strokeLinecap="round" vectorEffect="non-scaling-stroke"
-        opacity={focusId !== null && !lit ? 0.15 : 0.8} />
+        strokeWidth={1.2} strokeDasharray="1 6" strokeLinecap="round" vectorEffect="non-scaling-stroke" opacity={0.8} />
     )
-  }), [suggestions, placed, focusId, overviewOn])
+  }, [placed])
+  const suggestionLayer = useMemo(() => (overviewOn ? [] : suggestions).map(sg => drawSuggestion(sg, false)), [suggestions, drawSuggestion, overviewOn])
 
   // The cards. Memoised apart from the pan; the zoom only changes them when
   // it crosses into another level of detail.
   // Which way a card's tree grows: on the left of its subject, leftward.
   const outer = useCallback((id: string) => (placed.left?.has(id) ? -1 : 1), [placed.left])
-  const nodeLayer = useMemo(() => drawn.map(n => {
+  // The handlers every card calls, through one ref (see MapCard).
+  const cardActs = useRef<CardActs | null>(null)
+  cardActs.current = {
+    pointerDown: onCardPointerDown, pointerMove: onCardPointerMove, pointerUp: onCardPointerUp, pointerCancel: onCardPointerCancel,
+    click: id => {
+      if (swallowClick.current) { swallowClick.current = false; return }
+      pendingSelect.current = null
+      lastChosen.current = id
+      if (selected === id) { setDetailOpen(o => !o); return }
+      select(id)
+    },
+    dbl: id => { if (tree.children.get(id)?.length) explore(id) },
+    focus: id => { lastChosen.current = id },
+    hover: hoverCard,
+    chip: id => { if (canExplore(tree, id)) explore(id) },
+    fold: toggleFold,
+    add: n => { setSelected(n.id); openAdd(n) },
+  }
+  // What a card is drawn from: its record, its place and its own state only
+  // (never the hover or the selection, which the focus layer shows).
+  const cardPropsOf = useCallback((n: MapNode, copy?: 'focus' | 'near'): CardProps | null => {
     const p = placed.at.get(n.id)
     if (!p) return null
-    const { w, h } = CARD[n.type]
-    const dim = neighbourIds !== null && !neighbourIds.has(n.id)
-    // A lens or a search sets the rest back (never hides it).
-    const faded = !dim && emphasis !== null && !emphasis.has(n.id) && selected !== n.id
-    const on  = selected === n.id
-    const dragging = dragAt?.id === n.id
-    const tone = n.type === 'subject' ? n.label : n.subjectName
     const kids = tree.children.get(n.id)?.length ?? 0
-    // Depth (depth.ts): the card's slab, its shadow on the ground, and where
-    // it is in the entrance or arriving after an add.
-    const th = thicknessOf(n), r = radiusOf(n)
-    // Raised and receded by the selection only: a hover lifts just its own
-    // card (CSS), so sweeping the pointer over the map starts no transitions.
-    const near = chosenAround !== null && chosenAround.has(n.id)
-    const recede = chosenAround !== null && !chosenAround.has(n.id)
-    const delay = entrance?.node.get(n.id)
-    const arriving = delay !== undefined ? (entrance!.mode === 'full' ? 'map-card-in' : 'map-card-in-brief') : fresh?.nodes.has(n.id) ? 'map-card-new' : undefined
-    return (
-      <g
-        key={n.id} transform={`translate(${p.x} ${p.y})`} style={{ ...toneStyle(tone), opacity: dim ? 0.38 : faded ? 0.3 : 1 }} data-emphasis={emphasis?.has(n.id) ? '' : undefined}
-        role="button" tabIndex={0} aria-label={`${TYPE_LABEL[n.type]}: ${n.label}${kids ? `, ${kids} inside` : ''}`} aria-pressed={on}
-        aria-keyshortcuts="Enter Shift+Enter Space N Delete Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
-        className={cn('map-card subject-tone group/card outline-none [&:focus-visible_.map-focus]:opacity-100', dragging ? 'cursor-grabbing' : 'cursor-pointer')}
-        data-node={n.type} data-node-id={n.id} data-depth-thickness={th}
-        onPointerDown={e => onCardPointerDown(e, n.id)} onPointerMove={onCardPointerMove}
-        onPointerUp={onCardPointerUp} onPointerCancel={onCardPointerCancel}
-        onClick={() => {
-          if (swallowClick.current) { swallowClick.current = false; return }
-          pendingSelect.current = null
-          lastChosen.current = n.id
-          if (on) { setDetailOpen(o => !o); return }
-          select(n.id)
-        }}
-        onDoubleClick={() => { if (kids) explore(n.id) }}
-        onFocus={() => { lastChosen.current = n.id }}
-        onPointerEnter={() => hoverCard(n.id)} onPointerLeave={() => hoverCard(null)}
-      >
-        <g className={arriving} style={arriving ? { animationDelay: `${delay ?? 0}ms` } : undefined}>
-          {/* The shadow it casts, softer the higher it stands; then its edge (the slab). */}
-          {/* Far out it can't be seen: not drawn, so zooming stays light on a large map. */}
-          {/* A subject anchor glows softly in its colour, so the eye finds the anchors first. */}
-          {n.type === 'subject' && (
-            <g className="map-anchor-glow pointer-events-none">
-              <rect x={-w / 2 - 20} y={-h / 2 - 18} width={w + 40} height={h + 36} rx={34} fill="var(--sc)" opacity={0.045} />
-              <rect x={-w / 2 - 9} y={-h / 2 - 8} width={w + 18} height={h + 16} rx={24} fill="var(--sc)" opacity={0.09} />
-            </g>
-          )}
-          {detail > 0 && <rect className="map-shadow" x={-w / 2 + 3} y={-h / 2 + th + 4} width={w - 6} height={h} rx={r + 2} opacity={0.13 + th * 0.018} />}
-          {th > 0 && <rect className="map-slab" x={-w / 2} y={-h / 2 + th} width={w} height={h} rx={r} />}
-          <g className={cn('map-lift', on || near || dragging ? 'map-raise' : recede ? 'map-recede' : undefined)}>
-            {(on || dragging) && <rect x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="color-mix(in oklch, var(--action) 9%, transparent)" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
-            {/* Selected: one soft pulse outward, then still. */}
-            {on && !dragging && <rect className="map-select-pulse pointer-events-none" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
-            <rect className="map-focus opacity-0" x={-w / 2 - 5} y={-h / 2 - 5} width={w + 10} height={h + 10} rx={18} fill="none" stroke="var(--ring)" strokeWidth={2.5} strokeDasharray="5 3" vectorEffect="non-scaling-stroke" />
-            <g style={dragging ? { filter: 'drop-shadow(0 10px 18px rgb(0 0 0 / 0.25))' } : undefined}><CardFace n={n} detail={detail} folded={overviewOn ? (dens && foldedTotal(dens.folded.get(n.id)) > 0 ? foldedLabel(dens.folded.get(n.id)!) : '') : undefined} /></g>
-            {n.type === 'topic' && <TopicMarks n={n} detail={detail} lens={lens} now={now} />}
-            {/* Light on its surface, from above. */}
-            {detail > 0 && <rect className="pointer-events-none" x={-w / 2} y={-h / 2} width={w} height={h} rx={r} fill="url(#map-sheen)" />}
-            {detail > 0 && <rect className="pointer-events-none" x={-w / 2} y={-h / 2} width={w} height={h} rx={r} fill="url(#map-shade)" />}
-            {flash?.id === n.id && <rect key={flash.n} className="map-found pointer-events-none" x={-w / 2 - 6} y={-h / 2 - 6} width={w + 12} height={h + 12} rx={r + 6} fill="none" stroke="var(--action)" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
-          </g>
-        </g>
-        {/* Everything's overview: how many items are folded inside, on its outer
-            edge (where a fold button sits); it opens by going in. What they are
-            is said on the card's face. */}
-        {dens && detail >= 1 && foldedTotal(dens.folded.get(n.id)) > 0 && (() => {
-          const c = dens.folded.get(n.id)!, total = foldedTotal(c)
-          const label = total > 99 ? '99+' : `+${total}`
-          const r = label.length > 2 ? 12 : 10
-          const at = n.type === 'subject' ? { x: 0, y: h / 2 + th } : { x: (outer(n.id)) * (w / 2), y: 0 }
-          return (
-            <g transform={`translate(${at.x} ${at.y})`} role="button" tabIndex={-1} aria-label={`${foldedLabel(c)} inside ${n.label}. Open it to see them.`} data-folded={n.id}
-              className="map-chip cursor-pointer" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); if (canExplore(tree, n.id)) explore(n.id) }}>
-              <title>{`${foldedLabel(c)}: open ${n.label} to see them`}</title>
-              <rect x={-r - 2} y={-10} width={2 * r + 4} height={20} rx={10} fill="var(--map-card)" stroke="var(--map-line-strong)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-              <text textAnchor="middle" y={3.6} fontSize={10} fontWeight={650} className="fill-[var(--subtle)]">{label}</text>
-            </g>
-          )
-        })()}
-        {/* A subject's progress at a glance, along its card's foot: its topics by state, all of them. */}
-        {overviewOn && n.type === 'subject' && detail >= 1 && (() => {
-          const tl = subjectTallies.get(n.id)
-          if (!tl || tl.topics === 0) return null
-          const bw = w - 68, x0 = -w / 2 + 34, y0 = h / 2 - 12
-          const segs: Array<[number, string]> = [[tl.solid, 'var(--nova)'], [tl.developing, 'var(--map-resource)'], [tl.weak, 'var(--map-note)'], [tl.studied - tl.solid - tl.developing - tl.weak, 'var(--map-topic)']]
-          let at = x0
-          return (
-            <g className="pointer-events-none" data-subject-progress={n.id}>
-              <rect x={x0} y={y0} width={bw} height={3} rx={1.5} fill="var(--map-line)" />
-              {segs.map(([count, fill], i) => { if (count <= 0) return null; const sw = (bw * count) / tl.topics; const r = <rect key={i} x={at} y={y0} width={sw} height={3} rx={1.5} fill={fill} />; at += sw; return r })}
-            </g>
-          )
-        })()}
-        {kids > 0 && detail >= 1 && !(dens && (tree.children.get(n.id) ?? []).every(c => dens.hidden.has(c))) && (
-          // Fold or show what hangs from it.
-          <g transform={`translate(${outer(n.id) * (w / 2)} 0)`} role="button" tabIndex={-1} aria-label={collapsed.has(n.id) ? `Show what is inside ${n.label}` : `Fold what is inside ${n.label}`} data-fold={collapsed.has(n.id) ? 'folded' : 'open'}
-            onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); toggleFold(n.id) }} className="cursor-pointer">
-            <circle r={9} fill="var(--card)" stroke="var(--border)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-            {collapsed.has(n.id)
-              ? <text textAnchor="middle" y={3.5} fontSize={9.5} fontWeight={600} className="fill-foreground">{Math.min(99, insideCount(n.id))}</text>
-              : <path d="M -4 0 h 8" stroke="var(--subtle)" strokeWidth={1.6} vectorEffect="non-scaling-stroke" />}
-          </g>
-        )}
-        {ADDABLE.has(n.type) && detail >= 1 && (
-          // Add a card inside or beside it. Shown on hover, focus and selection.
-          <g transform={`translate(${w / 2 - 14} ${-h / 2})`} role="button" tabIndex={-1} aria-label={`Add to ${n.label}`} data-add={n.id}
-            className={cn('map-add cursor-pointer transition-opacity', on ? 'opacity-100' : 'opacity-0 group-hover/card:opacity-100 group-focus-visible/card:opacity-100')}
-            onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setSelected(n.id); openAdd(n) }}>
-            <title>{`Add to ${n.label} (N)`}</title>
-            <circle r={9} fill="var(--action)" />
-            <path d="M -4 0 h 8 M 0 -4 v 8" stroke="var(--action-foreground)" strokeWidth={1.8} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-          </g>
-        )}
-      </g>
-    )
-  }), [hoverCard, drawn, placed, neighbourIds, selected, dragAt, detail, onCardPointerDown, onCardPointerMove, onCardPointerUp, onCardPointerCancel, tree, collapsed, insideCount, toggleFold, select, explore, openAdd, entrance, fresh, flash, chosenAround, emphasis, lens, now, dens, overviewOn, subjectTallies, outer])
+    const delay = copy ? undefined : entrance?.node.get(n.id)
+    const arriving = copy ? undefined : delay !== undefined ? (entrance!.mode === 'full' ? 'map-card-in' : 'map-card-in-brief') : fresh?.nodes.has(n.id) ? 'map-card-new' : undefined
+    const c = dens?.folded.get(n.id)
+    const total = c ? foldedTotal(c) : 0
+    return {
+      n, x: p.x, y: p.y, detail, kids, inside: collapsed.has(n.id) ? insideCount(n.id) : 0, collapsed: collapsed.has(n.id),
+      showFold: kids > 0 && detail >= 1 && !(dens && (tree.children.get(n.id) ?? []).every(ch => dens.hidden.has(ch))),
+      addable: ADDABLE.has(n.type), outer: outer(n.id),
+      emphasized: !!emphasis?.has(n.id),
+      on: selected === n.id, dragging: dragAt?.id === n.id, copy, arriving, delay,
+      flash: flash?.id === n.id ? flash.n : null,
+      folded: overviewOn ? (total > 0 ? foldedLabel(c!) : '') : undefined,
+      chip: dens && total > 0 ? { total, label: foldedLabel(c!) } : null,
+      tally: overviewOn && n.type === 'subject' ? subjectTallies.get(n.id) ?? null : null,
+      lens, now, acts: cardActs,
+    }
+  }, [placed, tree, entrance, fresh, dens, detail, collapsed, insideCount, outer, emphasis, selected, dragAt, flash, overviewOn, subjectTallies, lens, now])
+  // The cards. Memoised apart from the pan; each card draws again only when its own props change.
+  const nodeLayer = useMemo(() => drawn.map(n => {
+    const props = cardPropsOf(n)
+    return props ? <MapCard key={n.id} {...props} /> : null
+  }), [drawn, cardPropsOf])
+  // ── The focus layer ────────────────────────────────────────────────────────
+  // What the hover or the selection lights, over a scrim of the canvas's own
+  // colour (so the rest reads as set back, as before): its lines lit, its
+  // [[link]] rings, its suggestions, and copies of the card and the cards it
+  // joins, raised. Only these redraw when the focus moves.
+  const focusOn = focusId !== null && placed.at.has(focusId)
+  const focusLayer = useMemo(() => {
+    if (!focusOn || !neighbourIds) return null
+    const lines = allLines.map((e, i) => (isLit(e) ? drawEdge(e, i, true, null) : null))
+    const rings = allLines.filter(e => e.kind === 'links_to' && (e.from === focusId || e.to === focusId)).map(e => drawRing(e, true))
+    const sugg = (overviewOn ? [] : suggestions).filter(sg => sg.from === focusId || sg.to === focusId).map(sg => drawSuggestion(sg, true))
+    // The card in focus last, so it is drawn on top; the selected one stays
+    // marked while the pointer rests on another.
+    const near = drawn.filter(n => (neighbourIds.has(n.id) || n.id === selected) && n.id !== focusId)
+    const self = byId.get(focusId!)
+    const copies = [...near.map(n => cardPropsOf(n, n.id === selected ? 'focus' : 'near')), self ? cardPropsOf(self, 'focus') : null]
+    return <>{lines}{sugg}{copies.map(p => (p ? <MapCard key={`copy-${p.n.id}`} {...p} /> : null))}{rings}</>
+  }, [focusOn, focusId, selected, neighbourIds, allLines, isLit, drawEdge, drawRing, drawSuggestion, suggestions, overviewOn, drawn, byId, cardPropsOf])
 
   // The ground each subject's tree stands on, lit softly in its colour, and
   // what each holds (for the overview's labels).
@@ -2105,6 +2180,20 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
   const resetView = () => { forgetViews(store); chooseOrientation(store, null); setChosen(null); requestAnimationFrame(() => fit()) }
   const askReset = () => { if (hasLayout) setPanel({ kind: 'reset' }); else { resetView(); say('The map is in its own layout. View reset.') } }
 
+  // The one map in view, to clear or delete whole: the workspace or subject
+  // chosen, or (in Everything) the subject explored. null in Everything itself.
+  const mapInView: { target: MapDeleteTarget; title: string } | null = (() => {
+    const ws = view.workspaceId
+    const title = view.workspaces?.find(w => w.id === ws)?.title
+    if (ws?.startsWith('subject:')) return { target: { subjectId: ws.slice('subject:'.length) }, title: title ?? 'this map' }
+    if (ws) return { target: { workspaceId: ws }, title: title ?? 'this map' }
+    const f = focus ? byId.get(focus) : null
+    return f?.type === 'subject' ? { target: { subjectId: rowId(f.id) }, title: f.label } : null
+  })()
+  // The map's own colour (map-color.ts): on its toolbar's edge and beside its name. Everything has none.
+  const tone = mapColor(view.workspaces?.find(w => w.id === view.workspaceId) ?? null)
+  const toneVars = tone ? ({ '--sh': tone.hue } as React.CSSProperties) : undefined
+  const askDeleteMap = (mode: MapDeleteMode) => { if (mapInView) setPanel({ kind: 'delete_map', target: mapInView.target, title: mapInView.title, mode }) }
   const trail = [{ id: null as string | null, label: view.workspaces?.find(w => w.id === view.workspaceId)?.title ?? 'Everything' },
     ...(focus ? pathTo(tree, focus).map(id => ({ id, label: byId.get(id)?.label ?? '' })) : [])]
 
@@ -2112,14 +2201,19 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
     <div ref={root} className={cn('relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-white/8 bg-card/60', motion === 'reduced' && 'map-still')} data-knowledge-map data-motion={motion}>
       <div ref={bridgeRef} hidden data-kivo-map-bridge="1" />
       {/* The toolbar: where you are, finding, and the view. Filters are folded into one menu. */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-white/8 px-3 py-2">
+      <div className={cn('flex flex-wrap items-center gap-2 border-b border-white/8 px-3 py-2', tone && 'subject-tone shadow-[inset_0_2px_0_var(--sc)]')} style={toneVars} data-map-tone={tone ? tone.hue : undefined}>
+        {tone && <span aria-hidden className="size-2.5 shrink-0 rounded-full bg-[var(--sc)]" data-map-dot />}
         {(view.workspaces?.length ?? 0) > 0 && onWorkspace && (
           // One workspace's map at a time; everything together on request.
           // One workspace's map at a time; everything together on request. While
           // the next one loads, the choice shows what was asked for.
           <select value={pendingScope ?? view.workspaceId ?? 'all'} onChange={e => onWorkspace(e.target.value)} aria-label="Which map" data-workspace-switch aria-busy={pendingScope !== null}
             className={cn('h-8 max-w-[11rem] rounded-full border border-white/12 bg-background px-3 text-xs font-medium text-foreground outline-none focus-visible:border-ring sm:max-w-[14rem]', pendingScope !== null && 'animate-pulse')}>
-            {view.workspaces!.map(w => <option key={w.id} value={w.id}>{w.title}</option>)}
+            {/* Workspaces, then subjects that belong to no workspace (one an assistant made through Kivo Connect is one). */}
+            {view.workspaces!.some(w => w.kind === 'subject') ? <>
+              <optgroup label="Maps">{view.workspaces!.filter(w => w.kind !== 'subject').map(w => <option key={w.id} value={w.id}>{w.title}</option>)}</optgroup>
+              <optgroup label="Subjects">{view.workspaces!.filter(w => w.kind === 'subject').map(w => <option key={w.id} value={w.id}>{w.title}</option>)}</optgroup>
+            </> : view.workspaces!.map(w => <option key={w.id} value={w.id}>{w.title}</option>)}
             <option value="all">Everything</option>
           </select>
         )}
@@ -2233,12 +2327,17 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
                   <button type="button" onClick={() => { setPanel(null); askReset() }} className={chip(false)} data-reset-layout title="Kivo's own layout, fitted to the screen">
                     <RotateCcw aria-hidden className="size-3" /> Reset layout
                   </button>
-                  {view.workspaceId && (
-                    // Out of the way, in a menu: one step deletes a whole map (it goes to Recently deleted).
-                    <button type="button" onClick={() => setPanel({ kind: 'delete_map', workspaceId: view.workspaceId!, title: view.workspaces?.find(w => w.id === view.workspaceId)?.title ?? 'this map' })}
-                      className={cn(chip(false), 'hover:border-red-400/50 hover:text-red-400')} title="Delete this whole map in one step" data-delete-map>
-                      <Trash2 aria-hidden className="size-3.5" /> Delete this map…
-                    </button>
+                  {mapInView && (
+                    // A whole map in one step, after a list of what goes (it all goes to Recently deleted).
+                    <>
+                      <button type="button" onClick={() => askDeleteMap('clear')} className={cn(chip(false), 'hover:border-red-400/50 hover:text-red-400')} title="Take everything off this map and keep the map, empty" data-clear-map>
+                        <Eraser aria-hidden className="size-3.5" /> Clear this map…
+                      </button>
+                      <button type="button" onClick={() => askDeleteMap('delete')}
+                        className={cn(chip(false), 'hover:border-red-400/50 hover:text-red-400')} title="Delete this whole map in one step" data-delete-map>
+                        <Trash2 aria-hidden className="size-3.5" /> Delete this map…
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -2252,6 +2351,12 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           <button type="button" onClick={() => { setPanel(null); askReset() }} className={tool} data-reset-layout-bar title="Kivo's own layout, fitted to the screen">
             <RotateCcw aria-hidden className="size-3.5" /> <span className="hidden md:inline">Reset layout</span>
           </button>
+          {mapInView && (
+            // Clear or delete this whole map: one dialog that says which is which and lists what goes first.
+            <button type="button" onClick={() => askDeleteMap('clear')} className={cn(tool, 'hover:text-red-400')} data-manage-map title={`Clear or delete “${mapInView.title}”`}>
+              <Trash2 aria-hidden className="size-3.5" /> <span className="hidden md:inline">Clear or delete</span>
+            </button>
+          )}
           <button type="button" onClick={() => setPanel(p => (p?.kind === 'help' ? null : { kind: 'help' }))} className={cn(tool, 'px-2.5')} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" data-shortcuts-open>
             <Keyboard aria-hidden className="size-3.5" />
           </button>
@@ -2330,21 +2435,11 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           // The camera: on the first visit the map tilts up into place as it settles.
           <div className={cn('absolute inset-0', layoutWait && !entrance ? 'opacity-0' : entrance ? (entrance.glide ? 'map-cam-glide' : entrance.mode === 'full' && entrance.key.endsWith('/root') ? 'map-cam-in' : 'map-cam-brief') : undefined)}>
           {/* What moves on its own, on its own layer under the cards: signals along the branches, the selection's pulse. */}
-          <div ref={cam} className="map-cam absolute inset-0">
+          <div ref={cam} className={cn('map-cam absolute inset-0', emphasis !== null && 'map-emph')}>
           <svg aria-hidden className="map-live pointer-events-none absolute" style={{ left: `${-OVERSCAN * 100}%`, top: `${-OVERSCAN * 100}%`, width: `${(1 + 2 * OVERSCAN) * 100}%`, height: `${(1 + 2 * OVERSCAN) * 100}%` }}><svg x={`${(OVERSCAN / (1 + 2 * OVERSCAN)) * 100}%`} y={`${(OVERSCAN / (1 + 2 * OVERSCAN)) * 100}%`} overflow="visible"><g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>{liveLayer}</g></svg></svg>
           {/* A group, not an image: it holds the items a keyboard reaches. */}
           <svg className="map-main absolute" style={{ left: `${-OVERSCAN * 100}%`, top: `${-OVERSCAN * 100}%`, width: `${(1 + 2 * OVERSCAN) * 100}%`, height: `${(1 + 2 * OVERSCAN) * 100}%` }} role="group" aria-label={`${drawn.length} items and ${drawnEdges.length} links${markers.size ? `, ${markers.size} outside` : ''}`}>
-            <defs>
-              <linearGradient id="map-sheen" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#fff" stopOpacity={0.07} />
-                <stop offset="45%" stopColor="#fff" stopOpacity={0} />
-              </linearGradient>
-              {/* Toward a card's foot, a little shade: with the light from above, a surface with volume. */}
-              <linearGradient id="map-shade" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="55%" stopColor="#000" stopOpacity={0} />
-                <stop offset="100%" stopColor="#000" stopOpacity={0.08} />
-              </linearGradient>
-            </defs>
+            <MapDefs />
             <svg x={`${(OVERSCAN / (1 + 2 * OVERSCAN)) * 100}%`} y={`${(OVERSCAN / (1 + 2 * OVERSCAN)) * 100}%`} overflow="visible">
             <g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>
               <g key={focus ?? 'root'} className={entrance ? undefined : 'map-enter'}>
@@ -2363,6 +2458,16 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
                 {farLabels}
               </g>
             </g>
+            </svg>
+          </svg>
+          {/* The focus: a scrim of the canvas's colour (one composited layer;
+              its fade is the compositor's), then what the hover or selection
+              lights, drawn over it. Nothing here takes the pointer: the cards
+              under it do. */}
+          <div aria-hidden className={cn('map-scrim pointer-events-none absolute', focusOn && 'map-scrim-on')} style={{ inset: `${-OVERSCAN * 100}%` }} />
+          <svg aria-hidden className="map-focus-layer pointer-events-none absolute" style={{ left: `${-OVERSCAN * 100}%`, top: `${-OVERSCAN * 100}%`, width: `${(1 + 2 * OVERSCAN) * 100}%`, height: `${(1 + 2 * OVERSCAN) * 100}%` }}>
+            <svg x={`${(OVERSCAN / (1 + 2 * OVERSCAN)) * 100}%`} y={`${(OVERSCAN / (1 + 2 * OVERSCAN)) * 100}%`} overflow="visible">
+              <g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>{focusLayer}</g>
             </svg>
           </svg>
           </div>
@@ -2403,8 +2508,12 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
               onDeleted={said => { leave(panel.node); if (selected === panel.node.id) setSelected(null); afterEdit(said, null) }} onStale={onChanged} />
         )}
         {panel?.kind === 'delete_map' && (
-          <DeleteWholeDialog target={{ workspaceId: panel.workspaceId }} title={panel.title} style={{ left: '50%', top: 12, transform: 'translateX(-50%)' }} onClose={closePanel}
-            onDeleted={said => { setSelected(null); goTo(null); setPanel(null); say(said); if (onWorkspace) onWorkspace('all'); else onChanged() }} />
+          <DeleteWholeDialog target={panel.target} title={panel.title} mode={panel.mode} style={{ left: '50%', top: 12, transform: 'translateX(-50%)' }} onClose={closePanel}
+            onDeleted={(said, gone) => {
+              setSelected(null); setPanel(null); say(said)
+              // Deleted: back to everything. Cleared: the same map, read again (empty).
+              if (gone) { goTo(null); if (onWorkspace && view.workspaceId) onWorkspace('all'); else onChanged() } else onChanged()
+            }} />
         )}
         {panel?.kind === 'reset' && (
           <div role="alertdialog" aria-label="Reset layout" data-map-overlay className="absolute left-1/2 top-3 z-30 w-[min(26rem,calc(100%-1.5rem))] -translate-x-1/2 rounded-2xl border border-white/10 bg-popover p-4 text-sm shadow-float" onPointerDown={e => e.stopPropagation()}>
@@ -2531,9 +2640,13 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
           </section>
         )}
 
-        <div className={cn('absolute bottom-3 flex flex-col items-end gap-2 transition-[right]', picked && detailOpen ? 'right-3 max-lg:bottom-[calc(58%+0.75rem)] lg:right-[23.5rem]' : 'right-3')} onPointerDown={e => e.stopPropagation()}>
+        {/* The view's controls stay in the corner, never over the cards (K-15):
+            with the details panel open on a wide screen they are one row under
+            the panel (which leaves them that strip) and the minimap rests;
+            on a phone they sit above the panel's sheet. */}
+        <div className={cn('absolute bottom-3 right-3 flex flex-col items-end gap-2', picked && detailOpen && 'max-lg:bottom-[calc(58%+0.75rem)]')} data-map-controls={picked && detailOpen ? 'beside-panel' : 'corner'} onPointerDown={e => e.stopPropagation()}>
         {/* The minimap, when the map is bigger than the screen. */}
-        {!portrait && miniCards.length > 0 && frame.current && (() => {
+        {!portrait && !(picked && detailOpen) && miniCards.length > 0 && frame.current && (() => {
           const cw = frame.current.clientWidth, ch = frame.current.clientHeight
           const ms = miniSize(miniBox), mf = minimapFrame(miniBox, ms.w, ms.h), vp = viewportOn(mf, t, cw, ch)
           // Shown only when part of the map is off screen.
@@ -2544,7 +2657,7 @@ export function KnowledgeMap({ view, onChanged, onWorkspace, pendingScope = null
             </div>
           )
         })()}
-        <div className="flex flex-col overflow-hidden rounded-xl border border-white/10 bg-card/90 shadow-soft backdrop-blur">
+        <div className={cn('flex overflow-hidden rounded-xl border border-white/10 bg-card/90 shadow-soft backdrop-blur [&>button+button]:border-white/8', picked && detailOpen ? 'flex-col lg:flex-row-reverse lg:items-stretch lg:[&>button+button]:border-r lg:[&>button+button]:border-t-0 lg:[&>button]:px-2.5' : 'flex-col')}>
           <button type="button" onClick={() => zoomAt(1.25)} aria-label="Zoom in" title="Zoom in (+)" className="p-2 text-foreground/70 transition-colors hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"><Plus className="size-4" /></button>
           <button type="button" onClick={() => { if (selected && placed.at.has(selected)) centreOn(selected, 1); else zoomAt(1 / t.k) }} aria-label={`Zoom ${Math.round(t.k * 100)}%. Set to 100%`} title="Zoom to 100% (0)"
             className="border-t border-white/8 py-1 text-[10px] font-medium tabular-nums text-foreground/70 hover:bg-white/6 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring">{Math.round(t.k * 100)}%</button>
