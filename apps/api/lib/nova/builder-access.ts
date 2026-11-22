@@ -16,6 +16,8 @@ import { spendAiRequest, meterTokensForLearner } from "@repo/api/billing/usage"
 import { runJob, type BuilderJob } from "@repo/api/nova/product/builder"
 //@ts-ignore
 import { startInteraction } from "@repo/api/services/llm-usage"
+//@ts-ignore
+import { reserveForInteraction } from "@repo/api/billing/accounting/nova"
 import { allowAttempt } from "./extension-access"
 
 export const TURNS_PER_MINUTE = 8
@@ -49,7 +51,11 @@ export function startJob(platformChatId: string, job: BuilderJob | null, counted
       // one interaction named by the job.
       await startInteraction(
         { feature: "build_with_nova", surface: "web", learner: platformChatId, requestId: job.jobId, isAllowanceCounted: counted },
-        () => meterTokensForLearner(platformChatId, () => runJob(platformChatId, job)),
+        async () => {
+          // Usage accounting (shadow): the job's Nova credits, reserved once per job.
+          await reserveForInteraction({ idempotencyKey: `builder:${job.jobId}` })
+          return meterTokensForLearner(platformChatId, () => runJob(platformChatId, job))
+        },
       )
     } catch (err) {
       console.error("[nova/builder] job crashed:", (err as Error)?.name ?? "error")

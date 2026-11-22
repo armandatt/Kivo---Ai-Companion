@@ -67,7 +67,19 @@ export interface UsageContext {
   isBackground:       boolean;
   // Whether this call is inside a request the daily allowance counted.
   isAllowanceCounted: boolean;
+  // The interaction's calls, for usage accounting when it ends
+  // (billing/accounting/nova.ts). Shared by every context narrowed inside it.
+  tally?:             InteractionTally;
 }
+
+// What one interaction did, handed to accounting when it ends: every model
+// call made inside it (each with the context it was made in), whether the
+// work failed, and the reservation its entry point made, if any.
+export interface InteractionTally {
+  events:      LlmCallEvent[];
+  reservation: Promise<string | null> | null;
+}
+export interface InteractionEnd { context: UsageContext; events: LlmCallEvent[]; failed: boolean; reservation: Promise<string | null> | null }
 
 const contexts = new AsyncLocalStorage<UsageContext>();
 
@@ -80,8 +92,21 @@ export function currentUsageContext(): UsageContext | undefined {
 
 // A new learner action or job: its own interaction id, nothing inherited
 // but what is given.
-export function startInteraction<T>(context: Partial<Omit<UsageContext, "interactionId">> & Pick<UsageContext, "feature" | "surface">, work: () => Promise<T>): Promise<T> {
-  return contexts.run({ ...UNATTRIBUTED, ...context, interactionId: randomUUID() }, work);
+// When it ends (returned or threw), its calls go to usage accounting.
+export function startInteraction<T>(context: Partial<Omit<UsageContext, "interactionId" | "tally">> & Pick<UsageContext, "feature" | "surface">, work: () => Promise<T>): Promise<T> {
+  const tally: InteractionTally = { events: [], reservation: null };
+  const ctx: UsageContext = { ...UNATTRIBUTED, ...context, interactionId: randomUUID(), tally };
+  return contexts.run(ctx, async () => {
+    let failed = false;
+    try {
+      return await work();
+    } catch (err) {
+      failed = true;
+      throw err;
+    } finally {
+      endInteraction({ context: ctx, events: tally.events, failed, reservation: tally.reservation });
+    }
+  });
 }
 
 // Narrows the current interaction (a different feature for one call, say)
@@ -159,11 +184,20 @@ let lastFailureLog = 0;
 // Hands the call to the sink without waiting for it. A failure to record is
 // logged (by kind only, at most once a minute) and never reaches the caller.
 export function emitLlmCall(call: LlmCall): void {
-  if (process.env.AI_USAGE_EVENTS_DISABLED === "true" || !sink) return;
+  if (process.env.AI_USAGE_EVENTS_DISABLED === "true" || !sink) {
+    const store = contexts.getStore();
+    if (store?.tally) store.tally.events.push({ ...call, context: store });
+    return;
+  }
   const context = contexts.getStore() ?? { ...UNATTRIBUTED, interactionId: randomUUID() };
+  const event: LlmCallEvent = { ...call, context };
+  // Accounting: the interaction settles it when it ends; a call made under
+  // no interaction is settled on its own, so none is left out.
+  if (context.tally) context.tally.events.push(event);
+  else endInteraction({ context, events: [event], failed: false, reservation: null });
   let write: Promise<void>;
   try {
-    write = sink({ ...call, context });
+    write = sink(event);
   } catch (err) {
     write = Promise.reject(err);
   }
@@ -172,6 +206,38 @@ export function emitLlmCall(call: LlmCall): void {
     if (now - lastFailureLog > 60_000) {
       lastFailureLog = now;
       console.error(`[llm-usage] usage event not recorded: ${(err as Error)?.name ?? "error"}`);
+    }
+  }).finally(() => { pending.delete(tracked); });
+  pending.add(tracked);
+}
+
+// ── Interactions, to usage accounting ─────────────────────────────────────────
+// Production settles each ended interaction on the usage ledger
+// (billing/accounting/nova.ts, loaded on first use). Tests set their own.
+type InteractionSink = (end: InteractionEnd) => Promise<void>;
+const accountingSink: InteractionSink = async end => {
+  const { settleInteraction } = await import("../billing/accounting/nova");
+  await settleInteraction(end);
+};
+let interactionSink: InteractionSink | null = accountingSink;
+export function setInteractionSink(next: InteractionSink | null | "accounting"): void {
+  interactionSink = next === "accounting" ? accountingSink : next;
+}
+
+function endInteraction(end: InteractionEnd): void {
+  if (!interactionSink || process.env.USAGE_ACCOUNTING === "off") return;
+  if (end.events.length === 0 && !end.reservation) return;
+  let settle: Promise<void>;
+  try {
+    settle = interactionSink(end);
+  } catch (err) {
+    settle = Promise.reject(err);
+  }
+  const tracked: Promise<void> = settle.catch(err => {
+    const now = Date.now();
+    if (now - lastFailureLog > 60_000) {
+      lastFailureLog = now;
+      console.error(`[llm-usage] interaction not settled: ${(err as Error)?.name ?? "error"}`);
     }
   }).finally(() => { pending.delete(tracked); });
   pending.add(tracked);

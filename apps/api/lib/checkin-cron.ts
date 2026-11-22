@@ -11,6 +11,8 @@ import { startInteraction } from "@repo/api/services/llm-usage";
 //@ts-ignore
 import { createHousekeepingGate } from "@repo/api/services/schedulerGate";
 //@ts-ignore
+import { reconcileUsage } from "@repo/api/billing/accounting/reconcile";
+//@ts-ignore
 import type { ProactiveOutlook } from "@repo/api/nova/proactive/proactive-outlook";
 
 // The scheduled jobs, one tick. Nova only: Nova's proactive messages, the
@@ -57,6 +59,9 @@ async function runTick(now: Date): Promise<CheckinCronResult> {
   // Housekeeping: drop webhook dedup rows past their retention window.
   if (housekeeping) {
     await purgeProcessedTelegramUpdates(now).catch((err: unknown) => console.error("[CHECKIN] update purge failed", err));
+    // Usage accounting: reservations left open past their time (a crash, a
+    // deploy) are settled from what is on record (billing/accounting/reconcile.ts).
+    await reconcileUsage(now).catch((err: unknown) => console.error("[CHECKIN] usage reconciliation failed", (err as Error)?.name ?? err));
   }
 
   const token = process.env.TELEGRAM_BOT_TOKEN ?? process.env.BOT_TOKEN;

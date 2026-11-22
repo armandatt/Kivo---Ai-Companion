@@ -40,8 +40,10 @@ export async function metered<T>(platformChatId: string, work: () => Promise<T>,
 // request, however many steps; packages/api/src/nova/product/agent-ticket.ts).
 // Not counted again on the allowance, but every token its model calls use
 // still goes on the account's meter and the usage events, under `use`.
-export async function withinCountedTask<T>(platformChatId: string, work: () => Promise<T>, use: MeteredUse): Promise<T> {
-  const entry = { feature: use.feature, surface: use.surface ?? "web", learner: platformChatId, isAllowanceCounted: false }
+// `taskId` names the task on every step's usage event (requestId), so usage
+// accounting adds the step's cost to that task (billing/accounting/browser.ts).
+export async function withinCountedTask<T>(platformChatId: string, work: () => Promise<T>, use: MeteredUse, taskId: string | null = null): Promise<T> {
+  const entry = { feature: use.feature, surface: use.surface ?? "web", learner: platformChatId, isAllowanceCounted: false, requestId: taskId }
   let usageKey: string | null = null
   try { usageKey = (await entitlementForLearner(platformChatId)).usageKey } catch (err) { console.error(`[billing] entitlement unavailable: ${(err as Error).name}`) }
   if (!usageKey) return startInteraction(entry, work)

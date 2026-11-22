@@ -13,6 +13,8 @@ import { runTool, TOOLS, type ToolResult } from "@repo/api/connect/tools"
 import { hasScopes } from "@repo/api/connect/oauth-rules"
 //@ts-ignore
 import type { ConnectLearner } from "@repo/api/connect/learner"
+//@ts-ignore
+import { recordMcpCall } from "@repo/api/billing/accounting/mcp"
 import { CONNECT_VERSION } from "./config"
 
 const INSTRUCTIONS = [
@@ -63,6 +65,10 @@ export function buildServer(learner: ConnectLearner | Blocked, origin: string): 
         return { content: [{ type: "text" as const, text: JSON.stringify(structured) }], structuredContent: structured, isError: true }
       }
       const result: ToolResult = await runTool(tool, args, { learner, origin, confirm: null })
+      // Usage accounting (shadow): every call that reached a tool, counted
+      // server-side by account and grant, read or write, with batch items.
+      // Never awaited: a fault in accounting never delays or fails the call.
+      void recordMcpCall({ userId: learner.userId, grantId: learner.grantId, tool: tool.name, args, outcome: result.ok ? "ok" : String(result.error ?? "error") })
       const structured = result.ok ? { ok: true, ...result.data } : { ok: false, error: result.error, message: result.message, ...(result.data ?? {}) }
       // Images go as MCP image content after the JSON, each named first by a
       // line of text (which note, which image, its caption): never inside

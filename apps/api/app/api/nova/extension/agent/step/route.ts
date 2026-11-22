@@ -36,7 +36,7 @@ async function handle(req: Request): Promise<NextResponse> {
     if (!allowAttempt(`agent-task:${ticket.taskId}`, AGENT_TASK_STEPS, AGENT_TASK_TTL_MS)) return eventFail(429, "task_limit", "This task has used all its steps. Ask again to continue.")
     // This step's own tokens, returned so the extension can measure a whole task.
     const usage = { inputTokens: 0, outputTokens: 0, calls: 0 }
-    const result = await withinCountedTask(who.platformChatId, () => meterLlmUsage((u: { inputTokens: number | null; outputTokens: number | null }) => { usage.inputTokens += u.inputTokens ?? 0; usage.outputTokens += u.outputTokens ?? 0; usage.calls++ }, () => agentStep(read.body)), { feature: "extension_agent", surface: "extension" }) as Awaited<ReturnType<typeof agentStep>>
+    const result = await withinCountedTask(who.platformChatId, () => meterLlmUsage((u: { inputTokens: number | null; outputTokens: number | null }) => { usage.inputTokens += u.inputTokens ?? 0; usage.outputTokens += u.outputTokens ?? 0; usage.calls++ }, () => agentStep(read.body)), { feature: "extension_agent", surface: "extension" }, ticket.taskId) as Awaited<ReturnType<typeof agentStep>>
     if (result.ok) return NextResponse.json({ success: true, thought: result.thought, plan: result.plan, expect: result.expect, action: result.action, usage }, { headers: { "cache-control": "no-store" } })
     return NextResponse.json({ success: false, ...result }, { status: result.error === "invalid" ? 400 : 503 })
   } catch (err) {

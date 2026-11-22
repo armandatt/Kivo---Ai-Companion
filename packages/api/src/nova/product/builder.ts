@@ -1285,3 +1285,13 @@ export async function liveWorkspace(platformChatId: string, workspaceId: unknown
   if (!profile || typeof workspaceId !== "string") return null;
   return workspaceDetail(platformChatId, profile.id, workspaceId, now);
 }
+
+// Bytes of the files waiting in a learner's Build with Nova conversations,
+// for usage accounting (storage allowance). Removed when a draft is built or
+// cancelled, so this is what is held now.
+export async function draftFileBytes(profileId: string): Promise<number> {
+  const rows = await prisma.$queryRaw<{ bytes: bigint | null }[]>`
+    SELECT COALESCE(SUM(octet_length(f.bytes)), 0)::bigint AS bytes
+    FROM "NovaWorkspaceDraftFile" f JOIN "NovaWorkspaceDraft" d ON d.id = f."draftId" WHERE d."profileId" = ${profileId}`;
+  return Number(rows[0]?.bytes ?? 0);
+}

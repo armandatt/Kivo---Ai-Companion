@@ -4,6 +4,8 @@ import { metered } from "../../../../../../lib/billing/metered"
 import { agentContext } from "@repo/api/nova/product/browser-agent"
 //@ts-ignore
 import { issueAgentTicket, AGENT_TASK_STEPS } from "@repo/api/nova/product/agent-ticket"
+//@ts-ignore
+import { clientTaskKey, reserveBrowserTask } from "@repo/api/billing/accounting/browser"
 import { allowAttempt, eventFail, preflight, readSmallJson, requireExtensionLearner, withCors } from "../../../../../../lib/nova/extension-access"
 
 export const runtime = "nodejs"
@@ -32,7 +34,14 @@ async function handle(req: Request): Promise<NextResponse> {
     const run = await metered(who.platformChatId, () => agentContext(who.profileId, objective, pageTitle), { feature: "extension_agent", surface: "extension" })
     if (!run.ok) return run.response
     const context = run.value as Awaited<ReturnType<typeof agentContext>>
-    const { ticket, expiresAt } = issueAgentTicket(who.connectionId)
+    // Usage accounting (shadow): one browser task reserved for this start; a
+    // retried start with the same clientKey gets its first task back
+    // (billing/accounting/browser.ts). Today's daily allowance above still decides.
+    let issued = issueAgentTicket(who.connectionId)
+    const clientKey = clientTaskKey(read.ok ? (read.body as { clientKey?: unknown } | null)?.clientKey : undefined)
+    const task = await reserveBrowserTask({ platformChatId: who.platformChatId, taskId: issued.taskId, clientKey })
+    if (task?.duplicate && task.taskId !== issued.taskId) issued = issueAgentTicket(who.connectionId, Date.now(), task.taskId)
+    const { ticket, expiresAt } = issued
     return NextResponse.json({ success: true, ticket, expiresAt, maxSteps: AGENT_TASK_STEPS, ...context }, { headers: { "cache-control": "no-store" } })
   } catch (err) {
     console.error("[nova/extension/agent/start]", err)

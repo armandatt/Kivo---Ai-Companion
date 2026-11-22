@@ -8,6 +8,7 @@
 import { prisma } from "@repo/db/client";
 import { meterLlmUsage, startInteraction, withUsageContext, type LlmUsage, type UsageContext } from "../services/llm-usage";
 import type { Entitlement } from "./entitlements";
+import { reserveForInteraction } from "./accounting/nova";
 
 // Who and what a metered request is, for its usage events (llm-usage.ts).
 export type UsageEntry = Pick<UsageContext, "feature" | "surface"> & Partial<Pick<UsageContext, "learner" | "requestId">>;
@@ -60,8 +61,12 @@ export async function withAiAllowance<T>(
   now = new Date(),
   entry?: UsageEntry,
 ): Promise<{ ok: true; value: T } | { ok: false; spend: Extract<Spend, { ok: false }> }> {
+  // Usage accounting (shadow): Nova credits are reserved for the interaction
+  // before its work runs, and settled from its measured cost when it ends
+  // (accounting/nova.ts). Today's daily allowance above still decides.
+  const reserved = () => reserveForInteraction().then(work);
   const described = (counted: boolean) => entry
-    ? startInteraction({ ...entry, usageKey: ent.usageKey, isAllowanceCounted: counted }, work)
+    ? startInteraction({ ...entry, usageKey: ent.usageKey, isAllowanceCounted: counted }, reserved)
     : withUsageContext({ usageKey: ent.usageKey, isAllowanceCounted: counted }, work);
   let spend: Spend;
   try {
@@ -114,4 +119,11 @@ export async function meterTokensForLearner<T>(platformChatId: string, work: () 
     } catch { /* metering never fails the work */ }
   }
   return value;
+}
+
+// Counted requests per meter key over a range of UTC days, for the shadow
+// report's comparison with the new balances (internal).
+export async function requestsBySubject(fromDay: string, toDay: string): Promise<Map<string, number>> {
+  const rows = await prisma.aiUsageDay.groupBy({ by: ["subjectKey"], where: { day: { gte: fromDay, lte: toDay } }, _sum: { requests: true } });
+  return new Map(rows.map(r => [r.subjectKey, r._sum.requests ?? 0]));
 }

@@ -56,6 +56,7 @@ import { slowestStage } from "./telegram.types";
 import { entitlementForLearner, type Entitlement } from "../../billing/entitlements";
 import { allowanceFor } from "../../billing/limits";
 import { spendAiRequest } from "../../billing/usage";
+import { reserveForInteraction } from "../../billing/accounting/nova";
 import { withUsageContext } from "../../services/llm-usage";
 import { openDraftFromChat } from "../product/builder";
 
@@ -192,7 +193,13 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
   // `counted`: the meter took it (for the usage events of the reading).
   let counted = false;
   const accountAllows = async () => {
-    try { return counted = (await spendAiRequest(await entitled())).ok } catch { return true }
+    const allowed = await (async () => {
+      try { return counted = (await spendAiRequest(await entitled())).ok } catch { return true }
+    })();
+    // Usage accounting (shadow): this update's Nova credits, reserved once
+    // per update (its reading, wording and rewording settle together).
+    if (allowed) await reserveForInteraction({ feature: "telegram_understanding", idempotencyKey: event.updateId != null ? `telegram:${event.chatId}:${event.updateId}` : undefined });
+    return allowed;
   };
   const inLanguage = async (text: string): Promise<string> => {
     if (event.kind !== "text") return text;

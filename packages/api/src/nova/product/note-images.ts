@@ -229,3 +229,11 @@ export async function noteImagesForModel(profileId: string, noteId: string, ids:
   }
   return { images, missing };
 }
+
+// Bytes of a learner's note images, for usage accounting (storage allowance).
+// Measured from the stored bytes, not from upload sizes.
+export async function noteImageBytes(profileId: string): Promise<number> {
+  const rows = await prisma.$queryRaw<{ bytes: bigint | null }[]>`
+    SELECT COALESCE(SUM(octet_length(bytes)), 0)::bigint AS bytes FROM "NovaNoteImage" WHERE "profileId" = ${profileId}`;
+  return Number(rows[0]?.bytes ?? 0);
+}
