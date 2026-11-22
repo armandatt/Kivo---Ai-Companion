@@ -17,12 +17,18 @@
 // learner's own, unfiled by the delete) is remembered by id, and refiled on
 // restore only if it is still filed under nothing: a later choice of theirs
 // is never undone. Workspace records are kept by workspaces.ts and handed in.
+//
+// Topics deleted one at a time (Subject Studio, the map, an assistant through
+// Kivo Connect: setup-edit.ts applyStudyEdits) come here too (K-02): the topic
+// rows, and what was filed under each (which stayed under the subject, with
+// no topic), filed back under the topic on restore if it is still there.
 
 import { prisma } from "@repo/db/client";
 import { noteFilingIn, refileNotesIn } from "./notes";
 import { taskFilingIn, refileTasksIn } from "./tasks";
 import { resourceFilingIn, refileResourcesIn } from "./learning-events";
 import { restoreDatesIn } from "./exams";
+import { normalizeTopicName } from "../engines/topic-mastery-engine";
 
 export const TRASH_KEEP_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -42,10 +48,14 @@ export interface TrashSnapshot {
   resources:  Filing[];
   // workspaces.ts's own record of the workspaces it deleted or changed.
   workspaces: Array<{ id: string; removed: boolean; row: Record<string, unknown> | null; subjectIds: string[] }>;
+  // Filed under a deleted topic, left under its subject by the delete.
+  topicFiled?: { notes: Filing[]; tasks: Filing[]; resources: Filing[] };
 }
 
+export type TrashKind = "subject" | "workspace" | "topic";
+
 export interface TrashItem {
-  id: string; kind: "subject" | "workspace"; title: string; deletedAt: string; expiresAt: string;
+  id: string; kind: TrashKind; title: string; deletedAt: string; expiresAt: string;
   holds: { subjects: number; topics: number; dates: number };
 }
 
@@ -73,10 +83,23 @@ export async function snapshotIn(tx: Tx, profileId: string, going: { subjectIds:
   };
 }
 
-export async function trashIn(tx: Tx, profileId: string, item: { kind: "subject" | "workspace"; title: string; snapshot: TrashSnapshot }, now = new Date()): Promise<void> {
-  await tx.novaKnowledgeTrash.create({
+export async function trashIn(tx: Tx, profileId: string, item: { kind: TrashKind; title: string; snapshot: TrashSnapshot }, now = new Date()): Promise<string> {
+  const row = await tx.novaKnowledgeTrash.create({
     data: { profileId, kind: item.kind, title: item.title.slice(0, 200), snapshot: item.snapshot as unknown as JsonInput, deletedAt: now, expiresAt: new Date(now.getTime() + TRASH_KEEP_DAYS * DAY_MS) },
+    select: { id: true },
   });
+  return row.id;
+}
+
+// What was filed under these topics (by subject and name, as filing is),
+// read before they go: the delete leaves it under the subject, with no topic.
+export async function topicFilingIn(tx: Tx, profileId: string, topics: Array<{ subjectId: string; name: string }>): Promise<NonNullable<TrashSnapshot["topicFiled"]>> {
+  if (topics.length === 0) return { notes: [], tasks: [], resources: [] };
+  const subjectIds = [...new Set(topics.map(t => t.subjectId))];
+  const named = new Set(topics.map(t => `${t.subjectId}\n${normalizeTopicName(t.name).toLowerCase()}`));
+  const under = (f: Filing) => f.topicName !== null && named.has(`${f.subjectId}\n${normalizeTopicName(f.topicName).toLowerCase()}`);
+  const [notes, tasks, resources] = await Promise.all([noteFilingIn(tx, profileId, subjectIds), taskFilingIn(tx, profileId, subjectIds), resourceFilingIn(tx, profileId, subjectIds)]);
+  return { notes: notes.filter(under), tasks: tasks.filter(under), resources: resources.filter(under) };
 }
 
 const holds = (s: TrashSnapshot) => ({ subjects: s.subjects.length, topics: s.topics.length, dates: s.dates.length });
@@ -87,7 +110,7 @@ export async function listTrash(profileId: string, now = new Date()): Promise<Tr
     where: { profileId, restoredAt: null, expiresAt: { gt: now } }, orderBy: { deletedAt: "desc" }, take: 50,
   });
   return rows.map(r => ({
-    id: r.id, kind: r.kind === "workspace" ? "workspace" : "subject", title: r.title,
+    id: r.id, kind: r.kind === "workspace" || r.kind === "topic" ? r.kind : "subject", title: r.title,
     deletedAt: r.deletedAt.toISOString(), expiresAt: r.expiresAt.toISOString(), holds: holds(r.snapshot as unknown as TrashSnapshot),
   }));
 }
@@ -109,7 +132,8 @@ const asDate = (v: unknown) => (v === null || v === undefined ? null : new Date(
 // The copy put back, with the same ids. A subject whose name is taken now (they
 // made another one since) comes back as "Name (restored)". A subject inside one
 // that is gone, and not coming back, comes back at the top.
-export async function putBackIn(tx: Tx, profileId: string, s: TrashSnapshot): Promise<{ renamed: string[] }> {
+export async function putBackIn(tx: Tx, profileId: string, s: TrashSnapshot): Promise<{ renamed: string[]; left: string[] }> {
+  const left: string[] = [];
   const renamed: string[] = [];
   const existing = new Set((await tx.novaSubject.findMany({ where: { profileId }, select: { name: true, id: true } })).map((x: { name: string }) => x.name.toLowerCase()));
   const liveIds = new Set((await tx.novaSubject.findMany({ where: { profileId }, select: { id: true } })).map((x: { id: string }) => x.id));
@@ -146,16 +170,35 @@ export async function putBackIn(tx: Tx, profileId: string, s: TrashSnapshot): Pr
   const topicsBack = new Set(s.topics.map(t => t.id as string));
   const done = new Set<string>();
   const pending = s.topics.filter(t => subjectsNow.has(t.subjectId as string));
+  // A topic whose subject has gone since can't come back on its own.
+  for (const t of s.topics) if (!subjectsNow.has(t.subjectId as string)) left.push(t.name as string);
+  // Topics there now in those subjects: a parent still there is kept, and a
+  // name taken since comes back as "Name (restored)" (a subject holds a name once).
+  const liveTopics = await tx.novaTopicMastery.findMany({ where: { subjectId: { in: [...new Set(pending.map(t => t.subjectId as string))] } }, select: { id: true, subjectId: true, name: true } });
+  const liveTopicIds = new Set(liveTopics.map((x: { id: string }) => x.id));
+  const takenNames = new Set(liveTopics.map((x: { subjectId: string; name: string }) => `${x.subjectId}\n${x.name.toLowerCase()}`));
+  const nameNow = new Map<string, string>();
   for (let guard = 0; pending.some(t => !done.has(t.id as string)) && guard < s.topics.length + 1; guard++) {
     for (const t of pending) {
       const id = t.id as string, parent = (t.parentId as string | null) ?? null;
       if (done.has(id) || (parent && topicsBack.has(parent) && !done.has(parent))) continue;
+      let name = t.name as string;
+      const slot = (n: string) => `${t.subjectId as string}\n${n.toLowerCase()}`;
+      if (takenNames.has(slot(name))) {
+        const base = `${name} (restored)`;
+        let n = 1;
+        name = base;
+        while (takenNames.has(slot(name))) name = `${base} ${++n}`;
+        renamed.push(name);
+      }
+      takenNames.add(slot(name));
+      nameNow.set(`${t.subjectId as string}\n${normalizeTopicName(t.name as string).toLowerCase()}`, name);
       await tx.novaTopicMastery.create({ data: {
-        id, subjectId: t.subjectId as string, name: t.name as string,
+        id, subjectId: t.subjectId as string, name,
         masteryProbability: (t.masteryProbability as number) ?? 0, confidenceReported: (t.confidenceReported as number) ?? 0,
         efFactor: (t.efFactor as number) ?? 2.5, intervalDays: (t.intervalDays as number) ?? 1, reviewCount: (t.reviewCount as number) ?? 0,
         lastStudiedAt: asDate(t.lastStudiedAt), nextReviewAt: asDate(t.nextReviewAt), archivedAt: asDate(t.archivedAt),
-        parentId: parent && (topicsBack.has(parent) || done.has(parent)) ? parent : null, position: (t.position as number | null) ?? null,
+        parentId: parent && (done.has(parent) || liveTopicIds.has(parent)) ? parent : null, position: (t.position as number | null) ?? null,
         kind: (t.kind as string | null) ?? null, details: (t.details ?? undefined) as JsonInput | undefined, createdAt: asDate(t.createdAt) ?? undefined,
       } });
       done.add(id);
@@ -167,5 +210,16 @@ export async function putBackIn(tx: Tx, profileId: string, s: TrashSnapshot): Pr
   await refileNotesIn(tx, profileId, live(s.notes));
   await refileTasksIn(tx, profileId, live(s.tasks));
   await refileResourcesIn(tx, profileId, live(s.resources));
-  return { renamed };
+  // Filed under a topic that is back: filed under it again (under the name it
+  // came back with), if it is still under its subject with no topic.
+  if (s.topicFiled) {
+    const back = (f: Filing[]) => f.flatMap(x => {
+      const name = x.topicName === null ? undefined : nameNow.get(`${x.subjectId}\n${normalizeTopicName(x.topicName).toLowerCase()}`);
+      return name ? [{ ...x, topicName: name }] : [];
+    });
+    await refileNotesIn(tx, profileId, back(s.topicFiled.notes), "under_subject");
+    await refileTasksIn(tx, profileId, back(s.topicFiled.tasks), "under_subject");
+    await refileResourcesIn(tx, profileId, back(s.topicFiled.resources), "under_subject");
+  }
+  return { renamed, left };
 }

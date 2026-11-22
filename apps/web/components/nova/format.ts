@@ -64,6 +64,18 @@ export function dayOfMonth(dayKey: string): string {
   return String(Number(dayKey.slice(8, 10)))
 }
 
+// "21 – 27 Nov", "28 Nov – 4 Dec", "29 Dec 2026 – 4 Jan 2027": two day keys
+// (YYYY-MM-DD) as the calendar days they are, wherever the device is.
+export function daysRange(first: string, last: string): string {
+  const at = (k: string) => new Date(`${k}T12:00:00Z`)
+  const fmt = (k: string, o: Intl.DateTimeFormatOptions) => at(k).toLocaleDateString(undefined, { ...o, timeZone: 'UTC' })
+  const sameYear = first.slice(0, 4) === last.slice(0, 4)
+  const sameMonth = sameYear && first.slice(0, 7) === last.slice(0, 7)
+  if (sameMonth) return `${dayOfMonth(first)} – ${fmt(last, { day: 'numeric', month: 'short' })}`
+  if (sameYear) return `${fmt(first, { day: 'numeric', month: 'short' })} – ${fmt(last, { day: 'numeric', month: 'short' })}`
+  return `${fmt(first, { day: 'numeric', month: 'short', year: 'numeric' })} – ${fmt(last, { day: 'numeric', month: 'short', year: 'numeric' })}`
+}
+
 export function calendarDate(iso: string, timeZone: string): string {
   return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone })
 }

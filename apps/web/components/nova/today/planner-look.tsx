@@ -12,7 +12,8 @@ import { WhyPlan } from '../planner/why-plan'
 import { UpcomingPressure } from '../planner/pressure'
 
 export function PlannerLook() {
-  const { view, loading, refresh } = useNovaPlanner(null)
+  // Under "the week ahead": today and the six days after it (K-11).
+  const { view, loading, refresh } = useNovaPlanner(null, null, { ahead: true })
   if (loading) return <div aria-busy="true" aria-label="Loading the week ahead" className="h-40 animate-pulse rounded-2xl bg-white/3" />
   if (!view || view.status !== 'ready') {
     return <p role="status" className="text-sm text-foreground/60">The week ahead didn&apos;t load. <button type="button" onClick={() => void refresh()} className="underline">Try again</button></p>
@@ -20,7 +21,7 @@ export function PlannerLook() {
   const ready: NovaPlannerReady = view
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem]" data-today-planner-look>
-      <WeekPlan week={ready.week} />
+      <WeekPlan week={ready.week} ahead />
       <div className="space-y-6">
         <WhyPlan reasoning={ready.reasoning} />
         <UpcomingPressure pressure={ready.pressure} timezone={ready.timezone} goals={ready.goals} />

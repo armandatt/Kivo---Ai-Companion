@@ -1,5 +1,6 @@
 'use client'
 
+import { sameZone } from '@repo/api/nova/product/zone-names'
 import { useEffect, useState } from 'react'
 import { BellRing } from 'lucide-react'
 
@@ -130,7 +131,7 @@ export function CheckinSettings() {
           {zone.stored && (
             <p className="mt-3 text-xs leading-relaxed text-foreground/60" data-checkin-timezone>
               Your days and this time are kept in <span className="font-medium text-foreground/80">{zone.stored}</span>.
-              {zone.device && zone.device !== zone.stored && (
+              {zone.device && !sameZone(zone.device, zone.stored) && (
                 <>
                   {' '}This device is on {zone.device}.{' '}
                   <button type="button" disabled={saving} onClick={() => void switchToDeviceZone()} className="font-medium text-keppel-300 underline underline-offset-2 disabled:opacity-50" data-use-device-zone>

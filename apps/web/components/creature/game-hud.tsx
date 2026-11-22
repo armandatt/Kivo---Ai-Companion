@@ -3,6 +3,8 @@
 import { motion } from 'framer-motion'
 
 interface GameHUDProps {
+  // The companion's own name (Settings), not a fixed "Kivo".
+  name?: string
   playerLevel: number
   currentStreak: number
   worldHealth: number
@@ -26,7 +28,7 @@ function StreakFlame({ streak }: { streak: number }) {
   )
 }
 
-export function GameHUD({ playerLevel, currentStreak, worldHealth, currentTime }: GameHUDProps) {
+export function GameHUD({ name = 'Kivo', playerLevel, currentStreak, worldHealth, currentTime }: GameHUDProps) {
   const worldTier  = playerLevel >= 20 ? 'Ancient' : playerLevel >= 10 ? 'Elder' : playerLevel >= 5 ? 'Growing' : 'Newborn'
   const worldColor = playerLevel >= 20 ? 'text-yellow-300' : playerLevel >= 10 ? 'text-purple-300' : playerLevel >= 5 ? 'text-cyan-300' : 'text-green-300'
   const isDay      = currentTime >= 6 && currentTime < 20
@@ -38,12 +40,13 @@ export function GameHUD({ playerLevel, currentStreak, worldHealth, currentTime }
         initial={{ opacity: 0, x: -20 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ delay: 0.3 }}
-        className="fixed top-5 left-5 z-20"
+        // Beside the shell's menu button (top-4 left-4 on this page), never under it (K-17).
+        className="fixed top-5 left-16 z-20"
       >
         <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-2xl px-4 py-3 space-y-1 shadow-xl">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399] animate-pulse" />
-            <span className="text-white/90 text-sm font-semibold tracking-wide">Kivo</span>
+            <span className="max-w-40 truncate text-white/90 text-sm font-semibold tracking-wide" title={name}>{name}</span>
           </div>
           <div className={`text-xs font-medium ${worldColor}`}>{worldTier} World · Lv {playerLevel}</div>
           <div className="w-28 h-1 rounded-full bg-white/10 mt-1">

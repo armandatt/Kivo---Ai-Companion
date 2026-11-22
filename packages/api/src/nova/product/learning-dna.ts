@@ -123,7 +123,7 @@ export async function recordLearnerTimezone(platformChatId: string, raw: unknown
   }
   const learner = await resolveLearner(platformChatId);
   if (learner.status !== "ready") return { ok: false, error: learner.status };
-  if (learner.timezone && isValidTimezone(learner.timezone)) return { ok: true, timezone: learner.timezone, changed: false };
+  if (learner.timezone && isValidTimezone(learner.timezone)) return { ok: true, timezone: currentZoneName(learner.timezone), changed: false };
 
   // Conditional on still being unset (or unusable): two tabs agree on one value.
   const zone = currentZoneName(raw);

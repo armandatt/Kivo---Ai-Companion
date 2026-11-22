@@ -598,7 +598,7 @@ const fingerprintOf = (text: string): string => {
 };
 
 export type DeleteResult =
-  | { ok: true; scope: DeletionScope }
+  | { ok: true; scope: DeletionScope; trashId?: string | null }
   | { ok: false; error: "not_found" | "changed"; message: string };
 
 type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -701,7 +701,8 @@ export async function deleteMap(platformChatId: string, profileId: string, targe
   let copy: Omit<TrashSnapshot, "workspaces"> | null = null;
   const workspaces: TrashSnapshot["workspaces"] = [];
   const keep = mode === "clear" ? await shellOf(profileId, target) : undefined;
-  return deleteResource(platformChatId, { ref, fingerprint, whole: true, keep }, now, {
+  let trashId: string | null = null;
+  const result = await deleteResource(platformChatId, { ref, fingerprint, whole: true, keep }, now, {
     before: async (tx, scope) => {
       const going = scope.removes.subjects.map(s => s.id);
       copy = await snapshotIn(tx, profileId, { subjectIds: going, topicIds: scope.removes.topics.map(t => t.id), dateIds: scope.removes.dates.map(d => d.id), filedUnder: [...going, ...(scope.clears ?? [])] });
@@ -722,15 +723,18 @@ export async function deleteMap(platformChatId: string, profileId: string, targe
         ? (copy!.subjects.find(x => x.id === target.subjectId)?.name as string | undefined) ?? (await tx.novaSubject.findFirst({ where: { id: target.subjectId, profileId }, select: { name: true } }))?.name
         : undefined;
       const title = named ?? scope.title;
-      await trashIn(tx, profileId, { kind: "workspaceId" in target ? "workspace" : "subject", title: scope.clears ? `${title} (cleared)` : title, snapshot: { ...copy!, workspaces: kept } }, now);
+      trashId = await trashIn(tx, profileId, { kind: "workspaceId" in target ? "workspace" : "subject", title: scope.clears ? `${title} (cleared)` : title, snapshot: { ...copy!, workspaces: kept } }, now);
     },
   });
+  return result.ok ? { ...result, trashId } : result;
 }
 
 export const listDeletedKnowledge = (profileId: string) => listTrash(profileId);
 export type { TrashItem };
 
-export type RestoreResult = { ok: true; title: string; renamed: string[] } | { ok: false; error: "not_found"; message: string };
+// renamed: names taken since, so it came back under another; left: topics
+// whose subject is gone, which could not come back.
+export type RestoreResult = { ok: true; title: string; renamed: string[]; left: string[] } | { ok: false; error: "not_found"; message: string };
 
 // Puts one deleted map or subject back, with the same ids, and the workspace
 // records it took with it. Nova sees it again because it is active again.
@@ -738,7 +742,7 @@ export async function restoreKnowledge(profileId: string, trashId: string, now =
   try {
     return await prisma.$transaction(async tx => {
       const { title, snapshot } = await claimIn(tx, profileId, trashId, now);
-      const { renamed } = await putBackIn(tx, profileId, snapshot);
+      const { renamed, left } = await putBackIn(tx, profileId, snapshot);
       const back = new Set(snapshot.subjects.map(s => s.id as string));
       for (const w of snapshot.workspaces) {
         const ids = w.subjectIds.filter(id => back.has(id));
@@ -758,7 +762,7 @@ export async function restoreKnowledge(profileId: string, trashId: string, now =
           if (row) await tx.novaWorkspace.updateMany({ where: { id: w.id, profileId }, data: { subjectIds: [...new Set([...row.subjectIds, ...ids])] } });
         }
       }
-      return { ok: true as const, title, renamed };
+      return { ok: true as const, title, renamed, left };
     }, { timeout: 30_000, maxWait: 10_000 });
   } catch (err) {
     if (err instanceof TrashGone) return { ok: false, error: "not_found", message: "That isn't in Recently deleted any more. It may have been restored already." };

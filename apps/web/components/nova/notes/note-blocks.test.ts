@@ -261,3 +261,13 @@ test('a checklist item is ticked in the note text; nothing else changes; a list 
   assert.equal(toggleChecklistItem(body, list.at!, list.to!, 9), null)
   assert.equal(toggleChecklistItem('Plain text only', 0, 15, 0), null)
 })
+
+test('K-13: in a list that mixes checklist items and plain bullets, the n-th box ticks the n-th checklist item only', async () => {
+  const { toggleChecklistItem, checkItem } = await import('./note-blocks')
+  const body = '# Plan\n\n- [ ] Read chapter 3\n- plain bullet stays a bullet\n- [ ] Solve 5 problems\n\nSome **bold** text.'
+  const list = parseWithSpans(body).find(b => b.kind === 'list')!
+  assert.ok(list.kind === 'list' && list.items.map(checkItem).some(Boolean) && !list.items.map(checkItem).every(Boolean), 'a mixed list')
+  const second = toggleChecklistItem(body, list.at!, list.to!, 1)!
+  assert.equal(second, body.replace('- [ ] Solve', '- [x] Solve'), 'the plain bullet is not counted, and is untouched')
+  assert.ok(second.includes('- plain bullet stays a bullet') && second.includes('Some **bold** text.'))
+})

@@ -32,6 +32,7 @@ import { canPlace, levelOf, parentsOf, subtreeOf } from "./task-tree";
 import { refileNotesForTopic } from "./notes";
 import { refileTasksForTopic } from "./tasks";
 import { refileResourcesForTopic } from "./learning-events";
+import { snapshotIn, topicFilingIn, trashIn } from "./knowledge-trash";
 import {
   STUDY_EDITS_MAX, SUBJECT_DEPTH_MAX, SUBJECT_NAME_MAX, TOPIC_NAME_MAX,
   type StudyEdit, type StudyEditIssue, type StudyEditResponse, type StudyStructure,
@@ -126,6 +127,21 @@ export function parseStudyEdits(raw: unknown): { ok: true; version: string; edit
 // Plays the edits, in order, on a copy of the structure: every id must exist
 // at its turn, every name must be free where it lands. Returns what each one
 // would do as a sentence, or the issues that stop the whole batch.
+// The first name in an edit longer than a name may be, said for the learner.
+const lengthOf = (text: string) => [...normalizeTopicName(text)].length;
+function tooLong(e: StudyEdit): string | null {
+  const x = e as { op: string; name?: unknown; names?: unknown; topics?: unknown; parentName?: unknown };
+  const subjectish = x.op === "add_subject" || x.op === "rename_subject" || x.op === "move_subject";
+  const subjectNames = subjectish ? [x.name, x.op === "add_subject" || x.op === "move_subject" ? x.parentName : undefined] : [];
+  const topicNames = [...(subjectish ? [] : [x.name, x.parentName]), ...(Array.isArray(x.names) ? x.names : []), ...(Array.isArray(x.topics) ? x.topics : [])];
+  const over = (v: unknown, max: number) => typeof v === "string" && lengthOf(v) > max;
+  const s = subjectNames.find(v => over(v, SUBJECT_NAME_MAX));
+  if (typeof s === "string") return `A subject name can be at most ${SUBJECT_NAME_MAX} characters; "${[...s.trim()].slice(0, 40).join("")}…" is ${lengthOf(s)}. Nothing was changed.`;
+  const t = topicNames.find(v => over(v, TOPIC_NAME_MAX));
+  if (typeof t === "string") return `A topic name can be at most ${TOPIC_NAME_MAX} characters; "${[...t.trim()].slice(0, 40).join("")}…" is ${lengthOf(t)}. Nothing was changed.`;
+  return null;
+}
+
 export function checkStudyEdits(structure: StudyStructure, edits: StudyEdit[]): { issues: StudyEditIssue[]; sentences: string[] } {
   type T = { id: string; name: string; hasHistory: boolean; archived?: boolean; parentId?: string | null };
   type S = { id: string; name: string; parentId: string | null; dates: number; topics: T[] };
@@ -155,6 +171,9 @@ export function checkStudyEdits(structure: StudyStructure, edits: StudyEdit[]): 
 
   edits.forEach((e, index) => {
     const bad = (message: string) => issues.push({ index, message });
+    // A name over its limit is refused, never cut where it is stored (K-04).
+    const long = tooLong(e);
+    if (long) return bad(long);
     switch (e.op) {
       case "add_subject": {
         const name = subjectName(e.name);
@@ -332,8 +351,11 @@ export async function applyStudyEdits(profileId: string, raw: unknown): Promise<
   const { issues, sentences } = checkStudyEdits(current, parsed.edits);
   if (issues.length > 0) return { ok: false, error: "invalid", message: "Nothing was changed.", issues, structure: current };
 
+  let trashId: string | null = null;
   try {
-    await prisma.$transaction(tx => playStudyEditsIn(tx, profileId, parsed.edits, current.version));
+    // A deletion here is kept in Recently deleted for 30 days (K-02), in the
+    // same transaction: nothing goes without its copy.
+    trashId = await prisma.$transaction(tx => playStudyEditsIn(tx, profileId, parsed.edits, current.version, { trash: true }));
   } catch (err) {
     // Another change got there first (a second tab, a unique name taken).
     if (err instanceof StaleStructure || (err as { code?: string } | null)?.code === "P2002" || (err as { code?: string } | null)?.code === "P2025") {
@@ -342,7 +364,7 @@ export async function applyStudyEdits(profileId: string, raw: unknown): Promise<
     throw err;
   }
   console.log(JSON.stringify({ layer: "nova_setup_edit", event: "applied", profileId, edits: parsed.edits.length }));
-  return { ok: true, structure: await loadStudyStructure(profileId), applied: sentences };
+  return { ok: true, structure: await loadStudyStructure(profileId), applied: sentences, trashId };
 }
 
 // Plays checked edits inside the caller's transaction (Subject Studio's own,
@@ -350,7 +372,10 @@ export async function applyStudyEdits(profileId: string, raw: unknown): Promise<
 // records): one batch at a time per learner, and only on the structure
 // version the edits were checked against. Throws StaleStructure otherwise.
 export class StaleStructure extends Error {}
-export async function playStudyEditsIn(tx: Tx, profileId: string, edits: StudyEdit[], version: string): Promise<void> {
+// trash: keep what the batch deletes in Recently deleted (knowledge-trash.ts)
+// and return the item's id. Build with Nova's own deletion and a whole map's
+// keep their copies themselves, so they leave it off.
+export async function playStudyEditsIn(tx: Tx, profileId: string, edits: StudyEdit[], version: string, opts: { trash?: boolean } = {}): Promise<string | null> {
   // One batch at a time per learner (the same lock a session start takes),
   // so two batches made from one version cannot both pass the check below.
   await tx.$queryRaw`SELECT id FROM "NovaAcademicProfile" WHERE id = ${profileId} FOR UPDATE`;
@@ -369,6 +394,7 @@ export async function playStudyEditsIn(tx: Tx, profileId: string, edits: StudyEd
     return e.parentId ?? null;
   };
   const subjectOf = (id: string) => now.find(s => s.id === id);
+  const trashId = opts.trash ? await trashRemovalsIn(tx, profileId, edits, now) : null;
   // A parent by name may be one this batch added, so it is looked up as the batch goes.
   const parentIdOf = async (e: { parentId?: string | null; parentName?: string }): Promise<string | null> => {
     if (e.parentName !== undefined && e.parentName.trim()) {
@@ -446,6 +472,29 @@ export async function playStudyEditsIn(tx: Tx, profileId: string, edits: StudyEd
       }
     }
   }
+  return trashId;
+}
+
+// The copy of what a batch deletes, taken before anything in it runs: the
+// topics and subjects it removes as they are now, and what is filed under
+// them. One Recently deleted item per batch, named by what went.
+async function trashRemovalsIn(tx: Tx, profileId: string, edits: StudyEdit[], now: Array<{ id: string; name: string; topics: Array<{ id: string; name: string }> }>): Promise<string | null> {
+  const topicIds = edits.flatMap(e => (e.op === "remove_topic" ? [e.topicId] : []));
+  const subjectIds = edits.flatMap(e => (e.op === "remove_subject" ? [e.subjectId] : []));
+  if (topicIds.length === 0 && subjectIds.length === 0) return null;
+  const going = now.flatMap(s => s.topics.filter(t => topicIds.includes(t.id)).map(t => ({ subjectId: s.id, name: t.name, subject: s.name })));
+  const copy = await snapshotIn(tx, profileId, { subjectIds, topicIds, dateIds: [] });
+  const topicFiled = await topicFilingIn(tx, profileId, going);
+  const subjects = now.filter(s => subjectIds.includes(s.id));
+  // Named by the topic that was asked for (the last remove in a batch: the
+  // map removes what is inside a topic first), else the subject.
+  const lastTopic = [...edits].reverse().find(e => e.op === "remove_topic") as { topicId: string } | undefined;
+  const main = lastTopic ? going.find(t => now.some(s => s.topics.some(x => x.id === lastTopic.topicId && x.name === t.name && s.id === t.subjectId))) : undefined;
+  const title = subjects.length
+    ? subjects.map(s => s.name).join(", ")
+    : `${main?.name ?? going[0]?.name ?? "Topic"}${going.length > 1 ? ` and ${going.length - 1} more topic${going.length === 2 ? "" : "s"}` : ""}`;
+  const kind = subjects.length ? "subject" : "topic";
+  return trashIn(tx, profileId, { kind, title: kind === "topic" && going[0] ? `${title} · ${going[0].subject}` : title, snapshot: { ...copy, workspaces: [], topicFiled } });
 }
 
 async function refile(

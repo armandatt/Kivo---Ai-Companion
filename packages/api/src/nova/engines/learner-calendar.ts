@@ -3,6 +3,8 @@
 // Every reader that draws a day boundary (Planner, Progress, Learning DNA)
 // uses these, so a session never falls on two different days.
 
+import { canonicalZone } from "../product/zone-names";
+
 const DAY_MS = 86_400_000;
 
 // A stored zone that is not a real IANA zone counts as none.
@@ -16,17 +18,11 @@ export function isValidTimezone(timezone: string): boolean {
 }
 
 // Browsers still report some zones under the name they had before a rename.
-// The stored name is the current one.
-const RENAMED_ZONES: Record<string, string> = {
-  "Asia/Calcutta": "Asia/Kolkata",
-  "Asia/Katmandu": "Asia/Kathmandu",
-  "Asia/Rangoon":  "Asia/Yangon",
-  "Asia/Saigon":   "Asia/Ho_Chi_Minh",
-  "Europe/Kiev":   "Europe/Kyiv",
-};
+// The stored name is the current one (the table is product/zone-names.ts,
+// shared with the web app so a page compares zones the same way, K-09).
 export function currentZoneName(timezone: string): string {
-  const renamed = RENAMED_ZONES[timezone];
-  return renamed && isValidTimezone(renamed) ? renamed : timezone;
+  const renamed = canonicalZone(timezone);
+  return renamed !== timezone && isValidTimezone(renamed) ? renamed : timezone;
 }
 
 export function resolveTimezone(timezone: string | null): string {

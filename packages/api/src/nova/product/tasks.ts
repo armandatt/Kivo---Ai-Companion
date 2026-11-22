@@ -682,6 +682,8 @@ export async function taskFilingIn(tx: Pick<typeof prisma, "novaTask">, profileI
 
 // Filed back where they were when their subject comes back: only those still
 // filed under nothing, so a choice made since is kept.
-export async function refileTasksIn(tx: Pick<typeof prisma, "novaTask">, profileId: string, filings: Array<{ id: string; subjectId: string; topicName: string | null }>): Promise<void> {
-  for (const f of filings) await tx.novaTask.updateMany({ where: { id: f.id, profileId, subjectId: null }, data: { subjectId: f.subjectId, topicName: f.topicName } });
+export async function refileTasksIn(tx: Pick<typeof prisma, "novaTask">, profileId: string, filings: Array<{ id: string; subjectId: string; topicName: string | null }>, left: "unfiled" | "under_subject" = "unfiled"): Promise<void> {
+  // left: where the delete left it. A subject's delete unfiled it; a topic's
+  // left it under the subject with no topic (K-02). Only one still there moves.
+  for (const f of filings) await tx.novaTask.updateMany({ where: { id: f.id, profileId, ...(left === "unfiled" ? { subjectId: null } : { subjectId: f.subjectId, topicName: null }) }, data: { subjectId: f.subjectId, topicName: f.topicName } });
 }

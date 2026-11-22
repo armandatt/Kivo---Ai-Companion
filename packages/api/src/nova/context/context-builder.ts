@@ -180,6 +180,7 @@ function buildKnowledgeSection(ctx: NovaContext): string {
       `## ${kind}: ${e.examTitle} (${e.subjectName})`,
       `When: ${when} | Mode: ${e.mode} | Focus: ${e.primaryFocus}`,
       `Critical topics: ${e.riskMatrix.critical.join(", ") || "none"}`,
+      ...(e.riskMatrix.unstudied?.length ? [`Not studied yet (no evidence either way; never call these weak): ${e.riskMatrix.unstudied.join(", ")}`] : []),
     ].join("\n"));
   }
 

@@ -21,14 +21,19 @@ function Preparation({ item }: { item: PlannerPressure }) {
       </p>
     )
   }
-  const tracked = prep.weak.length + prep.developing.length + prep.solid.length
+  // Not studied yet is said as that, never as weak (K-12): there is no
+  // evidence either way until a session is finished on it.
+  const notStudied = prep.notStudied ?? []
+  const tracked = prep.weak.length + notStudied.length + prep.developing.length + prep.solid.length
+  const counts = [notStudied.length && `${notStudied.length} not studied yet`, `${prep.weak.length} weak`, `${prep.developing.length} developing`, `${prep.solid.length} solid`].filter(Boolean).join(', ')
   return (
     <div className="mt-2 space-y-1 text-xs leading-relaxed text-foreground/55">
       <p>
-        Of {tracked} tracked topic{tracked === 1 ? '' : 's'}: {prep.weak.length} weak, {prep.developing.length} developing, {prep.solid.length} solid.
+        Of {tracked} tracked topic{tracked === 1 ? '' : 's'}: {counts}.
       </p>
       {prep.weak.length > 0 && <p><span className="text-foreground/40">Weak: </span>{prep.weak.join(', ')}</p>}
-      {prep.focusTopic && (prep.weak.length > 0 || prep.developing.length > 0) && (
+      {notStudied.length > 0 && <p data-not-studied><span className="text-foreground/40">Not studied yet: </span>{notStudied.join(', ')}</p>}
+      {prep.focusTopic && (prep.weak.length > 0 || notStudied.length > 0 || prep.developing.length > 0) && (
         <p><span className="text-foreground/40">Nova would start with: </span><span className="text-foreground/80">{prep.focusTopic}</span></p>
       )}
     </div>

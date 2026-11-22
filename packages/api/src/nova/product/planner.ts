@@ -36,15 +36,16 @@ const MAX_REASONS_PER_SUBJECT = 3;
 
 export { dayKey, resolveTimezone };
 
-// Monday to Sunday of the week containing `today` (a YYYY-MM-DD key).
 // Today and the six days after it: "the next seven days", for a learner who
-// asks about the days ahead rather than the calendar week.
+// asks about the days ahead rather than the calendar week (Today's "the week
+// ahead" and Telegram's /week).
 export function daysFrom(today: string, count = 7): string[] {
   const [y, m, d] = today.split("-").map(Number) as [number, number, number];
   const noon      = Date.UTC(y, m - 1, d, 12);
   return Array.from({ length: count }, (_, i) => new Date(noon + i * DAY_MS).toISOString().slice(0, 10));
 }
 
+// Monday to Sunday of the week containing `today` (a YYYY-MM-DD key).
 export function weekOf(today: string): string[] {
   const [y, m, d] = today.split("-").map(Number) as [number, number, number];
   const noon      = Date.UTC(y, m - 1, d, 12);
@@ -250,6 +251,7 @@ export function buildPlannerView(input: PlanningInputs, options: { ahead?: boole
         preparation: context ? {
           mode:       context.mode,
           weak:       context.riskMatrix.critical,
+          notStudied: context.riskMatrix.unstudied ?? [],
           developing: context.riskMatrix.risky,
           solid:      context.riskMatrix.safe,
           focusTopic: context.primaryFocus,

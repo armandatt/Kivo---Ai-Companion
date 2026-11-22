@@ -129,7 +129,11 @@ export function FocusSession() {
         </div>
       )}
 
-      <div className="relative z-5 flex h-full flex-col items-center justify-center px-4 pb-24 pt-20 text-center">
+      {/* An open sound or topic panel is beside the room's content on a
+          large screen, never over it: the content makes room on that side
+          (K-14: the panel covered the timer, the rating buttons and the note). */}
+      <div className={cn('relative z-5 flex h-full flex-col items-center justify-center px-4 pb-24 pt-20 text-center transition-[padding] duration-200 motion-reduce:transition-none',
+        panel === 'sound' && 'lg:pl-[24.5rem]', panel === 'topic' && topicPanel && 'lg:pr-[26.5rem]')} data-focus-content>
         {children}
       </div>
 
@@ -190,9 +194,13 @@ export function FocusSession() {
           {' '}
           {ended.counted === false
             ? 'That was under ten minutes, so Nova kept it as a session but changed nothing in Knowledge or Progress.'
+            : !ended.topicName
+            // K-22: a session with no topic (Quick Focus, nothing chosen) never
+            // claims one: it is focus time, and nothing in Knowledge moves.
+            ? 'It wasn’t on a topic, so nothing in Knowledge changed. It counts toward your focus time on Progress.'
             : ended.topicRecorded
             ? 'Nova has updated this topic and when to revisit it.'
-            : "Nova logged the session, but couldn't tie this topic to one of your subjects, so it isn't in Knowledge yet."}
+            : `Nova logged the session, but couldn't tie ${ended.topicName} to one of your subjects, so it isn't in Knowledge yet.`}
         </p>
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Link href="/home" className={cn(primary, 'h-12 text-base')}>See what&apos;s next</Link>

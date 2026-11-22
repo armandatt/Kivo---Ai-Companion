@@ -91,6 +91,7 @@ export interface ProgressInputs {
     selfReported: number; underTenMinutes: number;
   };
   goals:    string[];
+  workingOn?: string[];
   nextExam: { title: string; subjectId: string | null; scheduledAt: Date } | null;
   learningDna: { optimalSessionMinutes: number | null; dataPointCount: number; confidence: string } | null;
   now:      Date;
@@ -407,6 +408,7 @@ export function buildProgressView(input: ProgressInputs): NovaProgressReady {
     },
     journey: journey.slice(0, JOURNEY_LIMIT),
     goals:   input.goals.map(g => g.trim()).filter(Boolean),
+    workingOn: input.workingOn ?? [],
     nextExam: input.nextExam && input.nextExam.scheduledAt.getTime() >= now.getTime() ? {
       title:       input.nextExam.title,
       subjectName: nameOf(input.nextExam.subjectId),

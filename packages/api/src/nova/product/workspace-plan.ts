@@ -38,7 +38,7 @@
 // and edits with it.
 
 import { TASK_DEPTH_MAX, treeOrder, untangle } from "./task-tree";
-import { SUBJECT_DEPTH_MAX } from "./setup-edit.types";
+import { SUBJECT_DEPTH_MAX, SUBJECT_NAME_MAX, TOPIC_NAME_MAX } from "./setup-edit.types";
 import { TOPIC_DEPTH_MAX, readTopicDetails, topicKindOf, type TopicDetails, type TopicKind } from "./topic-tree";
 import type { StudyTemplate, TemplateCategory } from "./templates";
 import { TEMPLATE_CATEGORIES } from "./templates";
@@ -51,7 +51,10 @@ export const PLAN_VERSION = 2;
 // The same limits the prompts state (workspace-generation.ts) and the
 // writers hold (MAX_TOPICS_PER_SUBJECT, TASK_OPEN_MAX).
 export const PLAN_LIMITS = {
-  title: 80, summary: 400, subjects: 12, topicsPerSubject: 200, name: 80, explanation: 600,
+  // name: a subject's (or a date's); topicName: a topic's. The same limits
+  // Subject Studio and the topic engine hold (setup-edit.types.ts), so a name
+  // Nova writes is never cut further on its way in (K-04: topics were cut at 80).
+  title: 80, summary: 400, subjects: 12, topicsPerSubject: 200, name: SUBJECT_NAME_MAX, topicName: TOPIC_NAME_MAX, explanation: 600,
   tasks: 80, taskTitle: 160, priorityReason: 160, notes: 20, noteTitle: 120, noteBody: 8000, dates: 10,
   milestones: 12, listItems: 10, item: 240, resources: 12, prerequisites: 10, assumptions: 6, sources: 5, after: 5,
 } as const;
@@ -181,6 +184,18 @@ export function isPlaceholderTopic(name: string, within: string): boolean {
   for (const p of PLACEHOLDER_AROUND) if (w && (n === `${p} ${w}`)) return true;
   for (const p of ["basics", "fundamentals", "overview", "introduction", "concepts", "advanced concepts"]) if (w && n === `${w} ${p}`) return true;
   return false;
+}
+
+// A name over its limit is shortened at the last whole word that fits, never
+// in the middle of one (K-04), and the caller says so; under it, as oneLine.
+export function nameWithin(text: unknown, max: number): { name: string; shortened: boolean } {
+  const whole = oneLine(text, Number.MAX_SAFE_INTEGER);
+  if ([...whole].length <= max) return { name: whole, shortened: false };
+  const cut = [...whole].slice(0, max + 1).join("");
+  const space = cut.lastIndexOf(" ");
+  let name = space > max / 2 ? cut.slice(0, space) : [...whole].slice(0, max).join("");
+  while (name.length > 0 && " ,;:.-–—(".includes(name[name.length - 1]!)) name = name.slice(0, -1);
+  return { name, shortened: true };
 }
 
 export function oneLine(text: unknown, max: number): string {
@@ -336,7 +351,7 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
         if (t.kind === "milestone" && there.kind !== "milestone") { there.kind = "milestone"; there.milestone = t.milestone; }
         return there.name;
       }
-      const apart = oneLine(`${t.name} (${t.parent ?? s.name})`, PLAN_LIMITS.name);
+      const apart = nameWithin(`${t.name} (${t.parent ?? s.name})`, PLAN_LIMITS.topicName).name;
       if (findTopic(s, apart)) { dropped.push(`topic "${t.name}" in ${s.name} (listed twice)`); return null; }
       dropped.push(`topic "${t.name}" under ${t.parent ?? s.name} renamed "${apart}" (a subject holds a name once)`);
       t = { ...t, name: apart };
@@ -349,11 +364,13 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
     for (const item of items) {
       const x = (typeof item === "string" ? { name: item } : item) as Record<string, unknown> | null;
       if (!x || typeof x !== "object" || Array.isArray(x)) continue;
-      const name = oneLine(x.name, PLAN_LIMITS.name);
+      const read = nameWithin(x.name, PLAN_LIMITS.topicName);
+      const name = read.name;
       if (!name) continue;
+      if (read.shortened) dropped.push(`topic "${name}…" in ${s.name} shortened to ${PLAN_LIMITS.topicName} characters (a topic name's limit)`);
       // An older plan's unit is a topic this one sits inside.
       let under = parent;
-      const unit = parent === null ? oneLine(x.unit, PLAN_LIMITS.name) : "";
+      const unit = parent === null ? nameWithin(x.unit, PLAN_LIMITS.topicName).name : "";
       if (unit && !same(unit, name)) under = addTopic(s, { name: unit, explanation: null, sources: [] }) ?? null;
       if (isPlaceholderTopic(name, under ?? s.name)) { dropped.push(`topic "${name}" in ${s.name} (too general to study from: name what it covers)`); continue; }
       const kind = topicKindOf(x.kind);
@@ -364,7 +381,7 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
       };
       const at = addTopic(s, topic);
       if (at === null) continue;
-      const flatParent = under === null ? oneLine(x.parent, PLAN_LIMITS.name) : "";
+      const flatParent = under === null ? nameWithin(x.parent, PLAN_LIMITS.topicName).name : "";
       const placed = findTopic(s, at);
       if (flatParent && placed && !same(flatParent, at)) named.set(placed, flatParent);
       readTopics(s, [...arr(x.topics), ...arr(x.children), ...arr(x.subtopics)], at);
@@ -396,7 +413,7 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
   for (const [i, p] of phases.entries()) {
     if (!p || typeof p !== "object") continue;
     const x = p as Record<string, unknown>;
-    const name = oneLine(x.name, PLAN_LIMITS.name);
+    const name = nameWithin(x.name, PLAN_LIMITS.topicName).name;
     if (!name) continue;
     if (i >= PLAN_LIMITS.milestones) { dropped.push(`milestone "${name}" (more than ${PLAN_LIMITS.milestones})`); continue; }
     let into = subjects.find(s => s.name === subjectName(x.subject));
@@ -492,7 +509,7 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
     const suggested = ctx.nova ? (level(x.suggestedPriority) ?? level(x.priority)) : level(x.suggestedPriority);
     let subject = subjectName(x.subject);
     if (x.subject && !subject && oneLine(x.subject, PLAN_LIMITS.name)) dropped.push(`the subject of "${ttitle}" ("${oneLine(x.subject, PLAN_LIMITS.name)}" isn't one of the plan's)`);
-    const asked = oneLine(x.topic, PLAN_LIMITS.name);
+    const asked = nameWithin(x.topic, PLAN_LIMITS.topicName).name;
     const found = asked ? topicFor(subject, asked) : null;
     if (asked && !found) dropped.push(`the topic of "${ttitle}" ("${asked}" isn't in the plan${subject ? `'s ${subject}` : ""}; it stays under ${subject ?? "no topic"})`);
     if (found) subject = found.subject;
@@ -573,7 +590,7 @@ export function checkWorkspacePlan(raw: unknown, ctx: PlanContext): PlanCheck {
     const sources = sourcesOf(x.sources, files);
     // "source" is earned by naming a file the learner gave; otherwise it is Nova's.
     const origin: PlanNote["origin"] = x.origin === "template" ? "template" : x.origin === "source" && sources.length > 0 ? "source" : "nova";
-    notes.push({ key: oneLine(x.key, 60) || slug(ntitle, i), title: ntitle, subject: subjectName(x.subject), topic: oneLine(x.topic, PLAN_LIMITS.name) || null, body, origin, sources });
+    notes.push({ key: oneLine(x.key, 60) || slug(ntitle, i), title: ntitle, subject: subjectName(x.subject), topic: nameWithin(x.topic, PLAN_LIMITS.topicName).name || null, body, origin, sources });
   }
 
   const sources: PlanSourceFile[] = [];
@@ -664,7 +681,7 @@ export function planFromTemplate(t: StudyTemplate, inputs: TemplateInputs, ctx: 
   if (needsName && !name) return { ok: false, field: "name", message: `${t.namePrompt ?? "A name"} is needed.` };
   const listed = lines(inputs.subjectList, PLAN_LIMITS.subjects, PLAN_LIMITS.name);
   if (t.asksSubjectList?.required && listed.length === 0) return { ok: false, field: "subjectList", message: "List at least one." };
-  const pasted = lines(inputs.topics, PLAN_LIMITS.topicsPerSubject, PLAN_LIMITS.name);
+  const pasted = lines(inputs.topics, PLAN_LIMITS.topicsPerSubject, PLAN_LIMITS.topicName);
   if (inputs.date !== undefined && inputs.date !== "" && (!isIsoDay(inputs.date) || inputs.date < ctx.today)) {
     return { ok: false, field: "date", message: "Pick a day from today on." };
   }

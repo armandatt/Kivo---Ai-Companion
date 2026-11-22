@@ -301,3 +301,90 @@ test("a subject an assistant made (Kivo Connect's build_knowledge_map) is a map 
   const theirs = await loadNovaKnowledgeMap(other.id, { workspace: `subject:${sid}` });
   assert.equal(theirs.status === "ready" ? theirs.nodes.length : 0, 0);
 });
+
+// K-02: a topic deleted on its own (the map, Subject Studio, an assistant)
+// was gone for good. Now it is kept in Recently deleted, with what was filed
+// under it, and Undo / Restore puts it back where it was.
+test("K-02: deleting a topic keeps it in Recently deleted; restoring puts it back in its place with its notes, tasks and saved pages; twice restores once", async () => {
+  const { applyStudyEdits, loadStudyStructure } = await import("../product/setup-edit.js");
+  const { createTask } = await import("../product/tasks.js");
+  const { recordLearningEvent } = await import("../product/learning-events.js");
+  const who = await learner();
+  const os = await prisma.novaSubject.create({ data: { profileId: who.profileId, name: "Operating Systems" } });
+  const unit = await prisma.novaTopicMastery.create({ data: { subjectId: os.id, name: "Memory", position: 0 } });
+  const paging = await prisma.novaTopicMastery.create({ data: { subjectId: os.id, name: "Paging", parentId: unit.id, position: 0 } });
+  await prisma.novaTopicMastery.create({ data: { subjectId: os.id, name: "Deadlock", position: 1 } });
+  const note = await createNote(who.profileId, { title: "Paging notes", body: "Page tables.", subjectId: os.id, topicName: "Paging" });
+  assert.ok(note.ok);
+  const task = await createTask(who.profileId, { title: "Paging exercises", subjectId: os.id, topicName: "Paging" });
+  assert.ok(task.ok, JSON.stringify(task));
+  const page = await recordLearningEvent(who.profileId, { clientEventId: `k02-${STAMP}`, eventType: "resource_saved", url: "https://example.com/paging", title: "Paging explained", subjectId: os.id, topicName: "Paging" }, { source: "web" });
+  assert.ok(page.success, JSON.stringify(page));
+
+  const s = await loadStudyStructure(who.profileId);
+  const out = await applyStudyEdits(who.profileId, { version: s.version, edits: [{ op: "remove_topic", topicId: paging.id }] });
+  assert.ok(out.ok, JSON.stringify(out));
+  assert.ok(out.ok && out.trashId, "the delete names its Recently deleted item, for Undo");
+  assert.equal(await prisma.novaTopicMastery.count({ where: { id: paging.id } }), 0, "the topic is out of the active tables");
+  assert.equal((await getNote(who.profileId, note.note.id))!.topicName, null, "its note stays, under the subject");
+  assert.equal((await getNote(who.profileId, note.note.id))!.subjectId, os.id);
+  const listed = (await listDeletedKnowledge(who.profileId)).find(i => i.id === (out as { trashId: string }).trashId);
+  assert.ok(listed, "listed in Recently deleted");
+  assert.equal(listed!.kind, "topic");
+  assert.equal(listed!.holds.topics, 1);
+  assert.ok(listed!.title.startsWith("Paging"), listed!.title);
+  // Not in any active view.
+  const map = await loadNovaKnowledgeMap(who.id);
+  assert.ok(!JSON.stringify(map).includes(paging.id), "not on the map");
+
+  // A choice made since is kept: the task is moved elsewhere before restoring.
+  await prisma.novaTask.update({ where: { id: task.task.id }, data: { topicName: "Deadlock" } });
+  const back = await restoreKnowledge(who.profileId, (out as { trashId: string }).trashId);
+  assert.ok(back.ok, JSON.stringify(back));
+  const row = await prisma.novaTopicMastery.findUnique({ where: { id: paging.id } });
+  assert.equal(row?.name, "Paging", "the same row, same id");
+  assert.equal(row?.parentId, unit.id, "back inside the topic it was in, which stayed");
+  assert.equal((await getNote(who.profileId, note.note.id))!.topicName, "Paging", "its note is filed under it again");
+  assert.equal((await prisma.novaLearningEvent.findUnique({ where: { id: (page as { eventId: string }).eventId } }))?.topicName, "Paging", "its saved page too");
+  assert.equal((await prisma.novaTask.findUnique({ where: { id: task.task.id } }))?.topicName, "Deadlock", "a later choice is never undone");
+  const again = await restoreKnowledge(who.profileId, (out as { trashId: string }).trashId);
+  assert.equal(again.ok, false, "twice restores once");
+  assert.equal(await prisma.novaTopicMastery.count({ where: { subjectId: os.id, name: "Paging" } }), 1);
+});
+
+test("K-02: a topic's name taken since comes back renamed; a topic whose subject is gone says so", async () => {
+  const { applyStudyEdits, loadStudyStructure } = await import("../product/setup-edit.js");
+  const who = await learner();
+  const os = await prisma.novaSubject.create({ data: { profileId: who.profileId, name: "OS" } });
+  const t = await prisma.novaTopicMastery.create({ data: { subjectId: os.id, name: "Scheduling" } });
+  let s = await loadStudyStructure(who.profileId);
+  const out = await applyStudyEdits(who.profileId, { version: s.version, edits: [{ op: "remove_topic", topicId: t.id }] });
+  assert.ok(out.ok && out.trashId);
+  await prisma.novaTopicMastery.create({ data: { subjectId: os.id, name: "Scheduling" } });
+  const back = await restoreKnowledge(who.profileId, (out as { trashId: string }).trashId);
+  assert.ok(back.ok);
+  assert.deepEqual(back.ok && back.renamed, ["Scheduling (restored)"]);
+
+  const db = await prisma.novaSubject.create({ data: { profileId: who.profileId, name: "Databases" } });
+  const n2 = await prisma.novaTopicMastery.create({ data: { subjectId: db.id, name: "Indexes" } });
+  s = await loadStudyStructure(who.profileId);
+  const gone = await applyStudyEdits(who.profileId, { version: s.version, edits: [{ op: "remove_topic", topicId: n2.id }] });
+  assert.ok(gone.ok && gone.trashId);
+  await prisma.novaSubject.delete({ where: { id: db.id } });
+  const r = await restoreKnowledge(who.profileId, (gone as { trashId: string }).trashId);
+  assert.ok(r.ok);
+  assert.deepEqual(r.ok && r.left, ["Indexes"], "said, not silently dropped");
+});
+
+test("K-02: another learner can't restore someone's deleted topic", async () => {
+  const { applyStudyEdits, loadStudyStructure } = await import("../product/setup-edit.js");
+  const a = await learner(), b = await learner();
+  const sub = await prisma.novaSubject.create({ data: { profileId: a.profileId, name: "Maths" } });
+  const t = await prisma.novaTopicMastery.create({ data: { subjectId: sub.id, name: "Limits" } });
+  const s = await loadStudyStructure(a.profileId);
+  const out = await applyStudyEdits(a.profileId, { version: s.version, edits: [{ op: "remove_topic", topicId: t.id }] });
+  assert.ok(out.ok && out.trashId);
+  const theirs = await restoreKnowledge(b.profileId, (out as { trashId: string }).trashId);
+  assert.equal(theirs.ok, false);
+  assert.equal(await prisma.novaTopicMastery.count({ where: { id: t.id } }), 0);
+});

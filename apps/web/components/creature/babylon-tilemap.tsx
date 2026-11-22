@@ -23,6 +23,8 @@ interface Props {
   currentTime: number
   cameraYaw?: number
   onEngineReady?: (api: EngineApi) => void
+  // The world could not be built (no WebGL, a failed start): the page says so.
+  onEngineError?: (error: unknown) => void
   onActivityChange?: (text: string) => void
   // The places the creature may go on its own, and where it has arrived.
   allowedPlaces?: PlaceId[]
@@ -31,7 +33,7 @@ interface Props {
 
 export function BabylonTilemap({
   userSeed, unlockedBiomes, worldHealth, currentTime,
-  cameraYaw = 0, onEngineReady, onActivityChange, allowedPlaces, onPlaceChange,
+  cameraYaw = 0, onEngineReady, onEngineError, onActivityChange, allowedPlaces, onPlaceChange,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const engineRef = useRef<BabylonVoxelEngine | null>(null)
@@ -64,7 +66,7 @@ export function BabylonTilemap({
             getCameraYaw: () => engine.getCameraYaw(),
           })
         }
-      } catch (e) { console.error('[creature]', e) }
+      } catch (e) { console.error('[creature]', e); onEngineError?.(e) }
     }
     raf = requestAnimationFrame(init)
     return () => {

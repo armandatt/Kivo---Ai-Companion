@@ -295,7 +295,7 @@ const count = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`
 // that they mean it, the server takes exactly that (fingerprint) or nothing,
 // and it is all in Recently deleted for 30 days.
 export function DeleteWholeDialog({ target, title, mode: initial = 'delete', style, onClose, onDeleted }: {
-  target: MapDeleteTarget; title: string; mode?: MapDeleteMode; style?: CSSProperties; onClose: () => void; onDeleted: (said: string, mapGone: boolean) => void
+  target: MapDeleteTarget; title: string; mode?: MapDeleteMode; style?: CSSProperties; onClose: () => void; onDeleted: (said: string, mapGone: boolean, trashId: string | null) => void
 }) {
   const [mode, setMode] = useState<MapDeleteMode>(initial)
   const [scope, setScope] = useState<MapDeleteScope | null>(null)
@@ -326,7 +326,7 @@ export function DeleteWholeDialog({ target, title, mode: initial = 'delete', sty
     setBusy(false)
     if (out.ok) {
       const kept = out.value.keeps.length ? ' Some of it stays, as the list said.' : ''
-      onDeleted(clear ? `Cleared “${title}”. It’s empty, ready to start again.${kept} Recently deleted has what was taken.` : `Deleted “${title}”.${kept}`, !clear)
+      onDeleted(clear ? `Cleared “${title}”. It’s empty, ready to start again.${kept} Recently deleted has what was taken.` : `Deleted “${title}”.${kept} It’s in Recently deleted for 30 days.`, !clear, out.value.trashId)
       return
     }
     setError(out.message); setTicked(false)
@@ -389,7 +389,7 @@ export function DeleteWholeDialog({ target, title, mode: initial = 'delete', sty
 
 export function DeleteDialog({ node, edges, tree, style, onClose, onDeleted, onStale }: {
   node: MapNode; edges: readonly MapEdge[]; tree: { children: ReadonlyMap<string, readonly string[]> }
-  style?: CSSProperties; onClose: () => void; onDeleted: (said: string) => void; onStale: () => void
+  style?: CSSProperties; onClose: () => void; onDeleted: (said: string, trashId?: string | null) => void; onStale: () => void
 }) {
   const needsStructure = node.type === 'topic' || node.type === 'subject'
   const [structure, setStructure] = useState<StudyStructure | null>(null)
@@ -419,7 +419,11 @@ export function DeleteDialog({ node, edges, tree, style, onClose, onDeleted, onS
     const out = await sendDelete(deleteRequest(node, chosen.mode, tree, structure), structure)
     setBusy(false)
     const how: Record<DeleteMode, string> = { only: '', lift: '; the topics inside moved up in its place', branch: ' and everything inside it', keep_steps: '; its steps are tasks of their own now', with_steps: ' and its steps' }
-    if (out.ok) { onDeleted(out.said[0] === 'It was already gone.' ? `“${node.label}” was already deleted.` : `Deleted “${node.label}”${how[chosen.mode]}.`); return }
+    if (out.ok) {
+      const kept = out.value.trashId ? ' It’s in Recently deleted for 30 days.' : ''
+      onDeleted(out.said[0] === 'It was already gone.' ? `“${node.label}” was already deleted.` : `Deleted “${node.label}”${how[chosen.mode]}.${kept}`, out.value.trashId)
+      return
+    }
     setError(out.message)
     if (out.stale) onStale()
   }

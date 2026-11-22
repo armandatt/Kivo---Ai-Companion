@@ -75,5 +75,7 @@ export type StudyStructureView =
 export interface StudyEditIssue { index: number; message: string }
 
 export type StudyEditResponse =
-  | { ok: true; structure: StudyStructure; applied: string[] }
+  // trashId: when the batch deleted topics or subjects, the Recently deleted
+  // item holding them (30 days), which the page offers as Undo (K-02).
+  | { ok: true; structure: StudyStructure; applied: string[]; trashId?: string | null }
   | { ok: false; error: "invalid" | "stale" | "failed" | "unauthenticated" | "not_nova" | "not_connected" | "onboarding_incomplete"; message: string; issues?: StudyEditIssue[]; structure?: StudyStructure };

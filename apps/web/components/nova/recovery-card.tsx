@@ -7,6 +7,7 @@
 // and only hides this proposal in this browser; Undo puts back exactly what
 // was moved, if nothing changed since.
 
+import { readGet } from '@/lib/early-read'
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import type {
@@ -48,7 +49,7 @@ export function RecoveryCard({ onChanged }: { onChanged?: () => void }) {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/nova/recovery', { cache: 'no-store' })
+      const res = await readGet('/api/nova/recovery')
       if (!res.ok) return
       const v = await res.json() as NovaRecoveryView
       if (v.status === 'ready') setView(v)

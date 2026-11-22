@@ -23,7 +23,7 @@ import { NO_SUBJECT, destinationFor, destinationsOf, type Destination } from './
 import { NoteBody } from './note-body'
 import { fetchNotes } from './notes-api'
 import {
-  choosePlace, discardDraft, editDraft, fetchDraft, fetchDrafts, mergeDraft, placeItem, restoreDraft, today,
+  choosePlace, discardDraft, editDraft, fetchDraft, fetchDrafts, keepInDrafts, mergeDraft, newKey, placeItem, restoreDraft, today,
   type CaptureItem, type DraftDetail, type DraftEdit, type DraftSummary, type MergePreview, type MergeTarget,
 } from './drafts-api'
 
@@ -41,6 +41,44 @@ const counts = (d: { passages: number; sources: number }) =>
 
 type Notice = { text: string; undo?: () => void; tone?: 'error' } | null
 
+// A passage pasted on Drafts, kept as a draft (POST /api/nova/drafts, the
+// extension's capture route for the web session): a new draft, the address
+// and title optional, never a note. Once per press (the key).
+function PasteToDraft({ onDone, onCancel }: { onDone: (draftId: string) => void; onCancel: () => void }) {
+  const [text, setText] = useState('')
+  const [url, setUrl] = useState('')
+  const [title, setTitle] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const key = useRef(newKey())
+  const keep = async () => {
+    if (!text.trim() || busy) return
+    setBusy(true); setError(null)
+    const res = await keepInDrafts({ key: key.current, url: url.trim() || null, title: title.trim(), text, newDraft: true })
+    setBusy(false)
+    if (res.ok) onDone(res.draft.id)
+    else setError(res.message)
+  }
+  return (
+    <form className="mt-5 space-y-2.5" onSubmit={e => { e.preventDefault(); void keep() }} data-drafts-paste-form>
+      <label className="block text-xs font-medium text-foreground/70" htmlFor="paste-text">The passage</label>
+      <textarea id="paste-text" autoFocus value={text} onChange={e => setText(e.target.value)} rows={6}
+        className="w-full rounded-xl border border-white/10 bg-background px-3 py-2 text-sm text-foreground placeholder:text-foreground/30" placeholder="Paste what you copied." />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <input value={url} onChange={e => setUrl(e.target.value)} placeholder="Where it's from (optional address)" aria-label="Where it's from" inputMode="url"
+          className="h-10 rounded-xl border border-white/10 bg-background px-3 text-sm text-foreground placeholder:text-foreground/30" />
+        <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Page title (optional)" aria-label="Page title" maxLength={160}
+          className="h-10 rounded-xl border border-white/10 bg-background px-3 text-sm text-foreground placeholder:text-foreground/30" />
+      </div>
+      {error && <p role="alert" className="text-xs text-red-400">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onCancel} className={BUTTON_QUIET}>Cancel</button>
+        <button type="submit" disabled={!text.trim() || busy} className={BUTTON_PRIMARY}>{busy ? 'Keeping…' : 'Keep in Drafts'}</button>
+      </div>
+    </form>
+  )
+}
+
 export function NoteDrafts() {
   const router = useRouter()
   const params = useSearchParams()
@@ -48,6 +86,7 @@ export function NoteDrafts() {
   const [list, setList] = useState<DraftSummary[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice>(null)
+  const [pasting, setPasting] = useState(false)
 
   const load = useCallback(async () => {
     const res = await fetchDrafts()
@@ -82,8 +121,11 @@ export function NoteDrafts() {
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
             <Link href="/saved" className={BUTTON_QUIET}>Get the extension</Link>
-            <Link href="/notes/capture" className={BUTTON_QUIET}>Paste a passage</Link>
+            {/* K-24: a Drafts action makes a draft. It opened Notes' capture
+                before, and the passage was saved as a note. */}
+            <button type="button" onClick={() => setPasting(true)} className={BUTTON_QUIET} data-drafts-paste>Paste a passage</button>
           </div>
+          {pasting && <PasteToDraft onDone={id => { setPasting(false); void load(); open(id); setNotice({ text: 'Kept in a new draft.' }) }} onCancel={() => setPasting(false)} />}
         </section>
       )}
 

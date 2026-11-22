@@ -6,7 +6,7 @@ import { resolveNovaLearner } from "../../../../lib/nova/resolve-learner"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-// GET /api/nova/planner?minutes=60&subject=Data%20Structures
+// GET /api/nova/planner?minutes=60&subject=Data%20Structures&ahead=1
 // Nova's current plan: today's blocks, this week, upcoming exams, and the
 // reasons behind it. `minutes` is the time the student says they have today;
 // the Planning Engine refits the day to it. The learner is always the
@@ -28,6 +28,9 @@ export async function GET(req: Request) {
       availableMinutes: minutes !== null && Number.isFinite(minutes) ? minutes : null,
       // One of the learner's subjects, checked against their own; anything else is ignored.
       focusSubject:     params.get("subject"),
+      // ahead=1: the week is today and the six days after it (Today's "the
+      // week ahead", K-11), as Telegram's /week; otherwise Monday to Sunday.
+      ahead:            params.get("ahead") === "1",
     })
     return NextResponse.json(view)
   } catch (err) {

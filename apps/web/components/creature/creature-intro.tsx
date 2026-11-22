@@ -374,7 +374,10 @@ export function CreatureIntro({ creatureName, level, streak, onReveal, onComplet
               <motion.div
                 initial={{ opacity:0, scale:0.92 }} animate={{ opacity:1, scale:1 }}
                 exit={{ opacity:0, scale:0.95 }} transition={{ duration:0.6 }}
-                className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none"
+                // In the lower part of the screen: the creature is revealed at
+                // the centre, and its name must not cover it (K-17).
+                className="absolute inset-0 z-20 flex items-end justify-center pb-[14vh] pointer-events-none"
+                data-creature-name-reveal
               >
                 <div className="text-center">
                   <motion.p

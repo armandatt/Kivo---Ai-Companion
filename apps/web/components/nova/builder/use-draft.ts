@@ -21,6 +21,13 @@ const SAVE_AFTER_MS = 700
 
 export type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 
+// A conversation just started on this page is handed to its own address
+// with the draft the server answered (K-18): the page draws it at once,
+// the learner's message and Nova's reply on its way, instead of replacing
+// it with a skeleton while the same draft is read again.
+const handedOver = new Map<string, DraftView>()
+export function handOver(draft: DraftView): void { handedOver.set(draft.id, draft) }
+
 export function useDraft(draftId: string | null) {
   const [draft, setDraft] = useState<DraftView | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -63,7 +70,9 @@ export function useDraft(draftId: string | null) {
   }, [draftId, adopt])
 
   useEffect(() => {
-    setDraft(null); setPlanState(null); setLoadError(null); setConflict(null); setArrival(null); dirty.current = false
+    const given = draftId ? handedOver.get(draftId) ?? null : null
+    if (draftId) handedOver.delete(draftId)
+    setDraft(given); setPlanState(given?.plan ?? null); setLoadError(null); setConflict(null); setArrival(null); dirty.current = false
     if (draftId) void reload()
   }, [draftId, reload])
 

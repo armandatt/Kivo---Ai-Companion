@@ -21,7 +21,8 @@
 // No regex: text is compared by characters (SKILL.md; the no-regex guard).
 
 import type { ChangeKind, ChangeOp, ChangeSet, ProposedChange, ResourceRef, TopicPatch, WorkspaceDetail } from "./builder.types";
-import { isPlaceholderTopic, oneLine } from "./workspace-plan";
+import { isPlaceholderTopic, nameWithin, oneLine } from "./workspace-plan";
+import { SUBJECT_NAME_MAX, TOPIC_NAME_MAX } from "./setup-edit.types";
 import { TASK_DEPTH_MAX, canPlace, levelOf, parentsOf, subtreeOf, wouldLoop, type TreeNode, type Wait } from "./task-tree";
 import { SUBJECT_DEPTH_MAX } from "./setup-edit.types";
 import { TOPIC_DEPTH_MAX } from "./topic-tree";
@@ -129,7 +130,10 @@ export function decideResource(said: { name: string; intent: "open" | "change" |
 // ── Changing it ───────────────────────────────────────────────────────────────
 
 export const CHANGE_OPS_MAX = 60;
-const NAME_MAX = 120, TITLE_MAX = 160, NOTE_TITLE_MAX = 120, NOTE_BODY_MAX = 8000, NAMES_PER_ADD = 40;
+// Names at the limits the writers hold, shortened at a whole word (K-04).
+const subjectNamed = (v: unknown) => nameWithin(v, SUBJECT_NAME_MAX).name;
+const topicNamed = (v: unknown) => nameWithin(v, TOPIC_NAME_MAX).name;
+const TITLE_MAX = 160, NOTE_TITLE_MAX = 120, NOTE_BODY_MAX = 8000, NAMES_PER_ADD = 40;
 const PRIORITIES = ["low", "medium", "high"] as const;
 const DATE_KINDS = ["exam", "assignment", "project", "interview", "certification", "other"] as const;
 
@@ -325,7 +329,7 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         const names: string[] = [];
         const keys: string[] = [];
         for (const [i, n] of (Array.isArray(x.names) ? x.names : []).entries()) {
-          const name = oneLine(n, NAME_MAX);
+          const name = topicNamed(n);
           if (!name) continue;
           if (have.has(low(name))) { dropped.push(`topic ${quoted(name)} (${s.name} already has it)`); continue; }
           if (isPlaceholderTopic(name, parentName ?? s.name)) { dropped.push(`topic ${quoted(name)} (too general: name what it covers)`); continue; }
@@ -413,7 +417,7 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         break;
       }
       case "add_subject": {
-        const name = oneLine(x.name, NAME_MAX);
+        const name = subjectNamed(x.name);
         if (!name) break;
         if (current.subjects.some(s => low(s.name) === low(name))) { dropped.push(`subject ${quoted(name)} (it's already here; add topics to it instead)`); break; }
         if (addedSubjects.some(a => low(a.name) === low(name))) { dropped.push(`subject ${quoted(name)} (already added)`); break; }
@@ -422,7 +426,7 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         // A "topic" that is one of their subjects here is that subject going
         // inside the new one ("put them all under Semester Five"), never a
         // topic of the same name beside it.
-        const named = (Array.isArray(x.topics) ? x.topics : []).map(t => oneLine(t, NAME_MAX)).filter(Boolean);
+        const named = (Array.isArray(x.topics) ? x.topics : []).map(t => topicNamed(t)).filter(Boolean);
         const inside = current.subjects.filter(s => named.some(t => low(t) === low(s.name)));
         const topics = named.filter(t => !inside.some(s => low(s.name) === low(t)) && !isPlaceholderTopic(t, name)).slice(0, NAMES_PER_ADD);
         const rawKey = oneLine(x.key, 40);
@@ -445,7 +449,7 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
       }
       case "rename_subject": {
         const s = subjectById(x.subjectId);
-        const name = oneLine(x.name, NAME_MAX);
+        const name = subjectNamed(x.name);
         if (!s || !name) { dropped.push("a rename of a subject that isn't part of this"); break; }
         if (s.name === name || touched.has(`name:${s.id}`)) break;
         if (current.subjects.some(v => v.id !== s.id && low(v.name) === low(name)) || addedSubjects.some(a => low(a.name) === low(name))) { dropped.push(`renaming ${quoted(s.name)} (there's already a subject called ${quoted(name)})`); break; }
@@ -455,7 +459,7 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
       }
       case "rename_topic": {
         const hit = topicById(x.topicId);
-        const name = oneLine(x.name, NAME_MAX);
+        const name = topicNamed(x.name);
         if (!hit || !name) { dropped.push("a rename of a topic that isn't part of this"); break; }
         if (low(name) === low(hit.t.name)) break;
         if (hit.s.topics.some(t => t.id !== hit.t.id && low(t.name) === low(name))) { dropped.push(`renaming ${quoted(hit.t.name)} (${hit.s.name} already has ${quoted(name)})`); break; }
@@ -525,7 +529,7 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         for (const n of on) waits.push({ task: `+${finalKey}`, on: n });
         keep({
           op: "add_task", key: finalKey, title, subjectId: subjectId ?? (current.subjects.length === 1 ? current.subjects[0]!.id : null),
-          topicName: topicFromParent ?? (oneLine(x.topicName, NAME_MAX) || null), dueDay, priority,
+          topicName: topicFromParent ?? (topicNamed(x.topicName) || null), dueDay, priority,
           ...(parentTask ? { parentId: parentTask.id } : parentAdded ? { parentKey: parentAdded.key } : {}),
           ...(minutes ? { estimatedMinutes: minutes } : {}), ...(on.length ? { after: on.map(refOf) } : {}),
         }, `${parentTitle ? `Add step ${quoted(title)} under ${quoted(parentTitle)}` : `Add task ${quoted(title)}`}${dueDay ? `, due ${dueDay}` : ""}${priority ? `, ${priority} priority` : ""}${on.length ? `, after ${on.map(n => quoted(taskById(n)?.title ?? (ops.find(o => o.op === "add_task" && `+${o.key}` === n) as { title?: string } | undefined)?.title ?? n)).join(", ")}` : ""}`, "add", x);
@@ -561,7 +565,7 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
           if (m !== undefined && m !== t.estimatedMinutes) { change.estimatedMinutes = m; parts.push(m ? `about ${m} min` : "no estimate"); }
         }
         if (x.topicName !== undefined && !t.parentId) {
-          const name = x.topicName === null ? null : oneLine(x.topicName, NAME_MAX) || null;
+          const name = x.topicName === null ? null : topicNamed(x.topicName) || null;
           if (name !== t.topicName) { change.topicName = name; parts.push(name ? `under ${quoted(name)}` : "under no topic"); }
         }
         if (x.after !== undefined) {
@@ -634,7 +638,7 @@ export function checkChanges(raw: unknown, current: WorkspaceDetail, ctx: Change
         if (current.notes.some(n => low(n.title) === low(title))) { dropped.push(`note ${quoted(title)} (a note with that title is already here)`); break; }
         const subjectId = subjectOrNull(x.subjectId);
         if (subjectId === undefined) { dropped.push(`note ${quoted(title)} (for a subject that isn't part of this)`); break; }
-        keep({ op: "add_note", title, body, subjectId: subjectId ?? (current.subjects.length === 1 ? current.subjects[0]!.id : null), topicName: oneLine(x.topicName, NAME_MAX) || null },
+        keep({ op: "add_note", title, body, subjectId: subjectId ?? (current.subjects.length === 1 ? current.subjects[0]!.id : null), topicName: topicNamed(x.topicName) || null },
           `Add note ${quoted(title)}`, "add", x);
         break;
       }

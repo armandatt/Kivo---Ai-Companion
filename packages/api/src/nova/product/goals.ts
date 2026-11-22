@@ -25,7 +25,17 @@
 import { prisma } from "@repo/db/client";
 import { learnerKey, webAccountOf } from "./learner-key";
 import { GOALS_MAX, GOAL_TEXT_MAX, type GoalsError } from "./goals.types";
-import { dailyColumns, seedDailyMinutesFromSignup } from "../adapters/account-preferences-adapter";
+import { dailyColumns, loadSignupAnswers, seedDailyMinutesFromSignup } from "../adapters/account-preferences-adapter";
+import { WORKING_ON_LABEL } from "./onboarding-options";
+
+// What they said they were working on when they joined (onboarding v3), in
+// words. Not a goal and never copied into goals: shown beside them when none
+// is written, so a page never says nothing is on record (K-23). Reads only.
+export async function workingOnWords(platformChatId: string): Promise<string[]> {
+  const said = (await loadSignupAnswers(platformChatId)).workingOn;
+  if (!said) return [];
+  return [...said.selected.map(id => WORKING_ON_LABEL[id]), ...said.custom].filter(Boolean).slice(0, 6);
+}
 
 export { GOALS_MAX, GOAL_TEXT_MAX } from "./goals.types";
 export type { GoalsError, GoalsResponse, NovaGoalsView } from "./goals.types";
