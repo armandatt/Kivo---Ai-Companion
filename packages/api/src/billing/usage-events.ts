@@ -63,3 +63,26 @@ export async function writeUsageEvent(event: LlmCallEvent): Promise<void> {
     },
   });
 }
+
+// What one interaction's model calls cost, from their usage events: for usage
+// accounting when a reservation was left open (billing/accounting/reconcile.ts).
+export async function interactionUsage(interactionId: string): Promise<{ calls: number; succeeded: number; costMicros: number; succeededCostMicros: number; unknown: number }> {
+  const rows = await prisma.aiUsageEvent.findMany({ where: { interactionId }, select: { outcome: true, estimatedCostMicros: true, costState: true } });
+  let costMicros = 0, succeededCostMicros = 0, succeeded = 0, unknown = 0;
+  for (const r of rows) {
+    const c = r.estimatedCostMicros ?? 0;
+    costMicros += c;
+    if (r.outcome === "success") { succeeded++; succeededCostMicros += c; }
+    if (r.costState === "unknown") unknown++;
+  }
+  return { calls: rows.length, succeeded, costMicros, succeededCostMicros, unknown };
+}
+
+// Model cost by feature over a range, for the shadow report (internal).
+export async function costByFeature(from: Date, to: Date): Promise<Array<{ feature: string; subjects: number; calls: number; interactions: number; costMicros: number }>> {
+  const rows = await prisma.$queryRaw<Array<{ feature: string; subjects: bigint; calls: bigint; interactions: bigint; cost: bigint | null }>>`
+    SELECT feature, COUNT(DISTINCT "subjectKey") AS subjects, COUNT(*) AS calls, COUNT(DISTINCT "interactionId") AS interactions,
+      COALESCE(SUM("estimatedCostMicros"), 0)::bigint AS cost
+    FROM "AiUsageEvent" WHERE "createdAt" >= ${from} AND "createdAt" < ${to} GROUP BY feature ORDER BY cost DESC`;
+  return rows.map(r => ({ feature: r.feature, subjects: Number(r.subjects), calls: Number(r.calls), interactions: Number(r.interactions), costMicros: Number(r.cost ?? 0) }));
+}

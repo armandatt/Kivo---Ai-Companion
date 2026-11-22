@@ -20,8 +20,9 @@ export const AGENT_TASK_STEPS = 40;
 const sign = (connectionId: string, taskId: string, issuedAt: number) =>
   createHmac("sha256", serverSecret()).update(`agent-task:${connectionId}:${taskId}:${issuedAt}`).digest("base64url");
 
-export function issueAgentTicket(connectionId: string, now = Date.now()): { ticket: string; taskId: string; expiresAt: number } {
-  const taskId = randomBytes(12).toString("hex");
+// `taskId`: a task already started (a retried start, found by usage
+// accounting), given a fresh ticket under the same id.
+export function issueAgentTicket(connectionId: string, now = Date.now(), taskId: string = randomBytes(12).toString("hex")): { ticket: string; taskId: string; expiresAt: number } {
   return { ticket: `${taskId}.${now}.${sign(connectionId, taskId, now)}`, taskId, expiresAt: now + AGENT_TASK_TTL_MS };
 }
 

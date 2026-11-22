@@ -1976,3 +1976,108 @@ model NovaKnowledgeTrash {
 
   @@index([profileId, deletedAt])
 }
+
+// ─── Usage accounting: four independent allowances ───────────────────────────
+// packages/api/src/billing/accounting/ is the only reader and writer of these
+// three tables. Products (never one shared balance):
+//   nova_credits    cost-based Nova credits, monthly
+//   browser_tasks   browser-agent tasks, monthly, one per task however many steps
+//   mcp_calls       MCP tool calls, lifetime (periodKey "lifetime")
+//   mcp_read_only   read-only MCP calls after the lifetime allowance, monthly
+//   storage_bytes   image/attachment bytes, a measured gauge (periodKey "current")
+//   kivo_funded     model cost Kivo pays (proactive messages, auto-filing, …): no allowance
+//   system          model cost with no learner (Rex, unattributed): no allowance
+// The account is the billing meter key ("user:<id>" or "learner:<platformChatId>",
+// billing/entitlements.ts usageKey); no new identity is derived or hashed. An
+// account's rows are removed with it (services/accountDeletion.service.ts).
+// Phase 1 runs in shadow: rows are written beside the existing daily meter
+// (AiUsageDay), which alone still decides what a learner may do.
+
+model UsageBalance {
+  id             String    @id
+  accountKey     String
+  product        String
+  // "2026-11" (calendar month, UTC), "lifetime" or "current".
+  periodKey      String
+  periodStart    DateTime?
+  periodEnd      DateTime?
+  // The plan tier and its allowance when this row was last written; null limit: no fixed quota.
+  tier           String
+  limitUnits     BigInt?
+  reservedUnits  BigInt    @default(0)
+  committedUnits BigInt    @default(0)
+  refundedUnits  BigInt    @default(0)
+  costMicros     BigInt    @default(0)
+  // Abuse units beside the allowance (items inside MCP batch calls).
+  items          BigInt    @default(0)
+  // Reservations or calls the allowance would have refused, had it been enforced.
+  shadowRefusals Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now())
+
+  @@unique([accountKey, product, periodKey])
+  @@index([product, periodKey])
+}
+
+// One unit of work's claim on an allowance: reserved before it runs, then
+// committed (what it actually used) or refunded, exactly once.
+model UsageReservation {
+  id             String    @id
+  accountKey     String
+  product        String
+  periodKey      String
+  // The caller's idempotency key: a repeat returns this row and reserves nothing.
+  idempotencyKey String
+  // reserved | committed | refunded
+  state          String
+  feature        String?
+  // What the work is known by: the interaction id (Nova), the task id (browser).
+  ref            String?
+  reservedUnits  BigInt
+  committedUnits BigInt    @default(0)
+  costMicros     BigInt    @default(0)
+  reason         String?
+  // The allowance error enforcement would have returned (shadow).
+  shadowRefusal  String?
+  expiresAt      DateTime
+  createdAt      DateTime  @default(now())
+  settledAt      DateTime?
+
+  @@unique([accountKey, product, idempotencyKey])
+  @@index([state, expiresAt])
+  @@index([product, ref])
+}
+
+// Append-only: one row per change to a balance. Never updated or deleted
+// (except with the account). The balance is the sum of its entries.
+model UsageLedger {
+  id             String   @id
+  accountKey     String
+  product        String
+  periodKey      String
+  // reserve | commit | refund | record | gauge
+  entry          String
+  units          BigInt
+  // This entry's change to the balance.
+  reservedUnits  BigInt   @default(0)
+  committedUnits BigInt   @default(0)
+  refundedUnits  BigInt   @default(0)
+  costMicros     BigInt   @default(0)
+  items          Int      @default(0)
+  feature        String?
+  // MCP: "<tool>:<read|write>"; storage: what was measured.
+  detail         String?
+  reason         String
+  // Unique per transition: a retried write adds nothing.
+  idempotencyKey String   @unique
+  reservationId  String?
+  shadowRefusal  String?
+  // shadow | enforce
+  mode           String
+  // The credit conversion and allowance table that priced it.
+  rateVersion    String?
+  createdAt      DateTime @default(now())
+
+  @@index([accountKey, product, periodKey])
+  @@index([product, createdAt])
+}

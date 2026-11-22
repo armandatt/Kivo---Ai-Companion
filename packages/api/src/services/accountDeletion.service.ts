@@ -30,6 +30,7 @@
 
 import { prisma } from "@repo/db/client";
 
+import { deleteAccountUsage } from "../billing/accounting/ledger";
 export interface AccountDeletionResult {
   // false: there was no such account (it had already been deleted).
   deleted:            boolean;
@@ -73,6 +74,10 @@ export async function deleteAccount(userId: string): Promise<AccountDeletionResu
     // It goes with the account, and its cascade takes everything Nova kept.
     const own = await tx.messengerUser.deleteMany({ where: { platform: "web", platformChatId: `web:${userId}` } });
     if (own.count > 0) { removed = true; kept = null; }
+
+    // Usage accounting rows are keyed by the account (and by the chat while it
+    // had no account); they go with it.
+    await deleteAccountUsage(tx, [`user:${userId}`, ...(chatId && removed ? [`learner:${chatId}`] : [])]);
 
     await tx.user.delete({ where: { id: userId } });
     return { deleted: true, novaProfileRemoved: removed, novaProfileKept: kept };

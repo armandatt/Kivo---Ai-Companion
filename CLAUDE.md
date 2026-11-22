@@ -527,6 +527,16 @@ Held by `recovery.test.ts`, `hard-availability.test.ts` and `nova-recovery.itest
 
 Held by `nova-quick-focus.itest.ts`. Home's Quick focus starts the ordinary `start` command with only a label ("Quick focus", untimed): no task, no topic, no plan (`useNovaSession.quickStart`). While it runs, `set_details` (title for a session with no topic → `currentFocus`; category and description → `NovaStudySession.focusDetails` Json, additive) changes nothing about its time (`setSessionDetails`). End is the existing guarded end. Before ending, a session with no topic can be given one of the learner's own topics (`set_topic`: `setSessionTopic` in `nova-persistence.ts`, by subject and name, guarded on the session still open with no topic; never creates a topic), so it counts toward that topic (`session-topic.tsx`, on Today and Focus). It counts in Progress by the usual rule and moves no mastery and completes no task. `GET /api/nova/sessions/recent` (`product/focus-history.ts`, type in `focus-history.types.ts`) feeds Recent sessions on Progress.
 
+## Usage accounting (four allowances, shadow)
+
+Docs: `docs/USAGE_ACCOUNTING.md`. `packages/api/src/billing/accounting/` is the only reader and writer of `UsageBalance`, `UsageReservation` and `UsageLedger` (additive; `prisma db push` before the API). Held by `accounting-rules.test.ts`, `usage-class.test.ts`, `interaction-tally.test.ts` and `usage-accounting.itest.ts`.
+
+- **Four independent balances**: Nova credits (cost-based, monthly), browser tasks (monthly, one per task), MCP calls (lifetime, then Free's monthly read-only), storage bytes (a gauge). Kivo-funded and system cost are recorded with no allowance. Never combine them.
+- **Phase 1 is shadow**: nothing is refused by these balances; `AiUsageDay` still decides. `USAGE_ACCOUNTING=off` records nothing.
+- **Every model call is settled**: `startInteraction` hands its calls to `accounting/nova.ts` when it ends; a call under no interaction is settled alone. A new AI entry point needs no accounting code, but a learner-initiated one should call `reserveForInteraction()` before its model work (as `withAiAllowance` does). A new usage feature is the learner's (Nova credits) unless `rules.ts FEATURE_CLASS` says otherwise.
+- **A new MCP tool must be added to `connect/usage-class.ts`** (read or write, from what its handler does); the test fails otherwise, and an unlisted tool is accounted as a write.
+- **Accounting writes never wake the scheduler** (`runWithoutWriteSignal`) and never fail or block the learner's request.
+
 ## Kivo Connect (MCP for ChatGPT, Claude)
 
 Docs: `docs/integrations/KIVO_CONNECT_*.md`. `packages/api/src/connect/` (tools, OAuth, plans, curation; no HTTP, no model), `apps/api/app/api/mcp` + `api/oauth/*` + `api/connect/*` + `app/.well-known/oauth-*`, web pages `/connect/authorize`, `/connect/approve`, Settings › AI assistants. Held by `src/connect/__tests__`, `kivo-connect.itest.ts`, `kivo-connect-http.e2e.ts` (official SDK client over HTTP) and `extension-origin.test.ts`.
