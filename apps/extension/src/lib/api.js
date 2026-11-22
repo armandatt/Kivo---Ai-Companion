@@ -95,7 +95,17 @@ export function createClient({ baseUrl, fetch: doFetch, getToken }) {
     places:      () => call('/api/nova/extension/places'),
     // The browser agent: start a task (counted once; its ticket and what the
     // workspace holds), one decision at a time, and the workspace read mid-task.
-    agentStart:     (objective, pageTitle = '') => call('/api/nova/extension/agent/start', { method: 'POST', body: { objective, pageTitle } }),
+    // One task start, named by a key made here. When the answer is lost (a
+    // timeout, a dropped connection) it is sent once more with the same key,
+    // and the server answers with the task it already started: one task, one
+    // count on the month's allowance. Any other answer is final.
+    agentStart:     async (objective, pageTitle = '') => {
+      const body = { objective, pageTitle, clientKey: newActionId() }
+      const send = () => call('/api/nova/extension/agent/start', { method: 'POST', body })
+      const first = await send()
+      if (first.ok || first.kind !== 'offline') return first
+      return send()
+    },
     agentStep:      input => call('/api/nova/extension/agent/step', { method: 'POST', body: input, timeoutMs: AGENT_STEP_TIMEOUT_MS }),
     agentWorkspace: body => call('/api/nova/extension/agent/workspace', { method: 'POST', body }),
   }

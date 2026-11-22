@@ -95,22 +95,56 @@ Further settings:
 - Allowances are limits per period, not grants, so nothing can be granted twice. An account's first enforced month starts from zero use; earlier daily-meter history stays in `AiUsageDay` and is not converted.
 - Production had 0 subscriptions and 0 active trials on 2026-11-22.
 
-## Rollout (each step needs the owner's approval)
+## Production rollout
 
-1. `prisma db push` on production from `packages/db`. Check it reports `RateLimitWindow` and `UsageReservation.steps`, and that the three Phase 1 `Usage*` tables exist. **On 2026-11-22 they did not exist in the production database `packages/db/.env` points to**, so this push must include them.
-2. Deploy the API (Render, manual) with `USAGE_ACCOUNTING=off` (as now), then switch to `shadow` and restart. Watch the shadow report (`scripts/usageShadowReport.ts`) for a few days:
-   - coverage ≥ 99%;
-   - no stale reservations;
-   - which accounts would be refused.
-3. Owner actions before enforcement:
-   - approve the Terms page's plan text (it still describes a daily allowance) and its version;
-   - deploy the web app (pricing, billing page, guide copy describe the monthly model);
-   - for Plus: create the ₹299 Polar product, verify the INR/UPI route in the sandbox (checkout, webhook, payout), then set `POLAR_PRODUCT_PLUS_MONTHLY`.
-4. `USAGE_ACCOUNTING=enforce`. Product by product with `USAGE_ENFORCE` if preferred (suggested order: `mcp_calls,storage_bytes` → `browser_tasks` → `nova_credits`).
+Verified 2026-11-22 (read-only):
+- **The database.** `packages/db/.env` and the live Render API (commit `0b4888d`) use the same database: Neon endpoint `ep-late-band-a46…` (us-east-1), database `neondb`, timeline `85822520…`. Evidence: Render's MCP endpoint wrote `NovaConnectGrant.lastUsedAt` there at 16:18:59 UTC, 13 minutes after the deploy.
+- **The schema.** Everything else in that database matches the repo: `prisma migrate diff` from it to the Phase 2 schema is only `CREATE TABLE` (4) and `CREATE INDEX` (9), with no `ALTER` and no `DROP`.
+- **Why the tables are missing.** The Phase 1 push was run from a checkout on `feature/phase5-reliability`, whose schema has no `Usage*` models, so it was a no-op ("in sync").
+- **Account deletion.** With the tables missing, `deleteAccount` fails in Phase 1 code (`42P01 UsageLedger`) and rolls back whole; Phase 2 code skips the missing tables. Both pass once the tables exist (local reproduction on a production-shaped database: 0/8 → 8/8).
+
+Steps marked **[prod]** need the owner's approval and are run by the owner.
+
+1. **[prod] Recovery point.** In the Neon console, create a branch from production *now* (for example `pre-usage-tables-2026-11-22`) and note the time (Neon's instant restore covers it too). The push only adds tables, so this is insurance.
+2. **Verify the target**, from a checkout of the Phase 2 code (this branch, or `main` after it is merged), **never from a checkout on an older branch**:
+   ```bash
+   git -C my-turborepo log -1 --format=%h          # the Phase 2 commit (or main containing it)
+   grep -c '^model Usage\|^model RateLimitWindow' my-turborepo/packages/db/prisma/schema.prisma   # must print 4
+   node my-turborepo/scripts/db-target-check.mjs   # endpoint ep-late-band-a46…, neondb, timeline 85822520…, all five objects false
+   ```
+   In Render → Environment, read only the host part of `DATABASE_URL`: it must contain the same `ep-late-band-a46…` endpoint.
+3. **Dry run (read-only):**
+   ```bash
+   cd my-turborepo/packages/db && npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script
+   ```
+   Expected: exactly `CREATE TABLE` for `UsageBalance`, `UsageReservation` (with `steps`), `UsageLedger`, `RateLimitWindow`, and their 9 indexes. Stop if it shows any `ALTER`, `DROP` or another table.
+4. **[prod] Push:** `cd my-turborepo/packages/db && npx prisma db push`. It must not ask about data loss; if it does, stop. Then run `node scripts/db-target-check.mjs` again: all five objects true.
+5. **Verify account deletion:** the running Phase 1 API deletes accounts again as soon as the tables exist (no deploy needed). Delete a throwaway test account through Settings, or watch the next real deletion in the Render logs for no `42P01`.
+6. **[prod] Deploy the API** (Render, manual) with `USAGE_ACCOUNTING=off` (as set now). Health must show the new commit; `/api/health` and the scheduler must be healthy.
+7. **[prod] Switch to `shadow`** (Render env) and restart.
+8. **Shadow verification**, for a few days: `npx tsx --tsconfig tsconfig.json scripts/usageShadowReport.ts --days 3`. Check:
+   - coverage ≥ 99% of the usage events' cost;
+   - no reservation stale beyond one hour past its expiry;
+   - reconciliation logs present;
+   - the accounts enforcement would refuse, reviewed;
+   - MCP read/write mix and browser task cost against the $0.03 target.
+9. **[prod] Web deploy** (Vercel, from `main`) with the pricing, billing page and guide copy, together with the Terms page wording the owner approves (it still describes a daily allowance). Until Plus can be bought, its card says so on Plan and billing ("Payments open soon" / "Not available yet").
+10. **[prod] Plus in the Polar sandbox:**
+    - create the ₹299/month product;
+    - check that INR/UPI checkout works end to end with a sandbox subscription (`subscription.active` → Plus on Plan and billing);
+    - check renewal, cancel and refund webhooks and the payout currency.
+
+    Then create it in production and set `POLAR_PRODUCT_PLUS_MONTHLY`.
+11. **[prod] Enforce:** `USAGE_ACCOUNTING=enforce` and restart. Suggested order with `USAGE_ENFORCE`: `mcp_calls,storage_bytes`, then add `browser_tasks`, then `nova_credits`.
+12. **Extension:** release the version with the browser-task start key (`lib/api.js agentStart`) so a lost start is never two tasks. The server already accepts it; older versions still work.
 
 **Rollback:**
-- `USAGE_ACCOUNTING=shadow` (or `off`) and restart: the daily meter decides again at once, and no data is lost.
-- Code rollback: redeploy the previous commit. The tables are additive and can stay.
+
+| What went wrong | Do this |
+|---|---|
+| Enforcement causes trouble | `USAGE_ACCOUNTING=shadow` (or `off`) and restart: the daily meter decides again at once, and no data is lost |
+| The deploy causes trouble | Redeploy `0b4888d` in Render. The new tables stay and are harmless; Phase 1 code needs them for deletion |
+| The schema push itself | Not expected to need undoing (additive). If ever required, restore from the step 1 branch. Never drop the tables while Phase 1 or 2 code runs: account deletion would fail again under Phase 1 |
 
 ## Code
 
