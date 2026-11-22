@@ -332,12 +332,14 @@ test("MCP batch calls are one call each, their items counted beside; concurrent 
   assert.deepEqual([unknown!.kind, unknown!.classified], ["write", false]);
 });
 
-test("a Plus/Pro account has no fixed MCP quota; a trial is Plus", async () => {
+test("a Plus/Pro account has no fixed MCP quota; a trial keeps Pro by default, Plus when configured", async () => {
   const id = await account();
   await prisma.billingTrial.create({ data: { userId: id, planKey: "pro_monthly", startedAt: new Date(Date.now() - 86_400_000), endsAt: new Date(Date.now() + 6 * 86_400_000) } });
   forgetTier(key(id));
   const t = await targetFor(key(id), "nova_credits");
-  assert.deepEqual([t.tier, t.limit], ["plus", 1_000]);
+  assert.deepEqual([t.tier, t.limit], ["pro", 3_500], "the existing trial: Pro");
+  process.env.BILLING_TRIAL_TIER = "plus"; forgetTier(key(id));
+  try { assert.deepEqual([(await targetFor(key(id), "nova_credits")).tier], ["plus"]); } finally { delete process.env.BILLING_TRIAL_TIER; forgetTier(key(id)); }
   const life = await targetFor(key(id), "mcp_calls");
   await ledger.record(life, { units: 50_000, key: "seed", reason: "test_seed", shadowRefusal: null });
   const w = await recordMcpCall({ userId: id, grantId: "g", tool: "create_note", args: {}, outcome: "ok" });

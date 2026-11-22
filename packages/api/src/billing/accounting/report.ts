@@ -11,7 +11,7 @@ import { createHash } from "crypto";
 import { prisma } from "@repo/db/client";
 import { requestsBySubject } from "../usage";
 import { costByFeature } from "../usage-events";
-import { creditRateVersion, ALLOWANCE_VERSION } from "./rules";
+import { allowanceVersion, browserTaskCostTargetMicros, creditRateVersion } from "./rules";
 
 const label = (accountKey: string) => `${accountKey.split(":")[0]}#${createHash("sha256").update(accountKey).digest("hex").slice(0, 8)}`;
 const num = (v: unknown) => Number(v ?? 0);
@@ -83,7 +83,7 @@ export async function shadowReport(from: Date, to: Date) {
 
   return {
     range: { from: from.toISOString(), to: to.toISOString() },
-    versions: { credits: creditRateVersion(), allowances: ALLOWANCE_VERSION },
+    versions: { credits: creditRateVersion(), allowances: allowanceVersion() },
     nova: {
       accounts: byAccount.length,
       totals: { oldRequests: byAccount.reduce((a, r) => a + r.oldRequests, 0), credits: byAccount.reduce((a, r) => a + r.novaCredits, 0) },
@@ -94,6 +94,10 @@ export async function shadowReport(from: Date, to: Date) {
     browser: {
       tasks: tasks.length, outcomes: taskOutcomes,
       committedCostUsd: { p50: (pct(taskCosts, 0.5) ?? 0) / 1e6, p75: (pct(taskCosts, 0.75) ?? 0) / 1e6, p95: (pct(taskCosts, 0.95) ?? 0) / 1e6, max: (pct(taskCosts, 1) ?? 0) / 1e6 },
+      // The $0.03 target (rules.ts): tasks that passed it, and by how much in total.
+      costTargetUsd: browserTaskCostTargetMicros() / 1e6,
+      overTarget: taskCosts.filter(c => c > browserTaskCostTargetMicros()).length,
+      overTargetExcessUsd: taskCosts.reduce((a, c) => a + Math.max(0, c - browserTaskCostTargetMicros()), 0) / 1e6,
     },
     mcp: {
       byTool: mcp.map(m => ({ tool: m.detail, calls: num(m.calls), items: num(m.items), shadowRefusals: num(m.refusals), accounts: num(m.accounts) })),

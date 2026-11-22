@@ -545,6 +545,7 @@ export const TEXT = {
   // what they wrote, and the commands do not need it.
   notUnderstood:   "I can't read messages right now, so I didn't take that in. /today, /focus and /done still work. Try me again in a minute.",
   budget:          "I've done a lot of reading for you today, so I'm on buttons until tomorrow. /today, /focus and /done all still work.",
+  creditsUsed:     "You've used this month's Nova credits, so I'm on buttons until they renew. /today, /focus and /done all still work, and your plan is on the Kivo site under Plan and billing.",
   selfReport:      "Noted. There was no timer running, so I can only count that as something you told me.",
   converseFallback: "Got that. Ask me what to study whenever you're ready.",
   explainFallback: "I can't explain that properly right now. Ask me again in a moment.",
@@ -595,6 +596,7 @@ export const TEXT_HINGLISH: typeof TEXT = {
   failed:          "Meri taraf se ye ho nahi paya. Dobara try karo.",
   notUnderstood:   "Abhi messages padhe nahi ja rahe, to ye wala reh gaya. /today, /focus aur /done abhi bhi chalte hain. Ek minute mein dobara try karo.",
   budget:          "Aaj tumhare liye kaafi padhna ho gaya, to kal tak sirf buttons. /today, /focus aur /done abhi bhi chalte hain.",
+  creditsUsed:     "Is mahine ke Nova credits khatam ho gaye, to renew hone tak sirf buttons. /today, /focus aur /done abhi bhi chalte hain, aur tumhara plan Kivo site par Plan and billing mein hai.",
   selfReport:      "Note kar liya. Timer nahi chal raha tha, to ye sirf tumhari batayi hui baat ke taur pe gina jayega.",
   converseFallback: "Theek hai. Jab ready ho, pooch lena kya padhna hai.",
   explainFallback: "Abhi ye theek se explain nahi ho payega. Thodi der mein dobara poochho.",

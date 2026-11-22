@@ -15,7 +15,7 @@ const access = (s: SubscriptionRow | null, trial: { startedAt: Date; endsAt: Dat
 
 describe("who has Pro", () => {
   it("Free: no subscription, no trial", () => {
-    expect(access(null)).toEqual({ plan: "free", source: "free", planKey: null, until: null });
+    expect(access(null)).toEqual({ plan: "free", tier: "free", source: "free", planKey: null, until: null });
   });
 
   it("active and trialing subscriptions are Pro until the period ends", () => {

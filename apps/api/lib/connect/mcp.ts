@@ -14,7 +14,11 @@ import { hasScopes } from "@repo/api/connect/oauth-rules"
 //@ts-ignore
 import type { ConnectLearner } from "@repo/api/connect/learner"
 //@ts-ignore
-import { recordMcpCall } from "@repo/api/billing/accounting/mcp"
+import { admitMcpCall, type McpCallAccounted } from "@repo/api/billing/accounting/mcp"
+//@ts-ignore
+import { admitStorage, incomingBytes } from "@repo/api/billing/accounting/storage"
+//@ts-ignore
+import { NOTE_IMAGE_BYTES_MAX } from "@repo/api/nova/product/note-images"
 import { CONNECT_VERSION } from "./config"
 
 const INSTRUCTIONS = [
@@ -64,11 +68,25 @@ export function buildServer(learner: ConnectLearner | Blocked, origin: string): 
         const structured = { ok: false, error: "not_ready", message: learner.blocked }
         return { content: [{ type: "text" as const, text: JSON.stringify(structured) }], structuredContent: structured, isError: true }
       }
-      const result: ToolResult = await runTool(tool, args, { learner, origin, confirm: null })
-      // Usage accounting (shadow): every call that reached a tool, counted
-      // server-side by account and grant, read or write, with batch items.
-      // Never awaited: a fault in accounting never delays or fails the call.
-      void recordMcpCall({ userId: learner.userId, grantId: learner.grantId, tool: tool.name, args, outcome: result.ok ? "ok" : String(result.error ?? "error") })
+      // Usage accounting, before the tool runs: every call that reaches a
+      // tool is counted server-side (account and grant, read or write, batch
+      // items) and, enforcing, refused when the account's MCP allowance or
+      // fair use says so (billing/accounting/mcp.ts). Scopes and the tool's
+      // own checks still apply to every call admitted.
+      const gate = await admitMcpCall({ userId: learner.userId, grantId: learner.grantId, tool: tool.name, args })
+      if (!gate.admitted) return refusedCall(gate)
+      // Images a note write would store are admitted on the storage allowance first.
+      const storing = tool.name === "create_note" || tool.name === "update_note"
+        ? incomingBytes(args.images, NOTE_IMAGE_BYTES_MAX) + (Array.isArray(args.files) ? args.files.length * NOTE_IMAGE_BYTES_MAX : 0) : 0
+      const space = storing > 0 ? await admitStorage({ platformChatId: learner.platformChatId, profileId: learner.profileId, bytes: storing }) : null
+      if (space?.refused) {
+        const structured = { ok: false, error: "storage_allowance_exhausted", message: `This account's images use ${Math.round(space.refused.usedBytes / 1_000_000)} MB of ${Math.round(space.refused.limitBytes / 1_000_000)} MB, so no more can be added. Everything stored stays readable on Kivo.` }
+        return { content: [{ type: "text" as const, text: JSON.stringify(structured) }], structuredContent: structured, isError: true }
+      }
+      const result: ToolResult = await runTool(tool, args, { learner, origin, confirm: null }).finally(() => { if (space) void space.release() })
+      // The allowance, discoverable: on the profile, and on every result once
+      // a Free account is on its read-only calls.
+      if (result.ok && (tool.name === "get_my_profile" || gate.allowance.readOnly)) result.data = { ...result.data, mcpAllowance: gate.allowance }
       const structured = result.ok ? { ok: true, ...result.data } : { ok: false, error: result.error, message: result.message, ...(result.data ?? {}) }
       // Images go as MCP image content after the JSON, each named first by a
       // line of text (which note, which image, its caption): never inside
@@ -97,4 +115,18 @@ export async function serveMcp(req: Request, learner: ConnectLearner | Blocked, 
     // The response is complete (JSON mode): nothing is left open.
     void server.close().catch(() => undefined)
   }
+}
+
+// A call the MCP allowance refused, as a structured tool error the assistant
+// can read: which allowance, what is left, when it renews, what still works.
+function refusedCall(gate: McpCallAccounted) {
+  const a = gate.allowance
+  const renews = a.readOnlyResetsAt ? new Date(a.readOnlyResetsAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" }) : null
+  const message = gate.refusal === "mcp_lifetime_exhausted"
+    ? `This Kivo account (Free) has used its ${a.lifetimeLimit?.toLocaleString("en-US")} ChatGPT and Claude tool calls, so changes from here are paused. Reading still works: ${Math.max(0, (a.readOnlyLimit ?? 0) - (a.readOnlyUsed ?? 0))} read calls left this month${renews ? `, renewing on ${renews}` : ""}. Upgrading to Plus removes the limit. Nothing in Kivo was changed.`
+    : gate.refusal === "mcp_read_only_allowance_exhausted"
+      ? `This Kivo account (Free) has used this month's ${a.readOnlyLimit} read calls${renews ? `; they renew on ${renews}` : ""}. Upgrading to Plus removes the limit. Everything is still in Kivo.`
+      : `Too many Kivo requests at once. Wait ${gate.retryAfterSeconds ?? 60} seconds and try again.`
+  const structured = { ok: false, error: gate.refusal, message, mcpAllowance: a, ...(gate.retryAfterSeconds ? { retryAfterSeconds: gate.retryAfterSeconds } : {}) }
+  return { content: [{ type: "text" as const, text: JSON.stringify(structured) }], structuredContent: structured, isError: true }
 }

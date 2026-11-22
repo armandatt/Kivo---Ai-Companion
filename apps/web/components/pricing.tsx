@@ -10,9 +10,9 @@ import { PLANS, formatPrice, intervalLabel, type PlanDefinition } from "@repo/ap
 // plans), so this page cannot promise what checkout does not sell. A plan
 // that is not enabled yet is shown as coming and has no button to buy it.
 const CARDS: Array<{ plan: PlanDefinition; mark: string; highlighted: boolean; cta: string; href: string }> = [
-  { plan: PLANS.free,        mark: "🥚", highlighted: false, cta: "Start free",              href: "/signup" },
-  { plan: PLANS.pro_monthly, mark: "🐉", highlighted: true,  cta: "Start 7-day free trial",  href: "/signup?plan=pro_monthly" },
-  { plan: PLANS.pro_annual,  mark: "🌍", highlighted: false, cta: "Not available yet",       href: "/signup?plan=pro_annual" },
+  { plan: PLANS.free,         mark: "🥚", highlighted: false, cta: "Start free",              href: "/signup" },
+  { plan: PLANS.plus_monthly, mark: "🐣", highlighted: false, cta: "Choose Plus",             href: "/signup?plan=plus_monthly" },
+  { plan: PLANS.pro_monthly,  mark: "🐉", highlighted: true,  cta: "Start 7-day free trial",  href: "/signup?plan=pro_monthly" },
 ]
 
 export function Pricing() {
@@ -26,10 +26,10 @@ export function Pricing() {
         <Reveal className="text-center max-w-2xl mx-auto mb-16">
           <span className="text-sm font-medium text-[var(--color-keppel-400)] uppercase tracking-wider">Pricing</span>
           <h2 className="mt-3 text-3xl font-bold text-[var(--color-baltic-sea-100)] md:text-4xl text-balance">
-            Start free. Add Pro when Nova is part of every day.
+            Start free. Add Plus or Pro when Nova is part of every day.
           </h2>
           <p className="mt-4 text-lg text-[var(--color-baltic-sea-400)]">
-            Everything in Kivo is free, with a daily Nova allowance. Pro raises it.
+            Your notes, maps and plans are free on every plan. Plus and Pro add more Nova, the browser agent and ChatGPT and Claude.
           </p>
         </Reveal>
 

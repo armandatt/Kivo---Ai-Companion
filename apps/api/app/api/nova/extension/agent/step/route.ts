@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { withinCountedTask } from "../../../../../../lib/billing/metered"
 //@ts-ignore
+import { stepOfTask } from "@repo/api/billing/accounting/browser"
+//@ts-ignore
 import { agentStep } from "@repo/api/nova/product/browser-agent"
 //@ts-ignore
 import { checkAgentTicket, AGENT_TASK_STEPS, AGENT_TASK_TTL_MS } from "@repo/api/nova/product/agent-ticket"
@@ -33,7 +35,13 @@ async function handle(req: Request): Promise<NextResponse> {
     if (!read.ok) return eventFail(read.reason === "too_large" ? 413 : 400, "invalid", "That step was too large to send.")
     const ticket = checkAgentTicket((read.body as { ticket?: unknown } | null)?.ticket, who.connectionId)
     if (!ticket.ok) return eventFail(409, "task_expired", ticket.reason === "expired" ? "This task has run for too long. Ask again to start a new one." : "Start the task again.")
-    if (!allowAttempt(`agent-task:${ticket.taskId}`, AGENT_TASK_STEPS, AGENT_TASK_TTL_MS)) return eventFail(429, "task_limit", "This task has used all its steps. Ask again to continue.")
+    // The step cap: counted on the task's reservation, so it holds across
+    // restarts; a task with none (accounting off, or started before it) uses
+    // the in-memory cap as before. Never the month's tasks: a running task is
+    // not stopped by them.
+    const step = await stepOfTask(ticket.taskId, AGENT_TASK_STEPS)
+    const withinCap = step ? step.allowed : allowAttempt(`agent-task:${ticket.taskId}`, AGENT_TASK_STEPS, AGENT_TASK_TTL_MS)
+    if (!withinCap) return eventFail(429, "task_limit", "This task has used all its steps. Ask again to continue.")
     // This step's own tokens, returned so the extension can measure a whole task.
     const usage = { inputTokens: 0, outputTokens: 0, calls: 0 }
     const result = await withinCountedTask(who.platformChatId, () => meterLlmUsage((u: { inputTokens: number | null; outputTokens: number | null }) => { usage.inputTokens += u.inputTokens ?? 0; usage.outputTokens += u.outputTokens ?? 0; usage.calls++ }, () => agentStep(read.body)), { feature: "extension_agent", surface: "extension" }, ticket.taskId) as Awaited<ReturnType<typeof agentStep>>

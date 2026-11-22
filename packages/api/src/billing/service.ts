@@ -10,6 +10,8 @@ import { PLANS, PAID_PLANS, type PlanKey } from "./plans";
 import { appUrl, planForProduct, providerConfig, purchasable, trialDays, type ProviderConfig } from "./config";
 import { entitlementForUser } from "./entitlements";
 import { usageToday } from "./usage";
+import { usageViewFor } from "./accounting/summary";
+import { accountingMode, forgetTier } from "./accounting/targets";
 import { decideSync, type ProviderSubscription } from "./subscription-sync";
 import { InvalidSignatureError, type BillingProvider } from "./provider";
 import { polarProvider } from "./polar";
@@ -41,9 +43,13 @@ export async function billingView(userId: string, now = new Date(), env = proces
     prisma.billingTrial.findUnique({ where: { userId } }),
   ]);
   const usage = await usageToday(ent.usageKey, now);
+  // The four allowances (accounting/summary.ts), unless accounting is off; a
+  // fault there leaves the page with the daily figure only.
+  const allowances = accountingMode() === "off" ? null : await usageViewFor(userId, now).catch(err => { console.error(`[billing] usage view failed: ${(err as Error).name}`); return null; });
   const cfg = providerConfig(env);
   return {
     plan:    ent.plan,
+    tier:    ent.tier,
     source:  ent.source,
     planKey: ent.planKey,
     until:   ent.until?.toISOString() ?? null,
@@ -58,6 +64,7 @@ export async function billingView(userId: string, now = new Date(), env = proces
     trialEligible: ent.trialEligible,
     trialDays: trialDays(env),
     usage: { today: usage.requests, limit: ent.allowance.dailyRequests },
+    allowances,
     // Plans that can be bought now. With no provider configured, none.
     purchasable: cfg.ok ? PAID_PLANS.filter(p => purchasable(p, cfg.config, env)) : [],
     providerReady: cfg.ok,
@@ -80,6 +87,7 @@ export async function startTrial(userId: string, now = new Date(), env = process
     const made = await prisma.billingTrial.create({
       data: { userId, planKey: "pro_monthly", startedAt: now, endsAt: new Date(now.getTime() + days * DAY) },
     });
+    forgetTier(`user:${userId}`);
     return { ok: true, endsAt: made.endsAt.toISOString(), created: true };
   } catch (err) {
     if (!isUniqueViolation(err)) throw err;
@@ -102,8 +110,11 @@ export async function startCheckout(input: {
   if (!purchasable(plan, p.config)) return fail("plan_unavailable", `${PLANS[plan].name} can't be bought yet.`);
 
   const ent = await entitlementForUser(input.userId, input.now);
+  // One subscription per account: a change between Plus and Pro is made from
+  // the provider's portal (Manage subscription), which changes the product of
+  // the subscription already paying, so two never run at once.
   if (ent.source === "subscription" || ent.source === "grace") {
-    return fail("already_subscribed", "You already have Pro. Manage it from your billing page.");
+    return fail("already_subscribed", `You already have ${PLANS[ent.planKey ?? "pro_monthly"]?.name ?? "a paid plan"}. Change or cancel it from Manage subscription.`);
   }
   const user = await prisma.user.findUniqueOrThrow({ where: { id: input.userId }, select: { id: true, email: true, name: true } });
   const base = p.config.appUrl || appUrl();
@@ -217,6 +228,7 @@ async function applySubscription(incoming: ProviderSubscription, eventType: stri
     if (!user) return "ignored" as const;
     const { userId: uid, ...data } = decision.data;
     await tx.billingSubscription.upsert({ where: { userId: uid }, create: { userId: uid, ...data }, update: data });
+    forgetTier(`user:${uid}`);
     return "applied" as const;
   });
   try {

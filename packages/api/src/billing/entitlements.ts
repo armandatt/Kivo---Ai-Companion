@@ -13,13 +13,17 @@
 import { prisma } from "@repo/db/client";
 import { deriveAccess, trialEligible, type Access } from "./access";
 import { allowanceFor, type Allowance } from "./limits";
-import { graceDays } from "./config";
+import { graceDays, trialTier } from "./config";
 import { webAccountOf } from "../nova/product/learner-key";
 
 export interface Entitlement extends Access {
   allowance: Allowance;
   // The meter key this person's usage is counted under.
   usageKey:  string;
+  // The day of the month a paid plan's allowances renew (its subscription's
+  // current period start, UTC; annual plans renew monthly on it). null:
+  // calendar months (Free, trial).
+  anchorDay: number | null;
 }
 
 export async function accountForLearner(platformChatId: string): Promise<string | null> {
@@ -33,7 +37,7 @@ async function billingRows(userId: string) {
   const [subscription, trial] = await Promise.all([
     prisma.billingSubscription.findUnique({
       where: { userId },
-      select: { planKey: true, status: true, currentPeriodEnd: true, cancelAtPeriodEnd: true, endedAt: true },
+      select: { planKey: true, status: true, currentPeriodStart: true, currentPeriodEnd: true, cancelAtPeriodEnd: true, endedAt: true },
     }),
     prisma.billingTrial.findUnique({ where: { userId }, select: { startedAt: true, endsAt: true } }),
   ]);
@@ -42,8 +46,10 @@ async function billingRows(userId: string) {
 
 export async function entitlementForUser(userId: string, now = new Date()): Promise<Entitlement & { trialEligible: boolean }> {
   const rows = await billingRows(userId);
-  const access = deriveAccess({ ...rows, now, graceDays: graceDays() });
-  return { ...access, allowance: allowanceFor(access.plan), usageKey: `user:${userId}`, trialEligible: trialEligible(rows) };
+  const access = deriveAccess({ ...rows, now, graceDays: graceDays(), trialTier: trialTier() });
+  const paid = access.source === "subscription" || access.source === "grace";
+  const start = paid ? rows.subscription?.currentPeriodStart ?? null : null;
+  return { ...access, allowance: allowanceFor(access.plan), usageKey: `user:${userId}`, anchorDay: start ? start.getUTCDate() : null, trialEligible: trialEligible(rows) };
 }
 
 // A learner from any surface. With no account behind it (a Telegram chat no
@@ -51,5 +57,5 @@ export async function entitlementForUser(userId: string, now = new Date()): Prom
 export async function entitlementForLearner(platformChatId: string, now = new Date()): Promise<Entitlement> {
   const userId = await accountForLearner(platformChatId);
   if (userId) return entitlementForUser(userId, now);
-  return { plan: "free", source: "free", planKey: null, until: null, allowance: allowanceFor("free"), usageKey: `learner:${platformChatId}` };
+  return { plan: "free", tier: "free", source: "free", planKey: null, until: null, allowance: allowanceFor("free"), usageKey: `learner:${platformChatId}`, anchorDay: null };
 }

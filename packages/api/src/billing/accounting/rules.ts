@@ -4,10 +4,11 @@
 // read-only one) and storage bytes. Nothing here touches the database; the
 // ledger (ledger.ts) applies these rules. Held by __tests__/accounting-rules.test.ts.
 //
-// Phase 1 is shadow accounting: the numbers below are the approved initial
-// targets (master brief, 2026-11-22), recorded beside today's daily meter
-// (billing/usage.ts), which alone still decides what a learner may do. No
-// price, plan or production limit is read from here yet.
+// The launch configuration approved by the owner on 2026-11-22. Enforced only
+// when USAGE_ACCOUNTING=enforce (targets.ts accountingMode); in shadow it is
+// recorded, off it is not read. Every number can be changed without a code
+// change through USAGE_ALLOWANCES / USAGE_FAIR_USE (JSON, see below), which
+// also changes the version stamped on each ledger entry.
 
 export type Product =
   | "nova_credits" | "browser_tasks" | "mcp_calls" | "mcp_read_only" | "storage_bytes"
@@ -15,7 +16,8 @@ export type Product =
 
 export const PRODUCTS: readonly Product[] = ["nova_credits", "browser_tasks", "mcp_calls", "mcp_read_only", "storage_bytes", "kivo_funded", "system"];
 
-export type Tier = "free" | "plus" | "pro";
+import type { Tier } from "../plans";
+export type { Tier };
 
 // ── Allowances ──
 // null: no fixed quota (fair-use and abuse limits still apply).
@@ -29,17 +31,84 @@ export interface TierAllowance {
 
 const MB = 1_000_000, GB = 1_000_000_000;
 
-// Versioned: a ledger entry names the table that priced it, so a later change
-// never rewrites what was recorded under an earlier one.
-export const ALLOWANCE_VERSION = "allowances@2026-11-22-approved-targets";
-export const ALLOWANCES: Record<Tier, TierAllowance> = {
+export const DEFAULT_ALLOWANCES: Record<Tier, TierAllowance> = {
   free: { novaCredits: 150,   browserTasks: 10,  mcpLifetime: 2_000, mcpReadOnly: 100,  storageBytes: 500 * MB },
   plus: { novaCredits: 1_000, browserTasks: 40,  mcpLifetime: null,  mcpReadOnly: null, storageBytes: 2 * GB },
-  pro:  { novaCredits: 3_500, browserTasks: 200, mcpLifetime: null,  mcpReadOnly: null, storageBytes: 15 * GB },
+  pro:  { novaCredits: 3_500, browserTasks: 120, mcpLifetime: null,  mcpReadOnly: null, storageBytes: 15 * GB },
 };
+const BASE_VERSION = "allowances@2026-11-22-launch";
+
+type Env = Record<string, string | undefined>;
+const nonNeg = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : undefined;
+
+// USAGE_ALLOWANCES: a JSON object of per-tier overrides, e.g.
+//   {"free":{"novaCredits":200},"pro":{"browserTasks":200}}
+// A value that is not a non-negative number (or null for "no fixed quota"
+// on the MCP fields) is ignored. An unreadable value is ignored as a whole.
+export function allowances(env: Env = process.env): { table: Record<Tier, TierAllowance>; version: string } {
+  const raw = env.USAGE_ALLOWANCES?.trim();
+  if (!raw) return { table: DEFAULT_ALLOWANCES, version: BASE_VERSION };
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return { table: DEFAULT_ALLOWANCES, version: BASE_VERSION }; }
+  const table = structuredClone(DEFAULT_ALLOWANCES);
+  for (const tier of ["free", "plus", "pro"] as const) {
+    const o = (parsed as Record<string, Record<string, unknown>> | null)?.[tier];
+    if (!o || typeof o !== "object") continue;
+    for (const k of ["novaCredits", "browserTasks", "storageBytes"] as const) { const v = nonNeg(o[k]); if (v !== undefined) table[tier][k] = v; }
+    for (const k of ["mcpLifetime", "mcpReadOnly"] as const) {
+      if (o[k] === null) table[tier][k] = null; else { const v = nonNeg(o[k]); if (v !== undefined) table[tier][k] = v; }
+    }
+  }
+  const sig = JSON.stringify(table);
+  let h = 0; for (let i = 0; i < sig.length; i++) h = (h * 31 + sig.charCodeAt(i)) | 0;
+  return { table, version: `${BASE_VERSION}+env:${(h >>> 0).toString(16)}` };
+}
+
+// The table in effect (read at call time, so a change of env needs no deploy
+// of code, only a restart where the host requires one).
+export const ALLOWANCES: Record<Tier, TierAllowance> = new Proxy({} as Record<Tier, TierAllowance>, {
+  get: (_t, tier: string) => allowances().table[tier as Tier],
+});
+export const allowanceVersion = () => allowances().version;
+export const ALLOWANCE_VERSION = BASE_VERSION;
+
+// ── Fair use and abuse limits ──
+// Persistent (limiter.ts): they hold across restarts. Overridable with
+// USAGE_FAIR_USE (JSON, same keys).
+export interface FairUse {
+  mcpCallsPerMinute:     number;   // per connection (grant)
+  mcpCallsPerDay:        number;   // per account, every tier
+  mcpItemsPerDay:        number;   // batch items per account
+  browserStartsPer10Min: number;   // task starts per account
+  browserOpenTasks:      number;   // tasks started and not yet finished, per account
+  novaJobsPerMinute:     number;   // Build with Nova turns per account
+}
+export const DEFAULT_FAIR_USE: FairUse = {
+  mcpCallsPerMinute: 120, mcpCallsPerDay: 5_000, mcpItemsPerDay: 5_000,
+  browserStartsPer10Min: 8, browserOpenTasks: 3, novaJobsPerMinute: 8,
+};
+export function fairUse(env: Env = process.env): FairUse {
+  const raw = env.USAGE_FAIR_USE?.trim();
+  if (!raw) return DEFAULT_FAIR_USE;
+  try {
+    const o = JSON.parse(raw) as Record<string, unknown>;
+    const out = { ...DEFAULT_FAIR_USE };
+    for (const k of Object.keys(out) as Array<keyof FairUse>) { const v = nonNeg(o[k]); if (v !== undefined && v > 0) out[k] = v; }
+    return out;
+  } catch { return DEFAULT_FAIR_USE; }
+}
+
+// ── Browser task cost target ──
+// $0.03 a task (approved 2026-11-22): a target to measure against, never a
+// reason to stop a running task. A task whose measured cost passes it is
+// recorded and reported (report.ts browser.overTarget). BROWSER_TASK_COST_TARGET_MICROS overrides.
+export function browserTaskCostTargetMicros(env: Env = process.env): number {
+  const n = Number(env.BROWSER_TASK_COST_TARGET_MICROS);
+  return Number.isInteger(n) && n > 0 ? n : 30_000;
+}
 
 export function limitFor(tier: Tier, product: Product): number | null {
-  const a = ALLOWANCES[tier];
+  const a = allowances().table[tier];
   switch (product) {
     case "nova_credits":  return a.novaCredits;
     case "browser_tasks": return a.browserTasks;
@@ -50,14 +119,11 @@ export function limitFor(tier: Tier, product: Product): number | null {
   }
 }
 
-// ── The shadow tier ──
-// From the account's current access (billing/access.ts) without changing it:
-// Kivo's own trial grants Plus allowances (master brief §8); a paid or grace
-// subscription is Pro (the only paid plan sold today); anything else Free.
-export function shadowTier(access: { plan: "free" | "pro"; source: "subscription" | "grace" | "trial" | "free" }): Tier {
-  if (access.source === "trial") return "plus";
-  if (access.plan === "pro") return "pro";
-  return "free";
+// ── The tier ──
+// The entitlement's tier (billing/access.ts: the plan behind a subscription,
+// or the trial's tier, configurable).
+export function tierFor(access: { tier: Tier }): Tier {
+  return access.tier;
 }
 
 // ── Periods ──
@@ -151,7 +217,7 @@ export type McpRefusal = "mcp_lifetime_exhausted" | "mcp_read_only_allowance_exh
 
 export function mcpDecision(input: { tier: Tier; kind: McpKind; lifetimeBefore: number; readOnlyBefore: number }):
   { countReadOnly: boolean; refusal: McpRefusal | null } {
-  const a = ALLOWANCES[input.tier];
+  const a = allowances().table[input.tier];
   if (a.mcpLifetime === null || input.lifetimeBefore < a.mcpLifetime) return { countReadOnly: false, refusal: null };
   if (input.kind === "write") return { countReadOnly: false, refusal: "mcp_lifetime_exhausted" };
   const ro = a.mcpReadOnly ?? 0;

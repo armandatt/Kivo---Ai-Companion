@@ -8,7 +8,8 @@
 import { prisma } from "@repo/db/client";
 import { meterLlmUsage, startInteraction, withUsageContext, type LlmUsage, type UsageContext } from "../services/llm-usage";
 import type { Entitlement } from "./entitlements";
-import { reserveForInteraction } from "./accounting/nova";
+import { reserveForInteraction, type NovaRefusal } from "./accounting/nova";
+import { enforcing } from "./accounting/targets";
 
 // Who and what a metered request is, for its usage events (llm-usage.ts).
 export type UsageEntry = Pick<UsageContext, "feature" | "surface"> & Partial<Pick<UsageContext, "learner" | "requestId">>;
@@ -19,7 +20,15 @@ const isUniqueViolation = (err: unknown) => (err as { code?: string } | null)?.c
 
 export type Spend =
   | { ok: true;  used: number; limit: number }
-  | { ok: false; used: number; limit: number; plan: Entitlement["plan"] };
+  | { ok: false; used: number; limit: number; plan: Entitlement["plan"]; credits?: NovaRefusal };
+
+// Enforcing Nova credits (USAGE_ACCOUNTING=enforce): the daily meter still
+// counts every request (its history and the cost reports read it) but no
+// longer refuses; the month's credits decide. One allowance, not two.
+const UNLIMITED = 2_147_483_647;
+export const countOnly = <E extends Pick<Entitlement, "allowance">>(ent: E): E => ({ ...ent, allowance: { ...ent.allowance, dailyRequests: UNLIMITED } });
+
+class CreditsRefused extends Error { constructor(readonly refusal: NovaRefusal) { super("nova_allowance_exhausted"); } }
 
 export async function spendAiRequest(ent: Pick<Entitlement, "usageKey" | "allowance" | "plan">, now = new Date()): Promise<Spend> {
   const key = { subjectKey: ent.usageKey, day: utcDay(now) };
@@ -61,26 +70,42 @@ export async function withAiAllowance<T>(
   now = new Date(),
   entry?: UsageEntry,
 ): Promise<{ ok: true; value: T } | { ok: false; spend: Extract<Spend, { ok: false }> }> {
-  // Usage accounting (shadow): Nova credits are reserved for the interaction
-  // before its work runs, and settled from its measured cost when it ends
-  // (accounting/nova.ts). Today's daily allowance above still decides.
-  const reserved = () => reserveForInteraction().then(work);
+  // Usage accounting: Nova credits are reserved for the interaction before its
+  // work runs, and settled from its measured cost when it ends
+  // (accounting/nova.ts). Enforcing, that reservation is the admission; in
+  // shadow it is only recorded and the daily allowance decides.
+  const credits = enforcing("nova_credits");
+  const reserved = async () => {
+    const admitted = await reserveForInteraction();
+    if (admitted.refused) throw new CreditsRefused(admitted.refused);
+    return work();
+  };
   const described = (counted: boolean) => entry
     ? startInteraction({ ...entry, usageKey: ent.usageKey, isAllowanceCounted: counted }, reserved)
     : withUsageContext({ usageKey: ent.usageKey, isAllowanceCounted: counted }, work);
   let spend: Spend;
   try {
-    spend = await spendAiRequest(ent, now);
+    spend = await spendAiRequest(credits ? countOnly(ent) : ent, now);
   } catch (err) {
     // The meter could not be read: the learner is not refused for Kivo's fault.
     console.error(`[billing] meter unavailable: ${(err as Error).name}`);
-    return { ok: true, value: await described(false) };
+    try {
+      return { ok: true, value: await described(false) };
+    } catch (e) {
+      if (e instanceof CreditsRefused) return { ok: false, spend: { ok: false, used: e.refusal.used, limit: e.refusal.limit, plan: ent.plan, credits: e.refusal } };
+      throw e;
+    }
   }
   if (!spend.ok) return { ok: false, spend };
   const pending: Array<Promise<unknown>> = []
-  const value = await meterLlmUsage(usage => { pending.push(recordTokens(ent.usageKey, usage, now).catch(() => undefined)) }, () => described(true));
-  await Promise.all(pending);
-  return { ok: true, value };
+  try {
+    const value = await meterLlmUsage(usage => { pending.push(recordTokens(ent.usageKey, usage, now).catch(() => undefined)) }, () => described(true));
+    await Promise.all(pending);
+    return { ok: true, value };
+  } catch (err) {
+    if (err instanceof CreditsRefused) return { ok: false, spend: { ok: false, used: err.refusal.used, limit: err.refusal.limit, plan: ent.plan, credits: err.refusal } };
+    throw err;
+  }
 }
 
 export async function usageToday(usageKey: string, now = new Date()) {

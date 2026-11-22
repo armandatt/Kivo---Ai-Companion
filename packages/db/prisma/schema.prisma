@@ -2037,6 +2037,8 @@ model UsageReservation {
   committedUnits BigInt    @default(0)
   costMicros     BigInt    @default(0)
   reason         String?
+  // Steps run under it (a browser task's agent steps, counted against the step cap).
+  steps          Int       @default(0)
   // The allowance error enforcement would have returned (shadow).
   shadowRefusal  String?
   expiresAt      DateTime
@@ -2080,4 +2082,18 @@ model UsageLedger {
 
   @@index([accountKey, product, periodKey])
   @@index([product, createdAt])
+}
+
+// A persistent rate-limit window (billing/accounting/limiter.ts, the only
+// reader and writer): one row per key per fixed window, counted by an atomic
+// upsert, so a limit holds across restarts and instances. Rows older than a
+// day are purged by the scheduler's hourly housekeeping.
+model RateLimitWindow {
+  key         String
+  windowStart DateTime
+  count       Int      @default(0)
+  expiresAt   DateTime
+
+  @@id([key, windowStart])
+  @@index([expiresAt])
 }

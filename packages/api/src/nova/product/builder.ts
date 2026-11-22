@@ -1295,3 +1295,13 @@ export async function draftFileBytes(profileId: string): Promise<number> {
     FROM "NovaWorkspaceDraftFile" f JOIN "NovaWorkspaceDraft" d ON d.id = f."draftId" WHERE d."profileId" = ${profileId}`;
   return Number(rows[0]?.bytes ?? 0);
 }
+
+// The same, for a web account (read only; the billing page's usage view).
+export async function draftFileBytesForAccount(userId: string): Promise<number> {
+  const rows = await prisma.$queryRaw<{ bytes: bigint | null }[]>`
+    SELECT COALESCE(SUM(octet_length(f.bytes)), 0)::bigint AS bytes
+    FROM "NovaWorkspaceDraftFile" f JOIN "NovaWorkspaceDraft" d ON d.id = f."draftId" JOIN "NovaAcademicProfile" p ON p.id = d."profileId" JOIN "MessengerUser" m ON m.id = p."userId"
+    WHERE m."platformChatId" = ${`web:${userId}`}
+       OR m."platformChatId" = (SELECT "telegramChatId" FROM "UserProfile" WHERE "userId" = ${userId})`;
+  return Number(rows[0]?.bytes ?? 0);
+}

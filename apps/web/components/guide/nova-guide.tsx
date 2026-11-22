@@ -343,7 +343,7 @@ const FAQ = [
   { q: 'The extension says it was disconnected.', a: 'Its connection ends if you disconnect it or leave it unused for thirty days. Open the Saved Pages page, press Connect a browser and type the new code into the extension.' },
   { q: 'Can Nova remind me at a set time?', a: 'Not yet. It checks in around the time you picked on days you haven’t studied, and messages first only when something is due, at most twice a day. It says so plainly if you ask for a reminder.' },
   { q: 'Does saving a page or ticking a task count as studying?', a: 'No. Only finished, timed sessions move the record. Saved pages and tasks are how you organise; sessions are how you learn.' },
-  { q: 'What happens to my notes if I stop paying for Pro?', a: 'Nothing. Your notes, Knowledge, saved pages and history stay yours on every plan. Pro changes how much you can ask Nova each day, not what you own.' },
+  { q: 'What happens to my notes if I stop paying for Pro?', a: 'Nothing. Your notes, Knowledge, saved pages and history stay yours on every plan. A plan changes how much Nova, the browser agent and the ChatGPT and Claude connector you can use each month, not what you own.' },
 ]
 
 // ── The page ─────────────────────────────────────────────────────────────────
@@ -761,7 +761,7 @@ export function NovaGuide() {
 
           <Section topic={topic('plans')} hidden={hide('plans')} lead="Kivo is free to use. Pro is for when you lean on Nova every day.">
             <Grid>
-              {[PLANS.free, pro].map(plan => (
+              {[PLANS.free, PLANS.plus_monthly, pro].map(plan => (
                 <div key={plan.key} className={`${CARD} p-6 ${plan.key === pro.key ? 'border-keppel-400/30' : ''}`}>
                   <div className="flex items-baseline justify-between gap-3">
                     <p className={SUB}>{plan.name}</p>

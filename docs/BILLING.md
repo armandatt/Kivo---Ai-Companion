@@ -111,3 +111,12 @@ A visit to `/settings/billing?checkout=success` grants nothing. The page waits f
   - duplicates and out-of-order deliveries;
   - cancel, past-due, refund and revoke;
   - checkout allowlist, the portal, cross-surface entitlement, data kept after a downgrade.
+
+## Plans, tiers and allowances (Phase 2, 2026-11-22)
+
+- Plans map to tiers (`plans.ts`): `free` → Free, `plus_monthly` (₹299/month, Polar product `POLAR_PRODUCT_PLUS_MONTHLY`) → Plus, `pro_monthly` ($10) and `pro_annual` → Pro. Each plan is sold in its own currency; nothing is converted or shown in another.
+- What a tier allows (Nova credits, browser tasks, MCP, storage) and when it is enforced: `docs/USAGE_ACCOUNTING.md`.
+- Kivo's trial grants `BILLING_TRIAL_TIER` (default `pro`, as before).
+- One subscription per account: changing between Plus and Pro is done in Polar's portal (Manage subscription), which changes the paying subscription's product; the webhook moves the tier. Checkout refuses a second subscription.
+- Plus cannot be sold until its Polar product exists and the INR route (UPI or cards in rupees, checkout, webhook, payout) has been verified in the sandbox.
+- Disputes: Polar charges $15 per dispute and revokes the subscription when it is lost; the `subscription.revoked` event ends the tier. Dispute events themselves are not handled (none in the SDK version used).

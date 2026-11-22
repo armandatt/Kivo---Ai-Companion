@@ -8,6 +8,8 @@
 //   POLAR_SERVER                "sandbox" | "production"; anything else is refused
 //   POLAR_PRODUCT_PRO_MONTHLY   the provider's product id for each plan
 //   POLAR_PRODUCT_PRO_ANNUAL
+//   POLAR_PRODUCT_PLUS_MONTHLY  Plus (₹299/month); unset: Plus cannot be bought
+//   BILLING_TRIAL_TIER          "plus" or "pro": what Kivo's trial grants (default "pro", as before)
 //   BILLING_ANNUAL_ENABLED      "true" to sell the yearly plan (off by default)
 //   BILLING_TRIAL_DAYS          days of Kivo's free trial (default: the plan's)
 //   BILLING_GRACE_DAYS          days a past-due subscription keeps Pro (default 3)
@@ -44,8 +46,10 @@ export function providerConfig(env: Env = process.env): { ok: true; config: Prov
   const products: Partial<Record<PlanKey, string>> = {};
   const monthly = env.POLAR_PRODUCT_PRO_MONTHLY?.trim();
   const annual  = env.POLAR_PRODUCT_PRO_ANNUAL?.trim();
+  const plus    = env.POLAR_PRODUCT_PLUS_MONTHLY?.trim();
   if (monthly) products.pro_monthly = monthly; else missing.push("POLAR_PRODUCT_PRO_MONTHLY");
   if (annual) products.pro_annual = annual;
+  if (plus) products.plus_monthly = plus;
   if (missing.length > 0) return { ok: false, missing };
   return { ok: true, config: { server: server as PolarServer, accessToken, webhookSecret, products, appUrl: appUrl(env) } };
 }
@@ -71,6 +75,12 @@ export function planForProduct(productId: string, config: Pick<ProviderConfig, "
 export function trialDays(env: Env = process.env): number {
   const n = Number(env.BILLING_TRIAL_DAYS);
   return Number.isInteger(n) && n >= 0 && n <= 30 ? n : PLANS.pro_monthly.trialDays;
+}
+
+// What Kivo's no-card trial grants. The existing behaviour is Pro; the
+// monetisation brief proposes Plus, which is the owner's call (BILLING_TRIAL_TIER).
+export function trialTier(env: Env = process.env): "plus" | "pro" {
+  return env.BILLING_TRIAL_TIER?.trim() === "plus" ? "plus" : "pro";
 }
 
 export function graceDays(env: Env = process.env): number {

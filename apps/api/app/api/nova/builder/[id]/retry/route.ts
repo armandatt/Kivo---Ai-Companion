@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 //@ts-ignore
 import { retryDraft } from "@repo/api/nova/product/builder"
 import { requireWorkspaceLearner } from "../../../../../../lib/nova/workspace-access"
-import { builderFail, spendForTurn, startJob, statusFor } from "../../../../../../lib/nova/builder-access"
+import { builderFail, releaseTurn, spendForTurn, startJob, statusFor, type Turn } from "../../../../../../lib/nova/builder-access"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -15,9 +15,9 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     if (access.denied) return access.denied
     const turn = await spendForTurn(access.platformChatId)
     if (turn.refused) return turn.refused
-    const claimed = await retryDraft(access.platformChatId, (await ctx.params).id)
-    if (!claimed.ok) return builderFail(statusFor(claimed.error), claimed.error, claimed.message, claimed.draft ? { draft: claimed.draft } : {})
-    startJob(access.platformChatId, claimed.job, turn.counted)
+    const claimed = await retryDraft(access.platformChatId, (await ctx.params).id).catch(err => { releaseTurn(turn, "route_failed"); throw err })
+    if (!claimed.ok) { releaseTurn(turn); return builderFail(statusFor(claimed.error), claimed.error, claimed.message, claimed.draft ? { draft: claimed.draft } : {}) }
+    startJob(access.platformChatId, claimed.job, turn)
     return NextResponse.json({ ok: true, draft: claimed.draft }, { headers: { "cache-control": "no-store" } })
   } catch (err) {
     console.error("[nova/builder/:id/retry]", err)
