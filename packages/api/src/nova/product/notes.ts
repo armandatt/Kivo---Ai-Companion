@@ -435,6 +435,19 @@ export async function listNoteTitlesIn(profileId: string, subjectIds: string[], 
   return prisma.novaNote.findMany({ where: { profileId, subjectId: { in: subjectIds } }, orderBy: { updatedAt: "desc" }, take, select: { id: true, title: true, subjectId: true, updatedAt: true } });
 }
 
+// ── For exporting a map package (portable/export.ts) ──────────────────────────
+// Only the notes the learner ticked in the export, only their own, filed under
+// the subjects being exported. Read only when they press Export.
+export async function notesForExport(profileId: string, noteIds: string[], subjectIds: string[]): Promise<Array<{ id: string; title: string; body: string; subjectId: string | null; topicName: string | null }>> {
+  const ids = [...new Set(noteIds.filter(i => typeof i === "string" && i.length > 0 && i.length <= 40))];
+  if (ids.length === 0 || subjectIds.length === 0) return [];
+  return prisma.novaNote.findMany({
+    where:   { profileId, id: { in: ids }, subjectId: { in: subjectIds } },
+    orderBy: { createdAt: "asc" },
+    select:  { id: true, title: true, body: true, subjectId: true, topicName: true },
+  });
+}
+
 // ── For Nova's help on a note (product/note-assist.ts) ────────────────────────
 // The note itself and a few of the learner's own notes that belong with it:
 // the ones it links to, the ones that link to it, and others filed under the

@@ -2,7 +2,7 @@
 
 Kivo curates a map, exports it as a `.kivo` file, the file is passed around (WhatsApp, Telegram, a website), and a signed-in learner imports it. The import is an independent copy they own. There is no online sharing, public viewer or fork in this design; the package format is built so those can reuse it later.
 
-Status (2026-11-24): Milestones 0–1 are done. The format, pack/unpack and validation live in `packages/api/src/portable/`, with tests. Export, import, UI and the Bennett package are still to come (below).
+Status (2026-11-24): export, import preview, import (resumable, verified), the import/export page and tests are done. The Bennett third-year CSE package waits for the approved map from the Kivo team (see "Bennett package").
 
 ## Milestone 0: what was removed, what the map really is
 
@@ -67,24 +67,75 @@ provenance.json          creator, source, license, exportedAt, packageId, import
 
 **Compatibility:** a newer format is refused with `unsupported_version`, never half-read. Adding attachments later (`resources/` with the same inventory and checks) is `kivo.archive/2`.
 
-## Still to do (Milestones 2–7)
+## How export and import work (Milestones 2–5)
 
-- **2. Export** (`portable/export.ts`, `POST /api/nova/portable/export`):
-  - The owner chooses a root subject, the notes to include, whether to include saved-page links, a licence and a credit line.
-  - The server reads only that learner's records through their owners (`setup-edit.loadStudyStructure`, a new `notes.ts` reader for selected note bodies, `learning-events.ts` for links), builds and packs the file, unpacks it again to check, and returns the download.
-  - It writes nothing.
-- **3. Preview** (`POST /api/nova/portable/preview`, multipart, rate-limited with `hitLimit`): unpack, validate, and report counts, name clashes and what is excluded. Nothing is stored.
-- **4. Import** (`portable/import.ts`, schema `NovaImportJob`: additive, needs a `db push` before the API):
-  - **Idempotency:** one job per (profile, packageId).
-  - **Order:** first the subject tree in `applyStudyEdits` batches with clash-renamed names, then the notes through `createNote`, then the links.
-  - **Verification:** the result is read back and compared with the manifest counts before it reports success.
-  - **Resuming:** a stopped job continues from where it stopped and creates nothing twice. An abandoned partial import can be removed with the existing whole-map delete.
-  - **Limits:** it calls no model; format 1 stores no images, so storage is unchanged.
-- **5. UI:**
-  - **Export:** "Export map" on the Knowledge Map's subject menu.
-  - **Import:** "Import a .kivo file" on the Knowledge Map and on the Browser Extension page, with upload, validation, preview, confirm, progress, open the map, and every error state.
-- **6. Bennett package:** needs the approved third-year CSE map built in a Kivo account by the Kivo team. Nothing is made up. Export it, test-import it into a clean account, then write the student guide.
-- **7. Hardening:**
-  - large-package and failure-recovery tests;
-  - the full regression suites;
-  - a rollout plan: schema push, then the API, then the web app.
+- **Export** (`portable/export.ts`):
+  - `POST /api/nova/portable/export { action: "preview" | "export", … }`.
+  - Reads only the session learner's subject tree (`loadStudyStructure`), the notes they ticked (`notes.ts notesForExport`) and the links filed under the tree (`learning-events.ts`).
+  - Packs the file, then unpacks it again before returning it. Writes nothing.
+- **Import preview:** `POST /api/nova/portable/import/preview`, with the file as the body.
+  - Runs every archive check, then `checkImportable`: subject depth ≤ 4, topic depth ≤ 6, Kivo's name lengths.
+  - Plans clash-free subject names. Subject names are unique per learner, so a clash becomes "Name (imported)".
+  - Stores nothing.
+- **Import** (`portable/import.ts`): `POST /api/nova/portable/import` with the file, and `POST /api/nova/portable/import/:id` to continue.
+  - One `NovaImportJob` per (learner, packageId). The same file again returns the import already made. A different file with the same id is refused.
+  - **Stages:**
+    1. **structure:** `missingEdits` → `applyStudyEdits`, in batches of up to 60, re-reading the structure each pass, so maps larger than one batch work and a resumed import adds only what is missing.
+    2. **notes:** `createNote` once per note, with each done note recorded on the job.
+    3. **about:** one "About this map" note at the root, holding the title, creator, source, licence, dates, package id, what was left out, and the links as a list.
+    4. **verify:** every subject under its parent, every topic under its subject and parent, every note made.
+  - Only after `verify` passes is the job `complete`. The stored package is then cleared.
+  - **One run at a time.** A run claims the job; a stopped run can be taken over after 2 minutes, or at once if it failed.
+  - **What it touches:** only the importer's account. No model call. No storage use: format 1 has no images.
+- **Guards** (`apps/api/lib/nova/portable-access.ts`):
+  - The learner comes from the session only.
+  - Uploads must use a content type HTML forms cannot send (`application/vnd.kivo.map+zip` / `octet-stream` / `zip`). An Origin header must be Kivo's; `Sec-Fetch-Site` must not name another site.
+  - 10 MB at most.
+  - Postgres rate limits per learner: export 10/min, preview 20/min, import 6/min.
+- **Page:** `/map/portable` ("Import / export" on the Knowledge Map).
+  - **Import:** choose a file → checked → preview (counts, outline, renames, what is excluded) → Import → open the map. A repeat says it was already imported, and a failure offers Try again, which resumes.
+  - **Export:** choose a subject → tick notes → links on or off → licence → credit → download.
+- **Tests:**
+  - `portable/__tests__/kivo-archive.test.ts` (9): format, ZIP Slip, zip bombs, tampering, inventory, versions.
+  - `portable/__integration__/kivo-portable.itest.ts` (5, real Postgres):
+    - export reads only and leaks no ids or private text; another learner can't export;
+    - the import makes new ids with nesting and filing intact, keeps provenance, and leaves the source untouched;
+    - importing again makes nothing; editing or deleting the copy leaves the source alone;
+    - a tampered file makes nothing;
+    - resume after a stop creates nothing twice, and a stranger can't resume someone else's job;
+    - 70 units and 210 topics import over several batches.
+
+## Production rollout
+
+1. `prisma db push`, from a checkout of the merged commit: adds the `NovaImportJob` table, its unique and created-at indexes, and its foreign key to the profile. Nothing else.
+2. Deploy the API (Render).
+3. The web app deploys from `main` (Vercel).
+
+**Rollback:** redeploy the previous API and web commits. The table can stay; nothing else reads it.
+
+## Bennett package (content-dependent)
+
+The platform is ready. The package itself needs the approved third-year B.Tech CSE map built in a Kivo account by the Kivo team; Kivo does not make up course content. Then:
+
+1. On `/map/portable`, choose the map's root subject.
+2. Tick the approved notes.
+3. Pick the licence and credit "Kivo".
+4. Download the file.
+5. Import it into a fresh test account and compare the counts.
+6. Share the `.kivo` file with the student guide below.
+
+### Student guide (short)
+
+1. Sign up or sign in at thekivo.in.
+2. Open Knowledge Map → Import / export.
+3. Choose the `.kivo` file you were sent.
+4. Check what it holds, then choose **Import into my Kivo**.
+5. Choose **Open the map**. It's your own copy: rename, add, delete; nothing you do changes anyone else's.
+
+## Limits of format 1
+
+- Note images and PDFs are not carried. Each image is replaced in the note by a line saying so.
+- Saved pages travel as links in the source note, not as saved-page entries.
+- Topic explanations (details) are not carried.
+
+`kivo.archive/2` adds `resources/` with the same inventory and checks.

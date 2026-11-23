@@ -1,0 +1,33 @@
+import { NextResponse } from "next/server"
+//@ts-ignore
+import { resumeImport } from "@repo/api/portable/import"
+import { noteFail, requireNoteLearner } from "../../../../../../lib/nova/note-access"
+import { portableLimit } from "../../../../../../lib/nova/portable-access"
+//@ts-ignore
+import { crossSiteProblem } from "@repo/api/auth/request-origin"
+import { connectOrigin } from "../../../../../../lib/connect/config"
+
+export const runtime = "nodejs"
+export const dynamic = "force-dynamic"
+export const maxDuration = 120
+
+// POST /api/nova/portable/import/:id  {}   continue a stopped import (the
+// session learner's own job only).
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const cross = crossSiteProblem(req.headers, [connectOrigin(), process.env.NEXT_PUBLIC_APP_URL ?? null])
+    if (cross) return noteFail(cross.status, "forbidden", cross.error)
+    const access = await requireNoteLearner()
+    if (access.denied) return access.denied
+    const limited = await portableLimit("import", access.platformChatId)
+    if (limited) return limited
+    const { id } = await ctx.params
+    if (typeof id !== "string" || id.length > 40) return noteFail(400, "invalid", "That import doesn't exist.")
+    const r = await resumeImport(access.profileId, id)
+    const status = r.ok ? (r.status === "running" ? 202 : 200) : r.status === "refused" ? 404 : 500
+    return NextResponse.json(r, { status, headers: { "cache-control": "no-store" } })
+  } catch (err) {
+    console.error("[nova/portable/import/:id]", (err as Error).name)
+    return noteFail(500, "failed", "The import stopped. Nothing was lost; try again.")
+  }
+}

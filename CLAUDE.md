@@ -541,6 +541,16 @@ Docs: `docs/USAGE_ACCOUNTING.md`. `packages/api/src/billing/accounting/` is the 
 - **Plan and usage page** (`docs/PLAN_AND_USAGE.md`): every figure comes from `GET /api/billing` (`usageViewFor`, `planCatalog`, `nextOffer` in `billing/offer.ts`); `apps/web/components/billing/usage-model.ts` only words it. A refusal or page names a plan only if `nextOffer`/`upgradeLine` says it is on sale now; never hard-code "upgrade to Plus".
 - **Accounting writes never wake the scheduler** (`runWithoutWriteSignal`) and a fault in accounting admits the request.
 
+## Portable maps (.kivo files)
+
+Docs: `docs/KIVO_PACKAGES.md`. `packages/api/src/portable/`. The format and checks are pure: `map-package.ts`, `kivo-archive.ts`. `export.ts` reads only. `import.ts` is the only writer of `NovaImportJob`; it makes the map through `applyStudyEdits` and `createNote`, never directly. Routes are under `/api/nova/portable/*` (guards in `apps/api/lib/nova/portable-access.ts`). The page is `/map/portable`. Held by `portable/__tests__` and `kivo-portable.itest.ts`.
+
+- **A package is transport, never canonical.** It carries package-local refs only: no ids and no learning state.
+- **An import is an independent copy** in the importer's account.
+- **One job per learner and package.** It resumes, and reports success only after reading the result back.
+- **Every upload is hostile until `unpackArchive` and `checkImportable` pass.**
+- **No sharing:** there is no public viewer, no account-to-account sharing and no online forking.
+
 ## Kivo Connect (MCP for ChatGPT, Claude)
 
 Docs: `docs/integrations/KIVO_CONNECT_*.md`. `packages/api/src/connect/` (tools, OAuth, plans, curation; no HTTP, no model), `apps/api/app/api/mcp` + `api/oauth/*` + `api/connect/*` + `app/.well-known/oauth-*`, web pages `/connect/authorize`, `/connect/approve`, Settings › AI assistants. Held by `src/connect/__tests__`, `kivo-connect.itest.ts`, `kivo-connect-http.e2e.ts` (official SDK client over HTTP) and `extension-origin.test.ts`.
