@@ -66,6 +66,7 @@ export default function PrivacyPage() {
         <p><strong>Telegram, if you connect it.</strong> Your Telegram chat identifier, your name as it appears on Telegram and your Telegram username.</p>
         <p><strong>The browser extension, if you use it.</strong> When you press its buttons: the page’s address and title, the subject and topic you choose, and a passage only if you choose to save one. For each connected browser, a label such as “Chrome on macOS”, when it was connected and last used, and a one-way hash of its credential.</p>
         <p><strong>Sign-in safety.</strong> To limit repeated sign-in, sign-up and reset attempts, we count attempts per email address, stored in a hashed form.</p>
+        <p><strong>Usage of your plan.</strong> To apply your plan’s allowances and to understand Kivo’s costs, we record how much you use: for each AI request, which part of Kivo asked, the amount of text the AI provider processed and what it cost; your browser-agent tasks and their steps; calls from ChatGPT or Claude (which tool, whether it read or changed something, never the content); and how much space your images and attachments take. These records are kept with your account and deleted with it.</p>
       </Section>
 
       <Section id="use" title="How we use it">

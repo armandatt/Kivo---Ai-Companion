@@ -12,14 +12,14 @@
 // A version is the date of the text it names. Change the text, change the
 // version, and the date the pages show changes with it.
 
-export const TERMS_VERSION = "2026-11-14";
-export const PRIVACY_VERSION = "2026-11-14";
+export const TERMS_VERSION = "2026-11-23";
+export const PRIVACY_VERSION = "2026-11-23";
 // The versions just before these, still accepted while a deploy is under way
 // (the web app and the API deploy separately, so for a few minutes a sign-up
 // page can still show the earlier text). Each is recorded as what was agreed
 // to. Empty this once both are deployed.
-export const PREVIOUS_TERMS_VERSION = "2026-10-27";
-export const PREVIOUS_PRIVACY_VERSION = "2026-10-27";
+export const PREVIOUS_TERMS_VERSION = "2026-11-14";
+export const PREVIOUS_PRIVACY_VERSION = "2026-11-14";
 
 export interface LegalConsentInput { terms: string; privacy: string }
 

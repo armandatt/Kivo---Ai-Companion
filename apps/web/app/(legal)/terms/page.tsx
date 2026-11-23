@@ -74,13 +74,18 @@ export default function TermsPage() {
       </Section>
 
       <Section id="plans" title="Plans and payment">
-        <p>Kivo has a free plan. Pro, at {formatPrice(PLANS.pro_monthly)} a {PLANS.pro_monthly.interval}{PLANS.pro_monthly.trialDays ? ` after a ${PLANS.pro_monthly.trialDays}-day trial` : ""}, raises how much you can ask Nova each day. Payment is taken by Polar. Whatever plan you are on, what you have written and recorded stays yours, and nothing is deleted when a trial or a subscription ends.</p>
+        <p>Kivo has three plans. Free costs nothing. Plus costs {formatPrice(PLANS.plus_monthly)} a month and Pro {formatPrice(PLANS.pro_monthly)} a month. Every account starts on Free; there is no free trial of Plus or Pro, and a paid plan starts only once its payment has been confirmed. Payment is taken by Polar. Whatever plan you are on, what you have written and recorded stays yours, and nothing is deleted when a subscription ends.</p>
         <ul>
-          <li><strong>Renewal.</strong> Pro renews automatically at the end of each billing period until you cancel.</li>
-          <li><strong>Cancelling.</strong> You can cancel at any time. You keep Pro until the end of the period you have paid for, and you are not charged again.</li>
+          <li><strong>What each plan includes.</strong> Each plan includes monthly allowances, shown on the pricing page and in Settings › Plan and billing: Nova credits (Free 150, Plus 1,000, Pro 3,500 a month); browser-agent tasks (Free 10, Plus 40, Pro 120 a month); space for images and attachments (Free 500 MB, Plus 2 GB, Pro 15 GB); and use of Kivo from ChatGPT and Claude (on Free, 2,000 calls in total and then 100 read-only calls a month; on Plus and Pro, no fixed number, subject to fair use).</li>
+          <li><strong>Nova credits.</strong> A usual request to Nova uses about one credit; longer documents and larger jobs use more, in proportion to the work they take. A request that fails because of Kivo or its AI provider uses no credits.</li>
+          <li><strong>When an allowance runs out.</strong> Kivo tells you which one, and that part of Kivo pauses until the allowance renews (each month, or on your billing date on a paid plan) or you upgrade. Everything else keeps working, and nothing you have made is deleted, hidden or changed. A browser task that has started is never stopped because an allowance runs out.</li>
+          <li><strong>Fair use.</strong> To keep Kivo working for everyone, we limit unusually heavy or automated use on every plan, for example many requests in a short time.</li>
+          <li><strong>Renewal.</strong> Plus and Pro renew automatically at the end of each billing period until you cancel.</li>
+          <li><strong>Cancelling.</strong> You can cancel at any time. You keep your plan until the end of the period you have paid for, and you are not charged again; then your account is on Free.</li>
+          <li><strong>A payment that fails.</strong> If a renewal payment fails, your plan stays on for a short grace period while you update your payment method; then your account is on Free until a payment succeeds.</li>
           <li><strong>Refunds.</strong> Payments are not refunded, including for part of a period, except where the law that applies to you requires a refund.</li>
-          <li><strong>Taxes and the seller.</strong> Polar sells Pro as the merchant of record: it takes the payment, charges any tax that applies and issues the receipt. Its own terms apply to the purchase.</li>
-          <li><strong>Price changes.</strong> If the price of Pro changes, we will tell you before your next renewal at the new price, and you can cancel before then.</li>
+          <li><strong>Taxes and the seller.</strong> Polar sells Plus and Pro as the merchant of record: it takes the payment, charges any tax that applies and issues the receipt. Its own terms apply to the purchase. Plus is charged in Indian rupees and Pro in US dollars.</li>
+          <li><strong>Changes to prices and allowances.</strong> If the price of a paid plan changes, we will tell you before your next renewal at the new price, and you can cancel before then. If we reduce an allowance of a plan you pay for, we will tell you before the change applies.</li>
         </ul>
       </Section>
 
