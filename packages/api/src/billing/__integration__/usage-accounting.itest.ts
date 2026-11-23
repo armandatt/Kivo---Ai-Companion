@@ -54,6 +54,7 @@ after(async () => {
   await llm.flushLlmCalls();
   await prisma.$transaction(tx => ledger.deleteAccountUsage(tx, allKeys()));
   await prisma.aiUsageEvent.deleteMany({ where: { subjectKey: { in: allKeys() } } });
+  await prisma.aiUsageDay.deleteMany({ where: { subjectKey: { in: allKeys() } } });
   await prisma.billingTrial.deleteMany({ where: { userId: { in: users } } });
   await prisma.user.deleteMany({ where: { id: { in: users } } });
   await prisma.$disconnect();
@@ -332,13 +333,17 @@ test("MCP batch calls are one call each, their items counted beside; concurrent 
   assert.deepEqual([unknown!.kind, unknown!.classified], ["write", false]);
 });
 
-test("a Plus/Pro account has no fixed MCP quota; a trial is Plus", async () => {
+test("a Plus/Pro account has no fixed MCP quota; a trial row is Free", async () => {
   const id = await account();
   await prisma.billingTrial.create({ data: { userId: id, planKey: "pro_monthly", startedAt: new Date(Date.now() - 86_400_000), endsAt: new Date(Date.now() + 6 * 86_400_000) } });
   forgetTier(key(id));
   const t = await targetFor(key(id), "nova_credits");
-  assert.deepEqual([t.tier, t.limit], ["plus", 1_000]);
+  assert.deepEqual([t.tier, t.limit], ["free", 150], "a trial grants nothing");
+  await prisma.billingSubscription.create({ data: { userId: id, provider: "polar", providerCustomerId: `cus_${id}`, providerSubscriptionId: `sub_${id}`, planKey: "plus_monthly", status: "active",
+    currentPeriodStart: new Date(Date.now() - 86_400_000), currentPeriodEnd: new Date(Date.now() + 29 * 86_400_000), cancelAtPeriodEnd: false, providerModifiedAt: new Date() } });
+  forgetTier(key(id));
   const life = await targetFor(key(id), "mcp_calls");
+  assert.equal(life.tier, "plus");
   await ledger.record(life, { units: 50_000, key: "seed", reason: "test_seed", shadowRefusal: null });
   const w = await recordMcpCall({ userId: id, grantId: "g", tool: "create_note", args: {}, outcome: "ok" });
   assert.equal(w!.shadowRefusal, null);
@@ -362,4 +367,56 @@ test("an account's usage rows go with it", async () => {
   assert.equal(await prisma.usageLedger.count({ where: { accountKey: key(id) } }), 0);
   assert.equal(await prisma.usageReservation.count({ where: { accountKey: key(id) } }), 0);
   assert.equal(await prisma.usageBalance.count({ where: { accountKey: key(id) } }), 0);
+});
+
+// ── Account deletion and the usage tables (regression: production, 2026-11-22) ──
+
+test("deleting an account removes its usage rows in all four tables, and no one else's", async () => {
+  const { deleteAccount } = await import("../../services/accountDeletion.service.js");
+  const { hitLimit } = await import("../accounting/limiter.js");
+  const gone = await account(), kept = await account();
+  for (const id of [gone, kept]) {
+    await prisma.aiUsageDay.create({ data: { subjectKey: key(id), day: "2026-11-01", requests: 3 } });
+    await novaRun(key(id), "notes_tutor", async () => { llm.emitLlmCall(call(1_000, 0)); });
+    await hitLimit(`mcp-day:${key(id)}`, 10, 86_400_000);
+  }
+  const before = async (id: string) => ({
+    ledger: await prisma.usageLedger.count({ where: { accountKey: key(id) } }),
+    reservations: await prisma.usageReservation.count({ where: { accountKey: key(id) } }),
+    balances: await prisma.usageBalance.count({ where: { accountKey: key(id) } }),
+    limits: Number((await prisma.$queryRaw<{ c: bigint }[]>`SELECT COUNT(*) AS c FROM "RateLimitWindow" WHERE key = ${`mcp-day:${key(id)}`}`)[0]!.c),
+  });
+  const g = await before(gone);
+  assert.ok(g.ledger > 0 && g.reservations > 0 && g.balances > 0 && g.limits > 0);
+  const result = await deleteAccount(gone);
+  assert.equal(result.deleted, true);
+  assert.deepEqual(await before(gone), { ledger: 0, reservations: 0, balances: 0, limits: 0 });
+  assert.equal(await prisma.aiUsageEvent.count({ where: { subjectKey: key(gone) } }), 0, "model-call events go too");
+  assert.equal(await prisma.aiUsageDay.count({ where: { subjectKey: key(gone) } }), 0, "daily meter rows go too");
+  assert.ok((await prisma.aiUsageEvent.count({ where: { subjectKey: key(kept) } })) > 0, "another account's events stay");
+  const k = await before(kept);
+  assert.ok(k.ledger > 0 && k.reservations > 0 && k.balances > 0 && k.limits > 0, "another account's rows are untouched");
+  assert.equal(await prisma.user.count({ where: { id: gone } }), 0);
+});
+
+test("usage cleanup never fails a deletion when the tables are missing (all four, or only RateLimitWindow)", async () => {
+  const id = await account();
+  await novaRun(key(id), "notes_tutor", async () => { llm.emitLlmCall(call(1_000, 0)); });
+  class Rollback extends Error {}
+  // DDL is transactional in Postgres: rename the tables, run the cleanup, roll everything back.
+  for (const missing of [["UsageLedger", "UsageReservation", "UsageBalance", "RateLimitWindow"], ["RateLimitWindow"]]) {
+    let ledgerLeft = -1;
+    await assert.rejects(prisma.$transaction(async tx => {
+      for (const t of missing) await tx.$executeRawUnsafe(`ALTER TABLE "${t}" RENAME TO "${t}_hidden_for_test"`);
+      await ledger.deleteAccountUsage(tx, [key(id)]);
+      if (!missing.includes("UsageLedger")) {
+        ledgerLeft = Number((await tx.$queryRaw<{ c: bigint }[]>`SELECT COUNT(*) AS c FROM "UsageLedger" WHERE "accountKey" = ${key(id)}`)[0]!.c);
+      }
+      throw new Rollback();
+    }), (e: unknown) => e instanceof Rollback, `cleanup with ${missing.join(", ")} missing did not throw`);
+    if (!missing.includes("UsageLedger")) assert.equal(ledgerLeft, 0, "the tables that exist are still cleaned");
+  }
+  // Rolled back: the tables and this account's rows are as they were.
+  assert.ok((await prisma.usageLedger.count({ where: { accountKey: key(id) } })) > 0);
+  assert.equal(Number((await prisma.$queryRaw<{ c: bigint }[]>`SELECT COUNT(*) AS c FROM information_schema.tables WHERE table_name IN ('UsageLedger','UsageReservation','UsageBalance','RateLimitWindow')`)[0]!.c), 4);
 });

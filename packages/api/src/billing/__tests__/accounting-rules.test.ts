@@ -3,16 +3,36 @@
 // read-only fallback.
 
 import {
-  ALLOWANCES, creditRateVersion, creditsFor, featureClass, limitFor, mcpDecision, monthlyPeriod, periodFor,
-  reserveEstimate, shadowTier,
+  ALLOWANCES, allowances, browserTaskCostTargetMicros, creditRateVersion, creditsFor, DEFAULT_FAIR_USE, fairUse, featureClass,
+  limitFor, mcpDecision, monthlyPeriod, periodFor, reserveEstimate, tierFor,
 } from "../accounting/rules";
+import { accountingMode, enforcing } from "../accounting/targets";
+import { deriveAccess } from "../access";
+import { PLANS, formatPrice, tierOfPlan } from "../plans";
 import { USAGE_FEATURES } from "../../services/llm-usage";
 
 describe("allowances", () => {
-  it("are the approved initial targets, independent per product", () => {
+  it("are the approved launch configuration, independent per product", () => {
     expect(ALLOWANCES.free).toEqual({ novaCredits: 150, browserTasks: 10, mcpLifetime: 2_000, mcpReadOnly: 100, storageBytes: 500_000_000 });
     expect(ALLOWANCES.plus).toEqual({ novaCredits: 1_000, browserTasks: 40, mcpLifetime: null, mcpReadOnly: null, storageBytes: 2_000_000_000 });
-    expect(ALLOWANCES.pro).toEqual({ novaCredits: 3_500, browserTasks: 200, mcpLifetime: null, mcpReadOnly: null, storageBytes: 15_000_000_000 });
+    expect(ALLOWANCES.pro).toEqual({ novaCredits: 3_500, browserTasks: 120, mcpLifetime: null, mcpReadOnly: null, storageBytes: 15_000_000_000 });
+  });
+  it("can be changed without code (USAGE_ALLOWANCES), with a new version; bad values are ignored", () => {
+    const env = { USAGE_ALLOWANCES: JSON.stringify({ free: { novaCredits: 200, browserTasks: -3 }, pro: { browserTasks: 200 }, plus: { mcpLifetime: null } }) };
+    const a = allowances(env);
+    expect(a.table.free.novaCredits).toBe(200);
+    expect(a.table.free.browserTasks).toBe(10);
+    expect(a.table.pro.browserTasks).toBe(200);
+    expect(a.version).not.toBe(allowances({}).version);
+    expect(allowances({ USAGE_ALLOWANCES: "{not json" }).table).toEqual(allowances({}).table);
+  });
+  it("track a $0.03 browser-task cost target, configurable", () => {
+    expect(browserTaskCostTargetMicros({})).toBe(30_000);
+    expect(browserTaskCostTargetMicros({ BROWSER_TASK_COST_TARGET_MICROS: "25000" })).toBe(25_000);
+  });
+  it("have fair-use limits, configurable, never zero", () => {
+    expect(fairUse({})).toEqual(DEFAULT_FAIR_USE);
+    expect(fairUse({ USAGE_FAIR_USE: JSON.stringify({ mcpCallsPerMinute: 30, mcpCallsPerDay: 0 }) })).toMatchObject({ mcpCallsPerMinute: 30, mcpCallsPerDay: DEFAULT_FAIR_USE.mcpCallsPerDay });
   });
   it("give no allowance to Kivo-funded or system cost", () => {
     for (const tier of ["free", "plus", "pro"] as const) {
@@ -22,12 +42,49 @@ describe("allowances", () => {
   });
 });
 
-describe("shadow tier", () => {
-  it("is Plus during Kivo's trial, Pro for a paid or grace subscription, else Free", () => {
-    expect(shadowTier({ plan: "pro", source: "trial" })).toBe("plus");
-    expect(shadowTier({ plan: "pro", source: "subscription" })).toBe("pro");
-    expect(shadowTier({ plan: "pro", source: "grace" })).toBe("pro");
-    expect(shadowTier({ plan: "free", source: "free" })).toBe("free");
+describe("tiers", () => {
+  const at = (d: number) => new Date(Date.UTC(2026, 10, d));
+  const sub = (planKey: string, over: Record<string, unknown> = {}) => ({ planKey, status: "active", currentPeriodEnd: at(20), cancelAtPeriodEnd: false, endedAt: null, ...over });
+  const trial = { startedAt: at(1), endsAt: at(8) };
+  it("come from the plan behind the subscription", () => {
+    expect(deriveAccess({ subscription: sub("plus_monthly"), trial: null, now: at(10), graceDays: 3 })).toMatchObject({ tier: "plus", plan: "pro", source: "subscription" });
+    expect(deriveAccess({ subscription: sub("pro_monthly"), trial: null, now: at(10), graceDays: 3 })).toMatchObject({ tier: "pro", source: "subscription" });
+    expect(deriveAccess({ subscription: sub("pro_annual"), trial: null, now: at(10), graceDays: 3 }).tier).toBe("pro");
+    expect(tierFor({ tier: "plus" })).toBe("plus");
+  });
+  it("keep a paying tier through the past-due grace, then fall to Free", () => {
+    const pastDue = sub("plus_monthly", { status: "past_due" });
+    expect(deriveAccess({ subscription: pastDue, trial: null, now: at(22), graceDays: 3 })).toMatchObject({ tier: "plus", source: "grace" });
+    expect(deriveAccess({ subscription: pastDue, trial: null, now: at(24), graceDays: 3 }).tier).toBe("free");
+  });
+  it("end at the period end when cancelled, and at once when revoked", () => {
+    expect(deriveAccess({ subscription: sub("pro_monthly", { status: "canceled", cancelAtPeriodEnd: true }), trial: null, now: at(15), graceDays: 3 }).tier).toBe("pro");
+    expect(deriveAccess({ subscription: sub("pro_monthly", { status: "canceled", cancelAtPeriodEnd: true }), trial: null, now: at(21), graceDays: 3 }).tier).toBe("free");
+    expect(deriveAccess({ subscription: sub("pro_monthly", { status: "revoked", endedAt: at(12) }), trial: null, now: at(13), graceDays: 3 }).tier).toBe("free");
+  });
+  it("give a trial nothing: everyone is Free without a verified payment", () => {
+    expect(deriveAccess({ subscription: null, trial, now: at(3), graceDays: 3 })).toMatchObject({ tier: "free", plan: "free", source: "free" });
+    expect(deriveAccess({ subscription: null, trial, now: at(9), graceDays: 3 }).tier).toBe("free");
+    expect(deriveAccess({ subscription: null, trial: null, now: at(3), graceDays: 3 }).tier).toBe("free");
+  });
+  it("map every plan, Plus in rupees and Pro in dollars, never converted", () => {
+    expect(tierOfPlan("plus_monthly")).toBe("plus");
+    expect(tierOfPlan("pro_monthly")).toBe("pro");
+    expect(tierOfPlan("nonsense")).toBe("free");
+    expect(formatPrice(PLANS.plus_monthly)).toBe("₹299");
+    expect(formatPrice(PLANS.pro_monthly)).toBe("$10");
+  });
+});
+
+describe("the switch", () => {
+  it("is shadow by default, enforces only when told, product by product", () => {
+    expect(accountingMode({})).toBe("shadow");
+    expect(accountingMode({ USAGE_ACCOUNTING: "off" })).toBe("off");
+    expect(enforcing("nova_credits", {})).toBe(false);
+    expect(enforcing("nova_credits", { USAGE_ACCOUNTING: "enforce" })).toBe(true);
+    expect(enforcing("mcp_read_only", { USAGE_ACCOUNTING: "enforce", USAGE_ENFORCE: "mcp_calls" })).toBe(true);
+    expect(enforcing("browser_tasks", { USAGE_ACCOUNTING: "enforce", USAGE_ENFORCE: "mcp_calls,nova_credits" })).toBe(false);
+    expect(enforcing("kivo_funded", { USAGE_ACCOUNTING: "enforce" })).toBe(false);
   });
 });
 

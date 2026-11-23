@@ -14,6 +14,7 @@
 import { interactionUsage } from "../usage-events";
 import { reconcileStale, type StaleDecision, type StaleReservation } from "./ledger";
 import { creditRateVersion, creditsFor } from "./rules";
+import { purgeRateLimits } from "./limiter";
 import { accountingMode } from "./targets";
 
 export async function decideStale(r: StaleReservation): Promise<StaleDecision> {
@@ -32,6 +33,8 @@ export async function decideStale(r: StaleReservation): Promise<StaleDecision> {
 export async function reconcileUsage(now = new Date()): Promise<{ committed: number; refunded: number; skipped: number; rateVersion: string } | null> {
   if (accountingMode() === "off") return null;
   const out = await reconcileStale(now, decideStale);
+  // Rate-limit windows that ended over a day ago.
+  await purgeRateLimits(now).catch(() => 0);
   if (out.committed + out.refunded + out.skipped > 0) {
     console.log(JSON.stringify({ layer: "usage_accounting", event: "reconciled", ...out }));
   }

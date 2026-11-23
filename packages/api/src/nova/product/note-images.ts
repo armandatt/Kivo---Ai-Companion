@@ -237,3 +237,14 @@ export async function noteImageBytes(profileId: string): Promise<number> {
     SELECT COALESCE(SUM(octet_length(bytes)), 0)::bigint AS bytes FROM "NovaNoteImage" WHERE "profileId" = ${profileId}`;
   return Number(rows[0]?.bytes ?? 0);
 }
+
+// The same, for a web account: its own learner (web:<id>) and the Telegram
+// chat its profile links, read only (the billing page's usage view).
+export async function noteImageBytesForAccount(userId: string): Promise<number> {
+  const rows = await prisma.$queryRaw<{ bytes: bigint | null }[]>`
+    SELECT COALESCE(SUM(octet_length(i.bytes)), 0)::bigint AS bytes
+    FROM "NovaNoteImage" i JOIN "NovaAcademicProfile" p ON p.id = i."profileId" JOIN "MessengerUser" m ON m.id = p."userId"
+    WHERE m."platformChatId" = ${`web:${userId}`}
+       OR m."platformChatId" = (SELECT "telegramChatId" FROM "UserProfile" WHERE "userId" = ${userId})`;
+  return Number(rows[0]?.bytes ?? 0);
+}

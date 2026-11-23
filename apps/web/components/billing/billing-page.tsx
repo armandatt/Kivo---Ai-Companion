@@ -8,15 +8,28 @@ import { PLANS, formatPrice, intervalLabel, type PlanKey } from '@repo/api/billi
 import { cn } from '@/lib/utils'
 import { BUTTON_PRIMARY, BUTTON_QUIET } from '@/components/nova/workspace/ui'
 
-// The account's plan: what it has, until when, how much of today's Nova it
-// has used, and the ways to change it. Everything shown comes from
+// The account's plan: what it has, until when, what it has used, and the
+// ways to change it. There is no free trial: paid plans come only from a
+// verified payment. Everything shown comes from
 // /api/billing, which reads the server's records; this page never decides
 // that someone has Pro. After checkout it waits for the provider's own word.
+
+type Allowance = { used: number; limit: number | null; remaining: number | null; resetsAt: string | null }
+type Allowances = {
+  mode: 'off' | 'shadow' | 'enforce'
+  enforced: { nova: boolean; browser: boolean; mcp: boolean; storage: boolean }
+  tier: 'free' | 'plus' | 'pro'
+  nova: Allowance
+  browser: Allowance
+  mcp: { lifetimeUsed: number; lifetimeLimit: number | null; readOnly: boolean; readOnlyUsed: number | null; readOnlyLimit: number | null; readOnlyResetsAt: string | null }
+  storage: { usedBytes: number; limitBytes: number; remainingBytes: number }
+}
 
 type View = {
   ok: true
   plan: 'free' | 'pro'
-  source: 'subscription' | 'grace' | 'trial' | 'free'
+  tier?: 'free' | 'plus' | 'pro'
+  source: 'subscription' | 'grace' | 'free'
   planKey: PlanKey | null
   until: string | null
   subscription: { planKey: PlanKey; status: string; currentPeriodEnd: string | null; cancelAtPeriodEnd: boolean; canceledAt: string | null } | null
@@ -24,6 +37,7 @@ type View = {
   trialEligible: boolean
   trialDays: number
   usage: { today: number; limit: number }
+  allowances?: Allowances | null
   purchasable: PlanKey[]
   providerReady: boolean
 }
@@ -42,17 +56,17 @@ async function post(path: string, body: unknown = {}): Promise<{ ok: boolean; ur
 }
 
 // One plain sentence for where the account stands.
+
 function standing(v: View): { title: string; detail: string; tone: 'good' | 'warn' | 'plain' } {
   const s = v.subscription
-  if (v.source === 'grace') return { title: 'Pro, payment due', detail: `Your last payment didn't go through. Pro stays on until ${day(v.until)} while you update your card.`, tone: 'warn' }
+  const paid = s ? (PLANS[s.planKey]?.name ?? 'Pro') : 'Pro'
+  if (v.source === 'grace') return { title: `${paid}, payment due`, detail: `Your last payment didn't go through. ${paid} stays on until ${day(v.until)} while you update your payment method.`, tone: 'warn' }
   if (v.source === 'subscription' && s) {
-    if (s.cancelAtPeriodEnd || s.status === 'canceled') return { title: `${PLANS[s.planKey]?.name ?? 'Pro'}, ending`, detail: `You cancelled. Pro stays on until ${day(s.currentPeriodEnd)}, then you're on Free. Nothing you made is lost.`, tone: 'warn' }
+    if (s.cancelAtPeriodEnd || s.status === 'canceled') return { title: `${paid}, ending`, detail: `You cancelled. ${paid} stays on until ${day(s.currentPeriodEnd)}, then you're on Free. Nothing you made is lost.`, tone: 'warn' }
     return { title: PLANS[s.planKey]?.name ?? 'Pro', detail: s.currentPeriodEnd ? `Renews on ${day(s.currentPeriodEnd)}.` : 'Active.', tone: 'good' }
   }
-  if (v.source === 'trial' && v.trial) return { title: 'Pro trial', detail: `Your free trial ends on ${day(v.trial.endsAt)}. No card on file, so nothing is charged; you move to Free unless you upgrade.`, tone: 'good' }
-  if (v.trial && !v.trial.active) return { title: 'Free', detail: `Your Pro trial ended on ${day(v.trial.endsAt)}. Everything you made is still here.`, tone: 'plain' }
-  if (s && (s.status === 'revoked' || s.status === 'canceled')) return { title: 'Free', detail: 'Your Pro subscription has ended. Everything you made is still here.', tone: 'plain' }
-  return { title: 'Free', detail: 'Plan, study, keep notes and talk to Nova, within a daily allowance.', tone: 'plain' }
+  if (s && (s.status === 'revoked' || s.status === 'canceled')) return { title: 'Free', detail: `Your ${paid} subscription has ended. Everything you made is still here.`, tone: 'plain' }
+  return { title: 'Free', detail: v.allowances?.mode === 'enforce' ? 'Plan, study, keep notes and talk to Nova, within a monthly allowance.' : 'Plan, study, keep notes and talk to Nova, within a daily allowance.', tone: 'plain' }
 }
 
 export function BillingPage() {
@@ -107,7 +121,7 @@ export function BillingPage() {
     <div className="mx-auto w-full max-w-3xl pb-20 pt-10 lg:pt-4">
       <Link href="/settings" className="inline-flex items-center gap-1.5 text-sm text-foreground/55 transition-colors hover:text-foreground"><ArrowLeft className="size-4" /> Settings</Link>
       <h1 className="mt-4 text-[1.9rem] font-semibold leading-[1.08] tracking-[-0.03em] text-foreground sm:text-[2.4rem]">Plan and billing</h1>
-      <p className="mt-2 text-sm text-foreground/60">Your plan, today&apos;s use of Nova, and how to change either.</p>
+      <p className="mt-2 text-sm text-foreground/60">Your plan, what you&apos;ve used of it, and how to change either.</p>
       <div className="mt-8 space-y-6">{children}</div>
     </div>
   )
@@ -126,9 +140,8 @@ export function BillingPage() {
   }
 
   const now = standing(view)
-  const pct = Math.min(100, Math.round((view.usage.today / Math.max(1, view.usage.limit)) * 100))
   const subscribed = view.source === 'subscription' || view.source === 'grace'
-  const offers = (['pro_monthly', 'pro_annual'] as const).filter(k => k === 'pro_monthly' || view.purchasable.includes(k))
+  const offers = (['plus_monthly', 'pro_monthly', 'pro_annual'] as const).filter(k => k !== 'pro_annual' || view.purchasable.includes(k))
 
   return shell(
     <>
@@ -144,12 +157,12 @@ export function BillingPage() {
       )}
 
       <section aria-labelledby="your-plan" className={cn(CARD, 'relative overflow-hidden')}>
-        {view.plan === 'pro' && <div aria-hidden className="pointer-events-none absolute -right-16 -top-20 size-56 rounded-full bg-keppel-400/15 blur-3xl" />}
+        {view.plan !== 'free' && <div aria-hidden className="pointer-events-none absolute -right-16 -top-20 size-56 rounded-full bg-keppel-400/15 blur-3xl" />}
         <div className="relative flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-foreground/45">Your plan</p>
             <h2 id="your-plan" className="mt-1 flex items-center gap-2 text-2xl font-semibold tracking-tight text-foreground">
-              {view.plan === 'pro' && <Sparkles className="size-5 text-keppel-300" />}{now.title}
+              {view.plan !== 'free' && <Sparkles className="size-5 text-keppel-300" />}{now.title}
             </h2>
             <p className={cn('mt-1.5 max-w-prose text-sm leading-relaxed', now.tone === 'warn' ? 'text-amber-200' : 'text-foreground/65')}>{now.detail}</p>
           </div>
@@ -160,36 +173,25 @@ export function BillingPage() {
           )}
         </div>
 
-        <div className="relative mt-6">
-          <div className="flex items-baseline justify-between text-xs">
-            <span className="font-medium text-foreground/75">Nova today</span>
-            <span className="tabular-nums text-foreground/55">{view.usage.today} of {view.usage.limit} requests</span>
+        {view.allowances ? <UsageRows a={view.allowances} /> : (
+          <div className="relative mt-6">
+            <div className="flex items-baseline justify-between text-xs">
+              <span className="font-medium text-foreground/75">Nova today</span>
+              <span className="tabular-nums text-foreground/55">{view.usage.today} of {view.usage.limit} requests</span>
+            </div>
+            <Bar used={view.usage.today} limit={view.usage.limit} label="Nova requests used today" />
+            <p className="mt-1.5 text-[11px] text-foreground/45">Every message Nova reads, on the web or Telegram, and every note or page you ask it about. Resets at midnight UTC.</p>
           </div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/8" role="progressbar" aria-valuemin={0} aria-valuemax={view.usage.limit} aria-valuenow={view.usage.today} aria-label="Nova requests used today">
-            <div className={cn('h-full rounded-full transition-[width] duration-700', pct >= 90 ? 'bg-amber-300' : 'bg-keppel-400')} style={{ width: `${pct}%` }} />
-          </div>
-          <p className="mt-1.5 text-[11px] text-foreground/45">Every message Nova reads, on the web or Telegram, and every note or page you ask it about. Resets at midnight UTC.</p>
-        </div>
+        )}
       </section>
 
       {error && <p role="alert" className="rounded-2xl border border-red-400/30 bg-red-400/5 px-4 py-3 text-sm text-red-200">{error}</p>}
 
-      {!subscribed && view.trialEligible && view.trialDays > 0 && (
-        <section className={cn(CARD, 'flex flex-wrap items-center justify-between gap-4 border-keppel-400/25')}>
-          <div className="min-w-0">
-            <p className="text-base font-semibold text-foreground">Try Pro free for {view.trialDays} days</p>
-            <p className="mt-1 max-w-prose text-sm leading-relaxed text-foreground/60">No card needed and nothing is charged. When it ends you&apos;re back on Free, with everything you made still here.</p>
-          </div>
-          <button type="button" onClick={() => void go('trial', '/api/billing/trial')} disabled={busy !== null} className={cn(BUTTON_PRIMARY, 'shrink-0')} data-start-trial>
-            {busy === 'trial' ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} Start free trial
-          </button>
-        </section>
-      )}
 
       {!subscribed && (
         <section aria-labelledby="upgrade" className="space-y-3">
           <h2 id="upgrade" className="text-sm font-semibold text-foreground/85">Upgrade</h2>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className={cn('grid gap-4', offers.length > 2 ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
             {offers.map(key => {
               const plan = PLANS[key]
               const can = view.purchasable.includes(key)
@@ -211,9 +213,53 @@ export function BillingPage() {
               )
             })}
           </div>
-          <p className="text-xs leading-relaxed text-foreground/45">Payments are handled by Polar, Kivo&apos;s merchant of record; Kivo never sees your card. Prices are in US dollars. Cancel any time from Manage subscription; Pro stays on until the end of the period you paid for.</p>
+          <p className="text-xs leading-relaxed text-foreground/45">Payments are handled by Polar, Kivo&apos;s merchant of record; Kivo never sees your card. Plus is charged in Indian rupees and Pro in US dollars, at the prices shown. Cancel any time from Manage subscription; your plan stays on until the end of the period you paid for. Nothing you made is ever deleted when a plan ends.</p>
         </section>
       )}
     </>,
+  )
+}
+
+function Bar({ used, limit, label }: { used: number; limit: number; label: string }) {
+  const pct = Math.min(100, Math.round((used / Math.max(1, limit)) * 100))
+  return (
+    <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/8" role="progressbar" aria-valuemin={0} aria-valuemax={limit} aria-valuenow={used} aria-label={label}>
+      <div className={cn('h-full rounded-full transition-[width] duration-700', pct >= 90 ? 'bg-amber-300' : 'bg-keppel-400')} style={{ width: `${pct}%` }} />
+    </div>
+  )
+}
+
+const renews = (iso: string | null) => iso ? `Renews ${new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'long', timeZone: 'UTC' })}` : ''
+const size = (b: number) => b >= 1_000_000_000 ? `${(b / 1_000_000_000).toLocaleString(undefined, { maximumFractionDigits: 1 })} GB` : `${Math.round(b / 1_000_000).toLocaleString()} MB`
+
+// The four allowances, each on its own: they never share a balance.
+function UsageRows({ a }: { a: Allowances }) {
+  const rows: Array<{ name: string; used: number; limit: number | null; figure: string; note: string; what: string }> = [
+    { name: 'Nova credits', used: a.nova.used, limit: a.nova.limit, figure: a.nova.limit === null ? `${a.nova.used.toLocaleString()} used` : `${a.nova.used.toLocaleString()} of ${a.nova.limit.toLocaleString()}`, note: renews(a.nova.resetsAt),
+      what: 'Nova on the web, Telegram and the extension. A usual request is about one credit; long documents and bigger jobs use more.' },
+    { name: 'Browser agent', used: a.browser.used, limit: a.browser.limit, figure: a.browser.limit === null ? `${a.browser.used} tasks` : `${a.browser.used} of ${a.browser.limit} tasks`, note: renews(a.browser.resetsAt),
+      what: 'One task each time you ask Nova to do something in your browser, however many steps it takes.' },
+    a.mcp.lifetimeLimit === null
+      ? { name: 'ChatGPT and Claude', used: 0, limit: null, figure: `${a.mcp.lifetimeUsed.toLocaleString()} calls`, note: 'No fixed limit · fair use', what: 'Each time an assistant reads or changes your Kivo through the connector.' }
+      : a.mcp.readOnly
+        ? { name: 'ChatGPT and Claude', used: a.mcp.readOnlyUsed ?? 0, limit: a.mcp.readOnlyLimit, figure: `${a.mcp.readOnlyUsed ?? 0} of ${a.mcp.readOnlyLimit ?? 0} reads`, note: `Read-only after ${a.mcp.lifetimeLimit.toLocaleString()} calls · ${renews(a.mcp.readOnlyResetsAt)}`, what: 'Assistants can still read your Kivo; changes need Plus.' }
+        : { name: 'ChatGPT and Claude', used: a.mcp.lifetimeUsed, limit: a.mcp.lifetimeLimit, figure: `${a.mcp.lifetimeUsed.toLocaleString()} of ${a.mcp.lifetimeLimit.toLocaleString()} calls`, note: 'Lifetime · then 100 reads a month', what: 'Each time an assistant reads or changes your Kivo through the connector.' },
+    { name: 'Images and attachments', used: a.storage.usedBytes, limit: a.storage.limitBytes, figure: `${size(a.storage.usedBytes)} of ${size(a.storage.limitBytes)}`, note: 'Notes and text are not counted',
+      what: 'Screenshots and images in your notes, and files waiting in Build with Nova.' },
+  ]
+  return (
+    <div className="relative mt-6 space-y-5" aria-label="What you've used">
+      {rows.map(r => (
+        <div key={r.name}>
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-xs">
+            <span className="font-medium text-foreground/75">{r.name}</span>
+            <span className="tabular-nums text-foreground/55">{r.figure}</span>
+          </div>
+          {r.limit !== null && <Bar used={r.used} limit={r.limit} label={`${r.name} used`} />}
+          <p className="mt-1.5 text-[11px] text-foreground/45">{r.what}{r.note ? ` · ${r.note}` : ''}</p>
+        </div>
+      ))}
+      {a.mode !== 'enforce' && <p className="text-[11px] text-foreground/40">Shown for your information: today&apos;s Nova allowance still applies while these limits are being introduced.</p>}
+    </div>
   )
 }

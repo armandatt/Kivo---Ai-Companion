@@ -674,3 +674,31 @@ test('the popup stays within its width, the panel fills its own, and nothing mov
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/)
   assert.ok(!css.match(/@import|url\(/), 'no outside fonts or images')
 })
+
+// ── A browser task's start is one task, even when its answer is lost ──
+test('agentStart sends one key per start and retries a lost answer once with the same key', async () => {
+  const bodies = []
+  let n = 0
+  const client = createClient({ baseUrl: 'https://kivo.example', getToken: async () => 'nvx_abc', fetch: async (_url, init) => {
+    bodies.push(JSON.parse(init.body))
+    if (++n === 1) throw new TypeError('Load failed')
+    return new Response(JSON.stringify({ success: true, ticket: 't' }), { status: 200 })
+  } })
+  const started = await client.agentStart('find the paper', 'A page')
+  assert.equal(started.ok, true)
+  assert.equal(bodies.length, 2)
+  assert.match(bodies[0].clientKey, /^[A-Za-z0-9_-]{8,80}$/)
+  assert.equal(bodies[1].clientKey, bodies[0].clientKey)
+  const again = createClient({ baseUrl: 'https://kivo.example', getToken: async () => 'nvx_abc', fetch: async (_u, init) => { bodies.push(JSON.parse(init.body)); return new Response(JSON.stringify({ success: true }), { status: 200 }) } })
+  await again.agentStart('another task')
+  assert.notEqual(bodies.at(-1).clientKey, bodies[0].clientKey, 'a new start is a new key')
+})
+
+test('agentStart does not retry an answer the server gave (a refusal is final)', async () => {
+  let calls = 0
+  const client = createClient({ baseUrl: 'https://kivo.example', getToken: async () => 'nvx_abc', fetch: async () => { calls++; return new Response(JSON.stringify({ success: false, error: 'browser_allowance_exhausted', message: 'Used up.' }), { status: 429 }) } })
+  const r = await client.agentStart('task')
+  assert.equal(r.ok, false)
+  assert.equal(calls, 1)
+  assert.equal(r.message, 'Used up.')
+})

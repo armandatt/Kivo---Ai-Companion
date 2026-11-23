@@ -190,7 +190,7 @@ export async function reserve(t: Target, input: {
 export type Settled = { applied: boolean; state: string | null };
 
 async function settle(reservationId: string, outcome: "committed" | "refunded", input: {
-  units: number; costMicros: number; reason: string; rateVersion?: string | null; now?: Date;
+  units: number; costMicros: number; reason: string; rateVersion?: string | null; now?: Date; detail?: string | null;
 }): Promise<Settled> {
   const now = input.now ?? new Date();
   const units = Math.max(0, Math.round(input.units));
@@ -212,33 +212,69 @@ async function settle(reservationId: string, outcome: "committed" | "refunded", 
       ? { reserved: -held, committed: units, costMicros: cost }
       : { reserved: -held, refunded: held, costMicros: cost });
     await appendLedger(tx, t, outcome === "committed"
-      ? { entry: "commit", units, reserved: -held, committed: units, costMicros: cost, feature: r.feature, reason: input.reason, key: reservationId, reservationId, rateVersion: input.rateVersion }
-      : { entry: "refund", units: held, reserved: -held, refunded: held, costMicros: cost, feature: r.feature, reason: input.reason, key: reservationId, reservationId, rateVersion: input.rateVersion });
+      ? { entry: "commit", units, reserved: -held, committed: units, costMicros: cost, feature: r.feature, detail: input.detail, reason: input.reason, key: reservationId, reservationId, rateVersion: input.rateVersion }
+      : { entry: "refund", units: held, reserved: -held, refunded: held, costMicros: cost, feature: r.feature, detail: input.detail, reason: input.reason, key: reservationId, reservationId, rateVersion: input.rateVersion });
     return { applied: true, state: outcome };
   }));
 }
 
-export const commit = (reservationId: string, input: { units: number; costMicros?: number; reason: string; rateVersion?: string | null; now?: Date }) =>
+// `detail` names the work settled (Nova: "interaction:<id>"), so the shadow
+// report can match every usage event to its settlement.
+export const commit = (reservationId: string, input: { units: number; costMicros?: number; reason: string; rateVersion?: string | null; now?: Date; detail?: string | null }) =>
   settle(reservationId, "committed", { costMicros: 0, ...input });
-export const refund = (reservationId: string, input: { reason: string; costMicros?: number; now?: Date }) =>
-  settle(reservationId, "refunded", { units: 0, costMicros: input.costMicros ?? 0, reason: input.reason, now: input.now });
+export const refund = (reservationId: string, input: { reason: string; costMicros?: number; now?: Date; detail?: string | null }) =>
+  settle(reservationId, "refunded", { units: 0, costMicros: input.costMicros ?? 0, reason: input.reason, now: input.now, detail: input.detail });
 
 // Cost that arrives after a reservation was made or settled (a browser task's
 // later steps): added to the reservation and its balance, never to its units.
 // `key` names the cost (a step's interaction), so it is added once.
-export async function addCost(reservationId: string, input: { costMicros: number; key: string; reason: string; feature?: string | null }): Promise<boolean> {
+// Answers the reservation's cost before and after (null: nothing added, a
+// repeat or no such reservation), so a crossing of a cost target is seen once.
+export async function addCost(reservationId: string, input: { costMicros: number; key: string; reason: string; feature?: string | null }): Promise<{ before: number; after: number } | null> {
   const cost = Math.max(0, Math.round(input.costMicros));
   return quiet(() => prisma.$transaction(async tx => {
     const [r] = await tx.$queryRaw<{ accountKey: string; product: string; periodKey: string }[]>`
       SELECT "accountKey", product, "periodKey" FROM "UsageReservation" WHERE id = ${reservationId}`;
-    if (!r) return false;
+    if (!r) return null;
     const t = { accountKey: r.accountKey, product: r.product as Product, period: { key: r.periodKey, start: null, end: null } };
     const fresh = await appendLedger(tx, t, { entry: "record", units: 0, costMicros: cost, feature: input.feature, reason: input.reason, key: `${reservationId}:cost:${input.key}`, reservationId });
-    if (!fresh) return false;
-    await tx.$executeRaw`UPDATE "UsageReservation" SET "costMicros" = "costMicros" + ${BigInt(cost)} WHERE id = ${reservationId}`;
+    if (!fresh) return null;
+    const [row] = await tx.$queryRaw<{ costMicros: bigint }[]>`
+      UPDATE "UsageReservation" SET "costMicros" = "costMicros" + ${BigInt(cost)} WHERE id = ${reservationId} RETURNING "costMicros"`;
     await bumpBalance(tx, t, { costMicros: cost });
-    return true;
+    const after = n(row?.costMicros);
+    return { before: after - cost, after };
   }));
+}
+
+// One more step under a reservation (a browser task's agent step); answers the
+// count after it, so the step cap holds across restarts. null: no such reservation.
+export async function countStep(reservationId: string): Promise<number | null> {
+  return quiet(async () => {
+    const rows = await prisma.$queryRaw<{ steps: number }[]>`
+      UPDATE "UsageReservation" SET steps = steps + 1 WHERE id = ${reservationId} RETURNING steps`;
+    return rows[0]?.steps ?? null;
+  });
+}
+
+// Reservations of a product an account made since `since` that were not
+// refunded (browser tasks still within their ticket's life).
+export async function recentReservations(accountKey: string, product: Product, since: Date): Promise<number> {
+  const rows = await prisma.$queryRaw<{ c: bigint }[]>`
+    SELECT COUNT(*) AS c FROM "UsageReservation"
+    WHERE "accountKey" = ${accountKey} AND product = ${product} AND "createdAt" >= ${since} AND state <> 'refunded'`;
+  return n(rows[0]?.c);
+}
+
+// The balances of an account for a set of periods (the usage view).
+export async function balancesOf(accountKey: string, keys: Array<{ product: Product; periodKey: string }>): Promise<Map<string, { reserved: number; committed: number; limit: number | null }>> {
+  const out = new Map<string, { reserved: number; committed: number; limit: number | null }>();
+  if (keys.length === 0) return out;
+  const rows = await prisma.$queryRaw<{ product: string; periodKey: string; reservedUnits: bigint; committedUnits: bigint; limitUnits: bigint | null }[]>`
+    SELECT product, "periodKey", "reservedUnits", "committedUnits", "limitUnits" FROM "UsageBalance"
+    WHERE "accountKey" = ${accountKey} AND (product, "periodKey") IN (SELECT * FROM unnest(${keys.map(k => k.product)}::text[], ${keys.map(k => k.periodKey)}::text[]))`;
+  for (const r of rows) out.set(`${r.product}|${r.periodKey}`, { reserved: n(r.reservedUnits), committed: n(r.committedUnits), limit: r.limitUnits === null ? null : n(r.limitUnits) });
+  return out;
 }
 
 // The latest reservation of a product made for a piece of work (a browser
@@ -246,6 +282,12 @@ export async function addCost(reservationId: string, input: { costMicros: number
 export async function reservationByRef(product: Product, ref: string): Promise<{ id: string; state: string; accountKey: string } | null> {
   const rows = await prisma.$queryRaw<{ id: string; state: string; accountKey: string }[]>`
     SELECT id, state, "accountKey" FROM "UsageReservation" WHERE product = ${product} AND ref = ${ref} ORDER BY "createdAt" DESC LIMIT 1`;
+  return rows[0] ?? null;
+}
+
+export async function reservationByKey(accountKey: string, product: Product, idempotencyKey: string): Promise<{ id: string; state: string } | null> {
+  const rows = await prisma.$queryRaw<{ id: string; state: string }[]>`
+    SELECT id, state FROM "UsageReservation" WHERE "accountKey" = ${accountKey} AND product = ${product} AND "idempotencyKey" = ${idempotencyKey}`;
   return rows[0] ?? null;
 }
 
@@ -316,9 +358,18 @@ export async function reconcileStale(now: Date, decide: (r: StaleReservation) =>
 }
 
 // ── An account's rows, removed with the account ──
+// Each table is checked first: a database the schema has not been pushed to
+// yet (the API deployed before `prisma db push`, or only Phase 1's tables
+// pushed) must not fail the deletion, and a table that is there is always
+// cleaned. Rate-limit windows keyed by the account (`<kind>:<accountKey>`)
+// go too; those keyed by a connection or a chat expire within a day.
 export async function deleteAccountUsage(tx: Tx, accountKeys: string[]): Promise<void> {
   if (accountKeys.length === 0) return;
-  await tx.$executeRaw`DELETE FROM "UsageLedger" WHERE "accountKey" = ANY(${accountKeys})`;
-  await tx.$executeRaw`DELETE FROM "UsageReservation" WHERE "accountKey" = ANY(${accountKeys})`;
-  await tx.$executeRaw`DELETE FROM "UsageBalance" WHERE "accountKey" = ANY(${accountKeys})`;
+  const [has] = await tx.$queryRaw<{ ledger: boolean; reservation: boolean; balance: boolean; limits: boolean }[]>`
+    SELECT to_regclass('"UsageLedger"') IS NOT NULL AS ledger, to_regclass('"UsageReservation"') IS NOT NULL AS reservation,
+           to_regclass('"UsageBalance"') IS NOT NULL AS balance, to_regclass('"RateLimitWindow"') IS NOT NULL AS limits`;
+  if (has?.ledger) await tx.$executeRaw`DELETE FROM "UsageLedger" WHERE "accountKey" = ANY(${accountKeys})`;
+  if (has?.reservation) await tx.$executeRaw`DELETE FROM "UsageReservation" WHERE "accountKey" = ANY(${accountKeys})`;
+  if (has?.balance) await tx.$executeRaw`DELETE FROM "UsageBalance" WHERE "accountKey" = ANY(${accountKeys})`;
+  if (has?.limits) await tx.$executeRaw`DELETE FROM "RateLimitWindow" WHERE split_part(key, ':', 2) || ':' || split_part(key, ':', 3) = ANY(${accountKeys})`;
 }

@@ -1,6 +1,6 @@
 {
   "name": "nova-extension",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "private": true,
   "type": "module",
   "description": "Nova browser extension: save a page to Nova, or study it, when you ask.",

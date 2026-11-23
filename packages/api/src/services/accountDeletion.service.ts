@@ -31,6 +31,8 @@
 import { prisma } from "@repo/db/client";
 
 import { deleteAccountUsage } from "../billing/accounting/ledger";
+import { deleteUsageDaysIn } from "../billing/usage";
+import { deleteUsageEventsIn } from "../billing/usage-events";
 export interface AccountDeletionResult {
   // false: there was no such account (it had already been deleted).
   deleted:            boolean;
@@ -75,9 +77,14 @@ export async function deleteAccount(userId: string): Promise<AccountDeletionResu
     const own = await tx.messengerUser.deleteMany({ where: { platform: "web", platformChatId: `web:${userId}` } });
     if (own.count > 0) { removed = true; kept = null; }
 
-    // Usage accounting rows are keyed by the account (and by the chat while it
-    // had no account); they go with it.
-    await deleteAccountUsage(tx, [`user:${userId}`, ...(chatId && removed ? [`learner:${chatId}`] : [])]);
+    // Usage records are keyed by the account (and by the chat while it had no
+    // account): the allowances' ledger, the daily meter and the model-call
+    // events go with it, as the Privacy Policy says.
+    const usageKeys = [`user:${userId}`, ...(chatId && removed ? [`learner:${chatId}`] : [])];
+    const learners = [`web:${userId}`, ...(chatId && removed ? [chatId] : [])];
+    await deleteAccountUsage(tx, usageKeys);
+    await deleteUsageDaysIn(tx, usageKeys);
+    await deleteUsageEventsIn(tx, usageKeys, learners);
 
     await tx.user.delete({ where: { id: userId } });
     return { deleted: true, novaProfileRemoved: removed, novaProfileKept: kept };

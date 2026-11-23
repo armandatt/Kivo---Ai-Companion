@@ -55,8 +55,9 @@ import type {
 import { slowestStage } from "./telegram.types";
 import { entitlementForLearner, type Entitlement } from "../../billing/entitlements";
 import { allowanceFor } from "../../billing/limits";
-import { spendAiRequest } from "../../billing/usage";
+import { countOnly, spendAiRequest } from "../../billing/usage";
 import { reserveForInteraction } from "../../billing/accounting/nova";
+import { enforcing } from "../../billing/accounting/targets";
 import { withUsageContext } from "../../services/llm-usage";
 import { openDraftFromChat } from "../product/builder";
 
@@ -186,8 +187,10 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
   // be used. If billing cannot be read, the chat gets Free's allowance: a
   // learner is never refused because of a fault on Kivo's side.
   let plan: Promise<Pick<Entitlement, "allowance" | "usageKey" | "plan">> | null = null;
+  // Enforcing Nova credits, the daily meter only counts (billing/usage.ts countOnly).
   const entitled = () => (plan ??= (deps.entitlement ?? entitlementForLearner)(event.chatId)
-    .catch(() => ({ plan: "free" as const, allowance: allowanceFor("free"), usageKey: `learner:${event.chatId}` })));
+    .catch(() => ({ plan: "free" as const, allowance: allowanceFor("free"), usageKey: `learner:${event.chatId}` }))
+    .then(e => enforcing("nova_credits") ? countOnly(e) : e));
   const factor = async () => (await entitled()).allowance.telegramFactor;
   // One request on the account's daily meter. A fault in the meter allows it.
   // `counted`: the meter took it (for the usage events of the reading).
@@ -196,11 +199,15 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
     const allowed = await (async () => {
       try { return counted = (await spendAiRequest(await entitled())).ok } catch { return true }
     })();
-    // Usage accounting (shadow): this update's Nova credits, reserved once
-    // per update (its reading, wording and rewording settle together).
-    if (allowed) await reserveForInteraction({ feature: "telegram_understanding", idempotencyKey: event.updateId != null ? `telegram:${event.chatId}:${event.updateId}` : undefined });
-    return allowed;
+    // Usage accounting: this update's Nova credits, reserved once per update
+    // (its reading, wording and rewording settle together). Enforcing, the
+    // month's credits decide.
+    if (!allowed) return false;
+    const admitted = await reserveForInteraction({ feature: "telegram_understanding", idempotencyKey: event.updateId != null ? `telegram:${event.chatId}:${event.updateId}` : undefined });
+    if (admitted.refused) { creditsRefused = true; return false; }
+    return true;
   };
+  let creditsRefused = false;
   const inLanguage = async (text: string): Promise<string> => {
     if (event.kind !== "text") return text;
     if (!ctx || ctx.language === "english" || !text.trim() || isFixedText(text, ctx.language)) return text;
@@ -430,8 +437,8 @@ export async function handleNovaTelegramEvent(event: Event, deps: TelegramDeps):
       // Reading the message is the request the account's daily allowance
       // counts; the chat's own cap is inside it.
       if (!await spendModelCall(profile.id, "understanding", day, await factor()) || !await accountAllows()) {
-        await deliver({ text: say().budget });
-        return finish("budget_exhausted");
+        await deliver({ text: creditsRefused ? say().creditsUsed : say().budget });
+        return finish(creditsRefused ? "nova_allowance_exhausted" : "budget_exhausted");
       }
       spent("learnerMs", limited);
       const gathering = Date.now();

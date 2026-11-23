@@ -29,37 +29,88 @@ import type { InteractionEnd, LlmCallEvent, UsageContext } from "../../services/
 import { currentUsageContext } from "../../services/llm-usage";
 import { costOf } from "../pricing";
 import { usageKeysFor } from "../usage-events";
+import { entitlementForLearner } from "../entitlements";
 import { addCost, commit, record, refund, reservationByRef, reserve } from "./ledger";
-import { creditRateVersion, creditsFor, featureClass, reserveEstimate, type FeatureClass } from "./rules";
-import { accountingFault, accountingMode, targetFor } from "./targets";
+import { browserTaskCostTargetMicros, creditRateVersion, creditsFor, featureClass, reserveEstimate, type FeatureClass, type Tier } from "./rules";
+import { accountingFault, accountingMode, enforcing, targetFor } from "./targets";
 
-// How long an entry point waits for its reservation before letting the work
-// start (shadow: the reservation still completes, and settlement waits for it).
+// How long an entry point waits for its reservation in shadow mode before
+// letting the work start (the reservation still completes, and settlement
+// waits for it). Enforcing, it waits for the answer: the reservation is the
+// admission.
 const RESERVE_WAIT_MS = 300;
+
+export interface NovaRefusal {
+  code:      "nova_allowance_exhausted";
+  tier:      Tier;
+  used:      number;
+  limit:     number;
+  resetsAt:  string | null;
+}
+export type NovaAdmission = { refused: null; reservationId: string | null } | { refused: NovaRefusal; reservationId: null };
+
+async function reserveFor(accountKey: string, opts: { feature: string; estimate?: number; idempotencyKey: string; ref: string | null; enforce: boolean }): Promise<NovaAdmission> {
+  const t = await targetFor(accountKey, "nova_credits");
+  const r = await reserve(t, {
+    units: opts.estimate ?? reserveEstimate(opts.feature), idempotencyKey: opts.idempotencyKey,
+    feature: opts.feature, ref: opts.ref, rateVersion: creditRateVersion(), mode: opts.enforce ? "enforce" : "shadow",
+  });
+  if (r.ok) return { refused: null, reservationId: r.reservationId };
+  return { refused: { code: "nova_allowance_exhausted", tier: t.tier, used: r.used, limit: r.limit, resetsAt: t.period.end?.toISOString() ?? null }, reservationId: null };
+}
 
 // Reserves Nova credits for the interaction now open, before its work runs.
 // Only for learner-initiated Nova work; anything else is recorded when it
-// ends. Never throws and never blocks the work for long.
-export async function reserveForInteraction(opts: { feature?: string; estimate?: number; idempotencyKey?: string } = {}): Promise<void> {
-  if (accountingMode() === "off") return;
+// ends. Shadow: never refuses and never blocks the work for long. Enforcing:
+// answers whether the work may run. A fault in accounting allows it.
+export async function reserveForInteraction(opts: { feature?: string; estimate?: number; idempotencyKey?: string } = {}): Promise<NovaAdmission> {
+  const allowed: NovaAdmission = { refused: null, reservationId: null };
+  if (accountingMode() === "off") return allowed;
   const ctx = currentUsageContext();
   const tally = ctx?.tally;
-  if (!ctx || !tally || tally.reservation) return;
+  if (!ctx || !tally || tally.reservation) return allowed;
   const feature = opts.feature ?? ctx.feature;
-  if (featureClass(feature) !== "nova") return;
-  const held = (async (): Promise<string | null> => {
+  if (featureClass(feature) !== "nova") return allowed;
+  const enforce = enforcing("nova_credits");
+  const held = (async (): Promise<NovaAdmission> => {
     const { subjectKey } = await usageKeysFor(ctx);
-    if (subjectKey.startsWith("system:")) return null;
-    const t = await targetFor(subjectKey, "nova_credits");
-    const r = await reserve(t, {
-      units: opts.estimate ?? reserveEstimate(feature),
-      idempotencyKey: opts.idempotencyKey ?? `interaction:${ctx.interactionId}`,
-      feature, ref: ctx.interactionId, rateVersion: creditRateVersion(),
-    });
-    return r.ok ? r.reservationId : null;
-  })().catch(err => { accountingFault("nova.reserve", err); return null; });
-  tally.reservation = held;
+    if (subjectKey.startsWith("system:")) return allowed;
+    return reserveFor(subjectKey, { feature, estimate: opts.estimate, idempotencyKey: opts.idempotencyKey ?? `interaction:${ctx.interactionId}`, ref: ctx.interactionId, enforce });
+  })().catch((err): NovaAdmission => { accountingFault("nova.reserve", err); return allowed; });
+  tally.reservation = held.then(a => a.reservationId);
+  if (enforce) return held;
   await Promise.race([held, new Promise(resolve => setTimeout(resolve, RESERVE_WAIT_MS).unref?.())]);
+  return allowed;
+}
+
+// Reserves Nova credits for work that will run later in an interaction of its
+// own (a Build with Nova job, answered before it runs): the learner's account
+// and an idempotency key for this request. The job adopts it
+// (adoptReservation); work that never starts releases it.
+export async function reserveNovaFor(platformChatId: string, opts: { feature: string; idempotencyKey: string; estimate?: number }): Promise<NovaAdmission> {
+  const allowed: NovaAdmission = { refused: null, reservationId: null };
+  if (accountingMode() === "off") return allowed;
+  try {
+    const ent = await entitlementForLearner(platformChatId);
+    return await reserveFor(ent.usageKey, { feature: opts.feature, estimate: opts.estimate, idempotencyKey: opts.idempotencyKey, ref: null, enforce: enforcing("nova_credits") });
+  } catch (err) {
+    accountingFault("nova.reserve_for", err);
+    return allowed;
+  }
+}
+
+// The interaction now open settles this reservation when it ends.
+export function adoptReservation(reservationId: string | null): void {
+  const tally = currentUsageContext()?.tally;
+  if (!tally || !reservationId || tally.reservation) return;
+  tally.reservation = Promise.resolve(reservationId);
+}
+
+// Work that was reserved for and never started (a claim refused, a route that
+// failed before its job): the credits go back.
+export async function releaseReservation(reservationId: string | null, reason: string): Promise<void> {
+  if (!reservationId) return;
+  try { await refund(reservationId, { reason }); } catch (err) { accountingFault("nova.release", err); }
 }
 
 interface Priced { event: LlmCallEvent; costMicros: number; unknown: boolean }
@@ -107,10 +158,10 @@ async function settleNova(end: InteractionEnd, calls: Priced[], reservationId: s
   if (reservationId) {
     if (end.failed || ok.length === 0) {
       const reason = end.failed ? (calls.length > 0 ? "work_failed_after_model_call" : "work_failed_before_model_call") : calls.length > 0 ? "model_call_failed" : "no_model_call";
-      await refund(reservationId, { reason, costMicros: cost, now });
+      await refund(reservationId, { reason, costMicros: cost, now, detail: `interaction:${end.context.interactionId}` });
     } else {
       const feature = ok[0]!.event.context.feature;
-      await commit(reservationId, { units: credits(reserveEstimate(feature)), costMicros: cost, reason: ok.length < calls.length ? "committed_partial" : "committed", rateVersion: rate, now });
+      await commit(reservationId, { units: credits(reserveEstimate(feature)), costMicros: cost, reason: ok.length < calls.length ? "committed_partial" : "committed", rateVersion: rate, now, detail: `interaction:${end.context.interactionId}` });
     }
     return;
   }
@@ -137,7 +188,13 @@ async function settleBrowser(calls: Priced[], accounts: Map<string, string>, now
     const res = taskId ? await reservationByRef("browser_tasks", taskId) : null;
     const key = `${c.event.context.interactionId}:${c.event.at.getTime()}`;
     if (res) {
-      await addCost(res.id, { costMicros: c.costMicros, key, reason: "step_cost", feature: c.event.context.feature });
+      const added = await addCost(res.id, { costMicros: c.costMicros, key, reason: "step_cost", feature: c.event.context.feature });
+      // The $0.03 target is measured, never enforced on a running task: a
+      // task that passes it is logged once and counted by the report.
+      const target = browserTaskCostTargetMicros();
+      if (added && added.before <= target && added.after > target) {
+        console.warn(JSON.stringify({ layer: "usage_accounting", event: "browser_task_over_cost_target", targetMicros: target, costMicros: added.after }));
+      }
       if (c.event.outcome === "success" && res.state === "reserved") {
         await commit(res.id, { units: 1, costMicros: 0, reason: "first_step_completed", now });
       }

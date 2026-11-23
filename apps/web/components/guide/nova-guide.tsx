@@ -187,7 +187,7 @@ const TOPICS: Topic[] = [
   { id: 'telegram',  label: 'Nova on Telegram', icon: Send,        group: 'Nova',         keywords: 'commands chat hinglish hindi nudges check-in language' },
   { id: 'extension', label: 'Browser Extension',icon: Puzzle,      group: 'Nova',         keywords: 'chrome edge brave arc save page selection code connect install screenshot select area region ask existing note' },
   { id: 'counts',    label: 'What counts',      icon: Check,       group: 'Nova',         keywords: 'record ten minutes rules honest' },
-  { id: 'plans',     label: 'Plans',            icon: CreditCard,  group: 'Account',      keywords: 'free pro price trial billing upgrade dollars' },
+  { id: 'plans',     label: 'Plans',            icon: CreditCard,  group: 'Account',      keywords: 'free plus pro price billing upgrade dollars' },
   { id: 'privacy',   label: 'Your data',        icon: ShieldCheck, group: 'Account',      keywords: 'privacy delete account export settings theme password reset email verified profile terms' },
   { id: 'faq',       label: 'Questions',        icon: CircleHelp,  group: 'Account',      keywords: 'faq help problems troubleshooting not applied stale disconnected planner missing' },
 ]
@@ -343,7 +343,7 @@ const FAQ = [
   { q: 'The extension says it was disconnected.', a: 'Its connection ends if you disconnect it or leave it unused for thirty days. Open the Saved Pages page, press Connect a browser and type the new code into the extension.' },
   { q: 'Can Nova remind me at a set time?', a: 'Not yet. It checks in around the time you picked on days you haven’t studied, and messages first only when something is due, at most twice a day. It says so plainly if you ask for a reminder.' },
   { q: 'Does saving a page or ticking a task count as studying?', a: 'No. Only finished, timed sessions move the record. Saved pages and tasks are how you organise; sessions are how you learn.' },
-  { q: 'What happens to my notes if I stop paying for Pro?', a: 'Nothing. Your notes, Knowledge, saved pages and history stay yours on every plan. Pro changes how much you can ask Nova each day, not what you own.' },
+  { q: 'What happens to my notes if I stop paying for Pro?', a: 'Nothing. Your notes, Knowledge, saved pages and history stay yours on every plan. A plan changes how much Nova, the browser agent and the ChatGPT and Claude connector you can use each month, not what you own.' },
 ]
 
 // ── The page ─────────────────────────────────────────────────────────────────
@@ -759,9 +759,9 @@ export function NovaGuide() {
             </div>
           </Section>
 
-          <Section topic={topic('plans')} hidden={hide('plans')} lead="Kivo is free to use. Pro is for when you lean on Nova every day.">
+          <Section topic={topic('plans')} hidden={hide('plans')} lead="Kivo is free to use. Plus and Pro add more of Nova, the browser agent and the ChatGPT and Claude connector.">
             <Grid>
-              {[PLANS.free, pro].map(plan => (
+              {[PLANS.free, PLANS.plus_monthly, pro].map(plan => (
                 <div key={plan.key} className={`${CARD} p-6 ${plan.key === pro.key ? 'border-keppel-400/30' : ''}`}>
                   <div className="flex items-baseline justify-between gap-3">
                     <p className={SUB}>{plan.name}</p>
@@ -774,7 +774,7 @@ export function NovaGuide() {
                 </div>
               ))}
             </Grid>
-            <p className={BODY}>Your notes, Knowledge, saved pages and history are yours on every plan; nothing is deleted when a trial or a subscription ends.</p>
+            <p className={BODY}>Your notes, Knowledge, saved pages and history are yours on every plan; nothing is deleted when a subscription ends. There is no free trial of Plus or Pro: every account starts on Free.</p>
           </Section>
 
           <Section topic={topic('privacy')} hidden={hide('privacy')} lead="What Kivo keeps, and how you stay in charge of it.">
